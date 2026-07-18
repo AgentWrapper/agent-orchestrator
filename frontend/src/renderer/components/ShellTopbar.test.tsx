@@ -171,6 +171,16 @@ describe("ShellTopbar status pill", () => {
 	});
 });
 
+describe("ShellTopbar orchestrator actions", () => {
+	it("marks Kanban as the primary action on orchestrator sessions", () => {
+		renderTopbar(orchestrator);
+
+		expect(screen.getByRole("button", { name: "Open Kanban" })).toHaveClass("bg-primary");
+		expect(screen.getByRole("button", { name: "New task" })).toHaveClass("bg-raised");
+		expect(screen.getByRole("button", { name: "New task" })).not.toHaveClass("bg-primary");
+	});
+});
+
 describe("TopbarKillButton", () => {
 	it("arms a confirmation before killing an active session", async () => {
 		renderKill();

@@ -22,6 +22,14 @@ export type CreateProjectAgentSelection = {
 };
 
 const EMPTY_INTAKE: IntakeForm = { enabled: false, repo: "", assignee: "" };
+const DEFAULT_AGENT_PRIORITY = ["claude-code", "codex", "cursor", "opencode", "aider"] as const;
+const DEFAULT_AGENT_PRIORITY_RANK = new Map<string, number>(
+	DEFAULT_AGENT_PRIORITY.map((agent, index) => [agent, index]),
+);
+
+function agentLabelCompare(a: AgentInfo, b: AgentInfo): number {
+	return a.label.localeCompare(b.label) || a.id.localeCompare(b.id);
+}
 
 type CreateProjectAgentSheetProps = {
 	error?: string | null;
@@ -112,6 +120,8 @@ export function CreateProjectAgentSheet({
 		: agentsError;
 	const [workerAgent, setWorkerAgent] = useState("");
 	const [orchestratorAgent, setOrchestratorAgent] = useState("");
+	const [workerAgentTouched, setWorkerAgentTouched] = useState(false);
+	const [orchestratorAgentTouched, setOrchestratorAgentTouched] = useState(false);
 	const isBusy = isCreating || isInitializing;
 	const [intake, setIntake] = useState<IntakeForm>(EMPTY_INTAKE);
 	const intakeIncomplete = intakeNeedsRule(intake);
@@ -119,9 +129,18 @@ export function CreateProjectAgentSheet({
 	const sheetError = error ? projectSheetError(error) : null;
 
 	useEffect(() => {
+		if (!open) return;
+		const defaultAgent = defaultAuthorizedAgent(agentOptions);
+		if (!workerAgentTouched) setWorkerAgent(defaultAgent);
+		if (!orchestratorAgentTouched) setOrchestratorAgent(defaultAgent);
+	}, [agentOptions, open, orchestratorAgentTouched, workerAgentTouched]);
+
+	useEffect(() => {
 		if (!open) {
 			setWorkerAgent("");
 			setOrchestratorAgent("");
+			setWorkerAgentTouched(false);
+			setOrchestratorAgentTouched(false);
 			setIntake(EMPTY_INTAKE);
 		}
 	}, [open, path]);
@@ -169,7 +188,10 @@ export function CreateProjectAgentSheet({
 								installed={installedAgents}
 								supported={supportedAgents}
 								disabled={isLoadingAgents}
-								onChange={setWorkerAgent}
+								onChange={(value) => {
+									setWorkerAgent(value);
+									setWorkerAgentTouched(true);
+								}}
 							/>
 							<RequiredAgentField
 								id="newProjectOrchestratorAgent"
@@ -180,7 +202,10 @@ export function CreateProjectAgentSheet({
 								installed={installedAgents}
 								supported={supportedAgents}
 								disabled={isLoadingAgents}
-								onChange={setOrchestratorAgent}
+								onChange={(value) => {
+									setOrchestratorAgent(value);
+									setOrchestratorAgentTouched(true);
+								}}
 							/>
 						</div>
 
@@ -313,12 +338,13 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 			return {
 				...agent,
 				disabled: !isSelectable,
+				priorityRank: DEFAULT_AGENT_PRIORITY_RANK.get(agent.id) ?? Number.MAX_SAFE_INTEGER,
 				rank,
 				reason: !installedAgent ? "Needs install" : isAuthUnknown ? "Auth unknown" : !isAuthorized ? "Needs auth" : "",
 				warning: isAuthUnknown,
 			};
 		})
-		.sort((a, b) => a.rank - b.rank || a.label.localeCompare(b.label) || a.id.localeCompare(b.id));
+		.sort((a, b) => a.rank - b.rank || a.priorityRank - b.priorityRank || agentLabelCompare(a, b));
 
 	return (
 		<div className="flex flex-col gap-1.5">
@@ -353,3 +379,10 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 		</div>
 	);
 });
+
+export function defaultAuthorizedAgent(authorizedAgents: AgentInfo[]): string {
+	const authorizedIds = new Set(authorizedAgents.map((agent) => agent.id));
+	const prioritized = DEFAULT_AGENT_PRIORITY.find((agent) => authorizedIds.has(agent));
+	if (prioritized) return prioritized;
+	return [...authorizedAgents].sort(agentLabelCompare)[0]?.id ?? "";
+}

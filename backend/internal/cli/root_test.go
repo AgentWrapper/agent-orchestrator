@@ -35,6 +35,16 @@ func TestRootHelpDoesNotShowDaemon(t *testing.T) {
 	}
 }
 
+func TestRootCommandsHaveUniqueNames(t *testing.T) {
+	seen := make(map[string]struct{})
+	for _, cmd := range NewRootCommand(Deps{}).Commands() {
+		if _, exists := seen[cmd.Name()]; exists {
+			t.Fatalf("root command %q is registered more than once", cmd.Name())
+		}
+		seen[cmd.Name()] = struct{}{}
+	}
+}
+
 func TestCommandsRejectUnexpectedArgs(t *testing.T) {
 	for _, args := range [][]string{
 		{"daemon", "extra"},

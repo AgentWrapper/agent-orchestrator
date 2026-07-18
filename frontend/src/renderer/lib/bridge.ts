@@ -10,6 +10,7 @@ export const aoBridge: AoBridge =
 				window.open(url, "_blank", "noopener,noreferrer");
 			},
 			scanImportFolder: async ({ path }) => ({ path, repos: [] }),
+			onNewSessionShortcut: () => () => undefined,
 		},
 		terminal: {
 			saveDroppedFile: async () => "",

@@ -60,6 +60,7 @@ if (typeof window !== "undefined") {
 			chooseDirectory: async () => null,
 			openExternal: async () => undefined,
 			scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
+			onNewSessionShortcut: () => () => undefined,
 		},
 		terminal: {
 			saveDroppedFile: async () => "",
