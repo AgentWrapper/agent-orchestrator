@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession } from "../types/workspace";
@@ -480,6 +480,50 @@ describe("review board", () => {
 		expect(
 			postMock.mock.calls.some(([path]) => path === "/api/v1/sessions/{sessionId}/send"),
 		).toBe(false);
+	});
+
+	it("starts a fresh reviewer when sending to the existing helper fails", async () => {
+		vi.useFakeTimers();
+		try {
+			const candidate = worker({
+				prs: [openPr],
+				previewUrl: "http://127.0.0.1/api/v1/sessions/worker-1/preview/files/docs/cache-policy.md",
+			});
+			const helper = worker({
+				id: "review-helper-1",
+				title: "Review helper",
+				issueId: reviewAgentIssueId,
+				terminalHandleId: "review-terminal-1",
+				status: "idle",
+				activity: { state: "idle", lastActivityAt: "2026-07-16T10:00:01Z" },
+			});
+			postMock.mockImplementation((path: string) =>
+				path === "/api/v1/sessions/{sessionId}/send"
+					? Promise.resolve({ data: undefined, error: { message: "PTY is closed" } })
+					: Promise.resolve({ data: { session: { id: "review-helper-2" } }, error: undefined }),
+			);
+
+			renderBoard([candidate, helper], true);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+			expect(postMock).toHaveBeenCalledWith(
+				"/api/v1/sessions/{sessionId}/send",
+				expect.objectContaining({ params: { path: { sessionId: "review-helper-1" } } }),
+			);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(5_100);
+			});
+			expect(postMock).toHaveBeenCalledWith(
+				"/api/v1/sessions",
+				expect.objectContaining({
+					body: expect.objectContaining({ displayName: "Review agent", issueId: reviewAgentIssueId }),
+				}),
+			);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it("does not resend a durable review request after remounting", async () => {

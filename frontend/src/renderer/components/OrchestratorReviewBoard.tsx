@@ -6,7 +6,7 @@ import {
 	RefreshCw,
 	Sparkles,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTerminalSession, type AttachableTerminal, type TerminalSessionState } from "../hooks/useTerminalSession";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
@@ -523,14 +523,28 @@ export function OrchestratorReviewBoard({
 	const queryClient = useQueryClient();
 	const candidates = useMemo(() => reviewCandidates(sessions), [sessions]);
 	const expectedIssueId = `${REVIEW_TRANSLATOR_ISSUE_PREFIX}${orchestrator.workspaceId}`;
+	const [rejectedHelperIds, setRejectedHelperIds] = useState<ReadonlySet<string>>(() => new Set());
+	const eligibleReviewSessions = useMemo(
+		() => sessions.filter((session) => !rejectedHelperIds.has(session.id)),
+		[rejectedHelperIds, sessions],
+	);
 	const liveHelper = useMemo(
-		() => newestLiveReviewHelper(sessions, expectedIssueId),
-		[expectedIssueId, sessions],
+		() => newestLiveReviewHelper(eligibleReviewSessions, expectedIssueId),
+		[eligibleReviewSessions, expectedIssueId],
 	);
 	const historicalHelper = useMemo(
 		() => newestReviewHelper(sessions, expectedIssueId),
 		[expectedIssueId, sessions],
 	);
+	const rejectKnownReviewHelpers = useCallback(() => {
+		setRejectedHelperIds((current) => {
+			const next = new Set(current);
+			for (const session of sessions) {
+				if (session.issueId === expectedIssueId) next.add(session.id);
+			}
+			return next;
+		});
+	}, [expectedIssueId, sessions]);
 	const candidateContextKey = useMemo(
 		() =>
 			candidates
@@ -573,11 +587,11 @@ export function OrchestratorReviewBoard({
 	const helperId = reviewAttempt?.batchId === batchId ? (reviewAttempt.helperId ?? helper?.id) : helper?.id;
 	const attachableHelper =
 		manageAgent &&
-		helper &&
-		helper.status !== "terminated" &&
-		helper.status !== "merged" &&
-		helper.activity?.state !== "exited"
-			? helper
+		liveHelper &&
+		liveHelper.status !== "terminated" &&
+		liveHelper.status !== "merged" &&
+		liveHelper.activity?.state !== "exited"
+			? liveHelper
 			: undefined;
 	const prompt = useMemo(
 		() => reviewAgentPrompt(candidates, batchId, reviewContexts),
@@ -604,6 +618,7 @@ export function OrchestratorReviewBoard({
 		},
 	});
 	const conversationSupported = helperConversationQuery.data?.supported === true;
+	const bridgeHelper = helperConversationQuery.data?.supported === false ? attachableHelper : undefined;
 	const refetchHelperConversation = helperConversationQuery.refetch;
 	const responseLines = conversationSupported
 		? (helperConversationQuery.data?.responseLines ?? [])
@@ -788,6 +803,7 @@ export function OrchestratorReviewBoard({
 				}
 				await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 			} catch (error) {
+				if (liveHelper) rejectKnownReviewHelpers();
 				requestedBatchRef.current = undefined;
 				setReviewAttempt(undefined);
 				setRequestError(error instanceof Error ? error.message : "Unable to prepare the review");
@@ -813,6 +829,7 @@ export function OrchestratorReviewBoard({
 		orchestrator.workspaceId,
 		prompt,
 		queryClient,
+		rejectKnownReviewHelpers,
 		requestError,
 	]);
 
@@ -861,8 +878,7 @@ export function OrchestratorReviewBoard({
 		const activityState = helper?.activity?.state;
 		const helperIsIdle = activityState === "idle" || (!activityState && helper?.status === "idle");
 		const helperInterrupted =
-			helperState === "error" ||
-			helperState === "exited" ||
+			(!conversationSupported && (helperState === "error" || helperState === "exited")) ||
 			activityState === "waiting_input" ||
 			activityState === "blocked" ||
 			activityState === "exited";
@@ -889,6 +905,7 @@ export function OrchestratorReviewBoard({
 				const finalRead = await refetchHelperConversation();
 				if (cancelled) return;
 				if (finalRead.data && hasReviewTranslationResponse(finalRead.data.responseLines, batchId)) return;
+				rejectKnownReviewHelpers();
 				setReviewAttempt(undefined);
 				setRequestError(
 					helperInterrupted
@@ -903,7 +920,17 @@ export function OrchestratorReviewBoard({
 			cancelled = true;
 			window.clearTimeout(timer);
 		};
-	}, [batchId, helper, helperResponded, helperState, manageAgent, refetchHelperConversation, reviewAttempt]);
+	}, [
+		batchId,
+		conversationSupported,
+		helper,
+		helperResponded,
+		helperState,
+		manageAgent,
+		refetchHelperConversation,
+		rejectKnownReviewHelpers,
+		reviewAttempt,
+	]);
 
 	const refresh = async () => {
 		if (isRefreshing || isRequesting) return;
@@ -935,16 +962,16 @@ export function OrchestratorReviewBoard({
 		isRefreshing ||
 		isRequesting ||
 		Boolean(reviewAttempt?.batchId === batchId && !helperResponded && !requestError);
-	const reviewFailed = !helperResponded && Boolean(requestError || helperError);
+	const reviewFailed = !helperResponded && Boolean(requestError || (!conversationSupported && helperError));
 	const someQuestionsUnavailable = !helperWorking && unavailableSessions.length > 0;
 	const allClear = candidates.length === 0;
 
 	if (backgroundOnly) {
-		return attachableHelper ? (
+		return bridgeHelper ? (
 			<ReviewAgentBridge
-				key={`${attachableHelper.id}:${attachableHelper.terminalHandleId ?? "starting"}`}
+				key={`${bridgeHelper.id}:${bridgeHelper.terminalHandleId ?? "starting"}`}
 				daemonReady={daemonReady}
-				helper={attachableHelper}
+				helper={bridgeHelper}
 				onError={setHelperError}
 				onStateChange={setHelperState}
 				onTranscriptChange={setTranscriptLines}
@@ -955,11 +982,11 @@ export function OrchestratorReviewBoard({
 
 	return (
 		<div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-background">
-			{attachableHelper ? (
+			{bridgeHelper ? (
 				<ReviewAgentBridge
-					key={`${attachableHelper.id}:${attachableHelper.terminalHandleId ?? "starting"}`}
+					key={`${bridgeHelper.id}:${bridgeHelper.terminalHandleId ?? "starting"}`}
 					daemonReady={daemonReady}
-					helper={attachableHelper}
+					helper={bridgeHelper}
 					onError={setHelperError}
 					onStateChange={setHelperState}
 					onTranscriptChange={setTranscriptLines}
