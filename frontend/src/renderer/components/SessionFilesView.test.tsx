@@ -134,6 +134,20 @@ describe("SessionFilesView", () => {
 		expect(codePane).not.toHaveClass("text-terminal");
 	});
 
+	it("renders changed files as one integrated review list instead of boxed cards", async () => {
+		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+
+		const activeRowButton = await screen.findByRole("button", { name: "Collapse src/App.tsx" });
+		const list = screen.getByRole("list");
+		const row = activeRowButton.closest("article");
+
+		expect(list).toHaveClass("session-files-review-list");
+		expect(row).toHaveClass("session-files-review-row");
+		expect(row).not.toHaveClass("border");
+		expect(row).not.toHaveClass("bg-surface");
+		expect(row).not.toHaveClass("shadow-sm");
+	});
+
 	it("lets the caller toggle between rail and maximized layouts", async () => {
 		const onToggleMaximized = vi.fn();
 		renderWithQuery(<SessionFilesView onClose={vi.fn()} onToggleMaximized={onToggleMaximized} sessionId="sess-1" />);

@@ -223,9 +223,9 @@ function ReviewFileList({
 		return <PanelMessage>No changed files found.</PanelMessage>;
 	}
 	return (
-		<ul className="flex flex-col gap-3">
+		<ul className="session-files-review-list overflow-hidden border-y border-border/70">
 			{files.map((file) => (
-				<li key={file.path}>
+				<li className="border-b border-border/60 last:border-b-0" key={file.path}>
 					<ReviewFileCard
 						expanded={expandedPaths.has(file.path)}
 						file={file}
@@ -257,13 +257,16 @@ function ReviewFileCard({
 	});
 
 	return (
-		<article className="overflow-hidden rounded-md border border-border bg-surface shadow-sm">
-			<div className="flex min-h-14 items-center gap-3 px-4">
+		<article className="session-files-review-row overflow-hidden bg-transparent">
+			<div className="flex min-h-14 items-center">
 				<button
 					aria-controls={`workspace-diff-${file.path}`}
 					aria-expanded={expanded}
 					aria-label={`${expanded ? "Collapse" : "Expand"} ${file.path}`}
-					className="flex min-w-0 flex-1 items-center gap-3 py-3 text-left"
+					className={cn(
+						"flex min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left transition-colors",
+						expanded ? "bg-interactive-active/45" : "hover:bg-interactive-hover/50",
+					)}
 					onClick={onToggle}
 					type="button"
 				>
@@ -278,7 +281,7 @@ function ReviewFileCard({
 				</button>
 			</div>
 			{expanded ? (
-				<div id={`workspace-diff-${file.path}`} className="border-t border-border">
+				<div id={`workspace-diff-${file.path}`} className="border-t border-border/60 bg-background/40">
 					{detailQuery.isPending ? <PanelMessage>Loading diff...</PanelMessage> : null}
 					{!detailQuery.isPending && detailQuery.error ? (
 						<PanelMessage action={<RetryButton onClick={() => void detailQuery.refetch()} />}>
