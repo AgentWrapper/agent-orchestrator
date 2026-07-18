@@ -78,9 +78,12 @@ type CleanupSkipped struct {
 type RestoreModeView string
 
 const (
-	RestoreModeViewNative      RestoreModeView = "native"
+	// RestoreModeViewNative restores a session using the runtime's native resume behavior.
+	RestoreModeViewNative RestoreModeView = "native"
+	// RestoreModeViewSavedPrompt restores a session by replaying the saved prompt.
 	RestoreModeViewSavedPrompt RestoreModeView = "saved_prompt"
-	RestoreModeViewFresh       RestoreModeView = "fresh"
+	// RestoreModeViewFresh restores a session by starting from a fresh runtime state.
+	RestoreModeViewFresh RestoreModeView = "fresh"
 )
 
 // RestoreOutcome reports the restored read model and how AO relaunched it.
