@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import { NEW_SESSION_SHORTCUT_CHANNEL } from "./shared/shortcuts";
+import { KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL } from "./shared/shortcuts";
 import type { BrowserNavState, BrowserRect } from "./main/browser-view-host";
 import type { DaemonStatus } from "./shared/daemon-status";
 import type { TelemetryBootstrap } from "./shared/telemetry";
@@ -55,6 +55,13 @@ const api = {
 			ipcRenderer.on(NEW_SESSION_SHORTCUT_CHANNEL, wrapped);
 			return () => {
 				ipcRenderer.off(NEW_SESSION_SHORTCUT_CHANNEL, wrapped);
+			};
+		},
+		onKeyboardShortcutsHelp: (listener: () => void) => {
+			const wrapped = () => listener();
+			ipcRenderer.on(KEYBOARD_SHORTCUTS_HELP_CHANNEL, wrapped);
+			return () => {
+				ipcRenderer.off(KEYBOARD_SHORTCUTS_HELP_CHANNEL, wrapped);
 			};
 		},
 	},

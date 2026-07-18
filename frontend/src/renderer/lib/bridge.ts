@@ -11,6 +11,7 @@ export const aoBridge: AoBridge =
 			},
 			scanImportFolder: async ({ path }) => ({ path, repos: [] }),
 			onNewSessionShortcut: () => () => undefined,
+			onKeyboardShortcutsHelp: () => () => undefined,
 		},
 		terminal: {
 			saveDroppedFile: async () => "",

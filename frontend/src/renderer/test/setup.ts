@@ -61,6 +61,7 @@ if (typeof window !== "undefined") {
 			openExternal: async () => undefined,
 			scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
 			onNewSessionShortcut: () => () => undefined,
+			onKeyboardShortcutsHelp: () => () => undefined,
 		},
 		terminal: {
 			saveDroppedFile: async () => "",
