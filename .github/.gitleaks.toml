@@ -172,9 +172,11 @@ title = "gitleaks config"
     files = ['''^\.?gitleaks.toml$''',
     '''(.*?)(png|jpg|gif|doc|docx|pdf|bin|xls|pyc|zip)$''',
     '''(go.mod|go.sum)$''',
-    # Public Settings social URL constants (LinkedIn company page is not a client id/secret).
-    '''frontend/src/renderer/lib/social-links\.ts$''']
-    # Ignore false positives on the public LinkedIn company URL (rule matches "linkedin" + nearby alnum).
+    # Public Settings social URL constants (company page is not a client id/secret).
+    '''frontend/src/renderer/lib/social-links\.ts$''',
+    # Settings social-link tests trip the LinkedIn client/secret regexes on labels.
+    '''frontend/src/renderer/components/GlobalSettingsForm\.test\.tsx$''']
+    # Ignore false positives on the public company URL (rule matches brand name + nearby alnum).
     regexes = [
         '''(?i)linkedin\.com/company/agent-orchestrator''',
     ]
@@ -183,8 +185,7 @@ title = "gitleaks config"
     # secret-redaction test fixtures, living in files already deleted from
     # the tree. The push-event scan walks full history, so these commits are
     # allowlisted to keep `main` green without weakening detection on new code.
-    # Also includes settings-revamp commits that introduced the public LinkedIn
-    # company URL before it was allowlisted / moved to social-links.ts.
+    # Also includes settings-revamp commits that hit LinkedIn false positives.
     commits = [
         "15ad44633a34151e81737183e6f35889a38ffbcb",
         "1efa966296178deaf161853f5bc1abf595e22223",
@@ -200,4 +201,6 @@ title = "gitleaks config"
         "45994b6d169d1004a02205b3a7ad23a4b1304ed3",
         "73613281ab149c2dd4186fe83c4687c5464150fa",
         "2a0c8a0f3e27ae78612b9896f07e0a79b181a431",
+        "d1d4092df1adfe6f9581b03484845485dfb91b76",
+        "423f0de6fa12d55785f2cc254e033edb94773a84",
     ]
