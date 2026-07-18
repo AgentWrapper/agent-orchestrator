@@ -75,7 +75,13 @@ type CleanupSkipped struct {
 }
 
 // RestoreModeView is the API-facing restore-mode enum.
-type RestoreModeView = sessionmanager.RestoreMode
+type RestoreModeView string
+
+const (
+	RestoreModeViewNative      RestoreModeView = "native"
+	RestoreModeViewSavedPrompt RestoreModeView = "saved_prompt"
+	RestoreModeViewFresh       RestoreModeView = "fresh"
+)
 
 // RestoreOutcome reports the restored read model and how AO relaunched it.
 type RestoreOutcome struct {
@@ -402,7 +408,20 @@ func (s *Service) Restore(ctx context.Context, id domain.SessionID) (RestoreOutc
 	if err != nil {
 		return RestoreOutcome{}, err
 	}
-	return RestoreOutcome{Session: session, Mode: res.Mode}, nil
+	return RestoreOutcome{Session: session, Mode: restoreModeView(res.Mode)}, nil
+}
+
+func restoreModeView(mode sessionmanager.RestoreMode) RestoreModeView {
+	switch mode {
+	case sessionmanager.RestoreModeNative:
+		return RestoreModeViewNative
+	case sessionmanager.RestoreModeSavedPrompt:
+		return RestoreModeViewSavedPrompt
+	case sessionmanager.RestoreModeFresh:
+		return RestoreModeViewFresh
+	default:
+		return RestoreModeView(mode)
+	}
 }
 
 // Kill delegates terminal intent and teardown to the internal manager.
