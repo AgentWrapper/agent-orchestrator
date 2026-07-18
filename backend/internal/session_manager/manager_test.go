@@ -338,6 +338,59 @@ func (a envAugmentingAgent) AugmentRuntimeEnv(env map[string]string, dataDir str
 	env[a.key] = filepath.Join(dataDir, a.value)
 }
 
+type preallocatingAgent struct {
+	*recordingAgent
+	id            string
+	err           error
+	lastPrealloc  ports.LaunchConfig
+	preallocCalls int
+	sharedLog     *[]string
+}
+
+func (a *preallocatingAgent) PreallocateAgentSession(_ context.Context, cfg ports.LaunchConfig) (string, error) {
+	a.preallocCalls++
+	a.lastPrealloc = cfg
+	if a.sharedLog != nil {
+		*a.sharedLog = append(*a.sharedLog, "PreallocateAgentSession")
+	}
+	if a.err != nil {
+		return "", a.err
+	}
+	return a.id, nil
+}
+
+type preallocatingEnvAgent struct {
+	*preallocatingAgent
+	envAugmentingAgent
+}
+
+func (a preallocatingEnvAgent) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
+	return a.preallocatingAgent.GetConfigSpec(ctx)
+}
+func (a preallocatingEnvAgent) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) ([]string, error) {
+	return a.preallocatingAgent.GetLaunchCommand(ctx, cfg)
+}
+func (a preallocatingEnvAgent) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
+	return a.preallocatingAgent.GetPromptDeliveryStrategy(ctx, cfg)
+}
+func (a preallocatingEnvAgent) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfig) error {
+	return a.preallocatingAgent.GetAgentHooks(ctx, cfg)
+}
+func (a preallocatingEnvAgent) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig) ([]string, bool, error) {
+	return a.preallocatingAgent.GetRestoreCommand(ctx, cfg)
+}
+func (a preallocatingEnvAgent) SessionInfo(ctx context.Context, ref ports.SessionRef) (ports.SessionInfo, bool, error) {
+	return a.preallocatingAgent.SessionInfo(ctx, ref)
+}
+
+type nativeRestoreOnlyAgent struct {
+	*recordingAgent
+}
+
+func (a nativeRestoreOnlyAgent) NativeRestoreRequired(context.Context, ports.RestoreConfig) (bool, error) {
+	return true, nil
+}
+
 func blockedDataDir(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "data")
@@ -1173,6 +1226,69 @@ func TestSpawn_AgentRuntimeEnvAugmenterReachesRuntime(t *testing.T) {
 	}
 	if got, want := rt.lastCfg.Env["AGENT_DATA_DIR"], filepath.Join("/ao/data", "agent"); got != want {
 		t.Fatalf("runtime env AGENT_DATA_DIR = %q, want %q", got, want)
+	}
+}
+
+func TestSpawn_StoresPreallocatedAgentSessionID(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{}
+	envAgent := envAugmentingAgent{key: "AGENT_DATA_DIR", value: "agent"}
+	base := &recordingAgent{}
+	agent := &preallocatingAgent{recordingAgent: base, id: "chat-123"}
+	m := New(Deps{
+		Runtime:    rt,
+		Agents:     singleAgent{agent: preallocatingEnvAgent{preallocatingAgent: agent, envAugmentingAgent: envAgent}},
+		Workspace:  &fakeWorkspace{path: "/ws/mer-1"},
+		Store:      st,
+		Messenger:  &fakeMessenger{},
+		Lifecycle:  &fakeLCM{store: st},
+		DataDir:    "/ao/data",
+		LookPath:   func(string) (string, error) { return "/bin/true", nil },
+		Executable: func() (string, error) { return "/daemon/ao", nil },
+	})
+
+	rec, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "fix it"})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if rec.Metadata.AgentSessionID != "chat-123" {
+		t.Fatalf("stored agentSessionId = %q, want chat-123", rec.Metadata.AgentSessionID)
+	}
+	if base.lastLaunch.AgentSessionID != "chat-123" {
+		t.Fatalf("launch agentSessionId = %q, want chat-123", base.lastLaunch.AgentSessionID)
+	}
+	if agent.lastPrealloc.Env["AGENT_DATA_DIR"] != filepath.Join("/ao/data", "agent") {
+		t.Fatalf("prealloc env AGENT_DATA_DIR = %q, want augmented env", agent.lastPrealloc.Env["AGENT_DATA_DIR"])
+	}
+	if rt.created != 1 {
+		t.Fatalf("runtime.Create = %d, want 1", rt.created)
+	}
+}
+
+func TestSpawn_PreallocationFailureRollsBackBeforeRuntimeCreate(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
+	agent := &preallocatingAgent{recordingAgent: &recordingAgent{}, err: errors.New("create chat failed")}
+	m := New(Deps{
+		Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err == nil || !strings.Contains(err.Error(), "preallocate agent session") {
+		t.Fatalf("Spawn err = %v, want preallocation failure", err)
+	}
+	if rt.created != 0 {
+		t.Fatalf("runtime.Create = %d, want 0", rt.created)
+	}
+	if ws.destroyed != 1 {
+		t.Fatalf("workspace destroy calls = %d, want 1", ws.destroyed)
+	}
+	if _, present := st.sessions["mer-1"]; present {
+		t.Fatal("seed row should be deleted after preallocation failure")
 	}
 }
 
@@ -2572,6 +2688,74 @@ func TestRestore_AgyAndCopilotWithAgentSessionIDUseNativeResume(t *testing.T) {
 				t.Fatal("session must be live after native resume")
 			}
 		})
+	}
+}
+
+func TestRestore_NativeRestorePolicyWithAgentSessionIDUsesNativeResume(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessCursor, IsTerminated: true,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "chat-123", Prompt: "continue the task"},
+	}
+	rt := &fakeRuntime{}
+	agent := &recordingAgent{}
+	m := New(Deps{
+		Runtime:   rt,
+		Agents:    singleAgent{agent: nativeRestoreOnlyAgent{recordingAgent: agent}},
+		Workspace: &fakeWorkspace{},
+		Store:     st,
+		Messenger: &fakeMessenger{},
+		Lifecycle: &fakeLCM{store: st},
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, err := m.Restore(ctx, "mer-1"); err != nil {
+		t.Fatalf("Restore err = %v, want native resume", err)
+	}
+	if got := agent.lastRestore.Session.Metadata[ports.MetadataKeyAgentSessionID]; got != "chat-123" {
+		t.Fatalf("restore agent session id = %q, want chat-123", got)
+	}
+	if agent.launchCalls != 0 {
+		t.Fatalf("GetLaunchCommand calls = %d, want 0", agent.launchCalls)
+	}
+	if rt.created != 1 {
+		t.Fatalf("runtime.Create = %d, want 1", rt.created)
+	}
+}
+
+func TestRestore_NativeRestorePolicyWithoutAgentSessionIDNotResumable(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessCursor, IsTerminated: true,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", Prompt: "continue the task"},
+	}
+	rt := &fakeRuntime{}
+	agent := &recordingAgent{}
+	m := New(Deps{
+		Runtime:   rt,
+		Agents:    singleAgent{agent: nativeRestoreOnlyAgent{recordingAgent: agent}},
+		Workspace: &fakeWorkspace{},
+		Store:     st,
+		Messenger: &fakeMessenger{},
+		Lifecycle: &fakeLCM{store: st},
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	_, err := m.Restore(ctx, "mer-1")
+	if !errors.Is(err, ErrNotResumable) {
+		t.Fatalf("Restore err = %v, want ErrNotResumable", err)
+	}
+	if agent.restoreCalls != 1 {
+		t.Fatalf("GetRestoreCommand calls = %d, want 1", agent.restoreCalls)
+	}
+	if agent.launchCalls != 0 {
+		t.Fatalf("GetLaunchCommand calls = %d, want 0", agent.launchCalls)
+	}
+	if rt.created != 0 {
+		t.Fatalf("runtime.Create = %d, want 0", rt.created)
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session must remain terminated")
 	}
 }
 

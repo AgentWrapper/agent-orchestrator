@@ -8,7 +8,7 @@ import { Accordions, Accordion } from "fumadocs-ui/components/accordion";
 <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", margin: "0.5rem 0 1.25rem" }}>
 	<Logo name="cursor" size={28} />
 	<span style={{ fontSize: "0.8125rem", color: "var(--color-fd-muted-foreground)" }}>
-		Slot: <code>agent</code> · Name: <code>cursor</code> · Binary: <code>agent</code>
+		Slot: <code>agent</code> · Name: <code>cursor</code> · Binary: <code>cursor-agent</code>
 	</span>
 </div>
 
@@ -25,10 +25,10 @@ curl https://cursor.com/install -fsS | bash
 Verify:
 
 ```bash
-agent --help
+cursor-agent --help
 ```
 
-You should see "Cursor Agent" in the output. If you don't, the `agent` binary in your PATH is something else (e.g. an unrelated tool) — reorder your PATH so the Cursor one wins.
+You should see "Cursor Agent" in the output.
 
 ## Use
 
@@ -40,33 +40,31 @@ No plugin-level config.
 
 ## How it works
 
-- **Launch:** AO runs `agent` inside the worktree.
-- **Activity tracking:** AO writes a JSONL to `{workspace}/.ao/activity.jsonl` each poll cycle based on terminal output classification. The dashboard reads from there.
-- **PR + git tracking:** PATH wrappers at `~/.ao/bin/gh` / `~/.ao/bin/git` intercept calls to record PR metadata.
-- **Session resume:** Not supported — every spawn is a fresh Cursor session.
+- **Launch:** AO creates a Cursor chat with `cursor-agent create-chat`, stores the returned chat id, then runs `cursor-agent --resume <chatId> -- <prompt>` inside the worktree.
+- **Activity tracking:** AO installs workspace-local Cursor hooks that report activity and can confirm the native chat id when Cursor emits it.
+- **Session resume:** AO restores with `cursor-agent --resume <chatId>`. Deterministic restore is available for Cursor sessions created after AO stored a chat id; older Cursor sessions without `agentSessionId` cannot be restored safely and remain terminated.
 
 ## Detection
 
-The plugin's `detect()` checks `agent --help` output for the strings `Cursor Agent` and `--approve-mcps` to avoid false positives with other binaries named `agent`.
+The plugin resolves `cursor-agent` from PATH or common install locations.
 
 ## Environment variables
 
-| Variable        | Set by AO | Purpose                    |
-| --------------- | --------- | -------------------------- |
-| `AO_SESSION_ID` | ✓         | AO session id              |
-| `AO_ISSUE_ID`   | ✓         | Issue identifier           |
-| `PATH`          | ✓         | Prepends `~/.ao/bin`       |
-| `GH_PATH`       | ✓         | Absolute path to real `gh` |
+| Variable          | Set by AO | Purpose                                 |
+| ----------------- | --------- | --------------------------------------- |
+| `AO_SESSION_ID`   | ✓         | AO session id                           |
+| `AO_ISSUE_ID`     | ✓         | Issue identifier                        |
+| `AO_DATA_DIR`     | ✓         | AO data root for hooks                  |
+| `CURSOR_DATA_DIR` | ✓         | Isolated Cursor profile under `~/.ao`   |
 
 ## Troubleshooting
 
 <Accordions>
 	<Accordion title="AO says Cursor Agent isn't detected">
-		The plugin only recognises the real Cursor binary by its help output. Run `agent --help` — if you see a different
-		tool's help, remove or shadow it, or reinstall Cursor Agent.
+		Run `cursor-agent --help`. If it is missing, reinstall Cursor Agent or add the install directory to PATH.
 	</Accordion>
-	<Accordion title="Dashboard never leaves `active`">
-		Cursor doesn't emit its own session JSONL. AO classifies based on terminal output — if your terminal is being
-		captured by another tool, the classification can drift. `ao doctor` will flag this.
+	<Accordion title="An older Cursor session does not restore">
+		Only Cursor sessions created after AO stored a native chat id have deterministic restore. Sessions without
+		`agentSessionId` are left terminated instead of attaching AO to the wrong Cursor transcript.
 	</Accordion>
 </Accordions>

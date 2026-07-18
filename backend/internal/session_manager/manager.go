@@ -328,6 +328,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		IssueID:          string(cfg.IssueID),
 		Config:           agentConfig,
 		Permissions:      agentConfig.Permissions,
+		Env:              env,
 	}
 	delivery, err := agent.GetPromptDeliveryStrategy(ctx, launchCfg)
 	if err != nil {
@@ -335,6 +336,13 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: prompt delivery: %w", id, err)
 	}
+	agentSessionID, err := m.preallocateAgentSession(ctx, agent, launchCfg)
+	if err != nil {
+		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
+		m.rollbackSpawnSeedRow(ctx, id)
+		return domain.SessionRecord{}, fmt.Errorf("spawn %s: preallocate agent session: %w", id, err)
+	}
+	launchCfg.AgentSessionID = agentSessionID
 	if delivery == ports.PromptDeliveryAfterStart {
 		launchCfg.Prompt = ""
 	}
@@ -365,7 +373,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: runtime: %w", id, err)
 	}
 
-	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, Prompt: prompt}
+	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, AgentSessionID: agentSessionID, Prompt: prompt}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
@@ -868,6 +876,8 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 			SystemPromptFile: systemPromptFile,
 			Config:           agentConfig,
 			Permissions:      agentConfig.Permissions,
+			AgentSessionID:   rec.Metadata.AgentSessionID,
+			Env:              env,
 		}
 		if err := m.deliverAfterStartPrompt(ctx, agent, launchCfg, handle, rec.ID, rec.Metadata.Prompt); err != nil {
 			_ = m.runtime.Destroy(ctx, handle)
@@ -2222,6 +2232,14 @@ func (m *Manager) augmentAgentRuntimeEnv(agent ports.Agent, env map[string]strin
 	}
 }
 
+func (m *Manager) preallocateAgentSession(ctx context.Context, agent ports.Agent, cfg ports.LaunchConfig) (string, error) {
+	preallocator, ok := agent.(ports.AgentSessionPreallocator)
+	if !ok {
+		return "", nil
+	}
+	return preallocator.PreallocateAgentSession(ctx, cfg)
+}
+
 // prepareWorkspace runs the per-session pre-launch steps before the runtime
 // starts the agent: installing the workspace-local activity hooks (so early
 // startup hooks can update the already-created session row), then any optional
@@ -2407,12 +2425,22 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 		WorkspacePath: workspacePath,
 		Metadata:      map[string]string{ports.MetadataKeyAgentSessionID: meta.AgentSessionID},
 	}
-	cmd, ok, err := agent.GetRestoreCommand(ctx, ports.RestoreConfig{Session: ref, Kind: kind, SystemPrompt: systemPrompt, SystemPromptFile: systemPromptFile, Config: agentConfig, Permissions: agentConfig.Permissions})
+	restoreCfg := ports.RestoreConfig{Session: ref, Kind: kind, SystemPrompt: systemPrompt, SystemPromptFile: systemPromptFile, Config: agentConfig, Permissions: agentConfig.Permissions}
+	cmd, ok, err := agent.GetRestoreCommand(ctx, restoreCfg)
 	if err != nil {
 		return nil, "", fmt.Errorf("restore command: %w", err)
 	}
 	if ok {
 		return cmd, ports.PromptDeliveryInCommand, nil
+	}
+	if policy, ok := agent.(ports.AgentNativeRestorePolicy); ok {
+		required, err := policy.NativeRestoreRequired(ctx, restoreCfg)
+		if err != nil {
+			return nil, "", fmt.Errorf("native restore policy: %w", err)
+		}
+		if required {
+			return nil, "", ErrNotResumable
+		}
 	}
 	// A saved prompt is replayed fresh. An orchestrator is promptless by design
 	// and relaunches with the system prompt only. A promptless WORKER has no task

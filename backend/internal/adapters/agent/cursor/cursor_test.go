@@ -39,6 +39,29 @@ func TestGetLaunchCommandBuildsArgv(t *testing.T) {
 	}
 }
 
+func TestGetLaunchCommandUsesPreallocatedAgentSessionID(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "cursor-agent"}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		AgentSessionID: "chat-123",
+		Permissions:    ports.PermissionModeBypassPermissions,
+		Prompt:         "-fix this",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"cursor-agent",
+		"--yolo",
+		"--resume", "chat-123",
+		"--", "-fix this",
+	}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
 func TestGetLaunchCommandOmitsPromptWhenEmpty(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "cursor-agent"}
 
@@ -52,6 +75,87 @@ func TestGetLaunchCommandOmitsPromptWhenEmpty(t *testing.T) {
 	want := []string{"cursor-agent"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestPreallocateAgentSessionRunsCreateChatWithCursorDataDir(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "cursor-agent"}
+	var gotBinary string
+	var gotArgs []string
+	var gotEnv map[string]string
+	runCursorCommand = func(_ context.Context, binary string, args []string, env map[string]string) ([]byte, error) {
+		gotBinary = binary
+		gotArgs = append([]string(nil), args...)
+		gotEnv = env
+		return []byte("chat-123\n"), nil
+	}
+	t.Cleanup(func() { runCursorCommand = defaultRunCursorCommand })
+	dataDir := t.TempDir()
+
+	id, err := plugin.PreallocateAgentSession(context.Background(), ports.LaunchConfig{
+		DataDir: dataDir,
+		Env:     map[string]string{"KEEP": "1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != "chat-123" {
+		t.Fatalf("id = %q, want chat-123", id)
+	}
+	if gotBinary != "cursor-agent" {
+		t.Fatalf("binary = %q, want cursor-agent", gotBinary)
+	}
+	if !reflect.DeepEqual(gotArgs, []string{"create-chat"}) {
+		t.Fatalf("args = %#v, want create-chat", gotArgs)
+	}
+	if gotEnv["KEEP"] != "1" {
+		t.Fatalf("env KEEP = %q, want 1", gotEnv["KEEP"])
+	}
+	if gotEnv[cursorDataDirEnv] != cursorDataDir(dataDir) {
+		t.Fatalf("%s = %q, want %q", cursorDataDirEnv, gotEnv[cursorDataDirEnv], cursorDataDir(dataDir))
+	}
+}
+
+func TestPreallocateAgentSessionHonorsCursorDataDirOverride(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "cursor-agent"}
+	var gotEnv map[string]string
+	runCursorCommand = func(_ context.Context, _ string, _ []string, env map[string]string) ([]byte, error) {
+		gotEnv = env
+		return []byte("chat-123"), nil
+	}
+	t.Cleanup(func() { runCursorCommand = defaultRunCursorCommand })
+
+	if _, err := plugin.PreallocateAgentSession(context.Background(), ports.LaunchConfig{
+		DataDir: t.TempDir(),
+		Env:     map[string]string{cursorDataDirEnv: "/custom/cursor"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if gotEnv[cursorDataDirEnv] != "/custom/cursor" {
+		t.Fatalf("%s = %q, want override", cursorDataDirEnv, gotEnv[cursorDataDirEnv])
+	}
+}
+
+func TestPreallocateAgentSessionRejectsMalformedCreateChatOutput(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		out  string
+	}{
+		{name: "empty", out: " \n"},
+		{name: "multiple fields", out: "created chat-123\n"},
+		{name: "overlong", out: strings.Repeat("a", 257)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			plugin := &Plugin{resolvedBinary: "cursor-agent"}
+			runCursorCommand = func(context.Context, string, []string, map[string]string) ([]byte, error) {
+				return []byte(tc.out), nil
+			}
+			t.Cleanup(func() { runCursorCommand = defaultRunCursorCommand })
+
+			if _, err := plugin.PreallocateAgentSession(context.Background(), ports.LaunchConfig{}); err == nil {
+				t.Fatal("PreallocateAgentSession err = nil, want malformed output error")
+			}
+		})
 	}
 }
 
