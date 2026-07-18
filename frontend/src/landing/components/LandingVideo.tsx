@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 export function LandingVideo() {
-	const muxPlaybackId = process.env.NEXT_PUBLIC_MUX_PLAYBACK_ID ?? "rR8P8mSaKDzz02TsftugTUdI00cQPJX00oy";
+	const muxPlaybackId = process.env.NEXT_PUBLIC_MUX_PLAYBACK_ID ?? "zWxz3vxZBxGtXUwjP4lG7Krql7WN8PaOrs6MRmfpSKc";
 	const [isPlaying, setIsPlaying] = useState(false);
 	const videoTitle = "Agent Orchestrator Launch Demo";
 	const encodedTitle = encodeURIComponent(videoTitle);
