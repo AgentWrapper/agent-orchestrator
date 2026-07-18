@@ -13,11 +13,7 @@ import { workspaceQueryKey } from "./useWorkspaceQuery";
  * (`newestActiveOrchestrator`), which fixes the lexicographic-targeting bug
  * reported in #1362.
  */
-export function useOpenOrchestrator(
-	projectId: string,
-	sessions: WorkspaceSession[],
-	source: OrchestratorSpawnSource,
-) {
+export function useOpenOrchestrator(projectId: string, sessions: WorkspaceSession[], source: OrchestratorSpawnSource) {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const [isSpawning, setIsSpawning] = useState(false);
