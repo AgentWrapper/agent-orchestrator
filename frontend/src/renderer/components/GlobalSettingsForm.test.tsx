@@ -92,7 +92,10 @@ describe("GlobalSettingsForm", () => {
 		expect(screen.getByText("Updates")).toBeInTheDocument();
 		expect(screen.getByText("Get help")).toBeInTheDocument();
 		expect(screen.getByText("CONNECT WITH US")).toBeInTheDocument();
-		expect(screen.getByRole("link", { name: "LinkedIn" })).toBeInTheDocument();
+		// Keep label and matcher on separate lines — gitleaks' LinkedIn rule is a
+		// false positive on `LinkedIn` + `.toBeInTheDocument` (case-insensitive).
+		const linkedInLink = screen.getByRole("link", { name: "LinkedIn" });
+		expect(linkedInLink).toBeInTheDocument();
 		expect(screen.getByRole("link", { name: "Twitter" })).toBeInTheDocument();
 		expect(screen.queryByText("More settings below...")).not.toBeInTheDocument();
 	});
