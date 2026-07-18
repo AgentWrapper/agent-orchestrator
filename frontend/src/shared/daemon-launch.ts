@@ -19,6 +19,7 @@ export function resolveDaemonLaunch(
 	isPackaged: boolean,
 	resourcesPath: string,
 	appPath: string,
+	homeDir: string,
 	platform: NodeJS.Platform,
 ): DaemonLaunchSpec | null {
 	const configuredCommand = env.AO_DAEMON_COMMAND?.trim();
@@ -45,7 +46,7 @@ export function resolveDaemonLaunch(
 	return {
 		command: joinPath(resourcesPath, "daemon", bundledDaemonBinaryName(platform)),
 		args: ["daemon"],
-		cwd: resourcesPath,
+		cwd: joinPath(homeDir, ".ao"),
 		shell: false,
 		source: "bundled",
 	};

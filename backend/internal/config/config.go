@@ -94,6 +94,10 @@ type Config struct {
 	AllowedOrigins []string
 	// Telemetry controls local/remote telemetry sinks.
 	Telemetry TelemetryConfig
+	// StartupWorkingDirectory is the daemon process cwd before startup
+	// normalizes it. The desktop uses this to identify dev daemons after the
+	// process cwd is moved to the stable data dir.
+	StartupWorkingDirectory string
 }
 
 // Addr returns the host:port the HTTP server binds. It uses net.JoinHostPort so

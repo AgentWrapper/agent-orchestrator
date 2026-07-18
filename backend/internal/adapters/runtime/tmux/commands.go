@@ -44,6 +44,13 @@ func setWindowSizeLargestArgs(id string) []string {
 	return []string{"set-option", "-t", id, "window-size", "largest"}
 }
 
+// paneCurrentPathArgs prints tmux's cwd for the session's active pane. Create
+// uses this after new-session so a poisoned tmux server that ignores -c fails
+// loudly instead of silently starting the agent in the wrong directory.
+func paneCurrentPathArgs(id string) []string {
+	return []string{"display-message", "-p", "-t", id, "#{pane_current_path}"}
+}
+
 // killSessionArgs builds args for `tmux kill-session -t =<id>`. The `=` prefix
 // requests exact-name matching so a session "foo" does not accidentally match
 // "foobar" (tmux otherwise does unique-prefix matching).
