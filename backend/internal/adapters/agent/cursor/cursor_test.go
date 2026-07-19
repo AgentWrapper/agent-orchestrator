@@ -4,14 +4,29 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
+
+func init() {
+	if os.Getenv("AO_CURSOR_CREATE_CHAT_HELPER") != "1" {
+		return
+	}
+	output := os.Getenv("AO_CURSOR_CREATE_CHAT_HELPER_OUTPUT")
+	if output == "" {
+		output = "chat-helper-123"
+	}
+	fmt.Fprintln(os.Stdout, output)
+	_ = os.Stdout.Sync()
+	select {}
+}
 
 func TestGetLaunchCommandBuildsArgv(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "cursor-agent"}
@@ -133,6 +148,47 @@ func TestPreallocateAgentSessionHonorsCursorDataDirOverride(t *testing.T) {
 	}
 	if gotEnv[cursorDataDirEnv] != "/custom/cursor" {
 		t.Fatalf("%s = %q, want override", cursorDataDirEnv, gotEnv[cursorDataDirEnv])
+	}
+}
+
+func TestPreallocateAgentSessionReadsIDFromLongRunningCreateChat(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: os.Args[0]}
+	oldRunner := runCursorCommand
+	runCursorCommand = defaultRunCursorCommand
+	t.Cleanup(func() { runCursorCommand = oldRunner })
+
+	start := time.Now()
+	id, err := plugin.PreallocateAgentSession(context.Background(), ports.LaunchConfig{
+		Env: map[string]string{"AO_CURSOR_CREATE_CHAT_HELPER": "1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != "chat-helper-123" {
+		t.Fatalf("id = %q, want chat-helper-123", id)
+	}
+	if elapsed := time.Since(start); elapsed >= createChatIDTimeout {
+		t.Fatalf("PreallocateAgentSession took %s, want less than %s", elapsed, createChatIDTimeout)
+	}
+}
+
+func TestPreallocateAgentSessionRejectsMultiWordLongRunningCreateChatOutput(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: os.Args[0]}
+	oldRunner := runCursorCommand
+	runCursorCommand = defaultRunCursorCommand
+	t.Cleanup(func() { runCursorCommand = oldRunner })
+
+	_, err := plugin.PreallocateAgentSession(context.Background(), ports.LaunchConfig{
+		Env: map[string]string{
+			"AO_CURSOR_CREATE_CHAT_HELPER":        "1",
+			"AO_CURSOR_CREATE_CHAT_HELPER_OUTPUT": "created chat-123",
+		},
+	})
+	if err == nil {
+		t.Fatal("PreallocateAgentSession err = nil, want malformed output error")
+	}
+	if !strings.Contains(err.Error(), "malformed chat id") {
+		t.Fatalf("PreallocateAgentSession err = %v, want malformed output error", err)
 	}
 }
 

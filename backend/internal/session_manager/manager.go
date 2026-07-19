@@ -336,11 +336,13 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: prompt delivery: %w", id, err)
 	}
-	agentSessionID, err := m.preallocateAgentSession(ctx, agent, launchCfg)
-	if err != nil {
-		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
-		m.rollbackSpawnSeedRow(ctx, id)
-		return domain.SessionRecord{}, fmt.Errorf("spawn %s: preallocate agent session: %w", id, err)
+	agentSessionID := ""
+	if preallocator, ok := agent.(agentSessionPreallocator); ok {
+		if allocatedID, err := preallocator.PreallocateAgentSession(ctx, launchCfg); err != nil {
+			m.logger.Warn("spawn: preallocate agent session failed; launching fresh", "sessionID", id, "harness", cfg.Harness, "error", err)
+		} else {
+			agentSessionID = strings.TrimSpace(allocatedID)
+		}
 	}
 	launchCfg.AgentSessionID = agentSessionID
 	if delivery == ports.PromptDeliveryAfterStart {
@@ -610,7 +612,8 @@ func (m *Manager) RollbackSpawn(ctx context.Context, id domain.SessionID) (delet
 // Kill tears down the runtime and workspace, then records terminal intent with
 // the LCM. A workspace teardown refused by the worktree-remove safety
 // (uncommitted work) is never forced: Kill succeeds with freed=false,
-// signalling the workspace was preserved and the session is left retryable.
+// signalling the workspace was preserved for later inspection/cleanup while
+// the session itself is still marked terminated.
 //
 // A session whose runtime handle or workspace path is missing (e.g. spawn
 // failed partway, handle lost after a crash) is still terminated after the
@@ -646,6 +649,10 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 		cleaned, err := m.destroyWorkspaceProjectRows(ctx, workspaceProjectRows)
 		if err != nil {
 			if errors.Is(err, ports.ErrWorkspaceDirty) {
+				if err := m.lcm.MarkTerminated(ctx, id); err != nil {
+					return false, fmt.Errorf("kill %s: %w", id, err)
+				}
+				m.cleanupSystemPromptDir(id)
 				return false, nil
 			}
 			return false, fmt.Errorf("kill %s: workspace: %w", id, err)
@@ -657,6 +664,13 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	} else if ws.Path != "" {
 		if err := m.workspace.Destroy(ctx, ws); err != nil {
 			if errors.Is(err, ports.ErrWorkspaceDirty) {
+				if err := m.store.DeleteSessionWorktrees(ctx, id); err != nil {
+					m.logger.Warn("kill: delete restore marker failed", "sessionID", id, "error", err)
+				}
+				if err := m.lcm.MarkTerminated(ctx, id); err != nil {
+					return false, fmt.Errorf("kill %s: %w", id, err)
+				}
+				m.cleanupSystemPromptDir(id)
 				return false, nil
 			}
 			return false, fmt.Errorf("kill %s: workspace: %w", id, err)
@@ -2226,18 +2240,16 @@ type runtimeEnvAugmenter interface {
 	AugmentRuntimeEnv(env map[string]string, dataDir string)
 }
 
+// agentSessionPreallocator is an optional single-consumer capability for
+// adapters whose native CLI can create a resumable transcript id before launch.
+type agentSessionPreallocator interface {
+	PreallocateAgentSession(ctx context.Context, cfg ports.LaunchConfig) (agentSessionID string, err error)
+}
+
 func (m *Manager) augmentAgentRuntimeEnv(agent ports.Agent, env map[string]string) {
 	if augmenter, ok := agent.(runtimeEnvAugmenter); ok {
 		augmenter.AugmentRuntimeEnv(env, m.dataDir)
 	}
-}
-
-func (m *Manager) preallocateAgentSession(ctx context.Context, agent ports.Agent, cfg ports.LaunchConfig) (string, error) {
-	preallocator, ok := agent.(ports.AgentSessionPreallocator)
-	if !ok {
-		return "", nil
-	}
-	return preallocator.PreallocateAgentSession(ctx, cfg)
 }
 
 // prepareWorkspace runs the per-session pre-launch steps before the runtime

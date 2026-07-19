@@ -45,6 +45,8 @@ type SessionService interface {
 	Send(ctx context.Context, id domain.SessionID, message string) error
 	ListPRSummaries(ctx context.Context, id domain.SessionID) ([]sessionsvc.PRSummary, error)
 	ClaimPR(ctx context.Context, id domain.SessionID, ref string, opts sessionsvc.ClaimPROptions) (sessionsvc.ClaimPRResult, error)
+	ListWorkspaceFiles(ctx context.Context, id domain.SessionID) (sessionsvc.WorkspaceFiles, error)
+	GetWorkspaceFile(ctx context.Context, id domain.SessionID, path string) (sessionsvc.WorkspaceFileDetail, error)
 }
 
 // ActivityRecorder applies an agent activity-state signal to a session. It is
@@ -73,6 +75,8 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Post("/sessions/{sessionId}/preview", c.setPreview)
 	r.Delete("/sessions/{sessionId}/preview", c.clearPreview)
 	r.Get("/sessions/{sessionId}/preview/files/*", c.previewFile)
+	r.Get("/sessions/{sessionId}/workspace/files", c.listWorkspaceFiles)
+	r.Get("/sessions/{sessionId}/workspace/file", c.getWorkspaceFile)
 	r.Get("/sessions/{sessionId}/pr", c.listPRs)
 	r.Post("/sessions/{sessionId}/pr/claim", c.claimPR)
 	r.Patch("/sessions/{sessionId}", c.rename)
@@ -213,6 +217,37 @@ func (c *SessionsController) servePreviewMarkdown(w http.ResponseWriter, r *http
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 	_, _ = w.Write(rendered) //nolint:gosec // G705: preview content is workspace-local and agent-trusted
+}
+
+func (c *SessionsController) listWorkspaceFiles(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "GET", "/api/v1/sessions/{sessionId}/workspace/files")
+		return
+	}
+	files, err := c.Svc.ListWorkspaceFiles(r.Context(), sessionID(r))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, workspaceFilesResponse(files))
+}
+
+func (c *SessionsController) getWorkspaceFile(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "GET", "/api/v1/sessions/{sessionId}/workspace/file")
+		return
+	}
+	relPath := strings.TrimSpace(r.URL.Query().Get("path"))
+	if relPath == "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "WORKSPACE_PATH_REQUIRED", "path is required", nil)
+		return
+	}
+	file, err := c.Svc.GetWorkspaceFile(r.Context(), sessionID(r), relPath)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, workspaceFileResponse(file))
 }
 
 // setPreview persists the browser preview URL the desktop app opens for a
@@ -742,6 +777,38 @@ func sessionPRSummaries(prs []sessionsvc.PRSummary) []SessionPRSummary {
 		out = append(out, NewSessionPRSummary(pr))
 	}
 	return out
+}
+
+func workspaceFilesResponse(files sessionsvc.WorkspaceFiles) ListWorkspaceFilesResponse {
+	out := make([]WorkspaceFileSummary, 0, len(files.Files))
+	for _, file := range files.Files {
+		out = append(out, WorkspaceFileSummary{
+			Path:      file.Path,
+			Status:    file.Status,
+			Additions: file.Additions,
+			Deletions: file.Deletions,
+			Size:      file.Size,
+			Binary:    file.Binary,
+		})
+	}
+	return ListWorkspaceFilesResponse{SessionID: files.SessionID, Files: out, Truncated: files.Truncated}
+}
+
+func workspaceFileResponse(file sessionsvc.WorkspaceFileDetail) WorkspaceFileResponse {
+	return WorkspaceFileResponse{
+		SessionID:        file.SessionID,
+		Path:             file.Path,
+		Status:           file.Status,
+		Additions:        file.Additions,
+		Deletions:        file.Deletions,
+		Size:             file.Size,
+		Binary:           file.Binary,
+		Deleted:          file.Deleted,
+		Content:          file.Content,
+		ContentTruncated: file.ContentTruncated,
+		Diff:             file.Diff,
+		DiffTruncated:    file.DiffTruncated,
+	}
 }
 
 func prState(pr domain.PRFacts) string {

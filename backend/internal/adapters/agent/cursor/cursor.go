@@ -8,20 +8,25 @@
 package cursor
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 )
 
 // Plugin is the Cursor agent adapter. It is safe for concurrent use; the binary
@@ -39,7 +44,6 @@ func New() *Plugin {
 
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
-var _ ports.AgentSessionPreallocator = (*Plugin)(nil)
 
 // cursorDataDir returns the isolated Cursor profile AO uses for managed Cursor
 // sessions. This keeps Cursor's trust/cache state under AO_DATA_DIR instead of
@@ -255,12 +259,122 @@ type cursorCommandRunner func(ctx context.Context, binary string, args []string,
 
 var runCursorCommand cursorCommandRunner = defaultRunCursorCommand
 
+const (
+	createChatIDTimeout    = 5 * time.Second
+	maxCreateChatIDLen     = 256
+	maxCreateChatOutputLen = maxCreateChatIDLen + 1
+)
+
 func defaultRunCursorCommand(ctx context.Context, binary string, args []string, env map[string]string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, binary, args...)
+	cmdCtx, cancel := context.WithTimeout(ctx, createChatIDTimeout)
+	defer cancel()
+
+	cmd := aoprocess.CommandContext(cmdCtx, binary, args...)
 	if len(env) > 0 {
 		cmd.Env = mergeProcessEnv(os.Environ(), env)
 	}
-	return cmd.CombinedOutput()
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+
+	tokenCh := make(chan []byte, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		token, err := readFirstOutputLine(stdout, maxCreateChatOutputLen)
+		if err != nil {
+			errCh <- err
+			return
+		}
+		tokenCh <- token
+	}()
+
+	waitCh := make(chan error, 1)
+	go func() {
+		waitCh <- cmd.Wait()
+	}()
+
+	var out []byte
+	var readErr error
+	waited := false
+	gotOutput := false
+	contextDone := false
+	select {
+	case out = <-tokenCh:
+		gotOutput = true
+	case readErr = <-errCh:
+	case err := <-waitCh:
+		waited = true
+		if err != nil {
+			if cmdCtx.Err() != nil {
+				select {
+				case out = <-tokenCh:
+					return out, nil
+				case <-errCh:
+				}
+			}
+			return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+		}
+		select {
+		case out = <-tokenCh:
+			gotOutput = true
+		case readErr = <-errCh:
+		}
+	case <-cmdCtx.Done():
+		readErr = cmdCtx.Err()
+		contextDone = true
+	}
+	if cmd.Process != nil {
+		_ = cmd.Process.Kill()
+	}
+	if readErr != nil {
+		if !waited {
+			<-waitCh
+		}
+		if contextDone {
+			select {
+			case out = <-tokenCh:
+				return out, nil
+			case <-errCh:
+			}
+		}
+		return nil, readErr
+	}
+	if !waited {
+		if err := <-waitCh; err != nil && cmdCtx.Err() == nil {
+			if !gotOutput {
+				return nil, err
+			}
+		}
+	}
+	return out, nil
+}
+
+func readFirstOutputLine(r io.Reader, maxBytes int) ([]byte, error) {
+	br := bufio.NewReader(r)
+	line := make([]byte, 0, maxBytes)
+	for {
+		b, err := br.ReadByte()
+		if err != nil {
+			if len(line) > 0 {
+				return line, nil
+			}
+			return nil, err
+		}
+		line = append(line, b)
+		if b == '\n' {
+			return line, nil
+		}
+		if len(line) >= maxBytes {
+			return line, nil
+		}
+	}
 }
 
 func mergeProcessEnv(base []string, overrides map[string]string) []string {
@@ -307,7 +421,7 @@ func parseCreateChatID(out []byte) (string, error) {
 	if strings.ContainsAny(id, " \t\r\n") {
 		return "", fmt.Errorf("cursor create-chat returned malformed chat id %q", id)
 	}
-	if len(id) > 256 {
+	if len(id) > maxCreateChatIDLen {
 		return "", fmt.Errorf("cursor create-chat returned overlong chat id (%d bytes)", len(id))
 	}
 	return id, nil

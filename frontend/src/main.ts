@@ -38,6 +38,8 @@ import { promisify } from "node:util";
 import { type DaemonLaunchSpec, resolveDaemonLaunch } from "./shared/daemon-launch";
 import { createListenPortScanner, defaultRunFilePath, parseRunFile } from "./shared/daemon-discovery";
 import type { DaemonStatus } from "./shared/daemon-status";
+import { attachAppShortcuts } from "./main/app-shortcuts";
+import { KEYBOARD_SHORTCUTS_HELP_CHANNEL } from "./shared/shortcuts";
 import {
 	type DaemonProbe,
 	expectedDaemonPort,
@@ -339,6 +341,12 @@ function createWindow(): void {
 		}
 	});
 
+	// Application shortcuts are handled here so they fire no matter which web
+	// contents holds focus — the shell renderer, xterm's helper textarea, or a
+	// browser-preview view (wired per-view in the browser host).
+	const isMac = process.platform === "darwin";
+	attachAppShortcuts(mainWindow.webContents, isMac, mainWindow.webContents);
+
 	browserViewHost = createBrowserViewHost({
 		mainWindow,
 		ipcMain,
@@ -346,6 +354,7 @@ function createWindow(): void {
 		WebContentsView,
 		annotatePreloadPath: annotatePreloadPath(),
 		rendererOrigin: RENDERER_ORIGIN,
+		isMac,
 	});
 
 	void mainWindow.loadURL(rendererUrl());
@@ -1025,6 +1034,9 @@ ipcMain.handle("menu:action", (_event, action: string) => {
 			return win.close();
 		case "app.quit":
 			return app.quit();
+		case "help.shortcuts":
+			win.webContents.focus();
+			return win.webContents.send(KEYBOARD_SHORTCUTS_HELP_CHANNEL);
 		case "help.about":
 			void dialog.showMessageBox(win, {
 				type: "info",

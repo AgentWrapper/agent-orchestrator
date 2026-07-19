@@ -7,7 +7,6 @@ import {
 	findProjectOrchestrator,
 	isOrchestratorSession,
 	sessionIsActive,
-	type SessionActivityState,
 	type WorkspaceSession,
 } from "../types/workspace";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
@@ -16,8 +15,8 @@ import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { useUiStore } from "../stores/ui-store";
 import { OrchestratorIcon } from "./icons";
-import { NewTaskDialog } from "./NewTaskDialog";
 import { cn } from "../lib/utils";
+import { getAgentActivityView } from "../lib/session-presentation";
 import { StatusPill } from "./StatusPill";
 import {
 	TopbarButton,
@@ -35,17 +34,6 @@ const isLinux =
 		.includes("linux");
 const dragStyle = isMac ? ({ WebkitAppRegion: "drag" } as React.CSSProperties) : undefined;
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
-
-// Topbar shows only the raw agent activity state. SCM/context badges stay in
-// the inspector Summary > Activity row.
-const TOPBAR_ACTIVITY_PILL: Record<SessionActivityState, { label: string; tone: string; breathe: boolean }> = {
-	active: { label: "Working", tone: "var(--color-working)", breathe: true },
-	idle: { label: "Idle", tone: "var(--color-text-muted)", breathe: false },
-	waiting_input: { label: "Input Needed", tone: "var(--color-warning)", breathe: false },
-	blocked: { label: "Awaiting Decision", tone: "var(--color-warning)", breathe: false },
-	exited: { label: "Exited", tone: "var(--color-text-muted)", breathe: false },
-	unknown: { label: "Unknown", tone: "var(--color-text-muted)", breathe: false },
-};
 
 // The one app topbar (.dashboard-app-header), rendered by the shell layout
 // across the full window width — above both the sidebar and the route outlet —
@@ -66,8 +54,8 @@ export function ShellTopbar() {
 	const isInspectorOpen = useUiStore((state) => state.isInspectorOpen);
 	const toggleInspector = useUiStore((state) => state.toggleInspector);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
+	const requestNewTask = useUiStore((state) => state.requestNewTask);
 	const [isSpawning, setIsSpawning] = useState(false);
-	const [isNewTaskOpen, setIsNewTaskOpen] = useState(false);
 	const all = useWorkspaceQuery().data ?? [];
 
 	const session = params.sessionId
@@ -97,16 +85,7 @@ export function ShellTopbar() {
 
 	const openNewTask = () => {
 		if (!projectId || isProjectRestarting) return;
-		setIsNewTaskOpen(true);
-	};
-
-	const handleTaskCreated = async (sessionId: string) => {
-		if (!projectId || isProjectRestarting) return;
-		await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-		void navigate({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId, sessionId },
-		});
+		requestNewTask(projectId);
 	};
 
 	const openOrchestrator = async () => {
@@ -251,12 +230,6 @@ export function ShellTopbar() {
 					</>
 				) : null}
 			</div>
-			<NewTaskDialog
-				open={isNewTaskOpen}
-				projectId={projectId}
-				onCreated={(sessionId) => void handleTaskCreated(sessionId)}
-				onOpenChange={setIsNewTaskOpen}
-			/>
 		</header>
 	);
 }
@@ -337,7 +310,6 @@ export function TopbarKillButton({
 }
 
 function SessionStatusPill({ session }: { session: WorkspaceSession }) {
-	const activityState = session.activity?.state ?? "unknown";
-	const { label, tone, breathe } = TOPBAR_ACTIVITY_PILL[activityState];
+	const { label, tone, breathe } = getAgentActivityView(session.activity);
 	return <StatusPill label={label} tone={tone} breathe={breathe} leading="none" />;
 }

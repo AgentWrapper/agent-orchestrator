@@ -1258,7 +1258,7 @@ func TestSpawn_StoresPreallocatedAgentSessionID(t *testing.T) {
 	}
 }
 
-func TestSpawn_PreallocationFailureRollsBackBeforeRuntimeCreate(t *testing.T) {
+func TestSpawn_PreallocationFailureLaunchesFresh(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
 	rt := &fakeRuntime{}
@@ -1270,17 +1270,21 @@ func TestSpawn_PreallocationFailureRollsBackBeforeRuntimeCreate(t *testing.T) {
 		LookPath: func(string) (string, error) { return "/bin/true", nil },
 	})
 
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err == nil || !strings.Contains(err.Error(), "preallocate agent session") {
-		t.Fatalf("Spawn err = %v, want preallocation failure", err)
+	rec, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
 	}
-	if rt.created != 0 {
-		t.Fatalf("runtime.Create = %d, want 0", rt.created)
+	if rt.created != 1 {
+		t.Fatalf("runtime.Create = %d, want 1", rt.created)
 	}
-	if ws.destroyed != 1 {
-		t.Fatalf("workspace destroy calls = %d, want 1", ws.destroyed)
+	if ws.destroyed != 0 {
+		t.Fatalf("workspace destroy calls = %d, want 0", ws.destroyed)
 	}
-	if _, present := st.sessions["mer-1"]; present {
-		t.Fatal("seed row should be deleted after preallocation failure")
+	if rec.Metadata.AgentSessionID != "" {
+		t.Fatalf("stored agentSessionId = %q, want empty", rec.Metadata.AgentSessionID)
+	}
+	if agent.lastLaunch.AgentSessionID != "" {
+		t.Fatalf("launch agentSessionId = %q, want empty", agent.lastLaunch.AgentSessionID)
 	}
 }
 
@@ -1481,11 +1485,11 @@ func TestKill_TerminatesIncompleteHandle(t *testing.T) {
 	}
 }
 
-// TestKill_DirtyWorkspacePreservesAndRemainsRetryable: a workspace teardown
+// TestKill_DirtyWorkspacePreservesAndTerminates: a workspace teardown
 // refused because of uncommitted work must NOT force-remove the worktree. Kill
-// succeeds with freed=false and leaves the session non-terminal so a later retry
-// can complete cleanup.
-func TestKill_DirtyWorkspacePreservesAndRemainsRetryable(t *testing.T) {
+// succeeds with freed=false and still marks the session terminated; cleanup can
+// reclaim the preserved worktree after the user resolves the dirty state.
+func TestKill_DirtyWorkspacePreservesAndTerminates(t *testing.T) {
 	m, st, rt, ws := newManager()
 	st.sessions["mer-1"] = mkLive("mer-1")
 	ws.destroyErr = fmt.Errorf("gitworktree: refusing to remove: %w", ports.ErrWorkspaceDirty)
@@ -1499,8 +1503,8 @@ func TestKill_DirtyWorkspacePreservesAndRemainsRetryable(t *testing.T) {
 	if rt.destroyed != 1 {
 		t.Fatal("runtime should be destroyed")
 	}
-	if st.sessions["mer-1"].IsTerminated {
-		t.Fatal("session should remain active so cleanup can be retried")
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session should be terminated even when the workspace is preserved")
 	}
 }
 
@@ -1616,8 +1620,8 @@ func TestKill_WorkspaceProjectDirtyRowRefusesRemoval(t *testing.T) {
 	if got := ws.calls; strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("calls = %v, want %v", got, want)
 	}
-	if st.sessions["mer-1"].IsTerminated {
-		t.Fatal("session should remain active so dirty workspace cleanup can be retried")
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session should be terminated even when dirty workspace cleanup is deferred")
 	}
 }
 

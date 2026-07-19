@@ -1,7 +1,9 @@
-import { createFileRoute, Outlet, useMatchRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Outlet, useMatchRoute, useNavigate, useParams } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { type CSSProperties, useCallback, useEffect, useRef } from "react";
+import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 import { NotificationRuntime } from "../components/NotificationCenter";
+import { GlobalNewTaskDialog } from "../components/GlobalNewTaskDialog";
+import { KeyboardShortcutsDialog } from "../components/KeyboardShortcutsDialog";
 import { ShellTopbar } from "../components/ShellTopbar";
 import { OrchestratorReplacementDialog } from "../components/OrchestratorReplacementDialog";
 import { Sidebar } from "../components/Sidebar";
@@ -18,6 +20,7 @@ import { ShellProvider } from "../lib/shell-context";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { captureOrchestratorReplacementFailure } from "../lib/orchestrator-replacement-telemetry";
 import { applyDocumentTheme, readStoredTheme, systemTheme } from "../lib/theme";
+import { aoBridge } from "../lib/bridge";
 import { useUiStore } from "../stores/ui-store";
 import type { WorkspaceSummary } from "../types/workspace";
 import type { components } from "../../api/schema";
@@ -70,6 +73,18 @@ function ShellLayout() {
 	const daemonStatus = useDaemonStatus(queryClient);
 	const agentCatalogPortRef = useRef<number | undefined>(undefined);
 	const { theme, setTheme, isSidebarOpen, toggleSidebar } = useUiStore();
+	const requestNewTask = useUiStore((state) => state.requestNewTask);
+	const requestCreateProject = useUiStore((state) => state.requestCreateProject);
+	const [isKeyboardShortcutsOpen, setIsKeyboardShortcutsOpen] = useState(false);
+	const routeParams = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
+	// Project in scope for a new-session shortcut: the route's project, or the
+	// workspace owning the open session (so the shortcut works from a worker's
+	// detail view, where the URL carries only a sessionId).
+	const scopedProjectId = routeParams.projectId
+		? routeParams.projectId
+		: routeParams.sessionId
+			? workspaces.find((workspace) => workspace.sessions.some((session) => session.id === routeParams.sessionId))?.id
+			: undefined;
 	const isSessionRoute =
 		Boolean(matchRoute({ to: "/projects/$projectId/sessions/$sessionId", fuzzy: true })) ||
 		Boolean(matchRoute({ to: "/sessions/$sessionId", fuzzy: true }));
@@ -277,9 +292,29 @@ function ShellLayout() {
 		return () => window.removeEventListener("keydown", handleKeyDown);
 	}, [navigate, workspaces]);
 
+	// New session (⌘N / Ctrl+Shift+N) is detected in the main process and
+	// delivered here, so it fires even when focus is inside xterm or a native
+	// Browser-preview view. The shell owns the routing: open the New Task flow
+	// for the in-scope project, else fall back to create-project.
+	useEffect(
+		() =>
+			aoBridge.app.onNewSessionShortcut(() => {
+				if (scopedProjectId) {
+					requestNewTask(scopedProjectId);
+				} else {
+					requestCreateProject();
+				}
+			}),
+		[scopedProjectId, requestNewTask, requestCreateProject],
+	);
+
+	useEffect(() => aoBridge.app.onKeyboardShortcutsHelp(() => setIsKeyboardShortcutsOpen(true)), []);
+
 	return (
 		<ShellProvider value={{ daemonStatus, createProject, initializeProjectRepository }}>
 			<NotificationRuntime />
+			<GlobalNewTaskDialog />
+			<KeyboardShortcutsDialog open={isKeyboardShortcutsOpen} onOpenChange={setIsKeyboardShortcutsOpen} />
 			{/* The topbar spans the full window width above the sidebar row (the
           macOS traffic lights + TitlebarNav cluster sit in its left inset),
           and the sidebar hangs below it — so the sidebar border stops at the

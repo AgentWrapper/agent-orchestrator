@@ -19,13 +19,13 @@ import {
 import { useEffect, useRef, useState } from "react";
 import type { UpdateStatus } from "../../main/update-settings";
 import {
-	attentionZone,
 	newestActiveOrchestrator,
 	sessionIsActive,
 	type WorkspaceSession,
 	type WorkspaceSummary,
 	workerSessions,
 } from "../types/workspace";
+import { getSessionDotView } from "../lib/session-presentation";
 import { aoBridge } from "../lib/bridge";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
@@ -123,22 +123,8 @@ function useSelection() {
 // 6px session dot: mirrors the board's status language so the sidebar can be
 // scanned without opening the project board.
 function SessionDot({ session }: { session: WorkspaceSession }) {
-	const zone = attentionZone(session);
-	const isIdle = session.status === "idle" || (session.status === "working" && session.activity?.state === "idle");
-	return (
-		<span
-			aria-hidden="true"
-			className={cn(
-				"mt-px h-1.5 w-1.5 shrink-0 rounded-full",
-				zone === "working" && isIdle && "bg-passive",
-				zone === "working" && !isIdle && "animate-status-pulse bg-working",
-				zone === "action" && (session.status === "ci_failed" ? "bg-error" : "bg-warning"),
-				zone === "pending" && "bg-passive",
-				zone === "merge" && "bg-success",
-				zone === "done" && "bg-passive",
-			)}
-		/>
-	);
+	const dot = getSessionDotView(session);
+	return <span aria-hidden="true" className={cn("mt-px h-1.5 w-1.5 shrink-0 rounded-full", dot.className)} />;
 }
 
 // Built on shadcn's sidebar primitives (components/ui/sidebar): the provider in
@@ -525,6 +511,7 @@ function ProjectItem({
 	const [isSpawning, setIsSpawning] = useState(false);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const isProjectRestarting = restartingProjectIds.has(workspace.id);
+	const requestNewTask = useUiStore((state) => state.requestNewTask);
 	// Live workers only: merged/terminated sessions leave the sidebar and stay
 	// reachable through the board's Done / Terminated bar (SessionsBoard).
 	const sessions = workerSessions(workspace.sessions).filter(sessionIsActive);
@@ -671,6 +658,11 @@ function ProjectItem({
 						</button>
 					</DropdownMenuTrigger>
 					<DropdownMenuContent side="right" align="start" className="min-w-44">
+						<DropdownMenuItem disabled={isProjectRestarting} onSelect={() => requestNewTask(workspace.id)}>
+							<Plus aria-hidden="true" />
+							New session
+						</DropdownMenuItem>
+						<DropdownMenuSeparator />
 						<DropdownMenuItem onSelect={() => selection.goSettings(workspace.id)}>
 							<Settings aria-hidden="true" />
 							Project settings
@@ -900,8 +892,18 @@ function CreateProjectButton({
 	onCreateProject,
 	onInitializeProject,
 }: Pick<SidebarProps, "onCreateProject" | "onInitializeProject">) {
+	// This "+" is always mounted (the collapsed rail only CSS-hides it), so it
+	// owns the ⌘N "no project in scope" fallback via openSignal — no separate
+	// delegating component needed. The collapsed-only list item does not, to
+	// avoid a double open while both are mounted.
+	const createProjectNonce = useUiStore((state) => state.createProjectNonce);
 	return (
-		<CreateProjectFlow mode="choose" onCreateProject={onCreateProject} onInitializeProject={onInitializeProject}>
+		<CreateProjectFlow
+			mode="choose"
+			onCreateProject={onCreateProject}
+			onInitializeProject={onInitializeProject}
+			openSignal={createProjectNonce}
+		>
 			{({ disabled, choosePath, label }) => (
 				<Tooltip>
 					<TooltipTrigger asChild>

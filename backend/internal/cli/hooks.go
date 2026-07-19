@@ -153,9 +153,6 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 	if activitydispatch.SupportsHarness(domain.AgentHarness(agent)) {
 		agentSessionID = hookAgentSessionID(payload)
 	}
-	if agent == string(domain.HarnessCursor) && event == "session-start" && agentSessionID == "" {
-		return nil
-	}
 	if !hasActivity && agentSessionID == "" {
 		// Unknown agent, or an event carrying neither activity nor resumable
 		// session metadata: report nothing.

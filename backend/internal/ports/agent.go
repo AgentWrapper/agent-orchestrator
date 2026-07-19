@@ -78,14 +78,6 @@ type AgentPromptReadinessProvider interface {
 	PromptReadinessHints(ctx context.Context, cfg LaunchConfig) (PromptReadinessHints, error)
 }
 
-// AgentSessionPreallocator is an optional capability for adapters whose native
-// CLI can create a resumable transcript id before the first launch. The session
-// manager persists the returned id with MarkSpawned and passes it back in the
-// LaunchConfig used for the actual process argv.
-type AgentSessionPreallocator interface {
-	PreallocateAgentSession(ctx context.Context, cfg LaunchConfig) (agentSessionID string, err error)
-}
-
 // PromptReadinessHints describes when an after-start prompt should be sent.
 // Empty hints mean "send immediately" to preserve existing adapter behavior.
 type PromptReadinessHints struct {

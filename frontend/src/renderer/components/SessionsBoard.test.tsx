@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
@@ -81,10 +81,12 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		expect(screen.getByText("Idle")).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: /idle sessions/i }));
+		const idleCard = screen.getByText("brand-font-pipeline").closest('[role="button"]') as HTMLElement;
+		expect(within(idleCard).getByText("Idle")).toBeInTheDocument();
 	});
 
-	it("renders idle activity in the working column with passive styling", () => {
+	it("uses distinct card badge tones for idle, no signal, and draft PR sessions", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
 				{
@@ -93,13 +95,158 @@ describe("SessionsBoard", () => {
 					path: "/tmp/radic",
 					sessions: [
 						{
+							id: "s0",
+							workspaceId: "p1",
+							workspaceName: "radic",
+							title: "idle-card-task",
+							provider: "claude-code",
+							branch: "ao/radic-5",
+							status: "idle",
+							activity: { state: "idle", lastActivityAt: "2026-01-01T00:00:00Z" },
+							updatedAt: "2026-01-01T00:00:00Z",
+							prs: [],
+						},
+						{
 							id: "s1",
 							workspaceId: "p1",
 							workspaceName: "radic",
-							title: "brand-font-pipeline",
+							title: "no-signal-card-task",
+							provider: "claude-code",
+							branch: "ao/radic-6",
+							status: "no_signal",
+							activity: { state: "idle", lastActivityAt: "2026-01-01T00:00:00Z" },
+							updatedAt: "2026-01-01T00:00:00Z",
+							prs: [],
+						},
+						{
+							id: "s2",
+							workspaceId: "p1",
+							workspaceName: "radic",
+							title: "draft-card-task",
+							provider: "claude-code",
+							branch: "ao/radic-7",
+							status: "draft",
+							activity: { state: "idle", lastActivityAt: "2026-01-01T00:00:00Z" },
+							updatedAt: "2026-01-01T00:00:00Z",
+							prs: [],
+						},
+					],
+				},
+			],
+			isError: false,
+		});
+
+		renderBoard("p1");
+		fireEvent.click(screen.getByRole("button", { name: /idle sessions/i }));
+
+		const idleCard = screen.getByText("idle-card-task").closest('[role="button"]') as HTMLElement;
+		const noSignalCard = screen.getByText("no-signal-card-task").closest('[role="button"]') as HTMLElement;
+		const draftCard = screen.getByText("draft-card-task").closest('[role="button"]') as HTMLElement;
+
+		expect(within(idleCard).getByText("Idle").closest("span")).toHaveClass("text-passive");
+		expect(within(noSignalCard).getByText("No signal").closest("span")).toHaveClass("text-warning");
+		expect(within(draftCard).getByText("Draft PR").closest("span")).toHaveClass("text-accent");
+	});
+
+	it("collapses idle sessions into a nested Working-column stack", () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				{
+					id: "p1",
+					name: "radic",
+					path: "/tmp/radic",
+					sessions: [
+						{
+							id: "s0",
+							workspaceId: "p1",
+							workspaceName: "radic",
+							title: "active-task",
+							provider: "claude-code",
+							branch: "ao/radic-4",
+							status: "working",
+							activity: { state: "active", lastActivityAt: "2026-01-01T00:00:00Z" },
+							updatedAt: "2026-01-01T00:00:00Z",
+							prs: [],
+						},
+						{
+							id: "s1",
+							workspaceId: "p1",
+							workspaceName: "radic",
+							title: "idle-no-pr-task",
 							provider: "claude-code",
 							branch: "ao/radic-5",
 							status: "working",
+							activity: { state: "idle", lastActivityAt: "2026-01-01T00:00:00Z" },
+							updatedAt: "2026-01-01T00:00:00Z",
+							prs: [],
+						},
+						{
+							id: "s2",
+							workspaceId: "p1",
+							workspaceName: "radic",
+							title: "idle-with-pr-task",
+							provider: "claude-code",
+							branch: "ao/radic-6",
+							status: "working",
+							activity: { state: "idle", lastActivityAt: "2026-01-01T00:00:00Z" },
+							updatedAt: "2026-01-01T00:00:00Z",
+							prs: [{ number: 7, url: "https://github.com/acme/radic/pull/7", state: "open" }],
+						},
+					],
+				},
+			],
+			isError: false,
+		});
+
+		renderBoard("p1");
+
+		expect(screen.getByText("active-task")).toBeInTheDocument();
+		expect(screen.queryByText("idle-no-pr-task")).not.toBeInTheDocument();
+		expect(screen.queryByText("idle-with-pr-task")).not.toBeInTheDocument();
+
+		const idleStackToggle = screen.getByRole("button", { name: /idle sessions/i });
+		expect(idleStackToggle).toHaveAttribute("aria-expanded", "false");
+		expect(within(idleStackToggle).getByText("2")).toBeInTheDocument();
+
+		fireEvent.click(idleStackToggle);
+
+		expect(screen.getByRole("button", { name: /idle sessions/i })).toHaveAttribute("aria-expanded", "true");
+		expect(screen.getByText("active-task")).toBeInTheDocument();
+		const idleCard = screen.getByText("idle-no-pr-task").closest('[role="button"]') as HTMLElement;
+		expect(screen.getByText("idle-with-pr-task")).toBeInTheDocument();
+		const badge = within(idleCard).getByText("Working").closest("span");
+		expect(badge).toHaveClass("text-working");
+		expect(badge).not.toHaveClass("text-passive");
+	});
+
+	it("toggles idle contents without hiding active cards or remounting the toggle", () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				{
+					id: "p1",
+					name: "radic",
+					path: "/tmp/radic",
+					sessions: [
+						{
+							id: "s0",
+							workspaceId: "p1",
+							workspaceName: "radic",
+							title: "active-task",
+							provider: "claude-code",
+							branch: "ao/radic-4",
+							status: "working",
+							activity: { state: "active", lastActivityAt: "2026-01-01T00:00:00Z" },
+							updatedAt: "2026-01-01T00:00:00Z",
+							prs: [],
+						},
+						{
+							id: "s1",
+							workspaceId: "p1",
+							workspaceName: "radic",
+							title: "idle-task",
+							provider: "claude-code",
+							branch: "ao/radic-5",
+							status: "idle",
 							activity: { state: "idle", lastActivityAt: "2026-01-01T00:00:00Z" },
 							updatedAt: "2026-01-01T00:00:00Z",
 							prs: [],
@@ -112,10 +259,112 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		expect(screen.getAllByText("Working").length).toBeGreaterThan(0);
-		const badge = screen.getByText("Idle").closest("span");
-		expect(badge).toHaveClass("text-passive");
-		expect(badge).not.toHaveClass("text-working");
+		expect(screen.getByText("active-task")).toBeInTheDocument();
+		expect(screen.queryByText("idle-task")).not.toBeInTheDocument();
+
+		const idleToggle = screen.getByRole("button", { name: /idle sessions/i });
+		expect(idleToggle).toHaveAttribute("aria-expanded", "false");
+		expect(idleToggle.parentElement).toHaveClass("transition-[opacity,transform]");
+		expect(idleToggle.parentElement).not.toHaveClass("transition-[flex-grow,opacity,transform]");
+		expect(idleToggle.parentElement).toHaveClass("motion-reduce:transition-none");
+		expect(idleToggle.querySelector("svg")).toHaveClass("motion-reduce:transition-none");
+		fireEvent.click(idleToggle);
+
+		expect(screen.getByRole("button", { name: /idle sessions/i })).toBe(idleToggle);
+		expect(idleToggle).toHaveAttribute("aria-expanded", "true");
+		expect(screen.getByText("active-task")).toBeInTheDocument();
+		expect(screen.getByText("idle-task")).toBeInTheDocument();
+
+		fireEvent.click(idleToggle);
+
+		expect(screen.getByText("active-task")).toBeInTheDocument();
+		expect(screen.queryByText("idle-task")).not.toBeInTheDocument();
+		expect(idleToggle).toHaveAttribute("aria-expanded", "false");
+	});
+
+	it("resets the idle stack when navigating between project boards", () => {
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				{
+					id: "p1",
+					name: "radic",
+					path: "/tmp/radic",
+					sessions: [
+						{
+							id: "p1-active",
+							workspaceId: "p1",
+							workspaceName: "radic",
+							title: "p1 active",
+							provider: "claude-code",
+							branch: "ao/radic-active",
+							status: "working",
+							activity: { state: "active", lastActivityAt: "2026-01-01T00:00:00Z" },
+							updatedAt: "2026-01-01T00:00:00Z",
+							prs: [],
+						},
+						{
+							id: "p1-idle",
+							workspaceId: "p1",
+							workspaceName: "radic",
+							title: "p1 idle",
+							provider: "claude-code",
+							branch: "ao/radic-idle",
+							status: "idle",
+							activity: { state: "idle", lastActivityAt: "2026-01-01T00:00:00Z" },
+							updatedAt: "2026-01-01T00:00:00Z",
+							prs: [],
+						},
+					],
+				},
+				{
+					id: "p2",
+					name: "other",
+					path: "/tmp/other",
+					sessions: [
+						{
+							id: "p2-active",
+							workspaceId: "p2",
+							workspaceName: "other",
+							title: "p2 active",
+							provider: "claude-code",
+							branch: "ao/other-active",
+							status: "working",
+							activity: { state: "active", lastActivityAt: "2026-01-01T00:00:00Z" },
+							updatedAt: "2026-01-01T00:00:00Z",
+							prs: [],
+						},
+						{
+							id: "p2-idle",
+							workspaceId: "p2",
+							workspaceName: "other",
+							title: "p2 idle",
+							provider: "claude-code",
+							branch: "ao/other-idle",
+							status: "idle",
+							activity: { state: "idle", lastActivityAt: "2026-01-01T00:00:00Z" },
+							updatedAt: "2026-01-01T00:00:00Z",
+							prs: [],
+						},
+					],
+				},
+			],
+			isError: false,
+		});
+		const view = renderBoardWithClient(queryClient, "p1");
+
+		fireEvent.click(screen.getByRole("button", { name: /idle sessions/i }));
+		expect(screen.getByText("p1 idle")).toBeInTheDocument();
+
+		view.rerender(
+			<QueryClientProvider client={queryClient}>
+				<SessionsBoard projectId="p2" />
+			</QueryClientProvider>,
+		);
+
+		expect(screen.getByText("p2 active")).toBeInTheDocument();
+		expect(screen.queryByText("p2 idle")).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /idle sessions/i })).toHaveAttribute("aria-expanded", "false");
 	});
 
 	it("shows a restore action for terminated sessions in expanded Done / Terminated", async () => {
