@@ -21,7 +21,13 @@ function formatPullRequestDate(date: string) {
 	}).format(new Date(date));
 }
 
-export function ChangelogDetails({ pullRequests, areaLabel }: { pullRequests: RelatedPullRequest[]; areaLabel: string }) {
+export function ChangelogDetails({
+	pullRequests,
+	areaLabel,
+}: {
+	pullRequests: RelatedPullRequest[];
+	areaLabel: string;
+}) {
 	return (
 		<Accordion type="single" collapsible className="not-prose w-full">
 			<AccordionItem value="related-changes">
@@ -33,7 +39,12 @@ export function ChangelogDetails({ pullRequests, areaLabel }: { pullRequests: Re
 					<ul className="space-y-3">
 						{pullRequests.map((pullRequest) => (
 							<li key={pullRequest.number} className="border-l border-border pl-3">
-								<a href={pullRequest.url} target="_blank" rel="noreferrer" className="font-medium text-foreground underline-offset-4 transition-colors hover:underline">
+								<a
+									href={pullRequest.url}
+									target="_blank"
+									rel="noreferrer"
+									className="font-medium text-foreground underline-offset-4 transition-colors hover:underline"
+								>
 									{pullRequest.title}
 								</a>
 								<div className="mt-1 text-xs text-muted-foreground">

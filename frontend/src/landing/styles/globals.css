@@ -191,17 +191,8 @@ body::-webkit-scrollbar,
 
 /* Magic UI changelog structure, branded with the landing page design system. */
 .changelog-template {
-	--font-sans:
-		var(--font-inter),
-		-apple-system,
-		system-ui,
-		sans-serif;
-	--font-mono:
-		var(--font-geist-mono),
-		ui-monospace,
-		"SFMono-Regular",
-		Menlo,
-		monospace;
+	--font-sans: var(--font-inter), -apple-system, system-ui, sans-serif;
+	--font-mono: var(--font-geist-mono), ui-monospace, "SFMono-Regular", Menlo, monospace;
 	--radius: 0.625rem;
 	--background: var(--color-bg-base);
 	--foreground: var(--color-text-primary);

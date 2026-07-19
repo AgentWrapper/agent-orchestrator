@@ -20,47 +20,137 @@ const areaDefinitions = [
 	{
 		key: "mobile",
 		label: "Mobile & remote",
-		patterns: [/\bmobile\b/i, /\bremote\b/i, /\bandroid\b/i, /\bios\b/i, /react native/i, /\blan\b/i, /connect mobile/i, /supervisor app/i],
+		patterns: [
+			/\bmobile\b/i,
+			/\bremote\b/i,
+			/\bandroid\b/i,
+			/\bios\b/i,
+			/react native/i,
+			/\blan\b/i,
+			/connect mobile/i,
+			/supervisor app/i,
+		],
 	},
 	{
 		key: "desktop",
 		label: "Desktop & updates",
-		patterns: [/\bdesktop\b/i, /\belectron\b/i, /\btitlebar\b/i, /\bupdater\b/i, /\bauto-update\b/i, /\bapp update\b/i, /update channel/i, /\bwindow controls?\b/i],
+		patterns: [
+			/\bdesktop\b/i,
+			/\belectron\b/i,
+			/\btitlebar\b/i,
+			/\bupdater\b/i,
+			/\bauto-update\b/i,
+			/\bapp update\b/i,
+			/update channel/i,
+			/\bwindow controls?\b/i,
+		],
 	},
 	{
 		key: "reviews",
 		label: "Reviews & CI",
-		patterns: [/\breview/i, /\breviewer/i, /\bci\b/i, /\bcheck runs?\b/i, /\bbugbot\b/i, /merge conflict/i, /pull request/i, /\bpr status/i],
+		patterns: [
+			/\breview/i,
+			/\breviewer/i,
+			/\bci\b/i,
+			/\bcheck runs?\b/i,
+			/\bbugbot\b/i,
+			/merge conflict/i,
+			/pull request/i,
+			/\bpr status/i,
+		],
 	},
 	{
 		key: "projects",
 		label: "Projects & workspaces",
-		patterns: [/\bprojects?\b/i, /\bworkspaces?\b/i, /\bworktrees?\b/i, /\brepositor/i, /\brepo import/i, /\bportfolio\b/i],
+		patterns: [
+			/\bprojects?\b/i,
+			/\bworkspaces?\b/i,
+			/\bworktrees?\b/i,
+			/\brepositor/i,
+			/\brepo import/i,
+			/\bportfolio\b/i,
+		],
 	},
 	{
 		key: "sessions",
 		label: "Sessions & lifecycle",
-		patterns: [/\bsessions?\b/i, /\brestore/i, /\blifecycle\b/i, /\bterminal/i, /\bspawn/i, /\bactivity\b/i, /\bruntime\b/i, /\btmux\b/i, /\bprompt/i, /\borchestrat/i],
+		patterns: [
+			/\bsessions?\b/i,
+			/\brestore/i,
+			/\blifecycle\b/i,
+			/\bterminal/i,
+			/\bspawn/i,
+			/\bactivity\b/i,
+			/\bruntime\b/i,
+			/\btmux\b/i,
+			/\bprompt/i,
+			/\borchestrat/i,
+		],
 	},
 	{
 		key: "agents",
 		label: "Agents & plugins",
-		patterns: [/\bagents?\b/i, /\bharness/i, /\bplugins?\b/i, /claude/i, /codex/i, /cursor/i, /opencode/i, /\bkimi\b/i, /\bgrok\b/i, /\bpi\b/i, /kilocode/i, /\bqwen\b/i, /gemini/i],
+		patterns: [
+			/\bagents?\b/i,
+			/\bharness/i,
+			/\bplugins?\b/i,
+			/claude/i,
+			/codex/i,
+			/cursor/i,
+			/opencode/i,
+			/\bkimi\b/i,
+			/\bgrok\b/i,
+			/\bpi\b/i,
+			/kilocode/i,
+			/\bqwen\b/i,
+			/gemini/i,
+		],
 	},
 	{
 		key: "integrations",
 		label: "Integrations",
-		patterns: [/\bnotifier/i, /\blinear\b/i, /\bgithub\b/i, /\bscm\b/i, /\btracker/i, /\bslack\b/i, /\bdiscord\b/i, /\bcomposio\b/i, /\bwebhooks?\b/i],
+		patterns: [
+			/\bnotifier/i,
+			/\blinear\b/i,
+			/\bgithub\b/i,
+			/\bscm\b/i,
+			/\btracker/i,
+			/\bslack\b/i,
+			/\bdiscord\b/i,
+			/\bcomposio\b/i,
+			/\bwebhooks?\b/i,
+		],
 	},
 	{
 		key: "cli",
 		label: "CLI & configuration",
-		patterns: [/\bcli\b/i, /\bcommands?\b/i, /\bconfig/i, /\bao start\b/i, /\bsettings?\b/i, /\binstall/i, /\bonboarding\b/i, /\bsetup\b/i],
+		patterns: [
+			/\bcli\b/i,
+			/\bcommands?\b/i,
+			/\bconfig/i,
+			/\bao start\b/i,
+			/\bsettings?\b/i,
+			/\binstall/i,
+			/\bonboarding\b/i,
+			/\bsetup\b/i,
+		],
 	},
 	{
 		key: "dashboard",
 		label: "Dashboard & UX",
-		patterns: [/\bdashboard\b/i, /\bui\b/i, /\bfrontend\b/i, /\bsidebar\b/i, /\bkanban\b/i, /\btheme\b/i, /\bdesign\b/i, /\blayout\b/i, /\btopbar\b/i, /\bbutton\b/i, /\bicon\b/i],
+		patterns: [
+			/\bdashboard\b/i,
+			/\bui\b/i,
+			/\bfrontend\b/i,
+			/\bsidebar\b/i,
+			/\bkanban\b/i,
+			/\btheme\b/i,
+			/\bdesign\b/i,
+			/\blayout\b/i,
+			/\btopbar\b/i,
+			/\bbutton\b/i,
+			/\bicon\b/i,
+		],
 	},
 	{
 		key: "docs",
@@ -70,7 +160,18 @@ const areaDefinitions = [
 	{
 		key: "platform",
 		label: "Platform & reliability",
-		patterns: [/\bwindows?\b/i, /\bmacos\b/i, /\blinux\b/i, /\bsecurity\b/i, /\bdatabase\b/i, /\bsqlite\b/i, /\bapi\b/i, /\bserver\b/i, /\bperformance\b/i, /\breliab/i],
+		patterns: [
+			/\bwindows?\b/i,
+			/\bmacos\b/i,
+			/\blinux\b/i,
+			/\bsecurity\b/i,
+			/\bdatabase\b/i,
+			/\bsqlite\b/i,
+			/\bapi\b/i,
+			/\bserver\b/i,
+			/\bperformance\b/i,
+			/\breliab/i,
+		],
 	},
 ];
 
@@ -116,10 +217,19 @@ function readFirstCommit() {
 
 function categorizePullRequest(title, body, labels) {
 	const titleAndLabels = `${title} ${labels.join(" ")}`.toLowerCase();
-	const hasBreakingHeading = /^#{1,3}\s*(?:⚠️\s*)?breaking(?:\s*\/\s*behavioral)?(?:\s+changes?|\s+visual change|\s+change)(?!s?\s*:\s*(?:none|no)\b)/im.test(body);
-	const removesPublicSurface = /^(?:\w+(?:\([^)]*\))?:\s*)?(remove|deprecat)\w*\b.*\b(command|flag|option|api|feature)\b/.test(titleAndLabels);
+	const hasBreakingHeading =
+		/^#{1,3}\s*(?:⚠️\s*)?breaking(?:\s*\/\s*behavioral)?(?:\s+changes?|\s+visual change|\s+change)(?!s?\s*:\s*(?:none|no)\b)/im.test(
+			body,
+		);
+	const removesPublicSurface =
+		/^(?:\w+(?:\([^)]*\))?:\s*)?(remove|deprecat)\w*\b.*\b(command|flag|option|api|feature)\b/.test(titleAndLabels);
 
-	if (/breaking[ -]change|\bbreaking\b|backward incompatible/.test(titleAndLabels) || hasBreakingHeading || removesPublicSurface) return "breaking";
+	if (
+		/breaking[ -]change|\bbreaking\b|backward incompatible/.test(titleAndLabels) ||
+		hasBreakingHeading ||
+		removesPublicSurface
+	)
+		return "breaking";
 	if (/^\(?feat(?:\(.+?\))?\)?:|\bfeature\b|\benhancement\b/.test(title.toLowerCase())) return "feature";
 	if (/^fix(?:\(.+?\))?:|\bbug\b|\bhotfix\b|^revert\b/i.test(title)) return "fix";
 	if (/^docs?(?:\(.+?\))?:|\breadme\b|\bdocumentation\b/i.test(title)) return "docs";
@@ -163,7 +273,8 @@ function importanceScore(pullRequest) {
 	if (pullRequest.category === "feature") score += 70;
 	if (pullRequest.category === "fix") score += 28;
 	if (/security|critical|crash|data loss|vulnerability/.test(text)) score += 50;
-	if (/rebuild|redesign|introduc|launch|support|workspace|desktop|windows|browser|mobile|overhaul/.test(text)) score += 24;
+	if (/rebuild|redesign|introduc|launch|support|workspace|desktop|windows|browser|mobile|overhaul/.test(text))
+		score += 24;
 	if (/major|highlight|priority|complete/.test(text)) score += 20;
 	score += Math.min(42, Math.log10(changedLines + 1) * 11);
 	score += Math.min(20, pullRequest.changedFiles * 0.75);
@@ -218,7 +329,12 @@ function extractBodySummary(body) {
 
 	for (let index = summaryHeadingIndex === -1 ? 0 : summaryHeadingIndex + 1; index < lines.length; index += 1) {
 		const line = lines[index].trim();
-		if (/^#{1,3}\s*(test|testing|validation|verification|screenshots?|checklist|how to test|notes? for reviewers?)/i.test(line)) break;
+		if (
+			/^#{1,3}\s*(test|testing|validation|verification|screenshots?|checklist|how to test|notes? for reviewers?)/i.test(
+				line,
+			)
+		)
+			break;
 		if (/^#{1,3}\s+/.test(line)) {
 			if (collecting && candidates.length > 0) break;
 			continue;
@@ -226,7 +342,12 @@ function extractBodySummary(body) {
 		if (!collecting || !line || /^https?:\/\/\S+$/.test(line) || /^[-*+]\s*\[[ xX]\]/.test(line)) continue;
 
 		const text = plainText(line);
-		if (text.length < 18 || /^(closes|fixes|resolves)\s+#\d+\.?$/i.test(text) || /^(npm|pnpm|yarn|bun|npx|go test|cargo test|pytest)\b/i.test(text)) continue;
+		if (
+			text.length < 18 ||
+			/^(closes|fixes|resolves)\s+#\d+\.?$/i.test(text) ||
+			/^(npm|pnpm|yarn|bun|npx|go test|cargo test|pytest)\b/i.test(text)
+		)
+			continue;
 		candidates.push(truncateAtWord(text));
 		if (candidates.length === 3) break;
 	}
@@ -235,7 +356,22 @@ function extractBodySummary(body) {
 }
 
 function tokenize(title) {
-	const stopWords = new Set(["add", "adds", "added", "fix", "feat", "the", "and", "for", "with", "from", "into", "support", "update", "improve"]);
+	const stopWords = new Set([
+		"add",
+		"adds",
+		"added",
+		"fix",
+		"feat",
+		"the",
+		"and",
+		"for",
+		"with",
+		"from",
+		"into",
+		"support",
+		"update",
+		"improve",
+	]);
 	return new Set(
 		title
 			.toLowerCase()
@@ -270,13 +406,19 @@ function allocateStoryCounts(groupedPullRequests, totalPullRequests) {
 	});
 
 	while (allocations.reduce((sum, allocation) => sum + allocation.count, 0) < targetStoryCount) {
-		const next = [...allocations].sort((left, right) => right.fraction - left.fraction || groupedPullRequests.get(right.area).length - groupedPullRequests.get(left.area).length)[0];
+		const next = [...allocations].sort(
+			(left, right) =>
+				right.fraction - left.fraction ||
+				groupedPullRequests.get(right.area).length - groupedPullRequests.get(left.area).length,
+		)[0];
 		next.count += 1;
 		next.fraction = -1;
 	}
 
 	while (allocations.reduce((sum, allocation) => sum + allocation.count, 0) > targetStoryCount) {
-		const next = [...allocations].filter((allocation) => allocation.count > 1).sort((left, right) => left.fraction - right.fraction)[0];
+		const next = [...allocations]
+			.filter((allocation) => allocation.count > 1)
+			.sort((left, right) => left.fraction - right.fraction)[0];
 		next.count -= 1;
 	}
 
@@ -301,7 +443,10 @@ function selectAnchors(pullRequests, count) {
 				const distance = Math.min(...selected.map((anchor) => daysBetween(pullRequest.mergedAt, anchor.mergedAt)));
 				return { pullRequest, score: pullRequest.importance + Math.min(70, distance * 2.4) };
 			})
-			.sort((left, right) => right.score - left.score || right.pullRequest.mergedAt.localeCompare(left.pullRequest.mergedAt))[0].pullRequest;
+			.sort(
+				(left, right) =>
+					right.score - left.score || right.pullRequest.mergedAt.localeCompare(left.pullRequest.mergedAt),
+			)[0].pullRequest;
 		selected.push(candidate);
 	}
 
@@ -329,14 +474,20 @@ function buildStories(pullRequests) {
 			const anchor = [...anchors]
 				.map((candidate) => ({
 					candidate,
-					score: daysBetween(pullRequest.mergedAt, candidate.mergedAt) * 2 - tokenOverlap(pullRequest.title, candidate.title) * 18,
+					score:
+						daysBetween(pullRequest.mergedAt, candidate.mergedAt) * 2 -
+						tokenOverlap(pullRequest.title, candidate.title) * 18,
 				}))
-				.sort((left, right) => left.score - right.score || right.candidate.importance - left.candidate.importance)[0].candidate;
+				.sort(
+					(left, right) => left.score - right.score || right.candidate.importance - left.candidate.importance,
+				)[0].candidate;
 			assignments.get(anchor.number).push(pullRequest);
 		}
 
 		for (const anchor of anchors) {
-			const assigned = assignments.get(anchor.number).sort((left, right) => right.mergedAt.localeCompare(left.mergedAt));
+			const assigned = assignments
+				.get(anchor.number)
+				.sort((left, right) => right.mergedAt.localeCompare(left.mergedAt));
 			stories.push({
 				key: `pr-${anchor.number}`,
 				leadPullRequestNumber: anchor.number,
@@ -346,7 +497,9 @@ function buildStories(pullRequests) {
 		}
 	}
 
-	return stories.sort((left, right) => right.date.localeCompare(left.date) || right.leadPullRequestNumber - left.leadPullRequestNumber);
+	return stories.sort(
+		(left, right) => right.date.localeCompare(left.date) || right.leadPullRequestNumber - left.leadPullRequestNumber,
+	);
 }
 
 function auditStories(pullRequests, stories) {
@@ -446,4 +599,6 @@ const payload = {
 mkdirSync(dirname(outputPath), { recursive: true });
 writeFileSync(outputPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 
-console.log(`Wrote ${pullRequests.length} merged pull requests into ${stories.length} audited product stories at ${outputPath}`);
+console.log(
+	`Wrote ${pullRequests.length} merged pull requests into ${stories.length} audited product stories at ${outputPath}`,
+);

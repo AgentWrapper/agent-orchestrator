@@ -139,123 +139,155 @@ export default async function ChangelogPage({ searchParams }: ChangelogPageProps
 						const updateCount = dateGroup.entries.length + (dateGroup.firstCommit ? 1 : 0);
 
 						return (
-						<section key={dateGroup.dateKey} className="relative">
-							<div className="flex flex-col gap-y-6 md:flex-row">
-								<div className="shrink-0 md:w-48">
-									<div className="pb-4 md:sticky md:top-8 md:pb-10">
-										<time dateTime={dateGroup.dateKey} className="block text-sm font-medium text-muted-foreground">
-											{formatDate(dateGroup.date)}
-										</time>
-										<p className="mt-2 text-xs text-muted-foreground">
-											{updateCount} {updateCount === 1 ? "update" : "updates"}
-										</p>
+							<section key={dateGroup.dateKey} className="relative">
+								<div className="flex flex-col gap-y-6 md:flex-row">
+									<div className="shrink-0 md:w-48">
+										<div className="pb-4 md:sticky md:top-8 md:pb-10">
+											<time dateTime={dateGroup.dateKey} className="block text-sm font-medium text-muted-foreground">
+												{formatDate(dateGroup.date)}
+											</time>
+											<p className="mt-2 text-xs text-muted-foreground">
+												{updateCount} {updateCount === 1 ? "update" : "updates"}
+											</p>
+										</div>
 									</div>
-								</div>
 
-								<div className="relative flex-1 pb-14 md:pl-8">
-									<div className="absolute left-0 top-2 hidden h-full w-px bg-border md:block" />
+									<div className="relative flex-1 pb-14 md:pl-8">
+										<div className="absolute left-0 top-2 hidden h-full w-px bg-border md:block" />
 
-									<div className="space-y-14">
-										{dateGroup.entries.map(({ story, leadPullRequest, pullRequests }) => {
-											const relatedPullRequests = pullRequests
-												.filter((pullRequest) => pullRequest.number !== leadPullRequest.number)
-												.map<RelatedPullRequest>((pullRequest) => ({
-													number: pullRequest.number,
-													title: pullRequest.title,
-													mergedAt: pullRequest.mergedAt,
-													url: pullRequest.url,
-													author: pullRequest.author,
-													category: pullRequest.category,
-												}));
-											const hasBreakingChange = pullRequests.some((pullRequest) => pullRequest.category === "breaking");
-											const tags = [
-												leadPullRequest.area.label,
-												hasBreakingChange ? categoryLabels.breaking : categoryLabels[leadPullRequest.category],
-												`${pullRequests.length} ${pullRequests.length === 1 ? "PR" : "PRs"}`,
-											];
+										<div className="space-y-14">
+											{dateGroup.entries.map(({ story, leadPullRequest, pullRequests }) => {
+												const relatedPullRequests = pullRequests
+													.filter((pullRequest) => pullRequest.number !== leadPullRequest.number)
+													.map<RelatedPullRequest>((pullRequest) => ({
+														number: pullRequest.number,
+														title: pullRequest.title,
+														mergedAt: pullRequest.mergedAt,
+														url: pullRequest.url,
+														author: pullRequest.author,
+														category: pullRequest.category,
+													}));
+												const hasBreakingChange = pullRequests.some(
+													(pullRequest) => pullRequest.category === "breaking",
+												);
+												const tags = [
+													leadPullRequest.area.label,
+													hasBreakingChange ? categoryLabels.breaking : categoryLabels[leadPullRequest.category],
+													`${pullRequests.length} ${pullRequests.length === 1 ? "PR" : "PRs"}`,
+												];
 
-											return (
-												<article key={story.key} className="relative">
+												return (
+													<article key={story.key} className="relative">
+														<div className="absolute -left-8 top-2 z-10 hidden size-3 -translate-x-1/2 rounded-full bg-primary md:block" />
+
+														<div className="space-y-6">
+															<div className="relative z-10 flex flex-col gap-2">
+																<h2 className="text-balance text-2xl font-semibold tracking-tight">
+																	{leadPullRequest.displayTitle}
+																</h2>
+
+																<div className="flex flex-wrap gap-2">
+																	<a
+																		href={leadPullRequest.url}
+																		target="_blank"
+																		rel="noreferrer"
+																		className="changelog-source-badge flex h-6 w-fit items-center justify-center rounded-full border px-2 text-xs font-semibold transition-colors"
+																	>
+																		#{leadPullRequest.number}
+																	</a>
+																	{tags.map((tag) => (
+																		<span
+																			key={tag}
+																			className="flex h-6 w-fit items-center justify-center rounded-full border bg-muted px-2 text-xs font-medium text-muted-foreground"
+																		>
+																			{tag}
+																		</span>
+																	))}
+																</div>
+															</div>
+
+															<div className="prose max-w-none text-balance tracking-tight dark:prose-invert prose-a:no-underline prose-headings:scroll-mt-8 prose-headings:text-balance prose-headings:font-semibold prose-headings:tracking-tight prose-p:text-balance prose-p:tracking-tight">
+																{leadPullRequest.bodySummary.map((paragraph) => (
+																	<p key={paragraph}>{paragraph}</p>
+																))}
+
+																<p className="text-sm text-muted-foreground">
+																	<a
+																		href={leadPullRequest.url}
+																		target="_blank"
+																		rel="noreferrer"
+																		className="group inline-flex items-center gap-1 font-medium text-foreground"
+																	>
+																		<span>View primary PR #{leadPullRequest.number}</span>
+																		<ExternalArrow />
+																	</a>
+																	<span>
+																		{" "}
+																		· @{leadPullRequest.author} · {leadPullRequest.changedFiles}{" "}
+																		{leadPullRequest.changedFiles === 1 ? "file" : "files"} changed
+																	</span>
+																</p>
+
+																{relatedPullRequests.length > 0 && (
+																	<ChangelogDetails
+																		pullRequests={relatedPullRequests}
+																		areaLabel={leadPullRequest.area.label}
+																	/>
+																)}
+															</div>
+														</div>
+													</article>
+												);
+											})}
+
+											{dateGroup.firstCommit && (
+												<article className="relative">
 													<div className="absolute -left-8 top-2 z-10 hidden size-3 -translate-x-1/2 rounded-full bg-primary md:block" />
 
 													<div className="space-y-6">
 														<div className="relative z-10 flex flex-col gap-2">
-															<h2 className="text-balance text-2xl font-semibold tracking-tight">{leadPullRequest.displayTitle}</h2>
+															<h2 className="text-balance text-2xl font-semibold tracking-tight">Hello, world.</h2>
 
 															<div className="flex flex-wrap gap-2">
 																<a
-																	href={leadPullRequest.url}
+																	href={dateGroup.firstCommit.url}
 																	target="_blank"
 																	rel="noreferrer"
-																	className="changelog-source-badge flex h-6 w-fit items-center justify-center rounded-full border px-2 text-xs font-semibold transition-colors"
+																	className="changelog-source-badge flex h-6 w-fit items-center justify-center rounded-full border px-2 font-mono text-xs font-semibold transition-colors"
 																>
-																	#{leadPullRequest.number}
+																	{dateGroup.firstCommit.hash.slice(0, 7)}
 																</a>
-																{tags.map((tag) => (
-																	<span key={tag} className="flex h-6 w-fit items-center justify-center rounded-full border bg-muted px-2 text-xs font-medium text-muted-foreground">
-																		{tag}
-																	</span>
-																))}
+																<span className="flex h-6 w-fit items-center justify-center rounded-full border bg-muted px-2 text-xs font-medium text-muted-foreground">
+																	First commit
+																</span>
+																<span className="flex h-6 w-fit items-center justify-center rounded-full border bg-muted px-2 text-xs font-medium text-muted-foreground">
+																	Repository origin
+																</span>
 															</div>
 														</div>
 
-														<div className="prose max-w-none text-balance tracking-tight dark:prose-invert prose-a:no-underline prose-headings:scroll-mt-8 prose-headings:text-balance prose-headings:font-semibold prose-headings:tracking-tight prose-p:text-balance prose-p:tracking-tight">
-															{leadPullRequest.bodySummary.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
-
+														<div className="prose max-w-none text-balance tracking-tight dark:prose-invert prose-a:no-underline prose-p:text-balance prose-p:tracking-tight">
+															<p>{dateGroup.firstCommit.subject.replace(/^\w+(?:\([^)]*\))?:\s*/i, "")}</p>
 															<p className="text-sm text-muted-foreground">
-																<a href={leadPullRequest.url} target="_blank" rel="noreferrer" className="group inline-flex items-center gap-1 font-medium text-foreground">
-																	<span>View primary PR #{leadPullRequest.number}</span>
+																<a
+																	href={dateGroup.firstCommit.url}
+																	target="_blank"
+																	rel="noreferrer"
+																	className="group inline-flex items-center gap-1 font-medium text-foreground"
+																>
+																	<span>View first commit {dateGroup.firstCommit.hash.slice(0, 7)}</span>
 																	<ExternalArrow />
 																</a>
-																<span> · @{leadPullRequest.author} · {leadPullRequest.changedFiles} {leadPullRequest.changedFiles === 1 ? "file" : "files"} changed</span>
+																<span> · {dateGroup.firstCommit.authorName}</span>
 															</p>
-
-															{relatedPullRequests.length > 0 && <ChangelogDetails pullRequests={relatedPullRequests} areaLabel={leadPullRequest.area.label} />}
 														</div>
 													</div>
 												</article>
-											);
-										})}
-
-										{dateGroup.firstCommit && (
-											<article className="relative">
-												<div className="absolute -left-8 top-2 z-10 hidden size-3 -translate-x-1/2 rounded-full bg-primary md:block" />
-
-												<div className="space-y-6">
-													<div className="relative z-10 flex flex-col gap-2">
-														<h2 className="text-balance text-2xl font-semibold tracking-tight">Hello, world.</h2>
-
-														<div className="flex flex-wrap gap-2">
-															<a
-																href={dateGroup.firstCommit.url}
-																target="_blank"
-																rel="noreferrer"
-															className="changelog-source-badge flex h-6 w-fit items-center justify-center rounded-full border px-2 font-mono text-xs font-semibold transition-colors"
-															>
-																{dateGroup.firstCommit.hash.slice(0, 7)}
-															</a>
-															<span className="flex h-6 w-fit items-center justify-center rounded-full border bg-muted px-2 text-xs font-medium text-muted-foreground">First commit</span>
-															<span className="flex h-6 w-fit items-center justify-center rounded-full border bg-muted px-2 text-xs font-medium text-muted-foreground">Repository origin</span>
-														</div>
-													</div>
-
-													<div className="prose max-w-none text-balance tracking-tight dark:prose-invert prose-a:no-underline prose-p:text-balance prose-p:tracking-tight">
-														<p>{dateGroup.firstCommit.subject.replace(/^\w+(?:\([^)]*\))?:\s*/i, "")}</p>
-														<p className="text-sm text-muted-foreground">
-															<a href={dateGroup.firstCommit.url} target="_blank" rel="noreferrer" className="group inline-flex items-center gap-1 font-medium text-foreground">
-																<span>View first commit {dateGroup.firstCommit.hash.slice(0, 7)}</span>
-																<ExternalArrow />
-															</a>
-															<span> · {dateGroup.firstCommit.authorName}</span>
-														</p>
-													</div>
-												</div>
-											</article>
-										)}
+											)}
+										</div>
 									</div>
 								</div>
-							</div>
-						</section>
+							</section>
 						);
 					})}
 				</div>

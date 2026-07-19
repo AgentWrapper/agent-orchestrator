@@ -14,10 +14,19 @@ function paginationItems(currentPage: number, totalPages: number): PaginationIte
 	return [1, "ellipsis-left", currentPage - 1, currentPage, currentPage + 1, "ellipsis-right", totalPages];
 }
 
-function DirectionLink({ page, direction, disabled }: { page: number; direction: "previous" | "next"; disabled: boolean }) {
+function DirectionLink({
+	page,
+	direction,
+	disabled,
+}: {
+	page: number;
+	direction: "previous" | "next";
+	disabled: boolean;
+}) {
 	const isPrevious = direction === "previous";
 	const label = isPrevious ? "Previous" : "Next";
-	const className = "inline-flex h-10 items-center gap-2 rounded-lg border border-border px-3 text-sm font-medium transition-colors";
+	const className =
+		"inline-flex h-10 items-center gap-2 rounded-lg border border-border px-3 text-sm font-medium transition-colors";
 
 	if (disabled) {
 		return (
@@ -27,7 +36,6 @@ function DirectionLink({ page, direction, disabled }: { page: number; direction:
 				{!isPrevious && <ChevronRight aria-hidden="true" className="size-4" />}
 			</span>
 		);
-
 	}
 
 	return (
@@ -49,7 +57,8 @@ export function ChangelogPagination({ currentPage, totalPages }: { currentPage: 
 					<DirectionLink page={currentPage - 1} direction="previous" disabled={currentPage === 1} />
 				</div>
 				<p className="text-sm font-medium text-muted-foreground">
-					Page <span className="text-foreground">{currentPage}</span> of <span className="text-foreground">{totalPages}</span>
+					Page <span className="text-foreground">{currentPage}</span> of{" "}
+					<span className="text-foreground">{totalPages}</span>
 				</p>
 				<div className="justify-self-end">
 					<DirectionLink page={currentPage + 1} direction="next" disabled={currentPage === totalPages} />
@@ -59,7 +68,15 @@ export function ChangelogPagination({ currentPage, totalPages }: { currentPage: 
 			<div className="mt-5 flex items-center justify-center gap-1" role="group" aria-label="Changelog pages">
 				{items.map((item) => {
 					if (typeof item !== "number") {
-						return <span key={item} className="inline-flex size-9 items-center justify-center text-sm text-muted-foreground" aria-hidden="true">…</span>;
+						return (
+							<span
+								key={item}
+								className="inline-flex size-9 items-center justify-center text-sm text-muted-foreground"
+								aria-hidden="true"
+							>
+								…
+							</span>
+						);
 					}
 
 					const isCurrent = item === currentPage;
