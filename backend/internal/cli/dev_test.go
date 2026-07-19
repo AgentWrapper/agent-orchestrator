@@ -69,6 +69,47 @@ func TestDevImportProjectsDryRunCallsLiveDaemon(t *testing.T) {
 	}
 }
 
+func TestDevImportProjectsRelativeSourceSendsAbsolutePath(t *testing.T) {
+	cfg := setConfigEnv(t)
+	wd := t.TempDir()
+	sourceDir := filepath.Join(wd, "normal-data")
+	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wantSourceDir, err := resolvedPath(sourceDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(wd); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldwd) })
+
+	srv, capture := devImportServer(t, http.StatusOK, devimport.Report{
+		SourceDataDir: sourceDir,
+		TargetDataDir: cfg.dataDir,
+		DryRun:        true,
+	})
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "dev", "import-projects", "--from-data-dir", "./normal-data", "--dry-run")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if capture.body.SourceDataDir != wantSourceDir {
+		t.Fatalf("sourceDataDir = %q, want %q", capture.body.SourceDataDir, wantSourceDir)
+	}
+	if !filepath.IsAbs(capture.body.SourceDataDir) {
+		t.Fatalf("sourceDataDir = %q, want absolute path", capture.body.SourceDataDir)
+	}
+}
+
 func TestDevImportProjectsHelpDescribesDaemonBackedImport(t *testing.T) {
 	out, _, err := executeCLI(t, Deps{}, "dev", "import-projects", "--help")
 	if err != nil {

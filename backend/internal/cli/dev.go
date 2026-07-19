@@ -77,16 +77,20 @@ func (c *commandContext) runDevImportProjects(cmd *cobra.Command, opts devImport
 	if err != nil {
 		return err
 	}
+	sourceDataDir, err = resolvedPath(sourceDataDir)
+	if err != nil {
+		return err
+	}
 	targetDataDir, err := expandHomePath(cfg.DataDir)
 	if err != nil {
 		return err
 	}
-
-	same, err := sameResolvedPath(sourceDataDir, targetDataDir)
+	targetDataDir, err = resolvedPath(targetDataDir)
 	if err != nil {
 		return err
 	}
-	if same {
+
+	if sourceDataDir == targetDataDir {
 		return usageError{fmt.Errorf("source and target data dirs are the same: %s", sourceDataDir)}
 	}
 
@@ -166,18 +170,6 @@ func expandHomePath(path string) (string, error) {
 		return filepath.Join(home, path[2:]), nil
 	}
 	return path, nil
-}
-
-func sameResolvedPath(a, b string) (bool, error) {
-	ra, err := resolvedPath(a)
-	if err != nil {
-		return false, err
-	}
-	rb, err := resolvedPath(b)
-	if err != nil {
-		return false, err
-	}
-	return ra == rb, nil
 }
 
 func resolvedPath(path string) (string, error) {
