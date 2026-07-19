@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -124,6 +125,40 @@ func TestHasLegacyData(t *testing.T) {
 	}
 	if HasLegacyData(filepath.Join(t.TempDir(), "nope")) {
 		t.Fatal("HasLegacyData = true for missing root")
+	}
+}
+
+// TestLegacyConfigError_SurfacesParseFailure covers issue #2186 Bug 2: a legacy
+// config.yaml with a syntax error must be surfaced as a parse error, not
+// swallowed as "no data". The tab-indented line below is a YAML syntax error
+// (not a *yaml.TypeError, so it is not a partial decode), exactly the case
+// HasLegacyData collapses to false today. HasLegacyData's bool contract for the
+// migration-probe service layer must stay intact (still false on a broken store).
+func TestLegacyConfigError_SurfacesParseFailure(t *testing.T) {
+	root := filepath.Join(t.TempDir(), ".agent-orchestrator")
+	mustMkdir(t, root)
+	mustWrite(t, filepath.Join(root, "config.yaml"), "projects:\n\talpha:\n  path: /repos/alpha\n")
+
+	err := LegacyConfigError(context.Background(), root)
+	if err == nil {
+		t.Fatal("LegacyConfigError = nil for a config.yaml with a syntax error")
+	}
+	if !strings.Contains(err.Error(), "parse legacy config.yaml") {
+		t.Fatalf("LegacyConfigError = %q, want an error mentioning parse legacy config.yaml", err)
+	}
+	// The bool probe used by the migration UI must keep reporting "not available"
+	// rather than erroring on a broken store.
+	if HasLegacyData(root) {
+		t.Fatal("HasLegacyData = true for a config.yaml that fails to parse")
+	}
+}
+
+func TestLegacyConfigError_NilWhenAbsentOrEmpty(t *testing.T) {
+	if LegacyConfigError(context.Background(), "") != nil {
+		t.Fatal("LegacyConfigError(\"\") = non-nil, want nil")
+	}
+	if LegacyConfigError(context.Background(), filepath.Join(t.TempDir(), "nope")) != nil {
+		t.Fatal("LegacyConfigError on a missing root = non-nil, want nil")
 	}
 }
 

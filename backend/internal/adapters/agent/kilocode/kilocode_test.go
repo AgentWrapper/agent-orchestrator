@@ -202,6 +202,14 @@ func TestGetAgentHooksInstallsPlugin(t *testing.T) {
 	if strings.Contains(body, `"session.idle"`) {
 		t.Fatalf("plugin subscribes to deprecated session.idle; use session.status(idle):\n%s", body)
 	}
+	for _, marker := range []string{"function readSessionID", "function readCreatedSessionID", "sessionID", "sessionId", "session_id"} {
+		if !strings.Contains(body, marker) {
+			t.Fatalf("installed plugin missing session id normalization marker %q:\n%s", marker, body)
+		}
+	}
+	if strings.Contains(body, "value?.session_id ?? value?.id") {
+		t.Fatalf("readSessionID must not fall back to generic object id:\n%s", body)
+	}
 	// A hung `ao hooks` call must not block Kilo forever, so each spawn is
 	// time-boxed (parity with the claude/codex 30s hook timeout).
 	if !strings.Contains(body, "timeout:") {

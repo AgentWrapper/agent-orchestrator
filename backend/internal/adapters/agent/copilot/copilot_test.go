@@ -568,6 +568,47 @@ func TestGetAgentHooksInstallsSessionCopilotAgent(t *testing.T) {
 	}
 }
 
+func TestGetAgentHooksIgnoresSessionCopilotAgentInLinkedWorktreeCommonExclude(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "copilot"}
+	dir := t.TempDir()
+	commonGitDir := filepath.Join(dir, "repo", ".git")
+	worktreeGitDir := filepath.Join(commonGitDir, "worktrees", "sess-1")
+	workspace := filepath.Join(dir, "worktree")
+	if err := os.MkdirAll(worktreeGitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, ".git"), []byte("gitdir: "+worktreeGitDir+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreeGitDir, "commondir"), []byte("../..\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := ports.WorkspaceHookConfig{
+		DataDir:       t.TempDir(),
+		SessionID:     "sess-1",
+		SystemPrompt:  "orchestrator must spawn workers",
+		WorkspacePath: workspace,
+	}
+	if err := plugin.GetAgentHooks(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	exclude, err := os.ReadFile(filepath.Join(commonGitDir, "info", "exclude"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(exclude), "/.github/agents/ao-sess-1.agent.md\n") {
+		t.Fatalf("common git exclude does not ignore custom agent:\n%s", exclude)
+	}
+	if _, err := os.Stat(filepath.Join(worktreeGitDir, "info", "exclude")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("worktree-local exclude exists or stat failed: %v", err)
+	}
+}
+
 func TestGetAgentHooksUpdatesManagedSessionCopilotAgent(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "copilot"}
 	workspace := t.TempDir()

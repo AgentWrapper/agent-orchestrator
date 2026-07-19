@@ -1,7 +1,9 @@
 # Desktop release runbook
 
-How to cut a stable desktop release, end to end. Written from the v0.10.2 cut
-(2026-07-04); v0.10.1 followed the same recipe.
+How to cut a stable desktop release, end to end. Written from the v0.10.3 cut
+(2026-07-12), which bumps the version on `main` via a PR and tags the merge
+commit. v0.10.1/v0.10.2 used an older tag-only stamp commit that never landed
+on `main`; the PR-based flow below supersedes it.
 
 ## How releases work
 
@@ -17,9 +19,10 @@ How to cut a stable desktop release, end to end. Written from the v0.10.2 cut
   electron-forge's GitHub publisher names the release `v<package.json version>`,
   NOT after the git tag. The `desktop-v*` tag is only the workflow trigger, so
   the tagged commit must carry the right version (see the stamp commit below).
-- On `main`, `frontend/package.json` stays at whatever it last was; nightlies
-  stamp the version at build time and stable stamps it on a tag-only commit.
-  Do not bump the version on `main` itself.
+- The bump lands on `main` via a PR, so `main`'s `frontend/package.json`
+  tracks the last released version; the `desktop-v*` tag then points at that
+  merge commit. Nightlies stamp the version at build time from the highest
+  `desktop-v*` tag, so they are unaffected by whatever `main` currently carries.
 
 ## Prerequisites
 
@@ -45,23 +48,34 @@ git log v<last-stable>..upstream/main --oneline
 
 Stable versions bump the patch unless something warrants minor/major.
 
-### 2. Create the tag-only stamp commit
+### 2. Bump the version on `main` via a PR
 
-The stamp commit bumps `frontend/package.json` to `X.Y.Z` and lives only on
-the tag, not on `main`:
+Bump `frontend/package.json` to `X.Y.Z` on a branch and merge it into `main`.
+This is the only version pin the stable build reads; `packages/ao*` are not
+gated on the desktop release and stay as-is.
 
 ```bash
-git checkout --detach upstream/main
+git checkout -b release-X.Y.Z upstream/main
 # edit frontend/package.json: "version": "X.Y.Z"
 git add frontend/package.json
 git commit -m "chore(release): stamp desktop app version X.Y.Z"
-git tag -a desktop-vX.Y.Z -m "Desktop release X.Y.Z: <one-line highlights with PR numbers>"
-git checkout -            # get off the detached HEAD; the tag keeps the commit alive
+git push <your-remote> release-X.Y.Z
+gh pr create -R AgentWrapper/agent-orchestrator --base main \
+  --head <owner>:release-X.Y.Z \
+  --title "chore(release): stamp desktop app version X.Y.Z"
 ```
 
-### 3. Push the tag (this triggers the release)
+Merge the PR into `main` once it is green.
+
+### 3. Tag the merge commit and push (this triggers the release)
+
+Tag the merged `main` HEAD; confirm it carries the right version first, since
+the release name comes from `frontend/package.json`, not the tag.
 
 ```bash
+git fetch upstream main
+git show upstream/main:frontend/package.json | grep '"version"'   # must read X.Y.Z
+git tag -a desktop-vX.Y.Z upstream/main -m "Desktop release X.Y.Z: <highlights with PR numbers>"
 git push upstream desktop-vX.Y.Z
 ```
 

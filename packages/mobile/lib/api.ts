@@ -423,6 +423,37 @@ export function sessionTitle(s: DashboardSession): string {
 	return s.displayName || s.issueTitle || s.userPrompt || s.summary || s.id;
 }
 
+// Project ids/names carry a generated hash suffix (`my-app_98d163a851`) and
+// session ids are minted as `<projectId>-<n>`. Printed in full on a phone that's
+// the same slug twice, wider than the card. These two helpers shorten each label
+// to something that still identifies it — only when it's actually too long.
+
+const MAX_LABEL = 20;
+
+// Middle-truncate. A plain tail-cut would drop the hash and make two projects
+// that share a base name render identically, so keep the head (the readable
+// part) AND the tail (the part that disambiguates).
+export function shortLabel(value: string, max = MAX_LABEL): string {
+	if (value.length <= max) return value;
+	const keep = max - 1; // room for the ellipsis
+	const head = Math.ceil(keep / 2);
+	const tail = Math.floor(keep / 2);
+	return `${value.slice(0, head)}…${value.slice(value.length - tail)}`;
+}
+
+// A session id is its project id plus a `-n` discriminator, so when that holds
+// the only new information is the discriminator — show `#n` rather than
+// reprinting the project slug. Ids that don't follow the convention fall back to
+// a middle-truncated label.
+export function shortSessionId(s: DashboardSession): string {
+	const { projectId, id } = s;
+	// The separator is required: a bare `startsWith(projectId)` would also match a
+	// longer sibling slug (project `app`, session `apple-1`) and print `#le-1`.
+	const prefixed = projectId && (id.startsWith(`${projectId}-`) || id.startsWith(`${projectId}_`));
+	const rest = prefixed ? id.slice(projectId.length + 1) : "";
+	return rest ? `#${rest}` : shortLabel(id);
+}
+
 // All PRs across sessions, de-duplicated by number+repo.
 export function collectPRs(sessions: DashboardSession[]): { pr: DashboardPR; session: DashboardSession }[] {
 	const seen = new Set<string>();

@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
 import { getPreview, isTerminalStatus, killSession, sendMessage } from "../../lib/api";
 import { authHeaders, isConfigured, loadConfig, type ServerConfig } from "../../lib/config";
+import { haptics } from "../../lib/haptics";
 import { MuxClient, type MuxStatus } from "../../lib/mux";
 import { useApp } from "../../lib/store";
 import { theme } from "../../lib/theme";
@@ -721,9 +722,11 @@ export default function TerminalScreen() {
 		try {
 			const config = cfg ?? (await loadConfig());
 			await sendMessage(config, id, text);
+			haptics.success();
 			setMsg("");
 			setCompose(false);
 		} catch (e) {
+			haptics.error();
 			setBanner(`Send failed: ${e instanceof Error ? e.message : String(e)}`);
 		} finally {
 			setSending(false);
@@ -734,6 +737,7 @@ export default function TerminalScreen() {
 	// just shows/hides the overlay. A bare README (the detector's markdown fallback)
 	// reports "no preview yet" instead of surfacing an unbuilt repo doc.
 	const toggleBrowser = useCallback(() => {
+		haptics.tap();
 		if (browserOpen) {
 			setBrowserOpen(false);
 			return;
@@ -750,8 +754,10 @@ export default function TerminalScreen() {
 			try {
 				const config = cfg ?? (await loadConfig());
 				await killSession(config, id);
+				haptics.success();
 				leave();
 			} catch (e) {
+				haptics.error();
 				setBanner(`Kill failed: ${e instanceof Error ? e.message : String(e)}`);
 			}
 		};
@@ -759,6 +765,8 @@ export default function TerminalScreen() {
 			doKill();
 			return;
 		}
+		// Cautionary buzz as the destructive confirmation dialog is raised.
+		haptics.warning();
 		Alert.alert("Kill session?", `This stops ${id}.`, [
 			{ text: "Cancel", style: "cancel" },
 			{ text: "Kill", style: "destructive", onPress: doKill },

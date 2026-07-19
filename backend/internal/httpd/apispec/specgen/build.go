@@ -154,6 +154,10 @@ var schemaNames = map[string]string{
 	"ControllersRestoreSessionResponse":           "RestoreSessionResponse",
 	"ControllersCleanupSessionsResponse":          "CleanupSessionsResponse",
 	"ControllersCleanupSkippedSession":            "CleanupSkippedSession",
+	"ControllersWorkspaceFileQuery":               "WorkspaceFileQuery",
+	"ControllersListWorkspaceFilesResponse":       "ListWorkspaceFilesResponse",
+	"ControllersWorkspaceFileSummary":             "WorkspaceFileSummary",
+	"ControllersWorkspaceFileResponse":            "WorkspaceFileResponse",
 	"ControllersKillSessionResponse":              "KillSessionResponse",
 	"ControllersRollbackSessionResponse":          "RollbackSessionResponse",
 	"ControllersSendSessionMessageRequest":        "SendSessionMessageRequest",
@@ -218,6 +222,7 @@ var schemaNames = map[string]string{
 	"ProjectRemoveResult":               "RemoveProjectResult",
 	"ProjectSetConfigInput":             "SetProjectConfigInput",
 	"ProjectWorkspaceRepo":              "WorkspaceRepo",
+	"SessionWorkspaceFileStatus":        "WorkspaceFileStatus",
 }
 
 // markRequestBodyRequired sets requestBody.required: true on the operation's
@@ -680,6 +685,29 @@ func sessionOperations() []operation {
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},
 			contentTypes: map[int]string{http.StatusOK: "text/html"},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/sessions/{sessionId}/workspace/files", id: "listSessionWorkspaceFiles", tag: "sessions",
+			summary:    "List files in a session workspace with git change status",
+			pathParams: []any{controllers.SessionIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListWorkspaceFilesResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/sessions/{sessionId}/workspace/file", id: "getSessionWorkspaceFile", tag: "sessions",
+			summary:    "Read one session workspace file and its git diff",
+			pathParams: []any{controllers.SessionIDParam{}, controllers.WorkspaceFileQuery{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.WorkspaceFileResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
 		},
 		{
 			method: http.MethodGet, path: "/api/v1/sessions/{sessionId}/pr", id: "listSessionPRs", tag: "sessions",
