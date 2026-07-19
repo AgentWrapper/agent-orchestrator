@@ -835,6 +835,10 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 			keepDaemonLogFd = openSync(logPath, "a");
 			stdio = ["ignore", keepDaemonLogFd, keepDaemonLogFd];
 		} catch {
+			// Log redirect failed (e.g. ~/.ao not creatable, permission denied):
+			// fall back to "ignore" so the daemon still runs, but warn — otherwise
+			// a long-lived keep-alive daemon would run with zero log output.
+			console.warn(`AO: keep-daemon log redirect failed; daemon will run with stdio disabled: ${logPath}`);
 			keepDaemonLogFd = undefined;
 			stdio = "ignore";
 		}
@@ -906,7 +910,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		// remain persistent across app quit.
 		//
 		// AO_KEEP_DAEMON opts out of the link entirely: the daemon is spawned but
-		// survives the window closing, stopping only on an explicit `ao start`.
+		// survives the window closing, stopping only on an explicit `ao stop`.
 		// Reuse the `keep` captured at spawn rather than re-reading process.env
 		// here: the flag is a property of this spawn, not a value that should be
 		// able to flip between spawn and port-confirmation. (The process.on("exit")
