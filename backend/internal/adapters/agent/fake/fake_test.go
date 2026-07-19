@@ -2,6 +2,7 @@ package fake
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -40,8 +41,10 @@ func TestGetLaunchCommandIsScriptedTimeline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cmd) != 3 || cmd[0] != "sh" || cmd[1] != "-lc" {
-		t.Fatalf("launch command shape = %#v, want [sh -lc <script>]", cmd)
+	// argv[0] must be the RESOLVED shell path (what Manager.Spawn validates), not
+	// a bare "sh" — see ResolveBinary / #2692 review.
+	if len(cmd) != 3 || cmd[1] != "-lc" || !strings.HasSuffix(cmd[0], "sh") || !strings.Contains(cmd[0], "/") {
+		t.Fatalf("launch command shape = %#v, want [<resolved sh path> -lc <script>]", cmd)
 	}
 
 	script := cmd[2]
@@ -68,6 +71,30 @@ func TestGetLaunchCommandIsScriptedTimeline(t *testing.T) {
 	// Hooks must read from /dev/null and never fail the timeline.
 	if !strings.Contains(script, "</dev/null") || !strings.Contains(script, "|| true") {
 		t.Fatalf("hook invocations are not guarded/stdin-fed; script:\n%s", script)
+	}
+}
+
+func TestResolveBinaryReturnsResolvedShellPath(t *testing.T) {
+	got, err := New().ResolveBinary(context.Background())
+	if err != nil {
+		t.Fatalf("ResolveBinary: unexpected error: %v", err)
+	}
+	if !strings.HasSuffix(got, "sh") || !strings.Contains(got, "/") {
+		t.Fatalf("ResolveBinary = %q, want an absolute resolved sh path", got)
+	}
+}
+
+// When no runnable sh is on PATH (Windows / stripped PATH), the fake must report
+// NOT installed (ResolveBinary errors) so preflight fails cleanly, and
+// GetLaunchCommand must surface the same error rather than emit an unlaunchable
+// bare "sh" that Manager.Spawn would later reject. (#2692 review)
+func TestResolveBinaryErrorsWhenNoShell(t *testing.T) {
+	t.Setenv("PATH", filepath.Join(t.TempDir(), "empty-no-sh-here"))
+	if got, err := New().ResolveBinary(context.Background()); err == nil {
+		t.Fatalf("ResolveBinary = %q, want an error when no sh is on PATH", got)
+	}
+	if cmd, err := New().GetLaunchCommand(context.Background(), ports.LaunchConfig{}); err == nil {
+		t.Fatalf("GetLaunchCommand = %#v, want an error when no sh is on PATH", cmd)
 	}
 }
 

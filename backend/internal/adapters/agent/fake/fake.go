@@ -78,7 +78,15 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, _ ports.LaunchConfig) (cm
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return []string{"sh", "-lc", timelineScript(phaseSleep())}, nil
+	// Launch via the RESOLVED shell path, not a bare "sh". Manager.Spawn validates
+	// argv[0] with exec.LookPath, so using the same path ResolveBinary reported
+	// keeps "catalog says installed" and "spawn can launch it" in lockstep — and a
+	// stripped PATH / Windows (no sh) fails here at preflight, not mid-spawn.
+	sh, err := p.ResolveBinary(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return []string{sh, "-lc", timelineScript(phaseSleep())}, nil
 }
 
 // AuthStatus reports authorized unconditionally: the fake needs no credentials.
@@ -92,19 +100,20 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 }
 
 // ResolveBinary satisfies ports.AgentBinaryResolver. The fake harness launches
-// via the system shell (`sh -lc`), which is always present, so it resolves to
-// the shell path. This makes the agent catalog report `fake` as installed, so
-// `ao spawn --agent fake` passes CLI preflight without --skip-agent-check.
+// via the system shell (`sh -lc`), so it resolves to sh's actual path on PATH.
+// When no runnable sh exists (Windows, a stripped-down PATH), it returns an
+// error so the agent catalog reports `fake` as NOT installed and CLI preflight
+// fails cleanly — rather than reporting installed via a hard-coded /bin/sh and
+// then failing later in Manager.Spawn's argv[0] lookup.
 func (p *Plugin) ResolveBinary(ctx context.Context) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	if path, err := exec.LookPath("sh"); err == nil {
-		return path, nil
+	path, err := exec.LookPath("sh")
+	if err != nil {
+		return "", fmt.Errorf("fake harness requires a POSIX shell (sh) on PATH: %w", err)
 	}
-	// sh is part of the POSIX base system; fall back to the conventional path
-	// rather than failing the catalog check on an unusual PATH.
-	return "/bin/sh", nil
+	return path, nil
 }
 
 // DeriveActivityState maps a fake hook sub-command name onto an AO activity
