@@ -39,7 +39,7 @@ export function LandingVideo() {
 					>
 						{playing ? (
 							<iframe
-								src={`https://player.mux.com/${muxPlaybackId}?autoplay=1&metadata-video-title=${encodedTitle}&video-title=${encodedTitle}`}
+								src={`https://player.mux.com/${muxPlaybackId}?autoplay=true&metadata-video-title=${encodedTitle}&video-title=${encodedTitle}`}
 								allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture"
 								allowFullScreen
 								className="absolute inset-0 h-full w-full border-none"
