@@ -20,6 +20,9 @@ import (
 type sessionStore interface {
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
 	UpdateSession(ctx context.Context, rec domain.SessionRecord) error
+	// ListSessions returns every session in a project. The reducer reads it to
+	// find the project's active orchestrator when a worker goes idle.
+	ListSessions(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error)
 	// ListPRsBySession returns every PR row tracked for the session. The
 	// reducer reads it to apply the multi-PR completion rule (terminate only
 	// when no open PR remains and at least one merged) and to suppress
@@ -221,12 +224,70 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		}
 	}
 	waitingEvents := m.waitingInputEvents(next, prevState, prevAt, now)
+	workerWentIdle := crossedToIdle(prevState, next)
 	m.mu.Unlock()
 	for _, ev := range waitingEvents {
 		m.emitTelemetry(ctx, ev)
 	}
 	m.emitNotification(ctx, intent)
+	if workerWentIdle {
+		m.notifyOrchestratorWorkerIdle(ctx, next)
+	}
 	return nil
+}
+
+// crossedToIdle reports a worker finishing a turn: an active->idle transition on
+// a live worker session, which is AO's "this worker may be done" signal. Gating
+// on active (not merely non-idle) skips the spawn-time idle seed and
+// waiting_input->idle demotions.
+func crossedToIdle(prev domain.ActivityState, next domain.SessionRecord) bool {
+	return next.Kind == domain.KindWorker &&
+		prev == domain.ActivityActive &&
+		next.Activity.State == domain.ActivityIdle &&
+		!next.IsTerminated
+}
+
+// notifyOrchestratorWorkerIdle wakes the project's active orchestrator when one
+// of its workers goes idle, so it reports completion to the human instead of
+// waiting to be asked. Best-effort and non-fatal to the activity write: a
+// missing orchestrator, or a guard-suppressed paste (orchestrator blocked or
+// awaiting the user), is a silent no-op.
+func (m *Manager) notifyOrchestratorWorkerIdle(ctx context.Context, worker domain.SessionRecord) {
+	if m.guard == nil {
+		return
+	}
+	orchID, ok, err := m.activeOrchestrator(ctx, worker.ProjectID)
+	if err != nil {
+		slog.Default().Error("lifecycle: find orchestrator for idle worker", "worker", worker.ID, "err", err)
+		return
+	}
+	if !ok || orchID == worker.ID {
+		return
+	}
+	if _, err := m.guard.Nudge(ctx, orchID, workerIdleNudgeMessage(worker)); err != nil {
+		slog.Default().Error("lifecycle: nudge orchestrator on worker idle", "worker", worker.ID, "orchestrator", orchID, "err", err)
+	}
+}
+
+func (m *Manager) activeOrchestrator(ctx context.Context, project domain.ProjectID) (domain.SessionID, bool, error) {
+	recs, err := m.store.ListSessions(ctx, project)
+	if err != nil {
+		return "", false, err
+	}
+	for _, rec := range recs {
+		if rec.Kind == domain.KindOrchestrator && !rec.IsTerminated {
+			return rec.ID, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+func workerIdleNudgeMessage(worker domain.SessionRecord) string {
+	label := string(worker.ID)
+	if name := strings.TrimSpace(domain.SanitizeControlChars(worker.DisplayName)); name != "" {
+		label = fmt.Sprintf("%s (%q)", worker.ID, name)
+	}
+	return fmt.Sprintf("[AO] Worker %s has gone idle and may be done. Inspect it with `ao session get %s`, then report its status and any PR to the human. If it needs more work, redirect it with `ao send`.", label, worker.ID)
 }
 
 // toolFlight tracks one session's in-flight tool executions and the pending
