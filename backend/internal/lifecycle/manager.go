@@ -36,6 +36,14 @@ type notificationSink interface {
 	Notify(ctx context.Context, intent ports.NotificationIntent) error
 }
 
+// pipelineMergeGate is the optional one-directional coupling to the pipelines
+// service: lifecycle asks the pipeline package whether a settled run blocks a
+// PR's merge; the pipeline package never imports lifecycle. Nil (pipelines off
+// or no manager) makes the merge-readiness gate a no-op.
+type pipelineMergeGate interface {
+	PRBlocksMerge(ctx context.Context, projectID domain.ProjectID, prURL, headSHA string) (bool, error)
+}
+
 // Option customizes a Manager.
 type Option func(*Manager)
 
@@ -58,6 +66,9 @@ type Manager struct {
 	// nudges become no-ops but the reducer still runs.
 	guard         *sessionguard.Guard
 	notifications notificationSink
+	// pipelineGate is set post-construction (SetPipelineMergeGate) only when the
+	// pipelines subsystem is enabled; nil otherwise. Guarded by mu.
+	pipelineGate pipelineMergeGate
 
 	mu        sync.Mutex
 	window    time.Duration
@@ -84,6 +95,16 @@ func New(store sessionStore, messenger ports.AgentMessenger, opts ...Option) *Ma
 		opt(m)
 	}
 	return m
+}
+
+// SetPipelineMergeGate wires the pipelines merge-readiness gate after
+// construction. The daemon calls it only when the pipelines subsystem is enabled
+// (the gate is the pipeline service); left unset, the readiness path never
+// consults pipelines. A nil gate resets to the no-op behavior.
+func (m *Manager) SetPipelineMergeGate(gate pipelineMergeGate) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.pipelineGate = gate
 }
 
 func (m *Manager) mutate(ctx context.Context, id domain.SessionID, fn func(domain.SessionRecord, time.Time) (domain.SessionRecord, bool)) error {

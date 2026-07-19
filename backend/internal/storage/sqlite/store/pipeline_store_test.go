@@ -390,6 +390,64 @@ func TestPipelineRunListFilterAndOrder(t *testing.T) {
 	}
 }
 
+// TestPipelineRunBlocksMergePersistAndQuery covers the BlocksMerge persist +
+// hydrate round-trip and the LatestSettledPipelineRunByPR readiness query: it
+// returns the newest SETTLED run for a PR (ignoring running runs and other PRs),
+// so a newer settled run clears an older block.
+func TestPipelineRunBlocksMergePersistAndQuery(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	base := time.Now().UTC().Truncate(time.Second)
+	const prURL = "https://github.com/o/r/pull/7"
+
+	mk := func(id string, state pipeline.LoopStateName, prURLVal, headSHA string, blocks bool, createdAt time.Time) {
+		run := pipeline.RunState{
+			RunID: pipeline.RunID(id), PipelineID: "pl-review", PipelineName: "review", SessionID: "mer-1",
+			PipelineConfigSnapshot: samplePipeline("review"),
+			HeadSHA:                headSHA,
+			Context:                pipeline.RunContext{PRURL: prURLVal, HeadSHA: headSHA},
+			LoopState:              state,
+			BlocksMerge:            blocks,
+			Stages:                 map[string]pipeline.StageState{},
+			CreatedAt:              createdAt, UpdatedAt: createdAt,
+		}
+		if err := s.SavePipelineRun(ctx, "mer", run); err != nil {
+			t.Fatalf("save %s: %v", id, err)
+		}
+	}
+
+	// Oldest settled run for the PR blocks merge on sha1.
+	mk("r1", pipeline.LoopStalled, prURL, "sha1", true, base)
+	// Round-trip the BlocksMerge bit through the store.
+	if got, ok, err := s.GetPipelineRun(ctx, "r1"); err != nil || !ok || !got.BlocksMerge {
+		t.Fatalf("BlocksMerge round-trip: ok=%v err=%v blocks=%v", ok, err, got.BlocksMerge)
+	}
+
+	latest, ok, err := s.LatestSettledPipelineRunByPR(ctx, "mer", prURL)
+	if err != nil || !ok || latest.RunID != "r1" || !latest.BlocksMerge {
+		t.Fatalf("latest settled = %s ok=%v err=%v blocks=%v, want r1/true", latest.RunID, ok, err, latest.BlocksMerge)
+	}
+
+	// A running run on a newer SHA is not settled and must be ignored.
+	mk("r2", pipeline.LoopRunning, prURL, "sha2", false, base.Add(time.Minute))
+	if latest, _, _ := s.LatestSettledPipelineRunByPR(ctx, "mer", prURL); latest.RunID != "r1" {
+		t.Fatalf("running run leaked into settled query: got %s", latest.RunID)
+	}
+
+	// A newer SETTLED run that does not block clears the block.
+	mk("r3", pipeline.LoopDone, prURL, "sha2", false, base.Add(2*time.Minute))
+	latest, ok, err = s.LatestSettledPipelineRunByPR(ctx, "mer", prURL)
+	if err != nil || !ok || latest.RunID != "r3" || latest.BlocksMerge {
+		t.Fatalf("newest settled = %s blocks=%v, want r3/false", latest.RunID, latest.BlocksMerge)
+	}
+
+	// A different PR with no settled run returns no opinion.
+	if _, ok, _ := s.LatestSettledPipelineRunByPR(ctx, "mer", "https://github.com/o/r/pull/999"); ok {
+		t.Fatal("unknown PR should have no settled run")
+	}
+}
+
 func runIDs(runs []pipeline.RunState) []pipeline.RunID {
 	out := make([]pipeline.RunID, 0, len(runs))
 	for _, r := range runs {

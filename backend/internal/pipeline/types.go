@@ -616,6 +616,15 @@ type RunState struct {
 	TerminationReason RunTerminationReason `json:"terminationReason,omitempty"`
 	LoopRounds        int                  `json:"loopRounds"`
 
+	// BlocksMerge is the terminal-time decision of whether this run blocks the
+	// PR from merging. It is evaluated once, when the run reaches a terminal
+	// loop state (see terminateRunFromState): true when a finally-failed stage's
+	// policy opts into blocking, or the exitPredicates.blocksMerge predicate is
+	// true. Runs superseded by an outdated/cancel/config-change termination never
+	// block. The lifecycle merge-readiness path consults this on the most recent
+	// settled run matching the PR (by URL + head SHA).
+	BlocksMerge bool `json:"blocksMerge,omitempty"`
+
 	// Stages is keyed by stage name. v1 has at most one entry per stage.
 	Stages map[string]StageState `json:"stages"`
 

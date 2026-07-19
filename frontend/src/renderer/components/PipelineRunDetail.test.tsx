@@ -55,6 +55,7 @@ function detail(overrides: Partial<RunDetail>): RunDetail {
 		stageCount: 1,
 		stageStatuses: { review: "running" },
 		hasOpenFindings: false,
+		blocksMerge: false,
 		findings: [],
 		stages: [],
 		createdAt: "2026-07-15T00:00:00Z",

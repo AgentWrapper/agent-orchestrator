@@ -39,6 +39,7 @@ type Store interface {
 
 	ListPipelineRuns(ctx context.Context, projectID domain.ProjectID, filter pipeline.RunFilter) ([]pipeline.RunState, error)
 	GetPipelineRun(ctx context.Context, id pipeline.RunID) (pipeline.RunState, bool, error)
+	LatestSettledPipelineRunByPR(ctx context.Context, projectID domain.ProjectID, prURL string) (pipeline.RunState, bool, error)
 	GetPipelineArtifact(ctx context.Context, id pipeline.ArtifactID) (pipeline.Artifact, bool, error)
 }
 
@@ -99,6 +100,13 @@ type Manager interface {
 	ResumeRun(ctx context.Context, projectID domain.ProjectID, id pipeline.RunID) (pipeline.RunState, error)
 	TriggerRun(ctx context.Context, projectID domain.ProjectID, in TriggerInput) (pipeline.RunID, error)
 	GetArtifact(ctx context.Context, id pipeline.ArtifactID) (pipeline.Artifact, error)
+
+	// PRBlocksMerge reports whether the most recent settled pipeline run for a
+	// PR blocks it from merging. It is the read side of the lifecycle
+	// merge-readiness gate. It returns false (no opinion) when the PR has no
+	// settled run, the latest settled run's head SHA is stale relative to the
+	// PR's current head, or either argument is empty.
+	PRBlocksMerge(ctx context.Context, projectID domain.ProjectID, prURL, headSHA string) (bool, error)
 }
 
 // Service is the concrete Manager over a Store + Engines.
@@ -392,6 +400,25 @@ func (s *Service) resolveDefinition(ctx context.Context, projectID domain.Projec
 	}
 	return pipeline.Definition{}, apierr.NotFound("PIPELINE_NOT_FOUND",
 		fmt.Sprintf("no pipeline definition %q in this project", ref))
+}
+
+// PRBlocksMerge implements the merge-readiness gate. It looks up the most recent
+// settled run for the PR and blocks only when that run is fresh (its head SHA
+// equals the PR's current head) and its terminal decision was BlocksMerge. Any
+// other case, no settled run, a stale-SHA run, or empty arguments, is treated as
+// no opinion (false) so pipelines never fabricate a block.
+func (s *Service) PRBlocksMerge(ctx context.Context, projectID domain.ProjectID, prURL, headSHA string) (bool, error) {
+	if prURL == "" || headSHA == "" {
+		return false, nil
+	}
+	run, ok, err := s.store.LatestSettledPipelineRunByPR(ctx, projectID, prURL)
+	if err != nil || !ok {
+		return false, err
+	}
+	if run.HeadSHA != headSHA {
+		return false, nil
+	}
+	return run.BlocksMerge, nil
 }
 
 // ---------------------------------------------------------------------------

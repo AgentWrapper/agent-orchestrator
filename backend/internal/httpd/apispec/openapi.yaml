@@ -3054,6 +3054,8 @@ components:
       type: object
     PipelineRunDetail:
       properties:
+        blocksMerge:
+          type: boolean
         createdAt:
           format: date-time
           type: string
@@ -3105,6 +3107,7 @@ components:
       - stageCount
       - stageStatuses
       - hasOpenFindings
+      - blocksMerge
       - createdAt
       - updatedAt
       - stages
@@ -3119,6 +3122,8 @@ components:
       type: object
     PipelineRunSummary:
       properties:
+        blocksMerge:
+          type: boolean
         createdAt:
           format: date-time
           type: string
@@ -3162,6 +3167,7 @@ components:
       - stageCount
       - stageStatuses
       - hasOpenFindings
+      - blocksMerge
       - createdAt
       - updatedAt
       type: object

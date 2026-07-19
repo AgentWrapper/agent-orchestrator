@@ -349,3 +349,55 @@ func TestTriggerUnknownRefNotFound(t *testing.T) {
 		t.Fatalf("err = %v, want not-found apierr", err)
 	}
 }
+
+// TestPRBlocksMerge covers the merge-readiness gate: it blocks only when the
+// latest settled run for the PR is fresh (its head SHA matches the PR head) and
+// its terminal decision was BlocksMerge; a stale-SHA run, no settled run, a
+// newer clearing run, or empty inputs are all no opinion.
+func TestPRBlocksMerge(t *testing.T) {
+	ctx := context.Background()
+	svc, _, store, _ := newHarness(t)
+	const prURL = "https://github.com/o/r/pull/9"
+	base := time.Now().UTC().Truncate(time.Second)
+
+	save := func(id string, state pipeline.LoopStateName, headSHA string, blocks bool, at time.Time) {
+		run := pipeline.RunState{
+			RunID: pipeline.RunID(id), PipelineID: "pl-review", PipelineName: "review", SessionID: "mer-1",
+			HeadSHA: headSHA, Context: pipeline.RunContext{PRURL: prURL, HeadSHA: headSHA},
+			LoopState: state, BlocksMerge: blocks, Stages: map[string]pipeline.StageState{},
+			CreatedAt: at, UpdatedAt: at,
+		}
+		if err := store.SavePipelineRun(ctx, "mer", run); err != nil {
+			t.Fatalf("save %s: %v", id, err)
+		}
+	}
+	check := func(headSHA string, want bool) {
+		t.Helper()
+		got, err := svc.PRBlocksMerge(ctx, "mer", prURL, headSHA)
+		if err != nil {
+			t.Fatalf("PRBlocksMerge: %v", err)
+		}
+		if got != want {
+			t.Fatalf("PRBlocksMerge(sha=%s) = %v, want %v", headSHA, got, want)
+		}
+	}
+
+	// No settled run yet: no opinion.
+	check("sha1", false)
+
+	// Latest settled run blocks on sha1.
+	save("r1", pipeline.LoopStalled, "sha1", true, base)
+	check("sha1", true)
+	// Same blocking run, but the PR has advanced to sha2: stale decision, no opinion.
+	check("sha2", false)
+
+	// A newer settled run on sha2 that does not block clears the veto.
+	save("r2", pipeline.LoopDone, "sha2", false, base.Add(time.Minute))
+	check("sha2", false)
+
+	// Empty inputs are always no opinion.
+	check("", false)
+	if got, _ := svc.PRBlocksMerge(ctx, "mer", "", "sha1"); got {
+		t.Fatal("empty prURL should be no opinion")
+	}
+}

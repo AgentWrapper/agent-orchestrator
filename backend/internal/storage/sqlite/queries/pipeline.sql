@@ -30,8 +30,8 @@ DELETE FROM pipeline_definitions WHERE id = ?;
 INSERT INTO pipeline_runs (
     id, project_id, pipeline_id, pipeline_name, session_id, head_sha,
     loop_state, termination_reason, loop_rounds, config_snapshot, fingerprints,
-    created_at, updated_at, context_json
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    created_at, updated_at, context_json, blocks_merge
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (id) DO UPDATE SET
     pipeline_name = excluded.pipeline_name,
     session_id = excluded.session_id,
@@ -42,24 +42,40 @@ ON CONFLICT (id) DO UPDATE SET
     config_snapshot = excluded.config_snapshot,
     fingerprints = excluded.fingerprints,
     context_json = excluded.context_json,
+    blocks_merge = excluded.blocks_merge,
     updated_at = excluded.updated_at;
 
 -- name: GetPipelineRun :one
 SELECT id, project_id, pipeline_id, pipeline_name, session_id, head_sha,
        loop_state, termination_reason, loop_rounds, config_snapshot, fingerprints,
-       created_at, updated_at, context_json
+       created_at, updated_at, context_json, blocks_merge
 FROM pipeline_runs WHERE id = ?;
 
 -- name: ListPipelineRuns :many
 SELECT id, project_id, pipeline_id, pipeline_name, session_id, head_sha,
        loop_state, termination_reason, loop_rounds, config_snapshot, fingerprints,
-       created_at, updated_at, context_json
+       created_at, updated_at, context_json, blocks_merge
 FROM pipeline_runs
 WHERE project_id = ?
   AND (sqlc.narg('pipeline_name') IS NULL OR pipeline_name = sqlc.narg('pipeline_name'))
   AND (sqlc.narg('loop_state') IS NULL OR loop_state = sqlc.narg('loop_state'))
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg('lim');
+
+-- name: GetLatestSettledPipelineRunByPR :one
+-- Latest settled (done or stalled) run for a PR, matched by the RunContext PR
+-- URL stored in context_json. The lifecycle merge-readiness path compares the
+-- returned run's head SHA against the PR's current head to decide whether the
+-- decision is fresh; a stale-SHA run is treated as no opinion by the caller.
+SELECT id, project_id, pipeline_id, pipeline_name, session_id, head_sha,
+       loop_state, termination_reason, loop_rounds, config_snapshot, fingerprints,
+       created_at, updated_at, context_json, blocks_merge
+FROM pipeline_runs
+WHERE project_id = ?
+  AND json_extract(context_json, '$.prUrl') = sqlc.arg('pr_url')
+  AND loop_state IN ('done', 'stalled')
+ORDER BY created_at DESC, id DESC
+LIMIT 1;
 
 -- Pipeline stage runs --------------------------------------------------------
 

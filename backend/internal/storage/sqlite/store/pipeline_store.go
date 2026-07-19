@@ -193,6 +193,29 @@ func (s *Store) ListPipelineRuns(ctx context.Context, projectID domain.ProjectID
 	return out, nil
 }
 
+// LatestSettledPipelineRunByPR returns the most recent settled (done or stalled)
+// run for a PR, matched by the RunContext PR URL. The run is fully reconstructed.
+// It is the read side of the lifecycle merge-readiness gate: the caller compares
+// the run's head SHA against the PR's current head and consults BlocksMerge. No
+// settled run for the PR returns (zero, false, nil).
+func (s *Store) LatestSettledPipelineRunByPR(ctx context.Context, projectID domain.ProjectID, prURL string) (pipeline.RunState, bool, error) {
+	if prURL == "" {
+		return pipeline.RunState{}, false, nil
+	}
+	row, err := s.qr.GetLatestSettledPipelineRunByPR(ctx, gen.GetLatestSettledPipelineRunByPRParams{ProjectID: projectID, PRURL: prURL})
+	if errors.Is(err, sql.ErrNoRows) {
+		return pipeline.RunState{}, false, nil
+	}
+	if err != nil {
+		return pipeline.RunState{}, false, fmt.Errorf("latest settled pipeline run for %s: %w", prURL, err)
+	}
+	run, err := hydrateRun(ctx, s.qr, row)
+	if err != nil {
+		return pipeline.RunState{}, false, err
+	}
+	return run, true, nil
+}
+
 // ---------------------------------------------------------------------------
 // Artifacts
 // ---------------------------------------------------------------------------
@@ -318,6 +341,7 @@ func hydrateRun(ctx context.Context, q *gen.Queries, row gen.PipelineRun) (pipel
 		LoopState:              pipeline.LoopStateName(row.LoopState),
 		TerminationReason:      pipeline.RunTerminationReason(row.TerminationReason),
 		LoopRounds:             int(row.LoopRounds),
+		BlocksMerge:            row.BlocksMerge != 0,
 		Stages:                 stages,
 		Findings:               findings,
 		Fingerprints:           fingerprints,
@@ -376,9 +400,18 @@ func runUpsertParams(projectID domain.ProjectID, run pipeline.RunState) (gen.Ups
 		ConfigSnapshot:    string(cfg),
 		Fingerprints:      string(fpJSON),
 		ContextJson:       string(ctxJSON),
+		BlocksMerge:       boolToInt64(run.BlocksMerge),
 		CreatedAt:         run.CreatedAt,
 		UpdatedAt:         run.UpdatedAt,
 	}, nil
+}
+
+// boolToInt64 maps a Go bool onto the SQLite integer-bool column convention.
+func boolToInt64(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func stageUpsertParams(projectID domain.ProjectID, runID, stageName string, st pipeline.StageState) gen.UpsertPipelineStageRunParams {

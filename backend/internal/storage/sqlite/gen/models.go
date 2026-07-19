@@ -167,6 +167,7 @@ type PipelineRun struct {
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
 	ContextJson       string
+	BlocksMerge       int64
 }
 
 type PipelineStageRun struct {

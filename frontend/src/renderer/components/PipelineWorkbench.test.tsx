@@ -23,6 +23,7 @@ function run(overrides: Partial<PipelineRunSummary> & { runId: string }): Pipeli
 		stageCount: 2,
 		stageStatuses: { lint: "succeeded", test: "running" },
 		hasOpenFindings: false,
+		blocksMerge: false,
 		createdAt: "2026-07-15T00:00:00Z",
 		updatedAt: "2026-07-15T00:00:00Z",
 		projectId: "proj-1",

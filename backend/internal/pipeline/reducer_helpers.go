@@ -184,6 +184,7 @@ func terminateRunFromState(state EngineState, run RunState, reason RunTerminatio
 	finalRun.Stages = terminatedStages
 	finalRun.LoopState = finalLoopState
 	finalRun.TerminationReason = reason
+	finalRun.BlocksMerge = runBlocksMerge(state, run, reason)
 	finalRun.UpdatedAt = now
 
 	key := LoopKeyFor(run.Context, run.SessionID, run.PipelineName, run.RunID)
@@ -221,7 +222,7 @@ func terminateRunFromState(state EngineState, run RunState, reason RunTerminatio
 		HistorySummaries: histories,
 	}
 
-	effects := make([]Effect, 0, len(preceding)+len(cancelEffects)+3)
+	effects := make([]Effect, 0, len(preceding)+len(cancelEffects)+4)
 	effects = append(effects, preceding...)
 	effects = append(effects, cancelEffects...)
 	effects = append(effects,
@@ -237,8 +238,52 @@ func terminateRunFromState(state EngineState, run RunState, reason RunTerminatio
 			},
 		},
 	)
+	if finalRun.BlocksMerge {
+		effects = append(effects, EmitObservation{
+			Name: "pipeline.run.blocks_merge",
+			Data: map[string]any{
+				"runId":        run.RunID,
+				"pipelineName": run.PipelineName,
+				"prUrl":        run.Context.PRURL,
+				"headSha":      run.HeadSHA,
+			},
+		})
+	}
 
 	return nextState, effects
+}
+
+// runBlocksMerge is the terminal-time merge-blocking decision for a run. Runs
+// superseded by a later run (outdated), cancelled by hand, or terminated by a
+// config change never block, since they were replaced rather than judged. For
+// every other termination, a finally-failed stage whose policy opts into
+// blocking blocks merge, and otherwise the exitPredicates.blocksMerge predicate
+// (when configured) is evaluated with the same PredicateCtx used for done and
+// stalled.
+func runBlocksMerge(state EngineState, run RunState, reason RunTerminationReason) bool {
+	switch reason {
+	case TerminationOutdated, TerminationManualCancel, TerminationConfigChange:
+		return false
+	}
+	for _, stage := range run.PipelineConfigSnapshot.Stages {
+		st, ok := run.Stages[stage.Name]
+		if !ok || st.Status != StageStatusFailed {
+			continue
+		}
+		if stage.Policy != nil && stage.Policy.BlocksMerge != nil && *stage.Policy.BlocksMerge {
+			return true
+		}
+	}
+	exits := run.PipelineConfigSnapshot.ExitPredicates
+	if exits == nil || exits.BlocksMerge == nil {
+		return false
+	}
+	ctx := PredicateCtx{
+		Run:      &run,
+		History:  state.HistorySummaries[LoopKeyFor(run.Context, run.SessionID, run.PipelineName, run.RunID)],
+		Findings: run.Findings,
+	}
+	return Evaluate(*exits.BlocksMerge, ctx)
 }
 
 // terminateRun is terminateRunFromState with no preceding effects.

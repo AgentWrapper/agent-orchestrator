@@ -1440,3 +1440,79 @@ func TestSCMObservation_ReadyToMergeSuppressedWhileWaitingInput(t *testing.T) {
 		t.Fatalf("waiting-input session emitted ready notification: %+v", sink.intents)
 	}
 }
+
+// fakeMergeGate records the merge-readiness gate call and returns a scripted
+// verdict, so the lifecycle test can assert both the suppression behavior and
+// the exact (project, prURL, headSHA) the gate is asked about.
+type fakeMergeGate struct {
+	blocked    bool
+	err        error
+	calls      int
+	gotProject domain.ProjectID
+	gotPR      string
+	gotSHA     string
+}
+
+func (f *fakeMergeGate) PRBlocksMerge(_ context.Context, p domain.ProjectID, prURL, headSHA string) (bool, error) {
+	f.calls++
+	f.gotProject, f.gotPR, f.gotSHA = p, prURL, headSHA
+	return f.blocked, f.err
+}
+
+func TestSCMObservation_PipelineMergeGate(t *testing.T) {
+	ready := ports.SCMObservation{
+		Fetched:      true,
+		PR:           ports.SCMPRObservation{URL: "https://github.com/o/r/pull/1", Number: 1, Title: "checkout", HeadSHA: "sha1"},
+		CI:           ports.SCMCIObservation{Summary: string(domain.CIPassing)},
+		Review:       ports.SCMReviewObservation{Decision: string(domain.ReviewApproved)},
+		Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeMergeable)},
+	}
+
+	t.Run("blocking pipeline suppresses ready-to-merge", func(t *testing.T) {
+		st := newFakeStore()
+		sink := &fakeNotificationSink{}
+		m := New(st, nil, WithNotificationSink(sink))
+		gate := &fakeMergeGate{blocked: true}
+		m.SetPipelineMergeGate(gate)
+		st.sessions["mer-1"] = working("mer-1")
+
+		if err := m.ApplySCMObservation(ctx, "mer-1", ready); err != nil {
+			t.Fatal(err)
+		}
+		if len(sink.intents) != 0 {
+			t.Fatalf("blocking pipeline should suppress ready-to-merge, got %+v", sink.intents)
+		}
+		if gate.calls != 1 || gate.gotProject != "mer" || gate.gotPR != ready.PR.URL || gate.gotSHA != "sha1" {
+			t.Fatalf("gate call = %+v, want one call for (mer, %s, sha1)", gate, ready.PR.URL)
+		}
+	})
+
+	t.Run("non-blocking pipeline leaves ready-to-merge", func(t *testing.T) {
+		st := newFakeStore()
+		sink := &fakeNotificationSink{}
+		m := New(st, nil, WithNotificationSink(sink))
+		m.SetPipelineMergeGate(&fakeMergeGate{blocked: false})
+		st.sessions["mer-1"] = working("mer-1")
+
+		if err := m.ApplySCMObservation(ctx, "mer-1", ready); err != nil {
+			t.Fatal(err)
+		}
+		if len(sink.intents) != 1 || sink.intents[0].Type != domain.NotificationReadyToMerge {
+			t.Fatalf("non-blocking pipeline should keep ready-to-merge, got %+v", sink.intents)
+		}
+	})
+
+	t.Run("nil gate (pipelines off) leaves ready-to-merge", func(t *testing.T) {
+		st := newFakeStore()
+		sink := &fakeNotificationSink{}
+		m := New(st, nil, WithNotificationSink(sink))
+		st.sessions["mer-1"] = working("mer-1")
+
+		if err := m.ApplySCMObservation(ctx, "mer-1", ready); err != nil {
+			t.Fatal(err)
+		}
+		if len(sink.intents) != 1 || sink.intents[0].Type != domain.NotificationReadyToMerge {
+			t.Fatalf("nil gate should not veto ready-to-merge, got %+v", sink.intents)
+		}
+	})
+}

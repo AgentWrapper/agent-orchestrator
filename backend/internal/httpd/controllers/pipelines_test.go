@@ -112,6 +112,10 @@ func (f *fakePipelineService) GetArtifact(context.Context, pipeline.ArtifactID) 
 	return f.artifact, nil
 }
 
+func (f *fakePipelineService) PRBlocksMerge(context.Context, domain.ProjectID, string, string) (bool, error) {
+	return false, nil
+}
+
 func newPipelineTestServer(t *testing.T, svc pipelinesvc.Manager) *httptest.Server {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -130,6 +134,7 @@ func sampleRun() pipeline.RunState {
 		LoopState:    pipeline.LoopRunning,
 		LoopRounds:   1,
 		HeadSHA:      "sha1",
+		BlocksMerge:  true,
 		Stages: map[string]pipeline.StageState{
 			"review": {StageRunID: "sr-1", Status: pipeline.StageStatusRunning, Attempt: 1, Artifacts: []pipeline.ArtifactID{"a-1"}},
 		},
@@ -280,7 +285,7 @@ func TestPipelinesListRuns_HappyPassesFilter(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("status = %d body=%s", status, body)
 	}
-	if !contains(body, `"runs"`) || !contains(body, `"run-1"`) || !contains(body, `"hasOpenFindings":true`) {
+	if !contains(body, `"runs"`) || !contains(body, `"run-1"`) || !contains(body, `"hasOpenFindings":true`) || !contains(body, `"blocksMerge":true`) {
 		t.Fatalf("body missing run summary: %s", body)
 	}
 	if svc.lastFilter.PipelineName != "review" || svc.lastFilter.Status != pipeline.LoopRunning || svc.lastFilter.Limit != 5 {

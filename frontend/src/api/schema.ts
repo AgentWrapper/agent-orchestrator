@@ -1111,6 +1111,7 @@ export interface components {
             yamlSource: string;
         };
         PipelineRunDetail: {
+            blocksMerge: boolean;
             /** Format: date-time */
             createdAt: string;
             findings: components["schemas"]["PipelineArtifact"][];
@@ -1135,6 +1136,7 @@ export interface components {
             run: components["schemas"]["PipelineRunDetail"];
         };
         PipelineRunSummary: {
+            blocksMerge: boolean;
             /** Format: date-time */
             createdAt: string;
             hasOpenFindings: boolean;

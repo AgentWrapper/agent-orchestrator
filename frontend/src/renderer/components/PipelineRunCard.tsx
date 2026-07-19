@@ -2,6 +2,7 @@ import { cn } from "../lib/utils";
 import { formatTimeCompact } from "../lib/format-time";
 import { loopStateTone, shortSha, stageStatusDotTone } from "../lib/pipeline-display";
 import type { PipelineRunSummary } from "../hooks/usePipelineRuns";
+import { Badge } from "./ui/badge";
 
 // Card view of a single pipeline run in a Kanban column: pipeline name, run id,
 // session, loop rounds, per-stage status dots, artifact/findings hint, and a
@@ -20,6 +21,11 @@ export function PipelineRunCard({ run, onOpen }: { run: PipelineRunSummary; onOp
 		>
 			<div className="flex items-baseline gap-2">
 				<span className="truncate font-mono text-caption font-semibold text-foreground">{run.pipelineName}</span>
+				{run.blocksMerge && (
+					<Badge variant="error" className="shrink-0">
+						Blocks merge
+					</Badge>
+				)}
 				<span className={cn("ml-auto text-micro font-medium", loopStateTone(run.loopState))}>
 					rounds {run.loopRounds}
 				</span>

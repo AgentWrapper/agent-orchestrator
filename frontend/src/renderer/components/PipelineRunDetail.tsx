@@ -75,6 +75,7 @@ export function PipelineRunDetail({ runId, project }: { runId: string; project?:
 						<h1 className="truncate text-subtitle font-bold tracking-tight text-foreground">{run.pipelineName}</h1>
 						<span className={cn("text-caption font-semibold", loopStateTone(run.loopState))}>{run.loopState}</span>
 						{run.terminationReason && <span className="text-caption text-passive">· {run.terminationReason}</span>}
+						{run.blocksMerge && <Badge variant="error">Blocks merge</Badge>}
 					</div>
 					<p className="mt-0.5 truncate font-mono text-micro text-passive">
 						{run.runId} · session {run.sessionId || "—"} · {shortSha(run.headSha)} · {run.loopRounds} round

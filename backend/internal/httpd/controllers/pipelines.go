@@ -122,6 +122,7 @@ type PipelineRunSummary struct {
 	StageCount        int               `json:"stageCount"`
 	StageStatuses     map[string]string `json:"stageStatuses"`
 	HasOpenFindings   bool              `json:"hasOpenFindings"`
+	BlocksMerge       bool              `json:"blocksMerge"`
 	CreatedAt         time.Time         `json:"createdAt"`
 	UpdatedAt         time.Time         `json:"updatedAt"`
 }
@@ -499,6 +500,7 @@ func runSummary(run pipeline.RunState) PipelineRunSummary {
 		StageCount:        len(run.Stages),
 		StageStatuses:     statuses,
 		HasOpenFindings:   hasOpenFindings(run),
+		BlocksMerge:       run.BlocksMerge,
 		CreatedAt:         run.CreatedAt,
 		UpdatedAt:         run.UpdatedAt,
 	}

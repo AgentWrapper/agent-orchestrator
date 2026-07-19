@@ -147,6 +147,10 @@ func Run() error {
 	if resolvePipelinesEnabled(ctx, cfg, store, log) {
 		pipelineStk = startPipelineEngine(ctx, store, sessionSvc, cdcPipe.Broadcaster, log)
 		pipelinesSvc = pipelinesvc.New(store, pipelinesvc.SupervisorEngines(pipelineStk.supervisor))
+		// Let the lifecycle merge-readiness path veto a ready-to-merge PR whose
+		// latest settled pipeline run blocks merge. Only wired when pipelines are
+		// enabled, so the gate stays a no-op otherwise.
+		lcStack.LCM.SetPipelineMergeGate(pipelinesSvc)
 	}
 
 	previewDone := preview.NewPoller(store, sessionSvc, "http://"+cfg.Addr(), preview.PollerConfig{Logger: log}).Start(ctx)

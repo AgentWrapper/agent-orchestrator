@@ -55,6 +55,50 @@ func (q *Queries) DeletePipelineDefinition(ctx context.Context, id string) (int6
 	return result.RowsAffected()
 }
 
+const getLatestSettledPipelineRunByPR = `-- name: GetLatestSettledPipelineRunByPR :one
+SELECT id, project_id, pipeline_id, pipeline_name, session_id, head_sha,
+       loop_state, termination_reason, loop_rounds, config_snapshot, fingerprints,
+       created_at, updated_at, context_json, blocks_merge
+FROM pipeline_runs
+WHERE project_id = ?
+  AND json_extract(context_json, '$.prUrl') = ?2
+  AND loop_state IN ('done', 'stalled')
+ORDER BY created_at DESC, id DESC
+LIMIT 1
+`
+
+type GetLatestSettledPipelineRunByPRParams struct {
+	ProjectID domain.ProjectID
+	PRURL     string
+}
+
+// Latest settled (done or stalled) run for a PR, matched by the RunContext PR
+// URL stored in context_json. The lifecycle merge-readiness path compares the
+// returned run's head SHA against the PR's current head to decide whether the
+// decision is fresh; a stale-SHA run is treated as no opinion by the caller.
+func (q *Queries) GetLatestSettledPipelineRunByPR(ctx context.Context, arg GetLatestSettledPipelineRunByPRParams) (PipelineRun, error) {
+	row := q.db.QueryRowContext(ctx, getLatestSettledPipelineRunByPR, arg.ProjectID, arg.PRURL)
+	var i PipelineRun
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.PipelineID,
+		&i.PipelineName,
+		&i.SessionID,
+		&i.HeadSha,
+		&i.LoopState,
+		&i.TerminationReason,
+		&i.LoopRounds,
+		&i.ConfigSnapshot,
+		&i.Fingerprints,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ContextJson,
+		&i.BlocksMerge,
+	)
+	return i, err
+}
+
 const getPipelineArtifact = `-- name: GetPipelineArtifact :one
 SELECT id, pipeline_run_id, project_id, stage_run_id, stage_name, kind,
        fingerprint, status, sent_to_agent_at, payload, created_at
@@ -128,7 +172,7 @@ func (q *Queries) GetPipelineDefinitionByName(ctx context.Context, arg GetPipeli
 const getPipelineRun = `-- name: GetPipelineRun :one
 SELECT id, project_id, pipeline_id, pipeline_name, session_id, head_sha,
        loop_state, termination_reason, loop_rounds, config_snapshot, fingerprints,
-       created_at, updated_at, context_json
+       created_at, updated_at, context_json, blocks_merge
 FROM pipeline_runs WHERE id = ?
 `
 
@@ -150,6 +194,7 @@ func (q *Queries) GetPipelineRun(ctx context.Context, id string) (PipelineRun, e
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ContextJson,
+		&i.BlocksMerge,
 	)
 	return i, err
 }
@@ -274,7 +319,7 @@ func (q *Queries) ListPipelineDefinitions(ctx context.Context, projectID domain.
 const listPipelineRuns = `-- name: ListPipelineRuns :many
 SELECT id, project_id, pipeline_id, pipeline_name, session_id, head_sha,
        loop_state, termination_reason, loop_rounds, config_snapshot, fingerprints,
-       created_at, updated_at, context_json
+       created_at, updated_at, context_json, blocks_merge
 FROM pipeline_runs
 WHERE project_id = ?
   AND (?2 IS NULL OR pipeline_name = ?2)
@@ -319,6 +364,7 @@ func (q *Queries) ListPipelineRuns(ctx context.Context, arg ListPipelineRunsPara
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.ContextJson,
+			&i.BlocksMerge,
 		); err != nil {
 			return nil, err
 		}
@@ -424,8 +470,8 @@ const upsertPipelineRun = `-- name: UpsertPipelineRun :exec
 INSERT INTO pipeline_runs (
     id, project_id, pipeline_id, pipeline_name, session_id, head_sha,
     loop_state, termination_reason, loop_rounds, config_snapshot, fingerprints,
-    created_at, updated_at, context_json
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    created_at, updated_at, context_json, blocks_merge
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (id) DO UPDATE SET
     pipeline_name = excluded.pipeline_name,
     session_id = excluded.session_id,
@@ -436,6 +482,7 @@ ON CONFLICT (id) DO UPDATE SET
     config_snapshot = excluded.config_snapshot,
     fingerprints = excluded.fingerprints,
     context_json = excluded.context_json,
+    blocks_merge = excluded.blocks_merge,
     updated_at = excluded.updated_at
 `
 
@@ -454,6 +501,7 @@ type UpsertPipelineRunParams struct {
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
 	ContextJson       string
+	BlocksMerge       int64
 }
 
 // Pipeline runs --------------------------------------------------------------
@@ -473,6 +521,7 @@ func (q *Queries) UpsertPipelineRun(ctx context.Context, arg UpsertPipelineRunPa
 		arg.CreatedAt,
 		arg.UpdatedAt,
 		arg.ContextJson,
+		arg.BlocksMerge,
 	)
 	return err
 }
