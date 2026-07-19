@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AlertCircle, CheckCircle2, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, Loader2, Pencil, Plus, Settings2, Trash2 } from "lucide-react";
 import { apiErrorMessage } from "../lib/api-client";
 import { formatTimeCompact } from "../lib/format-time";
 import {
@@ -17,6 +17,7 @@ import { usePipelineDraft, type PipelineDraftValidation } from "../hooks/usePipe
 import { useStageSelection } from "../hooks/useStageSelection";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { PipelineCanvas } from "./PipelineCanvas";
+import { PipelineSettingsModal } from "./PipelineSettingsModal";
 import { YamlEditor } from "./YamlEditor";
 import { Button } from "./ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
@@ -185,6 +186,7 @@ function DefinitionEditor({
 	// click, the stage inspector (V3) binds to the same stage name.
 	const selection = useStageSelection();
 	const [view, setView] = useState<ViewMode>("yaml");
+	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [issues, setIssues] = useState<PipelineValidationIssue[] | null>(null);
 	const [genericError, setGenericError] = useState<string | null>(null);
 
@@ -218,6 +220,10 @@ function DefinitionEditor({
 				</div>
 				<div className="flex shrink-0 items-center gap-3">
 					<ViewToggle value={view} onChange={setView} />
+					<Button size="sm" variant="ghost" onClick={() => setSettingsOpen(true)}>
+						<Settings2 className="size-icon-sm" aria-hidden="true" />
+						Settings
+					</Button>
 					<ValidityIndicator validation={validation} />
 					<Button size="sm" variant="ghost" onClick={onClose} disabled={isSaving}>
 						Cancel
@@ -250,6 +256,16 @@ function DefinitionEditor({
 					<YamlEditor value={yamlSource} onChange={setYamlSource} aria-label="Pipeline YAML" className="px-1 py-2" />
 				)}
 			</div>
+
+			<PipelineSettingsModal
+				open={settingsOpen}
+				value={draft}
+				onCancel={() => setSettingsOpen(false)}
+				onDone={(next) => {
+					setDraft(next);
+					setSettingsOpen(false);
+				}}
+			/>
 
 			{genericError && (
 				<div className="flex items-start gap-2 border-t border-destructive/40 bg-destructive/10 px-4.5 py-2.5 text-caption text-destructive">

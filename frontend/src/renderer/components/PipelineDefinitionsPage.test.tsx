@@ -129,6 +129,42 @@ describe("PipelineDefinitionsPage", () => {
 		expect(screen.getByLabelText("Pipeline YAML")).toBeInTheDocument();
 	});
 
+	it("opens the settings modal from the top bar and commits edits into the draft", async () => {
+		renderPage();
+		const user = userEvent.setup();
+
+		await user.click(await screen.findByRole("button", { name: "Edit" }));
+		await user.click(screen.getByRole("button", { name: "Settings" }));
+		expect(screen.getByText("Pipeline settings")).toBeInTheDocument();
+
+		const name = screen.getByRole("textbox", { name: "Pipeline name" });
+		await user.clear(name);
+		await user.type(name, "renamed");
+		await user.click(screen.getByRole("button", { name: "Done" }));
+
+		// Modal closed; Done reserialized the draft (normalized shape) into the
+		// YAML buffer.
+		expect(screen.queryByText("Pipeline settings")).not.toBeInTheDocument();
+		expect(screen.getByLabelText("Pipeline YAML")).toHaveValue(
+			"name: renamed\nstages:\n  - name: a\n    executor:\n      kind: agent\n  - name: b\n    executor:\n      kind: agent\n",
+		);
+	});
+
+	it("closes the settings modal on Cancel without touching the buffer", async () => {
+		renderPage();
+		const user = userEvent.setup();
+
+		await user.click(await screen.findByRole("button", { name: "Edit" }));
+		await user.click(screen.getByRole("button", { name: "Settings" }));
+		const name = screen.getByRole("textbox", { name: "Pipeline name" });
+		await user.clear(name);
+		await user.type(name, "scrapped");
+		await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
+
+		expect(screen.queryByText("Pipeline settings")).not.toBeInTheDocument();
+		expect(screen.getByLabelText("Pipeline YAML")).toHaveValue(TWO_STAGE_YAML);
+	});
+
 	it("saves the edited YAML buffer when updating an existing definition", async () => {
 		renderPage();
 		const user = userEvent.setup();
