@@ -10,16 +10,11 @@ type KeyboardShortcutsDialogProps = {
 function isMacPlatform(): boolean {
 	if (typeof navigator === "undefined") return false;
 	const platform =
-		(navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ??
-		navigator.platform;
+		(navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform;
 	return platform.toLowerCase().includes("mac");
 }
 
-export function KeyboardShortcutsDialog({
-	open,
-	onOpenChange,
-	isMac = isMacPlatform(),
-}: KeyboardShortcutsDialogProps) {
+export function KeyboardShortcutsDialog({ open, onOpenChange, isMac = isMacPlatform() }: KeyboardShortcutsDialogProps) {
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent className="max-h-[min(680px,calc(100svh-32px))] max-w-xl gap-0 overflow-hidden border-border bg-popover p-0 text-popover-foreground">
@@ -48,7 +43,10 @@ export function KeyboardShortcutsDialog({
 													<p className="mt-0.5 text-caption text-passive">{shortcut.context}</p>
 												) : null}
 											</div>
-											<div className="flex shrink-0 items-center gap-1" aria-label={shortcutKeys(shortcut, isMac).join("+")}>
+											<div
+												className="flex shrink-0 items-center gap-1"
+												aria-label={shortcutKeys(shortcut, isMac).join("+")}
+											>
 												{shortcutKeys(shortcut, isMac).map((key) => (
 													<kbd
 														className="inline-flex min-w-7 items-center justify-center rounded-sm border border-border-strong bg-surface px-1.5 py-1 font-mono text-caption font-medium text-muted-foreground shadow-sm"

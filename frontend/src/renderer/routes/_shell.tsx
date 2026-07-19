@@ -308,10 +308,7 @@ function ShellLayout() {
 		[scopedProjectId, requestNewTask, requestCreateProject],
 	);
 
-	useEffect(
-		() => aoBridge.app.onKeyboardShortcutsHelp(() => setIsKeyboardShortcutsOpen(true)),
-		[],
-	);
+	useEffect(() => aoBridge.app.onKeyboardShortcutsHelp(() => setIsKeyboardShortcutsOpen(true)), []);
 
 	return (
 		<ShellProvider value={{ daemonStatus, createProject, initializeProjectRepository }}>
