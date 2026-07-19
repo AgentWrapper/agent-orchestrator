@@ -127,6 +127,10 @@ func TestCommandBuilders(t *testing.T) {
 	if got, want := capturePaneArgs("sess-1", 10), []string{"capture-pane", "-t", "sess-1", "-p", "-S", "-10"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("capturePaneArgs = %#v, want %#v", got, want)
 	}
+	// show-options uses plain session-name targeting (no = prefix).
+	if got, want := exitedOptionArgs("sess-1"), []string{"show-options", "-v", "-p", "-t", "sess-1", "@ao_agent_exited"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("exitedOptionArgs = %#v, want %#v", got, want)
+	}
 }
 
 // -- session name sanitization --
@@ -189,7 +193,7 @@ func TestCreateIssuesNewSessionAndStatusOff(t *testing.T) {
 	// new-session, display-message cwd verification, set-option status,
 	// set-option mouse, set-option window-size, has-session (exit 0 = alive)
 	r, fr := newTestRuntime(0)
-	fr.outputs = [][]byte{nil, []byte("/tmp/ws\n"), nil, nil, nil, nil}
+	fr.outputs = [][]byte{nil, []byte("/tmp/ws\n"), nil, nil, nil, nil, nil}
 
 	h, err := r.Create(context.Background(), ports.RuntimeConfig{
 		SessionID:     "sess-1",
@@ -203,10 +207,11 @@ func TestCreateIssuesNewSessionAndStatusOff(t *testing.T) {
 	if h.ID != "sess-1" {
 		t.Fatalf("handle ID = %q, want sess-1", h.ID)
 	}
-	// Expect 6 calls: new-session, display-message cwd verification,
-	// set-option status, set-option mouse, set-option window-size, has-session.
-	if len(fr.calls) != 6 {
-		t.Fatalf("calls = %d, want 6", len(fr.calls))
+	// Expect 7 calls: new-session, display-message cwd verification,
+	// set-option status, set-option mouse, set-option window-size, has-session,
+	// show-options.
+	if len(fr.calls) != 7 {
+		t.Fatalf("calls = %d, want 7", len(fr.calls))
 	}
 
 	// Call 0: new-session
@@ -251,6 +256,12 @@ func TestCreateIssuesNewSessionAndStatusOff(t *testing.T) {
 	if got, want := fr.calls[5].args, hasSessionArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("call[5] = %#v, want %#v", got, want)
 	}
+
+	// Call 6: show-options @ao_agent_exited (checks pane option, plain
+	// session-name targeting, no = prefix).
+	if got, want := fr.calls[6].args, exitedOptionArgs("sess-1"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("call[6] = %#v, want %#v", got, want)
+	}
 }
 
 func TestCreateLaunchCommandContainsKeepAliveShell(t *testing.T) {
@@ -273,6 +284,9 @@ func TestCreateLaunchCommandContainsKeepAliveShell(t *testing.T) {
 	}
 	if !strings.HasPrefix(launchCmd, "cd '/tmp/ws' || exit; ") {
 		t.Fatalf("launch command missing cwd guard: %q", launchCmd)
+	}
+	if !strings.Contains(launchCmd, `@ao_agent_exited 1`) {
+		t.Fatalf("launch command missing agent-exited pane option: %q", launchCmd)
 	}
 	if !strings.Contains(launchCmd, "'myagent'") {
 		t.Fatalf("launch command missing quoted argv: %q", launchCmd)
@@ -491,7 +505,7 @@ func TestDestroyReapsDiscoveredPaneSessions(t *testing.T) {
 
 func TestIsAliveReturnsTrueOnExitZero(t *testing.T) {
 	r, fr := newTestRuntime(0)
-	fr.outputs = [][]byte{nil}
+	fr.outputs = [][]byte{nil, nil}
 
 	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
 	if err != nil {
@@ -500,8 +514,14 @@ func TestIsAliveReturnsTrueOnExitZero(t *testing.T) {
 	if !alive {
 		t.Fatal("alive = false, want true")
 	}
+	if len(fr.calls) != 2 {
+		t.Fatalf("calls = %d, want 2 (has-session + show-options)", len(fr.calls))
+	}
 	if got, want := fr.calls[0].args, hasSessionArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("has-session args = %#v, want %#v", got, want)
+	}
+	if got, want := fr.calls[1].args, exitedOptionArgs("sess-1"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("show-options args = %#v, want %#v", got, want)
 	}
 }
 
@@ -787,6 +807,46 @@ func TestCommandErrorUnwraps(t *testing.T) {
 }
 
 // -- text helper tests --
+
+// -- IsAlive: agent-exited pane option tests --
+
+func TestIsAlive_ReportsDeadWhenAgentExitedBehindSurvivingPane(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	// has-session succeeds (nil), show-options returns "1" (agent exited).
+	fr.outputs = [][]byte{nil, []byte("1")}
+
+	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
+	if err != nil {
+		t.Fatalf("IsAlive: %v", err)
+	}
+	if alive {
+		t.Fatal("alive = true, want false; agent exited but pane survives")
+	}
+	if len(fr.calls) != 2 {
+		t.Fatalf("calls = %d, want 2 (has-session + show-options)", len(fr.calls))
+	}
+	if got, want := fr.calls[1].args, exitedOptionArgs("sess-1"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("show-options args = %#v, want %#v", got, want)
+	}
+}
+
+func TestIsAlive_ShowOptionsErrorReportsAlive(t *testing.T) {
+	r := New(Options{Binary: "tmux-test", Timeout: time.Second, Shell: "/bin/sh"})
+	r.enterDelay = 0
+	fr := &fakeRunnerSelectiveErr{
+		exitErrOn: "show-options",
+		errOutput: []byte("invalid option: @ao_agent_exited"),
+	}
+	r.runner = fr
+
+	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
+	if err != nil {
+		t.Fatalf("IsAlive: %v", err)
+	}
+	if !alive {
+		t.Fatal("alive = false, want true; show-options error is conservative")
+	}
+}
 
 func TestChunks(t *testing.T) {
 	if got := chunks("", 5); !reflect.DeepEqual(got, []string{""}) {

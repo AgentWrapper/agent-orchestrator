@@ -310,12 +310,15 @@ func (r *Runtime) paneSessionIDs(ctx context.Context, id string) []int {
 	return ids
 }
 
-// IsAlive reports whether the handle's session still exists via `tmux
-// has-session`. Exit 0 means alive. A non-zero exit with output indicating the
-// session or server is missing is a definitive false, nil. Any other non-zero
-// exit is a probe error (not proof of death) so callers (the reaper feeding
-// the LCM) treat it as a failed probe and never kill a session on a transient
-// error.
+// IsAlive reports whether the agent process is still running in the tmux
+// session. It first verifies the session exists via `tmux has-session`. If the
+// session exists it then queries the pane-local @ao_agent_exited option, which
+// buildLaunchCommand sets to "1" after the agent exits and before entering the
+// keep-alive shell. A non-zero exit from has-session with output indicating
+// the session or server is missing is a definitive false, nil. Any other
+// non-zero exit is a probe error (not proof of death) so callers (the reaper
+// feeding the LCM) treat it as a failed probe and never kill a session on a
+// transient error.
 func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error) {
 	id, err := handleID(handle)
 	if err != nil {
@@ -328,6 +331,14 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 			return false, nil
 		}
 		return false, fmt.Errorf("tmux runtime: probe session %s: %w", id, err)
+	}
+
+	// Session exists — check whether the pane option signals a dead agent.
+	// show-options -v -p exits 0 and prints "1" when the option is set,
+	// or exits non-zero (expected, option unset) when the agent is alive.
+	optionOut, err := r.run(ctx, exitedOptionArgs(id)...)
+	if err == nil && strings.TrimSpace(string(optionOut)) == "1" {
+		return false, nil
 	}
 	return true, nil
 }
@@ -683,7 +694,10 @@ func buildLaunchCommand(cfg ports.RuntimeConfig) string {
 	// Keep the tmux session alive after the agent exits so the operator can
 	// inspect the terminal. The shell variable expansion picks up $SHELL from
 	// the process env if set, otherwise falls back to /bin/sh.
-	b.WriteString(`; exec "${SHELL:-/bin/sh}" -i`)
+	//
+	// Before entering the keep-alive shell, set a pane-local option so IsAlive
+	// can distinguish a live agent from a surviving shell (issue #2802).
+	b.WriteString(`; tmux set-option -p -t "$TMUX_PANE" @ao_agent_exited 1; exec "${SHELL:-/bin/sh}" -i`)
 	return b.String()
 }
 
