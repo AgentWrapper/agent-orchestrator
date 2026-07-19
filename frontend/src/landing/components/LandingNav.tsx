@@ -68,8 +68,9 @@ const socials = [
 ];
 
 const navLinks = [
-	{ label: "Demo", href: "#see-it" },
-	{ label: "Features", href: "#features" },
+	{ label: "Demo", href: "/#see-it" },
+	{ label: "Features", href: "/#features" },
+	{ label: "Changelog", href: "/changelog" },
 	{ label: "Docs", href: "/docs" },
 ];
 

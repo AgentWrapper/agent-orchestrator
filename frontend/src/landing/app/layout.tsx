@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
+import { GeistSans } from "geist/font/sans";
+import { GeistMono } from "geist/font/mono";
 import { HomeScrollReset } from "@/components/HomeScrollReset";
+import { ThemeProvider } from "@/components/theme-provider";
 import "../styles/globals.css";
 
 const inter = Inter({
@@ -14,29 +17,14 @@ export const metadata: Metadata = {
 	description: "Open-source platform for running parallel AI coding agents.",
 };
 
-const themeScript = `
-(() => {
-  document.documentElement.dataset.theme = "dark";
-  document.documentElement.classList.add("dark");
-  document.documentElement.style.colorScheme = "dark";
-})();
-`;
-
 export default function RootLayout({ children }: { children: React.ReactNode }) {
 	return (
-		<html
-			lang="en"
-			suppressHydrationWarning
-			className={`${inter.variable} ${inter.className} dark`}
-			data-theme="dark"
-			style={{ colorScheme: "dark" }}
-		>
-			<head>
-				<script dangerouslySetInnerHTML={{ __html: themeScript }} />
-			</head>
+		<html lang="en" suppressHydrationWarning className={`${inter.variable} ${GeistSans.variable} ${GeistMono.variable}`}>
 			<body className={`${inter.variable} ${inter.className} font-sans`}>
-				<HomeScrollReset />
-				{children}
+				<ThemeProvider attribute="class" defaultTheme="dark" disableTransitionOnChange>
+					<HomeScrollReset />
+					{children}
+				</ThemeProvider>
 			</body>
 		</html>
 	);
