@@ -2537,7 +2537,7 @@ func isNodeLaunchBinary(path string) bool {
 	if err != nil {
 		return false
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	const maxShebangBytes = 4096
 	buf := make([]byte, maxShebangBytes)
 	n, _ := f.Read(buf)
@@ -2590,7 +2590,6 @@ func (m *Manager) nodeRuntimeDir(ctx context.Context) string {
 	if voltaHome == "" {
 		voltaHome = filepath.Join(home, ".volta")
 	}
-	var candidates []string
 	nvm := versionedNodeMatches(filepath.Join(home, ".nvm", "versions", "node", "*", "bin", "node"))
 	if data, err := os.ReadFile(filepath.Join(home, ".nvm", "alias", "default")); err == nil {
 		fields := strings.Fields(string(data))
@@ -2598,8 +2597,10 @@ func (m *Manager) nodeRuntimeDir(ctx context.Context) string {
 			nvm = preferNodeVersion(nvm, fields[0])
 		}
 	}
+	fnmMatches := versionedNodeMatches(filepath.Join(fnmDir, "node-versions", "*", "installation", "bin", "node"))
+	candidates := make([]string, 0, len(nvm)+len(fnmMatches)+3)
 	candidates = append(candidates, nvm...)
-	candidates = append(candidates, versionedNodeMatches(filepath.Join(fnmDir, "node-versions", "*", "installation", "bin", "node"))...)
+	candidates = append(candidates, fnmMatches...)
 	// Prefer explicitly selected/versioned runtimes over manager and package-
 	// manager shims. A dormant ~/.volta installation must not override the NVM
 	// default or newest fnm runtime merely because the GUI omitted shell setup.
@@ -2637,13 +2638,14 @@ func nodeVersionFromPath(path string) string {
 func preferNodeVersion(paths []string, version string) []string {
 	version = normalizeNodeVersion(version)
 	for i, path := range paths {
-		if normalizeNodeVersion(nodeVersionFromPath(path)) == version {
-			out := make([]string, 0, len(paths))
-			out = append(out, path)
-			out = append(out, paths[:i]...)
-			out = append(out, paths[i+1:]...)
-			return out
+		if normalizeNodeVersion(nodeVersionFromPath(path)) != version {
+			continue
 		}
+		out := make([]string, 0, len(paths))
+		out = append(out, path)
+		out = append(out, paths[:i]...)
+		out = append(out, paths[i+1:]...)
+		return out
 	}
 	return paths
 }
