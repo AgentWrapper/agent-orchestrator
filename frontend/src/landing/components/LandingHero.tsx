@@ -1136,7 +1136,7 @@ export function LandingHero() {
 								New
 							</span>
 							<span className="text-[12.5px] font-medium text-[color:var(--fg-muted)] transition-colors group-hover:text-[color:var(--fg)]">
-								{latestRelease ? `${latestRelease} is out` : "Latest release is out"} — nightly builds ship every day
+								{latestRelease ? `${latestRelease} · nightly builds daily` : "Nightly builds ship daily"}
 							</span>
 							<ArrowRightIcon className="h-3 w-3 text-[color:var(--fg-dim)] transition-transform duration-200 group-hover:translate-x-0.5" />
 						</a>
@@ -1151,9 +1151,9 @@ export function LandingHero() {
 						data-testid="hero-subhead"
 						className="gsap-reveal mx-auto mt-6 max-w-[640px] text-balance text-[16px] leading-[1.65] text-[color:var(--fg-muted)] sm:text-[17.5px]"
 					>
-						Mission control for a fleet of coding agents. AO runs Claude&nbsp;Code, Codex, Cursor —{" "}
-						<span className="text-[color:var(--fg)]">23 harnesses</span> — in isolated git worktrees, watches every PR,
-						and routes CI and review feedback back to the agent that owns the branch.
+						Mission control for a fleet of coding agents —{" "}
+						<span className="text-[color:var(--fg)]">23 harnesses</span> in isolated worktrees, with CI and review
+						feedback routed back to the agent that owns the branch.
 					</p>
 					<div className="gsap-reveal mt-8 flex w-full flex-col items-stretch justify-center gap-3 sm:w-auto sm:flex-row sm:items-center">
 						{downloadTarget ? (
@@ -1213,23 +1213,13 @@ export function LandingHero() {
 								className="w-full sm:w-auto"
 							/>
 						) : null}
-						<p className="text-[12.5px] text-[color:var(--fg-dim)]">
-							{showBrew ? "or grab the zip above" : "Free desktop app"} ·{" "}
-							<a
-								href="/docs/installation"
-								className="underline decoration-[color:var(--border-strong)] underline-offset-4 transition-colors hover:text-[color:var(--fg-muted)]"
-							>
-								All platforms
-							</a>{" "}
-							· Apache&nbsp;2.0 · runs 100% locally
-						</p>
 					</div>
 				</div>
 
 				<div className="gsap-reveal mx-auto mt-14 flex max-w-[1200px] items-center gap-4 px-1 text-left sm:mt-16">
 					<div className="h-px flex-1 bg-gradient-to-r from-transparent via-[color:var(--border-strong)] to-[color:var(--border-strong)]" />
 					<div className="whitespace-nowrap text-[11px] font-bold uppercase tracking-[0.18em] text-[color:var(--fg-dim)]">
-						Live board preview — click around
+						Live preview — click around
 					</div>
 					<div className="h-px flex-1 bg-gradient-to-r from-[color:var(--border-strong)] via-[color:var(--border-strong)] to-transparent" />
 				</div>
