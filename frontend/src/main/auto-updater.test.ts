@@ -251,6 +251,54 @@ describe("startAutoUpdates", () => {
 		});
 	});
 
+	it("does not overwrite a newer staged escalation when an automatic check fails", async () => {
+		vi.useFakeTimers();
+		const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
+		const stagedAt = new Date("2026-07-17T12:00:00.000Z").getTime();
+		vi.setSystemTime(stagedAt);
+		const automaticCheck = deferred();
+		const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+		const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+		const err = new Error("feed failed");
+
+		await module.checkForUpdatesNow(stateDir);
+		updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+		await Promise.resolve();
+		await Promise.resolve();
+		const { callback: runEscalation } = latestInterval(setIntervalSpy);
+
+		autoUpdater.checkForUpdates.mockImplementationOnce(() => {
+			updaterEvents.get("checking-for-update")?.();
+			return automaticCheck.promise;
+		});
+		const startPromise = module.startAutoUpdates(stateDir);
+		await Promise.resolve();
+		await Promise.resolve();
+
+		vi.setSystemTime(stagedAt + 49 * 60 * 60 * 1000);
+		runEscalation();
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(module.getUpdateStatus()).toEqual({
+			state: "downloaded",
+			version: "2.1.0",
+			stagedAt,
+			escalated: true,
+		});
+
+		updaterEvents.get("error")?.(err);
+		automaticCheck.resolve();
+		await startPromise;
+
+		expect(consoleErrorSpy).toHaveBeenCalledWith("auto-update check failed:", err);
+		expect(module.getUpdateStatus()).toEqual({
+			state: "downloaded",
+			version: "2.1.0",
+			stagedAt,
+			escalated: true,
+		});
+	});
+
 	it("keeps automatic download errors silent after checkForUpdates resolves", async () => {
 		const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 		const lateDownload = deferred();
@@ -274,6 +322,30 @@ describe("startAutoUpdates", () => {
 		expect(BrowserWindow.getAllWindows).not.toHaveBeenCalled();
 		lateDownload.resolve();
 		await startPromise;
+	});
+
+	it("keeps manual download errors visible when requested during an automatic check", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => undefined);
+		const automaticCheck = deferred();
+		const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+		const err = new Error("manual download failed");
+		autoUpdater.checkForUpdates.mockReturnValueOnce(automaticCheck.promise);
+		autoUpdater.downloadUpdate.mockImplementationOnce(() => {
+			updaterEvents.get("error")?.(err);
+			return Promise.resolve();
+		});
+
+		const startPromise = module.startAutoUpdates(stateDir);
+		await Promise.resolve();
+		await Promise.resolve();
+		const downloadPromise = module.downloadUpdateNow();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		automaticCheck.resolve();
+		await Promise.all([startPromise, downloadPromise]);
+
+		expect(module.getUpdateStatus()).toEqual({ state: "error", message: "manual download failed" });
 	});
 
 	it("keeps manual updater error events visible to the renderer", async () => {

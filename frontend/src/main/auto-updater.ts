@@ -28,6 +28,7 @@ function configureFeed(channel: UpdateChannel): void {
 }
 
 let lastStatus: UpdateStatus = { state: "idle" };
+let statusRevision = 0;
 let eventsWired = false;
 
 // Staged-update tracking for the escalation evaluator: set on update-downloaded,
@@ -40,13 +41,14 @@ let escalationTimer: ReturnType<typeof setInterval> | undefined;
 let escalationStateDir: string | undefined;
 const AUTOMATIC_UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 let automaticUpdateTimer: ReturnType<typeof setInterval> | undefined;
-let activeUpdateCheckMode: "automatic" | "manual" | undefined;
-let automaticCheckPreviousStatus: UpdateStatus | undefined;
-let updateCheckQueue: Promise<void> = Promise.resolve();
+let activeUpdaterOperation: "automatic-check" | "manual-check" | "manual-download" | undefined;
+let automaticCheckPreviousStatus: { status: UpdateStatus; checkingRevision: number } | undefined;
+let updaterOperationQueue: Promise<void> = Promise.resolve();
 
 // broadcast pushes the latest update status to every renderer window so the
 // Global Settings Updates section can reflect check/download progress live.
 function broadcast(status: UpdateStatus): void {
+	statusRevision += 1;
 	lastStatus = status;
 	for (const win of BrowserWindow.getAllWindows()) {
 		if (!win.isDestroyed()) win.webContents.send("updates:status", status);
@@ -160,23 +162,27 @@ function stopEscalationTimer(): void {
 
 function restoreAutomaticCheckPreviousStatus(): void {
 	if (automaticCheckPreviousStatus === undefined) return;
-	const status = automaticCheckPreviousStatus;
+	const { status, checkingRevision } = automaticCheckPreviousStatus;
 	automaticCheckPreviousStatus = undefined;
+	if (statusRevision !== checkingRevision) return;
 	broadcast(status);
 }
 
-async function runSerializedUpdateCheck(mode: "automatic" | "manual", check: () => Promise<void>): Promise<void> {
+async function runSerializedUpdaterOperation(
+	operation: "automatic-check" | "manual-check" | "manual-download",
+	runOperation: () => Promise<void>,
+): Promise<void> {
 	const run = async () => {
-		activeUpdateCheckMode = mode;
+		activeUpdaterOperation = operation;
 		try {
-			await check();
+			await runOperation();
 		} finally {
-			activeUpdateCheckMode = undefined;
-			if (mode === "automatic") automaticCheckPreviousStatus = undefined;
+			activeUpdaterOperation = undefined;
+			if (operation === "automatic-check") automaticCheckPreviousStatus = undefined;
 		}
 	};
-	const queued = updateCheckQueue.then(run, run);
-	updateCheckQueue = queued.catch(() => undefined);
+	const queued = updaterOperationQueue.then(run, run);
+	updaterOperationQueue = queued.catch(() => undefined);
 	await queued;
 }
 
@@ -190,8 +196,11 @@ function wireUpdaterEvents(): void {
 	// is acceptable and self-healing: the available / not-available handlers below
 	// restore the enriched downloaded status right after.
 	autoUpdater.on("checking-for-update", () => {
-		if (activeUpdateCheckMode === "automatic" && automaticCheckPreviousStatus === undefined) {
-			automaticCheckPreviousStatus = lastStatus;
+		if (activeUpdaterOperation === "automatic-check" && automaticCheckPreviousStatus === undefined) {
+			const status = lastStatus;
+			broadcast({ state: "checking" });
+			automaticCheckPreviousStatus = { status, checkingRevision: statusRevision };
+			return;
 		}
 		broadcast({ state: "checking" });
 	});
@@ -230,7 +239,7 @@ function wireUpdaterEvents(): void {
 	});
 	autoUpdater.on("error", (err) => {
 		// Never crash on update failure (offline, unsigned macOS, etc.).
-		if (activeUpdateCheckMode === "automatic") {
+		if (activeUpdaterOperation === "automatic-check") {
 			console.error("auto-update check failed:", err);
 			restoreAutomaticCheckPreviousStatus();
 			return;
@@ -246,7 +255,7 @@ export function getUpdateStatus(): UpdateStatus {
 async function runAutomaticUpdateCheck(stateDir: string): Promise<boolean> {
 	let shouldSchedule = true;
 	try {
-		await runSerializedUpdateCheck("automatic", async () => {
+		await runSerializedUpdaterOperation("automatic-check", async () => {
 			const settings = await readUpdateSettings(stateDir);
 			if (!settings.enabled) {
 				shouldSchedule = false;
@@ -294,7 +303,7 @@ export async function checkForUpdatesNow(stateDir: string): Promise<void> {
 	}
 	broadcast({ state: "checking" });
 	try {
-		await runSerializedUpdateCheck("manual", async () => {
+		await runSerializedUpdaterOperation("manual-check", async () => {
 			const settings = await readUpdateSettings(stateDir);
 			configureFeed(settings.channel);
 			autoUpdater.autoDownload = false;
@@ -314,7 +323,9 @@ export async function downloadUpdateNow(): Promise<void> {
 		return;
 	}
 	try {
-		await autoUpdater.downloadUpdate();
+		await runSerializedUpdaterOperation("manual-download", async () => {
+			await autoUpdater.downloadUpdate();
+		});
 	} catch (err) {
 		broadcast({ state: "error", message: (err as Error)?.message ?? "Download failed" });
 	}
