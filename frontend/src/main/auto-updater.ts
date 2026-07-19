@@ -48,7 +48,12 @@ let updaterOperationQueue: Promise<void> = Promise.resolve();
 // broadcast pushes the latest update status to every renderer window so the
 // Global Settings Updates section can reflect check/download progress live.
 function broadcast(status: UpdateStatus, owner: "independent" | "automatic-operation" = "independent"): void {
-	if (owner === "independent") independentStatusRevision += 1;
+	if (owner === "independent") {
+		independentStatusRevision += 1;
+		if (activeUpdaterOperation === "automatic-check" && automaticCheckPreviousStatus !== undefined) {
+			automaticCheckPreviousStatus = { status, independentRevision: independentStatusRevision };
+		}
+	}
 	lastStatus = status;
 	for (const win of BrowserWindow.getAllWindows()) {
 		if (!win.isDestroyed()) win.webContents.send("updates:status", status);

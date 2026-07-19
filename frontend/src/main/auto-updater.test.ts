@@ -328,6 +328,51 @@ describe("startAutoUpdates", () => {
 		});
 	});
 
+	it("restores an independent staged escalation after later automatic download progress fails", async () => {
+		vi.useFakeTimers();
+		const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
+		const stagedAt = new Date("2026-07-17T12:00:00.000Z").getTime();
+		vi.setSystemTime(stagedAt);
+		const automaticDownload = deferred();
+		const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+		const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+		const err = new Error("download failed");
+
+		await module.checkForUpdatesNow(stateDir);
+		updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+		await Promise.resolve();
+		await Promise.resolve();
+		const { callback: runEscalation } = latestInterval(setIntervalSpy);
+
+		autoUpdater.checkForUpdates.mockImplementationOnce(() => {
+			updaterEvents.get("checking-for-update")?.();
+			return Promise.resolve({ downloadPromise: automaticDownload.promise });
+		});
+		const startPromise = module.startAutoUpdates(stateDir);
+		await Promise.resolve();
+		await Promise.resolve();
+
+		vi.setSystemTime(stagedAt + 49 * 60 * 60 * 1000);
+		runEscalation();
+		await Promise.resolve();
+		await Promise.resolve();
+		updaterEvents.get("update-available")?.({ version: "2.2.0" });
+		updaterEvents.get("download-progress")?.({ percent: 64 });
+		expect(module.getUpdateStatus()).toEqual({ state: "downloading", percent: 64 });
+
+		updaterEvents.get("error")?.(err);
+		automaticDownload.resolve();
+		await startPromise;
+
+		expect(consoleErrorSpy).toHaveBeenCalledWith("auto-update check failed:", err);
+		expect(module.getUpdateStatus()).toEqual({
+			state: "downloaded",
+			version: "2.1.0",
+			stagedAt,
+			escalated: true,
+		});
+	});
+
 	it("keeps automatic download errors silent after checkForUpdates resolves", async () => {
 		const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 		const lateDownload = deferred();
