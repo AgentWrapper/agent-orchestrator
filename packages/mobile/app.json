@@ -1,73 +1,71 @@
 {
-  "expo": {
-    "name": "AO",
-    "slug": "ao-mobile",
-    "version": "1.0.0",
-    "orientation": "portrait",
-    "icon": "./assets/icon.png",
-    "userInterfaceStyle": "dark",
-    "backgroundColor": "#0a0b0d",
-    "scheme": "aomobile",
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#0a0b0d"
-    },
-    "ios": {
-      "supportsTablet": true,
-      "bundleIdentifier": "aoagents.ao",
-      "config": {
-        "usesNonExemptEncryption": false
-      }
-    },
-    "android": {
-      "package": "aoagents.ao",
-      "googleServicesFile": "./google-services.json",
-      "adaptiveIcon": {
-        "backgroundColor": "#0a0b0d",
-        "foregroundImage": "./assets/android-icon-foreground.png"
-      },
-      "predictiveBackGestureEnabled": false,
-      "permissions": [
-        "android.permission.CAMERA"
-      ]
-    },
-    "web": {
-      "favicon": "./assets/favicon.png",
-      "bundler": "metro"
-    },
-    "plugins": [
-      "expo-router",
-      [
-        "expo-build-properties",
-        {
-          "android": {
-            "usesCleartextTraffic": true
-          }
-        }
-      ],
-      [
-        "expo-camera",
-        {
-          "cameraPermission": "Allow AO to scan the pairing QR code.",
-          "microphonePermission": false,
-          "recordAudioAndroid": false
-        }
-      ],
-      [
-        "expo-notifications",
-        {
-          "color": "#0a0b0d"
-        }
-      ],
-      "expo-secure-store"
-    ],
-    "extra": {
-      "router": {},
-      "eas": {
-        "projectId": "2d7dec61-2206-4943-8582-a37e160907ea"
-      }
-    },
-    "owner": "untrivial"
-  }
+	"expo": {
+		"name": "AO",
+		"slug": "ao-mobile",
+		"version": "1.0.0",
+		"orientation": "portrait",
+		"icon": "./assets/icon.png",
+		"userInterfaceStyle": "dark",
+		"backgroundColor": "#0a0b0d",
+		"scheme": "aomobile",
+		"splash": {
+			"image": "./assets/splash-icon.png",
+			"resizeMode": "contain",
+			"backgroundColor": "#0a0b0d"
+		},
+		"ios": {
+			"supportsTablet": true,
+			"bundleIdentifier": "aoagents.ao",
+			"config": {
+				"usesNonExemptEncryption": false
+			}
+		},
+		"android": {
+			"package": "aoagents.ao",
+			"googleServicesFile": "./google-services.json",
+			"adaptiveIcon": {
+				"backgroundColor": "#0a0b0d",
+				"foregroundImage": "./assets/android-icon-foreground.png"
+			},
+			"predictiveBackGestureEnabled": false,
+			"permissions": ["android.permission.CAMERA"]
+		},
+		"web": {
+			"favicon": "./assets/favicon.png",
+			"bundler": "metro"
+		},
+		"plugins": [
+			"expo-router",
+			[
+				"expo-build-properties",
+				{
+					"android": {
+						"usesCleartextTraffic": true
+					}
+				}
+			],
+			[
+				"expo-camera",
+				{
+					"cameraPermission": "Allow AO to scan the pairing QR code.",
+					"microphonePermission": false,
+					"recordAudioAndroid": false
+				}
+			],
+			[
+				"expo-notifications",
+				{
+					"color": "#0a0b0d"
+				}
+			],
+			"expo-secure-store"
+		],
+		"extra": {
+			"router": {},
+			"eas": {
+				"projectId": "2d7dec61-2206-4943-8582-a37e160907ea"
+			}
+		},
+		"owner": "untrivial"
+	}
 }
