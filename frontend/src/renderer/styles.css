@@ -474,8 +474,12 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 		transition: opacity var(--duration-fast) ease;
 	}
 
-	[data-slot="sidebar-container"][data-expanded-chrome="visible"] [data-sidebar="menu-item"]:hover .sidebar-project-actions,
-	[data-slot="sidebar-container"][data-expanded-chrome="visible"] [data-sidebar="menu-item"]:focus-within .sidebar-project-actions,
+	[data-slot="sidebar-container"][data-expanded-chrome="visible"]
+		[data-sidebar="menu-item"]:hover
+		.sidebar-project-actions,
+	[data-slot="sidebar-container"][data-expanded-chrome="visible"]
+		[data-sidebar="menu-item"]:focus-within
+		.sidebar-project-actions,
 	[data-slot="sidebar-container"][data-expanded-chrome="visible"] .sidebar-project-actions:has([data-state="open"]) {
 		opacity: 1;
 	}
