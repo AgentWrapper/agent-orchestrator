@@ -200,4 +200,65 @@ describe("GlobalSettingsForm", () => {
 		expect(await screen.findByText("No live feature releases.")).toBeInTheDocument();
 		expect(featListBuilds).toHaveBeenCalled();
 	});
+
+	it("pins a feature build after confirming, then auto-progresses check -> download -> install", async () => {
+		featListBuilds.mockResolvedValue([
+			{
+				pr: 2270,
+				title: "Fix foo",
+				base: "0.2.0",
+				sha: "abc",
+				slug: "x",
+				buildId: "v0.2.0-pr2270.202607061200",
+				publishedAt: new Date().toISOString(),
+			},
+		]);
+		let emit: (s: { state: string; version?: string }) => void = () => undefined;
+		updOnStatus.mockImplementation((cb: (s: unknown) => void) => {
+			emit = cb as typeof emit;
+			return () => undefined;
+		});
+		renderForm();
+		await screen.findByText("Updates");
+
+		await userEvent.click(screen.getByLabelText("Update channel"));
+		await userEvent.click(await screen.findByRole("option", { name: "Feature Releases" }));
+
+		await userEvent.click(await screen.findByLabelText("Feature build"));
+		await userEvent.click(await screen.findByRole("option", { name: /PR #2270: Fix foo/ }));
+
+		// Confirmation dialog replaces window.confirm.
+		await userEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+
+		await waitFor(() => expect(setUpdate).toHaveBeenCalledWith(expect.objectContaining({ feature: { pr: 2270 } })));
+		expect(updCheck).toHaveBeenCalled();
+
+		// Auto-progression: available -> download(), downloaded -> install().
+		act(() => emit({ state: "available", version: "1.2.3" }));
+		await waitFor(() => expect(updDownload).toHaveBeenCalled());
+		act(() => emit({ state: "downloaded", version: "1.2.3" }));
+		await waitFor(() => expect(updInstall).toHaveBeenCalled());
+	});
+
+	it("returns to Stable, then auto-progresses check -> download -> install", async () => {
+		getUpdate.mockResolvedValue({ enabled: true, channel: "latest", nightlyAck: false, feature: { pr: 2270 } });
+		featGetActive.mockResolvedValue({ pr: 2270 });
+		let emit: (s: { state: string; version?: string }) => void = () => undefined;
+		updOnStatus.mockImplementation((cb: (s: unknown) => void) => {
+			emit = cb as typeof emit;
+			return () => undefined;
+		});
+		renderForm();
+
+		const returnBtn = await screen.findByRole("button", { name: "Return to Stable" });
+		await userEvent.click(returnBtn);
+
+		await waitFor(() => expect(setUpdate).toHaveBeenCalledWith(expect.objectContaining({ feature: null })));
+		expect(updCheck).toHaveBeenCalled();
+
+		act(() => emit({ state: "available", version: "1.3.0" }));
+		await waitFor(() => expect(updDownload).toHaveBeenCalled());
+		act(() => emit({ state: "downloaded", version: "1.3.0" }));
+		await waitFor(() => expect(updInstall).toHaveBeenCalled());
+	});
 });

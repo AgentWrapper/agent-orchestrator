@@ -182,6 +182,38 @@ function stopEscalationTimer(): void {
 	}
 }
 
+// Feature-pin retirement polling: while a build is pinned to a pr<N> channel,
+// re-check every 30 minutes whether that PR has since been retired, so a
+// long-running session notices a merge/close without waiting for a relaunch.
+let retirementPollTimer: ReturnType<typeof setInterval> | undefined;
+
+// startRetirementPollTimer is idempotent (guards against stacking multiple
+// intervals across repeated startAutoUpdates calls) and runs independently of
+// the auto-update opt-in, since a disabled user can still be pinned.
+// ponytail: fixed 30-min cadence, not an aggressive poll; runRetirementPoll
+// returns immediately whenever there's no pin, so idle cost is one settings read.
+function startRetirementPollTimer(stateDir: string): void {
+	if (retirementPollTimer !== undefined) return;
+	retirementPollTimer = setInterval(() => void runRetirementPoll(stateDir), 30 * 60 * 1000);
+	retirementPollTimer.unref?.();
+}
+
+async function runRetirementPoll(stateDir: string): Promise<void> {
+	try {
+		const before = await readUpdateSettings(stateDir);
+		if (before.feature === null || before.feature === undefined) return; // not pinned; nothing to check
+		const settings = await reconcileAndPersist(stateDir, before);
+		if (settings.feature === null || settings.feature === undefined) {
+			// Pin was cleared: drop the now-dead pr<N> channel right away instead of
+			// waiting for the next manual or launch-time check to notice.
+			configureFeed(settings);
+		}
+	} catch (err) {
+		// Background poll: never throw, just skip this round.
+		console.debug("retirement poll skipped:", err);
+	}
+}
+
 // wireUpdaterEvents registers electron-updater listeners once and forwards each
 // to the renderer as an UpdateStatus. Idempotent: safe to call on every entry
 // point (launch auto-check and manual check).
@@ -239,8 +271,12 @@ export function getUpdateStatus(): UpdateStatus {
 // Caller guards on app.isPackaged.
 export async function startAutoUpdates(stateDir: string): Promise<void> {
 	const initial = await readUpdateSettings(stateDir);
-	if (!initial.enabled) return;
+	// Reconcile (and start the retirement poll) even for disabled users: a
+	// pinned feature build whose PR was retired must still be cleared so the
+	// user isn't left tracking a dead pr<N> channel indefinitely.
 	const settings = await reconcileAndPersist(stateDir, initial);
+	startRetirementPollTimer(stateDir);
+	if (!settings.enabled) return;
 
 	escalationStateDir = stateDir;
 	wireUpdaterEvents();
