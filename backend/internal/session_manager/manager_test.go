@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -3143,14 +3144,35 @@ func TestSpawn_ProjectPATHIsPinBase(t *testing.T) {
 
 func TestSpawnAndRestore_PrependsResolvedBinaryAndNodeDirsToRuntimePATH(t *testing.T) {
 	daemonExe := filepath.Join(t.TempDir(), "ao")
-	binDir := filepath.Join(t.TempDir(), ".npm-global", "bin")
-	nodeDir := filepath.Join(t.TempDir(), ".nvm", "versions", "node", "v22.23.1", "bin")
+	home := t.TempDir()
+	binDir := filepath.Join(home, ".npm-global", "bin")
+	nodeDir := filepath.Join(home, ".nvm", "versions", "node", "v22.23.1", "bin")
 	agentBin := filepath.Join(binDir, "kimi")
+	for _, path := range []string{
+		agentBin,
+		filepath.Join(home, ".nvm", "versions", "node", "v18.20.0", "bin", "node"),
+		filepath.Join(nodeDir, "node"),
+		filepath.Join(home, ".volta", "bin", "node"),
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		contents := "#!/bin/sh\n"
+		if path == agentBin {
+			contents = "#!/usr/bin/env node\n"
+		}
+		if err := os.WriteFile(path, []byte(contents), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
 	want := strings.Join([]string{binDir, nodeDir, filepath.Dir(daemonExe), "/usr/bin"}, string(os.PathListSeparator))
 
 	for _, operation := range []string{"spawn", "restore"} {
 		t.Run(operation, func(t *testing.T) {
+			t.Setenv("HOME", home)
 			t.Setenv("PATH", "/usr/bin")
+			t.Setenv("VOLTA_HOME", filepath.Join(home, ".volta"))
+			t.Setenv("FNM_DIR", filepath.Join(home, ".fnm"))
 			st := newFakeStore()
 			st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
 			rt := &fakeRuntime{}
@@ -3160,7 +3182,7 @@ func TestSpawnAndRestore_PrependsResolvedBinaryAndNodeDirsToRuntimePATH(t *testi
 				Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
 				LookPath: func(name string) (string, error) {
 					if name == "node" {
-						return filepath.Join(nodeDir, "node"), nil
+						return "", exec.ErrNotFound
 					}
 					return agentBin, nil
 				},
@@ -3181,6 +3203,44 @@ func TestSpawnAndRestore_PrependsResolvedBinaryAndNodeDirsToRuntimePATH(t *testi
 				t.Fatalf("runtime env PATH = %q, want %q", got, want)
 			}
 		})
+	}
+}
+
+func TestSpawn_DoesNotAddNodeRuntimeForNativeBinary(t *testing.T) {
+	t.Setenv("PATH", "/usr/bin")
+	home := t.TempDir()
+	binDir := filepath.Join(home, "native", "bin")
+	agentBin := filepath.Join(binDir, "agent")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(agentBin, []byte("native executable"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{}
+	nodeLookups := 0
+	m := New(Deps{
+		Runtime: rt, Agents: singleAgent{agent: launchArgvAgent{argv: []string{agentBin}}}, Workspace: &fakeWorkspace{},
+		Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(name string) (string, error) {
+			if name == "node" {
+				nodeLookups++
+			}
+			return agentBin, nil
+		},
+		Executable: func() (string, error) { return "/ao/bin/ao", nil },
+	})
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if nodeLookups != 0 {
+		t.Fatalf("node LookPath calls = %d, want 0 for native binary", nodeLookups)
+	}
+	want := strings.Join([]string{binDir, "/ao/bin", "/usr/bin"}, string(os.PathListSeparator))
+	if got := rt.lastCfg.Env["PATH"]; got != want {
+		t.Fatalf("runtime env PATH = %q, want %q", got, want)
 	}
 }
 

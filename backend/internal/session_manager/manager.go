@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -2509,8 +2511,10 @@ func (m *Manager) augmentRuntimePATHForLaunchBinary(ctx context.Context, env map
 		return
 	}
 	dirs := []string{launchDir}
-	if nodeDir := m.nodeRuntimeDir(ctx); nodeDir != "" && nodeDir != launchDir {
-		dirs = append(dirs, nodeDir)
+	if isNodeLaunchBinary(bin) {
+		if nodeDir := m.nodeRuntimeDir(ctx); nodeDir != "" && nodeDir != launchDir {
+			dirs = append(dirs, nodeDir)
+		}
 	}
 	var parts []string
 	if path := env["PATH"]; path != "" {
@@ -2522,6 +2526,34 @@ func (m *Manager) augmentRuntimePATHForLaunchBinary(ctx context.Context, env map
 		}
 	}
 	env["PATH"] = strings.Join(parts, string(os.PathListSeparator))
+}
+
+func isNodeLaunchBinary(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	const maxShebangBytes = 4096
+	buf := make([]byte, maxShebangBytes)
+	n, _ := f.Read(buf)
+	line := string(buf[:n])
+	if newline := strings.IndexByte(line, '\n'); newline >= 0 {
+		line = line[:newline]
+	}
+	if !strings.HasPrefix(line, "#!") {
+		return false
+	}
+	for _, field := range strings.Fields(strings.TrimPrefix(line, "#!")) {
+		if filepath.Base(field) == "node" {
+			return true
+		}
+	}
+	return false
 }
 
 func containsPathDir(parts []string, dir string) bool {
@@ -2558,18 +2590,20 @@ func (m *Manager) nodeRuntimeDir(ctx context.Context) string {
 	if voltaHome == "" {
 		voltaHome = filepath.Join(home, ".volta")
 	}
-	candidates := []string{
-		filepath.Join(voltaHome, "bin", "node"),
-		"/opt/homebrew/bin/node",
-		"/usr/local/bin/node",
+	var candidates []string
+	nvm := versionedNodeMatches(filepath.Join(home, ".nvm", "versions", "node", "*", "bin", "node"))
+	if data, err := os.ReadFile(filepath.Join(home, ".nvm", "alias", "default")); err == nil {
+		fields := strings.Fields(string(data))
+		if len(fields) > 0 {
+			nvm = preferNodeVersion(nvm, fields[0])
+		}
 	}
-	for _, pattern := range []string{
-		filepath.Join(home, ".nvm", "versions", "node", "*", "bin", "node"),
-		filepath.Join(fnmDir, "node-versions", "*", "installation", "bin", "node"),
-	} {
-		matches, _ := filepath.Glob(pattern)
-		candidates = append(candidates, matches...)
-	}
+	candidates = append(candidates, nvm...)
+	candidates = append(candidates, versionedNodeMatches(filepath.Join(fnmDir, "node-versions", "*", "installation", "bin", "node"))...)
+	// Prefer explicitly selected/versioned runtimes over manager and package-
+	// manager shims. A dormant ~/.volta installation must not override the NVM
+	// default or newest fnm runtime merely because the GUI omitted shell setup.
+	candidates = append(candidates, filepath.Join(voltaHome, "bin", "node"), "/opt/homebrew/bin/node", "/usr/local/bin/node")
 	for _, candidate := range candidates {
 		if err := ctx.Err(); err != nil {
 			return ""
@@ -2579,6 +2613,79 @@ func (m *Manager) nodeRuntimeDir(ctx context.Context) string {
 		}
 	}
 	return ""
+}
+
+func versionedNodeMatches(pattern string) []string {
+	matches, _ := filepath.Glob(pattern)
+	sort.SliceStable(matches, func(i, j int) bool {
+		return compareNodeVersion(nodeVersionFromPath(matches[i]), nodeVersionFromPath(matches[j])) > 0
+	})
+	return matches
+}
+
+func nodeVersionFromPath(path string) string {
+	dir := filepath.Dir(path)
+	if filepath.Base(dir) == "bin" {
+		dir = filepath.Dir(dir)
+	}
+	if filepath.Base(dir) == "installation" {
+		dir = filepath.Dir(dir)
+	}
+	return filepath.Base(dir)
+}
+
+func preferNodeVersion(paths []string, version string) []string {
+	version = normalizeNodeVersion(version)
+	for i, path := range paths {
+		if normalizeNodeVersion(nodeVersionFromPath(path)) == version {
+			out := make([]string, 0, len(paths))
+			out = append(out, path)
+			out = append(out, paths[:i]...)
+			out = append(out, paths[i+1:]...)
+			return out
+		}
+	}
+	return paths
+}
+
+func compareNodeVersion(a, b string) int {
+	av, aok := parseNodeVersion(a)
+	bv, bok := parseNodeVersion(b)
+	for i := range av {
+		if av[i] != bv[i] {
+			if av[i] > bv[i] {
+				return 1
+			}
+			return -1
+		}
+	}
+	if aok != bok {
+		if aok {
+			return 1
+		}
+		return -1
+	}
+	return strings.Compare(a, b)
+}
+
+func parseNodeVersion(version string) ([3]int, bool) {
+	var parsed [3]int
+	fields := strings.Split(normalizeNodeVersion(version), ".")
+	if len(fields) == 0 || fields[0] == "" {
+		return parsed, false
+	}
+	for i := 0; i < len(fields) && i < len(parsed); i++ {
+		n, err := strconv.Atoi(fields[i])
+		if err != nil {
+			return [3]int{}, false
+		}
+		parsed[i] = n
+	}
+	return parsed, true
+}
+
+func normalizeNodeVersion(version string) string {
+	return strings.TrimPrefix(strings.TrimSpace(version), "v")
 }
 
 func (m *Manager) validateRuntimePrerequisites() error {
