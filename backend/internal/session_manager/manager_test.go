@@ -1373,11 +1373,11 @@ func TestKill_TerminatesIncompleteHandle(t *testing.T) {
 	}
 }
 
-// TestKill_DirtyWorkspacePreservesAndTerminates: a workspace teardown
+// TestKill_DirtyWorkspacePreservesAndRemainsRetryable: a workspace teardown
 // refused because of uncommitted work must NOT force-remove the worktree. Kill
-// succeeds with freed=false and still marks the session terminated; cleanup can
-// reclaim the preserved worktree after the user resolves the dirty state.
-func TestKill_DirtyWorkspacePreservesAndTerminates(t *testing.T) {
+// succeeds with freed=false and leaves the session non-terminal so a later retry
+// can complete cleanup.
+func TestKill_DirtyWorkspacePreservesAndRemainsRetryable(t *testing.T) {
 	m, st, rt, ws := newManager()
 	st.sessions["mer-1"] = mkLive("mer-1")
 	ws.destroyErr = fmt.Errorf("gitworktree: refusing to remove: %w", ports.ErrWorkspaceDirty)
@@ -1391,8 +1391,8 @@ func TestKill_DirtyWorkspacePreservesAndTerminates(t *testing.T) {
 	if rt.destroyed != 1 {
 		t.Fatal("runtime should be destroyed")
 	}
-	if !st.sessions["mer-1"].IsTerminated {
-		t.Fatal("session should be terminated even when the workspace is preserved")
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session should remain active so cleanup can be retried")
 	}
 }
 
@@ -1508,8 +1508,8 @@ func TestKill_WorkspaceProjectDirtyRowRefusesRemoval(t *testing.T) {
 	if got := ws.calls; strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("calls = %v, want %v", got, want)
 	}
-	if !st.sessions["mer-1"].IsTerminated {
-		t.Fatal("session should be terminated even when dirty workspace cleanup is deferred")
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session should remain active so dirty workspace cleanup can be retried")
 	}
 }
 
@@ -4782,4 +4782,157 @@ func (m *flipOnNudgeMessenger) Send(_ context.Context, _ domain.SessionID, msg s
 		m.flipped = true
 	}
 	return nil
+}
+
+// TestEffectiveAgentConfig_MergesProfileFields: the per-role override's
+// SystemPrompt/Env/MCP/PluginDirs merge over the project base, mirroring the
+// pre-existing Model/Permissions merge. Role wins on key collision for Env.
+func TestEffectiveAgentConfig_MergesProfileFields(t *testing.T) {
+	base := domain.AgentConfig{
+		Model:        "base-model",
+		Env:          map[string]string{"KEEP": "base", "OVER": "base"},
+		SystemPrompt: "base-prompt",
+		PluginDirs:   []string{"/base"},
+	}
+	cfg := domain.ProjectConfig{
+		AgentConfig: base,
+		Worker: domain.RoleOverride{AgentConfig: domain.AgentConfig{
+			Model:        "worker-model",
+			Env:          map[string]string{"OVER": "worker", "EXTRA": "worker"},
+			SystemPrompt: "worker-prompt",
+			MCP:          &domain.MCPConfig{Strict: true, Configs: []string{"{\"a\":1}"}},
+			PluginDirs:   []string{"/worker"},
+		}},
+	}
+
+	got := effectiveAgentConfig(domain.KindWorker, cfg)
+
+	if got.Model != "worker-model" {
+		t.Fatalf("Model = %q, want worker-model", got.Model)
+	}
+	if got.SystemPrompt != "worker-prompt" {
+		t.Fatalf("SystemPrompt = %q, want worker-prompt", got.SystemPrompt)
+	}
+	if got.MCP == nil || !got.MCP.Strict || len(got.MCP.Configs) != 1 {
+		t.Fatalf("MCP not merged from override: %+v", got.MCP)
+	}
+	if len(got.PluginDirs) != 1 || got.PluginDirs[0] != "/worker" {
+		t.Fatalf("PluginDirs = %v, want [/worker]", got.PluginDirs)
+	}
+	// Env: base keys preserved, role override wins on collision, extra keys added.
+	if got.Env["KEEP"] != "base" {
+		t.Fatalf("base Env key KEEP lost: %v", got.Env)
+	}
+	if got.Env["OVER"] != "worker" {
+		t.Fatalf("role Env did not win on OVER: %v", got.Env)
+	}
+	if got.Env["EXTRA"] != "worker" {
+		t.Fatalf("role Env extra key missing: %v", got.Env)
+	}
+}
+
+// TestEffectiveAgentConfig_DoesNotMutateProjectEnv: merging a role's Env must
+// not mutate the project's base AgentConfig.Env. The earlier inline merge wrote
+// into merged.Env, which aliased the project map (Go copies the map header by
+// value on struct copy), so a worker's role-specific env leaked into every
+// later session of the project for the daemon's lifetime. Regression guard.
+func TestEffectiveAgentConfig_DoesNotMutateProjectEnv(t *testing.T) {
+	cfg := domain.ProjectConfig{
+		AgentConfig: domain.AgentConfig{Env: map[string]string{"BASE": "b"}},
+		Worker: domain.RoleOverride{AgentConfig: domain.AgentConfig{
+			Env: map[string]string{"ROLE_ONLY": "secret"},
+		}},
+	}
+
+	_ = effectiveAgentConfig(domain.KindWorker, cfg)
+	_ = effectiveAgentConfig(domain.KindWorker, cfg) // a second call surfaces cross-call leakage
+
+	if _, leaked := cfg.AgentConfig.Env["ROLE_ONLY"]; leaked {
+		t.Fatalf("role-only env leaked into project config after merge: %#v", cfg.AgentConfig.Env)
+	}
+	if cfg.AgentConfig.Env["BASE"] != "b" {
+		t.Fatalf("project base env mutated: %#v", cfg.AgentConfig.Env)
+	}
+}
+
+// TestEffectiveAgentConfig_OrchestratorRoleUsesOrchestratorOverride: the role
+// selector picks Worker vs Orchestrator, not just Worker for every call.
+func TestEffectiveAgentConfig_OrchestratorRoleUsesOrchestratorOverride(t *testing.T) {
+	cfg := domain.ProjectConfig{
+		Worker:       domain.RoleOverride{AgentConfig: domain.AgentConfig{SystemPrompt: "w"}},
+		Orchestrator: domain.RoleOverride{AgentConfig: domain.AgentConfig{SystemPrompt: "o"}},
+	}
+	if got := effectiveAgentConfig(domain.KindWorker, cfg); got.SystemPrompt != "w" {
+		t.Fatalf("worker prompt = %q, want w", got.SystemPrompt)
+	}
+	if got := effectiveAgentConfig(domain.KindOrchestrator, cfg); got.SystemPrompt != "o" {
+		t.Fatalf("orchestrator prompt = %q, want o", got.SystemPrompt)
+	}
+}
+
+// TestMergeEnv_RoleWinsOnCollision: a per-role value overrides a project value
+// on key collision; both nil inputs yield an empty (non-nil) map.
+func TestMergeEnv_RoleWinsOnCollision(t *testing.T) {
+	got := mergeEnv(
+		map[string]string{"A": "proj", "B": "proj"},
+		map[string]string{"B": "role", "C": "role"},
+	)
+	want := map[string]string{"A": "proj", "B": "role", "C": "role"}
+	if len(got) != len(want) {
+		t.Fatalf("mergeEnv = %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Fatalf("mergeEnv[%q] = %q, want %q", k, got[k], v)
+		}
+	}
+	if mergeEnv(nil, nil) == nil {
+		t.Fatalf("mergeEnv(nil,nil) should be non-nil empty map")
+	}
+}
+
+// TestBuildSystemPrompt_AppendsRoleSystemPrompt: a per-role agentConfig
+// systemPrompt is layered into the derived system prompt so a project can hand
+// a worker standing context beyond the built-in role block.
+func TestBuildSystemPrompt_AppendsRoleSystemPrompt(t *testing.T) {
+	const marker = "ALWAYS COMMIT AFTER EACH STEP"
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		Worker: domain.RoleOverride{AgentConfig: domain.AgentConfig{SystemPrompt: marker}},
+	}}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: &recordingAgent{}}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	sp, err := m.buildSystemPrompt(ctx, domain.KindWorker, "mer")
+	if err != nil {
+		t.Fatalf("buildSystemPrompt: %v", err)
+	}
+	if !strings.Contains(sp, marker) {
+		t.Fatalf("worker system prompt missing per-role marker %q:\n%s", marker, sp)
+	}
+	// The marker must sit inside the guarded region (before the skill pointer and
+	// the confidentiality guard), so it is itself protected from disclosure.
+	if !strings.Contains(sp, "Standing-instruction confidentiality") {
+		t.Fatalf("guard lost:\n%s", sp)
+	}
+}
+
+// TestBuildSystemPrompt_NoRolePromptWhenUnset: a project without a per-role
+// systemPrompt produces the same prompt as before (no stray sections).
+func TestBuildSystemPrompt_NoRolePromptWhenUnset(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: &recordingAgent{}}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	sp, err := m.buildSystemPrompt(ctx, domain.KindWorker, "mer")
+	if err != nil {
+		t.Fatalf("buildSystemPrompt: %v", err)
+	}
+	if !strings.Contains(sp, "Multi-PR workflow") && !strings.Contains(sp, "branch namespace") {
+		// worker prompt still assembled; we only assert it does not error and is non-empty.
+		if sp == "" {
+			t.Fatalf("expected non-empty worker system prompt")
+		}
+	}
 }

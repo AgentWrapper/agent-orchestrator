@@ -310,7 +310,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: no agent adapter for harness %q", id, cfg.Harness)
 	}
 	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config)
-	env := m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, project.Config.Env)
+	env := m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, mergeEnv(project.Config.Env, effectiveAgentConfig(cfg.Kind, project.Config).Env))
 	m.augmentAgentRuntimeEnv(agent, env)
 	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
 		m.destroySpawnWorkspace(ctx, ws, workspaceProject)
@@ -506,6 +506,30 @@ func effectiveAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig) por
 	if override.Permissions != "" {
 		merged.Permissions = override.Permissions
 	}
+	if override.SystemPrompt != "" {
+		merged.SystemPrompt = override.SystemPrompt
+	}
+	if len(override.Env) > 0 {
+		// mergeEnv returns a fresh map (deep copy) so the role override cannot
+		// mutate the project's base Env — an earlier inline write aliased it
+		// (Go copies the map header by value on struct copy), leaking role env
+		// into every later session of the project.
+		merged.Env = mergeEnv(cfg.AgentConfig.Env, override.Env)
+	}
+	if override.MCP != nil {
+		// Copy the MCPConfig (and its Configs slice) rather than aliasing the
+		// override pointer — same defense-in-depth as Env: the merged config
+		// flows to adapters, and a future adapter/hook that mutated it would
+		// otherwise corrupt the stored project config for the daemon's lifetime.
+		cp := *override.MCP
+		if len(cp.Configs) > 0 {
+			cp.Configs = append([]string(nil), cp.Configs...)
+		}
+		merged.MCP = &cp
+	}
+	if len(override.PluginDirs) > 0 {
+		merged.PluginDirs = append([]string(nil), override.PluginDirs...)
+	}
 	return merged
 }
 
@@ -602,8 +626,7 @@ func (m *Manager) RollbackSpawn(ctx context.Context, id domain.SessionID) (delet
 // Kill tears down the runtime and workspace, then records terminal intent with
 // the LCM. A workspace teardown refused by the worktree-remove safety
 // (uncommitted work) is never forced: Kill succeeds with freed=false,
-// signalling the workspace was preserved for later inspection/cleanup while
-// the session itself is still marked terminated.
+// signalling the workspace was preserved and the session is left retryable.
 //
 // A session whose runtime handle or workspace path is missing (e.g. spawn
 // failed partway, handle lost after a crash) is still terminated after the
@@ -639,10 +662,6 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 		cleaned, err := m.destroyWorkspaceProjectRows(ctx, workspaceProjectRows)
 		if err != nil {
 			if errors.Is(err, ports.ErrWorkspaceDirty) {
-				if err := m.lcm.MarkTerminated(ctx, id); err != nil {
-					return false, fmt.Errorf("kill %s: %w", id, err)
-				}
-				m.cleanupSystemPromptDir(id)
 				return false, nil
 			}
 			return false, fmt.Errorf("kill %s: workspace: %w", id, err)
@@ -654,13 +673,6 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	} else if ws.Path != "" {
 		if err := m.workspace.Destroy(ctx, ws); err != nil {
 			if errors.Is(err, ports.ErrWorkspaceDirty) {
-				if err := m.store.DeleteSessionWorktrees(ctx, id); err != nil {
-					m.logger.Warn("kill: delete restore marker failed", "sessionID", id, "error", err)
-				}
-				if err := m.lcm.MarkTerminated(ctx, id); err != nil {
-					return false, fmt.Errorf("kill %s: %w", id, err)
-				}
-				m.cleanupSystemPromptDir(id)
 				return false, nil
 			}
 			return false, fmt.Errorf("kill %s: workspace: %w", id, err)
@@ -843,7 +855,7 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 	// Restore re-applies the project's resolved agent config so a configured
 	// model/permissions carry across a restore, matching fresh spawn.
 	agentConfig := effectiveAgentConfig(rec.Kind, project.Config)
-	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
+	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, mergeEnv(project.Config.Env, agentConfig.Env))
 	m.augmentAgentRuntimeEnv(agent, env)
 	if err := m.prepareWorkspace(ctx, agent, rec.ID, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", rec.ID, err)
@@ -1916,6 +1928,13 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 	if workspacePrompt != "" {
 		cfg.AdditionalSections = append(cfg.AdditionalSections, workspacePrompt)
 	}
+	// A per-role base prompt (agentConfig.systemPrompt) layers on top of the
+	// role-derived instructions so a project can hand a worker (or orchestrator)
+	// standing context beyond the built-in role. It sits before the skill pointer
+	// and the confidentiality guard so it is covered by both.
+	if rolePrompt := strings.TrimSpace(effectiveAgentConfig(kind, project.Config).SystemPrompt); rolePrompt != "" {
+		cfg.RolePrompt = rolePrompt
+	}
 	if pointer := strings.TrimSpace(m.aoSkillPointer()); pointer != "" {
 		cfg.AdditionalSections = append(cfg.AdditionalSections, pointer)
 	}
@@ -2058,6 +2077,21 @@ func workspaceRepoList(repos []domain.WorkspaceRepoRecord) string {
 		lines = append(lines, fmt.Sprintf("- %s: %s", repo.Name, repo.RelativePath))
 	}
 	return strings.Join(lines, "\n")
+}
+
+// mergeEnv overlays roleEnv on top of projectEnv so a per-role value wins on
+// key collision, mirroring the effectiveAgentConfig merge for Env. nil inputs
+// are treated as empty. The result is always a fresh map so callers can mutate
+// it freely (spawnEnv adds AO-internal keys on top).
+func mergeEnv(projectEnv, roleEnv map[string]string) map[string]string {
+	out := make(map[string]string, len(projectEnv)+len(roleEnv))
+	for k, v := range projectEnv {
+		out[k] = v
+	}
+	for k, v := range roleEnv {
+		out[k] = v
+	}
+	return out
 }
 
 // spawnEnv builds the runtime environment: the per-project env vars first, then

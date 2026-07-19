@@ -696,8 +696,14 @@ export interface components {
             projectId?: null | string;
         };
         AgentConfig: {
+            env?: {
+                [key: string]: string;
+            };
+            mcp?: components["schemas"]["MCPConfig"];
             model?: string;
             permissions?: string;
+            pluginDirs?: string[];
+            systemPrompt?: string;
         };
         AgentInfo: {
             /**
@@ -822,6 +828,10 @@ export interface components {
             files: components["schemas"]["WorkspaceFileSummary"][];
             sessionId: string;
             truncated: boolean;
+        };
+        MCPConfig: {
+            configs?: string[];
+            strict?: boolean;
         };
         MarkAllNotificationsReadResponse: {
             notifications: components["schemas"]["NotificationResponse"][];
