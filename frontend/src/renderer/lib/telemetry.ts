@@ -112,7 +112,7 @@ function normalizeException(reason: unknown): Error {
 
 function routeSurface(pathname: string): string {
 	if (pathname === "/") return "home";
-	if (/^\/prs(?:\/|$)/.test(pathname)) return "pull_requests";
+	if (/^\/settings(?:\/|$)/.test(pathname)) return "global_settings";
 	if (/^\/projects\/[^/]+\/sessions\/[^/]+$/.test(pathname)) return "session_detail";
 	if (/^\/projects\/[^/]+(?:\/|$)/.test(pathname)) {
 		if (/\/settings$/.test(pathname)) return "project_settings";

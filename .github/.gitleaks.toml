@@ -171,11 +171,7 @@ title = "gitleaks config"
     description = "Allowlisted files"
     files = ['''^\.?gitleaks.toml$''',
     '''(.*?)(png|jpg|gif|doc|docx|pdf|bin|xls|pyc|zip)$''',
-    '''(go.mod|go.sum)$''',
-    # Public Settings social URL constants (company page is not a client id/secret).
-    '''frontend/src/renderer/lib/social-links\.ts$''',
-    # Settings social-link tests trip the LinkedIn client/secret regexes on labels.
-    '''frontend/src/renderer/components/GlobalSettingsForm\.test\.tsx$''']
+    '''(go.mod|go.sum)$''']
     # Ignore false positives on the public company URL (rule matches brand name + nearby alnum).
     regexes = [
         '''(?i)linkedin\.com/company/agent-orchestrator''',
