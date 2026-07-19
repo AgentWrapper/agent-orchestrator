@@ -73,6 +73,8 @@ const SIDEBAR_COLLAPSE_THRESHOLD = SIDEBAR_MIN_WIDTH;
 
 type SidebarProps = {
 	underTopbar?: boolean;
+	/** Chrome height to clear when underTopbar is set. Defaults to the 56px shell toolbar. */
+	topbarOffset?: "toolbar" | "titlebar";
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];
 	onCreateProject: (input: CreateProjectInput) => Promise<void>;
@@ -112,6 +114,7 @@ function SessionDot({ session }: { session: WorkspaceSession }) {
 // via group-data-[collapsible=icon] into the 48px letter rail.
 export function Sidebar({
 	underTopbar = true,
+	topbarOffset = "toolbar",
 	workspaceError,
 	workspaces,
 	onCreateProject,
@@ -189,7 +192,11 @@ export function Sidebar({
 			data-expanded-chrome={expandedChromeVisible ? "visible" : "hidden"}
 			className={cn(
 				"border-r-0 group-data-[side=left]:border-r-0",
-				underTopbar ? "top-14 h-[calc(100svh-3.5rem)]!" : "top-0 h-svh!",
+				underTopbar
+					? topbarOffset === "titlebar"
+						? "top-9 h-[calc(100svh-2.25rem)]!"
+						: "top-14 h-[calc(100svh-3.5rem)]!"
+					: "top-0 h-svh!",
 			)}
 		>
 			<SidebarHeader className="gap-0 p-0 pl-2.5 pr-1.75 pt-2.5 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pt-2">
@@ -325,14 +332,6 @@ export function Sidebar({
 						</TooltipTrigger>
 						<TooltipContent side="right">Settings</TooltipContent>
 					</Tooltip>
-					{!isMac && (
-						<Tooltip>
-							<TooltipTrigger asChild>
-								<SidebarTrigger className="size-control-board rounded-lg text-passive hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-base" />
-							</TooltipTrigger>
-							<TooltipContent side="right">Expand sidebar · ⌘B</TooltipContent>
-						</Tooltip>
-					)}
 				</div>
 			</SidebarFooter>
 
