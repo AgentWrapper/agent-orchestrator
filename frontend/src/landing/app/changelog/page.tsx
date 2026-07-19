@@ -157,16 +157,23 @@ export default async function ChangelogPage({ searchParams }: ChangelogPageProps
 
 										<div className="space-y-14">
 											{dateGroup.entries.map(({ story, leadPullRequest, pullRequests }) => {
-												const relatedPullRequests = pullRequests
-													.filter((pullRequest) => pullRequest.number !== leadPullRequest.number)
-													.map<RelatedPullRequest>((pullRequest) => ({
-														number: pullRequest.number,
-														title: pullRequest.title,
-														mergedAt: pullRequest.mergedAt,
-														url: pullRequest.url,
-														author: pullRequest.author,
-														category: pullRequest.category,
-													}));
+												const relatedPullRequests = pullRequests.reduce<RelatedPullRequest[]>(
+													(related, pullRequest) => {
+														if (pullRequest.number !== leadPullRequest.number) {
+															related.push({
+																number: pullRequest.number,
+																title: pullRequest.title,
+																mergedAt: pullRequest.mergedAt,
+																url: pullRequest.url,
+																author: pullRequest.author,
+																category: pullRequest.category,
+															});
+														}
+
+														return related;
+													},
+													[],
+												);
 												const hasBreakingChange = pullRequests.some(
 													(pullRequest) => pullRequest.category === "breaking",
 												);

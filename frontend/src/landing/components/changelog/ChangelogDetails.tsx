@@ -13,12 +13,14 @@ export type RelatedPullRequest = {
 	category: PullRequestCategory;
 };
 
+const pullRequestDateFormatter = new Intl.DateTimeFormat("en-US", {
+	month: "short",
+	day: "numeric",
+	timeZone: "UTC",
+});
+
 function formatPullRequestDate(date: string) {
-	return new Intl.DateTimeFormat("en-US", {
-		month: "short",
-		day: "numeric",
-		timeZone: "UTC",
-	}).format(new Date(date));
+	return pullRequestDateFormatter.format(new Date(date));
 }
 
 export function ChangelogDetails({
