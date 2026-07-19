@@ -1,11 +1,12 @@
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Sidebar } from "./Sidebar";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
+import { useUiStore } from "../stores/ui-store";
 
 const { getMock, navigateMock, mockParams, renameSessionMock, updateStatusMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
@@ -252,6 +253,29 @@ describe("Sidebar", () => {
 		expect(screen.getByRole("dialog", { name: "Remove project" })).toBeInTheDocument();
 	});
 
+	it("requests a new task for the project from the kebab menu", async () => {
+		const user = userEvent.setup();
+		renderSidebar();
+		const before = useUiStore.getState().newTaskRequest?.nonce ?? 0;
+
+		await user.click(screen.getByLabelText("Project actions for Project One"));
+		await user.click(await screen.findByRole("menuitem", { name: /New session/ }));
+
+		const request = useUiStore.getState().newTaskRequest;
+		expect(request?.projectId).toBe("proj-1");
+		expect(request?.nonce ?? 0).toBeGreaterThan(before);
+	});
+
+	it("opens the create-project flow when the no-project shortcut signal arrives", async () => {
+		renderSidebar();
+
+		act(() => {
+			useUiStore.getState().requestCreateProject();
+		});
+
+		expect(await screen.findByRole("dialog", { name: "Import to Agent Orchestrator" })).toBeInTheDocument();
+	});
+
 	it("reveals dashboard and orchestrator buttons alongside the kebab on the project row", () => {
 		renderSidebar();
 
@@ -269,7 +293,7 @@ describe("Sidebar", () => {
 		expect(navigateMock).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "proj-1" } });
 	});
 
-	it("requires explicit worker and orchestrator agents when creating a project", async () => {
+	it("defaults worker and orchestrator agents when creating a project", async () => {
 		const user = userEvent.setup();
 		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;
 		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/new-project");
@@ -284,16 +308,73 @@ describe("Sidebar", () => {
 		expect(window.ao!.app.chooseDirectory).toHaveBeenCalledWith("Choose a project repository");
 		const dialog = screen.getByRole("dialog", { name: "Project agents" });
 		expect(dialog).toHaveClass("left-1/2", "top-1/2", "-translate-x-1/2", "-translate-y-1/2");
-		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Codex");
-		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create and start" }));
 
 		await waitFor(() =>
 			expect(onCreateProject).toHaveBeenCalledWith(
 				expect.objectContaining({
 					path: "/repo/new-project",
-					workerAgent: "codex",
+					workerAgent: "claude-code",
 					orchestratorAgent: "claude-code",
+				}),
+			),
+		);
+	});
+
+	it("prioritizes authorized project agents by preferred agent order", async () => {
+		const user = userEvent.setup();
+		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;
+		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/new-project");
+		getMock.mockResolvedValueOnce({
+			data: {
+				supported: [
+					{ id: "goose", label: "Goose" },
+					{ id: "devin", label: "Devin" },
+					{ id: "aider", label: "Aider" },
+					{ id: "opencode", label: "OpenCode" },
+					{ id: "cursor", label: "Cursor" },
+				],
+				installed: [
+					{ id: "goose", label: "Goose", authStatus: "authorized" },
+					{ id: "devin", label: "Devin", authStatus: "authorized" },
+					{ id: "aider", label: "Aider", authStatus: "authorized" },
+					{ id: "opencode", label: "OpenCode", authStatus: "authorized" },
+					{ id: "cursor", label: "Cursor", authStatus: "authorized" },
+				],
+				authorized: [
+					{ id: "goose", label: "Goose", authStatus: "authorized" },
+					{ id: "devin", label: "Devin", authStatus: "authorized" },
+					{ id: "aider", label: "Aider", authStatus: "authorized" },
+					{ id: "opencode", label: "OpenCode", authStatus: "authorized" },
+					{ id: "cursor", label: "Cursor", authStatus: "authorized" },
+				],
+			},
+			error: undefined,
+		});
+		renderSidebar({ onCreateProject, seedAgents: false });
+
+		await user.click(screen.getByLabelText("New project"));
+		await user.click(screen.getByRole("button", { name: /^Project/i }));
+		expect(await screen.findByText("/repo/new-project")).toBeInTheDocument();
+		expect(screen.getByRole("combobox", { name: "Worker agent" })).toHaveTextContent(/cursor/i);
+		expect(screen.getByRole("combobox", { name: "Orchestrator agent" })).toHaveTextContent(/cursor/i);
+
+		await user.click(screen.getByRole("combobox", { name: "Worker agent" }));
+		expect((await screen.findAllByRole("option")).map((option) => option.textContent)).toEqual([
+			"Cursor",
+			"OpenCode",
+			"Aider",
+			"Devin",
+			"Goose",
+		]);
+		await user.keyboard("{Escape}");
+
+		await user.click(screen.getByRole("button", { name: "Create and start" }));
+		await waitFor(() =>
+			expect(onCreateProject).toHaveBeenCalledWith(
+				expect.objectContaining({
+					workerAgent: "cursor",
+					orchestratorAgent: "cursor",
 				}),
 			),
 		);
@@ -402,7 +483,6 @@ describe("Sidebar", () => {
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Workspace/i }));
 		await screen.findByRole("dialog", { name: "Workspace agents" });
-		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Codex");
 		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
 
@@ -448,7 +528,6 @@ describe("Sidebar", () => {
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Workspace/i }));
 		await screen.findByRole("dialog", { name: "Workspace agents" });
-		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Codex");
 		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
 
@@ -475,7 +554,6 @@ describe("Sidebar", () => {
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Workspace/i }));
 		await screen.findByRole("dialog", { name: "Workspace agents" });
-		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Codex");
 		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
 
@@ -517,7 +595,7 @@ describe("Sidebar", () => {
 		await user.click(screen.getByRole("button", { name: /^Project/i }));
 		expect(await screen.findByText("/repo/new-project")).toBeInTheDocument();
 
-		await user.click(screen.getByRole("combobox", { name: "Worker agent" }));
+		await user.click(screen.getByRole("combobox", { name: "Orchestrator agent" }));
 		const options = await screen.findAllByRole("option");
 		expect(options.map((option) => option.textContent)).toEqual([
 			"Claude Code",
@@ -528,12 +606,10 @@ describe("Sidebar", () => {
 		expect(options[2]).toHaveAttribute("aria-disabled", "true");
 		await user.keyboard("{Escape}");
 
-		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Claude Code");
-		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create and start" }));
 
 		await waitFor(() =>
-			expect(onCreateProject).toHaveBeenCalledWith(expect.objectContaining({ workerAgent: "claude-code" })),
+			expect(onCreateProject).toHaveBeenCalledWith(expect.objectContaining({ orchestratorAgent: "claude-code" })),
 		);
 	});
 
@@ -579,14 +655,13 @@ describe("Sidebar", () => {
 			error: undefined,
 		});
 
-		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Codex");
 		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create and start" }));
 
 		await waitFor(() =>
 			expect(onCreateProject).toHaveBeenCalledWith({
 				path: "/repo/new-project",
-				workerAgent: "codex",
+				workerAgent: "claude-code",
 				orchestratorAgent: "claude-code",
 				trackerIntake: undefined,
 				asWorkspace: false,
@@ -852,25 +927,78 @@ describe("Sidebar", () => {
 		}
 	});
 
-	it("renders a calm non-pulsing dot for an idle session and a pulsing one for a working session", () => {
+	it("renders sidebar dots from attention zones without activity overrides", () => {
 		renderSidebar({
 			workspaces: [
 				{
 					...workspace,
 					sessions: [
 						{ ...session, id: "proj-1-idle", title: "idle task", status: "idle" },
-						{ ...session, id: "proj-1-work", title: "working task", status: "working" },
+						{
+							...session,
+							id: "proj-1-work",
+							title: "working task",
+							status: "working",
+							activity: { state: "active", lastActivityAt: "2026-06-30T00:00:00Z" },
+						},
+						{
+							...session,
+							id: "proj-1-ci",
+							title: "ci failed task",
+							status: "ci_failed",
+							activity: { state: "active", lastActivityAt: "2026-06-30T00:00:00Z" },
+						},
 					],
 				},
 			],
 		});
 
 		const idleDot = screen.getByLabelText("Open idle task").querySelector('span[aria-hidden="true"]');
-		expect(idleDot).toHaveClass("bg-passive");
+		expect(idleDot).toHaveClass("bg-working");
 		expect(idleDot).not.toHaveClass("animate-status-pulse");
 
 		const workingDot = screen.getByLabelText("Open working task").querySelector('span[aria-hidden="true"]');
-		expect(workingDot).toHaveClass("animate-status-pulse", "bg-working");
+		expect(workingDot).toHaveClass("bg-working");
+		expect(workingDot).not.toHaveClass("animate-status-pulse");
+
+		const ciFailedDot = screen.getByLabelText("Open ci failed task").querySelector('span[aria-hidden="true"]');
+		expect(ciFailedDot).toHaveClass("bg-warning");
+		expect(ciFailedDot).not.toHaveClass("bg-error");
+		expect(ciFailedDot).not.toHaveClass("animate-status-pulse");
+	});
+
+	it("renders idle activity as quiet while preserving PR status color", () => {
+		renderSidebar({
+			workspaces: [
+				{
+					...workspace,
+					sessions: [
+						{
+							...session,
+							id: "proj-1-idle-activity",
+							title: "idle activity task",
+							status: "working",
+							activity: { state: "idle", lastActivityAt: "2026-06-30T00:00:00Z" },
+						},
+						{
+							...session,
+							id: "proj-1-idle-draft",
+							title: "idle draft task",
+							status: "draft",
+							activity: { state: "idle", lastActivityAt: "2026-06-30T00:00:00Z" },
+						},
+					],
+				},
+			],
+		});
+
+		const idleDot = screen.getByLabelText("Open idle activity task").querySelector('span[aria-hidden="true"]');
+		expect(idleDot).toHaveClass("bg-working");
+		expect(idleDot).not.toHaveClass("animate-status-pulse");
+
+		const idleDraftDot = screen.getByLabelText("Open idle draft task").querySelector('span[aria-hidden="true"]');
+		expect(idleDraftDot).toHaveClass("bg-accent-dim");
+		expect(idleDraftDot).not.toHaveClass("animate-status-pulse");
 	});
 
 	it("does not render the restart-to-update row unless an update is downloaded", async () => {

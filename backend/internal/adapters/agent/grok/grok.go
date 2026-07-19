@@ -1,9 +1,9 @@
 // Package grok implements the Grok Build (xAI) agent adapter.
 //
 // Grok Build is xAI's terminal coding agent (binary "grok"). It supports
-// Claude Code compatibility for hooks, skills, etc., so we reuse the claude
-// hook installation (which writes .claude/settings.local.json with AO
-// hook commands). Grok will pick them up via its compat layer.
+// Claude Code compatibility for hooks, skills, etc., so we write Claude-shaped
+// hooks into .claude/settings.local.json with Grok-specific AO hook commands.
+// Grok will pick them up via its compat layer.
 //
 // Launch uses a positional prompt for the initial task (in-command delivery).
 // AO's standing instructions are appended with `--rules` so Grok's built-in
@@ -12,21 +12,21 @@
 // (parity with Codex no-update).
 // Restore prefers the hook-captured native session id via `-r <id>`.
 //
-// SessionInfo and title/summary flow through the shared claude hook path
-// (when the hook handlers are extended to persist them).
+// SessionInfo and title/summary flow through the shared hook metadata path.
 package grok
 
 import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hooksjson"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -41,6 +41,39 @@ var grokBinarySpec = binaryutil.BinarySpec{
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "grok.exe"}},
 		{Base: binaryutil.WinHome, Parts: []string{".grok", "bin", "grok.exe"}},
 	},
+}
+
+const (
+	grokClaudeSettingsDirName  = ".claude"
+	grokClaudeSettingsFileName = "settings.local.json"
+	grokHookCommandPrefix      = "ao hooks grok "
+	grokHookTimeout            = 30
+)
+
+var grokStartupMatcher = "startup"
+
+// grokManagedHooks is Claude Code's hook event shape with Grok-specific AO
+// hook commands. Grok reads this file through its Claude compatibility layer,
+// while `ao hooks grok` keeps activity and session metadata attributed to the
+// Grok harness.
+var grokManagedHooks = []hooksjson.HookSpec{
+	{Event: "SessionStart", Matcher: &grokStartupMatcher, Command: grokHookCommandPrefix + "session-start"},
+	{Event: "UserPromptSubmit", Command: grokHookCommandPrefix + "user-prompt-submit"},
+	{Event: "PreToolUse", Command: grokHookCommandPrefix + "pre-tool-use"},
+	{Event: "PostToolUse", Command: grokHookCommandPrefix + "post-tool-use"},
+	{Event: "PostToolUseFailure", Command: grokHookCommandPrefix + "post-tool-use-failure"},
+	{Event: "PermissionRequest", Command: grokHookCommandPrefix + "permission-request"},
+	{Event: "Stop", Command: grokHookCommandPrefix + "stop"},
+	{Event: "Notification", Command: grokHookCommandPrefix + "notification"},
+	{Event: "SessionEnd", Command: grokHookCommandPrefix + "session-end"},
+}
+
+var grokHooks = hooksjson.Manager{
+	Label:         "grok",
+	CommandPrefix: grokHookCommandPrefix,
+	Timeout:       grokHookTimeout,
+	Path:          grokClaudeSettingsPath,
+	Managed:       grokManagedHooks,
 }
 
 // Plugin is the Grok Build agent adapter.
@@ -100,50 +133,37 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	return cmd, nil
 }
 
-// GetAgentHooks reuses the Claude Code hook installer because Grok Build
-// has a full Claude Code compatibility layer.
+// GetAgentHooks installs Claude Code-shaped hooks because Grok Build has a
+// Claude Code compatibility layer.
 //
 // Official docs (https://docs.x.ai/build/features/skills-plugins-marketplaces#claude-code-compatibility:~:text=tasks%20in%20parallel.-,Claude%20Code%20compatibility,-Grok%20is%20fully):
 //
 //	"Grok is fully compatible with Claude Code with zero configuration needed.
 //	 Grok automatically reads Claude Code ... hooks ... alongside .grok/."
 //
-// This means Grok will pick up the .claude/settings.local.json (and the
-// AO hook commands we install there) in the worktree. The hook payloads for
-// SessionStart / UserPromptSubmit / Stop etc. are compatible, so we get
-// title/summary/agentSessionId + activity for free without a separate native
-// .grok/hooks/ implementation or code duplication.
+// This means Grok will pick up the .claude/settings.local.json in the
+// worktree. The hook payloads for SessionStart / UserPromptSubmit / Stop etc.
+// are compatible, and the installed commands use the Grok harness token so AO
+// persists Grok's native session id under the Grok session.
 func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfig) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	// Delegate; the installed commands will be "ao hooks claude-code <evt>"
-	// so the existing CLI hook dispatcher routes them to claude derive logic.
-	// This works because of Grok's documented zero-config Claude compat.
-	return (&claudecode.Plugin{}).GetAgentHooks(ctx, cfg)
+	return grokHooks.Install(ctx, cfg.WorkspacePath)
 }
 
 // UninstallHooks removes the Claude Code-compatible AO hooks Grok uses.
 func (p *Plugin) UninstallHooks(ctx context.Context, workspacePath string) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return (&claudecode.Plugin{}).UninstallHooks(ctx, workspacePath)
+	return grokHooks.Uninstall(ctx, workspacePath)
 }
 
-// AreHooksInstalled reports whether the delegated Claude Code-compatible AO
+// AreHooksInstalled reports whether the Grok Claude Code-compatible AO
 // hooks are present for this Grok workspace.
 func (p *Plugin) AreHooksInstalled(ctx context.Context, workspacePath string) (bool, error) {
-	if err := ctx.Err(); err != nil {
-		return false, err
-	}
-	return (&claudecode.Plugin{}).AreHooksInstalled(ctx, workspacePath)
+	return grokHooks.AreInstalled(ctx, workspacePath)
 }
 
 // GetRestoreCommand resumes a prior grok session by its captured id, building
 // `grok --no-auto-update [--permission-mode <mode>] -r <agentSessionId>`
-// when we have a hook-captured native id. ok=false otherwise (fall back to fresh
-// launch in the manager).
+// when we have a hook-captured native id. ok=false otherwise, so the restore
+// manager falls back to a fresh launch with AO's saved system prompt.
 func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig) (cmd []string, ok bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
@@ -172,10 +192,8 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	return cmd, true, nil
 }
 
-// SessionInfo reads hook-derived metadata. Since we delegate hook install to
-// claude hooks (via compat), the keys in the metadata map are the claude ones
-// ("title", "summary", "agentSessionId"). We surface them under the normalized
-// SessionInfo; grok-specific aliases are not needed.
+// SessionInfo reads hook-derived metadata under AO's normalized keys ("title",
+// "summary", "agentSessionId").
 func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (ports.SessionInfo, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return ports.SessionInfo{}, false, err
@@ -203,6 +221,10 @@ func (p *Plugin) grokBinary(ctx context.Context) (string, error) {
 	}
 	p.resolvedBinary = binary
 	return binary, nil
+}
+
+func grokClaudeSettingsPath(workspacePath string) string {
+	return filepath.Join(workspacePath, grokClaudeSettingsDirName, grokClaudeSettingsFileName)
 }
 
 func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {

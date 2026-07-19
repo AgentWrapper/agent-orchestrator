@@ -35,4 +35,11 @@ describe("CenterPane toolbar session label", () => {
 		render(<CenterPane theme="dark" daemonReady />);
 		expect(screen.getByText("No session")).toBeInTheDocument();
 	});
+
+	it("uses the inspector tab height for the terminal header", () => {
+		render(<CenterPane session={worker} theme="dark" daemonReady />);
+
+		const header = screen.getByText("TERMINAL").parentElement?.parentElement;
+		expect(header).toHaveClass("h-inspector-tabs");
+	});
 });

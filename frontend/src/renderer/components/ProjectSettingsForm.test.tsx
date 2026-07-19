@@ -263,8 +263,8 @@ describe("ProjectSettingsForm", () => {
 		expect(options.map((option) => option.textContent)).toEqual([
 			"Claude Code",
 			"Codex",
-			"Goose",
 			"OpenCode",
+			"Goose",
 			"KiroAuth unknown",
 		]);
 		expect(options[4]).not.toHaveAttribute("aria-disabled", "true");

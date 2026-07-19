@@ -50,7 +50,7 @@ func kimiLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, erro
 }
 
 func kimiCodeHome() (string, bool) {
-	if home := strings.TrimSpace(os.Getenv("KIMI_CODE_HOME")); home != "" {
+	if home := strings.TrimSpace(os.Getenv(kimiCodeHomeEnv)); home != "" {
 		return home, true
 	}
 	home, err := os.UserHomeDir()

@@ -163,6 +163,11 @@ export function WindowTitlebar() {
 				</TopMenu>
 
 				<TopMenu id="help" label="Help" openMenu={openMenu} setOpenMenu={setOpenMenu}>
+					<DropdownMenuItem onSelect={act("help.shortcuts")}>
+						Keyboard shortcuts
+						<DropdownMenuShortcut>Ctrl+/</DropdownMenuShortcut>
+					</DropdownMenuItem>
+					<DropdownMenuSeparator />
 					<DropdownMenuItem onSelect={act("help.about")}>About Agent Orchestrator</DropdownMenuItem>
 				</TopMenu>
 			</nav>

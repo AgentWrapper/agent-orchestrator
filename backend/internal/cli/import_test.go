@@ -54,6 +54,35 @@ func TestImportCommand_ImportsProjectJSON(t *testing.T) {
 	}
 }
 
+func TestImportCommand_SurfacesParseErrorOnce(t *testing.T) {
+	setConfigEnv(t)
+	// A tab-indented line is a YAML syntax error (not a *yaml.TypeError), so
+	// loadLegacyConfig surfaces it exactly like issue #2186 describes.
+	root := filepath.Join(t.TempDir(), ".agent-orchestrator")
+	if err := os.MkdirAll(root, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "config.yaml"),
+		[]byte("projects:\n\talpha:\n  path: /repos/alpha\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, stderr, err := executeCLI(t, Deps{}, "import", "--from", root, "--yes")
+	if err == nil {
+		t.Fatal("import: want non-nil error for a config.yaml that fails to parse")
+	}
+	if got := ExitCode(err); got != 1 {
+		t.Fatalf("ExitCode = %d, want 1 (runtime failure)", got)
+	}
+	// The parse error must reach the user exactly once. main.go prints the
+	// returned error, so the command itself must not also Fprintf it; that
+	// doubled the output before this fix.
+	count := strings.Count(stderr, "parse legacy config.yaml") + strings.Count(err.Error(), "parse legacy config.yaml")
+	if count != 1 {
+		t.Fatalf("parse error appeared %d time(s) (stderr=%q, err=%q), want exactly 1", count, stderr, err)
+	}
+}
+
 func TestImportCommand_RefusesWhenDaemonRunning(t *testing.T) {
 	cfg := setConfigEnv(t)
 	root := writeLegacyProject(t)

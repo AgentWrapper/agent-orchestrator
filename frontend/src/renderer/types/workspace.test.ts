@@ -212,7 +212,7 @@ describe("findProjectOrchestrator", () => {
 });
 
 describe("sessionNeedsAttention", () => {
-	it.each(["needs_input", "no_signal", "changes_requested", "review_pending", "ci_failed"] as const)(
+	it.each(["needs_input", "no_signal", "changes_requested", "ci_failed", "unknown"] as const)(
 		"is true for %s",
 		(status) => {
 			expect(sessionNeedsAttention(sessionWith({ status }))).toBe(true);
@@ -226,6 +226,7 @@ describe("sessionNeedsAttention", () => {
 	it("is false for statuses that don't need the user", () => {
 		expect(sessionNeedsAttention(sessionWith({ status: "working" }))).toBe(false);
 		expect(sessionNeedsAttention(sessionWith({ status: "mergeable" }))).toBe(false);
+		expect(sessionNeedsAttention(sessionWith({ status: "review_pending" }))).toBe(false);
 	});
 });
 
@@ -339,10 +340,10 @@ describe("attentionZone", () => {
 		["no_signal", "action"],
 		["ci_failed", "action"],
 		["changes_requested", "action"],
+		["unknown", "action"],
 		["review_pending", "pending"],
 		["pr_open", "pending"],
 		["draft", "pending"],
-		["unknown", "pending"],
 		["working", "working"],
 		["idle", "working"],
 		["merged", "done"],
