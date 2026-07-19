@@ -244,18 +244,56 @@ func sanitizeRemotePayload(name string, payload map[string]any) map[string]any {
 		if !ok {
 			continue
 		}
-		if safe, ok := sanitizeRemoteValue(value); ok {
+		if safe, ok := sanitizeRemoteValue(key, value); ok {
 			sanitized[key] = safe
 		}
 	}
 	return sanitized
 }
 
-func sanitizeRemoteValue(v any) (any, bool) {
+// maxRemoteStringLen bounds any allowlisted string property. No legitimate value
+// here is large; a big one means an emitter leaked free text, so we truncate.
+const maxRemoteStringLen = 256
+
+// commandShapedKeys hold a command name or command path (e.g. "status",
+// "ao status"), never free text. Values that don't match the command shape are
+// replaced with a stable non-reversible token so raw args (URLs, paths, prose)
+// can never leave the machine even if a future emitter reintroduces the leak
+// (defense-in-depth for #2813; the primary fix is in cli.usageErrorCommand).
+var commandShapedKeys = map[string]bool{"command": true, "command_path": true}
+
+// isCommandShaped reports whether s looks like a command name/path: a short
+// string of letters/digits/-/_/space plus the "<unknown>" sentinel. URLs (":",
+// "/"), file paths ("/"), and prose (punctuation, non-ASCII) fail it.
+func isCommandShaped(s string) bool {
+	if s == "" || len(s) > 48 {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '-', r == '_', r == ' ', r == '<', r == '>':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func sanitizeRemoteValue(key string, v any) (any, bool) {
 	switch value := v.(type) {
 	case string:
 		value = strings.TrimSpace(value)
-		return value, value != ""
+		if value == "" {
+			return nil, false
+		}
+		if commandShapedKeys[key] && !isCommandShaped(value) {
+			return "sha256:" + sha256String(value)[:16], true
+		}
+		if len(value) > maxRemoteStringLen {
+			value = value[:maxRemoteStringLen]
+		}
+		return value, true
 	case bool:
 		return value, true
 	case int:

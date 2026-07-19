@@ -30,7 +30,7 @@ func executeWithDeps(deps Deps, args []string) error {
 	cmd.SetArgs(args)
 	err := cmd.Execute()
 	if err != nil && ExitCode(err) == 2 {
-		(&commandContext{deps: deps}).emitCLIUsageError(context.Background(), args, err)
+		(&commandContext{deps: deps}).emitCLIUsageError(context.Background(), knownCommandNames(cmd), args, err)
 	}
 	return err
 }
@@ -224,8 +224,8 @@ func (c *commandContext) emitCLIInvoked(ctx context.Context, cmd *cobra.Command)
 	})
 }
 
-func (c *commandContext) emitCLIUsageError(ctx context.Context, args []string, err error) {
-	command, commandPath := usageErrorCommand(args)
+func (c *commandContext) emitCLIUsageError(ctx context.Context, known map[string]bool, args []string, err error) {
+	command, commandPath := usageErrorCommand(known, args)
 	reqCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 	_ = c.postLoopbackJSON(reqCtx, "/internal/telemetry/cli-usage-error", map[string]string{
@@ -235,18 +235,51 @@ func (c *commandContext) emitCLIUsageError(ctx context.Context, args []string, e
 	})
 }
 
-func usageErrorCommand(args []string) (string, string) {
-	tokens := []string{"ao"}
+// knownCommandNames collects every registered command name (and alias) in the
+// tree, so usageErrorCommand can tell a real subcommand from arbitrary free text.
+func knownCommandNames(root *cobra.Command) map[string]bool {
+	known := make(map[string]bool)
+	var walk func(*cobra.Command)
+	walk = func(c *cobra.Command) {
+		for _, sub := range c.Commands() {
+			known[sub.Name()] = true
+			for _, alias := range sub.Aliases {
+				known[alias] = true
+			}
+			walk(sub)
+		}
+	}
+	walk(root)
+	return known
+}
+
+// usageErrorCommand derives a SAFE command / command_path for the usage-error
+// telemetry event. Parsing has already failed, so args may contain arbitrary user
+// text (URLs, absolute paths, multi-paragraph instructions). Only tokens that are
+// registered command names are propagated; the first non-flag token that is not a
+// known command is recorded as the sentinel "<unknown>" and the scan stops, so
+// raw positional text never leaves the machine (#2813). Flags (leading "-") end
+// the scan as before.
+func usageErrorCommand(known map[string]bool, args []string) (string, string) {
+	command := "ao"
+	commandPath := "ao"
+	sawUnknown := false
 	for _, arg := range args {
 		if strings.HasPrefix(arg, "-") {
 			break
 		}
-		tokens = append(tokens, arg)
+		if known[arg] {
+			command = arg
+			commandPath += " " + arg
+			continue
+		}
+		// Free text / URL / path — record a sentinel, never the raw token.
+		commandPath += " <unknown>"
+		sawUnknown = true
+		break
 	}
-	commandPath := strings.Join(tokens, " ")
-	command := "ao"
-	if len(tokens) > 1 {
-		command = tokens[len(tokens)-1]
+	if sawUnknown && command == "ao" {
+		command = "<unknown>"
 	}
 	return command, commandPath
 }
