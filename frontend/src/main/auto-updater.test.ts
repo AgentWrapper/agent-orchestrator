@@ -217,6 +217,35 @@ describe("startAutoUpdates", () => {
 		expect(module.getUpdateStatus()).toEqual({ state: "available", version: "2.0.0" });
 	});
 
+	it("restores the prior status when an automatic download fails after publishing progress", async () => {
+		const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+		const lateDownload = deferred();
+		const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+		const err = new Error("download failed");
+
+		await module.checkForUpdatesNow(stateDir);
+		updaterEvents.get("update-available")?.({ version: "2.0.0" });
+		expect(module.getUpdateStatus()).toEqual({ state: "available", version: "2.0.0" });
+
+		autoUpdater.checkForUpdates.mockImplementationOnce(() => {
+			updaterEvents.get("checking-for-update")?.();
+			updaterEvents.get("update-available")?.({ version: "2.1.0" });
+			updaterEvents.get("download-progress")?.({ percent: 42 });
+			return Promise.resolve({ downloadPromise: lateDownload.promise });
+		});
+		const startPromise = module.startAutoUpdates(stateDir);
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(module.getUpdateStatus()).toEqual({ state: "downloading", percent: 42 });
+
+		updaterEvents.get("error")?.(err);
+		lateDownload.resolve();
+		await startPromise;
+
+		expect(consoleErrorSpy).toHaveBeenCalledWith("auto-update check failed:", err);
+		expect(module.getUpdateStatus()).toEqual({ state: "available", version: "2.0.0" });
+	});
+
 	it("restores a staged update when an automatic check emits checking before an error", async () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date("2026-07-19T12:00:00.000Z"));

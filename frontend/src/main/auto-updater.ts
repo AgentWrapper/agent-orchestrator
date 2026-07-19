@@ -28,7 +28,7 @@ function configureFeed(channel: UpdateChannel): void {
 }
 
 let lastStatus: UpdateStatus = { state: "idle" };
-let statusRevision = 0;
+let independentStatusRevision = 0;
 let eventsWired = false;
 
 // Staged-update tracking for the escalation evaluator: set on update-downloaded,
@@ -42,17 +42,21 @@ let escalationStateDir: string | undefined;
 const AUTOMATIC_UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 let automaticUpdateTimer: ReturnType<typeof setInterval> | undefined;
 let activeUpdaterOperation: "automatic-check" | "manual-check" | "manual-download" | undefined;
-let automaticCheckPreviousStatus: { status: UpdateStatus; checkingRevision: number } | undefined;
+let automaticCheckPreviousStatus: { status: UpdateStatus; independentRevision: number } | undefined;
 let updaterOperationQueue: Promise<void> = Promise.resolve();
 
 // broadcast pushes the latest update status to every renderer window so the
 // Global Settings Updates section can reflect check/download progress live.
-function broadcast(status: UpdateStatus): void {
-	statusRevision += 1;
+function broadcast(status: UpdateStatus, owner: "independent" | "automatic-operation" = "independent"): void {
+	if (owner === "independent") independentStatusRevision += 1;
 	lastStatus = status;
 	for (const win of BrowserWindow.getAllWindows()) {
 		if (!win.isDestroyed()) win.webContents.send("updates:status", status);
 	}
+}
+
+function broadcastUpdaterStatus(status: UpdateStatus): void {
+	broadcast(status, activeUpdaterOperation === "automatic-check" ? "automatic-operation" : "independent");
 }
 
 // --- Read-only release-feed helpers (packaged app only; every failure is silent).
@@ -162,9 +166,9 @@ function stopEscalationTimer(): void {
 
 function restoreAutomaticCheckPreviousStatus(): void {
 	if (automaticCheckPreviousStatus === undefined) return;
-	const { status, checkingRevision } = automaticCheckPreviousStatus;
+	const { status, independentRevision } = automaticCheckPreviousStatus;
 	automaticCheckPreviousStatus = undefined;
-	if (statusRevision !== checkingRevision) return;
+	if (independentStatusRevision !== independentRevision) return;
 	broadcast(status);
 }
 
@@ -198,30 +202,30 @@ function wireUpdaterEvents(): void {
 	autoUpdater.on("checking-for-update", () => {
 		if (activeUpdaterOperation === "automatic-check" && automaticCheckPreviousStatus === undefined) {
 			const status = lastStatus;
-			broadcast({ state: "checking" });
-			automaticCheckPreviousStatus = { status, checkingRevision: statusRevision };
+			broadcastUpdaterStatus({ state: "checking" });
+			automaticCheckPreviousStatus = { status, independentRevision: independentStatusRevision };
 			return;
 		}
-		broadcast({ state: "checking" });
+		broadcastUpdaterStatus({ state: "checking" });
 	});
 	autoUpdater.on("update-available", (info) => {
 		// A manual re-check reports the already-staged build as merely "available"
 		// (autoDownload is off on that path). It is still in cache and installs on
 		// quit, so keep the richer downloaded status instead of hiding the row.
 		if (stagedAtMs !== undefined && info?.version === stagedVersion) {
-			broadcast(stagedDownloadedStatus());
+			broadcastUpdaterStatus(stagedDownloadedStatus());
 			return;
 		}
-		broadcast({ state: "available", version: info?.version });
+		broadcastUpdaterStatus({ state: "available", version: info?.version });
 	});
 	autoUpdater.on("update-not-available", () => {
-		broadcast({ state: "not-available" });
+		broadcastUpdaterStatus({ state: "not-available" });
 		// The staged build outlives a "nothing newer" answer (e.g. after a channel
 		// switch); follow up so the restart row returns.
-		if (stagedAtMs !== undefined) broadcast(stagedDownloadedStatus());
+		if (stagedAtMs !== undefined) broadcastUpdaterStatus(stagedDownloadedStatus());
 	});
 	autoUpdater.on("download-progress", (p) =>
-		broadcast({ state: "downloading", percent: Math.max(0, Math.min(100, Math.round(p?.percent ?? 0))) }),
+		broadcastUpdaterStatus({ state: "downloading", percent: Math.max(0, Math.min(100, Math.round(p?.percent ?? 0))) }),
 	);
 	autoUpdater.on("update-downloaded", (info) => {
 		stagedVersion = info?.version;
