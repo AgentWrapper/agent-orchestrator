@@ -12,11 +12,13 @@ import { useEffect } from "react";
  * leaves the docs stylesheet — including its preflight reset — alive on the
  * landing page, which then breaks its spacing, nav and sticky scroll.
  *
- * Landing -> docs is already a hard navigation (the landing nav uses plain
- * <a> tags), so the leak is one-directional. This guard makes the reverse
- * direction a hard navigation too: any in-app link that leaves /docs triggers
- * a full document load, guaranteeing the landing page renders with only its
- * own CSS. Links that stay within /docs keep Fumadocs' fast client routing.
+ * The landing -> docs direction is safe either way: globals.css lives in the
+ * root layout and is present on both routes, so a client-side navigation to
+ * /docs just adds docs.css on top. The leak only bites docs -> landing. This
+ * guard makes that direction a hard navigation: any in-app link that leaves
+ * /docs triggers a full document load, guaranteeing the landing page renders
+ * with only its own CSS. Links that stay within /docs keep Fumadocs' fast
+ * client routing.
  */
 export function DocsHardNav() {
 	useEffect(() => {

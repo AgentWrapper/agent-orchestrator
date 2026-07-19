@@ -3,8 +3,8 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
-import { getDownloadTarget, isMacDesktop } from "../lib/desktop-downloads";
 import { useGitHubRepoFacts } from "../lib/use-github-repo-facts";
+import { useDownloadTarget, useIsMacDesktop } from "../lib/use-download-target";
 import { CopyCommand } from "./CopyCommand";
 import { ScaledMockup } from "./ScaledMockup";
 
@@ -1063,13 +1063,8 @@ function SessionDot({ zone }: { zone: string }) {
 export function LandingHero() {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const { stars, latestRelease } = useGitHubRepoFacts();
-	const [downloadTarget, setDownloadTarget] = useState<ReturnType<typeof getDownloadTarget>>(null);
-	const [showBrew, setShowBrew] = useState(false);
-
-	useEffect(() => {
-		setDownloadTarget(getDownloadTarget(navigator));
-		setShowBrew(isMacDesktop(navigator));
-	}, []);
+	const downloadTarget = useDownloadTarget();
+	const showBrew = useIsMacDesktop();
 
 	useGSAP(
 		() => {

@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useState } from "react";
 
 function PlayIcon({ className = "" }: { className?: string }) {
@@ -52,11 +53,12 @@ export function LandingVideo() {
 								aria-label={`Play video: ${videoTitle}`}
 								className="group absolute inset-0 h-full w-full cursor-pointer"
 							>
-								<img
+								<Image
 									src="/mux-video-preview.jpg"
 									alt="Still from the Agent Orchestrator demo video: 100 PRs in 6 days"
-									loading="lazy"
-									className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 ease-out group-hover:scale-[1.02]"
+									fill
+									sizes="(min-width: 1280px) 1180px, 100vw"
+									className="object-cover transition-transform duration-700 ease-out group-hover:scale-[1.02]"
 								/>
 								<span className="absolute inset-0 bg-black/25 transition-colors duration-300 group-hover:bg-black/15" />
 								<span className="absolute inset-0 grid place-items-center">

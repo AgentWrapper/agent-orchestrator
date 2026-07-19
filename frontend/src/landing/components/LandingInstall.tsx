@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { DESKTOP_DOWNLOADS, getDownloadTarget, isMacDesktop } from "../lib/desktop-downloads";
+import Link from "next/link";
+import { DESKTOP_DOWNLOADS } from "../lib/desktop-downloads";
+import { useDownloadTarget, useIsMacDesktop } from "../lib/use-download-target";
 import { CopyCommand } from "./CopyCommand";
 
 const BREW_INSTALL_COMMAND = "brew install --cask agentwrapper/tap/agent-orchestrator";
@@ -47,13 +48,8 @@ const platformIcons: Record<string, ({ className }: { className?: string }) => R
 };
 
 export function LandingInstall() {
-	const [primary, setPrimary] = useState<ReturnType<typeof getDownloadTarget>>(null);
-	const [mac, setMac] = useState(false);
-
-	useEffect(() => {
-		setPrimary(getDownloadTarget(navigator));
-		setMac(isMacDesktop(navigator));
-	}, []);
+	const primary = useDownloadTarget();
+	const mac = useIsMacDesktop();
 
 	return (
 		<section
@@ -168,7 +164,7 @@ export function LandingInstall() {
 									label="ao spawn command"
 									className="w-full"
 								/>
-								<a
+								<Link
 									href="/docs/quickstart"
 									className="group inline-flex items-center gap-1.5 pt-1 text-[12.5px] font-medium text-[color:var(--accent)]"
 								>
@@ -176,7 +172,7 @@ export function LandingInstall() {
 									<span aria-hidden="true" className="transition-transform duration-200 group-hover:translate-x-0.5">
 										→
 									</span>
-								</a>
+								</Link>
 							</div>
 						</div>
 					</div>

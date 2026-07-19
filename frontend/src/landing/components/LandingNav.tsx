@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useState, useRef } from "react";
+import Link from "next/link";
 import gsap from "gsap";
 import ScrollTrigger from "gsap/ScrollTrigger";
 import { useGSAP } from "@gsap/react";
-import { getDownloadTarget } from "../lib/desktop-downloads";
+import { RELEASE_URL } from "../lib/desktop-downloads";
+import { useDownloadTarget } from "../lib/use-download-target";
 import { useGitHubRepoFacts } from "../lib/use-github-repo-facts";
 
 if (typeof window !== "undefined") {
@@ -86,15 +88,8 @@ export function LandingNav() {
 	const navRef = useRef<HTMLDivElement>(null);
 	const innerRef = useRef<HTMLDivElement>(null);
 	const { stars } = useGitHubRepoFacts();
-	const [downloadHref, setDownloadHref] = useState<string>(
-		"https://github.com/AgentWrapper/agent-orchestrator/releases/latest",
-	);
-
-	useEffect(() => {
-		setDownloadHref(
-			getDownloadTarget(navigator)?.href ?? "https://github.com/AgentWrapper/agent-orchestrator/releases/latest",
-		);
-	}, []);
+	const downloadTarget = useDownloadTarget();
+	const downloadHref = downloadTarget?.href ?? RELEASE_URL;
 
 	useGSAP(() => {
 		// Shrink + hide-on-scroll only on desktop (>=768px). On mobile/tablet the
@@ -144,7 +139,7 @@ export function LandingNav() {
 				ref={innerRef}
 				className="relative mx-auto flex h-14 w-full max-w-4xl items-center justify-between gap-5 rounded-full border border-[color:var(--border)] bg-[color:var(--bg)]/70 px-5 backdrop-blur-xl shadow-lg transition-all duration-500 ease-out [.nav-scrolled_&]:h-12 [.nav-scrolled_&]:max-w-3xl [.nav-scrolled_&]:bg-[color:var(--bg)]/90"
 			>
-				<a href="/" data-testid="nav-logo" className="group inline-flex h-10 shrink-0 items-center gap-3">
+				<Link href="/" data-testid="nav-logo" className="group inline-flex h-10 shrink-0 items-center gap-3">
 					<img
 						src="/ao-logo.svg"
 						alt="Agent Orchestrator"
@@ -153,18 +148,28 @@ export function LandingNav() {
 					<span className="text-[14px] font-semibold leading-[1.1] tracking-tight text-[color:var(--fg)] sm:text-[15px]">
 						Agent Orchestrator
 					</span>
-				</a>
+				</Link>
 
 				<nav className="absolute left-1/2 hidden -translate-x-1/2 items-center gap-7 md:flex" aria-label="Primary">
-					{navLinks.map((item) => (
-						<a
-							key={item.label}
-							href={item.href}
-							className="landing-nav-link px-1.5 py-1.5 text-[13px] font-medium tracking-wide focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[color:var(--accent)]"
-						>
-							{item.label}
-						</a>
-					))}
+					{navLinks.map((item) =>
+						item.href.startsWith("/") ? (
+							<Link
+								key={item.label}
+								href={item.href}
+								className="landing-nav-link px-1.5 py-1.5 text-[13px] font-medium tracking-wide focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[color:var(--accent)]"
+							>
+								{item.label}
+							</Link>
+						) : (
+							<a
+								key={item.label}
+								href={item.href}
+								className="landing-nav-link px-1.5 py-1.5 text-[13px] font-medium tracking-wide focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[color:var(--accent)]"
+							>
+								{item.label}
+							</a>
+						),
+					)}
 				</nav>
 
 				<div className="flex items-center gap-2">
@@ -224,16 +229,27 @@ export function LandingNav() {
 					id="mobile-navigation-menu"
 					className="absolute inset-x-0 top-full mt-4 flex flex-col gap-1 rounded-2xl border border-[color:var(--border)] bg-[color:var(--bg)]/95 p-4 mx-4 backdrop-blur-xl shadow-2xl md:hidden"
 				>
-					{navLinks.map((item) => (
-						<a
-							key={item.label}
-							href={item.href}
-							onClick={() => setOpen(false)}
-							className="flex items-center rounded-lg px-4 py-3 text-[15px] font-medium text-[color:var(--fg)] transition-colors hover:bg-[color:var(--bg-elevated)]"
-						>
-							{item.label}
-						</a>
-					))}
+					{navLinks.map((item) =>
+						item.href.startsWith("/") ? (
+							<Link
+								key={item.label}
+								href={item.href}
+								onClick={() => setOpen(false)}
+								className="flex items-center rounded-lg px-4 py-3 text-[15px] font-medium text-[color:var(--fg)] transition-colors hover:bg-[color:var(--bg-elevated)]"
+							>
+								{item.label}
+							</Link>
+						) : (
+							<a
+								key={item.label}
+								href={item.href}
+								onClick={() => setOpen(false)}
+								className="flex items-center rounded-lg px-4 py-3 text-[15px] font-medium text-[color:var(--fg)] transition-colors hover:bg-[color:var(--bg-elevated)]"
+							>
+								{item.label}
+							</a>
+						),
+					)}
 					<div className="my-2 h-px bg-[color:var(--border)]" />
 					<div className="flex justify-center gap-6 py-2">
 						<a

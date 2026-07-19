@@ -1,8 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { getDownloadTarget, isMacDesktop } from "../lib/desktop-downloads";
 import { useGitHubRepoFacts } from "../lib/use-github-repo-facts";
+import { useDownloadTarget, useIsMacDesktop } from "../lib/use-download-target";
 import { CopyCommand } from "./CopyCommand";
 
 const BREW_INSTALL_COMMAND = "brew install --cask agentwrapper/tap/agent-orchestrator";
@@ -35,13 +34,8 @@ function StarIcon({ className = "" }: { className?: string }) {
 
 export function LandingCTA() {
 	const { stars } = useGitHubRepoFacts();
-	const [downloadTarget, setDownloadTarget] = useState<ReturnType<typeof getDownloadTarget>>(null);
-	const [showBrew, setShowBrew] = useState(false);
-
-	useEffect(() => {
-		setDownloadTarget(getDownloadTarget(navigator));
-		setShowBrew(isMacDesktop(navigator));
-	}, []);
+	const downloadTarget = useDownloadTarget();
+	const showBrew = useIsMacDesktop();
 
 	return (
 		<section
