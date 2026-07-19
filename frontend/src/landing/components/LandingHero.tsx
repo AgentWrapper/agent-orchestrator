@@ -902,15 +902,15 @@ function MockNewTaskDialog({
 				</div>
 				<div className="space-y-4 px-5 py-4">
 					<DialogInput label="Title" value={title} onChange={setTitle} placeholder="e.g. Fix WebGL fallback renderer" />
-					<div className="space-y-1.5">
-						<label className="text-[12px] font-medium text-[#9ba1aa]">Brief</label>
+					<label className="block space-y-1.5">
+						<span className="text-[12px] font-medium text-[#9ba1aa]">Brief</span>
 						<textarea
 							value={brief}
 							onChange={(e) => setBrief(e.target.value)}
 							placeholder="Describe what the agent should do..."
 							className="min-h-[112px] w-full resize-none rounded-md border border-[rgba(255,255,255,0.10)] bg-transparent px-3 py-2 text-[13px] leading-relaxed text-[#d5d7dc] outline-none focus:border-[color:var(--accent)]"
 						/>
-					</div>
+					</label>
 					<div className="grid gap-3 sm:grid-cols-2">
 						<DialogSelect
 							label="Agent"
@@ -966,7 +966,7 @@ function ReadonlySetting({ label, value }: { label: string; value: string }) {
 function MockField({ label, muted = false, value }: { label: string; muted?: boolean; value: string }) {
 	return (
 		<div className="grid grid-cols-[150px_1fr] items-center gap-3">
-			<label className="text-[12px] text-[#9ba1aa]">{label}</label>
+			<span className="text-[12px] text-[#9ba1aa]">{label}</span>
 			<div
 				className={`flex h-8 items-center rounded-md border border-[rgba(255,255,255,0.10)] bg-transparent px-2.5 text-[13px] ${
 					muted ? "text-[#646a73]" : "text-[#f4f5f7]"
@@ -981,7 +981,7 @@ function MockField({ label, muted = false, value }: { label: string; muted?: boo
 function MockSelect({ label, value }: { label: string; value: string }) {
 	return (
 		<div className="grid grid-cols-[150px_1fr] items-center gap-3">
-			<label className="text-[12px] text-[#9ba1aa]">{label}</label>
+			<span className="text-[12px] text-[#9ba1aa]">{label}</span>
 			<div className="flex h-8 items-center justify-between rounded-md border border-[rgba(255,255,255,0.10)] bg-[#17191d] px-2.5 text-[13px] text-[#f4f5f7]">
 				<span>{value}</span>
 				<span className="text-[#646a73]">⌄</span>
@@ -1002,15 +1002,15 @@ function DialogInput({
 	placeholder?: string;
 }) {
 	return (
-		<div className="space-y-1.5">
-			<label className="text-[12px] font-medium text-[#9ba1aa]">{label}</label>
+		<label className="block space-y-1.5">
+			<span className="text-[12px] font-medium text-[#9ba1aa]">{label}</span>
 			<input
 				value={value}
 				onChange={(e) => onChange(e.target.value)}
 				placeholder={placeholder}
 				className="flex h-8 w-full items-center justify-between rounded-md border border-[rgba(255,255,255,0.10)] bg-transparent px-3 text-[13px] text-[#f4f5f7] outline-none focus:border-[color:var(--accent)]"
 			/>
-		</div>
+		</label>
 	);
 }
 
@@ -1026,9 +1026,9 @@ function DialogSelect({
 	options: string[];
 }) {
 	return (
-		<div className="space-y-1.5 relative">
-			<label className="text-[12px] font-medium text-[#9ba1aa]">{label}</label>
-			<div className="relative">
+		<label className="block space-y-1.5">
+			<span className="text-[12px] font-medium text-[#9ba1aa]">{label}</span>
+			<span className="relative block">
 				<select
 					value={value}
 					onChange={(e) => onChange(e.target.value)}
@@ -1041,8 +1041,8 @@ function DialogSelect({
 					))}
 				</select>
 				<span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#646a73]">⌄</span>
-			</div>
-		</div>
+			</span>
+		</label>
 	);
 }
 

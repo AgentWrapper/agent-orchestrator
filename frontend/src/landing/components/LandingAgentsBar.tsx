@@ -1,3 +1,5 @@
+import Image from "next/image";
+
 const agents = [
 	{ name: "Claude Code", id: "claude-code", src: "/docs/logos/claude-code.svg" },
 	{ name: "Codex", id: "codex", src: "/docs/logos/codex.svg" },
@@ -24,9 +26,9 @@ const agents = [
 	{ name: "Autohand", id: "autohand", src: "https://www.google.com/s2/favicons?domain=npmjs.com&sz=64" },
 ];
 
-export function LandingAgentsBar() {
-	const marqueeAgents = [...agents, ...agents];
+const marqueeAgents = [...agents, ...agents];
 
+export function LandingAgentsBar() {
 	return (
 		<section
 			id="agents"
@@ -51,13 +53,16 @@ export function LandingAgentsBar() {
 						<div className="agents-marquee-track flex w-max items-center gap-3">
 							{marqueeAgents.map((agent, index) => (
 								<div
-									key={`${agent.id}-${index}`}
+									key={`${agent.id}-${index < agents.length ? "a" : "b"}`}
 									className="agent-logo-pill group flex h-14 shrink-0 items-center gap-3 px-4"
 								>
 									<div className="agent-logo-pill-icon">
-										<img
+										<Image
 											src={agent.src}
 											alt=""
+											width={28}
+											height={28}
+											unoptimized
 											referrerPolicy="no-referrer"
 											className={`agent-logo-image ${agent.id === "kilocode" ? "agent-logo-image-kilocode" : ""}`}
 										/>

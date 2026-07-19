@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useRef, useState } from "react";
 import gsap from "gsap";
 import ScrollTrigger from "gsap/ScrollTrigger";
@@ -157,7 +158,7 @@ export function LandingSocialProof() {
 
 					<div className="tweet-masonry">
 						{posts.map((post, index) => (
-							<TweetCard key={`${post.handle}-${index}`} post={post} index={index} />
+							<TweetCard key={post.handle} post={post} index={index} />
 						))}
 					</div>
 				</div>
@@ -178,10 +179,12 @@ function Avatar({ post }: { post: Post }) {
 	}
 
 	return (
-		<img
+		<Image
 			src={`https://unavatar.io/x/${post.handle}`}
 			alt={`${post.author} avatar`}
-			loading="lazy"
+			width={40}
+			height={40}
+			unoptimized
 			referrerPolicy="no-referrer"
 			onError={() => setFailed(true)}
 			className="h-10 w-10 shrink-0 rounded-full border border-[color:var(--border)] object-cover"
