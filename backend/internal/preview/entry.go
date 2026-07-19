@@ -199,7 +199,7 @@ func previewHost(u url.URL, id domain.SessionID) string {
 	encoded := strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString([]byte(id)))
 	labels := []string{previewHostLabel}
 	const maxChunk = 50
-	for len(encoded) > 0 {
+	for encoded != "" {
 		n := min(len(encoded), maxChunk)
 		labels = append(labels, encoded[:n])
 		encoded = encoded[n:]
