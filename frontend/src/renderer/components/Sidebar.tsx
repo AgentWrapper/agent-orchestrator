@@ -13,6 +13,7 @@ import {
 import { getSessionDotView } from "../lib/session-presentation";
 import { aoBridge } from "../lib/bridge";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { useSessionTerminationTransitions } from "../hooks/useSessionTerminationTransitions";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { renameSession } from "../lib/rename-session";
 import { useResizable } from "../hooks/useResizable";
@@ -49,6 +50,7 @@ import { useUiStore } from "../stores/ui-store";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CreateProjectInput } from "./CreateProjectFlow";
 import { ResizeHandle } from "./ResizeHandle";
+import { SessionTerminationLabel } from "./SessionTerminationLabel";
 
 // The macOS hiddenInset traffic lights and the fixed TitlebarNav overlay live
 // in the full-width topbar's left inset (_shell renders the bar above the
@@ -130,6 +132,7 @@ export function Sidebar({
 	const [expandedChromeVisible, setExpandedChromeVisible] = useState(!isCollapsed);
 	// One IPC subscription for both footer variants of the restart-to-update prompt.
 	const updateStatus = useUpdateStatus();
+	const terminalTransitions = useSessionTerminationTransitions(workspaces.flatMap((workspace) => workerSessions(workspace.sessions)));
 
 	useEffect(() => {
 		if (isCollapsed) {
@@ -288,6 +291,7 @@ export function Sidebar({
 										workspace={workspace}
 										expanded={!collapsedIds.has(workspace.id)}
 										selection={selection}
+										terminalTransitions={terminalTransitions}
 										onToggle={() => toggleCollapsed(workspace.id)}
 										onRemoveProject={onRemoveProject}
 									/>
@@ -356,12 +360,14 @@ function ProjectItem({
 	workspace,
 	expanded,
 	selection,
+	terminalTransitions,
 	onToggle,
 	onRemoveProject,
 }: {
 	workspace: WorkspaceSummary;
 	expanded: boolean;
 	selection: Selection;
+	terminalTransitions: ReturnType<typeof useSessionTerminationTransitions>;
 	onToggle: () => void;
 	onRemoveProject: (projectId: string) => Promise<void>;
 }) {
@@ -374,9 +380,11 @@ function ProjectItem({
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const isProjectRestarting = restartingProjectIds.has(workspace.id);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
-	// Live workers only: merged/terminated sessions leave the sidebar and stay
-	// reachable through the board's Done / Terminated bar (SessionsBoard).
-	const sessions = workerSessions(workspace.sessions).filter(sessionIsActive);
+	const workerSessionList = workerSessions(workspace.sessions);
+	// Live workers plus the short terminal transition row. After the transition,
+	// merged/terminated sessions leave the sidebar and stay reachable through
+	// the board's Done / Terminated bar (SessionsBoard).
+	const sessions = workerSessionList.filter((session) => sessionIsActive(session) || terminalTransitions[session.id]);
 	// The project's live orchestrator (if any) backs the hover Orchestrator
 	// button: navigate to it when present, otherwise spawn one first.
 	const orchestrator = newestActiveOrchestrator(workspace.sessions);
@@ -550,7 +558,9 @@ function ProjectItem({
 							key={session.id}
 							session={session}
 							active={selection.activeSessionId === session.id}
+							isTerminating={Boolean(terminalTransitions[session.id])}
 							onOpen={() => selection.goSession(workspace.id, session.id)}
+							transitionTitle={terminalTransitions[session.id]?.previousTitle}
 						/>
 					))}
 				</SidebarMenuSub>
@@ -585,7 +595,19 @@ function ProjectItem({
 // One worker-session row. Reads as a link by default; a hover-revealed pencil
 // flips the label into an inline input (Enter/blur saves, Escape cancels) that
 // persists through the daemon rename endpoint, so the new name survives reload.
-function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; active: boolean; onOpen: () => void }) {
+function SessionRow({
+	session,
+	active,
+	onOpen,
+	isTerminating = false,
+	transitionTitle,
+}: {
+	session: WorkspaceSession;
+	active: boolean;
+	onOpen: () => void;
+	isTerminating?: boolean;
+	transitionTitle?: string;
+}) {
 	const queryClient = useQueryClient();
 	const [isEditing, setIsEditing] = useState(false);
 	const [draft, setDraft] = useState(session.title);
@@ -593,12 +615,17 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 	// blurs the input, so it flags a cancel here for onBlur to honour.
 	const cancelledRef = useRef(false);
 
+	useEffect(() => {
+		if (isTerminating) setIsEditing(false);
+	}, [isTerminating]);
+
 	const startEditing = () => {
 		setDraft(session.title);
 		setIsEditing(true);
 	};
 
 	const commit = async () => {
+		if (isTerminating) return;
 		if (cancelledRef.current) {
 			cancelledRef.current = false;
 			setIsEditing(false);
@@ -649,37 +676,45 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 		<SidebarMenuSubItem>
 			<button
 				aria-current={active ? "page" : undefined}
-				aria-label={`Open ${session.title}`}
+				aria-disabled={isTerminating || undefined}
+				aria-label={isTerminating ? "Terminated" : `Open ${session.title}`}
 				className={cn(
 					"relative flex h-auto w-full items-center gap-2.25 rounded-sm py-1.25 pl-2.5 pr-7 text-left outline-hidden transition-[color]",
 					"before:absolute before:top-1.5 before:bottom-1.5 before:left-0 before:w-px before:rounded-full before:bg-transparent",
-					"hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+					!isTerminating && "hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+					isTerminating && "cursor-default",
 					active && "text-foreground before:bg-accent",
 				)}
-				onClick={onOpen}
+				onClick={isTerminating ? undefined : onOpen}
 				type="button"
 			>
 				<SessionDot session={session} />
 				<span className="min-w-0 flex-1">
-					<span className={cn("block truncate text-xs", active ? "text-foreground" : "text-muted-foreground")}>
-						{session.title}
-					</span>
+					<SessionTerminationLabel
+						title={transitionTitle ?? session.title}
+						isTerminating={isTerminating}
+						className={cn("text-xs", active ? "text-foreground" : "text-muted-foreground")}
+						titleClassName="truncate"
+						terminalClassName="text-passive"
+					/>
 				</span>
 			</button>
 			{/* Pencil reveals on row hover/focus (named group on SidebarMenuSubItem);
 			it sits beside the row button rather than nested inside it. */}
-			<button
-				aria-label={`Rename ${session.title}`}
-				className={cn(
-					HOVER_ACTION_CLASS,
-					"absolute top-1/2 right-1 -translate-y-1/2 opacity-0",
-					"group-focus-within/menu-sub-item:opacity-100 group-hover/menu-sub-item:opacity-100",
-				)}
-				onClick={startEditing}
-				type="button"
-			>
-				<Pencil aria-hidden="true" />
-			</button>
+			{!isTerminating && (
+				<button
+					aria-label={`Rename ${session.title}`}
+					className={cn(
+						HOVER_ACTION_CLASS,
+						"absolute top-1/2 right-1 -translate-y-1/2 opacity-0",
+						"group-focus-within/menu-sub-item:opacity-100 group-hover/menu-sub-item:opacity-100",
+					)}
+					onClick={startEditing}
+					type="button"
+				>
+					<Pencil aria-hidden="true" />
+				</button>
+			)}
 		</SidebarMenuSubItem>
 	);
 }
