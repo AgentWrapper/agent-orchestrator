@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 
 const { navigateMock, postMock, workspaceQueryMock } = vi.hoisted(() => ({
@@ -44,6 +44,10 @@ beforeEach(() => {
 	navigateMock.mockReset();
 	postMock.mockReset().mockResolvedValue({ data: {} });
 	workspaceQueryMock.mockReset().mockReturnValue({ data: [], isError: false });
+});
+
+afterEach(() => {
+	vi.useRealTimers();
 });
 
 describe("SessionsBoard", () => {
@@ -365,6 +369,73 @@ describe("SessionsBoard", () => {
 		expect(screen.getByText("p2 active")).toBeInTheDocument();
 		expect(screen.queryByText("p2 idle")).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: /idle sessions/i })).toHaveAttribute("aria-expanded", "false");
+	});
+
+	it("retains a just-terminated card in its previous column before archiving it", () => {
+		vi.useFakeTimers();
+		const activeSession: WorkspaceSession = {
+			id: "s-merge",
+			workspaceId: "p1",
+			workspaceName: "radic",
+			title: "merge ready task",
+			provider: "claude-code",
+			kind: "worker",
+			branch: "ao/merge-ready",
+			status: "working",
+			activity: { state: "active", lastActivityAt: "2026-01-01T00:00:00Z" },
+			updatedAt: "2026-01-01T00:00:00Z",
+			prs: [],
+		};
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([activeSession])],
+			isError: false,
+			isSuccess: true,
+		});
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		const view = renderBoardWithClient(queryClient, "p1");
+
+		expect(screen.getByText("merge ready task")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /done \/ terminated/i })).not.toBeInTheDocument();
+
+		const terminalSession: WorkspaceSession = {
+			...activeSession,
+			status: "merged",
+			activity: { state: "exited", lastActivityAt: "2026-01-01T00:01:00Z" },
+			updatedAt: "2026-01-01T00:01:00Z",
+			prs: [
+				{
+					url: "https://github.com/example/radic/pull/42",
+					number: 42,
+					state: "merged",
+					ci: "passing",
+					review: "approved",
+					mergeability: "mergeable",
+					reviewComments: false,
+					updatedAt: "2026-01-01T00:01:00Z",
+				},
+			],
+		};
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([terminalSession])],
+			isError: false,
+			isSuccess: true,
+		});
+		view.rerender(
+			<QueryClientProvider client={queryClient}>
+				<SessionsBoard projectId="p1" />
+			</QueryClientProvider>,
+		);
+
+		expect(screen.getByText("merge ready task")).toBeInTheDocument();
+		expect(screen.getByText("Terminated")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /done \/ terminated/i })).not.toBeInTheDocument();
+
+		act(() => {
+			vi.advanceTimersByTime(1500);
+		});
+
+		expect(screen.queryByText("merge ready task")).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /done \/ terminated/i })).toBeInTheDocument();
 	});
 
 	it("shows a restore action for terminated sessions in expanded Done / Terminated", async () => {

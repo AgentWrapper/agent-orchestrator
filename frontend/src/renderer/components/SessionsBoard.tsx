@@ -20,6 +20,10 @@ import {
 	type AttentionZoneView,
 } from "../lib/session-presentation";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
+import {
+	useSessionTerminationTransitions,
+	type SessionTerminationTransition,
+} from "../hooks/useSessionTerminationTransitions";
 import { useRestoreSession } from "../hooks/useRestoreSession";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { NotificationCenter } from "./NotificationCenter";
@@ -32,6 +36,7 @@ import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
+import { SessionTerminationLabel } from "./SessionTerminationLabel";
 
 const isLinux =
 	typeof navigator !== "undefined" &&
@@ -56,6 +61,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const workspaces = projectId ? all.filter((w) => w.id === projectId) : all;
 	const workspace = projectId ? workspaces[0] : undefined;
 	const sessions = workspaces.flatMap((w) => workerSessions(w.sessions));
+	const terminalTransitions = useSessionTerminationTransitions(sessions);
 	const orchestrator = projectId ? newestActiveOrchestrator(workspaces[0]?.sessions ?? []) : undefined;
 	const [isSpawning, setIsSpawning] = useState(false);
 	const [spawnError, setSpawnError] = useState<string | null>(null);
@@ -89,7 +95,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 	const byZone = new Map<AttentionZone, WorkspaceSession[]>();
 	for (const session of sessions) {
-		const zone = attentionZone(session);
+		const zone = terminalTransitions[session.id]?.previousZone ?? attentionZone(session);
 		(byZone.get(zone) ?? byZone.set(zone, []).get(zone)!).push(session);
 	}
 	const done = byZone.get("done") ?? [];
@@ -278,6 +284,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 								col={col}
 								sessions={byZone.get(col.zone) ?? []}
 								onOpen={openSession}
+								terminalTransitions={terminalTransitions}
 							/>
 						))}
 					</div>
@@ -349,10 +356,12 @@ function ZoneColumn({
 	col,
 	sessions,
 	onOpen,
+	terminalTransitions,
 }: {
 	col: Column;
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
+	terminalTransitions: Record<string, SessionTerminationTransition>;
 }) {
 	const isWorkingColumn = col.zone === "working";
 	const [idleExpanded, setIdleExpanded] = useState(false);
@@ -381,7 +390,13 @@ function ZoneColumn({
 			<div className="min-h-0 flex-1 overflow-y-auto px-2.75 pb-3">
 				<div className="flex min-h-full flex-col gap-2.5">
 					{activeSessions.map((session) => (
-						<SessionCard key={session.id} session={session} onOpen={() => onOpen(session)} />
+						<SessionCard
+							key={session.id}
+							session={session}
+							onOpen={() => onOpen(session)}
+							isTerminating={Boolean(terminalTransitions[session.id])}
+							transitionTitle={terminalTransitions[session.id]?.previousTitle}
+						/>
 					))}
 					{idleSessions.length > 0 ? (
 						<IdleSessionsStack
@@ -389,6 +404,7 @@ function ZoneColumn({
 							sessions={idleSessions}
 							onOpen={onOpen}
 							onToggle={() => setIdleExpanded((value) => !value)}
+							terminalTransitions={terminalTransitions}
 						/>
 					) : null}
 				</div>
@@ -402,11 +418,13 @@ function IdleSessionsStack({
 	sessions,
 	onOpen,
 	onToggle,
+	terminalTransitions,
 }: {
 	expanded: boolean;
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
 	onToggle: () => void;
+	terminalTransitions: Record<string, SessionTerminationTransition>;
 }) {
 	return (
 		<div
@@ -439,7 +457,13 @@ function IdleSessionsStack({
 			{expanded ? (
 				<div className="flex max-h-[min(45vh,28rem)] flex-col gap-2.5 overflow-y-auto border-t border-border p-2.5 animate-in fade-in-0 slide-in-from-top-1 duration-200 motion-reduce:animate-none">
 					{sessions.map((session) => (
-						<SessionCard key={session.id} session={session} onOpen={() => onOpen(session)} />
+						<SessionCard
+							key={session.id}
+							session={session}
+							onOpen={() => onOpen(session)}
+							isTerminating={Boolean(terminalTransitions[session.id])}
+							transitionTitle={terminalTransitions[session.id]?.previousTitle}
+						/>
 					))}
 				</div>
 			) : null}
@@ -455,6 +479,8 @@ function SessionCard({
 	restoreError,
 	isRestoring = false,
 	isRestoreDisabled = false,
+	isTerminating = false,
+	transitionTitle,
 }: {
 	session: WorkspaceSession;
 	onOpen?: () => void;
@@ -463,11 +489,14 @@ function SessionCard({
 	restoreError?: string;
 	isRestoring?: boolean;
 	isRestoreDisabled?: boolean;
+	isTerminating?: boolean;
+	transitionTitle?: string;
 }) {
 	const badge = getSessionStatusView(session.status);
 	const issueId = canonicalTrackerIssueId(session.issueId);
 	const branch = session.branch || "";
-	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
+	const displayTitle = transitionTitle ?? session.title;
+	const showBranch = branch !== "" && !sameLabel(branch, displayTitle) && !sameLabel(branch, session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
 	const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
 		if (!interactive || !onOpen) return;
@@ -513,10 +542,14 @@ function SessionCard({
 					className={cn(
 						"px-3.25 text-control font-medium leading-snug tracking-tight text-foreground",
 						showBranch ? "pb-2" : "pb-3",
-						"line-clamp-2 overflow-hidden",
 					)}
 				>
-					{session.title}
+					<SessionTerminationLabel
+						title={displayTitle}
+						isTerminating={isTerminating}
+						titleClassName="line-clamp-2 overflow-hidden"
+						terminalClassName="text-passive"
+					/>
 				</div>
 				{showBranch && <div className="px-3.25 pb-2.5 font-mono text-2xs text-passive">{branch}</div>}
 			</div>

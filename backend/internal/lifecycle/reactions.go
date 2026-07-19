@@ -154,7 +154,7 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 			return err
 		}
 		if done {
-			return m.MarkTerminated(ctx, id)
+			return m.terminateCompletedSession(ctx, id)
 		}
 		return nil
 	}
@@ -228,6 +228,29 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 		}
 	}
 	return nil
+}
+
+func (m *Manager) terminateCompletedSession(ctx context.Context, id domain.SessionID) error {
+	m.mu.Lock()
+	terminator := m.completionTerminator
+	m.mu.Unlock()
+	if terminator == nil {
+		return m.MarkTerminated(ctx, id)
+	}
+	if _, err := terminator.Kill(ctx, id); err != nil {
+		return err
+	}
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil || !ok {
+		return err
+	}
+	if rec.IsTerminated {
+		return nil
+	}
+	// Session Manager's user-facing Kill preserves dirty worktrees by returning
+	// without MarkTerminated so the user can retry. Merge completion is final,
+	// so keep the dirty worktree safe but still record the terminal session fact.
+	return m.MarkTerminated(ctx, id)
 }
 
 // ApplyReviewResult reacts to a completed AO-internal review pass after the

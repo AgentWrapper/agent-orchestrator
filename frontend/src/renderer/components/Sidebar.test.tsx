@@ -129,6 +129,32 @@ function renderSidebar({
 	return onRemoveProject;
 }
 
+function renderSidebarView(workspaces: WorkspaceSummary[]) {
+	const queryClient = new QueryClient({
+		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+	});
+	const props = {
+		onCreateProject: vi.fn().mockResolvedValue(undefined) as CreateProjectHandler,
+		onInitializeProject: vi.fn().mockResolvedValue(undefined) as InitializeProjectHandler,
+		onRemoveProject: vi.fn().mockResolvedValue(undefined) as RemoveProjectHandler,
+	};
+	const tree = (nextWorkspaces: WorkspaceSummary[]) => (
+		<QueryClientProvider client={queryClient}>
+			<SidebarProvider>
+				<Sidebar
+					daemonStatus={{ state: "running" }}
+					onCreateProject={props.onCreateProject}
+					onInitializeProject={props.onInitializeProject}
+					onRemoveProject={props.onRemoveProject}
+					workspaces={nextWorkspaces}
+				/>
+			</SidebarProvider>
+		</QueryClientProvider>
+	);
+	const view = render(tree(workspaces));
+	return { ...view, rerenderWorkspaces: (nextWorkspaces: WorkspaceSummary[]) => view.rerender(tree(nextWorkspaces)) };
+}
+
 async function chooseOption(trigger: HTMLElement, optionName: string) {
 	await userEvent.click(trigger);
 	await userEvent.click(await screen.findByRole("option", { name: optionName }));
@@ -200,10 +226,50 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	vi.useRealTimers();
 	vi.restoreAllMocks();
 });
 
 describe("Sidebar", () => {
+	it("retains a just-terminated worker row long enough to show the terminal label", async () => {
+		vi.useFakeTimers();
+		const activeWorkspace = { ...workspace, sessions: [session] };
+		const view = renderSidebarView([activeWorkspace]);
+
+		expect(screen.getByText("fix login")).toBeInTheDocument();
+
+		const terminalSession: WorkspaceSession = {
+			...session,
+			status: "merged",
+			updatedAt: "2026-06-30T00:01:00Z",
+			prs: [
+				{
+					url: "https://github.com/example/project/pull/42",
+					number: 42,
+					state: "merged",
+					ci: "passing",
+					review: "approved",
+					mergeability: "mergeable",
+					reviewComments: false,
+					updatedAt: "2026-06-30T00:01:00Z",
+				},
+			],
+		};
+		await act(async () => {
+			view.rerenderWorkspaces([{ ...workspace, sessions: [terminalSession] }]);
+		});
+
+		expect(screen.getByText("fix login")).toBeInTheDocument();
+		expect(screen.getByText("Terminated")).toBeInTheDocument();
+
+		act(() => {
+			vi.advanceTimersByTime(1500);
+		});
+
+		expect(screen.queryByText("fix login")).not.toBeInTheDocument();
+		expect(screen.queryByText("Terminated")).not.toBeInTheDocument();
+	});
+
 	it("shows a ConfirmDialog and calls onRemoveProject when confirmed", async () => {
 		const user = userEvent.setup();
 		const onRemoveProject = renderSidebar();

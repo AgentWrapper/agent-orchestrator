@@ -36,12 +36,22 @@ type notificationSink interface {
 	Notify(ctx context.Context, intent ports.NotificationIntent) error
 }
 
+type sessionTerminator interface {
+	Kill(ctx context.Context, id domain.SessionID) (bool, error)
+}
+
 // Option customizes a Manager.
 type Option func(*Manager)
 
 // WithNotificationSink wires lifecycle notification intents to a write-side producer.
 func WithNotificationSink(sink notificationSink) Option {
 	return func(m *Manager) { m.notifications = sink }
+}
+
+// WithCompletionTerminator wires the session teardown path used when PR
+// completion ends a session.
+func WithCompletionTerminator(terminator sessionTerminator) Option {
+	return func(m *Manager) { m.completionTerminator = terminator }
 }
 
 // WithTelemetry wires lifecycle activity transitions to the shared telemetry sink.
@@ -58,6 +68,10 @@ type Manager struct {
 	// nudges become no-ops but the reducer still runs.
 	guard         *sessionguard.Guard
 	notifications notificationSink
+	// completionTerminator is the optional session-manager teardown path used
+	// when a session completes because its PR set reached the merged/closed bar.
+	// Nil keeps unit tests and legacy wiring on MarkTerminated.
+	completionTerminator sessionTerminator
 
 	mu        sync.Mutex
 	window    time.Duration
@@ -84,6 +98,15 @@ func New(store sessionStore, messenger ports.AgentMessenger, opts ...Option) *Ma
 		opt(m)
 	}
 	return m
+}
+
+// SetCompletionTerminator late-binds the session-manager teardown path for
+// merge-driven session completion. Daemon wiring constructs lifecycle before
+// sessionmanager because sessionmanager itself depends on lifecycle.
+func (m *Manager) SetCompletionTerminator(terminator sessionTerminator) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.completionTerminator = terminator
 }
 
 func (m *Manager) mutate(ctx context.Context, id domain.SessionID, fn func(domain.SessionRecord, time.Time) (domain.SessionRecord, bool)) error {

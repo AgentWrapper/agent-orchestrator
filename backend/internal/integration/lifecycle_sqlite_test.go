@@ -146,6 +146,7 @@ func newStack(t *testing.T) *stack {
 	rt := &stubRuntime{}
 	ws := &stubWorkspace{}
 	mgr := sessionmanager.New(sessionmanager.Deps{Runtime: rt, Agents: stubAgents{}, Workspace: ws, Store: store, Messenger: msg, Lifecycle: lcm, LookPath: func(string) (string, error) { return "/usr/bin/true", nil }})
+	lcm.SetCompletionTerminator(mgr)
 	sm := sessionsvc.New(mgr, store)
 	return &stack{store: store, sm: sm, mgr: mgr, lcm: lcm, prm: prm, rt: rt, ws: ws, msg: msg}
 }
@@ -181,6 +182,33 @@ func TestSpawnPRKillRoundTrip(t *testing.T) {
 	rec, _, _ = st.store.GetSession(ctx, sess.ID)
 	if !rec.IsTerminated {
 		t.Fatalf("post-kill row should be terminated: %+v", rec)
+	}
+}
+
+func TestMergedPRTerminatesThroughSessionManager(t *testing.T) {
+	ctx := context.Background()
+	st := newStack(t)
+	sess, err := st.sm.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Branch: "b", Prompt: "do it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := st.prm.ApplyObservation(ctx, sess.ID, ports.PRObservation{Fetched: true, URL: "pr1", Number: 1, Merged: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	if st.rt.destroyed != 1 {
+		t.Fatalf("merged PR should destroy the session runtime once, got %d", st.rt.destroyed)
+	}
+	if st.ws.destroyed != 1 {
+		t.Fatalf("merged PR should destroy the session workspace once, got %d", st.ws.destroyed)
+	}
+	rec, ok, err := st.store.GetSession(ctx, sess.ID)
+	if err != nil || !ok {
+		t.Fatalf("GetSession: ok=%v err=%v", ok, err)
+	}
+	if !rec.IsTerminated {
+		t.Fatalf("merged PR should leave the session terminated: %+v", rec)
 	}
 }
 
