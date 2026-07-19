@@ -829,17 +829,21 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 	// running.json handshake (the log pipe scan is skipped).
 	const keep = keepDaemonAlive(process.env);
 	let keepDaemonLogFd: number | undefined;
-	const stdio: "pipe" | "ignore" | ["ignore", number, number] = keep
-		? (() => {
-				const logPath = path.join(os.homedir(), ".ao", "daemon.log");
-				try {
-					keepDaemonLogFd = openSync(logPath, "a");
-				} catch {
-					keepDaemonLogFd = undefined;
-				}
-				return keepDaemonLogFd !== undefined ? ["ignore", keepDaemonLogFd, keepDaemonLogFd] : "ignore";
-			})()
-		: "pipe";
+	// Under AO_KEEP_DAEMON the daemon's stdio is redirected to ~/.ao/daemon.log
+	// (stdin ignored) and the child is unref()'d below, so Electron-owned pipes
+	// don't kill the kept-alive daemon on the next stderr log write. If the log
+	// open fails, fall back to "ignore" — the daemon still runs, just unlogged.
+	let stdio: "pipe" | "ignore" | ["ignore", number, number] = "pipe";
+	if (keep) {
+		const logPath = path.join(os.homedir(), ".ao", "daemon.log");
+		try {
+			keepDaemonLogFd = openSync(logPath, "a");
+			stdio = ["ignore", keepDaemonLogFd, keepDaemonLogFd];
+		} catch {
+			keepDaemonLogFd = undefined;
+			stdio = "ignore";
+		}
+	}
 	let child: ChildProcess;
 	try {
 		child = spawn(launch.command, launch.args, {
