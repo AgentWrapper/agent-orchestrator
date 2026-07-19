@@ -17,8 +17,7 @@ expo-env.d.ts
 *.mobileprovision
 
 # Push secrets — the FCM V1 service-account key and any admin SDK JSON must never
-# be committed (they authorize sending push to your devices). google-services.json
-# is NOT secret and stays tracked so EAS Build can bundle it.
+# be committed (they authorize sending push to your devices).
 *-firebase-adminsdk-*.json
 *service-account*.json
 
@@ -46,3 +45,8 @@ yarn-error.*
 
 # logs
 *.log
+
+# Firebase Android config — kept out of the public repo. The EAS build still
+# gets it via .easignore (which re-includes it); locally it must exist for
+# `expo run:android`.
+google-services.json
