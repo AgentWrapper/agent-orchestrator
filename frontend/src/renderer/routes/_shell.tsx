@@ -356,15 +356,28 @@ function ShellLayout() {
 							<Outlet />
 						</div>
 					</main>
+					{/* When ShellTopbar is hidden on the welcome board, keep a macOS
+              window-drag strip in the same 56px band — otherwise only
+              TitlebarNav's no-drag buttons remain and the top chrome can't
+              move the window. Invisible/fixed so the start-page layout is
+              unchanged. */}
+					{isWelcomeBoard && isMac ? (
+						<div
+							aria-hidden="true"
+							className="fixed inset-x-0 top-0 z-chrome h-toolbar"
+							style={{ WebkitAppRegion: "drag" } as CSSProperties}
+						/>
+					) : null}
 					{/* Fixed macOS titlebar cluster beside the traffic lights — rendered
               once here so the toggle/history buttons never move when the
               sidebar collapses or expands. History arrows stay visible but
-              locked on the empty start page. MUST come after the topbar in the
-              DOM: Electron builds the window-drag region in document order
-              (drag rects add, no-drag rects subtract), so the cluster's
-              no-drag holes only survive if they're processed after the drag
-              strips they overlap. Rendered first, real clicks get swallowed
-              by window-drag even though DOM hit-testing looks correct. */}
+              locked on the empty start page. MUST come after the drag strip
+              (ShellTopbar or the welcome substitute) in the DOM: Electron
+              builds the window-drag region in document order (drag rects add,
+              no-drag rects subtract), so the cluster's no-drag holes only
+              survive if they're processed after the drag strips they overlap.
+              Rendered first, real clicks get swallowed by window-drag even
+              though DOM hit-testing looks correct. */}
 					<TitlebarNav historyLocked={isWelcomeBoard} />
 				</SidebarProvider>
 				<OrchestratorReplacementDialog
