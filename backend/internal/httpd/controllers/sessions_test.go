@@ -406,6 +406,35 @@ func TestSessionsAPI_SetPreviewExplicitURLPersists(t *testing.T) {
 	}
 }
 
+func TestSessionsAPI_SetPreviewRejectsOrchestratorSession(t *testing.T) {
+	svc := newFakeSessionService()
+	s := svc.sessions["ao-1"]
+	s.Kind = domain.KindOrchestrator
+	svc.sessions["ao-1"] = s
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/preview", `{"url":"http://localhost:5173/"}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "PREVIEW_UNSUPPORTED_SESSION_KIND")
+	if got := svc.sessions["ao-1"].Metadata.PreviewURL; got != "" {
+		t.Fatalf("persisted previewUrl = %q, want no write on rejected orchestrator preview", got)
+	}
+}
+
+func TestSessionsAPI_ClearPreviewRejectsOrchestratorSession(t *testing.T) {
+	svc := newFakeSessionService()
+	s := svc.sessions["ao-1"]
+	s.Kind = domain.KindOrchestrator
+	s.Metadata = domain.SessionMetadata{PreviewURL: "http://localhost:5173/"}
+	svc.sessions["ao-1"] = s
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "DELETE", "/api/v1/sessions/ao-1/preview", "")
+	assertErrorCode(t, body, status, http.StatusBadRequest, "PREVIEW_UNSUPPORTED_SESSION_KIND")
+	if got := svc.sessions["ao-1"].Metadata.PreviewURL; got != "http://localhost:5173/" {
+		t.Fatalf("persisted previewUrl = %q, want unchanged on rejected orchestrator clear", got)
+	}
+}
+
 func TestSessionsAPI_SetPreviewEmptyURLAutodetectsIndex(t *testing.T) {
 	svc := newFakeSessionService()
 	workspace := t.TempDir()
