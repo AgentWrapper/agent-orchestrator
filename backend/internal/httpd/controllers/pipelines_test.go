@@ -30,10 +30,14 @@ type fakePipelineService struct {
 	runID       pipeline.RunID
 	schema      []byte
 
+	valid  bool
+	issues []pipeline.Issue
+
 	createErr, updateErr, deleteErr error
 	listDefErr, listRunErr          error
 	getRunErr, cancelErr, resumeErr error
 	triggerErr, artifactErr         error
+	validateErr                     error
 
 	lastTrigger pipelinesvc.TriggerInput
 	lastFilter  pipeline.RunFilter
@@ -59,6 +63,10 @@ func (f *fakePipelineService) UpdateDefinition(_ context.Context, _ pipeline.ID,
 
 func (f *fakePipelineService) DeleteDefinition(context.Context, pipeline.ID) error {
 	return f.deleteErr
+}
+
+func (f *fakePipelineService) ValidateDefinition(_ context.Context, _ string) (bool, []pipeline.Issue, error) {
+	return f.valid, f.issues, f.validateErr
 }
 
 func (f *fakePipelineService) ConfigSchema() []byte { return f.schema }
@@ -212,6 +220,46 @@ func TestPipelinesDeleteDefinition_HappyAndNotFound(t *testing.T) {
 	assertErrorCode(t, body, status, http.StatusNotFound, "PIPELINE_DEFINITION_NOT_FOUND")
 }
 
+func TestPipelinesValidateDefinition_Valid(t *testing.T) {
+	srv := newPipelineTestServer(t, &fakePipelineService{valid: true})
+
+	body, status, headers := doRequest(t, srv, "POST", "/api/v1/pipelines/validate", `{"yamlSource":"name: review"}`)
+	assertJSON(t, headers)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d body=%s", status, body)
+	}
+	if !contains(body, `"valid":true`) || !contains(body, `"issues":[]`) {
+		t.Fatalf("valid body unexpected: %s", body)
+	}
+}
+
+func TestPipelinesValidateDefinition_InvalidListsEveryIssue(t *testing.T) {
+	srv := newPipelineTestServer(t, &fakePipelineService{valid: false, issues: []pipeline.Issue{
+		{Path: "name", Message: "name must not be empty"},
+		{Path: "stages", Message: "pipeline must declare at least one stage"},
+	}})
+
+	body, status, headers := doRequest(t, srv, "POST", "/api/v1/pipelines/validate", `{"yamlSource":"bad: true"}`)
+	assertJSON(t, headers)
+	if status != http.StatusOK {
+		t.Fatalf("validation failure must be 200 (data, not error): status=%d body=%s", status, body)
+	}
+	if !contains(body, `"valid":false`) {
+		t.Fatalf("expected valid:false: %s", body)
+	}
+	for _, want := range []string{"name must not be empty", "pipeline must declare at least one stage", `"path":"stages"`} {
+		if !contains(body, want) {
+			t.Fatalf("issue list missing %q: %s", want, body)
+		}
+	}
+}
+
+func TestPipelinesValidateDefinition_MalformedBody(t *testing.T) {
+	srv := newPipelineTestServer(t, &fakePipelineService{valid: true})
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/pipelines/validate", `{"yamlSource":`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
+}
+
 func TestPipelinesSchema(t *testing.T) {
 	srv := newPipelineTestServer(t, &fakePipelineService{schema: []byte(`{"$schema":"x","title":"Pipeline"}`)})
 	body, status, headers := doRequest(t, srv, "GET", "/api/v1/pipelines/schema", "")
@@ -326,6 +374,7 @@ func TestPipelinesFlagOffReturns501(t *testing.T) {
 	}{
 		{"GET", "/api/v1/pipelines?project=mer", ""},
 		{"POST", "/api/v1/pipelines?project=mer", `{"yamlSource":"name: review"}`},
+		{"POST", "/api/v1/pipelines/validate", `{"yamlSource":"name: review"}`},
 		{"PUT", "/api/v1/pipelines/pl-1", `{"yamlSource":"name: review"}`},
 		{"DELETE", "/api/v1/pipelines/pl-1", ""},
 		{"GET", "/api/v1/pipelines/schema", ""},

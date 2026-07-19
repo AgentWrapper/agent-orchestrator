@@ -400,6 +400,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/pipelines/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Validate a pipeline definition without persisting it */
+        post: operations["validatePipelineDefinition"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects": {
         parameters: {
             query?: never;
@@ -1110,6 +1127,12 @@ export interface components {
             status: string;
             verdict?: string;
         };
+        PipelineValidationIssue: {
+            /** @description Human-readable description of the problem. */
+            message: string;
+            /** @description Dotted path to the offending location, e.g. stages[2].dependsOn. */
+            path: string;
+        };
         PipelinesSettingResponse: {
             enabled: boolean;
         };
@@ -1413,6 +1436,14 @@ export interface components {
         TriggerReviewResponse: {
             reviewerHandleId: string;
             reviews: components["schemas"]["PRReviewState"][];
+        };
+        ValidatePipelineDefinitionRequest: {
+            /** @description Raw YAML pipeline definition document to validate. */
+            yamlSource: string;
+        };
+        ValidatePipelineDefinitionResponse: {
+            issues: components["schemas"]["PipelineValidationIssue"][];
+            valid: boolean;
         };
         WorkspaceRepo: {
             name: string;
@@ -2781,6 +2812,48 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    validatePipelineDefinition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ValidatePipelineDefinitionRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidatePipelineDefinitionResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Not Implemented */

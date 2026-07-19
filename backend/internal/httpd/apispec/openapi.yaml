@@ -1055,6 +1055,37 @@ paths:
       summary: Fetch the JSON schema for the pipeline YAML definition format
       tags:
       - pipelines
+  /api/v1/pipelines/validate:
+    post:
+      operationId: validatePipelineDefinition
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ValidatePipelineDefinitionRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidatePipelineDefinitionResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Validate a pipeline definition without persisting it
+      tags:
+      - pipelines
   /api/v1/projects:
     get:
       operationId: listProjects
@@ -3064,6 +3095,18 @@ components:
       - attempt
       - artifactIds
       type: object
+    PipelineValidationIssue:
+      properties:
+        message:
+          description: Human-readable description of the problem.
+          type: string
+        path:
+          description: Dotted path to the offending location, e.g. stages[2].dependsOn.
+          type: string
+      required:
+      - path
+      - message
+      type: object
     PipelinesSettingResponse:
       properties:
         enabled:
@@ -3830,6 +3873,26 @@ components:
       required:
       - reviewerHandleId
       - reviews
+      type: object
+    ValidatePipelineDefinitionRequest:
+      properties:
+        yamlSource:
+          description: Raw YAML pipeline definition document to validate.
+          type: string
+      required:
+      - yamlSource
+      type: object
+    ValidatePipelineDefinitionResponse:
+      properties:
+        issues:
+          items:
+            $ref: '#/components/schemas/PipelineValidationIssue'
+          type: array
+        valid:
+          type: boolean
+      required:
+      - valid
+      - issues
       type: object
     WorkspaceRepo:
       properties:

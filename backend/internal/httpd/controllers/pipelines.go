@@ -88,6 +88,27 @@ type DeletePipelineDefinitionResponse struct {
 	Deleted bool   `json:"deleted"`
 }
 
+// ValidatePipelineDefinitionRequest is the dry-run validate body: the raw YAML
+// the editor is authoring. Nothing is persisted.
+type ValidatePipelineDefinitionRequest struct {
+	YAMLSource string `json:"yamlSource" description:"Raw YAML pipeline definition document to validate."`
+}
+
+// PipelineValidationIssue is one validation problem: a dotted path into the
+// definition document plus a human-readable message.
+type PipelineValidationIssue struct {
+	Path    string `json:"path" description:"Dotted path to the offending location, e.g. stages[2].dependsOn."`
+	Message string `json:"message" description:"Human-readable description of the problem."`
+}
+
+// ValidatePipelineDefinitionResponse is the body of POST /api/v1/pipelines/validate.
+// A validation failure is reported here as data (valid=false with the issue
+// list), not as an error envelope, so the editor can render the Problems list.
+type ValidatePipelineDefinitionResponse struct {
+	Valid  bool                      `json:"valid"`
+	Issues []PipelineValidationIssue `json:"issues"`
+}
+
 // PipelineRunSummary is the compact per-run wire shape (list + detail base).
 type PipelineRunSummary struct {
 	RunID             string            `json:"runId"`
@@ -171,6 +192,7 @@ type PipelinesController struct {
 func (c *PipelinesController) Register(r chi.Router) {
 	r.Get("/pipelines", c.listDefinitions)
 	r.Post("/pipelines", c.createDefinition)
+	r.Post("/pipelines/validate", c.validateDefinition)
 	r.Get("/pipelines/schema", c.schema)
 
 	r.Get("/pipelines/runs", c.listRuns)
@@ -256,6 +278,32 @@ func (c *PipelinesController) deleteDefinition(w http.ResponseWriter, r *http.Re
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, DeletePipelineDefinitionResponse{ID: id, Deleted: true})
+}
+
+// validateDefinition dry-runs YAML through the pipeline parser and returns the
+// outcome as data: 200 {valid, issues}. A validation failure is NOT a 4xx — the
+// editor wants the issue list as a result, not an error envelope. Only a
+// malformed JSON request body is a 400. Persists nothing.
+func (c *PipelinesController) validateDefinition(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/pipelines/validate")
+		return
+	}
+	var in ValidatePipelineDefinitionRequest
+	if err := decodeJSONStrict(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	valid, issues, err := c.Svc.ValidateDefinition(r.Context(), in.YAMLSource)
+	if err != nil {
+		writePipelineError(w, r, err)
+		return
+	}
+	out := make([]PipelineValidationIssue, 0, len(issues))
+	for _, is := range issues {
+		out = append(out, PipelineValidationIssue{Path: is.Path, Message: is.Message})
+	}
+	envelope.WriteJSON(w, http.StatusOK, ValidatePipelineDefinitionResponse{Valid: valid, Issues: out})
 }
 
 func (c *PipelinesController) schema(w http.ResponseWriter, r *http.Request) {

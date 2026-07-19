@@ -310,6 +310,35 @@ func TestCreateDuplicateNameConflicts(t *testing.T) {
 	}
 }
 
+// TestValidateDefinition covers the dry-run validate path: a valid document is
+// (true, nil, nil); a semantic validation failure surfaces the full issue list
+// as data with err=nil; a bare YAML syntax error becomes a single root issue.
+func TestValidateDefinition(t *testing.T) {
+	ctx := context.Background()
+	svc, _, _, _ := newHarness(t)
+
+	valid, issues, err := svc.ValidateDefinition(ctx, reviewYAML)
+	if err != nil || !valid || len(issues) != 0 {
+		t.Fatalf("valid config = (%v, %+v, %v), want (true, nil, nil)", valid, issues, err)
+	}
+
+	valid, issues, err = svc.ValidateDefinition(ctx, "name: \"\"\nstages: []\n")
+	if err != nil {
+		t.Fatalf("validation failure must not error: %v", err)
+	}
+	if valid || len(issues) < 2 {
+		t.Fatalf("invalid config = (%v, %+v), want valid=false with the name + stages problems", valid, issues)
+	}
+
+	valid, issues, err = svc.ValidateDefinition(ctx, "name: [oops\n")
+	if err != nil {
+		t.Fatalf("syntax error must not error: %v", err)
+	}
+	if valid || len(issues) != 1 {
+		t.Fatalf("syntax error = (%v, %+v), want valid=false with one root issue", valid, issues)
+	}
+}
+
 // TestTriggerUnknownRefNotFound asserts an unresolvable reference is a 404.
 func TestTriggerUnknownRefNotFound(t *testing.T) {
 	ctx := context.Background()

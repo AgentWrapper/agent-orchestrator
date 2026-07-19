@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AlertCircle, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { apiErrorMessage } from "../lib/api-client";
 import { formatTimeCompact } from "../lib/format-time";
 import {
@@ -13,10 +13,18 @@ import {
 	usePipelineDefinitionMutations,
 	usePipelineDefinitionsQuery,
 } from "../hooks/usePipelineDefinitions";
+import { usePipelineDraft, type PipelineDraftValidation } from "../hooks/usePipelineDraft";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { PipelineCanvas } from "./PipelineCanvas";
 import { YamlEditor } from "./YamlEditor";
 import { Button } from "./ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
+import { cn } from "../lib/utils";
+
+// The definition editor's view modes (mockups 1a/1c): the node-graph canvas, a
+// side-by-side canvas+YAML split, and the raw YAML editor. V1 fills in YAML mode
+// end to end; Canvas/Split mount placeholders that V2/V6 flesh out.
+type ViewMode = "canvas" | "split" | "yaml";
 
 // One of: browsing the list, editing an existing definition, or drafting a new
 // one. The editor buffer lives in EditorView while a draft is open, so switching
@@ -169,13 +177,20 @@ function DefinitionEditor({
 	onClose: () => void;
 }) {
 	const { create, update } = usePipelineDefinitionMutations(projectId);
-	const [draft, setDraft] = useState(def ? def.yamlSource : DEFAULT_PIPELINE_YAML);
+	const { yamlSource, setYamlSource, draft, validation } = usePipelineDraft(
+		def ? def.yamlSource : DEFAULT_PIPELINE_YAML,
+	);
+	const [view, setView] = useState<ViewMode>("yaml");
 	const [issues, setIssues] = useState<PipelineValidationIssue[] | null>(null);
 	const [genericError, setGenericError] = useState<string | null>(null);
 
 	const mutation = def ? update : create;
 	const isSaving = mutation.isPending;
 
+	// Save serializes the draft to config and reuses the existing create/update
+	// endpoints. In YAML mode the buffer IS that config verbatim (so raw
+	// formatting survives); a canvas-only edit path (V2+) would setYamlSource via
+	// the draft first.
 	const save = () => {
 		setIssues(null);
 		setGenericError(null);
@@ -184,8 +199,8 @@ function DefinitionEditor({
 			if (parsed) setIssues(parsed);
 			else setGenericError(apiErrorMessage(error));
 		};
-		if (def) update.mutate({ id: def.id, yamlSource: draft }, { onSuccess: onClose, onError });
-		else create.mutate(draft, { onSuccess: onClose, onError });
+		if (def) update.mutate({ id: def.id, yamlSource }, { onSuccess: onClose, onError });
+		else create.mutate(yamlSource, { onSuccess: onClose, onError });
 	};
 
 	return (
@@ -195,9 +210,11 @@ function DefinitionEditor({
 					<h2 className="truncate text-control font-semibold text-foreground">
 						{def ? `Edit ${def.name || def.id}` : "New pipeline"}
 					</h2>
-					<p className="text-caption text-passive">YAML validated on save by the daemon.</p>
+					<p className="text-caption text-passive">YAML validated live by the daemon.</p>
 				</div>
-				<div className="flex shrink-0 items-center gap-2">
+				<div className="flex shrink-0 items-center gap-3">
+					<ViewToggle value={view} onChange={setView} />
+					<ValidityIndicator validation={validation} />
 					<Button size="sm" variant="ghost" onClick={onClose} disabled={isSaving}>
 						Cancel
 					</Button>
@@ -209,7 +226,25 @@ function DefinitionEditor({
 			</div>
 
 			<div className="min-h-0 flex-1 overflow-hidden bg-surface/40">
-				<YamlEditor value={draft} onChange={setDraft} aria-label="Pipeline YAML" className="px-1 py-2" />
+				{view === "canvas" ? (
+					<PipelineCanvas draft={draft} />
+				) : view === "split" ? (
+					<div className="flex h-full min-h-0">
+						<div className="min-w-0 flex-1 border-r border-border">
+							<PipelineCanvas draft={draft} />
+						</div>
+						<div className="min-h-0 flex-1 overflow-hidden">
+							<YamlEditor
+								value={yamlSource}
+								onChange={setYamlSource}
+								aria-label="Pipeline YAML"
+								className="px-1 py-2"
+							/>
+						</div>
+					</div>
+				) : (
+					<YamlEditor value={yamlSource} onChange={setYamlSource} aria-label="Pipeline YAML" className="px-1 py-2" />
+				)}
 			</div>
 
 			{genericError && (
@@ -240,4 +275,65 @@ function DefinitionEditor({
 			)}
 		</div>
 	);
+}
+
+// ViewToggle is the top-bar Canvas / Split / YAML segmented control (mockups
+// 1a/1c). A plain radiogroup of buttons keyed to the app tokens.
+const VIEW_OPTIONS: { value: ViewMode; label: string }[] = [
+	{ value: "canvas", label: "Canvas" },
+	{ value: "split", label: "Split" },
+	{ value: "yaml", label: "YAML" },
+];
+
+function ViewToggle({ value, onChange }: { value: ViewMode; onChange: (next: ViewMode) => void }) {
+	return (
+		<div role="radiogroup" aria-label="Editor view" className="flex items-center rounded-md border border-border p-0.5">
+			{VIEW_OPTIONS.map((opt) => (
+				<button
+					key={opt.value}
+					type="button"
+					role="radio"
+					aria-checked={value === opt.value}
+					onClick={() => onChange(opt.value)}
+					className={cn(
+						"rounded px-2.5 py-1 text-caption font-medium transition-colors",
+						value === opt.value ? "bg-accent/15 text-foreground" : "text-muted-foreground hover:text-foreground",
+					)}
+				>
+					{opt.label}
+				</button>
+			))}
+		</div>
+	);
+}
+
+// ValidityIndicator is the placeholder Valid / N-problems status wired to the
+// draft hook's live validation. V6 expands this into the full Problems panel.
+function ValidityIndicator({ validation }: { validation: PipelineDraftValidation }) {
+	if (validation.isValidating) {
+		return (
+			<span className="flex items-center gap-1 text-caption text-passive" aria-live="polite">
+				<Loader2 className="size-icon-sm animate-spin" aria-hidden="true" />
+				Checking…
+			</span>
+		);
+	}
+	if (validation.valid === true) {
+		return (
+			<span className="flex items-center gap-1 text-caption text-success" aria-live="polite">
+				<CheckCircle2 className="size-icon-sm" aria-hidden="true" />
+				Valid
+			</span>
+		);
+	}
+	if (validation.valid === false) {
+		const n = validation.issues.length;
+		return (
+			<span className="flex items-center gap-1 text-caption text-warning" aria-live="polite">
+				<AlertCircle className="size-icon-sm" aria-hidden="true" />
+				{n === 0 ? "Invalid" : `${n} ${n === 1 ? "problem" : "problems"}`}
+			</span>
+		);
+	}
+	return null;
 }

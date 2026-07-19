@@ -90,6 +90,7 @@ type Manager interface {
 	CreateDefinition(ctx context.Context, projectID domain.ProjectID, yamlSource string) (pipeline.Definition, error)
 	UpdateDefinition(ctx context.Context, id pipeline.ID, yamlSource string) (pipeline.Definition, error)
 	DeleteDefinition(ctx context.Context, id pipeline.ID) error
+	ValidateDefinition(ctx context.Context, yamlSource string) (valid bool, issues []pipeline.Issue, err error)
 	ConfigSchema() []byte
 
 	ListRuns(ctx context.Context, projectID domain.ProjectID, filter pipeline.RunFilter) ([]pipeline.RunState, error)
@@ -242,6 +243,25 @@ func (s *Service) DeleteDefinition(ctx context.Context, id pipeline.ID) error {
 		return notFoundDefinition(id)
 	}
 	return nil
+}
+
+// ValidateDefinition dry-runs ParseDefinition over the raw YAML and reports the
+// outcome as data (never an error envelope): a valid document yields
+// (true, nil, nil); a validation failure yields (false, issues, nil) carrying
+// the full multi-issue list with dotted paths; a bare YAML syntax / unknown-field
+// error is surfaced as a single root-path issue so the visual editor renders it
+// in the Problems list rather than as a request error. Persists nothing. The
+// err return is reserved for genuine infrastructure failures (none today), so
+// the editor can treat a nil err as "the answer is the issue list".
+func (s *Service) ValidateDefinition(_ context.Context, yamlSource string) (bool, []pipeline.Issue, error) {
+	if _, err := pipeline.ParseDefinition([]byte(yamlSource)); err != nil {
+		var verr *pipeline.ValidationError
+		if errors.As(err, &verr) {
+			return false, verr.Issues, nil
+		}
+		return false, []pipeline.Issue{{Path: "", Message: err.Error()}}, nil
+	}
+	return true, nil, nil
 }
 
 // ConfigSchema returns the JSON Schema for the YAML definition document, for the

@@ -29,6 +29,20 @@ vi.mock("./YamlEditor", () => ({
 	),
 }));
 
+// React Flow needs ResizeObserver + real layout jsdom lacks; the canvas is a
+// V2 placeholder here, so stub it and keep the shell/CRUD flow under test.
+vi.mock("./PipelineCanvas", () => ({
+	PipelineCanvas: () => <div data-testid="pipeline-canvas" />,
+}));
+
+// The editor debounce-calls POST /pipelines/validate; branch that off the create
+// POST so a test's create-response override does not also change validation.
+let createResponse: unknown;
+function routePost(url: string) {
+	if (url.endsWith("/validate")) return Promise.resolve({ data: { valid: true, issues: [] }, error: undefined });
+	return Promise.resolve(createResponse);
+}
+
 const def = (id: string, name: string, yamlSource: string) => ({
 	id,
 	projectId: "proj-1",
@@ -56,7 +70,8 @@ beforeEach(() => {
 		data: { definitions: [def("pl-1", "review", TWO_STAGE_YAML)] },
 		error: undefined,
 	});
-	postMock.mockReset().mockResolvedValue({ data: { definition: def("pl-2", "new", "name: new\n") }, error: undefined });
+	createResponse = { data: { definition: def("pl-2", "new", "name: new\n") }, error: undefined };
+	postMock.mockReset().mockImplementation((url: string) => routePost(url));
 	putMock
 		.mockReset()
 		.mockResolvedValue({ data: { definition: def("pl-1", "review", TWO_STAGE_YAML) }, error: undefined });
@@ -84,17 +99,56 @@ describe("PipelineDefinitionsPage", () => {
 		await user.type(editor, "name: created");
 		await user.click(screen.getByRole("button", { name: "Save" }));
 
-		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
-		expect(postMock).toHaveBeenCalledWith("/api/v1/pipelines", {
-			params: { query: { project: "proj-1" } },
-			body: { yamlSource: "name: created" },
-		});
+		await waitFor(() =>
+			expect(postMock).toHaveBeenCalledWith("/api/v1/pipelines", {
+				params: { query: { project: "proj-1" } },
+				body: { yamlSource: "name: created" },
+			}),
+		);
 		// Back to the list view.
 		await screen.findByRole("button", { name: /New pipeline/ });
 	});
 
+	it("toggles between YAML and Canvas views and defaults to YAML", async () => {
+		renderPage();
+		await screen.findByText("review");
+		const user = userEvent.setup();
+
+		await user.click(screen.getByRole("button", { name: /New pipeline/ }));
+		// YAML mode by default: the editor is mounted, the canvas is not.
+		expect(screen.getByLabelText("Pipeline YAML")).toBeInTheDocument();
+		expect(screen.queryByTestId("pipeline-canvas")).not.toBeInTheDocument();
+
+		await user.click(screen.getByRole("radio", { name: "Canvas" }));
+		expect(screen.getByTestId("pipeline-canvas")).toBeInTheDocument();
+		expect(screen.queryByLabelText("Pipeline YAML")).not.toBeInTheDocument();
+
+		// Split shows both surfaces at once.
+		await user.click(screen.getByRole("radio", { name: "Split" }));
+		expect(screen.getByTestId("pipeline-canvas")).toBeInTheDocument();
+		expect(screen.getByLabelText("Pipeline YAML")).toBeInTheDocument();
+	});
+
+	it("saves the edited YAML buffer when updating an existing definition", async () => {
+		renderPage();
+		const user = userEvent.setup();
+
+		await user.click(await screen.findByRole("button", { name: "Edit" }));
+		const editor = screen.getByLabelText("Pipeline YAML");
+		await user.clear(editor);
+		await user.type(editor, "name: edited");
+		await user.click(screen.getByRole("button", { name: "Save" }));
+
+		await waitFor(() =>
+			expect(putMock).toHaveBeenCalledWith("/api/v1/pipelines/{id}", {
+				params: { path: { id: "pl-1" } },
+				body: { yamlSource: "name: edited" },
+			}),
+		);
+	});
+
 	it("surfaces each validation issue inline and keeps the buffer", async () => {
-		postMock.mockResolvedValue({
+		createResponse = {
 			data: undefined,
 			error: {
 				code: "PIPELINE_VALIDATION_FAILED",
@@ -106,7 +160,7 @@ describe("PipelineDefinitionsPage", () => {
 					],
 				},
 			},
-		});
+		};
 		renderPage();
 		await screen.findByText("review");
 		const user = userEvent.setup();
