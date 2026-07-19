@@ -2,6 +2,8 @@ package domain
 
 import "fmt"
 
+// ProjectImportConflict reason constants describe why an imported project
+// cannot be written to the target storage.
 const (
 	ProjectImportConflictSameIDArchivedTarget      = "same id matches archived target project"
 	ProjectImportConflictSameIDDifferentActivePath = "same id with different active path"
