@@ -41,6 +41,7 @@ let escalationStateDir: string | undefined;
 const AUTOMATIC_UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 let automaticUpdateTimer: ReturnType<typeof setInterval> | undefined;
 let activeUpdateCheckMode: "automatic" | "manual" | undefined;
+let automaticCheckPreviousStatus: UpdateStatus | undefined;
 let updateCheckQueue: Promise<void> = Promise.resolve();
 
 // broadcast pushes the latest update status to every renderer window so the
@@ -157,6 +158,13 @@ function stopEscalationTimer(): void {
 	}
 }
 
+function restoreAutomaticCheckPreviousStatus(): void {
+	if (automaticCheckPreviousStatus === undefined) return;
+	const status = automaticCheckPreviousStatus;
+	automaticCheckPreviousStatus = undefined;
+	broadcast(status);
+}
+
 async function runSerializedUpdateCheck(mode: "automatic" | "manual", check: () => Promise<void>): Promise<void> {
 	const run = async () => {
 		activeUpdateCheckMode = mode;
@@ -164,6 +172,7 @@ async function runSerializedUpdateCheck(mode: "automatic" | "manual", check: () 
 			await check();
 		} finally {
 			activeUpdateCheckMode = undefined;
+			if (mode === "automatic") automaticCheckPreviousStatus = undefined;
 		}
 	};
 	const queued = updateCheckQueue.then(run, run);
@@ -180,7 +189,12 @@ function wireUpdaterEvents(): void {
 	// With a build staged, "checking" briefly hides the sidebar restart row; that
 	// is acceptable and self-healing: the available / not-available handlers below
 	// restore the enriched downloaded status right after.
-	autoUpdater.on("checking-for-update", () => broadcast({ state: "checking" }));
+	autoUpdater.on("checking-for-update", () => {
+		if (activeUpdateCheckMode === "automatic" && automaticCheckPreviousStatus === undefined) {
+			automaticCheckPreviousStatus = lastStatus;
+		}
+		broadcast({ state: "checking" });
+	});
 	autoUpdater.on("update-available", (info) => {
 		// A manual re-check reports the already-staged build as merely "available"
 		// (autoDownload is off on that path). It is still in cache and installs on
@@ -204,6 +218,7 @@ function wireUpdaterEvents(): void {
 		stagedVersion = info?.version;
 		stagedAtMs = Date.now();
 		stagedEscalated = false;
+		automaticCheckPreviousStatus = undefined;
 		broadcast(stagedDownloadedStatus());
 		// Evaluate now (nightly can escalate immediately), then every 30 minutes
 		// while the update sits uninstalled. unref so the timer never holds the
@@ -217,6 +232,7 @@ function wireUpdaterEvents(): void {
 		// Never crash on update failure (offline, unsigned macOS, etc.).
 		if (activeUpdateCheckMode === "automatic") {
 			console.error("auto-update check failed:", err);
+			restoreAutomaticCheckPreviousStatus();
 			return;
 		}
 		broadcast({ state: "error", message: err?.message ?? String(err) });

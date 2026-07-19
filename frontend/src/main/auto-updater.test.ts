@@ -196,6 +196,61 @@ describe("startAutoUpdates", () => {
 		expect(module.getUpdateStatus()).toEqual({ state: "idle" });
 	});
 
+	it("restores the prior renderer status when an automatic check emits checking before an error", async () => {
+		const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+		const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+		const err = new Error("feed failed");
+
+		await module.checkForUpdatesNow(stateDir);
+		updaterEvents.get("update-available")?.({ version: "2.0.0" });
+		expect(module.getUpdateStatus()).toEqual({ state: "available", version: "2.0.0" });
+
+		autoUpdater.checkForUpdates.mockImplementationOnce(() => {
+			updaterEvents.get("checking-for-update")?.();
+			updaterEvents.get("error")?.(err);
+			return Promise.resolve();
+		});
+
+		await module.startAutoUpdates(stateDir);
+
+		expect(consoleErrorSpy).toHaveBeenCalledWith("auto-update check failed:", err);
+		expect(module.getUpdateStatus()).toEqual({ state: "available", version: "2.0.0" });
+	});
+
+	it("restores a staged update when an automatic check emits checking before an error", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-07-19T12:00:00.000Z"));
+		const stagedAt = Date.now();
+		const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+		const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+		const err = new Error("feed failed");
+
+		await module.checkForUpdatesNow(stateDir);
+		updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+		expect(module.getUpdateStatus()).toEqual({
+			state: "downloaded",
+			version: "2.1.0",
+			stagedAt,
+			escalated: false,
+		});
+
+		autoUpdater.checkForUpdates.mockImplementationOnce(() => {
+			updaterEvents.get("checking-for-update")?.();
+			updaterEvents.get("error")?.(err);
+			return Promise.resolve();
+		});
+
+		await module.startAutoUpdates(stateDir);
+
+		expect(consoleErrorSpy).toHaveBeenCalledWith("auto-update check failed:", err);
+		expect(module.getUpdateStatus()).toEqual({
+			state: "downloaded",
+			version: "2.1.0",
+			stagedAt,
+			escalated: false,
+		});
+	});
+
 	it("keeps automatic download errors silent after checkForUpdates resolves", async () => {
 		const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 		const lateDownload = deferred();
