@@ -74,6 +74,11 @@ const hookBinaryName = "ao"
 type lifecycleRecorder interface {
 	MarkSpawned(ctx context.Context, id domain.SessionID, metadata domain.SessionMetadata) error
 	MarkTerminated(ctx context.Context, id domain.SessionID) error
+	// DispatchProject delivers any pending worker_idle events for a project to
+	// its orchestrator. Called after an orchestrator spawn/restore so a freshly
+	// available orchestrator immediately picks up completions that queued while
+	// no orchestrator existed.
+	DispatchProject(ctx context.Context, project domain.ProjectID)
 }
 
 type runtimeController interface {
@@ -379,6 +384,9 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 			m.markSpawnFailedTerminatedWithoutWorkspace(ctx, id)
 			return domain.SessionRecord{}, fmt.Errorf("spawn %s: deliver prompt: %w", id, err)
 		}
+	}
+	if cfg.Kind == domain.KindOrchestrator {
+		m.lcm.DispatchProject(ctx, cfg.ProjectID)
 	}
 	return m.getRecord(ctx, id)
 }
@@ -875,6 +883,9 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 			m.cleanupSystemPromptDir(rec.ID)
 			return domain.SessionRecord{}, fmt.Errorf("restore %s: deliver prompt: %w", rec.ID, err)
 		}
+	}
+	if rec.Kind == domain.KindOrchestrator {
+		m.lcm.DispatchProject(ctx, rec.ProjectID)
 	}
 	return m.getRecord(ctx, rec.ID)
 }

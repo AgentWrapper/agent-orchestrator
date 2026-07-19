@@ -17,13 +17,53 @@ type fakeStore struct {
 	sessions   map[domain.SessionID]domain.SessionRecord
 	prs        map[domain.SessionID][]domain.PullRequest
 	signatures map[string]string
+	idleEvents []domain.WorkerIdleEvent
+	delivered  map[string]bool
 
 	signatureWriteErr error
 	signatureWrites   int
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{sessions: map[domain.SessionID]domain.SessionRecord{}, prs: map[domain.SessionID][]domain.PullRequest{}, signatures: map[string]string{}}
+	return &fakeStore{sessions: map[domain.SessionID]domain.SessionRecord{}, prs: map[domain.SessionID][]domain.PullRequest{}, signatures: map[string]string{}, delivered: map[string]bool{}}
+}
+
+func (f *fakeStore) RecordWorkerIdle(_ context.Context, rec domain.SessionRecord, ev domain.WorkerIdleEvent) error {
+	f.sessions[rec.ID] = rec
+	for i := range f.idleEvents {
+		e := f.idleEvents[i]
+		if e.WorkerID == ev.WorkerID && !f.delivered[e.ID] {
+			f.idleEvents[i].TransitionAt = ev.TransitionAt
+			return nil
+		}
+	}
+	f.idleEvents = append(f.idleEvents, ev)
+	return nil
+}
+
+func (f *fakeStore) ListPendingWorkerIdleEventsByProject(_ context.Context, project domain.ProjectID) ([]domain.WorkerIdleEvent, error) {
+	var out []domain.WorkerIdleEvent
+	for _, e := range f.idleEvents {
+		if e.ProjectID == project && !f.delivered[e.ID] {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) ListPendingWorkerIdleEvents(_ context.Context) ([]domain.WorkerIdleEvent, error) {
+	var out []domain.WorkerIdleEvent
+	for _, e := range f.idleEvents {
+		if !f.delivered[e.ID] {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) MarkWorkerIdleEventDelivered(_ context.Context, id string, _ time.Time) error {
+	f.delivered[id] = true
+	return nil
 }
 
 func (f *fakeStore) GetSession(_ context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
@@ -33,6 +73,16 @@ func (f *fakeStore) GetSession(_ context.Context, id domain.SessionID) (domain.S
 
 func (f *fakeStore) ListPRsBySession(_ context.Context, id domain.SessionID) ([]domain.PullRequest, error) {
 	return f.prs[id], nil
+}
+
+func (f *fakeStore) ListSessions(_ context.Context, project domain.ProjectID) ([]domain.SessionRecord, error) {
+	var out []domain.SessionRecord
+	for _, rec := range f.sessions {
+		if rec.ProjectID == project {
+			out = append(out, rec)
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeStore) UpdateSession(_ context.Context, rec domain.SessionRecord) error {
@@ -58,6 +108,7 @@ func (f *fakeStore) UpdatePRLastNudgeSignature(_ context.Context, prURL, payload
 
 type fakeMessenger struct {
 	msgs []string
+	ids  []domain.SessionID
 	err  error
 }
 
@@ -71,11 +122,12 @@ func (s *telemetrySink) Emit(_ context.Context, ev ports.TelemetryEvent) {
 
 func (*telemetrySink) Close(context.Context) error { return nil }
 
-func (f *fakeMessenger) Send(_ context.Context, _ domain.SessionID, msg string) error {
+func (f *fakeMessenger) Send(_ context.Context, id domain.SessionID, msg string) error {
 	if f.err != nil {
 		return f.err
 	}
 	f.msgs = append(f.msgs, msg)
+	f.ids = append(f.ids, id)
 	return nil
 }
 
@@ -1438,5 +1490,216 @@ func TestSCMObservation_ReadyToMergeSuppressedWhileWaitingInput(t *testing.T) {
 	}
 	if len(sink.intents) != 0 {
 		t.Fatalf("waiting-input session emitted ready notification: %+v", sink.intents)
+	}
+}
+
+func TestActivity_WorkerIdleNudgesOrchestrator(t *testing.T) {
+	m, st, msg := newManager()
+	now := time.Now()
+	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
+	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, DisplayName: "husky-setup", Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle}); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("orchestrator nudges = %d, want 1", len(msg.msgs))
+	}
+	if !strings.Contains(msg.msgs[0], "mer-8") {
+		t.Fatalf("nudge missing worker id: %q", msg.msgs[0])
+	}
+	if len(msg.ids) != 1 || msg.ids[0] != "mer-orch" {
+		t.Fatalf("nudge destination = %v, want [mer-orch]", msg.ids)
+	}
+}
+
+func TestActivity_WorkerIdleSteerableActiveOrchestratorDelivers(t *testing.T) {
+	m, st, msg := newManager()
+	now := time.Now()
+	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Harness: domain.HarnessCodex, Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
+	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle}); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.ids) != 1 || msg.ids[0] != "mer-orch" {
+		t.Fatalf("steerable active orchestrator not delivered: ids=%v", msg.ids)
+	}
+}
+
+func TestActivity_WorkerIdleMissingOrchestratorRetainsEvent(t *testing.T) {
+	m, st, msg := newManager()
+	now := time.Now()
+	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle}); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("nudges = %d, want 0", len(msg.msgs))
+	}
+	pending, _ := st.ListPendingWorkerIdleEventsByProject(ctx, "mer")
+	if len(pending) != 1 {
+		t.Fatalf("pending events = %d, want 1 (retained)", len(pending))
+	}
+}
+
+func TestActivity_WorkerIdleCoalescesWhileOrchestratorBusy(t *testing.T) {
+	m, st, msg := newManager()
+	now := time.Now()
+	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
+	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
+
+	// Two completions while the orchestrator is busy coalesce to one pending event.
+	for i := 0; i < 2; i++ {
+		ts := now.Add(time.Duration(i) * time.Minute)
+		if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityActive, Timestamp: ts}); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle, Timestamp: ts.Add(time.Second)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pending, _ := st.ListPendingWorkerIdleEvents(ctx)
+	if len(pending) != 1 {
+		t.Fatalf("pending events = %d, want 1 (coalesced)", len(pending))
+	}
+
+	// Orchestrator frees up: exactly one delivery, not a storm.
+	if err := m.ApplyActivitySignal(ctx, "mer-orch", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle}); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("deliveries = %d, want 1", len(msg.msgs))
+	}
+}
+
+func TestDispatchAllPending_DeliversWhenOrchestratorSafe(t *testing.T) {
+	m, st, msg := newManager()
+	now := time.Now()
+	// A pending event with no orchestrator yet (as if left across a restart).
+	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
+	st.idleEvents = []domain.WorkerIdleEvent{{ID: "wie_1", ProjectID: "mer", WorkerID: "mer-8", TransitionAt: now, CreatedAt: now}}
+
+	m.DispatchAllPending(ctx)
+	if len(msg.msgs) != 0 {
+		t.Fatalf("delivered with no orchestrator: %d, want 0", len(msg.msgs))
+	}
+
+	// An orchestrator appears and the sweep delivers.
+	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
+	m.DispatchAllPending(ctx)
+	if len(msg.ids) != 1 || msg.ids[0] != "mer-orch" {
+		t.Fatalf("sweep delivery = %v, want [mer-orch]", msg.ids)
+	}
+	// Delivered events are not redelivered on a later sweep.
+	m.DispatchAllPending(ctx)
+	if len(msg.msgs) != 1 {
+		t.Fatalf("redelivered after mark: %d, want 1", len(msg.msgs))
+	}
+}
+
+func TestActivity_WorkerIdleNoOrchestratorNoNudge(t *testing.T) {
+	m, st, msg := newManager()
+	now := time.Now()
+	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle}); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("nudges = %d, want 0", len(msg.msgs))
+	}
+}
+
+func TestActivity_OrchestratorIdleDoesNotNudge(t *testing.T) {
+	m, st, msg := newManager()
+	now := time.Now()
+	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-orch", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle}); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("orchestrator idle self-nudged: %d, want 0", len(msg.msgs))
+	}
+}
+
+func TestActivity_WorkerWaitingToIdleDoesNotNudge(t *testing.T) {
+	m, st, msg := newManager()
+	now := time.Now()
+	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
+	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityWaitingInput, LastActivityAt: now}, FirstSignalAt: now}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle}); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("waiting_input->idle nudged: %d, want 0", len(msg.msgs))
+	}
+}
+
+func TestActivity_WorkerIdleOrchestratorBlockedSuppressed(t *testing.T) {
+	m, st, msg := newManager()
+	now := time.Now()
+	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityBlocked, LastActivityAt: now}, FirstSignalAt: now}
+	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle}); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("nudged a blocked orchestrator: %d, want 0", len(msg.msgs))
+	}
+}
+
+func TestActivity_WorkerIdleOrchestratorActiveDefersNoNudge(t *testing.T) {
+	m, st, msg := newManager()
+	now := time.Now()
+	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
+	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle}); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("nudged a busy orchestrator: %d, want 0", len(msg.msgs))
+	}
+}
+
+func TestActivity_DeferredReportFlushedWhenOrchestratorIdle(t *testing.T) {
+	m, st, msg := newManager()
+	now := time.Now()
+	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
+	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, DisplayName: "husky-setup", Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
+
+	// Worker finishes while the orchestrator is busy: deferred, no nudge yet.
+	if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle}); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("nudged while orchestrator busy: %d, want 0", len(msg.msgs))
+	}
+
+	// Orchestrator becomes idle: the deferred report is delivered.
+	if err := m.ApplyActivitySignal(ctx, "mer-orch", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle}); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("flushed nudges = %d, want 1", len(msg.msgs))
+	}
+	if !strings.Contains(msg.msgs[0], "mer-8") {
+		t.Fatalf("flushed nudge missing worker id: %q", msg.msgs[0])
+	}
+
+	// A second orchestrator idle transition must not re-deliver.
+	if err := m.ApplyActivitySignal(ctx, "mer-orch", ports.ActivitySignal{Valid: true, State: domain.ActivityActive, Timestamp: now.Add(time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.ApplyActivitySignal(ctx, "mer-orch", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle, Timestamp: now.Add(2 * time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("re-delivered deferred report: %d, want 1", len(msg.msgs))
 	}
 }

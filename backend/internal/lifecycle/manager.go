@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/sessionguard"
@@ -20,6 +22,9 @@ import (
 type sessionStore interface {
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
 	UpdateSession(ctx context.Context, rec domain.SessionRecord) error
+	// ListSessions returns every session in a project. The dispatcher reads it
+	// to resolve the current orchestrator at delivery time.
+	ListSessions(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error)
 	// ListPRsBySession returns every PR row tracked for the session. The
 	// reducer reads it to apply the multi-PR completion rule (terminate only
 	// when no open PR remains and at least one merged) and to suppress
@@ -29,6 +34,13 @@ type sessionStore interface {
 	// reaction-dedup map so nudges survive a daemon restart.
 	GetPRLastNudgeSignature(ctx context.Context, prURL string) (string, error)
 	UpdatePRLastNudgeSignature(ctx context.Context, prURL, payload string) error
+	// RecordWorkerIdle persists the worker's activity transition and its
+	// worker_idle outbox event atomically. ListPending* / MarkWorkerIdleEventDelivered
+	// drive the durable at-least-once delivery of those events.
+	RecordWorkerIdle(ctx context.Context, rec domain.SessionRecord, ev domain.WorkerIdleEvent) error
+	ListPendingWorkerIdleEventsByProject(ctx context.Context, project domain.ProjectID) ([]domain.WorkerIdleEvent, error)
+	ListPendingWorkerIdleEvents(ctx context.Context) ([]domain.WorkerIdleEvent, error)
+	MarkWorkerIdleEventDelivered(ctx context.Context, id string, at time.Time) error
 }
 
 // notificationSink is the optional lifecycle-to-notification-producer boundary.
@@ -49,6 +61,16 @@ func WithTelemetry(sink ports.EventSink) Option {
 	return func(m *Manager) { m.telemetry = sink }
 }
 
+// WithActiveSteering overrides the harness active-turn steering predicate
+// (default domain.HarnessSteersActiveTurn). Injected in tests.
+func WithActiveSteering(pred func(domain.AgentHarness) bool) Option {
+	return func(m *Manager) {
+		if pred != nil {
+			m.steerActive = pred
+		}
+	}
+}
+
 // Manager reduces runtime, activity, spawn, and termination observations into durable session facts.
 // It also owns agent nudges caused by PR observations, including merge-conflict, CI-failure, and review-feedback prompts.
 type Manager struct {
@@ -67,6 +89,10 @@ type Manager struct {
 	// flights tracks, per session, the in-flight tool executions and the
 	// pending permission dialog's identity (see toolFlight). Guarded by mu.
 	flights map[domain.SessionID]*toolFlight
+	// steerActive reports whether a harness can safely receive a nudge during
+	// an active turn (Enter steers the run) rather than only while idle. Unknown
+	// harnesses default to false so an active orchestrator is left alone.
+	steerActive func(domain.AgentHarness) bool
 }
 
 // New builds a Lifecycle Manager over the session store it writes and the messenger it uses for agent nudges.
@@ -76,7 +102,7 @@ func New(store sessionStore, messenger ports.AgentMessenger, opts ...Option) *Ma
 	// `ao session get` showing created in UTC but updated in local time. A
 	// WithClock option may still override this in tests.
 	clock := func() time.Time { return time.Now().UTC() }
-	m := &Manager{store: store, window: defaultRecentActivityWindow, clock: clock, react: newReactionState(), flights: map[domain.SessionID]*toolFlight{}}
+	m := &Manager{store: store, window: defaultRecentActivityWindow, clock: clock, react: newReactionState(), flights: map[domain.SessionID]*toolFlight{}, steerActive: domain.HarnessSteersActiveTurn}
 	if messenger != nil {
 		m.guard = sessionguard.New(store, messenger, nil)
 	}
@@ -204,7 +230,20 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		next.IsTerminated = true
 	}
 	next.UpdatedAt = now
-	if err := m.store.UpdateSession(ctx, next); err != nil {
+	// A worker's active->idle transition creates a durable worker_idle event in
+	// the same write as the activity change, so a crash can't persist the idle
+	// state while losing the pending delivery.
+	var idleEvent *domain.WorkerIdleEvent
+	if crossedToIdle(prevState, next) {
+		idleEvent = &domain.WorkerIdleEvent{
+			ID:           uuid.NewString(),
+			ProjectID:    next.ProjectID,
+			WorkerID:     next.ID,
+			TransitionAt: next.Activity.LastActivityAt,
+			CreatedAt:    now,
+		}
+	}
+	if err := m.persistActivity(ctx, next, idleEvent); err != nil {
 		m.mu.Unlock()
 		return err
 	}
@@ -221,12 +260,148 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		}
 	}
 	waitingEvents := m.waitingInputEvents(next, prevState, prevAt, now)
+	// Two triggers re-attempt delivery of pending worker_idle events: a fresh
+	// event, and the orchestrator itself entering idle (becoming safe).
+	dispatch := idleEvent != nil || crossedToIdleOrchestrator(prevState, next)
 	m.mu.Unlock()
 	for _, ev := range waitingEvents {
 		m.emitTelemetry(ctx, ev)
 	}
 	m.emitNotification(ctx, intent)
+	if dispatch {
+		m.DispatchProject(ctx, next.ProjectID)
+	}
 	return nil
+}
+
+// persistActivity writes the activity transition, atomically appending the
+// worker_idle outbox event when one was produced. Callers hold m.mu.
+func (m *Manager) persistActivity(ctx context.Context, next domain.SessionRecord, ev *domain.WorkerIdleEvent) error {
+	if ev == nil {
+		return m.store.UpdateSession(ctx, next)
+	}
+	return m.store.RecordWorkerIdle(ctx, next, *ev)
+}
+
+// crossedToIdle reports a worker finishing a turn: an active->idle transition on
+// a live worker session, which is AO's "this worker may be done" signal. Gating
+// on active (not merely non-idle) skips the spawn-time idle seed and
+// waiting_input->idle demotions.
+func crossedToIdle(prev domain.ActivityState, next domain.SessionRecord) bool {
+	return next.Kind == domain.KindWorker &&
+		prev == domain.ActivityActive &&
+		next.Activity.State == domain.ActivityIdle &&
+		!next.IsTerminated
+}
+
+// crossedToIdleOrchestrator reports the orchestrator becoming free: any
+// transition into idle (from active, waiting_input, or blocked) is a moment
+// pending worker reports can be delivered without interrupting its work.
+func crossedToIdleOrchestrator(prev domain.ActivityState, next domain.SessionRecord) bool {
+	return next.Kind == domain.KindOrchestrator &&
+		prev != domain.ActivityIdle &&
+		next.Activity.State == domain.ActivityIdle &&
+		!next.IsTerminated
+}
+
+// DispatchProject delivers pending worker_idle events for one project to its
+// current orchestrator, if a safe one exists. Suppressed or undeliverable
+// events stay pending for a later trigger. Best-effort: errors are logged.
+func (m *Manager) DispatchProject(ctx context.Context, project domain.ProjectID) {
+	if m.guard == nil {
+		return
+	}
+	orch, ok, err := m.liveOrchestrator(ctx, project)
+	if err != nil {
+		slog.Default().Error("lifecycle: resolve orchestrator", "project", project, "err", err)
+		return
+	}
+	if !ok || !m.safeToDeliver(orch) {
+		return
+	}
+	events, err := m.store.ListPendingWorkerIdleEventsByProject(ctx, project)
+	if err != nil {
+		slog.Default().Error("lifecycle: list pending worker events", "project", project, "err", err)
+		return
+	}
+	for _, ev := range events {
+		outcome, err := m.guard.Nudge(ctx, orch.ID, m.workerIdleNudgeMessage(ctx, ev.WorkerID))
+		if err != nil {
+			slog.Default().Error("lifecycle: deliver worker idle", "worker", ev.WorkerID, "orchestrator", orch.ID, "err", err)
+		}
+		if outcome != sessionguard.Sent {
+			continue
+		}
+		if err := m.store.MarkWorkerIdleEventDelivered(ctx, ev.ID, m.clock()); err != nil {
+			slog.Default().Error("lifecycle: mark worker idle delivered", "event", ev.ID, "err", err)
+		}
+	}
+}
+
+// DispatchAllPending re-attempts delivery for every project with pending
+// worker_idle events. Used on daemon start and by the recovery sweep.
+func (m *Manager) DispatchAllPending(ctx context.Context) {
+	if m.guard == nil {
+		return
+	}
+	events, err := m.store.ListPendingWorkerIdleEvents(ctx)
+	if err != nil {
+		slog.Default().Error("lifecycle: list pending worker events", "err", err)
+		return
+	}
+	seen := map[domain.ProjectID]struct{}{}
+	for _, ev := range events {
+		if _, done := seen[ev.ProjectID]; done {
+			continue
+		}
+		seen[ev.ProjectID] = struct{}{}
+		m.DispatchProject(ctx, ev.ProjectID)
+	}
+}
+
+// safeToDeliver reports whether the orchestrator can receive a nudge now: idle
+// always, active only for a harness that steers on active input; blocked,
+// waiting_input, and exited defer.
+func (m *Manager) safeToDeliver(orch domain.SessionRecord) bool {
+	if orch.IsTerminated {
+		return false
+	}
+	switch orch.Activity.State {
+	case domain.ActivityIdle:
+		return true
+	case domain.ActivityActive:
+		return m.steerActive(orch.Harness)
+	default:
+		return false
+	}
+}
+
+// liveOrchestrator resolves the project's current (non-terminated) orchestrator
+// at delivery time, so an event is never bound to one that was later replaced.
+func (m *Manager) liveOrchestrator(ctx context.Context, project domain.ProjectID) (domain.SessionRecord, bool, error) {
+	recs, err := m.store.ListSessions(ctx, project)
+	if err != nil {
+		return domain.SessionRecord{}, false, err
+	}
+	for _, rec := range recs {
+		if rec.Kind == domain.KindOrchestrator && !rec.IsTerminated {
+			return rec, true, nil
+		}
+	}
+	return domain.SessionRecord{}, false, nil
+}
+
+// workerIdleNudgeMessage tells the orchestrator to inspect the worker with a
+// live `ao session get`, deliberately embedding no status snapshot that could
+// be stale by delivery time. The display name is best-effort identity only.
+func (m *Manager) workerIdleNudgeMessage(ctx context.Context, worker domain.SessionID) string {
+	label := string(worker)
+	if rec, ok, err := m.store.GetSession(ctx, worker); err == nil && ok {
+		if name := strings.TrimSpace(domain.SanitizeControlChars(rec.DisplayName)); name != "" {
+			label = fmt.Sprintf("%s (%q)", worker, name)
+		}
+	}
+	return fmt.Sprintf("[AO] Worker %s has gone idle and may be done. Inspect it with `ao session get %s`, then report its status and any PR to the human. If it needs more work, redirect it with `ao send`.", label, worker)
 }
 
 // toolFlight tracks one session's in-flight tool executions and the pending

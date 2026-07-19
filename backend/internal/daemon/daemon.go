@@ -198,6 +198,10 @@ func Run() error {
 		log.Error("reconcile sessions on boot failed", "err", reconcileErr)
 	}
 
+	// Redeliver any worker_idle events left pending across the restart, now that
+	// sessions (and their orchestrators) have been reconciled.
+	lcStack.LCM.DispatchAllPending(ctx)
+
 	// ponytail: 5s tolerates a brief frontend restart; tune if dev hot-reload trips it.
 	const supervisorGrace = 5 * time.Second
 
