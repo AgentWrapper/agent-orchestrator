@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "../lib/api-client";
 import { parseYamlToDraft, serializeToYaml, type PipelineDraft } from "../lib/pipeline-draft";
@@ -52,11 +52,30 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 }
 
 export function usePipelineDraft(initialYaml: string): UsePipelineDraftResult {
-	const [yamlSource, setYamlSource] = useState(initialYaml);
-	const parsed = useMemo(() => parseYamlToDraft(yamlSource), [yamlSource]);
-	const setDraft = useCallback((next: PipelineDraft) => setYamlSource(serializeToYaml(next)), []);
+	const [yamlSource, setYamlSourceState] = useState(initialYaml);
+	// Canvas/inspector edits produce the next draft directly; hold it so those
+	// edits render immediately while the debounced re-parse of the reserialized
+	// buffer catches up. A YAML-pane edit clears it: the buffer is canonical.
+	const [pending, setPending] = useState<PipelineDraft | null>(null);
 
 	const debounced = useDebouncedValue(yamlSource, VALIDATE_DEBOUNCE_MS);
+	// Parse on the debounced buffer, not per keystroke, so YAML typing stays
+	// smooth (a parse rebuilds the whole canvas node set downstream).
+	const parsed = useMemo(() => parseYamlToDraft(debounced), [debounced]);
+	// On a YAML syntax error keep the last good graph (the split view must not
+	// blank the canvas mid-edit); the error itself surfaces as parseError.
+	const lastGoodRef = useRef(parsed.draft);
+	if (!parsed.error) lastGoodRef.current = parsed.draft;
+
+	const setYamlSource = useCallback((next: string) => {
+		setPending(null);
+		setYamlSourceState(next);
+	}, []);
+	const setDraft = useCallback((next: PipelineDraft) => {
+		setPending(next);
+		setYamlSourceState(serializeToYaml(next));
+	}, []);
+
 	const enabled = debounced.trim().length > 0;
 	const query = useQuery({
 		queryKey: pipelineValidateQueryKey(debounced),
@@ -75,5 +94,10 @@ export function usePipelineDraft(initialYaml: string): UsePipelineDraftResult {
 		issues: query.data?.issues ?? [],
 	};
 
-	return { yamlSource, setYamlSource, draft: parsed.draft, parseError: parsed.error, setDraft, validation };
+	const draft = pending ?? (parsed.error ? lastGoodRef.current : parsed.draft);
+	// While a pending canvas edit awaits its round-trip re-parse, the buffer was
+	// serialized by us and cannot be broken; suppress the stale error.
+	const parseError = pending ? undefined : parsed.error;
+
+	return { yamlSource, setYamlSource, draft, parseError, setDraft, validation };
 }

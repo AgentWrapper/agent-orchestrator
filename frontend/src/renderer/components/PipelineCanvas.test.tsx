@@ -139,6 +139,21 @@ describe("PipelineCanvas", () => {
 		expect(document.querySelector('[data-stage-name="intake"]')).not.toHaveAttribute("data-in-cycle");
 	});
 
+	it("renders validation badges on affected nodes (mockup 1d)", () => {
+		render(
+			<PipelineCanvas
+				draft={draftOf(stage("review"), stage("fix"))}
+				stageIssues={{ review: ["task.prompt is required", "unknown plugin"] }}
+			/>,
+		);
+
+		expect(screen.getByLabelText("2 validation problems")).toBeInTheDocument();
+		// The first message renders inline on the card.
+		expect(screen.getByText("task.prompt is required")).toBeInTheDocument();
+		expect(document.querySelector('[data-stage-name="review"]')).toHaveAttribute("data-issue-count", "2");
+		expect(document.querySelector('[data-stage-name="fix"]')).not.toHaveAttribute("data-issue-count");
+	});
+
 	it("shows the zoom indicator and view controls", () => {
 		render(<PipelineCanvas draft={draftOf(stage("review"))} />);
 

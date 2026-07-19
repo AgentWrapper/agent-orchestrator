@@ -73,6 +73,9 @@ export type YamlEditorProps = {
 	value: string;
 	onChange: (value: string) => void;
 	readOnly?: boolean;
+	// 1-based line to scroll into view (top-aligned). The split view sets this
+	// to the selected stage's block; out-of-range or null values are no-ops.
+	revealLine?: number | null;
 	className?: string;
 	"aria-label"?: string;
 };
@@ -81,7 +84,7 @@ export type YamlEditorProps = {
 // changes in only when they diverge from the live doc (so typing never fights a
 // re-render). `onChange` is read through a ref so the update listener stays
 // stable across renders.
-export function YamlEditor({ value, onChange, readOnly = false, className, ...aria }: YamlEditorProps) {
+export function YamlEditor({ value, onChange, readOnly = false, revealLine, className, ...aria }: YamlEditorProps) {
 	const hostRef = useRef<HTMLDivElement | null>(null);
 	const viewRef = useRef<EditorView | null>(null);
 	const onChangeRef = useRef(onChange);
@@ -117,6 +120,17 @@ export function YamlEditor({ value, onChange, readOnly = false, className, ...ar
 		if (current === value) return;
 		view.dispatch({ changes: { from: 0, to: current.length, insert: value } });
 	}, [value]);
+
+	// Best-effort reveal: scroll the requested line to the top of the pane when
+	// it changes (node select in split view). Never touches the selection, so it
+	// cannot fight active typing.
+	useEffect(() => {
+		const view = viewRef.current;
+		if (!view || revealLine == null) return;
+		if (revealLine < 1 || revealLine > view.state.doc.lines) return;
+		const pos = view.state.doc.line(revealLine).from;
+		view.dispatch({ effects: EditorView.scrollIntoView(pos, { y: "start", yMargin: 8 }) });
+	}, [revealLine]);
 
 	return (
 		<div

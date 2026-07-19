@@ -17,7 +17,7 @@ import {
 	type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Maximize, Minus, Plus, Sparkles } from "lucide-react";
+import { AlertCircle, Maximize, Minus, Plus, Sparkles } from "lucide-react";
 import type { ExecutorKind, PipelineDraft, StageDraft } from "../lib/pipeline-draft";
 import {
 	addStage,
@@ -54,21 +54,24 @@ export interface PipelineCanvasProps {
 	onDraftChange?: (next: PipelineDraft) => void;
 	// The editor area's useStageSelection instance, shared with the inspector.
 	selection?: StageSelection;
+	// Validation issue messages keyed by stage name (V6, mockup 1d): affected
+	// nodes render an inline error badge plus the first message.
+	stageIssues?: Record<string, string[]>;
 }
 
 const CYCLE_FLASH_MS = 1800;
 
-type StageNodeType = Node<{ stage: StageDraft; inCycle: boolean }, "stage">;
+type StageNodeType = Node<{ stage: StageDraft; inCycle: boolean; issues: string[] }, "stage">;
 
-export function PipelineCanvas({ draft, onDraftChange, selection }: PipelineCanvasProps) {
+export function PipelineCanvas({ draft, onDraftChange, selection, stageIssues }: PipelineCanvasProps) {
 	return (
 		<ReactFlowProvider>
-			<CanvasInner draft={draft} onDraftChange={onDraftChange} selection={selection} />
+			<CanvasInner draft={draft} onDraftChange={onDraftChange} selection={selection} stageIssues={stageIssues} />
 		</ReactFlowProvider>
 	);
 }
 
-function CanvasInner({ draft, onDraftChange, selection }: PipelineCanvasProps) {
+function CanvasInner({ draft, onDraftChange, selection, stageIssues }: PipelineCanvasProps) {
 	const { fitView } = useReactFlow();
 	const selected = selection?.selectedStage ?? null;
 	const selectStage = selection?.selectStage;
@@ -118,12 +121,16 @@ function CanvasInner({ draft, onDraftChange, selection }: PipelineCanvasProps) {
 				type: "stage",
 				position: positions[id] ?? { x: 32, y: i * (STAGE_NODE_HEIGHT + 32) },
 				width: STAGE_NODE_WIDTH,
-				data: { stage, inCycle: persistent.has(id) || (flash?.path.includes(id) ?? false) },
+				data: {
+					stage,
+					inCycle: persistent.has(id) || (flash?.path.includes(id) ?? false),
+					issues: stageIssues?.[id] ?? [],
+				},
 				selected: selected === id,
 			});
 		});
 		return out;
-	}, [draft, positions, selected, flash]);
+	}, [draft, positions, selected, flash, stageIssues]);
 
 	const edges = useMemo<Edge[]>(() => {
 		const out: Edge[] = draftEdges(draft).map((edge) => {
@@ -317,7 +324,7 @@ function executorSubtitle(stage: StageDraft): string {
 }
 
 function StageNode({ data, selected }: NodeProps<StageNodeType>) {
-	const { stage, inCycle } = data;
+	const { stage, inCycle, issues } = data;
 	const badge = KIND_BADGE[stage.executor.kind] ?? KIND_BADGE.agent;
 	const footer = [stage.workspace, stage.maxLoopRounds != null ? `${stage.maxLoopRounds} rounds` : null]
 		.filter(Boolean)
@@ -335,6 +342,7 @@ function StageNode({ data, selected }: NodeProps<StageNodeType>) {
 			)}
 			data-stage-name={stage.name}
 			data-in-cycle={inCycle || undefined}
+			data-issue-count={issues.length || undefined}
 		>
 			<Handle type="target" position={Position.Left} className="!size-2 !border-border-strong !bg-raised" />
 			<div className="flex items-center gap-2">
@@ -347,9 +355,21 @@ function StageNode({ data, selected }: NodeProps<StageNodeType>) {
 				>
 					{badge.letter}
 				</span>
-				<span className="truncate text-control font-semibold text-foreground">{stage.name || "(unnamed)"}</span>
+				<span className="min-w-0 flex-1 truncate text-control font-semibold text-foreground">
+					{stage.name || "(unnamed)"}
+				</span>
+				{issues.length > 0 && (
+					<span
+						className="flex shrink-0 items-center gap-0.5 text-error"
+						aria-label={`${issues.length} validation ${issues.length === 1 ? "problem" : "problems"}`}
+					>
+						<AlertCircle className="size-icon-xs" aria-hidden="true" />
+						{issues.length > 1 && <span className="font-mono text-micro">{issues.length}</span>}
+					</span>
+				)}
 			</div>
 			<p className="mt-1 truncate font-mono text-micro text-muted-foreground">{executorSubtitle(stage)}</p>
+			{issues.length > 0 && <p className="mt-1.5 truncate text-micro text-error">{issues[0]}</p>}
 			{stage.routes?.when && (
 				<p className="mt-1.5">
 					<span className="inline-block max-w-full truncate rounded border border-warning/40 bg-warning/10 px-1.5 py-0.5 font-mono text-micro text-warning">

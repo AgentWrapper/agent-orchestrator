@@ -77,4 +77,36 @@ describe("usePipelineDraft", () => {
 		expect(result.current.draft.name).toBe("review");
 		expect(result.current.draft.stages).toHaveLength(1);
 	});
+
+	it("keeps the last good draft and surfaces parseError on a YAML syntax error", async () => {
+		const { result } = renderHook(() => usePipelineDraft(VALID_YAML), { wrapper });
+		expect(result.current.draft.name).toBe("review");
+
+		act(() => result.current.setYamlSource("name: [broken"));
+
+		await waitFor(() => expect(result.current.parseError).toBeTruthy());
+		// The graph is the pre-error one, not the empty fallback draft.
+		expect(result.current.draft.name).toBe("review");
+		expect(result.current.draft.stages).toHaveLength(1);
+
+		// A corrected buffer clears the error and re-derives the draft.
+		act(() => result.current.setYamlSource("name: fixed\nstages: []\n"));
+		await waitFor(() => expect(result.current.draft.name).toBe("fixed"));
+		expect(result.current.parseError).toBeUndefined();
+	});
+
+	it("applies canvas draft edits immediately and reserializes the buffer", () => {
+		const { result } = renderHook(() => usePipelineDraft(VALID_YAML), { wrapper });
+
+		act(() =>
+			result.current.setDraft({
+				name: "renamed",
+				stages: [{ name: "s", trigger: { on: ["manual"] }, executor: { kind: "agent" } }],
+			}),
+		);
+
+		// No debounce on the draft -> YAML direction: both update synchronously.
+		expect(result.current.draft.name).toBe("renamed");
+		expect(result.current.yamlSource).toContain("name: renamed");
+	});
 });
