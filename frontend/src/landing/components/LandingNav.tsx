@@ -150,7 +150,7 @@ export function LandingNav() {
 						alt="Agent Orchestrator"
 						className="block h-7 w-7 shrink-0 object-contain transition-transform duration-300 group-hover:scale-105"
 					/>
-					<span className="hidden text-[15px] font-semibold leading-[1.1] tracking-tight text-[color:var(--fg)] sm:block">
+					<span className="text-[14px] font-semibold leading-[1.1] tracking-tight text-[color:var(--fg)] sm:text-[15px]">
 						Agent Orchestrator
 					</span>
 				</a>
