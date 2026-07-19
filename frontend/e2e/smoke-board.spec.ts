@@ -1,8 +1,10 @@
 import { expect, test } from "@playwright/test";
 import { installFakeAgent } from "./support/fake-bridge";
 
-// BRD-* FAKE smoke suite (issue #2483). Drives the board off the fake-agent CDC
-// SSE stream so column moves and live updates exercise the same
+// BRD-* RENDERER SMOKE (issue #2483, renderer slice). dev:web + fake bridge —
+// does NOT hit the real daemon/storage/API/preload/PTY/FS; real-boundary coverage
+// is the packaged-app pod gate (#2697), not here. Drives the board off the
+// fake-agent CDC SSE stream so column moves and live updates exercise the same
 // SSE → invalidate → refetch path the real daemon uses (see fake-bridge.ts).
 
 const columnCard = (column: string, id: string) =>

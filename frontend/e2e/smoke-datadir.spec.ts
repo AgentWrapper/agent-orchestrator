@@ -1,7 +1,10 @@
 import { expect, test } from "@playwright/test";
 import { installFakeAgent, installFakeBridge } from "./support/fake-bridge";
 
-// P0 — Data-directory invariant (issue #2483 P0 comment, frontend slice).
+// P0 — Data-directory invariant (issue #2483, RENDERER SLICE). dev:web + fake
+// bridge — this asserts only the renderer's readiness reflection, NOT the on-disk
+// ~/.ao layout or the real daemon/storage; real-boundary coverage is the
+// packaged-app pod gate (#2697), not here.
 //
 // The on-disk checks (Electron userData resolves under ~/.ao/electron, daemon
 // data under ~/.ao, no OS-default app-data writes, AO_DATA_DIR override) run in

@@ -1,17 +1,22 @@
 import { expect, test } from "@playwright/test";
 import { installFakeAgent, installFakeBridge } from "./support/fake-bridge";
 
-// T0 POD smoke suite (issue #2483): the pod-runnable cases that need no fake
-// agent and no external GitHub repo. Select with `playwright test --grep @T0`
-// (or a category: @INS install, @DMN daemon, @BRD board, @SET settings).
+// INS/DMN/BRD/SET RENDERER SMOKE (issue #2483, renderer slice).
 //
-// Harness note: playwright.config runs the renderer under `dev:web`
-// (VITE_NO_ELECTRON=1) — a browser, no Electron and no live daemon. Cases that
-// depend on a ready daemon / a known app version inject a complete `window.ao`
-// via installFakeBridge (the same seam the real Electron preload fills), so
-// they are deterministic here and exercise the true IPC path unchanged when the
-// packaged build runs in a Linux pod. Cases that only need the renderer read
-// the deterministic lib/mock-data.ts fixtures preview mode already serves.
+// Scope — read this before trusting a green run. These run under `dev:web`
+// (VITE_NO_ELECTRON=1) with an injected `window.ao` (installFakeBridge /
+// installFakeAgent) plus a fake CDC/SSE stream and workspace snapshot. They
+// assert the renderer's rendering + interaction logic ONLY. They do NOT exercise
+// the real daemon, storage, API, preload, PTY, or filesystem — those boundaries
+// are faked, so a daemon/storage/API/preload/PTY/FS regression can still pass
+// here.
+//
+// Cases that inject state (a version string, a daemon status, board data) prove
+// the renderer RENDERS that state, not that the daemon PRODUCES it. Real
+// end-to-end coverage for these case IDs is the packaged-app pod gate (#2697),
+// which installs the `.deb` and drives the real app + daemon + embedded SQLite.
+// The IDs below cross-reference the #2483 catalog; this is renderer smoke, NOT
+// the canonical T0/P0 gate.
 
 // ── INS: install / first run ────────────────────────────────────────────────
 

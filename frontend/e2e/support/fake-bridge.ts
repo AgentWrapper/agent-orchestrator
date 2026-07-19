@@ -10,8 +10,18 @@ import type { Page } from "@playwright/test";
 // process and no GitHub repo are involved, matching the T0 POD constraints.
 //
 // In a real Linux pod running the packaged Electron build, `window.ao` is the
-// live preload and these specs exercise the true IPC path unchanged; the
-// injected bridge is only the deterministic stand-in for the browser harness.
+// live preload; the injected bridge is only the deterministic stand-in for the
+// browser harness.
+//
+// SCOPE / CAVEAT — renderer smoke, not full e2e. Because `window.ao`,
+// `EventSource`, and the workspace snapshot are all faked here, this harness
+// CANNOT catch daemon, storage, API, preload, PTY, or filesystem regressions —
+// those are the packaged-app pod gate's job (#2697). In particular,
+// `useWorkspaceQuery` reads an already-shaped `WorkspaceSummary` straight from
+// `window.__aoFakeAgent.snapshot()`, BYPASSING the generated API client + DTO
+// mapping; DTO/client coverage comes from the pod gate + unit tests, never from
+// these specs. Treat green here as "the renderer renders the injected state,"
+// not "the boundary works."
 
 export type FakeBridgeOptions = {
 	/** Version string surfaced by app.getVersion() (Settings > Updates). */

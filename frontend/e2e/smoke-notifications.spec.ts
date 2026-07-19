@@ -1,7 +1,9 @@
 import { expect, test } from "@playwright/test";
 import { installFakeAgent } from "./support/fake-bridge";
 
-// NTF-003 (issue #2483). The notification bell (NotificationCenter) is
+// NTF-003 RENDERER SMOKE (issue #2483, renderer slice). dev:web + fake bridge —
+// not the canonical T0/P0 gate; real boundaries are the pod gate (#2697).
+// The notification bell (NotificationCenter) is
 // platform-gated to Linux, so we override navigator.platform. The daemon's
 // unread list is REST-routed; a needs-input notification then arrives over the
 // fake notifications SSE stream (the session-driven part) and the unread badge

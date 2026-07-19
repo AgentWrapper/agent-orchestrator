@@ -40,9 +40,12 @@ jobs:
       - name: Run vitest suite
         run: npx vitest run
 
-  e2e-smoke:
-    # Runs the @T0 and @P0 Playwright smoke suites (issue #2483) so the new
-    # browser-harness coverage actually blocks PRs instead of silently regressing.
+  renderer-smoke:
+    # RENDERER smoke (issue #2483, renderer slice) — the Playwright specs that run
+    # the renderer under `dev:web` with an injected window.ao + fake CDC/snapshot.
+    # This is fast renderer-regression coverage; it is NOT the canonical T0/P0
+    # end-to-end gate. Real daemon/storage/API/preload/PTY/FS boundaries are
+    # exercised by the packaged-app pod gate (#2697), not here.
     # playwright.config starts `dev:web` itself (webServer); we only need the
     # browser installed.
     runs-on: ubuntu-latest
@@ -63,5 +66,5 @@ jobs:
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
-      - name: Run T0 + P0 smoke suite
-        run: CI=true npm run test:e2e:smoke
+      - name: Run renderer smoke suite
+        run: CI=true npm run test:e2e:renderer
