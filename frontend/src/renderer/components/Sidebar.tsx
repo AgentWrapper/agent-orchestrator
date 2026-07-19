@@ -262,20 +262,8 @@ export function Sidebar({
 							nightly
 						</span>
 					)}
-					{/* On macOS the toggle lives in the titlebar cluster instead. */}
-					{!isMac && (
-						<Tooltip>
-							<TooltipTrigger asChild>
-								<SidebarTrigger
-									aria-label="Collapse sidebar"
-									className="sidebar-expanded-chrome size-icon-xl shrink-0 rounded-sm p-0 text-passive hover:bg-interactive-hover hover:text-foreground group-data-[collapsible=icon]:hidden [&_svg]:size-icon-lg"
-								/>
-							</TooltipTrigger>
-							<TooltipContent>Collapse sidebar · ⌘B</TooltipContent>
-						</Tooltip>
-					)}
-				</div>
-			</SidebarHeader>
+					</div>
+				</SidebarHeader>
 
 			<SidebarContent className="gap-0 pl-2.5 pr-1.75 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
 				<SidebarGroup className="p-0">
