@@ -262,8 +262,8 @@ export function Sidebar({
 							nightly
 						</span>
 					)}
-					</div>
-				</SidebarHeader>
+				</div>
+			</SidebarHeader>
 
 			<SidebarContent className="gap-0 pl-2.5 pr-1.75 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
 				<SidebarGroup className="p-0">
