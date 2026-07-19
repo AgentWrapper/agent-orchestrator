@@ -200,6 +200,87 @@ func (c *SessionsController) previewFile(w http.ResponseWriter, r *http.Request)
 	http.ServeFile(w, r, file)
 }
 
+// PreviewOrigin serves a workspace preview from its isolated *.localhost
+// origin. It returns false when the request host is not a preview origin so the
+// daemon router can continue handling its normal API and control surfaces.
+//
+// The selected entry's directory is mounted at the origin root. For example,
+// dist/index.html is reachable at both /dist/ (the persisted URL) and /, while
+// /assets/app.css maps to dist/assets/app.css. This mirrors a production static
+// server and fixes root-relative URLs without rewriting user-generated files.
+func (c *SessionsController) PreviewOrigin(w http.ResponseWriter, r *http.Request) bool {
+	id, ok := previewutil.SessionIDFromHost(r.Host)
+	if !ok {
+		return false
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		envelope.WriteAPIError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "METHOD_NOT_ALLOWED",
+			r.Method+" not allowed on preview origin", nil)
+		return true
+	}
+	if c.Svc == nil {
+		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PREVIEW_NOT_FOUND", "Preview not found", nil)
+		return true
+	}
+	sess, err := c.Svc.Get(r.Context(), id)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return true
+	}
+	entry, ok := previewOriginEntry(sess)
+	if !ok {
+		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "NO_PREVIEW_ENTRY", "No preview entry point found in session workspace", nil)
+		return true
+	}
+	asset := previewOriginAssetPath(entry, r.URL.Path)
+	file, ok := confinedPreviewPath(sess.Metadata.WorkspacePath, asset)
+	if !ok {
+		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PREVIEW_FILE_NOT_FOUND", "Preview file not found", nil)
+		return true
+	}
+	if info, statErr := os.Stat(file); statErr != nil || info.IsDir() {
+		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PREVIEW_FILE_NOT_FOUND", "Preview file not found", nil)
+		return true
+	}
+	if previewutil.IsMarkdownPath(file) {
+		c.servePreviewMarkdown(w, r, file)
+		return true
+	}
+	http.ServeFile(w, r, file)
+	return true
+}
+
+func previewOriginEntry(sess domain.Session) (string, bool) {
+	if parsed, err := url.Parse(strings.TrimSpace(sess.Metadata.PreviewURL)); err == nil {
+		if id, ok := previewutil.SessionIDFromHost(parsed.Host); ok && id == sess.ID {
+			entry := strings.TrimPrefix(path.Clean("/"+parsed.Path), "/")
+			if file, confined := confinedPreviewPath(sess.Metadata.WorkspacePath, entry); confined {
+				if info, statErr := os.Stat(file); statErr == nil && !info.IsDir() {
+					return entry, true
+				}
+			}
+		}
+	}
+	return discoverPreviewEntry(sess.Metadata.WorkspacePath)
+}
+
+func previewOriginAssetPath(entry, requestPath string) string {
+	requested := strings.TrimPrefix(path.Clean("/"+requestPath), "/")
+	if requested == "" || requested == "." {
+		return entry
+	}
+	root := path.Dir(entry)
+	if root == "." {
+		return requested
+	}
+	if requested == root {
+		return entry
+	}
+	requested = strings.TrimPrefix(requested, root+"/")
+	return path.Join(root, requested)
+}
+
 // servePreviewMarkdown renders a workspace Markdown file to a self-contained
 // HTML document so the browser panel displays formatted content instead of raw
 // source.

@@ -172,6 +172,9 @@ func isWorkspacePreviewURL(raw string, id domain.SessionID) bool {
 	if err != nil {
 		return false
 	}
+	if originID, ok := SessionIDFromHost(parsed.Host); ok {
+		return originID == id
+	}
 	previewPath := parsed.Path
 	if previewPath == "" {
 		previewPath = raw

@@ -253,6 +253,30 @@ func newSessionTestServer(t *testing.T, svc *fakeSessionService) *httptest.Serve
 	return srv
 }
 
+func doPreviewOriginRequest(t *testing.T, srv *httptest.Server, previewURL, requestPath string) ([]byte, int, http.Header) {
+	t.Helper()
+	preview, err := url.Parse(previewURL)
+	if err != nil {
+		t.Fatalf("parse preview URL: %v", err)
+	}
+	req, err := http.NewRequest(http.MethodGet, srv.URL+requestPath, nil)
+	if err != nil {
+		t.Fatalf("new preview request: %v", err)
+	}
+	req.Host = preview.Host
+	req.Header.Set("Origin", preview.Scheme+"://"+preview.Host)
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("do preview request: %v", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read preview response: %v", err)
+	}
+	return body, resp.StatusCode, resp.Header
+}
+
 func TestSessionsRoutes_DefaultToStubsWithoutService(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{}, httpd.ControlDeps{}))
@@ -394,14 +418,14 @@ func TestSessionsAPI_PreviewDiscoversAndServesStaticIndex(t *testing.T) {
 	if strings.Contains(preview.PreviewURL, workspace) {
 		t.Fatalf("preview leaked workspace path: %s", preview.PreviewURL)
 	}
-	if !strings.Contains(preview.PreviewURL, "/index.html") {
-		t.Fatalf("preview URL = %q, want index.html asset path", preview.PreviewURL)
-	}
 	parsed, err := url.Parse(preview.PreviewURL)
 	if err != nil {
 		t.Fatalf("parse preview URL: %v", err)
 	}
-	body, status, headers := doRequest(t, srv, "GET", parsed.RequestURI(), "")
+	if !strings.HasSuffix(parsed.Hostname(), ".localhost") || parsed.Path != "/index.html" {
+		t.Fatalf("preview URL = %q, want isolated localhost origin ending in /index.html", preview.PreviewURL)
+	}
+	body, status, headers := doPreviewOriginRequest(t, srv, preview.PreviewURL, "/")
 	if status != http.StatusOK {
 		t.Fatalf("preview file = %d, want 200; body=%s", status, body)
 	}
@@ -487,8 +511,8 @@ func TestSessionsAPI_SetPreviewEmptyURLPrefersWorkspaceEntryOverExistingTarget(t
 		} `json:"session"`
 	}
 	mustJSON(t, body, &resp)
-	if !strings.HasSuffix(resp.Session.PreviewURL, "/preview/files/index.html") {
-		t.Fatalf("response previewUrl = %q, want workspace index files URL", resp.Session.PreviewURL)
+	if !strings.HasSuffix(resp.Session.PreviewURL, "/index.html") {
+		t.Fatalf("response previewUrl = %q, want workspace index preview URL", resp.Session.PreviewURL)
 	}
 }
 
@@ -513,8 +537,8 @@ func TestSessionsAPI_SetPreviewEmptyURLNormalizesExistingRelativeTarget(t *testi
 		} `json:"session"`
 	}
 	mustJSON(t, body, &resp)
-	if !strings.HasSuffix(resp.Session.PreviewURL, "/preview/files/index.html") {
-		t.Fatalf("response previewUrl = %q, want index.html files URL", resp.Session.PreviewURL)
+	if !strings.HasSuffix(resp.Session.PreviewURL, "/index.html") {
+		t.Fatalf("response previewUrl = %q, want index.html preview URL", resp.Session.PreviewURL)
 	}
 	if got := svc.sessions["ao-1"].Metadata.PreviewURL; got != resp.Session.PreviewURL {
 		t.Fatalf("persisted previewUrl = %q, want normalized response URL %q", got, resp.Session.PreviewURL)
@@ -543,7 +567,7 @@ func TestSessionsAPI_SetPreviewEmptyURLReusesExistingTargetWhenNoEntryExists(t *
 	}
 }
 
-func TestSessionsAPI_SetPreviewLocalRelativePathResolvesToFilesURL(t *testing.T) {
+func TestSessionsAPI_SetPreviewLocalRelativePathResolvesToPreviewOrigin(t *testing.T) {
 	svc := newFakeSessionService()
 	workspace := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(workspace, "dist"), 0o755); err != nil {
@@ -567,20 +591,132 @@ func TestSessionsAPI_SetPreviewLocalRelativePathResolvesToFilesURL(t *testing.T)
 		} `json:"session"`
 	}
 	mustJSON(t, body, &resp)
-	if !strings.HasSuffix(resp.Session.PreviewURL, "/preview/files/dist/index.html") {
-		t.Fatalf("response previewUrl = %q, want dist/index.html files URL", resp.Session.PreviewURL)
+	if !strings.HasSuffix(resp.Session.PreviewURL, "/dist/index.html") {
+		t.Fatalf("response previewUrl = %q, want dist/index.html preview URL", resp.Session.PreviewURL)
 	}
 	if strings.Contains(resp.Session.PreviewURL, workspace) {
 		t.Fatalf("preview leaked workspace path: %s", resp.Session.PreviewURL)
 	}
-	// The resolved files URL actually serves the local file.
-	parsed, err := url.Parse(resp.Session.PreviewURL)
-	if err != nil {
-		t.Fatalf("parse preview URL: %v", err)
-	}
-	fileBody, fileStatus, _ := doRequest(t, srv, "GET", parsed.RequestURI(), "")
+	// The resolved preview origin actually serves the local file.
+	fileBody, fileStatus, _ := doPreviewOriginRequest(t, srv, resp.Session.PreviewURL, "/")
 	if fileStatus != http.StatusOK {
 		t.Fatalf("serve local file = %d, want 200; body=%s", fileStatus, fileBody)
+	}
+}
+
+func TestSessionsAPI_PreviewOriginResolvesRootRelativeAssetsFromEntryDirectory(t *testing.T) {
+	svc := newFakeSessionService()
+	workspace := t.TempDir()
+	for _, dir := range []string{
+		filepath.Join(workspace, "dist", "assets"),
+		filepath.Join(workspace, "dist", "fonts"),
+		filepath.Join(workspace, "assets"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	files := map[string]string{
+		filepath.Join(workspace, "dist", "index.html"):         `<link rel="stylesheet" href="/assets/app.css"><script type="module" src="/assets/app.js"></script>`,
+		filepath.Join(workspace, "dist", "assets", "app.css"):  `@font-face { src: url("/fonts/app.woff2") }`,
+		filepath.Join(workspace, "dist", "assets", "app.js"):   `document.body.dataset.loaded = "yes"`,
+		filepath.Join(workspace, "dist", "fonts", "app.woff2"): "preview-font",
+		// A conflicting workspace-root asset proves /assets is mounted relative
+		// to the selected deployment directory, not the workspace root.
+		filepath.Join(workspace, "assets", "app.css"): "wrong-root",
+	}
+	for file, contents := range files {
+		if err := os.WriteFile(file, []byte(contents), 0o644); err != nil {
+			t.Fatalf("write %s: %v", file, err)
+		}
+	}
+	s := svc.sessions["ao-1"]
+	s.Metadata = domain.SessionMetadata{WorkspacePath: workspace}
+	svc.sessions["ao-1"] = s
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/sessions/ao-1/preview", `{"url":"./dist/index.html"}`)
+	if status != http.StatusOK {
+		t.Fatalf("set preview = %d, want 200; body=%s", status, body)
+	}
+	var resp struct {
+		Session struct {
+			PreviewURL string `json:"previewUrl"`
+		} `json:"session"`
+	}
+	mustJSON(t, body, &resp)
+
+	for requestPath, want := range map[string]string{
+		"/":                   `/assets/app.css`,
+		"/assets/app.css":     `/fonts/app.woff2`,
+		"/dist/assets/app.js": `dataset.loaded`,
+		"/fonts/app.woff2":    `preview-font`,
+	} {
+		assetBody, assetStatus, _ := doPreviewOriginRequest(t, srv, resp.Session.PreviewURL, requestPath)
+		if assetStatus != http.StatusOK {
+			t.Errorf("GET %s = %d, want 200; body=%s", requestPath, assetStatus, assetBody)
+			continue
+		}
+		if !strings.Contains(string(assetBody), want) {
+			t.Errorf("GET %s body = %q, want content containing %q", requestPath, assetBody, want)
+		}
+	}
+
+	// Retain the old API route as a compatibility surface for stored URLs and
+	// external callers while new previews use the isolated origin.
+	legacyBody, legacyStatus, _ := doRequest(t, srv, http.MethodGet, "/api/v1/sessions/ao-1/preview/files/dist/assets/app.css", "")
+	if legacyStatus != http.StatusOK || !strings.Contains(string(legacyBody), "/fonts/app.woff2") {
+		t.Fatalf("legacy preview route = %d, body=%q; want existing file response", legacyStatus, legacyBody)
+	}
+}
+
+func TestSessionsAPI_PreviewOriginsIsolateConcurrentSessionsAndSurviveRouterRestart(t *testing.T) {
+	svc := newFakeSessionService()
+	previewURLs := make(map[domain.SessionID]string)
+	for _, tc := range []struct {
+		id      domain.SessionID
+		content string
+	}{{id: "ao-1", content: "session-one"}, {id: "ao-2", content: "session-two"}} {
+		workspace := t.TempDir()
+		if err := os.WriteFile(filepath.Join(workspace, "index.html"), []byte(`<link rel="stylesheet" href="/theme.css">`), 0o644); err != nil {
+			t.Fatalf("write index: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(workspace, "theme.css"), []byte(tc.content), 0o644); err != nil {
+			t.Fatalf("write theme: %v", err)
+		}
+		s := domain.Session{SessionRecord: domain.SessionRecord{ID: tc.id, Kind: domain.KindWorker}}
+		s.Metadata = domain.SessionMetadata{WorkspacePath: workspace}
+		svc.sessions[tc.id] = s
+	}
+
+	srv := newSessionTestServer(t, svc)
+	for id := range svc.sessions {
+		body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/sessions/"+string(id)+"/preview", `{}`)
+		if status != http.StatusOK {
+			t.Fatalf("set preview %s = %d, want 200; body=%s", id, status, body)
+		}
+		var resp struct {
+			Session struct {
+				PreviewURL string `json:"previewUrl"`
+			} `json:"session"`
+		}
+		mustJSON(t, body, &resp)
+		previewURLs[id] = resp.Session.PreviewURL
+	}
+
+	for id, want := range map[domain.SessionID]string{"ao-1": "session-one", "ao-2": "session-two"} {
+		body, status, _ := doPreviewOriginRequest(t, srv, previewURLs[id], "/theme.css")
+		if status != http.StatusOK || string(body) != want {
+			t.Fatalf("session %s asset = %d, %q; want 200, %q", id, status, body, want)
+		}
+	}
+
+	// A new router has no in-memory preview registry. The persisted URL and
+	// session workspace are sufficient to reconstruct the same virtual root.
+	restarted := newSessionTestServer(t, svc)
+	body, status, _ := doPreviewOriginRequest(t, restarted, previewURLs["ao-1"], "/theme.css")
+	if status != http.StatusOK || string(body) != "session-one" {
+		t.Fatalf("asset after router restart = %d, %q; want 200, session-one", status, body)
 	}
 }
 

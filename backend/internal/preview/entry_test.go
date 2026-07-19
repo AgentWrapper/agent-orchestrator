@@ -1,10 +1,14 @@
 package preview
 
 import (
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
 func writeEntryFile(t *testing.T, path, contents string, mod time.Time) {
@@ -117,6 +121,68 @@ func TestIsMarkdownPath(t *testing.T) {
 	for in, want := range cases {
 		if got := IsMarkdownPath(in); got != want {
 			t.Errorf("IsMarkdownPath(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
+
+func TestFileURLUsesIsolatedLocalhostOrigin(t *testing.T) {
+	id := domain.SessionID("ao-1")
+	raw := FileURL("http://127.0.0.1:3001", id, "dist/index.html")
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse FileURL: %v", err)
+	}
+	if parsed.Scheme != "http" || parsed.Port() != "3001" {
+		t.Fatalf("FileURL = %q, want http on daemon port", raw)
+	}
+	if !strings.HasSuffix(parsed.Hostname(), ".localhost") {
+		t.Fatalf("FileURL host = %q, want isolated .localhost origin", parsed.Hostname())
+	}
+	if parsed.Path != "/dist/index.html" {
+		t.Fatalf("FileURL path = %q, want /dist/index.html", parsed.Path)
+	}
+	decoded, ok := SessionIDFromHost(parsed.Host)
+	if !ok || decoded != id {
+		t.Fatalf("SessionIDFromHost(%q) = %q, %v; want %q, true", parsed.Host, decoded, ok, id)
+	}
+}
+
+func TestSessionIDFromHostSupportsLongUnicodeIDs(t *testing.T) {
+	id := domain.SessionID(strings.Repeat("worker-", 12) + "雪")
+	raw := FileURL("http://localhost:4321", id, "index.html")
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse FileURL: %v", err)
+	}
+	for _, label := range strings.Split(parsed.Hostname(), ".") {
+		if len(label) > 63 {
+			t.Fatalf("hostname label length = %d, want <= 63", len(label))
+		}
+	}
+	decoded, ok := SessionIDFromHost(parsed.Host)
+	if !ok || decoded != id {
+		t.Fatalf("round trip = %q, %v; want %q, true", decoded, ok, id)
+	}
+}
+
+func TestFileURLPreservesSpecialCharactersInEntryPath(t *testing.T) {
+	raw := FileURL("http://127.0.0.1:3001", "ao-1", "dist/my report #1.html")
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse FileURL: %v", err)
+	}
+	if parsed.Path != "/dist/my report #1.html" {
+		t.Fatalf("FileURL path = %q, want decoded workspace path", parsed.Path)
+	}
+	if strings.Contains(raw, "%2520") || strings.Contains(raw, "%2523") {
+		t.Fatalf("FileURL = %q, path was double-escaped", raw)
+	}
+}
+
+func TestSessionIDFromHostRejectsOrdinaryHosts(t *testing.T) {
+	for _, host := range []string{"127.0.0.1:3001", "localhost:3001", "ao-preview.invalid.localhost:3001", "example.com"} {
+		if id, ok := SessionIDFromHost(host); ok {
+			t.Errorf("SessionIDFromHost(%q) = %q, true; want false", host, id)
 		}
 	}
 }

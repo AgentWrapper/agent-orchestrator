@@ -1,16 +1,21 @@
 package preview
 
 import (
+	"encoding/base32"
 	"io/fs"
+	"net"
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
+
+const previewHostLabel = "ao-preview"
 
 var entryCandidates = []string{"index.html", "public/index.html", "dist/index.html", "build/index.html"}
 
@@ -155,13 +160,56 @@ func ConfinedPath(workspacePath, assetPath string) (string, bool) {
 	return absFile, true
 }
 
-// FileURL builds the daemon preview/files URL for a workspace-local entry.
+// FileURL builds an isolated localhost origin for a workspace-local entry.
+// Mounting the entry directory at the origin root makes both relative and
+// root-relative browser requests resolve inside the preview instead of falling
+// through to the daemon's API origin.
 func FileURL(baseURL string, id domain.SessionID, entry string) string {
 	u := normalizedBaseURL(baseURL)
-	u.Path = "/api/v1/sessions/" + url.PathEscape(string(id)) + "/preview/files/" + escapePath(entry)
+	u.Host = previewHost(u, id)
+	// URL.String escapes Path exactly once. Supplying an already-escaped path
+	// here would turn spaces into %2520 and make otherwise valid workspace files
+	// impossible to resolve.
+	u.Path = path.Clean("/" + strings.TrimSpace(entry))
 	u.RawQuery = ""
 	u.Fragment = ""
 	return u.String()
+}
+
+// SessionIDFromHost decodes the session identity carried by a FileURL host.
+// The labels use unpadded base32 so arbitrary session IDs remain DNS-safe.
+func SessionIDFromHost(rawHost string) (domain.SessionID, bool) {
+	host := rawHost
+	if parsedHost, _, err := net.SplitHostPort(rawHost); err == nil {
+		host = parsedHost
+	}
+	labels := strings.Split(strings.TrimSuffix(strings.ToLower(host), "."), ".")
+	if len(labels) < 3 || labels[0] != previewHostLabel || labels[len(labels)-1] != "localhost" {
+		return "", false
+	}
+	encoded := strings.Join(labels[1:len(labels)-1], "")
+	decoded, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(strings.ToUpper(encoded))
+	if err != nil || len(decoded) == 0 || !utf8.Valid(decoded) {
+		return "", false
+	}
+	return domain.SessionID(decoded), true
+}
+
+func previewHost(u url.URL, id domain.SessionID) string {
+	encoded := strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString([]byte(id)))
+	labels := []string{previewHostLabel}
+	const maxChunk = 50
+	for len(encoded) > 0 {
+		n := min(len(encoded), maxChunk)
+		labels = append(labels, encoded[:n])
+		encoded = encoded[n:]
+	}
+	labels = append(labels, "localhost")
+	host := strings.Join(labels, ".")
+	if port := u.Port(); port != "" {
+		return host + ":" + port
+	}
+	return host
 }
 
 func normalizedBaseURL(raw string) url.URL {
@@ -177,12 +225,4 @@ func normalizedBaseURL(raw string) url.URL {
 		return url.URL{Scheme: "http", Host: raw}
 	}
 	return *u
-}
-
-func escapePath(raw string) string {
-	parts := strings.Split(raw, "/")
-	for i, part := range parts {
-		parts[i] = url.PathEscape(part)
-	}
-	return strings.Join(parts, "/")
 }
