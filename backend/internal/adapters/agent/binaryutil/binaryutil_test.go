@@ -31,6 +31,22 @@ func TestResolveBinaryPrefersPath(t *testing.T) {
 	}
 }
 
+func TestDefaultFNMDirDarwin(t *testing.T) {
+	home := filepath.Join(string(filepath.Separator), "Users", "tester")
+	want := filepath.Join(home, "Library", "Application Support", "fnm")
+	if got := defaultFNMDir(home, "", "darwin"); got != want {
+		t.Fatalf("defaultFNMDir() = %q, want %q", got, want)
+	}
+}
+
+func TestDefaultFNMDirPrefersXDGDataHome(t *testing.T) {
+	xdg := filepath.Join(string(filepath.Separator), "custom", "share")
+	want := filepath.Join(xdg, "fnm")
+	if got := defaultFNMDir("/home/tester", xdg, "linux"); got != want {
+		t.Fatalf("defaultFNMDir() = %q, want %q", got, want)
+	}
+}
+
 func TestResolveBinaryFallsBackToHomeCandidate(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("unix home candidate shape")

@@ -353,7 +353,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
 	}
-	augmentRuntimePATHForLaunchBinary(env, argv)
+	m.augmentRuntimePATHForLaunchBinary(ctx, env, argv)
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     id,
 		WorkspacePath: ws.Path,
@@ -854,7 +854,7 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 		m.cleanupSystemPromptDir(rec.ID)
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", rec.ID, err)
 	}
-	augmentRuntimePATHForLaunchBinary(env, argv)
+	m.augmentRuntimePATHForLaunchBinary(ctx, env, argv)
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     rec.ID,
 		WorkspacePath: ws.Path,
@@ -2499,25 +2499,86 @@ func launchBinary(argv []string) (string, bool) {
 	return "", false
 }
 
-func augmentRuntimePATHForLaunchBinary(env map[string]string, argv []string) {
+func (m *Manager) augmentRuntimePATHForLaunchBinary(ctx context.Context, env map[string]string, argv []string) {
 	bin, ok := launchBinary(argv)
 	if !ok || !filepath.IsAbs(bin) {
 		return
 	}
-	dir := filepath.Dir(bin)
-	if dir == "." || dir == string(filepath.Separator) {
+	launchDir := filepath.Dir(bin)
+	if launchDir == "." || launchDir == string(filepath.Separator) {
 		return
 	}
-	path := env["PATH"]
-	if path == "" {
-		env["PATH"] = dir
-		return
+	dirs := []string{launchDir}
+	if nodeDir := m.nodeRuntimeDir(ctx); nodeDir != "" && nodeDir != launchDir {
+		dirs = append(dirs, nodeDir)
 	}
-	parts := strings.Split(path, string(os.PathListSeparator))
-	if len(parts) > 0 && parts[0] == dir {
-		return
+	var parts []string
+	if path := env["PATH"]; path != "" {
+		parts = strings.Split(path, string(os.PathListSeparator))
 	}
-	env["PATH"] = dir + string(os.PathListSeparator) + path
+	for i := len(dirs) - 1; i >= 0; i-- {
+		if !containsPathDir(parts, dirs[i]) {
+			parts = append([]string{dirs[i]}, parts...)
+		}
+	}
+	env["PATH"] = strings.Join(parts, string(os.PathListSeparator))
+}
+
+func containsPathDir(parts []string, dir string) bool {
+	for _, part := range parts {
+		if part == dir {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Manager) nodeRuntimeDir(ctx context.Context) string {
+	if err := ctx.Err(); err != nil || runtime.GOOS == "windows" {
+		return ""
+	}
+	if node, err := m.lookPath("node"); err == nil && node != "" {
+		return filepath.Dir(node)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	fnmDir := os.Getenv("FNM_DIR")
+	if fnmDir == "" {
+		if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {
+			fnmDir = filepath.Join(xdg, "fnm")
+		} else if runtime.GOOS == "darwin" {
+			fnmDir = filepath.Join(home, "Library", "Application Support", "fnm")
+		} else {
+			fnmDir = filepath.Join(home, ".local", "share", "fnm")
+		}
+	}
+	voltaHome := os.Getenv("VOLTA_HOME")
+	if voltaHome == "" {
+		voltaHome = filepath.Join(home, ".volta")
+	}
+	candidates := []string{
+		filepath.Join(voltaHome, "bin", "node"),
+		"/opt/homebrew/bin/node",
+		"/usr/local/bin/node",
+	}
+	for _, pattern := range []string{
+		filepath.Join(home, ".nvm", "versions", "node", "*", "bin", "node"),
+		filepath.Join(fnmDir, "node-versions", "*", "installation", "bin", "node"),
+	} {
+		matches, _ := filepath.Glob(pattern)
+		candidates = append(candidates, matches...)
+	}
+	for _, candidate := range candidates {
+		if err := ctx.Err(); err != nil {
+			return ""
+		}
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+			return filepath.Dir(candidate)
+		}
+	}
+	return ""
 }
 
 func (m *Manager) validateRuntimePrerequisites() error {

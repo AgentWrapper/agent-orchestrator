@@ -238,6 +238,10 @@ func (a launchArgvAgent) GetLaunchCommand(context.Context, ports.LaunchConfig) (
 	return a.argv, nil
 }
 
+func (a launchArgvAgent) GetRestoreCommand(context.Context, ports.RestoreConfig) ([]string, bool, error) {
+	return a.argv, true, nil
+}
+
 // fakeAgents resolves every harness to the same fakeAgent.
 type fakeAgents struct{}
 
@@ -3137,32 +3141,46 @@ func TestSpawn_ProjectPATHIsPinBase(t *testing.T) {
 	}
 }
 
-func TestSpawn_PrependsResolvedBinaryDirToRuntimePATH(t *testing.T) {
+func TestSpawnAndRestore_PrependsResolvedBinaryAndNodeDirsToRuntimePATH(t *testing.T) {
 	daemonExe := filepath.Join(t.TempDir(), "ao")
-	binDir := filepath.Join(t.TempDir(), ".nvm", "versions", "node", "v22.23.1", "bin")
+	binDir := filepath.Join(t.TempDir(), ".npm-global", "bin")
+	nodeDir := filepath.Join(t.TempDir(), ".nvm", "versions", "node", "v22.23.1", "bin")
 	agentBin := filepath.Join(binDir, "kimi")
-	st := newFakeStore()
-	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
-	rt := &fakeRuntime{}
-	agent := launchArgvAgent{argv: []string{agentBin}}
-	m := New(Deps{
-		Runtime:    rt,
-		Agents:     singleAgent{agent: agent},
-		Workspace:  &fakeWorkspace{path: "/ws/mer-1"},
-		Store:      st,
-		Messenger:  &fakeMessenger{},
-		Lifecycle:  &fakeLCM{store: st},
-		LookPath:   func(string) (string, error) { return agentBin, nil },
-		Executable: func() (string, error) { return daemonExe, nil },
-	})
-	t.Setenv("PATH", "/usr/bin")
+	want := strings.Join([]string{binDir, nodeDir, filepath.Dir(daemonExe), "/usr/bin"}, string(os.PathListSeparator))
 
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
-		t.Fatalf("Spawn: %v", err)
-	}
-	want := binDir + string(os.PathListSeparator) + filepath.Dir(daemonExe) + string(os.PathListSeparator) + "/usr/bin"
-	if got := rt.lastCfg.Env["PATH"]; got != want {
-		t.Fatalf("runtime env PATH = %q, want %q", got, want)
+	for _, operation := range []string{"spawn", "restore"} {
+		t.Run(operation, func(t *testing.T) {
+			t.Setenv("PATH", "/usr/bin")
+			st := newFakeStore()
+			st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+			rt := &fakeRuntime{}
+			agent := launchArgvAgent{argv: []string{agentBin}}
+			m := New(Deps{
+				Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{path: "/ws/mer-1"},
+				Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+				LookPath: func(name string) (string, error) {
+					if name == "node" {
+						return filepath.Join(nodeDir, "node"), nil
+					}
+					return agentBin, nil
+				},
+				Executable: func() (string, error) { return daemonExe, nil },
+			})
+			if operation == "spawn" {
+				_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+				if err != nil {
+					t.Fatalf("Spawn: %v", err)
+				}
+			} else {
+				seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x"})
+				if _, err := m.Restore(ctx, "mer-1"); err != nil {
+					t.Fatalf("Restore: %v", err)
+				}
+			}
+			if got := rt.lastCfg.Env["PATH"]; got != want {
+				t.Fatalf("runtime env PATH = %q, want %q", got, want)
+			}
+		})
 	}
 }
 

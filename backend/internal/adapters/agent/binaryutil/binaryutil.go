@@ -83,9 +83,21 @@ func ResolveBinary(ctx context.Context, spec BinarySpec) (string, error) {
 	}
 
 	names := spec.Names
-	var candidates []string
 	if runtime.GOOS == "windows" {
 		names = spec.WinNames
+	}
+
+	for _, name := range names {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		if path, err := exec.LookPath(name); err == nil && path != "" {
+			return path, nil
+		}
+	}
+
+	var candidates []string
+	if runtime.GOOS == "windows" {
 		home, _ := os.UserHomeDir()
 		appData := os.Getenv("APPDATA")
 		localAppData := os.Getenv("LOCALAPPDATA")
@@ -115,15 +127,6 @@ func ResolveBinary(ctx context.Context, spec BinarySpec) (string, error) {
 				}
 				candidates = append(candidates, nodeManagerCandidates...)
 			}
-		}
-	}
-
-	for _, name := range names {
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-		if path, err := exec.LookPath(name); err == nil && path != "" {
-			return path, nil
 		}
 	}
 
@@ -233,9 +236,19 @@ func unixFNMNodeBinCandidates(ctx context.Context, home, name string) ([]string,
 	}
 	fnmDir := os.Getenv("FNM_DIR")
 	if fnmDir == "" {
-		fnmDir = filepath.Join(home, ".local", "share", "fnm")
+		fnmDir = defaultFNMDir(home, os.Getenv("XDG_DATA_HOME"), runtime.GOOS)
 	}
 	return sortedVersionedBinMatches(ctx, filepath.Join(fnmDir, "node-versions", "*", "installation", "bin", name))
+}
+
+func defaultFNMDir(home, xdgDataHome, goos string) string {
+	if xdgDataHome != "" {
+		return filepath.Join(xdgDataHome, "fnm")
+	}
+	if goos == "darwin" {
+		return filepath.Join(home, "Library", "Application Support", "fnm")
+	}
+	return filepath.Join(home, ".local", "share", "fnm")
 }
 
 func sortedVersionedBinMatches(ctx context.Context, pattern string) ([]string, error) {
