@@ -40,7 +40,7 @@
 
 	--color-text-primary: #f5f5f4;
 	--color-text-secondary: #9b9b98;
-	--color-text-tertiary: #79796f;
+	--color-text-tertiary: #8a8a82;
 
 	--color-border-default: rgba(255, 255, 255, 0.12);
 	--color-border-subtle: rgba(255, 255, 255, 0.06);
@@ -142,6 +142,19 @@ body::-webkit-scrollbar,
 .dark .landing-page {
 	--status-fail: #ef4444;
 	--status-ok: #22c55e;
+}
+
+/* Keyboard navigation: consistent, visible focus ring on every interactive
+   element in the landing tree. */
+.landing-page a:focus-visible,
+.landing-page button:focus-visible,
+.landing-page summary:focus-visible,
+.landing-page select:focus-visible,
+.landing-page input:focus-visible,
+.landing-page textarea:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 3px;
+	border-radius: 4px;
 }
 
 .liquid-glass-solid {
@@ -254,7 +267,7 @@ body::-webkit-scrollbar,
 .landing-hero-heading {
 	max-width: 980px;
 	font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, ui-serif, serif;
-	font-size: clamp(48px, 5.55vw, 76px);
+	font-size: clamp(38px, 5.55vw, 76px);
 	font-weight: 700;
 	line-height: 0.96;
 	letter-spacing: 0;
@@ -1065,4 +1078,85 @@ body::-webkit-scrollbar,
 .landing-graph-pulse {
 	transform-box: fill-box;
 	animation: landing-graph-pulse 1.5s ease-out infinite;
+}
+
+/* ── Copyable install command ─────────────────────────────────── */
+.copy-command {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 10px;
+	min-height: 40px;
+	padding: 6px 8px 6px 14px;
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	background: var(--bg-deep);
+	font-family: var(--font-mono);
+	font-size: clamp(11px, 2.8vw, 12.5px);
+	line-height: 1.5;
+	color: var(--fg-muted);
+	cursor: pointer;
+	transition:
+		border-color 200ms ease,
+		background-color 200ms ease,
+		color 200ms ease;
+}
+
+.copy-command:hover {
+	border-color: var(--accent-glow);
+	color: var(--fg);
+}
+
+.copy-command:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 3px;
+}
+
+.copy-command-dollar {
+	color: var(--fg-dim);
+	user-select: none;
+}
+
+.copy-command-text {
+	/* Default: wrap like a real terminal (fits inside cards and narrow screens). */
+	overflow-wrap: anywhere;
+	text-align: left;
+}
+
+/* Opt-in single-line mode for wide, centered placements (hero, final CTA). */
+@media (min-width: 640px) {
+	.copy-command--nowrap .copy-command-text {
+		white-space: nowrap;
+	}
+}
+
+.copy-command-action {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 28px;
+	padding: 0 9px;
+	border-radius: 4px;
+	background: rgba(255, 255, 255, 0.05);
+	font-family: var(--font-mono);
+	font-size: 10.5px;
+	font-weight: 600;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--fg-dim);
+	transition:
+		color 200ms ease,
+		background-color 200ms ease;
+	flex-shrink: 0;
+	align-self: center;
+}
+
+.copy-command:hover .copy-command-action {
+	color: var(--fg-muted);
+	background: rgba(255, 255, 255, 0.08);
+}
+
+/* ── Hero release pill ────────────────────────────────────────── */
+.hero-release-pill {
+	box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset;
 }

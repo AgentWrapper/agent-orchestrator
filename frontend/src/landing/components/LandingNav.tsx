@@ -1,9 +1,11 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useEffect, useState, useRef } from "react";
 import gsap from "gsap";
 import ScrollTrigger from "gsap/ScrollTrigger";
 import { useGSAP } from "@gsap/react";
+import { getDownloadTarget } from "../lib/desktop-downloads";
+import { useGitHubRepoFacts } from "../lib/use-github-repo-facts";
 
 if (typeof window !== "undefined") {
 	gsap.registerPlugin(ScrollTrigger, useGSAP);
@@ -52,12 +54,15 @@ function DiscordIcon({ className = "" }: { className?: string }) {
 	);
 }
 
+function StarIcon({ className = "" }: { className?: string }) {
+	return (
+		<svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+			<path d="M12 2.5l2.95 5.98 6.6.96-4.77 4.65 1.13 6.57L12 17.55l-5.91 3.11 1.13-6.57L2.45 9.44l6.6-.96L12 2.5z" />
+		</svg>
+	);
+}
+
 const socials = [
-	{
-		label: "GitHub",
-		href: "https://github.com/AgentWrapper/agent-orchestrator",
-		icon: GithubIcon,
-	},
 	{
 		label: "Discord",
 		href: "https://discord.com/invite/UZv7JjxbwG",
@@ -80,6 +85,16 @@ export function LandingNav() {
 	const [open, setOpen] = useState(false);
 	const navRef = useRef<HTMLDivElement>(null);
 	const innerRef = useRef<HTMLDivElement>(null);
+	const { stars } = useGitHubRepoFacts();
+	const [downloadHref, setDownloadHref] = useState<string>(
+		"https://github.com/AgentWrapper/agent-orchestrator/releases/latest",
+	);
+
+	useEffect(() => {
+		setDownloadHref(
+			getDownloadTarget(navigator)?.href ?? "https://github.com/AgentWrapper/agent-orchestrator/releases/latest",
+		);
+	}, []);
 
 	useGSAP(() => {
 		// Shrink + hide-on-scroll only on desktop (>=768px). On mobile/tablet the
@@ -153,8 +168,20 @@ export function LandingNav() {
 				</nav>
 
 				<div className="flex items-center gap-2">
-					<div className="mx-1 hidden h-4 w-px bg-[color:var(--border)] lg:block" />
-					<div className="hidden items-center gap-3 lg:flex">
+					<a
+						href="https://github.com/AgentWrapper/agent-orchestrator"
+						target="_blank"
+						rel="noreferrer"
+						aria-label={`Star Agent Orchestrator on GitHub${stars ? ` — ${stars} stars` : ""}`}
+						title="Star on GitHub"
+						className="group/starchip hidden h-8 items-center gap-1.5 rounded-full border border-[color:var(--border)] bg-[color:var(--bg-elevated)] pl-2.5 pr-3 text-[12px] font-semibold text-[color:var(--fg-muted)] transition-[color,border-color,background-color] duration-300 hover:border-[color:var(--accent-glow)] hover:text-[color:var(--fg)] sm:inline-flex"
+					>
+						<GithubIcon className="h-3.5 w-3.5" />
+						<StarIcon className="h-3 w-3 text-[color:var(--fg-dim)] transition-colors duration-300 group-hover/starchip:text-[#ffd35c]" />
+						{stars ? <span className="font-mono text-[11.5px] leading-none">{stars}</span> : null}
+					</a>
+					<div className="mx-1 hidden h-4 w-px bg-[color:var(--border)] lg:block [.nav-scrolled_&]:hidden" />
+					<div className="hidden items-center gap-3 lg:flex [.nav-scrolled_&]:hidden">
 						{socials.map((item) => {
 							const Icon = item.icon;
 							return (
@@ -172,6 +199,13 @@ export function LandingNav() {
 							);
 						})}
 					</div>
+					<a
+						href={downloadHref}
+						className="hero-pressable hidden h-9 items-center gap-1.5 rounded-full bg-[color:var(--accent)] px-4 text-[13px] font-semibold text-[#11140c] hover:brightness-110 md:inline-flex"
+						style={{ color: "#11140c" }}
+					>
+						Download
+					</a>
 					<button
 						type="button"
 						aria-label={open ? "Close navigation menu" : "Open navigation menu"}
@@ -202,6 +236,17 @@ export function LandingNav() {
 					))}
 					<div className="my-2 h-px bg-[color:var(--border)]" />
 					<div className="flex justify-center gap-6 py-2">
+						<a
+							href="https://github.com/AgentWrapper/agent-orchestrator"
+							target="_blank"
+							rel="noreferrer"
+							aria-label="GitHub"
+							title="GitHub"
+							className="inline-flex items-center gap-1.5 text-[color:var(--fg-muted)] hover:text-[color:var(--fg)]"
+						>
+							<GithubIcon className="h-5 w-5" />
+							<span className="font-mono text-[12px]">{stars ?? ""}</span>
+						</a>
 						{socials.map((item) => {
 							const Icon = item.icon;
 							return (

@@ -3,12 +3,16 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
-import { DESKTOP_DOWNLOADS, getDownloadOptions, getDownloadTarget } from "../lib/desktop-downloads";
+import { getDownloadTarget, isMacDesktop } from "../lib/desktop-downloads";
+import { useGitHubRepoFacts } from "../lib/use-github-repo-facts";
+import { CopyCommand } from "./CopyCommand";
 import { ScaledMockup } from "./ScaledMockup";
 
 if (typeof window !== "undefined") {
 	gsap.registerPlugin(useGSAP);
 }
+
+const BREW_INSTALL_COMMAND = "brew install --cask agentwrapper/tap/agent-orchestrator";
 
 function GithubIcon({ className = "" }: { className?: string }) {
 	return (
@@ -45,17 +49,7 @@ function StarIcon({ className = "" }: { className?: string }) {
 	);
 }
 
-const GITHUB_REPO_API_URL = "https://api.github.com/repos/AgentWrapper/agent-orchestrator";
-
-function formatCompactNumber(value: number): string {
-	if (value >= 1_000_000) {
-		return `${(value / 1_000_000).toFixed(1)}m`;
-	}
-	if (value >= 1_000) {
-		return `${(value / 1_000).toFixed(1)}k`;
-	}
-	return String(value);
-}
+const GITHUB_REPO_URL = "https://github.com/AgentWrapper/agent-orchestrator";
 
 type BoardColumnId = "working" | "action" | "pending" | "merge";
 type SessionZone = "working" | "warning" | "error" | "success" | "pending";
@@ -1068,52 +1062,21 @@ function SessionDot({ zone }: { zone: string }) {
 
 export function LandingHero() {
 	const containerRef = useRef<HTMLDivElement>(null);
-	const [starCount, setStarCount] = useState<string | null>(null);
+	const { stars, latestRelease } = useGitHubRepoFacts();
 	const [downloadTarget, setDownloadTarget] = useState<ReturnType<typeof getDownloadTarget>>(null);
-	const [downloadOptions, setDownloadOptions] =
-		useState<readonly (typeof DESKTOP_DOWNLOADS)[number][]>(DESKTOP_DOWNLOADS);
+	const [showBrew, setShowBrew] = useState(false);
 
 	useEffect(() => {
 		setDownloadTarget(getDownloadTarget(navigator));
-		setDownloadOptions(getDownloadOptions(navigator));
-	}, []);
-
-	useEffect(() => {
-		let cancelled = false;
-
-		async function loadGitHubStars() {
-			try {
-				const response = await fetch(GITHUB_REPO_API_URL, {
-					cache: "no-store",
-					headers: {
-						Accept: "application/vnd.github+json",
-					},
-				});
-
-				if (!response.ok) {
-					return;
-				}
-
-				const data = (await response.json()) as { stargazers_count?: number };
-				if (!cancelled && typeof data.stargazers_count === "number") {
-					setStarCount(formatCompactNumber(data.stargazers_count));
-				}
-			} catch {
-				// Keep the neutral loading placeholder if the browser cannot reach GitHub.
-			}
-		}
-
-		void loadGitHubStars();
-		const intervalId = window.setInterval(loadGitHubStars, 5 * 60 * 1000);
-
-		return () => {
-			cancelled = true;
-			window.clearInterval(intervalId);
-		};
+		setShowBrew(isMacDesktop(navigator));
 	}, []);
 
 	useGSAP(
 		() => {
+			// Autonomous intro motion is skipped for reduced-motion users; the
+			// content is fully visible without it.
+			if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
 			const ctx = gsap.context(() => {
 				const tl = gsap.timeline({ defaults: { ease: "power4.out" } });
 
@@ -1162,12 +1125,36 @@ export function LandingHero() {
 			/>
 			<div className="relative z-10 mx-auto w-full max-w-[1200px] px-5 sm:px-8 lg:px-12 xl:px-16">
 				<div className="mx-auto text-center">
+					<div className="gsap-reveal mb-7 flex items-center justify-center">
+						<a
+							href="https://github.com/AgentWrapper/agent-orchestrator/releases"
+							target="_blank"
+							rel="noreferrer"
+							className="hero-release-pill group inline-flex items-center gap-2.5 rounded-full border border-[color:var(--border)] bg-[color:var(--bg-card)] py-1.5 pl-2 pr-3.5 text-left transition-colors hover:border-[color:var(--accent-glow)]"
+						>
+							<span className="rounded-full bg-[color:var(--accent-soft)] px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-[color:var(--accent)]">
+								New
+							</span>
+							<span className="text-[12.5px] font-medium text-[color:var(--fg-muted)] transition-colors group-hover:text-[color:var(--fg)]">
+								{latestRelease ? `${latestRelease} is out` : "Latest release is out"} — nightly builds ship every day
+							</span>
+							<ArrowRightIcon className="h-3 w-3 text-[color:var(--fg-dim)] transition-transform duration-200 group-hover:translate-x-0.5" />
+						</a>
+					</div>
 					<h1 data-testid="hero-headline" className="gsap-reveal landing-hero-heading mx-auto">
 						<span className="landing-hero-heading-setup block">Stop babysitting agents.</span>
 						<span className="landing-hero-heading-action block">
 							Start merging <span className="landing-hero-heading-accent">real work.</span>
 						</span>
 					</h1>
+					<p
+						data-testid="hero-subhead"
+						className="gsap-reveal mx-auto mt-6 max-w-[640px] text-balance text-[16px] leading-[1.65] text-[color:var(--fg-muted)] sm:text-[17.5px]"
+					>
+						Mission control for a fleet of coding agents. AO runs Claude&nbsp;Code, Codex, Cursor —{" "}
+						<span className="text-[color:var(--fg)]">23 harnesses</span> — in isolated git worktrees, watches every PR,
+						and routes CI and review feedback back to the agent that owns the branch.
+					</p>
 					<div className="gsap-reveal mt-8 flex w-full flex-col items-stretch justify-center gap-3 sm:w-auto sm:flex-row sm:items-center">
 						{downloadTarget ? (
 							<a
@@ -1179,34 +1166,19 @@ export function LandingHero() {
 								{downloadTarget.label}
 							</a>
 						) : (
-							<details className="group/download relative w-full sm:w-auto">
-								<summary
-									className="hero-pressable flex h-12 cursor-pointer list-none items-center justify-center gap-2 rounded-[6px] border border-[color:var(--accent)] bg-[color:var(--accent)] px-6 text-[15px] font-semibold text-[#11140c] hover:brightness-110 [&::-webkit-details-marker]:hidden"
-									style={{ color: "#11140c" }}
-								>
-									<DownloadIcon className="h-4 w-4" />
-									Desktop downloads
-									<ArrowRightIcon className="h-4 w-4 rotate-90 transition-transform duration-150 group-open/download:-rotate-90 motion-reduce:transition-none" />
-								</summary>
-								<div className="absolute left-0 right-0 top-[calc(100%+8px)] z-30 overflow-hidden rounded-lg border border-[color:var(--border-strong)] bg-[color:var(--bg-elevated)] p-1.5 text-left shadow-2xl sm:min-w-[260px]">
-									<p className="px-3 py-2 text-xs leading-relaxed text-[color:var(--fg-muted)]">
-										Choose the computer where you’ll run AO.
-									</p>
-									{downloadOptions.map((download) => (
-										<a
-											key={download.label}
-											href={download.href}
-											className="flex items-center justify-between gap-4 rounded-md px-3 py-2.5 text-sm font-medium text-[color:var(--fg)] hover:bg-white/[0.06]"
-										>
-											{download.label}
-											<DownloadIcon className="h-3.5 w-3.5 text-[color:var(--fg-muted)]" />
-										</a>
-									))}
-								</div>
-							</details>
+							<a
+								href={GITHUB_REPO_URL}
+								target="_blank"
+								rel="noreferrer"
+								className="hero-pressable group inline-flex h-12 w-full items-center justify-center gap-2 rounded-[6px] border border-[color:var(--accent)] bg-[color:var(--accent)] px-6 text-[15px] font-semibold text-[#11140c] hover:brightness-110 sm:w-auto"
+								style={{ color: "#11140c" }}
+							>
+								<GithubIcon className="h-4 w-4" />
+								Get Agent Orchestrator
+							</a>
 						)}
 						<a
-							href="https://github.com/AgentWrapper/agent-orchestrator"
+							href={GITHUB_REPO_URL}
 							target="_blank"
 							rel="noreferrer"
 							className="hero-pressable gh-star-btn group relative inline-flex h-12 w-full items-center justify-center gap-2 overflow-visible rounded-[6px] border border-[color:var(--border-strong)] bg-transparent px-6 text-[15px] font-semibold text-[color:var(--fg)] hover:border-[color:var(--accent-glow)] hover:bg-[color:var(--bg-card-hover)] sm:w-auto"
@@ -1224,22 +1196,45 @@ export function LandingHero() {
 									style={{ ["--sx" as string]: "-6px", ["--sy" as string]: "6px" }}
 								/>
 							</span>
-							<span className="gh-star-count rounded-full border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[12px] leading-none text-[color:var(--fg-muted)]">
-								{starCount ?? "..."}
+							<span
+								className={`gh-star-count rounded-full border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[12px] leading-none text-[color:var(--fg-muted)] ${stars ? "" : "hidden"}`}
+							>
+								{stars}
 							</span>
 						</a>
 					</div>
+
+					<div className="gsap-reveal mt-5 flex flex-col items-center justify-center gap-3">
+						{showBrew ? (
+							<CopyCommand
+								command={BREW_INSTALL_COMMAND}
+								label="brew install command"
+								nowrap
+								className="w-full sm:w-auto"
+							/>
+						) : null}
+						<p className="text-[12.5px] text-[color:var(--fg-dim)]">
+							{showBrew ? "or grab the zip above" : "Free desktop app"} ·{" "}
+							<a
+								href="/docs/installation"
+								className="underline decoration-[color:var(--border-strong)] underline-offset-4 transition-colors hover:text-[color:var(--fg-muted)]"
+							>
+								All platforms
+							</a>{" "}
+							· Apache&nbsp;2.0 · runs 100% locally
+						</p>
+					</div>
 				</div>
 
-				<div className="gsap-reveal mx-auto mt-20 flex max-w-[1200px] items-center gap-4 px-1 text-left">
+				<div className="gsap-reveal mx-auto mt-14 flex max-w-[1200px] items-center gap-4 px-1 text-left sm:mt-16">
 					<div className="h-px flex-1 bg-gradient-to-r from-transparent via-[color:var(--border-strong)] to-[color:var(--border-strong)]" />
 					<div className="whitespace-nowrap text-[11px] font-bold uppercase tracking-[0.18em] text-[color:var(--fg-dim)]">
-						Live board preview
+						Live board preview — click around
 					</div>
 					<div className="h-px flex-1 bg-gradient-to-r from-[color:var(--border-strong)] via-[color:var(--border-strong)] to-transparent" />
 				</div>
 
-				<div className="gsap-scale mt-12">
+				<div className="gsap-scale mt-10">
 					<ScaledMockup designWidth={1080}>
 						<HeroDashboardMockup />
 					</ScaledMockup>

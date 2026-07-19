@@ -40,7 +40,7 @@ export function LandingAgentsBar() {
 							<span className="landing-eyebrow">Coverage</span>
 							<h2 className="mt-4 max-w-[720px] text-[28px] font-semibold leading-[1.1] text-[color:var(--fg)] sm:text-[40px]">
 								Use the agent you already trust.
-								<span className="block text-[color:var(--fg-muted)]">AO keeps the workflow the same</span>
+								<span className="block text-[color:var(--fg-muted)]">AO keeps the workflow the same.</span>
 							</h2>
 						</div>
 					</div>
