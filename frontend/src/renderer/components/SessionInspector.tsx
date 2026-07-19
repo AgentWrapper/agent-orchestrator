@@ -254,7 +254,7 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 			</Section>
 
 			<Section title="Activity">
-				<ActivityTimeline session={session} />
+				<ActivityTimeline prs={prSummaries} session={session} />
 			</Section>
 
 			<Section className="border-t border-border pt-5" title="Overview">
@@ -305,7 +305,7 @@ const timelineNodeTone: Record<TimelineTone, string> = {
 	warn: "bg-warning shadow-timeline-dot",
 };
 
-function ActivityTimeline({ session }: { session: WorkspaceSession }) {
+function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: WorkspaceSession }) {
 	const events: { tone: TimelineTone; node: ReactNode; ts: string | null }[] = [];
 
 	events.push({
@@ -314,28 +314,19 @@ function ActivityTimeline({ session }: { session: WorkspaceSession }) {
 		ts: formatTimeCompact(session.createdAt ?? session.updatedAt),
 	});
 
-	const prs = sortedPRs(session);
 	for (const pr of prs.filter((pr) => pr.state === "draft")) {
 		events.push({
 			tone: "neutral",
-			node: (
-				<>
-					Draft <b>PR #{pr.number}</b>
-				</>
-			),
-			ts: null,
+			node: <PRTimelineLink pr={pr} verb="Draft" />,
+			ts: prStateTime(pr),
 		});
 	}
 
 	for (const pr of prs.filter((pr) => pr.state !== "draft")) {
 		events.push({
 			tone: "neutral",
-			node: (
-				<>
-					Opened <b>PR #{pr.number}</b>
-				</>
-			),
-			ts: null,
+			node: <PRTimelineLink pr={pr} verb="Opened" />,
+			ts: prCreatedTime(pr),
 		});
 	}
 
@@ -364,12 +355,8 @@ function ActivityTimeline({ session }: { session: WorkspaceSession }) {
 	for (const pr of prs.filter((pr) => pr.state === "merged")) {
 		events.push({
 			tone: "good",
-			node: (
-				<>
-					Merged <b>PR #{pr.number}</b>
-				</>
-			),
-			ts: null,
+			node: <PRTimelineLink pr={pr} verb="Merged" />,
+			ts: prStateTime(pr),
 		});
 	}
 
@@ -401,6 +388,30 @@ function ActivityTimeline({ session }: { session: WorkspaceSession }) {
 			))}
 		</div>
 	);
+}
+
+function PRTimelineLink({ pr, verb }: { pr: SessionPRSummary; verb: "Draft" | "Opened" | "Merged" }) {
+	return (
+		<a
+			aria-label={`${verb} PR #${pr.number}`}
+			className="inline-flex min-w-0 items-center gap-1 rounded-xs text-foreground underline-offset-2 transition-colors hover:text-accent hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent/50"
+			href={prBrowserUrl(pr)}
+			rel="noopener noreferrer"
+			target="_blank"
+		>
+			<span>{verb} </span>
+			<b>PR #{pr.number}</b>
+			<ArrowUpRight aria-hidden="true" className="size-icon-2xs shrink-0" strokeWidth={2} />
+		</a>
+	);
+}
+
+function prStateTime(pr: SessionPRSummary): string | null {
+	return pr.stateChangedAt ? formatTimeCompact(pr.stateChangedAt) : null;
+}
+
+function prCreatedTime(pr: SessionPRSummary): string | null {
+	return pr.createdAt ? formatTimeCompact(pr.createdAt) : null;
 }
 
 type ScmTimelineState = "ci_failed" | "changes_requested" | "conflict";

@@ -1148,6 +1148,67 @@ func TestListPRSummariesOmitsRawLogsAndReviewBodies(t *testing.T) {
 	}
 }
 
+func TestListPRSummariesExposesPRStateChangedAt(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+	createdAt := time.Date(2026, 6, 4, 9, 0, 0, 0, time.UTC)
+	readyAt := time.Date(2026, 6, 4, 10, 30, 0, 0, time.UTC)
+	mergedAt := time.Date(2026, 6, 4, 11, 0, 0, 0, time.UTC)
+	observedAt := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
+	stList := &multiPRFakeStore{fakeStore: st, prs: []domain.PullRequest{
+		{
+			URL:               "draft",
+			SessionID:         "mer-1",
+			Number:            1,
+			Draft:             true,
+			CreatedAtProvider: createdAt,
+			UpdatedAtProvider: readyAt,
+			UpdatedAt:         observedAt,
+		},
+		{
+			URL:               "ready",
+			SessionID:         "mer-1",
+			Number:            2,
+			StateChangedAt:    readyAt,
+			CreatedAtProvider: createdAt,
+			UpdatedAtProvider: readyAt.Add(15 * time.Minute),
+			UpdatedAt:         observedAt,
+		},
+		{
+			URL:               "merged",
+			SessionID:         "mer-1",
+			Number:            3,
+			Merged:            true,
+			CreatedAtProvider: createdAt,
+			MergedAtProvider:  mergedAt,
+			UpdatedAt:         observedAt,
+		},
+	}}
+
+	got, err := (&Service{store: stList}).ListPRSummaries(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byURL := map[string]PRSummary{}
+	for _, pr := range got {
+		byURL[pr.URL] = pr
+	}
+	if !byURL["draft"].StateChangedAt.Equal(createdAt) {
+		t.Fatalf("draft stateChangedAt = %s, want created time %s", byURL["draft"].StateChangedAt, createdAt)
+	}
+	if !byURL["ready"].StateChangedAt.Equal(readyAt) {
+		t.Fatalf("ready stateChangedAt = %s, want ready/open transition %s", byURL["ready"].StateChangedAt, readyAt)
+	}
+	if !byURL["merged"].StateChangedAt.Equal(mergedAt) {
+		t.Fatalf("merged stateChangedAt = %s, want merged time %s", byURL["merged"].StateChangedAt, mergedAt)
+	}
+	for _, url := range []string{"draft", "ready", "merged"} {
+		if !byURL[url].CreatedAt.Equal(createdAt) {
+			t.Fatalf("%s createdAt = %s, want provider creation time %s", url, byURL[url].CreatedAt, createdAt)
+		}
+	}
+}
+
 func TestListPRSummariesSuppressesFailingChecksUnlessCIFailing(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}

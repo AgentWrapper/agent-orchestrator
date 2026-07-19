@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
-import { prBrowserUrl, prDiffSummary, prStatusRows, prSummaryParts } from "./pr-display";
+import type { WorkspaceSession } from "../types/workspace";
+import { prBrowserUrl, prDiffSummary, prStatusRows, prSummaryParts, sessionPRDisplaySummaries } from "./pr-display";
 
 const summary = (overrides: Partial<SessionPRSummary> = {}): SessionPRSummary => ({
 	url: "https://github.com/acme/repo/pull/7",
@@ -66,6 +67,39 @@ describe("prBrowserUrl", () => {
 				}),
 			),
 		).toBe("https://github.com/acme/repo/pull/7");
+	});
+});
+
+describe("sessionPRDisplaySummaries", () => {
+	it("leaves timing absent for fallback PR facts until the API summary provides provider times", () => {
+		const session: WorkspaceSession = {
+			id: "sess-1",
+			workspaceId: "ws-1",
+			workspaceName: "repo",
+			title: "Fix timing",
+			provider: "codex",
+			branch: "feat/timing",
+			status: "review_pending",
+			updatedAt: "2026-06-15T12:00:00Z",
+			prs: [
+				{
+					url: "https://github.com/acme/repo/pull/7",
+					number: 7,
+					state: "open",
+					ci: "passing",
+					review: "none",
+					mergeability: "mergeable",
+					reviewComments: false,
+					updatedAt: "2026-06-15T11:00:00Z",
+				},
+			],
+		};
+
+		const [fallback] = sessionPRDisplaySummaries(session);
+
+		expect(fallback.updatedAt).toBe("2026-06-15T11:00:00Z");
+		expect(fallback.createdAt).toBeUndefined();
+		expect(fallback.stateChangedAt).toBeUndefined();
 	});
 });
 

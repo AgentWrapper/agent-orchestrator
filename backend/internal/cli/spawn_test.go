@@ -18,10 +18,19 @@ func authorizedAgentsJSON(agent string) string {
 	return `{"supported":[` + info + `],"installed":[` + info + `],"authorized":[` + info + `]}`
 }
 
+func setSpawnConfigEnv(t *testing.T) testConfig {
+	t.Helper()
+	cfg := setConfigEnv(t)
+	t.Setenv("AO_PROJECT_ID", "")
+	t.Setenv("AO_SESSION_ID", "")
+	t.Setenv("AO_ISSUE_ID", "")
+	return cfg
+}
+
 // TestSpawnCommand_MissingProjectContext asserts `ao spawn` gives a project
 // setup hint when neither --project, AO_PROJECT_ID, nor cwd can resolve one.
 func TestSpawnCommand_MissingProjectContext(t *testing.T) {
-	cfg := setConfigEnv(t)
+	cfg := setSpawnConfigEnv(t)
 	var requests []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		appendPrimaryRequest(&requests, r)
@@ -63,7 +72,7 @@ func TestProjectAddCommand_RequiresPath(t *testing.T) {
 }
 
 func TestSpawnClaimPRWiring(t *testing.T) {
-	cfg := setConfigEnv(t)
+	cfg := setSpawnConfigEnv(t)
 	var requests []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		appendPrimaryRequest(&requests, r)
@@ -103,7 +112,7 @@ func TestSpawnClaimPRWiring(t *testing.T) {
 }
 
 func TestSpawnClaimPRFailureRollsBackSession(t *testing.T) {
-	cfg := setConfigEnv(t)
+	cfg := setSpawnConfigEnv(t)
 	var requests []string
 	sessions := map[string]bool{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -176,7 +185,7 @@ func TestSpawnCommand_RejectsOverlongName(t *testing.T) {
 }
 
 func TestSpawnResolvesProjectFromEnvAndDefaultAgent(t *testing.T) {
-	cfg := setConfigEnv(t)
+	cfg := setSpawnConfigEnv(t)
 	var requests []string
 	var req spawnRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -217,7 +226,7 @@ func TestSpawnResolvesProjectFromEnvAndDefaultAgent(t *testing.T) {
 }
 
 func TestSpawnResolvesProjectFromAOSessionID(t *testing.T) {
-	cfg := setConfigEnv(t)
+	cfg := setSpawnConfigEnv(t)
 	var requests []string
 	var req spawnRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -257,7 +266,7 @@ func TestSpawnResolvesProjectFromAOSessionID(t *testing.T) {
 }
 
 func TestSpawnAOSessionIDFailureRequiresProject(t *testing.T) {
-	cfg := setConfigEnv(t)
+	cfg := setSpawnConfigEnv(t)
 	var requests []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		appendPrimaryRequest(&requests, r)
@@ -285,7 +294,7 @@ func TestSpawnAOSessionIDFailureRequiresProject(t *testing.T) {
 }
 
 func TestSpawnResolvesProjectFromCWD(t *testing.T) {
-	cfg := setConfigEnv(t)
+	cfg := setSpawnConfigEnv(t)
 	repo := filepath.Join(t.TempDir(), "repo")
 	subdir := filepath.Join(repo, "pkg")
 	if err := os.MkdirAll(subdir, 0o755); err != nil {
@@ -332,7 +341,7 @@ func TestSpawnResolvesProjectFromCWD(t *testing.T) {
 }
 
 func TestSpawnStaleUnauthorizedAgentRefreshesProbesThenAllows(t *testing.T) {
-	cfg := setConfigEnv(t)
+	cfg := setSpawnConfigEnv(t)
 	var requests []string
 	var req spawnRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -374,7 +383,7 @@ func TestSpawnStaleUnauthorizedAgentRefreshesProbesThenAllows(t *testing.T) {
 }
 
 func TestSpawnFreshUnauthorizedWarnsAndAllows(t *testing.T) {
-	cfg := setConfigEnv(t)
+	cfg := setSpawnConfigEnv(t)
 	var requests []string
 	var req spawnRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -416,7 +425,7 @@ func TestSpawnFreshUnauthorizedWarnsAndAllows(t *testing.T) {
 }
 
 func TestSpawnUnavailableFreshProbeWarnsAndAllows(t *testing.T) {
-	cfg := setConfigEnv(t)
+	cfg := setSpawnConfigEnv(t)
 	var requests []string
 	var req spawnRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -459,7 +468,7 @@ func TestSpawnUnavailableFreshProbeWarnsAndAllows(t *testing.T) {
 }
 
 func TestSpawnUnsupportedAgentRefreshesThenBlocks(t *testing.T) {
-	cfg := setConfigEnv(t)
+	cfg := setSpawnConfigEnv(t)
 	var requests []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		appendPrimaryRequest(&requests, r)
@@ -487,7 +496,7 @@ func TestSpawnUnsupportedAgentRefreshesThenBlocks(t *testing.T) {
 }
 
 func TestSpawnNotInstalledAgentRefreshesThenBlocks(t *testing.T) {
-	cfg := setConfigEnv(t)
+	cfg := setSpawnConfigEnv(t)
 	var requests []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		appendPrimaryRequest(&requests, r)
@@ -517,7 +526,7 @@ func TestSpawnNotInstalledAgentRefreshesThenBlocks(t *testing.T) {
 }
 
 func TestSpawnStaleNotInstalledFreshInstalledWarnsAndAllows(t *testing.T) {
-	cfg := setConfigEnv(t)
+	cfg := setSpawnConfigEnv(t)
 	var requests []string
 	var req spawnRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -559,7 +568,7 @@ func TestSpawnStaleNotInstalledFreshInstalledWarnsAndAllows(t *testing.T) {
 }
 
 func TestSpawnUnavailableFreshProbeForNotInstalledWarnsAndAllows(t *testing.T) {
-	cfg := setConfigEnv(t)
+	cfg := setSpawnConfigEnv(t)
 	var requests []string
 	var req spawnRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -602,7 +611,7 @@ func TestSpawnUnavailableFreshProbeForNotInstalledWarnsAndAllows(t *testing.T) {
 }
 
 func TestSpawnFreshProbeServerErrorBlocks(t *testing.T) {
-	cfg := setConfigEnv(t)
+	cfg := setSpawnConfigEnv(t)
 	var requests []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		appendPrimaryRequest(&requests, r)
@@ -633,7 +642,7 @@ func TestSpawnFreshProbeServerErrorBlocks(t *testing.T) {
 }
 
 func TestSpawnSkipAgentCheckBypassesOnlyPreflight(t *testing.T) {
-	cfg := setConfigEnv(t)
+	cfg := setSpawnConfigEnv(t)
 	var requests []string
 	var req spawnRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -668,7 +677,7 @@ func TestSpawnSkipAgentCheckBypassesOnlyPreflight(t *testing.T) {
 }
 
 func TestSpawnUnknownAuthRefreshesWarnsAndAllows(t *testing.T) {
-	cfg := setConfigEnv(t)
+	cfg := setSpawnConfigEnv(t)
 	var req spawnRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

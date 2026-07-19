@@ -252,6 +252,8 @@ const prSummary = (sessionId: string, number: number, overrides: Partial<Session
 			prUrl: url,
 			conflictFiles: [],
 		},
+		createdAt: facts?.updatedAt ?? now,
+		stateChangedAt: facts?.updatedAt ?? now,
 		updatedAt: facts?.updatedAt ?? now,
 		observedAt: facts?.updatedAt ?? now,
 		ciObservedAt: facts?.updatedAt ?? now,

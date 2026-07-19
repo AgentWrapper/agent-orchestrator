@@ -79,3 +79,105 @@ func TestListPRFactsForSessionProjectsAllPRsNewestFirst(t *testing.T) {
 		t.Fatalf("no-PR session = %d facts, want 0", len(got))
 	}
 }
+
+func TestPRStateChangedAtPersistsOnlyOnStateTransitions(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	createdAt := time.Date(2026, 6, 4, 9, 0, 0, 0, time.UTC)
+	updatedAt := time.Date(2026, 6, 4, 9, 30, 0, 0, time.UTC)
+	readyAt := time.Date(2026, 6, 4, 10, 0, 0, 0, time.UTC)
+	laterAt := time.Date(2026, 6, 4, 11, 0, 0, 0, time.UTC)
+	pr := domain.PullRequest{
+		URL:               "https://github.com/acme/repo/pull/7",
+		SessionID:         r.ID,
+		Number:            7,
+		Draft:             true,
+		CreatedAtProvider: createdAt,
+		UpdatedAtProvider: updatedAt,
+		UpdatedAt:         updatedAt,
+		ObservedAt:        updatedAt,
+	}
+	if err := s.WriteSCMObservation(ctx, pr, nil, nil, nil, nil, ports.ReviewWritePreserve); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := s.GetPR(ctx, pr.URL)
+	if err != nil || !ok {
+		t.Fatalf("GetPR after draft write: ok=%v err=%v", ok, err)
+	}
+	if !got.StateChangedAt.Equal(createdAt) {
+		t.Fatalf("draft stateChangedAt = %s, want created time %s", got.StateChangedAt, createdAt)
+	}
+
+	pr.Title = "metadata-only update"
+	pr.UpdatedAtProvider = laterAt
+	pr.UpdatedAt = laterAt
+	pr.ObservedAt = laterAt
+	if err := s.WriteSCMObservation(ctx, pr, nil, nil, nil, nil, ports.ReviewWritePreserve); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err = s.GetPR(ctx, pr.URL)
+	if err != nil || !ok {
+		t.Fatalf("GetPR after same-state write: ok=%v err=%v", ok, err)
+	}
+	if !got.StateChangedAt.Equal(createdAt) {
+		t.Fatalf("same-state stateChangedAt = %s, want preserved %s", got.StateChangedAt, createdAt)
+	}
+
+	pr.Draft = false
+	pr.UpdatedAtProvider = readyAt
+	pr.UpdatedAt = readyAt
+	pr.ObservedAt = readyAt
+	if err := s.WriteSCMObservation(ctx, pr, nil, nil, nil, nil, ports.ReviewWritePreserve); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err = s.GetPR(ctx, pr.URL)
+	if err != nil || !ok {
+		t.Fatalf("GetPR after ready write: ok=%v err=%v", ok, err)
+	}
+	if !got.StateChangedAt.Equal(readyAt) {
+		t.Fatalf("ready stateChangedAt = %s, want ready time %s", got.StateChangedAt, readyAt)
+	}
+}
+
+func TestPRStateChangedAtFillsWhenProviderCreatedAtArrives(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	discoveredAt := time.Date(2026, 6, 4, 9, 30, 0, 0, time.UTC)
+	createdAt := time.Date(2026, 6, 4, 8, 45, 0, 0, time.UTC)
+	laterAt := time.Date(2026, 6, 4, 10, 0, 0, 0, time.UTC)
+	pr := domain.PullRequest{
+		URL:        "https://github.com/acme/repo/pull/8",
+		SessionID:  r.ID,
+		Number:     8,
+		UpdatedAt:  discoveredAt,
+		ObservedAt: discoveredAt,
+	}
+	if err := s.WriteSCMObservation(ctx, pr, nil, nil, nil, nil, ports.ReviewWritePreserve); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := s.GetPR(ctx, pr.URL)
+	if err != nil || !ok {
+		t.Fatalf("GetPR after discovery write: ok=%v err=%v", ok, err)
+	}
+	if !got.StateChangedAt.IsZero() {
+		t.Fatalf("discovery stateChangedAt = %s, want unset without provider creation time", got.StateChangedAt)
+	}
+
+	pr.CreatedAtProvider = createdAt
+	pr.UpdatedAt = laterAt
+	pr.ObservedAt = laterAt
+	if err := s.WriteSCMObservation(ctx, pr, nil, nil, nil, nil, ports.ReviewWritePreserve); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err = s.GetPR(ctx, pr.URL)
+	if err != nil || !ok {
+		t.Fatalf("GetPR after provider-created write: ok=%v err=%v", ok, err)
+	}
+	if !got.StateChangedAt.Equal(createdAt) {
+		t.Fatalf("same-state stateChangedAt = %s, want provider creation time %s", got.StateChangedAt, createdAt)
+	}
+}

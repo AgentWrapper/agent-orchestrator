@@ -846,6 +846,15 @@ func (m *Manager) RestoreWithMode(ctx context.Context, id domain.SessionID) (Res
 	return m.relaunchRestoredSession(ctx, rec, project, ws)
 }
 
+// Restore relaunches a torn-down session and returns the updated session row.
+func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.SessionRecord, error) {
+	res, err := m.RestoreWithMode(ctx, id)
+	if err != nil {
+		return domain.SessionRecord{}, err
+	}
+	return res.Session, nil
+}
+
 func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo) (RestoreResult, error) {
 	agent, ok := m.agents.Agent(rec.Harness)
 	if !ok {
