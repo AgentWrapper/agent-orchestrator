@@ -362,7 +362,7 @@ function ZoneColumn({
 		<section
 			className="flex min-w-0 flex-col overflow-hidden rounded-panel"
 			data-testid="board-column"
-			data-column={col.level}
+			data-column={col.zone}
 			style={{
 				background: `linear-gradient(180deg, ${col.glow}, transparent var(--size-kanban-glow)), var(--color-overlay-subtle)`,
 			}}
