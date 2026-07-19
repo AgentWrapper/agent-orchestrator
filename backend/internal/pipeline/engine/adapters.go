@@ -2,8 +2,13 @@ package engine
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/pipeline"
 	"github.com/aoagents/agent-orchestrator/backend/internal/pipeline/executors"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -35,8 +40,11 @@ type SessionReader interface {
 // BuildExecutorSet assembles the three kind executors over the real session
 // service + store and returns the routing facade the engine drives. This is the
 // single place the executors are wired to infra.
-func BuildExecutorSet(cmd SessionCommander, reader SessionReader) *executors.Set {
-	agent := executors.NewAgentExecutor(&sessionSpawnerAdapter{cmd: cmd, reader: reader})
+func BuildExecutorSet(cmd SessionCommander, reader SessionReader, log *slog.Logger) *executors.Set {
+	if log == nil {
+		log = slog.Default()
+	}
+	agent := executors.NewAgentExecutor(&sessionSpawnerAdapter{cmd: cmd, reader: reader, log: log})
 	// nil LogSink: the subprocess output is still captured (capped) for the
 	// JSON-over-stdout contract; streaming it to an activity log is a phase-2
 	// nicety, not needed for correctness.
@@ -54,6 +62,7 @@ func BuildExecutorSet(cmd SessionCommander, reader SessionReader) *executors.Set
 type sessionSpawnerAdapter struct {
 	cmd    SessionCommander
 	reader SessionReader
+	log    *slog.Logger
 }
 
 var _ executors.SessionSpawner = (*sessionSpawnerAdapter)(nil)
@@ -68,12 +77,101 @@ func (a *sessionSpawnerAdapter) Spawn(ctx context.Context, req executors.SpawnRe
 		Prompt:    req.Prompt,
 	})
 	if err != nil {
+		// The PR's owning worker session usually has the PR source branch checked
+		// out while alive, so a pr.updated-triggered stage spawn onto that branch
+		// is refused (ErrWorkspaceBranchCheckedOutElsewhere, surfaced as a 409).
+		// Fall back once to a run-unique derived branch based at the PR head so the
+		// stage still runs; the agent pushes with `git push origin HEAD:<branch>`.
+		if req.Branch == "" || !isBranchCheckedOutElsewhere(err) {
+			return executors.SpawnedSession{}, err
+		}
+		return a.spawnOnFallbackBranch(ctx, req, err)
+	}
+	return executors.SpawnedSession{
+		SessionID:     string(sess.ID),
+		WorkspacePath: sess.Metadata.WorkspacePath,
+	}, nil
+}
+
+// spawnOnFallbackBranch retries a spawn that was refused because req.Branch is
+// checked out elsewhere. It creates a fresh derived branch based at the original
+// branch's head (BaseBranch), notes the substitution in the prompt, and logs it.
+func (a *sessionSpawnerAdapter) spawnOnFallbackBranch(ctx context.Context, req executors.SpawnRequest, cause error) (executors.SpawnedSession, error) {
+	fallback := fallbackBranchName(req.StageRunID)
+	a.log.Warn("pipeline spawn: source branch checked out elsewhere, using fallback branch",
+		"sourceBranch", req.Branch,
+		"fallbackBranch", fallback,
+		"stageRunId", req.StageRunID,
+		"cause", cause.Error(),
+	)
+	sess, err := a.cmd.Spawn(ctx, ports.SpawnConfig{
+		ProjectID:  domain.ProjectID(req.ProjectID),
+		IssueID:    domain.IssueID(req.IssueID),
+		Kind:       domain.KindWorker,
+		Harness:    domain.AgentHarness(req.Harness),
+		Branch:     fallback,
+		BaseBranch: req.Branch,
+		Prompt:     appendFallbackBranchNote(req.Prompt, fallback, req.Branch),
+	})
+	if err != nil {
 		return executors.SpawnedSession{}, err
 	}
 	return executors.SpawnedSession{
 		SessionID:     string(sess.ID),
 		WorkspacePath: sess.Metadata.WorkspacePath,
 	}, nil
+}
+
+// isBranchCheckedOutElsewhere reports whether err is the branch-conflict refusal.
+// The session service maps the workspace sentinel to a typed API error whose
+// Unwrap chain does not carry the sentinel, so both forms are checked: the
+// wrapped sentinel (direct session-manager wiring) and the API error code (the
+// production path through session.Service).
+func isBranchCheckedOutElsewhere(err error) bool {
+	if errors.Is(err, ports.ErrWorkspaceBranchCheckedOutElsewhere) {
+		return true
+	}
+	var apiErr *apierr.Error
+	return errors.As(err, &apiErr) && apiErr.Code == "BRANCH_CHECKED_OUT_ELSEWHERE"
+}
+
+// fallbackBranchName mints a collision-free branch under pipeline/ from the
+// stage run id (itself run-unique, e.g. sr-<uuid> or sr-<uuid>#2 on retry). A
+// missing id falls back to a fixed leaf; the caller only reaches this when a
+// real stage spawn conflicts, where StageRunID is always set.
+func fallbackBranchName(stageRunID string) string {
+	leaf := sanitizeBranchSegment(stageRunID)
+	if leaf == "" {
+		leaf = "stage"
+	}
+	return "pipeline/" + leaf
+}
+
+// sanitizeBranchSegment collapses characters git refnames forbid into '-' so an
+// id like "sr-abc#2" becomes a valid branch leaf "sr-abc-2".
+func sanitizeBranchSegment(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
+		}
+	}
+	return strings.Trim(b.String(), "-.")
+}
+
+// appendFallbackBranchNote tells the agent it is on a derived branch and how to
+// push back to the real PR source branch. The stage prompt already names the PR
+// branch; this only clarifies the substitution.
+func appendFallbackBranchNote(prompt, fallback, sourceBranch string) string {
+	note := fmt.Sprintf("Note: this session is on fallback branch `%s` because `%s` was already checked out in another worktree. Push your work with `git push origin HEAD:%s`.",
+		fallback, sourceBranch, sourceBranch)
+	if strings.TrimSpace(prompt) == "" {
+		return note
+	}
+	return prompt + "\n\n" + note
 }
 
 func (a *sessionSpawnerAdapter) Get(ctx context.Context, sessionID string) (executors.SessionSnapshot, bool, error) {

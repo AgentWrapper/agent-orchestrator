@@ -26,7 +26,7 @@ type pipelineStack struct {
 // start failure is logged, never fatal: an unhealthy pipeline subsystem must not
 // block daemon boot, and idle engines (no definitions, no triggers) are harmless.
 func startPipelineEngine(ctx context.Context, store *sqlite.Store, sessions pipelineengine.SessionCommander, bcast *cdc.Broadcaster, log *slog.Logger) *pipelineStack {
-	execs := pipelineengine.BuildExecutorSet(sessions, store)
+	execs := pipelineengine.BuildExecutorSet(sessions, store, log)
 	sup := pipelineengine.NewSupervisor(pipelineengine.SupervisorConfig{
 		Store:     store,
 		Executors: execs,

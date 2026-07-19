@@ -24,6 +24,10 @@ type SpawnRequest struct {
 	// review sessions see the PR diff and can push to it. Empty spawns a fresh
 	// worktree off the project default branch.
 	Branch string
+	// StageRunID is the run-unique id of the stage attempt. The spawn adapter uses
+	// it to mint a collision-free fallback branch name when Branch is already
+	// checked out in another worktree.
+	StageRunID string
 }
 
 // SpawnedSession is what the session manager returns for a fresh spawn.
@@ -87,11 +91,12 @@ func (e *AgentExecutor) Start(ctx context.Context, in StartInput) (Handle, error
 
 	prompt := buildStagePrompt(in.PipelineName, in.Stage, in.LoopRound, in.Context, in.UpstreamFindings)
 	session, err := e.sessions.Spawn(ctx, SpawnRequest{
-		ProjectID: in.ProjectID,
-		IssueID:   in.IssueID,
-		Prompt:    prompt,
-		Harness:   in.Stage.Executor.Plugin,
-		Branch:    in.Context.SourceBranch,
+		ProjectID:  in.ProjectID,
+		IssueID:    in.IssueID,
+		Prompt:     prompt,
+		Harness:    in.Stage.Executor.Plugin,
+		Branch:     in.Context.SourceBranch,
+		StageRunID: string(in.StageRunID),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("agent executor: spawn session for stage %q: %w", in.Stage.Name, err)

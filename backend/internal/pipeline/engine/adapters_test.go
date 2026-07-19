@@ -3,26 +3,39 @@ package engine
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/pipeline"
 	"github.com/aoagents/agent-orchestrator/backend/internal/pipeline/executors"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-// fakeCommander records spawn/kill/send calls for the adapter tests.
+// fakeCommander records spawn/kill/send calls for the adapter tests. When
+// spawnErrOnce is set it is returned by the first Spawn and then cleared, so the
+// fallback-retry path can be exercised (the second Spawn succeeds).
 type fakeCommander struct {
-	spawned  ports.SpawnConfig
-	spawnOut domain.Session
-	spawnErr error
-	killErr  error
-	killed   []domain.SessionID
-	sent     map[domain.SessionID]string
+	spawned      ports.SpawnConfig
+	spawnConfigs []ports.SpawnConfig
+	spawnOut     domain.Session
+	spawnErr     error
+	spawnErrOnce error
+	killErr      error
+	killed       []domain.SessionID
+	sent         map[domain.SessionID]string
 }
 
 func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.Session, error) {
 	f.spawned = cfg
+	f.spawnConfigs = append(f.spawnConfigs, cfg)
+	if f.spawnErrOnce != nil {
+		err := f.spawnErrOnce
+		f.spawnErrOnce = nil
+		return domain.Session{}, err
+	}
 	return f.spawnOut, f.spawnErr
 }
 
@@ -86,6 +99,97 @@ func TestSessionSpawnerAdapterSpawnMapsConfig(t *testing.T) {
 		cmd.spawned.Prompt != "review this" || cmd.spawned.Harness != "codex" ||
 		cmd.spawned.Kind != domain.KindWorker {
 		t.Fatalf("spawn config mismapped: %+v", cmd.spawned)
+	}
+}
+
+// checkedOutElsewhereAPIErr mirrors what session.Service returns in production:
+// the workspace sentinel mapped by toAPIError into a typed 409 whose Unwrap chain
+// no longer carries the sentinel, only the stable code.
+func checkedOutElsewhereAPIErr() error {
+	return apierr.Conflict("BRANCH_CHECKED_OUT_ELSEWHERE", "workspace: branch is already checked out in another worktree", nil)
+}
+
+func TestSessionSpawnerAdapterFallbackOnBranchConflict(t *testing.T) {
+	cmd := &fakeCommander{
+		spawnErrOnce: checkedOutElsewhereAPIErr(),
+		spawnOut: domain.Session{SessionRecord: domain.SessionRecord{
+			ID: "mer-9", Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-9"},
+		}},
+	}
+	a := &sessionSpawnerAdapter{cmd: cmd, reader: &fakeReader{}, log: slog.Default()}
+
+	got, err := a.Spawn(context.Background(), executors.SpawnRequest{
+		ProjectID: "mer", Prompt: "review this", Harness: "codex",
+		Branch: "feature/x", StageRunID: "sr-abc#2",
+	})
+	if err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if got.SessionID != "mer-9" {
+		t.Fatalf("fallback spawn session = %+v", got)
+	}
+	if len(cmd.spawnConfigs) != 2 {
+		t.Fatalf("want 2 spawn attempts, got %d", len(cmd.spawnConfigs))
+	}
+	// First attempt: the real PR source branch, no base override.
+	if cmd.spawnConfigs[0].Branch != "feature/x" || cmd.spawnConfigs[0].BaseBranch != "" {
+		t.Fatalf("first attempt = %+v, want Branch=feature/x BaseBranch=empty", cmd.spawnConfigs[0])
+	}
+	// Retry: a derived pipeline/ branch based at the PR source branch head.
+	retry := cmd.spawnConfigs[1]
+	if retry.Branch != "pipeline/sr-abc-2" {
+		t.Fatalf("fallback branch = %q, want pipeline/sr-abc-2", retry.Branch)
+	}
+	if retry.BaseBranch != "feature/x" {
+		t.Fatalf("fallback base = %q, want feature/x", retry.BaseBranch)
+	}
+	if !strings.Contains(retry.Prompt, "review this") || !strings.Contains(retry.Prompt, "git push origin HEAD:feature/x") {
+		t.Fatalf("fallback prompt missing note or original: %q", retry.Prompt)
+	}
+}
+
+func TestSessionSpawnerAdapterNoRetryOnOtherError(t *testing.T) {
+	cmd := &fakeCommander{spawnErr: errors.New("boom")}
+	a := &sessionSpawnerAdapter{cmd: cmd, reader: &fakeReader{}, log: slog.Default()}
+
+	if _, err := a.Spawn(context.Background(), executors.SpawnRequest{
+		ProjectID: "mer", Branch: "feature/x", StageRunID: "sr-1",
+	}); err == nil {
+		t.Fatal("want error for non-conflict failure")
+	}
+	if len(cmd.spawnConfigs) != 1 {
+		t.Fatalf("non-conflict error must not retry, got %d attempts", len(cmd.spawnConfigs))
+	}
+}
+
+func TestSessionSpawnerAdapterEmptyBranchNeverRetries(t *testing.T) {
+	cmd := &fakeCommander{spawnErr: checkedOutElsewhereAPIErr()}
+	a := &sessionSpawnerAdapter{cmd: cmd, reader: &fakeReader{}, log: slog.Default()}
+
+	if _, err := a.Spawn(context.Background(), executors.SpawnRequest{
+		ProjectID: "mer", Branch: "", StageRunID: "sr-1",
+	}); err == nil {
+		t.Fatal("want error propagated for empty-branch spawn")
+	}
+	if len(cmd.spawnConfigs) != 1 {
+		t.Fatalf("empty-branch spawn must not retry, got %d attempts", len(cmd.spawnConfigs))
+	}
+}
+
+func TestFallbackBranchNamesUniquePerStage(t *testing.T) {
+	// Two stages of the same run carry distinct StageRunIDs, so their derived
+	// fallback branches never collide.
+	one := fallbackBranchName("sr-" + "aaaa-1111")
+	two := fallbackBranchName("sr-" + "bbbb-2222")
+	if one == two {
+		t.Fatalf("derived names collide: %q", one)
+	}
+	if one != "pipeline/sr-aaaa-1111" {
+		t.Fatalf("unexpected derived name %q", one)
+	}
+	// A retry attempt (#N suffix) sanitizes to a valid, distinct leaf.
+	if got := fallbackBranchName("sr-aaaa-1111#3"); got != "pipeline/sr-aaaa-1111-3" {
+		t.Fatalf("retry derived name = %q, want pipeline/sr-aaaa-1111-3", got)
 	}
 }
 
