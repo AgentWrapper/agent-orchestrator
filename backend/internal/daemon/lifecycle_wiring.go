@@ -111,6 +111,12 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		DataDir:   cfg.DataDir,
 		Logger:    log,
 	})
+	// Close the lifecycle↔teardown cycle: when an observed terminal fact (PR
+	// merged/closed, tracker issue done) terminates a session, lifecycle now
+	// reclaims its worktree through the manager instead of leaking it on disk
+	// (#2811). Set here, during single-threaded boot wiring, before any observer
+	// starts driving reactions.
+	lcm.SetTerminationReclaimer(mgr)
 	scmProvider, err := newGitHubSCMProvider(log)
 	if err != nil {
 		logSCMProviderDisabled(log, err)
