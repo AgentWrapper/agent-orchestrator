@@ -467,7 +467,12 @@ body::-webkit-scrollbar,
 	animation: agents-marquee 50s linear infinite;
 }
 
-.agents-marquee-track:hover {
+.agents-marquee-track-reverse {
+	animation: agents-marquee-reverse 55s linear infinite;
+}
+
+.agents-marquee-track:hover,
+.agents-marquee-track-reverse:hover {
 	animation-play-state: paused;
 }
 
@@ -553,12 +558,51 @@ body::-webkit-scrollbar,
 	}
 }
 
+@keyframes agents-marquee-reverse {
+	from {
+		transform: translate3d(-50%, 0, 0);
+	}
+	to {
+		transform: translate3d(0, 0, 0);
+	}
+}
+
 @media (prefers-reduced-motion: reduce) {
-	.agents-marquee-track {
+	.agents-marquee-track,
+	.agents-marquee-track-reverse {
 		animation: none;
 		flex-wrap: nowrap;
 		width: max-content;
 	}
+}
+
+/* Agent coverage chips */
+.agent-chip {
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	border-radius: 999px;
+	background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.015));
+	transition:
+		border-color 0.18s ease,
+		background-color 0.18s ease,
+		transform 0.18s ease;
+}
+
+.agent-chip:hover {
+	border-color: var(--accent-glow);
+	transform: translateY(-1px);
+}
+
+.agent-chip-icon {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+}
+
+.agent-chip-icon .agent-logo-image {
+	width: 100%;
+	height: 100%;
 }
 
 .surface {
