@@ -152,7 +152,9 @@ export function Sidebar({
 	const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
 	// One IPC subscription for both footer variants of the restart-to-update prompt.
 	const updateStatus = useUpdateStatus();
-	const terminalTransitions = useSessionTerminationTransitions(workspaces.flatMap((workspace) => workerSessions(workspace.sessions)));
+	const terminalTransitions = useSessionTerminationTransitions(
+		workspaces.flatMap((workspace) => workerSessions(workspace.sessions)),
+	);
 
 	useEffect(() => {
 		if (isCollapsed) {
