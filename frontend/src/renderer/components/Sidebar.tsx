@@ -95,6 +95,8 @@ type SidebarProps = {
 	/** Hide the sidebar's right edge stroke on the welcome board inset chrome. */
 	hideEdgeBorder?: boolean;
 	underTopbar?: boolean;
+	/** Offset below the Windows 36px WindowTitlebar when ShellTopbar is hidden. */
+	underWindowTitlebar?: boolean;
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];
 	onCreateProject: (input: CreateProjectInput) => Promise<void>;
@@ -137,6 +139,7 @@ export function Sidebar({
 	daemonStatus,
 	hideEdgeBorder = false,
 	underTopbar = true,
+	underWindowTitlebar = false,
 	workspaceError,
 	workspaces,
 	onCreateProject,
@@ -214,14 +217,20 @@ export function Sidebar({
 
 	return (
 		// The container is fixed-positioned by the shadcn primitive; offset it
-		// below the 56px shell topbar so the bar runs edge-to-edge above it
-		// (same override as shadcn's header-above-sidebar block).
+		// below the shell chrome so the bar runs edge-to-edge above it (same
+		// override as shadcn's header-above-sidebar block). Prefer the 56px
+		// toolbar offset; on Windows welcome only the 36px WindowTitlebar is
+		// present, so hang below that instead of covering File/Edit/….
 		<SidebarRoot
 			collapsible="icon"
 			data-expanded-chrome={expandedChromeVisible ? "visible" : "hidden"}
 			className={cn(
 				hideEdgeBorder ? "border-transparent" : "border-border",
-				underTopbar ? "top-14 h-[calc(100svh-3.5rem)]!" : "top-0 h-svh!",
+				underTopbar
+					? "top-14 h-[calc(100svh-3.5rem)]!"
+					: underWindowTitlebar
+						? "top-9 h-[calc(100svh-2.25rem)]!"
+						: "top-0 h-svh!",
 			)}
 		>
 			<SidebarHeader className="gap-0 p-0 pl-2.5 pr-1.75 pt-3.5 group-data-[collapsible=icon]:px-1.5">

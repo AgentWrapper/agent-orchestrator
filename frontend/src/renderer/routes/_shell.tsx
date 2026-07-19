@@ -338,13 +338,15 @@ function ShellLayout() {
 						} as CSSProperties
 					}
 				>
-					{/* macOS TitlebarNav is fixed in the top 56px band on every route (including
-            welcome, where ShellTopbar is hidden), so the sidebar must always hang
-            below that strip on Mac to keep the brand out of the cluster. */}
+					{/* Hang the fixed sidebar below shell chrome: macOS TitlebarNav
+            band (56px) on every Mac route; Windows WindowTitlebar (36px) on
+            welcome where ShellTopbar is hidden; otherwise the usual topbar
+            rules (Linux boards skip the offset). */}
 					<Sidebar
 						daemonStatus={daemonStatus}
 						hideEdgeBorder={isWelcomeBoard}
 						underTopbar={isMac || (!isWelcomeBoard && (isLinux ? isSessionRoute : true))}
+						underWindowTitlebar={isWelcomeBoard && !isMac && !isLinux}
 						onCreateProject={createProject}
 						onInitializeProject={initializeProjectRepository}
 						onRemoveProject={removeProject}
