@@ -13,9 +13,13 @@ import { Route as ShellRouteImport } from './routes/_shell'
 import { Route as ShellIndexRouteImport } from './routes/_shell.index'
 import { Route as ShellSettingsRouteImport } from './routes/_shell.settings'
 import { Route as ShellPrsRouteImport } from './routes/_shell.prs'
+import { Route as ShellPipelinesRouteImport } from './routes/_shell.pipelines'
+import { Route as ShellPipelinesIndexRouteImport } from './routes/_shell.pipelines.index'
 import { Route as ShellSessionsSessionIdRouteImport } from './routes/_shell.sessions.$sessionId'
 import { Route as ShellProjectsProjectIdRouteImport } from './routes/_shell.projects.$projectId'
+import { Route as ShellPipelinesRunsRouteImport } from './routes/_shell.pipelines.runs'
 import { Route as ShellProjectsProjectIdSettingsRouteImport } from './routes/_shell.projects.$projectId_.settings'
+import { Route as ShellPipelinesRunsRunIdRouteImport } from './routes/_shell.pipelines.runs_.$runId'
 import { Route as ShellProjectsProjectIdSessionsSessionIdRouteImport } from './routes/_shell.projects.$projectId_.sessions.$sessionId'
 
 const ShellRoute = ShellRouteImport.update({
@@ -37,6 +41,16 @@ const ShellPrsRoute = ShellPrsRouteImport.update({
   path: '/prs',
   getParentRoute: () => ShellRoute,
 } as any)
+const ShellPipelinesRoute = ShellPipelinesRouteImport.update({
+  id: '/pipelines',
+  path: '/pipelines',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellPipelinesIndexRoute = ShellPipelinesIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => ShellPipelinesRoute,
+} as any)
 const ShellSessionsSessionIdRoute = ShellSessionsSessionIdRouteImport.update({
   id: '/sessions/$sessionId',
   path: '/sessions/$sessionId',
@@ -47,12 +61,22 @@ const ShellProjectsProjectIdRoute = ShellProjectsProjectIdRouteImport.update({
   path: '/projects/$projectId',
   getParentRoute: () => ShellRoute,
 } as any)
+const ShellPipelinesRunsRoute = ShellPipelinesRunsRouteImport.update({
+  id: '/runs',
+  path: '/runs',
+  getParentRoute: () => ShellPipelinesRoute,
+} as any)
 const ShellProjectsProjectIdSettingsRoute =
   ShellProjectsProjectIdSettingsRouteImport.update({
     id: '/projects/$projectId_/settings',
     path: '/projects/$projectId/settings',
     getParentRoute: () => ShellRoute,
   } as any)
+const ShellPipelinesRunsRunIdRoute = ShellPipelinesRunsRunIdRouteImport.update({
+  id: '/runs_/$runId',
+  path: '/runs/$runId',
+  getParentRoute: () => ShellPipelinesRoute,
+} as any)
 const ShellProjectsProjectIdSessionsSessionIdRoute =
   ShellProjectsProjectIdSessionsSessionIdRouteImport.update({
     id: '/projects/$projectId_/sessions/$sessionId',
@@ -62,10 +86,14 @@ const ShellProjectsProjectIdSessionsSessionIdRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof ShellIndexRoute
+  '/pipelines': typeof ShellPipelinesRouteWithChildren
   '/prs': typeof ShellPrsRoute
   '/settings': typeof ShellSettingsRoute
+  '/pipelines/runs': typeof ShellPipelinesRunsRoute
   '/projects/$projectId': typeof ShellProjectsProjectIdRoute
   '/sessions/$sessionId': typeof ShellSessionsSessionIdRoute
+  '/pipelines/': typeof ShellPipelinesIndexRoute
+  '/pipelines/runs/$runId': typeof ShellPipelinesRunsRunIdRoute
   '/projects/$projectId/settings': typeof ShellProjectsProjectIdSettingsRoute
   '/projects/$projectId/sessions/$sessionId': typeof ShellProjectsProjectIdSessionsSessionIdRoute
 }
@@ -73,19 +101,26 @@ export interface FileRoutesByTo {
   '/prs': typeof ShellPrsRoute
   '/settings': typeof ShellSettingsRoute
   '/': typeof ShellIndexRoute
+  '/pipelines/runs': typeof ShellPipelinesRunsRoute
   '/projects/$projectId': typeof ShellProjectsProjectIdRoute
   '/sessions/$sessionId': typeof ShellSessionsSessionIdRoute
+  '/pipelines': typeof ShellPipelinesIndexRoute
+  '/pipelines/runs/$runId': typeof ShellPipelinesRunsRunIdRoute
   '/projects/$projectId/settings': typeof ShellProjectsProjectIdSettingsRoute
   '/projects/$projectId/sessions/$sessionId': typeof ShellProjectsProjectIdSessionsSessionIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_shell': typeof ShellRouteWithChildren
+  '/_shell/pipelines': typeof ShellPipelinesRouteWithChildren
   '/_shell/prs': typeof ShellPrsRoute
   '/_shell/settings': typeof ShellSettingsRoute
   '/_shell/': typeof ShellIndexRoute
+  '/_shell/pipelines/runs': typeof ShellPipelinesRunsRoute
   '/_shell/projects/$projectId': typeof ShellProjectsProjectIdRoute
   '/_shell/sessions/$sessionId': typeof ShellSessionsSessionIdRoute
+  '/_shell/pipelines/': typeof ShellPipelinesIndexRoute
+  '/_shell/pipelines/runs_/$runId': typeof ShellPipelinesRunsRunIdRoute
   '/_shell/projects/$projectId_/settings': typeof ShellProjectsProjectIdSettingsRoute
   '/_shell/projects/$projectId_/sessions/$sessionId': typeof ShellProjectsProjectIdSessionsSessionIdRoute
 }
@@ -93,10 +128,14 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/pipelines'
     | '/prs'
     | '/settings'
+    | '/pipelines/runs'
     | '/projects/$projectId'
     | '/sessions/$sessionId'
+    | '/pipelines/'
+    | '/pipelines/runs/$runId'
     | '/projects/$projectId/settings'
     | '/projects/$projectId/sessions/$sessionId'
   fileRoutesByTo: FileRoutesByTo
@@ -104,18 +143,25 @@ export interface FileRouteTypes {
     | '/prs'
     | '/settings'
     | '/'
+    | '/pipelines/runs'
     | '/projects/$projectId'
     | '/sessions/$sessionId'
+    | '/pipelines'
+    | '/pipelines/runs/$runId'
     | '/projects/$projectId/settings'
     | '/projects/$projectId/sessions/$sessionId'
   id:
     | '__root__'
     | '/_shell'
+    | '/_shell/pipelines'
     | '/_shell/prs'
     | '/_shell/settings'
     | '/_shell/'
+    | '/_shell/pipelines/runs'
     | '/_shell/projects/$projectId'
     | '/_shell/sessions/$sessionId'
+    | '/_shell/pipelines/'
+    | '/_shell/pipelines/runs_/$runId'
     | '/_shell/projects/$projectId_/settings'
     | '/_shell/projects/$projectId_/sessions/$sessionId'
   fileRoutesById: FileRoutesById
@@ -154,6 +200,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShellPrsRouteImport
       parentRoute: typeof ShellRoute
     }
+    '/_shell/pipelines': {
+      id: '/_shell/pipelines'
+      path: '/pipelines'
+      fullPath: '/pipelines'
+      preLoaderRoute: typeof ShellPipelinesRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/pipelines/': {
+      id: '/_shell/pipelines/'
+      path: '/'
+      fullPath: '/pipelines/'
+      preLoaderRoute: typeof ShellPipelinesIndexRouteImport
+      parentRoute: typeof ShellPipelinesRoute
+    }
     '/_shell/sessions/$sessionId': {
       id: '/_shell/sessions/$sessionId'
       path: '/sessions/$sessionId'
@@ -168,12 +228,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShellProjectsProjectIdRouteImport
       parentRoute: typeof ShellRoute
     }
+    '/_shell/pipelines/runs': {
+      id: '/_shell/pipelines/runs'
+      path: '/runs'
+      fullPath: '/pipelines/runs'
+      preLoaderRoute: typeof ShellPipelinesRunsRouteImport
+      parentRoute: typeof ShellPipelinesRoute
+    }
     '/_shell/projects/$projectId_/settings': {
       id: '/_shell/projects/$projectId_/settings'
       path: '/projects/$projectId/settings'
       fullPath: '/projects/$projectId/settings'
       preLoaderRoute: typeof ShellProjectsProjectIdSettingsRouteImport
       parentRoute: typeof ShellRoute
+    }
+    '/_shell/pipelines/runs_/$runId': {
+      id: '/_shell/pipelines/runs_/$runId'
+      path: '/runs/$runId'
+      fullPath: '/pipelines/runs/$runId'
+      preLoaderRoute: typeof ShellPipelinesRunsRunIdRouteImport
+      parentRoute: typeof ShellPipelinesRoute
     }
     '/_shell/projects/$projectId_/sessions/$sessionId': {
       id: '/_shell/projects/$projectId_/sessions/$sessionId'
@@ -185,7 +259,24 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface ShellPipelinesRouteChildren {
+  ShellPipelinesRunsRoute: typeof ShellPipelinesRunsRoute
+  ShellPipelinesIndexRoute: typeof ShellPipelinesIndexRoute
+  ShellPipelinesRunsRunIdRoute: typeof ShellPipelinesRunsRunIdRoute
+}
+
+const ShellPipelinesRouteChildren: ShellPipelinesRouteChildren = {
+  ShellPipelinesRunsRoute: ShellPipelinesRunsRoute,
+  ShellPipelinesIndexRoute: ShellPipelinesIndexRoute,
+  ShellPipelinesRunsRunIdRoute: ShellPipelinesRunsRunIdRoute,
+}
+
+const ShellPipelinesRouteWithChildren = ShellPipelinesRoute._addFileChildren(
+  ShellPipelinesRouteChildren,
+)
+
 interface ShellRouteChildren {
+  ShellPipelinesRoute: typeof ShellPipelinesRouteWithChildren
   ShellPrsRoute: typeof ShellPrsRoute
   ShellSettingsRoute: typeof ShellSettingsRoute
   ShellIndexRoute: typeof ShellIndexRoute
@@ -196,6 +287,7 @@ interface ShellRouteChildren {
 }
 
 const ShellRouteChildren: ShellRouteChildren = {
+  ShellPipelinesRoute: ShellPipelinesRouteWithChildren,
   ShellPrsRoute: ShellPrsRoute,
   ShellSettingsRoute: ShellSettingsRoute,
   ShellIndexRoute: ShellIndexRoute,

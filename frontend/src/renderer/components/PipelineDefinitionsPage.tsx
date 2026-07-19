@@ -14,6 +14,7 @@ import {
 	usePipelineDefinitionsQuery,
 } from "../hooks/usePipelineDefinitions";
 import { usePipelineDraft, type PipelineDraftValidation } from "../hooks/usePipelineDraft";
+import { useStageSelection } from "../hooks/useStageSelection";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { PipelineCanvas } from "./PipelineCanvas";
 import { YamlEditor } from "./YamlEditor";
@@ -177,9 +178,12 @@ function DefinitionEditor({
 	onClose: () => void;
 }) {
 	const { create, update } = usePipelineDefinitionMutations(projectId);
-	const { yamlSource, setYamlSource, draft, validation } = usePipelineDraft(
+	const { yamlSource, setYamlSource, draft, setDraft, validation } = usePipelineDraft(
 		def ? def.yamlSource : DEFAULT_PIPELINE_YAML,
 	);
+	// One selection instance for the editor area: the canvas writes on node
+	// click, the stage inspector (V3) binds to the same stage name.
+	const selection = useStageSelection();
 	const [view, setView] = useState<ViewMode>("yaml");
 	const [issues, setIssues] = useState<PipelineValidationIssue[] | null>(null);
 	const [genericError, setGenericError] = useState<string | null>(null);
@@ -227,11 +231,11 @@ function DefinitionEditor({
 
 			<div className="min-h-0 flex-1 overflow-hidden bg-surface/40">
 				{view === "canvas" ? (
-					<PipelineCanvas draft={draft} />
+					<PipelineCanvas draft={draft} onDraftChange={setDraft} selection={selection} />
 				) : view === "split" ? (
 					<div className="flex h-full min-h-0">
 						<div className="min-w-0 flex-1 border-r border-border">
-							<PipelineCanvas draft={draft} />
+							<PipelineCanvas draft={draft} onDraftChange={setDraft} selection={selection} />
 						</div>
 						<div className="min-h-0 flex-1 overflow-hidden">
 							<YamlEditor
