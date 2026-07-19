@@ -24,6 +24,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/preview"
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
+	"github.com/aoagents/agent-orchestrator/backend/internal/runtimeenv"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 	importsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/importer"
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
@@ -36,6 +37,14 @@ import (
 // Run starts the daemon and blocks until it exits. SIGINT/SIGTERM drive
 // graceful shutdown through the HTTP server and background workers.
 func Run() error {
+	// Repair the daemon's PATH with the standard macOS/Linux tool floor before
+	// anything does an exec.LookPath. A daemon started outside the Electron
+	// launcher (headless `ao start`, systemd, cron, a container) inherits a
+	// minimal PATH and otherwise can't see tmux / agent binaries installed under
+	// Homebrew or /usr/local, which makes the spawn gate fail spuriously with
+	// "tmux required on macOS/Linux but not in PATH" (#2812). No-op on Windows.
+	runtimeenv.EnsureFallbackPath()
+
 	cfg, err := config.Load()
 	if err != nil {
 		return err
