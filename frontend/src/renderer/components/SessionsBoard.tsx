@@ -1,24 +1,30 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { AlertTriangle, Plus, RotateCw } from "lucide-react";
+import { AlertTriangle, ChevronRight, Plus, RotateCw } from "lucide-react";
 import { DashboardSubhead } from "./DashboardSubhead";
 import {
-	type AttentionZone,
 	type WorkspaceSession,
-	attentionZone,
 	canonicalTrackerIssueId,
 	newestActiveOrchestrator,
 	orchestratorHealth,
 	workerSessions,
 } from "../types/workspace";
+import {
+	attentionZone,
+	boardAttentionZoneOrder,
+	getAttentionZoneViewForZone,
+	getSessionStatusView,
+	isSessionInIdleStack,
+	type AttentionZone,
+	type AttentionZoneView,
+} from "../lib/session-presentation";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { useRestoreSession } from "../hooks/useRestoreSession";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { NotificationCenter } from "./NotificationCenter";
 import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyState";
 import { OrchestratorIcon } from "./icons";
-import { NewTaskDialog } from "./NewTaskDialog";
 import { TopbarButton, TopbarKillError } from "./TopbarButton";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
@@ -37,51 +43,9 @@ type SessionsBoardProps = {
 	projectId?: string;
 };
 
-// The four kanban columns, left→right by flow (work → review → merge), ported
-// verbatim from agent-orchestrator (SIMPLE_KANBAN_LEVELS + AttentionZone +
-// mc-board.css). "done" is archived, not a column.
-type Column = {
-	level: AttentionZone;
-	label: string;
-	glow: string;
-	dot: string;
-	dotGlow: boolean;
-	titleClass: string;
-};
-const COLUMNS: Column[] = [
-	{
-		level: "working",
-		label: "Working",
-		glow: "color-mix(in srgb, var(--color-working) 7%, transparent)",
-		dot: "var(--color-working)",
-		dotGlow: true,
-		titleClass: "text-working",
-	},
-	{
-		level: "action",
-		label: "Needs you",
-		glow: "color-mix(in srgb, var(--color-warning) 6%, transparent)",
-		dot: "var(--color-warning)",
-		dotGlow: true,
-		titleClass: "text-warning",
-	},
-	{
-		level: "pending",
-		label: "In review",
-		glow: "var(--color-overlay-faint)",
-		dot: "var(--color-text-muted)",
-		dotGlow: false,
-		titleClass: "text-muted-foreground",
-	},
-	{
-		level: "merge",
-		label: "Ready to merge",
-		glow: "color-mix(in srgb, var(--color-success) 7%, transparent)",
-		dot: "var(--color-success)",
-		dotGlow: true,
-		titleClass: "text-success",
-	},
-];
+// The board renders active flow columns; "done" remains archived in the footer.
+type Column = AttentionZoneView;
+const COLUMNS: Column[] = boardAttentionZoneOrder.map((zone) => getAttentionZoneViewForZone(zone));
 
 export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const navigate = useNavigate();
@@ -93,7 +57,6 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const workspace = projectId ? workspaces[0] : undefined;
 	const sessions = workspaces.flatMap((w) => workerSessions(w.sessions));
 	const orchestrator = projectId ? newestActiveOrchestrator(workspaces[0]?.sessions ?? []) : undefined;
-	const [isNewTaskOpen, setIsNewTaskOpen] = useState(false);
 	const [isSpawning, setIsSpawning] = useState(false);
 	const [spawnError, setSpawnError] = useState<string | null>(null);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
@@ -103,6 +66,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const setProjectRestarting = useUiStore((state) => state.setProjectRestarting);
 	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
 	const setOrchestratorStartupError = useUiStore((state) => state.setOrchestratorStartupError);
+	const requestNewTask = useUiStore((state) => state.requestNewTask);
 	const isProjectRestarting = projectId ? restartingProjectIds.has(projectId) : false;
 	const health = workspace ? orchestratorHealth(workspace, isProjectRestarting) : { state: "ok" as const };
 	const visibleSpawnError = spawnError ?? orchestratorStartupError;
@@ -230,15 +194,6 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 		});
 	};
 
-	const handleTaskCreated = async (sessionId: string) => {
-		if (!projectId) return;
-		await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-		void navigate({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId, sessionId },
-		});
-	};
-
 	const actions = projectId ? (
 		<>
 			{isLinux ? <NotificationCenter /> : null}
@@ -250,7 +205,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			<TopbarButton
 				aria-label="New task"
 				disabled={isProjectRestarting}
-				onClick={() => setIsNewTaskOpen(true)}
+				onClick={() => projectId && requestNewTask(projectId)}
 				variant="accent"
 			>
 				<Plus className="size-icon-md" aria-hidden="true" />
@@ -311,14 +266,19 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						hasOrchestrator={orchestrator !== undefined}
 						isSpawning={isSpawning}
 						isProjectRestarting={isProjectRestarting}
-						onNewTask={() => setIsNewTaskOpen(true)}
+						onNewTask={() => projectId && requestNewTask(projectId)}
 						onOpenOrchestrator={() => void openOrchestrator()}
 						spawnError={visibleSpawnError}
 					/>
 				) : (
 					<div className="grid h-full grid-cols-4 gap-2">
 						{COLUMNS.map((col) => (
-							<ZoneColumn key={col.level} col={col} sessions={byZone.get(col.level) ?? []} onOpen={openSession} />
+							<ZoneColumn
+								key={`${projectId ?? "all"}:${col.zone}`}
+								col={col}
+								sessions={byZone.get(col.zone) ?? []}
+								onOpen={openSession}
+							/>
 						))}
 					</div>
 				)}
@@ -369,12 +329,6 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 					)}
 				</div>
 			)}
-			<NewTaskDialog
-				open={isNewTaskOpen}
-				projectId={projectId}
-				onCreated={(sessionId) => void handleTaskCreated(sessionId)}
-				onOpenChange={setIsNewTaskOpen}
-			/>
 			{restoreUnavailableSession && (
 				<RestoreUnavailableDialog
 					open={true}
@@ -400,6 +354,10 @@ function ZoneColumn({
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
 }) {
+	const isWorkingColumn = col.zone === "working";
+	const [idleExpanded, setIdleExpanded] = useState(false);
+	const activeSessions = isWorkingColumn ? sessions.filter((session) => !isSessionInIdleStack(session)) : sessions;
+	const idleSessions = isWorkingColumn ? sessions.filter(isSessionInIdleStack) : [];
 	return (
 		<section
 			className="flex min-w-0 flex-col overflow-hidden rounded-panel"
@@ -415,17 +373,77 @@ function ZoneColumn({
 						boxShadow: col.dotGlow ? `0 0 7px color-mix(in srgb, ${col.dot} 60%, transparent)` : undefined,
 					}}
 				/>
-				<span className={cn("text-caption font-semibold uppercase tracking-wide-md", col.titleClass)}>{col.label}</span>
+				<span className={cn("text-caption font-semibold uppercase tracking-wide-md", col.titleClassName)}>
+					{col.label}
+				</span>
 				<span className="ml-auto font-mono text-caption leading-none text-passive">{sessions.length}</span>
 			</div>
 			<div className="min-h-0 flex-1 overflow-y-auto px-2.75 pb-3">
-				<div className="flex flex-col gap-2.5">
-					{sessions.map((session) => (
-						<SessionCard key={session.id} session={session} onOpen={() => onOpen(session)} interactive={true} />
+				<div className="flex min-h-full flex-col gap-2.5">
+					{activeSessions.map((session) => (
+						<SessionCard key={session.id} session={session} onOpen={() => onOpen(session)} />
 					))}
+					{idleSessions.length > 0 ? (
+						<IdleSessionsStack
+							expanded={idleExpanded}
+							sessions={idleSessions}
+							onOpen={onOpen}
+							onToggle={() => setIdleExpanded((value) => !value)}
+						/>
+					) : null}
 				</div>
 			</div>
 		</section>
+	);
+}
+
+function IdleSessionsStack({
+	expanded,
+	sessions,
+	onOpen,
+	onToggle,
+}: {
+	expanded: boolean;
+	sessions: WorkspaceSession[];
+	onOpen: (s: WorkspaceSession) => void;
+	onToggle: () => void;
+}) {
+	return (
+		<div
+			className={cn(
+				"mt-auto overflow-hidden rounded-panel border border-border bg-surface/70 transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none",
+				expanded ? "opacity-100" : "opacity-95 hover:opacity-100",
+			)}
+		>
+			<button
+				aria-expanded={expanded}
+				aria-label={`Idle sessions (${sessions.length})`}
+				className={cn(
+					"flex min-h-row-md w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:text-foreground",
+					expanded ? "text-foreground" : "text-passive",
+				)}
+				onClick={onToggle}
+				type="button"
+			>
+				<ChevronRight
+					className={cn(
+						"size-icon-2xs shrink-0 transition-transform duration-normal motion-reduce:transition-none",
+						expanded && "rotate-90",
+					)}
+					aria-hidden="true"
+				/>
+				<span className="size-dot-sm shrink-0 rounded-full bg-passive" aria-hidden="true" />
+				<span className="font-mono text-2xs font-semibold uppercase tracking-wide-md">Idle</span>
+				<span className="ml-auto shrink-0 font-mono text-caption leading-none text-passive">{sessions.length}</span>
+			</button>
+			{expanded ? (
+				<div className="flex max-h-[min(45vh,28rem)] flex-col gap-2.5 overflow-y-auto border-t border-border p-2.5 animate-in fade-in-0 slide-in-from-top-1 duration-200 motion-reduce:animate-none">
+					{sessions.map((session) => (
+						<SessionCard key={session.id} session={session} onOpen={() => onOpen(session)} />
+					))}
+				</div>
+			) : null}
+		</div>
 	);
 }
 
@@ -446,7 +464,7 @@ function SessionCard({
 	isRestoring?: boolean;
 	isRestoreDisabled?: boolean;
 }) {
-	const badge = sessionBadge(session);
+	const badge = getSessionStatusView(session.status);
 	const issueId = canonicalTrackerIssueId(session.issueId);
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
@@ -610,39 +628,5 @@ function agentLabel(provider: WorkspaceSession["provider"]): string {
 			return "OpenCode";
 		default:
 			return provider;
-	}
-}
-
-function sessionBadge(session: WorkspaceSession): { label: string; className: string } {
-	if (session.status === "working" && session.activity?.state === "idle") {
-		return { label: "Idle", className: "text-passive" };
-	}
-	switch (session.status) {
-		case "needs_input":
-			return { label: "Input needed", className: "text-warning" };
-		case "no_signal":
-			return { label: "No signal", className: "text-passive" };
-		case "ci_failed":
-			return { label: "CI failed", className: "text-error" };
-		case "changes_requested":
-			return { label: "Changes requested", className: "text-warning" };
-		case "review_pending":
-			return { label: "Review pending", className: "text-muted-foreground" };
-		case "draft":
-			return { label: "Draft PR", className: "text-muted-foreground" };
-		case "pr_open":
-			return { label: "PR open", className: "text-muted-foreground" };
-		case "approved":
-			return { label: "Approved", className: "text-success" };
-		case "mergeable":
-			return { label: "Ready", className: "text-success" };
-		case "merged":
-			return { label: "Merged", className: "text-passive" };
-		case "terminated":
-			return { label: "Terminated", className: "text-passive" };
-		case "idle":
-			return { label: "Idle", className: "text-passive" };
-		default:
-			return { label: "Working", className: "text-working" };
 	}
 }

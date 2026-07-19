@@ -2211,6 +2211,96 @@ paths:
       summary: Send a message to a running session's agent
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/workspace/file:
+    get:
+      operationId: getSessionWorkspaceFile
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Session-worktree-relative file path.
+        in: query
+        name: path
+        schema:
+          description: Session-worktree-relative file path.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceFileResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Read one session workspace file and its git diff
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/workspace/files:
+    get:
+      operationId: listSessionWorkspaceFiles
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListWorkspaceFilesResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List files in a session workspace with git change status
+      tags:
+      - sessions
   /api/v1/sessions/cleanup:
     post:
       operationId: cleanupSessions
@@ -2696,6 +2786,21 @@ components:
           type: array
       required:
       - sessions
+      type: object
+    ListWorkspaceFilesResponse:
+      properties:
+        files:
+          items:
+            $ref: '#/components/schemas/WorkspaceFileSummary'
+          type: array
+        sessionId:
+          type: string
+        truncated:
+          type: boolean
+      required:
+      - sessionId
+      - files
+      - truncated
       type: object
     MarkAllNotificationsReadResponse:
       properties:
@@ -3893,6 +3998,82 @@ components:
       required:
       - valid
       - issues
+      type: object
+    WorkspaceFileResponse:
+      properties:
+        additions:
+          type: integer
+        binary:
+          type: boolean
+        content:
+          type: string
+        contentTruncated:
+          type: boolean
+        deleted:
+          type: boolean
+        deletions:
+          type: integer
+        diff:
+          type: string
+        diffTruncated:
+          type: boolean
+        path:
+          type: string
+        sessionId:
+          type: string
+        size:
+          format: int64
+          type: integer
+        status:
+          enum:
+          - unmodified
+          - modified
+          - added
+          - deleted
+          - renamed
+          type: string
+      required:
+      - sessionId
+      - path
+      - status
+      - additions
+      - deletions
+      - size
+      - binary
+      - deleted
+      - content
+      - contentTruncated
+      - diff
+      - diffTruncated
+      type: object
+    WorkspaceFileSummary:
+      properties:
+        additions:
+          type: integer
+        binary:
+          type: boolean
+        deletions:
+          type: integer
+        path:
+          type: string
+        size:
+          format: int64
+          type: integer
+        status:
+          enum:
+          - unmodified
+          - modified
+          - added
+          - deleted
+          - renamed
+          type: string
+      required:
+      - path
+      - status
+      - additions
+      - deletions
+      - size
+      - binary
       type: object
     WorkspaceRepo:
       properties:

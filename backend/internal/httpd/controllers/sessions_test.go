@@ -28,9 +28,12 @@ type fakeSessionService struct {
 	cleanupProjects []domain.ProjectID
 	cleanupResult   []domain.SessionID
 	cleanupSkipped  []sessionsvc.CleanupSkipped
+	workspaceFiles  sessionsvc.WorkspaceFiles
+	workspaceFile   sessionsvc.WorkspaceFileDetail
 	spawnErr        error
 	claimErr        error
 	listPRErr       error
+	workspaceErr    error
 }
 
 func newFakeSessionService() *fakeSessionService {
@@ -214,6 +217,32 @@ func (f *fakeSessionService) ClaimPR(_ context.Context, id domain.SessionID, ref
 	}
 	prs, _ := f.ListPRs(context.Background(), id)
 	return sessionsvc.ClaimPRResult{PRs: prs, TakenOverFrom: []domain.SessionID{}, BranchChanged: true}, nil
+}
+
+func (f *fakeSessionService) ListWorkspaceFiles(_ context.Context, id domain.SessionID) (sessionsvc.WorkspaceFiles, error) {
+	if f.workspaceErr != nil {
+		return sessionsvc.WorkspaceFiles{}, f.workspaceErr
+	}
+	if _, ok := f.sessions[id]; !ok {
+		return sessionsvc.WorkspaceFiles{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	if f.workspaceFiles.SessionID != "" {
+		return f.workspaceFiles, nil
+	}
+	return sessionsvc.WorkspaceFiles{SessionID: id}, nil
+}
+
+func (f *fakeSessionService) GetWorkspaceFile(_ context.Context, id domain.SessionID, path string) (sessionsvc.WorkspaceFileDetail, error) {
+	if f.workspaceErr != nil {
+		return sessionsvc.WorkspaceFileDetail{}, f.workspaceErr
+	}
+	if _, ok := f.sessions[id]; !ok {
+		return sessionsvc.WorkspaceFileDetail{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	if f.workspaceFile.SessionID != "" {
+		return f.workspaceFile, nil
+	}
+	return sessionsvc.WorkspaceFileDetail{SessionID: id, Path: path}, nil
 }
 
 func newSessionTestServer(t *testing.T, svc *fakeSessionService) *httptest.Server {
@@ -653,6 +682,80 @@ func TestSessionsAPI_ClearPreviewNotFound(t *testing.T) {
 
 	body, status, _ := doRequest(t, srv, "DELETE", "/api/v1/sessions/missing-1/preview", "")
 	assertErrorCode(t, body, status, http.StatusNotFound, "SESSION_NOT_FOUND")
+}
+
+func TestSessionsAPI_ListWorkspaceFiles(t *testing.T) {
+	svc := newFakeSessionService()
+	svc.workspaceFiles = sessionsvc.WorkspaceFiles{
+		SessionID: "ao-1",
+		Files: []sessionsvc.WorkspaceFileSummary{
+			{Path: "README.md", Status: sessionsvc.WorkspaceFileModified, Additions: 2, Deletions: 1, Size: 48},
+			{Path: "notes.txt", Status: sessionsvc.WorkspaceFileAdded, Additions: 1, Size: 11},
+		},
+	}
+	srv := newSessionTestServer(t, svc)
+
+	body, status, headers := doRequest(t, srv, "GET", "/api/v1/sessions/ao-1/workspace/files", "")
+	assertJSON(t, headers)
+	if status != http.StatusOK {
+		t.Fatalf("GET workspace files = %d, want 200; body=%s", status, body)
+	}
+	var got struct {
+		SessionID string `json:"sessionId"`
+		Files     []struct {
+			Path      string `json:"path"`
+			Status    string `json:"status"`
+			Additions int    `json:"additions"`
+			Deletions int    `json:"deletions"`
+			Size      int64  `json:"size"`
+		} `json:"files"`
+	}
+	mustJSON(t, body, &got)
+	if got.SessionID != "ao-1" || len(got.Files) != 2 {
+		t.Fatalf("response = %#v", got)
+	}
+	if got.Files[0].Path != "README.md" || got.Files[0].Status != "modified" || got.Files[0].Additions != 2 || got.Files[0].Deletions != 1 {
+		t.Fatalf("first file = %#v", got.Files[0])
+	}
+}
+
+func TestSessionsAPI_GetWorkspaceFile(t *testing.T) {
+	svc := newFakeSessionService()
+	svc.workspaceFile = sessionsvc.WorkspaceFileDetail{
+		SessionID: "ao-1",
+		Path:      "README.md",
+		Status:    sessionsvc.WorkspaceFileModified,
+		Additions: 1,
+		Deletions: 1,
+		Size:      14,
+		Content:   "hello\nupdated\n",
+		Diff:      "@@ -1 +1 @@\n-hello\n+updated\n",
+	}
+	srv := newSessionTestServer(t, svc)
+
+	body, status, headers := doRequest(t, srv, "GET", "/api/v1/sessions/ao-1/workspace/file?path="+url.QueryEscape("README.md"), "")
+	assertJSON(t, headers)
+	if status != http.StatusOK {
+		t.Fatalf("GET workspace file = %d, want 200; body=%s", status, body)
+	}
+	var got struct {
+		SessionID string `json:"sessionId"`
+		Path      string `json:"path"`
+		Content   string `json:"content"`
+		Diff      string `json:"diff"`
+	}
+	mustJSON(t, body, &got)
+	if got.SessionID != "ao-1" || got.Path != "README.md" || got.Content == "" || got.Diff == "" {
+		t.Fatalf("response = %#v", got)
+	}
+}
+
+func TestSessionsAPI_GetWorkspaceFileRequiresPath(t *testing.T) {
+	srv := newSessionTestServer(t, newFakeSessionService())
+
+	body, status, headers := doRequest(t, srv, "GET", "/api/v1/sessions/ao-1/workspace/file", "")
+	assertJSON(t, headers)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "WORKSPACE_PATH_REQUIRED")
 }
 
 func TestSessionsAPI_SetPreviewEmptyURLNoEntry(t *testing.T) {

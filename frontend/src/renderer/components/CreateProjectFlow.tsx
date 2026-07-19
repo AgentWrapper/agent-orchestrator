@@ -1,6 +1,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { CheckCircle2, ChevronRight, Folder, FolderPlus, X, XCircle } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { ImportFolderScan } from "../../preload";
 import { aoBridge } from "../lib/bridge";
 import { cn } from "../lib/utils";
@@ -21,12 +21,17 @@ export function CreateProjectFlow({
 	mode = "single_repo",
 	onCreateProject,
 	onInitializeProject,
+	openSignal,
 }: {
 	children: (state: { choosePath: () => void; disabled: boolean; error: string | null; label: string }) => ReactNode;
 	idleLabel?: string;
 	mode?: CreateProjectFlowMode;
 	onCreateProject: (input: CreateProjectInput) => Promise<void>;
 	onInitializeProject: (path: string) => Promise<void>;
+	// Monotonic counter: each new value opens the flow programmatically (the ⌘N
+	// "no project in scope" fallback). Lets the shortcut reuse the sidebar's own
+	// create-project flow instead of a separate delegating component.
+	openSignal?: number;
 }) {
 	const [error, setError] = useState<string | null>(null);
 	const [modePickerOpen, setModePickerOpen] = useState(false);
@@ -82,6 +87,14 @@ export function CreateProjectFlow({
 		}
 		void chooseDirectory(mode);
 	};
+
+	// Seed with the current value so we never open on mount; open when it changes.
+	const lastOpenSignal = useRef(openSignal);
+	useEffect(() => {
+		if (openSignal === undefined || openSignal === lastOpenSignal.current) return;
+		lastOpenSignal.current = openSignal;
+		startFlow();
+	}, [openSignal]);
 
 	const createProject = async (selection: CreateProjectAgentSelection) => {
 		if (!selectedPath) return;

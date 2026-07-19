@@ -356,6 +356,36 @@ select {
 	height: 0;
 }
 
+.session-files-diff-scrollbar {
+	scrollbar-width: thin;
+	scrollbar-color: var(--color-scrollbar) transparent;
+}
+
+.session-files-diff-scrollbar::-webkit-scrollbar {
+	width: 8px;
+	height: 8px;
+}
+
+.session-files-diff-scrollbar::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+.session-files-diff-scrollbar::-webkit-scrollbar-thumb {
+	border: 2px solid transparent;
+	border-radius: var(--radius-full);
+	background: var(--color-scrollbar);
+	background-clip: content-box;
+}
+
+.session-files-diff-scrollbar::-webkit-scrollbar-thumb:hover {
+	background: var(--color-scrollbar-hover);
+	background-clip: content-box;
+}
+
+.session-files-diff-scrollbar::-webkit-scrollbar-corner {
+	background: transparent;
+}
+
 .terminal-pane-frame:fullscreen {
 	background: var(--color-bg-primary);
 }

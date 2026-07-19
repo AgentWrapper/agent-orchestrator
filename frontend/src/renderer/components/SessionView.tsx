@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import type { PanelImperativeHandle, PanelSize } from "react-resizable-panels";
 import { BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
 import { CenterPane } from "./CenterPane";
+import { SessionFilesView } from "./SessionFilesView";
 import { SessionInspector, type InspectorView } from "./SessionInspector";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resizable";
 import { useUiStore } from "../stores/ui-store";
@@ -48,6 +49,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const inspectorSeparatorRef = useRef<HTMLDivElement | null>(null);
 	const [terminalTarget, setTerminalTarget] = useState<TerminalTarget>({ kind: "worker" });
 	const [browserPoppedOut, setBrowserPoppedOut] = useState(false);
+	const [filesPoppedOut, setFilesPoppedOut] = useState(false);
 	const [inspectorView, setInspectorView] = useState<InspectorView>("summary");
 
 	const session = workspaces.flatMap((workspace) => workspace.sessions).find((s) => s.id === sessionId);
@@ -73,9 +75,32 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	useEffect(() => {
 		setTerminalTarget({ kind: "worker" });
 		setBrowserPoppedOut(false);
+		setFilesPoppedOut(false);
 		setInspectorView("summary");
 		revealedPreviewRef.current = null;
 	}, [sessionId]);
+
+	const handleOpenFiles = useCallback(() => {
+		setBrowserPoppedOut(false);
+		setFilesPoppedOut(false);
+		setInspectorView("files");
+		if (!useUiStore.getState().isInspectorOpen) toggleInspector();
+	}, [toggleInspector]);
+
+	const handleToggleFilesPopOut = useCallback(
+		(next: boolean) => {
+			if (next) setBrowserPoppedOut(false);
+			setFilesPoppedOut(next);
+			setInspectorView("files");
+			if (!useUiStore.getState().isInspectorOpen) toggleInspector();
+		},
+		[toggleInspector],
+	);
+
+	const handleToggleBrowserPopOut = useCallback((next: boolean) => {
+		if (next) setFilesPoppedOut(false);
+		setBrowserPoppedOut(next);
+	}, []);
 
 	// `ao preview` sets session.previewUrl (streamed over CDC); surface the result
 	// in the inspector rail's Browser tab (opening the rail if collapsed), not the
@@ -182,7 +207,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	}
 
 	return (
-		<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
+		<div className="relative flex h-full min-h-0 flex-col bg-background text-foreground">
 			<ResizablePanelGroup className="session-split min-h-0 flex-1" id="session-workspace" orientation="horizontal">
 				{/* react-resizable-panels v4: bare numbers are PIXELS; percentages must
             be strings. Numeric sizes here once clamped the inspector to 45px. */}
@@ -219,11 +244,21 @@ export function SessionView({ sessionId }: SessionViewProps) {
 								<SessionInspector
 									browserAnnotationQueue={browserAnnotationQueue}
 									browserPoppedOut={browserPoppedOut}
+									filesView={
+										session ? (
+											<SessionFilesView
+												onClose={() => setInspectorView("summary")}
+												onToggleMaximized={handleToggleFilesPopOut}
+												sessionId={session.id}
+											/>
+										) : null
+									}
 									isInspectorVisible={isInspectorOpen}
+									onOpenFiles={handleOpenFiles}
 									onOpenReviewerTerminal={({ handleId, harness }) =>
 										setTerminalTarget({ kind: "reviewer", handleId, harness })
 									}
-									onToggleBrowserPopOut={setBrowserPoppedOut}
+									onToggleBrowserPopOut={handleToggleBrowserPopOut}
 									onViewChange={setInspectorView}
 									view={inspectorView}
 									browserView={browserView}
@@ -234,6 +269,19 @@ export function SessionView({ sessionId }: SessionViewProps) {
 					</>
 				) : null}
 			</ResizablePanelGroup>
+			{filesPoppedOut && session ? (
+				<div className="absolute inset-0 z-30 bg-background">
+					<SessionFilesView
+						isMaximized
+						onClose={() => {
+							setFilesPoppedOut(false);
+							setInspectorView("summary");
+						}}
+						onToggleMaximized={handleToggleFilesPopOut}
+						sessionId={session.id}
+					/>
+				</div>
+			) : null}
 			{/* Maximized browser: a fixed overlay across the app workspace,
           portaled to <body> so it escapes the shell layout (covering the
           sidebar + topbar, not just the session area) and sits outside any
@@ -246,7 +294,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 								active
 								annotationQueue={browserAnnotationQueue}
 								browserView={browserView}
-								onTogglePopOut={setBrowserPoppedOut}
+								onTogglePopOut={handleToggleBrowserPopOut}
 								poppedOut
 								session={session}
 							/>

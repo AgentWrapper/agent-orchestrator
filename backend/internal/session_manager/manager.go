@@ -602,7 +602,8 @@ func (m *Manager) RollbackSpawn(ctx context.Context, id domain.SessionID) (delet
 // Kill tears down the runtime and workspace, then records terminal intent with
 // the LCM. A workspace teardown refused by the worktree-remove safety
 // (uncommitted work) is never forced: Kill succeeds with freed=false,
-// signalling the workspace was preserved and the session is left retryable.
+// signalling the workspace was preserved for later inspection/cleanup while
+// the session itself is still marked terminated.
 //
 // A session whose runtime handle or workspace path is missing (e.g. spawn
 // failed partway, handle lost after a crash) is still terminated after the
@@ -638,6 +639,10 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 		cleaned, err := m.destroyWorkspaceProjectRows(ctx, workspaceProjectRows)
 		if err != nil {
 			if errors.Is(err, ports.ErrWorkspaceDirty) {
+				if err := m.lcm.MarkTerminated(ctx, id); err != nil {
+					return false, fmt.Errorf("kill %s: %w", id, err)
+				}
+				m.cleanupSystemPromptDir(id)
 				return false, nil
 			}
 			return false, fmt.Errorf("kill %s: workspace: %w", id, err)
@@ -649,6 +654,13 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	} else if ws.Path != "" {
 		if err := m.workspace.Destroy(ctx, ws); err != nil {
 			if errors.Is(err, ports.ErrWorkspaceDirty) {
+				if err := m.store.DeleteSessionWorktrees(ctx, id); err != nil {
+					m.logger.Warn("kill: delete restore marker failed", "sessionID", id, "error", err)
+				}
+				if err := m.lcm.MarkTerminated(ctx, id); err != nil {
+					return false, fmt.Errorf("kill %s: %w", id, err)
+				}
+				m.cleanupSystemPromptDir(id)
 				return false, nil
 			}
 			return false, fmt.Errorf("kill %s: workspace: %w", id, err)
@@ -836,7 +848,7 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 	if err := m.prepareWorkspace(ctx, agent, rec.ID, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", rec.ID, err)
 	}
-	argv, delivery, err := restoreArgv(ctx, agent, rec.ID, ws.Path, rec.Metadata, systemPrompt, systemPromptFile, agentConfig, rec.Kind, m.dataDir)
+	argv, delivery, err := restoreArgv(ctx, agent, rec.ID, ws.Path, rec.Metadata, systemPrompt, systemPromptFile, agentConfig, rec.Kind, rec.Harness, m.dataDir)
 	if err != nil {
 		m.cleanupSystemPromptDir(rec.ID)
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", rec.ID, err)
@@ -2396,13 +2408,12 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 }
 
 // restoreArgv builds the argv to relaunch a torn-down session: the agent's
-// native resume command when it can continue the session, else a fresh launch.
-// The agent signals via ok=false (e.g. no native session id captured yet).
-// Returns ErrNotResumable only for a promptless, unresumable non-orchestrator:
-// a worker with no prompt and no native session id has nothing to restore from.
-// Orchestrators are promptless by design and always relaunch fresh with the
-// system prompt only.
-func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath string, meta domain.SessionMetadata, systemPrompt, systemPromptFile string, agentConfig ports.AgentConfig, kind domain.SessionKind, dataDir string) ([]string, ports.PromptDeliveryStrategy, error) {
+// native resume command when it can continue the session, else a fresh launch
+// for harnesses where replaying the saved prompt is acceptable. The agent
+// signals via ok=false (e.g. no native session id captured yet). Returns
+// ErrNotResumable when transcript-preserving restore is required but unavailable,
+// or when a promptless, unresumable worker has nothing to restore from.
+func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath string, meta domain.SessionMetadata, systemPrompt, systemPromptFile string, agentConfig ports.AgentConfig, kind domain.SessionKind, _ domain.AgentHarness, dataDir string) ([]string, ports.PromptDeliveryStrategy, error) {
 	ref := ports.SessionRef{
 		ID:            string(id),
 		WorkspacePath: workspacePath,
@@ -2415,9 +2426,9 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 	if ok {
 		return cmd, ports.PromptDeliveryInCommand, nil
 	}
-	// Adapter cannot resume. A saved prompt is replayed fresh. An orchestrator is
-	// promptless by design and relaunches with the system prompt only. A promptless
-	// WORKER has no task and no session id to restore from: do not blank-relaunch it.
+	// A saved prompt is replayed fresh. An orchestrator is promptless by design
+	// and relaunches with the system prompt only. A promptless WORKER has no task
+	// and no session id to restore from: do not blank-relaunch it.
 	if meta.Prompt == "" && kind != domain.KindOrchestrator {
 		return nil, "", ErrNotResumable
 	}

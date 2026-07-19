@@ -19,6 +19,14 @@ type UiState = {
 	restartingProjectIds: ReadonlySet<string>;
 	orchestratorReplacementErrors: Record<string, string>;
 	orchestratorStartupErrors: Record<string, string>;
+	// Transient "open the New Task dialog for this project" signal. The nonce
+	// bumps on every request so a repeat press (even for the same project) still
+	// re-fires; the always-mounted GlobalNewTaskDialog consumes it. Selection
+	// still lives in the URL — this is a one-shot action, not persisted state.
+	newTaskRequest: { projectId: string; nonce: number } | null;
+	// Bumps to ask the sidebar's create-project flow to open (the ⌘N fallback
+	// when no project is in scope).
+	createProjectNonce: number;
 	setWorkbenchTab: (tab: WorkbenchTab) => void;
 	setTheme: (theme: Theme) => void;
 	toggleTheme: () => void;
@@ -27,6 +35,8 @@ type UiState = {
 	setProjectRestarting: (projectId: string, restarting: boolean) => void;
 	setOrchestratorReplacementError: (projectId: string, message: string | null) => void;
 	setOrchestratorStartupError: (projectId: string, message: string | null) => void;
+	requestNewTask: (projectId: string) => void;
+	requestCreateProject: () => void;
 };
 
 const sidebarStorageKey = "ao.sidebar.open";
@@ -53,6 +63,8 @@ export const useUiStore = create<UiState>((set) => ({
 	restartingProjectIds: new Set<string>(),
 	orchestratorReplacementErrors: {},
 	orchestratorStartupErrors: {},
+	newTaskRequest: null,
+	createProjectNonce: 0,
 	setWorkbenchTab: (workbenchTab) => set({ workbenchTab }),
 	setTheme: (theme) => {
 		getLocalStorage()?.setItem(themeStorageKey, theme);
@@ -106,4 +118,7 @@ export const useUiStore = create<UiState>((set) => ({
 			}
 			return { orchestratorStartupErrors };
 		}),
+	requestNewTask: (projectId) =>
+		set((state) => ({ newTaskRequest: { projectId, nonce: (state.newTaskRequest?.nonce ?? 0) + 1 } })),
+	requestCreateProject: () => set((state) => ({ createProjectNonce: state.createProjectNonce + 1 })),
 }));
