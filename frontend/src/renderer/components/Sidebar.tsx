@@ -224,17 +224,6 @@ export function Sidebar({
 							Orchestrator board
 						</TooltipContent>
 					</Tooltip>
-					{!isMac && (
-						<Tooltip>
-							<TooltipTrigger asChild>
-								<SidebarTrigger
-									aria-label="Expand sidebar"
-									className="hidden size-9 shrink-0 rounded-lg text-passive hover:bg-interactive-hover hover:text-foreground group-data-[collapsible=icon]:grid [&_svg]:size-4"
-								/>
-							</TooltipTrigger>
-							<TooltipContent side="right">Expand sidebar · ⌘B</TooltipContent>
-						</Tooltip>
-					)}
 					<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate text-sm font-bold tracking-tight-lg text-foreground group-data-[collapsible=icon]:hidden">
 						Agent Orchestrator
 					</span>
@@ -243,16 +232,24 @@ export function Sidebar({
 							nightly
 						</span>
 					)}
-					{/* On macOS the toggle lives in the titlebar cluster instead. */}
+					{/* On macOS the toggle lives in the titlebar cluster instead. One trigger
+					    for Win/Linux — SidebarTrigger already toggles open/closed. */}
 					{!isMac && (
 						<Tooltip>
 							<TooltipTrigger asChild>
 								<SidebarTrigger
-									aria-label="Collapse sidebar"
-									className="sidebar-expanded-chrome size-icon-xl shrink-0 rounded-sm p-0 text-passive hover:bg-interactive-hover hover:text-foreground group-data-[collapsible=icon]:hidden [&_svg]:size-icon-lg"
+									aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+									className={cn(
+										"shrink-0 text-passive hover:bg-interactive-hover hover:text-foreground",
+										isCollapsed
+											? "grid size-9 rounded-lg [&_svg]:size-4"
+											: "sidebar-expanded-chrome size-icon-xl rounded-sm p-0 [&_svg]:size-icon-lg",
+									)}
 								/>
 							</TooltipTrigger>
-							<TooltipContent>Collapse sidebar · ⌘B</TooltipContent>
+							<TooltipContent side={isCollapsed ? "right" : undefined}>
+								{isCollapsed ? "Expand sidebar · ⌘B" : "Collapse sidebar · ⌘B"}
+							</TooltipContent>
 						</Tooltip>
 					)}
 				</div>
