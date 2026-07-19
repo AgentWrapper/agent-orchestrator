@@ -1,18 +1,17 @@
 import { useCallback, useState } from "react";
 
 // Shared stage-selection state for the visual editor area: the canvas (V2)
-// selects a stage by name, the inspector (V3) binds to it. V3 defined this
-// minimal version first (V2 had not landed one yet); V2/Batch-C reconcile on
-// this name and shape when the canvas wires node clicks into it. The editor
-// area holds one instance and passes selectedStage/selectStage down; names are
-// the stable stage identity in the draft model (dependsOn/routes refer by name).
+// selects a stage, the inspector (V3) binds to it. The stored value is the
+// stage's canvas node id (see stageNodeId in lib/pipeline-graph: the array
+// index), NOT the stage name: names can be empty or duplicated mid-edit and
+// selection must still resolve so the inspector can open and fix them.
 export interface StageSelection {
 	selectedStage: string | null;
-	selectStage: (name: string | null) => void;
+	selectStage: (nodeId: string | null) => void;
 }
 
 export function useStageSelection(): StageSelection {
 	const [selectedStage, setSelectedStage] = useState<string | null>(null);
-	const selectStage = useCallback((name: string | null) => setSelectedStage(name), []);
+	const selectStage = useCallback((nodeId: string | null) => setSelectedStage(nodeId), []);
 	return { selectedStage, selectStage };
 }

@@ -214,4 +214,16 @@ describe("StageInspector", () => {
 		await userEvent.click(screen.getByRole("button", { name: "Close inspector" }));
 		expect(onClose).toHaveBeenCalledTimes(1);
 	});
+
+	it("calls onDelete from the header delete button", async () => {
+		const onDelete = vi.fn();
+		renderInspector(agentStage(), { onDelete });
+		await userEvent.click(screen.getByRole("button", { name: "Delete stage" }));
+		expect(onDelete).toHaveBeenCalledTimes(1);
+	});
+
+	it("hides the delete button while onDelete is unwired", () => {
+		renderInspector(agentStage());
+		expect(screen.queryByRole("button", { name: "Delete stage" })).not.toBeInTheDocument();
+	});
 });

@@ -70,8 +70,8 @@ describe("PipelineCanvas", () => {
 		const next = onDraftChange.mock.calls[0][0] as PipelineDraft;
 		expect(next.stages.map((s) => s.name)).toEqual(["review", "stage-2"]);
 		expect(next.stages[1].executor.kind).toBe("agent");
-		// The new stage becomes the selection for the inspector.
-		expect(selection.selectStage).toHaveBeenCalledWith("stage-2");
+		// The new stage's node id (its index) becomes the selection.
+		expect(selection.selectStage).toHaveBeenCalledWith("1");
 	});
 
 	it("disables Add stage when the canvas is read-only", () => {
@@ -79,7 +79,7 @@ describe("PipelineCanvas", () => {
 		expect(screen.getByRole("button", { name: /Add stage/ })).toBeDisabled();
 	});
 
-	it("publishes the clicked node through the shared selection", () => {
+	it("publishes the clicked node's id (its index) through the shared selection", () => {
 		const selection = selectionOf();
 		render(
 			<PipelineCanvas draft={draftOf(stage("review"), stage("fix"))} onDraftChange={vi.fn()} selection={selection} />,
@@ -89,14 +89,34 @@ describe("PipelineCanvas", () => {
 		// mousedown handling, which jsdom cannot satisfy.
 		fireEvent.click(screen.getByText("fix"));
 
-		expect(selection.selectStage).toHaveBeenCalledWith("fix");
+		expect(selection.selectStage).toHaveBeenCalledWith("1");
 	});
 
 	it("highlights the node the shared selection points at", () => {
-		render(<PipelineCanvas draft={draftOf(stage("review"), stage("fix"))} selection={selectionOf("fix")} />);
+		render(<PipelineCanvas draft={draftOf(stage("review"), stage("fix"))} selection={selectionOf("1")} />);
 
-		expect(document.querySelector('.react-flow__node[data-id="fix"]')).toHaveClass("selected");
-		expect(document.querySelector('.react-flow__node[data-id="review"]')).not.toHaveClass("selected");
+		expect(document.querySelector('.react-flow__node[data-id="1"]')).toHaveClass("selected");
+		expect(document.querySelector('.react-flow__node[data-id="0"]')).not.toHaveClass("selected");
+	});
+
+	it("renders empty- and duplicate-named stages as distinct selectable nodes", () => {
+		const selection = selectionOf();
+		render(
+			<PipelineCanvas
+				draft={draftOf(stage(""), stage("dup"), stage("dup"))}
+				onDraftChange={vi.fn()}
+				selection={selection}
+			/>,
+		);
+
+		expect(screen.getByText("(unnamed)")).toBeInTheDocument();
+		expect(screen.getAllByText("dup")).toHaveLength(2);
+
+		fireEvent.click(screen.getByText("(unnamed)"));
+		expect(selection.selectStage).toHaveBeenLastCalledWith("0");
+
+		fireEvent.click(screen.getAllByText("dup")[1]);
+		expect(selection.selectStage).toHaveBeenLastCalledWith("2");
 	});
 
 	it("auto-layouts dependencies left of dependents", () => {
@@ -107,8 +127,8 @@ describe("PipelineCanvas", () => {
 		);
 		const { container } = render(<PipelineCanvas draft={draft} />);
 
-		expect(nodeX(container, "intake")).toBeLessThan(nodeX(container, "review"));
-		expect(nodeX(container, "review")).toBeLessThan(nodeX(container, "fix"));
+		expect(nodeX(container, "0")).toBeLessThan(nodeX(container, "1"));
+		expect(nodeX(container, "1")).toBeLessThan(nodeX(container, "2"));
 	});
 
 	it("re-runs layout from the Auto-layout button", async () => {
@@ -118,7 +138,26 @@ describe("PipelineCanvas", () => {
 
 		await userEvent.setup().click(screen.getByRole("button", { name: /Auto-layout/ }));
 
-		expect(nodeX(container, "a")).toBeLessThan(nodeX(container, "b"));
+		expect(nodeX(container, "0")).toBeLessThan(nodeX(container, "1"));
+	});
+
+	it("removes the selected stage from the draft on Delete/Backspace", async () => {
+		const onDraftChange = vi.fn();
+		const selection = selectionOf("0");
+		const draft = draftOf(stage("review"), stage("fix", { dependsOn: ["review"] }));
+		render(<PipelineCanvas draft={draft} onDraftChange={onDraftChange} selection={selection} />);
+
+		fireEvent.keyDown(document.querySelector(".react-flow")!, { key: "Backspace" });
+
+		await screen.findByText("fix");
+		// react-flow emits a remove for the connected edge too; the last draft
+		// carries the final state (edge scrub folded into the stage removal).
+		const next = onDraftChange.mock.calls.at(-1)![0] as PipelineDraft;
+		expect(next.stages.map((s) => s.name)).toEqual(["fix"]);
+		// The removed stage is scrubbed from the survivor's dependsOn.
+		expect(next.stages[0].dependsOn).toBeUndefined();
+		// The selection no longer points at anything.
+		expect(selection.selectStage).toHaveBeenCalledWith(null);
 	});
 
 	// Edge DOM rendering needs measured node dimensions React Flow only gets in
@@ -143,7 +182,7 @@ describe("PipelineCanvas", () => {
 		render(
 			<PipelineCanvas
 				draft={draftOf(stage("review"), stage("fix"))}
-				stageIssues={{ review: ["task.prompt is required", "unknown plugin"] }}
+				stageIssues={{ "0": ["task.prompt is required", "unknown plugin"] }}
 			/>,
 		);
 

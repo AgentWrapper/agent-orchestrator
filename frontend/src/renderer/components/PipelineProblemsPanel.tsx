@@ -10,7 +10,8 @@ export interface PipelineProblem {
 	// Dotted config path; "" for document-level problems (YAML parse errors).
 	path: string;
 	message: string;
-	// Stage the problem resolves to, when it does; enables the Reveal action.
+	// Canvas node id of the stage the problem resolves to, when it does;
+	// enables the Reveal action (unnamed stages included).
 	stage: string | null;
 }
 

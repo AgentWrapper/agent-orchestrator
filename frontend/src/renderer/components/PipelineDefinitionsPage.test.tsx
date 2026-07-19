@@ -46,6 +46,7 @@ vi.mock("./YamlEditor", () => ({
 // React Flow needs ResizeObserver + real layout jsdom lacks; stub the canvas
 // with hooks that expose what the shell passes in (draft, selection, issue
 // badges) and drive draft edits / node selection like real canvas gestures.
+// Selection speaks node ids (the stage's index), matching the real canvas.
 vi.mock("./PipelineCanvas", () => ({
 	PipelineCanvas: ({
 		draft,
@@ -55,14 +56,15 @@ vi.mock("./PipelineCanvas", () => ({
 	}: {
 		draft: { stages: { name: string }[] };
 		onDraftChange?: (next: unknown) => void;
-		selection?: { selectedStage: string | null; selectStage: (name: string | null) => void };
+		selection?: { selectedStage: string | null; selectStage: (nodeId: string | null) => void };
 		stageIssues?: Record<string, string[]>;
 	}) => (
 		<div data-testid="pipeline-canvas">
 			<span data-testid="canvas-stages">{draft.stages.map((s) => s.name).join(",")}</span>
 			<span data-testid="canvas-selected">{selection?.selectedStage ?? ""}</span>
 			<span data-testid="canvas-issues">{JSON.stringify(stageIssues ?? {})}</span>
-			<button onClick={() => selection?.selectStage(draft.stages[0]?.name ?? null)}>mock-select-first</button>
+			<button onClick={() => selection?.selectStage(draft.stages.length > 0 ? "0" : null)}>mock-select-first</button>
+			<button onClick={() => selection?.selectStage(draft.stages.length > 1 ? "1" : null)}>mock-select-second</button>
 			<button
 				onClick={() =>
 					onDraftChange?.({
@@ -427,13 +429,14 @@ describe("PipelineDefinitionsPage", () => {
 		expect(within(panel).getByText("unknown executor kind")).toBeInTheDocument();
 		expect(screen.getByText("1 problem")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-		// The affected node gets its badge messages.
-		expect(screen.getByTestId("canvas-issues")).toHaveTextContent('{"a":["unknown executor kind"]}');
+		// The affected node gets its badge messages, keyed by node id.
+		expect(screen.getByTestId("canvas-issues")).toHaveTextContent('{"0":["unknown executor kind"]}');
 
-		// Reveal selects the offending stage; the split view scrolls the YAML
-		// pane to its block (stage `a` starts on line 3 of TWO_STAGE_YAML).
+		// Reveal selects the offending stage by node id; the split view scrolls
+		// the YAML pane to its block (stage `a` starts on line 3 of
+		// TWO_STAGE_YAML).
 		await user.click(within(panel).getByRole("button", { name: "Reveal" }));
-		expect(screen.getByTestId("canvas-selected")).toHaveTextContent("a");
+		expect(screen.getByTestId("canvas-selected")).toHaveTextContent("0");
 		expect(screen.getByLabelText("Pipeline YAML")).toHaveAttribute("data-reveal-line", "3");
 	});
 
@@ -459,6 +462,106 @@ describe("PipelineDefinitionsPage", () => {
 		// The draft edit reserialized into the YAML buffer.
 		await user.click(screen.getByRole("radio", { name: "YAML" }));
 		expect((screen.getByLabelText("Pipeline YAML") as HTMLTextAreaElement).value).toContain("no_open_findings");
+	});
+
+	it("opens the inspector for an unnamed stage and lets the user name it", async () => {
+		// stages[1] has no name: exactly the state the daemon rejects with
+		// "stage name must not be empty", which the user must be able to fix.
+		getMock.mockReset().mockResolvedValue({
+			data: {
+				definitions: [def("pl-1", "review", "name: review\nstages:\n  - name: a\n  - executor:\n      kind: agent\n")],
+			},
+			error: undefined,
+		});
+		renderPage();
+		const user = userEvent.setup();
+
+		await user.click(await screen.findByRole("button", { name: "Edit" }));
+		await user.click(screen.getByRole("radio", { name: "Canvas" }));
+		await user.click(screen.getByRole("button", { name: "mock-select-second" }));
+
+		const inspector = await screen.findByTestId("stage-inspector");
+		expect(within(inspector).getByText("Stage: (unnamed)")).toBeInTheDocument();
+
+		// Naming it keeps the selection (index identity survives the rename and
+		// the debounced YAML re-parse) and lands in the draft.
+		await user.type(within(inspector).getByRole("textbox", { name: "Stage name" }), "fix");
+		await waitFor(() => expect(screen.getByTestId("canvas-stages")).toHaveTextContent("a,fix"), { timeout: 2000 });
+		expect(screen.getByTestId("canvas-selected")).toHaveTextContent("1");
+		expect(within(screen.getByTestId("stage-inspector")).getByText("Stage: fix")).toBeInTheDocument();
+	});
+
+	it("selects duplicate-named stages independently", async () => {
+		getMock.mockReset().mockResolvedValue({
+			data: { definitions: [def("pl-1", "review", "name: review\nstages:\n  - name: a\n  - name: a\n")] },
+			error: undefined,
+		});
+		renderPage();
+		const user = userEvent.setup();
+
+		await user.click(await screen.findByRole("button", { name: "Edit" }));
+		await user.click(screen.getByRole("radio", { name: "Canvas" }));
+		await user.click(screen.getByRole("button", { name: "mock-select-second" }));
+
+		const inspector = await screen.findByTestId("stage-inspector");
+		expect(screen.getByTestId("canvas-selected")).toHaveTextContent("1");
+
+		// Renaming edits the second stage only, resolving the duplicate.
+		await user.type(within(inspector).getByRole("textbox", { name: "Stage name" }), "2");
+		await waitFor(() => expect(screen.getByTestId("canvas-stages")).toHaveTextContent("a,a2"), { timeout: 2000 });
+	});
+
+	it("deletes the selected stage from the inspector, scrubbing dependsOn", async () => {
+		getMock.mockReset().mockResolvedValue({
+			data: {
+				definitions: [
+					def("pl-1", "review", "name: review\nstages:\n  - name: a\n  - name: b\n    dependsOn:\n      - a\n"),
+				],
+			},
+			error: undefined,
+		});
+		renderPage();
+		const user = userEvent.setup();
+
+		await user.click(await screen.findByRole("button", { name: "Edit" }));
+		await user.click(screen.getByRole("radio", { name: "Canvas" }));
+		await user.click(screen.getByRole("button", { name: "mock-select-first" }));
+		await screen.findByTestId("stage-inspector");
+
+		await user.click(screen.getByRole("button", { name: "Delete stage" }));
+
+		// The stage is gone from the draft, the survivor's dependsOn is
+		// scrubbed, and the now-dangling selection is cleared (inspector closes).
+		expect(screen.getByTestId("canvas-stages")).toHaveTextContent(/^b$/);
+		expect(screen.queryByTestId("stage-inspector")).not.toBeInTheDocument();
+		expect(screen.getByTestId("canvas-selected")).toHaveTextContent(/^$/);
+
+		await user.click(screen.getByRole("radio", { name: "YAML" }));
+		const yaml = (screen.getByLabelText("Pipeline YAML") as HTMLTextAreaElement).value;
+		expect(yaml).not.toContain("name: a");
+		expect(yaml).not.toContain("dependsOn");
+	});
+
+	it("keeps the selection stable across an unrelated YAML edit and re-parse", async () => {
+		renderPage();
+		const user = userEvent.setup();
+
+		await user.click(await screen.findByRole("button", { name: "Edit" }));
+		await user.click(screen.getByRole("radio", { name: "Split" }));
+		await user.click(screen.getByRole("button", { name: "mock-select-first" }));
+		expect(screen.getByTestId("canvas-selected")).toHaveTextContent("0");
+
+		// An edit elsewhere in the document (the pipeline name) triggers the
+		// debounced re-parse; the index identity must not churn.
+		fireEvent.change(screen.getByLabelText("Pipeline YAML"), {
+			target: { value: "name: renamed\nstages:\n  - name: a\n  - name: b\n" },
+		});
+
+		await waitFor(() => expect(screen.getByTestId("yaml-parse-status")).toHaveTextContent("parsed"), {
+			timeout: 2000,
+		});
+		expect(screen.getByTestId("canvas-stages")).toHaveTextContent("a,b");
+		expect(screen.getByTestId("canvas-selected")).toHaveTextContent("0");
 	});
 
 	it("confirms before deleting a definition", async () => {

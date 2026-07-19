@@ -27,8 +27,10 @@ import {
 	isEdgeInCycle,
 	layoutPositions,
 	removeDependency,
+	removeStage,
 	STAGE_NODE_HEIGHT,
 	STAGE_NODE_WIDTH,
+	stageIndexFromNodeId,
 	stageNodeId,
 	type StagePosition,
 } from "../lib/pipeline-graph";
@@ -41,8 +43,9 @@ import { cn } from "../lib/utils";
 // dependency -> dependent (execution order). Every edit routes through the
 // draft via onDraftChange (usePipelineDraft.setDraft), so serialization and
 // validation stay centralized. Selection flows through the editor shell's
-// useStageSelection instance (V3's shared hook): node clicks call selectStage,
-// and the inspector binds to the same selectedStage name.
+// useStageSelection instance (V3's shared hook): node clicks call selectStage
+// with the node id (the stage's index, see stageNodeId), and the inspector
+// binds to the same id, so empty- and duplicate-named stages stay selectable.
 //
 // Cycle handling (mockup 1d): a connect attempt that would close a dependency
 // cycle is blocked and flashed as a red dashed edge; cycles already present in
@@ -54,7 +57,7 @@ export interface PipelineCanvasProps {
 	onDraftChange?: (next: PipelineDraft) => void;
 	// The editor area's useStageSelection instance, shared with the inspector.
 	selection?: StageSelection;
-	// Validation issue messages keyed by stage name (V6, mockup 1d): affected
+	// Validation issue messages keyed by node id (V6, mockup 1d): affected
 	// nodes render an inline error badge plus the first message.
 	stageIssues?: Record<string, string[]>;
 }
@@ -77,8 +80,9 @@ function CanvasInner({ draft, onDraftChange, selection, stageIssues }: PipelineC
 	const selectStage = selection?.selectStage;
 	const [positions, setPositions] = useState<Record<string, StagePosition>>(() => layoutPositions(draft));
 	const [selectedEdgeIds, setSelectedEdgeIds] = useState<ReadonlySet<string>>(new Set());
-	// The blocked connect attempt currently flashing red, if any.
-	const [flash, setFlash] = useState<{ dep: string; dependent: string; path: string[] } | null>(null);
+	// The blocked connect attempt currently flashing red, if any: the endpoint
+	// node ids for the transient edge plus the cycle path as stage names.
+	const [flash, setFlash] = useState<{ sourceId: string; targetId: string; path: string[] } | null>(null);
 	const flashTimer = useRef<number | undefined>(undefined);
 
 	// The handlers read the latest draft through a ref so their identity stays
@@ -88,7 +92,7 @@ function CanvasInner({ draft, onDraftChange, selection, stageIssues }: PipelineC
 
 	// Stages that appear after mount (Add stage, YAML edits) get stacked below
 	// the existing nodes instead of re-layouting the user's arrangement.
-	const nodeIds = draft.stages.map(stageNodeId).join("\n");
+	const nodeIds = draft.stages.map((_, i) => stageNodeId(i)).join("\n");
 	useEffect(() => {
 		setPositions((prev) => {
 			const ids = nodeIds ? nodeIds.split("\n") : [];
@@ -108,28 +112,24 @@ function CanvasInner({ draft, onDraftChange, selection, stageIssues }: PipelineC
 
 	const nodes = useMemo<StageNodeType[]>(() => {
 		const persistent = cycleMembers(draft);
-		const seen = new Set<string>();
-		const out: StageNodeType[] = [];
-		draft.stages.forEach((stage, i) => {
-			const id = stageNodeId(stage, i);
-			// Duplicate names are invalid config (the daemon reports them); render
-			// the first occurrence only so node ids stay unique.
-			if (seen.has(id)) return;
-			seen.add(id);
-			out.push({
+		// Index-based ids are unique by construction, so every stage renders,
+		// including duplicate-named ones (each independently selectable to fix).
+		return draft.stages.map((stage, i): StageNodeType => {
+			const id = stageNodeId(i);
+			return {
 				id,
 				type: "stage",
 				position: positions[id] ?? { x: 32, y: i * (STAGE_NODE_HEIGHT + 32) },
 				width: STAGE_NODE_WIDTH,
 				data: {
 					stage,
-					inCycle: persistent.has(id) || (flash?.path.includes(id) ?? false),
+					// Cycle membership is a config-level (name) property.
+					inCycle: persistent.has(stage.name) || (flash?.path.includes(stage.name) ?? false),
 					issues: stageIssues?.[id] ?? [],
 				},
 				selected: selected === id,
-			});
+			};
 		});
-		return out;
 	}, [draft, positions, selected, flash, stageIssues]);
 
 	const edges = useMemo<Edge[]>(() => {
@@ -138,8 +138,8 @@ function CanvasInner({ draft, onDraftChange, selection, stageIssues }: PipelineC
 			const stroke = inCycle ? "var(--color-error)" : "var(--color-border-strong)";
 			return {
 				id: edge.id,
-				source: edge.dep,
-				target: edge.dependent,
+				source: edge.source,
+				target: edge.target,
 				data: { dep: edge.dep, dependent: edge.dependent },
 				selected: selectedEdgeIds.has(edge.id),
 				style: { stroke, strokeWidth: 1.5, ...(inCycle ? { strokeDasharray: "6 4" } : {}) },
@@ -149,11 +149,11 @@ function CanvasInner({ draft, onDraftChange, selection, stageIssues }: PipelineC
 		});
 		// The blocked attempt renders as a transient red dashed edge (mockup 1d);
 		// a blocked self-edge shows only the node highlight.
-		if (flash && flash.dep !== flash.dependent) {
+		if (flash && flash.sourceId !== flash.targetId) {
 			out.push({
 				id: "__cycle-flash",
-				source: flash.dep,
-				target: flash.dependent,
+				source: flash.sourceId,
+				target: flash.targetId,
 				animated: true,
 				selectable: false,
 				deletable: false,
@@ -175,8 +175,40 @@ function CanvasInner({ draft, onDraftChange, selection, stageIssues }: PipelineC
 					selectStage?.(change.selected ? change.id : null);
 				}
 			}
+			// Delete/Backspace on selected nodes arrives as `remove` changes; apply
+			// them to the draft (react-flow only drops the node visually). Highest
+			// index first so earlier removals do not shift later ones.
+			const removedIndices = changes
+				.filter((c) => c.type === "remove")
+				.map((c) => stageIndexFromNodeId(c.id))
+				.filter((i) => i >= 0)
+				.sort((a, b) => b - a);
+			if (removedIndices.length === 0 || !onDraftChange) return;
+			const before = draftRef.current;
+			let next = before;
+			for (const i of removedIndices) next = removeStage(next, i);
+			// Keep the ref in step so a same-tick edge-remove callback cannot
+			// compute from the pre-delete draft and resurrect the stage.
+			draftRef.current = next;
+			onDraftChange(next);
+			// The removed stage is gone; a stale index would point at its neighbor.
+			selectStage?.(null);
+			// Node ids above the removed indices shift down; move their saved
+			// positions along so the surviving nodes stay where the user put them.
+			const removedSet = new Set(removedIndices);
+			setPositions((prev) => {
+				const remapped: Record<string, StagePosition> = {};
+				let j = 0;
+				for (let i = 0; i < before.stages.length; i++) {
+					if (removedSet.has(i)) continue;
+					const p = prev[stageNodeId(i)];
+					if (p) remapped[stageNodeId(j)] = p;
+					j += 1;
+				}
+				return remapped;
+			});
 		},
-		[selectStage],
+		[selectStage, onDraftChange],
 	);
 
 	const onEdgesChange = useCallback(
@@ -194,11 +226,16 @@ function CanvasInner({ draft, onDraftChange, selection, stageIssues }: PipelineC
 				} else if (change.type === "remove" && onDraftChange) {
 					const edge = draftEdges(next).find((e) => e.id === change.id);
 					if (!edge) continue;
-					next = removeDependency(next, edge.dependent, edge.dep);
+					next = removeDependency(next, stageIndexFromNodeId(edge.target), edge.dep);
 					removed = true;
 				}
 			}
-			if (removed && onDraftChange) onDraftChange(next);
+			if (removed && onDraftChange) {
+				// Same-tick node-remove callbacks must see this edit (see the ref
+				// note in onNodesChange).
+				draftRef.current = next;
+				onDraftChange(next);
+			}
 		},
 		[onDraftChange],
 	);
@@ -208,9 +245,10 @@ function CanvasInner({ draft, onDraftChange, selection, stageIssues }: PipelineC
 			if (!onDraftChange || !connection.source || !connection.target) return;
 			const result = applyConnection(draftRef.current, connection.source, connection.target);
 			if (result.kind === "added") {
+				draftRef.current = result.draft;
 				onDraftChange(result.draft);
 			} else if (result.kind === "cycle") {
-				setFlash({ dep: connection.source, dependent: connection.target, path: result.path });
+				setFlash({ sourceId: connection.source, targetId: connection.target, path: result.path });
 				window.clearTimeout(flashTimer.current);
 				flashTimer.current = window.setTimeout(() => setFlash(null), CYCLE_FLASH_MS);
 			}
@@ -220,9 +258,11 @@ function CanvasInner({ draft, onDraftChange, selection, stageIssues }: PipelineC
 
 	const handleAddStage = useCallback(() => {
 		if (!onDraftChange) return;
-		const { draft: next, name } = addStage(draftRef.current);
+		const { draft: next } = addStage(draftRef.current);
+		draftRef.current = next;
 		onDraftChange(next);
-		selectStage?.(name);
+		// The appended stage's node id is its index (the new last slot).
+		selectStage?.(stageNodeId(next.stages.length - 1));
 	}, [onDraftChange, selectStage]);
 
 	const handleAutoLayout = useCallback(() => {

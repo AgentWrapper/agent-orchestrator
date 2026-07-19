@@ -1,5 +1,5 @@
 import { useId, useState } from "react";
-import { Pencil, X } from "lucide-react";
+import { Pencil, Trash2, X } from "lucide-react";
 import { cn } from "../lib/utils";
 import { AGENT_OPTIONS } from "../lib/agent-options";
 import {
@@ -34,6 +34,9 @@ export interface StageInspectorProps {
 	// C; while undefined the Edit-condition button is a disabled coming-soon stub.
 	onEditCondition?: () => void;
 	onClose?: () => void;
+	// Removes the inspected stage from the draft (the parent scrubs dependsOn
+	// and clears the selection). The delete button renders only when wired.
+	onDelete?: () => void;
 }
 
 const TASK_MODES: TaskMode[] = ["review", "code", "answer"];
@@ -50,7 +53,14 @@ const EXECUTOR_SUBTITLE: Record<ExecutorKind, string> = {
 	builtin: "Builtin executor",
 };
 
-export function StageInspector({ stage, stageNames, onChange, onEditCondition, onClose }: StageInspectorProps) {
+export function StageInspector({
+	stage,
+	stageNames,
+	onChange,
+	onEditCondition,
+	onClose,
+	onDelete,
+}: StageInspectorProps) {
 	const update = (patch: Partial<StageDraft>) => onChange({ ...stage, ...patch });
 
 	// Merges a task patch and drops the task object entirely once every field is
@@ -93,11 +103,24 @@ export function StageInspector({ stage, stageNames, onChange, onEditCondition, o
 					<h2 className="truncate text-control font-semibold text-foreground">Stage: {stage.name || "(unnamed)"}</h2>
 					<p className="text-caption text-passive">{EXECUTOR_SUBTITLE[stage.executor.kind]}</p>
 				</div>
-				{onClose && (
-					<Button size="icon-sm" variant="ghost" onClick={onClose} aria-label="Close inspector">
-						<X className="size-icon-sm" aria-hidden="true" />
-					</Button>
-				)}
+				<div className="flex shrink-0 items-center gap-1">
+					{onDelete && (
+						<Button
+							size="icon-sm"
+							variant="ghost"
+							className="text-destructive hover:text-destructive"
+							onClick={onDelete}
+							aria-label="Delete stage"
+						>
+							<Trash2 className="size-icon-sm" aria-hidden="true" />
+						</Button>
+					)}
+					{onClose && (
+						<Button size="icon-sm" variant="ghost" onClick={onClose} aria-label="Close inspector">
+							<X className="size-icon-sm" aria-hidden="true" />
+						</Button>
+					)}
+				</div>
 			</div>
 
 			<div className="flex flex-col gap-5 px-4 py-4">

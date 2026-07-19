@@ -3,7 +3,8 @@ import { AlertCircle, CheckCircle2, Loader2, Pencil, Plus, Settings2, Trash2, Wo
 import { apiErrorMessage } from "../lib/api-client";
 import { formatTimeCompact } from "../lib/format-time";
 import { serializeToYaml, type StageDraft } from "../lib/pipeline-draft";
-import { issueStageName, stageIssueMessages, stageYamlLine } from "../lib/pipeline-problems";
+import { removeStage, stageIndexFromNodeId } from "../lib/pipeline-graph";
+import { issueStageNodeId, stageIssueMessages, stageYamlLine } from "../lib/pipeline-problems";
 import { countStagesFromYaml, parsePipelineValidationIssues, type PipelineValidationIssue } from "../lib/pipeline-yaml";
 import {
 	type PipelineDefinitionSummary,
@@ -230,7 +231,8 @@ function DefinitionEditor({
 		def ? def.yamlSource : initialYaml,
 	);
 	// One selection instance for the editor area: the canvas writes on node
-	// click, the stage inspector (V3) binds to the same stage name.
+	// click, the stage inspector (V3) binds to the same node id (the stage's
+	// index; see stageNodeId), so empty/duplicate-named stages stay editable.
 	const selection = useStageSelection();
 	const [view, setView] = useState<ViewMode>(def ? "yaml" : initialView);
 	const [settingsOpen, setSettingsOpen] = useState(false);
@@ -246,18 +248,26 @@ function DefinitionEditor({
 	const mutation = def ? update : create;
 	const isSaving = mutation.isPending;
 
-	const selectedIndex = selection.selectedStage
-		? draft.stages.findIndex((s) => s.name === selection.selectedStage)
-		: -1;
-	const selectedStageDraft = selectedIndex >= 0 ? draft.stages[selectedIndex] : null;
+	// The selection holds the node id (the stage's index), so the lookup works
+	// for empty and duplicate names too; a YAML edit that shrank the stage list
+	// past the index just resolves to no stage (the inspector closes).
+	const selectedIndex = stageIndexFromNodeId(selection.selectedStage);
+	const selectedStageDraft = selectedIndex >= 0 ? (draft.stages[selectedIndex] ?? null) : null;
 	const stageNames = draft.stages.map((s) => s.name).filter(Boolean);
 
-	// Inspector edits replace the selected stage in place; a rename moves the
-	// selection with the stage (names are the selection identity).
+	// Inspector edits replace the selected stage in place; a rename keeps the
+	// selection (the index identity is name-independent).
 	const updateSelectedStage = (next: StageDraft) => {
-		if (selectedIndex < 0) return;
+		if (!selectedStageDraft) return;
 		setDraft({ ...draft, stages: draft.stages.map((s, i) => (i === selectedIndex ? next : s)) });
-		if (next.name !== selection.selectedStage) selection.selectStage(next.name || null);
+	};
+
+	// Delete from the inspector: drop the stage, scrub dependsOn (removeStage),
+	// and clear the now-dangling selection.
+	const deleteSelectedStage = () => {
+		if (!selectedStageDraft) return;
+		setDraft(removeStage(draft, selectedIndex));
+		selection.selectStage(null);
 	};
 
 	// The blocking problem list (mockup 1d): the YAML parse error, the live
@@ -269,7 +279,7 @@ function DefinitionEditor({
 		...dedupeIssues([...liveIssues, ...(saveIssues ?? [])]).map((issue) => ({
 			path: issue.path,
 			message: issue.message,
-			stage: issueStageName(draft, issue),
+			stage: issueStageNodeId(draft, issue),
 		})),
 	];
 	const stageIssues = useMemo(
@@ -280,13 +290,16 @@ function DefinitionEditor({
 	// saving"); "still checking" alone does not block.
 	const blocked = problems.length > 0;
 
-	// Reveal + node select scroll the YAML pane to the stage's block. The buffer
-	// is read through a ref so scrolling happens on selection changes only, not
+	// Reveal + node select scroll the YAML pane to the stage's block (located by
+	// name; an unnamed stage has no block to target). The buffer and the name
+	// are read through refs so scrolling happens on selection changes only, not
 	// on every keystroke.
 	const yamlRef = useRef(yamlSource);
 	yamlRef.current = yamlSource;
+	const selectedNameRef = useRef(selectedStageDraft?.name ?? "");
+	selectedNameRef.current = selectedStageDraft?.name ?? "";
 	const revealLine = useMemo(
-		() => (selection.selectedStage ? stageYamlLine(yamlRef.current, selection.selectedStage) : null),
+		() => (selection.selectedStage !== null ? stageYamlLine(yamlRef.current, selectedNameRef.current) : null),
 		[selection.selectedStage],
 	);
 
@@ -340,11 +353,15 @@ function DefinitionEditor({
 						{selectedStageDraft && (
 							<div className="w-80 shrink-0">
 								<StageInspector
+									// Remount per node id so field-local state never leaks
+									// between stages (duplicate names share no identity).
+									key={selection.selectedStage}
 									stage={selectedStageDraft}
 									stageNames={stageNames}
 									onChange={updateSelectedStage}
 									onEditCondition={() => setConditionOpen(true)}
 									onClose={() => selection.selectStage(null)}
+									onDelete={deleteSelectedStage}
 								/>
 							</div>
 						)}

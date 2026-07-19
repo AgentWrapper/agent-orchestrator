@@ -20,37 +20,56 @@ export interface StagePosition {
 	y: number;
 }
 
-// stageNodeId gives every stage a stable non-empty node id. Unnamed stages
-// (mid-edit drafts) get a placeholder id that dependsOn can never reference,
-// so they render but stay unconnectable.
-export function stageNodeId(stage: StageDraft, index: number): string {
-	return stage.name || `__stage-${index}`;
+// Stage identity is the array index, not the name: it is unique even for
+// empty or duplicate names (which the user must be able to select to fix) and
+// deterministic across the debounced YAML re-parse, so selection and node
+// positions survive typing. Names remain the config reference (dependsOn,
+// routes, predicates); helpers below translate at the boundary.
+export function stageNodeId(index: number): string {
+	return String(index);
+}
+
+// stageIndexFromNodeId is the inverse of stageNodeId; -1 for null/garbage.
+export function stageIndexFromNodeId(id: string | null | undefined): number {
+	if (id == null || !/^\d+$/.test(id)) return -1;
+	return Number(id);
 }
 
 export interface DraftEdge {
 	id: string;
-	// dep runs first (edge source), dependent declares `dependsOn: [dep]`.
+	// Node ids: the dep stage runs first (edge source), the dependent stage
+	// declares `dependsOn: [dep]` (edge target).
+	source: string;
+	target: string;
+	// The same endpoints as config references (stage names).
 	dep: string;
 	dependent: string;
 }
 
-export function edgeId(dep: string, dependent: string): string {
-	return `${dep}->${dependent}`;
+export function edgeId(source: string, target: string): string {
+	return `${source}->${target}`;
 }
 
 // draftEdges maps every dependsOn entry that references an existing stage to an
 // edge. Dangling references have no node to attach to; the /validate endpoint
-// reports them, so they are skipped here rather than guessed at.
+// reports them, so they are skipped here rather than guessed at. A dependsOn
+// name resolves to its first occurrence when names are duplicated.
 export function draftEdges(draft: PipelineDraft): DraftEdge[] {
-	const names = new Set(draft.stages.map((s) => s.name).filter(Boolean));
+	const indexByName = new Map<string, number>();
+	draft.stages.forEach((s, i) => {
+		if (s.name && !indexByName.has(s.name)) indexByName.set(s.name, i);
+	});
 	const edges: DraftEdge[] = [];
-	for (const stage of draft.stages) {
-		if (!stage.name) continue;
+	draft.stages.forEach((stage, i) => {
+		if (!stage.name) return;
 		for (const dep of stage.dependsOn ?? []) {
-			if (!names.has(dep)) continue;
-			edges.push({ id: edgeId(dep, stage.name), dep, dependent: stage.name });
+			const depIndex = indexByName.get(dep);
+			if (depIndex === undefined) continue;
+			const source = stageNodeId(depIndex);
+			const target = stageNodeId(i);
+			edges.push({ id: edgeId(source, target), source, target, dep, dependent: stage.name });
 		}
-	}
+	});
 	return edges;
 }
 
@@ -60,15 +79,15 @@ export function layoutPositions(draft: PipelineDraft): Record<string, StagePosit
 	const g = new dagre.graphlib.Graph();
 	g.setGraph({ rankdir: "LR", nodesep: 32, ranksep: 64 });
 	g.setDefaultEdgeLabel(() => ({}));
-	draft.stages.forEach((stage, i) => {
-		g.setNode(stageNodeId(stage, i), { width: STAGE_NODE_WIDTH, height: STAGE_NODE_HEIGHT });
+	draft.stages.forEach((_stage, i) => {
+		g.setNode(stageNodeId(i), { width: STAGE_NODE_WIDTH, height: STAGE_NODE_HEIGHT });
 	});
-	for (const edge of draftEdges(draft)) g.setEdge(edge.dep, edge.dependent);
+	for (const edge of draftEdges(draft)) g.setEdge(edge.source, edge.target);
 	dagre.layout(g);
 
 	const positions: Record<string, StagePosition> = {};
-	draft.stages.forEach((stage, i) => {
-		const id = stageNodeId(stage, i);
+	draft.stages.forEach((_stage, i) => {
+		const id = stageNodeId(i);
 		const node = g.node(id);
 		if (node) positions[id] = { x: node.x - STAGE_NODE_WIDTH / 2, y: node.y - STAGE_NODE_HEIGHT / 2 };
 	});
@@ -119,17 +138,11 @@ export function isEdgeInCycle(draft: PipelineDraft, edge: DraftEdge): boolean {
 	return findCycle(draft, edge.dependent, edge.dep) !== null;
 }
 
-// addDependency / removeDependency return a new draft with the dependsOn edit
-// applied; unknown stage names are a no-op.
-export function addDependency(draft: PipelineDraft, dependent: string, dep: string): PipelineDraft {
-	return mapStage(draft, dependent, (stage) => {
-		if ((stage.dependsOn ?? []).includes(dep)) return stage;
-		return { ...stage, dependsOn: [...(stage.dependsOn ?? []), dep] };
-	});
-}
-
-export function removeDependency(draft: PipelineDraft, dependent: string, dep: string): PipelineDraft {
-	return mapStage(draft, dependent, (stage) => {
+// removeDependency returns a new draft with `dep` dropped from the stage at
+// dependentIndex (the exact stage, so duplicate names cannot misroute the
+// edit); the empty dependsOn key is removed entirely. Out-of-range is a no-op.
+export function removeDependency(draft: PipelineDraft, dependentIndex: number, dep: string): PipelineDraft {
+	return mapStageAt(draft, dependentIndex, (stage) => {
 		const next = (stage.dependsOn ?? []).filter((d) => d !== dep);
 		const out = { ...stage };
 		if (next.length > 0) out.dependsOn = next;
@@ -138,25 +151,53 @@ export function removeDependency(draft: PipelineDraft, dependent: string, dep: s
 	});
 }
 
-function mapStage(draft: PipelineDraft, name: string, fn: (stage: StageDraft) => StageDraft): PipelineDraft {
-	return { ...draft, stages: draft.stages.map((s) => (s.name === name ? fn(s) : s)) };
+function mapStageAt(draft: PipelineDraft, index: number, fn: (stage: StageDraft) => StageDraft): PipelineDraft {
+	if (!draft.stages[index]) return draft;
+	return { ...draft, stages: draft.stages.map((s, i) => (i === index ? fn(s) : s)) };
+}
+
+// removeStage returns a new draft without the stage at `index`, with the
+// removed stage's name scrubbed from every other stage's dependsOn (dropping
+// the key once empty). The scrub is skipped while another stage still carries
+// the same name (a duplicate): its edges must survive. Out-of-range is a no-op.
+export function removeStage(draft: PipelineDraft, index: number): PipelineDraft {
+	const removed = draft.stages[index];
+	if (!removed) return draft;
+	const remaining = draft.stages.filter((_, i) => i !== index);
+	const scrub = removed.name && !remaining.some((s) => s.name === removed.name);
+	const stages = !scrub
+		? remaining
+		: remaining.map((s) => {
+				if (!(s.dependsOn ?? []).includes(removed.name)) return s;
+				const next = (s.dependsOn ?? []).filter((d) => d !== removed.name);
+				const out = { ...s };
+				if (next.length > 0) out.dependsOn = next;
+				else delete out.dependsOn;
+				return out;
+			});
+	return { ...draft, stages };
 }
 
 // applyConnection is the canvas' connect handler semantics as a pure function:
-// drawing source -> target makes target depend on source, unless the edge is a
-// self-edge or would close a dependency cycle (blocked, with the offending
-// path returned for the instant red highlight).
+// drawing source -> target (node ids) makes the target stage depend on the
+// source stage, unless the edge is a self-edge or would close a dependency
+// cycle (blocked, with the offending path returned for the instant red
+// highlight). Unnamed endpoints stay unconnectable: dependsOn refers by name.
 export type ConnectionResult =
 	{ kind: "added"; draft: PipelineDraft } | { kind: "cycle"; path: string[] } | { kind: "noop" };
 
-export function applyConnection(draft: PipelineDraft, source: string, target: string): ConnectionResult {
-	const names = new Set(draft.stages.map((s) => s.name).filter(Boolean));
-	if (!names.has(source) || !names.has(target)) return { kind: "noop" };
+export function applyConnection(draft: PipelineDraft, sourceId: string, targetId: string): ConnectionResult {
+	const source = draft.stages[stageIndexFromNodeId(sourceId)]?.name;
+	const targetIndex = stageIndexFromNodeId(targetId);
+	const target = draft.stages[targetIndex]?.name;
+	if (!source || !target) return { kind: "noop" };
 	const cycle = findCycle(draft, target, source);
 	if (cycle) return { kind: "cycle", path: cycle };
-	const stage = draft.stages.find((s) => s.name === target);
-	if ((stage?.dependsOn ?? []).includes(source)) return { kind: "noop" };
-	return { kind: "added", draft: addDependency(draft, target, source) };
+	if ((draft.stages[targetIndex].dependsOn ?? []).includes(source)) return { kind: "noop" };
+	return {
+		kind: "added",
+		draft: mapStageAt(draft, targetIndex, (s) => ({ ...s, dependsOn: [...(s.dependsOn ?? []), source] })),
+	};
 }
 
 // addStage appends a default agent stage under the first unused stage-N name

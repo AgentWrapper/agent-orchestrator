@@ -4,24 +4,27 @@
 // (split view scrolls there on node select).
 
 import type { PipelineDraft } from "./pipeline-draft";
+import { stageNodeId } from "./pipeline-graph";
 import type { PipelineValidationIssue } from "./pipeline-yaml";
 
 // Issue paths from the daemon address stages positionally: `stages[2].name`.
-// Returns the stage's name in the draft, or null when the path is not
-// stage-scoped (or points past the stage list / at an unnamed stage).
-export function issueStageName(draft: PipelineDraft, issue: PipelineValidationIssue): string | null {
+// Returns that stage's canvas node id (the index-based stage identity), or
+// null when the path is not stage-scoped or points past the stage list.
+// Unnamed stages resolve too: "name must not be empty" needs a Reveal target.
+export function issueStageNodeId(draft: PipelineDraft, issue: PipelineValidationIssue): string | null {
 	const match = /^stages\[(\d+)\]/.exec(issue.path);
 	if (!match) return null;
-	return draft.stages[Number(match[1])]?.name || null;
+	const index = Number(match[1]);
+	return index < draft.stages.length ? stageNodeId(index) : null;
 }
 
-// Groups issue messages by the stage they resolve to, for the canvas badges.
+// Groups issue messages by the node id they resolve to, for the canvas badges.
 export function stageIssueMessages(draft: PipelineDraft, issues: PipelineValidationIssue[]): Record<string, string[]> {
 	const out: Record<string, string[]> = {};
 	for (const issue of issues) {
-		const name = issueStageName(draft, issue);
-		if (!name) continue;
-		(out[name] ??= []).push(issue.message);
+		const id = issueStageNodeId(draft, issue);
+		if (id === null) continue;
+		(out[id] ??= []).push(issue.message);
 	}
 	return out;
 }

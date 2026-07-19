@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PipelineDraft, StageDraft } from "./pipeline-draft";
-import { issueStageName, stageIssueMessages, stageYamlLine } from "./pipeline-problems";
+import { issueStageNodeId, stageIssueMessages, stageYamlLine } from "./pipeline-problems";
 
 function stage(name: string): StageDraft {
 	return { name, trigger: { on: ["manual"] }, executor: { kind: "agent" } };
@@ -8,28 +8,33 @@ function stage(name: string): StageDraft {
 
 const draft: PipelineDraft = { name: "review", stages: [stage("a"), stage("b")] };
 
-describe("issueStageName", () => {
-	it("resolves a stage-scoped path to the stage's name", () => {
-		expect(issueStageName(draft, { path: "stages[1].executor.kind", message: "m" })).toBe("b");
-		expect(issueStageName(draft, { path: "stages[0]", message: "m" })).toBe("a");
+describe("issueStageNodeId", () => {
+	it("resolves a stage-scoped path to the stage's node id", () => {
+		expect(issueStageNodeId(draft, { path: "stages[1].executor.kind", message: "m" })).toBe("1");
+		expect(issueStageNodeId(draft, { path: "stages[0]", message: "m" })).toBe("0");
+	});
+
+	it("resolves paths for unnamed stages (they need a Reveal target)", () => {
+		const unnamed: PipelineDraft = { name: "review", stages: [stage("")] };
+		expect(issueStageNodeId(unnamed, { path: "stages[0].name", message: "must not be empty" })).toBe("0");
 	});
 
 	it("returns null for document-level and dangling paths", () => {
-		expect(issueStageName(draft, { path: "name", message: "m" })).toBeNull();
-		expect(issueStageName(draft, { path: "exitPredicates.done", message: "m" })).toBeNull();
-		expect(issueStageName(draft, { path: "stages[9].name", message: "m" })).toBeNull();
+		expect(issueStageNodeId(draft, { path: "name", message: "m" })).toBeNull();
+		expect(issueStageNodeId(draft, { path: "exitPredicates.done", message: "m" })).toBeNull();
+		expect(issueStageNodeId(draft, { path: "stages[9].name", message: "m" })).toBeNull();
 	});
 });
 
 describe("stageIssueMessages", () => {
-	it("groups messages by the stage they resolve to and drops the rest", () => {
+	it("groups messages by the node id they resolve to and drops the rest", () => {
 		const grouped = stageIssueMessages(draft, [
 			{ path: "stages[0].name", message: "first" },
 			{ path: "stages[0].executor", message: "second" },
 			{ path: "stages[1].trigger", message: "other" },
 			{ path: "name", message: "document-level" },
 		]);
-		expect(grouped).toEqual({ a: ["first", "second"], b: ["other"] });
+		expect(grouped).toEqual({ "0": ["first", "second"], "1": ["other"] });
 	});
 });
 
