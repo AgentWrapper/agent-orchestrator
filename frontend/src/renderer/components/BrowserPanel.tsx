@@ -227,7 +227,6 @@ export function BrowserPanel({ session, active, poppedOut, onTogglePopOut }: Bro
 }
 
 export function BrowserPanelView({
-	session,
 	poppedOut,
 	onTogglePopOut,
 	browserView,
@@ -239,7 +238,6 @@ export function BrowserPanelView({
 	const { beginPicking, cancelPicking, enqueue, error, failPicking, queuedCount, retryQueued, status } =
 		annotationQueue;
 	const showStaticPreview = !window.ao?.browser && navState.url !== "";
-	const sessionBusy = session.status === "working";
 	const canAnnotate = Boolean(window.ao?.browser && viewId && navState.url);
 	const canRetryAnnotation = status === "error" && queuedCount > 0;
 
@@ -367,8 +365,6 @@ export function BrowserPanelView({
 					>
 						{annotationStatusLabel}
 					</span>
-				) : sessionBusy ? (
-					<span className="browser-panel__annotation-status">Agent working</span>
 				) : null}
 				<div className="browser-panel__url">
 					<Globe2 aria-hidden="true" className="browser-panel__url-icon" />
