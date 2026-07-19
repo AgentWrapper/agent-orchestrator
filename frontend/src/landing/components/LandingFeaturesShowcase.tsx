@@ -59,10 +59,7 @@ export function LandingFeaturesShowcase() {
 						{features.map((feature, index) => {
 							const flip = index % 2 === 1;
 							return (
-								<div
-									key={feature.title}
-									className="landing-reveal grid items-center gap-8 lg:grid-cols-12 lg:gap-12"
-								>
+								<div key={feature.title} className="landing-reveal grid items-center gap-8 lg:grid-cols-12 lg:gap-12">
 									<div className={`lg:col-span-5 ${flip ? "lg:order-2" : ""}`}>
 										<div className="landing-eyebrow landing-eyebrow-accent">{feature.eyebrow}</div>
 										<h3 className="mt-3 text-[26px] font-semibold leading-[1.15] tracking-[-0.02em] text-[color:var(--fg)] sm:text-[32px]">
