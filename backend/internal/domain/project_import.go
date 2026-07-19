@@ -2,8 +2,14 @@ package domain
 
 import "fmt"
 
-// ProjectImportConflict describes an active target project that prevents an
-// imported project row from being written.
+const (
+	ProjectImportConflictSameIDArchivedTarget      = "same id matches archived target project"
+	ProjectImportConflictSameIDDifferentActivePath = "same id with different active path"
+	ProjectImportConflictSamePathDifferentActiveID = "same path with different active id"
+)
+
+// ProjectImportConflict describes a target project that prevents an imported
+// project row from being written.
 type ProjectImportConflict struct {
 	ProjectID  string
 	Path       string

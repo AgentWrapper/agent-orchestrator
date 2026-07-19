@@ -251,6 +251,72 @@ func TestRunSameIDDifferentPathConflicts(t *testing.T) {
 	}
 }
 
+func TestRunDryRunArchivedTargetSameIDConflicts(t *testing.T) {
+	ctx := context.Background()
+	source := newStore(t)
+	target := newStore(t)
+	if err := source.UpsertWorkspaceProject(ctx, testProject("alpha", "/repos/source"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := target.UpsertWorkspaceProject(ctx, testProject("alpha", "/repos/target"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := target.ArchiveProject(ctx, "alpha", time.Unix(200, 0).UTC()); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := Run(ctx, source, target, Options{DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Inserted != 0 || rep.Updated != 0 || rep.Skipped != 1 || len(rep.Conflicts) != 1 {
+		t.Fatalf("report = %#v, want archived same-id conflict", rep)
+	}
+	if rep.Conflicts[0].Reason != domain.ProjectImportConflictSameIDArchivedTarget || rep.Conflicts[0].TargetPath != "/repos/target" {
+		t.Fatalf("conflict = %#v", rep.Conflicts[0])
+	}
+	got, ok, err := target.GetProject(ctx, "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || got.ArchivedAt.IsZero() || got.Path != "/repos/target" {
+		t.Fatalf("target project = %#v, want archived target preserved", got)
+	}
+}
+
+func TestRunArchivedTargetSameIDConflictsWithoutReactivating(t *testing.T) {
+	ctx := context.Background()
+	source := newStore(t)
+	target := newStore(t)
+	if err := source.UpsertWorkspaceProject(ctx, testProject("alpha", "/repos/source"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := target.UpsertWorkspaceProject(ctx, testProject("alpha", "/repos/target"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := target.ArchiveProject(ctx, "alpha", time.Unix(200, 0).UTC()); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := Run(ctx, source, target, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Inserted != 0 || rep.Updated != 0 || rep.Skipped != 1 || len(rep.Conflicts) != 1 {
+		t.Fatalf("report = %#v, want archived same-id conflict", rep)
+	}
+	if rep.Conflicts[0].Reason != domain.ProjectImportConflictSameIDArchivedTarget {
+		t.Fatalf("conflict = %#v", rep.Conflicts[0])
+	}
+	got, ok, err := target.GetProject(ctx, "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || got.ArchivedAt.IsZero() || got.Path != "/repos/target" {
+		t.Fatalf("target project = %#v, want archived target preserved", got)
+	}
+}
+
 func TestRunIgnoresArchivedSourceProjects(t *testing.T) {
 	ctx := context.Background()
 	source := newStore(t)

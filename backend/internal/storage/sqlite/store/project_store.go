@@ -108,11 +108,20 @@ func upsertProject(ctx context.Context, q *gen.Queries, r domain.ProjectRecord, 
 func importProject(ctx context.Context, q *gen.Queries, r domain.ProjectRecord, config sql.NullString) error {
 	existingByID, err := q.GetProject(ctx, domain.ProjectID(r.ID))
 	if err == nil {
-		if !existingByID.ArchivedAt.Valid && existingByID.Path != r.Path {
+		if existingByID.ArchivedAt.Valid {
 			return &domain.ProjectImportConflictError{Conflict: domain.ProjectImportConflict{
 				ProjectID:  r.ID,
 				Path:       r.Path,
-				Reason:     "same id with different active path",
+				Reason:     domain.ProjectImportConflictSameIDArchivedTarget,
+				TargetID:   string(existingByID.ID),
+				TargetPath: existingByID.Path,
+			}}
+		}
+		if existingByID.Path != r.Path {
+			return &domain.ProjectImportConflictError{Conflict: domain.ProjectImportConflict{
+				ProjectID:  r.ID,
+				Path:       r.Path,
+				Reason:     domain.ProjectImportConflictSameIDDifferentActivePath,
 				TargetID:   string(existingByID.ID),
 				TargetPath: existingByID.Path,
 			}}
@@ -127,7 +136,7 @@ func importProject(ctx context.Context, q *gen.Queries, r domain.ProjectRecord, 
 			return &domain.ProjectImportConflictError{Conflict: domain.ProjectImportConflict{
 				ProjectID:  r.ID,
 				Path:       r.Path,
-				Reason:     "same path with different active id",
+				Reason:     domain.ProjectImportConflictSamePathDifferentActiveID,
 				TargetID:   string(existingByPath.ID),
 				TargetPath: existingByPath.Path,
 			}}

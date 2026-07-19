@@ -14,6 +14,7 @@ import (
 
 // Store is the storage slice required by the dev project importer.
 type Store interface {
+	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
 	ListProjects(ctx context.Context) ([]domain.ProjectRecord, error)
 	ListWorkspaceRepos(ctx context.Context, projectID string) ([]domain.WorkspaceRepoRecord, error)
 	ImportWorkspaceProject(ctx context.Context, row domain.ProjectRecord, repos []domain.WorkspaceRepoRecord) error
@@ -26,8 +27,8 @@ type Options struct {
 	DryRun        bool
 }
 
-// Conflict describes an active target project that prevented a source project
-// from being copied.
+// Conflict describes a target project that prevented a source project from
+// being copied.
 type Conflict struct {
 	ProjectID  string `json:"projectId"`
 	Path       string `json:"path"`
@@ -80,12 +81,33 @@ func Run(ctx context.Context, source, target Store, opts Options) (Report, error
 		existingByID, idExists := targetByID[src.ID]
 		existingByPath, pathExists := targetByPath[src.Path]
 
+		if !idExists {
+			existing, ok, err := target.GetProject(ctx, src.ID)
+			if err != nil {
+				return rep, fmt.Errorf("get target project %s: %w", src.ID, err)
+			}
+			if ok {
+				if !existing.ArchivedAt.IsZero() {
+					rep.addConflict(Conflict{
+						ProjectID:  src.ID,
+						Path:       src.Path,
+						Reason:     domain.ProjectImportConflictSameIDArchivedTarget,
+						TargetID:   existing.ID,
+						TargetPath: existing.Path,
+					})
+					continue
+				}
+				existingByID = existing
+				idExists = true
+			}
+		}
+
 		switch {
 		case idExists && existingByID.Path != src.Path:
 			rep.addConflict(Conflict{
 				ProjectID:  src.ID,
 				Path:       src.Path,
-				Reason:     "same id with different active path",
+				Reason:     domain.ProjectImportConflictSameIDDifferentActivePath,
 				TargetID:   existingByID.ID,
 				TargetPath: existingByID.Path,
 			})
@@ -94,7 +116,7 @@ func Run(ctx context.Context, source, target Store, opts Options) (Report, error
 			rep.addConflict(Conflict{
 				ProjectID:  src.ID,
 				Path:       src.Path,
-				Reason:     "same path with different active id",
+				Reason:     domain.ProjectImportConflictSamePathDifferentActiveID,
 				TargetID:   existingByPath.ID,
 				TargetPath: existingByPath.Path,
 			})
