@@ -125,19 +125,14 @@ export function LandingInstall() {
 								</span>
 							</div>
 							<h3 className="mt-4 text-[17px] font-semibold tracking-[-0.01em] text-[color:var(--fg)]">
-								Connect your tools
+								Sign in to GitHub
 							</h3>
 							<p className="mt-2 text-[13.5px] leading-relaxed text-[color:var(--fg-muted)]">
-								AO talks to GitHub through <code className="font-mono text-[12px] text-[color:var(--fg)]">gh</code> and
-								launches the agent CLIs you already have signed in — nothing new to authorize.
+								One command — AO reads issues, PRs, reviews, and CI as you. The agent CLI you already use just works.
+								That's the whole setup.
 							</p>
 							<div className="mt-auto flex flex-col gap-2.5 pt-5">
 								<CopyCommand command="gh auth login" label="GitHub CLI login command" className="w-full" />
-								<div className="flex flex-wrap gap-x-4 gap-y-1.5 pt-1 font-mono text-[11px] text-[color:var(--fg-dim)]">
-									<span>git</span>
-									<span>tmux</span>
-									<span>claude / codex / cursor / aider…</span>
-								</div>
 							</div>
 						</div>
 
@@ -152,18 +147,19 @@ export function LandingInstall() {
 								</span>
 							</div>
 							<h3 className="mt-4 text-[17px] font-semibold tracking-[-0.01em] text-[color:var(--fg)]">
-								Spawn your first agents
+								Tell the orchestrator what you need
 							</h3>
 							<p className="mt-2 text-[13.5px] leading-relaxed text-[color:var(--fg-muted)]">
-								Point AO at a repo, describe a task, and it creates the worktree, branch, and session. Watch the PR land
-								from the board.
+								Just say it in plain words. The orchestrator plans the work, spawns workers into their own worktrees,
+								and you watch the PRs land on the board.
 							</p>
 							<div className="mt-auto flex flex-col gap-2.5 pt-5">
-								<CopyCommand
-									command='ao spawn --prompt "fix the flaky login test"'
-									label="ao spawn command"
-									className="w-full"
-								/>
+								<div className="rounded-md border border-[color:var(--border)] bg-[color:var(--bg-deep)] px-4 py-3 text-[13px] leading-relaxed text-[color:var(--fg-muted)]">
+									<span className="text-[color:var(--fg-dim)]">You → </span>
+									<span className="italic text-[color:var(--fg)]">
+										“Go through my Linear backlog and let’s brainstorm what tasks to spawn.”
+									</span>
+								</div>
 								<Link
 									href="/docs/quickstart"
 									className="group inline-flex items-center gap-1.5 pt-1 text-[12.5px] font-medium text-[color:var(--accent)]"

@@ -32,7 +32,7 @@ const features: Feature[] = [
 		body: "AO watches every PR it opens. Failed checks and review comments route back to the session that owns the branch — with the context to fix them — until the PR is approved.",
 		facts: ["CI + review routing", "full activity timeline", "one click to the PR"],
 		src: "/features/session-feedback.jpg",
-		alt: "A session inspector in AO: the agent terminal on the left, and on the right the pull request card showing CI failing, the activity timeline with a CI Failed event, and session details.",
+		alt: "A session inspector in AO: the agent terminal showing a codex session that received an AO message about CI failing on its pull request, next to the pull request card and activity timeline.",
 	},
 ];
 
@@ -50,50 +50,46 @@ export function LandingFeaturesShowcase() {
 						<h2 className="landing-heading">
 							From a one-line task <span className="landing-heading-muted">to a merged PR.</span>
 						</h2>
-						<p className="landing-body-compact mt-5">
-							No staged renders — everything below is the actual AO desktop app, doing actual work.
-						</p>
+						<p className="landing-body-compact mt-5">Everything below is the actual AO desktop app, doing real work.</p>
 					</div>
 
 					<div className="mt-16 flex flex-col gap-20 sm:mt-20 sm:gap-28">
-						{features.map((feature, index) => {
-							const flip = index % 2 === 1;
-							return (
-								<div key={feature.title} className="landing-reveal grid items-center gap-8 lg:grid-cols-12 lg:gap-12">
-									<div className={`lg:col-span-5 ${flip ? "lg:order-2" : ""}`}>
-										<div className="landing-eyebrow landing-eyebrow-accent">{feature.eyebrow}</div>
-										<h3 className="mt-3 text-[26px] font-semibold leading-[1.15] tracking-[-0.02em] text-[color:var(--fg)] sm:text-[32px]">
-											{feature.title}
-										</h3>
-										<p className="mt-4 max-w-[46ch] text-[15px] leading-[1.7] text-[color:var(--fg-muted)]">
-											{feature.body}
-										</p>
-										<div className="mt-5 flex flex-wrap gap-x-5 gap-y-2 font-mono text-[11px] uppercase tracking-[0.1em] text-[color:var(--fg-dim)]">
-											{feature.facts.map((fact) => (
-												<span key={fact} className="inline-flex items-center gap-2">
-													<span className="h-1 w-1 rounded-full bg-[color:var(--accent)]" aria-hidden="true" />
-													{fact}
-												</span>
-											))}
-										</div>
+						{features.map((feature) => (
+							<div key={feature.title} className="landing-reveal">
+								<div className="max-w-[660px]">
+									<div className="landing-eyebrow landing-eyebrow-accent">{feature.eyebrow}</div>
+									<h3 className="mt-3 text-[26px] font-semibold leading-[1.15] tracking-[-0.02em] text-[color:var(--fg)] sm:text-[32px]">
+										{feature.title}
+									</h3>
+									<p className="mt-4 text-[15px] leading-[1.7] text-[color:var(--fg-muted)] sm:text-[16px]">
+										{feature.body}
+									</p>
+									<div className="mt-5 flex flex-wrap gap-x-5 gap-y-2 font-mono text-[11px] uppercase tracking-[0.1em] text-[color:var(--fg-dim)]">
+										{feature.facts.map((fact) => (
+											<span key={fact} className="inline-flex items-center gap-2">
+												<span className="h-1 w-1 rounded-full bg-[color:var(--accent)]" aria-hidden="true" />
+												{fact}
+											</span>
+										))}
 									</div>
-									<div className={`lg:col-span-7 ${flip ? "lg:order-1" : ""}`}>
-										<div className="hero-laptop-screen">
-											<div className="hero-laptop-display">
-												<Image
-													src={feature.src}
-													alt={feature.alt}
-													width={1600}
-													height={1000}
-													className="h-auto w-full"
-													sizes="(min-width: 1024px) 640px, 100vw"
-												/>
-											</div>
+								</div>
+								<div className="relative mt-8 sm:mt-10">
+									<div className="pointer-events-none absolute -inset-4 rounded-2xl bg-[color:var(--accent)] opacity-[0.03] blur-2xl" />
+									<div className="hero-laptop-screen relative">
+										<div className="hero-laptop-display">
+											<Image
+												src={feature.src}
+												alt={feature.alt}
+												width={1600}
+												height={1000}
+												className="h-auto w-full"
+												sizes="(min-width: 1280px) 1180px, 100vw"
+											/>
 										</div>
 									</div>
 								</div>
-							);
-						})}
+							</div>
+						))}
 					</div>
 				</div>
 			</div>

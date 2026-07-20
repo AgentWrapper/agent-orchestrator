@@ -1153,8 +1153,7 @@ export function LandingHero() {
 						{downloadTarget ? (
 							<a
 								href={downloadTarget.href}
-								className="hero-pressable group inline-flex h-12 w-full items-center justify-center gap-2 rounded-[6px] border border-[color:var(--accent)] bg-[color:var(--accent)] px-6 text-[15px] font-semibold text-[#11140c] hover:brightness-110 sm:w-auto"
-								style={{ color: "#11140c" }}
+								className="hero-pressable btn-primary group inline-flex h-12 w-full items-center justify-center gap-2 rounded-[6px] px-6 text-[15px] font-semibold sm:w-auto"
 							>
 								<DownloadIcon className="h-4 w-4" />
 								{downloadTarget.label}
@@ -1164,8 +1163,7 @@ export function LandingHero() {
 								href={GITHUB_REPO_URL}
 								target="_blank"
 								rel="noreferrer"
-								className="hero-pressable group inline-flex h-12 w-full items-center justify-center gap-2 rounded-[6px] border border-[color:var(--accent)] bg-[color:var(--accent)] px-6 text-[15px] font-semibold text-[#11140c] hover:brightness-110 sm:w-auto"
-								style={{ color: "#11140c" }}
+								className="hero-pressable btn-primary group inline-flex h-12 w-full items-center justify-center gap-2 rounded-[6px] px-6 text-[15px] font-semibold sm:w-auto"
 							>
 								<GithubIcon className="h-4 w-4" />
 								Get Agent Orchestrator

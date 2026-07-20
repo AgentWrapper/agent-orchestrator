@@ -179,7 +179,7 @@ export function LandingNav() {
 						rel="noreferrer"
 						aria-label={`Star Agent Orchestrator on GitHub${stars ? ` — ${stars} stars` : ""}`}
 						title="Star on GitHub"
-						className="group/starchip hidden h-8 items-center gap-1.5 rounded-full border border-[color:var(--border)] bg-[color:var(--bg-elevated)] pl-2.5 pr-3 text-[12px] font-semibold text-[color:var(--fg-muted)] transition-[color,border-color,background-color] duration-300 hover:border-[color:var(--accent-glow)] hover:text-[color:var(--fg)] sm:inline-flex"
+						className="group/starchip inline-flex h-8 items-center gap-1.5 rounded-full border border-[color:var(--border)] bg-[color:var(--bg-elevated)] pl-2.5 pr-3 text-[12px] font-semibold text-[color:var(--fg-muted)] transition-[color,border-color,background-color] duration-300 hover:border-[color:var(--accent-glow)] hover:text-[color:var(--fg)]"
 					>
 						<GithubIcon className="h-3.5 w-3.5" />
 						<StarIcon className="h-3 w-3 text-[color:var(--fg-dim)] transition-colors duration-300 group-hover/starchip:text-[#ffd35c]" />
@@ -206,8 +206,7 @@ export function LandingNav() {
 					</div>
 					<a
 						href={downloadHref}
-						className="hero-pressable hidden h-9 items-center gap-1.5 rounded-full bg-[color:var(--accent)] px-4 text-[13px] font-semibold text-[#11140c] hover:brightness-110 md:inline-flex"
-						style={{ color: "#11140c" }}
+						className="hero-pressable btn-primary hidden h-9 items-center gap-1.5 rounded-full px-4 text-[13px] font-semibold md:inline-flex"
 					>
 						Download
 					</a>

@@ -31,7 +31,7 @@ export function TerminalPane({ session, theme, daemonReady, terminalTarget, font
 			terminalTarget?.kind === "reviewer" ? reviewerPreviewLines(session) : workerPreviewLines(session, provider);
 		return (
 			<pre
-				className="h-full overflow-auto bg-terminal p-4 font-mono leading-relaxed text-terminal"
+				className="h-full overflow-auto bg-terminal p-4 font-mono leading-relaxed text-terminal-foreground"
 				style={{ fontSize }}
 			>
 				<span className="text-terminal-dim">~/{session?.workspaceName ?? "reverbcode"}</span>{" "}
@@ -45,9 +45,9 @@ export function TerminalPane({ session, theme, daemonReady, terminalTarget, font
 								? "text-success"
 								: line.startsWith("WARN") || line.startsWith("TODO")
 									? "text-warning"
-									: line.startsWith("$")
+									: line.startsWith("$") || line.startsWith("▲")
 										? "text-accent"
-										: "text-terminal"
+										: "text-terminal-foreground"
 						}
 					>
 						{line}
@@ -100,6 +100,20 @@ function workerPreviewLines(session: WorkspaceSession | undefined, provider: str
 			"frontend/src/renderer/styles.css                 | 27 +++++++++++",
 			"WARN reviewer requested a tighter terminal activity sample",
 			"TODO confirm whether to keep the toolbar density change",
+		];
+	}
+	if (session?.id === "demo-ci-failed") {
+		return [
+			`$ ${provider} --continue`,
+			"Reading NewTaskDialog.tsx and e2e/smoke.spec.ts...",
+			"$ npm test -- NewTaskDialog",
+			"PASS 12 tests passed",
+			"",
+			"▲ ao send · CI failed on PR #324. The failing checks are e2e (NewTaskDialog",
+			"  submits with Enter). Investigate and push a fix.",
+			"",
+			"Reproducing the Enter-submit path...",
+			"Found it: submit is debounced 300ms, the check asserts immediately. Patching.",
 		];
 	}
 	return [

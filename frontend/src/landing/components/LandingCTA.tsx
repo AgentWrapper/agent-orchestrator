@@ -73,8 +73,7 @@ export function LandingCTA() {
 							<a
 								href={downloadTarget.href}
 								data-testid="cta-download-btn"
-								className="hero-pressable inline-flex h-12 w-full items-center justify-center gap-2 rounded-[6px] border border-[color:var(--accent)] bg-[color:var(--accent)] px-7 text-[15px] font-semibold text-[#11140c] hover:brightness-110 sm:w-auto"
-								style={{ color: "#11140c" }}
+								className="hero-pressable btn-primary inline-flex h-12 w-full items-center justify-center gap-2 rounded-[6px] px-7 text-[15px] font-semibold sm:w-auto"
 							>
 								<DownloadIcon className="h-4 w-4" />
 								{downloadTarget.label}
@@ -85,8 +84,7 @@ export function LandingCTA() {
 								target="_blank"
 								rel="noreferrer"
 								data-testid="cta-download-btn"
-								className="hero-pressable inline-flex h-12 w-full items-center justify-center gap-2 rounded-[6px] border border-[color:var(--accent)] bg-[color:var(--accent)] px-7 text-[15px] font-semibold text-[#11140c] hover:brightness-110 sm:w-auto"
-								style={{ color: "#11140c" }}
+								className="hero-pressable btn-primary inline-flex h-12 w-full items-center justify-center gap-2 rounded-[6px] px-7 text-[15px] font-semibold sm:w-auto"
 							>
 								<DownloadIcon className="h-4 w-4" />
 								Download the app

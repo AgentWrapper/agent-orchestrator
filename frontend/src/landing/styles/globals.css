@@ -168,6 +168,19 @@ body::-webkit-scrollbar,
 	opacity: 0.9;
 }
 
+/* Primary CTA: quiet ivory fill instead of a saturated accent — the premium
+   pattern (Cursor, Linear). Blue stays for small accents only. */
+.btn-primary {
+	background: #f2f1ed;
+	border: 1px solid rgba(255, 255, 255, 0.16);
+	color: #17161a;
+}
+
+.btn-primary:hover {
+	background: #ffffff;
+	border-color: rgba(255, 255, 255, 0.28);
+}
+
 .landing-nav-link {
 	color: var(--fg);
 	transition: color 180ms ease-out;
