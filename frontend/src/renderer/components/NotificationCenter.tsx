@@ -33,7 +33,6 @@ function useNotificationTargetNavigation() {
 			if (target.kind === "pr" && target.prUrl) {
 				void captureRendererEvent("ao.renderer.notification_opened", { target: "pr" });
 				window.open(target.prUrl, "_blank", "noopener,noreferrer");
-				return;
 			}
 			const sessionId = target.sessionId || notification.sessionId;
 			if (!sessionId) return;
