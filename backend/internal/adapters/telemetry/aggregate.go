@@ -8,14 +8,16 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
+// AggregatingSink folds every occurrence of a bursty event in a flush window
+// into a single rollup event carrying a count, so cost scales with flush
+// windows (one event/minute per name, worst case), not occurrences, and the
+// true magnitude of a burst is still visible.
+//
 // PostHog bills per event ingested, regardless of what's in the payload. For
 // event names that are prone to bursts (a 5xx storm, a panic loop, a retry
 // hammering a bad command), per-occurrence rate limiting bounds the bill but
 // throws away everything past the cap - a storm of 10,000 errors and one of
-// 6 both show up as "5, then silence." AggregatingSink instead folds every
-// occurrence in a flush window into a single rollup event carrying a count,
-// so cost scales with flush windows (one event/minute per name, worst case),
-// not occurrences, and the true magnitude of a burst is still visible.
+// 6 both show up as "5, then silence."
 //
 // Only event names named at construction are aggregated; everything else
 // passes straight through to next unchanged, so per-occurrence semantics and
