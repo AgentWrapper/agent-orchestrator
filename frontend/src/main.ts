@@ -30,7 +30,7 @@ import {
 } from "./main/update-settings";
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { readdir, readFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -56,6 +56,7 @@ import { connectSupervisor, type SupervisorLinkHandle } from "./main/supervisor-
 import { shouldLinkOnAttach } from "./main/daemon-owner";
 import { readMigrationState, updateMigration, writeAppStateMarker, type MigrationState } from "./main/app-state";
 import { isAllowedAppExternalURL, openAllowedAppExternalURL } from "./main/external-open";
+import { saveDroppedFile } from "./main/terminal-drops";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -1225,19 +1226,9 @@ ipcMain.handle("clipboard:writeText", (_event, text: string) => {
 });
 ipcMain.handle("clipboard:readText", () => clipboard.readText());
 
-// A file dropped onto the terminal is delivered as raw bytes (its original path
-// is unavailable to the sandboxed renderer on macOS — see webUtils.getPathForFile
-// regressions in Electron 30-33). Stash the bytes under the app's own state dir
-// and return the path so the terminal can insert it, mirroring how a native
-// terminal inserts a dropped file's path.
-ipcMain.handle("terminal:saveDroppedFile", async (_event, input: { name: string; bytes: Uint8Array }) => {
-	const dir = path.join(app.getPath("userData"), "terminal-drops");
-	await mkdir(dir, { recursive: true });
-	const base = path.basename(input.name || "").replace(/[^\w.-]+/g, "_") || "dropped";
-	const target = path.join(dir, `${Date.now()}-${base}`);
-	await writeFile(target, Buffer.from(input.bytes));
-	return target;
-});
+ipcMain.handle("terminal:saveDroppedFile", (_event, input: { name: string; bytes: Uint8Array }) =>
+	saveDroppedFile(path.join(app.getPath("userData"), "terminal-drops"), input, Date.now()),
+);
 
 ipcMain.handle("appState:getMigration", async (): Promise<MigrationState> => {
 	const runFile = runFilePath();

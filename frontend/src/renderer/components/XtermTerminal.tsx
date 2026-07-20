@@ -575,18 +575,26 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			event.preventDefault();
 			event.stopPropagation();
 			void (async () => {
-				const paths: string[] = [];
+				const windows = isWindowsPlatform();
+				const safePattern = windows ? /^[A-Za-z0-9_.:\\/-]+$/ : /^[A-Za-z0-9_./-]+$/;
+				const quoted: string[] = [];
 				for (const file of files) {
 					try {
 						const bytes = new Uint8Array(await file.arrayBuffer());
 						const saved = await aoBridge.terminal.saveDroppedFile({ name: file.name, bytes });
-						if (saved) paths.push(saved);
+						if (!saved) continue;
+						if (safePattern.test(saved)) {
+							quoted.push(saved);
+						} else if (windows) {
+							quoted.push(`"${saved.replace(/"/g, '\\"')}"`);
+						} else {
+							quoted.push(`'${saved.replace(/'/g, "'\\''")}'`);
+						}
 					} catch (error) {
 						console.warn("Unable to attach dropped file", error);
 					}
 				}
-				if (paths.length === 0) return;
-				pasteText(`${paths.map((p) => (/\s/.test(p) ? `'${p}'` : p)).join(" ")} `);
+				if (quoted.length > 0) pasteText(`${quoted.join(" ")} `);
 			})();
 		};
 		host.addEventListener("dragover", dragOverInput);
