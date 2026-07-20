@@ -791,19 +791,10 @@ func (m *Manager) retireWorkspaceProjectForReplacement(ctx context.Context, rec 
 	return nil
 }
 
-// Restore relaunches a torn-down session in its workspace. The fallible I/O runs
-// before any durable session write, so a failure never resurrects the row or destroys
-// the worktree (it may hold the agent's prior work).
-func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.SessionRecord, error) {
-	res, err := m.RestoreWithMode(ctx, id)
-	if err != nil {
-		return domain.SessionRecord{}, err
-	}
-	return res.Session, nil
-}
-
 // RestoreWithMode relaunches a torn-down session and reports whether AO used
-// native resume or a saved-prompt fallback.
+// native resume, a saved-prompt fallback, or a fresh launch. The fallible I/O
+// runs before any durable session write, so a failure never resurrects the row
+// or destroys the worktree (it may hold the agent's prior work).
 func (m *Manager) RestoreWithMode(ctx context.Context, id domain.SessionID) (RestoreResult, error) {
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {

@@ -230,9 +230,6 @@ func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.
 	}
 	return domain.SessionRecord{ID: "mer-9", ProjectID: cfg.ProjectID, Kind: cfg.Kind, Harness: cfg.Harness}, nil
 }
-func (f *fakeCommander) Restore(context.Context, domain.SessionID) (domain.SessionRecord, error) {
-	return domain.SessionRecord{}, nil
-}
 func (f *fakeCommander) RestoreWithMode(context.Context, domain.SessionID) (sessionmanager.RestoreResult, error) {
 	if f.restoreErr != nil {
 		return sessionmanager.RestoreResult{}, f.restoreErr
