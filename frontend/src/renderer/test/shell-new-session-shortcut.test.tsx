@@ -6,14 +6,19 @@ import type { WorkspaceSummary } from "../types/workspace";
 
 const shellMocks = vi.hoisted(() => {
 	const state = {
-		listener: undefined as (() => void) | undefined,
+		newSessionListener: undefined as (() => void) | undefined,
+		keyboardShortcutsListener: undefined as (() => void) | undefined,
 		routeParams: {} as { projectId?: string; sessionId?: string },
 		workspaces: [] as WorkspaceSummary[],
 	};
 	return {
 		navigate: vi.fn(),
 		onNewSessionShortcut: vi.fn((listener: () => void) => {
-			state.listener = listener;
+			state.newSessionListener = listener;
+			return vi.fn();
+		}),
+		onKeyboardShortcutsHelp: vi.fn((listener: () => void) => {
+			state.keyboardShortcutsListener = listener;
 			return vi.fn();
 		}),
 		queryClient: {
@@ -40,7 +45,12 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
 }));
 
 vi.mock("../lib/bridge", () => ({
-	aoBridge: { app: { onNewSessionShortcut: shellMocks.onNewSessionShortcut } },
+	aoBridge: {
+		app: {
+			onNewSessionShortcut: shellMocks.onNewSessionShortcut,
+			onKeyboardShortcutsHelp: shellMocks.onKeyboardShortcutsHelp,
+		},
+	},
 }));
 
 vi.mock("../hooks/useWorkspaceQuery", () => ({
@@ -64,6 +74,9 @@ vi.mock("../components/OrchestratorReplacementDialog", () => ({ OrchestratorRepl
 vi.mock("../components/ShellTopbar", () => ({ ShellTopbar: () => null }));
 vi.mock("../components/TitlebarNav", () => ({ TitlebarNav: () => null }));
 vi.mock("../components/WindowTitlebar", () => ({ WindowTitlebar: () => null }));
+vi.mock("../components/KeyboardShortcutsDialog", () => ({
+	KeyboardShortcutsDialog: ({ open }: { open: boolean }) => (open ? <div data-testid="keyboard-shortcuts" /> : null),
+}));
 vi.mock("../lib/shell-context", () => ({
 	ShellProvider: ({ children }: PropsWithChildren) => children,
 }));
@@ -112,10 +125,11 @@ async function renderShell() {
 		);
 	});
 	await waitFor(() => expect(shellMocks.onNewSessionShortcut).toHaveBeenCalledTimes(1));
+	await waitFor(() => expect(shellMocks.onKeyboardShortcutsHelp).toHaveBeenCalledTimes(1));
 }
 
 function emitShortcut() {
-	const listener = shellMocks.state.listener;
+	const listener = shellMocks.state.newSessionListener;
 	if (!listener) throw new Error("shell shortcut listener was not registered");
 	act(() => listener());
 }
@@ -123,10 +137,24 @@ function emitShortcut() {
 beforeEach(() => {
 	shellMocks.navigate.mockReset();
 	shellMocks.onNewSessionShortcut.mockClear();
-	shellMocks.state.listener = undefined;
+	shellMocks.onKeyboardShortcutsHelp.mockClear();
+	shellMocks.state.newSessionListener = undefined;
+	shellMocks.state.keyboardShortcutsListener = undefined;
 	shellMocks.state.routeParams = {};
 	shellMocks.state.workspaces = workspaces;
 	useUiStore.setState({ createProjectNonce: 0, newTaskRequest: null });
+});
+
+describe("shell keyboard-shortcuts help subscription", () => {
+	it("opens the keyboard-shortcuts dialog", async () => {
+		await renderShell();
+
+		const listener = shellMocks.state.keyboardShortcutsListener;
+		if (!listener) throw new Error("keyboard-shortcuts listener was not registered");
+		act(() => listener());
+
+		expect(screen.getByTestId("keyboard-shortcuts")).toBeInTheDocument();
+	});
 });
 
 describe("shell new-session shortcut subscription", () => {

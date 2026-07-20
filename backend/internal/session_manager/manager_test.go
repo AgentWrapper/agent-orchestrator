@@ -1373,11 +1373,11 @@ func TestKill_TerminatesIncompleteHandle(t *testing.T) {
 	}
 }
 
-// TestKill_DirtyWorkspacePreservesAndRemainsRetryable: a workspace teardown
+// TestKill_DirtyWorkspacePreservesAndTerminates: a workspace teardown
 // refused because of uncommitted work must NOT force-remove the worktree. Kill
-// succeeds with freed=false and leaves the session non-terminal so a later retry
-// can complete cleanup.
-func TestKill_DirtyWorkspacePreservesAndRemainsRetryable(t *testing.T) {
+// succeeds with freed=false and still marks the session terminated; cleanup can
+// reclaim the preserved worktree after the user resolves the dirty state.
+func TestKill_DirtyWorkspacePreservesAndTerminates(t *testing.T) {
 	m, st, rt, ws := newManager()
 	st.sessions["mer-1"] = mkLive("mer-1")
 	ws.destroyErr = fmt.Errorf("gitworktree: refusing to remove: %w", ports.ErrWorkspaceDirty)
@@ -1391,8 +1391,8 @@ func TestKill_DirtyWorkspacePreservesAndRemainsRetryable(t *testing.T) {
 	if rt.destroyed != 1 {
 		t.Fatal("runtime should be destroyed")
 	}
-	if st.sessions["mer-1"].IsTerminated {
-		t.Fatal("session should remain active so cleanup can be retried")
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session should be terminated even when the workspace is preserved")
 	}
 }
 
@@ -1508,8 +1508,8 @@ func TestKill_WorkspaceProjectDirtyRowRefusesRemoval(t *testing.T) {
 	if got := ws.calls; strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("calls = %v, want %v", got, want)
 	}
-	if st.sessions["mer-1"].IsTerminated {
-		t.Fatal("session should remain active so dirty workspace cleanup can be retried")
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session should be terminated even when dirty workspace cleanup is deferred")
 	}
 }
 

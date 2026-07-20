@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { NEW_SESSION_SHORTCUT_CHANNEL } from "./shared/shortcuts";
+import { KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL } from "./shared/shortcuts";
 import type { AoBridge } from "./preload";
 
 const electronMocks = vi.hoisted(() => {
@@ -52,5 +52,20 @@ describe("preload new-session shortcut bridge", () => {
 
 		dispose();
 		expect(electronMocks.off).toHaveBeenCalledWith(NEW_SESSION_SHORTCUT_CHANNEL, wrapped);
+	});
+});
+
+describe("preload keyboard-shortcuts help bridge", () => {
+	it("delivers the IPC event and removes the exact wrapped listener", () => {
+		const listener = vi.fn();
+		const dispose = exposedBridge().app.onKeyboardShortcutsHelp(listener);
+		const wrapped = electronMocks.listeners.get(KEYBOARD_SHORTCUTS_HELP_CHANNEL);
+		expect(wrapped).toBeTypeOf("function");
+
+		wrapped?.({});
+		expect(listener).toHaveBeenCalledTimes(1);
+
+		dispose();
+		expect(electronMocks.off).toHaveBeenCalledWith(KEYBOARD_SHORTCUTS_HELP_CHANNEL, wrapped);
 	});
 });

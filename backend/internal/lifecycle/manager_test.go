@@ -18,6 +18,7 @@ type fakeStore struct {
 	prs        map[domain.SessionID][]domain.PullRequest
 	signatures map[string]string
 
+	listPRsErr        error
 	signatureWriteErr error
 	signatureWrites   int
 }
@@ -32,6 +33,9 @@ func (f *fakeStore) GetSession(_ context.Context, id domain.SessionID) (domain.S
 }
 
 func (f *fakeStore) ListPRsBySession(_ context.Context, id domain.SessionID) ([]domain.PullRequest, error) {
+	if f.listPRsErr != nil {
+		return nil, f.listPRsErr
+	}
 	return f.prs[id], nil
 }
 
@@ -409,6 +413,58 @@ func TestPRObservation_CIFailingAndReviewBothNudge(t *testing.T) {
 	}
 	if len(msg.msgs) != 2 {
 		t.Fatalf("re-observation should not re-nudge, got %d: %v", len(msg.msgs), msg.msgs)
+	}
+}
+
+// A failed parent-stack lookup (the store read behind the merge-conflict
+// exemption) must not discard the CI/review nudges already queued for the same
+// PR. Only the merge-conflict nudge is skipped this cycle; CI and review still
+// send, the read error still surfaces so the observer logs and re-polls, and the
+// merge-conflict nudge fires once the read recovers.
+func TestPRObservation_MergeConflictReadErrorStillSendsCIAndReview(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	st.listPRsErr = errors.New("transient store read failure")
+	o := ports.PRObservation{
+		Fetched:      true,
+		URL:          "pr1",
+		CI:           domain.CIFailing,
+		Checks:       []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"}},
+		Review:       domain.ReviewChangesRequest,
+		Comments:     []ports.PRCommentObservation{{ID: "1", Author: "alice", Body: "fix this"}},
+		Mergeability: domain.MergeConflicting,
+	}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err == nil {
+		t.Fatal("want the deferred parent-stack read error surfaced")
+	}
+	// CI and review still fired despite the merge-conflict lookup failing; the
+	// merge-conflict nudge itself is skipped this cycle.
+	if len(msg.msgs) != 2 {
+		t.Fatalf("want CI and review nudges sent, got %d: %v", len(msg.msgs), msg.msgs)
+	}
+	if !strings.Contains(msg.msgs[0], "boom") {
+		t.Fatalf("first nudge should carry the CI failure, got %q", msg.msgs[0])
+	}
+	if !strings.Contains(msg.msgs[1], "fix this") {
+		t.Fatalf("second nudge should carry the review feedback, got %q", msg.msgs[1])
+	}
+	for _, sent := range msg.msgs {
+		if strings.Contains(sent, "merge conflicts") {
+			t.Fatalf("merge-conflict nudge must be skipped on read error, got %q", sent)
+		}
+	}
+
+	// Next poll, the read recovers: the merge-conflict nudge now fires while
+	// CI/review stay deduped (their signatures persisted before the error).
+	st.listPRsErr = nil
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 3 {
+		t.Fatalf("want merge-conflict nudge on recovery with CI/review deduped, got %d: %v", len(msg.msgs), msg.msgs)
+	}
+	if !strings.Contains(msg.msgs[2], "merge conflicts") {
+		t.Fatalf("third nudge should be the merge-conflict nudge, got %q", msg.msgs[2])
 	}
 }
 

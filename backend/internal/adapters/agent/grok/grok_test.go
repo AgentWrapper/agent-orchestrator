@@ -2,6 +2,7 @@ package grok
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hooksjson"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -105,6 +107,22 @@ func TestGetLaunchCommandAcceptEdits(t *testing.T) {
 	assertNoPromptFlag(t, cmd)
 }
 
+func TestGetLaunchCommandAuto(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "grok"}
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Prompt:      "ship it",
+		Permissions: ports.PermissionModeAuto,
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	want := []string{"grok", "--no-auto-update", "--permission-mode", "auto", "--", "ship it"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+	assertNoPromptFlag(t, cmd)
+}
+
 func TestGetLaunchCommandTerminatesFlagsBeforeLeadingDashPrompt(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "grok"}
 	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
@@ -190,16 +208,65 @@ func TestGetRestoreCommand(t *testing.T) {
 	}
 }
 
-func TestGetRestoreCommandNoID(t *testing.T) {
-	plugin := &Plugin{resolvedBinary: "grok"}
-	_, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
-		Session: ports.SessionRef{Metadata: map[string]string{}},
-	})
-	if err != nil {
-		t.Fatalf("err: %v", err)
+func TestGetRestoreCommandMapsPermissionModes(t *testing.T) {
+	tests := []struct {
+		name       string
+		permission ports.PermissionMode
+		want       []string
+	}{
+		{"accept edits", ports.PermissionModeAcceptEdits, []string{"grok", "--no-auto-update", "--permission-mode", "acceptEdits", "-r", "sess-abc123"}},
+		{"auto", ports.PermissionModeAuto, []string{"grok", "--no-auto-update", "--permission-mode", "auto", "-r", "sess-abc123"}},
+		{"bypass permissions", ports.PermissionModeBypassPermissions, []string{"grok", "--no-auto-update", "--permission-mode", "bypassPermissions", "-r", "sess-abc123"}},
 	}
-	if ok {
-		t.Fatal("ok=true with no agentSessionId, want false")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plugin := &Plugin{resolvedBinary: "grok"}
+			cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+				Session: ports.SessionRef{
+					Metadata: map[string]string{
+						ports.MetadataKeyAgentSessionID: "sess-abc123",
+					},
+				},
+				Permissions: tt.permission,
+			})
+			if err != nil {
+				t.Fatalf("err: %v", err)
+			}
+			if !ok {
+				t.Fatal("ok=false, want true")
+			}
+			if !reflect.DeepEqual(cmd, tt.want) {
+				t.Fatalf("cmd = %#v, want %#v", cmd, tt.want)
+			}
+		})
+	}
+}
+
+func TestGetRestoreCommandNoID(t *testing.T) {
+	tests := []struct {
+		name string
+		ref  ports.SessionRef
+	}{
+		{"empty metadata", ports.SessionRef{Metadata: map[string]string{}}},
+		{"blank agent session metadata", ports.SessionRef{Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "   "}}},
+		{"ao session id only", ports.SessionRef{ID: "ao-7"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plugin := &Plugin{resolvedBinary: "grok"}
+			cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+				Session: tt.ref,
+			})
+			if err != nil {
+				t.Fatalf("err: %v", err)
+			}
+			if ok {
+				t.Fatal("ok=true with no agentSessionId, want false")
+			}
+			if cmd != nil {
+				t.Fatalf("cmd = %#v, want nil", cmd)
+			}
+		})
 	}
 }
 
@@ -245,13 +312,18 @@ func TestSessionInfoFalseWhenNoHookMetadata(t *testing.T) {
 	}
 }
 
-func TestHookLifecycleDelegates(t *testing.T) {
-	// Claude tests cover the full merge behavior; here we assert Grok exposes
-	// the same delegated lifecycle so Grok-installed compat hooks can be
-	// detected and removed through the Grok adapter.
+func TestGetAgentHooksInstallsGrokCommandsInClaudeSettings(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "grok"}
 	ctx := context.Background()
 	ws := t.TempDir()
+	settingsPath := grokClaudeSettingsPath(ws)
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"my own stop hook","timeout":5},{"type":"command","command":"ao hooks claude-code stop","timeout":30}]}]},"permissions":{"defaultMode":"plan"}}`
+	if err := os.WriteFile(settingsPath, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	cfg := ports.WorkspaceHookConfig{
 		WorkspacePath: ws,
 		SessionID:     "grok-test-1",
@@ -260,13 +332,108 @@ func TestHookLifecycleDelegates(t *testing.T) {
 	if err := plugin.GetAgentHooks(ctx, cfg); err != nil {
 		t.Fatalf("GetAgentHooks: %v", err)
 	}
+	if err := plugin.GetAgentHooks(ctx, cfg); err != nil {
+		t.Fatalf("second GetAgentHooks: %v", err)
+	}
 	if installed, err := plugin.AreHooksInstalled(ctx, ws); err != nil || !installed {
 		t.Fatalf("AreHooksInstalled after install = (%v, %v), want (true, nil)", installed, err)
 	}
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Hooks       map[string][]hooksjson.MatcherGroup `json:"hooks"`
+		Permissions json.RawMessage                     `json:"permissions"`
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if config.Hooks == nil {
+		t.Fatalf("hooks object missing: %s", data)
+	}
+	for _, spec := range grokManagedHooks {
+		if got := countGrokHookCommand(config.Hooks[spec.Event], spec.Command); got != 1 {
+			t.Fatalf("%s command %q count = %d, want 1", spec.Event, spec.Command, got)
+		}
+		claudeCommand := strings.Replace(spec.Command, "ao hooks grok ", "ao hooks claude-code ", 1)
+		if spec.Event != "Stop" && countGrokHookCommand(config.Hooks[spec.Event], claudeCommand) != 0 {
+			t.Fatalf("%s unexpectedly installed Claude command %q", spec.Event, claudeCommand)
+		}
+	}
+	if countGrokHookCommand(config.Hooks["Stop"], "my own stop hook") != 1 {
+		t.Fatalf("existing Stop hook not preserved: %#v", config.Hooks["Stop"])
+	}
+	if countGrokHookCommand(config.Hooks["Stop"], "ao hooks claude-code stop") != 1 {
+		t.Fatalf("existing Claude AO Stop hook not preserved: %#v", config.Hooks["Stop"])
+	}
+	if len(config.Permissions) == 0 {
+		t.Fatalf("unrelated settings clobbered: %s", data)
+	}
+	if m := grokMatcherForCommand(config.Hooks["SessionStart"], "ao hooks grok session-start"); m == nil || *m != "startup" {
+		t.Fatalf("SessionStart matcher = %v, want startup", m)
+	}
+	if m := grokMatcherForCommand(config.Hooks["UserPromptSubmit"], "ao hooks grok user-prompt-submit"); m != nil {
+		t.Fatalf("UserPromptSubmit matcher = %v, want none", m)
+	}
+	if m := grokMatcherForCommand(config.Hooks["Notification"], "ao hooks grok notification"); m != nil {
+		t.Fatalf("Notification matcher = %v, want none", m)
+	}
+
 	if err := plugin.UninstallHooks(ctx, ws); err != nil {
 		t.Fatalf("UninstallHooks: %v", err)
 	}
 	if installed, err := plugin.AreHooksInstalled(ctx, ws); err != nil || installed {
 		t.Fatalf("AreHooksInstalled after uninstall = (%v, %v), want (false, nil)", installed, err)
 	}
+
+	data, err = os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config = struct {
+		Hooks       map[string][]hooksjson.MatcherGroup `json:"hooks"`
+		Permissions json.RawMessage                     `json:"permissions"`
+	}{}
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	for _, spec := range grokManagedHooks {
+		if got := countGrokHookCommand(config.Hooks[spec.Event], spec.Command); got != 0 {
+			t.Fatalf("%s command %q count = %d after uninstall, want 0", spec.Event, spec.Command, got)
+		}
+	}
+	if countGrokHookCommand(config.Hooks["Stop"], "my own stop hook") != 1 {
+		t.Fatalf("user Stop hook not preserved after uninstall: %#v", config.Hooks["Stop"])
+	}
+	if countGrokHookCommand(config.Hooks["Stop"], "ao hooks claude-code stop") != 1 {
+		t.Fatalf("Claude AO Stop hook not preserved after uninstall: %#v", config.Hooks["Stop"])
+	}
+	if len(config.Permissions) == 0 {
+		t.Fatalf("unrelated settings clobbered after uninstall: %s", data)
+	}
+}
+
+func countGrokHookCommand(groups []hooksjson.MatcherGroup, command string) int {
+	count := 0
+	for _, group := range groups {
+		for _, hook := range group.Hooks {
+			if hook.Command == command {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+func grokMatcherForCommand(groups []hooksjson.MatcherGroup, command string) *string {
+	for _, group := range groups {
+		for _, hook := range group.Hooks {
+			if hook.Command == command {
+				return group.Matcher
+			}
+		}
+	}
+	return nil
 }

@@ -17,6 +17,8 @@ const {
 	updInstall,
 	updOnStatus,
 	getVersion,
+	featListBuilds,
+	featGetActive,
 } = vi.hoisted(() => ({
 	getMock: vi.fn(),
 	postMock: vi.fn(),
@@ -30,6 +32,8 @@ const {
 	updInstall: vi.fn(),
 	updOnStatus: vi.fn(),
 	getVersion: vi.fn(),
+	featListBuilds: vi.fn(),
+	featGetActive: vi.fn(),
 }));
 
 vi.mock("../lib/api-client", () => ({
@@ -49,6 +53,7 @@ vi.mock("../lib/bridge", () => ({
 			install: updInstall,
 			onStatus: updOnStatus,
 		},
+		featureBuilds: { list: featListBuilds, getActive: featGetActive },
 	},
 }));
 
@@ -63,12 +68,13 @@ function renderForm() {
 }
 
 beforeEach(() => {
-	for (const m of [getMock, postMock, getMigration, setMigration, getUpdate, setUpdate]) m.mockReset();
+	for (const m of [getMock, postMock, getMigration, setMigration, getUpdate, setUpdate, featListBuilds, featGetActive])
+		m.mockReset();
 	getMigration.mockResolvedValue({ status: "pending" });
 	getMock.mockResolvedValue({ data: { available: true, legacyRoot: "/home/u/.agent-orchestrator" }, error: undefined });
 	postMock.mockResolvedValue({ data: { report: { projectsImported: 2, projectsSkipped: 1 } }, error: undefined });
 	setMigration.mockResolvedValue(undefined);
-	getUpdate.mockResolvedValue({ enabled: true, channel: "latest", nightlyAck: false });
+	getUpdate.mockResolvedValue({ enabled: true, channel: "latest", nightlyAck: false, feature: null });
 	setUpdate.mockResolvedValue(undefined);
 	updGetStatus.mockResolvedValue({ state: "idle" });
 	updCheck.mockResolvedValue(undefined);
@@ -76,6 +82,8 @@ beforeEach(() => {
 	updInstall.mockResolvedValue(undefined);
 	updOnStatus.mockReturnValue(() => undefined);
 	getVersion.mockResolvedValue("1.4.0");
+	featListBuilds.mockResolvedValue([]);
+	featGetActive.mockResolvedValue(null);
 });
 
 describe("GlobalSettingsForm", () => {
@@ -86,7 +94,7 @@ describe("GlobalSettingsForm", () => {
 	});
 
 	it("shows the nightly warning and saves the loaded channel", async () => {
-		getUpdate.mockResolvedValue({ enabled: true, channel: "nightly", nightlyAck: true });
+		getUpdate.mockResolvedValue({ enabled: true, channel: "nightly", nightlyAck: true, feature: null });
 		renderForm();
 		expect(await screen.findByText(/Nightly builds are cut every day/i)).toBeInTheDocument();
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
@@ -180,5 +188,77 @@ describe("GlobalSettingsForm", () => {
 		await userEvent.click(btn);
 		expect(await screen.findByText(/disk full/i)).toBeInTheDocument();
 		expect(setMigration).toHaveBeenCalledWith(expect.objectContaining({ status: "failed", error: "disk full" }));
+	});
+
+	it("reveals the feature-build picker when Feature Releases is selected", async () => {
+		renderForm();
+		await screen.findByText("Updates");
+		// The picker must be reachable from a clean state (no pin seeded).
+		await userEvent.click(screen.getByLabelText("Update channel"));
+		await userEvent.click(await screen.findByRole("option", { name: "Feature Releases" }));
+		// Secondary picker mounts; no live builds are mocked, so it shows the empty state.
+		expect(await screen.findByText("No live feature releases.")).toBeInTheDocument();
+		expect(featListBuilds).toHaveBeenCalled();
+	});
+
+	it("pins a feature build after confirming, then auto-progresses check -> download -> install", async () => {
+		featListBuilds.mockResolvedValue([
+			{
+				pr: 2270,
+				title: "Fix foo",
+				base: "0.2.0",
+				sha: "abc",
+				slug: "x",
+				buildId: "v0.2.0-pr2270.202607061200",
+				publishedAt: new Date().toISOString(),
+			},
+		]);
+		let emit: (s: { state: string; version?: string }) => void = () => undefined;
+		updOnStatus.mockImplementation((cb: (s: unknown) => void) => {
+			emit = cb as typeof emit;
+			return () => undefined;
+		});
+		renderForm();
+		await screen.findByText("Updates");
+
+		await userEvent.click(screen.getByLabelText("Update channel"));
+		await userEvent.click(await screen.findByRole("option", { name: "Feature Releases" }));
+
+		await userEvent.click(await screen.findByLabelText("Feature build"));
+		await userEvent.click(await screen.findByRole("option", { name: /PR #2270: Fix foo/ }));
+
+		// Confirmation dialog replaces window.confirm.
+		await userEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+
+		await waitFor(() => expect(setUpdate).toHaveBeenCalledWith(expect.objectContaining({ feature: { pr: 2270 } })));
+		expect(updCheck).toHaveBeenCalled();
+
+		// Auto-progression: available -> download(), downloaded -> install().
+		act(() => emit({ state: "available", version: "1.2.3" }));
+		await waitFor(() => expect(updDownload).toHaveBeenCalled());
+		act(() => emit({ state: "downloaded", version: "1.2.3" }));
+		await waitFor(() => expect(updInstall).toHaveBeenCalled());
+	});
+
+	it("returns to Stable, then auto-progresses check -> download -> install", async () => {
+		getUpdate.mockResolvedValue({ enabled: true, channel: "latest", nightlyAck: false, feature: { pr: 2270 } });
+		featGetActive.mockResolvedValue({ pr: 2270 });
+		let emit: (s: { state: string; version?: string }) => void = () => undefined;
+		updOnStatus.mockImplementation((cb: (s: unknown) => void) => {
+			emit = cb as typeof emit;
+			return () => undefined;
+		});
+		renderForm();
+
+		const returnBtn = await screen.findByRole("button", { name: "Return to Stable" });
+		await userEvent.click(returnBtn);
+
+		await waitFor(() => expect(setUpdate).toHaveBeenCalledWith(expect.objectContaining({ feature: null })));
+		expect(updCheck).toHaveBeenCalled();
+
+		act(() => emit({ state: "available", version: "1.3.0" }));
+		await waitFor(() => expect(updDownload).toHaveBeenCalled());
+		act(() => emit({ state: "downloaded", version: "1.3.0" }));
+		await waitFor(() => expect(updInstall).toHaveBeenCalled());
 	});
 });
