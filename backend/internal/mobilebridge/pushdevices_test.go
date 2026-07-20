@@ -3,6 +3,7 @@ package mobilebridge
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -129,6 +130,11 @@ func TestUpsertRejectsInvalidToken(t *testing.T) {
 }
 
 func TestRegistryFileMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// Windows does not honor Unix file-permission bits; os.Chmod only toggles
+		// the read-only flag, so Stat reports 0666. The 0600 intent is a no-op there.
+		t.Skip("file mode bits are not meaningful on Windows")
+	}
 	path := PushDevicesPath(t.TempDir())
 	reg, _ := LoadRegistry(path)
 	now := time.Now().UTC()
