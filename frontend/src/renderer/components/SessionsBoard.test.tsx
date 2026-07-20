@@ -4,12 +4,14 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 
-const { navigateMock, notificationShowMock, postMock, workspaceQueryMock, boardActionsInPanelMock } = vi.hoisted(() => ({
+const { navigateMock, notificationShowMock, postMock, workspaceQueryMock, boardActionsInPanelMock, updateStatusMock, installMock } = vi.hoisted(() => ({
 	navigateMock: vi.fn(),
 	notificationShowMock: vi.fn(),
 	postMock: vi.fn(),
 	workspaceQueryMock: vi.fn(),
 	boardActionsInPanelMock: vi.fn(() => false),
+	updateStatusMock: vi.fn(),
+	installMock: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -33,6 +35,11 @@ vi.mock("../lib/bridge", () => ({
 		},
 		notifications: {
 			show: (...args: unknown[]) => notificationShowMock(...args),
+		},
+		updates: {
+			getStatus: () => Promise.resolve(updateStatusMock()),
+			onStatus: vi.fn().mockReturnValue(() => undefined),
+			install: () => installMock(),
 		},
 	},
 }));
@@ -72,6 +79,8 @@ beforeEach(() => {
 	workspaceQueryMock.mockReset().mockReturnValue({ data: [], isError: false });
 	window.localStorage.removeItem("ao.board.archive.layout");
 	boardActionsInPanelMock.mockReset().mockReturnValue(false);
+	updateStatusMock.mockReset().mockReturnValue({ state: "idle" });
+	installMock.mockReset().mockResolvedValue(undefined);
 });
 
 describe("SessionsBoard", () => {
