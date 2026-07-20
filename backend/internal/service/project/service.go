@@ -114,6 +114,11 @@ func (m *Service) List(ctx context.Context) ([]Summary, error) {
 		Kind: domain.ProjectKindScratch,
 	})
 	for _, row := range projects {
+		if row.ID == string(domain.ScratchProjectID) {
+			// The seeded scratch row exists to satisfy foreign keys; the pinned
+			// synthetic summary above is its only List representation.
+			continue
+		}
 		out = append(out, Summary{
 			ID:                domain.ProjectID(row.ID),
 			Name:              displayName(row),
@@ -139,6 +144,12 @@ func (m *Service) Get(ctx context.Context, id domain.ProjectID) (GetResult, erro
 		return GetResult{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
 	}
 	p := m.projectFromRow(row)
+	if id == domain.ScratchProjectID {
+		// The seeded row stores kind 'single_repo' (the projects.kind CHECK
+		// predates scratch); present the pseudo-project as scratch.
+		p.Kind = domain.ProjectKindScratch
+		p.Name = "Scratch"
+	}
 	if row.Kind.WithDefault() == domain.ProjectKindWorkspace {
 		repos, err := m.store.ListWorkspaceRepos(ctx, row.ID)
 		if err != nil {
@@ -166,6 +177,9 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 	}
 	if err := validateProjectID(id); err != nil {
 		return Project{}, err
+	}
+	if id == domain.ScratchProjectID {
+		return Project{}, apierr.Invalid("PROJECT_SCRATCH_RESERVED", "The id 'scratch' is reserved for the built-in Scratch project", nil)
 	}
 
 	m.addMu.Lock()
@@ -482,7 +496,16 @@ func (m *Service) activeProjectCount(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	return len(projects), nil
+	count := 0
+	for _, row := range projects {
+		// The seeded Scratch pseudo-project is not a user-registered project;
+		// excluding it keeps first-project onboarding telemetry accurate.
+		if row.ID == string(domain.ScratchProjectID) {
+			continue
+		}
+		count++
+	}
+	return count, nil
 }
 
 func (m *Service) emitProjectAdded(row domain.ProjectRecord, firstProject bool) {
@@ -583,6 +606,9 @@ func resolveDefaultBranch(path string) string {
 func (m *Service) Remove(ctx context.Context, id domain.ProjectID) (RemoveResult, error) {
 	if err := validateProjectID(id); err != nil {
 		return RemoveResult{}, err
+	}
+	if id == domain.ScratchProjectID {
+		return RemoveResult{}, apierr.Invalid("PROJECT_SCRATCH_RESERVED", "The built-in Scratch project cannot be removed", nil)
 	}
 	row, ok, err := m.store.GetProject(ctx, string(id))
 	if err != nil {

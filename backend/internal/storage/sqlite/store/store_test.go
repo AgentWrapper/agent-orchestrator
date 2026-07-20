@@ -45,6 +45,25 @@ func sampleRecord(project string) domain.SessionRecord {
 	}
 }
 
+// TestScratchSeedAllowsScratchSession locks the migration-seeded scratch project
+// row: a scratch session insert must satisfy the sessions.project_id foreign key
+// without any explicit project registration.
+func TestScratchSeedAllowsScratchSession(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	row, ok, err := s.GetProject(ctx, "scratch")
+	if err != nil || !ok {
+		t.Fatalf("scratch seed: ok=%v err=%v", ok, err)
+	}
+	if row.ArchivedAt != (time.Time{}) {
+		t.Fatalf("scratch seed archived_at = %v, want active", row.ArchivedAt)
+	}
+	if _, err := s.CreateSession(ctx, sampleRecord("scratch")); err != nil {
+		t.Fatalf("create scratch session: %v", err)
+	}
+}
+
 func TestProjectCRUDAndArchive(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -57,15 +76,16 @@ func TestProjectCRUDAndArchive(t *testing.T) {
 	if got.ID != "mer" || got.Path != "/tmp/mer" {
 		t.Fatalf("project = %+v", got)
 	}
-	if list, _ := s.ListProjects(ctx); len(list) != 1 {
-		t.Fatalf("active list = %d, want 1", len(list))
+	// The seeded scratch row is always active, so it rides along in every list.
+	if list, _ := s.ListProjects(ctx); len(list) != 2 {
+		t.Fatalf("active list = %d, want 2 (scratch seed + mer)", len(list))
 	}
 	// archive hides from the active list but still resolves by id.
 	if ok, err := s.ArchiveProject(ctx, "mer", time.Now().UTC()); err != nil || !ok {
 		t.Fatalf("archive: ok=%v err=%v", ok, err)
 	}
-	if list, _ := s.ListProjects(ctx); len(list) != 0 {
-		t.Fatalf("after archive, active list = %d, want 0", len(list))
+	if list, _ := s.ListProjects(ctx); len(list) != 1 || list[0].ID != "scratch" {
+		t.Fatalf("after archive, active list = %+v, want scratch seed only", list)
 	}
 	if _, ok, _ := s.GetProject(ctx, "mer"); !ok {
 		t.Fatal("archived project must still resolve by id")

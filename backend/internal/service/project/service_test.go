@@ -1177,3 +1177,48 @@ func TestManager_ListPinsScratchFirst(t *testing.T) {
 		t.Fatalf("scratch summary = %+v", list[0])
 	}
 }
+
+// TestManager_RemoveRejectsScratch asserts the built-in Scratch pseudo-project
+// cannot be archived: its seeded row backs the session foreign keys.
+func TestManager_RemoveRejectsScratch(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+
+	_, err := m.Remove(ctx, domain.ScratchProjectID)
+	wantCode(t, err, "PROJECT_SCRATCH_RESERVED")
+}
+
+// TestManager_AddRejectsScratchID asserts the reserved scratch id cannot be
+// claimed by a user-registered project, whether given explicitly or derived
+// from a repo named "scratch".
+func TestManager_AddRejectsScratchID(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+
+	repo := gitRepoWithCommit(t, filepath.Join(t.TempDir(), "scratch"))
+	if _, err := m.Add(ctx, project.AddInput{Path: repo, ProjectID: ptr(string(domain.ScratchProjectID))}); err == nil {
+		t.Fatal("Add with explicit scratch id succeeded")
+	} else {
+		wantCode(t, err, "PROJECT_SCRATCH_RESERVED")
+	}
+	if _, err := m.Add(ctx, project.AddInput{Path: repo}); err == nil {
+		t.Fatal("Add of repo named scratch succeeded")
+	} else {
+		wantCode(t, err, "PROJECT_SCRATCH_RESERVED")
+	}
+}
+
+// TestManager_GetScratchPresentsPseudoProject asserts the seeded scratch row is
+// presented with the scratch kind even though the stored kind is single_repo.
+func TestManager_GetScratchPresentsPseudoProject(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+
+	got, err := m.Get(ctx, domain.ScratchProjectID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Project == nil || got.Project.Kind != domain.ProjectKindScratch || got.Project.Name != "Scratch" {
+		t.Fatalf("scratch get = %+v", got.Project)
+	}
+}

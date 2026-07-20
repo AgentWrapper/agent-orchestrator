@@ -141,7 +141,7 @@ func (w *Workspace) Create(ctx context.Context, cfg ports.WorkspaceConfig) (port
 	if err := w.addWorktree(ctx, repo, path, cfg.Branch, cfg.BaseBranch); err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
-	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, nil
+	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID, RepoPath: repo}, nil
 }
 
 // CreateWorkspaceProject materialises a root-as-repo workspace session: the
@@ -597,7 +597,7 @@ func (w *Workspace) existingWorktree(ctx context.Context, repo, path string, cfg
 		if branch == "" {
 			branch = cfg.Branch
 		}
-		return ports.WorkspaceInfo{Path: path, Branch: branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, true, nil
+		return ports.WorkspaceInfo{Path: path, Branch: branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID, RepoPath: repo}, true, nil
 	}
 	return ports.WorkspaceInfo{}, false, nil
 }

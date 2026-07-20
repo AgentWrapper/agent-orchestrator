@@ -87,11 +87,18 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 				return usageError{fmt.Errorf("--name must be %d characters or fewer", maxDisplayNameLen)}
 			}
 
+			explicitProject := strings.TrimSpace(opts.project)
 			project, err := ctx.resolveSpawnProject(cmd.Context(), opts.project)
 			if err != nil {
 				return err
 			}
 			opts.project = project.ID
+			if project.ID == scratchProjectID && explicitProject == "" &&
+				strings.TrimSpace(os.Getenv("AO_PROJECT_ID")) == "" && strings.TrimSpace(os.Getenv("AO_SESSION_ID")) == "" {
+				// The fallback is silent otherwise: a user inside an unregistered
+				// repo could expect the agent to work on that repo.
+				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "note: no registered project matched; using the built-in Scratch project (throwaway worktree)")
+			}
 
 			harness, err := resolveSpawnHarness(opts.harness, project)
 			if err != nil {
