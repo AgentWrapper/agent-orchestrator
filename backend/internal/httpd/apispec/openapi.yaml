@@ -2513,6 +2513,12 @@ components:
       properties:
         ok:
           type: boolean
+        restoreMode:
+          enum:
+          - native
+          - saved_prompt
+          - fresh
+          type: string
         session:
           $ref: '#/components/schemas/ControllersSessionView'
         sessionId:
@@ -2520,6 +2526,7 @@ components:
       required:
       - ok
       - sessionId
+      - restoreMode
       - session
       type: object
     ReviewRun:

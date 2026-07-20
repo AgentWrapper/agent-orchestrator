@@ -44,7 +44,7 @@ type ListFilter struct {
 // *sessionmanager.Manager in production, a fake in tests.
 type commander interface {
 	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, error)
-	Restore(ctx context.Context, id domain.SessionID) (domain.SessionRecord, error)
+	RestoreWithMode(ctx context.Context, id domain.SessionID) (sessionmanager.RestoreResult, error)
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 	RetireForReplacement(ctx context.Context, id domain.SessionID) error
 	Send(ctx context.Context, id domain.SessionID, message string) error
@@ -71,6 +71,24 @@ type CleanupOutcome struct {
 type CleanupSkipped struct {
 	SessionID domain.SessionID `json:"sessionId"`
 	Reason    string           `json:"reason"`
+}
+
+// RestoreModeView is the API-facing restore-mode enum.
+type RestoreModeView string
+
+const (
+	// RestoreModeViewNative restores a session using the runtime's native resume behavior.
+	RestoreModeViewNative RestoreModeView = "native"
+	// RestoreModeViewSavedPrompt restores a session by replaying the saved prompt.
+	RestoreModeViewSavedPrompt RestoreModeView = "saved_prompt"
+	// RestoreModeViewFresh restores a session by starting from a fresh runtime state.
+	RestoreModeViewFresh RestoreModeView = "fresh"
+)
+
+// RestoreOutcome reports the restored read model and how AO relaunched it.
+type RestoreOutcome struct {
+	Session domain.Session  `json:"session"`
+	Mode    RestoreModeView `json:"restoreMode"`
 }
 
 type scmProvider interface {
@@ -383,12 +401,29 @@ func (s *Service) lockOrchestratorProject(projectID domain.ProjectID) func() {
 }
 
 // Restore relaunches a terminated session and returns the API-facing read model.
-func (s *Service) Restore(ctx context.Context, id domain.SessionID) (domain.Session, error) {
-	rec, err := s.manager.Restore(ctx, id)
+func (s *Service) Restore(ctx context.Context, id domain.SessionID) (RestoreOutcome, error) {
+	res, err := s.manager.RestoreWithMode(ctx, id)
 	if err != nil {
-		return domain.Session{}, toAPIError(err)
+		return RestoreOutcome{}, toAPIError(err)
 	}
-	return s.toSession(ctx, rec)
+	session, err := s.toSession(ctx, res.Session)
+	if err != nil {
+		return RestoreOutcome{}, err
+	}
+	return RestoreOutcome{Session: session, Mode: restoreModeView(res.Mode)}, nil
+}
+
+func restoreModeView(mode sessionmanager.RestoreMode) RestoreModeView {
+	switch mode {
+	case sessionmanager.RestoreModeNative:
+		return RestoreModeViewNative
+	case sessionmanager.RestoreModeSavedPrompt:
+		return RestoreModeViewSavedPrompt
+	case sessionmanager.RestoreModeFresh:
+		return RestoreModeViewFresh
+	default:
+		return RestoreModeView(mode)
+	}
 }
 
 // Kill delegates terminal intent and teardown to the internal manager.
