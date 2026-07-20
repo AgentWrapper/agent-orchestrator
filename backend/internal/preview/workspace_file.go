@@ -13,7 +13,7 @@ import (
 // browser requests is treated as the preview root, not as a host filesystem
 // root.
 func CleanWorkspacePath(raw string) (string, bool) {
-	raw = filepath.ToSlash(raw)
+	raw = strings.ReplaceAll(raw, `\`, "/")
 	for _, segment := range strings.Split(raw, "/") {
 		if segment == ".." {
 			return "", false
