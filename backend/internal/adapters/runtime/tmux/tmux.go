@@ -231,15 +231,20 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: set window-size %s: %w", id, err)
 	}
 
+	// Verify the session was created and has-session succeeds. This uses
+	// hasSessionArgs directly rather than IsAlive because IsAlive also checks
+	// agent liveness (the @ao_agent_exited pane option), which may be set by
+	// the time Create finishes if the launch command was short-lived — the
+	// keep-alive shell would still be running but IsAlive would report the
+	// agent as dead, incorrectly failing Create (issue #2802, #2822).
 	handle := ports.RuntimeHandle{ID: id}
-	alive, err := r.IsAlive(ctx, handle)
-	if err != nil {
+	if out, err := r.run(ctx, hasSessionArgs(id)...); err != nil {
 		_ = r.Destroy(context.Background(), handle)
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && sessionMissingOutput(string(out)) {
+			return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: session %s exited before ready", id)
+		}
 		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: verify session %s: %w", id, err)
-	}
-	if !alive {
-		_ = r.Destroy(context.Background(), handle)
-		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: session %s exited before ready", id)
 	}
 	return handle, nil
 }
