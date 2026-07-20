@@ -6,6 +6,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { components } from "../../api/schema";
 import { apiClient, hasTrustedApiBaseUrl } from "../lib/api-client";
+import { mockShellTerminals } from "../lib/mock-data";
 
 export type ShellTerminal = {
 	/** Runtime handle the terminal mux attaches to, exactly like a session pane's. */
@@ -29,10 +30,18 @@ function toShellTerminal(t: components["schemas"]["ShellTerminalResponse"]): She
 	};
 }
 
+// Preview-only shell list. The browser build has no daemon to spawn a PTY, so
+// open/close mutate this array instead — keeping the tab strip fully
+// interactive (open, select, close) without a backend, which is what the e2e
+// suite drives.
+let previewShellTerminals: ShellTerminal[] = [...mockShellTerminals];
+let previewShellSeq = 0;
+
 async function fetchShellTerminals(): Promise<ShellTerminal[]> {
-	// The browser-preview build has no daemon to open a real PTY against, so it
-	// shows no shells rather than erroring on every poll.
-	if (usePreviewData || !hasTrustedApiBaseUrl()) {
+	if (usePreviewData) {
+		return previewShellTerminals;
+	}
+	if (!hasTrustedApiBaseUrl()) {
 		return [];
 	}
 	const { data, error } = await apiClient.GET("/api/v1/shell-terminals");
@@ -58,6 +67,18 @@ export function useOpenShellTerminal() {
 	const queryClient = useQueryClient();
 	return useMutation({
 		mutationFn: async (projectId?: string): Promise<ShellTerminal> => {
+			if (usePreviewData) {
+				previewShellSeq += 1;
+				const shell: ShellTerminal = {
+					handleId: `shellterm-preview-${previewShellSeq}`,
+					projectId,
+					workingDir: `/Users/demo/Projects/${projectId ?? "ao"}`,
+					title: projectId ?? "shell",
+					createdAt: new Date().toISOString(),
+				};
+				previewShellTerminals = [...previewShellTerminals, shell];
+				return shell;
+			}
 			const { data, error } = await apiClient.POST("/api/v1/shell-terminals", {
 				body: projectId ? { projectId } : {},
 			});
@@ -76,6 +97,10 @@ export function useCloseShellTerminal() {
 	const queryClient = useQueryClient();
 	return useMutation({
 		mutationFn: async (handleId: string): Promise<void> => {
+			if (usePreviewData) {
+				previewShellTerminals = previewShellTerminals.filter((s) => s.handleId !== handleId);
+				return;
+			}
 			const { error } = await apiClient.DELETE("/api/v1/shell-terminals/{handleId}", {
 				params: { path: { handleId } },
 			});

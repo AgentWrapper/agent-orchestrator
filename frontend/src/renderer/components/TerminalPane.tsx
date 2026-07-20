@@ -28,6 +28,22 @@ export function TerminalPane({ session, theme, daemonReady, terminalTarget, font
 			: (session?.terminalHandleId ?? "empty");
 
 	if (!window.ao) {
+		// A standalone shell has no agent and no branch, so it previews as a plain
+		// prompt rather than borrowing the session's agent transcript.
+		if (terminalTarget?.kind === "shell") {
+			return (
+				<pre
+					className="h-full overflow-auto bg-terminal p-4 font-mono leading-relaxed text-terminal"
+					style={{ fontSize }}
+				>
+					<span className="text-terminal-dim">{terminalTarget.title}</span> $ {"\n"}
+					<span className="text-terminal-dim">
+						{"(standalone shell — a live PTY here in the desktop app)"}
+						{"\n"}
+					</span>
+				</pre>
+			);
+		}
 		const provider = terminalTarget?.kind === "reviewer" ? terminalTarget.harness : (session?.provider ?? "claude");
 		const lines =
 			terminalTarget?.kind === "reviewer" ? reviewerPreviewLines(session) : workerPreviewLines(session, provider);
