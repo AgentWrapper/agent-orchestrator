@@ -368,7 +368,7 @@ function ProjectModeButton({
 		<button
 			type="button"
 			aria-label={isWorkspace ? "Workspace" : "Project"}
-			className="flex min-h-[280px] w-full flex-1 flex-col justify-start gap-6 self-stretch rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] p-6 text-left transition-colors hover:bg-[var(--color-bg-import-card-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-50 sm:min-h-[320px]"
+			className="flex min-h-[252px] w-full flex-1 flex-col justify-start gap-6 self-stretch rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] p-6 text-left transition-colors hover:bg-[var(--color-bg-import-card-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-50 sm:min-h-[292px]"
 			disabled={disabled}
 			onClick={onClick}
 		>
@@ -417,10 +417,6 @@ function ProjectModeButton({
 				</span>
 				<span className="text-[14px] font-normal leading-[23px] text-[var(--color-text-import-muted)]">
 					{description}
-				</span>
-				<span className="flex items-center gap-2 pt-2 text-[14px] font-normal leading-5 text-[var(--color-text-import-muted)]">
-					<span aria-hidden="true">•</span>
-					{isWorkspace ? "Multiple repositories" : "One repository"}
 				</span>
 			</span>
 		</button>

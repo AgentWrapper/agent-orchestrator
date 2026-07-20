@@ -319,7 +319,7 @@ function ShellLayout() {
           header instead of cutting through the titlebar strip. The bar lives
           in the layout, not the screens, so the crumb and actions never shift
           when the outlet content swaps. */}
-			<div className="flex h-screen min-h-0 flex-col bg-background text-foreground">
+			<div className="flex h-screen min-h-0 flex-col bg-sidebar text-foreground">
 				{/* Windows-only custom title bar (logo + File/Edit/View/… menu); paints
             the chrome the frameless window drops. Renders null on macOS/Linux. */}
 				<WindowTitlebar />

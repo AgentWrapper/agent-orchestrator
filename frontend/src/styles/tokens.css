@@ -29,7 +29,7 @@
 	--color-bg-secondary: #15171b;
 	--color-bg-tertiary: #1b1d22;
 	--color-bg-elevated: #212329;
-	--color-bg-sidebar: #090909;
+	--color-bg-sidebar: #1e1f22;
 	--color-bg-terminal: #15171b;
 
 	/* Text */
@@ -247,7 +247,7 @@
 	--color-bg-import-card-hover: rgb(20 21 23 / 0.55);
 	--color-bg-import-illustration: #131313;
 	--color-bg-import-chip: #242424;
-	--color-import-dot: #3fb950;
+	--color-import-dot: #4d8dff;
 	--color-text-import-sep: #6b7280;
 	--color-import-shadow-fill: rgb(255 255 255 / 0.002);
 	--shadow-import-modal: 0 0 0 1px rgb(255 255 255 / 0.1), 0 8px 24px rgb(0 0 0 / 0.5);
@@ -405,7 +405,7 @@
 	--color-bg-import-card-hover: #e8e8ea;
 	--color-bg-import-illustration: #ffffff;
 	--color-bg-import-chip: #e8e8ea;
-	--color-import-dot: #1a7f37;
+	--color-import-dot: #4d8dff;
 	--color-text-import-sep: #9ca3af;
 	--color-import-shadow-fill: transparent;
 	--shadow-import-modal: 0 0 0 1px rgb(0 0 0 / 0.06), 0 8px 24px rgb(0 0 0 / 0.08);
