@@ -339,10 +339,14 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 	}
 
 	// Session exists — check whether the pane option signals a dead agent.
-	// show-options -v -p exits 0 and prints "1" when the option is set,
-	// or exits non-zero (expected, option unset) when the agent is alive.
+	// show-options -q -v -p exits 0 with empty output when the option is
+	// unset (agent alive), exits 0 with "1" when the option is set (agent
+	// dead), and exits non-zero for genuine tmux failures (probe error).
 	optionOut, err := r.run(ctx, exitedOptionArgs(id)...)
-	if err == nil && strings.TrimSpace(string(optionOut)) == "1" {
+	if err != nil {
+		return false, fmt.Errorf("tmux runtime: probe session %s: %w", id, err)
+	}
+	if strings.TrimSpace(string(optionOut)) == "1" {
 		return false, nil
 	}
 	return true, nil

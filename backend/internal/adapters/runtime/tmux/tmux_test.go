@@ -127,8 +127,8 @@ func TestCommandBuilders(t *testing.T) {
 	if got, want := capturePaneArgs("sess-1", 10), []string{"capture-pane", "-t", "sess-1", "-p", "-S", "-10"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("capturePaneArgs = %#v, want %#v", got, want)
 	}
-	// show-options uses plain session-name targeting (no = prefix).
-	if got, want := exitedOptionArgs("sess-1"), []string{"show-options", "-v", "-p", "-t", "sess-1", "@ao_agent_exited"}; !reflect.DeepEqual(got, want) {
+	// show-options uses quiet mode (-q) and plain session-name targeting (no = prefix).
+	if got, want := exitedOptionArgs("sess-1"), []string{"show-options", "-q", "-v", "-p", "-t", "sess-1", "@ao_agent_exited"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("exitedOptionArgs = %#v, want %#v", got, want)
 	}
 }
@@ -823,21 +823,21 @@ func TestIsAlive_ReportsDeadWhenAgentExitedBehindSurvivingPane(t *testing.T) {
 	}
 }
 
-func TestIsAlive_ShowOptionsErrorReportsAlive(t *testing.T) {
+func TestIsAlive_ShowOptionsErrorReportsProbeError(t *testing.T) {
 	r := New(Options{Binary: "tmux-test", Timeout: time.Second, Shell: "/bin/sh"})
 	r.enterDelay = 0
 	fr := &fakeRunnerSelectiveErr{
 		exitErrOn: "show-options",
-		errOutput: []byte("invalid option: @ao_agent_exited"),
+		errOutput: []byte("no server running"),
 	}
 	r.runner = fr
 
 	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
-	if err != nil {
-		t.Fatalf("IsAlive: %v", err)
+	if err == nil {
+		t.Fatal("IsAlive: got nil, want probe error for failed show-options")
 	}
-	if !alive {
-		t.Fatal("alive = false, want true; show-options error is conservative")
+	if alive {
+		t.Fatal("alive = true on probe error; probe failures must not produce a liveness fact")
 	}
 }
 
