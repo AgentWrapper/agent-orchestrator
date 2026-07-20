@@ -7,7 +7,6 @@ import { useRootNavigationState, useRouter } from "expo-router";
 import { useEffect, useRef } from "react";
 import { AppState } from "react-native";
 import { markNotificationRead } from "./api";
-import { cleanHostKey } from "./config";
 import { configurePushHandler, ensureAndroidChannel, registerForPush, unregisterFromPush } from "./push";
 import { useApp } from "./store";
 
@@ -23,34 +22,35 @@ type PushData = {
 };
 
 export function PushManager(): null {
-	const { config, connection } = useApp();
+	const { config, configured, connection } = useApp();
 	const router = useRouter();
 	const navState = useRootNavigationState();
 
-	// The daemon identity (host) we last registered against, so switching daemons
-	// unregisters the token from the old one before registering with the new.
-	const registeredHostRef = useRef<string | null>(null);
 	const handledColdStart = useRef(false);
+	const wasConfigured = useRef(false);
 
 	// Create the Android channel once at startup.
 	useEffect(() => {
 		void ensureAndroidChannel();
 	}, []);
 
+	// When the user clears the server config (unpairs), unregister this device's
+	// token from the daemon it was registered with, so that daemon stops pushing
+	// to a phone that's no longer watching it. Uses the persisted daemon creds.
+	useEffect(() => {
+		if (wasConfigured.current && !configured) {
+			void unregisterFromPush();
+		}
+		wasConfigured.current = configured;
+	}, [configured]);
+
 	// Register after a successful pairing/connection (D7: only prompt once the
-	// feature is meaningful), refresh on every foreground while connected, and
-	// unregister from a daemon we move away from.
+	// feature is meaningful) and refresh on every foreground while connected.
+	// registerForPush persists the daemon it registered with and, when the config
+	// points at a different daemon, unregisters the old one first — so switching
+	// daemons (even across app restarts) is handled inside push.ts, not here.
 	useEffect(() => {
 		if (!config || connection !== "open") return;
-		const host = cleanHostKey(config.host);
-
-		// Switched to a different daemon: drop the token from the previous one.
-		const prev = registeredHostRef.current;
-		if (prev && prev !== host) {
-			void unregisterFromPush({ ...config, host: prev });
-		}
-		registeredHostRef.current = host;
-
 		const safeRegister = () => {
 			registerForPush(config).catch((e) => console.warn("[push] registration failed", e));
 		};

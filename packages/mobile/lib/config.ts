@@ -35,12 +35,6 @@ function cleanHost(host: string): string {
 		.replace(/\/+$/, "");
 }
 
-// Exported host normalizer used to identify a daemon (e.g. to detect switching
-// daemons for push (un)registration). Same cleaning as URL building uses.
-export function cleanHostKey(host: string): string {
-	return cleanHost(host);
-}
-
 // Non-secret host/port/TLS config lives in AsyncStorage (plaintext app sandbox).
 const KEY = "ao.serverConfig";
 // The connection password is the Bearer secret for REST and /mux — it authorizes

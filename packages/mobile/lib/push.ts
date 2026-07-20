@@ -2,17 +2,57 @@
 // registration/unregistration with the daemon. Delivery + routing of taps lives
 // in PushManager.tsx; this module owns the "get a token and tell the daemon"
 // half. See docs/adr/0001-mobile-push-notifications.md (D1, D4, D7, D9).
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
+import * as SecureStore from "expo-secure-store";
 import { Linking, Platform } from "react-native";
 import { registerPushDevice, unregisterPushDevice } from "./api";
 import type { ServerConfig } from "./config";
 
-// The last Expo token we registered, kept so we can unregister it on disconnect
-// even after the config that registered it is gone.
-const LAST_TOKEN_KEY = "ao.pushToken";
+// The last successful registration: the Expo token AND the daemon it was
+// registered with (host/port/TLS/password). Persisting the daemon — not just the
+// token — is what lets us unregister from the *right* daemon after an app restart
+// or a config change, so an old daemon can't keep pushing to this device (D7).
+// It lives in SecureStore because it contains the connection password.
+const REGISTRATION_KEY = "ao.pushRegistration";
+
+type Registration = {
+	token: string;
+	host: string;
+	httpPort: string;
+	secure: boolean;
+	password: string;
+};
+
+async function loadRegistration(): Promise<Registration | null> {
+	try {
+		const raw = await SecureStore.getItemAsync(REGISTRATION_KEY);
+		return raw ? (JSON.parse(raw) as Registration) : null;
+	} catch {
+		return null;
+	}
+}
+
+async function saveRegistration(reg: Registration): Promise<void> {
+	await SecureStore.setItemAsync(REGISTRATION_KEY, JSON.stringify(reg));
+}
+
+async function clearRegistration(): Promise<void> {
+	await SecureStore.deleteItemAsync(REGISTRATION_KEY);
+}
+
+// Rebuild a minimal ServerConfig for talking to the daemon a registration names.
+// muxPort is unused by the REST calls (register/unregister) so it's left empty.
+function configOf(reg: Registration): ServerConfig {
+	return { host: reg.host, httpPort: reg.httpPort, muxPort: "", secure: reg.secure, password: reg.password };
+}
+
+// Same daemon? Keyed on the fields that address it — host/port/TLS. (The password
+// can change without it being a different daemon, so it's not part of identity.)
+function sameDaemon(reg: Registration, cfg: ServerConfig): boolean {
+	return reg.host === cfg.host && reg.httpPort === cfg.httpPort && !!reg.secure === !!cfg.secure;
+}
 
 // Suppress the OS banner while the app is foregrounded (D9) — the live in-app UI
 // is the signal, so a tray banner would be a redundant double-signal. When the
@@ -56,6 +96,11 @@ export async function registerForPush(cfg: ServerConfig): Promise<string | null>
 	// Remote push tokens are only issued on physical devices.
 	if (!Device.isDevice) return null;
 
+	// Ensure the Android channel exists BEFORE the permission prompt and before
+	// any notification could arrive, so a notification is never mis-filed onto an
+	// implicit default channel.
+	await ensureAndroidChannel();
+
 	const current = await Notifications.getPermissionsAsync();
 	let status = current.status;
 	if (status !== "granted" && current.canAskAgain) {
@@ -63,14 +108,25 @@ export async function registerForPush(cfg: ServerConfig): Promise<string | null>
 	}
 	if (status !== "granted") return null;
 
-	await ensureAndroidChannel();
-
 	const projectId = easProjectId();
 	if (!projectId) {
 		// Without a projectId Expo can't mint a token — this is an EAS setup gap,
 		// not a runtime error. Warn and no-op so the app still works without push.
 		console.warn("[push] no EAS projectId (run `eas init`); skipping push registration");
 		return null;
+	}
+
+	// If we're now pointed at a different daemon than we last registered with,
+	// unregister the token from the OLD daemon first (best-effort) so it stops
+	// pushing to this device. This survives app restarts because the old daemon's
+	// address + credentials are persisted, not just held in memory.
+	const prior = await loadRegistration();
+	if (prior && !sameDaemon(prior, cfg)) {
+		try {
+			await unregisterPushDevice(configOf(prior), prior.token);
+		} catch {
+			/* best-effort: the old daemon also prunes dead tokens on send */
+		}
 	}
 
 	// Acquiring the token can throw when the build lacks push support — most
@@ -84,7 +140,13 @@ export async function registerForPush(cfg: ServerConfig): Promise<string | null>
 			platform: Platform.OS,
 			deviceName: Device.deviceName ?? undefined,
 		});
-		await AsyncStorage.setItem(LAST_TOKEN_KEY, token);
+		await saveRegistration({
+			token,
+			host: cfg.host,
+			httpPort: cfg.httpPort,
+			secure: !!cfg.secure,
+			password: cfg.password,
+		});
 		return token;
 	} catch (e) {
 		console.warn("[push] could not obtain/register an Expo push token (build not provisioned for push?)", e);
@@ -103,12 +165,12 @@ export type PushStatus = {
 // Reads the live permission + registration state without prompting.
 export async function getPushStatus(): Promise<PushStatus> {
 	const perm = await Notifications.getPermissionsAsync();
-	const token = await AsyncStorage.getItem(LAST_TOKEN_KEY);
+	const reg = await loadRegistration();
 	return {
 		supported: Device.isDevice,
 		granted: perm.status === "granted",
 		canAskAgain: perm.canAskAgain ?? true,
-		registered: !!token,
+		registered: !!reg,
 	};
 }
 
@@ -122,14 +184,19 @@ export async function openNotificationSettings(): Promise<void> {
 	}
 }
 
-// Best-effort unregister of the last-registered token from the given daemon
-// (D7, disconnect/unpair or switching daemons). Never throws — the caller must
-// not be blocked by a failed unregister.
-export async function unregisterFromPush(cfg: ServerConfig): Promise<void> {
+// Best-effort unregister of the last-registered token from the daemon it was
+// registered with (D7, disconnect/unpair). Uses the persisted daemon address +
+// credentials, so it reaches the correct daemon even after a restart. Never
+// throws — the caller must not be blocked by a failed unregister.
+export async function unregisterFromPush(): Promise<void> {
 	try {
-		const token = await AsyncStorage.getItem(LAST_TOKEN_KEY);
-		if (token) await unregisterPushDevice(cfg, token);
+		const reg = await loadRegistration();
+		if (reg) {
+			await unregisterPushDevice(configOf(reg), reg.token);
+		}
 	} catch {
 		/* best-effort: the daemon prunes dead tokens on send anyway */
+	} finally {
+		await clearRegistration();
 	}
 }
