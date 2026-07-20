@@ -863,6 +863,12 @@ describe("Sidebar", () => {
 		expect(projectRow).toHaveClass("pr-sidebar-project-actions");
 	});
 
+	it("does not render a duplicate collapse trigger in the expanded header", () => {
+		renderSidebar();
+
+		expect(screen.queryByRole("button", { name: "Collapse sidebar" })).not.toBeInTheDocument();
+	});
+
 	it("snaps to the real collapsed rail when dragged past the resize collapse threshold", async () => {
 		renderSidebar();
 
