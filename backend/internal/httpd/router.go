@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -136,6 +137,43 @@ func mountTelemetry(r chi.Router, sink ports.EventSink) {
 	if sink == nil {
 		return
 	}
+	// CLI telemetry is capped to daily uniques: ao.app.active once per UTC day
+	// (matching the renderer heartbeat) and ao.cli.invoked once per command
+	// path per UTC day. Scripts and agent sessions invoke read-only commands
+	// (status, ls, get) in polling loops, so raw invocation counts measure
+	// automation, not usage; daily uniques keep the "which commands, how many
+	// users" signal without the firehose. In-memory state: a daemon restart may
+	// re-emit once that day, which dashboards dedupe by distinct ID anyway.
+	var (
+		cliTelemetryMu sync.Mutex
+		cliActiveDay   string
+		cliInvokedDay  string
+		cliInvokedSeen map[string]struct{}
+	)
+	reserveCLIActive := func(now time.Time) bool {
+		day := now.UTC().Format("2006-01-02")
+		cliTelemetryMu.Lock()
+		defer cliTelemetryMu.Unlock()
+		if cliActiveDay == day {
+			return false
+		}
+		cliActiveDay = day
+		return true
+	}
+	reserveCLIInvoked := func(now time.Time, commandPath string) bool {
+		day := now.UTC().Format("2006-01-02")
+		cliTelemetryMu.Lock()
+		defer cliTelemetryMu.Unlock()
+		if cliInvokedDay != day {
+			cliInvokedDay = day
+			cliInvokedSeen = make(map[string]struct{})
+		}
+		if _, seen := cliInvokedSeen[commandPath]; seen {
+			return false
+		}
+		cliInvokedSeen[commandPath] = struct{}{}
+		return true
+	}
 	r.Post("/internal/telemetry/cli-invoked", func(w http.ResponseWriter, req *http.Request) {
 		if !localControlRequest(req) {
 			envelope.WriteJSON(w, http.StatusForbidden, map[string]any{
@@ -157,29 +195,33 @@ func mountTelemetry(r chi.Router, sink ports.EventSink) {
 			return
 		}
 
-		sink.Emit(req.Context(), ports.TelemetryEvent{
-			Name:       "ao.cli.invoked",
-			Source:     "cli",
-			OccurredAt: time.Now().UTC(),
-			Level:      ports.TelemetryLevelInfo,
-			RequestID:  middleware.GetReqID(req.Context()),
-			Payload: map[string]any{
-				"command":      body.Command,
-				"command_path": body.CommandPath,
-			},
-		})
-		sink.Emit(req.Context(), ports.TelemetryEvent{
-			Name:       "ao.app.active",
-			Source:     "cli",
-			OccurredAt: time.Now().UTC(),
-			Level:      ports.TelemetryLevelInfo,
-			RequestID:  middleware.GetReqID(req.Context()),
-			Payload: map[string]any{
-				"channel":      "cli",
-				"command":      body.Command,
-				"command_path": body.CommandPath,
-			},
-		})
+		if now := time.Now(); reserveCLIInvoked(now, body.CommandPath) {
+			sink.Emit(req.Context(), ports.TelemetryEvent{
+				Name:       "ao.cli.invoked",
+				Source:     "cli",
+				OccurredAt: now.UTC(),
+				Level:      ports.TelemetryLevelInfo,
+				RequestID:  middleware.GetReqID(req.Context()),
+				Payload: map[string]any{
+					"command":      body.Command,
+					"command_path": body.CommandPath,
+				},
+			})
+		}
+		if now := time.Now(); reserveCLIActive(now) {
+			sink.Emit(req.Context(), ports.TelemetryEvent{
+				Name:       "ao.app.active",
+				Source:     "cli",
+				OccurredAt: now.UTC(),
+				Level:      ports.TelemetryLevelInfo,
+				RequestID:  middleware.GetReqID(req.Context()),
+				Payload: map[string]any{
+					"channel":      "cli",
+					"command":      body.Command,
+					"command_path": body.CommandPath,
+				},
+			})
+		}
 		w.WriteHeader(http.StatusAccepted)
 	})
 	r.Post("/internal/telemetry/cli-usage-error", func(w http.ResponseWriter, req *http.Request) {

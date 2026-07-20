@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	buildTelemetryContext,
+	reserveCapture,
 	reserveDailyActiveCapture,
 	routeSurface,
 	sanitizePostHogEvent,
@@ -247,6 +248,54 @@ describe("telemetry sanitizers", () => {
 		expect(
 			await sanitizeRendererProperties("ao.renderer.terminal_attach_failed", { reason: "something else" }),
 		).toEqual({});
+	});
+});
+
+describe("reserveCapture", () => {
+	it("allows up to 5 captures of a name within a minute", () => {
+		const start = 1_000_000;
+		for (let i = 0; i < 5; i += 1) {
+			expect(reserveCapture("ao.renderer.route_viewed", start + i)).toBe(true);
+		}
+		expect(reserveCapture("ao.renderer.route_viewed", start + 5)).toBe(false);
+	});
+
+	it("tracks each name in its own window", () => {
+		const start = 2_000_000;
+		for (let i = 0; i < 5; i += 1) {
+			reserveCapture("ao.renderer.route_viewed", start + i);
+		}
+		expect(reserveCapture("exception:TypeError", start)).toBe(true);
+	});
+
+	it("resets the burst window once a minute elapses", () => {
+		const start = 3_000_000;
+		for (let i = 0; i < 5; i += 1) {
+			reserveCapture("ao.renderer.loaded", start + i);
+		}
+		expect(reserveCapture("ao.renderer.loaded", start + 60_001)).toBe(true);
+	});
+
+	it("caps the daily total even when calls are paced under the burst limit", () => {
+		const name = "ao.renderer.paced_loop";
+		let start = 10_000_000;
+		let allowed = 0;
+		for (let i = 0; i < 210; i += 1) {
+			if (reserveCapture(name, start)) allowed += 1;
+			start += 60_000; // one call per simulated minute: never trips the burst cap
+		}
+		expect(allowed).toBe(200);
+	});
+
+	it("resets the daily ceiling after 24 hours", () => {
+		const name = "ao.renderer.daily_reset";
+		let start = 20_000_000;
+		for (let i = 0; i < 200; i += 1) {
+			expect(reserveCapture(name, start)).toBe(true);
+			start += 60_000;
+		}
+		expect(reserveCapture(name, start)).toBe(false);
+		expect(reserveCapture(name, start + 24 * 60 * 60_000)).toBe(true);
 	});
 });
 
