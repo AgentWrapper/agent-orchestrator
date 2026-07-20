@@ -27,11 +27,16 @@ type UiState = {
 	// Bumps to ask the sidebar's create-project flow to open (the ⌘N fallback
 	// when no project is in scope).
 	createProjectNonce: number;
-	// Bumps to ask the session view to open a standalone shell terminal. Like
-	// newTaskRequest this is a one-shot signal, not state: the topbar button and
-	// Ctrl+` both raise it so they cannot drift apart, and a repeat press
-	// re-fires because the nonce always changes.
+	// Bumps to ask for a new standalone shell terminal. Like newTaskRequest this
+	// is a one-shot signal, not state: the topbar button and Ctrl+` both raise it
+	// so they cannot drift apart, and a repeat press re-fires because the nonce
+	// always changes. The shell layout is its single consumer — it is mounted on
+	// every route, so the request is honoured from anywhere in the app.
 	newShellTerminalNonce: number;
+	// The shell terminal the user most recently opened or selected. Both the
+	// session view (tabs beside the session's pane) and the standalone terminals
+	// view read it, so whichever one is on screen shows the same shell.
+	activeShellTerminalHandleId: string | null;
 	setWorkbenchTab: (tab: WorkbenchTab) => void;
 	setTheme: (theme: Theme) => void;
 	toggleTheme: () => void;
@@ -43,6 +48,7 @@ type UiState = {
 	requestNewTask: (projectId: string) => void;
 	requestCreateProject: () => void;
 	requestNewShellTerminal: () => void;
+	setActiveShellTerminal: (handleId: string | null) => void;
 };
 
 const sidebarStorageKey = "ao.sidebar.open";
@@ -72,6 +78,7 @@ export const useUiStore = create<UiState>((set) => ({
 	newTaskRequest: null,
 	createProjectNonce: 0,
 	newShellTerminalNonce: 0,
+	activeShellTerminalHandleId: null,
 	setWorkbenchTab: (workbenchTab) => set({ workbenchTab }),
 	setTheme: (theme) => {
 		getLocalStorage()?.setItem(themeStorageKey, theme);
@@ -129,4 +136,5 @@ export const useUiStore = create<UiState>((set) => ({
 		set((state) => ({ newTaskRequest: { projectId, nonce: (state.newTaskRequest?.nonce ?? 0) + 1 } })),
 	requestCreateProject: () => set((state) => ({ createProjectNonce: state.createProjectNonce + 1 })),
 	requestNewShellTerminal: () => set((state) => ({ newShellTerminalNonce: state.newShellTerminalNonce + 1 })),
+	setActiveShellTerminal: (activeShellTerminalHandleId) => set({ activeShellTerminalHandleId }),
 }));

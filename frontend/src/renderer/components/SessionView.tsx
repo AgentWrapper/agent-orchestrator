@@ -9,7 +9,7 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resiz
 import { useUiStore } from "../stores/ui-store";
 import { useShell } from "../lib/shell-context";
 import { useBrowserView } from "../hooks/useBrowserView";
-import { useCloseShellTerminal, useOpenShellTerminal, useShellTerminals } from "../hooks/useShellTerminals";
+import { useCloseShellTerminal, useShellTerminals } from "../hooks/useShellTerminals";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { isOrchestratorSession } from "../types/workspace";
 import type { TerminalTarget } from "../types/terminal";
@@ -59,18 +59,18 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// They belong to the app, not this session, so they persist across session
 	// navigation; only which one is *selected* is local state.
 	const shellTerminals = useShellTerminals().data ?? [];
-	const openShellTerminal = useOpenShellTerminal();
 	const closeShellTerminal = useCloseShellTerminal();
-	const newShellTerminalNonce = useUiStore((state) => state.newShellTerminalNonce);
-	const handledShellTerminalNonceRef = useRef(newShellTerminalNonce);
+	const activeShellTerminalHandleId = useUiStore((state) => state.activeShellTerminalHandleId);
+	const setActiveShellTerminal = useUiStore((state) => state.setActiveShellTerminal);
 
 	const selectShellTerminal = useCallback(
 		(handleId: string) => {
 			const shell = shellTerminals.find((s) => s.handleId === handleId);
 			if (!shell) return;
+			setActiveShellTerminal(shell.handleId);
 			setTerminalTarget({ kind: "shell", handleId: shell.handleId, title: shell.title });
 		},
-		[shellTerminals],
+		[shellTerminals, setActiveShellTerminal],
 	);
 
 	const closeShellTerminalByHandle = useCallback(
@@ -80,21 +80,33 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			setTerminalTarget((current) =>
 				current.kind === "shell" && current.handleId === handleId ? { kind: "worker" } : current,
 			);
+			if (activeShellTerminalHandleId === handleId) setActiveShellTerminal(null);
 			closeShellTerminal.mutate(handleId);
 		},
-		[closeShellTerminal],
+		[closeShellTerminal, activeShellTerminalHandleId, setActiveShellTerminal],
 	);
 
-	// Opening is driven by a store nonce so the topbar button and Ctrl+` share
-	// one path. The ref seeds to the current value so a mount never opens a
-	// terminal the user did not ask for.
+	// Selecting the session's own pane also drops the active shell, so the effect
+	// above does not immediately pull the view back to that shell.
+	const selectSessionTerminal = useCallback(() => {
+		setActiveShellTerminal(null);
+		setTerminalTarget({ kind: "worker" });
+	}, [setActiveShellTerminal]);
+
+	// The shell layout owns opening (it is mounted on every route, so the button
+	// and Ctrl+` work everywhere); this view only follows the result. When a new
+	// shell becomes active while a session is on screen, switch the pane to it —
+	// that is what makes the shortcut feel like it opened a terminal *here*.
 	useEffect(() => {
-		if (handledShellTerminalNonceRef.current === newShellTerminalNonce) return;
-		handledShellTerminalNonceRef.current = newShellTerminalNonce;
-		openShellTerminal.mutate(session?.workspaceId, {
-			onSuccess: (shell) => setTerminalTarget({ kind: "shell", handleId: shell.handleId, title: shell.title }),
-		});
-	}, [newShellTerminalNonce, openShellTerminal, session?.workspaceId]);
+		if (!activeShellTerminalHandleId) return;
+		const shell = shellTerminals.find((s) => s.handleId === activeShellTerminalHandleId);
+		if (!shell) return;
+		setTerminalTarget((current) =>
+			current.kind === "shell" && current.handleId === shell.handleId
+				? current
+				: { kind: "shell", handleId: shell.handleId, title: shell.title },
+		);
+	}, [activeShellTerminalHandleId, shellTerminals]);
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
 	// Orchestrator sessions are terminal-only; only worker sessions have the rail.
 	const hasInspector = !isOrchestrator;
@@ -257,9 +269,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 					<CenterPane
 						daemonReady={daemonStatus.state === "ready"}
 						onCloseShellTerminal={closeShellTerminalByHandle}
-						onSelectSessionTerminal={() => setTerminalTarget({ kind: "worker" })}
+						onSelectSessionTerminal={selectSessionTerminal}
 						onSelectShellTerminal={selectShellTerminal}
-						onSelectWorkerTerminal={() => setTerminalTarget({ kind: "worker" })}
+						onSelectWorkerTerminal={selectSessionTerminal}
 						session={session}
 						shellTerminals={shellTerminals}
 						terminalTarget={terminalTarget}

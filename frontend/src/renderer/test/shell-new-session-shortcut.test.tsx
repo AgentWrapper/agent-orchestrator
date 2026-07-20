@@ -26,6 +26,7 @@ const shellMocks = vi.hoisted(() => {
 			state.newShellTerminalListener = listener;
 			return vi.fn();
 		}),
+		openShellTerminal: vi.fn(),
 		queryClient: {
 			ensureQueryData: vi.fn(),
 			fetchQuery: vi.fn(),
@@ -67,6 +68,12 @@ vi.mock("../hooks/useWorkspaceQuery", () => ({
 
 vi.mock("../hooks/useDaemonStatus", () => ({
 	useDaemonStatus: () => ({ state: "stopped" }),
+}));
+
+// The shell layout opens standalone terminals; this suite only covers the
+// shortcut subscriptions, so the mutation is stubbed rather than driven.
+vi.mock("../hooks/useShellTerminals", () => ({
+	useOpenShellTerminal: () => ({ mutate: shellMocks.openShellTerminal }),
 }));
 
 vi.mock("../hooks/useAgentsQuery", () => ({
@@ -146,6 +153,7 @@ beforeEach(() => {
 	shellMocks.onNewSessionShortcut.mockClear();
 	shellMocks.onKeyboardShortcutsHelp.mockClear();
 	shellMocks.onNewShellTerminalShortcut.mockClear();
+	shellMocks.openShellTerminal.mockClear();
 	shellMocks.state.newSessionListener = undefined;
 	shellMocks.state.keyboardShortcutsListener = undefined;
 	shellMocks.state.newShellTerminalListener = undefined;
@@ -155,27 +163,41 @@ beforeEach(() => {
 });
 
 describe("shell new-shell-terminal shortcut subscription", () => {
-	// The shortcut only raises the store signal; the session view owns actually
-	// opening the shell, so this asserts the signal and nothing more.
-	it("raises the new-shell-terminal request", async () => {
-		await renderShell();
-
+	function pressNewShellTerminal() {
 		const listener = shellMocks.state.newShellTerminalListener;
 		if (!listener) throw new Error("new-shell-terminal listener was not registered");
 		act(() => listener());
+	}
+
+	// Regression: the shell LAYOUT must own this, not the session view. When the
+	// session view owned it, the shortcut did nothing outside a session route —
+	// nothing was mounted to hear it.
+	it("opens a terminal even with no session on screen", async () => {
+		await renderShell();
+
+		pressNewShellTerminal();
 
 		expect(useUiStore.getState().newShellTerminalNonce).toBe(1);
+		expect(shellMocks.openShellTerminal).toHaveBeenCalledTimes(1);
+	});
+
+	it("scopes the terminal to the project in scope", async () => {
+		shellMocks.state.routeParams = { projectId: "proj-1" };
+		await renderShell();
+
+		pressNewShellTerminal();
+
+		expect(shellMocks.openShellTerminal).toHaveBeenCalledWith("proj-1", expect.anything());
 	});
 
 	it("re-fires on a repeat press so a second terminal can be opened", async () => {
 		await renderShell();
 
-		const listener = shellMocks.state.newShellTerminalListener;
-		if (!listener) throw new Error("new-shell-terminal listener was not registered");
-		act(() => listener());
-		act(() => listener());
+		pressNewShellTerminal();
+		pressNewShellTerminal();
 
 		expect(useUiStore.getState().newShellTerminalNonce).toBe(2);
+		expect(shellMocks.openShellTerminal).toHaveBeenCalledTimes(2);
 	});
 });
 
