@@ -11,12 +11,6 @@ name: Desktop build artifacts
 # never sets them (no macos-signing-setup). The conductor signs downstream.
 
 on:
-  # TEMPORARY: branch-scoped push trigger so GitHub registers this new
-  # workflow for dispatch (dispatch-only workflows are not registered until
-  # they reach the default branch). Removed in the next commit.
-  push:
-    branches:
-      - ao/agent-orchestrator-105/build-artifacts
   workflow_dispatch:
     inputs:
       ref:
