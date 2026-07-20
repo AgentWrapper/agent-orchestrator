@@ -276,7 +276,9 @@ function FeatureBuildsSelect({
 			<DropdownMenu>
 				<DropdownMenuTrigger asChild>
 					<button type="button" className="settings-option-trigger" aria-label="Feature build">
-						<span className="truncate">{selected ? `PR #${selected.pr}: ${selected.title}` : "Select a feature build..."}</span>
+						<span className="truncate">
+							{selected ? `PR #${selected.pr}: ${selected.title}` : "Select a feature build..."}
+						</span>
 						<ChevronDown className="size-icon-sm shrink-0 opacity-70" aria-hidden="true" />
 					</button>
 				</DropdownMenuTrigger>
