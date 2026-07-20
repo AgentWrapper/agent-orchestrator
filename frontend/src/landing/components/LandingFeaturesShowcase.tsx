@@ -7,6 +7,8 @@ type Feature = {
 	facts: string[];
 	src: string;
 	alt: string;
+	width: number;
+	height: number;
 };
 
 const features: Feature[] = [
@@ -16,7 +18,9 @@ const features: Feature[] = [
 		body: "Title, brief, agent — done. AO creates an isolated git worktree, a branch, and a live terminal session for the task. Your main checkout never moves.",
 		facts: ["worktree + branch per task", "23 agent harnesses", "resume any session"],
 		src: "/features/new-task.jpg",
-		alt: "The AO desktop app's New task dialog: a title field reading 'Fix WebGL fallback renderer', a brief field, an agent picker set to Codex, and a Start task button, over the session board.",
+		alt: "The AO desktop app's New task dialog: a title field reading 'Fix WebGL fallback renderer', a brief field, an agent picker set to Codex, and a Start task button.",
+		width: 1400,
+		height: 1257,
 	},
 	{
 		eyebrow: "Watch",
@@ -25,6 +29,8 @@ const features: Feature[] = [
 		facts: ["live session status", "PR + CI state per card", "multi-project"],
 		src: "/features/board-fleet.jpg",
 		alt: "The AO board with real sessions across four columns — Working, Needs you, In review, Ready to merge — each card showing its task, agent, branch, and pull request state.",
+		width: 1600,
+		height: 674,
 	},
 	{
 		eyebrow: "Close the loop",
@@ -32,7 +38,9 @@ const features: Feature[] = [
 		body: "AO watches every PR it opens. Failed checks and review comments route back to the session that owns the branch — with the context to fix them — until the PR is approved.",
 		facts: ["CI + review routing", "full activity timeline", "one click to the PR"],
 		src: "/features/session-feedback.jpg",
-		alt: "A session inspector in AO: the agent terminal showing a codex session that received an AO message about CI failing on its pull request, next to the pull request card and activity timeline.",
+		alt: "A session inspector in AO: a real Codex terminal that just received AO's message about CI failing on its pull request, next to the pull request card and activity timeline.",
+		width: 1600,
+		height: 743,
 	},
 ];
 
@@ -54,42 +62,45 @@ export function LandingFeaturesShowcase() {
 					</div>
 
 					<div className="mt-16 flex flex-col gap-20 sm:mt-20 sm:gap-28">
-						{features.map((feature) => (
-							<div key={feature.title} className="landing-reveal">
-								<div className="max-w-[660px]">
-									<div className="landing-eyebrow landing-eyebrow-accent">{feature.eyebrow}</div>
-									<h3 className="mt-3 text-[26px] font-semibold leading-[1.15] tracking-[-0.02em] text-[color:var(--fg)] sm:text-[32px]">
-										{feature.title}
-									</h3>
-									<p className="mt-4 text-[15px] leading-[1.7] text-[color:var(--fg-muted)] sm:text-[16px]">
-										{feature.body}
-									</p>
-									<div className="mt-5 flex flex-wrap gap-x-5 gap-y-2 font-mono text-[11px] uppercase tracking-[0.1em] text-[color:var(--fg-dim)]">
-										{feature.facts.map((fact) => (
-											<span key={fact} className="inline-flex items-center gap-2">
-												<span className="h-1 w-1 rounded-full bg-[color:var(--accent)]" aria-hidden="true" />
-												{fact}
-											</span>
-										))}
+						{features.map((feature, index) => {
+							const flip = index % 2 === 1;
+							return (
+								<div key={feature.title} className="landing-reveal grid items-center gap-8 lg:grid-cols-12 lg:gap-12">
+									<div className={`lg:col-span-5 ${flip ? "lg:order-2" : ""}`}>
+										<div className="landing-eyebrow landing-eyebrow-accent">{feature.eyebrow}</div>
+										<h3 className="mt-3 text-[26px] font-semibold leading-[1.15] tracking-[-0.02em] text-[color:var(--fg)] sm:text-[32px]">
+											{feature.title}
+										</h3>
+										<p className="mt-4 max-w-[46ch] text-[15px] leading-[1.7] text-[color:var(--fg-muted)]">
+											{feature.body}
+										</p>
+										<div className="mt-5 flex flex-wrap gap-x-5 gap-y-2 font-mono text-[11px] uppercase tracking-[0.1em] text-[color:var(--fg-dim)]">
+											{feature.facts.map((fact) => (
+												<span key={fact} className="inline-flex items-center gap-2">
+													<span className="h-1 w-1 rounded-full bg-[color:var(--accent)]" aria-hidden="true" />
+													{fact}
+												</span>
+											))}
+										</div>
 									</div>
-								</div>
-								<div className="relative mt-8 sm:mt-10">
-									<div className="pointer-events-none absolute -inset-4 rounded-2xl bg-[color:var(--accent)] opacity-[0.03] blur-2xl" />
-									<div className="hero-laptop-screen relative">
-										<div className="hero-laptop-display">
-											<Image
-												src={feature.src}
-												alt={feature.alt}
-												width={1600}
-												height={1000}
-												className="h-auto w-full"
-												sizes="(min-width: 1280px) 1180px, 100vw"
-											/>
+									<div className={`relative lg:col-span-7 ${flip ? "lg:order-1" : ""}`}>
+										<div className="pointer-events-none absolute -inset-4 rounded-2xl bg-[color:var(--accent)] opacity-[0.03] blur-2xl" />
+										<div className="hero-laptop-screen relative">
+											<div className="hero-laptop-display">
+												<Image
+													src={feature.src}
+													alt={feature.alt}
+													width={feature.width}
+													height={feature.height}
+													className="h-auto w-full"
+													sizes="(min-width: 1024px) 660px, 100vw"
+												/>
+											</div>
 										</div>
 									</div>
 								</div>
-							</div>
-						))}
+							);
+						})}
 					</div>
 				</div>
 			</div>

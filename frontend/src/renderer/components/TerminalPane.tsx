@@ -104,16 +104,22 @@ function workerPreviewLines(session: WorkspaceSession | undefined, provider: str
 	}
 	if (session?.id === "demo-ci-failed") {
 		return [
-			`$ ${provider} --continue`,
-			"Reading NewTaskDialog.tsx and e2e/smoke.spec.ts...",
-			"$ npm test -- NewTaskDialog",
-			"PASS 12 tests passed",
+			">_ OpenAI Codex (v0.133.0)",
+			"model:        gpt-5.5 high      /model to change",
+			"directory:    ~/ao-demo/demo-new-task-flake",
+			"permissions:  YOLO mode",
+			"",
+			"• Ran npm test -- NewTaskDialog",
+			"  PASS 12 tests passed",
 			"",
 			"▲ ao send · CI failed on PR #324. The failing checks are e2e (NewTaskDialog",
 			"  submits with Enter). Investigate and push a fix.",
 			"",
-			"Reproducing the Enter-submit path...",
-			"Found it: submit is debounced 300ms, the check asserts immediately. Patching.",
+			'• Ran rg -n "onKeyDown|Enter" src/components/NewTaskDialog.tsx',
+			"  … +42 lines (ctrl + t to view transcript)",
+			"",
+			"Found it: submit is debounced 300ms, the check asserts immediately.",
+			"Patching NewTaskDialog and re-running the e2e suite…",
 		];
 	}
 	return [
