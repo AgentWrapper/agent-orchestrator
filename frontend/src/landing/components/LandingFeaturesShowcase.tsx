@@ -13,14 +13,14 @@ type Feature = {
 
 const features: Feature[] = [
 	{
-		eyebrow: "Start",
-		title: "Describe the task. Pick the agent.",
-		body: "Title, brief, agent — done. AO creates an isolated git worktree, a branch, and a live terminal session for the task. Your main checkout never moves.",
-		facts: ["worktree + branch per task", "23 agent harnesses", "resume any session"],
-		src: "/features/new-task.jpg",
-		alt: "The AO desktop app's New task dialog: a title field reading 'Fix WebGL fallback renderer', a brief field, an agent picker set to Codex, and a Start task button.",
-		width: 1400,
-		height: 1257,
+		eyebrow: "Delegate",
+		title: "Tell the orchestrator what you need.",
+		body: "Every project gets a main agent that runs the fleet for you. Describe the outcome — it plans the work, spawns workers into their own worktrees, keeps them moving, and escalates only what needs a human.",
+		facts: ["plans + spawns workers", "keeps sessions moving", "you stay the reviewer"],
+		src: "/features/orchestrator.jpg",
+		alt: "A real orchestrator session in AO: the user asks it to get the flaky tests green, and the orchestrator plans the work, spawns workers, and reports what it is watching.",
+		width: 1600,
+		height: 484,
 	},
 	{
 		eyebrow: "Watch",

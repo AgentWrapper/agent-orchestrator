@@ -71,6 +71,23 @@ export function TerminalPane({ session, theme, daemonReady, terminalTarget, font
 }
 
 function workerPreviewLines(session: WorkspaceSession | undefined, provider: string): string[] {
+	if (session?.id === "ao-demo-orchestrator") {
+		return [
+			">_ OpenAI Codex (v0.133.0)",
+			"model:        gpt-5.5 high      /model to change",
+			"directory:    ~/ao-demo",
+			"permissions:  YOLO mode",
+			"",
+			"You: go through the backlog and get the flaky tests green this week.",
+			"",
+			"• Planning: 3 tasks worth delegating — spawning workers",
+			'  ao spawn --agent codex --prompt "Fix flaky NewTaskDialog smoke test"',
+			'  ao spawn --agent claude-code --prompt "Stabilize checkout e2e retries"',
+			"",
+			"• Watching 6 sessions · PR #324 needs a fix · PR #411 approved, ready to merge",
+			"  I'll route CI and review feedback to each worker. Ping me to reprioritize.",
+		];
+	}
 	if (session?.id === "demo-review-stack") {
 		return [
 			'$ rg "previewUrl|Browser" frontend/src/renderer',
