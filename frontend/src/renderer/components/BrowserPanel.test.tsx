@@ -167,11 +167,16 @@ describe("BrowserPanel", () => {
 				active
 				onTogglePopOut={() => undefined}
 				poppedOut={false}
-				session={{ ...session, previewUrl: "file:///tmp/preview/index.html" }}
+				session={{
+					...session,
+					previewUrl: "http://127.0.0.1:3001/api/v1/sessions/sess-1/preview/files/index.html",
+				}}
 			/>,
 		);
 
-		expect(hookState.previewUrl).toBe("file:///tmp/preview/index.html");
+		expect(hookState.previewUrl).toBe(
+			"http://127.0.0.1:3001/api/v1/sessions/sess-1/preview/files/index.html",
+		);
 	});
 
 	it("binds navigation controls to nav state", async () => {

@@ -28,7 +28,10 @@ const (
 	maxDisplayNameLen = 20
 )
 
-var errPreviewFileNotFound = errors.New("preview file not found")
+var (
+	errPreviewFileNotFound         = errors.New("preview file not found")
+	errPreviewFileOutsideWorkspace = errors.New("preview file outside workspace")
+)
 
 // SessionService is the controller-facing session service contract.
 type SessionService interface {
@@ -259,7 +262,9 @@ func (c *SessionsController) getWorkspaceFile(w http.ResponseWriter, r *http.Req
 //     when no entry point exists.
 //   - An explicit workspace-local path (e.g. `index.html`, `./dist/index.html`)
 //     is served through the preview/files route so local files load.
-//   - Anything else (http(s)/file URLs, host:port dev servers) is kept verbatim.
+//   - Explicit file URLs and absolute file paths must resolve inside the
+//     workspace and are served through the preview/files route.
+//   - Anything else (http(s) URLs, host:port dev servers) is kept verbatim.
 //
 // Every call bumps the session's preview revision, so re-running `ao preview`
 // with the same target still refreshes the panel.
@@ -280,7 +285,6 @@ func (c *SessionsController) setPreview(w http.ResponseWriter, r *http.Request) 
 		envelope.WriteError(w, r, err)
 		return
 	}
-	// ponytail: no URL sanitization on preview target; agent-trusted for now
 	previewURL := strings.TrimSpace(in.URL)
 	if previewURL == "" {
 		if entry, ok := discoverPreviewEntry(sess.Metadata.WorkspacePath); ok {
@@ -684,8 +688,13 @@ func resolveLocalPreview(r *http.Request, id domain.SessionID, workspacePath, ra
 
 func resolvePreviewTarget(r *http.Request, id domain.SessionID, workspacePath, raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
+	if file, ok, err := previewFileURLPath(raw); err != nil {
+		return "", err
+	} else if ok {
+		return absolutePreviewFileURL(r, id, workspacePath, file)
+	}
 	if isAbsolutePreviewPath(raw) {
-		return absolutePreviewFileURL(raw)
+		return absolutePreviewFileURL(r, id, workspacePath, raw)
 	}
 	if resolved, ok := resolveLocalPreview(r, id, workspacePath, raw); ok {
 		return resolved, nil
@@ -701,25 +710,50 @@ func isWindowsAbsolutePath(raw string) bool {
 	return len(raw) >= 3 && ((raw[0] >= 'a' && raw[0] <= 'z') || (raw[0] >= 'A' && raw[0] <= 'Z')) && raw[1] == ':' && (raw[2] == '\\' || raw[2] == '/')
 }
 
-func absolutePreviewFileURL(raw string) (string, error) {
+func previewFileURLPath(raw string) (string, bool, error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", false, err
+	}
+	if !strings.EqualFold(u.Scheme, "file") {
+		return "", false, nil
+	}
+	if u.Host != "" && u.Host != "localhost" {
+		return "", false, errPreviewFileOutsideWorkspace
+	}
+	return filepath.FromSlash(u.Path), true, nil
+}
+
+func absolutePreviewFileURL(r *http.Request, id domain.SessionID, workspacePath, raw string) (string, error) {
+	if strings.TrimSpace(workspacePath) == "" {
+		return "", errPreviewFileOutsideWorkspace
+	}
+	root, err := filepath.Abs(workspacePath)
+	if err != nil {
+		return "", errPreviewFileNotFound
+	}
 	file, err := filepath.Abs(raw)
 	if err != nil {
 		return "", errPreviewFileNotFound
+	}
+	rel, err := filepath.Rel(root, file)
+	if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
+		return "", errPreviewFileOutsideWorkspace
 	}
 	info, err := os.Stat(file)
 	if err != nil || info.IsDir() {
 		return "", errPreviewFileNotFound
 	}
-	filePath := filepath.ToSlash(file)
-	if filepath.VolumeName(file) != "" || isWindowsAbsolutePath(filePath) {
-		filePath = "/" + filePath
-	}
-	return (&url.URL{Scheme: "file", Path: filePath}).String(), nil
+	return previewFileURL(r, id, filepath.ToSlash(rel)), nil
 }
 
 func writePreviewResolveError(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, errPreviewFileNotFound) {
 		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PREVIEW_FILE_NOT_FOUND", "Preview file not found", nil)
+		return
+	}
+	if errors.Is(err, errPreviewFileOutsideWorkspace) {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "PREVIEW_FILE_OUTSIDE_WORKSPACE", "Preview file must be inside the session workspace", nil)
 		return
 	}
 	envelope.WriteError(w, r, err)

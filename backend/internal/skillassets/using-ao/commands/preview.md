@@ -1,6 +1,6 @@
 # ao preview
 
-Open a URL in the desktop browser panel for the current session. With no argument it opens the workspace's static entry point, falling back to this session's existing preview target when no entry point exists. A local file can be opened by its absolute `file://` URL. Use `ao preview clear` to empty the panel.
+Open a URL in the desktop browser panel for the current session. With no argument it opens the workspace's static entry point, falling back to this session's existing preview target when no entry point exists. Workspace-local files can be opened by relative path and are served through AO's preview proxy. Use `ao preview clear` to empty the panel.
 
 ## Syntax
 
@@ -35,8 +35,8 @@ ao preview http://localhost:5173
 ```
 
 ```bash
-# Open a local HTML file
-ao preview file://$(pwd)/index.html
+# Open a workspace-local HTML file
+ao preview ./index.html
 ```
 
 ---

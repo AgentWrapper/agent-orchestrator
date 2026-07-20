@@ -117,13 +117,15 @@ type BrowserEntry = {
 };
 
 const OFFSCREEN_BOUNDS: BrowserRect = { x: -10_000, y: -10_000, width: 0, height: 0 };
-// ponytail: file:// allowed unsanitized; preview targets are agent-trusted for now
-const ALLOWED_PROTOCOLS = new Set(["http:", "https:", "file:"]);
+const ALLOWED_PROTOCOLS = new Set(["http:", "https:"]);
 
 export function normalizeBrowserURL(input: string): URL {
 	const raw = input.trim();
 	if (raw === "") {
 		throw new Error("URL is required");
+	}
+	if (isWindowsAbsolutePath(raw) || isPosixAbsolutePath(raw)) {
+		throw new Error("Local file paths are not supported");
 	}
 	const candidate = withDefaultScheme(raw);
 	const url = new URL(candidate);
@@ -463,7 +465,6 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 }
 
 function withDefaultScheme(raw: string): string {
-	if (isWindowsAbsolutePath(raw) || isPosixAbsolutePath(raw)) return localPathToFileURL(raw);
 	if (/^https?:\/\//i.test(raw)) return raw;
 	if (isLocalhostLike(raw)) return `http://${raw}`;
 	if (/^[a-zA-Z][a-zA-Z\d+.-]*:/.test(raw)) return raw;
@@ -476,18 +477,6 @@ function isWindowsAbsolutePath(raw: string): boolean {
 
 function isPosixAbsolutePath(raw: string): boolean {
 	return raw.startsWith("/");
-}
-
-function localPathToFileURL(raw: string): string {
-	if (isWindowsAbsolutePath(raw)) {
-		const normalized = raw.replace(/\\/g, "/");
-		return `file:///${encodePathSegments(normalized).replace(/^([A-Za-z])%3A(?=\/)/, "$1:")}`;
-	}
-	return `file://${encodePathSegments(raw)}`;
-}
-
-function encodePathSegments(pathname: string): string {
-	return pathname.split("/").map(encodeURIComponent).join("/");
 }
 
 function isLocalhostLike(raw: string): boolean {
