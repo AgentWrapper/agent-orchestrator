@@ -119,6 +119,11 @@ type CleanupSessionsQuery struct {
 	Project string `query:"project,omitempty" description:"Project id filter. When omitted, clean terminated sessions across all projects."`
 }
 
+// WorkspaceFileQuery is the query string accepted by GET /api/v1/sessions/{sessionId}/workspace/file.
+type WorkspaceFileQuery struct {
+	Path string `query:"path" description:"Session-worktree-relative file path."`
+}
+
 // SessionView is the session wire shape: the domain read model plus the
 // display-safe branch name and the session's attributed pull requests in the
 // curated SessionPRFacts shape. One session can own many PRs (e.g. a stack), so
@@ -163,6 +168,39 @@ type SessionResponse struct {
 	Session SessionView `json:"session"`
 }
 
+// ListWorkspaceFilesResponse is the body of GET /api/v1/sessions/{sessionId}/workspace/files.
+type ListWorkspaceFilesResponse struct {
+	SessionID domain.SessionID       `json:"sessionId"`
+	Files     []WorkspaceFileSummary `json:"files"`
+	Truncated bool                   `json:"truncated"`
+}
+
+// WorkspaceFileSummary is one file row in the session workspace browser.
+type WorkspaceFileSummary struct {
+	Path      string                         `json:"path"`
+	Status    sessionsvc.WorkspaceFileStatus `json:"status" enum:"unmodified,modified,added,deleted,renamed"`
+	Additions int                            `json:"additions"`
+	Deletions int                            `json:"deletions"`
+	Size      int64                          `json:"size"`
+	Binary    bool                           `json:"binary"`
+}
+
+// WorkspaceFileResponse is the body of GET /api/v1/sessions/{sessionId}/workspace/file.
+type WorkspaceFileResponse struct {
+	SessionID        domain.SessionID               `json:"sessionId"`
+	Path             string                         `json:"path"`
+	Status           sessionsvc.WorkspaceFileStatus `json:"status" enum:"unmodified,modified,added,deleted,renamed"`
+	Additions        int                            `json:"additions"`
+	Deletions        int                            `json:"deletions"`
+	Size             int64                          `json:"size"`
+	Binary           bool                           `json:"binary"`
+	Deleted          bool                           `json:"deleted"`
+	Content          string                         `json:"content"`
+	ContentTruncated bool                           `json:"contentTruncated"`
+	Diff             string                         `json:"diff"`
+	DiffTruncated    bool                           `json:"diffTruncated"`
+}
+
 // SessionPreviewResponse is the body of GET /api/v1/sessions/{sessionId}/preview.
 type SessionPreviewResponse struct {
 	SessionID  domain.SessionID `json:"sessionId"`
@@ -191,9 +229,10 @@ type RenameSessionResponse struct {
 
 // RestoreSessionResponse is the body of POST /api/v1/sessions/{sessionId}/restore.
 type RestoreSessionResponse struct {
-	OK        bool             `json:"ok"`
-	SessionID domain.SessionID `json:"sessionId"`
-	Session   SessionView      `json:"session"`
+	OK          bool                       `json:"ok"`
+	SessionID   domain.SessionID           `json:"sessionId"`
+	RestoreMode sessionsvc.RestoreModeView `json:"restoreMode" enum:"native,saved_prompt,fresh"`
+	Session     SessionView                `json:"session"`
 }
 
 // KillSessionResponse is the body of POST /api/v1/sessions/{sessionId}/kill.

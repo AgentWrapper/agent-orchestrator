@@ -1373,11 +1373,11 @@ func TestKill_TerminatesIncompleteHandle(t *testing.T) {
 	}
 }
 
-// TestKill_DirtyWorkspacePreservesAndRemainsRetryable: a workspace teardown
+// TestKill_DirtyWorkspacePreservesAndTerminates: a workspace teardown
 // refused because of uncommitted work must NOT force-remove the worktree. Kill
-// succeeds with freed=false and leaves the session non-terminal so a later retry
-// can complete cleanup.
-func TestKill_DirtyWorkspacePreservesAndRemainsRetryable(t *testing.T) {
+// succeeds with freed=false and still marks the session terminated; cleanup can
+// reclaim the preserved worktree after the user resolves the dirty state.
+func TestKill_DirtyWorkspacePreservesAndTerminates(t *testing.T) {
 	m, st, rt, ws := newManager()
 	st.sessions["mer-1"] = mkLive("mer-1")
 	ws.destroyErr = fmt.Errorf("gitworktree: refusing to remove: %w", ports.ErrWorkspaceDirty)
@@ -1391,8 +1391,8 @@ func TestKill_DirtyWorkspacePreservesAndRemainsRetryable(t *testing.T) {
 	if rt.destroyed != 1 {
 		t.Fatal("runtime should be destroyed")
 	}
-	if st.sessions["mer-1"].IsTerminated {
-		t.Fatal("session should remain active so cleanup can be retried")
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session should be terminated even when the workspace is preserved")
 	}
 }
 
@@ -1508,8 +1508,8 @@ func TestKill_WorkspaceProjectDirtyRowRefusesRemoval(t *testing.T) {
 	if got := ws.calls; strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("calls = %v, want %v", got, want)
 	}
-	if st.sessions["mer-1"].IsTerminated {
-		t.Fatal("session should remain active so dirty workspace cleanup can be retried")
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session should be terminated even when dirty workspace cleanup is deferred")
 	}
 }
 
@@ -1536,12 +1536,12 @@ func TestKill_RuntimeDestroyFailureLeavesSessionActive(t *testing.T) {
 func TestRestore_ReopensTerminal(t *testing.T) {
 	m, st, rt, _ := newManager()
 	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x"})
-	s, err := m.Restore(ctx, "mer-1")
+	s, err := m.RestoreWithMode(ctx, "mer-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.Activity.State != domain.ActivityIdle {
-		t.Fatalf("restored records idle, got %q", s.Activity.State)
+	if s.Session.Activity.State != domain.ActivityIdle {
+		t.Fatalf("restored records idle, got %q", s.Session.Activity.State)
 	}
 	if rt.created != 1 {
 		t.Fatal("restore should relaunch")
@@ -1554,7 +1554,7 @@ func TestRestore_WorkspaceProjectRestoresChildrenAndRecordsInventory(t *testing.
 	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{{Name: "api", RelativePath: "services/api"}}
 	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1", AgentSessionID: "agent-x"})
 
-	if _, err := m.Restore(ctx, "mer-1"); err != nil {
+	if _, err := m.RestoreWithMode(ctx, "mer-1"); err != nil {
 		t.Fatal(err)
 	}
 	wantCalls := []string{"Restore:__root__", "Restore:api"}
@@ -1591,7 +1591,7 @@ func TestRestore_AppliesProjectAgentConfig(t *testing.T) {
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
 	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-	if _, err := m.Restore(ctx, "mer-1"); err != nil {
+	if _, err := m.RestoreWithMode(ctx, "mer-1"); err != nil {
 		t.Fatal(err)
 	}
 	if agent.lastConfig.Model != "restore-model" {
@@ -1602,7 +1602,7 @@ func TestRestore_AppliesProjectAgentConfig(t *testing.T) {
 func TestRestore_RefusesLiveSession(t *testing.T) {
 	m, st, _, _ := newManager()
 	st.sessions["mer-1"] = mkLive("mer-1")
-	if _, err := m.Restore(ctx, "mer-1"); !errors.Is(err, ErrNotRestorable) {
+	if _, err := m.RestoreWithMode(ctx, "mer-1"); !errors.Is(err, ErrNotRestorable) {
 		t.Fatalf("want ErrNotRestorable, got %v", err)
 	}
 }
@@ -1795,7 +1795,7 @@ func TestRestore_ForwardsResolvedAgentConfigPermissions(t *testing.T) {
 	agent := &recordingAgent{}
 	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: func(string) (string, error) { return "/bin/true", nil }})
 
-	_, err := m.Restore(ctx, "mer-1")
+	_, err := m.RestoreWithMode(ctx, "mer-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2083,7 +2083,7 @@ func TestSpawnOrchestrator_UsesCoordinatorPrompt(t *testing.T) {
 	systemPrompt := agent.lastLaunch.SystemPrompt
 	for _, want := range []string{
 		"You are the human-facing orchestrator for project mer",
-		`ao spawn --project mer --prompt "<clear worker task>"`,
+		`ao spawn --project mer --name "<label>" --prompt "<clear worker task>"`,
 		"Before running `ao spawn`, count the `--name` label yourself",
 		"coordination-only by default",
 		"always spawn or redirect a worker session",
@@ -2264,7 +2264,7 @@ func TestRestore_OrchestratorRederivesSystemPrompt(t *testing.T) {
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
 	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, DataDir: dataDir, LookPath: lookPath})
 
-	if _, err := m.Restore(ctx, "mer-1"); err != nil {
+	if _, err := m.RestoreWithMode(ctx, "mer-1"); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(agent.lastRestore.SystemPrompt, "You are the human-facing orchestrator for project mer") {
@@ -2300,7 +2300,7 @@ func TestRestore_FallsBackToInlineWhenPromptFileUnavailable(t *testing.T) {
 		Logger:    slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)),
 	})
 
-	if _, err := m.Restore(ctx, "mer-1"); err != nil {
+	if _, err := m.RestoreWithMode(ctx, "mer-1"); err != nil {
 		t.Fatal(err)
 	}
 	if agent.lastRestore.SystemPrompt == "" {
@@ -2331,7 +2331,7 @@ func TestRestore_PromptFileFailureBlocksFileOnlyHarness(t *testing.T) {
 		LookPath:  lookPath,
 	})
 
-	_, err := m.Restore(ctx, "mer-1")
+	_, err := m.RestoreWithMode(ctx, "mer-1")
 	if err == nil {
 		t.Fatal("Restore succeeded, want prompt-file error for file-only harness")
 	}
@@ -2354,7 +2354,7 @@ func TestRestore_FallbackLaunchCarriesSystemPrompt(t *testing.T) {
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
 	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, DataDir: dataDir, LookPath: lookPath})
 
-	if _, err := m.Restore(ctx, "mer-1"); err != nil {
+	if _, err := m.RestoreWithMode(ctx, "mer-1"); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(agent.lastLaunch.SystemPrompt, "You are the human-facing orchestrator for project mer") {
@@ -2389,7 +2389,7 @@ func TestRestore_FallbackLaunchDeliversPromptAfterStartWhenAgentRequestsIt(t *te
 		LookPath:  func(string) (string, error) { return "/bin/true", nil },
 	})
 
-	if _, err := m.Restore(ctx, "mer-1"); err != nil {
+	if _, err := m.RestoreWithMode(ctx, "mer-1"); err != nil {
 		t.Fatal(err)
 	}
 	if agent.lastLaunch.Prompt != "" {
@@ -2421,8 +2421,12 @@ func TestRestore_CodexWithoutAgentSessionIDFallsBackToSavedPrompt(t *testing.T) 
 		LookPath:  func(string) (string, error) { return "/bin/true", nil },
 	})
 
-	if _, err := m.Restore(ctx, "mer-1"); err != nil {
+	res, err := m.RestoreWithMode(ctx, "mer-1")
+	if err != nil {
 		t.Fatalf("Restore err = %v, want fallback launch", err)
+	}
+	if res.Mode != RestoreModeSavedPrompt {
+		t.Fatalf("restore mode = %q, want %q", res.Mode, RestoreModeSavedPrompt)
 	}
 	if agent.restoreCalls != 1 {
 		t.Fatalf("GetRestoreCommand calls = %d, want 1", agent.restoreCalls)
@@ -2459,7 +2463,7 @@ func TestRestore_OpenCodeWithoutAgentSessionIDFallsBackToSavedPrompt(t *testing.
 		LookPath:  func(string) (string, error) { return "/bin/true", nil },
 	})
 
-	if _, err := m.Restore(ctx, "mer-1"); err != nil {
+	if _, err := m.RestoreWithMode(ctx, "mer-1"); err != nil {
 		t.Fatalf("Restore err = %v, want fallback launch", err)
 	}
 	if agent.restoreCalls != 1 {
@@ -2505,7 +2509,7 @@ func TestRestore_AgyAndCopilotWithoutAgentSessionIDFallBackToSavedPrompt(t *test
 				LookPath:  func(string) (string, error) { return "/bin/true", nil },
 			})
 
-			if _, err := m.Restore(ctx, "mer-1"); err != nil {
+			if _, err := m.RestoreWithMode(ctx, "mer-1"); err != nil {
 				t.Fatalf("Restore err = %v, want fallback launch", err)
 			}
 			if agent.restoreCalls != 1 {
@@ -2553,8 +2557,12 @@ func TestRestore_AgyAndCopilotWithAgentSessionIDUseNativeResume(t *testing.T) {
 				LookPath:  func(string) (string, error) { return "/bin/true", nil },
 			})
 
-			if _, err := m.Restore(ctx, "mer-1"); err != nil {
+			res, err := m.RestoreWithMode(ctx, "mer-1")
+			if err != nil {
 				t.Fatalf("Restore err = %v, want native resume", err)
+			}
+			if res.Mode != RestoreModeNative {
+				t.Fatalf("restore mode = %q, want %q", res.Mode, RestoreModeNative)
 			}
 			if agent.restoreCalls != 1 {
 				t.Fatalf("GetRestoreCommand calls = %d, want 1", agent.restoreCalls)
@@ -2601,7 +2609,7 @@ func TestRestore_AgyAndCopilotPromptlessWorkersWithoutAgentSessionIDNotResumable
 				LookPath:  func(string) (string, error) { return "/bin/true", nil },
 			})
 
-			_, err := m.Restore(ctx, "mer-1")
+			_, err := m.RestoreWithMode(ctx, "mer-1")
 			if !errors.Is(err, ErrNotResumable) {
 				t.Fatalf("Restore err = %v, want ErrNotResumable", err)
 			}
@@ -2639,7 +2647,7 @@ func TestRestore_ClaudeCodeWithoutRestoreCommandFallsBackToSavedPrompt(t *testin
 		LookPath:  func(string) (string, error) { return "/bin/true", nil },
 	})
 
-	if _, err := m.Restore(ctx, "mer-1"); err != nil {
+	if _, err := m.RestoreWithMode(ctx, "mer-1"); err != nil {
 		t.Fatalf("Restore err = %v, want fallback launch", err)
 	}
 	if agent.restoreCalls != 1 {
@@ -2676,7 +2684,7 @@ func TestRestore_PromptlessOrchestratorResumesViaAdapter(t *testing.T) {
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
 	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: alwaysResumeAgent{}}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-	if _, err := m.Restore(ctx, "mer-1"); err != nil {
+	if _, err := m.RestoreWithMode(ctx, "mer-1"); err != nil {
 		t.Fatalf("promptless orchestrator must restore via adapter resume, got err = %v", err)
 	}
 	if rt.created != 1 {
@@ -2707,7 +2715,7 @@ func TestRestore_PromptlessUnresumableRelaunchesFresh(t *testing.T) {
 	// without an agentSessionId, and GetLaunchCommand returns a valid argv.
 	m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-	if _, err := m.Restore(ctx, "mer-1"); err != nil {
+	if _, err := m.RestoreWithMode(ctx, "mer-1"); err != nil {
 		t.Fatalf("promptless unresumable session must relaunch fresh, got err = %v", err)
 	}
 	if rt.created != 1 {
@@ -2739,7 +2747,7 @@ func TestRestore_PromptlessWorkerNotResumable(t *testing.T) {
 	// must produce ErrNotResumable instead of a blank relaunch.
 	m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-	_, err := m.Restore(ctx, "mer-1")
+	_, err := m.RestoreWithMode(ctx, "mer-1")
 	if !errors.Is(err, ErrNotResumable) {
 		t.Fatalf("promptless unresumable worker must return ErrNotResumable, got %v", err)
 	}
@@ -2765,7 +2773,7 @@ func TestRestore_WorkerPointsAtCurrentOrchestrator(t *testing.T) {
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
 	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-	if _, err := m.Restore(ctx, "mer-1"); err != nil {
+	if _, err := m.RestoreWithMode(ctx, "mer-1"); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(agent.lastRestore.SystemPrompt, `ao send --session mer-9`) {
@@ -2788,7 +2796,7 @@ func TestRestore_RefusesIncompleteHandle(t *testing.T) {
 		IsTerminated: true,
 		Metadata:     domain.SessionMetadata{Prompt: "do it"},
 	}
-	if _, err := m.Restore(ctx, "mer-1"); !errors.Is(err, ErrIncompleteHandle) {
+	if _, err := m.RestoreWithMode(ctx, "mer-1"); !errors.Is(err, ErrIncompleteHandle) {
 		t.Fatalf("want ErrIncompleteHandle, got %v", err)
 	}
 }
@@ -3072,7 +3080,7 @@ func TestSpawnAndRestore_PinHookPATHToDaemonBinary(t *testing.T) {
 			name: "restore",
 			launch: func(m *Manager, st *fakeStore) error {
 				seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x"})
-				_, err := m.Restore(ctx, "mer-1")
+				_, err := m.RestoreWithMode(ctx, "mer-1")
 				return err
 			},
 		},

@@ -39,3 +39,20 @@ func TestInstall_WritesSkillAndIsIdempotent(t *testing.T) {
 		t.Fatalf("stale file survived reinstall (err=%v)", err)
 	}
 }
+
+// TestMaterialize_WritesIntoArbitraryDest covers the opencode adapter path:
+// materialize the skill into .opencode/skills/using-ao (not the data-dir layout).
+func TestMaterialize_WritesIntoArbitraryDest(t *testing.T) {
+	dest := filepath.Join(t.TempDir(), ".opencode", "skills", SkillName)
+	if err := Materialize(dest); err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+	if b, err := os.ReadFile(filepath.Join(dest, "SKILL.md")); err != nil {
+		t.Fatalf("read SKILL.md: %v", err)
+	} else if len(b) == 0 {
+		t.Fatal("SKILL.md is empty")
+	}
+	if _, err := os.Stat(filepath.Join(dest, "commands", "spawn.md")); err != nil {
+		t.Fatalf("commands/spawn.md missing: %v", err)
+	}
+}

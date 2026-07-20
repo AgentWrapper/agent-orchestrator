@@ -15,7 +15,7 @@ import type {
 	BrowserAnnotationPageSubmitPayload,
 	BrowserAnnotationSubmitPayload,
 } from "../shared/browser-annotations";
-import { attachNewSessionShortcut } from "./new-session-shortcut";
+import { attachAppShortcuts } from "./app-shortcuts";
 
 export type BrowserRect = Pick<Rectangle, "x" | "y" | "width" | "height">;
 
@@ -95,9 +95,8 @@ export type BrowserViewHostOptions = {
 	WebContentsView: WebContentsViewConstructor;
 	annotatePreloadPath: string;
 	rendererOrigin: string;
-	// Platform flag for the app-level new-session shortcut, forwarded to each
-	// preview view so ⌘N / Ctrl+Shift+N still reaches the shell when the native
-	// Browser panel holds focus. Defaults to non-mac when omitted (tests).
+	// Platform flag for application shortcuts forwarded from each preview view
+	// to the shell. Defaults to non-mac when omitted (tests).
 	isMac?: boolean;
 };
 
@@ -241,10 +240,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		viewIdsByWebContentsId.set(view.webContents.id, viewId);
 		hardenWebContents(view.webContents, options, entry);
 		wireNavEvents(view.webContents, options, entry);
-		// The preview is a separate WebContentsView, so a renderer-window keydown
-		// listener never sees keys typed here. Forward the app-level new-session
-		// shortcut to the shell renderer so it works with the panel focused.
-		attachNewSessionShortcut(view.webContents, Boolean(options.isMac), options.mainWindow.webContents, true);
+		// The preview is a separate WebContentsView, so renderer-window keydown
+		// listeners never see keys typed here. Forward application shortcuts to the
+		// shell renderer so they still work with the panel focused.
+		attachAppShortcuts(view.webContents, Boolean(options.isMac), options.mainWindow.webContents, true);
 		view.webContents.on("focus", () => {
 			lastFocusedViewId = viewId;
 		});

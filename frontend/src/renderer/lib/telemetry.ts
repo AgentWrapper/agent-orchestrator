@@ -17,6 +17,41 @@ let errorHandlersBound = false;
 let telemetryContext: TelemetryProperties = {};
 let fallbackDailyActiveDate = "";
 
+// Bounds how many captures of a single event (or exception) name reach
+// PostHog. Mirrors the daemon-side RateLimitedSink: a re-render loop or
+// repeatedly-thrown exception must not turn into an unbounded PostHog bill.
+// A per-minute cap alone doesn't bound the daily total — a loop paced just
+// under it would sit under the ceiling forever — so this pairs a small burst
+// allowance with a hard daily ceiling per name.
+const EVENTS_PER_NAME_PER_MINUTE = 5;
+const EVENTS_PER_NAME_PER_DAY = 200;
+const MINUTE_MS = 60_000;
+const DAY_MS = 24 * 60 * 60_000;
+const minuteWindows = new Map<string, { start: number; count: number }>();
+const dayWindows = new Map<string, { start: number; count: number }>();
+
+function reserveWindow(
+	windows: Map<string, { start: number; count: number }>,
+	name: string,
+	now: number,
+	size: number,
+	limit: number,
+): boolean {
+	const window = windows.get(name);
+	if (!window || now - window.start >= size) {
+		windows.set(name, { start: now, count: 1 });
+		return true;
+	}
+	if (window.count >= limit) return false;
+	window.count += 1;
+	return true;
+}
+
+export function reserveCapture(name: string, now = Date.now()): boolean {
+	if (!reserveWindow(minuteWindows, name, now, MINUTE_MS, EVENTS_PER_NAME_PER_MINUTE)) return false;
+	return reserveWindow(dayWindows, name, now, DAY_MS, EVENTS_PER_NAME_PER_DAY);
+}
+
 type TelemetryProperties = Record<string, unknown>;
 type DailyActiveStorage = Pick<Storage, "getItem" | "setItem">;
 type DailyActiveEventTarget = {
@@ -341,6 +376,14 @@ export async function initTelemetry(): Promise<boolean> {
 			capture_pageview: false,
 			capture_exceptions: false,
 			persistence: "localStorage",
+			// The distinct ID is a random install ID, never a person, so keep
+			// every event anonymous: identified events bill at several times the
+			// anonymous rate and the person profiles would hold nothing. The
+			// bootstrap distinct ID keeps renderer and daemon events deduplicated
+			// without an identify() call, which would flip the install to
+			// identified billing permanently.
+			person_profiles: "identified_only",
+			bootstrap: { distinctID: bootstrap.distinctId },
 			before_send: (event) => (event ? sanitizePostHogCaptureResult(event) : event),
 			session_recording: {
 				maskCapturedNetworkRequestFn: (request) => {
@@ -350,10 +393,6 @@ export async function initTelemetry(): Promise<boolean> {
 					return request;
 				},
 			},
-		});
-		posthog.identify(bootstrap.distinctId, {
-			...telemetryContext,
-			surface: "renderer",
 		});
 		posthog.register({
 			...telemetryContext,
@@ -386,12 +425,14 @@ export async function initTelemetry(): Promise<boolean> {
 }
 
 export async function captureRendererEvent(event: string, properties?: Record<string, unknown>): Promise<void> {
+	if (!reserveCapture(event)) return;
 	if (!(await initTelemetry())) return;
 	const safeProperties = withTelemetryContext(await sanitizeRendererProperties(event, properties));
 	posthog.capture(event, safeProperties);
 }
 
 export async function captureRendererException(error: unknown, properties?: Record<string, unknown>): Promise<void> {
+	if (!reserveCapture(`exception:${exceptionName(error)}`)) return;
 	if (!(await initTelemetry())) return;
 	const safeProperties = withTelemetryContext(await sanitizeRendererExceptionProperties(error, properties));
 	posthog.captureException(normalizeException(error), safeProperties);

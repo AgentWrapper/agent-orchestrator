@@ -28,6 +28,7 @@ var Derivers = map[string]DeriveFunc{
 	// Adapters that parse hook payloads for finer-grained state keep their own
 	// deriver; the rest share the name-only StandardDeriveActivityState.
 	"claude-code": claudecode.DeriveActivityState,
+	"grok":        claudecode.DeriveActivityState,
 	"codex":       codex.DeriveActivityState,
 	"droid":       droid.DeriveActivityState,
 	"agy":         agy.DeriveActivityState,

@@ -203,7 +203,7 @@ func TestRestoreRoundTripPreservesMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if restored.IsTerminated || restored.Metadata.AgentSessionID != "agent-x" {
+	if restored.Session.IsTerminated || restored.Session.Metadata.AgentSessionID != "agent-x" {
 		t.Fatalf("restored wrong: %+v", restored)
 	}
 }

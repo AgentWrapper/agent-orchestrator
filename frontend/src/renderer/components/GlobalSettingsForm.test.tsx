@@ -18,6 +18,8 @@ const {
 	navigateMock,
 	writeText,
 	openExternal,
+	featListBuilds,
+	featGetActive,
 } = vi.hoisted(() => ({
 	getUpdate: vi.fn(),
 	setUpdate: vi.fn(),
@@ -31,6 +33,8 @@ const {
 	navigateMock: vi.fn(),
 	writeText: vi.fn(),
 	openExternal: vi.fn(),
+	featListBuilds: vi.fn(),
+	featGetActive: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => {
@@ -54,6 +58,7 @@ vi.mock("../lib/bridge", () => ({
 			install: updInstall,
 			onStatus: updOnStatus,
 		},
+		featureBuilds: { list: featListBuilds, getActive: featGetActive },
 	},
 }));
 
@@ -68,10 +73,20 @@ function renderForm() {
 }
 
 beforeEach(() => {
-	for (const m of [getUpdate, setUpdate, navigateMock, writeText, openExternal, getVersion, getDaemonStatus]) {
+	for (const m of [
+		getUpdate,
+		setUpdate,
+		navigateMock,
+		writeText,
+		openExternal,
+		getVersion,
+		getDaemonStatus,
+		featListBuilds,
+		featGetActive,
+	]) {
 		m.mockReset();
 	}
-	getUpdate.mockResolvedValue({ enabled: true, channel: "latest", nightlyAck: false });
+	getUpdate.mockResolvedValue({ enabled: true, channel: "latest", nightlyAck: false, feature: null });
 	setUpdate.mockResolvedValue(undefined);
 	updGetStatus.mockResolvedValue({ state: "idle" });
 	updCheck.mockResolvedValue(undefined);
@@ -82,6 +97,8 @@ beforeEach(() => {
 	getDaemonStatus.mockResolvedValue({ state: "ready" });
 	writeText.mockResolvedValue(undefined);
 	openExternal.mockResolvedValue(undefined);
+	featListBuilds.mockResolvedValue([]);
+	featGetActive.mockResolvedValue(null);
 });
 
 describe("GlobalSettingsForm", () => {
@@ -101,7 +118,7 @@ describe("GlobalSettingsForm", () => {
 	});
 
 	it("shows the nightly warning when the nightly channel is loaded", async () => {
-		getUpdate.mockResolvedValue({ enabled: true, channel: "nightly", nightlyAck: true });
+		getUpdate.mockResolvedValue({ enabled: true, channel: "nightly", nightlyAck: true, feature: null });
 		renderForm();
 		expect(await screen.findByText(/Nightly builds are cut every day/i)).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
@@ -114,7 +131,7 @@ describe("GlobalSettingsForm", () => {
 		await userEvent.click(await screen.findByRole("menuitem", { name: "Nightly (Pre-release)" }));
 		await waitFor(() =>
 			expect(setUpdate).toHaveBeenCalledWith(
-				expect.objectContaining({ channel: "nightly", enabled: true, nightlyAck: true }),
+				expect.objectContaining({ channel: "nightly", enabled: true, nightlyAck: true, feature: null }),
 			),
 		);
 		expect(await screen.findByText(/Nightly builds are cut every day/i)).toBeInTheDocument();
@@ -294,5 +311,77 @@ describe("GlobalSettingsForm", () => {
 		expect(screen.queryByRole("combobox", { name: "Report type" })).not.toBeInTheDocument();
 		expect(screen.queryByLabelText("Include safe diagnostics")).not.toBeInTheDocument();
 		expect(screen.queryByLabelText("Report preview")).not.toBeInTheDocument();
+	});
+
+	it("reveals the feature-build picker when Feature Releases is selected", async () => {
+		renderForm();
+		await screen.findByText("Updates");
+		// The picker must be reachable from a clean state (no pin seeded).
+		await userEvent.click(screen.getByLabelText("Updates channel"));
+		await userEvent.click(await screen.findByRole("menuitem", { name: "Feature Releases" }));
+		// Secondary picker mounts; no live builds are mocked, so it shows the empty state.
+		expect(await screen.findByText("No live feature releases.")).toBeInTheDocument();
+		expect(featListBuilds).toHaveBeenCalled();
+	});
+
+	it("pins a feature build after confirming, then auto-progresses check -> download -> install", async () => {
+		featListBuilds.mockResolvedValue([
+			{
+				pr: 2270,
+				title: "Fix foo",
+				base: "0.2.0",
+				sha: "abc",
+				slug: "x",
+				buildId: "v0.2.0-pr2270.202607061200",
+				publishedAt: new Date().toISOString(),
+			},
+		]);
+		let emit: (s: { state: string; version?: string }) => void = () => undefined;
+		updOnStatus.mockImplementation((cb: (s: unknown) => void) => {
+			emit = cb as typeof emit;
+			return () => undefined;
+		});
+		renderForm();
+		await screen.findByText("Updates");
+
+		await userEvent.click(screen.getByLabelText("Updates channel"));
+		await userEvent.click(await screen.findByRole("menuitem", { name: "Feature Releases" }));
+
+		await userEvent.click(await screen.findByLabelText("Feature build"));
+		await userEvent.click(await screen.findByRole("menuitem", { name: /PR #2270: Fix foo/ }));
+
+		// Confirmation dialog replaces window.confirm.
+		await userEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+
+		await waitFor(() => expect(setUpdate).toHaveBeenCalledWith(expect.objectContaining({ feature: { pr: 2270 } })));
+		expect(updCheck).toHaveBeenCalled();
+
+		// Auto-progression: available -> download(), downloaded -> install().
+		act(() => emit({ state: "available", version: "1.2.3" }));
+		await waitFor(() => expect(updDownload).toHaveBeenCalled());
+		act(() => emit({ state: "downloaded", version: "1.2.3" }));
+		await waitFor(() => expect(updInstall).toHaveBeenCalled());
+	});
+
+	it("returns to Stable, then auto-progresses check -> download -> install", async () => {
+		getUpdate.mockResolvedValue({ enabled: true, channel: "latest", nightlyAck: false, feature: { pr: 2270 } });
+		featGetActive.mockResolvedValue({ pr: 2270 });
+		let emit: (s: { state: string; version?: string }) => void = () => undefined;
+		updOnStatus.mockImplementation((cb: (s: unknown) => void) => {
+			emit = cb as typeof emit;
+			return () => undefined;
+		});
+		renderForm();
+
+		const returnBtn = await screen.findByRole("button", { name: "Return to Stable" });
+		await userEvent.click(returnBtn);
+
+		await waitFor(() => expect(setUpdate).toHaveBeenCalledWith(expect.objectContaining({ feature: null })));
+		expect(updCheck).toHaveBeenCalled();
+
+		act(() => emit({ state: "available", version: "1.3.0" }));
+		await waitFor(() => expect(updDownload).toHaveBeenCalled());
+		act(() => emit({ state: "downloaded", version: "1.3.0" }));
+		await waitFor(() => expect(updInstall).toHaveBeenCalled());
 	});
 });
