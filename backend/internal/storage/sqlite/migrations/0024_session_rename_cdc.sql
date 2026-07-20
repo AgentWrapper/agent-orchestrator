@@ -7,8 +7,12 @@
 -- live SSE stream — the sidebar only picked up the new name on a full refetch.
 -- Migrations 0017/0019 extended this same trigger for preview fan-out; rename
 -- was left out. display_name is NOT NULL, so a plain <> comparison is complete.
--- The payload gains displayName to match the previewUrl/previewRevision
--- precedent (the renderer can read the new name straight from the event).
+-- Only the WHEN guard changes: session_updated is an invalidation-only nudge
+-- (every renderer consumer treats it as a signal to refetch the workspace, see
+-- renderer/lib/event-transport.ts — no consumer reads fields off the payload),
+-- so the new name is derived from durable state on refetch, not carried on the
+-- event. The payload is left as-is to keep one invalidation-only contract for
+-- session_updated across every emitter of it.
 -- +goose StatementBegin
 DROP TRIGGER IF EXISTS sessions_cdc_update;
 -- +goose StatementEnd
@@ -24,7 +28,7 @@ WHEN OLD.activity_state <> NEW.activity_state
 BEGIN
     INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
     VALUES (NEW.project_id, NEW.id, 'session_updated',
-        json_object('id', NEW.id, 'activity', NEW.activity_state, 'isTerminated', json(CASE WHEN NEW.is_terminated THEN 'true' ELSE 'false' END), 'previewUrl', NEW.preview_url, 'previewRevision', NEW.preview_revision, 'displayName', NEW.display_name),
+        json_object('id', NEW.id, 'activity', NEW.activity_state, 'isTerminated', json(CASE WHEN NEW.is_terminated THEN 'true' ELSE 'false' END), 'previewUrl', NEW.preview_url, 'previewRevision', NEW.preview_revision),
         NEW.updated_at);
 END;
 -- +goose StatementEnd
