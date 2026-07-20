@@ -7,7 +7,10 @@ import { fileURLToPath, URL } from "node:url";
 import { TanStackRouterVite } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { devDaemonPort } from "./src/shared/dev-daemon-config";
 import { DEFAULT_POSTHOG_HOST } from "./src/shared/posthog-config";
+
+const DEV_API_TARGET = process.env.AO_DEV_API_TARGET ?? `http://127.0.0.1:${devDaemonPort(process.env)}`;
 
 const POSTHOG_ORIGIN = (() => {
 	const configured = process.env.VITE_AO_POSTHOG_HOST?.trim() || DEFAULT_POSTHOG_HOST;
@@ -62,11 +65,11 @@ export default defineConfig({
 	server: {
 		proxy: {
 			"/api": {
-				target: process.env.AO_DEV_API_TARGET ?? "http://127.0.0.1:3001",
+				target: DEV_API_TARGET,
 				changeOrigin: false,
 			},
 			"/mux": {
-				target: process.env.AO_DEV_API_TARGET ?? "http://127.0.0.1:3001",
+				target: DEV_API_TARGET,
 				changeOrigin: false,
 				ws: true,
 			},

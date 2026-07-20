@@ -47,6 +47,11 @@ import {
 	resolveDaemonFromPort,
 	resolveDaemonFromRunFile,
 } from "./shared/daemon-attach";
+import {
+	devDaemonPort,
+	isDevIsolationEnabled,
+	ISOLATED_DEV_STATE_SUBDIR,
+} from "./shared/dev-daemon-config";
 import { shouldReplacePortHolder } from "./shared/daemon-takeover";
 import { buildDaemonEnv, resolveShellEnv, type ShellRunner } from "./shared/shell-env";
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/posthog-config";
@@ -137,13 +142,6 @@ const IMPORT_SCAN_SKIP_DIRS = new Set([
 ]);
 
 const isDev = !app.isPackaged;
-
-// Dev mode uses a separate port and state subdirectory so it never collides with
-// a concurrently running installed-app daemon. The subdir also isolates supervise.sock
-// on Unix (backend derives it as dir(RunFilePath)/supervise.sock) and the named pipe
-// on Windows (supervisorPipeFromRunFile derives it from the same dir basename).
-const DEV_DAEMON_PORT = 3002;
-const DEV_STATE_SUBDIR = "dev"; // ~/.ao/dev/
 
 // Height (px) of the custom Windows title bar. Must stay in sync with the Window
 // Controls Overlay height passed to BrowserWindow and the .window-titlebar height
@@ -384,7 +382,9 @@ const DAEMON_PROBE_TIMEOUT_MS = 2_000;
 
 function runFilePath(): string | null {
 	if (process.env.AO_RUN_FILE) return process.env.AO_RUN_FILE;
-	if (isDev) return path.join(os.homedir(), ".ao", DEV_STATE_SUBDIR, "running.json");
+	if (isDev && isDevIsolationEnabled(process.env)) {
+		return path.join(os.homedir(), ".ao", ISOLATED_DEV_STATE_SUBDIR, "running.json");
+	}
 	return defaultRunFilePath(process.platform, process.env, os.homedir());
 }
 
@@ -469,13 +469,15 @@ function daemonEnv(): NodeJS.ProcessEnv {
 	// supervisor on attach (headless `ao start` daemons get no AO_OWNER and stay
 	// unlinked, preserving their persistence across app quit).
 	const ownerTag = { AO_OWNER: "app" };
-	// In dev mode, inject isolation defaults so the dev daemon never collides with
-	// the installed app. User-set env vars take priority (checked first).
+	// Keep dev on the installed app's port and state by default. Explicit isolation
+	// provides a sandbox while user-set daemon paths and ports still take priority.
 	const devExtras: Record<string, string> = {};
-	if (isDev) {
-		if (!process.env.AO_PORT) devExtras.AO_PORT = String(DEV_DAEMON_PORT);
+	if (isDev && isDevIsolationEnabled(process.env)) {
+		if (!process.env.AO_PORT) devExtras.AO_PORT = String(devDaemonPort(process.env));
 		if (!process.env.AO_RUN_FILE) devExtras.AO_RUN_FILE = runFilePath() ?? "";
-		if (!process.env.AO_DATA_DIR) devExtras.AO_DATA_DIR = path.join(os.homedir(), ".ao", DEV_STATE_SUBDIR, "data");
+		if (!process.env.AO_DATA_DIR) {
+			devExtras.AO_DATA_DIR = path.join(os.homedir(), ".ao", ISOLATED_DEV_STATE_SUBDIR, "data");
+		}
 	}
 	// Windows keeps the old behavior exactly: no shell probe, no unix PATH floor.
 	if (process.platform === "win32") {
@@ -649,11 +651,10 @@ async function startDaemon(): Promise<DaemonStatus> {
 	return daemonStartPromise;
 }
 
-// The port this Electron instance expects the daemon to bind. In dev mode a
-// separate port isolates the dev daemon from the installed-app daemon.
-// AO_PORT always wins if set explicitly.
+// The port this Electron instance expects the daemon to bind. Dev shares the
+// installed-app default unless ISOLATE_DEV=true; AO_PORT always wins.
 function resolvedDaemonPort(): number {
-	return isDev && !process.env.AO_PORT ? DEV_DAEMON_PORT : expectedDaemonPort(process.env);
+	return isDev ? devDaemonPort(process.env) : expectedDaemonPort(process.env);
 }
 
 async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
