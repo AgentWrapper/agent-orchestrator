@@ -46,9 +46,6 @@ const fieldControlClass =
 const footerButtonClass =
 	"inline-flex h-(--size-settings-action-height) shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-(--radius-settings-action) border px-3 text-sm leading-5 outline-none transition duration-150 focus-visible:ring-2 focus-visible:ring-accent-weak";
 
-const kbdClass =
-	"inline-flex items-center rounded border border-[var(--color-border-settings-input)] bg-[var(--color-bg-settings-input)] px-1 py-px font-sans text-2xs leading-none text-settings-muted";
-
 export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogProps) {
 	const titleId = useId();
 	const detailsId = useId();
@@ -60,7 +57,6 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 	const [copyError, setCopyError] = useState<string | null>(null);
 	const [diagnostics, setDiagnostics] = useState<ReportProblemDiagnostics>(DEFAULT_DIAGNOSTICS);
 
-	const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 	const copiedLabel = DESTINATIONS.find((option) => option.value === copiedOutput)?.label;
 
 	useEffect(() => {
@@ -216,13 +212,6 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 					</div>
 
 					<div className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-[var(--color-border-settings-dialog-header)] px-6 py-3.5">
-						<p className="mr-auto hidden items-center gap-1.5 text-2xs leading-none text-settings-muted sm:inline-flex">
-							<kbd className={kbdClass}>Esc</kbd>
-							<span>to cancel</span>
-							<span aria-hidden="true">·</span>
-							<kbd className={kbdClass}>{isMac ? "⌘ Enter" : "Ctrl Enter"}</kbd>
-							<span>to submit</span>
-						</p>
 						<Dialog.Close asChild>
 							<button
 								type="button"
