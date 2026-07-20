@@ -31,7 +31,8 @@ type InitializeRepositoryResult struct {
 // SetConfigInput is the body shape for PUT /api/v1/projects/{id}/config. Config
 // replaces the project's stored config wholesale; a zero-value config clears it.
 type SetConfigInput struct {
-	Config domain.ProjectConfig `json:"config"`
+	Config                             domain.ProjectConfig `json:"config"`
+	ConfigIncludesTrackerIntakeEnabled bool                 `json:"-"`
 }
 
 // RemoveResult reports what DELETE /api/v1/projects/{id} actually did.

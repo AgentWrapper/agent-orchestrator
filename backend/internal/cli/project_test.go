@@ -81,6 +81,103 @@ func TestProjectSetConfig_TrackerIntakeJSON(t *testing.T) {
 	}
 }
 
+func TestProjectSetConfig_TrackerIntakeExplicitDisableJSON(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := projectServer(t, http.StatusOK, `{"project":{"id":"demo","path":"/repo/demo"}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "set-config", "demo", "--config-json", `{"trackerIntake":{"enabled":false}}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if !strings.Contains(string(capture.body), `"enabled":false`) {
+		t.Fatalf("request body = %s, want raw explicit enabled:false preserved", capture.body)
+	}
+}
+
+func TestProjectSetConfig_ClearSendsExplicitTrackerIntakeDisable(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := projectServer(t, http.StatusOK, `{"project":{"id":"demo","path":"/repo/demo"}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "set-config", "demo", "--clear")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if !strings.Contains(string(capture.body), `"trackerIntake":{"enabled":false}`) {
+		t.Fatalf("request body = %s, want explicit tracker intake disable sentinel", capture.body)
+	}
+}
+
+func TestProjectSetConfig_TrackerIntakeFalseFlagIsExplicit(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := projectServer(t, http.StatusOK, `{"project":{"id":"demo","path":"/repo/demo"}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "set-config", "demo", "--default-branch", "main", "--tracker-intake=false")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	body := string(capture.body)
+	if !strings.Contains(body, `"defaultBranch":"main"`) || !strings.Contains(body, `"trackerIntake":{"enabled":false}`) {
+		t.Fatalf("request body = %s, want defaultBranch plus explicit tracker intake disable", capture.body)
+	}
+}
+
+func TestProjectSetConfig_TrackerIntakeFalseAloneRequiresAnotherConfigField(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, _ := projectServer(t, http.StatusOK, `{"project":{"id":"demo","path":"/repo/demo"}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "set-config", "demo", "--tracker-intake=false")
+	if err == nil {
+		t.Fatal("expected usage error for tracker-intake=false without a full replacement field")
+	}
+	if !strings.Contains(err.Error(), "provide at least one config flag") {
+		t.Fatalf("error = %v, want config flag usage guidance", err)
+	}
+}
+
+func TestProjectSetConfig_TrackerFlagsCannotMixWithConfigJSON(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, _ := projectServer(t, http.StatusOK, `{"project":{"id":"demo","path":"/repo/demo"}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "set-config", "demo", "--config-json", `{"defaultBranch":"main"}`, "--tracker-intake=false")
+	if err == nil {
+		t.Fatal("expected usage error for tracker flags with config-json")
+	}
+	if !strings.Contains(err.Error(), "tracker intake flags cannot be combined with --config-json") {
+		t.Fatalf("error = %v, want config-json tracker flag guidance", err)
+	}
+}
+
+func TestProjectSetConfig_TrackerFlagsCannotMixWithClear(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, _ := projectServer(t, http.StatusOK, `{"project":{"id":"demo","path":"/repo/demo"}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "set-config", "demo", "--clear", "--tracker-intake")
+	if err == nil {
+		t.Fatal("expected usage error for tracker flags with clear")
+	}
+	if !strings.Contains(err.Error(), "tracker intake flags cannot be combined with --clear") {
+		t.Fatalf("error = %v, want clear tracker flag guidance", err)
+	}
+}
+
 func TestBuildProjectConfigTrackerIntakeFlags(t *testing.T) {
 	got, err := buildProjectConfig(projectSetConfigOptions{
 		trackerIntake:   true,

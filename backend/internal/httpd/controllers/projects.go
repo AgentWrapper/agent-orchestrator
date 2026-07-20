@@ -5,7 +5,10 @@
 package controllers
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -15,6 +18,8 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 )
+
+const maxSetConfigBodyBytes = 1 << 20
 
 // ProjectsController owns the /projects routes. The controller depends only on
 // projectsvc.Manager; nil keeps routes registered but returns OpenAPI-backed 501s.
@@ -106,8 +111,13 @@ func (c *ProjectsController) setConfig(w http.ResponseWriter, r *http.Request) {
 		apispec.NotImplemented(w, r, "PUT", "/api/v1/projects/{id}/config")
 		return
 	}
-	var in projectsvc.SetConfigInput
-	if err := decodeJSONStrict(r, &in); err != nil {
+	in, err := decodeSetConfigInputStrict(w, r)
+	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			envelope.WriteAPIError(w, r, http.StatusRequestEntityTooLarge, "request_entity_too_large", "REQUEST_BODY_TOO_LARGE", "Request body too large", nil)
+			return
+		}
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
 		return
 	}
@@ -147,4 +157,31 @@ func decodeJSONStrict(r *http.Request, out any) error {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	return dec.Decode(out)
+}
+
+func decodeSetConfigInputStrict(w http.ResponseWriter, r *http.Request) (projectsvc.SetConfigInput, error) {
+	var in projectsvc.SetConfigInput
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxSetConfigBodyBytes))
+	if err != nil {
+		return in, err
+	}
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&in); err != nil {
+		return in, err
+	}
+	var raw struct {
+		Config *struct {
+			TrackerIntake *struct {
+				Enabled *bool `json:"enabled"`
+			} `json:"trackerIntake"`
+		} `json:"config"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return in, err
+	}
+	if raw.Config != nil && raw.Config.TrackerIntake != nil && raw.Config.TrackerIntake.Enabled != nil {
+		in.ConfigIncludesTrackerIntakeEnabled = true
+	}
+	return in, nil
 }

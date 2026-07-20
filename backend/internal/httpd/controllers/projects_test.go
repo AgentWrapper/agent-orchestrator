@@ -379,6 +379,48 @@ func TestProjectsAPI_RejectsUnknownConfigKeys(t *testing.T) {
 	}
 }
 
+func TestProjectsAPI_TrackerIntakeDisableMustBeExplicit(t *testing.T) {
+	srv := newTestServer(t)
+	repo := gitRepo(t, "explicit-disable")
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/projects", `{"path":`+quote(repo)+`,"projectId":"disable"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("seed create = %d, want 201; body=%s", status, body)
+	}
+
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/disable/config", `{"config":{"trackerIntake":{"enabled":true,"provider":"github","assignee":"alice"}}}`)
+	if status != http.StatusOK {
+		t.Fatalf("enable intake = %d, want 200; body=%s", status, body)
+	}
+
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/disable/config", `{"config":{"defaultBranch":"main"}}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_PROJECT_CONFIG")
+
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/disable/config", `{"config":{"trackerIntake":{"enabled":null}}}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_PROJECT_CONFIG")
+
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/disable/config", `{"config":{"trackerIntake":{"enabled":false}}}`)
+	if status != http.StatusOK {
+		t.Fatalf("explicit disable = %d, want 200; body=%s", status, body)
+	}
+
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/disable/config", `{"config":{"trackerIntake":{"Enabled":false}}}`)
+	if status != http.StatusOK {
+		t.Fatalf("case-insensitive explicit disable = %d, want 200; body=%s", status, body)
+	}
+}
+
+func TestProjectsAPI_SetConfigRejectsOversizedBody(t *testing.T) {
+	srv := newTestServer(t)
+	repo := gitRepo(t, "oversized-config")
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/projects", `{"path":`+quote(repo)+`,"projectId":"oversized"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("seed create = %d, want 201; body=%s", status, body)
+	}
+
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/oversized/config", `{"config":{}}`+strings.Repeat(" ", 1<<20))
+	assertErrorCode(t, body, status, http.StatusRequestEntityTooLarge, "REQUEST_BODY_TOO_LARGE")
+}
+
 func TestProjectsRoutes_LegacyUnregistered(t *testing.T) {
 
 	srv := newTestServer(t)

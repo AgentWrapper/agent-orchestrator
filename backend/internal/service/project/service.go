@@ -516,15 +516,18 @@ func (m *Service) SetConfig(ctx context.Context, id domain.ProjectID, in SetConf
 	if err := validateProjectID(id); err != nil {
 		return Project{}, err
 	}
-	if err := in.Config.Validate(); err != nil {
-		return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
-	}
 	row, ok, err := m.store.GetProject(ctx, string(id))
 	if err != nil {
 		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
 	}
 	if !ok || !row.ArchivedAt.IsZero() {
 		return Project{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
+	}
+	if row.Config.TrackerIntake.Enabled && !in.Config.TrackerIntake.Enabled && !in.ConfigIncludesTrackerIntakeEnabled {
+		return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", "trackerIntake.enabled must be explicitly set to false to disable previously-enabled tracker intake", nil)
+	}
+	if err := in.Config.Validate(); err != nil {
+		return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
 	}
 	row.Config = in.Config
 	if err := m.store.UpsertProject(ctx, row); err != nil {

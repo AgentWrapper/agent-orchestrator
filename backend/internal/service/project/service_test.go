@@ -449,6 +449,72 @@ func TestManager_SetConfig(t *testing.T) {
 	wantCode(t, err, "PROJECT_NOT_FOUND")
 }
 
+func TestManager_SetConfigRejectsImplicitTrackerIntakeDisable(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+	if _, err := m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("ao")}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	enabled := domain.ProjectConfig{
+		DefaultBranch: "main",
+		TrackerIntake: domain.TrackerIntakeConfig{
+			Enabled:  true,
+			Provider: domain.TrackerProviderGitHub,
+			Repo:     "owner/repo",
+			Assignee: "alice",
+		},
+	}
+	if _, err := m.SetConfig(ctx, "ao", project.SetConfigInput{Config: enabled, ConfigIncludesTrackerIntakeEnabled: true}); err != nil {
+		t.Fatalf("enable tracker intake: %v", err)
+	}
+
+	_, err := m.SetConfig(ctx, "ao", project.SetConfigInput{
+		Config: domain.ProjectConfig{DefaultBranch: "main"},
+	})
+	wantCode(t, err, "INVALID_PROJECT_CONFIG")
+	if !strings.Contains(err.Error(), "trackerIntake") || !strings.Contains(err.Error(), "enabled") {
+		t.Fatalf("implicit disable error = %v, want trackerIntake explicit-disable rule", err)
+	}
+
+	got, err := m.Get(ctx, "ao")
+	if err != nil {
+		t.Fatalf("Get after rejected disable: %v", err)
+	}
+	if got.Project == nil || got.Project.Config == nil || got.Project.Config.TrackerIntake.Assignee != "alice" {
+		t.Fatalf("tracker intake config was not preserved after rejected disable: %#v", got.Project)
+	}
+}
+
+func TestManager_SetConfigAcceptsExplicitTrackerIntakeDisable(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+	if _, err := m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("ao")}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	enabled := domain.ProjectConfig{
+		TrackerIntake: domain.TrackerIntakeConfig{
+			Enabled:  true,
+			Provider: domain.TrackerProviderGitHub,
+			Assignee: "alice",
+		},
+	}
+	if _, err := m.SetConfig(ctx, "ao", project.SetConfigInput{Config: enabled, ConfigIncludesTrackerIntakeEnabled: true}); err != nil {
+		t.Fatalf("enable tracker intake: %v", err)
+	}
+
+	proj, err := m.SetConfig(ctx, "ao", project.SetConfigInput{
+		Config:                             domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: false}},
+		ConfigIncludesTrackerIntakeEnabled: true,
+	})
+	if err != nil {
+		t.Fatalf("explicit disable tracker intake: %v", err)
+	}
+	if proj.Config != nil {
+		t.Fatalf("explicit disable should clear the now-zero config, got %#v", proj.Config)
+	}
+}
+
 func TestManager_ListIncludesOnlySummarySafeProjectConfig(t *testing.T) {
 	ctx := context.Background()
 	m := newManager(t)
