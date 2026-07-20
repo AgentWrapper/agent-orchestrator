@@ -105,6 +105,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           AO_RELEASE_REPO: ${{ github.repository }}
           AO_RELEASE_PRERELEASE: "true"
+          # Signed, published releases must not silently ship without the
+          # bundled tmux fallback: fail if the tmux-artifacts release or its
+          # sha256 pins aren't ready (frontend/scripts/fetch-tmux.mjs).
+          AO_REQUIRE_TMUX_FETCH: "1"
           # macOS signing + notarization env is exported by the "macOS signing
           # setup" step above via $GITHUB_ENV; the cert is in the keychain.
 
@@ -165,6 +169,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           AO_RELEASE_REPO: ${{ github.repository }}
           AO_RELEASE_PRERELEASE: "true"
+          # Signed, published releases must not silently ship without the
+          # bundled tmux fallback: fail if the tmux-artifacts release or its
+          # sha256 pins aren't ready (frontend/scripts/fetch-tmux.mjs).
+          AO_REQUIRE_TMUX_FETCH: "1"
       - name: Upload stable asset aliases (macOS)
         shell: bash
         run: |

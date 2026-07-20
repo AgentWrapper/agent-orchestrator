@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveDaemonLaunch } from "./daemon-launch";
+import { bundledTmuxPath, resolveDaemonLaunch } from "./daemon-launch";
 
 describe("resolveDaemonLaunch", () => {
 	it("uses AO_DAEMON_COMMAND when configured", () => {
@@ -52,5 +52,26 @@ describe("resolveDaemonLaunch", () => {
 			shell: false,
 			source: "bundled",
 		});
+	});
+});
+
+describe("bundledTmuxPath", () => {
+	const resources = "/Applications/Agent Orchestrator.app/Contents/Resources";
+	const bundled = `${resources}/tmux-dist/tmux`;
+
+	it("returns the resource path when packaged and the binary exists", () => {
+		expect(bundledTmuxPath(true, resources, "darwin", (p) => p === bundled)).toBe(bundled);
+	});
+
+	it("returns null in dev so the daemon resolves system tmux only", () => {
+		expect(bundledTmuxPath(false, resources, "darwin", () => true)).toBeNull();
+	});
+
+	it("returns null on Windows where ConPTY needs no tmux", () => {
+		expect(bundledTmuxPath(true, "C:\\AO\\resources", "win32", () => true)).toBeNull();
+	});
+
+	it("returns null when the resource is missing (AO_SKIP_TMUX_FETCH builds)", () => {
+		expect(bundledTmuxPath(true, resources, "linux", () => false)).toBeNull();
 	});
 });

@@ -45,6 +45,12 @@ sudo pacman -S tmux
 
 AO needs tmux 3.2 or newer.
 
+The **desktop app** ships its own static tmux as a private fallback, so a clean
+machine works without installing anything. A system tmux on `PATH` always wins
+over the bundled copy, and `AO_TMUX_BIN` overrides both. Nothing is ever
+installed onto your system. CLI-only (`ao start`) setups still need a system
+tmux.
+
 ## Use
 
 ```yaml title="agent-orchestrator.yaml"

@@ -10,10 +10,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	goruntime "runtime"
 	"syscall"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/tmux"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/daemon/supervisor"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -100,7 +102,18 @@ func Run() error {
 	// attach Stream and liveness; the CDC broadcaster feeds the session-state channel. The manager
 	// is handed to httpd, which mounts it at /mux. Raw PTY bytes never flow
 	// through the CDC change_log -- only session-state events do.
-	runtimeAdapter := runtimeselect.New(log)
+	// tmux binary resolution is shared by every consumer (runtime adapter,
+	// spawn prerequisite gate) so they can never disagree: AO_TMUX_BIN
+	// override → system PATH → app-bundled fallback. Logged once here so a
+	// support bundle shows which tmux the daemon will use; resolution re-runs
+	// per command, so this is advisory and never fails boot.
+	tmuxResolver := tmux.NewResolver(cfg.TmuxBin, cfg.BundledTmux)
+	if path, source, err := tmux.ResolveBinary(cfg.TmuxBin, cfg.BundledTmux, nil, nil); err == nil {
+		log.Info("tmux resolved", "path", path, "source", source)
+	} else if goruntime.GOOS != "windows" {
+		log.Warn("tmux not available; session spawn will fail until installed", "err", err)
+	}
+	runtimeAdapter := runtimeselect.New(log, tmuxResolver)
 	termMgr := terminal.NewManager(runtimeAdapter, cdcPipe.Broadcaster, log)
 	defer termMgr.Close()
 

@@ -29,10 +29,12 @@ var _ Runtime = (*tmux.Runtime)(nil)
 var _ Runtime = (*conpty.Runtime)(nil)
 
 // New returns the per-platform runtime: tmux on Darwin/Linux, conpty on Windows.
-// log is accepted for signature stability with callers but is currently unused.
-func New(_ *slog.Logger) Runtime {
+// tmuxResolver supplies the tmux binary (override → PATH → bundled); nil keeps
+// the default PATH-only resolution. log is accepted for signature stability
+// with callers but is currently unused.
+func New(_ *slog.Logger, tmuxResolver tmux.BinaryResolver) Runtime {
 	if runtime.GOOS != "windows" {
-		return tmux.New(tmux.Options{})
+		return tmux.New(tmux.Options{Resolver: tmuxResolver})
 	}
 	return conpty.New(conpty.Options{})
 }

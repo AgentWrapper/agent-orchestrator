@@ -68,6 +68,62 @@ func TestNewPicksUpShellFromEnv(t *testing.T) {
 	}
 }
 
+// -- resolver plumbing tests --
+
+// TestRuntimeConsultsResolverPerCommand proves the binary is re-resolved for
+// every tmux invocation, so a tmux installed (or removed) after construction
+// takes effect on the next command.
+func TestRuntimeConsultsResolverPerCommand(t *testing.T) {
+	answers := []string{"/first/tmux", "/second/tmux"}
+	resolver := func() (string, error) {
+		next := answers[0]
+		if len(answers) > 1 {
+			answers = answers[1:]
+		}
+		return next, nil
+	}
+	fr := &fakeRunner{}
+	r := New(Options{Resolver: resolver, Timeout: time.Second, Shell: "/bin/sh"})
+	r.runner = fr
+
+	handle := ports.RuntimeHandle{ID: "sess-1"}
+	if _, err := r.IsAlive(context.Background(), handle); err != nil {
+		t.Fatalf("IsAlive: %v", err)
+	}
+	if _, err := r.GetOutput(context.Background(), handle, 10); err != nil {
+		t.Fatalf("GetOutput: %v", err)
+	}
+	if len(fr.calls) != 2 || fr.calls[0].name != "/first/tmux" || fr.calls[1].name != "/second/tmux" {
+		t.Fatalf("runner calls = %#v, want /first/tmux then /second/tmux", fr.calls)
+	}
+}
+
+func TestRuntimeSurfacesResolverError(t *testing.T) {
+	resolveErr := errors.New("tmux nowhere")
+	r := New(Options{Resolver: func() (string, error) { return "", resolveErr }, Timeout: time.Second, Shell: "/bin/sh"})
+	r.runner = &fakeRunner{}
+
+	if _, err := r.Create(context.Background(), ports.RuntimeConfig{SessionID: "sess-1", WorkspacePath: "/tmp/ws", Argv: []string{"echo"}}); !errors.Is(err, resolveErr) {
+		t.Fatalf("Create err = %v, want resolver error", err)
+	}
+	if _, err := r.attachCommand(ports.RuntimeHandle{ID: "sess-1"}); !errors.Is(err, resolveErr) {
+		t.Fatalf("attachCommand err = %v, want resolver error", err)
+	}
+}
+
+// TestNewBinaryOverridesResolver: an explicit Binary pins the path and the
+// resolver is never consulted (the seam existing tests rely on).
+func TestNewBinaryOverridesResolver(t *testing.T) {
+	r := New(Options{
+		Binary:   "tmux-test",
+		Resolver: func() (string, error) { t.Fatal("resolver must not be called when Binary is set"); return "", nil },
+	})
+	bin, err := r.resolve()
+	if err != nil || bin != "tmux-test" {
+		t.Fatalf("resolve = (%q, %v), want (tmux-test, nil)", bin, err)
+	}
+}
+
 // -- command builder tests --
 
 func TestCommandBuilders(t *testing.T) {

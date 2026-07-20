@@ -35,7 +35,7 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { type DaemonLaunchSpec, resolveDaemonLaunch } from "./shared/daemon-launch";
+import { type DaemonLaunchSpec, bundledTmuxPath, resolveDaemonLaunch } from "./shared/daemon-launch";
 import { createListenPortScanner, defaultRunFilePath, parseRunFile } from "./shared/daemon-discovery";
 import type { DaemonStatus } from "./shared/daemon-status";
 import { attachAppShortcuts } from "./main/app-shortcuts";
@@ -481,7 +481,15 @@ function daemonEnv(): NodeJS.ProcessEnv {
 	if (process.platform === "win32") {
 		return { ...process.env, ...devExtras, ...telemetryOverrides(), ...ownerTag };
 	}
-	return buildDaemonEnv(process.env, cachedShellEnv, { ...devExtras, ...telemetryOverrides(), ...ownerTag });
+	// Point the daemon at the bundled tmux fallback; it is used only when no
+	// system tmux resolves from PATH (see backend tmux.ResolveBinary).
+	const bundledTmux = bundledTmuxPath(app.isPackaged, process.resourcesPath, process.platform, existsSync);
+	return buildDaemonEnv(process.env, cachedShellEnv, {
+		...devExtras,
+		...telemetryOverrides(),
+		...ownerTag,
+		...(bundledTmux ? { AO_BUNDLED_TMUX: bundledTmux } : {}),
+	});
 }
 
 function pathKey(value: string): string {

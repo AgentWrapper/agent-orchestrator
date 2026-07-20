@@ -90,6 +90,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           AO_RELEASE_REPO: ${{ github.repository }}
+          # Signed, published releases must not silently ship without the
+          # bundled tmux fallback: fail if the tmux-artifacts release or its
+          # sha256 pins aren't ready (frontend/scripts/fetch-tmux.mjs).
+          AO_REQUIRE_TMUX_FETCH: "1"
           # macOS signing + notarization env (APPLE_SIGNING_IDENTITY, APPLE_API_KEY,
           # APPLE_API_KEY_ID, APPLE_API_ISSUER) is exported by the "macOS signing
           # setup" step above via $GITHUB_ENV; the Developer ID cert is in the

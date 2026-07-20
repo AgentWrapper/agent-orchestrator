@@ -50,3 +50,21 @@ export function resolveDaemonLaunch(
 		source: "bundled",
 	};
 }
+
+// bundledTmuxPath locates the static tmux fallback shipped as an
+// extraResource (see fetch-tmux.mjs), stamped into the daemon env as
+// AO_BUNDLED_TMUX. Null when not packaged (dev uses system tmux), on
+// Windows (ConPTY needs no tmux), or when the resource is absent
+// (AO_SKIP_TMUX_FETCH builds) — the daemon then resolves PATH only.
+export function bundledTmuxPath(
+	isPackaged: boolean,
+	resourcesPath: string,
+	platform: NodeJS.Platform,
+	exists: (path: string) => boolean,
+): string | null {
+	if (!isPackaged || platform === "win32") {
+		return null;
+	}
+	const path = joinPath(resourcesPath, "tmux-dist", "tmux");
+	return exists(path) ? path : null;
+}

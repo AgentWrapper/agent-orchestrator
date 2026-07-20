@@ -137,6 +137,9 @@ type Manager struct {
 	// they don't need real binaries on PATH. Returns ports.ErrAgentBinaryNotFound
 	// when the binary is missing so the sentinel propagates through toAPIError.
 	lookPath func(string) (string, error)
+	// tmuxResolver resolves the tmux binary for the spawn prerequisite gate
+	// (see Deps.TmuxResolver). Defaults to a PATH-only check via lookPath.
+	tmuxResolver func() (string, error)
 	// executable resolves the daemon's own binary (os.Executable in
 	// production); its directory is prepended to spawned sessions' PATH so the
 	// workspace hook commands resolve back to this daemon. Tests inject a stub.
@@ -189,6 +192,13 @@ type Deps struct {
 	// Production wiring leaves this nil and the manager defaults to
 	// exec.LookPath; tests inject a stub so they need not seed real binaries.
 	LookPath func(string) (string, error)
+	// TmuxResolver resolves the tmux binary for the spawn prerequisite gate.
+	// Production wiring passes the shared resolver (AO_TMUX_BIN override →
+	// PATH → app-bundled fallback) so the gate can never disagree with the
+	// binary the tmux runtime adapter execs. Nil defaults to a PATH-only
+	// check through LookPath. A plain func type keeps this package decoupled
+	// from the tmux adapter.
+	TmuxResolver func() (string, error)
 	// Executable overrides os.Executable for the session PATH pin (see
 	// hookPATH). Production wiring leaves this nil; tests inject a stub so they
 	// control what the test binary appears to be.
@@ -202,15 +212,16 @@ type Deps struct {
 // time.Now when Deps.Clock is nil.
 func New(d Deps) *Manager {
 	m := &Manager{
-		runtime:    d.Runtime,
-		agents:     d.Agents,
-		workspace:  d.Workspace,
-		store:      d.Store,
-		lcm:        d.Lifecycle,
-		dataDir:    d.DataDir,
-		clock:      d.Clock,
-		lookPath:   d.LookPath,
-		executable: d.Executable,
+		runtime:      d.Runtime,
+		agents:       d.Agents,
+		workspace:    d.Workspace,
+		store:        d.Store,
+		lcm:          d.Lifecycle,
+		dataDir:      d.DataDir,
+		clock:        d.Clock,
+		lookPath:     d.LookPath,
+		tmuxResolver: d.TmuxResolver,
+		executable:   d.Executable,
 		sendConfirm: sendConfirmConfig{
 			pollInterval:    sendConfirmPollInterval,
 			attemptDeadline: sendConfirmAttemptDeadline,
@@ -226,6 +237,17 @@ func New(d Deps) *Manager {
 	}
 	if m.lookPath == nil {
 		m.lookPath = exec.LookPath
+	}
+	if m.tmuxResolver == nil {
+		// PATH-only fallback preserving the pre-resolver behavior (and error
+		// text) for callers that never wire a resolver.
+		m.tmuxResolver = func() (string, error) {
+			path, err := m.lookPath("tmux")
+			if err != nil || path == "" {
+				return "", fmt.Errorf("%w: tmux required on macOS/Linux but not in PATH", ports.ErrRuntimePrerequisite)
+			}
+			return path, nil
+		}
 	}
 	if m.executable == nil {
 		m.executable = os.Executable
@@ -2501,8 +2523,11 @@ func (m *Manager) validateRuntimePrerequisites() error {
 	if runtime.GOOS == "windows" {
 		return nil
 	}
-	if path, err := m.lookPath("tmux"); err != nil || path == "" {
-		return fmt.Errorf("%w: tmux required on macOS/Linux but not in PATH", ports.ErrRuntimePrerequisite)
+	if _, err := m.tmuxResolver(); err != nil {
+		if errors.Is(err, ports.ErrRuntimePrerequisite) {
+			return err
+		}
+		return fmt.Errorf("%w: %v", ports.ErrRuntimePrerequisite, err)
 	}
 	return nil
 }
