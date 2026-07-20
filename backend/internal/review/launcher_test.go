@@ -270,6 +270,27 @@ func TestLauncherAlive(t *testing.T) {
 	}
 }
 
+func TestLauncherTeardownDestroysPane(t *testing.T) {
+	rt := &fakeRuntime{}
+	l := NewLauncher(fakeReviewerResolver{ok: true}, rt)
+	if err := l.Teardown(context.Background(), "review-mer-1"); err != nil {
+		t.Fatalf("Teardown: %v", err)
+	}
+	if rt.destroyed != "review-mer-1" {
+		t.Fatalf("destroyed handle = %q, want review-mer-1", rt.destroyed)
+	}
+
+	// An empty handle is a no-op (nothing to destroy).
+	rtEmpty := &fakeRuntime{}
+	lEmpty := NewLauncher(fakeReviewerResolver{ok: true}, rtEmpty)
+	if err := lEmpty.Teardown(context.Background(), ""); err != nil {
+		t.Fatalf("empty-handle Teardown: %v", err)
+	}
+	if rtEmpty.destroyed != "" {
+		t.Fatalf("empty handle should not Destroy, got %q", rtEmpty.destroyed)
+	}
+}
+
 func TestLauncherCancelUsesReviewerCancelMode(t *testing.T) {
 	reviewer := &fakeCancellableReviewer{interrupts: 2}
 	rt := &fakeRuntime{}
