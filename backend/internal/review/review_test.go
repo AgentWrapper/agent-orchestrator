@@ -554,6 +554,74 @@ func TestTriggerRespawnsWhenReviewerHarnessChanged(t *testing.T) {
 	}
 }
 
+// A harness switch observed on a trigger that creates no run (the current
+// commit is already reviewed) must NOT advance the recorded harness. The live
+// pane keeps running under the previous harness, so recording the new harness
+// on this no-created path would make the next trigger read it back as
+// prevHarness, match the resolved harness, and reuse (Notify) the stale pane.
+func TestTriggerKeepsHarnessWhenNothingCreated(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerCodex, ReviewerHandleID: "review-mer-1"},
+		runs: []domain.ReviewRun{{
+			ID: "run-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1",
+			Status: domain.ReviewRunComplete, Verdict: domain.VerdictApproved,
+		}},
+	}
+	// Live codex pane; the worker/project now resolves to claude-code.
+	launcher := &fakeLauncher{alive: true, handle: "review-mer-1"}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.Trigger(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if res.Created || launcher.spawned || launcher.notified {
+		t.Fatalf("already-reviewed commit: expected no launch, got res=%+v launcher=%+v", res, launcher)
+	}
+	if store.review.Harness != domain.ReviewerCodex {
+		t.Fatalf("recorded harness = %q, want codex preserved (no respawn happened)", store.review.Harness)
+	}
+}
+
+// End-to-end of the blocker: a harness switch seen on a no-run trigger must not
+// defeat respawn on the next commit. Before the fix, the eager upsert recorded
+// the new harness on the no-created trigger, so the following commit saw
+// prevHarness == harness and reused (Notify) the stale old-harness pane.
+func TestTriggerRespawnsOnNextCommitAfterHarnessSwitchWithNoRun(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerCodex, ReviewerHandleID: "review-mer-1"},
+		runs: []domain.ReviewRun{{
+			ID: "run-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1",
+			Status: domain.ReviewRunComplete, Verdict: domain.VerdictApproved,
+		}},
+	}
+	// Trigger 1: current commit sha1 is already reviewed → no run created, while
+	// the worker now resolves to claude-code but the live pane is still codex.
+	l1 := &fakeLauncher{alive: true, handle: "review-mer-1"}
+	eng1 := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, l1)
+	if _, err := eng1.Trigger(context.Background(), "mer-1"); err != nil {
+		t.Fatalf("trigger 1: %v", err)
+	}
+	if l1.spawned || l1.notified {
+		t.Fatalf("trigger 1 (nothing new) should not launch: %+v", l1)
+	}
+
+	// Trigger 2: a new commit arrives → a run is created. The reviewer must
+	// respawn under claude-code, not Notify the stale codex pane.
+	l2 := &fakeLauncher{alive: true, handle: "review-mer-1"}
+	eng2 := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha2"), fakeProjects{}, l2)
+	res, err := eng2.Trigger(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("trigger 2: %v", err)
+	}
+	if !res.Created || !l2.spawned || l2.notified {
+		t.Fatalf("trigger 2 must respawn under the new harness, not reuse the stale pane: res=%+v launcher=%+v", res, l2)
+	}
+	if l2.gotSpec.Harness != domain.ReviewerClaudeCode {
+		t.Fatalf("respawn harness = %q, want claude-code", l2.gotSpec.Harness)
+	}
+}
+
 func TestTriggerLaunchFailureRecordsFailedRun(t *testing.T) {
 	store := &fakeStore{}
 	launcher := &fakeLauncher{spawnErr: fmt.Errorf("claude: %w", ports.ErrAgentBinaryNotFound)}
