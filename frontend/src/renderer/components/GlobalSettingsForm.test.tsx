@@ -247,6 +247,8 @@ describe("GlobalSettingsForm", () => {
 		expect(screen.getByRole("button", { name: /copy & open email/i })).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: /copy & open discord/i })).not.toBeInTheDocument();
 		expect(screen.queryByText("Discord draft copied.")).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /copy & open email/i })).toBeDisabled();
+		await user.type(screen.getByLabelText("Title"), "Need help with setup");
 		await user.click(screen.getByRole("button", { name: /copy & open email/i }));
 
 		await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
@@ -286,7 +288,7 @@ describe("GlobalSettingsForm", () => {
 		expect(screen.getByLabelText("Title")).toHaveAttribute("placeholder", "Brief Title");
 		expect(screen.getByLabelText("What happened?")).toHaveAttribute(
 			"placeholder",
-			"Include what you expected and the steps to reproduce.",
+			"Share what happened, what you expected, and how to reproduce it.",
 		);
 		expect(screen.queryByLabelText("Expected behavior")).not.toBeInTheDocument();
 		expect(screen.queryByRole("combobox", { name: "Report type" })).not.toBeInTheDocument();
