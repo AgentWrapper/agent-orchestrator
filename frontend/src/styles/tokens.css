@@ -29,7 +29,7 @@
 	--color-bg-secondary: #15171b;
 	--color-bg-tertiary: #1b1d22;
 	--color-bg-elevated: #212329;
-	--color-bg-sidebar: #090909;
+	--color-bg-sidebar: #1C1E22;
 	--color-bg-terminal: #15171b;
 
 	/* Text */
@@ -233,8 +233,8 @@
 	--size-sidebar-project-actions: 84px;
 
 	/* Settings page (Figma) */
-	--color-bg-settings-panel: rgb(18 18 19);
-	--color-bg-settings-row: #212121;
+	--color-bg-settings-panel: #101013;
+	--color-bg-settings-row: #18181c;
 	--color-bg-settings-menu: #212121;
 	--color-bg-settings-menu-selected: rgb(66 66 66 / 0.78);
 	--color-bg-settings-dialog: #212121;
