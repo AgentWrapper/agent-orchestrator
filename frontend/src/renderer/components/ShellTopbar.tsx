@@ -1,6 +1,15 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { GitBranch, LayoutDashboard, PanelRightClose, PanelRightOpen, Plus, Square, Trash2 } from "lucide-react";
+import {
+	GitBranch,
+	LayoutDashboard,
+	PanelRightClose,
+	PanelRightOpen,
+	Plus,
+	Square,
+	SquareTerminal,
+	Trash2,
+} from "lucide-react";
 import { useState } from "react";
 import { NotificationCenter } from "./NotificationCenter";
 import {
@@ -55,6 +64,7 @@ export function ShellTopbar() {
 	const toggleInspector = useUiStore((state) => state.toggleInspector);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
+	const requestNewShellTerminal = useUiStore((state) => state.requestNewShellTerminal);
 	const [isSpawning, setIsSpawning] = useState(false);
 	const all = useWorkspaceQuery().data ?? [];
 
@@ -159,6 +169,17 @@ export function ShellTopbar() {
 			<div className="min-w-0 flex-1" />
 
 			<div className="flex shrink-0 items-center gap-1.5">
+				{/* Standalone shell, independent of any agent session — the same action
+				    Ctrl+` fires, routed through the store so the two cannot drift. */}
+				<TopbarButton
+					aria-label="New terminal"
+					onClick={requestNewShellTerminal}
+					style={noDragStyle}
+					title="New terminal (Ctrl+`)"
+					variant="icon"
+				>
+					<SquareTerminal className="size-icon-md" aria-hidden="true" />
+				</TopbarButton>
 				{!isLinux ? <NotificationCenter style={noDragStyle} /> : null}
 				{isSessionRoute ? (
 					<>

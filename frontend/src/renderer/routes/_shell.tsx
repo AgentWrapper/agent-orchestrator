@@ -75,6 +75,7 @@ function ShellLayout() {
 	const { theme, setTheme, isSidebarOpen, toggleSidebar } = useUiStore();
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
 	const requestCreateProject = useUiStore((state) => state.requestCreateProject);
+	const requestNewShellTerminal = useUiStore((state) => state.requestNewShellTerminal);
 	const [isKeyboardShortcutsOpen, setIsKeyboardShortcutsOpen] = useState(false);
 	const routeParams = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
 	// Project in scope for a new-session shortcut: the route's project, or the
@@ -309,6 +310,12 @@ function ShellLayout() {
 	);
 
 	useEffect(() => aoBridge.app.onKeyboardShortcutsHelp(() => setIsKeyboardShortcutsOpen(true)), []);
+
+	// New standalone terminal (Ctrl+`), also detected in the main process so it
+	// fires from inside a terminal pane. It raises the same store signal as the
+	// topbar button; the session view owns opening the shell, because that is
+	// where the pane and its tabs live.
+	useEffect(() => aoBridge.app.onNewShellTerminalShortcut(() => requestNewShellTerminal()), [requestNewShellTerminal]);
 
 	return (
 		<ShellProvider value={{ daemonStatus, createProject, initializeProjectRepository }}>

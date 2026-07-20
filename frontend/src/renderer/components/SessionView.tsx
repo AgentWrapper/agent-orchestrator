@@ -9,6 +9,7 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resiz
 import { useUiStore } from "../stores/ui-store";
 import { useShell } from "../lib/shell-context";
 import { useBrowserView } from "../hooks/useBrowserView";
+import { useCloseShellTerminal, useOpenShellTerminal, useShellTerminals } from "../hooks/useShellTerminals";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { isOrchestratorSession } from "../types/workspace";
 import type { TerminalTarget } from "../types/terminal";
@@ -53,6 +54,47 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const [inspectorView, setInspectorView] = useState<InspectorView>("summary");
 
 	const session = workspaces.flatMap((workspace) => workspace.sessions).find((s) => s.id === sessionId);
+
+	// Standalone shell terminals live beside the session's pane as extra tabs.
+	// They belong to the app, not this session, so they persist across session
+	// navigation; only which one is *selected* is local state.
+	const shellTerminals = useShellTerminals().data ?? [];
+	const openShellTerminal = useOpenShellTerminal();
+	const closeShellTerminal = useCloseShellTerminal();
+	const newShellTerminalNonce = useUiStore((state) => state.newShellTerminalNonce);
+	const handledShellTerminalNonceRef = useRef(newShellTerminalNonce);
+
+	const selectShellTerminal = useCallback(
+		(handleId: string) => {
+			const shell = shellTerminals.find((s) => s.handleId === handleId);
+			if (!shell) return;
+			setTerminalTarget({ kind: "shell", handleId: shell.handleId, title: shell.title });
+		},
+		[shellTerminals],
+	);
+
+	const closeShellTerminalByHandle = useCallback(
+		(handleId: string) => {
+			// Fall back to the session pane first: leaving the target pointed at a
+			// handle that is being destroyed would attach to a dead PTY.
+			setTerminalTarget((current) =>
+				current.kind === "shell" && current.handleId === handleId ? { kind: "worker" } : current,
+			);
+			closeShellTerminal.mutate(handleId);
+		},
+		[closeShellTerminal],
+	);
+
+	// Opening is driven by a store nonce so the topbar button and Ctrl+` share
+	// one path. The ref seeds to the current value so a mount never opens a
+	// terminal the user did not ask for.
+	useEffect(() => {
+		if (handledShellTerminalNonceRef.current === newShellTerminalNonce) return;
+		handledShellTerminalNonceRef.current = newShellTerminalNonce;
+		openShellTerminal.mutate(session?.workspaceId, {
+			onSuccess: (shell) => setTerminalTarget({ kind: "shell", handleId: shell.handleId, title: shell.title }),
+		});
+	}, [newShellTerminalNonce, openShellTerminal, session?.workspaceId]);
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
 	// Orchestrator sessions are terminal-only; only worker sessions have the rail.
 	const hasInspector = !isOrchestrator;
@@ -214,8 +256,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				<ResizablePanel defaultSize="72%" id="terminal" minSize="45%">
 					<CenterPane
 						daemonReady={daemonStatus.state === "ready"}
+						onCloseShellTerminal={closeShellTerminalByHandle}
+						onSelectSessionTerminal={() => setTerminalTarget({ kind: "worker" })}
+						onSelectShellTerminal={selectShellTerminal}
 						onSelectWorkerTerminal={() => setTerminalTarget({ kind: "worker" })}
 						session={session}
+						shellTerminals={shellTerminals}
 						terminalTarget={terminalTarget}
 						theme={theme}
 					/>

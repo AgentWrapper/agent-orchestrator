@@ -8,6 +8,7 @@ const shellMocks = vi.hoisted(() => {
 	const state = {
 		newSessionListener: undefined as (() => void) | undefined,
 		keyboardShortcutsListener: undefined as (() => void) | undefined,
+		newShellTerminalListener: undefined as (() => void) | undefined,
 		routeParams: {} as { projectId?: string; sessionId?: string },
 		workspaces: [] as WorkspaceSummary[],
 	};
@@ -19,6 +20,10 @@ const shellMocks = vi.hoisted(() => {
 		}),
 		onKeyboardShortcutsHelp: vi.fn((listener: () => void) => {
 			state.keyboardShortcutsListener = listener;
+			return vi.fn();
+		}),
+		onNewShellTerminalShortcut: vi.fn((listener: () => void) => {
+			state.newShellTerminalListener = listener;
 			return vi.fn();
 		}),
 		queryClient: {
@@ -49,6 +54,7 @@ vi.mock("../lib/bridge", () => ({
 		app: {
 			onNewSessionShortcut: shellMocks.onNewSessionShortcut,
 			onKeyboardShortcutsHelp: shellMocks.onKeyboardShortcutsHelp,
+			onNewShellTerminalShortcut: shellMocks.onNewShellTerminalShortcut,
 		},
 	},
 }));
@@ -126,6 +132,7 @@ async function renderShell() {
 	});
 	await waitFor(() => expect(shellMocks.onNewSessionShortcut).toHaveBeenCalledTimes(1));
 	await waitFor(() => expect(shellMocks.onKeyboardShortcutsHelp).toHaveBeenCalledTimes(1));
+	await waitFor(() => expect(shellMocks.onNewShellTerminalShortcut).toHaveBeenCalledTimes(1));
 }
 
 function emitShortcut() {
@@ -138,11 +145,38 @@ beforeEach(() => {
 	shellMocks.navigate.mockReset();
 	shellMocks.onNewSessionShortcut.mockClear();
 	shellMocks.onKeyboardShortcutsHelp.mockClear();
+	shellMocks.onNewShellTerminalShortcut.mockClear();
 	shellMocks.state.newSessionListener = undefined;
 	shellMocks.state.keyboardShortcutsListener = undefined;
+	shellMocks.state.newShellTerminalListener = undefined;
 	shellMocks.state.routeParams = {};
 	shellMocks.state.workspaces = workspaces;
-	useUiStore.setState({ createProjectNonce: 0, newTaskRequest: null });
+	useUiStore.setState({ createProjectNonce: 0, newTaskRequest: null, newShellTerminalNonce: 0 });
+});
+
+describe("shell new-shell-terminal shortcut subscription", () => {
+	// The shortcut only raises the store signal; the session view owns actually
+	// opening the shell, so this asserts the signal and nothing more.
+	it("raises the new-shell-terminal request", async () => {
+		await renderShell();
+
+		const listener = shellMocks.state.newShellTerminalListener;
+		if (!listener) throw new Error("new-shell-terminal listener was not registered");
+		act(() => listener());
+
+		expect(useUiStore.getState().newShellTerminalNonce).toBe(1);
+	});
+
+	it("re-fires on a repeat press so a second terminal can be opened", async () => {
+		await renderShell();
+
+		const listener = shellMocks.state.newShellTerminalListener;
+		if (!listener) throw new Error("new-shell-terminal listener was not registered");
+		act(() => listener());
+		act(() => listener());
+
+		expect(useUiStore.getState().newShellTerminalNonce).toBe(2);
+	});
 });
 
 describe("shell keyboard-shortcuts help subscription", () => {

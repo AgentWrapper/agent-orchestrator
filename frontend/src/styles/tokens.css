@@ -223,6 +223,9 @@
 	--size-pr-col-number: 64px;
 	--size-pr-col-state: 96px;
 	--size-content-max: 320px;
+	/* Caps a standalone shell terminal's tab label so several open shells stay
+	   readable side by side instead of one long path crowding out the rest. */
+	--size-shell-tab-max: 140px;
 	--size-dialog-md: 420px;
 	--size-dialog-lg: 440px;
 	--size-dialog-orchestrator: 460px;

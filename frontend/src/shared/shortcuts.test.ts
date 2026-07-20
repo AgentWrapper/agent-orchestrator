@@ -3,6 +3,7 @@ import {
 	APP_SHORTCUTS,
 	matchesKeyboardShortcutsHelpShortcut,
 	matchesNewSessionShortcut,
+	matchesNewShellTerminalShortcut,
 	shortcutKeys,
 	type ShortcutChord,
 } from "./shortcuts";
@@ -38,6 +39,35 @@ describe("matchesNewSessionShortcut", () => {
 		expect(matchesNewSessionShortcut(chord({ key: "n", meta: true, alt: true }), true)).toBe(false);
 		expect(matchesNewSessionShortcut(chord({ key: "n", ctrl: true, shift: true, alt: true }), false)).toBe(false);
 		expect(matchesNewSessionShortcut(chord({ key: "n", ctrl: true, shift: true, meta: true }), false)).toBe(false);
+	});
+});
+
+describe("matchesNewShellTerminalShortcut", () => {
+	it("matches Ctrl+` on both platforms", () => {
+		expect(matchesNewShellTerminalShortcut(chord({ key: "`", ctrl: true }), false)).toBe(true);
+		expect(matchesNewShellTerminalShortcut(chord({ key: "`", ctrl: true }), true)).toBe(true);
+	});
+
+	// Layouts that need a modifier for the backtick report the physical key.
+	it("matches the Backquote key name", () => {
+		expect(matchesNewShellTerminalShortcut(chord({ key: "Backquote", ctrl: true }), false)).toBe(true);
+	});
+
+	// ⌘` is the macOS "cycle windows" binding and must stay with the OS.
+	it("does not match Command+backtick on macOS", () => {
+		expect(matchesNewShellTerminalShortcut(chord({ key: "`", meta: true }), true)).toBe(false);
+	});
+
+	it("requires Ctrl and rejects extra modifiers", () => {
+		expect(matchesNewShellTerminalShortcut(chord({ key: "`" }), false)).toBe(false);
+		expect(matchesNewShellTerminalShortcut(chord({ key: "`", ctrl: true, shift: true }), false)).toBe(false);
+		expect(matchesNewShellTerminalShortcut(chord({ key: "`", ctrl: true, alt: true }), false)).toBe(false);
+		expect(matchesNewShellTerminalShortcut(chord({ key: "`", ctrl: true, meta: true }), false)).toBe(false);
+	});
+
+	it("ignores other keys", () => {
+		expect(matchesNewShellTerminalShortcut(chord({ key: "1", ctrl: true }), false)).toBe(false);
+		expect(matchesNewShellTerminalShortcut(chord({ key: "~", ctrl: true }), false)).toBe(false);
 	});
 });
 
