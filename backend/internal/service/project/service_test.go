@@ -1192,6 +1192,7 @@ func TestManager_RemoveRejectsScratch(t *testing.T) {
 // claimed by a user-registered project, whether given explicitly or derived
 // from a repo named "scratch".
 func TestManager_AddRejectsScratchID(t *testing.T) {
+	configureCommitter(t)
 	ctx := context.Background()
 	m := newManager(t)
 
