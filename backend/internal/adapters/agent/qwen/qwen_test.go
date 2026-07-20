@@ -366,6 +366,41 @@ func assertSessionStartMatcher(t *testing.T, groups []hooksjson.MatcherGroup) {
 	t.Fatalf("session-start hook not found: %#v", groups)
 }
 
+func TestGetAgentHooksMigratesSessionStartMatcher(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "qwen"}
+	workspace := t.TempDir()
+	settingsDir := filepath.Join(workspace, ".qwen")
+	if err := os.MkdirAll(settingsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	settingsPath := filepath.Join(settingsDir, "settings.json")
+	existing := `{"hooks":{"SessionStart":[{"matcher":"startup","hooks":[{"type":"command","command":"ao hooks qwen session-start","timeout":30000},{"type":"command","command":"custom startup hook","timeout":3}]}]}}`
+	if err := os.WriteFile(settingsPath, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := plugin.GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{WorkspacePath: workspace}); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config qwenHookFile
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	groups := config.Hooks["SessionStart"]
+	assertSessionStartMatcher(t, groups)
+	if count := countQwenHookCommand(groups, qwenHookCommandPrefix+"session-start"); count != 1 {
+		t.Fatalf("session-start command count = %d, want 1 in %#v", count, groups)
+	}
+	if count := countQwenHookCommand(groups, "custom startup hook"); count != 1 {
+		t.Fatalf("custom startup hook count = %d, want 1 in %#v", count, groups)
+	}
+}
+
 func TestUninstallHooksRemovesQwenHooks(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "qwen"}
 	workspace := t.TempDir()

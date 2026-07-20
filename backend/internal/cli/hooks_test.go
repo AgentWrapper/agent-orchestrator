@@ -399,7 +399,7 @@ func TestHooks_GrokSessionStartReportsAgentSessionID(t *testing.T) {
 }
 
 func TestHooks_RegisteredHarnessSessionStartReportsAgentSessionID(t *testing.T) {
-	for _, agent := range []string{"opencode", "qwen", "kimi", "kilocode"} {
+	for _, agent := range []string{"opencode", "qwen", "kimi", "kilocode", "goose"} {
 		t.Run(agent, func(t *testing.T) {
 			t.Setenv("AO_SESSION_ID", "ao-7")
 			cfg := setConfigEnv(t)

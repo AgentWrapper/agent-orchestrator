@@ -116,12 +116,15 @@ func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, _ ports.LaunchCo
 	return ports.PromptDeliveryAfterStart, nil
 }
 
-// GetRestoreCommand rebuilds the argv that continues an existing Goose session:
+// GetRestoreCommand rebuilds the argv that continues an existing interactive
+// Goose session:
 //
-//	[env GOOSE_MODE=<mode>] goose run --resume --session-id <agentSessionId>
+//	[env GOOSE_MODE=<mode>] goose session --resume --session-id <agentSessionId>
 //
 // ok is false when the hook-derived native session id has not landed yet, so
-// callers can fall back to fresh launch behavior.
+// callers can fall back to fresh launch behavior. Goose's session command does
+// not accept run's --system flag; the resumed transcript retains the original
+// session context, and AO must not replay the original task.
 func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig) (cmd []string, ok bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
@@ -136,15 +139,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 		return nil, false, err
 	}
 
-	cmd = append(gooseModeEnvPrefix(cfg.Permissions), binary, "run")
-	systemPrompt, err := restoreSystemPromptText(cfg)
-	if err != nil {
-		return nil, false, err
-	}
-	if systemPrompt != "" {
-		cmd = append(cmd, "--system", systemPrompt)
-	}
-	cmd = append(cmd, "--resume", "--session-id", agentSessionID)
+	cmd = append(gooseModeEnvPrefix(cfg.Permissions), binary, "session", "--resume", "--session-id", agentSessionID)
 	return cmd, true, nil
 }
 
@@ -162,10 +157,6 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 // flag takes inline text only (no file variant), so a system-prompt file is read
 // from disk only when inline instructions are unavailable.
 func systemPromptText(cfg ports.LaunchConfig) (string, error) {
-	return systemPromptTextFrom(cfg.SystemPrompt, cfg.SystemPromptFile)
-}
-
-func restoreSystemPromptText(cfg ports.RestoreConfig) (string, error) {
 	return systemPromptTextFrom(cfg.SystemPrompt, cfg.SystemPromptFile)
 }
 
