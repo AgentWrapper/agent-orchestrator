@@ -277,6 +277,9 @@ func (w *Workspace) Destroy(ctx context.Context, info ports.WorkspaceInfo) error
 	}
 	if _, ok := findWorktree(records, path); ok {
 		if removeErr != nil {
+			if isLockedWorktreeRemoveError(removeErr) {
+				return fmt.Errorf("gitworktree: refusing to remove %q: path is still registered after git worktree prune (worktree remove: %w)", path, removeErr)
+			}
 			// Distinguish the dirty-worktree refusal (uncommitted agent work)
 			// from other registration leftovers (e.g. a locked worktree) so the
 			// Session Manager can preserve the workspace without erroring.
@@ -750,6 +753,10 @@ func (w *Workspace) pruneWorktrees(ctx context.Context, repo string) error {
 
 func isMissingRegisteredWorktreeError(err error) bool {
 	return strings.Contains(err.Error(), "is a missing but already registered worktree")
+}
+
+func isLockedWorktreeRemoveError(err error) bool {
+	return strings.Contains(err.Error(), "cannot remove a locked working tree")
 }
 
 func (w *Workspace) revParse(ctx context.Context, repo, ref string) (string, error) {

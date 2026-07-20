@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -138,6 +140,9 @@ func TestApplySymlinks(t *testing.T) {
 
 	// A present source is linked; a missing source is skipped, not an error.
 	if err := applySymlinks(project, workspace, []string{".env", "missing.txt"}); err != nil {
+		if runtime.GOOS == "windows" && strings.Contains(err.Error(), "A required privilege is not held by the client") {
+			t.Skipf("symlink privilege unavailable on this Windows runner: %v", err)
+		}
 		t.Fatalf("applySymlinks: %v", err)
 	}
 	target := filepath.Join(workspace, ".env")

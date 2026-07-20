@@ -186,6 +186,7 @@ func TestAuthStatusAuthorizedFromGooseConfig(t *testing.T) {
 	clearGooseAuthEnv(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_CONFIG_HOME", "")
 	configPath := filepath.Join(home, ".config", "goose", "config.yaml")
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
@@ -209,6 +210,7 @@ func TestAuthStatusUnauthorizedFromEmptyGooseConfig(t *testing.T) {
 	clearGooseAuthEnv(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_CONFIG_HOME", "")
 	configPath := filepath.Join(home, ".config", "goose", "config.yaml")
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {

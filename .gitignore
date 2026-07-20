@@ -49,6 +49,7 @@ session-events.jsonl.*
 
 # Local tooling (not for the team)
 .codegraph/
+.gocache/
 .cursor/
 
 # OS

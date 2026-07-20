@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"testing"
 )
 
@@ -22,7 +23,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 		t.Fatalf("round trip: got %+v want %+v", got, want)
 	}
 	info, _ := os.Stat(p)
-	if info.Mode().Perm() != 0o600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("mode = %v want 0600", info.Mode().Perm())
 	}
 }

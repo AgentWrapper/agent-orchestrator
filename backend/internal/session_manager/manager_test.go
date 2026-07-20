@@ -2901,8 +2901,12 @@ func TestSpawn_ValidatesBinaryAfterEnvPrefix(t *testing.T) {
 	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
-	if !reflect.DeepEqual(lookedUp, []string{"tmux", "opencode"}) {
-		t.Fatalf("lookups = %#v, want tmux then opencode", lookedUp)
+	wantLookups := []string{"tmux", "opencode"}
+	if runtime.GOOS == "windows" {
+		wantLookups = []string{"opencode"}
+	}
+	if !reflect.DeepEqual(lookedUp, wantLookups) {
+		t.Fatalf("lookups = %#v, want %#v", lookedUp, wantLookups)
 	}
 	if rt.created != 1 {
 		t.Fatalf("runtime.Create calls = %d, want 1", rt.created)
@@ -2932,8 +2936,12 @@ func TestSpawn_RejectsMissingBinaryAfterEnvPrefix(t *testing.T) {
 	if !errors.Is(err, ports.ErrAgentBinaryNotFound) {
 		t.Fatalf("err = %v, want ports.ErrAgentBinaryNotFound", err)
 	}
-	if !reflect.DeepEqual(lookedUp, []string{"tmux", "opencode"}) {
-		t.Fatalf("lookups = %#v, want tmux then opencode", lookedUp)
+	wantLookups := []string{"tmux", "opencode"}
+	if runtime.GOOS == "windows" {
+		wantLookups = []string{"opencode"}
+	}
+	if !reflect.DeepEqual(lookedUp, wantLookups) {
+		t.Fatalf("lookups = %#v, want %#v", lookedUp, wantLookups)
 	}
 	if rt.created != 0 {
 		t.Fatal("runtime.Create must NOT run when the env-prefixed agent binary is missing")

@@ -46,7 +46,7 @@ func NewWithDeps(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager,
 	log = loggerOrDefault(log)
 	ln, err := net.Listen("tcp", cfg.Addr())
 	if err != nil {
-		if !errors.Is(err, syscall.EADDRINUSE) {
+		if !isAddrInUse(err) {
 			return nil, fmt.Errorf("bind %s: %w", cfg.Addr(), err)
 		}
 		// Configured port is taken by a non-AO process: retry on an ephemeral port.
@@ -158,3 +158,8 @@ func (s *Server) requestShutdown() {
 // RequestShutdown triggers the same clean shutdown as POST /shutdown: it makes
 // Run return so the daemon exits without tearing down sessions. Idempotent.
 func (s *Server) RequestShutdown() { s.requestShutdown() }
+
+func isAddrInUse(err error) bool {
+	const windowsAddrInUse syscall.Errno = 10048
+	return errors.Is(err, syscall.EADDRINUSE) || errors.Is(err, windowsAddrInUse)
+}

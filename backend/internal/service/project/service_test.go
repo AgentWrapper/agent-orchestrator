@@ -21,6 +21,7 @@ import (
 // driver, migrations run on Open) — no in-memory store.
 func newManager(t *testing.T) project.Manager {
 	t.Helper()
+	t.Setenv("GIT_CEILING_DIRECTORIES", os.TempDir())
 	store, err := sqlite.Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("open store: %v", err)

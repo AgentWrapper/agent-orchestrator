@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -124,7 +123,7 @@ func (m *LANManager) Start(port int) (int, error) {
 	}
 	ln, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", port))
 	if err != nil {
-		if !errors.Is(err, syscall.EADDRINUSE) {
+		if !isAddrInUse(err) {
 			m.mu.Unlock()
 			return 0, fmt.Errorf("bind LAN 0.0.0.0:%d: %w", port, err)
 		}

@@ -105,6 +105,7 @@ func isolateRegistry(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
 }
 
 // ---------------------------------------------------------------------------

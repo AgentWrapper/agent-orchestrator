@@ -718,21 +718,8 @@ func isGitRepo(path string) bool {
 	if err != nil {
 		return false
 	}
-	top := filepath.Clean(strings.TrimSpace(string(out)))
-	path = filepath.Clean(path)
-	top, err = filepath.EvalSymlinks(top)
-	if err != nil {
-		return false
-	}
-	path, err = filepath.EvalSymlinks(path)
-	if err != nil {
-		return false
-	}
-
-	if strings.EqualFold(top, path) {
-		return true
-	}
-	return top == path
+	top := normalizeGitReportedPath(path, strings.TrimSpace(string(out)))
+	return samePath(top, comparablePath(path))
 }
 
 func defaultProjectID(path string) domain.ProjectID {

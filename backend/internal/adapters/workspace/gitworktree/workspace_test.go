@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -219,10 +220,7 @@ func TestCreateWorkspaceProjectRepoPrunesStaleRegisteredWorktree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new: %v", err)
 	}
-	exitErr := exec.Command("sh", "-c", "exit 1").Run()
-	if exitErr == nil {
-		t.Fatal("expected exit error")
-	}
+	exitErr := exitStatusOne(t)
 	var calls []string
 	addAttempts := 0
 	ws.run = func(_ context.Context, binary string, args ...string) ([]byte, error) {
@@ -607,7 +605,7 @@ func TestAddWorktreeRefusesBranchCheckedOutElsewhere(t *testing.T) {
 	if !errors.Is(err, ports.ErrWorkspaceBranchCheckedOutElsewhere) {
 		t.Fatalf("err = %v, want ports.ErrWorkspaceBranchCheckedOutElsewhere", err)
 	}
-	if !strings.Contains(err.Error(), otherPath) {
+	if !strings.Contains(err.Error(), strconv.Quote(otherPath)) {
 		t.Fatalf("err = %v, want message to include conflicting path %q", err, otherPath)
 	}
 }
@@ -652,10 +650,7 @@ func TestAddWorktreeReportsBranchNotFetched(t *testing.T) {
 		t.Fatalf("new: %v", err)
 	}
 	// Build a real exit-1 error so refExists treats every probe as "absent".
-	exitOne := func() error {
-		cmd := exec.Command("sh", "-c", "exit 1")
-		return cmd.Run()
-	}()
+	exitOne := exitStatusOne(t)
 	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
 		joined := strings.Join(args, " ")
 		switch {
@@ -685,10 +680,7 @@ func TestResolveBaseRefInfersRepoDefaultBranchWhenUnset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new: %v", err)
 	}
-	exitOne := func() error {
-		cmd := exec.Command("sh", "-c", "exit 1")
-		return cmd.Run()
-	}()
+	exitOne := exitStatusOne(t)
 	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
 		joined := strings.Join(args, " ")
 		switch {
@@ -716,4 +708,22 @@ func mkdirFile(dir, name string) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(dir, name), []byte("data"), 0o644)
+}
+
+func exitStatusOne(t *testing.T) error {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=TestGitWorktreeExitStatusOneHelper")
+	cmd.Env = append(os.Environ(), "GO_WANT_GITWORKTREE_EXIT_STATUS_ONE=1")
+	err := cmd.Run()
+	if err == nil {
+		t.Fatal("expected exit error")
+	}
+	return err
+}
+
+func TestGitWorktreeExitStatusOneHelper(t *testing.T) {
+	if os.Getenv("GO_WANT_GITWORKTREE_EXIT_STATUS_ONE") != "1" {
+		return
+	}
+	os.Exit(1)
 }
