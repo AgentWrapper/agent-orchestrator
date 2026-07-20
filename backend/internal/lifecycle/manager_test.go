@@ -83,6 +83,19 @@ func (f *fakeMessenger) Send(_ context.Context, _ domain.SessionID, msg string) 
 	return nil
 }
 
+type fakeCompletionTerminator struct {
+	calls int
+	err   error
+}
+
+func (f *fakeCompletionTerminator) Kill(context.Context, domain.SessionID) (bool, error) {
+	f.calls++
+	if f.err != nil {
+		return false, f.err
+	}
+	return true, nil
+}
+
 func newManager() (*Manager, *fakeStore, *fakeMessenger) {
 	st := newFakeStore()
 	msg := &fakeMessenger{}
@@ -620,6 +633,26 @@ func TestPRObservation_MergedTerminatesWithoutNudge(t *testing.T) {
 	}
 	if len(msg.msgs) != 0 {
 		t.Fatalf("merged PR should not send nudge, got %v", msg.msgs)
+	}
+}
+
+func TestPRObservation_MergedTeardownFailureStillRecordsTerminalFact(t *testing.T) {
+	m, st, _ := newManager()
+	terminator := &fakeCompletionTerminator{err: errors.New("transient teardown failure")}
+	m.SetCompletionTerminator(terminator)
+	st.sessions["mer-1"] = working("mer-1")
+	st.prs["mer-1"] = []domain.PullRequest{{URL: "pr1", Merged: true}}
+
+	err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1", Merged: true})
+	if err == nil || !strings.Contains(err.Error(), "transient teardown failure") {
+		t.Fatalf("ApplyPRObservation err = %v, want teardown failure", err)
+	}
+	if terminator.calls != 1 {
+		t.Fatalf("terminator calls = %d, want 1", terminator.calls)
+	}
+	got := st.sessions["mer-1"]
+	if !got.IsTerminated || got.Activity.State != domain.ActivityExited {
+		t.Fatalf("teardown failure should still record terminal fact for retry, got %+v", got)
 	}
 }
 

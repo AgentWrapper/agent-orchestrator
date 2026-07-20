@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -248,6 +249,14 @@ func (m *Manager) terminateCompletedSession(ctx context.Context, id domain.Sessi
 		return m.MarkTerminated(ctx, id)
 	}
 	if _, err := terminator.Kill(ctx, id); err != nil {
+		// The observer has already persisted the PR as terminal. If teardown
+		// fails before Kill can record the session's terminal fact, later SCM
+		// polls may exclude the closed/merged PR and never re-enter this reducer.
+		// Persist completion anyway so reconcile/cleanup have a durable retry
+		// target for leaked runtime or workspace resources.
+		if markErr := m.MarkTerminated(ctx, id); markErr != nil {
+			return errors.Join(err, markErr)
+		}
 		return err
 	}
 	rec, ok, err := m.store.GetSession(ctx, id)

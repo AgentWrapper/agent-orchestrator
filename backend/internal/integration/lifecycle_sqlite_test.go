@@ -2,6 +2,8 @@ package integration
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -16,8 +18,9 @@ import (
 )
 
 type stubRuntime struct {
-	created   int
-	destroyed int
+	created    int
+	destroyed  int
+	destroyErr error
 	// aliveByHandle scripts IsAlive per handle ID. If a handle ID is absent,
 	// IsAlive returns true (default: alive), matching the pre-existing behavior
 	// that all other tests relied on.
@@ -32,7 +35,7 @@ func (s *stubRuntime) Create(context.Context, ports.RuntimeConfig) (ports.Runtim
 func (s *stubRuntime) Destroy(_ context.Context, h ports.RuntimeHandle) error {
 	s.destroyed++
 	s.destroyedHandles = append(s.destroyedHandles, h.ID)
-	return nil
+	return s.destroyErr
 }
 func (s *stubRuntime) IsAlive(_ context.Context, h ports.RuntimeHandle) (bool, error) {
 	if s.aliveByHandle != nil {
@@ -83,19 +86,26 @@ type stubAgents struct{}
 
 func (stubAgents) Agent(domain.AgentHarness) (ports.Agent, bool) { return stubAgent{}, true }
 
-type stubWorkspace struct{ destroyed int }
+type stubWorkspace struct {
+	destroyed      int
+	forceDestroyed int
+	destroyErr     error
+}
 
 func (s *stubWorkspace) Create(_ context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
 	return ports.WorkspaceInfo{Path: "/ws/" + string(cfg.SessionID), Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, nil
 }
 func (s *stubWorkspace) Destroy(context.Context, ports.WorkspaceInfo) error {
 	s.destroyed++
-	return nil
+	return s.destroyErr
 }
 func (s *stubWorkspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
 	return s.Create(ctx, cfg)
 }
-func (s *stubWorkspace) ForceDestroy(context.Context, ports.WorkspaceInfo) error { return nil }
+func (s *stubWorkspace) ForceDestroy(context.Context, ports.WorkspaceInfo) error {
+	s.forceDestroyed++
+	return nil
+}
 func (s *stubWorkspace) StashUncommitted(_ context.Context, _ ports.WorkspaceInfo) (string, error) {
 	return "", nil
 }
@@ -209,6 +219,70 @@ func TestMergedPRTerminatesThroughSessionManager(t *testing.T) {
 	}
 	if !rec.IsTerminated {
 		t.Fatalf("merged PR should leave the session terminated: %+v", rec)
+	}
+}
+
+func TestMergedPRTeardownFailureTerminatesForReconcileRetry(t *testing.T) {
+	ctx := context.Background()
+	st := newStack(t)
+	sess, err := st.sm.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Branch: "b", Prompt: "do it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	st.rt.destroyErr = errors.New("tmux destroy failed once")
+	err = st.prm.ApplyObservation(ctx, sess.ID, ports.PRObservation{Fetched: true, URL: "pr1", Number: 1, Merged: true})
+	if err == nil || !errors.Is(err, st.rt.destroyErr) {
+		t.Fatalf("ApplyObservation err = %v, want first destroy failure", err)
+	}
+	if st.rt.destroyed != 1 {
+		t.Fatalf("first merge completion should attempt runtime destroy once, got %d", st.rt.destroyed)
+	}
+	rec, ok, err := st.store.GetSession(ctx, sess.ID)
+	if err != nil || !ok {
+		t.Fatalf("GetSession: ok=%v err=%v", ok, err)
+	}
+	if !rec.IsTerminated || rec.Activity.State != domain.ActivityExited {
+		t.Fatalf("first failure should still persist terminal fact for retry, got %+v", rec)
+	}
+
+	st.rt.destroyErr = nil
+	if err := st.mgr.Reconcile(ctx); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if st.rt.destroyed != 2 {
+		t.Fatalf("reconcile should retry leaked runtime destroy, got %d destroy calls", st.rt.destroyed)
+	}
+}
+
+func TestMergedPRDirtyWorkspacePreservesWorktreeAndTerminates(t *testing.T) {
+	ctx := context.Background()
+	st := newStack(t)
+	sess, err := st.sm.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Branch: "b", Prompt: "do it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	st.ws.destroyErr = fmt.Errorf("gitworktree: refusing to remove: %w", ports.ErrWorkspaceDirty)
+	if err := st.prm.ApplyObservation(ctx, sess.ID, ports.PRObservation{Fetched: true, URL: "pr1", Number: 1, Merged: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	if st.rt.destroyed != 1 {
+		t.Fatalf("merged dirty workspace should still destroy runtime once, got %d", st.rt.destroyed)
+	}
+	if st.ws.destroyed != 1 {
+		t.Fatalf("merged dirty workspace should attempt normal destroy once, got %d", st.ws.destroyed)
+	}
+	if st.ws.forceDestroyed != 0 {
+		t.Fatalf("dirty merged workspace must not be force destroyed, got %d force destroys", st.ws.forceDestroyed)
+	}
+	rec, ok, err := st.store.GetSession(ctx, sess.ID)
+	if err != nil || !ok {
+		t.Fatalf("GetSession: ok=%v err=%v", ok, err)
+	}
+	if !rec.IsTerminated || rec.Activity.State != domain.ActivityExited {
+		t.Fatalf("dirty merged workspace should still record terminal fact, got %+v", rec)
 	}
 }
 

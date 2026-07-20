@@ -48,12 +48,6 @@ func WithNotificationSink(sink notificationSink) Option {
 	return func(m *Manager) { m.notifications = sink }
 }
 
-// WithCompletionTerminator wires the session teardown path used when PR
-// completion ends a session.
-func WithCompletionTerminator(terminator sessionTerminator) Option {
-	return func(m *Manager) { m.completionTerminator = terminator }
-}
-
 // WithTelemetry wires lifecycle activity transitions to the shared telemetry sink.
 func WithTelemetry(sink ports.EventSink) Option {
 	return func(m *Manager) { m.telemetry = sink }
@@ -70,7 +64,8 @@ type Manager struct {
 	notifications notificationSink
 	// completionTerminator is the optional session-manager teardown path used
 	// when a session completes because its PR set reached the merged/closed bar.
-	// Nil keeps unit tests and legacy wiring on MarkTerminated.
+	// Late-bound because daemon wiring constructs lifecycle before
+	// sessionmanager, which itself depends on lifecycle.
 	completionTerminator sessionTerminator
 
 	mu        sync.Mutex
