@@ -26,6 +26,7 @@ const maxDisplayNameLen = 20
 type spawnOptions struct {
 	project        string
 	harness        string
+	role           string
 	branch         string
 	prompt         string
 	issue          string
@@ -40,6 +41,7 @@ type spawnOptions struct {
 type spawnRequest struct {
 	ProjectID   string `json:"projectId"`
 	IssueID     string `json:"issueId,omitempty"`
+	Kind        string `json:"kind,omitempty"`
 	Harness     string `json:"harness,omitempty"`
 	Branch      string `json:"branch,omitempty"`
 	Prompt      string `json:"prompt,omitempty"`
@@ -63,12 +65,24 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 	var opts spawnOptions
 	cmd := &cobra.Command{
 		Use:   "spawn",
-		Short: "Spawn a worker agent session in a registered project",
-		Long: "Spawn a worker agent session in a registered project.\n\n" +
+		Short: "Spawn a worker or reviewer agent session in a registered project",
+		Long: "Spawn a worker or reviewer agent session in a registered project.\n\n" +
 			"The session runs the chosen agent in a\n" +
 			"fresh git worktree. Register the project first with `ao project add`.",
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			switch opts.role {
+			case "worker":
+			case "reviewer":
+				if strings.TrimSpace(opts.harness) == "" {
+					return usageError{fmt.Errorf("--harness is required for reviewer sessions")}
+				}
+				if opts.claimPR != "" {
+					return usageError{fmt.Errorf("reviewer sessions cannot use --claim-pr")}
+				}
+			default:
+				return usageError{fmt.Errorf("--role must be worker or reviewer")}
+			}
 			if opts.noTakeover && opts.claimPR == "" {
 				return usageError{fmt.Errorf("--no-takeover requires --claim-pr")}
 			}
@@ -104,6 +118,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 			req := spawnRequest{
 				ProjectID:   opts.project,
 				IssueID:     opts.issue,
+				Kind:        opts.role,
 				Harness:     opts.harness,
 				Branch:      opts.branch,
 				Prompt:      opts.prompt,
@@ -158,6 +173,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 	})
 	f.StringVar(&opts.project, "project", "", "Project id to spawn the session in (default: AO_PROJECT_ID or current registered repo)")
 	f.StringVar(&opts.harness, "harness", "", "Agent harness / --agent: claude-code, codex, aider, opencode, grok, droid, amp, agy, crush, cursor, qwen, copilot, goose, auggie, continue, devin, cline, kimi, kiro, kilocode, vibe, pi, autohand (default: project worker.agent; required if the project has none)")
+	f.StringVar(&opts.role, "role", "worker", "Session role: worker or reviewer (reviewer requires --harness)")
 	f.StringVar(&opts.branch, "branch", "", "Branch for the session worktree (default: ao/<session-id>/root)")
 	f.StringVar(&opts.prompt, "prompt", "", "Initial prompt for the agent")
 	f.StringVar(&opts.issue, "issue", "", "Issue id to associate with the session")

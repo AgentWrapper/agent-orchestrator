@@ -67,10 +67,10 @@ func (p *Plugin) Manifest() adapters.Manifest {
 
 // GetLaunchCommand builds the argv to start a new Qwen Code session: the
 // approval-mode flag, optional system-prompt instructions, and the initial
-// prompt. Workers use Qwen's remote-input bridge so the task is submitted into
-// the interactive TUI after startup; non-workers use `-p` so command-delivered
-// prompts keep their previous one-shot behavior. `-p` takes the prompt as an
-// argument, so a leading "-" is not read as a flag.
+// prompt. Worker and reviewer sessions use Qwen's interactive prompt path so
+// durable reviewer sessions behave like normal sessions instead of one-shot
+// commands. `-i` takes the prompt as an argument, so a leading "-" is not read
+// as a flag.
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	binary, err := p.qwenBinary(ctx)
 	if err != nil {
@@ -88,7 +88,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 		cmd = append(cmd, "--append-system-prompt", systemPrompt)
 	}
 
-	if cfg.Prompt != "" && cfg.Kind == domain.KindWorker {
+	if cfg.Prompt != "" && qwenInteractivePromptKind(cfg.Kind) {
 		if runtime.GOOS != "windows" {
 			return qwenWorkerRemoteInputCommand(cmd, cfg)
 		}
@@ -98,6 +98,10 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	}
 
 	return cmd, nil
+}
+
+func qwenInteractivePromptKind(kind domain.SessionKind) bool {
+	return kind == domain.KindWorker || kind == domain.KindReviewer
 }
 
 // GetPromptDeliveryStrategy reports that Qwen receives prompted worker tasks via

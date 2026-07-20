@@ -1,6 +1,6 @@
 # ao spawn
 
-Spawn a worker agent session in a registered project. The session runs the chosen agent in a fresh git worktree. Register the project first with `ao project add`.
+Spawn a worker or durable reviewer agent session in a registered project. The session runs the chosen agent in a fresh git worktree. Register the project first with `ao project add`.
 
 ## Syntax
 
@@ -20,6 +20,7 @@ ao spawn [flags]
 | `--no-takeover` | Refuse if another active session owns the claimed PR (requires `--claim-pr`) | - |
 | `--project string` | Project id to spawn the session in | Required |
 | `--prompt string` | Initial prompt for the agent | - |
+| `--role string` | Session role: `worker` or `reviewer` | `worker`; reviewer requires `--harness` |
 
 `--agent` is an alias for `--harness`.
 
@@ -35,4 +36,9 @@ ao spawn --project agent-orchestrator --issue 142 --name "fix-session-leak" --pr
 ```bash
 # Spawn a worker and immediately claim an open PR
 ao spawn --project agent-orchestrator --name "review-pr-88" --claim-pr 88 --harness claude-code
+```
+
+```bash
+# Spawn an issue-bound durable reviewer; reviewers cannot use --claim-pr
+ao spawn --project agent-orchestrator --issue 142 --harness codex --role reviewer --name "review-issue-142" --prompt "Review the canonical records for issue 142."
 ```

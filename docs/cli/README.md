@@ -68,11 +68,13 @@ daemon), then the current working directory matched against registered project
 paths. If `AO_SESSION_ID` is set but the session cannot be fetched, pass
 `--project` explicitly.
 
-If `--agent` / `--harness` is omitted, `ao spawn` uses the resolved project's
-`worker.agent` config. Before spawning, the CLI refreshes the advisory agent
-catalog and fails early when the selected agent is unsupported, not installed,
-or unauthorized. It warns-but-continues when auth remains unknown because daemon
-spawn remains the authoritative runtime validation point. Use
+By default, `ao spawn` creates a worker session and uses the resolved project's
+`worker.agent` config when `--agent` / `--harness` is omitted. Use `--role
+reviewer` with an explicit `--agent` / `--harness` to create a durable reviewer
+session. Reviewer sessions cannot use `--claim-pr`. Before spawning, the CLI
+refreshes the advisory agent catalog and fails early when the selected agent is
+unsupported, not installed, or unauthorized. It warns-but-continues when auth
+remains unknown because daemon spawn remains the authoritative runtime validation point. Use
 `--skip-agent-check` to bypass only this CLI-side preflight.
 
 `ao preview` resolves its session from the `AO_SESSION_ID` environment variable

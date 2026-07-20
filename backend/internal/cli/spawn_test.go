@@ -157,6 +157,57 @@ func TestSpawnNoTakeoverRequiresClaimPR(t *testing.T) {
 	}
 }
 
+func TestSpawnReviewerValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "requires explicit harness", args: []string{"spawn", "--project", "demo", "--role", "reviewer"}, want: "--harness is required for reviewer sessions"},
+		{name: "cannot claim pr", args: []string{"spawn", "--project", "demo", "--role", "reviewer", "--harness", "codex", "--claim-pr", "13"}, want: "reviewer sessions cannot use --claim-pr"},
+		{name: "rejects unknown role", args: []string{"spawn", "--project", "demo", "--role", "bogus", "--harness", "codex"}, want: "--role must be worker or reviewer"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := executeCLI(t, Deps{}, tc.args...)
+			if err == nil || ExitCode(err) != 2 || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err=%v exit=%d, want %q", err, ExitCode(err), tc.want)
+			}
+		})
+	}
+}
+
+func TestSpawnReviewerWiring(t *testing.T) {
+	cfg := setConfigEnv(t)
+	var req map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/apl":
+			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"apl","name":"APL","path":"/repo/apl"}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/agents/refresh":
+			_, _ = io.WriteString(w, authorizedAgentsJSON("codex"))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions":
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			_, _ = io.WriteString(w, `{"session":{"id":"apl-4","status":"idle"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "apl", "--issue", "13", "--harness", "codex", "--role", "reviewer", "--name", "rc2-review", "--prompt", "review")
+	if err != nil {
+		t.Fatalf("spawn reviewer failed: %v stderr=%s", err, errOut)
+	}
+	if req["kind"] != "reviewer" || req["issueId"] != "13" || req["harness"] != "codex" || req["displayName"] != "rc2-review" {
+		t.Fatalf("reviewer spawn request = %#v", req)
+	}
+}
+
 // TestSpawnCommand_RejectsOverlongName asserts `ao spawn` rejects a --name
 // longer than 20 characters without contacting the daemon.
 func TestSpawnCommand_RejectsOverlongName(t *testing.T) {

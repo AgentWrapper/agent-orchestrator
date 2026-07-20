@@ -1029,6 +1029,22 @@ func TestClaimPRMapsObserverAndStoreErrors(t *testing.T) {
 	}
 }
 
+func TestClaimPRRejectsNonWorkerSessions(t *testing.T) {
+	for _, kind := range []domain.SessionKind{domain.KindOrchestrator, domain.KindReviewer} {
+		t.Run(string(kind), func(t *testing.T) {
+			st := newFakeStore()
+			st.sessions["mer-1"] = domain.SessionRecord{
+				ID: "mer-1", ProjectID: "mer", Kind: kind,
+				Metadata: domain.SessionMetadata{WorkspacePath: "/ws"},
+			}
+			_, err := NewWithDeps(Deps{Store: st}).ClaimPR(context.Background(), "mer-1", "7", ClaimPROptions{})
+			if !errors.Is(err, ErrSessionNotClaimable) {
+				t.Fatalf("kind=%q err=%v, want ErrSessionNotClaimable", kind, err)
+			}
+		})
+	}
+}
+
 func TestListPRsOrdersActiveBeforeClosedThenUpdatedDesc(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}

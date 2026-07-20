@@ -797,6 +797,26 @@ func TestSessionsAPI_SpawnRejectsOverlongDisplayName(t *testing.T) {
 	assertErrorCode(t, body, status, http.StatusBadRequest, "DISPLAY_NAME_TOO_LONG")
 }
 
+func TestSessionsAPI_SpawnsReviewerAndRejectsUnknownKind(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions", `{"projectId":"ao","issueId":"13","kind":"reviewer","harness":"codex"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("POST reviewer = %d, want 201; body=%s", status, body)
+	}
+	var spawned struct {
+		Session sessionBody `json:"session"`
+	}
+	mustJSON(t, body, &spawned)
+	if spawned.Session.Kind != "reviewer" || spawned.Session.IssueID != "13" {
+		t.Fatalf("spawned reviewer = %#v", spawned.Session)
+	}
+
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions", `{"projectId":"ao","kind":"bogus","harness":"codex"}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_SESSION_KIND")
+}
+
 func TestSessionsAPI_RenameNotFound(t *testing.T) {
 	srv := newSessionTestServer(t, newFakeSessionService())
 

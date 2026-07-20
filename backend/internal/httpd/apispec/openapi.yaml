@@ -2992,6 +2992,7 @@ components:
           enum:
           - worker
           - orchestrator
+          - reviewer
           type: string
         projectId:
           type: string
