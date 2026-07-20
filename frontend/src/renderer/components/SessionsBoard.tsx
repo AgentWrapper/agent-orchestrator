@@ -30,6 +30,8 @@ import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { cn } from "../lib/utils";
+import { aoBridge } from "../lib/bridge";
+import type { UpdateStatus } from "../../main/update-settings";
 import { useUiStore } from "../stores/ui-store";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
 
@@ -68,6 +70,20 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const setOrchestratorStartupError = useUiStore((state) => state.setOrchestratorStartupError);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
 	const isProjectRestarting = projectId ? restartingProjectIds.has(projectId) : false;
+
+	const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: "idle" });
+	useEffect(() => {
+		if (!aoBridge.updates) return;
+		let live = true;
+		void aoBridge.updates.getStatus().then((s) => {
+			if (live) setUpdateStatus(s);
+		});
+		const off = aoBridge.updates.onStatus(setUpdateStatus);
+		return () => {
+			live = false;
+			off?.();
+		};
+	}, []);
 	const health = workspace ? orchestratorHealth(workspace, isProjectRestarting) : { state: "ok" as const };
 	const visibleSpawnError = spawnError ?? orchestratorStartupError;
 	// The board instance survives project-to-project navigation (same route,
@@ -257,6 +273,18 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						) : null}
 					</div>
 				) : null}
+				{updateStatus.state === "downloaded" && (
+					<div className="mb-3 flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-xs text-muted-foreground">
+						<RotateCw className="size-icon-base shrink-0 text-success" aria-hidden="true" />
+						<span className="min-w-0 flex-1">
+							Update ready{updateStatus.version ? ` (v${updateStatus.version})` : ""}. Relaunch to apply.
+						</span>
+						<TopbarButton variant="primary" onClick={() => void aoBridge.updates.install()}>
+							<RotateCw className="size-3.5" aria-hidden="true" />
+							Relaunch to update
+						</TopbarButton>
+					</div>
+				)}
 				{workspaceQuery.isError ? (
 					<p className="py-10 text-center text-xs text-passive">Could not load sessions.</p>
 				) : showWelcome ? (
