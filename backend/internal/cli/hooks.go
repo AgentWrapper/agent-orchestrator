@@ -144,6 +144,9 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 		// agent. The deriver tolerates an empty payload.
 		c.reportHookFailure(agent, event, sessionID, fmt.Errorf("read stdin: %w", err))
 	}
+	if c.enforceCapabilityHook(agent, event, sessionID, payload) {
+		return nil
+	}
 	if shouldEmitSessionStartContext(agent, event) {
 		c.emitSessionStartContext(agent, event, sessionID)
 	}

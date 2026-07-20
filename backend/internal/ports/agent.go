@@ -180,13 +180,14 @@ const (
 
 // LaunchConfig carries inputs needed to build a new agent launch command.
 type LaunchConfig struct {
-	Config      AgentConfig
-	DataDir     string
-	IssueID     string
-	Kind        domain.SessionKind
-	Permissions PermissionMode
-	Prompt      string
-	SessionID   string
+	Config          AgentConfig
+	CapabilityClass domain.CapabilityClass
+	DataDir         string
+	IssueID         string
+	Kind            domain.SessionKind
+	Permissions     PermissionMode
+	Prompt          string
+	SessionID       string
 	// AllowedTools and DisallowedTools scope the agent to a tool allowlist when
 	// it runs in a non-bypass permission mode (allow rules auto-approve, deny
 	// rules auto-reject). They are the enforced read-only guarantee the reviewer
@@ -213,10 +214,11 @@ type WorkspaceHookConfig struct {
 
 // RestoreConfig carries inputs needed to continue an existing native agent session.
 type RestoreConfig struct {
-	Config      AgentConfig
-	Kind        domain.SessionKind
-	Permissions PermissionMode
-	Session     SessionRef
+	Config          AgentConfig
+	CapabilityClass domain.CapabilityClass
+	Kind            domain.SessionKind
+	Permissions     PermissionMode
+	Session         SessionRef
 	// SystemPrompt carries the session's standing instructions (e.g. the
 	// orchestrator role). Agent CLIs rebuild their system prompt from flags on
 	// resume — it is not part of the transcript — so adapters whose CLI has a

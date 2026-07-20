@@ -61,6 +61,9 @@ const (
 	EnvSessionID = "AO_SESSION_ID"
 	EnvProjectID = "AO_PROJECT_ID"
 	EnvIssueID   = "AO_ISSUE_ID"
+	// EnvCapabilityClass lets tool-boundary hooks apply the durable session
+	// policy without trusting prompt text or user-controlled project env.
+	EnvCapabilityClass = "AO_CAPABILITY_CLASS"
 	// EnvDataDir tells a spawned agent's AO hook commands where the store lives.
 	EnvDataDir = "AO_DATA_DIR"
 )
@@ -311,6 +314,8 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	}
 	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config)
 	env := m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, project.Config.Env)
+	capabilityClass := domain.CapabilityClassForKind(cfg.Kind)
+	env[EnvCapabilityClass] = string(capabilityClass)
 	m.augmentAgentRuntimeEnv(agent, env)
 	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
 		m.destroySpawnWorkspace(ctx, ws, workspaceProject)
@@ -319,6 +324,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	}
 	launchCfg := ports.LaunchConfig{
 		DataDir:          m.dataDir,
+		CapabilityClass:  capabilityClass,
 		SessionID:        string(id),
 		WorkspacePath:    ws.Path,
 		Kind:             cfg.Kind,
@@ -365,7 +371,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: runtime: %w", id, err)
 	}
 
-	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, Prompt: prompt}
+	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, Prompt: prompt, CapabilityClass: capabilityClass}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
@@ -844,6 +850,8 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 	// model/permissions carry across a restore, matching fresh spawn.
 	agentConfig := effectiveAgentConfig(rec.Kind, project.Config)
 	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
+	capabilityClass := domain.EffectiveCapabilityClass(rec)
+	env[EnvCapabilityClass] = string(capabilityClass)
 	m.augmentAgentRuntimeEnv(agent, env)
 	if err := m.prepareWorkspace(ctx, agent, rec.ID, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", rec.ID, err)
@@ -863,7 +871,7 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 		m.cleanupSystemPromptDir(rec.ID)
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: runtime: %w", rec.ID, err)
 	}
-	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, AgentSessionID: rec.Metadata.AgentSessionID, Prompt: rec.Metadata.Prompt}
+	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, AgentSessionID: rec.Metadata.AgentSessionID, Prompt: rec.Metadata.Prompt, CapabilityClass: capabilityClass}
 	if err := m.lcm.MarkSpawned(ctx, rec.ID, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		m.cleanupSystemPromptDir(rec.ID)
@@ -872,6 +880,7 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 	if delivery == ports.PromptDeliveryAfterStart && rec.Metadata.Prompt != "" {
 		launchCfg := ports.LaunchConfig{
 			DataDir:          m.dataDir,
+			CapabilityClass:  capabilityClass,
 			SessionID:        string(rec.ID),
 			WorkspacePath:    ws.Path,
 			Kind:             rec.Kind,
@@ -2419,7 +2428,11 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 		WorkspacePath: workspacePath,
 		Metadata:      map[string]string{ports.MetadataKeyAgentSessionID: meta.AgentSessionID},
 	}
-	cmd, ok, err := agent.GetRestoreCommand(ctx, ports.RestoreConfig{Session: ref, Kind: kind, SystemPrompt: systemPrompt, SystemPromptFile: systemPromptFile, Config: agentConfig, Permissions: agentConfig.Permissions})
+	capabilityClass := meta.CapabilityClass
+	if capabilityClass == "" {
+		capabilityClass = domain.CapabilityClassForKind(kind)
+	}
+	cmd, ok, err := agent.GetRestoreCommand(ctx, ports.RestoreConfig{Session: ref, Kind: kind, CapabilityClass: capabilityClass, SystemPrompt: systemPrompt, SystemPromptFile: systemPromptFile, Config: agentConfig, Permissions: agentConfig.Permissions})
 	if err != nil {
 		return nil, "", fmt.Errorf("restore command: %w", err)
 	}
@@ -2437,6 +2450,7 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 	// the runtime is live.
 	launchCfg := ports.LaunchConfig{
 		DataDir:          dataDir,
+		CapabilityClass:  capabilityClass,
 		SessionID:        string(id),
 		WorkspacePath:    workspacePath,
 		Kind:             kind,

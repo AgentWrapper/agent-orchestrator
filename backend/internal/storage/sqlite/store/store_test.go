@@ -39,7 +39,7 @@ func sampleRecord(project string) domain.SessionRecord {
 		Kind:      domain.KindWorker,
 		Harness:   domain.HarnessClaudeCode,
 		Activity:  domain.Activity{State: domain.ActivityActive, LastActivityAt: now},
-		Metadata:  domain.SessionMetadata{Branch: "feat/x", WorkspacePath: "/ws"},
+		Metadata:  domain.SessionMetadata{Branch: "feat/x", WorkspacePath: "/ws", CapabilityClass: domain.CapabilityClassAOWorker},
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
