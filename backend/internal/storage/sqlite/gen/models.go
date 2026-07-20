@@ -193,6 +193,15 @@ type SessionWorktree struct {
 	State        string
 }
 
+type ShellTerminal struct {
+	HandleID   string
+	ProjectID  *domain.ProjectID
+	WorkingDir string
+	Title      string
+	AppRunID   string
+	CreatedAt  time.Time
+}
+
 type TelemetryEvent struct {
 	ID          string
 	OccurredAt  time.Time
