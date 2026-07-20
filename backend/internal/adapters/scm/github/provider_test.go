@@ -1219,6 +1219,39 @@ func TestSCMObservationUsesRollupStateWhenContextsPaginated(t *testing.T) {
 	}
 }
 
+// TestSCMObservationCarriesHeadRepoFromGraphQL pins the poll-path fix for #285:
+// the GraphQL PR observation must carry the head repository so the observer can
+// classify pr.is_from_fork instead of leaving it NULL. A missing headRepository
+// (deleted fork) stays unknown ("") rather than being guessed.
+func TestSCMObservationCarriesHeadRepoFromGraphQL(t *testing.T) {
+	ref := ports.SCMPRRef{Repo: ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "octocat", Name: "hello", Repo: "octocat/hello"}, Number: 42}
+	cases := []struct {
+		name     string
+		headRepo any
+		want     string
+	}{
+		{"same repo", map[string]any{"nameWithOwner": "octocat/hello"}, "octocat/hello"},
+		{"fork repo", map[string]any{"nameWithOwner": "forker/hello"}, "forker/hello"},
+		{"missing head repository stays unknown", nil, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := basePRFixture()
+			var pr map[string]any
+			fx.prData(func(m map[string]any) {
+				pr = m
+				if tc.headRepo != nil {
+					m["headRepository"] = tc.headRepo
+				}
+			})
+			obs := scmObservationFromGraphQL(ref, pr)
+			if obs.PR.HeadRepo != tc.want {
+				t.Fatalf("HeadRepo = %q, want %q", obs.PR.HeadRepo, tc.want)
+			}
+		})
+	}
+}
+
 func TestSCMMergeabilityBlocksReviewRequiredAndDraft(t *testing.T) {
 	cases := []struct {
 		name        string

@@ -394,6 +394,66 @@ func TestSCMObserverEndToEnd(t *testing.T) {
 		}
 	})
 
+	t.Run("Same-repo PR self-heals is_from_fork from NULL to false on refresh", func(t *testing.T) {
+		ctx := context.Background()
+		f := newSCMFixture(t, "feat/x")
+		const (
+			prURL   = "https://github.com/octocat/hello/pull/59"
+			headSHA = "beadfeed"
+		)
+		f.provider.detected["feat/x"] = ports.SCMPRObservation{
+			URL: prURL, Number: 59, SourceBranch: "feat/x", HeadRepo: scmTestRepo.Repo, TargetBranch: "main", HeadSHA: headSHA,
+		}
+		// forkFacts reads the provenance the command-executor fork gate consults
+		// (pr.is_from_fork projected onto PRFacts), not the display projection,
+		// which is where the fail-safe block reads from.
+		forkFacts := func(stage string) *bool {
+			facts, ok, err := f.store.GetPRFactsByURL(ctx, prURL)
+			if err != nil || !ok {
+				t.Fatalf("GetPRFactsByURL %s: ok=%v err=%v", stage, ok, err)
+			}
+			return facts.IsFromFork
+		}
+
+		// First poll simulates the pre-fix provider path: no head repo, so
+		// provenance is unknown and is_from_fork stays NULL (issue #285).
+		noHeadRepo := openSCMObservation(prURL, 59, headSHA, "feat/x", "main", domain.MergeMergeable)
+		f.provider.observations[59] = noHeadRepo
+		if err := f.observer.Poll(ctx); err != nil {
+			t.Fatalf("first Poll: %v", err)
+		}
+		if got := forkFacts("after first Poll"); got != nil {
+			t.Fatalf("is_from_fork = %v, want nil (unknown) before head repo is known", *got)
+		}
+
+		// Second poll carries the now-populated head repo (the fix). The same-repo
+		// PR must transition NULL -> false so existing rows self-heal.
+		withHeadRepo := noHeadRepo
+		withHeadRepo.PR.HeadRepo = scmTestRepo.Repo
+		f.provider.observations[59] = withHeadRepo
+		if err := f.observer.Poll(ctx); err != nil {
+			t.Fatalf("second Poll: %v", err)
+		}
+		got := forkFacts("after second Poll")
+		if got == nil {
+			t.Fatal("is_from_fork = nil, want false after same-repo head repo observed (self-heal)")
+		}
+		if *got {
+			t.Fatalf("is_from_fork = true, want false for a same-repo PR")
+		}
+
+		// A fork head repo on a later refresh flips the same row to true.
+		forkHeadRepo := withHeadRepo
+		forkHeadRepo.PR.HeadRepo = "forker/hello"
+		f.provider.observations[59] = forkHeadRepo
+		if err := f.observer.Poll(ctx); err != nil {
+			t.Fatalf("third Poll: %v", err)
+		}
+		if got := forkFacts("after third Poll"); got == nil || !*got {
+			t.Fatalf("is_from_fork = %v, want true for a fork head repo", got)
+		}
+	})
+
 	t.Run("Branch with no open PR writes nothing and sends no nudge", func(t *testing.T) {
 		ctx := context.Background()
 		f := newSCMFixture(t, "feat/quiet")

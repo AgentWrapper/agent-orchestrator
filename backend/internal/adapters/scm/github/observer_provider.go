@@ -261,6 +261,7 @@ func scmPRFields() string {
 number url state isDraft merged closed title additions deletions changedFiles
 mergeable mergeStateStatus reviewDecision headRefName headRefOid baseRefName baseRefOid
 createdAt updatedAt mergedAt closedAt
+headRepository{ nameWithOwner }
 author{ login }
 mergeCommit{ oid }
 commits(last:1){ nodes{ commit{ oid statusCheckRollup{ state contexts(first:CONTEXT_LIMIT){ nodes{
@@ -369,6 +370,7 @@ func scmObservationFromGraphQL(ref ports.SCMPRRef, pr map[string]any) ports.SCMO
 			Merged:                   merged,
 			Closed:                   closed,
 			SourceBranch:             str(pr["headRefName"]),
+			HeadRepo:                 headRepositoryName(pr),
 			TargetBranch:             str(pr["baseRefName"]),
 			HeadSHA:                  firstNonEmpty(str(pr["headRefOid"]), latestCommitOID(pr)),
 			Title:                    str(pr["title"]),
@@ -707,6 +709,14 @@ func parseGitHubTime(s string) time.Time {
 func authorLogin(v any) string {
 	author, _ := v.(map[string]any)
 	return str(author["login"])
+}
+
+// headRepositoryName returns the PR head repository's owner/name, or "" when
+// GitHub omits it (e.g. the fork was deleted). The observer treats "" as unknown
+// provenance, so is_from_fork stays NULL rather than being guessed.
+func headRepositoryName(pr map[string]any) string {
+	headRepo, _ := pr["headRepository"].(map[string]any)
+	return str(headRepo["nameWithOwner"])
 }
 
 func mergeCommitOID(pr map[string]any) string {
