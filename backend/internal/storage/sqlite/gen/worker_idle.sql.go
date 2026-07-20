@@ -13,7 +13,7 @@ import (
 )
 
 const getPendingWorkerIdleEventByWorker = `-- name: GetPendingWorkerIdleEventByWorker :one
-SELECT id, project_id, worker_id, kind, transition_at, delivery_state, created_at, updated_at
+SELECT id, project_id, worker_id, transition_at, delivery_state, created_at, updated_at
 FROM worker_idle_events
 WHERE worker_id = ? AND delivery_state = 'pending'
 LIMIT 1
@@ -26,7 +26,6 @@ func (q *Queries) GetPendingWorkerIdleEventByWorker(ctx context.Context, workerI
 		&i.ID,
 		&i.ProjectID,
 		&i.WorkerID,
-		&i.Kind,
 		&i.TransitionAt,
 		&i.DeliveryState,
 		&i.CreatedAt,
@@ -63,7 +62,7 @@ func (q *Queries) InsertWorkerIdleEvent(ctx context.Context, arg InsertWorkerIdl
 }
 
 const listPendingWorkerIdleEvents = `-- name: ListPendingWorkerIdleEvents :many
-SELECT id, project_id, worker_id, kind, transition_at, delivery_state, created_at, updated_at
+SELECT id, project_id, worker_id, transition_at, delivery_state, created_at, updated_at
 FROM worker_idle_events
 WHERE delivery_state = 'pending'
 ORDER BY transition_at ASC
@@ -82,7 +81,6 @@ func (q *Queries) ListPendingWorkerIdleEvents(ctx context.Context) ([]WorkerIdle
 			&i.ID,
 			&i.ProjectID,
 			&i.WorkerID,
-			&i.Kind,
 			&i.TransitionAt,
 			&i.DeliveryState,
 			&i.CreatedAt,
@@ -102,7 +100,7 @@ func (q *Queries) ListPendingWorkerIdleEvents(ctx context.Context) ([]WorkerIdle
 }
 
 const listPendingWorkerIdleEventsByProject = `-- name: ListPendingWorkerIdleEventsByProject :many
-SELECT id, project_id, worker_id, kind, transition_at, delivery_state, created_at, updated_at
+SELECT id, project_id, worker_id, transition_at, delivery_state, created_at, updated_at
 FROM worker_idle_events
 WHERE project_id = ? AND delivery_state = 'pending'
 ORDER BY transition_at ASC
@@ -121,7 +119,6 @@ func (q *Queries) ListPendingWorkerIdleEventsByProject(ctx context.Context, proj
 			&i.ID,
 			&i.ProjectID,
 			&i.WorkerID,
-			&i.Kind,
 			&i.TransitionAt,
 			&i.DeliveryState,
 			&i.CreatedAt,

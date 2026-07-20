@@ -3,21 +3,21 @@ package domain
 import "time"
 
 // WorkerIdleEvent is a durable, project-scoped coordination event recorded when
-// a worker completes a turn (active -> idle). It is delivered to the project
-// orchestrator at least once; delivery timing is decoupled from creation so a
-// completion is never lost when no safe orchestrator is available yet.
+// a worker completes a turn (active -> idle). Delivery timing is decoupled from
+// creation so a completion is never lost while no safe orchestrator exists.
+//
+// Delivery is AT-LEAST-ONCE, not exactly-once: the event is marked delivered
+// only after the guard reports a pane write was attempted, so a crash between
+// the write and that mark redelivers it. A duplicate nudge is preferred to a
+// silently lost completion.
+//
+// Lifetime is bound to the source worker: the event's only instruction is to
+// inspect that worker, so if the worker row is deleted the event is obsolete
+// and is removed with it (worker_id ON DELETE CASCADE, migration 0024).
 type WorkerIdleEvent struct {
 	ID           string
 	ProjectID    ProjectID
 	WorkerID     SessionID
 	TransitionAt time.Time
 	CreatedAt    time.Time
-}
-
-// HarnessSteersActiveTurn reports whether submitting input to a harness during
-// an active turn steers the current run rather than being dropped or answering
-// a dialog. Only harnesses known to be safe opt in; every unknown harness
-// defaults to false so an active orchestrator is left alone unless proven safe.
-func HarnessSteersActiveTurn(h AgentHarness) bool {
-	return h == HarnessCodex
 }

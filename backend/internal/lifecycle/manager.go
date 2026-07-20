@@ -61,8 +61,9 @@ func WithTelemetry(sink ports.EventSink) Option {
 	return func(m *Manager) { m.telemetry = sink }
 }
 
-// WithActiveSteering overrides the harness active-turn steering predicate
-// (default domain.HarnessSteersActiveTurn). Injected in tests.
+// WithActiveSteering supplies the adapter-provided active-turn steering
+// capability (see ports.ActiveTurnSteerer). Without it the reducer assumes no
+// harness can be steered mid-turn.
 func WithActiveSteering(pred func(domain.AgentHarness) bool) Option {
 	return func(m *Manager) {
 		if pred != nil {
@@ -89,10 +90,15 @@ type Manager struct {
 	// flights tracks, per session, the in-flight tool executions and the
 	// pending permission dialog's identity (see toolFlight). Guarded by mu.
 	flights map[domain.SessionID]*toolFlight
-	// steerActive reports whether a harness can safely receive a nudge during
-	// an active turn (Enter steers the run) rather than only while idle. Unknown
-	// harnesses default to false so an active orchestrator is left alone.
+	// steerActive reports whether a harness can safely receive a write during an
+	// active turn (input steers the run) rather than only while idle. Supplied by
+	// the agent adapter via WithActiveSteering; the default answers false, so an
+	// unknown harness is only written to while idle.
 	steerActive func(domain.AgentHarness) bool
+	// dispatchLocks serializes delivery per project. Six triggers can dispatch
+	// concurrently; without this two of them can read the same pending row and
+	// both send it before either marks it delivered.
+	dispatchLocks sync.Map
 }
 
 // New builds a Lifecycle Manager over the session store it writes and the messenger it uses for agent nudges.
@@ -102,7 +108,7 @@ func New(store sessionStore, messenger ports.AgentMessenger, opts ...Option) *Ma
 	// `ao session get` showing created in UTC but updated in local time. A
 	// WithClock option may still override this in tests.
 	clock := func() time.Time { return time.Now().UTC() }
-	m := &Manager{store: store, window: defaultRecentActivityWindow, clock: clock, react: newReactionState(), flights: map[domain.SessionID]*toolFlight{}, steerActive: domain.HarnessSteersActiveTurn}
+	m := &Manager{store: store, window: defaultRecentActivityWindow, clock: clock, react: newReactionState(), flights: map[domain.SessionID]*toolFlight{}, steerActive: func(domain.AgentHarness) bool { return false }}
 	if messenger != nil {
 		m.guard = sessionguard.New(store, messenger, nil)
 	}
@@ -261,15 +267,15 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	}
 	waitingEvents := m.waitingInputEvents(next, prevState, prevAt, now)
 	// Two triggers re-attempt delivery of pending worker_idle events: a fresh
-	// event, and the orchestrator itself entering idle (becoming safe).
-	dispatch := idleEvent != nil || crossedToIdleOrchestrator(prevState, next)
+	// event, and the orchestrator crossing into a deliverable state.
+	dispatch := idleEvent != nil || m.orchestratorBecameDeliverable(prevState, next)
 	m.mu.Unlock()
 	for _, ev := range waitingEvents {
 		m.emitTelemetry(ctx, ev)
 	}
 	m.emitNotification(ctx, intent)
 	if dispatch {
-		m.DispatchProject(ctx, next.ProjectID)
+		m.DispatchPendingWorkerIdleEvents(ctx, next.ProjectID)
 	}
 	return nil
 }
@@ -294,23 +300,37 @@ func crossedToIdle(prev domain.ActivityState, next domain.SessionRecord) bool {
 		!next.IsTerminated
 }
 
-// crossedToIdleOrchestrator reports the orchestrator becoming free: any
-// transition into idle (from active, waiting_input, or blocked) is a moment
-// pending worker reports can be delivered without interrupting its work.
-func crossedToIdleOrchestrator(prev domain.ActivityState, next domain.SessionRecord) bool {
-	return next.Kind == domain.KindOrchestrator &&
-		prev != domain.ActivityIdle &&
-		next.Activity.State == domain.ActivityIdle &&
-		!next.IsTerminated
+// orchestratorBecameDeliverable reports the orchestrator crossing INTO a state
+// that accepts a coordination write — idle, or an active turn on a harness that
+// steers — from one that did not. Keying on the policy (not on idle alone) means
+// a steerable harness leaving blocked/waiting for active delivers immediately
+// instead of waiting for the recovery sweep.
+func (m *Manager) orchestratorBecameDeliverable(prev domain.ActivityState, next domain.SessionRecord) bool {
+	if next.Kind != domain.KindOrchestrator {
+		return false
+	}
+	was := next
+	was.Activity.State = prev
+	return m.safeToDeliver(next) && !m.safeToDeliver(was)
 }
 
-// DispatchProject delivers pending worker_idle events for one project to its
-// current orchestrator, if a safe one exists. Suppressed or undeliverable
-// events stay pending for a later trigger. Best-effort: errors are logged.
-func (m *Manager) DispatchProject(ctx context.Context, project domain.ProjectID) {
+// DispatchPendingWorkerIdleEvents delivers this project's pending worker_idle
+// events to its current orchestrator. The snapshot check here only avoids
+// pointless work — the binding safety decision is re-evaluated inside the guard
+// at the write boundary, so an orchestrator that becomes active (or blocked)
+// mid-loop is not written into. Undelivered events stay pending for a later
+// trigger. Best-effort: errors are logged, never propagated.
+//
+// Delivery is serialized per project so overlapping triggers cannot both read
+// and send the same pending row.
+func (m *Manager) DispatchPendingWorkerIdleEvents(ctx context.Context, project domain.ProjectID) {
 	if m.guard == nil {
 		return
 	}
+	lock := m.projectDispatchLock(project)
+	lock.Lock()
+	defer lock.Unlock()
+
 	orch, ok, err := m.liveOrchestrator(ctx, project)
 	if err != nil {
 		slog.Default().Error("lifecycle: resolve orchestrator", "project", project, "err", err)
@@ -325,12 +345,14 @@ func (m *Manager) DispatchProject(ctx context.Context, project domain.ProjectID)
 		return
 	}
 	for _, ev := range events {
-		outcome, err := m.guard.Nudge(ctx, orch.ID, m.workerIdleNudgeMessage(ctx, ev.WorkerID))
+		outcome, err := m.guard.NudgeCoordination(ctx, orch.ID, m.workerIdleNudgeMessage(ctx, ev.WorkerID), m.steerActive)
 		if err != nil {
 			slog.Default().Error("lifecycle: deliver worker idle", "worker", ev.WorkerID, "orchestrator", orch.ID, "err", err)
 		}
 		if outcome != sessionguard.Sent {
-			continue
+			// The orchestrator is no longer safe to write to (commonly because the
+			// delivery just above woke it): leave this and the rest pending.
+			return
 		}
 		if err := m.store.MarkWorkerIdleEventDelivered(ctx, ev.ID, m.clock()); err != nil {
 			slog.Default().Error("lifecycle: mark worker idle delivered", "event", ev.ID, "err", err)
@@ -338,9 +360,9 @@ func (m *Manager) DispatchProject(ctx context.Context, project domain.ProjectID)
 	}
 }
 
-// DispatchAllPending re-attempts delivery for every project with pending
-// worker_idle events. Used on daemon start and by the recovery sweep.
-func (m *Manager) DispatchAllPending(ctx context.Context) {
+// DispatchAllPendingWorkerIdleEvents re-attempts delivery for every project with
+// pending worker_idle events. Used on daemon start and by the recovery sweep.
+func (m *Manager) DispatchAllPendingWorkerIdleEvents(ctx context.Context) {
 	if m.guard == nil {
 		return
 	}
@@ -355,13 +377,18 @@ func (m *Manager) DispatchAllPending(ctx context.Context) {
 			continue
 		}
 		seen[ev.ProjectID] = struct{}{}
-		m.DispatchProject(ctx, ev.ProjectID)
+		m.DispatchPendingWorkerIdleEvents(ctx, ev.ProjectID)
 	}
 }
 
-// safeToDeliver reports whether the orchestrator can receive a nudge now: idle
-// always, active only for a harness that steers on active input; blocked,
-// waiting_input, and exited defer.
+func (m *Manager) projectDispatchLock(project domain.ProjectID) *sync.Mutex {
+	lock, _ := m.dispatchLocks.LoadOrStore(project, &sync.Mutex{})
+	return lock.(*sync.Mutex)
+}
+
+// safeToDeliver reports whether the orchestrator can receive a coordination
+// write now: idle always, active only for a harness that steers an active turn;
+// blocked, waiting_input, exited, and terminated defer.
 func (m *Manager) safeToDeliver(orch domain.SessionRecord) bool {
 	if orch.IsTerminated {
 		return false

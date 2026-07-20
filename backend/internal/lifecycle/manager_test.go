@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -129,6 +130,26 @@ func (f *fakeMessenger) Send(_ context.Context, id domain.SessionID, msg string)
 	f.msgs = append(f.msgs, msg)
 	f.ids = append(f.ids, id)
 	return nil
+}
+
+// lockedMessenger is the concurrency-safe counterpart used by tests that drive
+// two dispatchers at once.
+type lockedMessenger struct {
+	mu   sync.Mutex
+	msgs []string
+}
+
+func (l *lockedMessenger) Send(_ context.Context, _ domain.SessionID, msg string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.msgs = append(l.msgs, msg)
+	return nil
+}
+
+func (l *lockedMessenger) count() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.msgs)
 }
 
 func newManager() (*Manager, *fakeStore, *fakeMessenger) {
@@ -1514,7 +1535,11 @@ func TestActivity_WorkerIdleNudgesOrchestrator(t *testing.T) {
 }
 
 func TestActivity_WorkerIdleSteerableActiveOrchestratorDelivers(t *testing.T) {
-	m, st, msg := newManager()
+	st := newFakeStore()
+	msg := &fakeMessenger{}
+	// Steering is an adapter-declared capability; without it an active
+	// orchestrator is never written to (see TestActivity_WorkerIdleOrchestratorActiveDefersNoNudge).
+	m := New(st, msg, WithActiveSteering(func(h domain.AgentHarness) bool { return h == domain.HarnessCodex }))
 	now := time.Now()
 	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Harness: domain.HarnessCodex, Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
 	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
@@ -1574,28 +1599,181 @@ func TestActivity_WorkerIdleCoalescesWhileOrchestratorBusy(t *testing.T) {
 	}
 }
 
-func TestDispatchAllPending_DeliversWhenOrchestratorSafe(t *testing.T) {
+func TestDispatchAllPendingWorkerIdleEvents_DeliversWhenOrchestratorSafe(t *testing.T) {
 	m, st, msg := newManager()
 	now := time.Now()
 	// A pending event with no orchestrator yet (as if left across a restart).
 	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
 	st.idleEvents = []domain.WorkerIdleEvent{{ID: "wie_1", ProjectID: "mer", WorkerID: "mer-8", TransitionAt: now, CreatedAt: now}}
 
-	m.DispatchAllPending(ctx)
+	m.DispatchAllPendingWorkerIdleEvents(ctx)
 	if len(msg.msgs) != 0 {
 		t.Fatalf("delivered with no orchestrator: %d, want 0", len(msg.msgs))
 	}
 
 	// An orchestrator appears and the sweep delivers.
 	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
-	m.DispatchAllPending(ctx)
+	m.DispatchAllPendingWorkerIdleEvents(ctx)
 	if len(msg.ids) != 1 || msg.ids[0] != "mer-orch" {
 		t.Fatalf("sweep delivery = %v, want [mer-orch]", msg.ids)
 	}
 	// Delivered events are not redelivered on a later sweep.
-	m.DispatchAllPending(ctx)
+	m.DispatchAllPendingWorkerIdleEvents(ctx)
 	if len(msg.msgs) != 1 {
 		t.Fatalf("redelivered after mark: %d, want 1", len(msg.msgs))
+	}
+}
+
+// staleSnapshotStore returns an idle orchestrator from ListSessions (the
+// dispatcher's snapshot) while GetSession — the guard's just-in-time read at the
+// write boundary — reports it active. It reproduces the TOCTOU window where the
+// orchestrator starts a turn between the safety check and the write.
+type staleSnapshotStore struct {
+	*fakeStore
+	orchestrator domain.SessionID
+}
+
+func (s *staleSnapshotStore) GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
+	rec, ok, err := s.fakeStore.GetSession(ctx, id)
+	if ok && id == s.orchestrator {
+		rec.Activity.State = domain.ActivityActive
+	}
+	return rec, ok, err
+}
+
+func TestDispatch_SuppressesWhenOrchestratorGoesActiveBeforeWrite(t *testing.T) {
+	st := newFakeStore()
+	now := time.Now()
+	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Harness: domain.HarnessClaudeCode, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
+	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
+	st.idleEvents = []domain.WorkerIdleEvent{{ID: "wie_1", ProjectID: "mer", WorkerID: "mer-8", TransitionAt: now, CreatedAt: now}}
+
+	msg := &fakeMessenger{}
+	m := New(&staleSnapshotStore{fakeStore: st, orchestrator: "mer-orch"}, msg)
+
+	m.DispatchPendingWorkerIdleEvents(ctx, "mer")
+
+	if len(msg.msgs) != 0 {
+		t.Fatalf("wrote into an active non-steering orchestrator: %d, want 0", len(msg.msgs))
+	}
+	pending, _ := st.ListPendingWorkerIdleEventsByProject(ctx, "mer")
+	if len(pending) != 1 {
+		t.Fatalf("suppressed event not retained: pending = %d, want 1", len(pending))
+	}
+}
+
+func TestDispatch_SteerableHarnessStillDeliversWhenActiveAtWriteBoundary(t *testing.T) {
+	st := newFakeStore()
+	now := time.Now()
+	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Harness: domain.HarnessCodex, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
+	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
+	st.idleEvents = []domain.WorkerIdleEvent{{ID: "wie_1", ProjectID: "mer", WorkerID: "mer-8", TransitionAt: now, CreatedAt: now}}
+
+	msg := &fakeMessenger{}
+	m := New(&staleSnapshotStore{fakeStore: st, orchestrator: "mer-orch"}, msg,
+		WithActiveSteering(func(h domain.AgentHarness) bool { return h == domain.HarnessCodex }))
+
+	m.DispatchPendingWorkerIdleEvents(ctx, "mer")
+
+	if len(msg.ids) != 1 || msg.ids[0] != "mer-orch" {
+		t.Fatalf("steerable harness not delivered mid-turn: ids = %v", msg.ids)
+	}
+}
+
+// serializingStore makes the list->send->mark window wide and deterministic: the
+// first lister blocks until the second has also entered, so an unserialized
+// dispatcher would hand both the same pending row.
+type serializingStore struct {
+	*fakeStore
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (s *serializingStore) ListPendingWorkerIdleEventsByProject(ctx context.Context, project domain.ProjectID) ([]domain.WorkerIdleEvent, error) {
+	s.once.Do(func() {
+		close(s.entered)
+		<-s.release
+	})
+	return s.fakeStore.ListPendingWorkerIdleEventsByProject(ctx, project)
+}
+
+func TestDispatch_ConcurrentDispatchDeliversEventOnce(t *testing.T) {
+	st := newFakeStore()
+	now := time.Now()
+	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
+	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
+	st.idleEvents = []domain.WorkerIdleEvent{{ID: "wie_1", ProjectID: "mer", WorkerID: "mer-8", TransitionAt: now, CreatedAt: now}}
+
+	blocking := &serializingStore{fakeStore: st, entered: make(chan struct{}), release: make(chan struct{})}
+	msg := &lockedMessenger{}
+	m := New(blocking, msg)
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		m.DispatchPendingWorkerIdleEvents(ctx, "mer")
+	}()
+	<-blocking.entered
+	go func() {
+		defer wg.Done()
+		m.DispatchPendingWorkerIdleEvents(ctx, "mer")
+	}()
+	close(blocking.release)
+	wg.Wait()
+
+	if got := msg.count(); got != 1 {
+		t.Fatalf("concurrent dispatch delivered %d times, want 1", got)
+	}
+}
+
+func TestDispatch_WaitingInputAndTerminatedOrchestratorRetain(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		state      domain.ActivityState
+		terminated bool
+	}{
+		{"waiting_input", domain.ActivityWaitingInput, false},
+		{"blocked", domain.ActivityBlocked, false},
+		{"terminated", domain.ActivityIdle, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, st, msg := newManager()
+			now := time.Now()
+			st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, IsTerminated: tc.terminated, Activity: domain.Activity{State: tc.state, LastActivityAt: now}, FirstSignalAt: now}
+			st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
+			st.idleEvents = []domain.WorkerIdleEvent{{ID: "wie_1", ProjectID: "mer", WorkerID: "mer-8", TransitionAt: now, CreatedAt: now}}
+
+			m.DispatchPendingWorkerIdleEvents(ctx, "mer")
+
+			if len(msg.msgs) != 0 {
+				t.Fatalf("delivered to %s orchestrator: %d, want 0", tc.name, len(msg.msgs))
+			}
+			pending, _ := st.ListPendingWorkerIdleEventsByProject(ctx, "mer")
+			if len(pending) != 1 {
+				t.Fatalf("event not retained for %s: pending = %d, want 1", tc.name, len(pending))
+			}
+		})
+	}
+}
+
+func TestActivity_SteerableOrchestratorLeavingBlockedDispatches(t *testing.T) {
+	st := newFakeStore()
+	now := time.Now()
+	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Harness: domain.HarnessCodex, Activity: domain.Activity{State: domain.ActivityBlocked, LastActivityAt: now}, FirstSignalAt: now}
+	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
+	st.idleEvents = []domain.WorkerIdleEvent{{ID: "wie_1", ProjectID: "mer", WorkerID: "mer-8", TransitionAt: now, CreatedAt: now}}
+
+	msg := &fakeMessenger{}
+	m := New(st, msg, WithActiveSteering(func(h domain.AgentHarness) bool { return h == domain.HarnessCodex }))
+
+	// blocked -> active is deliverable for a steerable harness: no waiting on the sweep.
+	if err := m.ApplyActivitySignal(ctx, "mer-orch", ports.ActivitySignal{Valid: true, State: domain.ActivityActive}); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.ids) != 1 || msg.ids[0] != "mer-orch" {
+		t.Fatalf("blocked->active did not dispatch for steerable harness: ids = %v", msg.ids)
 	}
 }
 

@@ -50,10 +50,33 @@ const workerIdleSweepInterval = 2 * time.Minute
 // reaper. The goroutine stops when ctx is cancelled; Stop waits for it to drain.
 // The messenger is the per-daemon agent messenger the LCM uses to nudge agents
 // in response to SCM observations (CI failure, review feedback, merge conflict).
-func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runtime, messenger ports.AgentMessenger, notifier notificationSink, telemetry ports.EventSink, logger *slog.Logger) *lifecycleStack {
-	lcm := lifecycle.New(store, messenger, lifecycle.WithNotificationSink(notifier), lifecycle.WithTelemetry(telemetry))
+func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runtime, messenger ports.AgentMessenger, notifier notificationSink, telemetry ports.EventSink, agents ports.AgentResolver, logger *slog.Logger) *lifecycleStack {
+	lcm := lifecycle.New(store, messenger,
+		lifecycle.WithNotificationSink(notifier),
+		lifecycle.WithTelemetry(telemetry),
+		lifecycle.WithActiveSteering(activeTurnSteering(agents)),
+	)
 	rp := reaper.New(lcm, store, runtime, reaper.Config{Logger: logger})
 	return &lifecycleStack{LCM: lcm, reaperDone: rp.Start(ctx), sweepDone: startWorkerIdleSweep(ctx, lcm)}
+}
+
+// activeTurnSteering resolves the per-harness active-turn steering capability
+// from the agent adapters, so lifecycle policy consumes an adapter-declared
+// capability instead of knowing harness-specific terminal semantics. An
+// unresolvable harness, or one whose adapter does not declare the capability,
+// answers false.
+func activeTurnSteering(agents ports.AgentResolver) func(domain.AgentHarness) bool {
+	return func(harness domain.AgentHarness) bool {
+		if agents == nil {
+			return false
+		}
+		agent, ok := agents.Agent(harness)
+		if !ok {
+			return false
+		}
+		steerer, ok := agent.(ports.ActiveTurnSteerer)
+		return ok && steerer.SteersActiveTurn()
+	}
 }
 
 // startWorkerIdleSweep runs the low-frequency recovery sweep that redelivers
@@ -69,7 +92,7 @@ func startWorkerIdleSweep(ctx context.Context, lcm *lifecycle.Manager) <-chan st
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				lcm.DispatchAllPending(ctx)
+				lcm.DispatchAllPendingWorkerIdleEvents(ctx)
 			}
 		}
 	}()
@@ -109,15 +132,7 @@ type sessionLifecycle interface {
 // store + LCM, the per-session agent resolver, and the agent messenger. The
 // returned service is mounted at httpd APIDeps.Sessions. It also returns the
 // manager so the caller can wire Reconcile into the boot sequence.
-func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
-	defaultAgent := cfg.Agent
-	if defaultAgent == "" {
-		defaultAgent = config.DefaultAgent
-	}
-	agents, err := buildAgentResolver(defaultAgent, log)
-	if err != nil {
-		return nil, nil, nil, err
-	}
+func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, agents ports.AgentResolver, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
 	ws, err := gitworktree.New(gitworktree.Options{
 		// Per-session worktrees live under the data dir, so a single AO_DATA_DIR
 		// override moves all durable per-user state together.

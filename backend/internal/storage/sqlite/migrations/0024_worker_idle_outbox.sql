@@ -1,10 +1,13 @@
 -- +goose Up
 -- +goose StatementBegin
+-- Outbox of worker completions awaiting delivery to a project orchestrator.
+-- worker_id cascades deliberately: the event's only instruction is to inspect
+-- that worker, so deleting the worker makes an undelivered completion obsolete
+-- rather than something to keep retrying.
 CREATE TABLE worker_idle_events (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     worker_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-    kind TEXT NOT NULL DEFAULT 'worker_idle' CHECK (kind IN ('worker_idle')),
     transition_at TIMESTAMP NOT NULL,
     delivery_state TEXT NOT NULL DEFAULT 'pending' CHECK (delivery_state IN ('pending', 'delivered')),
     created_at TIMESTAMP NOT NULL,

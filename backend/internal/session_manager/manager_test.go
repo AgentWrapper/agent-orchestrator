@@ -160,7 +160,7 @@ func (l *fakeLCM) MarkTerminated(_ context.Context, id domain.SessionID) error {
 	l.store.sessions[id] = rec
 	return nil
 }
-func (l *fakeLCM) DispatchProject(_ context.Context, project domain.ProjectID) {
+func (l *fakeLCM) DispatchPendingWorkerIdleEvents(_ context.Context, project domain.ProjectID) {
 	l.dispatched = append(l.dispatched, project)
 }
 
@@ -2303,6 +2303,36 @@ func TestRestore_OrchestratorRederivesSystemPrompt(t *testing.T) {
 	wantPath := filepath.Join(dataDir, "prompts", "mer-1", "system.md")
 	if agent.lastRestore.SystemPromptFile != wantPath {
 		t.Fatalf("restore system prompt file = %q, want %q", agent.lastRestore.SystemPromptFile, wantPath)
+	}
+}
+
+func TestRestore_OrchestratorTriggersDispatch(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator, IsTerminated: true,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x"},
+	}
+	st.sessions["mer-2"] = domain.SessionRecord{
+		ID: "mer-2", ProjectID: "mer", Kind: domain.KindWorker, IsTerminated: true,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-2", Branch: "b", AgentSessionID: "agent-y"},
+	}
+	lcm := &fakeLCM{store: st}
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: &recordingAgent{}}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: lcm, DataDir: t.TempDir(), LookPath: func(string) (string, error) { return "/bin/true", nil }})
+
+	if _, err := m.Restore(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(lcm.dispatched) != 1 || lcm.dispatched[0] != "mer" {
+		t.Fatalf("orchestrator restore dispatched = %v, want [mer]", lcm.dispatched)
+	}
+
+	lcm.dispatched = nil
+	if _, err := m.Restore(ctx, "mer-2"); err != nil {
+		t.Fatal(err)
+	}
+	if len(lcm.dispatched) != 0 {
+		t.Fatalf("worker restore dispatched = %v, want none", lcm.dispatched)
 	}
 }
 

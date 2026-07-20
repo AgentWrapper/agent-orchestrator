@@ -209,7 +209,6 @@ type WorkerIdleEvent struct {
 	ID            string
 	ProjectID     domain.ProjectID
 	WorkerID      domain.SessionID
-	Kind          string
 	TransitionAt  time.Time
 	DeliveryState string
 	CreatedAt     time.Time

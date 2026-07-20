@@ -135,6 +135,33 @@ func TestWiring_AgentResolverResolvesRealAdapters(t *testing.T) {
 	}
 }
 
+// TestWiring_ActiveTurnSteeringComesFromAdapters asserts the active-turn
+// steering policy lifecycle consumes is resolved from the agent adapters
+// (ports.ActiveTurnSteerer) rather than from any harness knowledge baked into
+// the shared domain package. A harness whose adapter does not declare the
+// capability — and an unresolvable one — must answer false, so an unknown
+// harness is never written to mid-turn.
+func TestWiring_ActiveTurnSteeringComesFromAdapters(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	agents, err := buildAgentResolver(config.DefaultAgent, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	steers := activeTurnSteering(agents)
+
+	if !steers(domain.HarnessCodex) {
+		t.Error("codex declares SteersActiveTurn; want true from the adapter-backed policy")
+	}
+	for _, harness := range []domain.AgentHarness{domain.HarnessClaudeCode, domain.HarnessAider, "definitely-not-an-agent", ""} {
+		if steers(harness) {
+			t.Errorf("harness %q must not be steerable mid-turn", harness)
+		}
+	}
+	if activeTurnSteering(nil)(domain.HarnessCodex) {
+		t.Error("a nil resolver must answer false, not steer")
+	}
+}
+
 // TestWiring_StartSessionBuildsSessionService asserts the daemon's startSession
 // constructs a real controller-facing session service end to end (resolver +
 // gitworktree workspace + session manager over the shared store/LCM), which is
@@ -152,7 +179,11 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
 
 	rt := runtimeselect.New(nil)
 	messenger := newSessionMessenger(store, rt, log)
-	svc, reviewSvc, lc, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, log)
+	agents, err := buildAgentResolver(config.DefaultAgent, log)
+	if err != nil {
+		t.Fatalf("buildAgentResolver: %v", err)
+	}
+	svc, reviewSvc, lc, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -193,7 +224,11 @@ func TestStartSession_SpawnDoesNotPanicWhenNoTrackerToken(t *testing.T) {
 	cfg := config.Config{DataDir: t.TempDir()}
 	rt := runtimeselect.New(nil)
 	messenger := newSessionMessenger(store, rt, log)
-	svc, _, _, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, log)
+	agents, agentsErr := buildAgentResolver(config.DefaultAgent, log)
+	if agentsErr != nil {
+		t.Fatalf("buildAgentResolver: %v", agentsErr)
+	}
+	svc, _, _, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -222,7 +257,11 @@ func TestStartTrackerIntake_RunsEvenWithoutEnabledProjects(t *testing.T) {
 	cfg := config.Config{DataDir: t.TempDir()}
 	rt := runtimeselect.New(nil)
 	messenger := newSessionMessenger(store, rt, log)
-	svc, _, _, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, log)
+	agents, agentsErr := buildAgentResolver(config.DefaultAgent, log)
+	if agentsErr != nil {
+		t.Fatalf("buildAgentResolver: %v", agentsErr)
+	}
+	svc, _, _, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -413,7 +452,7 @@ func TestWiring_StartLifecycleThreadsMessengerIntoLCM(t *testing.T) {
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	messenger := &captureMessenger{}
-	stack := startLifecycle(ctx, store, tmux.New(tmux.Options{}), messenger, nil, nil, log)
+	stack := startLifecycle(ctx, store, tmux.New(tmux.Options{}), messenger, nil, nil, nil, log)
 	t.Cleanup(stack.Stop)
 	t.Cleanup(cancel)
 
