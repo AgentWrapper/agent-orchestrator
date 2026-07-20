@@ -1,0 +1,185 @@
+package vibe
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+)
+
+const (
+	vibeDirName       = ".vibe"
+	vibeHooksFileName = "hooks.toml"
+	vibeConfigName    = "config.toml"
+
+	vibeHooksSentinelStart = "# managed by agent-orchestrator: vibe hooks"
+	vibeHooksSentinelEnd   = "# /managed by agent-orchestrator: vibe hooks"
+)
+
+// GetAgentHooks installs Vibe callbacks that capture the native session id and
+// enables the interaction log that Vibe requires for --resume.
+func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfig) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(cfg.WorkspacePath) == "" {
+		return errors.New("vibe.GetAgentHooks: WorkspacePath is required")
+	}
+
+	dir := filepath.Join(cfg.WorkspacePath, vibeDirName)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return fmt.Errorf("vibe.GetAgentHooks: create config dir: %w", err)
+	}
+	if err := mergeVibeHooksFile(filepath.Join(dir, vibeHooksFileName)); err != nil {
+		return fmt.Errorf("vibe.GetAgentHooks: %w", err)
+	}
+	if err := enableVibeInteractionLogging(filepath.Join(dir, vibeConfigName)); err != nil {
+		return fmt.Errorf("vibe.GetAgentHooks: %w", err)
+	}
+	if err := hookutil.EnsureWorkspaceGitignore(dir, vibeHooksFileName, vibeConfigName); err != nil {
+		return fmt.Errorf("vibe.GetAgentHooks: gitignore: %w", err)
+	}
+	return nil
+}
+
+// UninstallHooks removes only AO's managed Vibe hook block. Interaction
+// logging remains enabled because the prior user value is not recoverable.
+func (p *Plugin) UninstallHooks(ctx context.Context, workspacePath string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(workspacePath) == "" {
+		return errors.New("vibe.UninstallHooks: workspacePath is required")
+	}
+	path := filepath.Join(workspacePath, vibeDirName, vibeHooksFileName)
+	data, err := os.ReadFile(path) //nolint:gosec // workspace-local adapter config
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("vibe.UninstallHooks: read %s: %w", path, err)
+	}
+	body := replaceVibeManagedBlock(string(data), "")
+	if err := hookutil.AtomicWriteFile(path, []byte(body), 0o600); err != nil {
+		return fmt.Errorf("vibe.UninstallHooks: write %s: %w", path, err)
+	}
+	return nil
+}
+
+// AreHooksInstalled reports whether AO's managed Vibe hook block is present.
+func (p *Plugin) AreHooksInstalled(ctx context.Context, workspacePath string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if strings.TrimSpace(workspacePath) == "" {
+		return false, errors.New("vibe.AreHooksInstalled: workspacePath is required")
+	}
+	path := filepath.Join(workspacePath, vibeDirName, vibeHooksFileName)
+	data, err := os.ReadFile(path) //nolint:gosec // workspace-local adapter config
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("vibe.AreHooksInstalled: read %s: %w", path, err)
+	}
+	return strings.Contains(string(data), vibeHooksSentinelStart), nil
+}
+
+func mergeVibeHooksFile(path string) error {
+	data, err := os.ReadFile(path) //nolint:gosec // workspace-local adapter config
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	body := replaceVibeManagedBlock(string(data), vibeHooksBlock())
+	if err := hookutil.AtomicWriteFile(path, []byte(body), 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
+}
+
+func vibeHooksBlock() string {
+	return vibeHooksSentinelStart + "\n\n" +
+		vibeHookEntry("ao-session-metadata", "post_agent", "", "ao hooks vibe post-agent") +
+		vibeHookEntry("ao-pre-tool", "pre_tool", "*", "ao hooks vibe pre-tool") +
+		vibeHookEntry("ao-post-tool", "post_tool", "*", "ao hooks vibe post-tool") +
+		vibeHooksSentinelEnd + "\n"
+}
+
+func vibeHookEntry(name, hookType, match, command string) string {
+	var b strings.Builder
+	b.WriteString("[[hooks]]\n")
+	fmt.Fprintf(&b, "name = %q\n", name)
+	fmt.Fprintf(&b, "type = %q\n", hookType)
+	if match != "" {
+		fmt.Fprintf(&b, "match = %q\n", match)
+	}
+	fmt.Fprintf(&b, "command = %q\n", command)
+	b.WriteString("timeout = 30.0\n\n")
+	return b.String()
+}
+
+func replaceVibeManagedBlock(existing, block string) string {
+	start := strings.Index(existing, vibeHooksSentinelStart)
+	if start < 0 {
+		return joinVibeTOML(existing, block, "")
+	}
+	afterStart := existing[start+len(vibeHooksSentinelStart):]
+	endRel := strings.Index(afterStart, vibeHooksSentinelEnd)
+	if endRel < 0 {
+		return joinVibeTOML(existing[:start], block, "")
+	}
+	end := start + len(vibeHooksSentinelStart) + endRel + len(vibeHooksSentinelEnd)
+	return joinVibeTOML(existing[:start], block, existing[end:])
+}
+
+func joinVibeTOML(prefix, block, suffix string) string {
+	var b strings.Builder
+	prefix = strings.TrimRight(prefix, "\n")
+	if prefix != "" {
+		b.WriteString(prefix)
+		b.WriteString("\n\n")
+	}
+	b.WriteString(block)
+	suffix = strings.TrimLeft(suffix, "\n")
+	if suffix != "" {
+		b.WriteString("\n")
+		b.WriteString(suffix)
+	}
+	return b.String()
+}
+
+func enableVibeInteractionLogging(path string) error {
+	data, err := os.ReadFile(path) //nolint:gosec // workspace-local adapter config
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	body := setVibeTopLevelLogging(string(data))
+	if err := hookutil.AtomicWriteFile(path, []byte(body), 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
+}
+
+func setVibeTopLevelLogging(existing string) string {
+	lines := strings.Split(existing, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") {
+			break
+		}
+		if key, _, found := strings.Cut(trimmed, "="); found && strings.TrimSpace(key) == "log_interactions" {
+			lines[i] = "log_interactions = true"
+			return strings.TrimRight(strings.Join(lines, "\n"), "\n") + "\n"
+		}
+	}
+	base := strings.TrimRight(existing, "\n")
+	if base == "" {
+		return "log_interactions = true\n"
+	}
+	return "log_interactions = true\n\n" + base + "\n"
+}
