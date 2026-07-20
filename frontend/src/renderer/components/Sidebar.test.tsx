@@ -258,7 +258,7 @@ describe("Sidebar", () => {
 			view.rerenderWorkspaces([{ ...workspace, sessions: [terminalSession] }]);
 		});
 
-		expect(screen.getByText("fix login")).toBeInTheDocument();
+		expect(screen.queryByText("fix login")).not.toBeInTheDocument();
 		expect(screen.getByText("Terminated")).toBeInTheDocument();
 
 		act(() => {

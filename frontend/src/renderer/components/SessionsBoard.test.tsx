@@ -436,7 +436,7 @@ describe("SessionsBoard", () => {
 			</QueryClientProvider>,
 		);
 
-		expect(screen.getByText("merge ready task")).toBeInTheDocument();
+		expect(screen.queryByText("merge ready task")).not.toBeInTheDocument();
 		expect(screen.getByText("Terminated")).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: /done \/ terminated/i })).not.toBeInTheDocument();
 
