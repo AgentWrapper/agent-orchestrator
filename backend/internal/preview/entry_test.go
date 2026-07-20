@@ -1,6 +1,7 @@
 package preview
 
 import (
+	"errors"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -109,6 +110,14 @@ func TestDiscoverEntryEmptyWorkspace(t *testing.T) {
 	}
 }
 
+func TestCleanWorkspacePathRejectsTraversal(t *testing.T) {
+	for _, raw := range []string{"../secret.html", "assets/../../secret.html", `assets\..\..\secret.html`} {
+		if got, ok := CleanWorkspacePath(raw); ok {
+			t.Errorf("CleanWorkspacePath(%q) = %q, true; want false", raw, got)
+		}
+	}
+}
+
 func TestIsMarkdownPath(t *testing.T) {
 	cases := map[string]bool{
 		"a.md":       true,
@@ -127,7 +136,7 @@ func TestIsMarkdownPath(t *testing.T) {
 
 func TestFileURLUsesIsolatedLocalhostOrigin(t *testing.T) {
 	id := domain.SessionID("ao-1")
-	raw := FileURL("http://127.0.0.1:3001", id, "dist/index.html")
+	raw := mustFileURL(t, "http://127.0.0.1:3001", id, "dist/index.html")
 	parsed, err := url.Parse(raw)
 	if err != nil {
 		t.Fatalf("parse FileURL: %v", err)
@@ -149,7 +158,7 @@ func TestFileURLUsesIsolatedLocalhostOrigin(t *testing.T) {
 
 func TestSessionIDFromHostSupportsLongUnicodeIDs(t *testing.T) {
 	id := domain.SessionID(strings.Repeat("worker-", 12) + "雪")
-	raw := FileURL("http://localhost:4321", id, "index.html")
+	raw := mustFileURL(t, "http://localhost:4321", id, "index.html")
 	parsed, err := url.Parse(raw)
 	if err != nil {
 		t.Fatalf("parse FileURL: %v", err)
@@ -166,7 +175,7 @@ func TestSessionIDFromHostSupportsLongUnicodeIDs(t *testing.T) {
 }
 
 func TestFileURLPreservesSpecialCharactersInEntryPath(t *testing.T) {
-	raw := FileURL("http://127.0.0.1:3001", "ao-1", "dist/my report #1.html")
+	raw := mustFileURL(t, "http://127.0.0.1:3001", "ao-1", "dist/my report #1.html")
 	parsed, err := url.Parse(raw)
 	if err != nil {
 		t.Fatalf("parse FileURL: %v", err)
@@ -177,6 +186,72 @@ func TestFileURLPreservesSpecialCharactersInEntryPath(t *testing.T) {
 	if strings.Contains(raw, "%2520") || strings.Contains(raw, "%2523") {
 		t.Fatalf("FileURL = %q, path was double-escaped", raw)
 	}
+}
+
+func TestFileURLPreservesLeadingAndTrailingSpacesInEntryPath(t *testing.T) {
+	raw := mustFileURL(t, "http://127.0.0.1:3001", "ao-1", "dist/ report.html ")
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse FileURL: %v", err)
+	}
+	if parsed.Path != "/dist/ report.html " {
+		t.Fatalf("FileURL path = %q, want exact filename spaces preserved", parsed.Path)
+	}
+}
+
+func TestFileURLRejectsHostnameOverDNSLimit(t *testing.T) {
+	accepted := domain.SessionID(strings.Repeat("x", 142))
+	raw := mustFileURL(t, "http://127.0.0.1:3001", accepted, "index.html")
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse boundary FileURL: %v", err)
+	}
+	if len(parsed.Hostname()) != 253 {
+		t.Fatalf("boundary hostname length = %d, want 253", len(parsed.Hostname()))
+	}
+	if decoded, ok := SessionIDFromHost(parsed.Host); !ok || decoded != accepted {
+		t.Fatalf("boundary hostname round trip = %q, %v; want %q, true", decoded, ok, accepted)
+	}
+
+	_, err = FileURL("http://127.0.0.1:3001", domain.SessionID(strings.Repeat("x", 143)), "index.html")
+	if !errors.Is(err, ErrPreviewHostUnsupported) {
+		t.Fatalf("FileURL error = %v, want ErrPreviewHostUnsupported", err)
+	}
+}
+
+func TestSessionIDFromHostRejectsHostnameOverDNSLimit(t *testing.T) {
+	host := "ao-preview." + strings.Repeat("a.", 120) + "localhost:3001"
+	if id, ok := SessionIDFromHost(host); ok {
+		t.Fatalf("SessionIDFromHost(overlong) = %q, true; want false", id)
+	}
+}
+
+func TestStoredWorkspaceEntryPreservesLegacyAndRelativeTargets(t *testing.T) {
+	for _, tc := range []struct {
+		raw  string
+		want string
+	}{
+		{raw: "http://127.0.0.1:3001/api/v1/sessions/ao-1/preview/files/docs/report.html", want: "docs/report.html"},
+		{raw: "docs/report.html", want: "docs/report.html"},
+		{raw: " docs/report.html ", want: " docs/report.html "},
+	} {
+		got, ok := StoredWorkspaceEntry(tc.raw, "ao-1")
+		if !ok || got != tc.want {
+			t.Errorf("StoredWorkspaceEntry(%q) = %q, %v; want %q, true", tc.raw, got, ok, tc.want)
+		}
+	}
+	if got, ok := StoredWorkspaceEntry("https://example.com/api/v1/sessions/ao-1/preview/files/docs/report.html", "ao-1"); ok {
+		t.Fatalf("external lookalike URL = %q, true; want false", got)
+	}
+}
+
+func mustFileURL(t *testing.T, baseURL string, id domain.SessionID, entry string) string {
+	t.Helper()
+	raw, err := FileURL(baseURL, id, entry)
+	if err != nil {
+		t.Fatalf("FileURL: %v", err)
+	}
+	return raw
 }
 
 func TestSessionIDFromHostRejectsOrdinaryHosts(t *testing.T) {

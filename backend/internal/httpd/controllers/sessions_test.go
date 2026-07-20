@@ -19,6 +19,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	previewutil "github.com/aoagents/agent-orchestrator/backend/internal/preview"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 )
 
@@ -254,12 +255,16 @@ func newSessionTestServer(t *testing.T, svc *fakeSessionService) *httptest.Serve
 }
 
 func doPreviewOriginRequest(t *testing.T, srv *httptest.Server, previewURL, requestPath string) ([]byte, int, http.Header) {
+	return doPreviewOriginMethod(t, srv, http.MethodGet, previewURL, requestPath)
+}
+
+func doPreviewOriginMethod(t *testing.T, srv *httptest.Server, method, previewURL, requestPath string) ([]byte, int, http.Header) {
 	t.Helper()
 	preview, err := url.Parse(previewURL)
 	if err != nil {
 		t.Fatalf("parse preview URL: %v", err)
 	}
-	req, err := http.NewRequest(http.MethodGet, srv.URL+requestPath, nil)
+	req, err := http.NewRequest(method, srv.URL+requestPath, nil)
 	if err != nil {
 		t.Fatalf("new preview request: %v", err)
 	}
@@ -435,6 +440,20 @@ func TestSessionsAPI_PreviewDiscoversAndServesStaticIndex(t *testing.T) {
 	if !strings.Contains(string(body), "styles.css") {
 		t.Fatalf("preview body did not serve index: %s", body)
 	}
+}
+
+func TestSessionsAPI_PreviewRejectsSessionIDTooLongForHostname(t *testing.T) {
+	svc := newFakeSessionService()
+	id := domain.SessionID(strings.Repeat("x", 143))
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "index.html"), []byte("preview"), 0o644); err != nil {
+		t.Fatalf("write index: %v", err)
+	}
+	svc.sessions[id] = domain.Session{SessionRecord: domain.SessionRecord{ID: id, Kind: domain.KindWorker, Metadata: domain.SessionMetadata{WorkspacePath: workspace}}}
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, http.MethodGet, "/api/v1/sessions/"+string(id)+"/preview", "")
+	assertErrorCode(t, body, status, http.StatusUnprocessableEntity, "PREVIEW_SESSION_ID_UNSUPPORTED")
 }
 
 func TestSessionsAPI_SetPreviewExplicitURLPersists(t *testing.T) {
@@ -668,6 +687,110 @@ func TestSessionsAPI_PreviewOriginResolvesRootRelativeAssetsFromEntryDirectory(t
 	if legacyStatus != http.StatusOK || !strings.Contains(string(legacyBody), "/fonts/app.woff2") {
 		t.Fatalf("legacy preview route = %d, body=%q; want existing file response", legacyStatus, legacyBody)
 	}
+}
+
+func TestSessionsAPI_PreviewOriginErrorContract(t *testing.T) {
+	svc := newFakeSessionService()
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "index.html"), []byte("preview"), 0o644); err != nil {
+		t.Fatalf("write index: %v", err)
+	}
+	s := svc.sessions["ao-1"]
+	s.Metadata = domain.SessionMetadata{WorkspacePath: workspace}
+	svc.sessions["ao-1"] = s
+	srv := newSessionTestServer(t, svc)
+	validURL := mustPreviewFileURL(t, srv, "ao-1", "index.html")
+
+	tests := []struct {
+		name       string
+		method     string
+		previewURL string
+		path       string
+		wantStatus int
+		wantCode   string
+		wantAllow  string
+	}{
+		{name: "method", method: http.MethodPost, previewURL: validURL, path: "/", wantStatus: http.StatusMethodNotAllowed, wantCode: "METHOD_NOT_ALLOWED", wantAllow: "GET, HEAD"},
+		{name: "unknown session", method: http.MethodGet, previewURL: mustPreviewFileURL(t, srv, "ao-missing", "index.html"), path: "/", wantStatus: http.StatusNotFound, wantCode: "SESSION_NOT_FOUND"},
+		{name: "missing asset", method: http.MethodGet, previewURL: validURL, path: "/missing.css", wantStatus: http.StatusNotFound, wantCode: "PREVIEW_FILE_NOT_FOUND"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body, status, headers := doPreviewOriginMethod(t, srv, tc.method, tc.previewURL, tc.path)
+			if status != tc.wantStatus {
+				t.Fatalf("status = %d, want %d; body=%s", status, tc.wantStatus, body)
+			}
+			if got := headers.Get("Allow"); got != tc.wantAllow {
+				t.Fatalf("Allow = %q, want %q", got, tc.wantAllow)
+			}
+			var got struct {
+				Code      string `json:"code"`
+				RequestID string `json:"requestId"`
+			}
+			mustJSON(t, body, &got)
+			if got.Code != tc.wantCode || got.RequestID == "" {
+				t.Fatalf("error = %#v, want code %q and requestId", got, tc.wantCode)
+			}
+		})
+	}
+
+	empty := t.TempDir()
+	s = svc.sessions["ao-1"]
+	s.Metadata = domain.SessionMetadata{WorkspacePath: empty}
+	svc.sessions["ao-1"] = s
+	body, status, _ := doPreviewOriginRequest(t, srv, validURL, "/")
+	assertErrorCode(t, body, status, http.StatusNotFound, "NO_PREVIEW_ENTRY")
+}
+
+func TestSessionsAPI_PreviewRoutesRejectSymlinkOutsideWorkspace(t *testing.T) {
+	workspace := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "secret.css")
+	if err := os.WriteFile(filepath.Join(workspace, "index.html"), []byte("preview"), 0o644); err != nil {
+		t.Fatalf("write index: %v", err)
+	}
+	if err := os.WriteFile(outside, []byte("must-not-leak"), 0o644); err != nil {
+		t.Fatalf("write outside file: %v", err)
+	}
+	link := filepath.Join(workspace, "escape.css")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks unavailable on this platform: %v", err)
+	}
+
+	svc := newFakeSessionService()
+	s := svc.sessions["ao-1"]
+	s.Metadata = domain.SessionMetadata{WorkspacePath: workspace}
+	svc.sessions["ao-1"] = s
+	srv := newSessionTestServer(t, svc)
+	previewURL := mustPreviewFileURL(t, srv, "ao-1", "index.html")
+
+	for _, tc := range []struct {
+		name string
+		do   func() ([]byte, int, http.Header)
+	}{
+		{name: "isolated origin", do: func() ([]byte, int, http.Header) {
+			return doPreviewOriginRequest(t, srv, previewURL, "/escape.css")
+		}},
+		{name: "legacy route", do: func() ([]byte, int, http.Header) {
+			return doRequest(t, srv, http.MethodGet, "/api/v1/sessions/ao-1/preview/files/escape.css", "")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body, status, _ := tc.do()
+			assertErrorCode(t, body, status, http.StatusNotFound, "PREVIEW_FILE_NOT_FOUND")
+			if strings.Contains(string(body), "must-not-leak") {
+				t.Fatalf("response leaked file outside workspace: %s", body)
+			}
+		})
+	}
+}
+
+func mustPreviewFileURL(t *testing.T, srv *httptest.Server, id domain.SessionID, entry string) string {
+	t.Helper()
+	raw, err := previewutil.FileURL(srv.URL, id, entry)
+	if err != nil {
+		t.Fatalf("FileURL: %v", err)
+	}
+	return raw
 }
 
 func TestSessionsAPI_PreviewOriginsIsolateConcurrentSessionsAndSurviveRouterRestart(t *testing.T) {

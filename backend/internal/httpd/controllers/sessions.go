@@ -3,6 +3,7 @@ package controllers
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -173,7 +174,11 @@ func (c *SessionsController) preview(w http.ResponseWriter, r *http.Request) {
 	res := SessionPreviewResponse{SessionID: sessionID(r)}
 	if ok {
 		res.Entry = entry
-		res.PreviewURL = previewFileURL(r, sessionID(r), entry)
+		res.PreviewURL, err = previewFileURL(r, sessionID(r), entry)
+		if err != nil {
+			writePreviewResolveError(w, r, err)
+			return
+		}
 	}
 	envelope.WriteJSON(w, http.StatusOK, res)
 }
@@ -188,16 +193,7 @@ func (c *SessionsController) previewFile(w http.ResponseWriter, r *http.Request)
 		envelope.WriteError(w, r, err)
 		return
 	}
-	file, ok := confinedPreviewPath(sess.Metadata.WorkspacePath, chi.URLParam(r, "*"))
-	if !ok {
-		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PREVIEW_FILE_NOT_FOUND", "Preview file not found", nil)
-		return
-	}
-	if previewutil.IsMarkdownPath(file) {
-		c.servePreviewMarkdown(w, r, file)
-		return
-	}
-	http.ServeFile(w, r, file)
+	c.serveWorkspacePreviewFile(w, r, sess.Metadata.WorkspacePath, chi.URLParam(r, "*"))
 }
 
 // PreviewOrigin serves a workspace preview from its isolated *.localhost
@@ -234,32 +230,14 @@ func (c *SessionsController) PreviewOrigin(w http.ResponseWriter, r *http.Reques
 		return true
 	}
 	asset := previewOriginAssetPath(entry, r.URL.Path)
-	file, ok := confinedPreviewPath(sess.Metadata.WorkspacePath, asset)
-	if !ok {
-		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PREVIEW_FILE_NOT_FOUND", "Preview file not found", nil)
-		return true
-	}
-	if info, statErr := os.Stat(file); statErr != nil || info.IsDir() {
-		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PREVIEW_FILE_NOT_FOUND", "Preview file not found", nil)
-		return true
-	}
-	if previewutil.IsMarkdownPath(file) {
-		c.servePreviewMarkdown(w, r, file)
-		return true
-	}
-	http.ServeFile(w, r, file)
+	c.serveWorkspacePreviewFile(w, r, sess.Metadata.WorkspacePath, asset)
 	return true
 }
 
 func previewOriginEntry(sess domain.Session) (string, bool) {
-	if parsed, err := url.Parse(strings.TrimSpace(sess.Metadata.PreviewURL)); err == nil {
-		if id, ok := previewutil.SessionIDFromHost(parsed.Host); ok && id == sess.ID {
-			entry := strings.TrimPrefix(path.Clean("/"+parsed.Path), "/")
-			if file, confined := confinedPreviewPath(sess.Metadata.WorkspacePath, entry); confined {
-				if info, statErr := os.Stat(file); statErr == nil && !info.IsDir() {
-					return entry, true
-				}
-			}
+	if entry, ok := previewutil.StoredWorkspaceEntry(sess.Metadata.PreviewURL, sess.ID); ok {
+		if stored, exists := previewutil.EntryAtPath(sess.Metadata.WorkspacePath, entry); exists {
+			return stored.Path, true
 		}
 	}
 	return discoverPreviewEntry(sess.Metadata.WorkspacePath)
@@ -281,23 +259,35 @@ func previewOriginAssetPath(entry, requestPath string) string {
 	return path.Join(root, requested)
 }
 
-// servePreviewMarkdown renders a workspace Markdown file to a self-contained
-// HTML document so the browser panel displays formatted content instead of raw
-// source.
-func (c *SessionsController) servePreviewMarkdown(w http.ResponseWriter, r *http.Request, file string) {
-	source, err := os.ReadFile(file)
+// serveWorkspacePreviewFile is the single serving path for both the legacy API
+// route and isolated preview origins. OpenRoot keeps symlink traversal and the
+// subsequent read on the same workspace-confined file handle.
+func (c *SessionsController) serveWorkspacePreviewFile(w http.ResponseWriter, r *http.Request, workspacePath, assetPath string) {
+	file, info, clean, err := previewutil.OpenWorkspaceFile(workspacePath, assetPath)
 	if err != nil {
 		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PREVIEW_FILE_NOT_FOUND", "Preview file not found", nil)
 		return
 	}
-	rendered, err := previewutil.RenderMarkdown(source, filepath.Base(file))
+	defer func() { _ = file.Close() }()
+	if !previewutil.IsMarkdownPath(clean) {
+		http.ServeContent(w, r, info.Name(), info.ModTime(), file)
+		return
+	}
+
+	source, err := io.ReadAll(file)
+	if err != nil {
+		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PREVIEW_FILE_NOT_FOUND", "Preview file not found", nil)
+		return
+	}
+	rendered, err := previewutil.RenderMarkdown(source, filepath.Base(clean))
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-
-	_, _ = w.Write(rendered) //nolint:gosec // G705: preview content is workspace-local and agent-trusted
+	if r.Method != http.MethodHead {
+		_, _ = w.Write(rendered) //nolint:gosec // G705: preview content is workspace-local and agent-trusted
+	}
 }
 
 func (c *SessionsController) listWorkspaceFiles(w http.ResponseWriter, r *http.Request) {
@@ -365,7 +355,11 @@ func (c *SessionsController) setPreview(w http.ResponseWriter, r *http.Request) 
 	previewURL := strings.TrimSpace(in.URL)
 	if previewURL == "" {
 		if entry, ok := discoverPreviewEntry(sess.Metadata.WorkspacePath); ok {
-			previewURL = previewFileURL(r, sessionID(r), entry)
+			previewURL, err = previewFileURL(r, sessionID(r), entry)
+			if err != nil {
+				writePreviewResolveError(w, r, err)
+				return
+			}
 		} else if existing := strings.TrimSpace(sess.Metadata.PreviewURL); existing != "" {
 			var resolveErr error
 			previewURL, resolveErr = resolvePreviewTarget(r, sessionID(r), sess.Metadata.WorkspacePath, existing)
@@ -746,21 +740,16 @@ func discoverPreviewEntry(workspacePath string) (string, bool) {
 // that already looks like a URL (an http(s)/file scheme, or a host:port dev
 // server) and for paths that escape the workspace or do not point at a file, so
 // the caller keeps those targets verbatim.
-func resolveLocalPreview(r *http.Request, id domain.SessionID, workspacePath, raw string) (string, bool) {
-	raw = strings.TrimSpace(raw)
+func resolveLocalPreview(r *http.Request, id domain.SessionID, workspacePath, raw string) (string, bool, error) {
 	if raw == "" || hasURLScheme(raw) {
-		return "", false
+		return "", false, nil
 	}
-	file, ok := confinedPreviewPath(workspacePath, raw)
+	entry, ok := previewutil.EntryAtPath(workspacePath, raw)
 	if !ok {
-		return "", false
+		return "", false, nil
 	}
-	info, err := os.Stat(file)
-	if err != nil || info.IsDir() {
-		return "", false
-	}
-	entry := strings.TrimPrefix(path.Clean("/"+raw), "/")
-	return previewFileURL(r, id, entry), true
+	resolved, err := previewFileURL(r, id, entry.Path)
+	return resolved, true, err
 }
 
 func resolvePreviewTarget(r *http.Request, id domain.SessionID, workspacePath, raw string) (string, error) {
@@ -768,8 +757,8 @@ func resolvePreviewTarget(r *http.Request, id domain.SessionID, workspacePath, r
 	if isAbsolutePreviewPath(raw) {
 		return absolutePreviewFileURL(raw)
 	}
-	if resolved, ok := resolveLocalPreview(r, id, workspacePath, raw); ok {
-		return resolved, nil
+	if resolved, ok, err := resolveLocalPreview(r, id, workspacePath, raw); ok || err != nil {
+		return resolved, err
 	}
 	return raw, nil
 }
@@ -803,6 +792,10 @@ func writePreviewResolveError(w http.ResponseWriter, r *http.Request, err error)
 		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PREVIEW_FILE_NOT_FOUND", "Preview file not found", nil)
 		return
 	}
+	if errors.Is(err, previewutil.ErrPreviewHostUnsupported) {
+		envelope.WriteAPIError(w, r, http.StatusUnprocessableEntity, "unprocessable", "PREVIEW_SESSION_ID_UNSUPPORTED", "Session ID is too long for an isolated preview hostname", nil)
+		return
+	}
 	envelope.WriteError(w, r, err)
 }
 
@@ -824,11 +817,7 @@ func hasURLScheme(raw string) bool {
 	return false
 }
 
-func confinedPreviewPath(workspacePath, assetPath string) (string, bool) {
-	return previewutil.ConfinedPath(workspacePath, assetPath)
-}
-
-func previewFileURL(r *http.Request, id domain.SessionID, entry string) string {
+func previewFileURL(r *http.Request, id domain.SessionID, entry string) (string, error) {
 	return previewutil.FileURL("http://"+r.Host, id, entry)
 }
 
