@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { SETTINGS_SOCIAL_LINKS } from "../lib/social-links";
+// import { SETTINGS_SOCIAL_LINKS } from "../lib/social-links";
 import { GlobalSettingsForm } from "./GlobalSettingsForm";
 
 const {
@@ -92,10 +92,11 @@ describe("GlobalSettingsForm", () => {
 		expect(screen.getByText("General")).toBeInTheDocument();
 		expect(screen.getByText("Updates")).toBeInTheDocument();
 		expect(screen.getByText("Get help")).toBeInTheDocument();
-		expect(screen.getByText("CONNECT WITH US")).toBeInTheDocument();
-		for (const { label } of SETTINGS_SOCIAL_LINKS) {
-			expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
-		}
+		// Connect with us — temporarily disabled
+		// expect(screen.getByText("CONNECT WITH US")).toBeInTheDocument();
+		// for (const { label } of SETTINGS_SOCIAL_LINKS) {
+		// 	expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
+		// }
 		expect(screen.queryByText("More settings below...")).not.toBeInTheDocument();
 	});
 
@@ -190,21 +191,19 @@ describe("GlobalSettingsForm", () => {
 
 		await user.type(screen.getByLabelText("Title"), "Create project fails in /Users/alice/private-repo");
 		await user.type(
-			screen.getByLabelText("Brief"),
+			screen.getByLabelText("What happened?"),
 			"Open http://127.0.0.1:5173/projects/demo?access_token=local-secret and click Create. Show a clear prerequisite error.",
 		);
 		expect(screen.queryByRole("combobox", { name: "Report type" })).not.toBeInTheDocument();
 		expect(screen.queryByLabelText("Include safe diagnostics")).not.toBeInTheDocument();
 		expect(screen.queryByLabelText("Expected behavior")).not.toBeInTheDocument();
-		const destinationButton = screen.getByRole("button", { name: "Report destination" });
-		expect(destinationButton).toHaveTextContent("GitHub");
-		await user.click(destinationButton);
-		await user.click(await screen.findByRole("menuitem", { name: "GitHub" }));
+		expect(screen.getByRole("radiogroup", { name: "Report destination" })).toBeInTheDocument();
+		expect(screen.getByRole("radio", { name: "GitHub" })).toHaveAttribute("aria-checked", "true");
 		expect(screen.queryByLabelText("Report preview")).not.toBeInTheDocument();
 
-		expect(screen.getByRole("button", { name: /copy and raise github issue/i })).toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: /copy and open email/i })).not.toBeInTheDocument();
-		await user.click(screen.getByRole("button", { name: /copy and raise github issue/i }));
+		expect(screen.getByRole("button", { name: /copy & create github issue/i })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /copy & open email/i })).not.toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: /copy & create github issue/i }));
 
 		await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
 		const copied = writeText.mock.calls[0][0] as string;
@@ -222,7 +221,7 @@ describe("GlobalSettingsForm", () => {
 		);
 		expect(open).not.toHaveBeenCalled();
 		expect(screen.getByLabelText("Title")).toHaveValue("");
-		expect(screen.getByLabelText("Brief")).toHaveValue("");
+		expect(screen.getByLabelText("What happened?")).toHaveValue("");
 	});
 
 	it("opens Discord with an official invite and email with the support mailbox", async () => {
@@ -236,21 +235,19 @@ describe("GlobalSettingsForm", () => {
 		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
 		await user.type(screen.getByLabelText("Title"), "Need help with setup");
 
-		await user.click(screen.getByRole("button", { name: "Report destination" }));
-		await user.click(await screen.findByRole("menuitem", { name: "Discord" }));
-		expect(screen.getByRole("button", { name: /copy and open discord/i })).toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: /copy and open email/i })).not.toBeInTheDocument();
-		await user.click(screen.getByRole("button", { name: /copy and open discord/i }));
+		await user.click(screen.getByRole("radio", { name: "Discord" }));
+		expect(screen.getByRole("button", { name: /copy & open discord/i })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /copy & open email/i })).not.toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: /copy & open discord/i }));
 		await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
 		expect(writeText.mock.calls[0][0]).toContain("**AO feedback**");
 		expect(screen.getByText("Discord draft copied.")).toBeInTheDocument();
 
-		await user.click(screen.getByRole("button", { name: "Report destination" }));
-		await user.click(await screen.findByRole("menuitem", { name: "Email" }));
-		expect(screen.getByRole("button", { name: /copy and open email/i })).toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: /copy and open discord/i })).not.toBeInTheDocument();
+		await user.click(screen.getByRole("radio", { name: "Email" }));
+		expect(screen.getByRole("button", { name: /copy & open email/i })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /copy & open discord/i })).not.toBeInTheDocument();
 		expect(screen.queryByText("Discord draft copied.")).not.toBeInTheDocument();
-		await user.click(screen.getByRole("button", { name: /copy and open email/i }));
+		await user.click(screen.getByRole("button", { name: /copy & open email/i }));
 
 		await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
 		expect(writeText.mock.calls[0][0]).toContain("Daemon: unknown");
@@ -269,7 +266,7 @@ describe("GlobalSettingsForm", () => {
 		await user.click(await screen.findByRole("button", { name: "Feedback" }));
 		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
 		await user.type(screen.getByLabelText("Title"), "Sensitive setup problem");
-		await user.type(screen.getByLabelText("Brief"), `Token is ${githubToken}`);
+		await user.type(screen.getByLabelText("What happened?"), `Token is ${githubToken}`);
 
 		await user.click(screen.getByRole("button", { name: "Close report dialog" }));
 		await waitFor(() => expect(screen.queryByRole("dialog", { name: "Report a problem" })).not.toBeInTheDocument());
@@ -277,19 +274,19 @@ describe("GlobalSettingsForm", () => {
 		await user.click(await screen.findByRole("button", { name: "Feedback" }));
 		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
 		expect(screen.getByLabelText("Title")).toHaveValue("");
-		expect(screen.getByLabelText("Brief")).toHaveValue("");
+		expect(screen.getByLabelText("What happened?")).toHaveValue("");
 	});
 
-	it("keeps the report form to title and brief while tailoring placeholder guidance", async () => {
+	it("keeps the report form to title and details while tailoring placeholder guidance", async () => {
 		const user = userEvent.setup();
 		renderForm();
 
 		await user.click(await screen.findByRole("button", { name: "Feedback" }));
 		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
-		expect(screen.getByLabelText("Title")).toHaveAttribute("placeholder", "Brief title");
-		expect(screen.getByLabelText("Brief")).toHaveAttribute(
+		expect(screen.getByLabelText("Title")).toHaveAttribute("placeholder", "Brief Title");
+		expect(screen.getByLabelText("What happened?")).toHaveAttribute(
 			"placeholder",
-			"Share what happened, what you expected, and how to reproduce it.",
+			"Include what you expected and the steps to reproduce.",
 		);
 		expect(screen.queryByLabelText("Expected behavior")).not.toBeInTheDocument();
 		expect(screen.queryByRole("combobox", { name: "Report type" })).not.toBeInTheDocument();

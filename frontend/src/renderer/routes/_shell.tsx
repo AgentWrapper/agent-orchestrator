@@ -353,9 +353,7 @@ function ShellLayout() {
             sidebar must hang below that strip on those platforms. Linux only
             offsets under the topbar on session routes. */}
 					<Sidebar
-						underTopbar={
-							isMac || isWindows || (!isSettingsRoute && (isLinux ? isSessionRoute : true))
-						}
+						underTopbar={isMac || isWindows || (!isSettingsRoute && (isLinux ? isSessionRoute : true))}
 						topbarOffset={isWindows && isSettingsRoute ? "titlebar" : "toolbar"}
 						onCreateProject={createProject}
 						onInitializeProject={initializeProjectRepository}
