@@ -4,10 +4,19 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 
-const { navigateMock, postMock, workspaceQueryMock } = vi.hoisted(() => ({
+const { navigateMock, postMock, workspaceQueryMock, bridgeMock } = vi.hoisted(() => ({
 	navigateMock: vi.fn(),
 	postMock: vi.fn(),
 	workspaceQueryMock: vi.fn(),
+	bridgeMock: {
+		aoBridge: {
+			updates: {
+				getStatus: vi.fn().mockResolvedValue({ state: "idle" }),
+				onStatus: vi.fn().mockReturnValue(() => undefined),
+				install: vi.fn().mockResolvedValue(undefined),
+			},
+		},
+	},
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -18,6 +27,8 @@ vi.mock("../hooks/useWorkspaceQuery", () => ({
 	workspaceQueryKey: ["workspaces"],
 	useWorkspaceQuery: workspaceQueryMock,
 }));
+
+vi.mock("../lib/bridge", () => bridgeMock);
 
 vi.mock("../lib/api-client", () => ({
 	apiClient: { POST: (...args: unknown[]) => postMock(...args) },
