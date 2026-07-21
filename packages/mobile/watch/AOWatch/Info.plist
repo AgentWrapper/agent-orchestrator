@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Standard bundle keys. Values are filled from build settings at build
+	     time (infoPlistUtility expands $(...)); GENERATE_INFOPLIST_FILE is NO so
+	     these must be present or the built app has no bundle ID. -->
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundleDisplayName</key>
+	<string>AO</string>
+	<key>CFBundlePackageType</key>
+	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+
+	<!-- Modern single-target watchOS app marker. -->
+	<key>WKApplication</key>
+	<true/>
+	<!-- Standalone app: no companion iOS app. Without this, the installer
+	     demands a WKCompanionAppBundleIdentifier. -->
+	<key>WKWatchOnly</key>
+	<true/>
+	<key>UISupportedInterfaceOrientations</key>
+	<array/>
+
+	<!-- The AO daemon speaks plaintext HTTP on the LAN by design, so the watch
+	     app must be allowed to make cleartext requests. POC-grade: allow all.
+	     A production build would scope this to the specific host instead. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
+	<!-- Reaching a LAN IP can trigger the local-network privacy prompt; this
+	     string is shown to the user when it appears. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>AO connects to the Agent Orchestrator daemon running on your computer over the local network.</string>
+</dict>
+</plist>

@@ -1,0 +1,334 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		00349A88859BB71E6D6E998A /* SpawnView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA4D56706B23DD3D405898E3 /* SpawnView.swift */; };
+		23CBA328CB885AA4943A04A8 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1160EA6F534E1F9249B8B1E /* AppModel.swift */; };
+		57346FC2DEEDDFD3F5FA3354 /* SessionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55C5B32A5A893A3684A0BCA1 /* SessionView.swift */; };
+		75EFE17E7EB52EBAC04AE674 /* SessionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AEE3D7B5418D674A86EB10D9 /* SessionsView.swift */; };
+		7F102194F4A5B0D7D0400ABA /* AOClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7217A6B0EA4FB9EB0E312AC /* AOClient.swift */; };
+		8BD7F845B58F4D1DBA88F0F1 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D83574BD0EC1BDAC0C5D0ED3 /* Assets.xcassets */; };
+		D3A6BB21DF48B0665BC64B21 /* AOWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 293DA41CA728B917EA7AB310 /* AOWatchApp.swift */; };
+		E61B6313DEF51C1AB90E171D /* ConnectView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98DFE6BE8022D9FA07179000 /* ConnectView.swift */; };
+		F31442D1D787E8FBC32ADF34 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0AEF4620208FE5561CCB65F /* Models.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		0E3ACBBDFA9B9B0D5D1E60AB /* AOWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AOWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		293DA41CA728B917EA7AB310 /* AOWatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AOWatchApp.swift; sourceTree = "<group>"; };
+		55C5B32A5A893A3684A0BCA1 /* SessionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionView.swift; sourceTree = "<group>"; };
+		905EDC48AAD094A9A38F7C5C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		98DFE6BE8022D9FA07179000 /* ConnectView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectView.swift; sourceTree = "<group>"; };
+		AEE3D7B5418D674A86EB10D9 /* SessionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsView.swift; sourceTree = "<group>"; };
+		C0AEF4620208FE5561CCB65F /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		D7217A6B0EA4FB9EB0E312AC /* AOClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AOClient.swift; sourceTree = "<group>"; };
+		D83574BD0EC1BDAC0C5D0ED3 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		F1160EA6F534E1F9249B8B1E /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		FA4D56706B23DD3D405898E3 /* SpawnView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpawnView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		1B895650B80B1A6FFB361D32 = {
+			isa = PBXGroup;
+			children = (
+				F993FB9A777FD94025FF9656 /* AOWatch */,
+				97DF092971B813451D2D96D7 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		97DF092971B813451D2D96D7 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				0E3ACBBDFA9B9B0D5D1E60AB /* AOWatch.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		F993FB9A777FD94025FF9656 /* AOWatch */ = {
+			isa = PBXGroup;
+			children = (
+				D7217A6B0EA4FB9EB0E312AC /* AOClient.swift */,
+				293DA41CA728B917EA7AB310 /* AOWatchApp.swift */,
+				F1160EA6F534E1F9249B8B1E /* AppModel.swift */,
+				D83574BD0EC1BDAC0C5D0ED3 /* Assets.xcassets */,
+				98DFE6BE8022D9FA07179000 /* ConnectView.swift */,
+				905EDC48AAD094A9A38F7C5C /* Info.plist */,
+				C0AEF4620208FE5561CCB65F /* Models.swift */,
+				AEE3D7B5418D674A86EB10D9 /* SessionsView.swift */,
+				55C5B32A5A893A3684A0BCA1 /* SessionView.swift */,
+				FA4D56706B23DD3D405898E3 /* SpawnView.swift */,
+			);
+			path = AOWatch;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		D9C844DE95149B19CA17A6E4 /* AOWatch */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 09273434A72D5D3580F74CBA /* Build configuration list for PBXNativeTarget "AOWatch" */;
+			buildPhases = (
+				72266F984C27D2E5163F7D82 /* Sources */,
+				4F1F41EDF3B9D652D6DEC29B /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = AOWatch;
+			packageProductDependencies = (
+			);
+			productName = AOWatch;
+			productReference = 0E3ACBBDFA9B9B0D5D1E60AB /* AOWatch.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		1951E43DB6277FC88AB28C01 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					D9C844DE95149B19CA17A6E4 = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 5FA206C2762A6A9578104075 /* Build configuration list for PBXProject "AOWatch" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 1B895650B80B1A6FFB361D32;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 97DF092971B813451D2D96D7 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				D9C844DE95149B19CA17A6E4 /* AOWatch */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		4F1F41EDF3B9D652D6DEC29B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8BD7F845B58F4D1DBA88F0F1 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		72266F984C27D2E5163F7D82 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7F102194F4A5B0D7D0400ABA /* AOClient.swift in Sources */,
+				D3A6BB21DF48B0665BC64B21 /* AOWatchApp.swift in Sources */,
+				23CBA328CB885AA4943A04A8 /* AppModel.swift in Sources */,
+				E61B6313DEF51C1AB90E171D /* ConnectView.swift in Sources */,
+				F31442D1D787E8FBC32ADF34 /* Models.swift in Sources */,
+				57346FC2DEEDDFD3F5FA3354 /* SessionView.swift in Sources */,
+				75EFE17E7EB52EBAC04AE674 /* SessionsView.swift in Sources */,
+				00349A88859BB71E6D6E998A /* SpawnView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		24F2BBFBA082680D63D25F22 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = AOWatch/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = com.aoagents.aowatch;
+				PRODUCT_NAME = AO;
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Release;
+		};
+		56F1FE0D65DBF8A3C4E9F55D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MARKETING_VERSION = 1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Release;
+		};
+		7408B45C630A33F6AA197ED5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = AOWatch/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = com.aoagents.aowatch;
+				PRODUCT_NAME = AO;
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Debug;
+		};
+		7CDCFC532BB581BEB6E260E4 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MARKETING_VERSION = 1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		09273434A72D5D3580F74CBA /* Build configuration list for PBXNativeTarget "AOWatch" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7408B45C630A33F6AA197ED5 /* Debug */,
+				24F2BBFBA082680D63D25F22 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		5FA206C2762A6A9578104075 /* Build configuration list for PBXProject "AOWatch" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7CDCFC532BB581BEB6E260E4 /* Debug */,
+				56F1FE0D65DBF8A3C4E9F55D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 1951E43DB6277FC88AB28C01 /* Project object */;
+}
