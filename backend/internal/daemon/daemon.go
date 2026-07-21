@@ -209,11 +209,6 @@ func Run() error {
 				return sqlite.OpenReadOnly(ctx, dataDir)
 			},
 		}),
-		CDC:       store,
-		Events:    cdcPipe.Broadcaster,
-		Activity:  lcStack.LCM,
-		Telemetry: telemetrySink,
-		Mobile:    mc,
 	})
 	if err != nil {
 		stop()
