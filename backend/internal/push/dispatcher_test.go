@@ -38,12 +38,15 @@ func (f *fakeDeviceStore) Delete(token string) error {
 }
 
 type fakeSender struct {
-	mu       sync.Mutex
-	gotMsgs  []Message
-	tickets  []Ticket
-	sendErr  error
-	sentCond *sync.Cond
-	sent     bool
+	mu         sync.Mutex
+	gotMsgs    []Message
+	tickets    []Ticket
+	sendErr    error
+	sentCond   *sync.Cond
+	sent       bool
+	gotIDs     []string           // ids passed to GetReceipts
+	receipts   map[string]Receipt // returned by GetReceipts
+	receiptErr error
 }
 
 func newFakeSender(tickets []Ticket) *fakeSender {
@@ -62,6 +65,13 @@ func (f *fakeSender) Send(_ context.Context, messages []Message) ([]Ticket, erro
 		return nil, f.sendErr
 	}
 	return f.tickets, nil
+}
+
+func (f *fakeSender) GetReceipts(_ context.Context, ids []string) (map[string]Receipt, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.gotIDs = append(f.gotIDs, ids...)
+	return f.receipts, f.receiptErr
 }
 
 func (f *fakeSender) waitSent(t *testing.T) {
@@ -179,5 +189,59 @@ func TestDispatcherNoDevicesIsNoop(t *testing.T) {
 	defer sender.mu.Unlock()
 	if sender.sent {
 		t.Fatal("sender was called despite no registered devices")
+	}
+}
+
+func TestDispatcherSweepPrunesOnReceipt(t *testing.T) {
+	store := &fakeDeviceStore{devices: []mobilebridge.PushDevice{{Token: "ExponentPushToken[dead]"}}}
+	sender := newFakeSender(nil)
+	dead := Receipt{Status: "error"}
+	dead.Details.Error = "DeviceNotRegistered"
+	sender.receipts = map[string]Receipt{"tk1": dead}
+	d := NewDispatcher(&fakeSubscriber{ch: make(chan domain.NotificationRecord)}, store, sender, nil)
+
+	base := time.Now()
+	d.clock = func() time.Time { return base }
+	// A ticket sent 16 minutes ago is due for a receipt check.
+	d.trackAccepted([]sentTicket{{id: "tk1", token: "ExponentPushToken[dead]", sentAt: base.Add(-16 * time.Minute)}})
+	d.sweepReceipts(context.Background())
+
+	sender.mu.Lock()
+	queried := append([]string(nil), sender.gotIDs...)
+	sender.mu.Unlock()
+	if len(queried) != 1 || queried[0] != "tk1" {
+		t.Fatalf("queried ids = %v, want [tk1]", queried)
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.deleted) != 1 || store.deleted[0] != "ExponentPushToken[dead]" {
+		t.Fatalf("deleted = %v, want [ExponentPushToken[dead]]", store.deleted)
+	}
+}
+
+func TestDispatcherSweepSkipsFreshAndDropsExpired(t *testing.T) {
+	store := &fakeDeviceStore{}
+	sender := newFakeSender(nil)
+	d := NewDispatcher(&fakeSubscriber{ch: make(chan domain.NotificationRecord)}, store, sender, nil)
+
+	base := time.Now()
+	d.clock = func() time.Time { return base }
+	d.trackAccepted([]sentTicket{
+		{id: "fresh", token: "ExponentPushToken[a]", sentAt: base.Add(-1 * time.Minute)}, // too new to check
+		{id: "expired", token: "ExponentPushToken[b]", sentAt: base.Add(-2 * time.Hour)}, // past max age → dropped
+	})
+	d.sweepReceipts(context.Background())
+
+	sender.mu.Lock()
+	nQueried := len(sender.gotIDs)
+	sender.mu.Unlock()
+	if nQueried != 0 {
+		t.Fatalf("queried %d ids, want 0 (fresh kept, expired dropped un-queried)", nQueried)
+	}
+	d.mu.Lock()
+	pending := len(d.pending)
+	d.mu.Unlock()
+	if pending != 1 {
+		t.Fatalf("pending = %d, want 1 (only the fresh ticket remains)", pending)
 	}
 }
