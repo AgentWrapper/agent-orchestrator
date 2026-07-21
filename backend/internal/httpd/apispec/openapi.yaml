@@ -2782,6 +2782,9 @@ components:
       type: object
     SetActivityRequest:
       properties:
+        agentSessionId:
+          description: Native agent session identifier discovered from the hook payload.
+          type: string
         event:
           description: AO hook sub-command that produced this state (e.g. post-tool-use).
           type: string

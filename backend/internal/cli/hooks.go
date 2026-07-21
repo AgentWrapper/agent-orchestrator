@@ -36,14 +36,16 @@ const (
 // setActivityAPIRequest mirrors the daemon's SetActivityRequest body for
 // POST /api/v1/sessions/{id}/activity. The CLI keeps its own copy so it need
 // not import httpd. Event carries the AO hook sub-command that produced the
-// state; ToolName/ToolUseID are the tool-use correlation facts lifted from the
-// native payload when present. All three are optional: an old daemon decodes
-// the body leniently and simply ignores them.
+// state; ToolName/ToolUseID are tool-use correlation facts, and AgentSessionID
+// is a native resumable-session id lifted from the payload when present. All
+// metadata fields are optional: an old daemon decodes the body leniently and
+// simply ignores them.
 type setActivityAPIRequest struct {
-	State     string `json:"state"`
-	Event     string `json:"event,omitempty"`
-	ToolName  string `json:"toolName,omitempty"`
-	ToolUseID string `json:"toolUseId,omitempty"`
+	State          string `json:"state"`
+	Event          string `json:"event,omitempty"`
+	ToolName       string `json:"toolName,omitempty"`
+	ToolUseID      string `json:"toolUseId,omitempty"`
+	AgentSessionID string `json:"agentSessionId,omitempty"`
 }
 
 // maxActivityMetaLen caps the correlation fields lifted from a native hook
@@ -125,8 +127,9 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 	}
 
 	toolName, toolUseID := activityMeta(payload)
+	agentSessionID, _ := activitydispatch.AgentSessionID(agent, payload)
 	path := "sessions/" + url.PathEscape(sessionID) + "/activity"
-	if err := c.postJSON(ctx, path, setActivityAPIRequest{State: string(state), Event: event, ToolName: toolName, ToolUseID: toolUseID}, nil); err != nil {
+	if err := c.postJSON(ctx, path, setActivityAPIRequest{State: string(state), Event: event, ToolName: toolName, ToolUseID: toolUseID, AgentSessionID: agentSessionID}, nil); err != nil {
 		// Surface the failure for diagnosis, but exit 0: a failed activity
 		// report must not disrupt the agent.
 		c.reportHookFailure(agent, event, sessionID, err)

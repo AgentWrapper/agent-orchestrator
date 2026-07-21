@@ -176,6 +176,29 @@ func TestHooks_PostToolUseCarriesCorrelationFields(t *testing.T) {
 	}
 }
 
+func TestHooks_ClineTaskStartCarriesAgentSessionID(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{"taskId":"cline-task-123","hookName":"TaskStart","taskStart":{"task":"fix restore"}}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "cline", "session-start")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var req setActivityAPIRequest
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
+	}
+	want := setActivityAPIRequest{State: "active", Event: "session-start", AgentSessionID: "cline-task-123"}
+	if req != want {
+		t.Errorf("body = %+v, want %+v", req, want)
+	}
+}
+
 func TestHooks_EventWithoutToolIdentityOmitsIt(t *testing.T) {
 	// Adapters whose payloads carry no tool fields (codex permission-request
 	// payload here has tool_name only) still tag the event; missing identity

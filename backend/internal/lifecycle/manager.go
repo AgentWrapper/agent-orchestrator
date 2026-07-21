@@ -161,16 +161,20 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	prevAt := rec.Activity.LastActivityAt
 	next := rec
 	act := domain.Activity{State: s.State, LastActivityAt: timeOr(s.Timestamp, now)}
+	metadataChanged := s.AgentSessionID != "" && s.AgentSessionID != rec.Metadata.AgentSessionID
 	// A same-state repeat is still a write when it is the FIRST signal for
 	// this spawn: the receipt itself is a durable fact (it clears the
 	// no_signal display status). Hook deliveries are best-effort, so the
 	// first to ARRIVE may match the seeded state — e.g. a turn's "active"
 	// POST is lost and its Stop hook lands idle on the idle-seeded row.
-	if sameActivity(rec.Activity, act) && !rec.FirstSignalAt.IsZero() {
+	if sameActivity(rec.Activity, act) && !rec.FirstSignalAt.IsZero() && !metadataChanged {
 		m.mu.Unlock()
 		return nil
 	}
 	next.Activity = act
+	if metadataChanged {
+		next.Metadata.AgentSessionID = s.AgentSessionID
+	}
 	if next.FirstSignalAt.IsZero() {
 		next.FirstSignalAt = timeOr(s.Timestamp, now)
 	}

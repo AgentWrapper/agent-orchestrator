@@ -1050,6 +1050,8 @@ export interface components {
             session: components["schemas"]["ControllersSessionView"];
         };
         SetActivityRequest: {
+            /** @description Native agent session identifier discovered from the hook payload. */
+            agentSessionId?: string;
             /** @description AO hook sub-command that produced this state (e.g. post-tool-use). */
             event?: string;
             /**

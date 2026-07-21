@@ -12,6 +12,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/activitystate"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agy"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/cline"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/droid"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/opencode"
@@ -41,6 +42,16 @@ var Derivers = map[string]DeriveFunc{
 	"kiro":        activitystate.StandardDeriveActivityState,
 	"kilocode":    activitystate.StandardDeriveActivityState,
 	"autohand":    activitystate.StandardDeriveActivityState,
+}
+
+// AgentSessionID extracts a native resumable-session identifier from an
+// adapter's hook payload. Most adapters obtain this metadata through other
+// mechanisms; Cline exposes its task id in every lifecycle hook payload.
+func AgentSessionID(agent string, payload []byte) (string, bool) {
+	if agent != "cline" {
+		return "", false
+	}
+	return cline.SessionIDFromHook(payload)
 }
 
 // Derive looks up the deriver for an agent token and applies it. ok=false when

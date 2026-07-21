@@ -161,6 +161,49 @@ func TestManifestIDMatchesHarness(t *testing.T) {
 	}
 }
 
+func TestSessionIDFromHook(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload string
+		want    string
+		ok      bool
+	}{
+		{name: "task id", payload: `{"taskId":"task-123","hookName":"TaskStart"}`, want: "task-123", ok: true},
+		{name: "trimmed", payload: `{"taskId":"  task-456  "}`, want: "task-456", ok: true},
+		{name: "missing", payload: `{}`, ok: false},
+		{name: "blank", payload: `{"taskId":"   "}`, ok: false},
+		{name: "malformed", payload: `{`, ok: false},
+		{name: "oversized", payload: `{"taskId":"` + strings.Repeat("x", maxHookSessionIDLen+1) + `"}`, ok: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := SessionIDFromHook([]byte(tt.payload))
+			if got != tt.want || ok != tt.ok {
+				t.Fatalf("SessionIDFromHook() = (%q, %v), want (%q, %v)", got, ok, tt.want, tt.ok)
+			}
+		})
+	}
+}
+
+func TestManagedHooksCoverClineTaskLifecycle(t *testing.T) {
+	want := map[clineHookSpec]bool{
+		{Event: "TaskStart", Subcommand: "session-start"}:  false,
+		{Event: "TaskResume", Subcommand: "session-start"}: false,
+		{Event: "TaskComplete", Subcommand: "stop"}:        false,
+		{Event: "TaskCancel", Subcommand: "stop"}:          false,
+	}
+	for _, got := range clineManagedHooks {
+		if _, ok := want[got]; ok {
+			want[got] = true
+		}
+	}
+	for spec, found := range want {
+		if !found {
+			t.Errorf("managed hook missing: %+v", spec)
+		}
+	}
+}
+
 func TestGetAgentHooksInstallsClineHooks(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "cline"}
 	workspace := t.TempDir()

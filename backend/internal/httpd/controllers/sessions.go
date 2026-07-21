@@ -471,11 +471,12 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 	// never match its pre/post counterpart, so overlong values are dropped by
 	// the CLI; the cap here is defense against non-AO callers).
 	sig := ports.ActivitySignal{
-		Valid:     true,
-		State:     state,
-		Event:     capActivityMeta(domain.SanitizeControlChars(in.Event)),
-		ToolName:  capActivityMeta(domain.SanitizeControlChars(in.ToolName)),
-		ToolUseID: capActivityMeta(domain.SanitizeControlChars(in.ToolUseID)),
+		Valid:          true,
+		State:          state,
+		Event:          capActivityMeta(domain.SanitizeControlChars(in.Event)),
+		ToolName:       capActivityMeta(domain.SanitizeControlChars(in.ToolName)),
+		ToolUseID:      capActivityMeta(domain.SanitizeControlChars(in.ToolUseID)),
+		AgentSessionID: capActivityMeta(domain.SanitizeControlChars(in.AgentSessionID)),
 	}
 	if err := c.Activity.ApplyActivitySignal(r.Context(), sessionID(r), sig); err != nil {
 		if errors.Is(err, ports.ErrSessionNotFound) {

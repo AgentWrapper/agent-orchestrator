@@ -97,6 +97,21 @@ func TestSessionsAPI_ActivityThreadsCorrelationFields(t *testing.T) {
 	}
 }
 
+func TestSessionsAPI_ActivityThreadsAgentSessionID(t *testing.T) {
+	rec := &fakeActivityRecorder{}
+	srv := newActivityTestServer(t, rec)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity",
+		`{"state":"active","event":"session-start","agentSessionId":"cline-task-123"}`)
+	if status != http.StatusOK {
+		t.Fatalf("activity = %d, want 200; body=%s", status, body)
+	}
+	want := ports.ActivitySignal{Valid: true, State: domain.ActivityActive, Event: "session-start", AgentSessionID: "cline-task-123"}
+	if rec.gotSignal != want {
+		t.Fatalf("recorder signal = %#v, want %#v", rec.gotSignal, want)
+	}
+}
+
 func TestSessionsAPI_ActivityCapsOverlongCorrelationFields(t *testing.T) {
 	// Overlong values are dropped, not truncated: a truncated id could never
 	// match its pre/post counterpart, so an empty value (fail-safe: no
