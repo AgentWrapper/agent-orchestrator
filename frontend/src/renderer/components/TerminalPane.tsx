@@ -101,7 +101,7 @@ function workerPreviewLines(session: WorkspaceSession | undefined, provider: str
 			"Running 3 shell commands…",
 			'└ $ ao spawn --project ao-demo --name "new-task-flake" --agent codex --prompt',
 			'  "Fix the flaky NewTaskDialog smoke test: submit is debounced 300ms while the',
-			"  e2e check asserts synchronously. Reproduce, fix, and push to update PR #324.\"",
+			'  e2e check asserts synchronously. Reproduce, fix, and push to update PR #324."',
 			"PASS 3 sessions spawned — board updated",
 		];
 	}
