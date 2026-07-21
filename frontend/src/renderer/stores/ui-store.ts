@@ -1,8 +1,15 @@
 import { create } from "zustand";
-import { resolveTheme, themeStorageKey, type Theme } from "../lib/theme";
+import {
+	readStoredThemePreference,
+	resolveTheme,
+	systemTheme,
+	themeStorageKey,
+	type Theme,
+	type ThemePreference,
+} from "../lib/theme";
 
-export type { Theme } from "../lib/theme";
-export { readStoredTheme } from "../lib/theme";
+export type { Theme, ThemePreference } from "../lib/theme";
+export { readStoredThemePreference, resolveTheme } from "../lib/theme";
 
 /** Worker detail view toggles — Changes (Git rail) is the default. */
 export type WorkbenchTab = "changes" | "files" | "terminal";
@@ -15,7 +22,9 @@ type UiState = {
 	workbenchTab: WorkbenchTab;
 	isSidebarOpen: boolean;
 	isInspectorOpen: boolean;
-	theme: Theme;
+	themePreference: ThemePreference;
+	/** Resolved light/dark for React consumers; may track OS while preference is system. */
+	resolvedTheme: Theme;
 	restartingProjectIds: ReadonlySet<string>;
 	orchestratorReplacementErrors: Record<string, string>;
 	orchestratorStartupErrors: Record<string, string>;
@@ -28,8 +37,9 @@ type UiState = {
 	// when no project is in scope).
 	createProjectNonce: number;
 	setWorkbenchTab: (tab: WorkbenchTab) => void;
-	setTheme: (theme: Theme) => void;
-	toggleTheme: () => void;
+	setThemePreference: (theme: ThemePreference) => void;
+	/** Refresh resolvedTheme from OS without writing light/dark to storage. */
+	syncSystemTheme: () => void;
 	toggleSidebar: () => void;
 	toggleInspector: () => void;
 	setProjectRestarting: (projectId: string, restarting: boolean) => void;
@@ -55,26 +65,29 @@ function initialInspectorOpen() {
 	return getLocalStorage()?.getItem(inspectorStorageKey) !== "false";
 }
 
+const initialThemePreference = readStoredThemePreference();
+
 export const useUiStore = create<UiState>((set) => ({
 	workbenchTab: "changes",
 	isSidebarOpen: initialSidebarOpen(),
 	isInspectorOpen: initialInspectorOpen(),
-	theme: resolveTheme(),
+	themePreference: initialThemePreference,
+	resolvedTheme: resolveTheme(initialThemePreference),
 	restartingProjectIds: new Set<string>(),
 	orchestratorReplacementErrors: {},
 	orchestratorStartupErrors: {},
 	newTaskRequest: null,
 	createProjectNonce: 0,
 	setWorkbenchTab: (workbenchTab) => set({ workbenchTab }),
-	setTheme: (theme) => {
-		getLocalStorage()?.setItem(themeStorageKey, theme);
-		set({ theme });
+	setThemePreference: (themePreference) => {
+		getLocalStorage()?.setItem(themeStorageKey, themePreference);
+		set({ themePreference, resolvedTheme: resolveTheme(themePreference) });
 	},
-	toggleTheme: () =>
+	syncSystemTheme: () =>
 		set((state) => {
-			const theme = state.theme === "dark" ? "light" : "dark";
-			getLocalStorage()?.setItem(themeStorageKey, theme);
-			return { theme };
+			if (state.themePreference !== "system") return state;
+			const next = systemTheme();
+			return next === state.resolvedTheme ? state : { resolvedTheme: next };
 		}),
 	toggleSidebar: () =>
 		set((state) => {
@@ -122,3 +135,7 @@ export const useUiStore = create<UiState>((set) => ({
 		set((state) => ({ newTaskRequest: { projectId, nonce: (state.newTaskRequest?.nonce ?? 0) + 1 } })),
 	requestCreateProject: () => set((state) => ({ createProjectNonce: state.createProjectNonce + 1 })),
 }));
+
+export function useResolvedTheme(): Theme {
+	return useUiStore((state) => state.resolvedTheme);
+}

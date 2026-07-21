@@ -3,10 +3,9 @@ import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
-// Drives the real useWorkspaceQuery + real Board / PR-page consumers end to end
-// for a normal project, mocking only the HTTP client and the router. Proves PR
-// facts carried on the session list flow through the shared workspace cache into
-// every consumer.
+// Drives the real useWorkspaceQuery + SessionsBoard end to end for a normal
+// project, mocking only the HTTP client and the router. Proves PR facts carried
+// on the session list flow through the shared workspace cache into the board.
 const { getMock, navigateMock } = vi.hoisted(() => ({ getMock: vi.fn(), navigateMock: vi.fn() }));
 
 vi.mock("../../lib/api-client", () => ({
@@ -21,7 +20,6 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
 });
 
 import { SessionsBoard } from "../../components/SessionsBoard";
-import { PullRequestsPage } from "../../components/PullRequestsPage";
 
 // One ordinary project with one worker session that has multiple PRs.
 function respondWithProjectAndPRs() {
@@ -257,17 +255,5 @@ describe("PR hydration for a normal project (#251)", () => {
 		expect(screen.getByText("open")).toBeInTheDocument();
 		expect(screen.queryByText("changes requested")).not.toBeInTheDocument();
 		expect(screen.queryByRole("link", { name: "conflicts" })).not.toBeInTheDocument();
-	});
-
-	it("lists every session PR on the PR page instead of being empty", async () => {
-		renderWithProviders(<PullRequestsPage />);
-
-		expect(await screen.findByText("#278")).toBeInTheDocument();
-		expect(screen.getByText("#279")).toBeInTheDocument();
-		expect(screen.getByText("#280")).toBeInTheDocument();
-		expect(screen.getByText("#281")).toBeInTheDocument();
-		expect(screen.getByText("#282")).toBeInTheDocument();
-		expect(screen.queryByText("No open pull requests.")).not.toBeInTheDocument();
-		expect(screen.getAllByText("fix the bug")).toHaveLength(5);
 	});
 });

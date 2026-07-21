@@ -63,6 +63,9 @@ func TestPostHogSinkCapturesEvent(t *testing.T) {
 		if props["project_id_hash"] == "" || props["session_id_hash"] == "" {
 			t.Fatalf("hashed ids missing from properties: %#v", props)
 		}
+		if props["$process_person_profile"] != false {
+			t.Fatalf("properties.$process_person_profile = %#v, want false", props["$process_person_profile"])
+		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("PostHog sink did not send request")
 	}

@@ -1,13 +1,9 @@
 "use client";
 
-import { useState } from "react";
-
 export function LandingVideo() {
-	const muxPlaybackId = process.env.NEXT_PUBLIC_MUX_PLAYBACK_ID ?? "JByXWlOrW1kIqAfOVbwIozLv4UEB1b901Zv01CwxArEWs";
-	const [isPlaying, setIsPlaying] = useState(false);
+	const muxPlaybackId = process.env.NEXT_PUBLIC_MUX_PLAYBACK_ID ?? "zWxz3vxZBxGtXUwjP4lG7Krql7WN8PaOrs6MRmfpSKc";
 	const videoTitle = "Agent Orchestrator Launch Demo";
 	const encodedTitle = encodeURIComponent(videoTitle);
-	const previewPosterUrl = "/mux-video-preview.jpg";
 
 	return (
 		<section
@@ -27,38 +23,14 @@ export function LandingVideo() {
 						data-testid="video-frame"
 						className="relative aspect-video overflow-hidden rounded-md border border-[color:var(--border-strong)] bg-black"
 					>
-						{muxPlaybackId && isPlaying ? (
+						{muxPlaybackId ? (
 							<iframe
-								src={`https://player.mux.com/${muxPlaybackId}?metadata-video-title=${encodedTitle}&video-title=${encodedTitle}&autoplay=1`}
-								allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+								src={`https://player.mux.com/${muxPlaybackId}?metadata-video-title=${encodedTitle}&video-title=${encodedTitle}`}
+								allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture"
 								allowFullScreen
 								className="absolute inset-0 h-full w-full border-none"
 								title={videoTitle}
 							/>
-						) : muxPlaybackId ? (
-							<button
-								type="button"
-								onClick={() => setIsPlaying(true)}
-								className="group absolute inset-0 cursor-pointer overflow-hidden text-left"
-								aria-label={`Play ${videoTitle}`}
-							>
-								<img
-									src={previewPosterUrl}
-									alt=""
-									className="absolute inset-0 h-full w-full object-cover opacity-80 transition duration-500 group-hover:scale-[1.015] group-hover:opacity-95"
-								/>
-								<div className="absolute inset-0 bg-gradient-to-t from-black via-black/55 to-black/20" />
-								<div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-6 p-6 sm:p-8">
-									<div>
-										<div className="max-w-[680px] text-2xl font-semibold tracking-[-0.04em] text-[color:var(--fg)] sm:text-4xl">
-											{videoTitle}
-										</div>
-									</div>
-									<span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-white/20 bg-white text-black shadow-2xl transition duration-200 group-hover:scale-105">
-										<span className="ml-1 h-0 w-0 border-y-[9px] border-l-[14px] border-y-transparent border-l-black" />
-									</span>
-								</div>
-							</button>
 						) : (
 							<div className="absolute inset-0 flex items-center justify-center px-6 text-center">
 								<div>

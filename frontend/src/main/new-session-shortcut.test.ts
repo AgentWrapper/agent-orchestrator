@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { NEW_SESSION_SHORTCUT_CHANNEL } from "../shared/shortcuts";
-import { attachNewSessionShortcut } from "./new-session-shortcut";
+import { KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL } from "../shared/shortcuts";
+import { attachAppShortcuts } from "./app-shortcuts";
 
 type InputEvent = {
 	key: string;
@@ -38,11 +38,11 @@ function fakeTarget() {
 	return { focus: vi.fn(), send: vi.fn() };
 }
 
-describe("attachNewSessionShortcut", () => {
+describe("attachAppShortcuts", () => {
 	it("forwards and prevents default on the main-window chord", () => {
 		const source = fakeSource();
 		const target = fakeTarget();
-		attachNewSessionShortcut(source, false, target);
+		attachAppShortcuts(source, false, target);
 
 		const event = source.emit({ key: "N", control: true, shift: true });
 
@@ -54,7 +54,7 @@ describe("attachNewSessionShortcut", () => {
 	it("forwards the macOS command chord", () => {
 		const source = fakeSource();
 		const target = fakeTarget();
-		attachNewSessionShortcut(source, true, target);
+		attachAppShortcuts(source, true, target);
 
 		source.emit({ key: "n", meta: true });
 
@@ -64,7 +64,7 @@ describe("attachNewSessionShortcut", () => {
 	it("focuses a separate shell target before forwarding", () => {
 		const source = fakeSource();
 		const target = fakeTarget();
-		attachNewSessionShortcut(source, false, target, true);
+		attachAppShortcuts(source, false, target, true);
 
 		source.emit({ key: "N", control: true, shift: true });
 
@@ -76,7 +76,7 @@ describe("attachNewSessionShortcut", () => {
 	it("ignores non-matching chords and key-up events", () => {
 		const source = fakeSource();
 		const target = fakeTarget();
-		attachNewSessionShortcut(source, false, target);
+		attachAppShortcuts(source, false, target);
 
 		source.emit({ key: "n", control: true });
 		source.emit({ key: "N", control: true, shift: true, type: "keyUp" });
@@ -88,12 +88,27 @@ describe("attachNewSessionShortcut", () => {
 	it("ignores auto-repeat so holding the combo fires once", () => {
 		const source = fakeSource();
 		const target = fakeTarget();
-		attachNewSessionShortcut(source, false, target);
+		attachAppShortcuts(source, false, target);
 
 		source.emit({ key: "N", control: true, shift: true });
 		source.emit({ key: "N", control: true, shift: true, isAutoRepeat: true });
 		source.emit({ key: "N", control: true, shift: true, isAutoRepeat: true });
 
 		expect(target.send).toHaveBeenCalledTimes(1);
+	});
+
+	it("forwards keyboard-shortcut help on each platform", () => {
+		const windowsSource = fakeSource();
+		const windowsTarget = fakeTarget();
+		attachAppShortcuts(windowsSource, false, windowsTarget);
+		windowsSource.emit({ key: "/", control: true });
+
+		const macSource = fakeSource();
+		const macTarget = fakeTarget();
+		attachAppShortcuts(macSource, true, macTarget);
+		macSource.emit({ key: "/", meta: true });
+
+		expect(windowsTarget.send).toHaveBeenCalledWith(KEYBOARD_SHORTCUTS_HELP_CHANNEL);
+		expect(macTarget.send).toHaveBeenCalledWith(KEYBOARD_SHORTCUTS_HELP_CHANNEL);
 	});
 });

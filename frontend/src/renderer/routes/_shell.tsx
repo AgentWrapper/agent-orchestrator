@@ -1,8 +1,9 @@
 import { createFileRoute, Outlet, useMatchRoute, useNavigate, useParams } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { type CSSProperties, useCallback, useEffect, useRef } from "react";
+import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 import { NotificationRuntime } from "../components/NotificationCenter";
 import { GlobalNewTaskDialog } from "../components/GlobalNewTaskDialog";
+import { KeyboardShortcutsDialog } from "../components/KeyboardShortcutsDialog";
 import { ShellTopbar } from "../components/ShellTopbar";
 import { OrchestratorReplacementDialog } from "../components/OrchestratorReplacementDialog";
 import { Sidebar } from "../components/Sidebar";
@@ -18,7 +19,7 @@ import { addRendererExceptionStep, captureRendererEvent, captureRendererExceptio
 import { ShellProvider } from "../lib/shell-context";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { captureOrchestratorReplacementFailure } from "../lib/orchestrator-replacement-telemetry";
-import { applyDocumentTheme, readStoredTheme, systemTheme } from "../lib/theme";
+import { applyDocumentTheme } from "../lib/theme";
 import { aoBridge } from "../lib/bridge";
 import { useUiStore } from "../stores/ui-store";
 import type { WorkspaceSummary } from "../types/workspace";
@@ -54,6 +55,13 @@ export function createProjectConfig(input: CreateProjectConfigInput): components
 }
 
 const isMac = typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
+const isWindows =
+	typeof navigator !== "undefined" &&
+	/win/i.test(
+		(navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ??
+			navigator.platform ??
+			"",
+	);
 const isLinux =
 	typeof navigator !== "undefined" &&
 	((navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform)
@@ -72,9 +80,11 @@ function ShellLayout() {
 	const workspaces = workspaceQuery.data ?? [];
 	const daemonStatus = useDaemonStatus(queryClient);
 	const agentCatalogPortRef = useRef<number | undefined>(undefined);
-	const { theme, setTheme, isSidebarOpen, toggleSidebar } = useUiStore();
+	const { themePreference, resolvedTheme, isSidebarOpen, toggleSidebar } = useUiStore();
+	const syncSystemTheme = useUiStore((state) => state.syncSystemTheme);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
 	const requestCreateProject = useUiStore((state) => state.requestCreateProject);
+	const [isKeyboardShortcutsOpen, setIsKeyboardShortcutsOpen] = useState(false);
 	const routeParams = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
 	// Project in scope for a new-session shortcut: the route's project, or the
 	// workspace owning the open session (so the shortcut works from a worker's
@@ -89,6 +99,10 @@ function ShellLayout() {
 		Boolean(matchRoute({ to: "/sessions/$sessionId", fuzzy: true }));
 	// First-launch root board only — not /prs or other shell routes with zero projects.
 	const isWelcomeBoard = Boolean(matchRoute({ to: "/" })) && workspaces.length === 0;
+	const isSettingsRoute =
+		Boolean(matchRoute({ to: "/settings", fuzzy: true })) ||
+		Boolean(matchRoute({ to: "/projects/$projectId/settings", fuzzy: true }));
+	const hideShellTopbar = isWelcomeBoard || isSettingsRoute;
 	const setProjectRestarting = useUiStore((state) => state.setProjectRestarting);
 	const orchestratorReplacementErrors = useUiStore((state) => state.orchestratorReplacementErrors);
 	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
@@ -254,8 +268,8 @@ function ShellLayout() {
 	);
 
 	useEffect(() => {
-		applyDocumentTheme(theme);
-	}, [theme]);
+		applyDocumentTheme(resolvedTheme);
+	}, [resolvedTheme]);
 
 	useEffect(() => {
 		if (daemonStatus.state !== "ready" || !daemonStatus.port) return;
@@ -267,15 +281,16 @@ function ShellLayout() {
 		void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 	}, [daemonStatus.port, daemonStatus.state, queryClient]);
 
-	// Follow OS appearance only until the user picks a theme explicitly.
+	// Follow OS appearance while the user keeps Theme on System — updates
+	// resolvedTheme (and thus React consumers) without writing light/dark to storage.
 	useEffect(() => {
-		if (readStoredTheme()) return;
+		if (themePreference !== "system") return;
 
 		const mediaQuery = window.matchMedia("(prefers-color-scheme: light)");
-		const handleChange = () => setTheme(systemTheme());
+		const handleChange = () => syncSystemTheme();
 		mediaQuery.addEventListener("change", handleChange);
 		return () => mediaQuery.removeEventListener("change", handleChange);
-	}, [setTheme]);
+	}, [themePreference, syncSystemTheme]);
 
 	// ⌘B lives in SidebarProvider (shadcn's built-in shortcut), which routes
 	// through onOpenChange back into the ui-store.
@@ -309,10 +324,13 @@ function ShellLayout() {
 		[scopedProjectId, requestNewTask, requestCreateProject],
 	);
 
+	useEffect(() => aoBridge.app.onKeyboardShortcutsHelp(() => setIsKeyboardShortcutsOpen(true)), []);
+
 	return (
 		<ShellProvider value={{ daemonStatus, createProject, initializeProjectRepository }}>
 			<NotificationRuntime />
 			<GlobalNewTaskDialog />
+			<KeyboardShortcutsDialog open={isKeyboardShortcutsOpen} onOpenChange={setIsKeyboardShortcutsOpen} />
 			{/* The topbar spans the full window width above the sidebar row (the
           macOS traffic lights + TitlebarNav cluster sit in its left inset),
           and the sidebar hangs below it — so the sidebar border stops at the
@@ -323,7 +341,7 @@ function ShellLayout() {
 				{/* Windows-only custom title bar (logo + File/Edit/View/… menu); paints
             the chrome the frameless window drops. Renders null on macOS/Linux. */}
 				<WindowTitlebar />
-				{!isWelcomeBoard ? <ShellTopbar /> : null}
+				{!hideShellTopbar ? <ShellTopbar /> : null}
 				{/* Controlled by the ui-store so TitlebarNav / Topbar toggles (which
             call the store directly) stay in sync. --sidebar-width chains to
             the drag-resizable --ao-sidebar-w set on :root by useResizable. */}
@@ -338,15 +356,15 @@ function ShellLayout() {
 						} as CSSProperties
 					}
 				>
-					{/* Hang the fixed sidebar below shell chrome: macOS TitlebarNav
-            band (56px) on every Mac route; Windows WindowTitlebar (36px) on
-            welcome where ShellTopbar is hidden; otherwise the usual topbar
-            rules (Linux boards skip the offset). */}
+					{/* Hang the fixed sidebar below shell chrome: macOS TitlebarNav and the
+            Windows WindowTitlebar stay in the top band on every route; when the
+            shell topbar is hidden (welcome board or settings), Windows clears
+            only the 36px titlebar. Linux offsets under the topbar on session
+            routes when the shell topbar is visible. */}
 					<Sidebar
-						daemonStatus={daemonStatus}
 						hideEdgeBorder={isWelcomeBoard}
-						underTopbar={isMac || (!isWelcomeBoard && (isLinux ? isSessionRoute : true))}
-						underWindowTitlebar={isWelcomeBoard && !isMac && !isLinux}
+						underTopbar={isMac || isWindows || (!hideShellTopbar && (isLinux ? isSessionRoute : true))}
+						topbarOffset={isWindows && hideShellTopbar ? "titlebar" : "toolbar"}
 						onCreateProject={createProject}
 						onInitializeProject={initializeProjectRepository}
 						onRemoveProject={removeProject}

@@ -208,6 +208,13 @@ type commandContext struct {
 
 func shouldEmitCLIInvocation(cmd *cobra.Command) bool {
 	switch strings.TrimSpace(cmd.CommandPath()) {
+	// "ao daemon"/"ao start" are supervisor-driven bootstrapping, and
+	// "ao completion"/"ao help" are shell setup and self-documentation, none
+	// of which reflect a human doing something with AO. "ao hooks" and
+	// "ao pty-host" ARE real usage signal (an agent session is doing
+	// something) even though a machine invokes them, so they are allowed
+	// through here; the per-command-path daily cap in httpd/router.go is what
+	// keeps their invocation frequency from reaching PostHog uncapped.
 	case "ao daemon", "ao start", "ao completion", "ao help":
 		return false
 	default:
@@ -236,12 +243,27 @@ func (c *commandContext) emitCLIUsageError(ctx context.Context, args []string, e
 }
 
 func usageErrorCommand(args []string) (string, string) {
+	// Only tokens that match registered subcommands may enter the reported
+	// path: anything past the deepest match is user data (session names,
+	// prompts, orchestrator names) and must never ride into telemetry.
+	current := NewRootCommand(Deps{})
 	tokens := []string{"ao"}
 	for _, arg := range args {
 		if strings.HasPrefix(arg, "-") {
 			break
 		}
+		var next *cobra.Command
+		for _, sub := range current.Commands() {
+			if sub.Name() == arg || sub.HasAlias(arg) {
+				next = sub
+				break
+			}
+		}
+		if next == nil {
+			break
+		}
 		tokens = append(tokens, arg)
+		current = next
 	}
 	commandPath := strings.Join(tokens, " ")
 	command := "ao"

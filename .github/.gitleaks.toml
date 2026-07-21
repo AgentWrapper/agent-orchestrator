@@ -172,11 +172,16 @@ title = "gitleaks config"
     files = ['''^\.?gitleaks.toml$''',
     '''(.*?)(png|jpg|gif|doc|docx|pdf|bin|xls|pyc|zip)$''',
     '''(go.mod|go.sum)$''']
+    # Ignore false positives on the public company URL (rule matches brand name + nearby alnum).
+    regexes = [
+        '''(?i)linkedin\.com/company/agent-orchestrator''',
+    ]
     # Historical false positives from the ReverbCode rewrite graft (#2166).
     # All offenders are example secret-patterns in security docs and
     # secret-redaction test fixtures, living in files already deleted from
     # the tree. The push-event scan walks full history, so these commits are
     # allowlisted to keep `main` green without weakening detection on new code.
+    # Also includes settings-revamp commits that hit LinkedIn false positives.
     commits = [
         "15ad44633a34151e81737183e6f35889a38ffbcb",
         "1efa966296178deaf161853f5bc1abf595e22223",
@@ -188,4 +193,10 @@ title = "gitleaks config"
         "cb2fc088a83b394fc128235f4106bbfc88d8ede8",
         "f56338cbabd2185cab706ae09e1471b0bd9b7b43",
         "fc7d76ad54d6a7350de0fca298a1294ce8a1f3a2",
+        "c4c38ba20fc311ad2c89b7016301cabb08c3a4b9",
+        "45994b6d169d1004a02205b3a7ad23a4b1304ed3",
+        "73613281ab149c2dd4186fe83c4687c5464150fa",
+        "2a0c8a0f3e27ae78612b9896f07e0a79b181a431",
+        "d1d4092df1adfe6f9581b03484845485dfb91b76",
+        "423f0de6fa12d55785f2cc254e033edb94773a84",
     ]

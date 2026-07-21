@@ -49,6 +49,13 @@ func TestCORS(t *testing.T) {
 			wantACAO:   "http://127.0.0.1:8080",
 		},
 		{
+			name:       "isolated localhost preview origin allowed",
+			method:     http.MethodGet,
+			headers:    map[string]string{"Origin": "http://ao-preview.mfxs2mi.localhost:5181"},
+			wantStatus: http.StatusOK,
+			wantACAO:   "http://ao-preview.mfxs2mi.localhost:5181",
+		},
+		{
 			// localhost in the host position of a non-loopback origin must not
 			// fool the predicate.
 			name:       "lookalike origin rejected",
@@ -64,6 +71,13 @@ func TestCORS(t *testing.T) {
 			name:       "unknown origin is rejected before handlers",
 			method:     http.MethodGet,
 			headers:    map[string]string{"Origin": "http://evil.example"},
+			wantStatus: http.StatusForbidden,
+			wantACAO:   "",
+		},
+		{
+			name:       "localhost suffix lookalike rejected",
+			method:     http.MethodGet,
+			headers:    map[string]string{"Origin": "http://ao-preview.localhost.evil.example"},
 			wantStatus: http.StatusForbidden,
 			wantACAO:   "",
 		},

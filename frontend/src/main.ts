@@ -21,7 +21,9 @@ import {
 	downloadUpdateNow,
 	quitAndInstallUpdate,
 	getUpdateStatus,
+	configureFeed,
 } from "./main/auto-updater";
+import { listFeatureBuilds, getActiveFeatureBuild } from "./main/feature-builds";
 import {
 	readUpdateSettings,
 	writeUpdateSettings,
@@ -38,7 +40,8 @@ import { promisify } from "node:util";
 import { type DaemonLaunchSpec, resolveDaemonLaunch } from "./shared/daemon-launch";
 import { createListenPortScanner, defaultRunFilePath, parseRunFile } from "./shared/daemon-discovery";
 import type { DaemonStatus } from "./shared/daemon-status";
-import { attachNewSessionShortcut } from "./main/new-session-shortcut";
+import { attachAppShortcuts } from "./main/app-shortcuts";
+import { KEYBOARD_SHORTCUTS_HELP_CHANNEL } from "./shared/shortcuts";
 import {
 	type DaemonProbe,
 	expectedDaemonPort,
@@ -340,12 +343,11 @@ function createWindow(): void {
 		}
 	});
 
-	// New-session shortcut (⌘N / Ctrl+Shift+N) handled at the app level so it
-	// fires no matter which web contents holds focus — the shell renderer,
-	// xterm's helper textarea, or a browser-preview view (wired per-view in the
-	// browser host). Each hook just tells the shell renderer to open the flow.
+	// Application shortcuts are handled here so they fire no matter which web
+	// contents holds focus — the shell renderer, xterm's helper textarea, or a
+	// browser-preview view (wired per-view in the browser host).
 	const isMac = process.platform === "darwin";
-	attachNewSessionShortcut(mainWindow.webContents, isMac, mainWindow.webContents);
+	attachAppShortcuts(mainWindow.webContents, isMac, mainWindow.webContents);
 
 	browserViewHost = createBrowserViewHost({
 		mainWindow,
@@ -1034,6 +1036,9 @@ ipcMain.handle("menu:action", (_event, action: string) => {
 			return win.close();
 		case "app.quit":
 			return app.quit();
+		case "help.shortcuts":
+			win.webContents.focus();
+			return win.webContents.send(KEYBOARD_SHORTCUTS_HELP_CHANNEL);
 		case "help.about":
 			void dialog.showMessageBox(win, {
 				type: "info",
@@ -1249,14 +1254,24 @@ ipcMain.handle("appState:setMigration", async (_event, migration: MigrationState
 
 ipcMain.handle("updateSettings:get", async (): Promise<UpdateSettings> => {
 	const runFile = runFilePath();
-	if (!runFile) return { enabled: false, channel: "latest", nightlyAck: false };
+	if (!runFile) return { enabled: false, channel: "latest", nightlyAck: false, feature: null };
 	return readUpdateSettings(path.dirname(runFile));
 });
 ipcMain.handle("updateSettings:set", async (_event, settings: UpdateSettings) => {
 	const runFile = runFilePath();
 	if (!runFile) return;
 	await writeUpdateSettings(path.dirname(runFile), settings);
+	// Re-apply the feed immediately so pinning/unpinning a feature build takes
+	// effect without an app restart. Only meaningful in packaged builds (where
+	// electron-updater has a real feed), but safe to call in dev.
+	// Pinning flow: renderer calls updateSettings.set({...feature:{pr}}) then
+	// updates.check()->download()->install() to land on the feature build.
+	// Returning home: updateSettings.set({...feature:null}) then same sequence.
+	configureFeed(settings);
 });
+
+ipcMain.handle("featureBuilds:list", () => listFeatureBuilds());
+ipcMain.handle("featureBuilds:getActive", () => getActiveFeatureBuild());
 
 ipcMain.handle("updates:getStatus", (): UpdateStatus => getUpdateStatus());
 ipcMain.handle("updates:check", async () => {

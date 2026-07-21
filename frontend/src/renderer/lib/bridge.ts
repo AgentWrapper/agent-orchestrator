@@ -1,4 +1,5 @@
 import type { AoBridge } from "../../preload";
+export type { FeatureBuild } from "../../main/feature-builds";
 
 export const aoBridge: AoBridge =
 	window.ao ??
@@ -11,6 +12,7 @@ export const aoBridge: AoBridge =
 			},
 			scanImportFolder: async ({ path }) => ({ path, repos: [] }),
 			onNewSessionShortcut: () => () => undefined,
+			onKeyboardShortcutsHelp: () => () => undefined,
 		},
 		terminal: {
 			saveDroppedFile: async () => "",
@@ -117,7 +119,7 @@ export const aoBridge: AoBridge =
 			setMigration: async () => undefined,
 		},
 		updateSettings: {
-			get: async () => ({ enabled: false, channel: "latest", nightlyAck: false }),
+			get: async () => ({ enabled: false, channel: "latest", nightlyAck: false, feature: null }),
 			set: async () => undefined,
 		},
 		updates: {
@@ -126,5 +128,9 @@ export const aoBridge: AoBridge =
 			download: async () => undefined,
 			install: async () => undefined,
 			onStatus: () => () => undefined,
+		},
+		featureBuilds: {
+			list: async () => [],
+			getActive: async () => null,
 		},
 	} satisfies AoBridge);
