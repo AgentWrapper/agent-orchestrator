@@ -45,7 +45,7 @@
 		"@types/semver": "^7.7.1",
 		"@vitejs/plugin-react": "^6.0.2",
 		"app-builder-lib": "^26.15.3",
-		"electron": "^33.0.0",
+		"electron": "^39.8.5",
 		"jsdom": "^29.1.1",
 		"openapi-typescript": "^7.13.0",
 		"playwright": "^1.60.0",
