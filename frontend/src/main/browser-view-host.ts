@@ -48,6 +48,7 @@ type BrowserWebContents = Pick<
 	| "canGoForward"
 	| "capturePage"
 	| "clearHistory"
+	| "debugger"
 	| "mainFrame"
 	| "getTitle"
 	| "getURL"
@@ -104,6 +105,7 @@ export type BrowserViewHost = {
 	dispose: () => void;
 	destroy: (viewId: string) => void;
 	destroyAll: () => void;
+	execute: (sessionId: string, action: string, args?: Record<string, unknown>) => Promise<unknown>;
 	// webContents of the most recently focused browser panel (or null); the titlebar menu targets it for Edit/Reload/Zoom/DevTools.
 	getLastFocusedPanelContents: () => WebContents | null;
 	// Drop the remembered panel; call when the shell gains focus for a real reason so a stale panel stops absorbing menu actions.
@@ -111,9 +113,22 @@ export type BrowserViewHost = {
 };
 
 type BrowserEntry = {
+	sessionId: string;
 	view: BrowserViewLike;
 	state: BrowserNavState;
 	annotationEnabled: boolean;
+	refGeneration: number;
+	refs: Map<string, { backendNodeId: number; generation: number }>;
+	consoleMessages: BrowserLogEntry[];
+	errors: BrowserLogEntry[];
+};
+
+type BrowserLogEntry = {
+	level: string;
+	message: string;
+	source?: string;
+	line?: number;
+	timestamp: string;
 };
 
 const OFFSCREEN_BOUNDS: BrowserRect = { x: -10_000, y: -10_000, width: 0, height: 0 };
@@ -177,6 +192,8 @@ export function scaleBoundsForZoom(rect: BrowserRect, zoomFactor: number): Brows
 
 export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserViewHost {
 	const entries = new Map<string, BrowserEntry>();
+	const viewIdsBySessionId = new Map<string, string>();
+	const rendererOwnersByViewId = new Map<string, Set<number>>();
 	const viewIdsByWebContentsId = new Map<number, string>();
 	const ipcDisposers: Array<() => void> = [];
 	// viewId of the panel that most recently held focus; cleared when it is hidden or destroyed.
@@ -218,7 +235,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		});
 	}
 
-	const ensure = (viewId: string): BrowserEntry => {
+	const ensure = (viewId: string, sessionId: string): BrowserEntry => {
 		const existing = entries.get(viewId);
 		if (existing) return existing;
 
@@ -235,11 +252,22 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		options.mainWindow.contentView.addChildView(view);
 
 		const state: BrowserNavState = emptyNavState(viewId);
-		const entry = { view, state, annotationEnabled: false };
+		const entry: BrowserEntry = {
+			sessionId,
+			view,
+			state,
+			annotationEnabled: false,
+			refGeneration: 0,
+			refs: new Map(),
+			consoleMessages: [],
+			errors: [],
+		};
 		entries.set(viewId, entry);
+		viewIdsBySessionId.set(sessionId, viewId);
 		viewIdsByWebContentsId.set(view.webContents.id, viewId);
 		hardenWebContents(view.webContents, options, entry);
 		wireNavEvents(view.webContents, options, entry);
+		wireAutomationEvents(view.webContents, entry);
 		// The preview is a separate WebContentsView, so renderer-window keydown
 		// listeners never see keys typed here. Forward application shortcuts to the
 		// shell renderer so they still work with the panel focused.
@@ -249,6 +277,21 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		});
 		return entry;
 	};
+
+	const ensureSession = (sessionId: string, rendererId?: number): BrowserEntry => {
+		const existingViewId = viewIdsBySessionId.get(sessionId);
+		const viewId = existingViewId ?? `${rendererId ?? 0}:${sessionId}`;
+		const entry = ensure(viewId, sessionId);
+		if (rendererId !== undefined) {
+			const owners = rendererOwnersByViewId.get(viewId) ?? new Set<number>();
+			owners.add(rendererId);
+			rendererOwnersByViewId.set(viewId, owners);
+		}
+		return entry;
+	};
+
+	const isRendererOwned = (event: IpcMainInvokeEvent | IpcMainEvent, viewId: string): boolean =>
+		rendererOwnersByViewId.get(viewId)?.has(event.sender.id) ?? false;
 
 	const setBounds = ({ viewId, rect, visible, parked }: BrowserBoundsInput, zoomFactor = 1): void => {
 		const entry = entries.get(viewId);
@@ -276,7 +319,8 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	};
 
 	const navigate = async ({ viewId, url }: BrowserNavigateInput): Promise<BrowserNavState> => {
-		const entry = ensure(viewId);
+		const entry = entries.get(viewId);
+		if (!entry) throw browserError("BROWSER_TARGET_UNAVAILABLE", "Browser target is unavailable");
 		cancelAnnotation(options, entry, "navigation");
 		const normalized = normalizeBrowserURL(url);
 		if (!isAllowedBrowserURL(normalized.href, options.rendererOrigin)) {
@@ -300,7 +344,8 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	// readNavState normalizes it back to an empty url so the panel shows its
 	// empty state.
 	const clear = async (viewId: string): Promise<BrowserNavState> => {
-		const entry = ensure(viewId);
+		const entry = entries.get(viewId);
+		if (!entry) throw browserError("BROWSER_TARGET_UNAVAILABLE", "Browser target is unavailable");
 		cancelAnnotation(options, entry, "navigation");
 		entry.view.setVisible?.(false);
 		entry.view.setBounds(OFFSCREEN_BOUNDS);
@@ -326,6 +371,8 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		const entry = entries.get(viewId);
 		if (!entry) return;
 		entries.delete(viewId);
+		viewIdsBySessionId.delete(entry.sessionId);
+		rendererOwnersByViewId.delete(viewId);
 		viewIdsByWebContentsId.delete(entry.view.webContents.id);
 		forgetIfFocused(viewId);
 		// When the window is already gone (dispose fired from mainWindow "closed"),
@@ -335,6 +382,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		entry.view.setVisible?.(false);
 		entry.view.setBounds(OFFSCREEN_BOUNDS);
 		options.mainWindow.contentView.removeChildView?.(entry.view);
+		if (entry.view.webContents.debugger?.isAttached()) {
+			entry.view.webContents.debugger.detach();
+		}
 		entry.view.webContents.close?.();
 	};
 
@@ -351,7 +401,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	};
 
 	const setAnnotationMode = (event: IpcMainInvokeEvent, input: BrowserAnnotationModeInput): void => {
-		if (!isRendererOwnedViewId(event, input.viewId)) return;
+		if (!isRendererOwned(event, input.viewId)) return;
 		const entry = entries.get(input.viewId);
 		if (!entry) return;
 		entry.annotationEnabled = input.enabled;
@@ -410,24 +460,44 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		ipcDisposers.push(() => options.ipcMain.off(channel, fn));
 	};
 
-	handle("browser:ensure", (event, sessionId: string) => pushNavState(options, ensure(scopedViewId(event, sessionId))));
-	on("browser:setBounds", (event, input: BrowserBoundsInput) => setBounds(input, event.sender.getZoomFactor()));
-	handle("browser:navigate", (_event, input: BrowserNavigateInput) => navigate(input));
-	handle("browser:clear", (_event, viewId: string) => clear(viewId));
-	handle("browser:capture", (event, viewId: string) => (isRendererOwnedViewId(event, viewId) ? capture(viewId) : ""));
+	handle("browser:ensure", (event, sessionId: string) =>
+		pushNavState(options, ensureSession(sessionId, event.sender.id)),
+	);
+	on("browser:setBounds", (event, input: BrowserBoundsInput) => {
+		if (isRendererOwned(event, input.viewId)) setBounds(input, event.sender.getZoomFactor());
+	});
+	handle("browser:navigate", (event, input: BrowserNavigateInput) =>
+		isRendererOwned(event, input.viewId) ? navigate(input) : emptyNavState(input.viewId),
+	);
+	handle("browser:clear", (event, viewId: string) =>
+		isRendererOwned(event, viewId) ? clear(viewId) : emptyNavState(viewId),
+	);
+	handle("browser:capture", (event, viewId: string) => (isRendererOwned(event, viewId) ? capture(viewId) : ""));
 	handle("browser:requestMirror", (event, viewId: string) => {
-		if (!mirrorSupported || !isRendererOwnedViewId(event, viewId) || !entries.has(viewId)) return false;
+		if (!mirrorSupported || !isRendererOwned(event, viewId) || !entries.has(viewId)) return false;
 		const frame = event.senderFrame;
 		if (!frame) return false;
 		pendingMirror = { viewId, expires: Date.now() + 5000, frame };
 		return true;
 	});
-	handle("browser:goBack", (_event, viewId: string) => invokeNav(viewId, (contents) => contents.goBack(), true));
-	handle("browser:goForward", (_event, viewId: string) => invokeNav(viewId, (contents) => contents.goForward(), true));
-	handle("browser:reload", (_event, viewId: string) => invokeNav(viewId, (contents) => contents.reload(), true));
-	handle("browser:stop", (_event, viewId: string) => invokeNav(viewId, (contents) => contents.stop()));
+	handle("browser:goBack", (event, viewId: string) =>
+		isRendererOwned(event, viewId) ? invokeNav(viewId, (contents) => contents.goBack(), true) : emptyNavState(viewId),
+	);
+	handle("browser:goForward", (event, viewId: string) =>
+		isRendererOwned(event, viewId)
+			? invokeNav(viewId, (contents) => contents.goForward(), true)
+			: emptyNavState(viewId),
+	);
+	handle("browser:reload", (event, viewId: string) =>
+		isRendererOwned(event, viewId) ? invokeNav(viewId, (contents) => contents.reload(), true) : emptyNavState(viewId),
+	);
+	handle("browser:stop", (event, viewId: string) =>
+		isRendererOwned(event, viewId) ? invokeNav(viewId, (contents) => contents.stop()) : emptyNavState(viewId),
+	);
 	handle("browser:annotation:setMode", (event, input: BrowserAnnotationModeInput) => setAnnotationMode(event, input));
-	on("browser:destroy", (_event, viewId: string) => destroy(viewId));
+	on("browser:destroy", (event, viewId: string) => {
+		if (isRendererOwned(event, viewId)) destroy(viewId);
+	});
 	on("browser:annotation:submit", (event, payload: BrowserAnnotationPageSubmitPayload) =>
 		forwardAnnotationSubmit(event, payload),
 	);
@@ -436,6 +506,38 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	);
 
 	return {
+		execute: async (sessionId, action, args = {}) => {
+			if (!sessionId.trim()) throw browserError("INVALID_ARGUMENT", "sessionId is required");
+			const entry = ensureSession(sessionId);
+			switch (action) {
+				case "open": {
+					const url = stringArg(args, "url", "URL_REQUIRED", "url is required");
+					const state = await navigate({ viewId: entry.state.viewId, url });
+					if (state.error) throw browserError("NAVIGATION_FAILED", state.error);
+					return state;
+				}
+				case "snapshot":
+					return snapshotEntry(entry, Boolean(args.interactive));
+				case "click":
+					return clickEntry(entry, stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"));
+				case "fill":
+					return fillEntry(
+						entry,
+						stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"),
+						stringArg(args, "text", "INVALID_ARGUMENT", "text is required", true),
+					);
+				case "wait":
+					return waitForEntry(entry, args);
+				case "screenshot":
+					return screenshotEntry(entry);
+				case "console":
+					return { messages: [...entry.consoleMessages] };
+				case "errors":
+					return { messages: [...entry.errors] };
+				default:
+					throw browserError("INVALID_ARGUMENT", `Unsupported browser action: ${action}`);
+			}
+		},
 		dispose: () => {
 			ipcDisposers.splice(0).forEach((dispose) => dispose());
 			for (const viewId of [...entries.keys()]) {
@@ -505,14 +607,6 @@ function emptyNavState(viewId: string): BrowserNavState {
 	};
 }
 
-function scopedViewId(event: IpcMainInvokeEvent, sessionId: string): string {
-	return `${event.sender.id}:${sessionId}`;
-}
-
-function isRendererOwnedViewId(event: IpcMainInvokeEvent, viewId: string): boolean {
-	return viewId.startsWith(`${event.sender.id}:`);
-}
-
 function hardenWebContents(contents: BrowserWebContents, options: BrowserViewHostOptions, entry: BrowserEntry): void {
 	contents.setWindowOpenHandler(({ url }) => {
 		if (isAllowedBrowserURL(url, options.rendererOrigin)) {
@@ -542,12 +636,18 @@ function wireNavEvents(contents: BrowserWebContents, options: BrowserViewHostOpt
 	contents.on("did-navigate-in-page", update);
 	contents.on("page-title-updated", update);
 	contents.on("did-start-loading", () => {
+		invalidateRefs(entry);
 		cancelAnnotation(options, entry, "navigation");
 		update();
 	});
 	contents.on("did-stop-loading", update);
 	contents.on("did-fail-load", (_event, errorCode, errorDescription) => {
 		if (errorCode === -3) return;
+		pushBrowserLog(entry.errors, {
+			level: "error",
+			message: String(errorDescription || `Navigation failed (${errorCode})`),
+			timestamp: new Date().toISOString(),
+		});
 		entry.view.setVisible?.(false);
 		entry.state = { ...readNavState(entry), error: String(errorDescription || "Unable to load page") };
 		options.mainWindow.webContents.send("browser:navState", entry.state);
@@ -585,4 +685,286 @@ function readNavState(entry: BrowserEntry): BrowserNavState {
 		canGoForward: webContents.canGoForward(),
 		isLoading: webContents.isLoading(),
 	};
+}
+
+type AXValue = { value?: unknown };
+type AXNode = {
+	nodeId: string;
+	parentId?: string;
+	ignored?: boolean;
+	backendDOMNodeId?: number;
+	role?: AXValue;
+	name?: AXValue;
+	value?: AXValue;
+	properties?: Array<{ name: string; value?: AXValue }>;
+};
+
+const INTERACTIVE_ROLES = new Set([
+	"button",
+	"checkbox",
+	"combobox",
+	"link",
+	"listbox",
+	"menuitem",
+	"menuitemcheckbox",
+	"menuitemradio",
+	"option",
+	"radio",
+	"scrollbar",
+	"searchbox",
+	"slider",
+	"spinbutton",
+	"switch",
+	"tab",
+	"textbox",
+	"treeitem",
+]);
+
+function wireAutomationEvents(contents: BrowserWebContents, entry: BrowserEntry): void {
+	contents.on("console-message", (...eventArgs: unknown[]) => {
+		const details = eventArgs.find(
+			(value) => value && typeof value === "object" && typeof (value as { message?: unknown }).message === "string",
+		) as { level?: string; message: string; lineNumber?: number; sourceId?: string } | undefined;
+		const legacyLevel = typeof eventArgs[1] === "number" ? eventArgs[1] : 1;
+		const legacyMessage = typeof eventArgs[2] === "string" ? eventArgs[2] : "";
+		const level = details?.level ?? ["debug", "info", "warning", "error"][legacyLevel] ?? "info";
+		const log: BrowserLogEntry = {
+			level,
+			message: details?.message ?? legacyMessage,
+			source: details?.sourceId ?? (typeof eventArgs[4] === "string" ? eventArgs[4] : undefined),
+			line: details?.lineNumber ?? (typeof eventArgs[3] === "number" ? eventArgs[3] : undefined),
+			timestamp: new Date().toISOString(),
+		};
+		pushBrowserLog(entry.consoleMessages, log);
+		if (level === "error") pushBrowserLog(entry.errors, log);
+	});
+	contents.on("render-process-gone", (_event, details) => {
+		pushBrowserLog(entry.errors, {
+			level: "error",
+			message: `Browser renderer exited: ${details.reason}`,
+			timestamp: new Date().toISOString(),
+		});
+	});
+	const targetDebugger = contents.debugger;
+	if (!targetDebugger) return;
+	targetDebugger.on("message", (_event, method, params) => {
+		if (method === "DOM.documentUpdated") {
+			invalidateRefs(entry);
+			return;
+		}
+		if (method === "Runtime.exceptionThrown") {
+			const detail = params as { exceptionDetails?: { text?: string; url?: string; lineNumber?: number } };
+			const exception = detail.exceptionDetails;
+			pushBrowserLog(entry.errors, {
+				level: "error",
+				message: exception?.text ?? "Uncaught browser exception",
+				source: exception?.url,
+				line: exception?.lineNumber,
+				timestamp: new Date().toISOString(),
+			});
+		}
+	});
+}
+
+function pushBrowserLog(target: BrowserLogEntry[], entry: BrowserLogEntry): void {
+	target.push(entry);
+	if (target.length > 200) target.splice(0, target.length - 200);
+}
+
+function invalidateRefs(entry: BrowserEntry): void {
+	entry.refGeneration += 1;
+	entry.refs.clear();
+}
+
+async function ensureDebugger(entry: BrowserEntry): Promise<void> {
+	const debug = entry.view.webContents.debugger;
+	if (!debug) throw browserError("BROWSER_TARGET_UNAVAILABLE", "Browser debugger is unavailable");
+	if (!debug.isAttached()) {
+		try {
+			debug.attach("1.3");
+		} catch (error) {
+			throw browserError(
+				"BROWSER_TARGET_UNAVAILABLE",
+				error instanceof Error ? error.message : "Unable to attach to browser target",
+			);
+		}
+	}
+	await debug.sendCommand("Runtime.enable");
+	await debug.sendCommand("DOM.enable");
+}
+
+async function snapshotEntry(entry: BrowserEntry, interactiveOnly: boolean): Promise<unknown> {
+	await ensureDebugger(entry);
+	await entry.view.webContents.debugger.sendCommand("Accessibility.enable");
+	const response = (await entry.view.webContents.debugger.sendCommand("Accessibility.getFullAXTree")) as {
+		nodes?: AXNode[];
+	};
+	const nodes = response.nodes ?? [];
+	entry.refGeneration += 1;
+	entry.refs.clear();
+	const generation = entry.refGeneration;
+	const depths = new Map<string, number>();
+	const lines: string[] = [];
+	const elements: Array<{ ref: string; role: string; name: string }> = [];
+	let refIndex = 0;
+	for (const node of nodes.slice(0, 1_000)) {
+		if (node.ignored) continue;
+		const role = stringValue(node.role) || "generic";
+		const name = stringValue(node.name);
+		const value = stringValue(node.value);
+		const interactive =
+			INTERACTIVE_ROLES.has(role) || node.properties?.some((property) => property.name === "focusable");
+		let ref = "";
+		if (interactive && node.backendDOMNodeId) {
+			ref = `e${++refIndex}`;
+			entry.refs.set(ref, { backendNodeId: node.backendDOMNodeId, generation });
+			elements.push({ ref, role, name });
+		}
+		if (interactiveOnly && !ref) continue;
+		if (!ref && !name && !value) continue;
+		const parentDepth = node.parentId ? (depths.get(node.parentId) ?? -1) : -1;
+		const depth = Math.max(0, parentDepth + 1);
+		depths.set(node.nodeId, depth);
+		const label = name ? ` \"${compactText(name)}\"` : "";
+		const currentValue = value && value !== name ? ` value=\"${compactText(value)}\"` : "";
+		const reference = ref ? ` [ref=${ref}]` : "";
+		lines.push(`${"  ".repeat(Math.min(depth, 8))}${role}${label}${currentValue}${reference}`);
+	}
+	return {
+		url: entry.view.webContents.getURL(),
+		title: entry.view.webContents.getTitle(),
+		generation,
+		text: lines.join("\n") || "(empty accessibility snapshot)",
+		elements,
+	};
+}
+
+async function clickEntry(entry: BrowserEntry, refName: string): Promise<unknown> {
+	const objectId = await resolveRef(entry, refName);
+	await entry.view.webContents.debugger.sendCommand("Runtime.callFunctionOn", {
+		objectId,
+		functionDeclaration:
+			"function(){ this.scrollIntoView({block:'center',inline:'center'}); this.focus(); this.click(); }",
+		awaitPromise: true,
+	});
+	return { ref: refName, url: entry.view.webContents.getURL() };
+}
+
+async function fillEntry(entry: BrowserEntry, refName: string, text: string): Promise<unknown> {
+	const objectId = await resolveRef(entry, refName);
+	await entry.view.webContents.debugger.sendCommand("Runtime.callFunctionOn", {
+		objectId,
+		functionDeclaration: `function(next){
+			this.scrollIntoView({block:'center',inline:'center'});
+			this.focus();
+			const proto = Object.getPrototypeOf(this);
+			const descriptor = proto && Object.getOwnPropertyDescriptor(proto, 'value');
+			if (descriptor && descriptor.set) descriptor.set.call(this, next); else this.value = next;
+			this.dispatchEvent(new Event('input', {bubbles:true, composed:true}));
+			this.dispatchEvent(new Event('change', {bubbles:true, composed:true}));
+		}`,
+		arguments: [{ value: text }],
+		awaitPromise: true,
+	});
+	return { ref: refName, value: text, url: entry.view.webContents.getURL() };
+}
+
+async function resolveRef(entry: BrowserEntry, refName: string): Promise<string> {
+	await ensureDebugger(entry);
+	const ref = entry.refs.get(refName);
+	if (!ref || ref.generation !== entry.refGeneration) {
+		throw browserError("STALE_REFERENCE", `Element reference ${refName} is stale; run ao browser snapshot again`);
+	}
+	try {
+		const resolved = (await entry.view.webContents.debugger.sendCommand("DOM.resolveNode", {
+			backendNodeId: ref.backendNodeId,
+		})) as { object?: { objectId?: string } };
+		if (!resolved.object?.objectId) throw new Error("node has no runtime object");
+		return resolved.object.objectId;
+	} catch {
+		entry.refs.delete(refName);
+		throw browserError("STALE_REFERENCE", `Element reference ${refName} is stale; run ao browser snapshot again`);
+	}
+}
+
+async function waitForEntry(entry: BrowserEntry, args: Record<string, unknown>): Promise<unknown> {
+	const fixedMS = numberArg(args.ms, 0, 60_000);
+	if (fixedMS > 0) {
+		await delay(fixedMS);
+		return { waitedMs: fixedMS, url: entry.view.webContents.getURL() };
+	}
+	const timeoutMS = numberArg(args.timeoutMs, 1, 60_000) || 10_000;
+	let expression = "";
+	let condition = "";
+	if (typeof args.text === "string" && args.text) {
+		expression = `Boolean(document.body && document.body.innerText.includes(${JSON.stringify(args.text)}))`;
+		condition = `text ${JSON.stringify(args.text)}`;
+	} else if (typeof args.selector === "string" && args.selector) {
+		expression = `Boolean(document.querySelector(${JSON.stringify(args.selector)}))`;
+		condition = `selector ${JSON.stringify(args.selector)}`;
+	} else if (typeof args.url === "string" && args.url) {
+		expression = `location.href.includes(${JSON.stringify(args.url)})`;
+		condition = `URL ${JSON.stringify(args.url)}`;
+	} else {
+		throw browserError("INVALID_ARGUMENT", "wait requires text, selector, url, or ms");
+	}
+	await ensureDebugger(entry);
+	const deadline = Date.now() + timeoutMS;
+	while (Date.now() <= deadline) {
+		const evaluated = (await entry.view.webContents.debugger.sendCommand("Runtime.evaluate", {
+			expression,
+			returnByValue: true,
+		})) as { result?: { value?: unknown } };
+		if (evaluated.result?.value === true) {
+			return { condition, url: entry.view.webContents.getURL() };
+		}
+		await delay(100);
+	}
+	throw browserError("WAIT_TIMEOUT", `Timed out after ${timeoutMS}ms waiting for ${condition}`);
+}
+
+async function screenshotEntry(entry: BrowserEntry): Promise<unknown> {
+	const image = await entry.view.webContents.capturePage();
+	if (image.isEmpty()) throw browserError("BROWSER_COMMAND_FAILED", "Browser screenshot is empty");
+	const size = image.getSize();
+	return {
+		mimeType: "image/png",
+		data: image.toPNG().toString("base64"),
+		width: size.width,
+		height: size.height,
+		url: entry.view.webContents.getURL(),
+	};
+}
+
+function stringArg(
+	args: Record<string, unknown>,
+	name: string,
+	code: string,
+	message: string,
+	allowEmpty = false,
+): string {
+	const value = args[name];
+	if (typeof value !== "string" || (!allowEmpty && !value.trim())) throw browserError(code, message);
+	return value;
+}
+
+function numberArg(value: unknown, min: number, max: number): number {
+	if (typeof value !== "number" || !Number.isFinite(value)) return 0;
+	return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+function stringValue(value: AXValue | undefined): string {
+	return typeof value?.value === "string" ? value.value : value?.value == null ? "" : String(value.value);
+}
+
+function compactText(value: string): string {
+	return value.replace(/\s+/g, " ").replace(/\"/g, '\\"').trim().slice(0, 240);
+}
+
+function delay(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function browserError(code: string, message: string): Error & { code: string } {
+	return Object.assign(new Error(message), { code });
 }

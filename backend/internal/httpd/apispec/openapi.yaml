@@ -97,6 +97,99 @@ paths:
       summary: Refresh the cached local agent adapter catalog
       tags:
       - agents
+  /api/v1/browser/commands:
+    post:
+      operationId: executeBrowserCommand
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BrowserCommandRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrowserCommandResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Execute a target-scoped command in a session's desktop browser
+      tags:
+      - browser
+  /api/v1/browser/status:
+    get:
+      operationId: getBrowserStatus
+      parameters:
+      - description: AO session identifier.
+        in: query
+        name: sessionId
+        schema:
+          description: AO session identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrowserStatusResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Check whether the desktop browser runtime is connected for a session
+      tags:
+      - browser
   /api/v1/events:
     get:
       operationId: streamEvents
@@ -1859,6 +1952,50 @@ components:
       - id
       - label
       type: object
+    BrowserCommandRequest:
+      properties:
+        action:
+          type: string
+        args:
+          additionalProperties: {}
+          type: object
+        sessionId:
+          type: string
+      required:
+      - sessionId
+      - action
+      type: object
+    BrowserCommandResponse:
+      properties:
+        action:
+          type: string
+        requestId:
+          type: string
+        result: {}
+        sessionId:
+          type: string
+      required:
+      - requestId
+      - sessionId
+      - action
+      - result
+      type: object
+    BrowserStatusResponse:
+      properties:
+        connected:
+          type: boolean
+        connectedAt:
+          format: date-time
+          type: string
+        sessionId:
+          type: string
+        transport:
+          type: string
+      required:
+      - sessionId
+      - connected
+      - transport
+      type: object
     CancelReviewResponse:
       properties:
         reviewerHandleId:
@@ -3179,3 +3316,5 @@ tags:
   name: import
 - description: Connect Mobile LAN bridge control (loopback/desktop only)
   name: mobile
+- description: Target-isolated desktop browser runtime (loopback only)
+  name: browser

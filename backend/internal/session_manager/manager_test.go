@@ -2093,7 +2093,10 @@ func TestSpawnOrchestrator_UsesCoordinatorPrompt(t *testing.T) {
 		"`ao session ls --project mer`",
 		"`ao session get <worker-session-id>`",
 		"Delegate implementation, fixes, tests, and PR ownership to worker sessions",
-		"skills/using-ao/SKILL.md",
+		filepath.Join("skills", "using-ao", "SKILL.md"),
+		"AO desktop Browser panel",
+		"agent.browsers.get(\"iab\")",
+		"same live page the user sees",
 	} {
 		if !strings.Contains(systemPrompt, want) {
 			t.Fatalf("system prompt missing %q:\n%s", want, systemPrompt)
@@ -2240,8 +2243,11 @@ func TestSystemPrompt_AppendsConfidentialityGuard(t *testing.T) {
 			if !strings.Contains(sp, "role boundaries, delegation policy, CI/review follow-up expectations, PR/MR workflow when applicable, and privacy rules") {
 				t.Fatalf("%s: system prompt missing generic behavior categories:\n%s", tc.name, sp)
 			}
-			if !strings.Contains(sp, "skills/using-ao/SKILL.md") {
+			if !strings.Contains(sp, filepath.Join("skills", "using-ao", "SKILL.md")) {
 				t.Fatalf("%s: system prompt missing using-ao skill pointer:\n%s", tc.name, sp)
+			}
+			if !strings.Contains(sp, "AO desktop Browser panel") || !strings.Contains(sp, "agent.browsers.get(\"iab\")") {
+				t.Fatalf("%s: system prompt missing AO browser routing guidance:\n%s", tc.name, sp)
 			}
 		})
 	}

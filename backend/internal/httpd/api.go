@@ -32,6 +32,7 @@ type APIDeps struct {
 	Events             cdcSubscriber
 	Telemetry          ports.EventSink
 	Mobile             *controllers.MobileController
+	Browser            controllers.BrowserRuntime
 }
 
 // API owns one controller per resource and is the single Register call the
@@ -45,6 +46,7 @@ type API struct {
 	reviews       *controllers.ReviewsController
 	notifications *controllers.NotificationsController
 	imports       *controllers.ImportController
+	browser       *controllers.BrowserController
 	events        *EventsController
 }
 
@@ -68,6 +70,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		reviews:       &controllers.ReviewsController{Svc: deps.Reviews},
 		notifications: &controllers.NotificationsController{Svc: deps.Notifications, Stream: deps.NotificationStream},
 		imports:       &controllers.ImportController{Svc: deps.Import},
+		browser:       &controllers.BrowserController{Runtime: deps.Browser, Sessions: deps.Sessions},
 		events:        &EventsController{Source: deps.CDC, Live: deps.Events},
 	}
 }
@@ -93,6 +96,7 @@ func (a *API) Register(root chi.Router) {
 			a.reviews.Register(r)
 			a.notifications.Register(r)
 			a.imports.Register(r)
+			a.browser.Register(r)
 			// Sibling REST controllers plug in here.
 		})
 		// Long-lived streams intentionally bypass the REST timeout middleware.
