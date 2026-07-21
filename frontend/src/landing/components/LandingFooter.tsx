@@ -9,6 +9,7 @@ const columns = [
 			{ label: "Agents", href: "#agents" },
 			{ label: "Install", href: "/docs/installation/" },
 			{ label: "CLI", href: "/docs/cli/" },
+			{ label: "Design partners", href: "/design-partners/" },
 		],
 	},
 	{
@@ -24,8 +25,8 @@ const columns = [
 		title: "Community",
 		links: [
 			{ label: "GitHub", href: "https://github.com/AgentWrapper/agent-orchestrator" },
-			{ label: "Issues", href: "https://github.com/AgentWrapper/agent-orchestrator/issues" },
-			{ label: "Pull requests", href: "https://github.com/AgentWrapper/agent-orchestrator/pulls" },
+			{ label: "Discord", href: "https://discord.com/invite/UZv7JjxbwG" },
+			{ label: "X", href: "https://x.com/aoagents" },
 			{ label: "Releases", href: "https://github.com/AgentWrapper/agent-orchestrator/releases" },
 		],
 	},
@@ -66,9 +67,6 @@ export function LandingFooter() {
 							<span className="inline-flex items-center rounded-sm border border-[color:var(--border)] bg-white/[0.015] px-3 py-2 font-mono text-[12px] text-[color:var(--fg-dim)]">
 								Apache 2.0
 							</span>
-							<span className="inline-flex items-center rounded-sm border border-[color:var(--border)] bg-white/[0.015] px-3 py-2 font-mono text-[12px] text-[color:var(--fg-dim)]">
-								127.0.0.1
-							</span>
 						</div>
 					</div>
 
@@ -99,7 +97,14 @@ export function LandingFooter() {
 				</div>
 
 				<div className="mt-20 flex flex-col justify-between gap-3 border-t border-[color:var(--border)] pt-5 font-mono text-[10px] uppercase tracking-[0.2em] text-[color:var(--fg-dim)] sm:flex-row">
-					<span>AgentWrapper/agent-orchestrator</span>
+					<a
+						href="https://github.com/AgentWrapper/agent-orchestrator"
+						target="_blank"
+						rel="noreferrer"
+						className="transition-colors duration-200 hover:text-[color:var(--fg)]"
+					>
+						AgentWrapper/agent-orchestrator
+					</a>
 					<span>Runs locally on your laptop.</span>
 				</div>
 			</div>
