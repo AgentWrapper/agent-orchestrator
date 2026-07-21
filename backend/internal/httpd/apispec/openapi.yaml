@@ -2272,6 +2272,17 @@ components:
       - id
       - label
       type: object
+    BotReviewFeedbackConfig:
+      properties:
+        allowAuthors:
+          items:
+            type: string
+          type: array
+        denyAuthors:
+          items:
+            type: string
+          type: array
+      type: object
     CancelReviewResponse:
       properties:
         reviewerHandleId:
@@ -2931,6 +2942,8 @@ components:
           type: string
         agentRulesFile:
           type: string
+        botReviewFeedback:
+          $ref: '#/components/schemas/BotReviewFeedbackConfig'
         defaultBranch:
           type: string
         env:

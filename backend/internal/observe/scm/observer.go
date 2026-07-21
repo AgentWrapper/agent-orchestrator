@@ -1053,6 +1053,11 @@ func (o *Observer) needsReviewRefresh(key string, local domain.PullRequest, deci
 }
 
 func (o *Observer) prepareForPersistence(obs ports.SCMObservation, local domain.PullRequest, opts persistenceOptions, now time.Time) ports.SCMObservation {
+	for i := range obs.Review.Threads {
+		if obs.Review.Threads[i].SemanticHash == "" {
+			obs.Review.Threads[i].SemanticHash = threadSemanticHash(obs.Review.Threads[i])
+		}
+	}
 	metadataHash := metadataSemanticHash(obs)
 	if opts.preserveLocalMetadataHash {
 		metadataHash = local.MetadataHash
@@ -1168,7 +1173,11 @@ func domainFromObservation(sessionID domain.SessionID, obs ports.SCMObservation,
 	}
 	comments := make([]domain.PullRequestComment, 0, commentCount)
 	for _, th := range obs.Review.Threads {
-		threads = append(threads, domain.PullRequestReviewThread{ThreadID: th.ID, Path: th.Path, Line: th.Line, Resolved: th.Resolved, IsBot: th.IsBot, SemanticHash: threadSemanticHash(th), UpdatedAt: now})
+		semanticHash := th.SemanticHash
+		if semanticHash == "" {
+			semanticHash = threadSemanticHash(th)
+		}
+		threads = append(threads, domain.PullRequestReviewThread{ThreadID: th.ID, Path: th.Path, Line: th.Line, Resolved: th.Resolved, IsBot: th.IsBot, SemanticHash: semanticHash, UpdatedAt: now})
 		for _, c := range th.Comments {
 			comments = append(comments, domain.PullRequestComment{ThreadID: th.ID, ID: c.ID, Author: c.Author, File: th.Path, Line: th.Line, Body: c.Body, URL: c.URL, Resolved: th.Resolved, IsBot: c.IsBot || th.IsBot, CreatedAt: now})
 		}
