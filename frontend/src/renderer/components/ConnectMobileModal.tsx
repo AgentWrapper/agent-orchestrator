@@ -141,7 +141,11 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 				)}
 			>
 				<DialogClose asChild>
-					<button type="button" className="settings-dialog-close-button settings-close-button" aria-label="Close connect mobile">
+					<button
+						type="button"
+						className="settings-dialog-close-button settings-close-button"
+						aria-label="Close connect mobile"
+					>
 						<X className="size-5" aria-hidden="true" />
 					</button>
 				</DialogClose>
@@ -263,7 +267,6 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 											tabIndex={enabled ? 0 : -1}
 											className="settings-footer-button mt-5 w-(--size-settings-mobile-regen-width) border-[var(--color-border-settings-input)] bg-[var(--color-bg-settings-input)] text-settings-label transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
 										>
-
 											{regenerate.isPending && <Loader2 className="mr-2 size-4 animate-spin" aria-hidden="true" />}
 											Regenerate password
 										</button>
