@@ -2,6 +2,7 @@ package usage
 
 import "github.com/aoagents/agent-orchestrator/backend/internal/domain"
 
+// Parser version constants identify the normalizer contract for each usage source.
 const (
 	ClaudeJSONLParserVersion  = "claude-jsonl/v1"
 	CodexRolloutParserVersion = "codex-rollout/v1"
@@ -12,6 +13,7 @@ const (
 // version gates.
 type VersionPolicy string
 
+// VersionPolicy values describe how support is determined for native artifacts.
 const (
 	VersionPolicyFeatureDetected VersionPolicy = "feature_detected"
 	VersionPolicyUnsupported     VersionPolicy = "unsupported"
