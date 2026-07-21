@@ -12,7 +12,7 @@ export default function NotFound() {
 			</p>
 			<div className="flex gap-4 text-sm underline underline-offset-4">
 				<Link href="/">Home</Link>
-				<Link href="/docs">Docs</Link>
+				<Link href="/docs/">Docs</Link>
 			</div>
 		</main>
 	);

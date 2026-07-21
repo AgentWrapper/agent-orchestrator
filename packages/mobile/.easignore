@@ -1,0 +1,55 @@
+# EAS upload ignore list. When this file exists, EAS Build uses it INSTEAD of
+# .gitignore to decide what to upload — so it must mirror .gitignore's excludes,
+# then re-include google-services.json (which is gitignored, but the Android
+# build needs it). Keep this in sync with .gitignore.
+
+# dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Push secrets — never upload the FCM service-account / admin SDK keys.
+*-firebase-adminsdk-*.json
+*service-account*.json
+
+# Metro
+.metro-health-check*
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# macOS
+.DS_Store
+*.pem
+
+# local env files
+.env*.local
+
+# typescript
+*.tsbuildinfo
+
+# generated native folders
+/ios
+/android
+
+# logs
+*.log
+
+# Re-include the Firebase Android config: gitignored (kept out of the public
+# repo) but required in the EAS build so the app registers with FCM.
+!google-services.json

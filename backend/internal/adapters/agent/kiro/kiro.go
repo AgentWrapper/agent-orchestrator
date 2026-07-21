@@ -162,7 +162,8 @@ var kiroBinarySpec = binaryutil.BinarySpec{
 	Names:         []string{"kiro-cli"},
 	WinNames:      []string{"kiro-cli.cmd", "kiro-cli.exe", "kiro-cli"},
 	UnixPaths:     []string{"/usr/local/bin/kiro-cli", "/opt/homebrew/bin/kiro-cli"},
-	UnixHomePaths: [][]string{{".kiro", "bin", "kiro-cli"}, {".local", "bin", "kiro-cli"}},
+	UnixHomePaths: binaryutil.NodeManagedUnixHomePaths("kiro-cli", []string{".kiro", "bin", "kiro-cli"}),
+	NodeManaged:   true,
 	// The native Kiro installer location is probed before the npm shim, matching
 	// the pre-refactor order so a native install still wins when both are present.
 	WinPaths: []binaryutil.WinPath{

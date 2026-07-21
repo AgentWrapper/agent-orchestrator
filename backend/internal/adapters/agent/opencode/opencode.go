@@ -33,6 +33,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 
@@ -51,6 +52,11 @@ const (
 	// (same value), but GetRestoreCommand reads it directly, so the const stays.
 	opencodeAgentSessionIDMetadataKey = "agentSessionId"
 )
+
+var opencodeUnixPaths = []string{
+	"/usr/local/bin/opencode",
+	"/opt/homebrew/bin/opencode",
+}
 
 // Plugin is the opencode agent adapter. It is safe for concurrent use; the
 // binary path is resolved once and cached under binaryMu.
@@ -460,15 +466,19 @@ func ResolveOpenCodeBinary(ctx context.Context) (string, error) {
 		return path, nil
 	}
 
-	candidates := []string{
-		"/usr/local/bin/opencode",
-		"/opt/homebrew/bin/opencode",
-	}
+	candidates := append([]string(nil), opencodeUnixPaths...)
 	if home, err := os.UserHomeDir(); err == nil {
 		candidates = append(candidates,
-			filepath.Join(home, ".opencode", "bin", "opencode"),
+			filepath.Join(home, ".npm-global", "bin", "opencode"),
 			filepath.Join(home, ".npm", "bin", "opencode"),
+			filepath.Join(home, ".local", "bin", "opencode"),
+			filepath.Join(home, ".opencode", "bin", "opencode"),
 		)
+		nodeManagerCandidates, err := binaryutil.UnixNodeManagerBinCandidates(ctx, home, "opencode")
+		if err != nil {
+			return "", err
+		}
+		candidates = append(candidates, nodeManagerCandidates...)
 	}
 
 	for _, candidate := range candidates {

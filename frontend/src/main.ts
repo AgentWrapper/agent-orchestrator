@@ -21,17 +21,13 @@ import {
 	downloadUpdateNow,
 	quitAndInstallUpdate,
 	getUpdateStatus,
-	configureFeed,
+	setUpdateSettings,
+	type UpdateCheckOptions,
 } from "./main/auto-updater";
 import { listFeatureBuilds, getActiveFeatureBuild } from "./main/feature-builds";
-import {
-	readUpdateSettings,
-	writeUpdateSettings,
-	type UpdateSettings,
-	type UpdateStatus,
-} from "./main/update-settings";
-import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { existsSync } from "node:fs";
+import { readUpdateSettings, type UpdateSettings, type UpdateStatus } from "./main/update-settings";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { closeSync, existsSync, openSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -55,7 +51,7 @@ import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/post
 import { buildTelemetryBootstrap } from "./shared/telemetry";
 import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view-host";
 import { connectSupervisor, type SupervisorLinkHandle } from "./main/supervisor-link";
-import { shouldLinkOnAttach } from "./main/daemon-owner";
+import { keepDaemonAlive, shouldLinkOnAttach } from "./main/daemon-owner";
 import { readMigrationState, updateMigration, writeAppStateMarker, type MigrationState } from "./main/app-state";
 import { isAllowedAppExternalURL, openAllowedAppExternalURL } from "./main/external-open";
 
@@ -95,8 +91,8 @@ if (process.platform === "win32") {
 app.setPath("userData", path.join(os.homedir(), ".ao", "electron"));
 
 let mainWindow: BrowserWindow | null = null;
-let daemonProcess: ChildProcessWithoutNullStreams | null = null;
-let daemonStoppingProcess: ChildProcessWithoutNullStreams | null = null;
+let daemonProcess: ChildProcess | null = null;
+let daemonStoppingProcess: ChildProcess | null = null;
 let daemonStartPromise: Promise<DaemonStatus> | null = null;
 let daemonStartEpoch = 0;
 let daemonStatus: DaemonStatus = { state: "stopped" };
@@ -467,10 +463,14 @@ function ensureShellEnv(): Promise<void> {
 }
 
 function daemonEnv(): NodeJS.ProcessEnv {
-	// AO_OWNER=app marks this daemon as app-spawned so the app can re-link the
-	// supervisor on attach (headless `ao start` daemons get no AO_OWNER and stay
-	// unlinked, preserving their persistence across app quit).
-	const ownerTag = { AO_OWNER: "app" };
+	// AO_OWNER is the daemon's durable spawn-mode record: the daemon writes it
+	// into running.json and the attach path reads it to decide the supervisor
+	// link from the daemon's own state (not this Electron process's env, which
+	// differs across launches). A keep-alive daemon is "persistent" (never
+	// re-linked, survives app quit); a normal app-owned daemon is "app";
+	// headless `ao start` sets none (stays unlinked, persistent by default).
+	const AO_OWNER = keepDaemonAlive(process.env) ? "persistent" : "app";
+	const ownerTag = { AO_OWNER };
 	// In dev mode, inject isolation defaults so the dev daemon never collides with
 	// the installed app. User-set env vars take priority (checked first).
 	const devExtras: Record<string, string> = {};
@@ -817,14 +817,64 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 	// runs the command through /bin/sh, a plain kill() would only signal the shell
 	// wrapper and orphan the real daemon (which keeps holding the port). Killing
 	// the whole group via killDaemon() reaches the daemon and any PTY children.
-	const child = spawn(launch.command, launch.args, {
-		cwd: launch.cwd,
-		env: daemonEnv(),
-		shell: launch.shell,
-		detached: true,
-		// Hide the daemon's console on a Windows GUI launch (no flashing terminal).
-		windowsHide: true,
-	});
+	//
+	// AO_KEEP_DAEMON: the daemon must survive this app, so it cannot inherit
+	// Electron-owned stdout/stderr pipes — when Electron exits, the pipe read
+	// ends close and the daemon's next stderr log write (SIGPIPE/EPIPE) kills it,
+	// defeating the keep-alive. Redirect stdio to ~/.ao/daemon.log and unref the
+	// child so the parent does not wait on it. Port discovery then relies on the
+	// running.json handshake (the log pipe scan is skipped).
+	const keep = keepDaemonAlive(process.env);
+	let keepDaemonLogFd: number | undefined;
+	let stdio: "pipe" | "ignore" | ["ignore", number, number] = "pipe";
+	if (keep) {
+		const logPath = path.join(os.homedir(), ".ao", "daemon.log");
+		try {
+			keepDaemonLogFd = openSync(logPath, "a");
+			stdio = ["ignore", keepDaemonLogFd, keepDaemonLogFd];
+		} catch {
+			// Log redirect failed (e.g. ~/.ao not creatable, permission denied):
+			// fall back to "ignore" so the daemon still runs, but warn — otherwise
+			// a long-lived keep-alive daemon would run with zero log output.
+			console.warn(`AO: keep-daemon log redirect failed; daemon will run with stdio disabled: ${logPath}`);
+			keepDaemonLogFd = undefined;
+			stdio = "ignore";
+		}
+	}
+	let child: ChildProcess;
+	try {
+		child = spawn(launch.command, launch.args, {
+			cwd: launch.cwd,
+			env: daemonEnv(),
+			shell: launch.shell,
+			detached: true,
+			// Hide the daemon's console on a Windows GUI launch (no flashing terminal).
+			windowsHide: true,
+			stdio,
+		});
+	} catch (err) {
+		// spawn can throw synchronously for invalid args; don't leak the log fd.
+		if (keepDaemonLogFd !== undefined) {
+			try {
+				closeSync(keepDaemonLogFd);
+			} catch {
+				// best-effort — the throw below is the real error
+			}
+		}
+		throw err;
+	}
+	// The child inherited its own copy of the log fd via stdio at spawn time;
+	// close the parent's copy now so each keep-alive start/stop cycle does not
+	// accumulate open descriptors until the process limit.
+	if (keepDaemonLogFd !== undefined) {
+		try {
+			closeSync(keepDaemonLogFd);
+		} catch {
+			// best-effort — the child still holds its inherited copy
+		}
+		keepDaemonLogFd = undefined;
+	}
+	if (keep) child.unref();
 	daemonProcess = child;
 
 	// Discover the port the daemon ACTUALLY bound rather than trusting AO_PORT:
@@ -849,31 +899,46 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		stopDiscovery();
 		setDaemonStatus({ state: "ready", port });
 
-		// Establish the OS-native liveness link unconditionally: this callback fires
-		// only on the spawn path (we own this daemon). Holding the connection keeps
-		// the daemon alive; when Electron exits for any reason, the OS closes the fd
-		// and the daemon detects EOF, then self-stops after its ~5s grace period.
-		// The attach paths link only when the daemon is app-owned (see
-		// establishSupervisorLink + shouldLinkOnAttach); headless `ao start` daemons
-		// stay unlinked so they remain persistent across app quit.
-		establishSupervisorLink();
+		// Establish the OS-native liveness link on the spawn path (we own this
+		// daemon). Holding the connection keeps the daemon alive; when Electron
+		// exits for any reason, the OS closes the fd and the daemon detects EOF,
+		// then self-stops after its ~5s grace period. The attach paths link only
+		// when the daemon is app-owned (see establishSupervisorLink +
+		// shouldLinkOnAttach); headless `ao start` daemons stay unlinked so they
+		// remain persistent across app quit.
+		//
+		// AO_KEEP_DAEMON opts out of the link entirely: the daemon is spawned but
+		// survives the window closing, stopping only on an explicit `ao stop`.
+		// Reuse the `keep` captured at spawn rather than re-reading process.env
+		// here: the flag is a property of this spawn, not a value that should be
+		// able to flip between spawn and port-confirmation. (The process.on("exit")
+		// orphan-cleanup below re-reads process.env because this `keep` is scoped
+		// to the spawn function — AO_KEEP_DAEMON is set once at startup and never
+		// mutated, so both reads agree.)
+		if (!keep) {
+			establishSupervisorLink();
+		}
 	};
 
 	// One scanner per stream: each keeps its own partial-line buffer.
-	const scanStdout = createListenPortScanner(reportBoundPort);
-	const scanStderr = createListenPortScanner(reportBoundPort);
+	// Skipped under AO_KEEP_DAEMON: stdio is redirected to a log file (no pipes
+	// to scan), so port discovery falls back to the running.json handshake below.
+	if (!keep) {
+		const scanStdout = createListenPortScanner(reportBoundPort);
+		const scanStderr = createListenPortScanner(reportBoundPort);
 
-	child.stdout.on("data", (chunk: Buffer) => {
-		const text = chunk.toString("utf8");
-		console.log(text.trimEnd());
-		scanStdout(text);
-	});
+		child.stdout?.on("data", (chunk: Buffer) => {
+			const text = chunk.toString("utf8");
+			console.log(text.trimEnd());
+			scanStdout(text);
+		});
 
-	child.stderr.on("data", (chunk: Buffer) => {
-		const text = chunk.toString("utf8");
-		console.error(text.trimEnd());
-		scanStderr(text);
-	});
+		child.stderr?.on("data", (chunk: Buffer) => {
+			const text = chunk.toString("utf8");
+			console.error(text.trimEnd());
+			scanStderr(text);
+		});
+	}
 
 	const handshakePath = runFilePath();
 	if (handshakePath) {
@@ -942,7 +1007,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 // behind the /bin/sh wrapper (and any PTY children it forked), not just the
 // shell. Falls back to a direct kill if the group signal can't be delivered
 // (e.g. the process already exited).
-function killDaemon(child: ChildProcessWithoutNullStreams): void {
+function killDaemon(child: ChildProcess): void {
 	if (child.pid === undefined) return;
 	try {
 		process.kill(-child.pid, "SIGTERM");
@@ -1260,27 +1325,20 @@ ipcMain.handle("updateSettings:get", async (): Promise<UpdateSettings> => {
 ipcMain.handle("updateSettings:set", async (_event, settings: UpdateSettings) => {
 	const runFile = runFilePath();
 	if (!runFile) return;
-	await writeUpdateSettings(path.dirname(runFile), settings);
-	// Re-apply the feed immediately so pinning/unpinning a feature build takes
-	// effect without an app restart. Only meaningful in packaged builds (where
-	// electron-updater has a real feed), but safe to call in dev.
-	// Pinning flow: renderer calls updateSettings.set({...feature:{pr}}) then
-	// updates.check()->download()->install() to land on the feature build.
-	// Returning home: updateSettings.set({...feature:null}) then same sequence.
-	configureFeed(settings);
+	await setUpdateSettings(path.dirname(runFile), settings);
 });
 
 ipcMain.handle("featureBuilds:list", () => listFeatureBuilds());
 ipcMain.handle("featureBuilds:getActive", () => getActiveFeatureBuild());
 
 ipcMain.handle("updates:getStatus", (): UpdateStatus => getUpdateStatus());
-ipcMain.handle("updates:check", async () => {
+ipcMain.handle("updates:check", async (_event, options?: UpdateCheckOptions) => {
 	const runFile = runFilePath();
 	if (!runFile) return;
-	await checkForUpdatesNow(path.dirname(runFile));
+	await checkForUpdatesNow(path.dirname(runFile), options);
 });
-ipcMain.handle("updates:download", async () => {
-	await downloadUpdateNow();
+ipcMain.handle("updates:download", async (_event, requestId?: string) => {
+	await downloadUpdateNow(requestId);
 });
 ipcMain.handle("updates:install", () => {
 	quitAndInstallUpdate();
@@ -1423,8 +1481,12 @@ app.on("before-quit", () => {
 // exits without tearing down sessions, which survive for the next boot to adopt.
 // When the link IS connected we do nothing here and rely on the OS closing the
 // fd on exit, which covers crash and SIGKILL uniformly.
+//
+// AO_KEEP_DAEMON opts out entirely: the daemon is deliberately spawned without a
+// supervisor link so it persists across app quit, so this orphan-cleanup kill
+// must be skipped — otherwise it would defeat the whole point on quit.
 process.on("exit", () => {
-	if (daemonProcess && !supervisorLink?.connected) {
+	if (daemonProcess && !supervisorLink?.connected && !keepDaemonAlive(process.env)) {
 		killDaemon(daemonProcess);
 	}
 });

@@ -1,6 +1,7 @@
 import posthog from "posthog-js/dist/module.full.no-external";
 import { aoBridge } from "./bridge";
 import { isLoopbackHostname } from "./loopback";
+import { ORCHESTRATOR_SPAWN_SOURCES } from "./orchestrator-spawn-sources";
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "../../shared/posthog-config";
 
 const POSTHOG_KEY = import.meta.env.VITE_AO_POSTHOG_KEY?.trim() || DEFAULT_POSTHOG_PROJECT_KEY;
@@ -147,7 +148,7 @@ function normalizeException(reason: unknown): Error {
 
 function routeSurface(pathname: string): string {
 	if (pathname === "/") return "home";
-	if (/^\/prs(?:\/|$)/.test(pathname)) return "pull_requests";
+	if (/^\/settings(?:\/|$)/.test(pathname)) return "global_settings";
 	if (/^\/projects\/[^/]+\/sessions\/[^/]+$/.test(pathname)) return "session_detail";
 	if (/^\/projects\/[^/]+(?:\/|$)/.test(pathname)) {
 		if (/\/settings$/.test(pathname)) return "project_settings";
@@ -245,18 +246,7 @@ async function sanitizeRendererContextProperties(properties?: TelemetryPropertie
 	return safe;
 }
 
-// Allowed `source` enum for the orchestrator-spawn triad. Kept as a literal set
-// here (rather than imported from spawn-orchestrator.ts, which imports this
-// module) to avoid a cycle; keep in sync with OrchestratorSpawnSource.
-const ORCHESTRATOR_SPAWN_SOURCES = new Set([
-	"board",
-	"restore_dialog",
-	"topbar",
-	"sidebar",
-	"project_add",
-	"settings",
-	"restart",
-]);
+const ORCHESTRATOR_SPAWN_SOURCE_SET = new Set<string>(ORCHESTRATOR_SPAWN_SOURCES);
 
 export async function sanitizeRendererProperties(
 	event: string,
@@ -296,7 +286,7 @@ export async function sanitizeRendererProperties(
 		case "ao.renderer.orchestrator_spawn_failed": {
 			const projectIDHash = await hashedTelemetryID(properties?.project_id);
 			if (projectIDHash) safe.project_id_hash = projectIDHash;
-			if (typeof properties?.source === "string" && ORCHESTRATOR_SPAWN_SOURCES.has(properties.source)) {
+			if (typeof properties?.source === "string" && ORCHESTRATOR_SPAWN_SOURCE_SET.has(properties.source)) {
 				safe.source = properties.source;
 			}
 			break;

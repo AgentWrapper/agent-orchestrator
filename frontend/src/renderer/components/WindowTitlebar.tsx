@@ -1,7 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import aoLogo from "../assets/ao-logo.png";
-import { useUiStore } from "../stores/ui-store";
+import { useResolvedTheme } from "../stores/ui-store";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -68,7 +68,7 @@ function TopMenu({
 
 export function WindowTitlebar() {
 	const navigate = useNavigate();
-	const theme = useUiStore((state) => state.theme);
+	const theme = useResolvedTheme();
 	const [openMenu, setOpenMenu] = useState<MenuKey | null>(null);
 
 	// Electron draws the min/max/close overlay natively and can't read our CSS, so

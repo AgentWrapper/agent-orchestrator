@@ -35,7 +35,8 @@ var grokBinarySpec = binaryutil.BinarySpec{
 	Names:         []string{"grok"},
 	WinNames:      []string{"grok.cmd", "grok.exe", "grok"},
 	UnixPaths:     []string{"/usr/local/bin/grok", "/opt/homebrew/bin/grok"},
-	UnixHomePaths: [][]string{{".grok", "bin", "grok"}, {".local", "bin", "grok"}},
+	UnixHomePaths: binaryutil.NodeManagedUnixHomePaths("grok", []string{".grok", "bin", "grok"}),
+	NodeManaged:   true,
 	WinPaths: []binaryutil.WinPath{
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "grok.cmd"}},
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "grok.exe"}},

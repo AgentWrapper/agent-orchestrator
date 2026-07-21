@@ -139,7 +139,8 @@ var piBinarySpec = binaryutil.BinarySpec{
 	Names:         []string{"pi"},
 	WinNames:      []string{"pi.cmd", "pi.exe", "pi"},
 	UnixPaths:     []string{"/usr/local/bin/pi", "/opt/homebrew/bin/pi"},
-	UnixHomePaths: [][]string{{".npm-global", "bin", "pi"}, {".local", "bin", "pi"}, {".pi", "bin", "pi"}},
+	UnixHomePaths: binaryutil.NodeManagedUnixHomePaths("pi", []string{".pi", "bin", "pi"}),
+	NodeManaged:   true,
 	WinPaths: []binaryutil.WinPath{
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "pi.cmd"}},
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "pi.exe"}},
@@ -147,8 +148,7 @@ var piBinarySpec = binaryutil.BinarySpec{
 }
 
 // ResolvePiBinary finds the `pi` binary, searching PATH then common install
-// locations. It returns "pi" as a last resort so callers get the shell's normal
-// command-not-found behavior if Pi is absent.
+// locations. It returns a wrapped ports.ErrAgentBinaryNotFound when Pi is absent.
 func ResolvePiBinary(ctx context.Context) (string, error) {
 	return binaryutil.ResolveBinary(ctx, piBinarySpec)
 }

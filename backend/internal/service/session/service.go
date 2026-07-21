@@ -107,6 +107,7 @@ type Service struct {
 	scm                 scmProvider
 	tracker             ports.Tracker
 	clock               func() time.Time
+	dataDir             string
 	telemetry           ports.EventSink
 	orchestratorLocksMu sync.Mutex
 	orchestratorLocks   map[domain.ProjectID]*sync.Mutex
@@ -132,6 +133,7 @@ type Deps struct {
 	SCM       scmProvider
 	Tracker   ports.Tracker
 	Clock     func() time.Time
+	DataDir   string
 	Telemetry ports.EventSink
 	// SignalCapable gates the no_signal status downgrade per harness; daemon
 	// wiring passes activitydispatch.SupportsHarness. Left nil, no session is
@@ -141,7 +143,7 @@ type Deps struct {
 
 // NewWithDeps wires a session service with optional PR-claim dependencies.
 func NewWithDeps(d Deps) *Service {
-	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, tracker: d.Tracker, clock: d.Clock, signalCapable: d.SignalCapable, telemetry: d.Telemetry}
+	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, tracker: d.Tracker, clock: d.Clock, dataDir: d.DataDir, signalCapable: d.SignalCapable, telemetry: d.Telemetry}
 	if s.prClaimer == nil {
 		if w, ok := d.Store.(ports.PRClaimer); ok {
 			s.prClaimer = w
@@ -321,7 +323,7 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 	if err != nil {
 		return domain.Session{}, err
 	}
-	if err := verifyOrchestratorReplacement(project, sess); err != nil {
+	if err := s.verifyOrchestratorReplacement(project, sess); err != nil {
 		return domain.Session{}, err
 	}
 	return sess, nil
@@ -336,7 +338,7 @@ func (s *Service) sendRetireNotice(ctx context.Context, id domain.SessionID) err
 	return nil
 }
 
-func verifyOrchestratorReplacement(project domain.ProjectRecord, sess domain.Session) error {
+func (s *Service) verifyOrchestratorReplacement(project domain.ProjectRecord, sess domain.Session) error {
 	if sess.IsTerminated {
 		return fmt.Errorf("orchestrator replacement verification failed: new session %s is terminated", sess.ID)
 	}
@@ -346,7 +348,7 @@ func verifyOrchestratorReplacement(project domain.ProjectRecord, sess domain.Ses
 	if expected := project.Config.Orchestrator.Harness; expected != "" && sess.Harness != expected {
 		return fmt.Errorf("orchestrator replacement verification failed: new session %s uses harness %q, want %q", sess.ID, sess.Harness, expected)
 	}
-	expectedBranch := "ao/" + serviceSessionPrefix(project) + "-orchestrator"
+	expectedBranch := sessionmanager.DefaultOrchestratorBranch(serviceSessionPrefix(project), s.dataDir)
 	if sess.Metadata.Branch != "" && sess.Metadata.Branch != expectedBranch {
 		return fmt.Errorf("orchestrator replacement verification failed: new session %s uses branch %q, want %q", sess.ID, sess.Metadata.Branch, expectedBranch)
 	}

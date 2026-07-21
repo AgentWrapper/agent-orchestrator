@@ -41,7 +41,8 @@ var continueBinarySpec = binaryutil.BinarySpec{
 	Names:         []string{"cn"},
 	WinNames:      []string{"cn.cmd", "cn.exe", "cn"},
 	UnixPaths:     []string{"/usr/local/bin/cn", "/opt/homebrew/bin/cn"},
-	UnixHomePaths: [][]string{{".npm-global", "bin", "cn"}, {".local", "bin", "cn"}, {".npm", "bin", "cn"}},
+	UnixHomePaths: binaryutil.NodeManagedUnixHomePaths("cn"),
+	NodeManaged:   true,
 	WinPaths: []binaryutil.WinPath{
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "cn.cmd"}},
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "cn.exe"}},
@@ -168,9 +169,8 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 }
 
 // ResolveContinueBinary finds the `cn` binary (Continue CLI), searching PATH then
-// common npm/global install locations. It returns "cn" as a last resort so
-// callers get the shell's normal command-not-found behavior if Continue is
-// absent.
+// common npm/global install locations. It returns a wrapped
+// ports.ErrAgentBinaryNotFound when Continue is absent.
 func ResolveContinueBinary(ctx context.Context) (string, error) {
 	return binaryutil.ResolveBinary(ctx, continueBinarySpec)
 }

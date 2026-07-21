@@ -3,7 +3,12 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, writeFile, readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { readUpdateSettings, writeUpdateSettings, UPDATE_SETTINGS_FILE_NAME } from "./update-settings";
+import {
+	readUpdateSettings,
+	updateUpdateSettings,
+	writeUpdateSettings,
+	UPDATE_SETTINGS_FILE_NAME,
+} from "./update-settings";
 
 describe("update-settings", () => {
 	let dir: string;
@@ -85,5 +90,36 @@ describe("update-settings", () => {
 		await writeUpdateSettings(dir, { enabled: true, channel: "latest", nightlyAck: false, feature: null });
 		const entries = await readdir(dir);
 		expect(entries).toEqual([UPDATE_SETTINGS_FILE_NAME]);
+	});
+
+	it("serializes a read-modify-write with later settings writes", async () => {
+		await writeUpdateSettings(dir, {
+			enabled: false,
+			channel: "latest",
+			nightlyAck: false,
+			feature: { pr: 2709 },
+		});
+		let releaseMutation!: () => void;
+		const mutationBlocked = new Promise<void>((resolve) => {
+			releaseMutation = resolve;
+		});
+		let mutationStarted!: () => void;
+		const started = new Promise<void>((resolve) => {
+			mutationStarted = resolve;
+		});
+
+		const mutation = updateUpdateSettings(dir, async (current) => {
+			mutationStarted();
+			await mutationBlocked;
+			return { ...current, feature: null };
+		});
+		await started;
+		const newer = { enabled: true, channel: "nightly" as const, nightlyAck: true, feature: { pr: 2710 } };
+		const laterWrite = writeUpdateSettings(dir, newer);
+
+		releaseMutation();
+		await Promise.all([mutation, laterWrite]);
+
+		expect(await readUpdateSettings(dir)).toEqual(newer);
 	});
 });

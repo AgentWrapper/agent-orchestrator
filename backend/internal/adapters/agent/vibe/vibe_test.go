@@ -348,24 +348,133 @@ func TestGetRestoreCommandNoID(t *testing.T) {
 	}
 }
 
-func TestGetAgentHooksNoOp(t *testing.T) {
-	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{WorkspacePath: t.TempDir()}); err != nil {
-		t.Fatalf("GetAgentHooks err = %v, want nil", err)
+func TestGetAgentHooksInstallsManagedHooksWithoutChangingConfig(t *testing.T) {
+	workspace := t.TempDir()
+	dir := filepath.Join(workspace, ".vibe")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	userHooks := "[[hooks]]\nname = \"user-hook\"\ntype = \"post_agent\"\ncommand = \"user-command\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "hooks.toml"), []byte(userHooks), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	userConfig := "log_interactions = false\nactive_model = \"custom-model\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(userConfig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &Plugin{}
+	for range 2 {
+		if err := p.GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{WorkspacePath: workspace}); err != nil {
+			t.Fatalf("GetAgentHooks: %v", err)
+		}
+	}
+
+	hooks, err := os.ReadFile(filepath.Join(dir, "hooks.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(hooks)
+	for _, want := range []string{
+		"user-command",
+		`name = "ao-session-metadata"`,
+		`type = "post_agent"`,
+		`name = "ao-pre-tool"`,
+		`type = "pre_tool"`,
+		`name = "ao-post-tool"`,
+		`type = "post_tool"`,
+		`match = "*"`,
+		`command = "ao hooks vibe post-agent"`,
+		`command = "ao hooks vibe pre-tool"`,
+		`command = "ao hooks vibe post-tool"`,
+		"timeout = 30.0",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("hooks.toml missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Count(body, vibeHooksSentinelStart) != 1 || strings.Count(body, "ao hooks vibe post-agent") != 1 {
+		t.Fatalf("managed hooks duplicated:\n%s", body)
+	}
+	if strings.Count(body, "timeout = 30.0") != 3 || strings.Count(body, `match = "*"`) != 2 {
+		t.Fatalf("unexpected Vibe hook schema:\n%s", body)
+	}
+
+	config, err := os.ReadFile(filepath.Join(dir, "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(config); got != userConfig {
+		t.Fatalf("config.toml changed\nwant: %q\n got: %q", userConfig, got)
+	}
+	ignore, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"/hooks.toml\n"} {
+		if !strings.Contains(string(ignore), want) {
+			t.Fatalf(".gitignore missing %q:\n%s", want, ignore)
+		}
+	}
+	if strings.Contains(string(ignore), "/config.toml\n") {
+		t.Fatalf(".gitignore unexpectedly claims user config:\n%s", ignore)
 	}
 }
 
-func TestSessionInfoNoOp(t *testing.T) {
+func TestGetAgentHooksRequiresWorkspace(t *testing.T) {
+	err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{})
+	if err == nil || !strings.Contains(err.Error(), "WorkspacePath is required") {
+		t.Fatalf("GetAgentHooks error = %v", err)
+	}
+}
+
+func TestUninstallHooksPreservesUserHooks(t *testing.T) {
+	workspace := t.TempDir()
+	p := &Plugin{}
+	if err := p.GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{WorkspacePath: workspace}); err != nil {
+		t.Fatal(err)
+	}
+	installed, err := p.AreHooksInstalled(context.Background(), workspace)
+	if err != nil || !installed {
+		t.Fatalf("AreHooksInstalled = (%v, %v), want (true, nil)", installed, err)
+	}
+	path := filepath.Join(workspace, ".vibe", "hooks.toml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withUserHook := "[[hooks]]\nname = \"user-hook\"\ntype = \"post_agent\"\ncommand = \"user-command\"\n\n" + string(data)
+	if err := os.WriteFile(path, []byte(withUserHook), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.UninstallHooks(context.Background(), workspace); err != nil {
+		t.Fatal(err)
+	}
+	installed, err = p.AreHooksInstalled(context.Background(), workspace)
+	if err != nil || installed {
+		t.Fatalf("AreHooksInstalled after uninstall = (%v, %v), want (false, nil)", installed, err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "user-command") || strings.Contains(string(got), "ao hooks vibe") {
+		t.Fatalf("hooks after uninstall:\n%s", got)
+	}
+}
+
+func TestSessionInfoReadsHookMetadata(t *testing.T) {
 	info, ok, err := (&Plugin{}).SessionInfo(context.Background(), ports.SessionRef{
 		Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "abcd1234"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ok {
-		t.Fatalf("ok=true with info %#v, want no-op false", info)
+	if !ok {
+		t.Fatal("ok=false, want hook metadata")
 	}
-	if !reflect.DeepEqual(info, ports.SessionInfo{}) {
-		t.Fatalf("info = %#v, want zero", info)
+	if info.AgentSessionID != "abcd1234" {
+		t.Fatalf("AgentSessionID = %q", info.AgentSessionID)
 	}
 }
 
