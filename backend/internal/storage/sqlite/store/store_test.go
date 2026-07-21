@@ -135,6 +135,7 @@ func TestProjectConfigRoundTrips(t *testing.T) {
 		OrchestratorRules: "Keep workers unblocked.",
 		AgentConfig:       domain.AgentConfig{Model: "claude-opus-4-5", Permissions: domain.PermissionModeAcceptEdits},
 		Worker:            domain.RoleOverride{Harness: domain.HarnessCodex},
+		BotReviewFeedback: domain.BotReviewFeedbackConfig{AllowAuthors: []string{"github-actions"}, DenyAuthors: []string{"noisy-bot[bot]"}},
 	}
 	if err := s.UpsertProject(ctx, domain.ProjectRecord{
 		ID: "cfg", Path: "/tmp/cfg", RegisteredAt: now, Config: cfg,
