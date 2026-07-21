@@ -141,7 +141,6 @@ function renderSidebarView(workspaces: WorkspaceSummary[]) {
 		<QueryClientProvider client={queryClient}>
 			<SidebarProvider>
 				<Sidebar
-					daemonStatus={{ state: "running" }}
 					onCreateProject={props.onCreateProject}
 					onInitializeProject={props.onInitializeProject}
 					onRemoveProject={props.onRemoveProject}
