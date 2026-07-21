@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -65,7 +64,7 @@ func NewRouterWithControl(cfg config.Config, log *slog.Logger, termMgr *terminal
 	mountHealth(r)
 	mountTerminalMux(r, termMgr, log)
 	mountControl(r, control)
-	mountTelemetry(r, deps.Telemetry)
+	mountTelemetry(r, cfg, deps.Telemetry)
 	mountMobile(r, deps.Mobile)
 	api.Register(r)
 
@@ -146,7 +145,7 @@ type cliUsageErrorRequest struct {
 	Error       string `json:"error"`
 }
 
-func mountTelemetry(r chi.Router, sink ports.EventSink) {
+func mountTelemetry(r chi.Router, cfg config.Config, sink ports.EventSink) {
 	if sink == nil {
 		return
 	}
@@ -155,38 +154,10 @@ func mountTelemetry(r chi.Router, sink ports.EventSink) {
 	// path per UTC day. Scripts and agent sessions invoke read-only commands
 	// (status, ls, get) in polling loops, so raw invocation counts measure
 	// automation, not usage; daily uniques keep the "which commands, how many
-	// users" signal without the firehose. In-memory state: a daemon restart may
-	// re-emit once that day, which dashboards dedupe by distinct ID anyway.
-	var (
-		cliTelemetryMu sync.Mutex
-		cliActiveDay   string
-		cliInvokedDay  string
-		cliInvokedSeen map[string]struct{}
-	)
-	reserveCLIActive := func(now time.Time) bool {
-		day := now.UTC().Format("2006-01-02")
-		cliTelemetryMu.Lock()
-		defer cliTelemetryMu.Unlock()
-		if cliActiveDay == day {
-			return false
-		}
-		cliActiveDay = day
-		return true
-	}
-	reserveCLIInvoked := func(now time.Time, commandPath string) bool {
-		day := now.UTC().Format("2006-01-02")
-		cliTelemetryMu.Lock()
-		defer cliTelemetryMu.Unlock()
-		if cliInvokedDay != day {
-			cliInvokedDay = day
-			cliInvokedSeen = make(map[string]struct{})
-		}
-		if _, seen := cliInvokedSeen[commandPath]; seen {
-			return false
-		}
-		cliInvokedSeen[commandPath] = struct{}{}
-		return true
-	}
+	// users" signal without the firehose. The reservation state is persisted
+	// under DataDir so daemon restarts cannot turn polling loops back into raw
+	// event volume.
+	cliTelemetry := newCLITelemetryReservoir(cfg.DataDir)
 	r.Post("/internal/telemetry/cli-invoked", func(w http.ResponseWriter, req *http.Request) {
 		if !localControlRequest(req) {
 			envelope.WriteJSON(w, http.StatusForbidden, map[string]any{
@@ -208,7 +179,7 @@ func mountTelemetry(r chi.Router, sink ports.EventSink) {
 			return
 		}
 
-		if now := time.Now(); reserveCLIInvoked(now, body.CommandPath) {
+		if now := time.Now(); cliTelemetry.reserveInvoked(now, body.CommandPath) {
 			sink.Emit(req.Context(), ports.TelemetryEvent{
 				Name:       "ao.cli.invoked",
 				Source:     "cli",
@@ -221,7 +192,7 @@ func mountTelemetry(r chi.Router, sink ports.EventSink) {
 				},
 			})
 		}
-		if now := time.Now(); reserveCLIActive(now) {
+		if now := time.Now(); cliTelemetry.reserveActive(now) {
 			sink.Emit(req.Context(), ports.TelemetryEvent{
 				Name:       "ao.app.active",
 				Source:     "cli",

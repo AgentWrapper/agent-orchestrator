@@ -10,6 +10,7 @@ const RELEASE_TAG = "2026-01-30";
 const REDACTED_LOCAL_URL = "[redacted-local-url]";
 const REDACTED_LOCAL_PATH = "[redacted-local-path]";
 const DAILY_ACTIVE_STORAGE_KEY = "ao.telemetry.lastActiveDate";
+const ROUTE_VIEW_STORAGE_KEY = "ao.telemetry.routeViewsByDate";
 const EMBEDDED_LOCAL_URL_PATTERN =
 	/(?:\bfile:\/\/\/\S+|\bapp:\/\/renderer\/\S+|\bhttps?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?\S*)/gi;
 
@@ -17,6 +18,8 @@ let initPromise: Promise<boolean> | null = null;
 let errorHandlersBound = false;
 let telemetryContext: TelemetryProperties = {};
 let fallbackDailyActiveDate = "";
+let fallbackRouteViewDate = "";
+let fallbackRouteViewSurfaces = new Set<string>();
 
 // Bounds how many captures of a single event (or exception) name reach
 // PostHog. Mirrors the daemon-side RateLimitedSink: a re-render loop or
@@ -78,8 +81,8 @@ export function buildTelemetryContext(appVersion: string, platform: string): Tel
 	};
 }
 
-function withTelemetryContext(properties: TelemetryProperties): TelemetryProperties {
-	return { ...telemetryContext, ...properties };
+export function withTelemetryContext(properties: TelemetryProperties): TelemetryProperties {
+	return { ...telemetryContext, ...properties, $process_person_profile: false };
 }
 
 export function reserveDailyActiveCapture(storage?: DailyActiveStorage, now = new Date()): boolean {
@@ -97,6 +100,48 @@ export function reserveDailyActiveCapture(storage?: DailyActiveStorage, now = ne
 		if (fallbackDailyActiveDate === utcDate) return false;
 		fallbackDailyActiveDate = utcDate;
 		return true;
+	}
+}
+
+export function reserveRouteViewCapture(
+	storage: DailyActiveStorage | undefined,
+	surface: string,
+	now = new Date(),
+): boolean {
+	const normalizedSurface = surface.trim() || "unknown";
+	const utcDate = now.toISOString().slice(0, 10);
+	const reserveFallback = () => {
+		if (fallbackRouteViewDate !== utcDate) {
+			fallbackRouteViewDate = utcDate;
+			fallbackRouteViewSurfaces = new Set<string>();
+		}
+		if (fallbackRouteViewSurfaces.has(normalizedSurface)) return false;
+		fallbackRouteViewSurfaces.add(normalizedSurface);
+		return true;
+	};
+
+	if (!storage) return reserveFallback();
+	try {
+		const raw = storage.getItem(ROUTE_VIEW_STORAGE_KEY);
+		const parsed = raw ? (JSON.parse(raw) as { date?: unknown; surfaces?: unknown }) : {};
+		const surfaces =
+			parsed.date === utcDate && Array.isArray(parsed.surfaces)
+				? parsed.surfaces.filter((value): value is string => typeof value === "string")
+				: [];
+		if (surfaces.includes(normalizedSurface)) return false;
+		surfaces.push(normalizedSurface);
+		storage.setItem(ROUTE_VIEW_STORAGE_KEY, JSON.stringify({ date: utcDate, surfaces }));
+		return true;
+	} catch {
+		return reserveFallback();
+	}
+}
+
+function telemetryStorage(): DailyActiveStorage | undefined {
+	try {
+		return window.localStorage;
+	} catch {
+		return undefined;
 	}
 }
 
@@ -365,6 +410,7 @@ export async function initTelemetry(): Promise<boolean> {
 			autocapture: false,
 			capture_pageview: false,
 			capture_exceptions: false,
+			capture_performance: false,
 			persistence: "localStorage",
 			// The distinct ID is a random install ID, never a person, so keep
 			// every event anonymous: identified events bill at several times the
@@ -389,14 +435,8 @@ export async function initTelemetry(): Promise<boolean> {
 			surface: "renderer",
 		});
 		bindErrorHandlers();
-		let storage: DailyActiveStorage | undefined;
-		try {
-			storage = window.localStorage;
-		} catch {
-			storage = undefined;
-		}
 		startDailyActiveHeartbeat({
-			storage,
+			storage: telemetryStorage(),
 			window,
 			document,
 			capture: () => {
@@ -415,9 +455,15 @@ export async function initTelemetry(): Promise<boolean> {
 }
 
 export async function captureRendererEvent(event: string, properties?: Record<string, unknown>): Promise<void> {
-	if (!reserveCapture(event)) return;
+	const sanitizedProperties = await sanitizeRendererProperties(event, properties);
+	if (event === "ao.renderer.route_viewed") {
+		const surface = typeof sanitizedProperties.surface === "string" ? sanitizedProperties.surface : "other";
+		if (!reserveRouteViewCapture(telemetryStorage(), surface)) return;
+	} else if (!reserveCapture(event)) {
+		return;
+	}
 	if (!(await initTelemetry())) return;
-	const safeProperties = withTelemetryContext(await sanitizeRendererProperties(event, properties));
+	const safeProperties = withTelemetryContext(sanitizedProperties);
 	posthog.capture(event, safeProperties);
 }
 

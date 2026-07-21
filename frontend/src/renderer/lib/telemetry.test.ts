@@ -3,12 +3,14 @@ import {
 	buildTelemetryContext,
 	reserveCapture,
 	reserveDailyActiveCapture,
+	reserveRouteViewCapture,
 	routeSurface,
 	sanitizePostHogEvent,
 	sanitizeReplayRequestName,
 	sanitizeRendererExceptionProperties,
 	sanitizeRendererProperties,
 	startDailyActiveHeartbeat,
+	withTelemetryContext,
 } from "./telemetry";
 import { ORCHESTRATOR_SPAWN_SOURCES } from "./orchestrator-spawn-sources";
 
@@ -33,6 +35,12 @@ describe("telemetry sanitizers", () => {
 			app_version: "unknown",
 			ao_version: "unknown",
 			platform: "darwin",
+		});
+	});
+
+	it("forces renderer events to stay anonymous in PostHog", () => {
+		expect(withTelemetryContext({ "$process_person_profile": true })).toMatchObject({
+			$process_person_profile: false,
 		});
 	});
 
@@ -334,5 +342,16 @@ describe("daily active heartbeat", () => {
 		} finally {
 			stop();
 		}
+	});
+});
+
+describe("route view reservation", () => {
+	it("reserves one capture per surface per UTC date", () => {
+		const storage = memoryStorage();
+
+		expect(reserveRouteViewCapture(storage, "session_detail", new Date("2026-07-12T08:00:00.000Z"))).toBe(true);
+		expect(reserveRouteViewCapture(storage, "session_detail", new Date("2026-07-12T09:00:00.000Z"))).toBe(false);
+		expect(reserveRouteViewCapture(storage, "project_board", new Date("2026-07-12T09:00:00.000Z"))).toBe(true);
+		expect(reserveRouteViewCapture(storage, "session_detail", new Date("2026-07-13T00:00:00.000Z"))).toBe(true);
 	});
 });
