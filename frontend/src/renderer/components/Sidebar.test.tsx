@@ -275,6 +275,16 @@ describe("Sidebar", () => {
 		expect(await screen.findByRole("dialog", { name: "Import to Agent Orchestrator" })).toBeInTheDocument();
 	});
 
+	it("keeps the create-project shortcut available when there are no projects", async () => {
+		renderSidebar({ workspaces: [] });
+
+		act(() => {
+			useUiStore.getState().requestCreateProject();
+		});
+
+		expect(await screen.findByRole("dialog", { name: "Import to Agent Orchestrator" })).toBeInTheDocument();
+	});
+
 	it("reveals dashboard and orchestrator buttons alongside the kebab on the project row", () => {
 		renderSidebar();
 
@@ -488,6 +498,7 @@ describe("Sidebar", () => {
 		await waitFor(() => expect(onCreateProject).toHaveBeenCalledTimes(1));
 		expect(onInitializeProject).not.toHaveBeenCalled();
 		expect(await screen.findByText(/Import failed · workspace not registered/i)).toBeInTheDocument();
+		expect(screen.getByText("Review the error above or choose a different folder")).toBeInTheDocument();
 		expect(window.ao!.app.scanImportFolder).toHaveBeenCalledWith({
 			path: "/repo/workspace",
 			mode: "workspace",

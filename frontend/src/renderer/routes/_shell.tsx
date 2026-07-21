@@ -97,7 +97,7 @@ function ShellLayout() {
 	const isSessionRoute =
 		Boolean(matchRoute({ to: "/projects/$projectId/sessions/$sessionId", fuzzy: true })) ||
 		Boolean(matchRoute({ to: "/sessions/$sessionId", fuzzy: true }));
-	// First-launch root board only — not /prs or other shell routes with zero projects.
+	// First-launch root board only (no projects in scope).
 	const isWelcomeBoard = Boolean(matchRoute({ to: "/" })) && workspaces.length === 0;
 	const isSettingsRoute =
 		Boolean(matchRoute({ to: "/settings", fuzzy: true })) ||

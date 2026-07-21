@@ -232,11 +232,14 @@
 	--size-textarea-min: 112px;
 	--size-sidebar-project-actions: 84px;
 
+	/* Shared inset-panel geometry (welcome board + settings page) */
+	--size-center-panel-inset: 14px;
+	--radius-center-panel: 17px;
+
 	/* Welcome board inset panel */
 	--color-bg-welcome-panel: rgb(18 18 19);
 	--color-border-welcome-panel: #212121;
-	--radius-welcome-panel: 17px;
-	--size-welcome-panel-inset: 14px;
+	--radius-welcome-panel: var(--radius-center-panel);
 
 	/* Import mode picker (Figma ModalContainer) — dark values must stay exact */
 	--color-bg-import-modal: #131313;
@@ -245,21 +248,13 @@
 	--color-text-import-muted: #8b949e;
 	--color-bg-import-card: rgb(20 21 23 / 0.3);
 	--color-bg-import-card-hover: rgb(20 21 23 / 0.55);
-	--color-bg-import-illustration: #131313;
+	--color-bg-import-illustration: var(--color-bg-import-modal);
 	--color-bg-import-chip: #242424;
-	--color-import-dot: #4d8dff;
-	--color-text-import-sep: #6b7280;
-	--color-import-shadow-fill: rgb(255 255 255 / 0.002);
 	--shadow-import-modal: 0 0 0 1px rgb(255 255 255 / 0.1), 0 8px 24px rgb(0 0 0 / 0.5);
-
-	/* Project / workspace agents sheet (Figma) — dark values must stay exact */
-	--color-bg-agents-sheet: #212121;
-	--color-border-agents-sheet: #424242;
-	--color-bg-agents-sheet-control: #2a2a2a;
-	--color-text-agents-sheet-title: #ffffff;
-	--color-text-agents-sheet-description: #9ca3af;
-	--color-text-agents-sheet-label: #d1d5db;
-	--radius-agents-sheet: var(--radius-welcome-panel); /* match Import modal (17px) */
+	--size-import-modal-max: 896px;
+	--size-import-folder-dialog: 640px;
+	--size-import-mode-card-min: 252px;
+	--size-import-mode-card-min-sm: 292px;
 
 	/* Settings page (Figma) */
 	--color-bg-settings-panel: #101013;
@@ -270,16 +265,15 @@
 	--color-text-settings-title: rgb(236 236 236);
 	--color-text-settings-muted: rgb(161 161 161);
 	--color-text-settings-row: rgb(236 236 236);
-	--color-border-settings: #212121;
+	--color-border-settings: var(--color-border-welcome-panel);
 	--color-border-settings-menu: rgb(66 66 66 / 0.78);
 	--font-size-settings-title: 28px;
 	--tracking-settings-title: -0.015em;
 	--tracking-settings-section: 0.06em;
 	--tracking-settings-mono: 0.08em;
-	--radius-settings-panel: 17px;
+	--radius-settings-panel: var(--radius-center-panel);
 	--radius-settings-row: 12px;
 	--size-settings-row: 52px;
-	--size-settings-page-inset: 14px;
 	--size-settings-content-width: 768px;
 	--size-settings-panel-padding-top: 64px;
 	--size-settings-panel-padding-x: 32px;
@@ -292,17 +286,23 @@
 	--color-border-settings-dialog: #2d2d34;
 	--color-border-settings-dialog-header: #2d2d34;
 	--color-bg-settings-input: #2a2a2a;
-	--color-border-settings-input: #2d2d34;
-	--color-text-settings-input-label: #d1d5db;
+	--color-border-settings-input: var(--color-border-settings-dialog);
 	--color-text-settings-input: #e5e7eb;
 	--color-text-settings-placeholder: #6b7280;
-	--color-bg-settings-select: #2a2a2a;
+	--color-text-import-sep: var(--color-text-settings-placeholder);
 	/* Settings accents (Figma — distinct from app --color-accent) */
 	--color-settings-accent: #4f8afa;
 	--color-settings-switch-on: #3b82f6;
+
+	/* Project / workspace agents sheet — aliases shared chrome where themes match */
+	--color-bg-agents-sheet: var(--color-bg-settings-dialog);
+	--color-border-agents-sheet: #424242;
+	--color-bg-agents-sheet-control: #2a2a2a;
+	--color-text-agents-sheet-title: #ffffff;
+	--color-text-agents-sheet-description: #9ca3af;
+	--color-text-agents-sheet-label: #d1d5db;
+	--radius-agents-sheet: var(--radius-center-panel);
 	/* Settings layout sizes (Figma) */
-	--size-settings-social-gap-x: 300px;
-	--size-settings-social-icon: 20px;
 	--size-settings-mobile-dialog: 336px;
 	--size-settings-mobile-dialog-pad-x: 17px;
 	--size-settings-mobile-desc: 306px;
@@ -319,14 +319,10 @@
 	--leading-settings-mobile-hint: 14px;
 	--leading-settings-mobile-warning: 15px;
 	--size-settings-action-height: 38px;
-	--size-settings-report-select: 257px;
 	--radius-settings-action: 12px;
-	--radius-settings-input: 6px;
 	--radius-settings-dialog-lg: 16px;
 	--shadow-settings-dialog: 0px 20px 25px -5px rgba(0, 0, 0, 0.1), 0px 8px 10px -6px rgba(0, 0, 0, 0.1);
 	--shadow-settings-qr: 0px 10px 15px -3px rgba(0, 0, 0, 0.1), 0px 4px 6px -4px rgba(0, 0, 0, 0.1);
-	--shadow-settings-field: 0 1px 2px rgba(0, 0, 0, 0.05);
-	--shadow-settings-dialog-ring: 0 0 0 1px rgba(0, 0, 0, 0.05);
 
 	--size-empty-offset-y: 5vh; /* board empty-state vertical nudge */
 
@@ -468,21 +464,15 @@
 	--color-text-import-muted: #666666;
 	--color-bg-import-card: #f3f3f4;
 	--color-bg-import-card-hover: #e8e8ea;
-	--color-bg-import-illustration: #ffffff;
 	--color-bg-import-chip: #e8e8ea;
-	--color-import-dot: #4d8dff;
-	--color-text-import-sep: #9ca3af;
-	--color-import-shadow-fill: transparent;
 	--shadow-import-modal: 0 0 0 1px rgb(0 0 0 / 0.06), 0 8px 24px rgb(0 0 0 / 0.08);
 
 	/* Project / workspace agents sheet — light surfaces */
-	--color-bg-agents-sheet: #ffffff;
 	--color-border-agents-sheet: #d4d4d6;
 	--color-bg-agents-sheet-control: #f3f3f4;
 	--color-text-agents-sheet-title: #1a1a1a;
 	--color-text-agents-sheet-description: #666666;
 	--color-text-agents-sheet-label: #374151;
-	--radius-agents-sheet: var(--radius-welcome-panel);
 
 	--color-bg-settings-panel: #ffffff;
 	--color-bg-settings-row: #f3f3f4;
@@ -492,16 +482,12 @@
 	--color-text-settings-title: rgb(26 26 26);
 	--color-text-settings-muted: rgb(102 102 102);
 	--color-text-settings-row: rgb(26 26 26);
-	--color-border-settings: #d4d4d6;
 	--color-border-settings-menu: rgb(0 0 0 / 0.12);
 	--color-border-settings-dialog: #d4d4d6;
 	--color-border-settings-dialog-header: #e5e5e7;
 	--color-bg-settings-input: #ffffff;
-	--color-border-settings-input: #d4d4d6;
-	--color-text-settings-input-label: #374151;
 	--color-text-settings-input: #1a1a1a;
 	--color-text-settings-placeholder: #9ca3af;
-	--color-bg-settings-select: #ffffff;
 	/* Settings accents stay brand-blue in light mode (same Figma values). */
 	--color-settings-accent: #4f8afa;
 	--color-settings-switch-on: #3b82f6;

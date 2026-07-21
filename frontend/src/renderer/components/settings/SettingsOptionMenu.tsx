@@ -14,6 +14,8 @@ export function SettingsOptionMenu<T extends string>({
 	options,
 	onChange,
 	disabled,
+	placeholder,
+	renderMenuItem,
 	triggerClassName,
 	"aria-label": ariaLabel,
 }: {
@@ -21,6 +23,8 @@ export function SettingsOptionMenu<T extends string>({
 	options: SettingsOption<T>[];
 	onChange: (value: T) => void;
 	disabled?: boolean;
+	placeholder?: string;
+	renderMenuItem?: (option: SettingsOption<T>, selected: boolean) => ReactNode;
 	triggerClassName?: string;
 	"aria-label": string;
 }) {
@@ -37,14 +41,11 @@ export function SettingsOptionMenu<T extends string>({
 					)}
 					aria-label={ariaLabel}
 				>
-					<span className="truncate">{selected?.label}</span>
+					<span className="truncate">{selected?.label ?? placeholder}</span>
 					<ChevronDown className="size-icon-sm shrink-0 opacity-70" aria-hidden="true" />
 				</button>
 			</DropdownMenuTrigger>
-			<DropdownMenuContent
-				align="end"
-				className="settings-menu-surface flex flex-col border border-settings-menu bg-settings-menu p-2 shadow-md"
-			>
+			<DropdownMenuContent align="end" className="settings-menu-surface">
 				{options.map((option) => (
 					<DropdownMenuItem
 						key={option.value}
@@ -57,8 +58,14 @@ export function SettingsOptionMenu<T extends string>({
 							"[&_svg]:size-icon-lg [&_svg]:shrink-0 [&_svg]:text-settings-muted",
 						)}
 					>
-						{option.icon}
-						{option.label}
+						{renderMenuItem ? (
+							renderMenuItem(option, option.value === value)
+						) : (
+							<>
+								{option.icon}
+								{option.label}
+							</>
+						)}
 					</DropdownMenuItem>
 				))}
 			</DropdownMenuContent>

@@ -1,16 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, Check, ChevronDown, HardDriveDownload, History, Loader2, RefreshCw } from "lucide-react";
+import { AlertTriangle, Check, HardDriveDownload, History, Loader2, RefreshCw } from "lucide-react";
 import { aoBridge } from "../../lib/bridge";
-import type { FeatureBuild } from "../../lib/bridge";
 import { useUpdateStatus } from "../../hooks/useUpdateStatus";
 import type { UpdateChannel, UpdateSettings, UpdateState, UpdateStatus } from "../../../main/update-settings";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../ui/dropdown-menu";
 import { Skeleton } from "../ui/skeleton";
-import { cn } from "../../lib/utils";
 import { SettingsOptionMenu } from "./SettingsOptionMenu";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
@@ -163,15 +160,17 @@ export function UpdatesSection() {
 		<>
 			<SettingsSection title="Updates">
 				{activeBuild && (
-					<div className="flex flex-col gap-2 px-1">
-						<div className="flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-xs">
+					<div className="flex flex-col gap-2">
+						<div className="settings-row-bar h-auto min-h-(--size-settings-row) flex-wrap gap-2">
 							<Badge variant="accent">PR #{activeBuild.pr}</Badge>
-							<span className="flex-1 text-foreground">You are on PR #{activeBuild.pr}'s build.</span>
+							<span className="min-w-0 flex-1 text-sm leading-5 text-settings-label">
+								You are on PR #{activeBuild.pr}'s build.
+							</span>
 							<Button type="button" variant="outline" size="sm" onClick={() => void handleReturnToHome()}>
 								Return to {form.channel === "nightly" ? "Nightly" : "Stable"}
 							</Button>
 						</div>
-						<p className="text-xs text-muted-foreground">
+						<p className="px-1 text-xs text-settings-muted">
 							Automatic updates, if enabled, will return you to your home channel on the next check.
 						</p>
 					</div>
@@ -262,77 +261,54 @@ function FeatureBuildsSelect({
 
 	if (builds.length === 0) {
 		return (
-			<div className="px-1 text-xs text-muted-foreground">
+			<div className="px-1 text-xs text-settings-muted">
 				<span className="sr-only">Feature build</span>
 				No live feature releases.
 			</div>
 		);
 	}
 
-	const selected = builds.find((b) => b.pr === currentPr);
+	const options = builds.map((build) => ({
+		value: build.pr.toString(),
+		label: `PR #${build.pr}: ${build.title}`,
+	}));
 
 	return (
 		<SettingsRow label="Feature build">
-			<DropdownMenu>
-				<DropdownMenuTrigger asChild>
-					<button type="button" className="settings-option-trigger" aria-label="Feature build">
-						<span className="truncate">
-							{selected ? `PR #${selected.pr}: ${selected.title}` : "Select a feature build..."}
-						</span>
-						<ChevronDown className="size-icon-sm shrink-0 opacity-70" aria-hidden="true" />
-					</button>
-				</DropdownMenuTrigger>
-				<DropdownMenuContent
-					align="end"
-					className="settings-menu-surface flex max-w-80 flex-col border border-settings-menu bg-settings-menu p-2 shadow-md"
-				>
-					{builds.map((build) => (
-						<FeatureBuildItem
-							key={build.pr}
-							build={build}
-							selected={build.pr === currentPr}
-							onSelect={() => void onPin(build.pr, build.title)}
-						/>
-					))}
-				</DropdownMenuContent>
-			</DropdownMenu>
+			<SettingsOptionMenu
+				aria-label="Feature build"
+				value={currentPr === null ? "__none__" : currentPr.toString()}
+				placeholder="Select a feature build..."
+				options={options}
+				onChange={(nextPr) => {
+					const pr = Number(nextPr);
+					const build = builds.find((b) => b.pr === pr);
+					if (!build) return;
+					void onPin(build.pr, build.title);
+				}}
+				renderMenuItem={(option) => {
+					const pr = Number(option.value);
+					const build = builds.find((b) => b.pr === pr);
+					if (!build) return null;
+
+					const ageMs = Date.now() - new Date(build.publishedAt).getTime();
+					const isStale = ageMs > STALE_THRESHOLD_MS;
+					const ageLabel = relativeAge(build.publishedAt);
+
+					return (
+						<div className="flex min-w-0 flex-col gap-0.5">
+							<span>
+								PR #{build.pr}: {build.title}
+							</span>
+							<div className="flex items-center gap-1.5">
+								<span className="font-mono text-caption text-passive">{build.buildId}</span>
+								<Badge variant={isStale ? "warning" : "neutral"}>{ageLabel}</Badge>
+							</div>
+						</div>
+					);
+				}}
+			/>
 		</SettingsRow>
-	);
-}
-
-function FeatureBuildItem({
-	build,
-	selected,
-	onSelect,
-}: {
-	build: FeatureBuild;
-	selected: boolean;
-	onSelect: () => void;
-}) {
-	const ageMs = Date.now() - new Date(build.publishedAt).getTime();
-	const isStale = ageMs > STALE_THRESHOLD_MS;
-	const ageLabel = relativeAge(build.publishedAt);
-
-	return (
-		<DropdownMenuItem
-			onSelect={onSelect}
-			className={cn(
-				"settings-menu-item cursor-default outline-none",
-				"focus:border-settings-menu focus:bg-settings-menu-selected focus:text-settings-label",
-				"data-highlighted:border-settings-menu data-highlighted:bg-settings-menu-selected data-highlighted:text-settings-label",
-				selected && "border-settings-menu bg-settings-menu-selected",
-			)}
-		>
-			<div className="flex min-w-0 flex-col gap-0.5">
-				<span>
-					PR #{build.pr}: {build.title}
-				</span>
-				<div className="flex items-center gap-1.5">
-					<span className="font-mono text-caption text-passive">{build.buildId}</span>
-					<Badge variant={isStale ? "warning" : "neutral"}>{ageLabel}</Badge>
-				</div>
-			</div>
-		</DropdownMenuItem>
 	);
 }
 
@@ -375,7 +351,7 @@ function UpdateActions({ status }: { status: UpdateStatus }) {
 			</SettingsRow>
 
 			{showStatus && (
-				<div className="flex flex-wrap items-center gap-3 px-1">
+				<div className="settings-row-bar h-auto min-h-0 flex-wrap justify-start gap-3 py-3">
 					{status.state === "available" && (
 						<Button type="button" variant="primary" onClick={() => void aoBridge.updates.download()}>
 							Update to {status.version ? `v${status.version}` : "latest"}
@@ -396,21 +372,21 @@ function UpdateActions({ status }: { status: UpdateStatus }) {
 function UpdateStatusLine({ status }: { status: UpdateStatus }) {
 	switch (status.state) {
 		case "checking":
-			return <span className="text-xs text-muted-foreground">Checking for updates…</span>;
+			return <span className="text-xs text-settings-muted">Checking for updates…</span>;
 		case "available":
 			return (
-				<span className="text-xs text-muted-foreground">
+				<span className="text-xs text-settings-muted">
 					Update available{status.version ? ` (v${status.version})` : ""}.
 				</span>
 			);
 		case "downloading":
-			return <span className="text-xs text-muted-foreground">Downloading… {status.percent ?? 0}%</span>;
+			return <span className="text-xs text-settings-muted">Downloading… {status.percent ?? 0}%</span>;
 		case "downloaded":
 			return <span className="text-xs text-success">Downloaded. Restart to finish updating.</span>;
 		case "not-available":
-			return <span className="text-xs text-muted-foreground">You're on the latest version.</span>;
+			return <span className="text-xs text-settings-muted">You're on the latest version.</span>;
 		case "unsupported":
-			return <span className="text-xs text-passive">{status.message ?? "Updates need the installed app."}</span>;
+			return <span className="text-xs text-settings-muted">{status.message ?? "Updates need the installed app."}</span>;
 		case "error":
 			return <span className="text-xs text-error">{status.message ?? "Update failed."}</span>;
 		default:

@@ -11,7 +11,7 @@ function SettingsRowLabel({ icon: Icon, label }: { icon?: LucideIcon; label: str
 	);
 }
 
-/** Figma row: #212121, 12px radius, 16px padding, 52px height, icon gap 12px. */
+/** Settings row bar: tokenized height, radius, padding, and icon gap. */
 export function SettingsRow({
 	icon,
 	label,
@@ -36,7 +36,7 @@ export function SettingsLinkRow({ icon, label, onClick }: { icon?: LucideIcon; l
 		<button
 			type="button"
 			onClick={onClick}
-			className="settings-row-bar w-full text-left transition-colors hover:bg-[var(--color-bg-settings-menu-selected)]"
+			className="settings-row-bar w-full text-left transition-colors hover:bg-settings-menu-selected"
 		>
 			<SettingsRowLabel icon={icon} label={label} />
 			<ChevronRight className="size-icon-base shrink-0 text-settings-muted" aria-hidden="true" />

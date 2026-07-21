@@ -267,10 +267,11 @@ export function Sidebar({
 						<SidebarGroupLabel className="h-auto rounded-none p-0 text-2xs font-semibold uppercase tracking-wide-lg text-passive">
 							Projects
 						</SidebarGroupLabel>
-						{/* Hide on the empty start page — import lives in the welcome board. */}
-						{workspaces.length > 0 ? (
-							<CreateProjectButton onCreateProject={onCreateProject} onInitializeProject={onInitializeProject} />
-						) : null}
+						<CreateProjectButton
+							hideTrigger={workspaces.length === 0}
+							onCreateProject={onCreateProject}
+							onInitializeProject={onInitializeProject}
+						/>
 					</div>
 
 					{/* Tree (project-sidebar__tree) */}
@@ -292,9 +293,7 @@ export function Sidebar({
 										onRemoveProject={onRemoveProject}
 									/>
 								))}
-								{isCollapsed && (
-									<CreateProjectListItem onCreateProject={onCreateProject} onInitializeProject={onInitializeProject} />
-								)}
+								{isCollapsed && <CreateProjectListItem />}
 							</SidebarMenu>
 						)}
 					</SidebarGroupContent>
@@ -464,9 +463,6 @@ function ProjectItem({
 				<span className="hidden group-data-[collapsible=icon]:block">{workspace.name.charAt(0).toUpperCase()}</span>
 				<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">
 					{workspace.name}
-				</span>
-				<span className="hidden h-4 min-w-4 shrink-0 place-items-center rounded bg-interactive-hover px-1 font-mono text-[10px] leading-none text-passive">
-					{sessions.length}
 				</span>
 			</SidebarMenuButton>
 			{/* Per-project actions: dashboard board, orchestrator, and a kebab
@@ -751,13 +747,14 @@ function RestartToUpdateRailButton({ status }: { status: UpdateStatus }) {
 }
 
 function CreateProjectButton({
+	hideTrigger = false,
 	onCreateProject,
 	onInitializeProject,
-}: Pick<SidebarProps, "onCreateProject" | "onInitializeProject">) {
-	// This "+" is always mounted (the collapsed rail only CSS-hides it), so it
-	// owns the ⌘N "no project in scope" fallback via openSignal — no separate
-	// delegating component needed. The collapsed-only list item does not, to
-	// avoid a double open while both are mounted.
+}: Pick<SidebarProps, "onCreateProject" | "onInitializeProject"> & { hideTrigger?: boolean }) {
+	// Single CreateProjectFlow owner for the sidebar: the header "+" stays mounted
+	// (CSS-hidden when collapsed or on the empty start page) so it can own
+	// openSignal for ⌘N on every shell route. The collapsed rail button below
+	// reuses this flow via requestCreateProject().
 	const createProjectNonce = useUiStore((state) => state.createProjectNonce);
 	return (
 		<CreateProjectFlow
@@ -771,7 +768,10 @@ function CreateProjectButton({
 					<TooltipTrigger asChild>
 						<button
 							aria-label="New project"
-							className="grid size-icon-xl place-items-center rounded-sm text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground"
+							className={cn(
+								"grid size-icon-xl place-items-center rounded-sm text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground",
+								hideTrigger && "hidden",
+							)}
 							disabled={disabled}
 							onClick={choosePath}
 							type="button"
@@ -786,30 +786,23 @@ function CreateProjectButton({
 	);
 }
 
-function CreateProjectListItem({
-	onCreateProject,
-	onInitializeProject,
-}: Pick<SidebarProps, "onCreateProject" | "onInitializeProject">) {
+function CreateProjectListItem() {
+	const requestCreateProject = useUiStore((state) => state.requestCreateProject);
 	return (
-		<CreateProjectFlow mode="choose" onCreateProject={onCreateProject} onInitializeProject={onInitializeProject}>
-			{({ disabled, choosePath, label }) => (
-				<SidebarMenuItem className="mb-px group-data-[collapsible=icon]:mb-0">
-					<Tooltip>
-						<TooltipTrigger asChild>
-							<button
-								aria-label="New project"
-								className="grid h-control-board w-full place-items-center rounded-sm text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground"
-								disabled={disabled}
-								onClick={choosePath}
-								type="button"
-							>
-								<Plus className="size-icon-sm" aria-hidden="true" />
-							</button>
-						</TooltipTrigger>
-						<TooltipContent side="right">{label}</TooltipContent>
-					</Tooltip>
-				</SidebarMenuItem>
-			)}
-		</CreateProjectFlow>
+		<SidebarMenuItem className="mb-px group-data-[collapsible=icon]:mb-0">
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<button
+						aria-label="New project"
+						className="grid h-control-board w-full place-items-center rounded-sm text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground"
+						onClick={() => requestCreateProject()}
+						type="button"
+					>
+						<Plus className="size-icon-sm" aria-hidden="true" />
+					</button>
+				</TooltipTrigger>
+				<TooltipContent side="right">New project</TooltipContent>
+			</Tooltip>
+		</SidebarMenuItem>
 	);
 }

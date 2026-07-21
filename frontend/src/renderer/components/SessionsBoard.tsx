@@ -23,7 +23,7 @@ import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSession
 import { useRestoreSession } from "../hooks/useRestoreSession";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { NotificationCenter } from "./NotificationCenter";
-import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyState";
+import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyStates";
 import { OrchestratorIcon } from "./icons";
 import { TopbarButton, TopbarKillError } from "./TopbarButton";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";

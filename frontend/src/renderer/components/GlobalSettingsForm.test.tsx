@@ -2,7 +2,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-// import { SETTINGS_SOCIAL_LINKS } from "../lib/social-links";
 import { GlobalSettingsForm } from "./GlobalSettingsForm";
 
 const {
@@ -109,12 +108,7 @@ describe("GlobalSettingsForm", () => {
 		expect(screen.getByText("General")).toBeInTheDocument();
 		expect(screen.getByText("Updates")).toBeInTheDocument();
 		expect(screen.getByText("Get help")).toBeInTheDocument();
-		// Connect with us — temporarily disabled
-		// expect(screen.getByText("CONNECT WITH US")).toBeInTheDocument();
-		// for (const { label } of SETTINGS_SOCIAL_LINKS) {
-		// 	expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
-		// }
-		expect(screen.queryByText("More settings below...")).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Report a problem" })).toBeInTheDocument();
 	});
 
 	it("shows the nightly warning when the nightly channel is loaded", async () => {
@@ -203,7 +197,7 @@ describe("GlobalSettingsForm", () => {
 		});
 		renderForm();
 
-		await user.click(await screen.findByRole("button", { name: "Feedback" }));
+		await user.click(await screen.findByRole("button", { name: "Report a problem" }));
 		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
 
 		await user.type(screen.getByLabelText("Title"), "Create project fails in /Users/alice/private-repo");
@@ -248,7 +242,7 @@ describe("GlobalSettingsForm", () => {
 		getDaemonStatus.mockRejectedValue(new Error("daemon unavailable"));
 		renderForm();
 
-		await user.click(await screen.findByRole("button", { name: "Feedback" }));
+		await user.click(await screen.findByRole("button", { name: "Report a problem" }));
 		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
 		await user.type(screen.getByLabelText("Title"), "Need help with setup");
 
@@ -282,7 +276,7 @@ describe("GlobalSettingsForm", () => {
 		const githubToken = `ghp_${"abcdefghijklmnopqrstuvwxyz"}${"1234567890AB"}`;
 		renderForm();
 
-		await user.click(await screen.findByRole("button", { name: "Feedback" }));
+		await user.click(await screen.findByRole("button", { name: "Report a problem" }));
 		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
 		await user.type(screen.getByLabelText("Title"), "Sensitive setup problem");
 		await user.type(screen.getByLabelText("What happened?"), `Token is ${githubToken}`);
@@ -290,7 +284,7 @@ describe("GlobalSettingsForm", () => {
 		await user.click(screen.getByRole("button", { name: "Close report dialog" }));
 		await waitFor(() => expect(screen.queryByRole("dialog", { name: "Report a problem" })).not.toBeInTheDocument());
 
-		await user.click(await screen.findByRole("button", { name: "Feedback" }));
+		await user.click(await screen.findByRole("button", { name: "Report a problem" }));
 		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
 		expect(screen.getByLabelText("Title")).toHaveValue("");
 		expect(screen.getByLabelText("What happened?")).toHaveValue("");
@@ -300,7 +294,7 @@ describe("GlobalSettingsForm", () => {
 		const user = userEvent.setup();
 		renderForm();
 
-		await user.click(await screen.findByRole("button", { name: "Feedback" }));
+		await user.click(await screen.findByRole("button", { name: "Report a problem" }));
 		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
 		expect(screen.getByLabelText("Title")).toHaveAttribute("placeholder", "Brief Title");
 		expect(screen.getByLabelText("What happened?")).toHaveAttribute(

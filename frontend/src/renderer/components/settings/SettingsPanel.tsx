@@ -11,12 +11,7 @@ export function SettingsPanel({ children, onClose }: { children: ReactNode; onCl
 			<div className="flex w-full max-w-(--size-settings-content-width) flex-col items-stretch gap-(--size-settings-section-gap) px-(--size-settings-panel-padding-x) pb-(--size-settings-panel-padding-bottom) pt-(--size-settings-panel-padding-top)">
 				<div className="flex shrink-0 items-start justify-between gap-4 self-stretch">
 					<h1 className="text-settings-heading font-bold text-settings-title">Settings</h1>
-					<button
-						type="button"
-						onClick={onClose}
-						className="grid size-8 place-items-center rounded-md text-settings-muted transition-colors hover:bg-settings-row hover:text-settings-title"
-						aria-label="Close settings"
-					>
+					<button type="button" onClick={onClose} className="settings-close-button" aria-label="Close settings">
 						<X className="size-5" aria-hidden="true" strokeWidth={2.25} />
 					</button>
 				</div>
