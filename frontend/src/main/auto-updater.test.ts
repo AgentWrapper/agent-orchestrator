@@ -620,6 +620,43 @@ describe("startAutoUpdates", () => {
 		expect(current).toEqual({ enabled: true, channel: "nightly", nightlyAck: true, feature: { pr: 2710 } });
 	});
 
+	it("coalesces retirement ticks queued behind a long updater operation", async () => {
+		vi.useFakeTimers();
+		const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
+		const automaticCheck = deferred();
+		const settings: UpdateSettings = {
+			enabled: true,
+			channel: "latest",
+			nightlyAck: false,
+			feature: { pr: 2709 },
+		};
+		const reconcileFeaturePin = vi.fn((current: UpdateSettings) =>
+			Promise.resolve({ settings: current, cleared: false }),
+		);
+		const { module, autoUpdater } = await importAutoUpdater(settings, { reconcileFeaturePin });
+		autoUpdater.checkForUpdates.mockReturnValueOnce(automaticCheck.promise);
+
+		const startPromise = module.startAutoUpdates(stateDir);
+		await flushMicrotasks();
+		expect(reconcileFeaturePin).toHaveBeenCalledTimes(1);
+
+		const runRetirementPoll = intervalWithDelay(setIntervalSpy, 30 * 60 * 1000);
+		runRetirementPoll();
+		runRetirementPoll();
+		runRetirementPoll();
+		await flushMicrotasks();
+		expect(reconcileFeaturePin).toHaveBeenCalledTimes(1);
+
+		automaticCheck.resolve();
+		await startPromise;
+		await flushMicrotasks();
+		expect(reconcileFeaturePin).toHaveBeenCalledTimes(2);
+
+		runRetirementPoll();
+		await flushMicrotasks();
+		expect(reconcileFeaturePin).toHaveBeenCalledTimes(3);
+	});
+
 	it("applies feature settings and owns its check after an in-flight automatic check", async () => {
 		const automaticCheck = deferred();
 		const featureSettings: UpdateSettings = {

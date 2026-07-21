@@ -255,6 +255,7 @@ async function runSerializedUpdaterOperation(
 // re-check every 30 minutes whether that PR has since been retired, so a
 // long-running session notices a merge/close without waiting for a relaunch.
 let retirementPollTimer: ReturnType<typeof setInterval> | undefined;
+let retirementPollInFlight = false;
 
 // startRetirementPollTimer is idempotent (guards against stacking multiple
 // intervals across repeated startAutoUpdates calls) and runs independently of
@@ -263,8 +264,18 @@ let retirementPollTimer: ReturnType<typeof setInterval> | undefined;
 // returns immediately whenever there's no pin, so idle cost is one settings read.
 function startRetirementPollTimer(stateDir: string): void {
 	if (retirementPollTimer !== undefined) return;
-	retirementPollTimer = setInterval(() => void runRetirementPoll(stateDir), 30 * 60 * 1000);
+	retirementPollTimer = setInterval(() => void requestRetirementPoll(stateDir), 30 * 60 * 1000);
 	retirementPollTimer.unref?.();
+}
+
+async function requestRetirementPoll(stateDir: string): Promise<void> {
+	if (retirementPollInFlight) return;
+	retirementPollInFlight = true;
+	try {
+		await runRetirementPoll(stateDir);
+	} finally {
+		retirementPollInFlight = false;
+	}
 }
 
 async function runRetirementPoll(stateDir: string): Promise<void> {
