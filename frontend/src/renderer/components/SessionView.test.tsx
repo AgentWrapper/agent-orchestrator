@@ -1,4 +1,4 @@
-import type { ReactNode, Ref } from "react";
+import { StrictMode, type ReactNode, type Ref } from "react";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { SessionView } from "./SessionView";
@@ -279,6 +279,24 @@ describe("SessionView", () => {
 		expect(pane).toHaveAttribute("inert");
 		expect(pane).toHaveAttribute("aria-hidden", "true");
 		expect(panels.get("inspector")!.handle.collapse).not.toHaveBeenCalled();
+	});
+
+	it("keeps StrictMode mount imperative-free and expands on the first user toggle", () => {
+		render(
+			<StrictMode>
+				<SessionView sessionId="sess-1" />
+			</StrictMode>,
+		);
+		const handle = panels.get("inspector")!.handle;
+
+		expect(handle.expand).not.toHaveBeenCalled();
+		expect(handle.collapse).not.toHaveBeenCalled();
+
+		fireEvent.keyDown(window, { key: "B", metaKey: true, shiftKey: true });
+
+		expect(inspectorOpen("sess-1")).toBe(true);
+		expect(handle.expand).toHaveBeenCalledTimes(1);
+		expect(handle.collapse).not.toHaveBeenCalled();
 	});
 
 	it("toggles the inspector with mod+shift+B through the imperative panel API", () => {

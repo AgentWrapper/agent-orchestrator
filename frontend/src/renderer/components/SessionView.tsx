@@ -172,21 +172,15 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// Drive the collapsible panel from the store so the topbar button, ⌘⇧B, and
 	// drag-to-collapse all stay in sync. When the inspector panel mounts into
 	// the already-live group (orchestrator/loading → worker), rrp only derives
-	// the new panel's constraints in the next commit. The readiness guard
-	// consumes that mount transition without calling expand()/collapse(); later
-	// toggles can safely use the imperative API after registration has settled.
+	// the new panel's constraints in the next commit. This effect intentionally
+	// runs before the readiness effect below, so mount and StrictMode's effect
+	// replay remain imperative-free; later store changes can safely drive the
+	// registered panel.
 	const inspectorImperativeReadyRef = useRef(false);
-	if (!hasInspector) {
-		inspectorImperativeReadyRef.current = false;
-	}
 	useEffect(() => {
-		if (!hasInspector) return;
+		if (!hasInspector || !inspectorImperativeReadyRef.current) return;
 		const panel = inspectorRef.current;
 		if (!panel) return;
-		if (!inspectorImperativeReadyRef.current) {
-			inspectorImperativeReadyRef.current = true;
-			return;
-		}
 		if (isInspectorOpen) {
 			panel.expand();
 			// expand() restores the "most recent" size, which is 0 when the panel
@@ -196,6 +190,16 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			panel.collapse();
 		}
 	}, [hasInspector, isInspectorOpen]);
+	useEffect(() => {
+		if (!hasInspector || !inspectorRef.current) {
+			inspectorImperativeReadyRef.current = false;
+			return;
+		}
+		inspectorImperativeReadyRef.current = true;
+		return () => {
+			inspectorImperativeReadyRef.current = false;
+		};
+	}, [hasInspector]);
 
 	// Persist drags and mirror collapse state (dragging past minSize collapses)
 	// back into the store. Read the store imperatively to avoid a stale closure.
