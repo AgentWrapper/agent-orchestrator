@@ -214,8 +214,10 @@ func Run() error {
 	}
 
 	// Redeliver any worker_idle events left pending across the restart, now that
-	// sessions (and their orchestrators) have been reconciled.
-	lcStack.LCM.DispatchAllPendingWorkerIdleEvents(ctx)
+	// sessions (and their orchestrators) have been reconciled. Off the critical
+	// boot path (a store read plus a possible pane write per pending project);
+	// the recovery sweep is the backstop if it does not finish before shutdown.
+	go lcStack.LCM.DispatchAllPendingWorkerIdleEvents(ctx)
 
 	// ponytail: 5s tolerates a brief frontend restart; tune if dev hot-reload trips it.
 	const supervisorGrace = 5 * time.Second

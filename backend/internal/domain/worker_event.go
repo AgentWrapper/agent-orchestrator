@@ -13,7 +13,7 @@ import "time"
 //
 // Lifetime is bound to the source worker: the event's only instruction is to
 // inspect that worker, so if the worker row is deleted the event is obsolete
-// and is removed with it (worker_id ON DELETE CASCADE, migration 0024).
+// and is removed with it (worker_id ON DELETE CASCADE, migration 0025).
 type WorkerIdleEvent struct {
 	ID           string
 	ProjectID    ProjectID
