@@ -16,6 +16,12 @@ import type { ServerConfig } from "./config";
 // or a config change, so an old daemon can't keep pushing to this device (D7).
 // It lives in SecureStore because it contains the connection password.
 const REGISTRATION_KEY = "ao.pushRegistration";
+// Registrations we still owe an unregister to (the daemon was unreachable when we
+// tried). Retried on the next register/foreground so a failed unregister is never
+// silently lost — otherwise an old daemon could keep pushing to this device.
+const PENDING_UNREG_KEY = "ao.pushPendingUnregister";
+// Bound the pending list so a permanently-dead daemon can't grow it forever.
+const MAX_PENDING_UNREG = 10;
 
 type Registration = {
 	token: string;
@@ -40,6 +46,46 @@ async function saveRegistration(reg: Registration): Promise<void> {
 
 async function clearRegistration(): Promise<void> {
 	await SecureStore.deleteItemAsync(REGISTRATION_KEY);
+}
+
+async function loadPendingUnregisters(): Promise<Registration[]> {
+	try {
+		const raw = await SecureStore.getItemAsync(PENDING_UNREG_KEY);
+		return raw ? (JSON.parse(raw) as Registration[]) : [];
+	} catch {
+		return [];
+	}
+}
+
+async function savePendingUnregisters(list: Registration[]): Promise<void> {
+	if (list.length === 0) {
+		await SecureStore.deleteItemAsync(PENDING_UNREG_KEY);
+		return;
+	}
+	await SecureStore.setItemAsync(PENDING_UNREG_KEY, JSON.stringify(list.slice(-MAX_PENDING_UNREG)));
+}
+
+// Queue a registration for a later unregister retry (deduped by token+host).
+async function queuePendingUnregister(reg: Registration): Promise<void> {
+	const list = await loadPendingUnregisters();
+	if (list.some((r) => r.token === reg.token && sameDaemon(r, configOf(reg)))) return;
+	list.push(reg);
+	await savePendingUnregisters(list);
+}
+
+// Retry every queued unregister; keep the ones that still fail. Best-effort.
+async function flushPendingUnregisters(): Promise<void> {
+	const list = await loadPendingUnregisters();
+	if (list.length === 0) return;
+	const stillPending: Registration[] = [];
+	for (const reg of list) {
+		try {
+			await unregisterPushDevice(configOf(reg), reg.token);
+		} catch {
+			stillPending.push(reg);
+		}
+	}
+	await savePendingUnregisters(stillPending);
 }
 
 // Rebuild a minimal ServerConfig for talking to the daemon a registration names.
@@ -116,16 +162,20 @@ export async function registerForPush(cfg: ServerConfig): Promise<string | null>
 		return null;
 	}
 
+	// Retry any unregisters we still owe from a previous failure.
+	await flushPendingUnregisters();
+
 	// If we're now pointed at a different daemon than we last registered with,
-	// unregister the token from the OLD daemon first (best-effort) so it stops
-	// pushing to this device. This survives app restarts because the old daemon's
-	// address + credentials are persisted, not just held in memory.
+	// unregister the token from the OLD daemon first so it stops pushing to this
+	// device. This survives app restarts because the old daemon's address +
+	// credentials are persisted. If that unregister fails (daemon unreachable),
+	// queue it for retry rather than dropping it.
 	const prior = await loadRegistration();
 	if (prior && !sameDaemon(prior, cfg)) {
 		try {
 			await unregisterPushDevice(configOf(prior), prior.token);
 		} catch {
-			/* best-effort: the old daemon also prunes dead tokens on send */
+			await queuePendingUnregister(prior);
 		}
 	}
 
@@ -186,17 +236,21 @@ export async function openNotificationSettings(): Promise<void> {
 
 // Best-effort unregister of the last-registered token from the daemon it was
 // registered with (D7, disconnect/unpair). Uses the persisted daemon address +
-// credentials, so it reaches the correct daemon even after a restart. Never
-// throws — the caller must not be blocked by a failed unregister.
+// credentials, so it reaches the correct daemon even after a restart. If the
+// unregister fails (daemon unreachable), the target is queued for retry instead
+// of being dropped — so the old daemon can't keep pushing to this device. Never
+// throws — the caller must not be blocked.
 export async function unregisterFromPush(): Promise<void> {
+	const reg = await loadRegistration();
+	// Clear the active registration up front: the device is disconnecting, so it
+	// is no longer "currently registered" regardless of whether the network call
+	// below succeeds. The retry is tracked separately in the pending queue.
+	await clearRegistration();
+	if (!reg) return;
 	try {
-		const reg = await loadRegistration();
-		if (reg) {
-			await unregisterPushDevice(configOf(reg), reg.token);
-		}
+		await unregisterPushDevice(configOf(reg), reg.token);
 	} catch {
-		/* best-effort: the daemon prunes dead tokens on send anyway */
-	} finally {
-		await clearRegistration();
+		await queuePendingUnregister(reg);
 	}
+	await flushPendingUnregisters();
 }
