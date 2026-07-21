@@ -358,6 +358,8 @@ type fakeCommander struct {
 	spawned         bool
 	spawnedCfg      ports.SpawnConfig
 	killsAtSpawn    int
+	restoreErr      error
+	restoreResult   sessionmanager.RestoreResult
 }
 
 func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, error) {
@@ -372,8 +374,11 @@ func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.
 	}
 	return domain.SessionRecord{ID: "mer-9", ProjectID: cfg.ProjectID, Kind: cfg.Kind, Harness: cfg.Harness}, nil
 }
-func (f *fakeCommander) Restore(context.Context, domain.SessionID) (domain.SessionRecord, error) {
-	return domain.SessionRecord{}, nil
+func (f *fakeCommander) RestoreWithMode(context.Context, domain.SessionID) (sessionmanager.RestoreResult, error) {
+	if f.restoreErr != nil {
+		return sessionmanager.RestoreResult{}, f.restoreErr
+	}
+	return f.restoreResult, nil
 }
 func (f *fakeCommander) Kill(_ context.Context, id domain.SessionID) (bool, error) {
 	if f.killErr != nil {
@@ -865,6 +870,35 @@ func TestToAPIError_NotResumable(t *testing.T) {
 	var e *apierr.Error
 	if !errors.As(mapped, &e) || e.Kind != apierr.KindConflict || e.Code != "SESSION_NOT_RESUMABLE" {
 		t.Fatalf("mapped = %v, want Conflict SESSION_NOT_RESUMABLE", mapped)
+	}
+}
+
+func TestRestoreMapsManagerModeToServiceView(t *testing.T) {
+	st := newFakeStore()
+	rec := domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessCodex,
+		Activity:  domain.Activity{State: domain.ActivityIdle},
+	}
+	fc := &fakeCommander{
+		restoreResult: sessionmanager.RestoreResult{
+			Session: rec,
+			Mode:    sessionmanager.RestoreModeSavedPrompt,
+		},
+	}
+	svc := &Service{manager: fc, store: st}
+
+	got, err := svc.Restore(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if got.Session.ID != "mer-1" {
+		t.Fatalf("session id = %q, want mer-1", got.Session.ID)
+	}
+	if got.Mode != RestoreModeViewSavedPrompt {
+		t.Fatalf("mode = %q, want %q", got.Mode, RestoreModeViewSavedPrompt)
 	}
 }
 

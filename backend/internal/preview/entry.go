@@ -1,16 +1,26 @@
 package preview
 
 import (
+	"encoding/base32"
+	"errors"
+	"fmt"
 	"io/fs"
+	"net"
 	"net/url"
-	"os"
 	"path"
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
+
+const previewHostLabel = "ao-preview"
+
+// ErrPreviewHostUnsupported indicates that a session ID cannot be represented
+// by a standards-compliant localhost hostname.
+var ErrPreviewHostUnsupported = errors.New("session ID is too long for a preview hostname")
 
 var entryCandidates = []string{"index.html", "public/index.html", "dist/index.html", "build/index.html"}
 
@@ -45,13 +55,8 @@ func DiscoverEntry(workspacePath string) (Entry, bool) {
 		return Entry{}, false
 	}
 	for _, candidate := range entryCandidates {
-		file, ok := ConfinedPath(workspacePath, candidate)
-		if !ok {
-			continue
-		}
-		info, err := os.Stat(file)
-		if err == nil && !info.IsDir() {
-			return Entry{Path: candidate, AbsPath: file, ModTime: info.ModTime(), Size: info.Size()}, true
+		if entry, ok := EntryAtPath(workspacePath, candidate); ok {
+			return entry, true
 		}
 	}
 	return mostRecentPreviewable(workspacePath)
@@ -87,19 +92,18 @@ func mostRecentPreviewable(workspacePath string) (Entry, bool) {
 		if seen > maxPreviewWalkFiles {
 			return filepath.SkipAll
 		}
-		info, err := d.Info()
-		if err != nil {
-			//nolint:nilerr // skip this file, keep scanning the rest of the workspace
-			return nil
-		}
 		rel, err := filepath.Rel(root, p)
 		if err != nil {
 			//nolint:nilerr // skip this file, keep scanning the rest of the workspace
 			return nil
 		}
 		relSlash := filepath.ToSlash(rel)
-		if !found || newerPreviewable(info, relSlash, best) {
-			best = Entry{Path: relSlash, AbsPath: p, ModTime: info.ModTime(), Size: info.Size()}
+		entry, ok := EntryAtPath(root, relSlash)
+		if !ok {
+			return nil
+		}
+		if !found || newerPreviewable(entry, relSlash, best) {
+			best = entry
 			found = true
 		}
 		return nil
@@ -107,8 +111,8 @@ func mostRecentPreviewable(workspacePath string) (Entry, bool) {
 	return best, found
 }
 
-func newerPreviewable(info fs.FileInfo, relSlash string, best Entry) bool {
-	mod := info.ModTime()
+func newerPreviewable(entry Entry, relSlash string, best Entry) bool {
+	mod := entry.ModTime
 	if mod.After(best.ModTime) {
 		return true
 	}
@@ -139,8 +143,11 @@ func ConfinedPath(workspacePath, assetPath string) (string, bool) {
 	if err != nil || root == "" {
 		return "", false
 	}
-	clean := strings.TrimPrefix(path.Clean("/"+strings.TrimSpace(assetPath)), "/")
-	if clean == "" || clean == "." {
+	clean, ok := CleanWorkspacePath(assetPath)
+	if !ok {
+		if path.Clean("/"+filepath.ToSlash(assetPath)) != "/" {
+			return "", false
+		}
 		clean = "index.html"
 	}
 	file := filepath.Join(root, filepath.FromSlash(clean))
@@ -155,13 +162,75 @@ func ConfinedPath(workspacePath, assetPath string) (string, bool) {
 	return absFile, true
 }
 
-// FileURL builds the daemon preview/files URL for a workspace-local entry.
-func FileURL(baseURL string, id domain.SessionID, entry string) string {
+// FileURL builds an isolated localhost origin for a workspace-local entry.
+// Mounting the entry directory at the origin root makes both relative and
+// root-relative browser requests resolve inside the preview instead of falling
+// through to the daemon's API origin.
+func FileURL(baseURL string, id domain.SessionID, entry string) (string, error) {
 	u := normalizedBaseURL(baseURL)
-	u.Path = "/api/v1/sessions/" + url.PathEscape(string(id)) + "/preview/files/" + escapePath(entry)
+	host, err := previewHost(u, id)
+	if err != nil {
+		return "", err
+	}
+	u.Host = host
+	// URL.String escapes Path exactly once. Supplying an already-escaped path
+	// here would turn spaces into %2520 and make otherwise valid workspace files
+	// impossible to resolve.
+	u.Path = path.Clean("/" + entry)
 	u.RawQuery = ""
 	u.Fragment = ""
-	return u.String()
+	return u.String(), nil
+}
+
+// SessionIDFromHost decodes the session identity carried by a FileURL host.
+// The labels use unpadded base32 so arbitrary session IDs remain DNS-safe.
+func SessionIDFromHost(rawHost string) (domain.SessionID, bool) {
+	host := rawHost
+	if parsedHost, _, err := net.SplitHostPort(rawHost); err == nil {
+		host = parsedHost
+	}
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	if host == "" || len(host) > 253 {
+		return "", false
+	}
+	labels := strings.Split(host, ".")
+	if len(labels) < 3 || labels[0] != previewHostLabel || labels[len(labels)-1] != "localhost" {
+		return "", false
+	}
+	for _, label := range labels {
+		if label == "" || len(label) > 63 {
+			return "", false
+		}
+	}
+	encoded := strings.Join(labels[1:len(labels)-1], "")
+	decoded, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(strings.ToUpper(encoded))
+	if err != nil || len(decoded) == 0 || !utf8.Valid(decoded) {
+		return "", false
+	}
+	return domain.SessionID(decoded), true
+}
+
+func previewHost(u url.URL, id domain.SessionID) (string, error) {
+	if id == "" {
+		return "", fmt.Errorf("%w: empty session ID", ErrPreviewHostUnsupported)
+	}
+	encoded := strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString([]byte(id)))
+	labels := []string{previewHostLabel}
+	const maxChunk = 50
+	for encoded != "" {
+		n := min(len(encoded), maxChunk)
+		labels = append(labels, encoded[:n])
+		encoded = encoded[n:]
+	}
+	labels = append(labels, "localhost")
+	host := strings.Join(labels, ".")
+	if len(host) > 253 {
+		return "", fmt.Errorf("%w: encoded hostname is %d characters", ErrPreviewHostUnsupported, len(host))
+	}
+	if port := u.Port(); port != "" {
+		return host + ":" + port, nil
+	}
+	return host, nil
 }
 
 func normalizedBaseURL(raw string) url.URL {
@@ -177,12 +246,4 @@ func normalizedBaseURL(raw string) url.URL {
 		return url.URL{Scheme: "http", Host: raw}
 	}
 	return *u
-}
-
-func escapePath(raw string) string {
-	parts := strings.Split(raw, "/")
-	for i, part := range parts {
-		parts[i] = url.PathEscape(part)
-	}
-	return strings.Join(parts, "/")
 }

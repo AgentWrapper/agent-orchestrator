@@ -6,7 +6,7 @@ import { CenterPane } from "./CenterPane";
 import { SessionFilesView } from "./SessionFilesView";
 import { SessionInspector } from "./SessionInspector";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resizable";
-import { useUiStore, type InspectorView } from "../stores/ui-store";
+import { useResolvedTheme, useUiStore, type InspectorView } from "../stores/ui-store";
 import { useShell } from "../lib/shell-context";
 import { useBrowserView } from "../hooks/useBrowserView";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
@@ -48,7 +48,7 @@ type SessionViewProps = {
 export function SessionView({ sessionId }: SessionViewProps) {
 	const workspaceQuery = useWorkspaceQuery();
 	const workspaces = workspaceQuery.data ?? [];
-	const { theme } = useUiStore();
+	const theme = useResolvedTheme();
 	const isInspectorOpen = useUiStore((state) => state.inspectorSessions[sessionId]?.isOpen ?? false);
 	const inspectorView = useUiStore((state) => state.inspectorSessions[sessionId]?.view ?? "summary");
 	const setInspectorOpenForSession = useUiStore((state) => state.setInspectorOpen);

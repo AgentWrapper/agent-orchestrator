@@ -230,7 +230,8 @@ var gooseBinarySpec = binaryutil.BinarySpec{
 	Names:         []string{"goose"},
 	WinNames:      []string{"goose.cmd", "goose.exe", "goose"},
 	UnixPaths:     []string{"/usr/local/bin/goose", "/opt/homebrew/bin/goose"},
-	UnixHomePaths: [][]string{{".local", "bin", "goose"}, {".cargo", "bin", "goose"}, {".npm", "bin", "goose"}},
+	UnixHomePaths: binaryutil.NodeManagedUnixHomePaths("goose", []string{".cargo", "bin", "goose"}),
+	NodeManaged:   true,
 	WinPaths: []binaryutil.WinPath{
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "goose.cmd"}},
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "goose.exe"}},

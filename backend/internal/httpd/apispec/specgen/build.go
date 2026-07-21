@@ -67,10 +67,14 @@ func Build() ([]byte, error) {
 			"Code-review runs and findings"),
 		*(&openapi31.Tag{Name: "notifications"}).WithDescription(
 			"Durable dashboard notifications"),
+		*(&openapi31.Tag{Name: "push"}).WithDescription(
+			"Mobile push-device registration for OS push notifications"),
 		*(&openapi31.Tag{Name: "events"}).WithDescription(
 			"Server-sent CDC event stream with durable replay"),
 		*(&openapi31.Tag{Name: "import"}).WithDescription(
 			"Legacy AO project import (availability probe and run)"),
+		*(&openapi31.Tag{Name: "dev"}).WithDescription(
+			"Developer-only maintenance operations"),
 		*(&openapi31.Tag{Name: "mobile"}).WithDescription(
 			"Connect Mobile LAN bridge control (loopback/desktop only)"),
 	}
@@ -208,8 +212,19 @@ var schemaNames = map[string]string{
 	// httpd/controllers: import wire envelopes
 	"ControllersImportStatusResponse": "ImportStatusResponse",
 	"ControllersImportRunResponse":    "ImportRunResponse",
+	// httpd/controllers: dev wire envelopes
+	"ControllersDevImportProjectsRequest":  "DevImportProjectsRequest",
+	"ControllersDevImportProjectsResponse": "DevImportProjectsResponse",
 	// httpd/controllers: mobile wire envelopes
 	"ControllersMobileStatusResponse": "MobileStatusResponse",
+	// devimport report
+	"DevimportReport":   "DevImportProjectsReport",
+	"DevimportConflict": "DevImportProjectsConflict",
+	// httpd/controllers: push-device wire envelopes
+	"ControllersRegisterPushDeviceRequest":    "RegisterPushDeviceRequest",
+	"ControllersPushDeviceEnvelope":           "PushDeviceEnvelope",
+	"ControllersPushDeviceResponse":           "PushDeviceResponse",
+	"ControllersUnregisterPushDeviceResponse": "UnregisterPushDeviceResponse",
 	// legacyimport report
 	"LegacyimportReport": "ImportReport",
 	// service/project entities + DTOs
@@ -303,7 +318,9 @@ func operations() []operation {
 	ops = append(ops, prOperations()...)
 	ops = append(ops, reviewOperations()...)
 	ops = append(ops, notificationOperations()...)
+	ops = append(ops, pushOperations()...)
 	ops = append(ops, importOperations()...)
+	ops = append(ops, devOperations()...)
 	ops = append(ops, mobileOperations()...)
 	return ops
 }
@@ -412,6 +429,24 @@ func importOperations() []operation {
 	}
 }
 
+// devOperations declares developer-only API operations. Must stay 1:1 with
+// the routes DevController.Register mounts (enforced by the parity test).
+func devOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodPost, path: "/api/v1/dev/import-projects", id: "runDevImportProjects", tag: "dev",
+			summary: "Run the developer project-registry import through the daemon store",
+			reqBody: controllers.DevImportProjectsRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.DevImportProjectsResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
+}
+
 func notificationOperations() []operation {
 	return []operation{
 		{
@@ -464,6 +499,34 @@ func notificationOperations() []operation {
 // reviewOperations declares the session-scoped /reviews operations. Must stay
 // 1:1 with the routes ReviewsController.Register mounts (enforced by the parity
 // test).
+// pushOperations declares the /push/devices operations. Must stay 1:1 with the
+// routes PushController.Register mounts (enforced by the parity test).
+func pushOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodPost, path: "/api/v1/push/devices", id: "registerPushDevice", tag: "push",
+			summary: "Register (upsert) a phone's Expo push token",
+			reqBody: controllers.RegisterPushDeviceRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.PushDeviceEnvelope{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodDelete, path: "/api/v1/push/devices/{token}", id: "unregisterPushDevice", tag: "push",
+			summary:    "Unregister a phone's Expo push token",
+			pathParams: []any{controllers.PushDeviceTokenParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.UnregisterPushDeviceResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
+}
+
 func reviewOperations() []operation {
 	return []operation{
 		{

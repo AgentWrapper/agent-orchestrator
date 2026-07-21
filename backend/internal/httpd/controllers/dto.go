@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/devimport"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/legacyimport"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
@@ -229,9 +230,10 @@ type RenameSessionResponse struct {
 
 // RestoreSessionResponse is the body of POST /api/v1/sessions/{sessionId}/restore.
 type RestoreSessionResponse struct {
-	OK        bool             `json:"ok"`
-	SessionID domain.SessionID `json:"sessionId"`
-	Session   SessionView      `json:"session"`
+	OK          bool                       `json:"ok"`
+	SessionID   domain.SessionID           `json:"sessionId"`
+	RestoreMode sessionsvc.RestoreModeView `json:"restoreMode" enum:"native,saved_prompt,fresh"`
+	Session     SessionView                `json:"session"`
 }
 
 // KillSessionResponse is the body of POST /api/v1/sessions/{sessionId}/kill.
@@ -572,6 +574,17 @@ type ImportRunResponse struct {
 	Report legacyimport.Report `json:"report"`
 }
 
+// DevImportProjectsRequest is the body of POST /api/v1/dev/import-projects.
+type DevImportProjectsRequest struct {
+	SourceDataDir string `json:"sourceDataDir" minLength:"1"`
+	DryRun        bool   `json:"dryRun"`
+}
+
+// DevImportProjectsResponse is the body of POST /api/v1/dev/import-projects.
+type DevImportProjectsResponse struct {
+	Report devimport.Report `json:"report"`
+}
+
 // PRIDParam is the {id} path parameter shared by the /prs/{id} routes.
 type PRIDParam struct {
 	ID string `path:"id" description:"PR number."`
@@ -604,4 +617,38 @@ type MobileStatusResponse struct {
 	Port     int    `json:"port"`
 	Password string `json:"password"`
 	Warning  string `json:"warning"`
+}
+
+// PushDeviceTokenParam is the {token} path parameter for push-device routes.
+type PushDeviceTokenParam struct {
+	Token string `path:"token" description:"Expo push token (URL-encoded) identifying the device."`
+}
+
+// RegisterPushDeviceRequest is the body of POST /api/v1/push/devices. The phone
+// sends its Expo push token plus a bit of descriptive metadata; the daemon keys
+// the registry on the token and re-registering is an idempotent upsert.
+type RegisterPushDeviceRequest struct {
+	Token      string `json:"token" description:"Expo push token, e.g. ExponentPushToken[...]."`
+	Platform   string `json:"platform,omitempty" enum:"ios,android" description:"Device platform."`
+	DeviceName string `json:"deviceName,omitempty" description:"Human-friendly device label."`
+}
+
+// PushDeviceResponse is the stored view of a registered push device.
+type PushDeviceResponse struct {
+	Token      string    `json:"token"`
+	Platform   string    `json:"platform,omitempty"`
+	DeviceName string    `json:"deviceName,omitempty"`
+	CreatedAt  time.Time `json:"createdAt"`
+	LastSeenAt time.Time `json:"lastSeenAt"`
+}
+
+// PushDeviceEnvelope is the { device } response body for a registered push device.
+type PushDeviceEnvelope struct {
+	Device PushDeviceResponse `json:"device"`
+}
+
+// UnregisterPushDeviceResponse is the body of DELETE /api/v1/push/devices/{token} (200).
+type UnregisterPushDeviceResponse struct {
+	Token   string `json:"token"`
+	Deleted bool   `json:"deleted"`
 }

@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/url"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -114,9 +112,16 @@ func (p *Poller) Poll(ctx context.Context) error {
 		if sess.Kind != domain.KindWorker {
 			continue
 		}
-		entry, ok := DiscoverEntry(sess.Metadata.WorkspacePath)
+		storedEntry, workspaceOwned := StoredWorkspaceEntry(sess.Metadata.PreviewURL, sess.ID)
+		entry, ok := Entry{}, false
+		if workspaceOwned {
+			entry, ok = EntryAtPath(sess.Metadata.WorkspacePath, storedEntry)
+		}
 		if !ok {
-			if isWorkspacePreviewURL(sess.Metadata.PreviewURL, sess.ID) {
+			entry, ok = DiscoverEntry(sess.Metadata.WorkspacePath)
+		}
+		if !ok {
+			if workspaceOwned {
 				if _, err := p.setter.SetPreview(ctx, sess.ID, ""); err != nil {
 					p.logger.Error("preview poller: failed to clear stale preview",
 						"session", sess.ID, "err", err)
@@ -130,8 +135,13 @@ func (p *Poller) Poll(ctx context.Context) error {
 		if seenBefore && previous == state {
 			continue
 		}
-		target := FileURL(p.baseURL, sess.ID, entry.Path)
-		if !p.shouldRefresh(sess, target, seenBefore) {
+		target, err := FileURL(p.baseURL, sess.ID, entry.Path)
+		if err != nil {
+			p.logger.Error("preview poller: cannot build isolated preview URL", "session", sess.ID, "err", err)
+			p.seen[sess.ID] = state
+			continue
+		}
+		if !p.shouldRefresh(sess, target, seenBefore, workspaceOwned) {
 			p.seen[sess.ID] = state
 			continue
 		}
@@ -148,7 +158,7 @@ func (p *Poller) Poll(ctx context.Context) error {
 	return nil
 }
 
-func (p *Poller) shouldRefresh(sess domain.SessionRecord, target string, seenBefore bool) bool {
+func (p *Poller) shouldRefresh(sess domain.SessionRecord, target string, seenBefore, workspaceOwned bool) bool {
 	current := strings.TrimSpace(sess.Metadata.PreviewURL)
 	if current == "" {
 		if !seenBefore {
@@ -157,37 +167,12 @@ func (p *Poller) shouldRefresh(sess domain.SessionRecord, target string, seenBef
 		previous := p.seen[sess.ID]
 		return previous.cleared
 	}
-	if current == target || isWorkspacePreviewURL(current, sess.ID) {
-		return true
+	if current == target {
+		return seenBefore
 	}
-	return isStaleWorkspacePath(current)
+	return workspaceOwned
 }
 
 func stateFor(entry Entry) entryState {
 	return entryState{path: entry.Path, modUnix: entry.ModTime.UnixNano(), size: entry.Size}
-}
-
-func isWorkspacePreviewURL(raw string, id domain.SessionID) bool {
-	parsed, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil {
-		return false
-	}
-	previewPath := parsed.Path
-	if previewPath == "" {
-		previewPath = raw
-	}
-	prefix := "/api/v1/sessions/" + url.PathEscape(string(id)) + "/preview/files/"
-	return strings.HasPrefix(previewPath, prefix)
-}
-
-func isStaleWorkspacePath(raw string) bool {
-	raw = strings.TrimSpace(raw)
-	if raw == "" || strings.Contains(raw, "://") || filepath.IsAbs(raw) || isWindowsAbs(raw) {
-		return false
-	}
-	return !strings.Contains(raw, ":")
-}
-
-func isWindowsAbs(raw string) bool {
-	return len(raw) >= 3 && ((raw[0] >= 'a' && raw[0] <= 'z') || (raw[0] >= 'A' && raw[0] <= 'Z')) && raw[1] == ':' && (raw[2] == '\\' || raw[2] == '/')
 }
