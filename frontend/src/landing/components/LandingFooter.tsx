@@ -1,3 +1,6 @@
+import Image from "next/image";
+import Link from "next/link";
+
 // NOT IN USE
 const LOGO_URL = "/ao-logo-transparent.png";
 
@@ -46,10 +49,16 @@ export function LandingFooter() {
 			<div className="container-page py-12 sm:py-24">
 				<div className="grid gap-10 lg:grid-cols-[0.95fr_1.05fr]">
 					<div className="max-w-md">
-						<a href="/" className="inline-flex items-center gap-3">
-							<img src={LOGO_URL} alt="Agent Orchestrator" className="h-10 w-10 object-contain" />
+						<Link href="/" className="inline-flex items-center gap-3">
+							<Image
+								src={LOGO_URL}
+								alt="Agent Orchestrator"
+								width={40}
+								height={40}
+								className="h-10 w-10 object-contain"
+							/>
 							<span className="text-[16px] font-semibold text-[color:var(--fg)]">Agent Orchestrator</span>
-						</a>
+						</Link>
 						<p className="mt-4 max-w-md text-[14px] leading-relaxed text-[color:var(--fg-muted)]">
 							Open-source orchestration for terminal-native coding agents. Local daemon, isolated worktrees, live
 							sessions, and PR feedback routed to the right worker.

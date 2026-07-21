@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Image from "next/image";
 import Link from "next/link";
 import { LandingFooter } from "../../components/LandingFooter";
 import { ScrollRevealProvider } from "../../components/ScrollRevealProvider";
@@ -291,7 +292,13 @@ function PartnersNav() {
 		<header className="border-b border-[color:var(--border)]">
 			<div className="container-page flex h-16 items-center justify-between">
 				<Link href="/" className="inline-flex items-center gap-3">
-					<img src="/ao-logo-transparent.png" alt="Agent Orchestrator" className="h-8 w-8 object-contain" />
+					<Image
+						src="/ao-logo-transparent.png"
+						alt="Agent Orchestrator"
+						width={32}
+						height={32}
+						className="h-8 w-8 object-contain"
+					/>
 					<span className="text-[15px] font-semibold text-[color:var(--fg)]">Agent Orchestrator</span>
 				</Link>
 				<nav className="flex items-center gap-5">
@@ -323,7 +330,7 @@ function PartnersNav() {
 export default function DesignPartnersPage() {
 	return (
 		<ScrollRevealProvider>
-			<div className="landing-page relative z-10 min-h-screen">
+			<div className="landing-page relative z-10 min-h-dvh">
 				<PartnersNav />
 
 				{/* Hero */}
