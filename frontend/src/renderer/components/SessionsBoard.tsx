@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { AlertTriangle, ChevronRight, Plus, RotateCw } from "lucide-react";
+import { AlertTriangle, Plus, RotateCw } from "lucide-react";
 import {
 	type WorkspaceSession,
 	canonicalTrackerIssueId,
@@ -13,8 +13,8 @@ import {
 	attentionZone,
 	boardAttentionZoneOrder,
 	getAttentionZoneViewForZone,
-	getSessionStatusView,
-	isSessionInIdleStack,
+	getSessionCardStatusView,
+	isSessionEffectivelyIdle,
 	type AttentionZone,
 	type AttentionZoneView,
 } from "../lib/session-presentation";
@@ -268,12 +268,21 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				) : (
 					<div className="grid h-full grid-cols-4 gap-2">
 						{COLUMNS.map((col) => (
-							<ZoneColumn
-								key={`${projectId ?? "all"}:${col.zone}`}
-								col={col}
-								sessions={byZone.get(col.zone) ?? []}
-								onOpen={openSession}
-							/>
+							col.zone === "working" ? (
+								<WorkLaneColumn
+									key={`${projectId ?? "all"}:${col.zone}`}
+									col={col}
+									sessions={byZone.get(col.zone) ?? []}
+									onOpen={openSession}
+								/>
+							) : (
+								<ZoneColumn
+									key={`${projectId ?? "all"}:${col.zone}`}
+									col={col}
+									sessions={byZone.get(col.zone) ?? []}
+									onOpen={openSession}
+								/>
+							)
 						))}
 					</div>
 				)}
@@ -347,12 +356,9 @@ function ZoneColumn({
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
 }) {
-	const isWorkingColumn = col.zone === "working";
-	const [idleExpanded, setIdleExpanded] = useState(false);
-	const activeSessions = isWorkingColumn ? sessions.filter((session) => !isSessionInIdleStack(session)) : sessions;
-	const idleSessions = isWorkingColumn ? sessions.filter(isSessionInIdleStack) : [];
 	return (
 		<section
+			aria-label={`${col.label} sessions`}
 			className="flex min-w-0 flex-col overflow-hidden rounded-panel"
 			style={{
 				background: `linear-gradient(180deg, ${col.glow}, transparent var(--size-kanban-glow)), var(--color-overlay-subtle)`,
@@ -373,69 +379,127 @@ function ZoneColumn({
 			</div>
 			<div className="min-h-0 flex-1 overflow-y-auto px-2.75 pb-3">
 				<div className="flex min-h-full flex-col gap-2.5">
-					{activeSessions.map((session) => (
+					{sessions.map((session) => (
 						<SessionCard key={session.id} session={session} onOpen={() => onOpen(session)} />
 					))}
-					{idleSessions.length > 0 ? (
-						<IdleSessionsStack
-							expanded={idleExpanded}
-							sessions={idleSessions}
-							onOpen={onOpen}
-							onToggle={() => setIdleExpanded((value) => !value)}
-						/>
-					) : null}
 				</div>
 			</div>
 		</section>
 	);
 }
 
-function IdleSessionsStack({
-	expanded,
+function WorkLaneColumn({
+	col,
 	sessions,
 	onOpen,
-	onToggle,
 }: {
-	expanded: boolean;
+	col: Column;
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
-	onToggle: () => void;
+}) {
+	const idleSessions = sessions.filter(isSessionEffectivelyIdle);
+	const workingSessions = sessions.filter((session) => !isSessionEffectivelyIdle(session));
+	const showIdle = idleSessions.length > 0;
+	const showWorking = workingSessions.length > 0;
+	return (
+		<section
+			aria-label="Idle / Working sessions"
+			className="flex min-w-0 flex-col overflow-hidden rounded-panel"
+			style={{
+				background:
+					"linear-gradient(180deg, color-mix(in srgb, var(--color-text-muted) 6%, transparent), transparent var(--size-kanban-glow)), var(--color-overlay-subtle)",
+			}}
+		>
+			<div className="flex shrink-0 items-center gap-2.25 px-3.75 pb-2.75 pt-3.5">
+				<span className="size-dot-sm rounded-full bg-passive" aria-hidden="true" />
+				<span className="text-caption font-semibold uppercase tracking-wide-md text-muted-foreground">
+					Idle / Working
+				</span>
+				<div className="ml-auto flex shrink-0 items-center gap-2 font-mono text-caption leading-none text-passive">
+					<span aria-label={`${idleSessions.length} idle sessions`} className="inline-flex items-center gap-1">
+						<span className="h-1.5 w-1.5 rounded-full bg-passive" aria-hidden="true" />
+						{idleSessions.length}
+					</span>
+					<span aria-hidden="true">/</span>
+					<span aria-label={`${workingSessions.length} working sessions`} className="inline-flex items-center gap-1">
+						<span
+							className="h-1.5 w-1.5 rounded-full"
+							style={{
+								background: col.dot,
+								boxShadow: col.dotGlow ? `0 0 7px color-mix(in srgb, ${col.dot} 60%, transparent)` : undefined,
+							}}
+							aria-hidden="true"
+						/>
+						{workingSessions.length}
+					</span>
+				</div>
+			</div>
+			<div className="min-h-0 flex flex-1 flex-col">
+				{showIdle ? (
+					<div className={cn("min-h-0 overflow-y-auto px-2.75", showWorking ? "flex-[3] pb-3" : "flex-1 pb-3")}>
+						<div className="flex min-h-full flex-col gap-2.5">
+							{idleSessions.map((session) => (
+								<SessionCard key={session.id} session={session} onOpen={() => onOpen(session)} />
+							))}
+						</div>
+					</div>
+				) : null}
+				{showWorking ? (
+					<WorkingSessionsSection
+						col={col}
+						sessions={workingSessions}
+						onOpen={onOpen}
+						standalone={!showIdle}
+					/>
+				) : null}
+			</div>
+		</section>
+	);
+}
+
+function WorkingSessionsSection({
+	col,
+	sessions,
+	onOpen,
+	standalone,
+}: {
+	col: Column;
+	sessions: WorkspaceSession[];
+	onOpen: (s: WorkspaceSession) => void;
+	standalone: boolean;
 }) {
 	return (
 		<div
+			aria-label="Working sessions"
+			role="region"
 			className={cn(
-				"mt-auto overflow-hidden rounded-panel border border-border bg-surface/70 transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none",
-				expanded ? "opacity-100" : "opacity-95 hover:opacity-100",
+				"min-h-0 overflow-hidden",
+				standalone
+					? "flex flex-1 flex-col bg-surface/35"
+					: "flex flex-[2] flex-col rounded-t-(--radius-panel) border-t border-border bg-surface/35",
 			)}
 		>
-			<button
-				aria-expanded={expanded}
-				aria-label={`Idle sessions (${sessions.length})`}
-				className={cn(
-					"flex min-h-row-md w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:text-foreground",
-					expanded ? "text-foreground" : "text-passive",
-				)}
-				onClick={onToggle}
-				type="button"
-			>
-				<ChevronRight
-					className={cn(
-						"size-icon-2xs shrink-0 transition-transform duration-normal motion-reduce:transition-none",
-						expanded && "rotate-90",
-					)}
+			<div className="flex shrink-0 items-center gap-2.25 px-3.75 pb-2.5 pt-3">
+				<span
+					className="size-dot-sm rounded-full"
+					style={{
+						background: col.dot,
+						boxShadow: col.dotGlow ? `0 0 7px color-mix(in srgb, ${col.dot} 60%, transparent)` : undefined,
+					}}
 					aria-hidden="true"
 				/>
-				<span className="size-dot-sm shrink-0 rounded-full bg-passive" aria-hidden="true" />
-				<span className="font-mono text-2xs font-semibold uppercase tracking-wide-md">Idle</span>
-				<span className="ml-auto shrink-0 font-mono text-caption leading-none text-passive">{sessions.length}</span>
-			</button>
-			{expanded ? (
-				<div className="flex max-h-[min(45vh,28rem)] flex-col gap-2.5 overflow-y-auto border-t border-border p-2.5 animate-in fade-in-0 slide-in-from-top-1 duration-200 motion-reduce:animate-none">
+				<span className={cn("text-caption font-semibold uppercase tracking-wide-md", col.titleClassName)}>
+					Working
+				</span>
+				<span className="ml-auto font-mono text-caption leading-none text-passive">{sessions.length}</span>
+			</div>
+			<div className="min-h-0 flex-1 overflow-y-auto px-2.75 pb-3">
+				<div className="flex min-h-full flex-col gap-2.5">
 					{sessions.map((session) => (
 						<SessionCard key={session.id} session={session} onOpen={() => onOpen(session)} />
 					))}
 				</div>
-			) : null}
+			</div>
 		</div>
 	);
 }
@@ -457,7 +521,7 @@ function SessionCard({
 	isRestoring?: boolean;
 	isRestoreDisabled?: boolean;
 }) {
-	const badge = getSessionStatusView(session.status);
+	const badge = getSessionCardStatusView(session);
 	const issueId = canonicalTrackerIssueId(session.issueId);
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);

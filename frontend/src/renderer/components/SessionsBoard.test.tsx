@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
@@ -91,7 +91,6 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		fireEvent.click(screen.getByRole("button", { name: /idle sessions/i }));
 		const idleCard = screen.getByText("brand-font-pipeline").closest('[role="button"]') as HTMLElement;
 		expect(within(idleCard).getByText("Idle")).toBeInTheDocument();
 	});
@@ -147,7 +146,6 @@ describe("SessionsBoard", () => {
 		});
 
 		renderBoard("p1");
-		fireEvent.click(screen.getByRole("button", { name: /idle sessions/i }));
 
 		const idleCard = screen.getByText("idle-card-task").closest('[role="button"]') as HTMLElement;
 		const noSignalCard = screen.getByText("no-signal-card-task").closest('[role="button"]') as HTMLElement;
@@ -158,7 +156,7 @@ describe("SessionsBoard", () => {
 		expect(within(draftCard).getByText("Draft PR").closest("span")).toHaveClass("text-accent");
 	});
 
-	it("collapses idle sessions into a nested Working-column stack", () => {
+	it("renders an idle-first work lane with a separate lower working section", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
 				{
@@ -210,26 +208,28 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		expect(screen.getByText("active-task")).toBeInTheDocument();
-		expect(screen.queryByText("idle-no-pr-task")).not.toBeInTheDocument();
-		expect(screen.queryByText("idle-with-pr-task")).not.toBeInTheDocument();
+		const workLane = screen.getByRole("region", { name: "Idle / Working sessions" });
 
-		const idleStackToggle = screen.getByRole("button", { name: /idle sessions/i });
-		expect(idleStackToggle).toHaveAttribute("aria-expanded", "false");
-		expect(within(idleStackToggle).getByText("2")).toBeInTheDocument();
-
-		fireEvent.click(idleStackToggle);
-
-		expect(screen.getByRole("button", { name: /idle sessions/i })).toHaveAttribute("aria-expanded", "true");
-		expect(screen.getByText("active-task")).toBeInTheDocument();
+		expect(within(workLane).getByText("Idle / Working")).toBeInTheDocument();
+		expect(within(workLane).getByLabelText("2 idle sessions")).toHaveTextContent("2");
+		expect(within(workLane).getByLabelText("1 working sessions")).toHaveTextContent("1");
+		expect(screen.queryByRole("button", { name: /idle sessions/i })).not.toBeInTheDocument();
+		expect(within(workLane).getByText("active-task")).toBeInTheDocument();
 		const idleCard = screen.getByText("idle-no-pr-task").closest('[role="button"]') as HTMLElement;
-		expect(screen.getByText("idle-with-pr-task")).toBeInTheDocument();
-		const badge = within(idleCard).getByText("Working").closest("span");
-		expect(badge).toHaveClass("text-working");
-		expect(badge).not.toHaveClass("text-passive");
+		expect(within(workLane).getByText("idle-with-pr-task")).toBeInTheDocument();
+
+		const workingRegion = within(workLane).getByRole("region", { name: "Working sessions" });
+		expect(workingRegion).toHaveClass("rounded-t-(--radius-panel)", "border-t", "flex-[2]");
+		expect(workingRegion).not.toHaveClass("mx-2.75", "border");
+		expect(within(workingRegion).getByText("active-task")).toBeInTheDocument();
+		expect(within(workingRegion).queryByText("idle-no-pr-task")).not.toBeInTheDocument();
+
+		const badge = within(idleCard).getByText("Idle").closest("span");
+		expect(badge).toHaveClass("text-passive");
+		expect(badge).not.toHaveClass("text-working");
 	});
 
-	it("toggles idle contents without hiding active cards or remounting the toggle", () => {
+	it("omits the lower working section when no active working sessions exist", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
 				{
@@ -237,18 +237,6 @@ describe("SessionsBoard", () => {
 					name: "radic",
 					path: "/tmp/radic",
 					sessions: [
-						{
-							id: "s0",
-							workspaceId: "p1",
-							workspaceName: "radic",
-							title: "active-task",
-							provider: "claude-code",
-							branch: "ao/radic-4",
-							status: "working",
-							activity: { state: "active", lastActivityAt: "2026-01-01T00:00:00Z" },
-							updatedAt: "2026-01-01T00:00:00Z",
-							prs: [],
-						},
 						{
 							id: "s1",
 							workspaceId: "p1",
@@ -269,30 +257,15 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		expect(screen.getByText("active-task")).toBeInTheDocument();
-		expect(screen.queryByText("idle-task")).not.toBeInTheDocument();
+		const workLane = screen.getByRole("region", { name: "Idle / Working sessions" });
 
-		const idleToggle = screen.getByRole("button", { name: /idle sessions/i });
-		expect(idleToggle).toHaveAttribute("aria-expanded", "false");
-		expect(idleToggle.parentElement).toHaveClass("transition-[opacity,transform]");
-		expect(idleToggle.parentElement).not.toHaveClass("transition-[flex-grow,opacity,transform]");
-		expect(idleToggle.parentElement).toHaveClass("motion-reduce:transition-none");
-		expect(idleToggle.querySelector("svg")).toHaveClass("motion-reduce:transition-none");
-		fireEvent.click(idleToggle);
-
-		expect(screen.getByRole("button", { name: /idle sessions/i })).toBe(idleToggle);
-		expect(idleToggle).toHaveAttribute("aria-expanded", "true");
-		expect(screen.getByText("active-task")).toBeInTheDocument();
-		expect(screen.getByText("idle-task")).toBeInTheDocument();
-
-		fireEvent.click(idleToggle);
-
-		expect(screen.getByText("active-task")).toBeInTheDocument();
-		expect(screen.queryByText("idle-task")).not.toBeInTheDocument();
-		expect(idleToggle).toHaveAttribute("aria-expanded", "false");
+		expect(within(workLane).getByText("idle-task")).toBeInTheDocument();
+		expect(within(workLane).getByLabelText("1 idle sessions")).toHaveTextContent("1");
+		expect(within(workLane).getByLabelText("0 working sessions")).toHaveTextContent("0");
+		expect(within(workLane).queryByRole("region", { name: "Working sessions" })).not.toBeInTheDocument();
 	});
 
-	it("resets the idle stack when navigating between project boards", () => {
+	it("keeps idle sessions visible when navigating between project boards", () => {
 		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 		workspaceQueryMock.mockReturnValue({
 			data: [
@@ -363,8 +336,9 @@ describe("SessionsBoard", () => {
 		});
 		const view = renderBoardWithClient(queryClient, "p1");
 
-		fireEvent.click(screen.getByRole("button", { name: /idle sessions/i }));
-		expect(screen.getByText("p1 idle")).toBeInTheDocument();
+		const p1Lane = screen.getByRole("region", { name: "Idle / Working sessions" });
+		expect(within(p1Lane).getByText("p1 idle")).toBeInTheDocument();
+		expect(within(p1Lane).getByText("p1 active")).toBeInTheDocument();
 
 		view.rerender(
 			<QueryClientProvider client={queryClient}>
@@ -372,9 +346,10 @@ describe("SessionsBoard", () => {
 			</QueryClientProvider>,
 		);
 
-		expect(screen.getByText("p2 active")).toBeInTheDocument();
-		expect(screen.queryByText("p2 idle")).not.toBeInTheDocument();
-		expect(screen.getByRole("button", { name: /idle sessions/i })).toHaveAttribute("aria-expanded", "false");
+		const p2Lane = screen.getByRole("region", { name: "Idle / Working sessions" });
+		expect(screen.queryByText("p1 idle")).not.toBeInTheDocument();
+		expect(within(p2Lane).getByText("p2 idle")).toBeInTheDocument();
+		expect(within(p2Lane).getByRole("region", { name: "Working sessions" })).toHaveTextContent("p2 active");
 	});
 
 	it("shows a restore action for terminated sessions in expanded Done / Terminated", async () => {

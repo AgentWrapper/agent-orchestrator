@@ -809,7 +809,7 @@ describe("Sidebar", () => {
 		}
 	});
 
-	it("renders sidebar dots from attention zones without activity overrides", () => {
+	it("renders idle sidebar dots quietly while preserving attention colors", () => {
 		renderSidebar({
 			workspaces: [
 				{
@@ -836,7 +836,7 @@ describe("Sidebar", () => {
 		});
 
 		const idleDot = screen.getByLabelText("Open idle task").querySelector('span[aria-hidden="true"]');
-		expect(idleDot).toHaveClass("bg-working");
+		expect(idleDot).toHaveClass("bg-passive");
 		expect(idleDot).not.toHaveClass("animate-status-pulse");
 
 		const workingDot = screen.getByLabelText("Open working task").querySelector('span[aria-hidden="true"]');
@@ -875,7 +875,7 @@ describe("Sidebar", () => {
 		});
 
 		const idleDot = screen.getByLabelText("Open idle activity task").querySelector('span[aria-hidden="true"]');
-		expect(idleDot).toHaveClass("bg-working");
+		expect(idleDot).toHaveClass("bg-passive");
 		expect(idleDot).not.toHaveClass("animate-status-pulse");
 
 		const idleDraftDot = screen.getByLabelText("Open idle draft task").querySelector('span[aria-hidden="true"]');

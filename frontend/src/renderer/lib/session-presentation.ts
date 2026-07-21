@@ -51,6 +51,11 @@ export function getSessionStatusView(status: SessionStatus): SessionStatusView {
 	return sessionStatusViews[status] ?? sessionStatusViews.unknown;
 }
 
+export function getSessionCardStatusView(session: Pick<WorkspaceSession, "status" | "activity">): SessionStatusView {
+	if (isSessionEffectivelyIdle(session)) return sessionStatusViews.idle;
+	return getSessionStatusView(session.status);
+}
+
 export type AttentionZone = "merge" | "action" | "pending" | "working" | "done";
 
 export type AttentionZoneView = {
@@ -156,7 +161,8 @@ export function getAttentionZoneViewForZone(zone: AttentionZone): AttentionZoneV
 	return attentionZoneViews[zone];
 }
 
-export function getSessionDotView(session: Pick<WorkspaceSession, "status">): { className: string } {
+export function getSessionDotView(session: Pick<WorkspaceSession, "status" | "activity">): { className: string } {
+	if (isSessionEffectivelyIdle(session)) return { className: attentionZoneViews.done.dotClassName };
 	return { className: getAttentionZoneView(session.status).dotClassName };
 }
 
@@ -178,6 +184,10 @@ export function getSessionTimelinePillView(status: SessionTimelinePillStatus): S
 	return sessionTimelinePillViews[status];
 }
 
-export function isSessionInIdleStack(session: Pick<WorkspaceSession, "status" | "activity">): boolean {
+export function isSessionEffectivelyIdle(session: Pick<WorkspaceSession, "status" | "activity">): boolean {
 	return session.status === "idle" || (session.status === "working" && session.activity?.state === "idle");
+}
+
+export function isSessionInIdleStack(session: Pick<WorkspaceSession, "status" | "activity">): boolean {
+	return isSessionEffectivelyIdle(session);
 }

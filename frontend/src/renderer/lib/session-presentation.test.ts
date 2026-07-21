@@ -3,11 +3,12 @@ import {
 	attentionZone,
 	getAgentActivityView,
 	getAttentionZoneView,
+	getSessionCardStatusView,
 	getSessionDotView,
 	getSessionStatusView,
 	getSessionTimelinePillView,
 	isAgentActivityWorking,
-	isSessionInIdleStack,
+	isSessionEffectivelyIdle,
 } from "./session-presentation";
 import type { WorkspaceSession } from "../types/workspace";
 
@@ -82,6 +83,25 @@ describe("session presentation", () => {
 		expect(getSessionStatusView("review_pending").className).toBe("text-accent");
 	});
 
+	it("uses the idle card badge for working sessions whose activity is idle", () => {
+		expect(
+			getSessionCardStatusView(
+				sessionWith({
+					status: "working",
+					activity: { state: "idle", lastActivityAt: "" },
+				}),
+			),
+		).toMatchObject({ label: "Idle", className: "text-passive" });
+		expect(
+			getSessionCardStatusView(
+				sessionWith({
+					status: "working",
+					activity: { state: "active", lastActivityAt: "" },
+				}),
+			),
+		).toMatchObject({ label: "Working", className: "text-working" });
+	});
+
 	it.each([
 		["approved", "merge", "Ready to merge"],
 		["mergeable", "merge", "Ready to merge"],
@@ -102,7 +122,7 @@ describe("session presentation", () => {
 		expect(getAttentionZoneView(status)).toMatchObject({ zone, label });
 	});
 
-	it("uses attention zones only for sidebar dot color and motion", () => {
+	it("renders idle session dots quietly while preserving attention colors", () => {
 		const activeWorkingDotClass = getSessionDotView(
 			sessionWith({
 				status: "working",
@@ -110,6 +130,12 @@ describe("session presentation", () => {
 			}),
 		).className;
 		const idleDotClass = getSessionDotView(sessionWith({ status: "idle" })).className;
+		const idleActivityDotClass = getSessionDotView(
+			sessionWith({
+				status: "working",
+				activity: { state: "idle", lastActivityAt: "" },
+			}),
+		).className;
 		const activeUnknownDotClass = getSessionDotView(
 			sessionWith({
 				status: "unknown",
@@ -125,8 +151,10 @@ describe("session presentation", () => {
 
 		expect(activeWorkingDotClass).toContain("bg-working");
 		expect(activeWorkingDotClass).not.toContain("animate-status-pulse");
-		expect(idleDotClass).toContain("bg-working");
+		expect(idleDotClass).toContain("bg-passive");
 		expect(idleDotClass).not.toContain("animate-status-pulse");
+		expect(idleActivityDotClass).toContain("bg-passive");
+		expect(idleActivityDotClass).not.toContain("animate-status-pulse");
 		expect(activeUnknownDotClass).toContain("bg-warning");
 		expect(activeUnknownDotClass).not.toContain("animate-status-pulse");
 		expect(idleDraftDotClass).toContain("bg-accent-dim");
@@ -143,10 +171,10 @@ describe("session presentation", () => {
 		});
 	});
 
-	it("separates idle sessions inside the Working board column", () => {
-		expect(isSessionInIdleStack(sessionWith({ status: "idle" }))).toBe(true);
+	it("classifies idle sessions for the board work lane", () => {
+		expect(isSessionEffectivelyIdle(sessionWith({ status: "idle" }))).toBe(true);
 		expect(
-			isSessionInIdleStack(
+			isSessionEffectivelyIdle(
 				sessionWith({
 					status: "idle",
 					activity: { state: "active", lastActivityAt: "" },
@@ -155,7 +183,7 @@ describe("session presentation", () => {
 			),
 		).toBe(true);
 		expect(
-			isSessionInIdleStack(
+			isSessionEffectivelyIdle(
 				sessionWith({
 					status: "working",
 					activity: { state: "idle", lastActivityAt: "" },
@@ -164,14 +192,14 @@ describe("session presentation", () => {
 			),
 		).toBe(true);
 		expect(
-			isSessionInIdleStack(
+			isSessionEffectivelyIdle(
 				sessionWith({
 					status: "working",
 					activity: { state: "active", lastActivityAt: "" },
 				}),
 			),
 		).toBe(false);
-		expect(isSessionInIdleStack(sessionWith({ status: "working" }))).toBe(false);
+		expect(isSessionEffectivelyIdle(sessionWith({ status: "working" }))).toBe(false);
 	});
 
 	it.each([
