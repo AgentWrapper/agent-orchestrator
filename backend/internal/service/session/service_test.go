@@ -193,7 +193,7 @@ func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectReco
 
 func TestSessionListDerivesStatusFromPRFacts(t *testing.T) {
 	st := newFakeStore()
-	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityActive}}
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityIdle}}
 	st.pr["mer-1"] = domain.PRFacts{URL: "pr1", CI: domain.CIFailing}
 
 	list, err := (&Service{store: st}).List(context.Background(), ListFilter{ProjectID: "mer"})
