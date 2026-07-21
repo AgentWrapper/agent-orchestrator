@@ -8,16 +8,45 @@ import {
 	writeUpdateSettings,
 	UPDATE_SETTINGS_FILE_NAME,
 	type UpdateChannel,
+	type UpdateSettings,
 	type UpdateStatus,
 } from "./update-settings";
+import { reconcileFeaturePin } from "./feature-builds";
 import { evaluateEscalation } from "./escalation-evaluator";
+
+// reconcileAndPersist clears a pinned feature build whose PR has been retired
+// (merged/closed/deleted/expired) and persists the change, so the next check
+// resolves the home channel and moves the user back automatically. A fetch
+// failure keeps the pin (see reconcileFeaturePin). Returns the effective settings.
+async function reconcileAndPersist(stateDir: string, settings: UpdateSettings): Promise<UpdateSettings> {
+	const rec = await reconcileFeaturePin(settings);
+	if (rec.cleared) {
+		await writeUpdateSettings(stateDir, rec.settings);
+		console.info("[feature-builds] pinned PR retired; cleared pin, falling back to home channel");
+	}
+	return rec.settings;
+}
 
 // configureFeed sets the update channel on electron-updater. The repo/owner
 // are loaded automatically from app-update.yml (written by forge.config.ts's
 // postPackage hook into the app's Resources dir at build time). No runtime env
 // or setFeedURL call is needed; electron-updater reads the bundled yml on first
 // checkForUpdates.
-function configureFeed(channel: UpdateChannel): void {
+//
+// When settings.feature is set, the feed tracks the pr<N> prerelease channel
+// (e.g. "pr2270") with allowPrerelease and allowDowngrade enabled so the user
+// can switch back to stable after testing. Otherwise falls back to the home
+// channel logic (latest vs nightly).
+export function configureFeed(settings: Pick<UpdateSettings, "channel" | "feature">): void {
+	if (settings.feature !== null && settings.feature !== undefined) {
+		// Feature build: pin to the pr<N> semver prerelease identifier channel.
+		autoUpdater.channel = `pr${settings.feature.pr}`;
+		autoUpdater.allowPrerelease = true;
+		autoUpdater.allowDowngrade = true; // allows switching back to stable/nightly
+		return;
+	}
+
+	const channel: UpdateChannel = settings.channel;
 	autoUpdater.channel = channel; // "latest" | "nightly"
 	// Nightly builds ship as GitHub *prereleases*. With allowPrerelease false
 	// (the default) electron-updater only inspects the latest NON-prerelease
@@ -195,6 +224,38 @@ async function runSerializedUpdaterOperation(
 	await queued;
 }
 
+// Feature-pin retirement polling: while a build is pinned to a pr<N> channel,
+// re-check every 30 minutes whether that PR has since been retired, so a
+// long-running session notices a merge/close without waiting for a relaunch.
+let retirementPollTimer: ReturnType<typeof setInterval> | undefined;
+
+// startRetirementPollTimer is idempotent (guards against stacking multiple
+// intervals across repeated startAutoUpdates calls) and runs independently of
+// the auto-update opt-in, since a disabled user can still be pinned.
+// ponytail: fixed 30-min cadence, not an aggressive poll; runRetirementPoll
+// returns immediately whenever there's no pin, so idle cost is one settings read.
+function startRetirementPollTimer(stateDir: string): void {
+	if (retirementPollTimer !== undefined) return;
+	retirementPollTimer = setInterval(() => void runRetirementPoll(stateDir), 30 * 60 * 1000);
+	retirementPollTimer.unref?.();
+}
+
+async function runRetirementPoll(stateDir: string): Promise<void> {
+	try {
+		const before = await readUpdateSettings(stateDir);
+		if (before.feature === null || before.feature === undefined) return; // not pinned; nothing to check
+		const settings = await reconcileAndPersist(stateDir, before);
+		if (settings.feature === null || settings.feature === undefined) {
+			// Pin was cleared: drop the now-dead pr<N> channel right away instead of
+			// waiting for the next manual or launch-time check to notice.
+			configureFeed(settings);
+		}
+	} catch (err) {
+		// Background poll: never throw, just skip this round.
+		console.debug("retirement poll skipped:", err);
+	}
+}
+
 // wireUpdaterEvents registers electron-updater listeners once and forwards each
 // to the renderer as an UpdateStatus. Idempotent: safe to call on every entry
 // point (launch auto-check and manual check).
@@ -265,7 +326,7 @@ async function runAutomaticUpdateCheck(stateDir: string): Promise<boolean> {
 	let shouldSchedule = true;
 	try {
 		await runSerializedUpdaterOperation("automatic-check", async () => {
-			const settings = await readUpdateSettings(stateDir);
+			const settings = await reconcileAndPersist(stateDir, await readUpdateSettings(stateDir));
 			if (!settings.enabled) {
 				shouldSchedule = false;
 				return;
@@ -273,7 +334,7 @@ async function runAutomaticUpdateCheck(stateDir: string): Promise<boolean> {
 
 			escalationStateDir = stateDir;
 			wireUpdaterEvents();
-			configureFeed(settings.channel);
+			configureFeed(settings);
 			autoUpdater.autoDownload = true;
 			autoUpdater.autoInstallOnAppQuit = true;
 			const result = await autoUpdater.checkForUpdates();
@@ -295,6 +356,7 @@ function schedulePeriodicAutomaticUpdateCheck(stateDir: string): void {
 // It is a thin shell: all policy (channel, opt-in) comes from update-settings.
 // Caller guards on app.isPackaged.
 export async function startAutoUpdates(stateDir: string): Promise<void> {
+	startRetirementPollTimer(stateDir);
 	if (await runAutomaticUpdateCheck(stateDir)) schedulePeriodicAutomaticUpdateCheck(stateDir);
 }
 
@@ -313,8 +375,8 @@ export async function checkForUpdatesNow(stateDir: string): Promise<void> {
 	broadcast({ state: "checking" });
 	try {
 		await runSerializedUpdaterOperation("manual-check", async () => {
-			const settings = await readUpdateSettings(stateDir);
-			configureFeed(settings.channel);
+			const settings = await reconcileAndPersist(stateDir, await readUpdateSettings(stateDir));
+			configureFeed(settings);
 			autoUpdater.autoDownload = false;
 			autoUpdater.autoInstallOnAppQuit = true;
 			await autoUpdater.checkForUpdates();
@@ -361,7 +423,7 @@ export async function ensureUpdatePrefs(stateDir: string): Promise<void> {
 		detail: "You can change this later in Settings.",
 	});
 	if (optIn.response !== 0) {
-		await writeUpdateSettings(stateDir, { enabled: false, channel: "latest", nightlyAck: false });
+		await writeUpdateSettings(stateDir, { enabled: false, channel: "latest", nightlyAck: false, feature: null });
 		return;
 	}
 
@@ -374,7 +436,7 @@ export async function ensureUpdatePrefs(stateDir: string): Promise<void> {
 		detail: "Stable is released and tested. Nightly is the newest daily build.",
 	});
 	if (chan.response !== 1) {
-		await writeUpdateSettings(stateDir, { enabled: true, channel: "latest", nightlyAck: false });
+		await writeUpdateSettings(stateDir, { enabled: true, channel: "latest", nightlyAck: false, feature: null });
 		return;
 	}
 
@@ -389,7 +451,7 @@ export async function ensureUpdatePrefs(stateDir: string): Promise<void> {
 	await writeUpdateSettings(
 		stateDir,
 		ack.response === 0
-			? { enabled: true, channel: "nightly", nightlyAck: true }
-			: { enabled: true, channel: "latest", nightlyAck: false },
+			? { enabled: true, channel: "nightly", nightlyAck: true, feature: null }
+			: { enabled: true, channel: "latest", nightlyAck: false, feature: null },
 	);
 }

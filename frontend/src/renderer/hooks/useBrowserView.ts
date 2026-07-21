@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BrowserNavState, BrowserRect } from "../../main/browser-view-host";
 import type { BrowserAnnotationCancelPayload, BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
+import { OPEN_DIALOG_OR_MENU_SELECTOR } from "../lib/dom-selectors";
 
 export type { BrowserNavState };
 
@@ -54,9 +55,6 @@ const EMPTY_NAV_STATE: BrowserNavState = {
 };
 
 const HIDDEN_RECT: BrowserRect = { x: 0, y: 0, width: 0, height: 0 };
-
-const OPEN_MODAL_SELECTOR =
-	'[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"], [role="menu"][data-state="open"]';
 
 // The native WebContentsView is a window-level overlay, so DOM `overflow:
 // hidden` never clips it — it paints wherever the slot's bounding box lands.
@@ -324,7 +322,7 @@ export function useBrowserView({
 			mirrorTimerRef.current = null;
 		};
 		const update = () => {
-			const open = document.querySelector(OPEN_MODAL_SELECTOR) !== null;
+			const open = document.querySelector(OPEN_DIALOG_OR_MENU_SELECTOR) !== null;
 			if (open === modalOpenRef.current) return;
 			modalOpenRef.current = open;
 			if (open) {

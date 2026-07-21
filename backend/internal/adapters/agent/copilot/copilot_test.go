@@ -241,6 +241,93 @@ func TestCopilotNativeBinaryForNpmLoader(t *testing.T) {
 	}
 }
 
+func TestResolveCopilotBinaryFallbacks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix fallback candidate shape")
+	}
+	oldUnixPaths := copilotUnixPaths
+	copilotUnixPaths = nil
+	t.Cleanup(func() { copilotUnixPaths = oldUnixPaths })
+
+	tests := []struct {
+		name string
+		seed func(t *testing.T, home string) string
+	}{
+		{
+			name: "npm global",
+			seed: func(t *testing.T, home string) string {
+				return writeExecutable(t, filepath.Join(home, ".npm-global", "bin", "copilot"))
+			},
+		},
+		{
+			name: "nvm",
+			seed: func(t *testing.T, home string) string {
+				return writeExecutable(t, filepath.Join(home, ".nvm", "versions", "node", "v22.23.1", "bin", "copilot"))
+			},
+		},
+		{
+			name: "npm loader resolves to native",
+			seed: func(t *testing.T, home string) string {
+				packageDir := filepath.Join(home, ".npm-global", "lib", "node_modules", "@github", "copilot")
+				binDir := filepath.Join(home, ".npm-global", "bin")
+				if err := os.MkdirAll(filepath.Join(packageDir, "node_modules", ".bin"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.MkdirAll(binDir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				loader := filepath.Join(packageDir, "npm-loader.js")
+				if err := os.WriteFile(loader, []byte("#!/usr/bin/env node\n"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				native := writeExecutable(t, filepath.Join(packageDir, "node_modules", ".bin", "copilot-"+runtime.GOOS+"-"+runtime.GOARCH))
+				link := filepath.Join(binDir, "copilot")
+				if err := os.Symlink(loader, link); err != nil {
+					t.Fatal(err)
+				}
+				return native
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("PATH", t.TempDir())
+			t.Setenv("VOLTA_HOME", filepath.Join(home, ".volta"))
+			t.Setenv("FNM_DIR", "")
+			want := tt.seed(t, home)
+
+			got, err := ResolveCopilotBinary(context.Background())
+			if err != nil {
+				t.Fatalf("ResolveCopilotBinary: %v", err)
+			}
+			got, err = filepath.EvalSymlinks(got)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want, err = filepath.EvalSymlinks(want)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != want {
+				t.Fatalf("ResolveCopilotBinary = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func writeExecutable(t *testing.T, path string) string {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 func TestAuthStatusAuthorizedFromEnv(t *testing.T) {
 	clearCopilotAuthEnv(t)
 	t.Setenv("GH_TOKEN", "github_pat_test")

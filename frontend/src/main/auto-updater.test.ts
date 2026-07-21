@@ -5,6 +5,7 @@ type UpdateSettings = {
 	enabled: boolean;
 	channel: "latest" | "nightly";
 	nightlyAck: boolean;
+	feature: { pr: number } | null;
 };
 
 type UpdateSettingsReader = ReturnType<typeof vi.fn<() => Promise<UpdateSettings>>>;
@@ -37,7 +38,12 @@ function createAutoUpdaterMock(): AutoUpdaterMock {
 }
 
 async function importAutoUpdater(
-	settings: UpdateSettings | UpdateSettingsReader = { enabled: true, channel: "latest", nightlyAck: false },
+	settings: UpdateSettings | UpdateSettingsReader = {
+		enabled: true,
+		channel: "latest",
+		nightlyAck: false,
+		feature: null,
+	},
 ) {
 	vi.resetModules();
 	const updaterEvents = new Map<string, UpdaterEventHandler>();
@@ -94,6 +100,12 @@ function deferred<T = void>(): { promise: Promise<T>; resolve: (value: T | Promi
 	return { promise, resolve };
 }
 
+async function flushMicrotasks(turns = 8): Promise<void> {
+	for (let i = 0; i < turns; i += 1) {
+		await Promise.resolve();
+	}
+}
+
 describe("startAutoUpdates", () => {
 	const stateDir = "/tmp/ao-state";
 
@@ -131,22 +143,24 @@ describe("startAutoUpdates", () => {
 		expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(2);
 	});
 
-	it("schedules nothing when automatic updates are disabled", async () => {
+	it("schedules only feature-pin retirement polling when automatic updates are disabled", async () => {
 		vi.useFakeTimers();
 		const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
 		const { module, autoUpdater } = await importAutoUpdater({
 			enabled: false,
 			channel: "latest",
 			nightlyAck: false,
+			feature: null,
 		});
 
 		await module.startAutoUpdates(stateDir);
 
 		expect(autoUpdater.checkForUpdates).not.toHaveBeenCalled();
-		expect(setIntervalSpy).not.toHaveBeenCalled();
+		expect(setIntervalSpy).toHaveBeenCalledTimes(1);
+		expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 30 * 60 * 1000);
 	});
 
-	it("does not stack periodic timers across repeated startAutoUpdates calls", async () => {
+	it("does not stack periodic automatic or retirement timers across repeated startAutoUpdates calls", async () => {
 		vi.useFakeTimers();
 		const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
 		const { module } = await importAutoUpdater();
@@ -154,7 +168,8 @@ describe("startAutoUpdates", () => {
 		await module.startAutoUpdates(stateDir);
 		await module.startAutoUpdates(stateDir);
 
-		expect(setIntervalSpy).toHaveBeenCalledTimes(1);
+		expect(setIntervalSpy).toHaveBeenCalledTimes(2);
+		expect(setIntervalSpy.mock.calls.map(([, delay]) => delay).sort()).toEqual([30 * 60 * 1000, 60 * 60 * 1000]);
 	});
 
 	it("logs periodic check failures without UI and retries on later ticks", async () => {
@@ -234,8 +249,7 @@ describe("startAutoUpdates", () => {
 			return Promise.resolve({ downloadPromise: lateDownload.promise });
 		});
 		const startPromise = module.startAutoUpdates(stateDir);
-		await Promise.resolve();
-		await Promise.resolve();
+		await flushMicrotasks();
 		expect(module.getUpdateStatus()).toEqual({ state: "downloading", percent: 42 });
 
 		updaterEvents.get("error")?.(err);
@@ -440,7 +454,7 @@ describe("startAutoUpdates", () => {
 		const readUpdateSettings = vi
 			.fn<() => Promise<UpdateSettings>>()
 			.mockRejectedValueOnce(new Error("settings locked"))
-			.mockResolvedValue({ enabled: true, channel: "latest", nightlyAck: false });
+			.mockResolvedValue({ enabled: true, channel: "latest", nightlyAck: false, feature: null });
 		const { module, autoUpdater } = await importAutoUpdater(readUpdateSettings);
 
 		await expect(module.startAutoUpdates(stateDir)).resolves.toBeUndefined();
@@ -450,7 +464,7 @@ describe("startAutoUpdates", () => {
 
 		await vi.advanceTimersByTimeAsync(delay);
 
-		expect(readUpdateSettings).toHaveBeenCalledTimes(2);
+		expect(readUpdateSettings).toHaveBeenCalledTimes(4);
 		expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
 	});
 
@@ -483,19 +497,18 @@ describe("startAutoUpdates", () => {
 		await module.startAutoUpdates(stateDir);
 		const { delay } = latestInterval(setIntervalSpy);
 		const manualPromise = module.checkForUpdatesNow(stateDir);
-		await Promise.resolve();
-		await Promise.resolve();
+		await flushMicrotasks();
 		expect(autoUpdater.autoDownload).toBe(false);
 		expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(2);
 
 		await vi.advanceTimersByTimeAsync(delay);
+		await flushMicrotasks();
 		expect(autoUpdater.autoDownload).toBe(false);
 		expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(2);
 
 		manualCheck.resolve();
 		await manualPromise;
-		await Promise.resolve();
-		await Promise.resolve();
+		await flushMicrotasks();
 
 		expect(autoUpdater.autoDownload).toBe(true);
 		expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(3);
@@ -509,6 +522,6 @@ describe("startAutoUpdates", () => {
 
 		await module.startAutoUpdates(stateDir);
 
-		expect(unref).toHaveBeenCalledTimes(1);
+		expect(unref).toHaveBeenCalledTimes(2);
 	});
 });

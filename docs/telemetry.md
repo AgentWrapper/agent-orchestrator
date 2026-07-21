@@ -7,7 +7,8 @@ telemetry is enabled.
 
 ## What is collected
 
-- App activation events: `ao.app.active` from the renderer and CLI
+- App activation events: `ao.app.active` from the renderer and CLI, each capped
+  at once per UTC day per install
 - Renderer load and route views, grouped by coarse surface names
 - Project/task/session UI actions, with project identifiers SHA-256 hashed
 - Renderer exceptions, reduced to error name and coarse context
@@ -31,6 +32,44 @@ Before any renderer event or recording is transmitted:
 Daemon events use a remote payload allowlist before PostHog export. Project and
 session IDs are hashed, and raw location/IP fields are not accepted from AO
 payloads. Geographic reporting should use PostHog's GeoIP enrichment only.
+
+Three burst-prone daemon events — `ao.http.5xx`, `ao.daemon.panic`,
+`ao.cli.usage_errors` — are aggregated before export: every occurrence in a
+rolling one-minute window is folded into a single rollup event carrying
+`count`, `window_start`, and `window_end`, instead of exporting one PostHog
+event per occurrence. A storm of 10,000 errors and one of 6 both cost the same
+one event, and the true magnitude is still visible via `count` rather than
+being silently capped away. Only the most recent occurrence's other
+properties (path, fingerprint, etc.) are kept on the rollup — if a burst hits
+several different endpoints or fingerprints in the same window, the ones
+overwritten by later occurrences aren't visible on that rollup. Local SQLite
+storage is unaffected: it receives every raw occurrence, unaggregated, for
+full-fidelity debugging regardless of what PostHog sees.
+
+Everything reaching PostHog remotely is still bounded per event name: a
+5-per-minute burst cap plus a 200-per-day hard ceiling for ordinary events,
+or a 1,500-per-day ceiling for the three aggregated names above (since their
+per-occurrence cost is already collapsed by aggregation, the daily cap there
+is a structural backstop rather than the primary limit). The renderer applies
+the same 5-per-minute / 200-per-day shape to its own event and exception
+capture path, without the aggregation step.
+
+All events are sent as PostHog anonymous events (`$process_person_profile:
+false`; the renderer never calls `identify()`). The install ID still
+deduplicates unique-user counts, but no person profiles are created — person
+properties and person-property cohorts are intentionally unavailable.
+
+`ao.cli.invoked` is capped at once per command path per UTC day per daemon, so
+script- or agent-driven polling (`ao status`, `ao session ls`, `ao hooks`
+firing on every agent hook event, ...) reports as "this install used this
+command today" rather than one event per call. Only commands that never
+reflect activity — the supervisor-driven `ao daemon`/`ao start` and the
+self-documenting `ao completion`/`ao help` — are excluded outright. `ao hooks`
+and `ao pty-host` are deliberately NOT excluded: on a headless or CLI-only
+install, agent hook activity may be the only signal that install did anything
+that day, and excluding it would silently zero out `ao.app.active` (and DAU)
+for that install. The per-command daily cap, not exclusion, is what keeps
+their invocation frequency off PostHog.
 
 ## Install ID
 
@@ -70,7 +109,8 @@ country-level active-user maps. AO emits it from:
 
 - `channel=renderer` when the desktop app initializes and at most once per UTC
   day while the app stays open
-- `channel=cli` when the CLI reports a command invocation to the local daemon
+- `channel=cli` when the CLI reports a user-typed command invocation to the
+  local daemon, at most once per UTC day per daemon
 
 Recommended PostHog setup:
 

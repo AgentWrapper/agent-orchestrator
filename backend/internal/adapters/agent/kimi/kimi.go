@@ -187,7 +187,8 @@ var kimiBinarySpec = binaryutil.BinarySpec{
 	Names:         []string{"kimi"},
 	WinNames:      []string{"kimi.cmd", "kimi.exe", "kimi"},
 	UnixPaths:     []string{"/usr/local/bin/kimi", "/opt/homebrew/bin/kimi"},
-	UnixHomePaths: [][]string{{".local", "bin", "kimi"}, {".cargo", "bin", "kimi"}},
+	UnixHomePaths: binaryutil.NodeManagedUnixHomePaths("kimi", []string{".cargo", "bin", "kimi"}),
+	NodeManaged:   true,
 	WinPaths: []binaryutil.WinPath{
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "kimi.cmd"}},
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "kimi.exe"}},
@@ -196,9 +197,7 @@ var kimiBinarySpec = binaryutil.BinarySpec{
 }
 
 // ResolveKimiBinary finds the `kimi` binary, searching PATH then common install
-// locations (the uv tool/curl installer drops it in ~/.local/bin, plus Homebrew
-// and ~/.cargo/bin). It returns "kimi" as a last resort so callers get the
-// shell's normal command-not-found behavior if Kimi is absent.
+// locations (npm global dirs, ~/.local/bin, Homebrew, and ~/.cargo/bin).
 func ResolveKimiBinary(ctx context.Context) (string, error) {
 	return binaryutil.ResolveBinary(ctx, kimiBinarySpec)
 }

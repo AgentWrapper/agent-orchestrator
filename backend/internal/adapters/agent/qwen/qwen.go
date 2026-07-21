@@ -183,7 +183,8 @@ var qwenBinarySpec = binaryutil.BinarySpec{
 	Names:         []string{"qwen"},
 	WinNames:      []string{"qwen.cmd", "qwen.exe", "qwen"},
 	UnixPaths:     []string{"/usr/local/bin/qwen", "/opt/homebrew/bin/qwen"},
-	UnixHomePaths: [][]string{{".npm-global", "bin", "qwen"}, {".npm", "bin", "qwen"}, {".local", "bin", "qwen"}},
+	UnixHomePaths: binaryutil.NodeManagedUnixHomePaths("qwen"),
+	NodeManaged:   true,
 	WinPaths: []binaryutil.WinPath{
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "qwen.cmd"}},
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "qwen.exe"}},

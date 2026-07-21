@@ -2,6 +2,7 @@ import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import {
+	InteractionManager,
 	KeyboardAvoidingView,
 	Modal,
 	Platform,
@@ -112,9 +113,22 @@ export default function SpawnModal() {
 		setBusy(true);
 		setError(null);
 		try {
-			await spawn(prompt.trim() || undefined, projectId, harness || undefined);
+			const session = await spawn(prompt.trim() || undefined, projectId, harness || undefined);
 			haptics.success();
+			// Dismiss the modal first, then open the freshly spawned session's terminal
+			// once the dismiss transition has settled. Firing both navigations in the
+			// same tick overlaps their animations (the modal retracts while the session
+			// is already sliding in); runAfterInteractions waits for the modal's
+			// transition to finish so the two happen back-to-back, not on top of each
+			// other. The session screen shows its own "connecting" state while the
+			// terminal attaches, so landing on it before the PTY is ready is expected.
 			router.back();
+			InteractionManager.runAfterInteractions(() => {
+				router.push({
+					pathname: "/session/[id]",
+					params: { id: session.id, projectId: session.projectId },
+				});
+			});
 		} catch (e) {
 			haptics.error();
 			setError(e instanceof Error ? e.message : "Failed to spawn agent.");

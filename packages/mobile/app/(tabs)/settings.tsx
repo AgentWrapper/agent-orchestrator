@@ -3,6 +3,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
 	ActivityIndicator,
+	Alert,
 	KeyboardAvoidingView,
 	Modal,
 	Platform,
@@ -18,14 +19,18 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { pingServer } from "../../lib/api";
 import { DEFAULT_CONFIG, loadConfig, saveConfig, type ServerConfig } from "../../lib/config";
 import { haptics } from "../../lib/haptics";
+import { getPushStatus, openNotificationSettings, type PushStatus, registerForPush } from "../../lib/push";
 import { useApp } from "../../lib/store";
 import { theme } from "../../lib/theme";
+import { useTabScrollToTop } from "../../lib/useTabScrollToTop";
 import { Button, ConnectionPill, ScreenHeader } from "../../lib/ui";
 
 export default function SettingsScreen() {
 	const insets = useSafeAreaInsets();
 	const router = useRouter();
 	const { reloadConfig, projects, connection, setActiveProject } = useApp();
+
+	const scrollRef = useTabScrollToTop<ScrollView>();
 
 	// Tapping a project scopes the Kanban board to it and jumps to that tab.
 	const openProject = (id: string) => {
@@ -136,6 +141,7 @@ export default function SettingsScreen() {
 			<View style={{ height: insets.top }} />
 			<ScreenHeader title="Settings" right={<ConnectionPill status={connection} />} />
 			<ScrollView
+				ref={scrollRef}
 				style={styles.screen}
 				contentContainerStyle={{ padding: 16, paddingBottom: 120 }}
 				keyboardShouldPersistTaps="handled"
@@ -235,6 +241,8 @@ export default function SettingsScreen() {
 						</Pressable>
 					))
 				)}
+
+				<NotificationsSection />
 			</ScrollView>
 
 			<Modal visible={pwPromptOpen} transparent animationType="fade" onRequestClose={() => setPwPromptOpen(false)}>
@@ -267,6 +275,100 @@ export default function SettingsScreen() {
 				</View>
 			</Modal>
 		</KeyboardAvoidingView>
+	);
+}
+
+// Describes the current push state as a label/hint and the single action that
+// moves it forward, so the section renders one clear next step.
+function describePush(
+	status: PushStatus | null,
+	hasConfig: boolean,
+): { label: string; hint: string; action: string | null } {
+	if (!status) return { label: "Checking…", hint: "", action: null };
+	if (!status.supported) {
+		return { label: "Not available", hint: "Push notifications need a physical device.", action: null };
+	}
+	if (status.granted && status.registered) {
+		return { label: "On", hint: "You'll be alerted when an agent needs you or a PR is ready.", action: null };
+	}
+	if (status.granted && !status.registered) {
+		return {
+			label: "Permission granted",
+			hint: hasConfig
+				? "This device isn't registered yet. Tap to register with your server."
+				: "Connect to a server first, then this device registers automatically.",
+			action: hasConfig ? "Register" : null,
+		};
+	}
+	if (!status.granted && status.canAskAgain) {
+		return { label: "Off", hint: "Turn on alerts for agents that need input and PR updates.", action: "Enable" };
+	}
+	// Permanently denied — only system settings can flip it back on.
+	return { label: "Blocked", hint: "Notifications are turned off for AO in system settings.", action: "Open settings" };
+}
+
+// Settings section that surfaces push-notification status and the one action to
+// advance it: request permission, register, or (after a permanent denial) open
+// the OS settings. Closes the "denied on first try, no way back" gap.
+function NotificationsSection() {
+	const { config, connection } = useApp();
+	const [status, setStatus] = useState<PushStatus | null>(null);
+	const [busy, setBusy] = useState(false);
+
+	const refresh = useCallback(() => {
+		getPushStatus()
+			.then(setStatus)
+			.catch(() => {});
+	}, []);
+
+	// Reload on focus and whenever the connection flips (registration happens on
+	// a successful connect, so the status can change without user action here).
+	useFocusEffect(useCallback(() => refresh(), [refresh]));
+	useEffect(() => refresh(), [connection, refresh]);
+
+	const { label, hint, action } = describePush(status, !!config);
+
+	async function onAction() {
+		if (!status) return;
+		setBusy(true);
+		try {
+			if (!status.granted && !status.canAskAgain) {
+				await openNotificationSettings();
+			} else if (config) {
+				// Requests permission if needed, then registers with the daemon.
+				// A null result means the build couldn't mint a token (most often an
+				// iOS local build with no APNs entitlement) — say so instead of a
+				// silent no-op.
+				const token = await registerForPush(config);
+				if (token) {
+					haptics.success();
+				} else {
+					haptics.error();
+					Alert.alert(
+						"Couldn't enable push on this build",
+						Platform.OS === "ios"
+							? "A local iOS build has no push entitlement, so it can't receive notifications. Install an EAS build (with an APNs key) to test push on iOS."
+							: "Couldn't register a push token. Check that notifications are allowed and that you're connected to your server.",
+					);
+				}
+			}
+		} finally {
+			setBusy(false);
+			refresh();
+		}
+	}
+
+	return (
+		<>
+			<Text style={[styles.sectionTitle, { marginTop: 32 }]}>NOTIFICATIONS</Text>
+			<View style={styles.notifCard}>
+				<View style={{ flex: 1, marginRight: 12 }}>
+					<Text style={styles.toggleLabel}>{label}</Text>
+					{hint ? <Text style={styles.toggleHint}>{hint}</Text> : null}
+				</View>
+				{action ? <Button title={action} variant="ghost" loading={busy} onPress={onAction} /> : null}
+			</View>
+		</>
 	);
 }
 
@@ -335,6 +437,15 @@ const styles = StyleSheet.create({
 	},
 	toggleLabel: { color: theme.textPrimary, fontSize: 14, fontWeight: "600" },
 	toggleHint: { color: theme.textTertiary, fontSize: 12, marginTop: 2, lineHeight: 16 },
+	notifCard: {
+		flexDirection: "row",
+		alignItems: "center",
+		padding: 14,
+		backgroundColor: theme.bgElevated,
+		borderRadius: 10,
+		borderWidth: 1,
+		borderColor: theme.borderSubtle,
+	},
 	projRow: {
 		flexDirection: "row",
 		alignItems: "center",

@@ -109,6 +109,44 @@ func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
 	return items, nil
 }
 
+const upsertImportedProject = `-- name: UpsertImportedProject :exec
+INSERT INTO projects (id, path, repo_origin_url, display_name, registered_at, archived_at, config, kind)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (id) DO UPDATE SET
+    path = excluded.path,
+    repo_origin_url = excluded.repo_origin_url,
+    display_name = excluded.display_name,
+    registered_at = excluded.registered_at,
+    archived_at = excluded.archived_at,
+    config = excluded.config,
+    kind = excluded.kind
+`
+
+type UpsertImportedProjectParams struct {
+	ID            domain.ProjectID
+	Path          string
+	RepoOriginURL string
+	DisplayName   string
+	RegisteredAt  time.Time
+	ArchivedAt    sql.NullTime
+	Config        sql.NullString
+	Kind          string
+}
+
+func (q *Queries) UpsertImportedProject(ctx context.Context, arg UpsertImportedProjectParams) error {
+	_, err := q.db.ExecContext(ctx, upsertImportedProject,
+		arg.ID,
+		arg.Path,
+		arg.RepoOriginURL,
+		arg.DisplayName,
+		arg.RegisteredAt,
+		arg.ArchivedAt,
+		arg.Config,
+		arg.Kind,
+	)
+	return err
+}
+
 const upsertProject = `-- name: UpsertProject :exec
 INSERT INTO projects (id, path, repo_origin_url, display_name, registered_at, archived_at, config, kind)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
