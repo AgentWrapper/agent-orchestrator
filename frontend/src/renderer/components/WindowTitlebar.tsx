@@ -1,7 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
+import { PanelLeft } from "lucide-react";
 import { useEffect, useState } from "react";
-import aoLogo from "../assets/ao-logo.png";
-import { useResolvedTheme } from "../stores/ui-store";
+import { useResolvedTheme, useUiStore } from "../stores/ui-store";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -69,14 +69,17 @@ function TopMenu({
 export function WindowTitlebar() {
 	const navigate = useNavigate();
 	const theme = useResolvedTheme();
+	const { isSidebarOpen, toggleSidebar } = useUiStore();
 	const [openMenu, setOpenMenu] = useState<MenuKey | null>(null);
 
 	// Electron draws the min/max/close overlay natively and can't read our CSS, so
 	// push theme-matched colours to it whenever the theme changes.
 	useEffect(() => {
 		if (!isWindows) return;
+		// Keep in sync with --color-bg-sidebar (tokens.css) — the titlebar paints
+		// that colour, so the native buttons must match it.
 		const overlay =
-			theme === "light" ? { color: "#ffffff", symbolColor: "#3f444c" } : { color: "#0f1014", symbolColor: "#c7ccd4" };
+			theme === "light" ? { color: "#fcfcfc", symbolColor: "#3f444c" } : { color: "#17181c", symbolColor: "#c7ccd4" };
 		void window.ao?.window?.setOverlay(overlay);
 	}, [theme]);
 
@@ -96,8 +99,18 @@ export function WindowTitlebar() {
 
 	return (
 		<header className="window-titlebar">
-			<img alt="" aria-hidden="true" className="window-titlebar__logo" draggable={false} src={aoLogo} />
-			<span className="window-titlebar__title">Agent Orchestrator</span>
+			{/* Sidebar collapse toggle — same ui-store path as the macOS TitlebarNav
+			    cluster, so it stays in sync with the SidebarProvider. The brand
+			    logo + name stay in the sidebar header instead of duplicating here. */}
+			<button
+				aria-label={isSidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+				className="window-titlebar__toggle"
+				onClick={toggleSidebar}
+				title={`${isSidebarOpen ? "Collapse" : "Expand"} sidebar · Ctrl+B`}
+				type="button"
+			>
+				<PanelLeft aria-hidden="true" className="window-titlebar__toggle-icon" />
+			</button>
 			<nav className="window-titlebar__menus">
 				<TopMenu id="file" label="File" openMenu={openMenu} setOpenMenu={setOpenMenu}>
 					<DropdownMenuItem onSelect={() => void navigate({ to: "/settings" })}>Settings</DropdownMenuItem>
