@@ -163,7 +163,8 @@ export function ShellTopbar() {
 						</div>
 						{session ? <SessionStatusPill session={session} /> : null}
 					</div>
-				) : (isProjectBoardRoute && !boardActionsInFramedTopbar) || (isMac && isRootBoardRoute && !boardActionsInFramedTopbar) ? null : (
+				) : (isProjectBoardRoute && !boardActionsInFramedTopbar) ||
+				  (isMac && isRootBoardRoute && !boardActionsInFramedTopbar) ? null : (
 					<div className="inline-flex min-w-0 items-center gap-1.5">
 						<span className={topbarProjectLabelClass}>{projectLabel}</span>
 					</div>
