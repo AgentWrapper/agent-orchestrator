@@ -13,7 +13,7 @@ import (
 
 func TestCLIInvokedRouteEmitsTelemetry(t *testing.T) {
 	sink := &captureSink{}
-	r := NewRouterWithControl(config.Config{}, discardLogger(), nil, APIDeps{Telemetry: sink}, ControlDeps{})
+	r := NewRouterWithControl(config.Config{DataDir: t.TempDir()}, discardLogger(), nil, APIDeps{Telemetry: sink}, ControlDeps{})
 
 	postInvoked := func(command, commandPath string) {
 		t.Helper()
@@ -69,7 +69,7 @@ func TestCLIInvokedRouteEmitsTelemetry(t *testing.T) {
 
 func TestCLIInvokedRouteRequiresLoopback(t *testing.T) {
 	sink := &captureSink{}
-	r := NewRouterWithControl(config.Config{}, discardLogger(), nil, APIDeps{Telemetry: sink}, ControlDeps{})
+	r := NewRouterWithControl(config.Config{DataDir: t.TempDir()}, discardLogger(), nil, APIDeps{Telemetry: sink}, ControlDeps{})
 
 	req := httptest.NewRequest(http.MethodPost, "http://evil.example/internal/telemetry/cli-invoked", strings.NewReader(`{"command":"status","commandPath":"ao status"}`))
 	req.Host = "evil.example"
@@ -87,7 +87,7 @@ func TestCLIInvokedRouteRequiresLoopback(t *testing.T) {
 func TestCLIUsageErrorRouteEmitsTelemetry(t *testing.T) {
 	sink := &captureSink{}
 	r := chi.NewRouter()
-	mountTelemetry(r, sink)
+	mountTelemetry(r, config.Config{DataDir: t.TempDir()}, sink)
 
 	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/internal/telemetry/cli-usage-error", strings.NewReader(`{"command":"status","commandPath":"ao status","error":"too many args"}`))
 	rec := httptest.NewRecorder()
@@ -117,6 +117,45 @@ func TestCLIUsageErrorRouteEmitsTelemetry(t *testing.T) {
 	}
 	if _, ok := payload["error"]; ok {
 		t.Fatalf("payload leaked raw error text: %#v", payload)
+	}
+}
+
+func TestCLIInvokedRoutePersistsDailyReservationsAcrossRouterRestart(t *testing.T) {
+	dataDir := t.TempDir()
+	sink := &captureSink{}
+	cfg := config.Config{DataDir: dataDir}
+
+	postInvoked := func(r http.Handler, command, commandPath string) {
+		t.Helper()
+		body := `{"command":"` + command + `","commandPath":"` + commandPath + `"}`
+		req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/internal/telemetry/cli-invoked", strings.NewReader(body))
+		req.Host = "127.0.0.1:3001"
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("status = %d, want 202", rec.Code)
+		}
+	}
+
+	r1 := NewRouterWithControl(cfg, discardLogger(), nil, APIDeps{Telemetry: sink}, ControlDeps{})
+	postInvoked(r1, "status", "ao status")
+	if len(sink.events) != 2 {
+		t.Fatalf("events after first invocation = %d, want 2", len(sink.events))
+	}
+
+	r2 := NewRouterWithControl(cfg, discardLogger(), nil, APIDeps{Telemetry: sink}, ControlDeps{})
+	postInvoked(r2, "status", "ao status")
+	if len(sink.events) != 2 {
+		t.Fatalf("events after router restart repeat = %d, want 2", len(sink.events))
+	}
+
+	postInvoked(r2, "ls", "ao session ls")
+	if len(sink.events) != 3 {
+		t.Fatalf("events after router restart new command = %d, want 3", len(sink.events))
+	}
+	if sink.events[2].Name != "ao.cli.invoked" {
+		t.Fatalf("third event name = %q, want ao.cli.invoked", sink.events[2].Name)
 	}
 }
 
