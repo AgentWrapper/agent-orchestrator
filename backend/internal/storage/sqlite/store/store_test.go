@@ -712,6 +712,50 @@ func TestSetSessionPreviewURLBumpsRevisionAndFiresCDCOnSameURL(t *testing.T) {
 	}
 }
 
+func TestRenameSessionFiresCDCEvent(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
+
+	base, _ := s.LatestSeq(ctx)
+	renamedAt := r.UpdatedAt.Add(time.Minute)
+	if ok, err := s.RenameSession(ctx, r.ID, "Fix flaky tests", renamedAt); err != nil || !ok {
+		t.Fatalf("rename: ok=%v err=%v", ok, err)
+	}
+
+	// A rename must reach the live SSE stream: display_name is in the
+	// sessions_cdc_update WHEN guard, so the rename writes exactly one
+	// session_updated row. The event is an invalidation-only nudge (renderer
+	// consumers refetch the workspace and read the new name from durable
+	// state), so we assert the fan-out fired, not the payload contents — the
+	// payload carries the shared {id,activity,isTerminated,preview*} shape
+	// common to every session_updated emitter.
+	evs, err := s.EventsAfter(ctx, base, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payloads []json.RawMessage
+	for _, e := range evs {
+		if string(e.Type) == "session_updated" {
+			payloads = append(payloads, e.Payload)
+		}
+	}
+	if len(payloads) != 1 {
+		t.Fatalf("session_updated events = %d, want 1 after rename", len(payloads))
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(payloads[0], &payload); err != nil {
+		t.Fatalf("session_updated payload JSON: %v", err)
+	}
+	if payload["id"] != string(r.ID) {
+		t.Fatalf("payload id = %v, want %q", payload["id"], r.ID)
+	}
+	if _, carried := payload["displayName"]; carried {
+		t.Fatalf("session_updated must stay invalidation-only; payload should not carry displayName: %v", payload)
+	}
+}
+
 func TestConcurrentSessionCreateAssignsUniqueNums(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

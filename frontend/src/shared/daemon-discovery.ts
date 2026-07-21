@@ -67,8 +67,11 @@ export type RunFileInfo = {
 	/** startedAt in epoch ms; 0 when missing/unparseable. */
 	startedAtMs: number;
 	/**
-	 * Daemon ownership tag. "app" when the desktop app spawned this daemon;
-	 * undefined/empty for a headless `ao start` daemon.
+	 * Daemon ownership tag — read from running.json so the attach-path link
+	 * decision uses the daemon's durable record, not the current process env.
+	 * "app" = desktop-spawned (re-link on attach); "persistent" = spawned under
+	 * AO_KEEP_DAEMON (stays alive across app quit, never re-linked);
+	 * undefined/empty = headless `ao start` daemon.
 	 */
 	owner?: string;
 };

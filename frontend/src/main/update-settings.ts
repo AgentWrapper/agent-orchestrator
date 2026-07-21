@@ -3,10 +3,18 @@ import path from "node:path";
 
 export type UpdateChannel = "latest" | "nightly";
 
+/** A pinned PR feature build. `channel` stays as the home channel; this is a separate overlay. */
+export interface FeaturePin {
+	pr: number;
+}
+
 export interface UpdateSettings {
 	enabled: boolean;
+	/** Home channel: stable or nightly. Never set this to a feature/pr value. */
 	channel: UpdateChannel;
 	nightlyAck: boolean;
+	/** When set, the updater tracks the pr<N> prerelease channel instead of `channel`. Null = not pinned. */
+	feature: FeaturePin | null;
 }
 
 // Live state of a manual update check/download, streamed to the renderer so the
@@ -29,7 +37,15 @@ export interface UpdateStatus {
 /** File holding the user's auto-update preferences under the ~/.ao state dir. */
 export const UPDATE_SETTINGS_FILE_NAME = "update-settings.json";
 
-const DEFAULTS: UpdateSettings = { enabled: false, channel: "latest", nightlyAck: false };
+const DEFAULTS: UpdateSettings = { enabled: false, channel: "latest", nightlyAck: false, feature: null };
+
+function coerceFeature(raw: unknown): FeaturePin | null {
+	if (raw === null || raw === undefined) return null;
+	if (typeof raw !== "object") return null;
+	const o = raw as Record<string, unknown>;
+	const pr = typeof o.pr === "number" && Number.isInteger(o.pr) && o.pr > 0 ? o.pr : null;
+	return pr !== null ? { pr } : null;
+}
 
 function coerce(raw: unknown): UpdateSettings {
 	const o = (raw ?? {}) as Record<string, unknown>;
@@ -37,6 +53,8 @@ function coerce(raw: unknown): UpdateSettings {
 		enabled: o.enabled === true,
 		channel: o.channel === "nightly" ? "nightly" : "latest",
 		nightlyAck: o.nightlyAck === true,
+		// Legacy files with no `feature` key default to null (migration-safe).
+		feature: coerceFeature(o.feature),
 	};
 }
 

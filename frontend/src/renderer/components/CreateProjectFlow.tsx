@@ -13,17 +13,21 @@ export type CreateProjectInput = { path: string; asWorkspace?: boolean } & Creat
 type CreateProjectFlowMode = ProjectKind | "choose";
 
 // Shared create-project flow (native folder picker -> agent sheet -> create).
-// Sidebar enables the import-type picker; first-run board CTAs keep the direct
-// single-repo picker while still using the same Git setup recovery path.
+// Sidebar opens the import-type picker as a dialog; the first-run board embeds
+// the same picker inline. Both still share the Git setup recovery path.
 export function CreateProjectFlow({
 	children,
+	embedded = false,
 	idleLabel = "New project",
 	mode = "single_repo",
 	onCreateProject,
 	onInitializeProject,
 	openSignal,
 }: {
-	children: (state: { choosePath: () => void; disabled: boolean; error: string | null; label: string }) => ReactNode;
+	children?: (state: { choosePath: () => void; disabled: boolean; error: string | null; label: string }) => ReactNode;
+	// When true, render the Workspace/Project chooser inline (start page) instead
+	// of behind a trigger + dialog. Folder validation + agent sheet stay modal.
+	embedded?: boolean;
 	idleLabel?: string;
 	mode?: CreateProjectFlowMode;
 	onCreateProject: (input: CreateProjectInput) => Promise<void>;
@@ -151,20 +155,33 @@ export function CreateProjectFlow({
 
 	return (
 		<>
-			{children({
-				choosePath: startFlow,
-				disabled: isBusy,
-				error,
-				label,
-			})}
+			{!embedded &&
+				children?.({
+					choosePath: startFlow,
+					disabled: isBusy,
+					error,
+					label,
+				})}
+			{hasModePicker && embedded && (
+				<div className="flex w-full flex-col items-center gap-3">
+					<ImportModePicker disabled={isBusy} onSelect={openFolderStep} />
+					{error && !folderPickerOpen && selectedPath === null && (
+						<p className="text-caption leading-body text-error" role="status">
+							{error}
+						</p>
+					)}
+				</div>
+			)}
 			{hasModePicker && (
 				<>
-					<CreateProjectModeDialog
-						disabled={isBusy}
-						open={modePickerOpen}
-						onOpenChange={(open) => !isBusy && setModePickerOpen(open)}
-						onSelect={openFolderStep}
-					/>
+					{!embedded && (
+						<CreateProjectModeDialog
+							disabled={isBusy}
+							open={modePickerOpen}
+							onOpenChange={(open) => !isBusy && setModePickerOpen(open)}
+							onSelect={openFolderStep}
+						/>
+					)}
 					<CreateProjectFolderDialog
 						disabled={isBusy}
 						error={error}
@@ -175,7 +192,9 @@ export function CreateProjectFlow({
 							setError(null);
 							setValidationScan(null);
 							setFolderPickerOpen(false);
-							window.requestAnimationFrame(() => setModePickerOpen(true));
+							if (!embedded) {
+								window.requestAnimationFrame(() => setModePickerOpen(true));
+							}
 						}}
 						onChooseFolder={() => void chooseDirectory(selectedKind)}
 						onOpenChange={(open) => {
@@ -253,44 +272,83 @@ function CreateProjectModeDialog({
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
 				<Dialog.Overlay className="fixed inset-0 z-50 bg-black/55 data-[state=open]:animate-overlay-in" />
-				<Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[min(720px,calc(100svh-24px))] w-[min(680px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in">
-					<div className="flex shrink-0 items-start justify-between gap-4 px-4 pb-3 pt-4 sm:px-6 sm:pb-4 sm:pt-5">
-						<div className="min-w-0">
-							<Dialog.Title className="text-[18px] font-semibold text-foreground">
-								Import to Agent Orchestrator
-							</Dialog.Title>
-							<Dialog.Description className="mt-1 text-[13px] font-medium text-muted-foreground">
-								What are you importing?
-							</Dialog.Description>
-						</div>
-						<Dialog.Close asChild>
-							<button
-								type="button"
-								className="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground transition hover:bg-surface hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
-								aria-label="Close new project dialog"
-								disabled={disabled}
-							>
-								<X className="size-4" aria-hidden="true" />
-							</button>
-						</Dialog.Close>
-					</div>
-					<div className="grid min-h-0 gap-3 overflow-y-auto px-4 pb-4 sm:grid-cols-2 sm:px-6 sm:pb-6">
-						<ProjectModeButton
-							description="Several Git repos that live under one parent folder."
-							disabled={disabled}
-							kind="workspace"
-							onClick={() => onSelect("workspace")}
-						/>
-						<ProjectModeButton
-							description="A single Git repository — one codebase, tracked in one repo."
-							disabled={disabled}
-							kind="single_repo"
-							onClick={() => onSelect("single_repo")}
-						/>
-					</div>
+				<Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(896px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 border-0 bg-transparent p-0 shadow-none outline-none data-[state=open]:animate-modal-in">
+					<ImportModePicker disabled={disabled} onClose={() => onOpenChange(false)} onSelect={onSelect} dialog />
 				</Dialog.Content>
 			</Dialog.Portal>
 		</Dialog.Root>
+	);
+}
+
+/** Figma "Dialog - ModalContainer" — Workspace vs Project import chooser. */
+function ImportModePicker({
+	dialog = false,
+	disabled,
+	onClose,
+	onSelect,
+}: {
+	dialog?: boolean;
+	disabled: boolean;
+	onClose?: () => void;
+	onSelect: (kind: ProjectKind) => void;
+}) {
+	return (
+		<div
+			className="relative isolate flex w-full max-w-[896px] flex-col items-stretch gap-8 rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-modal)] p-8"
+			role={dialog ? undefined : "group"}
+			aria-label={dialog ? undefined : "Import to Agent Orchestrator"}
+		>
+			{/* Figma ModalContainer:shadow — hairline + soft drop */}
+			<div
+				aria-hidden="true"
+				className="pointer-events-none absolute inset-0 rounded-welcome-panel bg-[var(--color-import-shadow-fill)] shadow-[var(--shadow-import-modal)]"
+			/>
+			<div className={cn("relative z-[1] flex flex-col items-start gap-1", onClose && "pr-8")}>
+				{dialog ? (
+					<Dialog.Title className="text-[20px] font-bold leading-7 text-[var(--color-text-import-title)]">
+						Import to Agent Orchestrator
+					</Dialog.Title>
+				) : (
+					<h2 className="text-[20px] font-bold leading-7 text-[var(--color-text-import-title)]">
+						Import to Agent Orchestrator
+					</h2>
+				)}
+				{dialog ? (
+					<Dialog.Description className="text-[14px] font-normal leading-5 text-[var(--color-text-import-muted)]">
+						What are you importing?
+					</Dialog.Description>
+				) : (
+					<p className="text-[14px] font-normal leading-5 text-[var(--color-text-import-muted)]">
+						What are you importing?
+					</p>
+				)}
+			</div>
+			<div className="relative z-[2] flex flex-row items-stretch justify-center gap-6 self-stretch">
+				<ProjectModeButton
+					description="Several Git repos that live under one parent folder."
+					disabled={disabled}
+					kind="workspace"
+					onClick={() => onSelect("workspace")}
+				/>
+				<ProjectModeButton
+					description="A single Git repository - tracked in a single codebase."
+					disabled={disabled}
+					kind="single_repo"
+					onClick={() => onSelect("single_repo")}
+				/>
+			</div>
+			{onClose && (
+				<button
+					type="button"
+					className="absolute right-[25px] top-[25px] z-[3] grid size-5 place-items-center text-[var(--color-text-import-muted)] transition hover:text-[var(--color-text-import-title)] disabled:pointer-events-none disabled:opacity-50"
+					aria-label="Close new project dialog"
+					disabled={disabled}
+					onClick={onClose}
+				>
+					<X className="size-5" aria-hidden="true" strokeWidth={1.67} />
+				</button>
+			)}
+		</div>
 	);
 }
 
@@ -310,44 +368,56 @@ function ProjectModeButton({
 		<button
 			type="button"
 			aria-label={isWorkspace ? "Workspace" : "Project"}
-			className="flex min-h-[176px] w-full flex-col justify-end rounded-lg border border-border bg-card px-4 py-4 text-left transition-colors hover:bg-background focus-visible:bg-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-50 sm:min-h-[220px] sm:px-5 sm:py-5"
+			className="flex min-h-[252px] w-full flex-1 flex-col justify-start gap-6 self-stretch rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] p-6 text-left transition-colors hover:bg-[var(--color-bg-import-card-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-50 sm:min-h-[292px]"
 			disabled={disabled}
 			onClick={onClick}
 		>
-			<span className="mb-3 flex min-h-[70px] w-full items-center justify-center sm:mb-4 sm:min-h-[92px]">
-				{isWorkspace ? (
-					<span className="mx-auto w-[min(210px,100%)] rounded-lg border border-dashed border-border px-3 py-3">
-						<span className="mx-auto mb-2 flex w-[min(160px,100%)] items-center gap-2 font-mono text-[11px] font-semibold text-muted-foreground">
-							<Folder className="size-3.5" aria-hidden="true" />
-							my-workspace/
-						</span>
-						{["web-app", "api-server", "shared-libs"].map((repo) => (
-							<span
-								key={repo}
-								className="mx-auto mb-1.5 flex w-[min(170px,100%)] items-center gap-2 rounded-md bg-background px-2.5 py-1.5 font-mono text-[12px] font-semibold text-foreground last:mb-0"
-							>
-								<span className="size-1.5 rounded-full bg-success" aria-hidden="true" />
-								{repo}
+			<span className="flex w-full flex-col items-start">
+				<span
+					className={cn("flex w-full justify-center", isWorkspace ? "h-[178px] items-start" : "h-[120px] items-center")}
+				>
+					{isWorkspace ? (
+						<span className="flex h-[178px] w-full max-w-[240px] flex-col items-start gap-3 rounded-lg border border-dashed border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-illustration)] p-4">
+							<span className="flex items-center gap-2 text-[14px] leading-5 text-[var(--color-text-import-muted)]">
+								<Folder className="size-[14px] shrink-0" aria-hidden="true" />
+								my-workspace/
 							</span>
-						))}
-					</span>
-				) : (
-					<span className="mx-auto max-w-full rounded-lg border border-border bg-background px-4 py-3 font-mono text-[12px] font-semibold text-foreground sm:px-5 sm:py-3.5 sm:text-[13px]">
-						<span className="mr-2 inline-block size-1.5 rounded-full bg-success" aria-hidden="true" />
-						web-app <span className="px-2 text-muted-foreground">·</span>
-						<span className="text-muted-foreground">main</span>
-					</span>
-				)}
+							<span className="flex w-full flex-col items-start gap-2">
+								{["web-app", "api-server", "shared-libs"].map((repo) => (
+									<span
+										key={repo}
+										className="flex w-full items-center rounded bg-[var(--color-bg-import-chip)] px-3 py-2"
+									>
+										<span
+											className="mr-2 size-2 shrink-0 rounded-full bg-[var(--color-import-dot)]"
+											aria-hidden="true"
+										/>
+										<span className="text-[12px] font-bold leading-4 text-[var(--color-text-import-title)]">
+											{repo}
+										</span>
+									</span>
+								))}
+							</span>
+						</span>
+					) : (
+						<span className="flex h-[50px] w-fit items-center rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-chip)] px-4 py-3">
+							<span className="mr-2 size-2 shrink-0 rounded-full bg-[var(--color-import-dot)]" aria-hidden="true" />
+							<span className="text-[14px] font-bold leading-5 text-[var(--color-text-import-title)]">web-app</span>
+							<span className="px-1 text-[16px] leading-6 text-[var(--color-text-import-sep)]" aria-hidden="true">
+								·
+							</span>
+							<span className="text-[14px] font-normal leading-5 text-[var(--color-text-import-muted)]">main</span>
+						</span>
+					)}
+				</span>
 			</span>
-			<span className="block text-[15px] font-semibold text-foreground sm:text-[16px]">
-				{isWorkspace ? "Workspace" : "Project"}
-			</span>
-			<span className="mt-2 block text-[12px] leading-5 text-muted-foreground sm:min-h-[40px] sm:text-[13px]">
-				{description}
-			</span>
-			<span className="mt-3 font-mono text-[12px] font-semibold text-passive">
-				<span className="mr-2 text-passive">•</span>
-				{isWorkspace ? "Multiple repositories" : "One repository"}
+			<span className="mt-auto flex w-full flex-col items-start gap-2">
+				<span className="text-[16px] font-bold leading-6 text-[var(--color-text-import-title)]">
+					{isWorkspace ? "Workspace" : "Project"}
+				</span>
+				<span className="text-[14px] font-normal leading-[23px] text-[var(--color-text-import-muted)]">
+					{description}
+				</span>
 			</span>
 		</button>
 	);
@@ -378,7 +448,7 @@ function CreateProjectFolderDialog({
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
-				<Dialog.Overlay className="fixed inset-0 z-50 bg-black/55 data-[state=open]:animate-overlay-in" />
+				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in" />
 				<Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[min(640px,calc(100svh-24px))] w-[min(640px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in">
 					<div className="flex shrink-0 items-start gap-3 border-b border-border px-4 py-4 sm:gap-4 sm:px-6 sm:py-5">
 						<button

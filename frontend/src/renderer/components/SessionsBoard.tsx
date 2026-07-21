@@ -244,7 +244,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				/>
 			)}
 
-			<div className="min-h-0 flex-1 overflow-hidden p-4.5">
+			<div className={cn("min-h-0 flex-1 overflow-hidden", showWelcome ? "p-0" : "p-4.5")}>
 				{projectId && health.state !== "ok" ? (
 					<div className="mb-3 flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-xs text-muted-foreground">
 						<AlertTriangle className="size-icon-base shrink-0 text-warning" aria-hidden="true" />
@@ -287,9 +287,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			{done.length > 0 && (
 				<div className="shrink-0 border-t border-border px-4.5">
 					{/* agent-orchestrator's done-bar (Dashboard.tsx + globals.css):
-					    a full-width chevron + label + count toggle row. min-h matches
-					    the sidebar footer (7px pad ×2 + 37px Settings button) so this
-					    border-t aligns with the sidebar's footer border. The button is
+					    a full-width chevron + label + count toggle row. The button is
 					    37px (not the 35.5px its text-control implies) because the
 					    unlayered `button { font: inherit }` in styles.css outranks
 					    Tailwind's layered text utilities, leaving it at 14px/21px. */}

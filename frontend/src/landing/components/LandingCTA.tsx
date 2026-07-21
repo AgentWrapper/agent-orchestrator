@@ -1,4 +1,10 @@
-import { formatCompactNumber, getGitHubRepoStats } from "../lib/github-repo";
+"use client";
+
+import { useGitHubRepoFacts } from "../lib/use-github-repo-facts";
+import { useDownloadTarget, useIsMacDesktop } from "../lib/use-download-target";
+import { CopyCommand } from "./CopyCommand";
+
+const BREW_INSTALL_COMMAND = "brew install --cask agentwrapper/tap/agent-orchestrator";
 
 function GithubIcon({ className = "" }: { className?: string }) {
 	return (
@@ -8,78 +14,114 @@ function GithubIcon({ className = "" }: { className?: string }) {
 	);
 }
 
-function ArrowRightIcon({ className = "" }: { className?: string }) {
+function DownloadIcon({ className = "" }: { className?: string }) {
 	return (
 		<svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-			<path d="M5 12h14" />
-			<path d="m12 5 7 7-7 7" />
+			<path d="M12 3v12" />
+			<path d="m7 10 5 5 5-5" />
+			<path d="M5 21h14" />
 		</svg>
 	);
 }
 
-function BookIcon({ className = "" }: { className?: string }) {
+function StarIcon({ className = "" }: { className?: string }) {
 	return (
-		<svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-			<path d="M12 7v14" />
-			<path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z" />
+		<svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+			<path d="M12 2.5l2.95 5.98 6.6.96-4.77 4.65 1.13 6.57L12 17.55l-5.91 3.11 1.13-6.57L2.45 9.44l6.6-.96L12 2.5z" />
 		</svg>
 	);
 }
 
-export async function LandingCTA() {
-	const { stars } = await getGitHubRepoStats();
+export function LandingCTA() {
+	const { stars } = useGitHubRepoFacts();
+	const downloadTarget = useDownloadTarget();
+	const showBrew = useIsMacDesktop();
 
 	return (
 		<section
-			id="cta"
+			id="get-started"
 			data-testid="cta-section"
-			className="relative overflow-hidden border-t border-[color:var(--border)] py-24 sm:py-32"
+			className="landing-reveal relative overflow-hidden border-t border-[color:var(--border)] py-20 sm:py-28"
 		>
+			{/* soft accent glow */}
+			<div
+				className="pointer-events-none absolute inset-0"
+				style={{
+					background: "radial-gradient(ellipse 60% 55% at 50% 62%, var(--accent-soft), transparent 70%)",
+				}}
+			/>
 			<div className="container-page relative">
-				<div className="surface-elev px-8 py-14 text-center sm:px-14 sm:py-20">
-					<div className="mb-8 inline-flex items-center gap-2 rounded-full border border-[color:var(--border-strong)] bg-[color:var(--bg-deep)] px-3 py-1">
-						<span className="font-mono text-[10px] uppercase tracking-[0.22em] text-[color:var(--accent)]">
-							$ ao spawn --project your-repo --prompt &quot;ship it&quot;
-						</span>
-					</div>
-
+				<div className="mx-auto max-w-[860px] text-center">
+					<div className="landing-eyebrow mb-5">Get started</div>
 					<h2
 						data-testid="cta-headline"
-						className="font-display font-bold leading-[1.02] tracking-tight text-[color:var(--fg)]"
-						style={{ fontSize: "clamp(36px, 6vw, 76px)" }}
+						className="landing-hero-heading mx-auto"
+						style={{ fontSize: "clamp(34px, 4.6vw, 64px)" }}
 					>
-						Stop babysitting one agent.
-						<br />
-						<span className="font-editorial font-medium italic text-[color:var(--accent)]">Start orchestrating.</span>
+						<span className="landing-hero-heading-setup block">Your agents are waiting.</span>
+						<span className="landing-hero-heading-action block">
+							Put them to <span className="landing-hero-heading-accent">work.</span>
+						</span>
 					</h2>
-
-					<p className="mx-auto mt-6 max-w-2xl text-[16px] leading-relaxed text-[color:var(--fg-muted)] sm:text-[17px]">
-						Free, Apache 2.0 licensed, runs on your laptop. The whole repo is on GitHub - read the source, fork it, and
-						ship your first parallel agent in five minutes.
+					<p className="mx-auto mt-6 max-w-[560px] text-balance text-[16px] leading-[1.65] text-[color:var(--fg-muted)] sm:text-[17px]">
+						Free and open source under Apache&nbsp;2.0. Download it, point it at a repo, and merge your first
+						agent-written PR tonight.
 					</p>
 
-					<div className="mt-10 flex flex-wrap items-center justify-center gap-3">
+					<div className="mt-9 flex w-full flex-col items-stretch justify-center gap-3 sm:w-auto sm:flex-row sm:items-center">
+						{downloadTarget ? (
+							<a
+								href={downloadTarget.href}
+								data-testid="cta-download-btn"
+								className="hero-pressable btn-primary inline-flex h-12 w-full items-center justify-center gap-2 rounded-[6px] px-7 text-[15px] font-semibold sm:w-auto"
+							>
+								<DownloadIcon className="h-4 w-4" />
+								{downloadTarget.label}
+							</a>
+						) : (
+							<a
+								href="https://github.com/AgentWrapper/agent-orchestrator/releases/latest"
+								target="_blank"
+								rel="noreferrer"
+								data-testid="cta-download-btn"
+								className="hero-pressable btn-primary inline-flex h-12 w-full items-center justify-center gap-2 rounded-[6px] px-7 text-[15px] font-semibold sm:w-auto"
+							>
+								<DownloadIcon className="h-4 w-4" />
+								Download the app
+							</a>
+						)}
 						<a
 							href="https://github.com/AgentWrapper/agent-orchestrator"
 							target="_blank"
 							rel="noreferrer"
 							data-testid="cta-github-btn"
-							className="group inline-flex items-center gap-2 rounded-lg bg-[color:var(--accent)] px-6 py-3.5 text-[15px] font-semibold shadow-[0_0_0_1px_rgba(255,255,255,0.1)_inset,0_8px_24px_-8px_rgba(130,170,255,0.42)] transition-all hover:brightness-110"
-							style={{ color: "#081225" }}
+							className="hero-pressable gh-star-btn group relative inline-flex h-12 w-full items-center justify-center gap-2 overflow-visible rounded-[6px] border border-[color:var(--border-strong)] bg-transparent px-7 text-[15px] font-semibold text-[color:var(--fg)] hover:border-[color:var(--accent-glow)] hover:bg-[color:var(--bg-card-hover)] sm:w-auto"
 						>
 							<GithubIcon className="h-4 w-4" />
-							Star on GitHub · {formatCompactNumber(stars)}
-							<ArrowRightIcon className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
-						</a>
-						<a
-							href="/docs/architecture"
-							data-testid="cta-docs-btn"
-							className="inline-flex items-center gap-2 rounded-lg border border-[color:var(--border-strong)] bg-[color:var(--bg-deep)] px-6 py-3.5 text-[15px] font-semibold text-[color:var(--fg)] transition-colors hover:bg-[color:var(--bg-card-hover)]"
-						>
-							<BookIcon className="h-4 w-4" />
-							Read the architecture
+							<span>Star on GitHub</span>
+							<StarIcon className="gh-star h-4 w-4 text-[color:var(--fg-muted)]" />
+							<span
+								className={`gh-star-count rounded-full border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[12px] leading-none text-[color:var(--fg-muted)] ${stars ? "" : "hidden"}`}
+							>
+								{stars}
+							</span>
 						</a>
 					</div>
+
+					{showBrew ? (
+						<div className="mt-6 flex justify-center">
+							<CopyCommand
+								command={BREW_INSTALL_COMMAND}
+								label="brew install command"
+								nowrap
+								className="w-full sm:w-auto"
+							/>
+						</div>
+					) : null}
+
+					<p className="mt-7 font-mono text-[11px] uppercase tracking-[0.16em] text-[color:var(--fg-dim)]">
+						macOS · Windows · Linux · nightly builds · no account required
+					</p>
 				</div>
 			</div>
 		</section>

@@ -153,7 +153,8 @@ beforeEach(() => {
 	act(() => {
 		useUiStore.setState({
 			isCommandPaletteOpen: false,
-			theme: "dark",
+			themePreference: "dark",
+			resolvedTheme: "dark",
 			restartingProjectIds: new Set(),
 		});
 	});
@@ -383,7 +384,7 @@ describe("CommandPalette actions", () => {
 		act(() => useUiStore.getState().setCommandPaletteOpen(true));
 		await screen.findByPlaceholderText(/search projects/i);
 		fireEvent.click(screen.getByText("Toggle theme"));
-		expect(useUiStore.getState().theme).toBe("light");
+		expect(useUiStore.getState().resolvedTheme).toBe("light");
 		await waitFor(() => expect(paletteInput()).toBeNull());
 	});
 

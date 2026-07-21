@@ -12,7 +12,6 @@ import {
 export type CommandGroupId = "current" | "attention" | "projects" | "sessions" | "prs" | "global";
 
 export type NavigateTarget =
-	| { to: "/prs" }
 	| { to: "/settings" }
 	| { to: "/projects/$projectId"; params: { projectId: string } }
 	| { to: "/projects/$projectId/settings"; params: { projectId: string } }
@@ -223,13 +222,6 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 		title: "New project",
 		keywords: ["add", "import", "repo", "workspace"],
 		action: { kind: "open-new-project" },
-	});
-	items.push({
-		id: "global-prs",
-		group: "global",
-		title: "Open pull requests",
-		keywords: ["prs", "pull requests", "reviews"],
-		action: { kind: "navigate", target: { to: "/prs" } },
 	});
 	items.push({
 		id: "global-settings",

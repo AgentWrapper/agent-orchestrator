@@ -838,6 +838,76 @@ paths:
       summary: Resolve review threads on a pull request
       tags:
       - prs
+  /api/v1/push/devices:
+    post:
+      operationId: registerPushDevice
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterPushDeviceRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PushDeviceEnvelope'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Register (upsert) a phone's Expo push token
+      tags:
+      - push
+  /api/v1/push/devices/{token}:
+    delete:
+      operationId: unregisterPushDevice
+      parameters:
+      - description: Expo push token (URL-encoded) identifying the device.
+        in: path
+        name: token
+        required: true
+        schema:
+          description: Expo push token (URL-encoded) identifying the device.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnregisterPushDeviceResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Unregister a phone's Expo push token
+      tags:
+      - push
   /api/v1/sessions:
     get:
       operationId: listSessions
@@ -2468,6 +2538,49 @@ components:
       - kind
       - sessionPrefix
       type: object
+    PushDeviceEnvelope:
+      properties:
+        device:
+          $ref: '#/components/schemas/PushDeviceResponse'
+      required:
+      - device
+      type: object
+    PushDeviceResponse:
+      properties:
+        createdAt:
+          format: date-time
+          type: string
+        deviceName:
+          type: string
+        lastSeenAt:
+          format: date-time
+          type: string
+        platform:
+          type: string
+        token:
+          type: string
+      required:
+      - token
+      - createdAt
+      - lastSeenAt
+      type: object
+    RegisterPushDeviceRequest:
+      properties:
+        deviceName:
+          description: Human-friendly device label.
+          type: string
+        platform:
+          description: Device platform.
+          enum:
+          - ios
+          - android
+          type: string
+        token:
+          description: Expo push token, e.g. ExponentPushToken[...].
+          type: string
+      required:
+      - token
+      type: object
     RemoveProjectResult:
       properties:
         projectId:
@@ -2513,6 +2626,12 @@ components:
       properties:
         ok:
           type: boolean
+        restoreMode:
+          enum:
+          - native
+          - saved_prompt
+          - fresh
+          type: string
         session:
           $ref: '#/components/schemas/ControllersSessionView'
         sessionId:
@@ -2520,6 +2639,7 @@ components:
       required:
       - ok
       - sessionId
+      - restoreMode
       - session
       type: object
     ReviewRun:
@@ -3064,6 +3184,16 @@ components:
       - reviewerHandleId
       - reviews
       type: object
+    UnregisterPushDeviceResponse:
+      properties:
+        deleted:
+          type: boolean
+        token:
+          type: string
+      required:
+      - token
+      - deleted
+      type: object
     WorkspaceFileResponse:
       properties:
         additions:
@@ -3166,6 +3296,8 @@ tags:
   name: reviews
 - description: Durable dashboard notifications
   name: notifications
+- description: Mobile push-device registration for OS push notifications
+  name: push
 - description: Server-sent CDC event stream with durable replay
   name: events
 - description: Legacy AO project import (availability probe and run)

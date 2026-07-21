@@ -38,6 +38,8 @@
 	--radius-md: var(--radius-md);
 	--radius-lg: var(--radius-lg);
 	--radius-panel: var(--radius-panel);
+	--radius-welcome-panel: var(--radius-welcome-panel);
+	--radius-agents-sheet: var(--radius-agents-sheet);
 	--radius-full: var(--radius-full);
 
 	/* Breakpoints — for Tailwind max-* variants */
@@ -94,16 +96,38 @@
 	--color-input: var(--bridge-border);
 	--color-sidebar: var(--color-bg-sidebar);
 	--color-sidebar-foreground: var(--color-text-muted);
-	--color-sidebar-primary: var(--bridge-accent);
-	--color-sidebar-primary-foreground: var(--bridge-accent-fg);
 	--color-sidebar-accent: var(--color-bg-tertiary);
 	--color-sidebar-accent-foreground: var(--color-text-primary);
 	--color-sidebar-border: var(--bridge-border);
 	--color-sidebar-ring: var(--bridge-accent);
 	--color-terminal: var(--color-bg-terminal);
-	--color-terminal-foreground: var(--color-text-terminal);
 	--color-terminal-dim: var(--color-text-terminal-dim);
 	--color-scrim: var(--bridge-scrim);
+	--color-welcome-panel: var(--color-bg-welcome-panel);
+
+	/* Settings page (Figma) */
+	--color-settings-panel: var(--color-bg-settings-panel);
+	--color-settings-row: var(--color-bg-settings-row);
+	--color-settings-menu: var(--color-bg-settings-menu);
+	--color-settings-menu-selected: var(--color-bg-settings-menu-selected);
+	--color-settings-title: var(--color-text-settings-title);
+	--color-settings-muted: var(--color-text-settings-muted);
+	--color-settings-label: var(--color-text-settings-row);
+	--radius-settings-row: var(--radius-settings-row);
+	--radius-settings-panel: var(--radius-settings-panel);
+	--spacing-settings-row: var(--size-settings-row);
+
+	/* Settings page (Figma) */
+	--color-settings-panel: var(--color-bg-settings-panel);
+	--color-settings-row: var(--color-bg-settings-row);
+	--color-settings-menu: var(--color-bg-settings-menu);
+	--color-settings-menu-selected: var(--color-bg-settings-menu-selected);
+	--color-settings-title: var(--color-text-settings-title);
+	--color-settings-muted: var(--color-text-settings-muted);
+	--color-settings-label: var(--color-text-settings-row);
+	--radius-settings-row: var(--radius-settings-row);
+	--radius-settings-panel: var(--radius-settings-panel);
+	--spacing-settings-row: var(--size-settings-row);
 
 	/* Browser static preview (light mock inside dark app) */
 	--color-preview: var(--color-preview-bg);
@@ -118,7 +142,6 @@
 	--color-preview-tile-border: var(--bridge-preview-tile-border);
 	--color-preview-terminal: var(--bridge-preview-terminal);
 	--color-preview-terminal-border: var(--bridge-preview-terminal-border);
-	--color-preview-terminal-foreground: var(--bridge-preview-terminal-fg);
 
 	/* Icon chrome — size-icon-* utilities */
 	--size-icon-2xs: var(--size-icon-2xs);
@@ -194,7 +217,6 @@
 	--color-muted-foreground: var(--color-text-muted);
 	--color-passive: var(--color-text-passive);
 	--color-secondary: var(--color-bg-tertiary);
-	--color-secondary-foreground: var(--color-text-muted);
 
 	--color-primary: var(--bridge-accent);
 	--color-primary-foreground: var(--bridge-accent-fg);
@@ -221,6 +243,16 @@
 	--animate-status-pulse: status-pulse 1.8s ease-in-out infinite;
 	--animate-overlay-in: overlay-in 150ms ease-out;
 	--animate-modal-in: modal-in 150ms ease-out;
+}
+
+/* Full-viewport modal/sheet scrim — dim + blur everything behind pop panels. */
+@utility dialog-overlay {
+	position: fixed;
+	inset: 0;
+	z-index: var(--z-overlay);
+	background-color: var(--color-scrim);
+	-webkit-backdrop-filter: blur(var(--blur-overlay));
+	backdrop-filter: blur(var(--blur-overlay));
 }
 
 @utility w-dialog-md {
@@ -271,6 +303,127 @@
 
 @utility bg-surface-faint {
 	background-color: color-mix(in srgb, var(--color-bg-primary) 35%, transparent);
+}
+
+@utility bg-settings-panel {
+	background-color: var(--color-bg-settings-panel);
+}
+
+@utility bg-settings-row {
+	background-color: var(--color-bg-settings-row);
+}
+
+@utility bg-settings-dialog {
+	background-color: var(--color-bg-settings-dialog);
+}
+
+@utility bg-settings-menu {
+	background-color: var(--color-bg-settings-menu);
+}
+
+@utility bg-settings-menu-selected {
+	background-color: var(--color-bg-settings-menu-selected);
+}
+
+@utility bg-settings-accent {
+	background-color: var(--color-settings-accent);
+}
+
+@utility bg-settings-switch-on {
+	background-color: var(--color-settings-switch-on);
+}
+
+@utility text-settings-title {
+	color: var(--color-text-settings-title);
+}
+
+@utility text-settings-muted {
+	color: var(--color-text-settings-muted);
+}
+
+@utility text-settings-label {
+	color: var(--color-text-settings-row);
+}
+
+@utility text-settings-heading {
+	font-size: var(--font-size-settings-title);
+	line-height: 36px;
+	letter-spacing: var(--tracking-settings-title);
+}
+
+@utility tracking-settings-section {
+	letter-spacing: var(--tracking-settings-section);
+}
+
+@utility tracking-settings-mono {
+	letter-spacing: var(--tracking-settings-mono);
+}
+
+@utility rounded-settings-panel {
+	border-radius: var(--radius-settings-panel);
+}
+
+@utility border-settings {
+	border-color: var(--color-border-settings);
+}
+
+@utility border-settings-menu {
+	border-color: var(--color-border-settings-menu);
+}
+
+@utility settings-row-bar {
+	display: flex;
+	height: var(--size-settings-row);
+	min-height: var(--size-settings-row);
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--size-settings-row-icon-gap);
+	border-radius: var(--radius-settings-row);
+	background-color: var(--color-bg-settings-row);
+	padding: var(--size-settings-row-padding);
+}
+
+/* Tailwind preflight clears button backgrounds; keep settings rows filled. */
+button.settings-row-bar {
+	background-color: var(--color-bg-settings-row);
+}
+
+@utility settings-menu-item {
+	display: flex;
+	align-items: center;
+	gap: calc(var(--spacing) * 2);
+	border-radius: var(--radius-settings-row);
+	border: 1px solid transparent;
+	padding-inline: var(--space-3);
+	padding-block: var(--space-2_5);
+	font-size: var(--font-size-md);
+	line-height: var(--line-height-row);
+	color: var(--color-text-settings-row);
+}
+
+@utility settings-option-trigger {
+	display: inline-flex;
+	align-items: center;
+	gap: calc(var(--spacing) * 1.5);
+	border-radius: var(--radius-settings-row);
+	padding-inline: var(--space-1);
+	padding-block: var(--space-0_5);
+	font-size: var(--font-size-base);
+	color: var(--color-text-settings-muted);
+	outline: none;
+	box-shadow: none;
+	transition-property: color;
+	transition-duration: var(--duration-fast);
+}
+
+@utility settings-menu-surface {
+	min-width: 11rem;
+	width: max-content;
+	border-radius: var(--radius-settings-panel);
+	border: 1px solid var(--color-border-settings-menu);
+	background-color: var(--color-bg-settings-menu);
+	padding: var(--space-2);
+	gap: var(--space-1_5);
 }
 
 * {

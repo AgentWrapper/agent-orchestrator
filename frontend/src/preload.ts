@@ -5,6 +5,7 @@ import type { DaemonStatus } from "./shared/daemon-status";
 import type { TelemetryBootstrap } from "./shared/telemetry";
 import type { MigrationState } from "./main/app-state";
 import type { UpdateSettings, UpdateStatus } from "./main/update-settings";
+import type { FeatureBuild } from "./main/feature-builds";
 import type {
 	BrowserAnnotationCancelPayload,
 	BrowserAnnotationModeInput,
@@ -165,6 +166,10 @@ const api = {
 				ipcRenderer.off("updates:status", wrapped);
 			};
 		},
+	},
+	featureBuilds: {
+		list: () => ipcRenderer.invoke("featureBuilds:list") as Promise<FeatureBuild[]>,
+		getActive: () => ipcRenderer.invoke("featureBuilds:getActive") as Promise<{ pr: number } | null>,
 	},
 };
 

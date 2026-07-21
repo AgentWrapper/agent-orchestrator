@@ -71,8 +71,8 @@ func (f *fakeSessionService) Get(context.Context, domain.SessionID) (domain.Sess
 	return domain.Session{}, nil
 }
 
-func (f *fakeSessionService) Restore(context.Context, domain.SessionID) (domain.Session, error) {
-	return domain.Session{}, nil
+func (f *fakeSessionService) Restore(context.Context, domain.SessionID) (sessionsvc.RestoreOutcome, error) {
+	return sessionsvc.RestoreOutcome{}, nil
 }
 
 func (f *fakeSessionService) Kill(context.Context, domain.SessionID) (bool, error) {
