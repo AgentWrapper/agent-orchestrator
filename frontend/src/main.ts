@@ -21,15 +21,11 @@ import {
 	downloadUpdateNow,
 	quitAndInstallUpdate,
 	getUpdateStatus,
-	configureFeed,
+	setUpdateSettings,
+	type UpdateCheckOptions,
 } from "./main/auto-updater";
 import { listFeatureBuilds, getActiveFeatureBuild } from "./main/feature-builds";
-import {
-	readUpdateSettings,
-	writeUpdateSettings,
-	type UpdateSettings,
-	type UpdateStatus,
-} from "./main/update-settings";
+import { readUpdateSettings, type UpdateSettings, type UpdateStatus } from "./main/update-settings";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { closeSync, existsSync, openSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
@@ -1329,27 +1325,20 @@ ipcMain.handle("updateSettings:get", async (): Promise<UpdateSettings> => {
 ipcMain.handle("updateSettings:set", async (_event, settings: UpdateSettings) => {
 	const runFile = runFilePath();
 	if (!runFile) return;
-	await writeUpdateSettings(path.dirname(runFile), settings);
-	// Re-apply the feed immediately so pinning/unpinning a feature build takes
-	// effect without an app restart. Only meaningful in packaged builds (where
-	// electron-updater has a real feed), but safe to call in dev.
-	// Pinning flow: renderer calls updateSettings.set({...feature:{pr}}) then
-	// updates.check()->download()->install() to land on the feature build.
-	// Returning home: updateSettings.set({...feature:null}) then same sequence.
-	configureFeed(settings);
+	await setUpdateSettings(path.dirname(runFile), settings);
 });
 
 ipcMain.handle("featureBuilds:list", () => listFeatureBuilds());
 ipcMain.handle("featureBuilds:getActive", () => getActiveFeatureBuild());
 
 ipcMain.handle("updates:getStatus", (): UpdateStatus => getUpdateStatus());
-ipcMain.handle("updates:check", async () => {
+ipcMain.handle("updates:check", async (_event, options?: UpdateCheckOptions) => {
 	const runFile = runFilePath();
 	if (!runFile) return;
-	await checkForUpdatesNow(path.dirname(runFile));
+	await checkForUpdatesNow(path.dirname(runFile), options);
 });
-ipcMain.handle("updates:download", async () => {
-	await downloadUpdateNow();
+ipcMain.handle("updates:download", async (_event, requestId?: string) => {
+	await downloadUpdateNow(requestId);
 });
 ipcMain.handle("updates:install", () => {
 	quitAndInstallUpdate();

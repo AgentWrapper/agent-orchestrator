@@ -75,6 +75,11 @@ beforeEach(() => {
 	for (const m of [
 		getUpdate,
 		setUpdate,
+		updGetStatus,
+		updCheck,
+		updDownload,
+		updInstall,
+		updOnStatus,
 		navigateMock,
 		writeText,
 		openExternal,
@@ -160,7 +165,7 @@ describe("GlobalSettingsForm", () => {
 	});
 
 	it("offers an Update button when an update is available and downloads it", async () => {
-		let emit: (s: { state: string; version?: string }) => void = () => undefined;
+		let emit: (s: { state: string; version?: string; requestId?: string }) => void = () => undefined;
 		updOnStatus.mockImplementation((cb: (s: unknown) => void) => {
 			emit = cb as typeof emit;
 			return () => undefined;
@@ -174,7 +179,7 @@ describe("GlobalSettingsForm", () => {
 	});
 
 	it("offers Restart & install once downloaded and installs it", async () => {
-		let emit: (s: { state: string; version?: string }) => void = () => undefined;
+		let emit: (s: { state: string; version?: string; requestId?: string }) => void = () => undefined;
 		updOnStatus.mockImplementation((cb: (s: unknown) => void) => {
 			emit = cb as typeof emit;
 			return () => undefined;
@@ -318,7 +323,7 @@ describe("GlobalSettingsForm", () => {
 		expect(featListBuilds).toHaveBeenCalled();
 	});
 
-	it("pins a feature build after confirming, then auto-progresses check -> download -> install", async () => {
+	it("pins a feature build after confirming and ignores unowned updater events", async () => {
 		featListBuilds.mockResolvedValue([
 			{
 				pr: 2270,
@@ -330,7 +335,7 @@ describe("GlobalSettingsForm", () => {
 				publishedAt: new Date().toISOString(),
 			},
 		]);
-		let emit: (s: { state: string; version?: string }) => void = () => undefined;
+		let emit: (s: { state: string; version?: string; requestId?: string }) => void = () => undefined;
 		updOnStatus.mockImplementation((cb: (s: unknown) => void) => {
 			emit = cb as typeof emit;
 			return () => undefined;
@@ -347,20 +352,30 @@ describe("GlobalSettingsForm", () => {
 		// Confirmation dialog replaces window.confirm.
 		await userEvent.click(await screen.findByRole("button", { name: "Confirm" }));
 
-		await waitFor(() => expect(setUpdate).toHaveBeenCalledWith(expect.objectContaining({ feature: { pr: 2270 } })));
-		expect(updCheck).toHaveBeenCalled();
+		await waitFor(() =>
+			expect(updCheck).toHaveBeenCalledWith({
+				settings: expect.objectContaining({ feature: { pr: 2270 } }),
+				requestId: expect.any(String),
+			}),
+		);
+		const requestId = updCheck.mock.calls[0]?.[0]?.requestId as string;
 
-		// Auto-progression: available -> download(), downloaded -> install().
+		// An older hourly operation can finish while the feature request waits for
+		// updater ownership. Its events must not arm the feature install flow.
 		act(() => emit({ state: "available", version: "1.2.3" }));
-		await waitFor(() => expect(updDownload).toHaveBeenCalled());
-		act(() => emit({ state: "downloaded", version: "1.2.3" }));
+		expect(updDownload).not.toHaveBeenCalled();
+
+		// The owned feature operation auto-progresses available -> download -> install.
+		act(() => emit({ state: "available", version: "1.2.3", requestId }));
+		await waitFor(() => expect(updDownload).toHaveBeenCalledWith(requestId));
+		act(() => emit({ state: "downloaded", version: "1.2.3", requestId }));
 		await waitFor(() => expect(updInstall).toHaveBeenCalled());
 	});
 
 	it("returns to Stable, then auto-progresses check -> download -> install", async () => {
 		getUpdate.mockResolvedValue({ enabled: true, channel: "latest", nightlyAck: false, feature: { pr: 2270 } });
 		featGetActive.mockResolvedValue({ pr: 2270 });
-		let emit: (s: { state: string; version?: string }) => void = () => undefined;
+		let emit: (s: { state: string; version?: string; requestId?: string }) => void = () => undefined;
 		updOnStatus.mockImplementation((cb: (s: unknown) => void) => {
 			emit = cb as typeof emit;
 			return () => undefined;
@@ -370,12 +385,17 @@ describe("GlobalSettingsForm", () => {
 		const returnBtn = await screen.findByRole("button", { name: "Return to Stable" });
 		await userEvent.click(returnBtn);
 
-		await waitFor(() => expect(setUpdate).toHaveBeenCalledWith(expect.objectContaining({ feature: null })));
-		expect(updCheck).toHaveBeenCalled();
+		await waitFor(() =>
+			expect(updCheck).toHaveBeenCalledWith({
+				settings: expect.objectContaining({ feature: null }),
+				requestId: expect.any(String),
+			}),
+		);
+		const requestId = updCheck.mock.calls[0]?.[0]?.requestId as string;
 
-		act(() => emit({ state: "available", version: "1.3.0" }));
-		await waitFor(() => expect(updDownload).toHaveBeenCalled());
-		act(() => emit({ state: "downloaded", version: "1.3.0" }));
+		act(() => emit({ state: "available", version: "1.3.0", requestId }));
+		await waitFor(() => expect(updDownload).toHaveBeenCalledWith(requestId));
+		act(() => emit({ state: "downloaded", version: "1.3.0", requestId }));
 		await waitFor(() => expect(updInstall).toHaveBeenCalled());
 	});
 });

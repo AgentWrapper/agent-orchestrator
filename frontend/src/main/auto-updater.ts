@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
 	readUpdateSettings,
+	updateUpdateSettings,
 	writeUpdateSettings,
 	UPDATE_SETTINGS_FILE_NAME,
 	type UpdateChannel,
@@ -19,12 +20,20 @@ import { evaluateEscalation } from "./escalation-evaluator";
 // resolves the home channel and moves the user back automatically. A fetch
 // failure keeps the pin (see reconcileFeaturePin). Returns the effective settings.
 async function reconcileAndPersist(stateDir: string, settings: UpdateSettings): Promise<UpdateSettings> {
+	const checkedPr = settings.feature?.pr;
 	const rec = await reconcileFeaturePin(settings);
-	if (rec.cleared) {
-		await writeUpdateSettings(stateDir, rec.settings);
+	if (!rec.cleared || checkedPr === undefined) return rec.settings;
+
+	let cleared = false;
+	const latest = await updateUpdateSettings(stateDir, (current) => {
+		if (current.feature?.pr !== checkedPr) return current;
+		cleared = true;
+		return { ...current, feature: null };
+	});
+	if (cleared) {
 		console.info("[feature-builds] pinned PR retired; cleared pin, falling back to home channel");
 	}
-	return rec.settings;
+	return latest;
 }
 
 // configureFeed sets the update channel on electron-updater. The repo/owner
@@ -66,13 +75,17 @@ let eventsWired = false;
 let stagedVersion: string | undefined;
 let stagedAtMs: number | undefined;
 let stagedEscalated = false;
+let stagedRequestId: string | undefined;
 let escalationTimer: ReturnType<typeof setInterval> | undefined;
 let escalationStateDir: string | undefined;
 const AUTOMATIC_UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 let automaticUpdateTimer: ReturnType<typeof setInterval> | undefined;
-let activeUpdaterOperation: "automatic-check" | "manual-check" | "manual-download" | undefined;
+type UpdaterOperation = "automatic-check" | "manual-check" | "manual-download" | "settings-write";
+let activeUpdaterOperation: UpdaterOperation | undefined;
+let activeUpdaterRequestId: string | undefined;
 let automaticCheckPreviousStatus: { status: UpdateStatus; independentRevision: number } | undefined;
 let updaterOperationQueue: Promise<void> = Promise.resolve();
+let automaticCheckInFlight = false;
 
 // broadcast pushes the latest update status to every renderer window so the
 // Global Settings Updates section can reflect check/download progress live.
@@ -89,8 +102,13 @@ function broadcast(status: UpdateStatus, owner: "independent" | "automatic-opera
 	}
 }
 
+function withActiveRequest(status: UpdateStatus): UpdateStatus {
+	return activeUpdaterRequestId === undefined ? status : { ...status, requestId: activeUpdaterRequestId };
+}
+
 function broadcastUpdaterStatus(status: UpdateStatus): void {
-	broadcast(status, activeUpdaterOperation === "automatic-check" ? "automatic-operation" : "independent");
+	const ownedStatus = withActiveRequest(status);
+	broadcast(ownedStatus, activeUpdaterOperation === "automatic-check" ? "automatic-operation" : "independent");
 }
 
 // --- Read-only release-feed helpers (packaged app only; every failure is silent).
@@ -145,7 +163,13 @@ async function fetchNightlyImportant(owner: string, repo: string, version: strin
 // stagedDownloadedStatus rebuilds the enriched downloaded status from module
 // state, so transient check states can restore the row without recomputing.
 function stagedDownloadedStatus(): UpdateStatus {
-	return { state: "downloaded", version: stagedVersion, stagedAt: stagedAtMs, escalated: stagedEscalated };
+	return {
+		state: "downloaded",
+		version: stagedVersion,
+		stagedAt: stagedAtMs,
+		escalated: stagedEscalated,
+		...(stagedRequestId === undefined ? {} : { requestId: stagedRequestId }),
+	};
 }
 
 // runEscalationCheck re-reads settings and feeds, then rebroadcasts the
@@ -207,15 +231,18 @@ function restoreAutomaticCheckPreviousStatus(): void {
 }
 
 async function runSerializedUpdaterOperation(
-	operation: "automatic-check" | "manual-check" | "manual-download",
+	operation: UpdaterOperation,
 	runOperation: () => Promise<void>,
+	requestId?: string,
 ): Promise<void> {
 	const run = async () => {
 		activeUpdaterOperation = operation;
+		activeUpdaterRequestId = requestId;
 		try {
 			await runOperation();
 		} finally {
 			activeUpdaterOperation = undefined;
+			activeUpdaterRequestId = undefined;
 			if (operation === "automatic-check") automaticCheckPreviousStatus = undefined;
 		}
 	};
@@ -242,14 +269,16 @@ function startRetirementPollTimer(stateDir: string): void {
 
 async function runRetirementPoll(stateDir: string): Promise<void> {
 	try {
-		const before = await readUpdateSettings(stateDir);
-		if (before.feature === null || before.feature === undefined) return; // not pinned; nothing to check
-		const settings = await reconcileAndPersist(stateDir, before);
-		if (settings.feature === null || settings.feature === undefined) {
-			// Pin was cleared: drop the now-dead pr<N> channel right away instead of
-			// waiting for the next manual or launch-time check to notice.
-			configureFeed(settings);
-		}
+		await runSerializedUpdaterOperation("settings-write", async () => {
+			const before = await readUpdateSettings(stateDir);
+			if (before.feature === null || before.feature === undefined) return;
+			const settings = await reconcileAndPersist(stateDir, before);
+			if (settings.feature === null || settings.feature === undefined) {
+				// Pin was cleared: drop the now-dead pr<N> channel right away instead of
+				// waiting for the next manual or launch-time check to notice.
+				configureFeed(settings);
+			}
+		});
 	} catch (err) {
 		// Background poll: never throw, just skip this round.
 		console.debug("retirement poll skipped:", err);
@@ -297,8 +326,11 @@ function wireUpdaterEvents(): void {
 		stagedVersion = info?.version;
 		stagedAtMs = Date.now();
 		stagedEscalated = false;
+		stagedRequestId = activeUpdaterRequestId;
 		automaticCheckPreviousStatus = undefined;
-		broadcast(stagedDownloadedStatus());
+		// A completed automatic download advances the independent baseline; a
+		// renderer-requested download additionally carries its request ownership.
+		broadcast(withActiveRequest(stagedDownloadedStatus()));
 		// Evaluate now (nightly can escalate immediately), then every 30 minutes
 		// while the update sits uninstalled. unref so the timer never holds the
 		// process open on quit.
@@ -314,7 +346,7 @@ function wireUpdaterEvents(): void {
 			restoreAutomaticCheckPreviousStatus();
 			return;
 		}
-		broadcast({ state: "error", message: err?.message ?? String(err) });
+		broadcast(withActiveRequest({ state: "error", message: err?.message ?? String(err) }));
 	});
 }
 
@@ -329,6 +361,9 @@ async function runAutomaticUpdateCheck(stateDir: string): Promise<boolean> {
 			const settings = await reconcileAndPersist(stateDir, await readUpdateSettings(stateDir));
 			if (!settings.enabled) {
 				shouldSchedule = false;
+				// Stop while this serialized snapshot still owns updater ordering. A
+				// later settings write that enables updates can then schedule safely.
+				stopPeriodicAutomaticUpdateCheck();
 				return;
 			}
 
@@ -348,8 +383,32 @@ async function runAutomaticUpdateCheck(stateDir: string): Promise<boolean> {
 
 function schedulePeriodicAutomaticUpdateCheck(stateDir: string): void {
 	if (automaticUpdateTimer !== undefined) return;
-	automaticUpdateTimer = setInterval(() => void runAutomaticUpdateCheck(stateDir), AUTOMATIC_UPDATE_CHECK_INTERVAL_MS);
+	automaticUpdateTimer = setInterval(
+		() => void requestAutomaticUpdateCheck(stateDir),
+		AUTOMATIC_UPDATE_CHECK_INTERVAL_MS,
+	);
 	automaticUpdateTimer.unref?.();
+}
+
+function stopPeriodicAutomaticUpdateCheck(): void {
+	if (automaticUpdateTimer === undefined) return;
+	clearInterval(automaticUpdateTimer);
+	automaticUpdateTimer = undefined;
+}
+
+function reconcileAutomaticUpdateSchedule(stateDir: string, enabled: boolean): void {
+	if (enabled) schedulePeriodicAutomaticUpdateCheck(stateDir);
+	else stopPeriodicAutomaticUpdateCheck();
+}
+
+async function requestAutomaticUpdateCheck(stateDir: string): Promise<boolean | undefined> {
+	if (automaticCheckInFlight) return undefined;
+	automaticCheckInFlight = true;
+	try {
+		return await runAutomaticUpdateCheck(stateDir);
+	} finally {
+		automaticCheckInFlight = false;
+	}
 }
 
 // startAutoUpdates configures electron-updater from the user's ~/.ao settings.
@@ -357,7 +416,24 @@ function schedulePeriodicAutomaticUpdateCheck(stateDir: string): void {
 // Caller guards on app.isPackaged.
 export async function startAutoUpdates(stateDir: string): Promise<void> {
 	startRetirementPollTimer(stateDir);
-	if (await runAutomaticUpdateCheck(stateDir)) schedulePeriodicAutomaticUpdateCheck(stateDir);
+	const shouldSchedule = await requestAutomaticUpdateCheck(stateDir);
+	if (shouldSchedule === true) schedulePeriodicAutomaticUpdateCheck(stateDir);
+}
+
+async function persistUpdaterSettings(stateDir: string, settings: UpdateSettings): Promise<void> {
+	await writeUpdateSettings(stateDir, settings);
+	configureFeed(settings);
+	reconcileAutomaticUpdateSchedule(stateDir, settings.enabled);
+}
+
+/** Persist settings and reconcile the live updater feed/timer as one updater operation. */
+export async function setUpdateSettings(stateDir: string, settings: UpdateSettings): Promise<void> {
+	await runSerializedUpdaterOperation("settings-write", () => persistUpdaterSettings(stateDir, settings));
+}
+
+export interface UpdateCheckOptions {
+	settings?: UpdateSettings;
+	requestId?: string;
 }
 
 // checkForUpdatesNow runs a manual update check regardless of the auto-update
@@ -365,40 +441,58 @@ export async function startAutoUpdates(stateDir: string): Promise<void> {
 // build from Settings. It does NOT auto-download — the user clicks Update — and
 // reports progress via the broadcast status. Updates only work in the packaged,
 // signed app; in dev electron-updater has no feed, so surface that plainly.
-export async function checkForUpdatesNow(stateDir: string): Promise<void> {
+export async function checkForUpdatesNow(stateDir: string, options: UpdateCheckOptions = {}): Promise<void> {
 	escalationStateDir = stateDir;
 	wireUpdaterEvents();
 	if (!app.isPackaged) {
-		broadcast({ state: "unsupported", message: "Updates are only available in the installed app." });
+		broadcast({
+			state: "unsupported",
+			message: "Updates are only available in the installed app.",
+			requestId: options.requestId,
+		});
 		return;
 	}
-	broadcast({ state: "checking" });
 	try {
-		await runSerializedUpdaterOperation("manual-check", async () => {
-			const settings = await reconcileAndPersist(stateDir, await readUpdateSettings(stateDir));
-			configureFeed(settings);
-			autoUpdater.autoDownload = false;
-			autoUpdater.autoInstallOnAppQuit = true;
-			await autoUpdater.checkForUpdates();
-		});
+		await runSerializedUpdaterOperation(
+			"manual-check",
+			async () => {
+				if (options.settings) await writeUpdateSettings(stateDir, options.settings);
+				const settings = await reconcileAndPersist(stateDir, options.settings ?? (await readUpdateSettings(stateDir)));
+				reconcileAutomaticUpdateSchedule(stateDir, settings.enabled);
+				configureFeed(settings);
+				autoUpdater.autoDownload = false;
+				autoUpdater.autoInstallOnAppQuit = true;
+				broadcastUpdaterStatus({ state: "checking" });
+				await autoUpdater.checkForUpdates();
+			},
+			options.requestId,
+		);
 	} catch (err) {
-		broadcast({ state: "error", message: (err as Error)?.message ?? "Update check failed" });
+		broadcast({
+			state: "error",
+			message: (err as Error)?.message ?? "Update check failed",
+			requestId: options.requestId,
+		});
 	}
 }
 
 // downloadUpdateNow starts downloading the update found by checkForUpdatesNow.
-export async function downloadUpdateNow(): Promise<void> {
+export async function downloadUpdateNow(requestId?: string): Promise<void> {
 	wireUpdaterEvents();
 	if (!app.isPackaged) {
-		broadcast({ state: "unsupported", message: "Updates are only available in the installed app." });
+		broadcast({ state: "unsupported", message: "Updates are only available in the installed app.", requestId });
 		return;
 	}
 	try {
-		await runSerializedUpdaterOperation("manual-download", async () => {
-			await autoUpdater.downloadUpdate();
-		});
+		await runSerializedUpdaterOperation(
+			"manual-download",
+			async () => {
+				await autoUpdater.downloadUpdate();
+			},
+			requestId,
+		);
 	} catch (err) {
-		broadcast({ state: "error", message: (err as Error)?.message ?? "Download failed" });
+		broadcast({ state: "error", message: (err as Error)?.message ?? "Download failed", requestId });
 	}
 }
 

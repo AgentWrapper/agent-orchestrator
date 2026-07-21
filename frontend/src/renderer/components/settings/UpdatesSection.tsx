@@ -30,6 +30,12 @@ const CHANNEL_OPTIONS: { value: PrimaryValue; label: string }[] = [
 const DEFAULT_SETTINGS: UpdateSettings = { enabled: false, channel: "latest", nightlyAck: false, feature: null };
 
 const STALE_THRESHOLD_MS = 5 * 24 * 60 * 60 * 1000; // 5 days
+let updateRequestSequence = 0;
+
+function nextUpdateRequestId(): string {
+	updateRequestSequence += 1;
+	return `feature-update-${updateRequestSequence}`;
+}
 
 function relativeAge(iso: string): string {
 	const diffMs = Date.now() - new Date(iso).getTime();
@@ -59,9 +65,9 @@ export function UpdatesSection() {
 	const [pendingPin, setPendingPin] = useState<{ pr: number; title: string } | null>(null);
 
 	const status = useUpdateStatus();
-	// Set only right after the user pins a build or returns to their home channel,
-	// so the check() that follows is allowed to auto-progress through download/install.
-	const autoProgressRef = useRef(false);
+	// Set only for the owned pin/home transition request, so unrelated hourly
+	// updater events cannot auto-progress through download/install.
+	const autoProgressRef = useRef<string | null>(null);
 	const handledStatusRef = useRef<UpdateState | null>(null);
 
 	useEffect(() => {
@@ -69,16 +75,17 @@ export function UpdatesSection() {
 	}, [query.data]);
 
 	useEffect(() => {
-		if (!autoProgressRef.current) return;
+		const requestId = autoProgressRef.current;
+		if (!requestId || status.requestId !== requestId) return;
 		if (handledStatusRef.current === status.state) return;
 		handledStatusRef.current = status.state;
 		if (status.state === "available") {
-			void aoBridge.updates.download();
+			void aoBridge.updates.download(requestId);
 		} else if (status.state === "downloaded") {
 			void aoBridge.updates.install();
-			autoProgressRef.current = false;
+			autoProgressRef.current = null;
 		} else if (status.state === "error" || status.state === "unsupported" || status.state === "not-available") {
-			autoProgressRef.current = false;
+			autoProgressRef.current = null;
 		}
 	}, [status]);
 
@@ -132,22 +139,30 @@ export function UpdatesSection() {
 		setPendingPin(null);
 		const next = { ...formRef.current, feature: { pr } };
 		setForm(next);
-		autoProgressRef.current = true;
+		const requestId = nextUpdateRequestId();
+		autoProgressRef.current = requestId;
 		handledStatusRef.current = null;
-		await aoBridge.updateSettings.set(next);
-		void queryClient.invalidateQueries({ queryKey: updateSettingsQueryKey });
-		void aoBridge.updates.check();
+		try {
+			await aoBridge.updates.check({ settings: next, requestId });
+			void queryClient.invalidateQueries({ queryKey: updateSettingsQueryKey });
+		} catch {
+			if (autoProgressRef.current === requestId) autoProgressRef.current = null;
+		}
 	};
 
 	const handleReturnToHome = async () => {
 		setShowFeature(false);
 		const next = { ...formRef.current, feature: null };
 		setForm(next);
-		autoProgressRef.current = true;
+		const requestId = nextUpdateRequestId();
+		autoProgressRef.current = requestId;
 		handledStatusRef.current = null;
-		await aoBridge.updateSettings.set(next);
-		void queryClient.invalidateQueries({ queryKey: updateSettingsQueryKey });
-		void aoBridge.updates.check();
+		try {
+			await aoBridge.updates.check({ settings: next, requestId });
+			void queryClient.invalidateQueries({ queryKey: updateSettingsQueryKey });
+		} catch {
+			if (autoProgressRef.current === requestId) autoProgressRef.current = null;
+		}
 	};
 
 	const activeQuery = useQuery({

@@ -11,6 +11,10 @@ type UpdateSettings = {
 type UpdateSettingsReader = ReturnType<typeof vi.fn<() => Promise<UpdateSettings>>>;
 type UpdaterEventHandler = (...args: any[]) => void;
 
+type ImportOptions = {
+	reconcileFeaturePin?: (settings: UpdateSettings) => Promise<{ settings: UpdateSettings; cleared: boolean }>;
+};
+
 type AutoUpdaterMock = {
 	on: ReturnType<typeof vi.fn>;
 	checkForUpdates: ReturnType<typeof vi.fn>;
@@ -44,6 +48,7 @@ async function importAutoUpdater(
 		nightlyAck: false,
 		feature: null,
 	},
+	options: ImportOptions = {},
 ) {
 	vi.resetModules();
 	const updaterEvents = new Map<string, UpdaterEventHandler>();
@@ -68,13 +73,35 @@ async function importAutoUpdater(
 		dialog,
 	}));
 	const readUpdateSettings = typeof settings === "function" ? settings : vi.fn(() => Promise.resolve(settings));
+	const writeUpdateSettings = vi.fn<(_stateDir: string, settings: UpdateSettings) => Promise<void>>(() =>
+		Promise.resolve(),
+	);
+	const updateUpdateSettings = vi.fn(
+		async (_stateDir: string, update: (current: UpdateSettings) => UpdateSettings | Promise<UpdateSettings>) =>
+			update(await readUpdateSettings()),
+	);
 	vi.doMock("./update-settings", () => ({
 		readUpdateSettings,
-		writeUpdateSettings: vi.fn(() => Promise.resolve()),
+		writeUpdateSettings,
+		updateUpdateSettings,
 		UPDATE_SETTINGS_FILE_NAME: "update-settings.json",
 	}));
+	vi.doMock("./feature-builds", () => ({
+		reconcileFeaturePin:
+			options.reconcileFeaturePin ??
+			((current: UpdateSettings) => Promise.resolve({ settings: current, cleared: false })),
+	}));
 	const module = await import("./auto-updater");
-	return { module, autoUpdater, dialog, BrowserWindow, updaterEvents, readUpdateSettings };
+	return {
+		module,
+		autoUpdater,
+		dialog,
+		BrowserWindow,
+		updaterEvents,
+		readUpdateSettings,
+		writeUpdateSettings,
+		updateUpdateSettings,
+	};
 }
 
 function latestInterval(setIntervalSpy: ReturnType<typeof vi.spyOn>): {
@@ -92,6 +119,13 @@ function latestInterval(setIntervalSpy: ReturnType<typeof vi.spyOn>): {
 	return { callback: callback as () => void, delay: delay as number, timer };
 }
 
+function intervalWithDelay(setIntervalSpy: ReturnType<typeof vi.spyOn>, delay: number): () => void {
+	const calls = setIntervalSpy.mock.calls as Array<[() => void, number]>;
+	const call = calls.find(([, candidateDelay]) => candidateDelay === delay);
+	expect(call).toBeDefined();
+	return call?.[0] as () => void;
+}
+
 function deferred<T = void>(): { promise: Promise<T>; resolve: (value: T | PromiseLike<T>) => void } {
 	let resolve!: (value: T | PromiseLike<T>) => void;
 	const promise = new Promise<T>((res) => {
@@ -100,7 +134,7 @@ function deferred<T = void>(): { promise: Promise<T>; resolve: (value: T | Promi
 	return { promise, resolve };
 }
 
-async function flushMicrotasks(turns = 8): Promise<void> {
+async function flushMicrotasks(turns = 16): Promise<void> {
 	for (let i = 0; i < turns; i += 1) {
 		await Promise.resolve();
 	}
@@ -511,6 +545,224 @@ describe("startAutoUpdates", () => {
 		await flushMicrotasks();
 
 		expect(autoUpdater.autoDownload).toBe(true);
+		expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(3);
+	});
+
+	it("preserves concurrent settings changes while clearing the same retired feature pin", async () => {
+		vi.useFakeTimers();
+		const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
+		const retirementLookup = deferred();
+		let current: UpdateSettings = {
+			enabled: false,
+			channel: "latest",
+			nightlyAck: false,
+			feature: { pr: 2709 },
+		};
+		const readUpdateSettings = vi.fn(() => Promise.resolve(current));
+		const reconcileFeaturePin = vi
+			.fn<(settings: UpdateSettings) => Promise<{ settings: UpdateSettings; cleared: boolean }>>()
+			.mockResolvedValueOnce({ settings: current, cleared: false })
+			.mockImplementationOnce(async (snapshot) => {
+				await retirementLookup.promise;
+				return { settings: { ...snapshot, feature: null }, cleared: true };
+			});
+		const { module, updateUpdateSettings } = await importAutoUpdater(readUpdateSettings, { reconcileFeaturePin });
+		updateUpdateSettings.mockImplementation(
+			async (_stateDir: string, update: (settings: UpdateSettings) => UpdateSettings | Promise<UpdateSettings>) => {
+				current = await update(current);
+				return current;
+			},
+		);
+
+		await module.startAutoUpdates(stateDir);
+		intervalWithDelay(setIntervalSpy, 30 * 60 * 1000)();
+		await flushMicrotasks();
+		current = { enabled: true, channel: "nightly", nightlyAck: true, feature: { pr: 2709 } };
+		retirementLookup.resolve();
+		await flushMicrotasks();
+
+		expect(current).toEqual({ enabled: true, channel: "nightly", nightlyAck: true, feature: null });
+	});
+
+	it("does not clear a newly selected feature after an older pin retires", async () => {
+		vi.useFakeTimers();
+		const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
+		const retirementLookup = deferred();
+		let current: UpdateSettings = {
+			enabled: false,
+			channel: "latest",
+			nightlyAck: false,
+			feature: { pr: 2709 },
+		};
+		const readUpdateSettings = vi.fn(() => Promise.resolve(current));
+		const reconcileFeaturePin = vi
+			.fn<(settings: UpdateSettings) => Promise<{ settings: UpdateSettings; cleared: boolean }>>()
+			.mockResolvedValueOnce({ settings: current, cleared: false })
+			.mockImplementationOnce(async (snapshot) => {
+				await retirementLookup.promise;
+				return { settings: { ...snapshot, feature: null }, cleared: true };
+			});
+		const { module, updateUpdateSettings } = await importAutoUpdater(readUpdateSettings, { reconcileFeaturePin });
+		updateUpdateSettings.mockImplementation(
+			async (_stateDir: string, update: (settings: UpdateSettings) => UpdateSettings | Promise<UpdateSettings>) => {
+				current = await update(current);
+				return current;
+			},
+		);
+
+		await module.startAutoUpdates(stateDir);
+		intervalWithDelay(setIntervalSpy, 30 * 60 * 1000)();
+		await flushMicrotasks();
+		current = { enabled: true, channel: "nightly", nightlyAck: true, feature: { pr: 2710 } };
+		retirementLookup.resolve();
+		await flushMicrotasks();
+
+		expect(current).toEqual({ enabled: true, channel: "nightly", nightlyAck: true, feature: { pr: 2710 } });
+	});
+
+	it("applies feature settings and owns its check after an in-flight automatic check", async () => {
+		const automaticCheck = deferred();
+		const featureSettings: UpdateSettings = {
+			enabled: true,
+			channel: "latest",
+			nightlyAck: false,
+			feature: { pr: 2709 },
+		};
+		const { module, autoUpdater, updaterEvents, writeUpdateSettings } = await importAutoUpdater();
+		autoUpdater.checkForUpdates.mockReturnValueOnce(automaticCheck.promise).mockImplementationOnce(() => {
+			expect(writeUpdateSettings).toHaveBeenCalledWith(stateDir, featureSettings);
+			expect(autoUpdater.channel).toBe("pr2709");
+			updaterEvents.get("update-available")?.({ version: "2.0.0-pr2709.1" });
+			return Promise.resolve();
+		});
+
+		const startPromise = module.startAutoUpdates(stateDir);
+		await flushMicrotasks();
+		const featureCheck = module.checkForUpdatesNow(stateDir, {
+			settings: featureSettings,
+			requestId: "feature-2709",
+		});
+		await flushMicrotasks();
+
+		updaterEvents.get("update-available")?.({ version: "1.9.0" });
+		expect(module.getUpdateStatus()).toEqual({ state: "available", version: "1.9.0" });
+
+		automaticCheck.resolve();
+		await Promise.all([startPromise, featureCheck]);
+
+		expect(module.getUpdateStatus()).toEqual({
+			state: "available",
+			version: "2.0.0-pr2709.1",
+			requestId: "feature-2709",
+		});
+	});
+
+	it("keeps feature request ownership through downloaded escalation rebroadcasts", async () => {
+		vi.useFakeTimers();
+		const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+		autoUpdater.checkForUpdates.mockImplementationOnce(() => {
+			updaterEvents.get("update-downloaded")?.({ version: "2.0.0-pr2709.1" });
+			return Promise.resolve();
+		});
+
+		await module.checkForUpdatesNow(stateDir, { requestId: "feature-2709" });
+		await flushMicrotasks();
+
+		expect(module.getUpdateStatus()).toEqual(
+			expect.objectContaining({
+				state: "downloaded",
+				version: "2.0.0-pr2709.1",
+				requestId: "feature-2709",
+			}),
+		);
+	});
+
+	it("starts and stops the hourly scheduler when settings are enabled at runtime", async () => {
+		vi.useFakeTimers();
+		const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
+		const clearIntervalSpy = vi.spyOn(globalThis, "clearInterval");
+		let current: UpdateSettings = {
+			enabled: false,
+			channel: "latest",
+			nightlyAck: false,
+			feature: null,
+		};
+		const readUpdateSettings = vi.fn(() => Promise.resolve(current));
+		const { module, autoUpdater, writeUpdateSettings } = await importAutoUpdater(readUpdateSettings);
+		writeUpdateSettings.mockImplementation(async (_stateDir: string, next: UpdateSettings) => {
+			current = next;
+		});
+
+		await module.startAutoUpdates(stateDir);
+		expect(setIntervalSpy).toHaveBeenCalledTimes(1);
+
+		await module.setUpdateSettings(stateDir, { ...current, enabled: true });
+		expect(setIntervalSpy.mock.calls.map(([, delay]) => delay)).toContain(60 * 60 * 1000);
+
+		await module.setUpdateSettings(stateDir, { ...current, enabled: false });
+		expect(clearIntervalSpy).toHaveBeenCalled();
+		await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+		expect(autoUpdater.checkForUpdates).not.toHaveBeenCalled();
+	});
+
+	it("does not let a stale disabled check clear a concurrently enabled scheduler", async () => {
+		vi.useFakeTimers();
+		const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
+		const disabledRead = deferred<UpdateSettings>();
+		let current: UpdateSettings = {
+			enabled: true,
+			channel: "latest",
+			nightlyAck: false,
+			feature: null,
+		};
+		const readUpdateSettings = vi
+			.fn<() => Promise<UpdateSettings>>()
+			.mockResolvedValueOnce(current)
+			.mockReturnValueOnce(disabledRead.promise)
+			.mockImplementation(() => Promise.resolve(current));
+		const { module, autoUpdater, writeUpdateSettings } = await importAutoUpdater(readUpdateSettings);
+		writeUpdateSettings.mockImplementation(async (_stateDir: string, next: UpdateSettings) => {
+			current = next;
+		});
+
+		await module.startAutoUpdates(stateDir);
+		intervalWithDelay(setIntervalSpy, 60 * 60 * 1000)();
+		await flushMicrotasks();
+		const enable = module.setUpdateSettings(stateDir, { ...current, enabled: true });
+		disabledRead.resolve({ ...current, enabled: false });
+		await enable;
+		await flushMicrotasks();
+
+		await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+		expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(2);
+	});
+
+	it("coalesces hourly ticks while an automatic check is still running", async () => {
+		vi.useFakeTimers();
+		const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
+		const slowCheck = deferred();
+		const { module, autoUpdater } = await importAutoUpdater();
+		autoUpdater.checkForUpdates
+			.mockResolvedValueOnce(undefined)
+			.mockReturnValueOnce(slowCheck.promise)
+			.mockResolvedValueOnce(undefined);
+
+		await module.startAutoUpdates(stateDir);
+		const runHourly = intervalWithDelay(setIntervalSpy, 60 * 60 * 1000);
+		runHourly();
+		await flushMicrotasks();
+		expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(2);
+
+		runHourly();
+		runHourly();
+		runHourly();
+		await flushMicrotasks();
+		expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(2);
+
+		slowCheck.resolve();
+		await flushMicrotasks();
+		runHourly();
+		await flushMicrotasks();
 		expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(3);
 	});
 
