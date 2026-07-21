@@ -20,8 +20,10 @@ settings:
     CODE_SIGN_STYLE: Automatic
     MARKETING_VERSION: "1.0"
     CURRENT_PROJECT_VERSION: "1"
-    # DEVELOPMENT_TEAM is intentionally left blank — set it in Xcode
-    # (watch target → Signing & Capabilities → Team) with your Apple ID.
+    # Personal-team ID from the local Apple Development identity. Team IDs are
+    # not secret. Change this to your own team if you build under a different
+    # Apple ID (Xcode → Signing & Capabilities → Team).
+    DEVELOPMENT_TEAM: L9RSS75TZ8
 targets:
   AOWatch:
     type: application
