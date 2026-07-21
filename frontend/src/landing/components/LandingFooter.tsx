@@ -7,17 +7,17 @@ const columns = [
 		links: [
 			{ label: "Features", href: "#features" },
 			{ label: "Agents", href: "#agents" },
-			{ label: "Install", href: "/docs/installation" },
-			{ label: "CLI", href: "/docs/cli" },
+			{ label: "Install", href: "/docs/installation/" },
+			{ label: "CLI", href: "/docs/cli/" },
 		],
 	},
 	{
 		title: "Docs",
 		links: [
-			{ label: "Overview", href: "/docs" },
-			{ label: "Architecture", href: "/docs/architecture" },
-			{ label: "Plugins", href: "/docs/plugins" },
-			{ label: "Changelog", href: "/docs/changelog" },
+			{ label: "Overview", href: "/docs/" },
+			{ label: "Architecture", href: "/docs/architecture/" },
+			{ label: "Plugins", href: "/docs/plugins/" },
+			{ label: "Changelog", href: "/docs/changelog/" },
 		],
 	},
 	{

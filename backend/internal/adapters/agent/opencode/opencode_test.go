@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -277,6 +278,62 @@ func TestResolveOpenCodeBinaryFallback(t *testing.T) {
 	if bin == "" {
 		t.Fatal("ResolveOpenCodeBinary returned empty path with no error")
 	}
+}
+
+func TestResolveOpenCodeBinaryFallbacks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix fallback candidate shape")
+	}
+	oldUnixPaths := opencodeUnixPaths
+	opencodeUnixPaths = nil
+	t.Cleanup(func() { opencodeUnixPaths = oldUnixPaths })
+
+	tests := []struct {
+		name string
+		seed func(t *testing.T, home string) string
+	}{
+		{
+			name: "npm global",
+			seed: func(t *testing.T, home string) string {
+				return writeOpenCodeExecutable(t, filepath.Join(home, ".npm-global", "bin", "opencode"))
+			},
+		},
+		{
+			name: "nvm",
+			seed: func(t *testing.T, home string) string {
+				return writeOpenCodeExecutable(t, filepath.Join(home, ".nvm", "versions", "node", "v22.23.1", "bin", "opencode"))
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("PATH", t.TempDir())
+			t.Setenv("VOLTA_HOME", filepath.Join(home, ".volta"))
+			t.Setenv("FNM_DIR", "")
+			want := tt.seed(t, home)
+
+			got, err := ResolveOpenCodeBinary(context.Background())
+			if err != nil {
+				t.Fatalf("ResolveOpenCodeBinary: %v", err)
+			}
+			if got != want {
+				t.Fatalf("ResolveOpenCodeBinary = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func writeOpenCodeExecutable(t *testing.T, path string) string {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func TestResolveOpenCodeBinaryContextCanceled(t *testing.T) {

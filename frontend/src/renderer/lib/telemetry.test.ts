@@ -10,6 +10,7 @@ import {
 	sanitizeRendererProperties,
 	startDailyActiveHeartbeat,
 } from "./telemetry";
+import { ORCHESTRATOR_SPAWN_SOURCES } from "./orchestrator-spawn-sources";
 
 function memoryStorage(initial: Record<string, string> = {}) {
 	const values = new Map(Object.entries(initial));
@@ -37,10 +38,10 @@ describe("telemetry sanitizers", () => {
 
 	it("categorizes routes without exporting raw paths", () => {
 		expect(routeSurface("/")).toBe("home");
+		expect(routeSurface("/settings")).toBe("global_settings");
 		expect(routeSurface("/projects/demo")).toBe("project_board");
 		expect(routeSurface("/projects/demo/settings")).toBe("project_settings");
 		expect(routeSurface("/projects/demo/sessions/demo-1")).toBe("session_detail");
-		expect(routeSurface("/prs")).toBe("pull_requests");
 	});
 
 	it("hashes renderer ids and drops raw route identifiers", async () => {
@@ -190,8 +191,8 @@ describe("telemetry sanitizers", () => {
 		expect(badSource).not.toHaveProperty("source");
 	});
 
-	it("keeps every whitelisted spawn source, including topbar/sidebar/project_add/settings/restart", async () => {
-		for (const source of ["board", "restore_dialog", "topbar", "sidebar", "project_add", "settings", "restart"]) {
+	it("keeps every whitelisted spawn source (the shared ORCHESTRATOR_SPAWN_SOURCES list)", async () => {
+		for (const source of ORCHESTRATOR_SPAWN_SOURCES) {
 			const props = await sanitizeRendererProperties("ao.renderer.orchestrator_spawn_succeeded", {
 				project_id: "demo-project",
 				source,

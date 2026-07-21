@@ -9,6 +9,8 @@ import type { DaemonStatus } from "./shared/daemon-status";
 import type { TelemetryBootstrap } from "./shared/telemetry";
 import type { MigrationState } from "./main/app-state";
 import type { UpdateSettings, UpdateStatus } from "./main/update-settings";
+import type { UpdateCheckOptions } from "./main/auto-updater";
+import type { FeatureBuild } from "./main/feature-builds";
 import type {
 	BrowserAnnotationCancelPayload,
 	BrowserAnnotationModeInput,
@@ -168,8 +170,8 @@ const api = {
 	},
 	updates: {
 		getStatus: () => ipcRenderer.invoke("updates:getStatus") as Promise<UpdateStatus>,
-		check: () => ipcRenderer.invoke("updates:check") as Promise<void>,
-		download: () => ipcRenderer.invoke("updates:download") as Promise<void>,
+		check: (options?: UpdateCheckOptions) => ipcRenderer.invoke("updates:check", options) as Promise<void>,
+		download: (requestId?: string) => ipcRenderer.invoke("updates:download", requestId) as Promise<void>,
 		install: () => ipcRenderer.invoke("updates:install") as Promise<void>,
 		onStatus: (listener: (status: UpdateStatus) => void) => {
 			const wrapped = (_event: Electron.IpcRendererEvent, status: UpdateStatus) => listener(status);
@@ -178,6 +180,10 @@ const api = {
 				ipcRenderer.off("updates:status", wrapped);
 			};
 		},
+	},
+	featureBuilds: {
+		list: () => ipcRenderer.invoke("featureBuilds:list") as Promise<FeatureBuild[]>,
+		getActive: () => ipcRenderer.invoke("featureBuilds:getActive") as Promise<{ pr: number } | null>,
 	},
 };
 

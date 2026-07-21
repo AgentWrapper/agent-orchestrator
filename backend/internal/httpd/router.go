@@ -47,12 +47,14 @@ type ControlDeps struct {
 func NewRouterWithControl(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager, deps APIDeps, control ControlDeps) chi.Router {
 	log = loggerOrDefault(log)
 	r := chi.NewRouter()
+	api := NewAPI(cfg, deps)
 
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(requestLogger(log, deps.Telemetry))
 	r.Use(recoverTelemetry(log, deps.Telemetry))
 	r.Use(corsMiddleware(cfg.AllowedOrigins))
+	r.Use(previewOriginMiddleware(api.sessions))
 
 	// JSON envelopes for unmatched routes / methods — chi's defaults are
 	// text/plain, which would break consumers that parse every response as
@@ -65,9 +67,20 @@ func NewRouterWithControl(cfg config.Config, log *slog.Logger, termMgr *terminal
 	mountControl(r, control)
 	mountTelemetry(r, deps.Telemetry)
 	mountMobile(r, deps.Mobile)
-	NewAPI(cfg, deps).Register(r)
+	api.Register(r)
 
 	return r
+}
+
+func previewOriginMiddleware(sessions *controllers.SessionsController) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if sessions != nil && sessions.PreviewOrigin(w, r) {
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // mountHealth registers the liveness and readiness probes the Electron

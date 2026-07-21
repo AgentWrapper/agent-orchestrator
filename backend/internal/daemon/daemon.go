@@ -23,8 +23,10 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/notify"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/preview"
+	"github.com/aoagents/agent-orchestrator/backend/internal/push"
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
+	devimportsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/devimport"
 	importsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/importer"
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
@@ -133,7 +135,6 @@ func Run() error {
 		return fmt.Errorf("wire session service: %w", err)
 	}
 	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, log)
-	previewDone := preview.NewPoller(store, sessionSvc, "http://"+cfg.Addr(), preview.PollerConfig{Logger: log}).Start(ctx)
 	agentSvc := agentsvc.New()
 	go func() {
 		if _, err := agentSvc.Refresh(ctx); err != nil {
@@ -160,6 +161,31 @@ func Run() error {
 	// terminal mux) as session panes, but keep their own ids, storage, and
 	// lifetime — see internal/service/shellterm.
 	shellTermSvc := startShellTerminals(ctx, cfg, runtimeAdapter, store, projectSvc, log)
+	// Push-device registry: persisted phones that receive OS push notifications.
+	// A load failure must not block boot — degrade to no push rather than refusing
+	// to start the daemon. pushRegistry (interface) is assigned only when load
+	// succeeds so a failure leaves a true nil interface (not a non-nil interface
+	// wrapping a nil pointer), which the controller's nil guard relies on to
+	// return 501. pushDevices keeps the concrete registry for the dispatcher.
+	var (
+		pushRegistry controllers.PushRegistry
+		pushDevices  *mobilebridge.DeviceRegistry
+	)
+	if reg, regErr := mobilebridge.LoadRegistry(mobilebridge.PushDevicesPath(cfg.DataDir)); regErr != nil {
+		log.Warn("load push device registry failed; push notifications disabled", "err", regErr)
+	} else {
+		pushRegistry = reg
+		pushDevices = reg
+	}
+
+	// Push dispatcher: an additive notification-hub subscriber that relays each
+	// new notification to every registered device via the Expo Push Service. Runs
+	// for the daemon's lifetime and stops when ctx is cancelled. EXPO_ACCESS_TOKEN
+	// (optional) enables Expo's enforced push security when set.
+	if pushDevices != nil {
+		dispatcher := push.NewDispatcher(notificationHub, pushDevices, push.NewExpoClient(os.Getenv("EXPO_ACCESS_TOKEN")), log)
+		go dispatcher.Run(ctx)
+	}
 
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
 		Projects:           projectSvc,
@@ -168,6 +194,7 @@ func Run() error {
 		Reviews:            reviewSvc,
 		Notifications:      notifier,
 		NotificationStream: notificationHub,
+		Push:               pushRegistry,
 		Import:             importsvc.New(importsvc.Deps{Store: store}),
 		ShellTerminals:     shellTermSvc,
 		CDC:                store,
@@ -175,16 +202,28 @@ func Run() error {
 		Activity:           lcStack.LCM,
 		Telemetry:          telemetrySink,
 		Mobile:             mc,
+		DevImport: devimportsvc.New(devimportsvc.Deps{
+			Store:         store,
+			TargetDataDir: cfg.DataDir,
+			OpenSource: func(ctx context.Context, dataDir string) (devimportsvc.SourceStore, error) {
+				return sqlite.OpenReadOnly(ctx, dataDir)
+			},
+		}),
+		CDC:       store,
+		Events:    cdcPipe.Broadcaster,
+		Activity:  lcStack.LCM,
+		Telemetry: telemetrySink,
+		Mobile:    mc,
 	})
 	if err != nil {
 		stop()
-		<-previewDone
 		lcStack.Stop()
 		if cdcErr := cdcPipe.Stop(); cdcErr != nil {
 			log.Error("cdc pipeline shutdown", "err", cdcErr)
 		}
 		return err
 	}
+	previewDone := preview.NewPoller(store, sessionSvc, "http://"+srv.Addr().String(), preview.PollerConfig{Logger: log}).Start(ctx)
 
 	// Late-bind: the LAN listener shares the exact loopback router instance so
 	// the LAN surface and loopback surface never drift apart.

@@ -33,6 +33,38 @@ describe("feedFilename", () => {
 		expect(feedFilename("nightly", "mac")).toBe("nightly-mac.yml");
 		expect(feedFilename("nightly", "linux")).toBe("nightly-linux.yml");
 	});
+
+	// Channel-isolation invariant: a pr<N> channel MUST produce its own namespaced
+	// feed filenames and MUST NOT produce filenames that start with "latest" or
+	// "nightly". This guards against the #2270 poisoning class where a pr-channel
+	// feed accidentally overwrites the shared latest-mac.yml / nightly-mac.yml.
+	describe("pr<N> channel isolation (guards against #2270 latest-mac.yml poisoning)", () => {
+		it("pr2270 + mac => pr2270-mac.yml", () => {
+			expect(feedFilename("pr2270", "mac")).toBe("pr2270-mac.yml");
+		});
+
+		it("pr2270 + linux => pr2270-linux.yml", () => {
+			expect(feedFilename("pr2270", "linux")).toBe("pr2270-linux.yml");
+		});
+
+		it("pr2270 + win => pr2270.yml", () => {
+			expect(feedFilename("pr2270", "win")).toBe("pr2270.yml");
+		});
+
+		it.each(["mac", "linux", "win"])(
+			"pr<N> channel never yields a filename starting with 'latest' (platform: %s)",
+			(platform) => {
+				expect(feedFilename("pr2270", platform)).not.toMatch(/^latest/);
+			},
+		);
+
+		it.each(["mac", "linux", "win"])(
+			"pr<N> channel never yields a filename starting with 'nightly' (platform: %s)",
+			(platform) => {
+				expect(feedFilename("pr2270", platform)).not.toMatch(/^nightly/);
+			},
+		);
+	});
 });
 
 describe("buildYml", () => {

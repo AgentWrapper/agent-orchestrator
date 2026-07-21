@@ -56,7 +56,16 @@ export function getDownloadTarget(navigator: PlatformNavigator) {
 	if (platform.includes("win")) return { label: "Download for Windows", href: DESKTOP_DOWNLOADS[2].href };
 	if (platform.includes("linux") || platform.includes("x11"))
 		return { label: "Download for Linux", href: DESKTOP_DOWNLOADS[3].href };
+	// macOS reports "MacIntel" on both architectures; default to Apple silicon
+	// (the overwhelming majority of active Macs). Intel users still get the
+	// x64 build from the platform list on the install page.
+	if (platform.includes("mac")) return { label: "Download for macOS", href: DESKTOP_DOWNLOADS[0].href };
 	return null;
+}
+
+/** True when the brew install command applies to this device (macOS desktops). */
+export function isMacDesktop(navigator: PlatformNavigator): boolean {
+	return platformDescription(navigator).includes("mac") && !isPortableDevice(navigator);
 }
 
 export function getDownloadOptions(navigator: PlatformNavigator) {

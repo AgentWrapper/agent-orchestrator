@@ -27,9 +27,12 @@ describe("desktop download selection", () => {
 		}
 	});
 
-	it("offers both macOS architectures on Mac desktops", () => {
+	it("links Mac desktops directly to the Apple silicon build and lists both architectures", () => {
 		const mac = device("MacIntel", "Macintosh; Intel Mac OS X 10_15_7");
-		expect(getDownloadTarget(mac)).toBeNull();
+		expect(getDownloadTarget(mac)).toEqual({
+			label: "Download for macOS",
+			href: DESKTOP_DOWNLOADS[0].href,
+		});
 		expect(getDownloadOptions(mac)).toEqual(DESKTOP_DOWNLOADS.slice(0, 2));
 	});
 
