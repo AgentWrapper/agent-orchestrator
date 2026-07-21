@@ -1,7 +1,7 @@
 ---
 name: using-ao
-description: Catalog of the AO (Agent Orchestrator) `ao` CLI: spawning workers, managing sessions and projects, sending messages, previewing pages, and daemon control. Use when using the ao CLI, spawning workers, or managing AO sessions in an AO workspace.
-trigger: Using the ao CLI in an AO workspace: spawning workers, managing sessions/projects, sending messages, previewing pages.
+description: "Catalog of the AO (Agent Orchestrator) `ao` CLI: spawning workers, managing sessions and projects, sending messages, previewing pages, and daemon control. Use when using the ao CLI, spawning workers, or managing AO sessions in an AO workspace."
+trigger: "Using the ao CLI in an AO workspace: spawning workers, managing sessions/projects, sending messages, previewing pages."
 ---
 
 # AO CLI Catalog
