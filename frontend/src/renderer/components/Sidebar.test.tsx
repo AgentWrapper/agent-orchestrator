@@ -8,22 +8,26 @@ import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
 import { useUiStore } from "../stores/ui-store";
 
-const { getMock, navigateMock, mockParams, renameSessionMock, updateStatusMock } = vi.hoisted(() => ({
-	getMock: vi.fn(),
-	navigateMock: vi.fn(),
-	mockParams: { projectId: undefined as string | undefined },
-	renameSessionMock: vi.fn().mockResolvedValue(undefined),
-	updateStatusMock: vi.fn(),
-}));
+const { getMock, navigateMock, mockParams, renameSessionMock, spawnOrchestratorMock, updateStatusMock } = vi.hoisted(
+	() => ({
+		getMock: vi.fn(),
+		navigateMock: vi.fn(),
+		mockParams: { projectId: undefined as string | undefined, sessionId: undefined as string | undefined },
+		renameSessionMock: vi.fn().mockResolvedValue(undefined),
+		spawnOrchestratorMock: vi.fn(),
+		updateStatusMock: vi.fn(),
+	}),
+);
 
 vi.mock("../lib/rename-session", () => ({ renameSession: renameSessionMock }));
+vi.mock("../lib/spawn-orchestrator", () => ({ spawnOrchestrator: spawnOrchestratorMock }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@tanstack/react-router")>();
 	return {
 		...actual,
 		useNavigate: () => navigateMock,
-		useParams: () => ({}),
+		useParams: () => mockParams,
 		useRouterState: ({ select }: { select: (state: { location: { pathname: string } }) => unknown }) =>
 			select({ location: { pathname: "/" } }),
 	};
@@ -65,6 +69,19 @@ const session: WorkspaceSession = {
 	provider: "claude-code",
 	kind: "worker",
 	branch: "session/proj-1-1",
+	status: "working",
+	updatedAt: "2026-06-30T00:00:00Z",
+	prs: [],
+};
+
+const orchestrator: WorkspaceSession = {
+	id: "proj-1-orch",
+	workspaceId: "proj-1",
+	workspaceName: "Project One",
+	title: "orchestrator",
+	provider: "claude-code",
+	kind: "orchestrator",
+	branch: "main",
 	status: "working",
 	updatedAt: "2026-06-30T00:00:00Z",
 	prs: [],
@@ -194,8 +211,10 @@ beforeEach(() => {
 	});
 	navigateMock.mockReset();
 	renameSessionMock.mockReset().mockResolvedValue(undefined);
+	spawnOrchestratorMock.mockReset();
 	updateStatusMock.mockReset().mockResolvedValue({ state: "idle" });
 	mockParams.projectId = undefined;
+	mockParams.sessionId = undefined;
 });
 
 afterEach(() => {
@@ -907,5 +926,72 @@ describe("Sidebar", () => {
 			expect(button).toHaveClass("text-working", "bg-working/12");
 		}
 		expect(screen.getByText("v9.9.9 ready")).toBeInTheDocument();
+	});
+
+	it("pins an orchestrator row at the top of the project's session group", () => {
+		renderSidebar({
+			workspaces: [{ ...workspace, sessions: [orchestrator, session] }],
+		});
+
+		const orchestratorRow = screen.getByLabelText("Open Orchestrator");
+		const workerRow = screen.getByLabelText("Open fix login");
+		expect(orchestratorRow).toBeInTheDocument();
+		expect(workerRow).toBeInTheDocument();
+		expect(workerRow.compareDocumentPosition(orchestratorRow) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+	});
+
+	it("navigates to the live orchestrator session when the pinned row is clicked", async () => {
+		const user = userEvent.setup();
+		renderSidebar({
+			workspaces: [{ ...workspace, sessions: [orchestrator, session] }],
+		});
+
+		await user.click(screen.getByLabelText("Open Orchestrator"));
+
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "proj-1", sessionId: "proj-1-orch" },
+		});
+	});
+
+	it("spawns an orchestrator and navigates to it when the pinned row is clicked and none exists", async () => {
+		const user = userEvent.setup();
+		spawnOrchestratorMock.mockResolvedValue("proj-1-orch-spawned");
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [] }] });
+
+		await user.click(screen.getByLabelText("Spawn Orchestrator"));
+
+		await waitFor(() => expect(spawnOrchestratorMock).toHaveBeenCalledWith("proj-1", "sidebar"));
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "proj-1", sessionId: "proj-1-orch-spawned" },
+		});
+	});
+
+	it("shows the orchestrator's live status dot from its attention zone", () => {
+		renderSidebar({
+			workspaces: [
+				{
+					...workspace,
+					sessions: [{ ...orchestrator, status: "needs_input" }, session],
+				},
+			],
+		});
+
+		const dot = screen.getByLabelText("Open Orchestrator").querySelector('span[aria-hidden="true"]');
+		expect(dot).toHaveClass("bg-warning");
+		expect(dot).not.toHaveClass("bg-working");
+	});
+
+	it("marks the orchestrator row as active when its session is selected", () => {
+		mockParams.projectId = "proj-1";
+		mockParams.sessionId = "proj-1-orch";
+		renderSidebar({
+			workspaces: [{ ...workspace, sessions: [orchestrator, session] }],
+		});
+
+		const row = screen.getByLabelText("Open Orchestrator");
+		expect(row).toHaveAttribute("aria-current", "page");
+		expect(row).toHaveClass("before:bg-accent");
 	});
 });

@@ -3,16 +3,11 @@ import { useNavigate, useParams } from "@tanstack/react-router";
 import { GitBranch, LayoutDashboard, PanelRightClose, PanelRightOpen, Plus, Square, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { NotificationCenter } from "./NotificationCenter";
-import {
-	findProjectOrchestrator,
-	isOrchestratorSession,
-	sessionIsActive,
-	type WorkspaceSession,
-} from "../types/workspace";
+import { isOrchestratorSession, sessionIsActive, type WorkspaceSession } from "../types/workspace";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { useOpenOrchestrator } from "../hooks/useOpenOrchestrator";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
-import { spawnOrchestrator } from "../lib/spawn-orchestrator";
-import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
+import { addRendererExceptionStep, captureRendererEvent } from "../lib/telemetry";
 import { useUiStore } from "../stores/ui-store";
 import { OrchestratorIcon } from "./icons";
 import { cn } from "../lib/utils";
@@ -49,7 +44,6 @@ const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperti
 // agent-orchestrator keeps those as two components aligned only by CSS.
 export function ShellTopbar() {
 	const navigate = useNavigate();
-	const queryClient = useQueryClient();
 	const params = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
 	const currentSessionId = params.sessionId;
 	const isInspectorOpen = useUiStore((state) =>
@@ -58,7 +52,6 @@ export function ShellTopbar() {
 	const toggleInspector = useUiStore((state) => state.toggleInspector);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
-	const [isSpawning, setIsSpawning] = useState(false);
 	const all = useWorkspaceQuery().data ?? [];
 
 	const session = params.sessionId
@@ -76,8 +69,12 @@ export function ShellTopbar() {
 	const isRootBoardRoute = !isSessionRoute && !isProjectBoardRoute;
 	const project = projectId ? all.find((workspace) => workspace.id === projectId) : undefined;
 	const projectLabel = project?.name ?? session?.workspaceName ?? (projectId ? "" : "agent-orchestrator");
-	const orchestrator = projectId ? findProjectOrchestrator(all, projectId) : undefined;
 	const isProjectRestarting = projectId ? restartingProjectIds.has(projectId) : false;
+	const { orchestrator, openOrchestrator, isSpawning } = useOpenOrchestrator(
+		projectId ?? "",
+		project?.sessions ?? [],
+		"topbar",
+	);
 
 	if (isLinux && !isSessionRoute) {
 		return null;
@@ -96,7 +93,7 @@ export function ShellTopbar() {
 		toggleInspector(currentSessionId);
 	};
 
-	const openOrchestrator = async () => {
+	const handleOpenOrchestrator = () => {
 		if (!projectId) return;
 		void addRendererExceptionStep("Orchestrator open requested", {
 			source: "orchestrator-open",
@@ -105,32 +102,7 @@ export function ShellTopbar() {
 			project_id: projectId,
 		});
 		void captureRendererEvent("ao.renderer.orchestrator_open_requested", { project_id: projectId });
-		if (orchestrator) {
-			void navigate({
-				to: "/projects/$projectId/sessions/$sessionId",
-				params: { projectId, sessionId: orchestrator.id },
-			});
-			return;
-		}
-		setIsSpawning(true);
-		try {
-			const sessionId = await spawnOrchestrator(projectId, "topbar");
-			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-			void navigate({
-				to: "/projects/$projectId/sessions/$sessionId",
-				params: { projectId, sessionId },
-			});
-		} catch (error) {
-			void captureRendererException(error, {
-				source: "orchestrator-open",
-				operation: "open_orchestrator",
-				surface: isSessionRoute ? "session_detail" : "project_board",
-				project_id: projectId,
-			});
-			console.error("Failed to spawn orchestrator:", error);
-		} finally {
-			setIsSpawning(false);
-		}
+		void openOrchestrator();
 	};
 
 	return (
@@ -210,7 +182,7 @@ export function ShellTopbar() {
 							<TopbarButton
 								aria-label="Open orchestrator"
 								disabled={isSpawning || isProjectRestarting}
-								onClick={() => void openOrchestrator()}
+								onClick={() => void handleOpenOrchestrator()}
 								style={noDragStyle}
 								variant="primary"
 							>
