@@ -9,7 +9,11 @@ const STATUS_REFRESH_MS = 2_000;
 const READY_STATUS_REFRESH_MS = 10_000;
 
 export function useDaemonStatus(queryClient: QueryClient = defaultQueryClient) {
-	const [status, setStatus] = useState<DaemonStatus>({ state: "stopped" });
+	// The first IPC status read is asynchronous. Treat that handshake as startup
+	// rather than briefly claiming the daemon is stopped; the shell uses this
+	// state to keep persisted projects behind a loading treatment until it knows
+	// whether the daemon is ready.
+	const [status, setStatus] = useState<DaemonStatus>({ state: "starting" });
 	const statusRef = useRef(status);
 
 	useEffect(() => {
@@ -34,7 +38,12 @@ export function useDaemonStatus(queryClient: QueryClient = defaultQueryClient) {
 				})
 				.catch(() => {
 					// IPC unavailable (browser preview, broken preload): stay on the
-					// last known status and keep the recovery loop alive.
+					// last known status and keep the recovery loop alive. The initial
+					// synthetic startup state is not a known daemon status, so settle it
+					// to stopped instead of leaving the project loader running forever.
+					if (active && requestVersion === statusVersion && statusRef.current.state === "starting") {
+						applyStatus({ state: "stopped" });
+					}
 				})
 				.finally(() => {
 					if (!active || requestVersion !== statusVersion) return;

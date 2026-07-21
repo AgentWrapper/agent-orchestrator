@@ -80,6 +80,8 @@ function ShellLayout() {
 	const workspaceQuery = useWorkspaceQuery();
 	const workspaces = workspaceQuery.data ?? [];
 	const daemonStatus = useDaemonStatus(queryClient);
+	const [isLoadingProjects, setIsLoadingProjects] = useState(true);
+	const workspaceLoadPortRef = useRef<number | undefined>(undefined);
 	const agentCatalogPortRef = useRef<number | undefined>(undefined);
 	const { themePreference, resolvedTheme, isSidebarOpen, toggleSidebar } = useUiStore();
 	const syncSystemTheme = useUiStore((state) => state.syncSystemTheme);
@@ -273,13 +275,30 @@ function ShellLayout() {
 	}, [resolvedTheme]);
 
 	useEffect(() => {
-		if (daemonStatus.state !== "ready" || !daemonStatus.port) return;
-		if (agentCatalogPortRef.current === daemonStatus.port) return;
+		if (daemonStatus.state !== "ready" || !daemonStatus.port) {
+			workspaceLoadPortRef.current = undefined;
+			if (daemonStatus.state !== "starting") setIsLoadingProjects(false);
+			return;
+		}
+		if (agentCatalogPortRef.current === daemonStatus.port && workspaceLoadPortRef.current === daemonStatus.port) {
+			return;
+		}
 
 		agentCatalogPortRef.current = daemonStatus.port;
 		void queryClient.invalidateQueries({ queryKey: agentsQueryKey });
 		void queryClient.fetchQuery({ ...agentsQueryOptions, queryFn: refreshAgents });
-		void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+
+		workspaceLoadPortRef.current = daemonStatus.port;
+		setIsLoadingProjects(true);
+		let active = true;
+		void Promise.resolve(queryClient.invalidateQueries({ queryKey: workspaceQueryKey }))
+			.catch(() => undefined)
+			.finally(() => {
+				if (active && workspaceLoadPortRef.current === daemonStatus.port) setIsLoadingProjects(false);
+			});
+		return () => {
+			active = false;
+		};
 	}, [daemonStatus.port, daemonStatus.state, queryClient]);
 
 	// Follow OS appearance while the user keeps Theme on System — updates
@@ -343,6 +362,17 @@ function ShellLayout() {
             the chrome the frameless window drops. Renders null on macOS/Linux. */}
 				<WindowTitlebar />
 				{!hideShellTopbar ? <ShellTopbar /> : null}
+				{isLoadingProjects ? (
+					<div
+						aria-label="Loading projects"
+						className="relative z-20 h-0 shrink-0"
+						role="progressbar"
+					>
+						<div className="absolute inset-x-0 top-0 h-0.5 overflow-hidden bg-accent-weak">
+							<div className="h-full w-2/5 animate-project-loading bg-accent motion-reduce:w-full motion-reduce:animate-pulse" />
+						</div>
+					</div>
+				) : null}
 				{/* Controlled by the ui-store so TitlebarNav / Topbar toggles (which
             call the store directly) stay in sync. --sidebar-width chains to
             the drag-resizable --ao-sidebar-w set on :root by useResizable. */}
@@ -364,6 +394,7 @@ function ShellLayout() {
             routes when the shell topbar is visible. */}
 					<Sidebar
 						hideEdgeBorder={isWelcomeBoard}
+						isLoadingProjects={isLoadingProjects}
 						underTopbar={isMac || isWindows || (!hideShellTopbar && (isLinux ? isSessionRoute : true))}
 						topbarOffset={isWindows && hideShellTopbar ? "titlebar" : "toolbar"}
 						onCreateProject={createProject}
@@ -374,7 +405,16 @@ function ShellLayout() {
 					/>
 					<main className="flex min-w-0 flex-1 flex-col overflow-x-hidden">
 						<div className="min-h-0 flex-1 overflow-x-hidden">
-							<Outlet />
+							{isLoadingProjects ? (
+								<div className="flex h-full items-center justify-center px-6 text-center" aria-live="polite">
+									<div>
+										<p className="text-sm font-medium text-foreground">Loading your projects…</p>
+										<p className="mt-1 text-xs text-passive">Checking existing projects and sessions.</p>
+									</div>
+								</div>
+							) : (
+								<Outlet />
+							)}
 						</div>
 					</main>
 					{/* When ShellTopbar is hidden on the welcome board, keep a macOS

@@ -6,6 +6,7 @@ import type { WorkspaceSummary } from "../types/workspace";
 
 const shellMocks = vi.hoisted(() => {
 	const state = {
+		daemonStatus: { state: "stopped" } as { state: "starting" | "ready" | "stopped" | "error"; port?: number },
 		newSessionListener: undefined as (() => void) | undefined,
 		keyboardShortcutsListener: undefined as (() => void) | undefined,
 		routeParams: {} as { projectId?: string; sessionId?: string },
@@ -38,7 +39,7 @@ vi.mock("@tanstack/react-query", () => ({
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
 	...(await importOriginal<typeof import("@tanstack/react-router")>()),
 	createFileRoute: () => (options: unknown) => ({ options }),
-	Outlet: () => null,
+	Outlet: () => <div data-testid="shell-outlet" />,
 	useMatchRoute: () => () => false,
 	useNavigate: () => shellMocks.navigate,
 	useParams: () => shellMocks.state.routeParams,
@@ -60,7 +61,7 @@ vi.mock("../hooks/useWorkspaceQuery", () => ({
 }));
 
 vi.mock("../hooks/useDaemonStatus", () => ({
-	useDaemonStatus: () => ({ state: "stopped" }),
+	useDaemonStatus: () => shellMocks.state.daemonStatus,
 }));
 
 vi.mock("../hooks/useAgentsQuery", () => ({
@@ -141,9 +142,21 @@ beforeEach(() => {
 	shellMocks.onKeyboardShortcutsHelp.mockClear();
 	shellMocks.state.newSessionListener = undefined;
 	shellMocks.state.keyboardShortcutsListener = undefined;
+	shellMocks.state.daemonStatus = { state: "stopped" };
 	shellMocks.state.routeParams = {};
 	shellMocks.state.workspaces = workspaces;
 	useUiStore.setState({ createProjectNonce: 0, newTaskRequest: null });
+});
+
+describe("shell project loading state", () => {
+	it("keeps the route content hidden behind an accessible loading bar while the daemon starts", async () => {
+		shellMocks.state.daemonStatus = { state: "starting" };
+		await renderShell();
+
+		expect(screen.getByRole("progressbar", { name: "Loading projects" })).toBeVisible();
+		expect(screen.getByText("Loading your projects…")).toBeVisible();
+		expect(screen.queryByTestId("shell-outlet")).not.toBeInTheDocument();
+	});
 });
 
 describe("shell keyboard-shortcuts help subscription", () => {
