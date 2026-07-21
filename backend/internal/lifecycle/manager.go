@@ -401,7 +401,8 @@ func (m *Manager) DispatchAllPendingWorkerIdleEvents(ctx context.Context) {
 
 func (m *Manager) projectDispatchLock(project domain.ProjectID) *sync.Mutex {
 	lock, _ := m.dispatchLocks.LoadOrStore(project, &sync.Mutex{})
-	return lock.(*sync.Mutex)
+	mu, _ := lock.(*sync.Mutex)
+	return mu
 }
 
 // safeToDeliver reports whether the orchestrator can receive a coordination
