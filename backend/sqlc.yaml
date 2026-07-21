@@ -108,6 +108,50 @@ sql:
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
               type: "ActivityState"
+          - column: "usage_bindings.session_id"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "SessionID"
+          - column: "usage_bindings.harness"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "AgentHarness"
+          - column: "usage_bindings.state"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "UsageBindingState"
+          - column: "usage_sources.kind"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "UsageSourceKind"
+          - column: "usage_sources.state"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "UsageSourceState"
+          - column: "model_usage_events.project_id"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "ProjectID"
+          - column: "model_usage_events.session_id"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "SessionID"
+          - column: "model_usage_events.harness"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "AgentHarness"
+          - column: "model_usage_events.cost_basis"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "CostBasis"
+          - column: "model_usage_events.token_confidence"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "TokenConfidence"
+          - column: "model_usage_events.cost_confidence"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "CostConfidence"
           - column: "review.session_id"
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
