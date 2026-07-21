@@ -241,10 +241,13 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		setContextMenu((current) => ({ ...current, open }));
 	}, []);
 
-	const runContextMenuAction = useCallback((action: TerminalContextMenuAction) => {
-		contextMenuActionsRef.current?.[action]();
-		setContextMenuOpen(false);
-	}, [setContextMenuOpen]);
+	const runContextMenuAction = useCallback(
+		(action: TerminalContextMenuAction) => {
+			contextMenuActionsRef.current?.[action]();
+			setContextMenuOpen(false);
+		},
+		[setContextMenuOpen],
+	);
 
 	useEffect(() => {
 		callbacksRef.current = props;
