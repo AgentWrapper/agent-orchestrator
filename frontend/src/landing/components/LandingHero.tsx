@@ -595,11 +595,11 @@ function HeroDashboardMockup() {
 									</button>
 									<button
 										type="button"
-										onClick={() => showTerminal(`Spawn orchestrator · ${activeProjectLabel}`)}
+										onClick={() => showTerminal(`Orchestrator · ${activeProjectLabel}`)}
 										className="hero-pressable inline-flex h-[34px] items-center gap-1.5 rounded-[7px] bg-[color:var(--accent)] px-[15px] text-[13px] font-semibold leading-none text-[#11140c] hover:brightness-110"
 									>
 										<NetworkIcon className="h-3.5 w-3.5" />
-										Spawn Orchestrator
+										Orchestrator
 									</button>
 								</div>
 							</div>
