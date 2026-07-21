@@ -322,6 +322,21 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: provision: %w", id, err)
 	}
 
+	// CLI agents receive the prompt as text and cannot consume inline binary
+	// data, so any pasted/dropped images are written into the worktree and
+	// referenced by path in the prompt. Done after provisioning (so the worktree
+	// exists) and before the launch command is built (so the references reach
+	// the agent).
+	if len(cfg.Attachments) > 0 {
+		refs, err := writeSpawnAttachments(ws.Path, cfg.Attachments)
+		if err != nil {
+			_ = m.workspace.Destroy(ctx, ws)
+			m.rollbackSpawnSeedRow(ctx, id)
+			return domain.SessionRecord{}, fmt.Errorf("spawn %s: attachments: %w", id, err)
+		}
+		prompt = appendAttachmentReferences(prompt, refs)
+	}
+
 	agent, ok := m.agents.Agent(cfg.Harness)
 	if !ok {
 		m.destroySpawnWorkspace(ctx, ws, workspaceProject)
@@ -1878,6 +1893,92 @@ func promptProjectContext(projectID domain.ProjectID, project domain.ProjectReco
 		DefaultBranch: cfg.DefaultBranch,
 		Path:          project.Path,
 	}
+}
+
+// attachmentsDir is the worktree-relative directory where spawn image
+// attachments are written.
+const attachmentsDir = ".ao/attachments"
+
+// writeSpawnAttachments writes each attachment into the worktree under
+// attachmentsDir as image-1<ext>, image-2<ext>, ... and returns the
+// worktree-relative paths in order. The files are excluded from git via the
+// worktree's info/exclude so they do not dirty the working tree.
+func writeSpawnAttachments(workspacePath string, attachments []ports.SpawnAttachment) ([]string, error) {
+	dir := filepath.Join(workspacePath, filepath.FromSlash(attachmentsDir))
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return nil, fmt.Errorf("create attachments dir: %w", err)
+	}
+	refs := make([]string, 0, len(attachments))
+	for i, a := range attachments {
+		ext := a.Ext
+		if ext == "" {
+			ext = ".bin"
+		}
+		name := fmt.Sprintf("image-%d%s", i+1, ext)
+		if err := os.WriteFile(filepath.Join(dir, name), a.Data, 0o600); err != nil {
+			return nil, fmt.Errorf("write attachment %d: %w", i+1, err)
+		}
+		// Worktree-relative reference, always forward-slashed for the prompt.
+		refs = append(refs, attachmentsDir+"/"+name)
+	}
+	excludeAttachmentsDir(workspacePath)
+	return refs, nil
+}
+
+// excludeAttachmentsDir adds the attachments directory to the worktree's local
+// git excludes so pasted images do not show up as untracked changes. Best
+// effort: a failure here is non-fatal since the attachment is already written.
+func excludeAttachmentsDir(workspacePath string) {
+	// In a linked worktree, .git is a file pointing at the real gitdir; use
+	// `git rev-parse` to resolve the per-worktree git dir rather than assuming
+	// a .git directory.
+	out, err := exec.Command("git", "-C", workspacePath, "rev-parse", "--git-dir").Output()
+	if err != nil {
+		return
+	}
+	gitDir := strings.TrimSpace(string(out))
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(workspacePath, gitDir)
+	}
+	infoDir := filepath.Join(gitDir, "info")
+	if err := os.MkdirAll(infoDir, 0o750); err != nil {
+		return
+	}
+	excludePath := filepath.Join(infoDir, "exclude")
+	existing, _ := os.ReadFile(excludePath)
+	entry := "/" + attachmentsDir + "/"
+	if strings.Contains(string(existing), entry) {
+		return
+	}
+	f, err := os.OpenFile(excludePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	defer func() { _ = f.Close() }()
+	prefix := ""
+	if len(existing) > 0 && !strings.HasSuffix(string(existing), "\n") {
+		prefix = "\n"
+	}
+	_, _ = f.WriteString(prefix + entry + "\n")
+}
+
+// appendAttachmentReferences appends a block listing the attached image paths so
+// the agent knows to read them. Placed after the human's brief.
+func appendAttachmentReferences(prompt string, refs []string) string {
+	if len(refs) == 0 {
+		return prompt
+	}
+	var b strings.Builder
+	b.WriteString(prompt)
+	if strings.TrimSpace(prompt) != "" {
+		b.WriteString("\n\n")
+	}
+	b.WriteString("Attached images (read these files in the workspace for visual context):")
+	for _, ref := range refs {
+		b.WriteString("\n- ")
+		b.WriteString(ref)
+	}
+	return b.String()
 }
 
 // buildSpawnTexts returns the user-facing prompt and the system prompt to

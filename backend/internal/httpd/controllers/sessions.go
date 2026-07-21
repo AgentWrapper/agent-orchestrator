@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"io"
 	"net/http"
@@ -27,7 +28,26 @@ const (
 	maxPromptLen      = 4096
 	maxMessageLen     = 4096
 	maxDisplayNameLen = 20
+
+	// Attachment limits guard the daemon against oversized spawn bodies. Images
+	// are pasted/dropped into the task brief and inlined as base64 in the JSON
+	// body, so the caps are deliberately conservative.
+	maxAttachments      = 8
+	maxAttachmentBytes  = 10 << 20 // 10 MiB per image, decoded
+	maxAttachmentsBytes = 25 << 20 // 25 MiB total, decoded
 )
+
+// attachmentExtByMime maps the accepted image MIME types to the file extension
+// used when the image is written into the worktree.
+var attachmentExtByMime = map[string]string{
+	"image/png":     ".png",
+	"image/jpeg":    ".jpg",
+	"image/jpg":     ".jpg",
+	"image/gif":     ".gif",
+	"image/webp":    ".webp",
+	"image/svg+xml": ".svg",
+	"image/bmp":     ".bmp",
+}
 
 var errPreviewFileNotFound = errors.New("preview file not found")
 
@@ -139,12 +159,60 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 	if in.Kind == "" {
 		in.Kind = domain.KindWorker
 	}
-	sess, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, Kind: in.Kind, Harness: in.Harness, Branch: in.Branch, Prompt: in.Prompt, DisplayName: displayName})
+	attachments, attachErr := decodeSpawnAttachments(in.Attachments)
+	if attachErr != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", attachErr.code, attachErr.message, nil)
+		return
+	}
+	sess, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, Kind: in.Kind, Harness: in.Harness, Branch: in.Branch, Prompt: in.Prompt, DisplayName: displayName, Attachments: attachments})
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
 	}
 	envelope.WriteJSON(w, http.StatusCreated, SessionResponse{Session: sessionView(sess)})
+}
+
+// spawnAttachmentError carries a client-facing API error code + message for a
+// rejected attachment payload.
+type spawnAttachmentError struct {
+	code    string
+	message string
+}
+
+// decodeSpawnAttachments validates and base64-decodes the inline image
+// attachments from a spawn request, enforcing count, per-image, and total size
+// caps. It returns a nil slice when there are no attachments.
+func decodeSpawnAttachments(in []SpawnAttachmentInput) ([]ports.SpawnAttachment, *spawnAttachmentError) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+	if len(in) > maxAttachments {
+		return nil, &spawnAttachmentError{"TOO_MANY_ATTACHMENTS", "too many attachments"}
+	}
+	out := make([]ports.SpawnAttachment, 0, len(in))
+	total := 0
+	for _, a := range in {
+		ext, ok := attachmentExtByMime[strings.ToLower(strings.TrimSpace(a.MimeType))]
+		if !ok {
+			return nil, &spawnAttachmentError{"UNSUPPORTED_ATTACHMENT_TYPE", "unsupported attachment type"}
+		}
+		data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(a.Data))
+		if err != nil {
+			return nil, &spawnAttachmentError{"INVALID_ATTACHMENT_DATA", "attachment data is not valid base64"}
+		}
+		if len(data) == 0 {
+			return nil, &spawnAttachmentError{"INVALID_ATTACHMENT_DATA", "attachment is empty"}
+		}
+		if len(data) > maxAttachmentBytes {
+			return nil, &spawnAttachmentError{"ATTACHMENT_TOO_LARGE", "attachment is too large"}
+		}
+		total += len(data)
+		if total > maxAttachmentsBytes {
+			return nil, &spawnAttachmentError{"ATTACHMENTS_TOO_LARGE", "attachments are too large"}
+		}
+		out = append(out, ports.SpawnAttachment{Ext: ext, Data: data})
+	}
+	return out, nil
 }
 
 func (c *SessionsController) get(w http.ResponseWriter, r *http.Request) {
