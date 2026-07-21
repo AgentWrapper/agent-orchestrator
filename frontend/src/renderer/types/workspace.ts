@@ -190,13 +190,7 @@ export type WorkspaceRepoSummary = {
 
 /** Glanceable worker status. Maps 1:1 to the accent colors in DESIGN.md. */
 export type WorkerDisplayStatus =
-	| "working"
-	| "needs_you"
-	| "mergeable"
-	| "ci_failed"
-	| "no_signal"
-	| "done"
-	| "unknown";
+	"working" | "needs_you" | "mergeable" | "ci_failed" | "no_signal" | "done" | "unknown";
 
 export function workerDisplayStatus(session: WorkspaceSession): WorkerDisplayStatus {
 	if (session.displayStatus) return session.displayStatus;
