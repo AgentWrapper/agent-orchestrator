@@ -8,7 +8,6 @@ import type { UpdateChannel, UpdateSettings, UpdateState, UpdateStatus } from ".
 import { ConfirmDialog } from "../ConfirmDialog";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { Skeleton } from "../ui/skeleton";
 import { SettingsOptionMenu } from "./SettingsOptionMenu";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
@@ -252,19 +251,9 @@ function FeatureBuildsSelect({
 		queryFn: () => aoBridge.featureBuilds.list(),
 	});
 
-	if (buildsQuery.isLoading) {
-		return (
-			<SettingsRow icon={GitPullRequest} label="Feature build">
-				<div className="flex w-48 flex-col gap-1">
-					<Skeleton className="h-control-form w-full" />
-				</div>
-			</SettingsRow>
-		);
-	}
-
 	const builds = buildsQuery.data ?? [];
 
-	if (builds.length === 0) {
+	if (!buildsQuery.isLoading && builds.length === 0) {
 		return (
 			<div className="px-1 text-xs text-settings-muted">
 				<span className="sr-only">Feature build</span>
@@ -285,6 +274,7 @@ function FeatureBuildsSelect({
 				value={currentPr === null ? "__none__" : currentPr.toString()}
 				placeholder="Select a feature build..."
 				options={options}
+				disabled={buildsQuery.isLoading}
 				onChange={(nextPr) => {
 					const pr = Number(nextPr);
 					const build = builds.find((b) => b.pr === pr);
@@ -307,7 +297,9 @@ function FeatureBuildsSelect({
 							</span>
 							<div className="flex min-w-0 items-center gap-1.5">
 								<span className="min-w-0 truncate font-mono text-caption text-passive">{build.buildId}</span>
-								<Badge variant={isStale ? "warning" : "neutral"}>{ageLabel}</Badge>
+								<Badge variant={isStale ? "warning" : "neutral"} className="h-3.5 px-1 text-[9px] leading-none">
+									{ageLabel}
+								</Badge>
 							</div>
 						</div>
 					);
