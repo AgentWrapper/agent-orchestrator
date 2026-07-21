@@ -7,8 +7,8 @@ telemetry is enabled.
 
 ## What is collected
 
-- App activation events: `ao.app.active` from the renderer and CLI, each capped
-  at once per UTC day per install
+- App activation events: `ao.app.active` from the renderer and user-context
+  CLI, each capped at once per UTC day per install
 - Renderer load and daily route-surface usage, grouped by coarse surface names
 - Project/task/session UI actions, with project identifiers SHA-256 hashed
 - Renderer exceptions, reduced to error name and coarse context
@@ -62,20 +62,65 @@ properties and person-property cohorts are intentionally unavailable.
 `ao.cli.invoked` is capped at once per command path per UTC day per install, so
 script- or agent-driven polling (`ao status`, `ao session ls`, `ao hooks`
 firing on every agent hook event, ...) reports as "this install used this
-command today" rather than one event per call. Only commands that never
-reflect activity — the supervisor-driven `ao daemon`/`ao start` and the
-self-documenting `ao completion`/`ao help` — are excluded outright. `ao hooks`
-and `ao pty-host` are deliberately NOT excluded: on a headless or CLI-only
-install, agent hook activity may be the only signal that install did anything
-that day, and excluding it would silently zero out `ao.app.active` (and DAU)
-for that install. The per-command daily cap, not exclusion, is what keeps
-their invocation frequency off PostHog. The CLI reservation state is persisted
-under the AO data dir so a daemon restart does not re-emit every polling
-command for the same day.
+command today" rather than one event per call. Commands that never reflect
+product activity — the supervisor-driven `ao daemon`/`ao start`, the
+self-documenting `ao completion`/`ao help`, and the internal Windows
+`ao pty-host` runtime host — are excluded outright.
+
+CLI invocations are classified by actor:
+
+- `actor_type=user`: a user-context CLI command. These can refresh CLI-channel
+  `ao.app.active`.
+- `actor_type=agent`: `ao hooks` and commands run inside an AO-managed agent
+  session (`AO_SESSION_ID` is set). These are useful agent-activity signal but
+  do not refresh `ao.app.active`, because agents can keep running after the
+  human has stopped actively using AO.
+- `actor_type=system`: supervisor/runtime background processes. These are not
+  sent as CLI usage.
+
+The per-command daily cap keeps invocation frequency off PostHog, and the CLI
+reservation state is persisted under the AO data dir so a daemon restart does
+not re-emit every polling command for the same day.
 
 `ao.renderer.route_viewed` is capped at once per coarse surface per UTC day per
 renderer install. This preserves surface adoption and retention signal while
 dropping repeated navigation churn inside the same surface.
+
+## Product Metrics Model
+
+AO currently has a stable install ID, not a signed-in account user ID. That
+means today's DAU/MAU can accurately represent active installs, but not unique
+people across multiple machines. True user-level new/churn/journey metrics
+require an explicit stable user identity from a login, license, or workspace
+account system. That identity should be sent as a first-party AO user ID (or a
+one-way hash of it) only when the user has authenticated or explicitly enabled
+account-level telemetry; it should not be inferred from machine fingerprints,
+paths, git remotes, emails in repo config, or other local data.
+
+The minimum signals for accurate usage analytics are:
+
+- `ao.app.active`: one event per UTC day per install/account when a human uses
+  the desktop app or runs a user-context CLI command. This powers DAU, WAU, MAU,
+  retention, and churn.
+- `ao.projects.created` and `ao.onboarding.first_project_added`: activation
+  funnel from install to first project.
+- `ao.session.spawned`, `ao.session.spawn_failed`, and
+  `ao.onboarding.first_session_spawned`: activation funnel from project to
+  first running agent, plus spawn reliability.
+- `ao.cli.invoked` with `actor_type=user|agent`: command adoption by actor,
+  capped by command/install/day. Agent-context command usage is product signal,
+  but should be analyzed separately from active-user counts.
+- `ao.session.waiting_input_entered/exited`: whether agents are making progress
+  or waiting on the human, with dwell time.
+- Renderer and daemon error/crash events: reliability and support signal.
+
+Signals that should not drive active-user metrics:
+
+- Internal runtime hosts such as `ao pty-host`.
+- Supervisor startup/control commands such as `ao daemon` and `ao start`.
+- Agent hook callbacks and other CLI commands run with `AO_SESSION_ID`, except
+  as separate agent-activity or command-adoption metrics.
+- Raw polling frequency for read-only state commands.
 
 ## Volume Investigation: 2026-07-21
 

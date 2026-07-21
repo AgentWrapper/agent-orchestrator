@@ -210,13 +210,11 @@ type commandContext struct {
 func shouldEmitCLIInvocation(cmd *cobra.Command) bool {
 	switch strings.TrimSpace(cmd.CommandPath()) {
 	// "ao daemon"/"ao start" are supervisor-driven bootstrapping, and
-	// "ao completion"/"ao help" are shell setup and self-documentation, none
-	// of which reflect a human doing something with AO. "ao hooks" and
-	// "ao pty-host" ARE real usage signal (an agent session is doing
-	// something) even though a machine invokes them, so they are allowed
-	// through here; the per-command-path daily cap in httpd/router.go is what
-	// keeps their invocation frequency from reaching PostHog uncapped.
-	case "ao daemon", "ao start", "ao completion", "ao help":
+	// "ao completion"/"ao help" are shell setup and self-documentation, and
+	// "ao pty-host" is an internal Windows runtime host. None reflect user
+	// activity. "ao hooks" is agent activity and is still reported, but the
+	// daemon keeps it out of ao.app.active/DAU.
+	case "ao daemon", "ao start", "ao completion", "ao help", "ao pty-host":
 		return false
 	default:
 		return true
@@ -229,7 +227,18 @@ func (c *commandContext) emitCLIInvoked(ctx context.Context, cmd *cobra.Command)
 	_ = c.postLoopbackJSON(reqCtx, "/internal/telemetry/cli-invoked", map[string]string{
 		"command":     cmd.Name(),
 		"commandPath": cmd.CommandPath(),
+		"actorType":   cliInvocationActorType(cmd),
 	})
+}
+
+func cliInvocationActorType(cmd *cobra.Command) string {
+	if strings.TrimSpace(cmd.CommandPath()) == "ao hooks" {
+		return "agent"
+	}
+	if sessionIDPattern.MatchString(strings.TrimSpace(os.Getenv("AO_SESSION_ID"))) {
+		return "agent"
+	}
+	return "user"
 }
 
 func (c *commandContext) emitCLIUsageError(ctx context.Context, args []string, err error) {
