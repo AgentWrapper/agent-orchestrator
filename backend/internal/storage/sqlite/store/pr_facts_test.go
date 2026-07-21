@@ -78,4 +78,15 @@ func TestListPRFactsForSessionProjectsAllPRsNewestFirst(t *testing.T) {
 	if len(got) != 0 {
 		t.Fatalf("no-PR session = %d facts, want 0", len(got))
 	}
+
+	batch, err := s.ListPRFactsForSessions(ctx, []domain.SessionID{r.ID, empty.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(batch[r.ID]) != 3 || batch[r.ID][0].URL != "old" || batch[r.ID][1].URL != "child" || batch[r.ID][2].URL != "root" {
+		t.Fatalf("batched facts = %+v", batch[r.ID])
+	}
+	if facts, ok := batch[empty.ID]; !ok || len(facts) != 0 {
+		t.Fatalf("batched empty session = present:%v facts:%+v", ok, facts)
+	}
 }

@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -19,6 +20,56 @@ FROM pr_checks WHERE pr_url = ? ORDER BY name, created_at
 
 func (q *Queries) ListChecksByPR(ctx context.Context, prUrl string) ([]PRCheck, error) {
 	rows, err := q.db.QueryContext(ctx, listChecksByPR, prUrl)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PRCheck{}
+	for rows.Next() {
+		var i PRCheck
+		if err := rows.Scan(
+			&i.PRURL,
+			&i.Name,
+			&i.CommitHash,
+			&i.Status,
+			&i.URL,
+			&i.LogTail,
+			&i.CreatedAt,
+			&i.Conclusion,
+			&i.Details,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listChecksByPRs = `-- name: ListChecksByPRs :many
+SELECT pr_url, name, commit_hash, status, url, log_tail, created_at, conclusion, details
+FROM pr_checks
+WHERE pr_url IN (/*SLICE:pr_urls*/?)
+ORDER BY pr_url, name, created_at
+`
+
+func (q *Queries) ListChecksByPRs(ctx context.Context, prUrls []string) ([]PRCheck, error) {
+	query := listChecksByPRs
+	var queryParams []interface{}
+	if len(prUrls) > 0 {
+		for _, v := range prUrls {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:pr_urls*/?", strings.Repeat(",?", len(prUrls))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:pr_urls*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
 	if err != nil {
 		return nil, err
 	}

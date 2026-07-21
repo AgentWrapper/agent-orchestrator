@@ -24,11 +24,14 @@ type Store interface {
 	SetSessionPreviewURL(ctx context.Context, id domain.SessionID, previewURL string, updatedAt time.Time) (bool, error)
 	GetDisplayPRFactsForSession(ctx context.Context, id domain.SessionID) (domain.PRFacts, bool, error)
 	ListPRFactsForSession(ctx context.Context, id domain.SessionID) ([]domain.PRFacts, error)
+	ListPRFactsForSessions(ctx context.Context, ids []domain.SessionID) (map[domain.SessionID][]domain.PRFacts, error)
 	ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]domain.PullRequest, error)
 	ListChecks(ctx context.Context, prURL string) ([]domain.PullRequestCheck, error)
+	ListChecksForPRs(ctx context.Context, prURLs []string) (map[string][]domain.PullRequestCheck, error)
 	ListPRReviews(ctx context.Context, prURL string) ([]domain.PullRequestReview, error)
-	ListPRReviewThreads(ctx context.Context, prURL string) ([]domain.PullRequestReviewThread, error)
+	ListPRReviewsForPRs(ctx context.Context, prURLs []string) (map[string][]domain.PullRequestReview, error)
 	ListPRComments(ctx context.Context, prURL string) ([]domain.PullRequestComment, error)
+	ListPRCommentsForPRs(ctx context.Context, prURLs []string) (map[string][]domain.PullRequestComment, error)
 	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
 }
 
@@ -94,6 +97,10 @@ type Service struct {
 	telemetry           ports.EventSink
 	orchestratorLocksMu sync.Mutex
 	orchestratorLocks   map[domain.ProjectID]*sync.Mutex
+	conversationPathMu  sync.Mutex
+	conversationPaths   map[conversationPathCacheKey]conversationPathCacheEntry
+	semanticMu          sync.Mutex
+	semanticCache       map[string]semanticCacheEntry
 	// signalCapable reports whether a harness has a hook pipeline that can
 	// deliver activity signals at all. Only capable harnesses are eligible for
 	// the no_signal downgrade: a hook-less harness staying silent forever is
@@ -130,7 +137,7 @@ type Deps struct {
 
 // NewWithDeps wires a session service with optional PR-claim dependencies.
 func NewWithDeps(d Deps) *Service {
-	s := &Service{manager: d.Manager, store: d.Store, dataDir: d.DataDir, homeDir: d.HomeDir, prClaimer: d.PRClaimer, scm: d.SCM, tracker: d.Tracker, clock: d.Clock, signalCapable: d.SignalCapable, telemetry: d.Telemetry}
+	s := &Service{manager: d.Manager, store: d.Store, dataDir: d.DataDir, homeDir: d.HomeDir, prClaimer: d.PRClaimer, scm: d.SCM, tracker: d.Tracker, clock: d.Clock, signalCapable: d.SignalCapable, telemetry: d.Telemetry, conversationPaths: make(map[conversationPathCacheKey]conversationPathCacheEntry), semanticCache: make(map[string]semanticCacheEntry)}
 	if s.prClaimer == nil {
 		if w, ok := d.Store.(ports.PRClaimer); ok {
 			s.prClaimer = w
@@ -497,16 +504,24 @@ func (s *Service) List(ctx context.Context, filter ListFilter) ([]domain.Session
 	if err != nil {
 		return nil, err
 	}
-	out := make([]domain.Session, 0, len(recs))
+	selected := make([]domain.SessionRecord, 0, len(recs))
 	for _, rec := range recs {
 		if !matchesSessionFilter(rec, filter) {
 			continue
 		}
-		sess, err := s.toSession(ctx, rec)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, sess)
+		selected = append(selected, rec)
+	}
+	ids := make([]domain.SessionID, 0, len(selected))
+	for _, rec := range selected {
+		ids = append(ids, rec.ID)
+	}
+	prFactsBySession, err := s.store.ListPRFactsForSessions(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("list pr facts for sessions: %w", err)
+	}
+	out := make([]domain.Session, 0, len(selected))
+	for _, rec := range selected {
+		out = append(out, s.toSessionWithPRs(rec, prFactsBySession[rec.ID]))
 	}
 	return out, nil
 }
@@ -584,6 +599,8 @@ func toAPIError(err error) error {
 		return apierr.Invalid("BRANCH_NOT_FETCHED", err.Error(), nil)
 	case errors.Is(err, ports.ErrWorkspaceBranchInvalid):
 		return apierr.Invalid("INVALID_BRANCH", err.Error(), nil)
+	case errors.Is(err, ports.ErrWorkspaceProvisionFailed):
+		return apierr.Invalid("WORKSPACE_PROVISION_FAILED", err.Error(), nil)
 	case errors.Is(err, ports.ErrAgentBinaryNotFound):
 		return apierr.Invalid("AGENT_BINARY_NOT_FOUND", err.Error(), nil)
 	case errors.Is(err, ports.ErrRuntimePrerequisite):
@@ -598,7 +615,11 @@ func (s *Service) toSession(ctx context.Context, rec domain.SessionRecord) (doma
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("pr facts %s: %w", rec.ID, err)
 	}
-	return domain.Session{SessionRecord: rec, Status: deriveStatus(rec, prs, s.now(), s.harnessSignals(rec.Harness)), TerminalHandleID: rec.Metadata.RuntimeHandleID, PRs: prs}, nil
+	return s.toSessionWithPRs(rec, prs), nil
+}
+
+func (s *Service) toSessionWithPRs(rec domain.SessionRecord, prs []domain.PRFacts) domain.Session {
+	return domain.Session{SessionRecord: rec, Status: deriveStatus(rec, prs, s.now(), s.harnessSignals(rec.Harness)), TerminalHandleID: rec.Metadata.RuntimeHandleID, SemanticLiveness: s.semanticLiveness(rec), PRs: prs}
 }
 
 // now tolerates a zero-value Service (tests construct the struct literally

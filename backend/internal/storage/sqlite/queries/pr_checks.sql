@@ -11,3 +11,9 @@ ON CONFLICT (pr_url, name, commit_hash) DO UPDATE SET
 -- name: ListChecksByPR :many
 SELECT pr_url, name, commit_hash, status, url, log_tail, created_at, conclusion, details
 FROM pr_checks WHERE pr_url = ? ORDER BY name, created_at;
+
+-- name: ListChecksByPRs :many
+SELECT pr_url, name, commit_hash, status, url, log_tail, created_at, conclusion, details
+FROM pr_checks
+WHERE pr_url IN (sqlc.slice('pr_urls'))
+ORDER BY pr_url, name, created_at;

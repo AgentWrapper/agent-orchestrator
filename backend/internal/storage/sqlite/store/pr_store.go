@@ -266,6 +266,23 @@ func (s *Store) ListChecks(ctx context.Context, prURL string) ([]domain.PullRequ
 	return out, nil
 }
 
+// ListChecksForPRs returns recorded check runs for all requested PRs in one
+// reader-pool query, grouped by PR URL.
+func (s *Store) ListChecksForPRs(ctx context.Context, prURLs []string) (map[string][]domain.PullRequestCheck, error) {
+	out := emptyPRGroups[domain.PullRequestCheck](prURLs)
+	if len(prURLs) == 0 {
+		return out, nil
+	}
+	rows, err := s.qr.ListChecksByPRs(ctx, prURLs)
+	if err != nil {
+		return nil, fmt.Errorf("list checks for %d prs: %w", len(prURLs), err)
+	}
+	for _, row := range rows {
+		out[row.PRURL] = append(out[row.PRURL], checkRowFromGen(row))
+	}
+	return out, nil
+}
+
 // ListPRComments returns a PR's review comments, oldest first.
 func (s *Store) ListPRComments(ctx context.Context, prURL string) ([]domain.PullRequestComment, error) {
 	rows, err := s.qr.ListPRComments(ctx, prURL)
@@ -275,6 +292,23 @@ func (s *Store) ListPRComments(ctx context.Context, prURL string) ([]domain.Pull
 	out := make([]domain.PullRequestComment, 0, len(rows))
 	for _, c := range rows {
 		out = append(out, commentFromGen(c))
+	}
+	return out, nil
+}
+
+// ListPRCommentsForPRs returns review comments for all requested PRs in one
+// reader-pool query, grouped by PR URL.
+func (s *Store) ListPRCommentsForPRs(ctx context.Context, prURLs []string) (map[string][]domain.PullRequestComment, error) {
+	out := emptyPRGroups[domain.PullRequestComment](prURLs)
+	if len(prURLs) == 0 {
+		return out, nil
+	}
+	rows, err := s.qr.ListPRCommentsByPRs(ctx, prURLs)
+	if err != nil {
+		return nil, fmt.Errorf("list pr comments for %d prs: %w", len(prURLs), err)
+	}
+	for _, row := range rows {
+		out[row.PRURL] = append(out[row.PRURL], commentFromGen(row))
 	}
 	return out, nil
 }
@@ -303,6 +337,31 @@ func (s *Store) ListPRReviews(ctx context.Context, prURL string) ([]domain.PullR
 		out = append(out, reviewFromGen(review))
 	}
 	return out, nil
+}
+
+// ListPRReviewsForPRs returns submitted reviews for all requested PRs in one
+// reader-pool query, grouped by PR URL.
+func (s *Store) ListPRReviewsForPRs(ctx context.Context, prURLs []string) (map[string][]domain.PullRequestReview, error) {
+	out := emptyPRGroups[domain.PullRequestReview](prURLs)
+	if len(prURLs) == 0 {
+		return out, nil
+	}
+	rows, err := s.qr.ListPRReviewsByPRs(ctx, prURLs)
+	if err != nil {
+		return nil, fmt.Errorf("list pr reviews for %d prs: %w", len(prURLs), err)
+	}
+	for _, row := range rows {
+		out[row.PRURL] = append(out[row.PRURL], reviewFromGen(row))
+	}
+	return out, nil
+}
+
+func emptyPRGroups[T any](prURLs []string) map[string][]T {
+	out := make(map[string][]T, len(prURLs))
+	for _, prURL := range prURLs {
+		out[prURL] = []T{}
+	}
+	return out
 }
 
 // ---- domain <-> gen mapping ----

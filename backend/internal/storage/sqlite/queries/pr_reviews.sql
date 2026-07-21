@@ -14,3 +14,9 @@ DELETE FROM pr_reviews WHERE pr_url = ?;
 -- name: ListPRReviews :many
 SELECT pr_url, review_id, author, state, url, is_bot, submitted_at
 FROM pr_reviews WHERE pr_url = ? ORDER BY submitted_at, review_id;
+
+-- name: ListPRReviewsByPRs :many
+SELECT pr_url, review_id, author, state, url, is_bot, submitted_at
+FROM pr_reviews
+WHERE pr_url IN (sqlc.slice('pr_urls'))
+ORDER BY pr_url, submitted_at, review_id;

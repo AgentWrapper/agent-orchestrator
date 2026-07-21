@@ -22,6 +22,9 @@ const (
 	conversationSourceClaude      = "claude"
 	conversationSourceCodex       = "codex"
 	conversationSourceUnavailable = "unavailable"
+	conversationTurnUnknown       = "unknown"
+	conversationTurnActive        = "active"
+	conversationTurnComplete      = "complete"
 	maxConversationBytes          = 8 << 20
 	maxConversationEntries        = 240
 	maxConversationTextRunes      = 16_000
@@ -45,6 +48,7 @@ type ConversationEntry struct {
 type ConversationSnapshot struct {
 	SessionID domain.SessionID    `json:"sessionId"`
 	Source    string              `json:"source" enum:"claude,codex,unavailable"`
+	TurnState string              `json:"turnState" enum:"unknown,active,complete"`
 	Entries   []ConversationEntry `json:"entries"`
 }
 
@@ -55,7 +59,7 @@ func (s *Service) Conversation(ctx context.Context, id domain.SessionID) (Conver
 		return ConversationSnapshot{}, err
 	}
 	if s.store == nil {
-		return ConversationSnapshot{SessionID: id, Source: conversationSourceUnavailable, Entries: []ConversationEntry{}}, nil
+		return unavailableConversation(id), nil
 	}
 	rec, ok, err := s.store.GetSession(ctx, id)
 	if err != nil {
@@ -67,19 +71,77 @@ func (s *Service) Conversation(ctx context.Context, id domain.SessionID) (Conver
 
 	path, source := s.conversationPath(rec)
 	if path == "" {
-		return ConversationSnapshot{SessionID: id, Source: conversationSourceUnavailable, Entries: []ConversationEntry{}}, nil
+		return unavailableConversation(id), nil
 	}
-	entries, err := readConversationTail(path, source)
+	entries, turnState, err := readConversationTail(path, source)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return ConversationSnapshot{SessionID: id, Source: conversationSourceUnavailable, Entries: []ConversationEntry{}}, nil
+			return unavailableConversation(id), nil
 		}
 		return ConversationSnapshot{}, fmt.Errorf("conversation %s: %w", id, err)
 	}
-	return ConversationSnapshot{SessionID: id, Source: source, Entries: entries}, nil
+	return ConversationSnapshot{SessionID: id, Source: source, TurnState: turnState, Entries: entries}, nil
+}
+
+func unavailableConversation(id domain.SessionID) ConversationSnapshot {
+	return ConversationSnapshot{
+		SessionID: id,
+		Source:    conversationSourceUnavailable,
+		TurnState: conversationTurnUnknown,
+		Entries:   []ConversationEntry{},
+	}
+}
+
+type conversationPathCacheKey struct {
+	sessionID      domain.SessionID
+	agentSessionID string
+}
+
+type conversationPathCacheEntry struct {
+	path   string
+	source string
 }
 
 func (s *Service) conversationPath(rec domain.SessionRecord) (string, string) {
+	key := conversationPathCacheKey{
+		sessionID:      rec.ID,
+		agentSessionID: strings.TrimSpace(rec.Metadata.AgentSessionID),
+	}
+	if key.sessionID != "" {
+		s.conversationPathMu.Lock()
+		cached, ok := s.conversationPaths[key]
+		s.conversationPathMu.Unlock()
+		if ok {
+			if _, err := os.Stat(cached.path); err == nil {
+				return cached.path, cached.source
+			}
+			s.conversationPathMu.Lock()
+			delete(s.conversationPaths, key)
+			s.conversationPathMu.Unlock()
+		}
+	}
+
+	path, source := s.resolveConversationPath(rec)
+	if key.sessionID == "" || path == "" {
+		return path, source
+	}
+	s.conversationPathMu.Lock()
+	if s.conversationPaths == nil {
+		s.conversationPaths = make(map[conversationPathCacheKey]conversationPathCacheEntry)
+	}
+	// A restored/reconciled session can acquire a new native provider id. Drop
+	// the old identity at the point the updated session record is observed.
+	for existing := range s.conversationPaths {
+		if existing.sessionID == key.sessionID && existing != key {
+			delete(s.conversationPaths, existing)
+		}
+	}
+	s.conversationPaths[key] = conversationPathCacheEntry{path: path, source: source}
+	s.conversationPathMu.Unlock()
+	return path, source
+}
+
+func (s *Service) resolveConversationPath(rec domain.SessionRecord) (string, string) {
 	nativeID := strings.TrimSpace(rec.Metadata.AgentSessionID)
 	switch rec.Harness {
 	case domain.HarnessClaudeCode:
@@ -213,49 +275,54 @@ func sameWorkspacePath(left, right string) bool {
 	return left == right || (runtime.GOOS == "windows" && strings.EqualFold(left, right))
 }
 
-func readConversationTail(path, source string) ([]ConversationEntry, error) {
+func readConversationTail(path, source string) ([]ConversationEntry, string, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, conversationTurnUnknown, err
 	}
 	defer func() { _ = file.Close() }()
 
 	info, err := file.Stat()
 	if err != nil {
-		return nil, err
+		return nil, conversationTurnUnknown, err
 	}
 	start := info.Size() - maxConversationBytes
 	if start < 0 {
 		start = 0
 	}
 	if _, err := file.Seek(start, io.SeekStart); err != nil {
-		return nil, err
+		return nil, conversationTurnUnknown, err
 	}
 	reader := bufio.NewReader(file)
 	if start > 0 {
 		if _, err := reader.ReadString('\n'); err != nil && err != io.EOF {
-			return nil, err
+			return nil, conversationTurnUnknown, err
 		}
 	}
 
 	entries := make([]ConversationEntry, 0, 64)
+	turnState := conversationTurnUnknown
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 64*1024), maxConversationBytes)
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		var parsed []ConversationEntry
+		var parsedTurnState string
 		switch source {
 		case conversationSourceClaude:
-			parsed = parseClaudeConversationLine(line)
+			parsed, parsedTurnState = parseClaudeConversationLine(line)
 		case conversationSourceCodex:
-			parsed = parseCodexConversationLine(line)
+			parsed, parsedTurnState = parseCodexConversationLine(line)
+		}
+		if parsedTurnState != conversationTurnUnknown {
+			turnState = parsedTurnState
 		}
 		for _, entry := range parsed {
 			entries = appendConversationEntry(entries, entry)
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, err
+		return nil, conversationTurnUnknown, err
 	}
 	if len(entries) > maxConversationEntries {
 		entries = entries[len(entries)-maxConversationEntries:]
@@ -263,11 +330,12 @@ func readConversationTail(path, source string) ([]ConversationEntry, error) {
 	if entries == nil {
 		entries = []ConversationEntry{}
 	}
-	return entries, nil
+	return entries, turnState, nil
 }
 
 type claudeConversationRecord struct {
 	Type      string          `json:"type"`
+	Subtype   string          `json:"subtype"`
 	UUID      string          `json:"uuid"`
 	Timestamp string          `json:"timestamp"`
 	IsMeta    bool            `json:"isMeta"`
@@ -285,14 +353,20 @@ type claudeContentBlock struct {
 	Name string `json:"name"`
 }
 
-func parseClaudeConversationLine(line []byte) []ConversationEntry {
+func parseClaudeConversationLine(line []byte) ([]ConversationEntry, string) {
 	var record claudeConversationRecord
-	if json.Unmarshal(line, &record) != nil || record.IsMeta || (record.Type != "user" && record.Type != "assistant") {
-		return nil
+	if json.Unmarshal(line, &record) != nil || record.IsMeta {
+		return nil, conversationTurnUnknown
+	}
+	if record.Type == "system" && record.Subtype == "turn_duration" {
+		return nil, conversationTurnComplete
+	}
+	if record.Type != "user" && record.Type != "assistant" {
+		return nil, conversationTurnUnknown
 	}
 	var message claudeMessage
 	if json.Unmarshal(record.Message, &message) != nil {
-		return nil
+		return nil, conversationTurnUnknown
 	}
 	id := strings.TrimSpace(record.UUID)
 	if id == "" {
@@ -301,16 +375,20 @@ func parseClaudeConversationLine(line []byte) []ConversationEntry {
 	if record.Type == "user" && message.Role == "user" {
 		var text string
 		if json.Unmarshal(message.Content, &text) == nil {
-			return []ConversationEntry{{ID: id, Role: "user", Kind: "message", Text: text, Timestamp: record.Timestamp}}
+			text = visibleUserMessage(text)
+			if text == "" {
+				return nil, conversationTurnUnknown
+			}
+			return []ConversationEntry{{ID: id, Role: "user", Kind: "message", Text: text, Timestamp: record.Timestamp}}, conversationTurnActive
 		}
-		return nil
+		return nil, conversationTurnUnknown
 	}
 	if record.Type != "assistant" || message.Role != "assistant" {
-		return nil
+		return nil, conversationTurnUnknown
 	}
 	var blocks []claudeContentBlock
 	if json.Unmarshal(message.Content, &blocks) != nil {
-		return nil
+		return nil, conversationTurnUnknown
 	}
 	entries := make([]ConversationEntry, 0, len(blocks))
 	for index, block := range blocks {
@@ -321,7 +399,7 @@ func parseClaudeConversationLine(line []byte) []ConversationEntry {
 			entries = append(entries, ConversationEntry{ID: fmt.Sprintf("%s:%d", id, index), Role: "assistant", Kind: "update", Text: plainToolActivity(block.Name), Timestamp: record.Timestamp})
 		}
 	}
-	return entries
+	return entries, conversationTurnUnknown
 }
 
 type codexConversationRecord struct {
@@ -339,14 +417,14 @@ type codexConversationPayload struct {
 	TurnID  string `json:"turn_id"`
 }
 
-func parseCodexConversationLine(line []byte) []ConversationEntry {
+func parseCodexConversationLine(line []byte) ([]ConversationEntry, string) {
 	var record codexConversationRecord
 	if json.Unmarshal(line, &record) != nil {
-		return nil
+		return nil, conversationTurnUnknown
 	}
 	var payload codexConversationPayload
 	if json.Unmarshal(record.Payload, &payload) != nil {
-		return nil
+		return nil, conversationTurnUnknown
 	}
 	id := strings.TrimSpace(payload.CallID)
 	if id == "" {
@@ -359,22 +437,47 @@ func parseCodexConversationLine(line []byte) []ConversationEntry {
 	case "event_msg":
 		switch payload.Type {
 		case "user_message":
-			return []ConversationEntry{{ID: id, Role: "user", Kind: "message", Text: payload.Message, Timestamp: record.Timestamp}}
+			text := visibleUserMessage(payload.Message)
+			if text == "" {
+				return nil, conversationTurnUnknown
+			}
+			return []ConversationEntry{{ID: id, Role: "user", Kind: "message", Text: text, Timestamp: record.Timestamp}}, conversationTurnActive
+		case "task_started":
+			return nil, conversationTurnActive
+		case "task_complete", "turn_aborted":
+			return nil, conversationTurnComplete
 		case "agent_message":
 			kind := "message"
 			if payload.Phase == "commentary" {
 				kind = "update"
 			}
-			return []ConversationEntry{{ID: id, Role: "assistant", Kind: kind, Text: payload.Message, Timestamp: record.Timestamp}}
+			return []ConversationEntry{{ID: id, Role: "assistant", Kind: kind, Text: payload.Message, Timestamp: record.Timestamp}}, conversationTurnUnknown
 		case "agent_reasoning":
-			return []ConversationEntry{{ID: id, Role: "assistant", Kind: "update", Text: payload.Message, Timestamp: record.Timestamp}}
+			return []ConversationEntry{{ID: id, Role: "assistant", Kind: "update", Text: payload.Message, Timestamp: record.Timestamp}}, conversationTurnUnknown
 		}
 	case "response_item":
 		if payload.Type == "function_call" || payload.Type == "custom_tool_call" {
-			return []ConversationEntry{{ID: id, Role: "assistant", Kind: "update", Text: plainToolActivity(payload.Name), Timestamp: record.Timestamp}}
+			return []ConversationEntry{{ID: id, Role: "assistant", Kind: "update", Text: plainToolActivity(payload.Name), Timestamp: record.Timestamp}}, conversationTurnUnknown
 		}
 	}
-	return nil
+	return nil, conversationTurnUnknown
+}
+
+func visibleUserMessage(text string) string {
+	clean := strings.TrimSpace(text)
+	if strings.HasPrefix(clean, "<task-notification>") {
+		return ""
+	}
+	for _, marker := range []string{
+		"\n\nAttached files (local paths):",
+		"\n\nSubagent runtime defaults (apply to every subagent):",
+		"\n\nSubagent runtime defaults: reset.",
+	} {
+		if index := strings.Index(clean, marker); index >= 0 {
+			clean = strings.TrimSpace(clean[:index])
+		}
+	}
+	return clean
 }
 
 func plainToolActivity(name string) string {

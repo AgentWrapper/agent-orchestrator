@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"strings"
 	"time"
 )
 
@@ -26,6 +27,54 @@ FROM pr_reviews WHERE pr_url = ? ORDER BY submitted_at, review_id
 
 func (q *Queries) ListPRReviews(ctx context.Context, prUrl string) ([]PRReview, error) {
 	rows, err := q.db.QueryContext(ctx, listPRReviews, prUrl)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PRReview{}
+	for rows.Next() {
+		var i PRReview
+		if err := rows.Scan(
+			&i.PRURL,
+			&i.ReviewID,
+			&i.Author,
+			&i.State,
+			&i.URL,
+			&i.IsBot,
+			&i.SubmittedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPRReviewsByPRs = `-- name: ListPRReviewsByPRs :many
+SELECT pr_url, review_id, author, state, url, is_bot, submitted_at
+FROM pr_reviews
+WHERE pr_url IN (/*SLICE:pr_urls*/?)
+ORDER BY pr_url, submitted_at, review_id
+`
+
+func (q *Queries) ListPRReviewsByPRs(ctx context.Context, prUrls []string) ([]PRReview, error) {
+	query := listPRReviewsByPRs
+	var queryParams []interface{}
+	if len(prUrls) > 0 {
+		for _, v := range prUrls {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:pr_urls*/?", strings.Repeat(",?", len(prUrls))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:pr_urls*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
 	if err != nil {
 		return nil, err
 	}
