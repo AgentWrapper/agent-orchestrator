@@ -118,6 +118,23 @@ func TestCleanWorkspacePathRejectsTraversal(t *testing.T) {
 	}
 }
 
+func TestConfinedPathRejectsSymlinkEscape(t *testing.T) {
+	ws := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "secret.html")
+	writeEntryFile(t, outside, "<main>secret</main>", time.Now())
+	link := filepath.Join(ws, "escape.html")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	if file, ok := ConfinedPath(ws, "escape.html"); ok {
+		t.Fatalf("ConfinedPath accepted symlink escape: %s", file)
+	}
+	if entry, ok := DiscoverEntry(ws); ok {
+		t.Fatalf("DiscoverEntry accepted symlink escape: %+v", entry)
+	}
+}
+
 func TestIsMarkdownPath(t *testing.T) {
 	cases := map[string]bool{
 		"a.md":       true,

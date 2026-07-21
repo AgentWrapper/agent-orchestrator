@@ -150,16 +150,29 @@ func ConfinedPath(workspacePath, assetPath string) (string, bool) {
 		}
 		clean = "index.html"
 	}
-	file := filepath.Join(root, filepath.FromSlash(clean))
-	absFile, err := filepath.Abs(file)
+	file, _, clean, err := OpenWorkspaceFile(workspacePath, clean)
 	if err != nil {
 		return "", false
 	}
-	rel, err := filepath.Rel(root, absFile)
+	_ = file.Close()
+
+	evalRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", false
+	}
+	absFile, err := filepath.Abs(filepath.Join(root, filepath.FromSlash(clean)))
+	if err != nil {
+		return "", false
+	}
+	evalFile, err := filepath.EvalSymlinks(absFile)
+	if err != nil {
+		return "", false
+	}
+	rel, err := filepath.Rel(evalRoot, evalFile)
 	if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
 		return "", false
 	}
-	return absFile, true
+	return evalFile, true
 }
 
 // FileURL builds an isolated localhost origin for a workspace-local entry.
