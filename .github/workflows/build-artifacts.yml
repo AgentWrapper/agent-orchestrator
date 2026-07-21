@@ -4,8 +4,9 @@ name: Desktop build artifacts
 # Dispatchable unsigned desktop build for an external release conductor.
 # Builds the Electron app for all four platforms at a pinned ref with a
 # caller-supplied version, uploads each installer as a short-lived run
-# artifact, and emits a digests.json artifact mapping each platform to the
-# SHA256 of its uploaded file. Creates no release and references no secrets.
+# artifact, and emits a digests.json artifact (a flat JSON object mapping
+# each artifact filename to its sha256 hex string) that the conductor reads
+# to verify hashes before signing. Creates no release, references no secrets.
 # macOS output is intentionally UNSIGNED: forge.config.ts only activates
 # osxSign/osxNotarize when the Apple env vars are present, and this workflow
 # never sets them (no macos-signing-setup). The conductor signs downstream.
@@ -31,14 +32,22 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # `artifact` is the pinned upload-artifact name the downstream release
+          # conductor consumes; the contained filenames keep the existing stable
+          # alias names so the cask/updater/landing stay compatible. Do not
+          # rename either without updating the conductor.
           - os: macos-latest
             platform: darwin-arm64
+            artifact: mac-arm64
           - os: macos-15-intel
             platform: darwin-x64
+            artifact: mac-x64
           - os: windows-latest
             platform: win32-x64
+            artifact: win
           - os: ubuntu-latest
             platform: linux-x64
+            artifact: linux
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -100,13 +109,15 @@ jobs:
           if [ -z "$src" ]; then echo "no build output found for $PLATFORM" >&2; exit 1; fi
           cp "$src" "dist-artifact/$name"
           hash="$(openssl dgst -sha256 "dist-artifact/$name" | awk '{print $NF}')"
-          jq -n --arg p "$PLATFORM" --arg f "$name" --arg h "$hash" \
-            '{($p): {file: $f, sha256: $h}}' > "dist-artifact/$PLATFORM.digest.json"
+          # Pinned digest contract: a flat filename -> sha256 hex map, merged
+          # into one digests.json by the digests job below.
+          jq -n --arg f "$name" --arg h "$hash" \
+            '{($f): $h}' > "dist-artifact/$PLATFORM.digest.json"
           echo "$PLATFORM: $name sha256=$hash" >> "$GITHUB_STEP_SUMMARY"
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: agent-orchestrator-${{ matrix.platform }}
+          name: ${{ matrix.artifact }}
           path: frontend/dist-artifact/agent-orchestrator-${{ matrix.platform }}.*
           retention-days: 1
           if-no-files-found: error
