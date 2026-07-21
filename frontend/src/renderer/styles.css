@@ -117,6 +117,18 @@
 	--radius-settings-panel: var(--radius-settings-panel);
 	--spacing-settings-row: var(--size-settings-row);
 
+	/* Settings page (Figma) */
+	--color-settings-panel: var(--color-bg-settings-panel);
+	--color-settings-row: var(--color-bg-settings-row);
+	--color-settings-menu: var(--color-bg-settings-menu);
+	--color-settings-menu-selected: var(--color-bg-settings-menu-selected);
+	--color-settings-title: var(--color-text-settings-title);
+	--color-settings-muted: var(--color-text-settings-muted);
+	--color-settings-label: var(--color-text-settings-row);
+	--radius-settings-row: var(--radius-settings-row);
+	--radius-settings-panel: var(--radius-settings-panel);
+	--spacing-settings-row: var(--size-settings-row);
+
 	/* Browser static preview (light mock inside dark app) */
 	--color-preview: var(--color-preview-bg);
 	--color-preview-foreground: var(--color-preview-fg);

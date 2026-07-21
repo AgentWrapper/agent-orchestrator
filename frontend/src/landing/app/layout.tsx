@@ -9,9 +9,29 @@ const inter = Inter({
 	variable: "--font-inter",
 });
 
+const description =
+	"Mission control for a fleet of coding agents. Run Claude Code, Codex, Cursor and 20 more harnesses in isolated git worktrees - AO watches every PR and routes CI and review feedback back to the agent that owns the branch.";
+
 export const metadata: Metadata = {
-	title: "Agent Orchestrator",
-	description: "Open-source platform for running parallel AI coding agents.",
+	metadataBase: new URL("https://aoagents.dev"),
+	title: "Agent Orchestrator - Mission control for coding agents",
+	description: "Mission control for a fleet of coding agents. Open source, runs locally on your machine.",
+	openGraph: {
+		type: "website",
+		url: "https://aoagents.dev/",
+		siteName: "Agent Orchestrator",
+		title: "Agent Orchestrator - Mission control for coding agents",
+		description,
+		images: [{ url: "/og-image.png", width: 1024, height: 1024, alt: "Agent Orchestrator" }],
+	},
+	twitter: {
+		card: "summary",
+		site: "@aoagents",
+		creator: "@aoagents",
+		title: "Agent Orchestrator - Mission control for coding agents",
+		description,
+		images: ["/og-image.png"],
+	},
 };
 
 const themeScript = `
