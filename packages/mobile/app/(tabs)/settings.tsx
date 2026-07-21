@@ -19,7 +19,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { pingServer } from "../../lib/api";
 import { DEFAULT_CONFIG, loadConfig, saveConfig, type ServerConfig } from "../../lib/config";
 import { haptics } from "../../lib/haptics";
-import { getPushStatus, openNotificationSettings, type PushStatus, registerForPush } from "../../lib/push";
+import { getPushStatus, openNotificationSettings, registerForPush } from "../../lib/push";
+import { describePush, describeRegisterFailure, type PushStatus } from "../../lib/pushStatus";
 import { useApp } from "../../lib/store";
 import { theme } from "../../lib/theme";
 import { useTabScrollToTop } from "../../lib/useTabScrollToTop";
@@ -278,35 +279,6 @@ export default function SettingsScreen() {
 	);
 }
 
-// Describes the current push state as a label/hint and the single action that
-// moves it forward, so the section renders one clear next step.
-function describePush(
-	status: PushStatus | null,
-	hasConfig: boolean,
-): { label: string; hint: string; action: string | null } {
-	if (!status) return { label: "Checking…", hint: "", action: null };
-	if (!status.supported) {
-		return { label: "Not available", hint: "Push notifications need a physical device.", action: null };
-	}
-	if (status.granted && status.registered) {
-		return { label: "On", hint: "You'll be alerted when an agent needs you or a PR is ready.", action: null };
-	}
-	if (status.granted && !status.registered) {
-		return {
-			label: "Permission granted",
-			hint: hasConfig
-				? "This device isn't registered yet. Tap to register with your server."
-				: "Connect to a server first, then this device registers automatically.",
-			action: hasConfig ? "Register" : null,
-		};
-	}
-	if (!status.granted && status.canAskAgain) {
-		return { label: "Off", hint: "Turn on alerts for agents that need input and PR updates.", action: "Enable" };
-	}
-	// Permanently denied — only system settings can flip it back on.
-	return { label: "Blocked", hint: "Notifications are turned off for AO in system settings.", action: "Open settings" };
-}
-
 // Settings section that surfaces push-notification status and the one action to
 // advance it: request permission, register, or (after a permanent denial) open
 // the OS settings. Closes the "denied on first try, no way back" gap.
@@ -326,30 +298,26 @@ function NotificationsSection() {
 	useFocusEffect(useCallback(() => refresh(), [refresh]));
 	useEffect(() => refresh(), [connection, refresh]);
 
-	const { label, hint, action } = describePush(status, !!config);
+	// Pass the config itself — describePush decides whether a server actually
+	// exists (non-empty host). Passing a caller-computed boolean is what shipped
+	// a Register button to unpaired testers.
+	const { label, hint, action, actionLabel } = describePush(status, config);
 
 	async function onAction() {
-		if (!status) return;
+		if (!status || !action) return;
 		setBusy(true);
 		try {
-			if (!status.granted && !status.canAskAgain) {
+			if (action === "open-settings") {
 				await openNotificationSettings();
 			} else if (config) {
 				// Requests permission if needed, then registers with the daemon.
-				// A null result means the build couldn't mint a token (most often an
-				// iOS local build with no APNs entitlement) — say so instead of a
-				// silent no-op.
-				const token = await registerForPush(config);
-				if (token) {
+				const result = await registerForPush(config);
+				if (result.ok) {
 					haptics.success();
 				} else {
 					haptics.error();
-					Alert.alert(
-						"Couldn't enable push on this build",
-						Platform.OS === "ios"
-							? "A local iOS build has no push entitlement, so it can't receive notifications. Install an EAS build (with an APNs key) to test push on iOS."
-							: "Couldn't register a push token. Check that notifications are allowed and that you're connected to your server.",
-					);
+					const { title, message } = describeRegisterFailure(result.reason, Platform.OS);
+					Alert.alert(title, message);
 				}
 			}
 		} finally {
@@ -366,7 +334,9 @@ function NotificationsSection() {
 					<Text style={styles.toggleLabel}>{label}</Text>
 					{hint ? <Text style={styles.toggleHint}>{hint}</Text> : null}
 				</View>
-				{action ? <Button title={action} variant="ghost" loading={busy} onPress={onAction} /> : null}
+				{action && actionLabel ? (
+					<Button title={actionLabel} variant="ghost" loading={busy} onPress={onAction} />
+				) : null}
 			</View>
 		</>
 	);
