@@ -21,6 +21,38 @@ type ChangeLog struct {
 	CreatedAt time.Time
 }
 
+type ModelUsageEvent struct {
+	ID                  int64
+	BindingID           int64
+	UsageSourceID       int64
+	ProjectID           domain.ProjectID
+	SessionID           domain.SessionID
+	Harness             domain.AgentHarness
+	Provider            string
+	ModelID             string
+	ObservedAt          time.Time
+	InputTokens         int64
+	UncachedInputTokens int64
+	CacheReadTokens     int64
+	CacheWriteTokens    int64
+	CacheWrite5mTokens  sql.NullInt64
+	CacheWrite1hTokens  sql.NullInt64
+	OutputTokens        int64
+	ReasoningTokens     sql.NullInt64
+	DurationMs          sql.NullInt64
+	ReportedCostNanos   sql.NullInt64
+	EstimatedCostNanos  sql.NullInt64
+	PricingVersion      string
+	CostBasis           domain.CostBasis
+	TokenConfidence     domain.TokenConfidence
+	CostConfidence      domain.CostConfidence
+	SourceEventKey      string
+	SourceUsageHash     string
+	ParserVersion       string
+	SourceCliVersion    string
+	CreatedAt           time.Time
+}
+
 type Notification struct {
 	ID        string
 	SessionID domain.SessionID
@@ -203,6 +235,46 @@ type TelemetryEvent struct {
 	SessionID   sql.NullString
 	RequestID   string
 	PayloadJson string
+}
+
+type UsageBinding struct {
+	ID               int64
+	SessionID        domain.SessionID
+	Harness          domain.AgentHarness
+	NativeRootID     string
+	InitialModelID   string
+	SourceCliVersion string
+	State            domain.UsageBindingState
+	LastErrorCode    string
+	FirstSeenAt      time.Time
+	LastSeenAt       time.Time
+	UpdatedAt        time.Time
+}
+
+type UsageSource struct {
+	ID                        int64
+	BindingID                 int64
+	Kind                      domain.UsageSourceKind
+	NativeSessionID           string
+	SubagentID                string
+	ArtifactPath              string
+	FileIdentity              string
+	Generation                int64
+	ByteOffset                int64
+	BaselineInputTokens       int64
+	BaselineCachedInputTokens int64
+	BaselineCacheWriteTokens  int64
+	BaselineOutputTokens      int64
+	BaselineReasoningTokens   int64
+	ParserVersion             string
+	State                     domain.UsageSourceState
+	FailureCount              int64
+	AnomalyCount              int64
+	NextRetryAt               sql.NullTime
+	LastErrorCode             string
+	LastObservedAt            sql.NullTime
+	CreatedAt                 time.Time
+	UpdatedAt                 time.Time
 }
 
 type WorkerIdleEvent struct {
