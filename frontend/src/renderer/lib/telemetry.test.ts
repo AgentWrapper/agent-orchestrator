@@ -39,7 +39,7 @@ describe("telemetry sanitizers", () => {
 	});
 
 	it("forces renderer events to stay anonymous in PostHog", () => {
-		expect(withTelemetryContext({ "$process_person_profile": true })).toMatchObject({
+		expect(withTelemetryContext({ $process_person_profile: true })).toMatchObject({
 			$process_person_profile: false,
 		});
 	});
