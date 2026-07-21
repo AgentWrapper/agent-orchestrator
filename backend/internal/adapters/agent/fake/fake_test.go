@@ -157,13 +157,40 @@ func TestDeriveActivityStateMapping(t *testing.T) {
 	}
 }
 
-func TestAuthStatusIsAuthorized(t *testing.T) {
+func TestAuthStatusIsAuthorizedWhenGateSet(t *testing.T) {
+	// Opt in explicitly — the fake must only report authorized when the gate
+	// env is set (see #2692 review, @whoisasx).
+	t.Setenv(HarnessEnv, "1")
 	status, err := New().AuthStatus(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if status != ports.AgentAuthStatusAuthorized {
-		t.Fatalf("AuthStatus = %q, want authorized", status)
+		t.Fatalf("AuthStatus with %s=1 = %q, want authorized", HarnessEnv, status)
+	}
+}
+
+// TestAuthStatusIsUnauthorizedByDefault pins the production-safety default: on
+// a user machine (no AO_FAKE_HARNESS) the fake must NOT be surfaceable as an
+// authorized agent, so it never drifts into the default-selectable catalog.
+func TestAuthStatusIsUnauthorizedByDefault(t *testing.T) {
+	t.Setenv(HarnessEnv, "")
+	status, err := New().AuthStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != ports.AgentAuthStatusUnauthorized {
+		t.Fatalf("AuthStatus with %s unset = %q, want unauthorized", HarnessEnv, status)
+	}
+	for _, off := range []string{"0", "false", "no", "off", "  ", "bogus"} {
+		t.Setenv(HarnessEnv, off)
+		status, err := New().AuthStatus(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status != ports.AgentAuthStatusUnauthorized {
+			t.Fatalf("AuthStatus with %s=%q = %q, want unauthorized", HarnessEnv, off, status)
+		}
 	}
 }
 

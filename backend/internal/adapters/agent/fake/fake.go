@@ -46,6 +46,13 @@ import (
 // value <= 0 or unparseable falls back to 1 (real-time base durations).
 const SpeedupEnv = "AO_FAKE_SPEEDUP"
 
+// HarnessEnv gates the fake harness's AuthStatus. Without a truthy value the
+// probe reports unauthorized, so the fake stays out of the default-selectable
+// catalog on a user's machine — e2e and dev must opt in explicitly by setting
+// AO_FAKE_HARNESS=1 (or any of the truthy tokens accepted by isTruthy). See
+// AuthStatus for the rationale (#2692 review, @whoisasx).
+const HarnessEnv = "AO_FAKE_HARNESS"
+
 // basePhaseSeconds is how long each timeline phase lasts at speedup 1. The
 // timeline has six sleeping phases (spawning, active, waiting_input, active,
 // pr-push, blocked) — the terminal session-end fires with no trailing sleep —
@@ -99,14 +106,32 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, _ ports.LaunchConfig) (cm
 	return []string{sh, "-lc", timelineScript(phaseSleep())}, nil
 }
 
-// AuthStatus reports authorized unconditionally: the fake needs no credentials.
-// It exists so the fake satisfies the registry contract that every shipped
-// harness expose an auth probe.
+// AuthStatus reports authorized ONLY when AO_FAKE_HARNESS is set to a truthy
+// value; otherwise it reports unauthorized. The fake needs no credentials, but
+// reporting authorized unconditionally would let it drift into the
+// default-selectable catalog on a user machine after a catalog refresh — desktop
+// defaults can pick any authorized agent when preferred agents are unavailable.
+// Gating behind an explicit opt-in keeps the fake usable for e2e/dev without
+// making it production-selectable (#2692 review, @whoisasx).
 func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
 	if err := ctx.Err(); err != nil {
 		return ports.AgentAuthStatusUnknown, err
 	}
+	if !isTruthy(os.Getenv(HarnessEnv)) {
+		return ports.AgentAuthStatusUnauthorized, nil
+	}
 	return ports.AgentAuthStatusAuthorized, nil
+}
+
+// isTruthy accepts the common opt-in tokens for an env-var gate. Matched
+// case-insensitively; whitespace is trimmed. Empty / unset / any other value
+// (including "0", "false", "no") is treated as off.
+func isTruthy(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }
 
 // ResolveBinary satisfies ports.AgentBinaryResolver. The fake harness launches
