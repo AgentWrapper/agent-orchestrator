@@ -64,6 +64,22 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
+// GetConfigSpec reports the per-project agent config keys Codex understands.
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.ConfigSpec{}, err
+	}
+	return ports.ConfigSpec{
+		Fields: []ports.ConfigField{
+			{
+				Key:         "model",
+				Type:        ports.ConfigFieldString,
+				Description: "Model override passed to `codex --model`.",
+			},
+		},
+	}, nil
+}
+
 // GetLaunchCommand builds the argv to start a new Codex session, applying the
 // no-update-check, hook-trust bypass, and approval flags, AO's session-flag
 // activity hooks, the workspace trust override, optional system-prompt
@@ -83,6 +99,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	appendSessionHookFlags(&cmd)
 	appendTerminalCompatibilityFlags(&cmd)
 	appendWorkspaceTrustFlag(&cmd, cfg.WorkspacePath)
+	appendModelFlag(&cmd, cfg.Config)
 
 	if cfg.SystemPrompt != "" {
 		cmd = append(cmd, "-c", "developer_instructions="+codexTOMLConfigString(cfg.SystemPrompt))
@@ -124,6 +141,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	appendSessionHookFlags(&cmd)
 	appendTerminalCompatibilityFlags(&cmd)
 	appendWorkspaceTrustFlag(&cmd, cfg.Session.WorkspacePath)
+	appendModelFlag(&cmd, cfg.Config)
 	if cfg.SystemPrompt != "" {
 		cmd = append(cmd, "-c", "developer_instructions="+codexTOMLConfigString(cfg.SystemPrompt))
 	} else if cfg.SystemPromptFile != "" {
@@ -340,6 +358,12 @@ func appendHookTrustBypassFlag(cmd *[]string) {
 func appendTerminalCompatibilityFlags(cmd *[]string) {
 	if runtime.GOOS == "windows" {
 		*cmd = append(*cmd, "--no-alt-screen")
+	}
+}
+
+func appendModelFlag(cmd *[]string, cfg ports.AgentConfig) {
+	if model := strings.TrimSpace(cfg.Model); model != "" {
+		*cmd = append(*cmd, "--model", model)
 	}
 }
 
