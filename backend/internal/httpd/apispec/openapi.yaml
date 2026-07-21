@@ -324,21 +324,25 @@ paths:
     get:
       operationId: listNotifications
       parameters:
-      - description: Notification status filter. V1 supports only unread.
+      - description: Notification status filter. Defaults to unread; all includes
+          read history from the last seven days.
         in: query
         name: status
         schema:
-          description: Notification status filter. V1 supports only unread.
+          description: Notification status filter. Defaults to unread; all includes
+            read history from the last seven days.
           enum:
           - unread
+          - all
           type: string
-      - description: Maximum notifications to return. Defaults to 50; capped at 100.
+      - description: Optional maximum notifications to return. When omitted, returns
+          the full retained seven-day window.
         in: query
         name: limit
         schema:
-          description: Maximum notifications to return. Defaults to 50; capped at
-            100.
-          maximum: 100
+          description: Optional maximum notifications to return. When omitted, returns
+            the full retained seven-day window.
+          maximum: 1000
           minimum: 1
           type: integer
       responses:
@@ -366,7 +370,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
-      summary: List unread notifications
+      summary: List recent notifications
       tags:
       - notifications
   /api/v1/notifications/{id}:

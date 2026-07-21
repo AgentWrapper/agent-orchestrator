@@ -5,6 +5,11 @@ import (
 	"time"
 )
 
+// NotificationRetentionWindow is how long notifications remain available in
+// dashboard history. Older rows are excluded from reads immediately and pruned
+// from SQLite as new notifications arrive.
+const NotificationRetentionWindow = 7 * 24 * time.Hour
+
 // NotificationType identifies a user-facing notification kind persisted for the dashboard.
 type NotificationType string
 

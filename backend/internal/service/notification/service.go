@@ -3,40 +3,55 @@ package notification
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 )
 
 const (
-	// DefaultListLimit is the unread notification page size used when none is requested.
-	DefaultListLimit = 50
-	// MaxListLimit caps unread notification API responses.
-	MaxListLimit = 100
+	// DefaultListLimit returns the full retained window when no limit is requested.
+	DefaultListLimit = 0
+	// MaxListLimit caps explicitly bounded notification API responses.
+	MaxListLimit = 1000
 )
 
 // Manager reads stored notifications for REST controllers.
 type Manager struct {
 	store Store
+	clock func() time.Time
 }
 
 // Deps configures a Manager.
 type Deps struct {
 	Store Store
+	Clock func() time.Time
 }
 
 // New constructs a read-only notification Manager.
 func New(d Deps) *Manager {
-	return &Manager{store: d.Store}
+	clock := d.Clock
+	if clock == nil {
+		clock = time.Now
+	}
+	return &Manager{store: d.Store, clock: clock}
 }
 
-// ListUnread returns unread notifications newest-first.
-func (m *Manager) ListUnread(ctx context.Context, filter ListFilter) ([]Notification, error) {
+// List returns retained notifications newest-first. Dashboard history is a
+// rolling seven-day window; status selects unread-only or all records.
+func (m *Manager) List(ctx context.Context, filter ListFilter) ([]Notification, error) {
 	if m == nil || m.store == nil {
 		return nil, errors.New("notification: store is required")
 	}
+	if filter.Status == "" {
+		filter.Status = ListUnread
+	}
+	if !filter.Status.Valid() {
+		return nil, apierr.Invalid("INVALID_NOTIFICATION_STATUS", "Notification status must be unread or all", nil)
+	}
 	limit := normalizeLimit(filter.Limit)
-	rows, err := m.store.ListUnreadNotifications(ctx, limit)
+	since := m.clock().UTC().Add(-domain.NotificationRetentionWindow)
+	rows, err := m.store.ListNotifications(ctx, filter.Status, since, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +97,7 @@ func (m *Manager) MarkAllRead(ctx context.Context) ([]Notification, error) {
 }
 
 func normalizeLimit(limit int) int {
-	if limit <= 0 {
+	if limit < 0 {
 		return DefaultListLimit
 	}
 	if limit > MaxListLimit {

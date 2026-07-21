@@ -506,8 +506,8 @@ type AgentInfo = agentsvc.Info
 
 // ListNotificationsQuery is the query string accepted by GET /api/v1/notifications.
 type ListNotificationsQuery struct {
-	Status string `query:"status,omitempty" enum:"unread" description:"Notification status filter. V1 supports only unread."`
-	Limit  int    `query:"limit,omitempty" minimum:"1" maximum:"100" description:"Maximum notifications to return. Defaults to 50; capped at 100."`
+	Status string `query:"status,omitempty" enum:"unread,all" description:"Notification status filter. Defaults to unread; all includes read history from the last seven days."`
+	Limit  int    `query:"limit,omitempty" minimum:"1" maximum:"1000" description:"Optional maximum notifications to return. When omitted, returns the full retained seven-day window."`
 }
 
 // NotificationStreamQuery is the query string accepted by GET /api/v1/notifications/stream.
@@ -541,7 +541,7 @@ type NotificationResponse struct {
 	Target    NotificationTarget `json:"target"`
 }
 
-// ListNotificationsResponse is the body of GET /api/v1/notifications.
+// ListNotificationsResponse is the recent-history body of GET /api/v1/notifications.
 type ListNotificationsResponse struct {
 	Notifications []NotificationResponse `json:"notifications"`
 }

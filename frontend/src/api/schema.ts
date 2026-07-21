@@ -182,7 +182,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List unread notifications */
+        /** List recent notifications */
         get: operations["listNotifications"];
         put?: never;
         post?: never;
@@ -1758,9 +1758,9 @@ export interface operations {
     listNotifications: {
         parameters: {
             query?: {
-                /** @description Notification status filter. V1 supports only unread. */
-                status?: "unread";
-                /** @description Maximum notifications to return. Defaults to 50; capped at 100. */
+                /** @description Notification status filter. Defaults to unread; all includes read history from the last seven days. */
+                status?: "unread" | "all";
+                /** @description Optional maximum notifications to return. When omitted, returns the full retained seven-day window. */
                 limit?: number;
             };
             header?: never;

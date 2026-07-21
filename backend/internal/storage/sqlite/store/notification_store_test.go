@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 )
 
 func TestNotificationStore_InsertListAndDedupe(t *testing.T) {
@@ -40,9 +41,9 @@ func TestNotificationStore_InsertListAndDedupe(t *testing.T) {
 	if err != nil || inserted {
 		t.Fatalf("duplicate inserted=%v err=%v, want false nil", inserted, err)
 	}
-	rows, err := s.ListUnreadNotifications(ctx, 10)
+	rows, err := s.ListNotifications(ctx, notificationsvc.ListUnread, time.Time{}, 10)
 	if err != nil {
-		t.Fatalf("ListUnreadNotifications: %v", err)
+		t.Fatalf("ListNotifications: %v", err)
 	}
 	if len(rows) != 1 || rows[0].ID != "ntf_1" {
 		t.Fatalf("rows = %+v", rows)
@@ -77,9 +78,9 @@ func TestNotificationStore_MarkReadReopensUnreadDedupe(t *testing.T) {
 	if read.Status != domain.NotificationRead {
 		t.Fatalf("status = %q, want read", read.Status)
 	}
-	rows, err := s.ListUnreadNotifications(ctx, 10)
+	rows, err := s.ListNotifications(ctx, notificationsvc.ListUnread, time.Time{}, 10)
 	if err != nil {
-		t.Fatalf("ListUnreadNotifications: %v", err)
+		t.Fatalf("ListNotifications: %v", err)
 	}
 	if len(rows) != 0 {
 		t.Fatalf("rows = %+v, want none", rows)
@@ -129,9 +130,9 @@ func TestNotificationStore_MarkAllRead(t *testing.T) {
 			t.Fatalf("row = %+v, want read", row)
 		}
 	}
-	rows, err := s.ListUnreadNotifications(ctx, 10)
+	rows, err := s.ListNotifications(ctx, notificationsvc.ListUnread, time.Time{}, 10)
 	if err != nil {
-		t.Fatalf("ListUnreadNotifications: %v", err)
+		t.Fatalf("ListNotifications: %v", err)
 	}
 	if len(rows) != 0 {
 		t.Fatalf("unread rows = %+v, want none", rows)
@@ -155,12 +156,49 @@ func TestNotificationStore_ListUnreadNewestFirstAcrossProjects(t *testing.T) {
 			t.Fatalf("insert %s inserted=%v err=%v", rec.ID, inserted, err)
 		}
 	}
-	rows, err := s.ListUnreadNotifications(ctx, 2)
+	rows, err := s.ListNotifications(ctx, notificationsvc.ListUnread, time.Time{}, 2)
 	if err != nil {
-		t.Fatalf("ListUnreadNotifications: %v", err)
+		t.Fatalf("ListNotifications: %v", err)
 	}
 	if len(rows) != 2 || rows[0].ID != "other" || rows[1].ID != "new" {
 		t.Fatalf("rows = %+v", rows)
+	}
+}
+
+func TestNotificationStore_ListRecentAllIncludesReadAndPrunesExpired(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	sess, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	recentRead := domain.NotificationRecord{ID: "read", SessionID: sess.ID, ProjectID: sess.ProjectID, PRURL: "https://github.com/o/r/pull/1", Type: domain.NotificationPRMerged, Title: "read", Status: domain.NotificationRead, CreatedAt: now.Add(-time.Hour)}
+	if _, inserted, err := s.CreateNotification(ctx, recentRead); err != nil || !inserted {
+		t.Fatalf("insert recent read inserted=%v err=%v", inserted, err)
+	}
+	recentUnread := domain.NotificationRecord{ID: "unread", SessionID: sess.ID, ProjectID: sess.ProjectID, Type: domain.NotificationNeedsInput, Title: "unread", Status: domain.NotificationUnread, CreatedAt: now}
+	if _, inserted, err := s.CreateNotification(ctx, recentUnread); err != nil || !inserted {
+		t.Fatalf("insert recent unread inserted=%v err=%v", inserted, err)
+	}
+	// Backfill an expired row after the recent rows so it remains physically
+	// present long enough to prove the rolling-window query excludes it.
+	old := domain.NotificationRecord{ID: "expired", SessionID: sess.ID, ProjectID: sess.ProjectID, PRURL: "https://github.com/o/r/pull/old", Type: domain.NotificationPRClosedUnmerged, Title: "expired", Status: domain.NotificationUnread, CreatedAt: now.Add(-domain.NotificationRetentionWindow - time.Minute)}
+	if _, inserted, err := s.CreateNotification(ctx, old); err != nil || !inserted {
+		t.Fatalf("insert expired inserted=%v err=%v", inserted, err)
+	}
+
+	rows, err := s.ListNotifications(ctx, notificationsvc.ListAll, now.Add(-domain.NotificationRetentionWindow), 0)
+	if err != nil {
+		t.Fatalf("ListNotifications: %v", err)
+	}
+	if len(rows) != 2 || rows[0].ID != "unread" || rows[1].ID != "read" {
+		t.Fatalf("rows = %+v", rows)
+	}
+	trigger := domain.NotificationRecord{ID: "trigger", SessionID: sess.ID, ProjectID: sess.ProjectID, PRURL: "https://github.com/o/r/pull/2", Type: domain.NotificationReadyToMerge, Title: "trigger", Status: domain.NotificationUnread, CreatedAt: now}
+	if _, inserted, err := s.CreateNotification(ctx, trigger); err != nil || !inserted {
+		t.Fatalf("insert prune trigger inserted=%v err=%v", inserted, err)
+	}
+	if _, ok, err := s.MarkNotificationRead(ctx, old.ID); err != nil || ok {
+		t.Fatalf("expired row was not pruned: ok=%v err=%v", ok, err)
 	}
 }
 

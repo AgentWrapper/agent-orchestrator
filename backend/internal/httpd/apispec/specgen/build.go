@@ -451,7 +451,7 @@ func notificationOperations() []operation {
 	return []operation{
 		{
 			method: http.MethodGet, path: "/api/v1/notifications", id: "listNotifications", tag: "notifications",
-			summary:    "List unread notifications",
+			summary:    "List recent notifications",
 			pathParams: []any{controllers.ListNotificationsQuery{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.ListNotificationsResponse{}},

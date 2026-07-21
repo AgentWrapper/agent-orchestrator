@@ -32,7 +32,13 @@ vi.mock("./bridge", () => ({
 	},
 }));
 
-import { createNotificationsTransport, mergeUnreadNotification, unreadNotificationsQueryKey } from "./notifications";
+import {
+	createNotificationsTransport,
+	markAllCachedNotificationsRead,
+	markCachedNotificationRead,
+	mergeUnreadNotification,
+	unreadNotificationsQueryKey,
+} from "./notifications";
 
 class EventSourceStub {
 	static instances: EventSourceStub[] = [];
@@ -105,6 +111,20 @@ describe("notification cache helpers", () => {
 		expect(mergeUnreadNotification(qc, notification())).toBe(false);
 
 		expect(qc.getQueryData<NotificationDTO[]>(unreadNotificationsQueryKey)).toHaveLength(1);
+	});
+
+	it("keeps acknowledged notifications in recent history", () => {
+		const qc = queryClient();
+		mergeUnreadNotification(qc, notification());
+		markCachedNotificationRead(qc, notification({ status: "read" }));
+
+		expect(qc.getQueryData<NotificationDTO[]>(unreadNotificationsQueryKey)).toEqual([
+			expect.objectContaining({ id: "ntf_1", status: "read" }),
+		]);
+
+		mergeUnreadNotification(qc, notification({ id: "ntf_2" }));
+		markAllCachedNotificationsRead(qc);
+		expect(qc.getQueryData<NotificationDTO[]>(unreadNotificationsQueryKey)?.every((item) => item.status === "read")).toBe(true);
 	});
 });
 

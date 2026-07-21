@@ -33,7 +33,7 @@ type fakeNotificationStream struct {
 	ch         chan domain.NotificationRecord
 }
 
-func (f *fakeNotificationService) ListUnread(_ context.Context, filter notificationsvc.ListFilter) ([]notificationsvc.Notification, error) {
+func (f *fakeNotificationService) List(_ context.Context, filter notificationsvc.ListFilter) ([]notificationsvc.Notification, error) {
 	f.gotFilter = filter
 	return f.items, f.err
 }
@@ -87,6 +87,9 @@ func TestNotificationsAPI_ListUnread(t *testing.T) {
 	if svc.gotFilter.Limit != 10 {
 		t.Fatalf("filter = %+v", svc.gotFilter)
 	}
+	if svc.gotFilter.Status != notificationsvc.ListUnread {
+		t.Fatalf("status = %q, want unread", svc.gotFilter.Status)
+	}
 	var resp struct {
 		Notifications []struct {
 			ID        string `json:"id"`
@@ -106,11 +109,24 @@ func TestNotificationsAPI_ListUnread(t *testing.T) {
 	}
 }
 
+func TestNotificationsAPI_ListAllHistory(t *testing.T) {
+	svc := &fakeNotificationService{}
+	srv := newNotificationTestServer(t, svc)
+
+	_, status, _ := doRequest(t, srv, "GET", "/api/v1/notifications?status=all", "")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", status)
+	}
+	if svc.gotFilter.Status != notificationsvc.ListAll || svc.gotFilter.Limit != notificationsvc.DefaultListLimit {
+		t.Fatalf("filter = %+v", svc.gotFilter)
+	}
+}
+
 func TestNotificationsAPI_DefaultsAndCapsLimit(t *testing.T) {
 	svc := &fakeNotificationService{}
 	srv := newNotificationTestServer(t, svc)
 
-	_, status, _ := doRequest(t, srv, "GET", "/api/v1/notifications?limit=999", "")
+	_, status, _ := doRequest(t, srv, "GET", "/api/v1/notifications?limit=9999", "")
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want 200", status)
 	}

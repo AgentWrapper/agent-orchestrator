@@ -26,7 +26,23 @@ type Notification struct {
 	Target Target
 }
 
-// ListFilter controls unread notification listing.
+// ListStatus selects which retained notifications are returned.
+type ListStatus string
+
+const (
+	// ListUnread returns only notifications that still need acknowledgement.
+	ListUnread ListStatus = "unread"
+	// ListAll returns both read and unread notifications.
+	ListAll ListStatus = "all"
+)
+
+// Valid reports whether s is a supported notification list filter.
+func (s ListStatus) Valid() bool {
+	return s == ListUnread || s == ListAll
+}
+
+// ListFilter controls recent notification listing.
 type ListFilter struct {
-	Limit int
+	Status ListStatus
+	Limit  int
 }

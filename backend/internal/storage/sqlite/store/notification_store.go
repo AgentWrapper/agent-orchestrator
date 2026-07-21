@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	moderncsqlite "modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
@@ -24,6 +25,9 @@ func (s *Store) CreateNotification(ctx context.Context, rec domain.NotificationR
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	if err := s.qw.DeleteNotificationsBefore(ctx, rec.CreatedAt.Add(-domain.NotificationRetentionWindow)); err != nil {
+		return domain.NotificationRecord{}, false, fmt.Errorf("prune expired notifications: %w", err)
+	}
 	if existing, ok, err := s.getUnreadNotificationByDedupe(ctx, rec); err != nil {
 		return domain.NotificationRecord{}, false, err
 	} else if ok {
@@ -53,11 +57,24 @@ func (s *Store) CreateNotification(ctx context.Context, rec domain.NotificationR
 	return notificationFromGen(row), true, nil
 }
 
-// ListUnreadNotifications returns unread notifications newest-first.
-func (s *Store) ListUnreadNotifications(ctx context.Context, limit int) ([]domain.NotificationRecord, error) {
-	rows, err := s.qr.ListUnreadNotifications(ctx, int64(limit))
+// ListNotifications returns retained notifications newest-first. A zero limit
+// means the full seven-day window; SQLite uses -1 for an unlimited LIMIT.
+func (s *Store) ListNotifications(ctx context.Context, status notificationsvc.ListStatus, since time.Time, limit int) ([]domain.NotificationRecord, error) {
+	sqlLimit := int64(limit)
+	if sqlLimit <= 0 {
+		sqlLimit = -1
+	}
+	var (
+		rows []gen.Notification
+		err  error
+	)
+	if status == notificationsvc.ListUnread {
+		rows, err = s.qr.ListRecentUnreadNotifications(ctx, gen.ListRecentUnreadNotificationsParams{CreatedAt: since, Limit: sqlLimit})
+	} else {
+		rows, err = s.qr.ListRecentNotifications(ctx, gen.ListRecentNotificationsParams{CreatedAt: since, Limit: sqlLimit})
+	}
 	if err != nil {
-		return nil, fmt.Errorf("list unread notifications: %w", err)
+		return nil, fmt.Errorf("list notifications: %w", err)
 	}
 	return notificationsFromGen(rows), nil
 }

@@ -58,6 +58,16 @@ func (q *Queries) CreateNotification(ctx context.Context, arg CreateNotification
 	return i, err
 }
 
+const deleteNotificationsBefore = `-- name: DeleteNotificationsBefore :exec
+DELETE FROM notifications
+WHERE created_at < ?
+`
+
+func (q *Queries) DeleteNotificationsBefore(ctx context.Context, createdAt time.Time) error {
+	_, err := q.db.ExecContext(ctx, deleteNotificationsBefore, createdAt)
+	return err
+}
+
 const getUnreadNotificationByDedupe = `-- name: GetUnreadNotificationByDedupe :one
 SELECT id, session_id, project_id, pr_url, type, title, body, status, created_at
 FROM notifications
@@ -88,16 +98,67 @@ func (q *Queries) GetUnreadNotificationByDedupe(ctx context.Context, arg GetUnre
 	return i, err
 }
 
-const listUnreadNotifications = `-- name: ListUnreadNotifications :many
+const listRecentNotifications = `-- name: ListRecentNotifications :many
 SELECT id, session_id, project_id, pr_url, type, title, body, status, created_at
 FROM notifications
-WHERE status = 'unread'
+WHERE created_at >= ?
 ORDER BY created_at DESC
 LIMIT ?
 `
 
-func (q *Queries) ListUnreadNotifications(ctx context.Context, limit int64) ([]Notification, error) {
-	rows, err := q.db.QueryContext(ctx, listUnreadNotifications, limit)
+type ListRecentNotificationsParams struct {
+	CreatedAt time.Time
+	Limit     int64
+}
+
+func (q *Queries) ListRecentNotifications(ctx context.Context, arg ListRecentNotificationsParams) ([]Notification, error) {
+	rows, err := q.db.QueryContext(ctx, listRecentNotifications, arg.CreatedAt, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Notification{}
+	for rows.Next() {
+		var i Notification
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.ProjectID,
+			&i.PRURL,
+			&i.Type,
+			&i.Title,
+			&i.Body,
+			&i.Status,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRecentUnreadNotifications = `-- name: ListRecentUnreadNotifications :many
+SELECT id, session_id, project_id, pr_url, type, title, body, status, created_at
+FROM notifications
+WHERE status = 'unread' AND created_at >= ?
+ORDER BY created_at DESC
+LIMIT ?
+`
+
+type ListRecentUnreadNotificationsParams struct {
+	CreatedAt time.Time
+	Limit     int64
+}
+
+func (q *Queries) ListRecentUnreadNotifications(ctx context.Context, arg ListRecentUnreadNotificationsParams) ([]Notification, error) {
+	rows, err := q.db.QueryContext(ctx, listRecentUnreadNotifications, arg.CreatedAt, arg.Limit)
 	if err != nil {
 		return nil, err
 	}

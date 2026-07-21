@@ -4,12 +4,23 @@ INSERT INTO notifications (
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
--- name: ListUnreadNotifications :many
+-- name: ListRecentUnreadNotifications :many
 SELECT *
 FROM notifications
-WHERE status = 'unread'
+WHERE status = 'unread' AND created_at >= ?
 ORDER BY created_at DESC
 LIMIT ?;
+
+-- name: ListRecentNotifications :many
+SELECT *
+FROM notifications
+WHERE created_at >= ?
+ORDER BY created_at DESC
+LIMIT ?;
+
+-- name: DeleteNotificationsBefore :exec
+DELETE FROM notifications
+WHERE created_at < ?;
 
 -- name: MarkNotificationRead :one
 UPDATE notifications

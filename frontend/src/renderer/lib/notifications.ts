@@ -5,18 +5,22 @@ import { apiClient, apiErrorMessage, getApiBaseUrl, subscribeApiBaseUrl } from "
 
 export type NotificationDTO = components["schemas"]["NotificationResponse"];
 
-export const unreadNotificationsQueryKey = ["notifications", "unread"] as const;
+export const recentNotificationsQueryKey = ["notifications", "recent"] as const;
+// Kept as an alias for callers that predate seven-day history.
+export const unreadNotificationsQueryKey = recentNotificationsQueryKey;
 
 const SSE_RETRY_MS = 5_000;
 const EVENTSOURCE_CLOSED = 2;
 
-export async function fetchUnreadNotifications(): Promise<NotificationDTO[]> {
+export async function fetchRecentNotifications(): Promise<NotificationDTO[]> {
 	const { data, error } = await apiClient.GET("/api/v1/notifications", {
-		params: { query: { status: "unread", limit: 100 } },
+		params: { query: { status: "all" } },
 	});
 	if (error) throw new Error(apiErrorMessage(error, "Could not load notifications"));
 	return sortNotifications(data?.notifications ?? []);
 }
+
+export const fetchUnreadNotifications = fetchRecentNotifications;
 
 export async function markNotificationRead(id: string): Promise<NotificationDTO> {
 	const { data, error } = await apiClient.PATCH("/api/v1/notifications/{id}", {
@@ -34,24 +38,28 @@ export async function markAllNotificationsRead(): Promise<NotificationDTO[]> {
 	return data?.notifications ?? [];
 }
 
-export function mergeUnreadNotification(queryClient: QueryClient, notification: NotificationDTO): boolean {
+export function mergeRecentNotification(queryClient: QueryClient, notification: NotificationDTO): boolean {
 	let inserted = false;
-	queryClient.setQueryData<NotificationDTO[]>(unreadNotificationsQueryKey, (current = []) => {
-		if (current.some((item) => item.id === notification.id)) return current;
+	queryClient.setQueryData<NotificationDTO[]>(recentNotificationsQueryKey, (current = []) => {
+		if (current.some((item) => item.id === notification.id)) {
+			return sortNotifications(current.map((item) => (item.id === notification.id ? notification : item)));
+		}
 		inserted = true;
 		return sortNotifications([notification, ...current]);
 	});
 	return inserted;
 }
 
-export function removeUnreadNotification(queryClient: QueryClient, id: string): void {
-	queryClient.setQueryData<NotificationDTO[]>(unreadNotificationsQueryKey, (current = []) =>
-		current.filter((item) => item.id !== id),
-	);
+export const mergeUnreadNotification = mergeRecentNotification;
+
+export function markCachedNotificationRead(queryClient: QueryClient, notification: NotificationDTO): void {
+	mergeRecentNotification(queryClient, notification);
 }
 
-export function clearUnreadNotifications(queryClient: QueryClient): void {
-	queryClient.setQueryData<NotificationDTO[]>(unreadNotificationsQueryKey, []);
+export function markAllCachedNotificationsRead(queryClient: QueryClient): void {
+	queryClient.setQueryData<NotificationDTO[]>(recentNotificationsQueryKey, (current = []) =>
+		current.map((item) => (item.status === "read" ? item : { ...item, status: "read" })),
+	);
 }
 
 export function createNotificationsTransport(queryClient: QueryClient) {
@@ -62,7 +70,7 @@ export function createNotificationsTransport(queryClient: QueryClient) {
 			let sourceBaseUrl: string | undefined;
 
 			const invalidateUnread = () => {
-				void queryClient.invalidateQueries({ queryKey: unreadNotificationsQueryKey });
+				void queryClient.invalidateQueries({ queryKey: recentNotificationsQueryKey });
 			};
 
 			const scheduleRetry = () => {
@@ -89,7 +97,7 @@ export function createNotificationsTransport(queryClient: QueryClient) {
 					source.addEventListener("notification_created", (event) => {
 						const notification = parseNotificationEvent(event);
 						if (!notification) return;
-						const inserted = mergeUnreadNotification(queryClient, notification);
+						const inserted = mergeRecentNotification(queryClient, notification);
 						if (inserted) {
 							void aoBridge.notifications.show({
 								id: notification.id,

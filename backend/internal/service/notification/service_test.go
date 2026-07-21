@@ -12,6 +12,9 @@ import (
 
 type fakeStore struct {
 	rows        []domain.NotificationRecord
+	listStatus  ListStatus
+	listSince   time.Time
+	listLimit   int
 	markRow     domain.NotificationRecord
 	markOK      bool
 	markAllRows []domain.NotificationRecord
@@ -22,7 +25,10 @@ func (f *fakeStore) CreateNotification(context.Context, domain.NotificationRecor
 	return domain.NotificationRecord{}, false, nil
 }
 
-func (f *fakeStore) ListUnreadNotifications(_ context.Context, _ int) ([]domain.NotificationRecord, error) {
+func (f *fakeStore) ListNotifications(_ context.Context, status ListStatus, since time.Time, limit int) ([]domain.NotificationRecord, error) {
+	f.listStatus = status
+	f.listSince = since
+	f.listLimit = limit
 	return f.rows, f.err
 }
 
@@ -34,18 +40,33 @@ func (f *fakeStore) MarkAllNotificationsRead(context.Context) ([]domain.Notifica
 	return f.markAllRows, f.err
 }
 
-func TestListUnreadAddsTargets(t *testing.T) {
+func TestListAddsTargetsAndAppliesRetentionWindow(t *testing.T) {
+	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
 	st := &fakeStore{rows: []domain.NotificationRecord{
 		{ID: "n1", SessionID: "mer-1", ProjectID: "mer", Type: domain.NotificationNeedsInput, Title: "needs", Status: domain.NotificationUnread, CreatedAt: time.Now()},
 		{ID: "n2", SessionID: "mer-1", ProjectID: "mer", PRURL: "https://github.com/o/r/pull/1", Type: domain.NotificationReadyToMerge, Title: "ready", Status: domain.NotificationUnread, CreatedAt: time.Now()},
 	}}
-	mgr := New(Deps{Store: st})
-	got, err := mgr.ListUnread(context.Background(), ListFilter{Limit: 10})
+	mgr := New(Deps{Store: st, Clock: func() time.Time { return now }})
+	got, err := mgr.List(context.Background(), ListFilter{Status: ListAll, Limit: 10})
 	if err != nil {
-		t.Fatalf("ListUnread: %v", err)
+		t.Fatalf("List: %v", err)
 	}
 	if got[0].Target.Kind != TargetSession || got[1].Target.Kind != TargetPR || got[1].Target.PRURL == "" {
 		t.Fatalf("targets = %+v", got)
+	}
+	if st.listStatus != ListAll || st.listLimit != 10 || !st.listSince.Equal(now.Add(-domain.NotificationRetentionWindow)) {
+		t.Fatalf("list filter status=%q since=%s limit=%d", st.listStatus, st.listSince, st.listLimit)
+	}
+}
+
+func TestListDefaultsToUnreadAndUnlimited(t *testing.T) {
+	st := &fakeStore{}
+	mgr := New(Deps{Store: st})
+	if _, err := mgr.List(context.Background(), ListFilter{}); err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if st.listStatus != ListUnread || st.listLimit != DefaultListLimit {
+		t.Fatalf("list status=%q limit=%d", st.listStatus, st.listLimit)
 	}
 }
 
@@ -91,7 +112,7 @@ func TestMarkAllReadAddsTargets(t *testing.T) {
 }
 
 func TestListUnreadRequiresStore(t *testing.T) {
-	_, err := New(Deps{}).ListUnread(context.Background(), ListFilter{})
+	_, err := New(Deps{}).List(context.Background(), ListFilter{})
 	if err == nil {
 		t.Fatal("want missing store error")
 	}
