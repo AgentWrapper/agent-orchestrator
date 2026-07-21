@@ -77,6 +77,7 @@ type SidebarProps = {
 	underTopbar?: boolean;
 	/** Chrome height to clear when underTopbar is set. Defaults to the 56px shell toolbar. */
 	topbarOffset?: "toolbar" | "titlebar";
+	isLoadingProjects: boolean;
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];
 	onCreateProject: (input: CreateProjectInput) => Promise<void>;
@@ -118,6 +119,7 @@ export function Sidebar({
 	hideEdgeBorder = false,
 	underTopbar = true,
 	topbarOffset = "toolbar",
+	isLoadingProjects,
 	workspaceError,
 	workspaces,
 	onCreateProject,
@@ -280,6 +282,14 @@ export function Sidebar({
 							<div className="sidebar-expanded-chrome px-2 py-3 group-data-[collapsible=icon]:hidden">
 								<p className="text-xs text-foreground">Could not load projects.</p>
 								<p className="mt-1 text-caption text-passive">{workspaceError}</p>
+							</div>
+						) : isLoadingProjects ? (
+							<div
+								aria-live="polite"
+								className="sidebar-expanded-chrome px-2 py-3 group-data-[collapsible=icon]:hidden"
+							>
+								<p className="text-xs text-foreground">Loading projects…</p>
+								<p className="mt-1 text-caption text-passive">Restoring your existing projects and sessions.</p>
 							</div>
 						) : workspaces.length === 0 ? null : (
 							<SidebarMenu className="gap-0 group-data-[collapsible=icon]:gap-1">

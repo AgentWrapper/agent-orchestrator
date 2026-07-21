@@ -85,12 +85,14 @@ function renderSidebar({
 	onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler,
 	onInitializeProject = vi.fn().mockResolvedValue(undefined) as InitializeProjectHandler,
 	onRemoveProject = vi.fn().mockResolvedValue(undefined) as RemoveProjectHandler,
+	isLoadingProjects = false,
 	seedAgents = true,
 	workspaces = [workspace],
 }: {
 	onCreateProject?: CreateProjectHandler;
 	onInitializeProject?: InitializeProjectHandler;
 	onRemoveProject?: RemoveProjectHandler;
+	isLoadingProjects?: boolean;
 	seedAgents?: boolean;
 	workspaces?: WorkspaceSummary[];
 } = {}) {
@@ -117,6 +119,7 @@ function renderSidebar({
 		<QueryClientProvider client={queryClient}>
 			<SidebarProvider>
 				<Sidebar
+					isLoadingProjects={isLoadingProjects}
 					onCreateProject={onCreateProject}
 					onInitializeProject={onInitializeProject}
 					onRemoveProject={onRemoveProject}
@@ -203,6 +206,14 @@ afterEach(() => {
 });
 
 describe("Sidebar", () => {
+	it("shows project loading state instead of claiming the project list is empty", () => {
+		renderSidebar({ isLoadingProjects: true, workspaces: [] });
+
+		expect(screen.getByText("Loading projects…")).toBeVisible();
+		expect(screen.getByText("Restoring your existing projects and sessions.")).toBeVisible();
+		expect(screen.queryByText("No projects yet.")).not.toBeInTheDocument();
+	});
+
 	it("shows a ConfirmDialog and calls onRemoveProject when confirmed", async () => {
 		const user = userEvent.setup();
 		const onRemoveProject = renderSidebar();

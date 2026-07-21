@@ -227,6 +227,7 @@
 	--color-interactive-active: var(--bridge-interactive-active);
 
 	--animate-status-pulse: status-pulse 1.8s ease-in-out infinite;
+	--animate-project-loading: project-loading 1.1s ease-in-out infinite;
 	--animate-overlay-in: overlay-in 150ms ease-out;
 	--animate-modal-in: modal-in 150ms ease-out;
 }
@@ -686,6 +687,15 @@ select {
 	}
 	50% {
 		opacity: 0.35;
+	}
+}
+
+@keyframes project-loading {
+	from {
+		transform: translateX(-100%);
+	}
+	to {
+		transform: translateX(250%);
 	}
 }
 
