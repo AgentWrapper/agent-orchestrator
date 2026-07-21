@@ -18,9 +18,9 @@ const features: Feature[] = [
 		body: "Every project gets a main agent that runs the fleet for you. Describe the outcome — it plans the work, spawns workers into their own worktrees, keeps them moving, and escalates only what needs a human.",
 		facts: ["plans + spawns workers", "keeps sessions moving", "you stay the reviewer"],
 		src: "/features/orchestrator.jpg",
-		alt: "A real orchestrator session in AO: the user asks it to get the flaky tests green, and the orchestrator plans the work, spawns workers, and reports what it is watching.",
+		alt: "A real orchestrator session in AO: the user asks it to plan tasks from the backlog, and the orchestrator answers with a triage, a plan table, and spawns the workers.",
 		width: 1600,
-		height: 484,
+		height: 565,
 	},
 	{
 		eyebrow: "Watch",
@@ -40,7 +40,7 @@ const features: Feature[] = [
 		src: "/features/session-feedback.jpg",
 		alt: "A session inspector in AO: a real Codex terminal that just received AO's message about CI failing on its pull request, next to the pull request card and activity timeline.",
 		width: 1600,
-		height: 743,
+		height: 811,
 	},
 ];
 
