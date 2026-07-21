@@ -204,6 +204,15 @@ func newSCMFixture(t *testing.T, branch string) *scmFixture {
 	}
 }
 
+func (f *scmFixture) enableTerminateOnPRMerge(t *testing.T) {
+	t.Helper()
+	ok, err := f.store.SetSessionTerminateOnPRMerge(context.Background(), f.session.ID, true, f.now)
+	if err != nil || !ok {
+		t.Fatalf("enable terminate-on-pr-merge: ok=%v err=%v", ok, err)
+	}
+	f.session.TerminateOnPRMerge = true
+}
+
 func failingSCMObservation(prURL string, num int, headSHA, logTail string) ports.SCMObservation {
 	failed := ports.SCMCheckObservation{
 		Name:       "build",
@@ -369,6 +378,7 @@ func TestSCMObserverEndToEnd(t *testing.T) {
 	t.Run("Merged observation terminates the session and sends no nudge", func(t *testing.T) {
 		ctx := context.Background()
 		f := newSCMFixture(t, "feat/x")
+		f.enableTerminateOnPRMerge(t)
 		const (
 			prURL   = "https://github.com/octocat/hello/pull/77"
 			headSHA = "cafef00d"
@@ -523,6 +533,7 @@ func TestSCMObserverMultiPREndToEnd(t *testing.T) {
 	t.Run("session stays alive while a stacked PR is open and terminates once all are merged", func(t *testing.T) {
 		ctx := context.Background()
 		f := newSCMFixture(t, "feat/x")
+		f.enableTerminateOnPRMerge(t)
 		const (
 			rootURL  = "https://github.com/octocat/hello/pull/201"
 			childURL = "https://github.com/octocat/hello/pull/202"

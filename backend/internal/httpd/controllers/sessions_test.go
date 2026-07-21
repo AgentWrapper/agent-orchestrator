@@ -150,6 +150,16 @@ func (f *fakeSessionService) Rename(_ context.Context, id domain.SessionID, disp
 	return nil
 }
 
+func (f *fakeSessionService) SetTerminateOnPRMerge(_ context.Context, id domain.SessionID, terminate bool) (domain.Session, error) {
+	s, ok := f.sessions[id]
+	if !ok {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	s.TerminateOnPRMerge = terminate
+	f.sessions[id] = s
+	return s, nil
+}
+
 func (f *fakeSessionService) Send(_ context.Context, _ domain.SessionID, message string) error {
 	f.sent = message
 	return nil
@@ -395,10 +405,35 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 		t.Fatalf("session displayName not updated: %+v", svc.sessions["ao-2"])
 	}
 
+	body, status, _ = doRequest(t, srv, "PATCH", "/api/v1/sessions/ao-2/merge-policy", `{"terminateOnPrMerge":true}`)
+	if status != http.StatusOK {
+		t.Fatalf("merge policy = %d, want 200; body=%s", status, body)
+	}
+	var policy struct {
+		OK                 bool        `json:"ok"`
+		SessionID          string      `json:"sessionId"`
+		TerminateOnPRMerge bool        `json:"terminateOnPrMerge"`
+		Session            sessionBody `json:"session"`
+	}
+	mustJSON(t, body, &policy)
+	if !policy.OK || policy.SessionID != "ao-2" || !policy.TerminateOnPRMerge || !policy.Session.TerminateOnPRMerge {
+		t.Fatalf("merge policy response = %#v", policy)
+	}
+	if !svc.sessions["ao-2"].TerminateOnPRMerge {
+		t.Fatalf("session terminateOnPRMerge not updated: %+v", svc.sessions["ao-2"])
+	}
+
 	body, status, _ = doRequest(t, srv, "POST", "/api/v1/orchestrators", `{"projectId":"ao"}`)
 	if status != http.StatusCreated {
 		t.Fatalf("orchestrator = %d, want 201; body=%s", status, body)
 	}
+}
+
+func TestSessionsAPI_MergePolicyRejectsInvalidJSON(t *testing.T) {
+	srv := newSessionTestServer(t, newFakeSessionService())
+
+	body, status, _ := doRequest(t, srv, "PATCH", "/api/v1/sessions/ao-1/merge-policy", `{`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
 }
 
 func TestSessionsAPI_PreviewDiscoversAndServesStaticIndex(t *testing.T) {
@@ -1190,15 +1225,17 @@ func TestSessionsAPI_CleanupWithoutProjectFilter(t *testing.T) {
 }
 
 type sessionBody struct {
-	ID               string `json:"id"`
-	ProjectID        string `json:"projectId"`
-	IssueID          string `json:"issueId"`
-	Kind             string `json:"kind"`
-	Harness          string `json:"harness"`
-	DisplayName      string `json:"displayName"`
-	Branch           string `json:"branch"`
-	Status           string `json:"status"`
-	TerminalHandleID string `json:"terminalHandleId"`
+	ID                 string `json:"id"`
+	ProjectID          string `json:"projectId"`
+	IssueID            string `json:"issueId"`
+	Kind               string `json:"kind"`
+	Harness            string `json:"harness"`
+	DisplayName        string `json:"displayName"`
+	Branch             string `json:"branch"`
+	Status             string `json:"status"`
+	IsTerminated       bool   `json:"isTerminated"`
+	TerminateOnPRMerge bool   `json:"terminateOnPrMerge"`
+	TerminalHandleID   string `json:"terminalHandleId"`
 }
 
 func TestSessionsAPI_PRRoutes(t *testing.T) {

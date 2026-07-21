@@ -59,6 +59,8 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 				kind: session.kind === "orchestrator" ? "orchestrator" : session.kind === "worker" ? "worker" : undefined,
 				branch: session.branch ?? `session/${session.id}`,
 				status: toSessionStatus(session.status, session.isTerminated),
+				isTerminated: session.isTerminated,
+				terminateOnPrMerge: session.terminateOnPrMerge ?? false,
 				createdAt: session.createdAt,
 				updatedAt: session.updatedAt,
 				activity: toSessionActivity(session.activity),

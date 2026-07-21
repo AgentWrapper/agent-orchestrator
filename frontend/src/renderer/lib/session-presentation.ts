@@ -122,8 +122,13 @@ export const attentionZoneLabel: Record<AttentionZone, string> = {
 	done: attentionZoneViews.done.label,
 };
 
-export function attentionZone(input: SessionStatus | Pick<WorkspaceSession, "status">): AttentionZone {
+export function attentionZone(
+	input: SessionStatus | (Pick<WorkspaceSession, "status"> & Partial<Pick<WorkspaceSession, "isTerminated">>),
+): AttentionZone {
 	const status = typeof input === "string" ? input : input.status;
+	if (typeof input !== "string" && status === "merged" && input.isTerminated === false) {
+		return "merge";
+	}
 	switch (status) {
 		case "merged":
 		case "terminated":
@@ -156,8 +161,10 @@ export function getAttentionZoneViewForZone(zone: AttentionZone): AttentionZoneV
 	return attentionZoneViews[zone];
 }
 
-export function getSessionDotView(session: Pick<WorkspaceSession, "status">): { className: string } {
-	return { className: getAttentionZoneView(session.status).dotClassName };
+export function getSessionDotView(
+	session: Pick<WorkspaceSession, "status"> & Partial<Pick<WorkspaceSession, "isTerminated">>,
+): { className: string } {
+	return { className: getAttentionZoneViewForZone(attentionZone(session)).dotClassName };
 }
 
 export type SessionTimelinePillStatus = Extract<SessionStatus, "no_signal" | "ci_failed" | "changes_requested">;

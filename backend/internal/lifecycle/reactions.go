@@ -150,6 +150,13 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 	// PR row before calling lifecycle, so the store already reflects this
 	// transition when sessionComplete reads it.
 	if o.Merged || o.Closed {
+		rec, ok, err := m.store.GetSession(ctx, id)
+		if err != nil || !ok {
+			return err
+		}
+		if !rec.TerminateOnPRMerge {
+			return nil
+		}
 		done, err := m.sessionComplete(ctx, id)
 		if err != nil {
 			return err

@@ -202,6 +202,9 @@ func TestMergedPRTerminatesThroughSessionManager(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if ok, err := st.store.SetSessionTerminateOnPRMerge(ctx, sess.ID, true, time.Now().UTC()); err != nil || !ok {
+		t.Fatalf("enable terminate-on-pr-merge: ok=%v err=%v", ok, err)
+	}
 
 	if err := st.prm.ApplyObservation(ctx, sess.ID, ports.PRObservation{Fetched: true, URL: "pr1", Number: 1, Merged: true}); err != nil {
 		t.Fatal(err)
@@ -228,6 +231,9 @@ func TestMergedPRTeardownFailureTerminatesForReconcileRetry(t *testing.T) {
 	sess, err := st.sm.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Branch: "b", Prompt: "do it"})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if ok, err := st.store.SetSessionTerminateOnPRMerge(ctx, sess.ID, true, time.Now().UTC()); err != nil || !ok {
+		t.Fatalf("enable terminate-on-pr-merge: ok=%v err=%v", ok, err)
 	}
 
 	st.rt.destroyErr = errors.New("tmux destroy failed once")
@@ -261,6 +267,9 @@ func TestMergedPRDirtyWorkspacePreservesWorktreeAndTerminates(t *testing.T) {
 	sess, err := st.sm.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Branch: "b", Prompt: "do it"})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if ok, err := st.store.SetSessionTerminateOnPRMerge(ctx, sess.ID, true, time.Now().UTC()); err != nil || !ok {
+		t.Fatalf("enable terminate-on-pr-merge: ok=%v err=%v", ok, err)
 	}
 
 	st.ws.destroyErr = fmt.Errorf("gitworktree: refusing to remove: %w", ports.ErrWorkspaceDirty)

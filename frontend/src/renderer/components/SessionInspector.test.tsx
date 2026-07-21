@@ -6,14 +6,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionInspector } from "./SessionInspector";
 import type { PRState, PullRequestFacts, WorkspaceSession } from "../types/workspace";
 
-const { getMock, postMock } = vi.hoisted(() => ({
+const { getMock, patchMock, postMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
+	patchMock: vi.fn(),
 	postMock: vi.fn(),
 }));
 
 vi.mock("../lib/api-client", () => ({
 	apiClient: {
 		GET: getMock,
+		PATCH: patchMock,
 		POST: postMock,
 	},
 	apiErrorMessage: (error: unknown, fallback = "Request failed") => {
@@ -121,8 +123,10 @@ const reviewState = (n: number, status: string, targetSha = `sha-${n}`) => ({
 
 beforeEach(() => {
 	getMock.mockReset();
+	patchMock.mockReset();
 	postMock.mockReset();
 	getMock.mockResolvedValue({ data: { reviewerHandleId: "", reviews: [] }, error: undefined });
+	patchMock.mockResolvedValue({ data: { ok: true, sessionId: "sess-1" }, error: undefined });
 	postMock.mockResolvedValue({ data: { ok: true, sessionId: "sess-1" }, error: undefined });
 });
 
@@ -181,6 +185,31 @@ describe("SessionInspector PR section", () => {
 	it("shows the empty state when there are no PRs", () => {
 		renderWithQuery(<SessionInspector session={session([])} />);
 		expect(screen.getByText("No pull request opened yet.")).toBeInTheDocument();
+	});
+
+	it("shows an opt-in terminate-on-merge switch in the Summary PR section", async () => {
+		renderWithQuery(<SessionInspector session={session([])} />);
+
+		const toggle = screen.getByRole("switch", { name: "Terminate on merge" });
+		expect(toggle).toHaveAttribute("aria-checked", "false");
+
+		await userEvent.click(toggle);
+
+		await waitFor(() => {
+			expect(patchMock).toHaveBeenCalledWith(
+				"/api/v1/sessions/{sessionId}/merge-policy",
+				expect.objectContaining({
+					params: { path: { sessionId: "sess-1" } },
+					body: { terminateOnPrMerge: true },
+				}),
+			);
+		});
+	});
+
+	it("reflects an enabled terminate-on-merge policy", () => {
+		renderWithQuery(<SessionInspector session={session([], { terminateOnPrMerge: true })} />);
+
+		expect(screen.getByRole("switch", { name: "Terminate on merge" })).toHaveAttribute("aria-checked", "true");
 	});
 
 	it("links each PR to its url", () => {

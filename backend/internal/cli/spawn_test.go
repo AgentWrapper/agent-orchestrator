@@ -22,6 +22,8 @@ func authorizedAgentsJSON(agent string) string {
 // setup hint when neither --project, AO_PROJECT_ID, nor cwd can resolve one.
 func TestSpawnCommand_MissingProjectContext(t *testing.T) {
 	cfg := setConfigEnv(t)
+	t.Setenv("AO_PROJECT_ID", "")
+	t.Setenv("AO_SESSION_ID", "")
 	var requests []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		appendPrimaryRequest(&requests, r)
@@ -218,6 +220,7 @@ func TestSpawnResolvesProjectFromEnvAndDefaultAgent(t *testing.T) {
 
 func TestSpawnResolvesProjectFromAOSessionID(t *testing.T) {
 	cfg := setConfigEnv(t)
+	t.Setenv("AO_PROJECT_ID", "")
 	var requests []string
 	var req spawnRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -258,6 +261,7 @@ func TestSpawnResolvesProjectFromAOSessionID(t *testing.T) {
 
 func TestSpawnAOSessionIDFailureRequiresProject(t *testing.T) {
 	cfg := setConfigEnv(t)
+	t.Setenv("AO_PROJECT_ID", "")
 	var requests []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		appendPrimaryRequest(&requests, r)
@@ -286,6 +290,8 @@ func TestSpawnAOSessionIDFailureRequiresProject(t *testing.T) {
 
 func TestSpawnResolvesProjectFromCWD(t *testing.T) {
 	cfg := setConfigEnv(t)
+	t.Setenv("AO_PROJECT_ID", "")
+	t.Setenv("AO_SESSION_ID", "")
 	repo := filepath.Join(t.TempDir(), "repo")
 	subdir := filepath.Join(repo, "pkg")
 	if err := os.MkdirAll(subdir, 0o755); err != nil {

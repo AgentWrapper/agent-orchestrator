@@ -116,12 +116,21 @@ describe("workerDisplayStatus", () => {
 	] as const)("maps %s to %s", (status, expected) => {
 		expect(workerDisplayStatus(sessionWith({ status }))).toBe(expected);
 	});
+
+	it("keeps a live merged session displayable as mergeable", () => {
+		expect(workerDisplayStatus(sessionWith({ status: "merged", isTerminated: false }))).toBe("mergeable");
+	});
 });
 
 describe("sessionIsActive", () => {
 	it("is false for merged and terminated", () => {
 		expect(sessionIsActive(sessionWith({ status: "merged" }))).toBe(false);
 		expect(sessionIsActive(sessionWith({ status: "terminated" }))).toBe(false);
+	});
+
+	it("uses the durable isTerminated fact when present", () => {
+		expect(sessionIsActive(sessionWith({ status: "merged", isTerminated: false }))).toBe(true);
+		expect(sessionIsActive(sessionWith({ status: "working", isTerminated: true }))).toBe(false);
 	});
 
 	it("is true for in-progress statuses", () => {
@@ -357,5 +366,9 @@ describe("attentionZone", () => {
 	it("prioritizes merge as the highest-ROI zone", () => {
 		// merge is checked before action/pending so an approved PR always surfaces.
 		expect(attentionZone(sessionWith({ status: "approved" }))).toBe("merge");
+	});
+
+	it("keeps live merged sessions in the Ready to merge zone", () => {
+		expect(attentionZone(sessionWith({ status: "merged", isTerminated: false }))).toBe("merge");
 	});
 });

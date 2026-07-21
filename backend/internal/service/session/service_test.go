@@ -149,6 +149,17 @@ func (f *fakeStore) SetSessionPreviewURL(_ context.Context, id domain.SessionID,
 	return true, nil
 }
 
+func (f *fakeStore) SetSessionTerminateOnPRMerge(_ context.Context, id domain.SessionID, terminate bool, updatedAt time.Time) (bool, error) {
+	r, ok := f.sessions[id]
+	if !ok {
+		return false, nil
+	}
+	r.TerminateOnPRMerge = terminate
+	r.UpdatedAt = updatedAt
+	f.sessions[id] = r
+	return true, nil
+}
+
 func (f *fakeStore) GetDisplayPRFactsForSession(_ context.Context, id domain.SessionID) (domain.PRFacts, bool, error) {
 	pr, ok := f.pr[id]
 	return pr, ok, nil
@@ -237,6 +248,29 @@ func TestSessionSetPreviewPersistsURL(t *testing.T) {
 func TestSessionSetPreviewUnknownSession(t *testing.T) {
 	st := newFakeStore()
 	if _, err := (&Service{store: st}).SetPreview(context.Background(), "ghost-1", "http://x"); err == nil {
+		t.Fatal("want error for unknown session")
+	}
+}
+
+func TestSessionSetTerminateOnPRMergePersistsPolicy(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityIdle}}
+
+	sess, err := (&Service{store: st}).SetTerminateOnPRMerge(context.Background(), "mer-1", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sess.TerminateOnPRMerge {
+		t.Fatalf("returned terminateOnPRMerge = false, want true")
+	}
+	if !st.sessions["mer-1"].TerminateOnPRMerge {
+		t.Fatalf("persisted terminateOnPRMerge = false, want true")
+	}
+}
+
+func TestSessionSetTerminateOnPRMergeUnknownSession(t *testing.T) {
+	st := newFakeStore()
+	if _, err := (&Service{store: st}).SetTerminateOnPRMerge(context.Background(), "ghost-1", true); err == nil {
 		t.Fatal("want error for unknown session")
 	}
 }

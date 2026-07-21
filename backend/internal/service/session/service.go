@@ -22,6 +22,7 @@ type Store interface {
 	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
 	RenameSession(ctx context.Context, id domain.SessionID, displayName string, updatedAt time.Time) (bool, error)
 	SetSessionPreviewURL(ctx context.Context, id domain.SessionID, previewURL string, updatedAt time.Time) (bool, error)
+	SetSessionTerminateOnPRMerge(ctx context.Context, id domain.SessionID, terminate bool, updatedAt time.Time) (bool, error)
 	GetDisplayPRFactsForSession(ctx context.Context, id domain.SessionID) (domain.PRFacts, bool, error)
 	ListPRFactsForSession(ctx context.Context, id domain.SessionID) ([]domain.PRFacts, error)
 	ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]domain.PullRequest, error)
@@ -477,6 +478,19 @@ func (s *Service) SetPreview(ctx context.Context, id domain.SessionID, previewUR
 	updated, err := s.store.SetSessionPreviewURL(ctx, id, previewURL, time.Now().UTC())
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("set preview url %s: %w", id, err)
+	}
+	if !updated {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	return s.Get(ctx, id)
+}
+
+// SetTerminateOnPRMerge persists the user's merge-completion lifecycle policy
+// and returns the refreshed read model.
+func (s *Service) SetTerminateOnPRMerge(ctx context.Context, id domain.SessionID, terminate bool) (domain.Session, error) {
+	updated, err := s.store.SetSessionTerminateOnPRMerge(ctx, id, terminate, time.Now().UTC())
+	if err != nil {
+		return domain.Session{}, fmt.Errorf("set terminate-on-pr-merge %s: %w", id, err)
 	}
 	if !updated {
 		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")

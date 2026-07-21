@@ -7,13 +7,14 @@ import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
-import type { WorkspaceSession } from "../types/workspace";
+import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { canonicalTrackerIssueId, sortedPRs } from "../types/workspace";
 import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session-presentation";
 import { BrowserPanelView, type BrowserAnnotationQueueModel } from "./BrowserPanel";
 import type { BrowserViewModel } from "../hooks/useBrowserView";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
+import { Switch } from "./ui/switch";
 import { cn } from "../lib/utils";
 import { PRSummaryMeta, PRSummaryParts } from "./PRSummaryDisplay";
 import { StatusPill } from "./StatusPill";
@@ -241,7 +242,10 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 
 	return (
 		<div role="tabpanel">
-			<Section title={prSectionTitle}>
+			<Section
+				title={prSectionTitle}
+				action={session.kind === "orchestrator" ? undefined : <MergePolicyToggle session={session} />}
+			>
 				{prSummaries.length === 0 ? (
 					<p className={inspectorEmptyClass}>No pull request opened yet.</p>
 				) : (
@@ -268,6 +272,71 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 			</Section>
 		</div>
 	);
+}
+
+function MergePolicyToggle({ session }: { session: WorkspaceSession }) {
+	const queryClient = useQueryClient();
+	const labelId = `merge-policy-${session.id}`;
+	const mutation = useMutation({
+		mutationFn: async (terminateOnPrMerge: boolean) => {
+			if (usePreviewData) return;
+			const { error, response } = await apiClient.PATCH("/api/v1/sessions/{sessionId}/merge-policy", {
+				params: { path: { sessionId: session.id } },
+				body: { terminateOnPrMerge },
+			});
+			if (error) {
+				throw new Error(apiErrorMessage(error, `Failed to update merge policy (${response.status})`));
+			}
+		},
+		onMutate: async (terminateOnPrMerge) => {
+			await queryClient.cancelQueries({ queryKey: workspaceQueryKey });
+			const previous = queryClient.getQueryData<WorkspaceSummary[]>(workspaceQueryKey);
+			queryClient.setQueryData<WorkspaceSummary[]>(workspaceQueryKey, (current) =>
+				updateSessionMergePolicy(current, session.id, terminateOnPrMerge),
+			);
+			return { previous };
+		},
+		onError: (_err, _next, context) => {
+			if (context?.previous) queryClient.setQueryData(workspaceQueryKey, context.previous);
+		},
+		onSettled: () => {
+			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+		},
+	});
+	const errorMessage = mutation.error instanceof Error ? mutation.error.message : undefined;
+
+	return (
+		<div className="flex min-w-0 items-center gap-2">
+			<span id={labelId} className="truncate">
+				Terminate on merge
+			</span>
+			<Switch
+				aria-labelledby={labelId}
+				checked={Boolean(session.terminateOnPrMerge)}
+				disabled={mutation.isPending || session.isTerminated}
+				onCheckedChange={(checked) => mutation.mutate(checked)}
+				title={errorMessage}
+			/>
+			{errorMessage ? (
+				<span className="sr-only" role="status">
+					{errorMessage}
+				</span>
+			) : null}
+		</div>
+	);
+}
+
+function updateSessionMergePolicy(
+	workspaces: WorkspaceSummary[] | undefined,
+	sessionId: string,
+	terminateOnPrMerge: boolean,
+): WorkspaceSummary[] | undefined {
+	return workspaces?.map((workspace) => ({
+		...workspace,
+		sessions: workspace.sessions.map((candidate) =>
+			candidate.id === sessionId ? { ...candidate, terminateOnPrMerge } : candidate,
+		),
+	}));
 }
 
 function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {

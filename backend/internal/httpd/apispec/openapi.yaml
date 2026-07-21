@@ -1212,6 +1212,57 @@ paths:
       summary: Mark a session terminated and tear down runtime/workspace resources
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/merge-policy:
+    patch:
+      operationId: setSessionMergePolicy
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetSessionMergePolicyRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SetSessionMergePolicyResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Configure whether a completed merged PR terminates the session
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/pr:
     get:
       operationId: listSessionPRs
@@ -2090,6 +2141,8 @@ components:
           type: string
         terminalHandleId:
           type: string
+        terminateOnPrMerge:
+          type: boolean
         updatedAt:
           format: date-time
           type: string
@@ -2099,6 +2152,7 @@ components:
       - kind
       - activity
       - isTerminated
+      - terminateOnPrMerge
       - createdAt
       - updatedAt
       - status
@@ -3147,6 +3201,29 @@ components:
           $ref: '#/components/schemas/ProjectConfig'
       required:
       - config
+      type: object
+    SetSessionMergePolicyRequest:
+      properties:
+        terminateOnPrMerge:
+          type: boolean
+      required:
+      - terminateOnPrMerge
+      type: object
+    SetSessionMergePolicyResponse:
+      properties:
+        ok:
+          type: boolean
+        session:
+          $ref: '#/components/schemas/ControllersSessionView'
+        sessionId:
+          type: string
+        terminateOnPrMerge:
+          type: boolean
+      required:
+      - ok
+      - sessionId
+      - terminateOnPrMerge
+      - session
       type: object
     SetSessionPreviewRequest:
       properties:

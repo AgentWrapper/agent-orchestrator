@@ -43,6 +43,7 @@ type SessionService interface {
 	Cleanup(ctx context.Context, project domain.ProjectID) (sessionsvc.CleanupOutcome, error)
 	Rename(ctx context.Context, id domain.SessionID, displayName string) error
 	SetPreview(ctx context.Context, id domain.SessionID, previewURL string) (domain.Session, error)
+	SetTerminateOnPRMerge(ctx context.Context, id domain.SessionID, terminate bool) (domain.Session, error)
 	Send(ctx context.Context, id domain.SessionID, message string) error
 	ListPRSummaries(ctx context.Context, id domain.SessionID) ([]sessionsvc.PRSummary, error)
 	ClaimPR(ctx context.Context, id domain.SessionID, ref string, opts sessionsvc.ClaimPROptions) (sessionsvc.ClaimPRResult, error)
@@ -81,6 +82,7 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Get("/sessions/{sessionId}/pr", c.listPRs)
 	r.Post("/sessions/{sessionId}/pr/claim", c.claimPR)
 	r.Patch("/sessions/{sessionId}", c.rename)
+	r.Patch("/sessions/{sessionId}/merge-policy", c.setMergePolicy)
 	r.Post("/sessions/{sessionId}/restore", c.restore)
 	r.Post("/sessions/{sessionId}/kill", c.kill)
 	r.Post("/sessions/{sessionId}/rollback", c.rollback)
@@ -464,6 +466,24 @@ func (c *SessionsController) rename(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, RenameSessionResponse{OK: true, SessionID: sessionID(r), DisplayName: displayName})
+}
+
+func (c *SessionsController) setMergePolicy(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "PATCH", "/api/v1/sessions/{sessionId}/merge-policy")
+		return
+	}
+	var in SetSessionMergePolicyRequest
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	sess, err := c.Svc.SetTerminateOnPRMerge(r.Context(), sessionID(r), in.TerminateOnPRMerge)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, SetSessionMergePolicyResponse{OK: true, SessionID: sessionID(r), TerminateOnPRMerge: in.TerminateOnPRMerge, Session: sessionView(sess)})
 }
 
 func (c *SessionsController) restore(w http.ResponseWriter, r *http.Request) {

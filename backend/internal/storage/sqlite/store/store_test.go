@@ -173,7 +173,7 @@ func TestSessionCreateAssignsPerProjectID(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("get: ok=%v err=%v", ok, err)
 	}
-	if got.Activity.State != domain.ActivityActive || got.IsTerminated ||
+	if got.Activity.State != domain.ActivityActive || got.IsTerminated || got.TerminateOnPRMerge ||
 		got.Harness != domain.HarnessClaudeCode || got.Metadata.Branch != "feat/x" {
 		t.Fatalf("round-trip mismatch: %+v", got)
 	}
@@ -277,6 +277,40 @@ func TestSessionRenameUpdatesDisplayName(t *testing.T) {
 	}
 	if ok {
 		t.Fatal("rename missing ok=true, want false")
+	}
+}
+
+func TestSessionTerminateOnPRMergePolicyRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
+
+	updatedAt := r.UpdatedAt.Add(time.Minute)
+	ok, err := s.SetSessionTerminateOnPRMerge(ctx, r.ID, true, updatedAt)
+	if err != nil || !ok {
+		t.Fatalf("set terminate-on-pr-merge: ok=%v err=%v", ok, err)
+	}
+	got, _, _ := s.GetSession(ctx, r.ID)
+	if !got.TerminateOnPRMerge || !got.UpdatedAt.Equal(updatedAt) {
+		t.Fatalf("policy not persisted: %+v", got)
+	}
+
+	ok, err = s.SetSessionTerminateOnPRMerge(ctx, r.ID, false, updatedAt.Add(time.Minute))
+	if err != nil || !ok {
+		t.Fatalf("clear terminate-on-pr-merge: ok=%v err=%v", ok, err)
+	}
+	again, _, _ := s.GetSession(ctx, r.ID)
+	if again.TerminateOnPRMerge {
+		t.Fatalf("policy should clear, got %+v", again)
+	}
+
+	ok, err = s.SetSessionTerminateOnPRMerge(ctx, "mer-missing", true, updatedAt)
+	if err != nil {
+		t.Fatalf("set missing: %v", err)
+	}
+	if ok {
+		t.Fatal("set missing ok=true, want false")
 	}
 }
 

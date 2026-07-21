@@ -56,11 +56,14 @@ type SessionRecord struct {
 	// activity state. Zero means no hook has ever reported, which deriveStatus
 	// surfaces as StatusNoSignal after a grace period. Internal fact, not part
 	// of the API read model.
-	FirstSignalAt time.Time       `json:"-"`
-	IsTerminated  bool            `json:"isTerminated"`
-	Metadata      SessionMetadata `json:"-"`
-	CreatedAt     time.Time       `json:"createdAt"`
-	UpdatedAt     time.Time       `json:"updatedAt"`
+	FirstSignalAt time.Time `json:"-"`
+	IsTerminated  bool      `json:"isTerminated"`
+	// TerminateOnPRMerge is a durable lifecycle policy. When true, PR-driven
+	// completion may terminate the session through the session-manager path.
+	TerminateOnPRMerge bool            `json:"terminateOnPrMerge"`
+	Metadata           SessionMetadata `json:"-"`
+	CreatedAt          time.Time       `json:"createdAt"`
+	UpdatedAt          time.Time       `json:"updatedAt"`
 }
 
 // Session is the read-model returned across the API boundary: a SessionRecord

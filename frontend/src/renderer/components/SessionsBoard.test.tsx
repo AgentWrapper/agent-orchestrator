@@ -448,6 +448,46 @@ describe("SessionsBoard", () => {
 		expect(screen.getByRole("button", { name: /done \/ terminated/i })).toBeInTheDocument();
 	});
 
+	it("keeps a live merged opt-out card in Ready to merge", () => {
+		const liveMergedSession: WorkspaceSession = {
+			id: "s-merged-live",
+			workspaceId: "p1",
+			workspaceName: "radic",
+			title: "merged live task",
+			provider: "claude-code",
+			kind: "worker",
+			branch: "ao/merged-live",
+			status: "merged",
+			isTerminated: false,
+			terminateOnPrMerge: false,
+			activity: { state: "idle", lastActivityAt: "2026-01-01T00:01:00Z" },
+			updatedAt: "2026-01-01T00:01:00Z",
+			prs: [
+				{
+					url: "https://github.com/example/radic/pull/42",
+					number: 42,
+					state: "merged",
+					ci: "passing",
+					review: "approved",
+					mergeability: "mergeable",
+					reviewComments: false,
+					updatedAt: "2026-01-01T00:01:00Z",
+				},
+			],
+		};
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([liveMergedSession])],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		const readyColumn = screen.getByText("Ready to merge").closest("section") as HTMLElement;
+		expect(within(readyColumn).getByText("merged live task")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /done \/ terminated/i })).not.toBeInTheDocument();
+	});
+
 	it("shows a restore action for terminated sessions in expanded Done / Terminated", async () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [workspaceWithSessions([terminatedSession()])],

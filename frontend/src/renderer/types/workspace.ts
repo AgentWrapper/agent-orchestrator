@@ -126,6 +126,10 @@ export type WorkspaceSession = {
 	kind?: SessionKind;
 	branch: string;
 	status: SessionStatus;
+	/** Durable terminal fact from the daemon. Presentation should not archive live sessions from status alone. */
+	isTerminated?: boolean;
+	/** User policy: terminate the session through lifecycle when its PR set completes via merge. */
+	terminateOnPrMerge?: boolean;
 	/** ISO timestamp from the daemon — used for relative time in the inspector. */
 	createdAt?: string;
 	/** ISO timestamp from the daemon. */
@@ -186,7 +190,13 @@ export type WorkspaceRepoSummary = {
 
 /** Glanceable worker status. Maps 1:1 to the accent colors in DESIGN.md. */
 export type WorkerDisplayStatus =
-	"working" | "needs_you" | "mergeable" | "ci_failed" | "no_signal" | "done" | "unknown";
+	| "working"
+	| "needs_you"
+	| "mergeable"
+	| "ci_failed"
+	| "no_signal"
+	| "done"
+	| "unknown";
 
 export function workerDisplayStatus(session: WorkspaceSession): WorkerDisplayStatus {
 	if (session.displayStatus) return session.displayStatus;
@@ -203,6 +213,7 @@ export function workerDisplayStatus(session: WorkspaceSession): WorkerDisplaySta
 		case "mergeable":
 			return "mergeable";
 		case "merged":
+			return sessionIsActive(session) ? "mergeable" : "done";
 		case "terminated":
 			return "done";
 		case "unknown":
@@ -283,6 +294,7 @@ export function workerSessions(sessions: WorkspaceSession[]): WorkspaceSession[]
 }
 
 export function sessionIsActive(session: WorkspaceSession): boolean {
+	if (typeof session.isTerminated === "boolean") return !session.isTerminated;
 	return session.status !== "merged" && session.status !== "terminated";
 }
 
