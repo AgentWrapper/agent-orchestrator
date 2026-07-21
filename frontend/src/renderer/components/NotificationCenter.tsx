@@ -141,7 +141,10 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 					style={style}
 					variant="icon"
 				>
-					<Bell className={cn("size-icon-lg", unread.length > 0 && "fill-current text-foreground")} aria-hidden="true" />
+					<Bell
+						className={cn("size-icon-lg", unread.length > 0 && "fill-current text-foreground")}
+						aria-hidden="true"
+					/>
 					{unread.length > 0 ? (
 						<span className="pointer-events-none absolute -right-0.5 -top-0.5 grid min-w-4 place-items-center rounded-full bg-foreground px-1 font-mono text-[9px] font-semibold leading-4 text-background shadow-sm">
 							{unread.length > 99 ? "99+" : unread.length}
@@ -173,12 +176,19 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 						</button>
 					</div>
 					<div aria-label="Notification filters" className="mt-3 flex items-end gap-5" role="tablist">
-						<NotificationTab active={view === "unread"} count={unread.length} label="Unread" onClick={() => setView("unread")} />
+						<NotificationTab
+							active={view === "unread"}
+							count={unread.length}
+							label="Unread"
+							onClick={() => setView("unread")}
+						/>
 						<NotificationTab active={view === "all"} label="All" onClick={() => setView("all")} />
 					</div>
 				</div>
 
-				{actionError ? <div className="border-b border-border bg-error/5 px-4 py-2 text-caption text-error">{actionError}</div> : null}
+				{actionError ? (
+					<div className="border-b border-border bg-error/5 px-4 py-2 text-caption text-error">{actionError}</div>
+				) : null}
 				{notificationsQuery.isError && notifications.length === 0 ? (
 					<NotificationEmpty icon={CircleAlert} message="Could not load notifications." />
 				) : notificationsQuery.isLoading && notifications.length === 0 ? (
@@ -209,7 +219,17 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 	);
 }
 
-function NotificationTab({ active, count, label, onClick }: { active: boolean; count?: number; label: string; onClick: () => void }) {
+function NotificationTab({
+	active,
+	count,
+	label,
+	onClick,
+}: {
+	active: boolean;
+	count?: number;
+	label: string;
+	onClick: () => void;
+}) {
 	return (
 		<button
 			aria-selected={active}
@@ -223,7 +243,12 @@ function NotificationTab({ active, count, label, onClick }: { active: boolean; c
 		>
 			{label}
 			{typeof count === "number" && count > 0 ? (
-				<span className={cn("grid min-w-4 place-items-center rounded-full px-1 font-mono text-[9px] leading-4", active ? "bg-foreground text-background" : "bg-surface text-muted-foreground")}>
+				<span
+					className={cn(
+						"grid min-w-4 place-items-center rounded-full px-1 font-mono text-[9px] leading-4",
+						active ? "bg-foreground text-background" : "bg-surface text-muted-foreground",
+					)}
+				>
 					{count > 99 ? "99+" : count}
 				</span>
 			) : null}
@@ -278,7 +303,12 @@ function NotificationItem({
 			)}
 			role="listitem"
 		>
-			<div className={cn("mt-0.5 grid size-notification-icon place-items-center rounded-md bg-surface", notificationIconClass(notification.type))}>
+			<div
+				className={cn(
+					"mt-0.5 grid size-notification-icon place-items-center rounded-md bg-surface",
+					notificationIconClass(notification.type),
+				)}
+			>
 				<Icon className="size-icon-base" aria-hidden="true" />
 			</div>
 			<div className="min-w-0">
@@ -295,7 +325,9 @@ function NotificationItem({
 						{formatTimeCompact(notification.createdAt)}
 					</time>
 				</div>
-				{notification.body ? <p className="mt-0.5 line-clamp-2 text-caption leading-snug text-muted-foreground">{notification.body}</p> : null}
+				{notification.body ? (
+					<p className="mt-0.5 line-clamp-2 text-caption leading-snug text-muted-foreground">{notification.body}</p>
+				) : null}
 			</div>
 			<div className="flex items-start gap-0.5">
 				{isPR && notification.sessionId ? (

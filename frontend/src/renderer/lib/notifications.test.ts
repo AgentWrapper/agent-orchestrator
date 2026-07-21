@@ -124,7 +124,9 @@ describe("notification cache helpers", () => {
 
 		mergeUnreadNotification(qc, notification({ id: "ntf_2" }));
 		markAllCachedNotificationsRead(qc);
-		expect(qc.getQueryData<NotificationDTO[]>(unreadNotificationsQueryKey)?.every((item) => item.status === "read")).toBe(true);
+		expect(
+			qc.getQueryData<NotificationDTO[]>(unreadNotificationsQueryKey)?.every((item) => item.status === "read"),
+		).toBe(true);
 	});
 });
 

@@ -113,11 +113,7 @@ describe("NotificationCenter", () => {
 		await hoverOpen();
 
 		await userEvent.click(screen.getByRole("button", { name: "PR #67 is ready to merge" }));
-		expect(window.open).toHaveBeenCalledWith(
-			"https://github.com/acme/app/pull/67",
-			"_blank",
-			"noopener,noreferrer",
-		);
+		expect(window.open).toHaveBeenCalledWith("https://github.com/acme/app/pull/67", "_blank", "noopener,noreferrer");
 
 		await hoverOpen();
 		await userEvent.click(screen.getByRole("button", { name: "Open related session" }));
