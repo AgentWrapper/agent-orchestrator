@@ -337,6 +337,13 @@
 	padding-left: 0;
 }
 
+/* macOS: drop the framed panel below the traffic-light/TitlebarNav band
+ * (56px toolbar height) so its top edge lines up with the sidebar brand and
+ * the pinned toggle/history cluster no longer overlaps the panel's topbar. */
+.center-panel-shell--mac {
+	padding-top: var(--size-toolbar);
+}
+
 @utility center-panel-welcome {
 	display: flex;
 	min-height: 0;
@@ -366,7 +373,7 @@
 	flex-direction: column;
 	overflow: hidden;
 	border-radius: var(--radius-center-panel);
-	border: 1px solid var(--color-border);
+	border: 1px solid var(--color-border-strong);
 	background-color: var(--color-bg-primary);
 }
 
@@ -996,7 +1003,10 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	gap: 8px;
 	padding: 0 10px;
 	border-bottom: 1px solid var(--border);
-	background: var(--bg);
+	/* Matches the shell chrome (bg-sidebar) and the Window Controls Overlay
+	   color pushed in WindowTitlebar/main.ts, so the native min/max/close
+	   strip blends into the bar instead of reading as a separate box. */
+	background: var(--color-bg-sidebar);
 	-webkit-app-region: drag;
 	user-select: none;
 }

@@ -15,9 +15,18 @@ const variantClass: Record<CenterPanelVariant, string> = {
  * welcome board, and the settings page. Chrome lives in `styles.css`
  * (`center-panel-*` utilities).
  */
-export function CenterPanelShell({ variant, children }: { variant: CenterPanelVariant; children: ReactNode }) {
+export function CenterPanelShell({
+	variant,
+	className,
+	children,
+}: {
+	variant: CenterPanelVariant;
+	/** Extra classes on the outer frame (e.g. the macOS top inset). */
+	className?: string;
+	children: ReactNode;
+}) {
 	return (
-		<div className="center-panel-shell">
+		<div className={className ? `center-panel-shell ${className}` : "center-panel-shell"}>
 			<div className={variantClass[variant]}>{children}</div>
 		</div>
 	);

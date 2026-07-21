@@ -76,8 +76,10 @@ export function WindowTitlebar() {
 	// push theme-matched colours to it whenever the theme changes.
 	useEffect(() => {
 		if (!isWindows) return;
+		// Keep in sync with --color-bg-sidebar (tokens.css) — the titlebar paints
+		// that colour, so the native buttons must match it.
 		const overlay =
-			theme === "light" ? { color: "#ffffff", symbolColor: "#3f444c" } : { color: "#0f1014", symbolColor: "#c7ccd4" };
+			theme === "light" ? { color: "#fcfcfc", symbolColor: "#3f444c" } : { color: "#17181c", symbolColor: "#c7ccd4" };
 		void window.ao?.window?.setOverlay(overlay);
 	}, [theme]);
 

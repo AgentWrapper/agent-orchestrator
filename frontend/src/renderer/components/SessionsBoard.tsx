@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { AlertTriangle, ChevronRight, Plus, RotateCw } from "lucide-react";
-import { DashboardSubhead } from "./DashboardSubhead";
 import {
 	type WorkspaceSession,
 	canonicalTrackerIssueId,
@@ -30,14 +29,12 @@ import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { cn } from "../lib/utils";
+import { isLinuxPlatform, usesBoardActionsInFramedTopbar } from "../lib/platform";
 import { useUiStore } from "../stores/ui-store";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
 
-const isLinux =
-	typeof navigator !== "undefined" &&
-	((navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform)
-		.toLowerCase()
-		.includes("linux");
+const isLinux = isLinuxPlatform();
+const boardActionsInFramedTopbar = usesBoardActionsInFramedTopbar();
 type SessionsBoardProps = {
 	/** When set, the board shows only this project's sessions. */
 	projectId?: string;
@@ -235,14 +232,12 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
 			{/* The first-launch welcome carries its own orientation; a "Board"
 			    header above it would describe a board that isn't rendered
-			    (review feedback on #2432). */}
-			{!showWelcome && (
-				<DashboardSubhead
-					title="Board"
-					subtitle="Live agent sessions flowing from work → review → merge."
-					actions={actions}
-				/>
-			)}
+			    (review feedback on #2432). The shell topbar crumb already
+			    names the board/project, so only the actions row stays here —
+			    and on inset-topbar platforms even that moves into the framed topbar. */}
+			{!showWelcome && actions && !boardActionsInFramedTopbar ? (
+				<div className="flex items-center justify-end gap-2 px-4.5 pt-4">{actions}</div>
+			) : null}
 
 			<div className={cn("min-h-0 flex-1 overflow-hidden", showWelcome ? "p-0" : "p-4.5")}>
 				{projectId && health.state !== "ok" ? (

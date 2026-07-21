@@ -43,7 +43,7 @@ import {
 } from "./ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { OrchestratorIcon } from "./icons";
-import aoLogo from "../assets/ao-logo.png";
+import aoLogo from "../../../assets/ao-logo.svg";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
 import { ConfirmDialog } from "./ConfirmDialog";
