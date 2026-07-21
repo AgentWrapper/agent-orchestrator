@@ -88,9 +88,7 @@ const WrenchIcon = icon(
 );
 
 /* founder access: chat bubble */
-const ChatIcon = icon(
-	<path d="M21 12a8 8 0 0 1-8 8H4l2.3-2.9A8 8 0 1 1 21 12Z" />,
-);
+const ChatIcon = icon(<path d="M21 12a8 8 0 0 1-8 8H4l2.3-2.9A8 8 0 1 1 21 12Z" />);
 
 /* book a call: calendar */
 const CalendarIcon = icon(
@@ -215,16 +213,44 @@ const ROADMAP: RoadmapPhase[] = [
 ];
 
 const OFFER = [
-	{ Icon: WrenchIcon, title: "White-glove onboarding", body: "Founder-led setup on your real repos, with the agents you already pay for." },
-	{ Icon: ChatIcon, title: "Weekly founder access", body: "A standing call and a private channel. Your bugs jump a queue that ships nightly." },
-	{ Icon: KeyIcon, title: "First access to every unlock", body: "Teams features land in your workspace before anyone else's." },
-	{ Icon: TagIcon, title: "Locked-in pricing", body: "Six months of partner pricing at GA. Pilot fees credit toward year one." },
+	{
+		Icon: WrenchIcon,
+		title: "White-glove onboarding",
+		body: "Founder-led setup on your real repos, with the agents you already pay for.",
+	},
+	{
+		Icon: ChatIcon,
+		title: "Weekly founder access",
+		body: "A standing call and a private channel. Your bugs jump a queue that ships nightly.",
+	},
+	{
+		Icon: KeyIcon,
+		title: "First access to every unlock",
+		body: "Teams features land in your workspace before anyone else's.",
+	},
+	{
+		Icon: TagIcon,
+		title: "Locked-in pricing",
+		body: "Six months of partner pricing at GA. Pilot fees credit toward year one.",
+	},
 ];
 
 const ASK = [
-	{ Icon: ReceiptIcon, title: "A paid pilot", body: "$500-2,000/month, sized to usage. Month-to-month. Churn is honest signal." },
-	{ Icon: PeopleIcon, title: "A champion and a sponsor", body: "One engineer who runs AO weekly. One leader who wants the ROI answer." },
-	{ Icon: LoopIcon, title: "Real feedback", body: "A biweekly working session and honest numbers - including the bad news." },
+	{
+		Icon: ReceiptIcon,
+		title: "A paid pilot",
+		body: "$500-2,000/month, sized to usage. Month-to-month. Churn is honest signal.",
+	},
+	{
+		Icon: PeopleIcon,
+		title: "A champion and a sponsor",
+		body: "One engineer who runs AO weekly. One leader who wants the ROI answer.",
+	},
+	{
+		Icon: LoopIcon,
+		title: "Real feedback",
+		body: "A biweekly working session and honest numbers - including the bad news.",
+	},
 ];
 
 const STATS = [
@@ -245,7 +271,16 @@ function DotFact({ children }: { children: React.ReactNode }) {
 
 function ChevronIcon({ className = "" }: IconProps) {
 	return (
-		<svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+		<svg
+			className={className}
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="1.5"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
 			<path d="m9 6 6 6-6 6" />
 		</svg>
 	);
@@ -260,10 +295,7 @@ function PartnersNav() {
 					<span className="text-[15px] font-semibold text-[color:var(--fg)]">Agent Orchestrator</span>
 				</Link>
 				<nav className="flex items-center gap-5">
-					<Link
-						href="/"
-						className="landing-nav-link hidden text-[13px] font-medium sm:inline-block"
-					>
+					<Link href="/" className="landing-nav-link hidden text-[13px] font-medium sm:inline-block">
 						Home
 					</Link>
 					<a
@@ -337,7 +369,10 @@ export default function DesignPartnersPage() {
 							</div>
 							<p className="mt-4 text-[13px] text-[color:var(--fg-dim)]">
 								or write to{" "}
-								<a href={MAILTO_HREF} className="text-[color:var(--fg-muted)] underline decoration-[color:var(--border-strong)] underline-offset-4 transition-colors hover:text-[color:var(--fg)]">
+								<a
+									href={MAILTO_HREF}
+									className="text-[color:var(--fg-muted)] underline decoration-[color:var(--border-strong)] underline-offset-4 transition-colors hover:text-[color:var(--fg)]"
+								>
 									{CONTACT_EMAIL}
 								</a>
 							</p>
