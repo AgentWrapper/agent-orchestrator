@@ -713,6 +713,22 @@ func TestToAPIErrorMapsWorkspaceBranchSentinels(t *testing.T) {
 	}
 }
 
+// TestToAPIErrorMapsWorkspaceCreateFailed: a worktree add failure not covered
+// by the branch sentinels (e.g. a repo checkout hook crashing during spawn)
+// maps to a typed 500 whose message carries the git stderr excerpt, instead of
+// the bare "Internal server error" the envelope substitutes for untyped 500s.
+func TestToAPIErrorMapsWorkspaceCreateFailed(t *testing.T) {
+	err := fmt.Errorf("spawn mer-1: %w: git -C /repo worktree add: exit status 254: post-checkout hook crashed", ports.ErrWorkspaceCreateFailed)
+	mapped := toAPIError(err)
+	var e *apierr.Error
+	if !errors.As(mapped, &e) || e.Kind != apierr.KindInternal || e.Code != "WORKSPACE_CREATE_FAILED" {
+		t.Fatalf("mapped = %v, want Internal WORKSPACE_CREATE_FAILED", mapped)
+	}
+	if !strings.Contains(e.Message, "post-checkout hook crashed") {
+		t.Fatalf("message = %q, want the git stderr excerpt preserved", e.Message)
+	}
+}
+
 // TestToAPIError_NotResumable asserts that ErrNotResumable (promptless worker
 // with no adapter resume handle) maps to a Conflict with code SESSION_NOT_RESUMABLE.
 func TestToAPIError_NotResumable(t *testing.T) {

@@ -166,6 +166,12 @@ var (
 	// ErrWorkspaceBranchInvalid reports the requested branch name is not a valid
 	// git ref (rejected by `git check-ref-format`).
 	ErrWorkspaceBranchInvalid = errors.New("workspace: invalid branch name")
+	// ErrWorkspaceCreateFailed reports `git worktree add` failed for a reason
+	// not covered by the branch sentinels above — most often a repo checkout
+	// hook (e.g. Git LFS post-checkout) crashing. The wrapping error carries
+	// the git stderr excerpt so the API envelope can surface the actionable
+	// cause instead of a bare INTERNAL_ERROR.
+	ErrWorkspaceCreateFailed = errors.New("workspace: worktree add failed")
 	// ErrWorkspaceDirty reports Destroy refused to remove a workspace because
 	// it holds uncommitted changes or untracked files. Teardown is never
 	// forced; callers treat the workspace as intentionally preserved.

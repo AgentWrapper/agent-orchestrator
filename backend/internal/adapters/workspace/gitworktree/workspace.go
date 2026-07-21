@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -79,6 +80,14 @@ type Workspace struct {
 	defaultBranch string
 	repos         RepoResolver
 	run           commandRunner
+
+	// addMu guards addLocks, which serializes `git worktree add` per source
+	// repository. Parallel adds on one repo gain nothing (git takes repo-level
+	// locks and the work is disk-bound) while running the repo's checkout hooks
+	// concurrently, which multiplies hook-crash risk (observed with Git LFS
+	// hooks under MSYS sh on Windows).
+	addMu    sync.Mutex
+	addLocks map[string]*sync.Mutex
 }
 
 type commandRunner func(ctx context.Context, binary string, args ...string) ([]byte, error)
@@ -619,7 +628,7 @@ func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch, baseBra
 		return err
 	}
 	if localBranch {
-		if _, err := w.run(ctx, w.binary, worktreeAddBranchArgs(repo, path, branch)...); err != nil {
+		if err := w.runWorktreeAdd(ctx, repo, path, branch, ""); err != nil {
 			return fmt.Errorf("gitworktree: worktree add existing branch %q: %w", branch, err)
 		}
 		return nil
@@ -638,18 +647,95 @@ func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch, baseBra
 		}
 		return err
 	}
-	if _, err := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo, branch, path, baseRef)...); err != nil {
-		if isMissingRegisteredWorktreeError(err) {
-			if pruneErr := w.pruneWorktrees(ctx, repo); pruneErr != nil {
-				return fmt.Errorf("gitworktree: worktree add branch %q from %q: recover stale registration: %w", branch, baseRef, pruneErr)
-			}
-			if _, retryErr := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo, branch, path, baseRef)...); retryErr == nil {
-				return nil
-			}
-		}
+	if err := w.runWorktreeAdd(ctx, repo, path, branch, baseRef); err != nil {
 		return fmt.Errorf("gitworktree: worktree add branch %q from %q: %w", branch, baseRef, err)
 	}
 	return nil
+}
+
+// repoAddLock returns the mutex serializing worktree adds for one source repo,
+// creating it on first use. Callers pass the physically resolved repo path, so
+// cleaning the key is enough to collapse aliases.
+func (w *Workspace) repoAddLock(repo string) *sync.Mutex {
+	key := filepath.Clean(repo)
+	w.addMu.Lock()
+	defer w.addMu.Unlock()
+	if w.addLocks == nil {
+		w.addLocks = make(map[string]*sync.Mutex)
+	}
+	mu, ok := w.addLocks[key]
+	if !ok {
+		mu = &sync.Mutex{}
+		w.addLocks[key] = mu
+	}
+	return mu
+}
+
+// runWorktreeAdd executes `git worktree add` for branch at path, serialized
+// per repository, with two narrow one-shot recoveries. baseRef selects the
+// form: empty checks out the existing local branch; non-empty creates the
+// branch from baseRef (-b).
+//
+// Recoveries:
+//   - stale registration ("missing but already registered worktree" left by an
+//     earlier crash): prune, then retry once.
+//   - transient checkout failure: git created the worktree directory (so the
+//     branch/base arguments were valid) and then exited non-zero — the shape of
+//     a repo checkout hook crashing (e.g. Git LFS post-checkout dying under
+//     MSYS sh on Windows). The partial worktree is force-removed, then the add
+//     is retried once; if the failed attempt already created the branch, the
+//     retry checks it out instead of recreating it. Failures where git never
+//     created the path (bad branch, missing ref, pre-existing directory) are
+//     not retried.
+//
+// Every failure is wrapped in ports.ErrWorkspaceCreateFailed so the API layer
+// can surface the git stderr excerpt instead of an opaque INTERNAL_ERROR.
+func (w *Workspace) runWorktreeAdd(ctx context.Context, repo, path, branch, baseRef string) error {
+	mu := w.repoAddLock(repo)
+	mu.Lock()
+	defer mu.Unlock()
+
+	args := worktreeAddBranchArgs(repo, path, branch)
+	if baseRef != "" {
+		args = worktreeAddNewBranchArgs(repo, branch, path, baseRef)
+	}
+	pathExisted := pathExists(path)
+	_, addErr := w.run(ctx, w.binary, args...)
+	if addErr == nil {
+		return nil
+	}
+	switch {
+	case isMissingRegisteredWorktreeError(addErr):
+		if pruneErr := w.pruneWorktrees(ctx, repo); pruneErr != nil {
+			return fmt.Errorf("%w: recover stale registration: %w", ports.ErrWorkspaceCreateFailed, pruneErr)
+		}
+	case !pathExisted && pathExists(path):
+		if cleanupErr := w.forceDestroyPath(ctx, repo, path); cleanupErr != nil {
+			slog.WarnContext(ctx, "gitworktree: could not clean up partial worktree before retry",
+				"path", path,
+				"err", cleanupErr,
+			)
+			return fmt.Errorf("%w: %w", ports.ErrWorkspaceCreateFailed, addErr)
+		}
+		// The failed attempt may have created the branch before dying; check it
+		// out on retry instead of failing on a second -b.
+		if baseRef != "" {
+			if exists, err := w.refExists(ctx, repo, "refs/heads/"+branch); err == nil && exists {
+				args = worktreeAddBranchArgs(repo, path, branch)
+			}
+		}
+	default:
+		return fmt.Errorf("%w: %w", ports.ErrWorkspaceCreateFailed, addErr)
+	}
+	if _, retryErr := w.run(ctx, w.binary, args...); retryErr != nil {
+		return fmt.Errorf("%w: %w", ports.ErrWorkspaceCreateFailed, retryErr)
+	}
+	return nil
+}
+
+func pathExists(path string) bool {
+	_, err := os.Lstat(path)
+	return err == nil
 }
 
 type workspaceProjectRepo struct {
@@ -716,15 +802,7 @@ func (w *Workspace) createWorkspaceProjectRepo(ctx context.Context, repo workspa
 	if err != nil {
 		return "", err
 	}
-	if _, err := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo.repoPath, branch, repo.outputPath, baseRef)...); err != nil {
-		if isMissingRegisteredWorktreeError(err) {
-			if pruneErr := w.pruneWorktrees(ctx, repo.repoPath); pruneErr != nil {
-				return "", fmt.Errorf("gitworktree: workspace repo %q worktree add branch %q from %q: recover stale registration: %w", repo.name, branch, baseRef, pruneErr)
-			}
-			if _, retryErr := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo.repoPath, branch, repo.outputPath, baseRef)...); retryErr == nil {
-				return baseSHA, nil
-			}
-		}
+	if err := w.runWorktreeAdd(ctx, repo.repoPath, repo.outputPath, branch, baseRef); err != nil {
 		return "", fmt.Errorf("gitworktree: workspace repo %q worktree add branch %q from %q: %w", repo.name, branch, baseRef, err)
 	}
 	return baseSHA, nil

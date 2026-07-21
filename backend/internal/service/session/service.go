@@ -577,6 +577,11 @@ func toAPIError(err error) error {
 		return apierr.Invalid("BRANCH_NOT_FETCHED", err.Error(), nil)
 	case errors.Is(err, ports.ErrWorkspaceBranchInvalid):
 		return apierr.Invalid("INVALID_BRANCH", err.Error(), nil)
+	case errors.Is(err, ports.ErrWorkspaceCreateFailed):
+		// Still a 500, but typed: the message carries the git stderr excerpt
+		// (e.g. a crashing repo hook) instead of the bare "Internal server
+		// error" the envelope substitutes for untyped failures.
+		return apierr.Internal("WORKSPACE_CREATE_FAILED", err.Error())
 	case errors.Is(err, ports.ErrAgentBinaryNotFound):
 		return apierr.Invalid("AGENT_BINARY_NOT_FOUND", err.Error(), nil)
 	case errors.Is(err, ports.ErrRuntimePrerequisite):
