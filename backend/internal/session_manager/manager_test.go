@@ -2574,13 +2574,14 @@ func TestRestore_AgyAndCopilotWithoutAgentSessionIDFallBackToSavedPrompt(t *test
 	}
 }
 
-func TestRestore_AgyAndCopilotWithAgentSessionIDUseNativeResume(t *testing.T) {
+func TestRestore_AgyCopilotAndPiWithAgentSessionIDUseNativeResume(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		harness domain.AgentHarness
 	}{
 		{name: "agy", harness: domain.HarnessAgy},
 		{name: "copilot", harness: domain.HarnessCopilot},
+		{name: "pi", harness: domain.HarnessPi},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := newFakeStore()
