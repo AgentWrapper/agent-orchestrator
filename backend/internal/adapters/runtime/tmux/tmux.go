@@ -38,6 +38,7 @@ var getenv = os.Getenv
 type Options struct {
 	Binary     string        // default "tmux" (resolved via exec.LookPath)
 	Shell      string        // default $SHELL else /bin/sh
+	Namespace  string        // optional per-instance prefix applied before sanitization
 	Timeout    time.Duration // default 5s
 	ChunkSize  int           // default 16*1024
 	EnterDelay time.Duration // pause after pasting a non-empty message before pressing Enter; default defaultEnterDelay. Conpty already does this (ptyInputEnterDelay); tmux lacked it, so a large multiline paste could absorb the trailing Enter and leave the prompt unsubmitted (issue #2342).
@@ -48,6 +49,7 @@ type Options struct {
 type Runtime struct {
 	binary     string
 	shell      string
+	namespace  string
 	timeout    time.Duration
 	chunkSize  int
 	enterDelay time.Duration
@@ -103,6 +105,7 @@ func New(opts Options) *Runtime {
 	return &Runtime{
 		binary:     binary,
 		shell:      shellPath,
+		namespace:  opts.Namespace,
 		timeout:    timeout,
 		chunkSize:  chunkSize,
 		enterDelay: enterDelay,
@@ -113,7 +116,7 @@ func New(opts Options) *Runtime {
 // Create starts a new tmux session in the workspace, running the agent's
 // launch command with a keep-alive shell, and returns a handle to it.
 func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
-	id, err := tmuxSessionName(cfg.SessionID)
+	id, err := tmuxSessionName(r.namespace, cfg.SessionID)
 	if err != nil {
 		return ports.RuntimeHandle{}, err
 	}
@@ -348,22 +351,32 @@ func (r *Runtime) run(ctx context.Context, args ...string) ([]byte, error) {
 
 // -- session name helpers --
 
-func tmuxSessionName(id domain.SessionID) (string, error) {
+func tmuxSessionName(namespace string, id domain.SessionID) (string, error) {
 	raw := string(id)
 	if raw == "" {
 		return "", errors.New("tmux runtime: session id is required")
 	}
-	return SessionName(raw), nil
+	return SessionNameWithNamespace(namespace, raw), nil
 }
 
 // SessionName returns the tmux session name the runtime registers for a given
 // session id, applying the same sanitisation Create does. Callers that print an
 // attach hint must use this rather than the raw id.
 func SessionName(id string) string {
-	if sessionIDPattern.MatchString(id) && len(id) <= 48 {
-		return id
+	return SessionNameWithNamespace("", id)
+}
+
+// SessionNameWithNamespace returns the tmux session name the runtime registers
+// for a given session id and optional per-instance namespace.
+func SessionNameWithNamespace(namespace, id string) string {
+	raw := id
+	if namespace != "" {
+		raw = namespace + "-" + id
 	}
-	return sanitizedSessionName(id)
+	if sessionIDPattern.MatchString(raw) && len(raw) <= 48 {
+		return raw
+	}
+	return sanitizedSessionName(raw)
 }
 
 func sanitizedSessionName(raw string) string {

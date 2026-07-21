@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
@@ -63,6 +64,8 @@ const (
 	EnvIssueID   = "AO_ISSUE_ID"
 	// EnvDataDir tells a spawned agent's AO hook commands where the store lives.
 	EnvDataDir = "AO_DATA_DIR"
+	// EnvRunFile tells a spawned agent's AO hook commands which daemon run-file to reach.
+	EnvRunFile = "AO_RUN_FILE"
 )
 
 // hookBinaryName is the executable name the workspace hook commands invoke:
@@ -148,10 +151,11 @@ type Manager struct {
 	// each call site re-deriving the check. Send/confirmActive use Deliver for
 	// its Outcome; Spawn/Restore use the interface-level Send for
 	// initial-prompt delivery, where a blocked session is impossible.
-	messenger *sessionguard.Guard
-	lcm       lifecycleRecorder
-	dataDir   string
-	clock     func() time.Time
+	messenger   *sessionguard.Guard
+	lcm         lifecycleRecorder
+	dataDir     string
+	runFilePath string
+	clock       func() time.Time
 	// lookPath is exec.LookPath in production; tests substitute a stub so
 	// they don't need real binaries on PATH. Returns ports.ErrAgentBinaryNotFound
 	// when the binary is missing so the sentinel propagates through toAPIError.
@@ -203,7 +207,10 @@ type Deps struct {
 	// DataDir is exported to spawned agents as AO_DATA_DIR so their hook
 	// commands can open the same store.
 	DataDir string
-	Clock   func() time.Time
+	// RunFilePath is exported to spawned agents as AO_RUN_FILE so their hook
+	// commands can reach the daemon instance that launched them.
+	RunFilePath string
+	Clock       func() time.Time
 	// LookPath overrides exec.LookPath for the pre-launch agent-binary check.
 	// Production wiring leaves this nil and the manager defaults to
 	// exec.LookPath; tests inject a stub so they need not seed real binaries.
@@ -221,15 +228,16 @@ type Deps struct {
 // time.Now when Deps.Clock is nil.
 func New(d Deps) *Manager {
 	m := &Manager{
-		runtime:    d.Runtime,
-		agents:     d.Agents,
-		workspace:  d.Workspace,
-		store:      d.Store,
-		lcm:        d.Lifecycle,
-		dataDir:    d.DataDir,
-		clock:      d.Clock,
-		lookPath:   d.LookPath,
-		executable: d.Executable,
+		runtime:     d.Runtime,
+		agents:      d.Agents,
+		workspace:   d.Workspace,
+		store:       d.Store,
+		lcm:         d.Lifecycle,
+		dataDir:     d.DataDir,
+		runFilePath: d.RunFilePath,
+		clock:       d.Clock,
+		lookPath:    d.LookPath,
+		executable:  d.Executable,
 		sendConfirm: sendConfirmConfig{
 			pollInterval:    sendConfirmPollInterval,
 			attemptDeadline: sendConfirmAttemptDeadline,
@@ -303,7 +311,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 
 	branch := cfg.Branch
 	if branch == "" {
-		branch = defaultSpawnBranch(id, cfg.Kind, sessionPrefix(project), project.Kind.WithDefault())
+		branch = defaultSpawnBranch(config.InstanceNamespace(m.dataDir), id, cfg.Kind, sessionPrefix(project), project.Kind.WithDefault())
 	}
 	ws, workspaceProject, err := m.createSessionWorkspace(ctx, project, cfg, id, branch)
 	if err != nil {
@@ -1827,7 +1835,10 @@ func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
 	}
 }
 
-func defaultSessionBranch(id domain.SessionID, kind domain.SessionKind, prefix string) string {
+func defaultSessionBranch(namespace string, id domain.SessionID, kind domain.SessionKind, prefix string) string {
+	if namespace != "" {
+		return "ao/" + namespace + "/" + string(id) + "/root"
+	}
 	if kind == domain.KindOrchestrator {
 		return "ao/" + prefix + "-orchestrator"
 	}
@@ -1838,11 +1849,14 @@ func defaultSessionBranch(id domain.SessionID, kind domain.SessionKind, prefix s
 	return "ao/" + string(id) + "/root"
 }
 
-func defaultSpawnBranch(id domain.SessionID, kind domain.SessionKind, prefix string, projectKind domain.ProjectKind) string {
+func defaultSpawnBranch(namespace string, id domain.SessionID, kind domain.SessionKind, prefix string, projectKind domain.ProjectKind) string {
 	if projectKind == domain.ProjectKindWorkspace {
+		if namespace != "" {
+			return "ao/" + namespace + "/" + string(id)
+		}
 		return "ao/" + string(id)
 	}
-	return defaultSessionBranch(id, kind, prefix)
+	return defaultSessionBranch(namespace, id, kind, prefix)
 }
 
 func buildPrompt(cfg ports.SpawnConfig) string {
@@ -2087,8 +2101,8 @@ func workspaceRepoList(repos []domain.WorkspaceRepoRecord) string {
 // spawnEnv builds the runtime environment: the per-project env vars first, then
 // the AO-internal vars last so they always win (a project cannot override
 // AO_SESSION_ID and friends).
-func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, dataDir string, projectEnv map[string]string) map[string]string {
-	env := make(map[string]string, len(projectEnv)+4)
+func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, dataDir, runFilePath string, projectEnv map[string]string) map[string]string {
+	env := make(map[string]string, len(projectEnv)+5)
 	for k, v := range projectEnv {
 		env[k] = v
 	}
@@ -2096,6 +2110,9 @@ func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueI
 	env[EnvProjectID] = string(project)
 	env[EnvIssueID] = string(issue)
 	env[EnvDataDir] = dataDir
+	if runFilePath != "" {
+		env[EnvRunFile] = runFilePath
+	}
 	return env
 }
 
@@ -2107,7 +2124,7 @@ func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueI
 // When the pin cannot be applied the inherited PATH is kept and a warning is
 // logged so the degradation isn't silent.
 func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, projectEnv map[string]string) map[string]string {
-	env := spawnEnv(id, project, issue, m.dataDir, projectEnv)
+	env := spawnEnv(id, project, issue, m.dataDir, m.runFilePath, projectEnv)
 	path, err := HookPATH(m.executable, os.Getenv, projectEnv)
 	if err != nil {
 		m.logger.Warn("session PATH not pinned to the daemon binary; `ao hooks` callbacks may resolve to a different ao and activity tracking will stall",

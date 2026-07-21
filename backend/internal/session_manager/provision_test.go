@@ -11,7 +11,7 @@ import (
 )
 
 func TestSpawnEnvProjectVarsCannotOverrideInternal(t *testing.T) {
-	env := spawnEnv("mer-1", "mer", "issue-9", "/data", map[string]string{
+	env := spawnEnv("mer-1", "mer", "issue-9", "/data", "", map[string]string{
 		"FOO":        "bar",
 		EnvSessionID: "hacked", // a project must not override AO-internal vars
 		EnvProjectID: "hacked",
@@ -24,6 +24,17 @@ func TestSpawnEnvProjectVarsCannotOverrideInternal(t *testing.T) {
 	}
 	if env[EnvProjectID] != "mer" {
 		t.Fatalf("AO_PROJECT_ID = %q, want mer (internal wins)", env[EnvProjectID])
+	}
+	if _, ok := env[EnvRunFile]; ok {
+		t.Fatalf("AO_RUN_FILE = %q, want unset when run file path is empty", env[EnvRunFile])
+	}
+}
+
+func TestSpawnEnvIncludesRunFileWhenSet(t *testing.T) {
+	env := spawnEnv("mer-1", "mer", "issue-9", "/data", "/data/running.json", nil)
+
+	if got := env[EnvRunFile]; got != "/data/running.json" {
+		t.Fatalf("AO_RUN_FILE = %q, want /data/running.json", got)
 	}
 }
 

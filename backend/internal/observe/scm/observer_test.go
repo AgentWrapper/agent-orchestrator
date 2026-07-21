@@ -1405,3 +1405,22 @@ func TestDiscoverSubjects_NonGitPathDoesNotBackfill(t *testing.T) {
 		t.Fatalf("RepoOriginURL = %q, want empty (no persist on failed backfill)", got)
 	}
 }
+
+func TestMatchSession_IsolatesNamespacedBranches(t *testing.T) {
+	candidates := []sessionRepo{
+		{session: domain.SessionRecord{ID: "who-am-i-4"}, branch: "ao/i-abc123/who-am-i-4/root"},
+		{session: domain.SessionRecord{ID: "who-am-i-4"}, branch: "ao/who-am-i-4/root"},
+	}
+
+	got, ok := matchSession(candidates, "ao/i-abc123/who-am-i-4/feature")
+	if !ok {
+		t.Fatal("matchSession(namespaced branch) = no match, want owner")
+	}
+	if got.branch != "ao/i-abc123/who-am-i-4/root" {
+		t.Fatalf("matchSession(namespaced branch) matched %q, want namespaced owner", got.branch)
+	}
+
+	if _, ok := matchSession(candidates[:1], "ao/who-am-i-4/feature"); ok {
+		t.Fatal("matchSession(unscoped branch) matched namespaced session, want isolation")
+	}
+}

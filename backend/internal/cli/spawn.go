@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/tmux"
+	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 )
 
 // maxDisplayNameLen caps the sidebar label set by `--name`. Mirrored by the
@@ -142,7 +143,11 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 			// On Windows: ConPTY has no user-facing attach CLI; use the AO dashboard.
 			var attach string
 			if runtime.GOOS != "windows" {
-				attach = fmt.Sprintf("tmux attach -t %s", tmux.SessionName(res.Session.ID))
+				namespace := ""
+				if cfg, err := config.Load(); err == nil {
+					namespace = config.InstanceNamespace(cfg.DataDir)
+				}
+				attach = fmt.Sprintf("tmux attach -t %s", tmux.SessionNameWithNamespace(namespace, res.Session.ID))
 			} else {
 				attach = "Attach from the AO dashboard (ConPTY sessions have no CLI attach command)"
 			}

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -157,4 +158,76 @@ func TestLoadAllowedOrigins(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestInstanceNamespace(t *testing.T) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("UserHomeDir: %v", err)
+	}
+	defaultDir := filepath.Join(homeDir, ".ao", "data")
+	altA := filepath.Join(t.TempDir(), "dev-data")
+	altB := filepath.Join(t.TempDir(), "other-data")
+
+	tests := []struct {
+		name    string
+		dataDir string
+		check   func(t *testing.T, got string)
+	}{
+		{
+			name:    "default data dir stays unscoped",
+			dataDir: defaultDir,
+			check: func(t *testing.T, got string) {
+				t.Helper()
+				if got != "" {
+					t.Fatalf("InstanceNamespace(default) = %q, want empty", got)
+				}
+			},
+		},
+		{
+			name:    "alternate data dir is stable and non-empty",
+			dataDir: altA,
+			check: func(t *testing.T, got string) {
+				t.Helper()
+				if got == "" {
+					t.Fatal("InstanceNamespace(alternate) = empty, want non-empty")
+				}
+				if !strings.HasPrefix(got, "i-") {
+					t.Fatalf("InstanceNamespace(alternate) = %q, want i- prefix", got)
+				}
+				if len(got) != len("i-")+6 {
+					t.Fatalf("InstanceNamespace(alternate) = %q, want 6 hex chars", got)
+				}
+				if again := InstanceNamespace(altA); again != got {
+					t.Fatalf("InstanceNamespace not deterministic: first %q second %q", got, again)
+				}
+			},
+		},
+		{
+			name:    "different dirs produce different namespaces",
+			dataDir: altA,
+			check: func(t *testing.T, got string) {
+				t.Helper()
+				if other := InstanceNamespace(altB); other == got {
+					t.Fatalf("InstanceNamespace(%q) = %q, want different from %q", altB, other, got)
+				}
+			},
+		},
+		{
+			name:    "empty data dir remains unscoped",
+			dataDir: "",
+			check: func(t *testing.T, got string) {
+				t.Helper()
+				if got != "" {
+					t.Fatalf("InstanceNamespace(\"\") = %q, want empty", got)
+				}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.check(t, InstanceNamespace(tc.dataDir))
+		})
+	}
 }

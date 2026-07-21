@@ -9,6 +9,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/conpty"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/tmux"
+	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -28,11 +29,12 @@ type Runtime interface {
 var _ Runtime = (*tmux.Runtime)(nil)
 var _ Runtime = (*conpty.Runtime)(nil)
 
-// New returns the per-platform runtime: tmux on Darwin/Linux, conpty on Windows.
-// log is accepted for signature stability with callers but is currently unused.
-func New(_ *slog.Logger) Runtime {
+// New returns the per-platform runtime: tmux on Darwin/Linux, conpty on
+// Windows. On Unix, tmux gets a per-instance namespace derived from dataDir so
+// multiple AO instances on one machine do not collide on session names.
+func New(dataDir string, _ *slog.Logger) Runtime {
 	if runtime.GOOS != "windows" {
-		return tmux.New(tmux.Options{})
+		return tmux.New(tmux.Options{Namespace: config.InstanceNamespace(dataDir)})
 	}
 	return conpty.New(conpty.Options{})
 }

@@ -102,14 +102,15 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		return nil, nil, nil, fmt.Errorf("session workspace: %w", err)
 	}
 	mgr := sessionmanager.New(sessionmanager.Deps{
-		Runtime:   runtime,
-		Agents:    agents,
-		Workspace: ws,
-		Store:     store,
-		Messenger: messenger,
-		Lifecycle: lcm,
-		DataDir:   cfg.DataDir,
-		Logger:    log,
+		Runtime:     runtime,
+		Agents:      agents,
+		Workspace:   ws,
+		Store:       store,
+		Messenger:   messenger,
+		Lifecycle:   lcm,
+		DataDir:     cfg.DataDir,
+		RunFilePath: cfg.RunFilePath,
+		Logger:      log,
 	})
 	scmProvider, err := newGitHubSCMProvider(log)
 	if err != nil {

@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -1754,6 +1755,83 @@ func TestSpawn_DefaultsBranchFromSessionID(t *testing.T) {
 	}
 }
 
+func TestSpawn_DefaultsBranchFromInstanceNamespace(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
+	dataDir := filepath.Join(t.TempDir(), "dev-data")
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{
+		Runtime:   rt,
+		Agents:    fakeAgents{},
+		Workspace: ws,
+		Store:     st,
+		Messenger: &fakeMessenger{},
+		Lifecycle: &fakeLCM{store: st},
+		DataDir:   dataDir,
+		LookPath:  lookPath,
+	})
+
+	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	namespace := config.InstanceNamespace(dataDir)
+	want := "ao/" + namespace + "/mer-1/root"
+	if got := st.sessions[s.ID].Metadata.Branch; got != want {
+		t.Fatalf("default branch = %q, want %q", got, want)
+	}
+}
+
+func TestDefaultSessionBranch(t *testing.T) {
+	tests := []struct {
+		name      string
+		namespace string
+		id        domain.SessionID
+		kind      domain.SessionKind
+		prefix    string
+		want      string
+	}{
+		{name: "worker default unchanged", id: "mer-1", kind: domain.KindWorker, prefix: "mer", want: "ao/mer-1/root"},
+		{name: "orchestrator default unchanged", id: "mer-1", kind: domain.KindOrchestrator, prefix: "mer", want: "ao/mer-orchestrator"},
+		{name: "namespaced worker uses session id path", namespace: "i-abc123", id: "mer-1", kind: domain.KindWorker, prefix: "mer", want: "ao/i-abc123/mer-1/root"},
+		{name: "namespaced orchestrator uses session id path", namespace: "i-abc123", id: "mer-1", kind: domain.KindOrchestrator, prefix: "mer", want: "ao/i-abc123/mer-1/root"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := defaultSessionBranch(tc.namespace, tc.id, tc.kind, tc.prefix); got != tc.want {
+				t.Fatalf("defaultSessionBranch(%q, %q, %q, %q) = %q, want %q", tc.namespace, tc.id, tc.kind, tc.prefix, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDefaultSpawnBranch(t *testing.T) {
+	tests := []struct {
+		name        string
+		namespace   string
+		id          domain.SessionID
+		kind        domain.SessionKind
+		prefix      string
+		projectKind domain.ProjectKind
+		want        string
+	}{
+		{name: "non-workspace default unchanged", id: "mer-1", kind: domain.KindWorker, prefix: "mer", want: "ao/mer-1/root"},
+		{name: "workspace default unchanged", id: "mer-1", kind: domain.KindWorker, prefix: "mer", projectKind: domain.ProjectKindWorkspace, want: "ao/mer-1"},
+		{name: "namespaced non-workspace uses root branch", namespace: "i-abc123", id: "mer-1", kind: domain.KindWorker, prefix: "mer", want: "ao/i-abc123/mer-1/root"},
+		{name: "namespaced workspace uses namespaced root", namespace: "i-abc123", id: "mer-1", kind: domain.KindWorker, prefix: "mer", projectKind: domain.ProjectKindWorkspace, want: "ao/i-abc123/mer-1"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := defaultSpawnBranch(tc.namespace, tc.id, tc.kind, tc.prefix, tc.projectKind); got != tc.want {
+				t.Fatalf("defaultSpawnBranch(%q, %q, %q, %q, %q) = %q, want %q", tc.namespace, tc.id, tc.kind, tc.prefix, tc.projectKind, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestSpawn_ForwardsResolvedAgentConfigPermissions(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
@@ -2692,6 +2770,35 @@ func TestRestore_PromptlessOrchestratorResumesViaAdapter(t *testing.T) {
 	}
 	if st.sessions["mer-1"].IsTerminated {
 		t.Error("orchestrator must be live after restore")
+	}
+}
+
+func TestRestore_RuntimeEnvIncludesRunFilePath(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator, IsTerminated: true,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-orchestrator"},
+		Activity: domain.Activity{State: domain.ActivityExited},
+	}
+	rt := &fakeRuntime{}
+	runFilePath := filepath.Join(t.TempDir(), "running.json")
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{
+		Runtime:     rt,
+		Agents:      singleAgent{agent: alwaysResumeAgent{}},
+		Workspace:   &fakeWorkspace{},
+		Store:       st,
+		Messenger:   &fakeMessenger{},
+		Lifecycle:   &fakeLCM{store: st},
+		RunFilePath: runFilePath,
+		LookPath:    lookPath,
+	})
+
+	if _, err := m.Restore(ctx, "mer-1"); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if got := rt.lastCfg.Env[EnvRunFile]; got != runFilePath {
+		t.Fatalf("runtime env AO_RUN_FILE = %q, want %q", got, runFilePath)
 	}
 }
 

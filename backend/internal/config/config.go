@@ -5,6 +5,8 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"os"
@@ -286,11 +288,7 @@ func resolveDataDir() (string, error) {
 	if p, ok := os.LookupEnv("AO_DATA_DIR"); ok && p != "" {
 		return p, nil
 	}
-	stateDir, err := defaultStateDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(stateDir, "data"), nil
+	return defaultDataDir()
 }
 
 func defaultStateDir() (string, error) {
@@ -299,4 +297,41 @@ func defaultStateDir() (string, error) {
 		return "", fmt.Errorf("resolve state dir: %w", err)
 	}
 	return filepath.Join(homeDir, ".ao"), nil
+}
+
+func defaultDataDir() (string, error) {
+	stateDir, err := defaultStateDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(stateDir, "data"), nil
+}
+
+// InstanceNamespace returns the per-instance namespace for side effects that
+// must stay unique across multiple AO data directories on one machine.
+//
+// The canonical default data dir intentionally has no namespace so its tmux
+// session names and Git branches remain byte-for-byte compatible with the
+// historical single-instance behavior.
+func InstanceNamespace(dataDir string) string {
+	canonical := canonicalPath(dataDir)
+	if canonical == "" {
+		return ""
+	}
+	if def, err := defaultDataDir(); err == nil && canonical == canonicalPath(def) {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(canonical))
+	return "i-" + hex.EncodeToString(sum[:])[:6]
+}
+
+func canonicalPath(path string) string {
+	if strings.TrimSpace(path) == "" {
+		return ""
+	}
+	cleaned := filepath.Clean(path)
+	if abs, err := filepath.Abs(cleaned); err == nil {
+		return abs
+	}
+	return cleaned
 }
