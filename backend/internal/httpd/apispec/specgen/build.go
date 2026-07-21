@@ -73,6 +73,8 @@ func Build() ([]byte, error) {
 			"Server-sent CDC event stream with durable replay"),
 		*(&openapi31.Tag{Name: "import"}).WithDescription(
 			"Legacy AO project import (availability probe and run)"),
+		*(&openapi31.Tag{Name: "dev"}).WithDescription(
+			"Developer-only maintenance operations"),
 		*(&openapi31.Tag{Name: "mobile"}).WithDescription(
 			"Connect Mobile LAN bridge control (loopback/desktop only)"),
 	}
@@ -210,8 +212,14 @@ var schemaNames = map[string]string{
 	// httpd/controllers: import wire envelopes
 	"ControllersImportStatusResponse": "ImportStatusResponse",
 	"ControllersImportRunResponse":    "ImportRunResponse",
+	// httpd/controllers: dev wire envelopes
+	"ControllersDevImportProjectsRequest":  "DevImportProjectsRequest",
+	"ControllersDevImportProjectsResponse": "DevImportProjectsResponse",
 	// httpd/controllers: mobile wire envelopes
 	"ControllersMobileStatusResponse": "MobileStatusResponse",
+	// devimport report
+	"DevimportReport":   "DevImportProjectsReport",
+	"DevimportConflict": "DevImportProjectsConflict",
 	// httpd/controllers: push-device wire envelopes
 	"ControllersRegisterPushDeviceRequest":    "RegisterPushDeviceRequest",
 	"ControllersPushDeviceEnvelope":           "PushDeviceEnvelope",
@@ -312,6 +320,7 @@ func operations() []operation {
 	ops = append(ops, notificationOperations()...)
 	ops = append(ops, pushOperations()...)
 	ops = append(ops, importOperations()...)
+	ops = append(ops, devOperations()...)
 	ops = append(ops, mobileOperations()...)
 	return ops
 }
@@ -413,6 +422,24 @@ func importOperations() []operation {
 			summary: "Run the legacy AO project import through the daemon store",
 			resps: []respUnit{
 				{http.StatusOK, controllers.ImportRunResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
+}
+
+// devOperations declares developer-only API operations. Must stay 1:1 with
+// the routes DevController.Register mounts (enforced by the parity test).
+func devOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodPost, path: "/api/v1/dev/import-projects", id: "runDevImportProjects", tag: "dev",
+			summary: "Run the developer project-registry import through the daemon store",
+			reqBody: controllers.DevImportProjectsRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.DevImportProjectsResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},

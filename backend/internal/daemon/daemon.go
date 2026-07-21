@@ -26,6 +26,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/push"
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
+	devimportsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/devimport"
 	importsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/importer"
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
@@ -188,11 +189,18 @@ func Run() error {
 		NotificationStream: notificationHub,
 		Push:               pushRegistry,
 		Import:             importsvc.New(importsvc.Deps{Store: store}),
-		CDC:                store,
-		Events:             cdcPipe.Broadcaster,
-		Activity:           lcStack.LCM,
-		Telemetry:          telemetrySink,
-		Mobile:             mc,
+		DevImport: devimportsvc.New(devimportsvc.Deps{
+			Store:         store,
+			TargetDataDir: cfg.DataDir,
+			OpenSource: func(ctx context.Context, dataDir string) (devimportsvc.SourceStore, error) {
+				return sqlite.OpenReadOnly(ctx, dataDir)
+			},
+		}),
+		CDC:       store,
+		Events:    cdcPipe.Broadcaster,
+		Activity:  lcStack.LCM,
+		Telemetry: telemetrySink,
+		Mobile:    mc,
 	})
 	if err != nil {
 		stop()

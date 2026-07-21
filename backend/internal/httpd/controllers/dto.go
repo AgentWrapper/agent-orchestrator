@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/devimport"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/legacyimport"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
@@ -571,6 +572,17 @@ type ImportStatusResponse struct {
 // of the import run (counts + notes), reused verbatim from the import engine.
 type ImportRunResponse struct {
 	Report legacyimport.Report `json:"report"`
+}
+
+// DevImportProjectsRequest is the body of POST /api/v1/dev/import-projects.
+type DevImportProjectsRequest struct {
+	SourceDataDir string `json:"sourceDataDir" minLength:"1"`
+	DryRun        bool   `json:"dryRun"`
+}
+
+// DevImportProjectsResponse is the body of POST /api/v1/dev/import-projects.
+type DevImportProjectsResponse struct {
+	Report devimport.Report `json:"report"`
 }
 
 // PRIDParam is the {id} path parameter shared by the /prs/{id} routes.

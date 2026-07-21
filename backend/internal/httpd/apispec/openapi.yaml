@@ -97,6 +97,43 @@ paths:
       summary: Refresh the cached local agent adapter catalog
       tags:
       - agents
+  /api/v1/dev/import-projects:
+    post:
+      operationId: runDevImportProjects
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DevImportProjectsRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevImportProjectsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Run the developer project-registry import through the daemon store
+      tags:
+      - dev
   /api/v1/events:
     get:
       operationId: streamEvents
@@ -2086,6 +2123,67 @@ components:
       - path
       - resolveError
       type: object
+    DevImportProjectsConflict:
+      properties:
+        path:
+          type: string
+        projectId:
+          type: string
+        reason:
+          type: string
+        targetId:
+          type: string
+        targetPath:
+          type: string
+      required:
+      - projectId
+      - path
+      - reason
+      type: object
+    DevImportProjectsReport:
+      properties:
+        conflicts:
+          items:
+            $ref: '#/components/schemas/DevImportProjectsConflict'
+          type: array
+        dryRun:
+          type: boolean
+        inserted:
+          type: integer
+        skipped:
+          type: integer
+        sourceDataDir:
+          type: string
+        targetDataDir:
+          type: string
+        updated:
+          type: integer
+      required:
+      - sourceDataDir
+      - targetDataDir
+      - dryRun
+      - inserted
+      - updated
+      - skipped
+      type: object
+    DevImportProjectsRequest:
+      properties:
+        dryRun:
+          type: boolean
+        sourceDataDir:
+          minLength: 1
+          type: string
+      required:
+      - sourceDataDir
+      - dryRun
+      type: object
+    DevImportProjectsResponse:
+      properties:
+        report:
+          $ref: '#/components/schemas/DevImportProjectsReport'
+      required:
+      - report
+      type: object
     DomainActivity:
       properties:
         lastActivityAt:
@@ -3302,5 +3400,7 @@ tags:
   name: events
 - description: Legacy AO project import (availability probe and run)
   name: import
+- description: Developer-only maintenance operations
+  name: dev
 - description: Connect Mobile LAN bridge control (loopback/desktop only)
   name: mobile
