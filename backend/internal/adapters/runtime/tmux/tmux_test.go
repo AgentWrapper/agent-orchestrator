@@ -127,6 +127,9 @@ func TestCommandBuilders(t *testing.T) {
 	if got, want := capturePaneArgs("sess-1", 10), []string{"capture-pane", "-t", "sess-1", "-p", "-S", "-10"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("capturePaneArgs = %#v, want %#v", got, want)
 	}
+	if got, want := exitedOptionArgs("sess-1"), []string{"show-options", "-q", "-v", "-p", "-t", "sess-1", "@ao_agent_exited"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("exitedOptionArgs = %#v, want %#v", got, want)
+	}
 }
 
 // -- session name sanitization --
@@ -187,7 +190,9 @@ func TestCreateRejectsInvalidEnvKeys(t *testing.T) {
 
 func TestCreateIssuesNewSessionAndStatusOff(t *testing.T) {
 	// new-session, display-message cwd verification, set-option status,
-	// set-option mouse, set-option window-size, has-session (exit 0 = alive)
+	// set-option mouse, set-option window-size, has-session (post-create
+	// existence check; Create only verifies the tmux session survived, not
+	// agent liveness — see hasSession).
 	r, fr := newTestRuntime(0)
 	fr.outputs = [][]byte{nil, []byte("/tmp/ws\n"), nil, nil, nil, nil}
 
@@ -276,6 +281,9 @@ func TestCreateLaunchCommandContainsKeepAliveShell(t *testing.T) {
 	}
 	if !strings.Contains(launchCmd, "'myagent'") {
 		t.Fatalf("launch command missing quoted argv: %q", launchCmd)
+	}
+	if !strings.Contains(launchCmd, `@ao_agent_exited 1`) {
+		t.Fatalf("launch command missing agent-exited marker: %q", launchCmd)
 	}
 }
 
@@ -557,6 +565,50 @@ func TestIsAliveReportsOtherExitFailuresAsProbeErrors(t *testing.T) {
 	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
 	if err == nil {
 		t.Fatal("IsAlive: got nil, want probe error; failed probe must not read as dead")
+	}
+	if alive {
+		t.Fatal("alive = true on probe failure")
+	}
+}
+
+func TestIsAlive_ReportsDeadWhenAgentExitedBehindSurvivingPane(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{nil, []byte("1")}
+
+	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
+	if err != nil {
+		t.Fatalf("IsAlive: %v", err)
+	}
+	if alive {
+		t.Fatal("alive = true, want false; agent exited but pane survives")
+	}
+}
+
+func TestIsAlive_ReportsAliveWhenAgentOptionUnset(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	// -q makes an unset option exit 0 with empty output, not an error.
+	fr.outputs = [][]byte{nil, []byte("")}
+
+	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
+	if err != nil {
+		t.Fatalf("IsAlive: %v", err)
+	}
+	if !alive {
+		t.Fatal("alive = false, want true; option unset means agent still running")
+	}
+}
+
+func TestIsAlive_ShowOptionsGenuineFailureReportsProbeError(t *testing.T) {
+	r, _ := newTestRuntime(0)
+	fr := &fakeRunnerSelectiveErr{
+		exitErrOn: "show-options",
+		errOutput: []byte("no server running on /tmp/tmux-1000/default"),
+	}
+	r.runner = fr
+
+	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
+	if err == nil {
+		t.Fatal("IsAlive: got nil, want probe error; a genuine show-options failure must not collapse to alive")
 	}
 	if alive {
 		t.Fatal("alive = true on probe failure")

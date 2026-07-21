@@ -31,10 +31,13 @@ func TestRuntimeIntegration(t *testing.T) {
 	h, err := r.Create(ctx, ports.RuntimeConfig{
 		SessionID:     domain.SessionID(id),
 		WorkspacePath: t.TempDir(),
-		// Run a trivial command then drop into an interactive shell (the keep-alive
-		// exec is added by buildLaunchCommand, but we also verify here that output
-		// appears).
-		Argv: []string{"sh", "-c", "echo hello-from-tmux"},
+		// Echo immediately (so waitForOutput below has something to find) but
+		// keep the foreground process alive briefly with sleep, so the IsAlive
+		// check right after Create is checking a genuinely-running agent
+		// instead of racing its near-instant exit. IsAlive now reflects whether
+		// the agent process itself is still running (see #2802), not just
+		// whether the tmux session exists.
+		Argv: []string{"sh", "-c", "echo hello-from-tmux; sleep 5"},
 		Env:  map[string]string{"AO_SESSION_ID": id},
 	})
 	if err != nil {
