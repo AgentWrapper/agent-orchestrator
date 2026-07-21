@@ -645,6 +645,17 @@ select {
 	height: 0;
 }
 
+/* Scrollable region that must not show a scrollbar — the wheel/trackpad still
+   scrolls, but no track is painted and none reserves width. */
+.scrollbar-none {
+	scrollbar-width: none;
+}
+
+.scrollbar-none::-webkit-scrollbar {
+	width: 0;
+	height: 0;
+}
+
 .session-files-diff-scrollbar {
 	scrollbar-width: thin;
 	scrollbar-color: var(--color-scrollbar) transparent;
