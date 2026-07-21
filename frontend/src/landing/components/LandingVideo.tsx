@@ -12,8 +12,8 @@ function PlayIcon({ className = "" }: { className?: string }) {
 }
 
 export function LandingVideo() {
-	const muxPlaybackId = process.env.NEXT_PUBLIC_MUX_PLAYBACK_ID ?? "zWxz3vxZBxGtXUwjP4lG7Krql7WN8PaOrs6MRmfpSKc";
-	const videoTitle = "Agent Orchestrator Launch Demo";
+	const muxPlaybackId = process.env.NEXT_PUBLIC_MUX_PLAYBACK_ID ?? "cpmHxjRygocH1rPeKq6jk4UYxGghl8B8ABcop4Gc01b8";
+	const videoTitle = "AO Demo";
 	const encodedTitle = encodeURIComponent(videoTitle);
 	const [playing, setPlaying] = useState(false);
 
