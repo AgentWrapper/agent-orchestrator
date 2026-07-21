@@ -30,6 +30,7 @@ func TestCommandArgs(t *testing.T) {
 		{"rev parse", revParseVerifyArgs(repo, "origin/main"), []string{"-C", repo, "rev-parse", "--verify", "--quiet", "origin/main"}},
 		{"add existing", worktreeAddBranchArgs(repo, path, branch), []string{"-C", repo, "worktree", "add", path, branch}},
 		{"add new", worktreeAddNewBranchArgs(repo, branch, path, "origin/main"), []string{"-C", repo, "worktree", "add", "-b", branch, path, "origin/main"}},
+		{"add without hooks", worktreeAddNewBranchArgs(repo, branch, path, "origin/main", "/disabled-hooks"), []string{"-c", "core.hooksPath=/disabled-hooks", "-C", repo, "worktree", "add", "-b", branch, path, "origin/main"}},
 		// No --force: a dirty worktree must cause `git worktree remove` to fail so
 		// the post-prune safety check surfaces the refusal instead of deleting
 		// uncommitted agent work (review item RA).
@@ -345,6 +346,329 @@ func TestCreateWorkspaceProjectRepoPrunesStaleRegisteredWorktree(t *testing.T) {
 	got := strings.Join(calls, "\n")
 	if !strings.Contains(got, "worktree prune") {
 		t.Fatalf("calls missing worktree prune:\n%s", got)
+	}
+}
+
+// forkCrashOutput mimics the stderr of a `worktree add` whose checkout hook
+// died in MSYS fork() on Windows (e.g. Git LFS post-checkout under MSYS sh).
+const forkCrashOutput = "Preparing worktree (checking out 'feature/test')\n" +
+	"1063 [main] sh 30576 dofork: child -1 - forked process 30576 died unexpectedly, retry 0, exit code 0xC0000142, errno 11\n" +
+	"post-checkout: fork: retry: Resource temporarily unavailable"
+
+func TestIsTransientWorktreeAddError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"dofork crash", commandError{args: []string{"git", "worktree", "add"}, output: forkCrashOutput, err: errors.New("exit status 254")}, true},
+		{"hook fork retry line", errors.New("post-checkout: fork: retry: Resource temporarily unavailable"), true},
+		{"plain fork exhaustion line", errors.New("fork: Resource temporarily unavailable"), true},
+		{"case-insensitive match", errors.New("DOFORK: CHILD -1 DIED"), true},
+		{"plain exit 254 without fork text", commandError{args: []string{"git", "worktree", "add"}, output: "fatal: could not create work tree", err: errors.New("exit status 254")}, false},
+		{"missing registered worktree", errors.New("fatal: '/x' is a missing but already registered worktree"), false},
+		{"ordinary error", errors.New("fatal: not a git repository"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isTransientWorktreeAddError(tc.err); got != tc.want {
+				t.Fatalf("isTransientWorktreeAddError(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestAddWorktreeRetriesOnceAfterTransientHookCrash covers the Windows MSYS
+// fork-crash path: a hook shell dying mid-checkout fails the add even though
+// the repo and arguments are fine. The partial worktree must be force-removed
+// and pruned, then the add retried exactly once.
+func TestAddWorktreeRetriesOnceAfterTransientHookCrash(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	path := filepath.Join(ws.managedRoot, "proj", "sess")
+	var calls []string
+	addAttempts := 0
+	ws.run = func(_ context.Context, binary string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		calls = append(calls, joined)
+		switch {
+		case strings.Contains(joined, "check-ref-format"):
+			return nil, nil
+		case strings.Contains(joined, "worktree list --porcelain"):
+			return []byte("worktree " + repo + "\nbranch refs/heads/main\n"), nil
+		case strings.Contains(joined, "rev-parse --verify --quiet refs/heads/feature/test"):
+			return nil, nil // branch exists locally
+		case strings.Contains(joined, "worktree remove --force"), strings.Contains(joined, "worktree prune"):
+			return nil, nil
+		case strings.Contains(joined, "worktree add "+path+" feature/test"):
+			addAttempts++
+			if addAttempts == 1 {
+				return nil, commandError{args: append([]string{binary}, args...), output: forkCrashOutput, err: errors.New("exit status 254")}
+			}
+			return nil, nil
+		default:
+			t.Fatalf("unexpected git invocation: %v", args)
+			return nil, nil
+		}
+	}
+
+	info, err := ws.Create(context.Background(), ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/test"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if info.Path != path {
+		t.Fatalf("info.Path = %q, want %q", info.Path, path)
+	}
+	if addAttempts != 2 {
+		t.Fatalf("add attempts = %d, want 2", addAttempts)
+	}
+	got := strings.Join(calls, "\n")
+	if !strings.Contains(got, "worktree remove --force "+path) {
+		t.Fatalf("calls missing force remove of partial worktree:\n%s", got)
+	}
+	if !strings.Contains(got, "worktree prune") {
+		t.Fatalf("calls missing worktree prune:\n%s", got)
+	}
+}
+
+// TestAddWorktreeTransientRetryUsesExistingBranchWhenCreated: a crashed `-b`
+// attempt can leave the new branch behind (git creates it before the checkout
+// hooks run). The one-shot retry must re-probe the ref and switch to the
+// existing-branch form instead of failing `-b` on "branch already exists".
+func TestAddWorktreeTransientRetryUsesExistingBranchWhenCreated(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	exitErr := exec.Command("sh", "-c", "exit 1").Run()
+	if exitErr == nil {
+		t.Fatal("expected exit error")
+	}
+	path := filepath.Join(ws.managedRoot, "proj", "sess")
+	branchCreated := false
+	newBranchAdds, existingBranchAdds := 0, 0
+	ws.run = func(_ context.Context, binary string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "check-ref-format"):
+			return nil, nil
+		case strings.Contains(joined, "worktree list --porcelain"):
+			return []byte("worktree " + repo + "\nbranch refs/heads/main\n"), nil
+		case strings.Contains(joined, "rev-parse --verify --quiet refs/heads/feature/test"):
+			if branchCreated {
+				return nil, nil
+			}
+			return nil, commandError{args: append([]string{binary}, args...), err: exitErr}
+		case strings.Contains(joined, "rev-parse --verify --quiet origin/feature/test"):
+			return nil, commandError{args: append([]string{binary}, args...), err: exitErr}
+		case strings.Contains(joined, "symbolic-ref --quiet --short refs/remotes/origin/HEAD"):
+			return []byte("origin/main\n"), nil
+		case strings.Contains(joined, "rev-parse --verify --quiet origin/main"):
+			return nil, nil
+		case strings.Contains(joined, "worktree remove --force"), strings.Contains(joined, "worktree prune"):
+			return nil, nil
+		case strings.Contains(joined, "worktree add -b feature/test"):
+			newBranchAdds++
+			branchCreated = true
+			return nil, commandError{args: append([]string{binary}, args...), output: forkCrashOutput, err: errors.New("exit status 254")}
+		case strings.Contains(joined, "worktree add "+path+" feature/test"):
+			existingBranchAdds++
+			return nil, nil
+		default:
+			t.Fatalf("unexpected git invocation: %v", args)
+			return nil, nil
+		}
+	}
+
+	if _, err := ws.Create(context.Background(), ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/test"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if newBranchAdds != 1 || existingBranchAdds != 1 {
+		t.Fatalf("adds = %d new-branch, %d existing-branch; want 1 and 1", newBranchAdds, existingBranchAdds)
+	}
+}
+
+// TestAddWorktreePersistentHookCrashWrapsProvisionFailed: when the one-shot
+// retry crashes too, the error must match ports.ErrWorkspaceProvisionFailed,
+// note the retry, and carry a bounded stderr excerpt instead of the full hook
+// transcript.
+func TestAddWorktreePersistentHookCrashWrapsProvisionFailed(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	longOutput := strings.Repeat("1063 [main] sh 30576 dofork: child -1 - forked process 30576 died unexpectedly, retry 0, exit code 0xC0000142, errno 11\n", 12)
+	addAttempts := 0
+	ws.run = func(_ context.Context, binary string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "check-ref-format"):
+			return nil, nil
+		case strings.Contains(joined, "worktree list --porcelain"):
+			return []byte("worktree " + repo + "\nbranch refs/heads/main\n"), nil
+		case strings.Contains(joined, "rev-parse --verify --quiet refs/heads/feature/test"):
+			return nil, nil // branch exists locally
+		case strings.Contains(joined, "worktree remove --force"), strings.Contains(joined, "worktree prune"):
+			return nil, nil
+		case strings.Contains(joined, "worktree add"):
+			addAttempts++
+			return nil, commandError{args: append([]string{binary}, args...), output: longOutput, err: errors.New("exit status 254")}
+		default:
+			t.Fatalf("unexpected git invocation: %v", args)
+			return nil, nil
+		}
+	}
+
+	_, err = ws.Create(context.Background(), ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/test"})
+	if err == nil {
+		t.Fatal("Create error = nil, want provisioning failure")
+	}
+	if addAttempts != 2 {
+		t.Fatalf("add attempts = %d, want 2 (exactly one retry)", addAttempts)
+	}
+	if !errors.Is(err, ports.ErrWorkspaceProvisionFailed) {
+		t.Fatalf("error does not wrap ErrWorkspaceProvisionFailed: %v", err)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "retried once after transient hook crash") {
+		t.Fatalf("error message missing retry context: %q", msg)
+	}
+	if !strings.Contains(msg, "dofork") {
+		t.Fatalf("error message missing stderr excerpt: %q", msg)
+	}
+	if !strings.Contains(msg, "[...]") {
+		t.Fatalf("long stderr not elided: %q", msg)
+	}
+	if strings.Count(msg, "dofork") >= 12 {
+		t.Fatalf("full stderr leaked into error message: %q", msg)
+	}
+}
+
+// TestCreateWorkspaceProjectRepoRetriesTransientHookCrash mirrors the stale-
+// registration recovery test above for the MSYS fork-crash path: clean up the
+// partial worktree, prune, retry once, succeed.
+func TestCreateWorkspaceProjectRepoRetriesTransientHookCrash(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	output := filepath.Join(root, "proj", "orchestrator", "proj-orchestrator", "api")
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	exitErr := exec.Command("sh", "-c", "exit 1").Run()
+	if exitErr == nil {
+		t.Fatal("expected exit error")
+	}
+	var calls []string
+	addAttempts := 0
+	ws.run = func(_ context.Context, binary string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		calls = append(calls, joined)
+		switch {
+		case strings.Contains(joined, "symbolic-ref --quiet --short refs/remotes/origin/HEAD"):
+			return []byte("origin/main\n"), nil
+		case strings.Contains(joined, "rev-parse --verify --quiet origin/feature/test"):
+			return nil, commandError{args: append([]string{binary}, args...), err: exitErr}
+		case strings.Contains(joined, "rev-parse --verify --quiet refs/heads/feature/test"):
+			return nil, commandError{args: append([]string{binary}, args...), err: exitErr}
+		case strings.Contains(joined, "rev-parse --verify --quiet origin/main"):
+			return nil, nil
+		case strings.Contains(joined, "rev-parse --verify origin/main"):
+			return []byte("abc123\n"), nil
+		case strings.Contains(joined, "worktree remove --force"), strings.Contains(joined, "worktree prune"):
+			return nil, nil
+		case strings.Contains(joined, "worktree add -b feature/test "+output+" origin/main"):
+			addAttempts++
+			if addAttempts == 1 {
+				return nil, commandError{args: append([]string{binary}, args...), output: forkCrashOutput, err: errors.New("exit status 254")}
+			}
+			return nil, nil
+		default:
+			t.Fatalf("unexpected git invocation: %v", args)
+			return nil, nil
+		}
+	}
+
+	baseSHA, err := ws.createWorkspaceProjectRepo(context.Background(), workspaceProjectRepo{
+		name:       "api",
+		repoPath:   repo,
+		outputPath: output,
+	}, "feature/test")
+	if err != nil {
+		t.Fatalf("createWorkspaceProjectRepo: %v", err)
+	}
+	if baseSHA != "abc123" {
+		t.Fatalf("baseSHA = %q, want abc123", baseSHA)
+	}
+	if addAttempts != 2 {
+		t.Fatalf("add attempts = %d, want 2", addAttempts)
+	}
+	got := strings.Join(calls, "\n")
+	if !strings.Contains(got, "worktree remove --force "+output) {
+		t.Fatalf("calls missing force remove of partial worktree:\n%s", got)
+	}
+}
+
+// TestCreateWorkspaceProjectRepoWrapsProvisionFailed: a non-transient add
+// failure gets no retry but still wraps ports.ErrWorkspaceProvisionFailed with
+// the git stderr so the API surfaces the cause instead of a bare 500.
+func TestCreateWorkspaceProjectRepoWrapsProvisionFailed(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	output := filepath.Join(root, "proj", "orchestrator", "proj-orchestrator", "api")
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	exitErr := exec.Command("sh", "-c", "exit 1").Run()
+	if exitErr == nil {
+		t.Fatal("expected exit error")
+	}
+	addAttempts := 0
+	ws.run = func(_ context.Context, binary string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "symbolic-ref --quiet --short refs/remotes/origin/HEAD"):
+			return []byte("origin/main\n"), nil
+		case strings.Contains(joined, "rev-parse --verify --quiet origin/feature/test"):
+			return nil, commandError{args: append([]string{binary}, args...), err: exitErr}
+		case strings.Contains(joined, "rev-parse --verify --quiet origin/main"):
+			return nil, nil
+		case strings.Contains(joined, "rev-parse --verify origin/main"):
+			return []byte("abc123\n"), nil
+		case strings.Contains(joined, "worktree add -b feature/test "+output+" origin/main"):
+			addAttempts++
+			return nil, commandError{args: append([]string{binary}, args...), output: "fatal: could not create directory", err: errors.New("exit status 128")}
+		default:
+			t.Fatalf("unexpected git invocation: %v", args)
+			return nil, nil
+		}
+	}
+
+	_, err = ws.createWorkspaceProjectRepo(context.Background(), workspaceProjectRepo{
+		name:       "api",
+		repoPath:   repo,
+		outputPath: output,
+	}, "feature/test")
+	if err == nil {
+		t.Fatal("createWorkspaceProjectRepo error = nil, want provisioning failure")
+	}
+	if addAttempts != 1 {
+		t.Fatalf("add attempts = %d, want 1 (no retry for non-transient failure)", addAttempts)
+	}
+	if !errors.Is(err, ports.ErrWorkspaceProvisionFailed) {
+		t.Fatalf("error does not wrap ErrWorkspaceProvisionFailed: %v", err)
+	}
+	if !strings.Contains(err.Error(), "fatal: could not create directory") {
+		t.Fatalf("error message missing stderr excerpt: %q", err.Error())
 	}
 }
 

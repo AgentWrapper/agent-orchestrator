@@ -2,6 +2,7 @@ package gitworktree
 
 import (
 	"bufio"
+	"path/filepath"
 	"strings"
 )
 
@@ -72,4 +73,23 @@ func parseWorktreePorcelain(out string) ([]worktreeRecord, error) {
 	}
 	flush()
 	return records, nil
+}
+
+func findWorktree(records []worktreeRecord, path string) (worktreeRecord, bool) {
+	clean := filepath.Clean(path)
+	for _, rec := range records {
+		if filepath.Clean(rec.Path) == clean {
+			return rec, true
+		}
+	}
+	return worktreeRecord{}, false
+}
+
+func findWorktreeByBranch(records []worktreeRecord, branch string) (worktreeRecord, bool) {
+	for _, rec := range records {
+		if rec.Branch == branch {
+			return rec, true
+		}
+	}
+	return worktreeRecord{}, false
 }
