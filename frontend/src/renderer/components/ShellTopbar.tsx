@@ -68,7 +68,7 @@ export function ShellTopbar() {
 	const isProjectBoardRoute = !isSessionRoute && Boolean(projectId);
 	const isRootBoardRoute = !isSessionRoute && !isProjectBoardRoute;
 	const project = projectId ? all.find((workspace) => workspace.id === projectId) : undefined;
-	const projectLabel = project?.name ?? session?.workspaceName ?? (projectId ? "" : "Board");
+	const projectLabel = project?.name ?? session?.workspaceName ?? (projectId ? "" : "agent-orchestrator");
 	const orchestrator = projectId ? findProjectOrchestrator(all, projectId) : undefined;
 	const isProjectRestarting = projectId ? restartingProjectIds.has(projectId) : false;
 
@@ -207,7 +207,7 @@ export function ShellTopbar() {
 									disabled={isProjectRestarting}
 									onClick={openNewTask}
 									style={noDragStyle}
-									variant="accent"
+									variant={isBoardEmpty ? "outline" : "accent"}
 								>
 									<Plus className="size-icon-md" aria-hidden="true" />
 									New task
@@ -242,7 +242,7 @@ export function ShellTopbar() {
 								disabled={isSpawning || isProjectRestarting}
 								onClick={() => void openOrchestrator()}
 								style={noDragStyle}
-								variant="primary"
+								variant={isBoardEmpty ? "outline" :"primary"}
 							>
 								<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
 								{isProjectRestarting ? "Restarting…" : isSpawning ? "Spawning…" : "Orchestrator"}
