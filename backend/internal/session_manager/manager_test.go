@@ -3241,7 +3241,7 @@ func TestSpawnAndRestore_PrependsResolvedBinaryAndNodeDirsToRuntimePATH(t *testi
 				}
 			} else {
 				seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x"})
-				if _, err := m.Restore(ctx, "mer-1"); err != nil {
+				if _, err := m.RestoreWithMode(ctx, "mer-1"); err != nil {
 					t.Fatalf("Restore: %v", err)
 				}
 			}
