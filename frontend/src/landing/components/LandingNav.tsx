@@ -80,7 +80,7 @@ const socials = [
 const navLinks = [
 	{ label: "Demo", href: "#see-it" },
 	{ label: "Features", href: "#features" },
-	{ label: "Docs", href: "/docs" },
+	{ label: "Docs", href: "/docs/" },
 ];
 
 export function LandingNav() {
