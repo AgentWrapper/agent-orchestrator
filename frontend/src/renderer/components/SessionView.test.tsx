@@ -241,7 +241,7 @@ describe("SessionView", () => {
 		}
 		workspaceQueryState.data = workspaces;
 		workspaceQueryState.isLoading = false;
-		useUiStore.setState({ isInspectorOpen: false, inspectorSessions: {} });
+		useUiStore.setState({ inspectorSessions: {} });
 		panels.clear();
 		browserDestroy.mockReset();
 	});
@@ -367,6 +367,23 @@ describe("SessionView", () => {
 		expect(handle.resize).not.toHaveBeenCalled();
 	});
 
+	it("expands on the first toggle after a closed worker inspector remounts", () => {
+		const { rerender } = render(<SessionView sessionId="sess-1" />);
+		const handle = panels.get("inspector")!.handle;
+
+		rerender(<SessionView sessionId="sess-orch" />);
+		expect(screen.queryByTestId("panel-inspector")).not.toBeInTheDocument();
+
+		rerender(<SessionView sessionId="sess-2" />);
+		expect(panelSizes("inspector")[0]).toBe("0%");
+		expect(handle.collapse).not.toHaveBeenCalled();
+
+		fireEvent.keyDown(window, { key: "B", metaKey: true, shiftKey: true });
+
+		expect(inspectorOpen("sess-2")).toBe(true);
+		expect(handle.expand).toHaveBeenCalledTimes(1);
+	});
+
 	it("renders no inspector panel or handle for orchestrator sessions", () => {
 		render(<SessionView sessionId="sess-orch" />);
 
@@ -480,7 +497,7 @@ describe("SessionView", () => {
 		expect(inspectorButton()).toHaveAttribute("data-view", "browser");
 	});
 
-	it("baselines an existing preview after async workspace load without opening Browser", () => {
+	it("baselines an async preview, then expands for the next preview revision", () => {
 		const secondWorker = workerSession("sess-2");
 		secondWorker.previewUrl = "http://localhost:5173/";
 		secondWorker.previewRevision = 1;
@@ -496,5 +513,14 @@ describe("SessionView", () => {
 		expect(inspectorOpen("sess-2")).toBe(false);
 		expect(screen.getByTestId("panel-inspector")).toHaveAttribute("inert");
 		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
+		const handle = panels.get("inspector")!.handle;
+		expect(handle.expand).not.toHaveBeenCalled();
+
+		secondWorker.previewRevision = 2;
+		rerender(<SessionView sessionId="sess-2" />);
+
+		expect(inspectorOpen("sess-2")).toBe(true);
+		expect(inspectorButton()).toHaveAttribute("data-view", "browser");
+		expect(handle.expand).toHaveBeenCalledTimes(1);
 	});
 });

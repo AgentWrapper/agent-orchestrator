@@ -28,8 +28,6 @@ export type InspectorSessionState = {
 type UiState = {
 	workbenchTab: WorkbenchTab;
 	isSidebarOpen: boolean;
-	/** Legacy mirror of the last-touched session inspector; prefer inspectorSessions. */
-	isInspectorOpen: boolean;
 	inspectorSessions: Record<string, InspectorSessionState>;
 	isCommandPaletteOpen: boolean;
 	themePreference: ThemePreference;
@@ -83,7 +81,6 @@ const initialThemePreference = readStoredThemePreference();
 export const useUiStore = create<UiState>((set) => ({
 	workbenchTab: "changes",
 	isSidebarOpen: initialSidebarOpen(),
-	isInspectorOpen: false,
 	inspectorSessions: {},
 	isCommandPaletteOpen: false,
 	themePreference: initialThemePreference,
@@ -114,7 +111,6 @@ export const useUiStore = create<UiState>((set) => ({
 		set((state) => {
 			const current = inspectorState(state.inspectorSessions, sessionId);
 			return {
-				isInspectorOpen: isOpen,
 				inspectorSessions: {
 					...state.inspectorSessions,
 					[sessionId]: { ...current, isOpen },
@@ -124,12 +120,10 @@ export const useUiStore = create<UiState>((set) => ({
 	toggleInspector: (sessionId) =>
 		set((state) => {
 			const current = inspectorState(state.inspectorSessions, sessionId);
-			const isOpen = !current.isOpen;
 			return {
-				isInspectorOpen: isOpen,
 				inspectorSessions: {
 					...state.inspectorSessions,
-					[sessionId]: { ...current, isOpen },
+					[sessionId]: { ...current, isOpen: !current.isOpen },
 				},
 			};
 		}),

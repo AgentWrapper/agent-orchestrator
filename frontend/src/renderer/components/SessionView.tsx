@@ -170,18 +170,17 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	}, [hasInspector, sessionId, toggleInspector]);
 
 	// Drive the collapsible panel from the store so the topbar button, ⌘⇧B, and
-	// drag-to-collapse all stay in sync. hasInspector must NOT be a dep: when
-	// the inspector panel mounts into the already-live group (orchestrator →
-	// worker navigation), rrp only derives the new panel's constraints in the
-	// next commit, so an expand()/collapse() in the mount commit throws "Panel
-	// constraints not found for Panel inspector" and unwinds the route. The
-	// panel mounts in sync via inspectorDefaultSize above; only later toggles
-	// need the imperative API, by which point registration has settled.
+	// drag-to-collapse all stay in sync. When the inspector panel mounts into
+	// the already-live group (orchestrator/loading → worker), rrp only derives
+	// the new panel's constraints in the next commit. The readiness guard
+	// consumes that mount transition without calling expand()/collapse(); later
+	// toggles can safely use the imperative API after registration has settled.
 	const inspectorImperativeReadyRef = useRef(false);
 	if (!hasInspector) {
 		inspectorImperativeReadyRef.current = false;
 	}
 	useEffect(() => {
+		if (!hasInspector) return;
 		const panel = inspectorRef.current;
 		if (!panel) return;
 		if (!inspectorImperativeReadyRef.current) {
@@ -196,7 +195,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		} else {
 			panel.collapse();
 		}
-	}, [isInspectorOpen]);
+	}, [hasInspector, isInspectorOpen]);
 
 	// Persist drags and mirror collapse state (dragging past minSize collapses)
 	// back into the store. Read the store imperatively to avoid a stale closure.
