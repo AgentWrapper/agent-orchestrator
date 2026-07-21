@@ -67,10 +67,23 @@ type SessionRecord struct {
 // plus the derived display Status.
 type Session struct {
 	SessionRecord
-	Status           SessionStatus `json:"status" enum:"working,pr_open,draft,ci_failed,review_pending,changes_requested,approved,mergeable,merged,needs_input,idle,terminated,no_signal"`
-	TerminalHandleID string        `json:"terminalHandleId,omitempty"`
+	Status           SessionStatus     `json:"status" enum:"working,pr_open,draft,ci_failed,review_pending,changes_requested,approved,mergeable,merged,needs_input,idle,terminated,no_signal"`
+	TerminalHandleID string            `json:"terminalHandleId,omitempty"`
+	SemanticLiveness *SemanticLiveness `json:"semanticLiveness,omitempty"`
 	// PRs are the session's attributed pull requests (one session can own many).
 	// They feed status derivation and are surfaced on the API read model. Not
 	// serialized here: the HTTP boundary maps them to the curated wire shape.
 	PRs []PRFacts `json:"-"`
+}
+
+// SemanticLiveness is a derived, privacy-safe warning about an active worker's
+// recent structured action stream. It is never persisted and contains no raw
+// prompts, reasoning, commands, file names, or tool arguments.
+type SemanticLiveness struct {
+	State           string `json:"state" enum:"watch,thrashing"`
+	RiskScore       int    `json:"riskScore" minimum:"0" maximum:"100"`
+	ObservedActions int    `json:"observedActions" minimum:"0"`
+	ObservedTokens  int64  `json:"observedTokens,omitempty" minimum:"0"`
+	Summary         string `json:"summary"`
+	SuggestedAction string `json:"suggestedAction" enum:"inspect,fresh_context_restart"`
 }

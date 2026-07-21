@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"strings"
 	"time"
 )
 
@@ -121,6 +122,58 @@ FROM pr_comment WHERE pr_url = ? ORDER BY created_at, comment_id
 
 func (q *Queries) ListPRComments(ctx context.Context, prUrl string) ([]PRComment, error) {
 	rows, err := q.db.QueryContext(ctx, listPRComments, prUrl)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PRComment{}
+	for rows.Next() {
+		var i PRComment
+		if err := rows.Scan(
+			&i.PRURL,
+			&i.CommentID,
+			&i.Author,
+			&i.File,
+			&i.Line,
+			&i.Body,
+			&i.Resolved,
+			&i.CreatedAt,
+			&i.ThreadID,
+			&i.URL,
+			&i.IsBot,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPRCommentsByPRs = `-- name: ListPRCommentsByPRs :many
+SELECT pr_url, comment_id, author, file, line, body, resolved, created_at, thread_id, url, is_bot
+FROM pr_comment
+WHERE pr_url IN (/*SLICE:pr_urls*/?)
+ORDER BY pr_url, created_at, comment_id
+`
+
+func (q *Queries) ListPRCommentsByPRs(ctx context.Context, prUrls []string) ([]PRComment, error) {
+	query := listPRCommentsByPRs
+	var queryParams []interface{}
+	if len(prUrls) > 0 {
+		for _, v := range prUrls {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:pr_urls*/?", strings.Repeat(",?", len(prUrls))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:pr_urls*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
 	if err != nil {
 		return nil, err
 	}

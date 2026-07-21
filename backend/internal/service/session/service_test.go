@@ -22,14 +22,24 @@ func (f *fakeTelemetrySink) Emit(_ context.Context, ev ports.TelemetryEvent) {
 func (f *fakeTelemetrySink) Close(context.Context) error { return nil }
 
 type fakeStore struct {
-	sessions map[domain.SessionID]domain.SessionRecord
-	pr       map[domain.SessionID]domain.PRFacts
-	projects map[string]domain.ProjectRecord
-	checks   map[string][]domain.PullRequestCheck
-	reviews  map[string][]domain.PullRequestReview
-	threads  map[string][]domain.PullRequestReviewThread
-	comments map[string][]domain.PullRequestComment
-	num      int
+	sessions            map[domain.SessionID]domain.SessionRecord
+	pr                  map[domain.SessionID]domain.PRFacts
+	projects            map[string]domain.ProjectRecord
+	checks              map[string][]domain.PullRequestCheck
+	reviews             map[string][]domain.PullRequestReview
+	comments            map[string][]domain.PullRequestComment
+	num                 int
+	getSessionCalls     int
+	listSessionsCalls   int
+	listPRsBySessionCalls int
+	prFactsSingleCalls  int
+	prFactsBatchCalls   int
+	checksSingleCalls   int
+	checksBatchCalls    int
+	reviewsSingleCalls  int
+	reviewsBatchCalls   int
+	commentsSingleCalls int
+	commentsBatchCalls  int
 }
 
 func newFakeStore() *fakeStore {
@@ -39,7 +49,6 @@ func newFakeStore() *fakeStore {
 		projects: map[string]domain.ProjectRecord{},
 		checks:   map[string][]domain.PullRequestCheck{},
 		reviews:  map[string][]domain.PullRequestReview{},
-		threads:  map[string][]domain.PullRequestReviewThread{},
 		comments: map[string][]domain.PullRequestComment{},
 	}
 }
@@ -52,11 +61,13 @@ func (f *fakeStore) CreateSession(_ context.Context, rec domain.SessionRecord) (
 }
 
 func (f *fakeStore) GetSession(_ context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
+	f.getSessionCalls++
 	r, ok := f.sessions[id]
 	return r, ok, nil
 }
 
 func (f *fakeStore) ListSessions(_ context.Context, p domain.ProjectID) ([]domain.SessionRecord, error) {
+	f.listSessionsCalls++
 	var out []domain.SessionRecord
 	for _, r := range f.sessions {
 		if r.ProjectID == p {
@@ -102,6 +113,7 @@ func (f *fakeStore) GetDisplayPRFactsForSession(_ context.Context, id domain.Ses
 }
 
 func (f *fakeStore) ListPRsBySession(_ context.Context, id domain.SessionID) ([]domain.PullRequest, error) {
+	f.listPRsBySessionCalls++
 	pr, ok := f.pr[id]
 	if !ok {
 		return nil, nil
@@ -110,6 +122,7 @@ func (f *fakeStore) ListPRsBySession(_ context.Context, id domain.SessionID) ([]
 }
 
 func (f *fakeStore) ListPRFactsForSession(_ context.Context, id domain.SessionID) ([]domain.PRFacts, error) {
+	f.prFactsSingleCalls++
 	pr, ok := f.pr[id]
 	if !ok {
 		return nil, nil
@@ -117,20 +130,58 @@ func (f *fakeStore) ListPRFactsForSession(_ context.Context, id domain.SessionID
 	return []domain.PRFacts{pr}, nil
 }
 
+func (f *fakeStore) ListPRFactsForSessions(_ context.Context, ids []domain.SessionID) (map[domain.SessionID][]domain.PRFacts, error) {
+	f.prFactsBatchCalls++
+	out := make(map[domain.SessionID][]domain.PRFacts, len(ids))
+	for _, id := range ids {
+		out[id] = []domain.PRFacts{}
+		if pr, ok := f.pr[id]; ok {
+			out[id] = []domain.PRFacts{pr}
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeStore) ListChecks(_ context.Context, prURL string) ([]domain.PullRequestCheck, error) {
+	f.checksSingleCalls++
 	return append([]domain.PullRequestCheck(nil), f.checks[prURL]...), nil
 }
 
+func (f *fakeStore) ListChecksForPRs(_ context.Context, prURLs []string) (map[string][]domain.PullRequestCheck, error) {
+	f.checksBatchCalls++
+	out := make(map[string][]domain.PullRequestCheck, len(prURLs))
+	for _, prURL := range prURLs {
+		out[prURL] = append([]domain.PullRequestCheck(nil), f.checks[prURL]...)
+	}
+	return out, nil
+}
+
 func (f *fakeStore) ListPRReviews(_ context.Context, prURL string) ([]domain.PullRequestReview, error) {
+	f.reviewsSingleCalls++
 	return append([]domain.PullRequestReview(nil), f.reviews[prURL]...), nil
 }
 
-func (f *fakeStore) ListPRReviewThreads(_ context.Context, prURL string) ([]domain.PullRequestReviewThread, error) {
-	return append([]domain.PullRequestReviewThread(nil), f.threads[prURL]...), nil
+func (f *fakeStore) ListPRReviewsForPRs(_ context.Context, prURLs []string) (map[string][]domain.PullRequestReview, error) {
+	f.reviewsBatchCalls++
+	out := make(map[string][]domain.PullRequestReview, len(prURLs))
+	for _, prURL := range prURLs {
+		out[prURL] = append([]domain.PullRequestReview(nil), f.reviews[prURL]...)
+	}
+	return out, nil
 }
 
 func (f *fakeStore) ListPRComments(_ context.Context, prURL string) ([]domain.PullRequestComment, error) {
+	f.commentsSingleCalls++
 	return append([]domain.PullRequestComment(nil), f.comments[prURL]...), nil
+}
+
+func (f *fakeStore) ListPRCommentsForPRs(_ context.Context, prURLs []string) (map[string][]domain.PullRequestComment, error) {
+	f.commentsBatchCalls++
+	out := make(map[string][]domain.PullRequestComment, len(prURLs))
+	for _, prURL := range prURLs {
+		out[prURL] = append([]domain.PullRequestComment(nil), f.comments[prURL]...)
+	}
+	return out, nil
 }
 
 func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectRecord, bool, error) {
@@ -149,6 +200,25 @@ func TestSessionListDerivesStatusFromPRFacts(t *testing.T) {
 	}
 	if len(list) != 1 || list[0].Status != domain.StatusCIFailed {
 		t.Fatalf("got %+v", list)
+	}
+}
+
+func TestSessionListBatchesPRFactsForAllSelectedSessions(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityActive}}
+	st.sessions["mer-2"] = domain.SessionRecord{ID: "mer-2", ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityIdle}}
+	st.pr["mer-1"] = domain.PRFacts{URL: "pr1", CI: domain.CIFailing}
+	st.pr["mer-2"] = domain.PRFacts{URL: "pr2", CI: domain.CIPassing}
+
+	list, err := (&Service{store: st}).List(context.Background(), ListFilter{ProjectID: "mer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("list = %+v", list)
+	}
+	if st.listSessionsCalls != 1 || st.prFactsBatchCalls != 1 || st.prFactsSingleCalls != 0 {
+		t.Fatalf("session-list calls: sessions=%d PR-batch=%d PR-single=%d", st.listSessionsCalls, st.prFactsBatchCalls, st.prFactsSingleCalls)
 	}
 }
 
@@ -696,6 +766,7 @@ func TestToAPIErrorMapsWorkspaceBranchSentinels(t *testing.T) {
 		{"checked out elsewhere", fmt.Errorf("spawn mer-1: workspace: %w: \"x\" is checked out at \"/tmp\"", ports.ErrWorkspaceBranchCheckedOutElsewhere), apierr.KindConflict, "BRANCH_CHECKED_OUT_ELSEWHERE"},
 		{"not fetched", fmt.Errorf("spawn mer-1: workspace: %w: \"x\" has no local head", ports.ErrWorkspaceBranchNotFetched), apierr.KindInvalid, "BRANCH_NOT_FETCHED"},
 		{"invalid branch", fmt.Errorf("spawn mer-1: workspace: %w: \"bad!!\" (exit 1)", ports.ErrWorkspaceBranchInvalid), apierr.KindInvalid, "INVALID_BRANCH"},
+		{"workspace provision failed", fmt.Errorf("spawn mer-1: gitworktree: worktree add existing branch \"x\": %w: exit status 254: dofork: child -1", ports.ErrWorkspaceProvisionFailed), apierr.KindInvalid, "WORKSPACE_PROVISION_FAILED"},
 		{"agent binary not found", fmt.Errorf("spawn mer-1: %w", ports.ErrAgentBinaryNotFound), apierr.KindInvalid, "AGENT_BINARY_NOT_FOUND"},
 		{"runtime prerequisite missing", fmt.Errorf("spawn: %w: tmux required on macOS/Linux but not in PATH", ports.ErrRuntimePrerequisite), apierr.KindInvalid, "RUNTIME_PREREQUISITE_MISSING"},
 		{"unknown harness", fmt.Errorf("spawn: %w: %q", sessionmanager.ErrUnknownHarness, "bogus"), apierr.KindInvalid, "UNKNOWN_HARNESS"},
@@ -710,6 +781,22 @@ func TestToAPIErrorMapsWorkspaceBranchSentinels(t *testing.T) {
 				t.Fatalf("mapped = %v, want %s %s", mapped, tc.wantCode, e)
 			}
 		})
+	}
+}
+
+// TestToAPIError_WorkspaceProvisionFailedKeepsCause asserts the mapped
+// envelope message carries the wrapped error text, so the bounded git stderr
+// excerpt the workspace adapter embeds reaches the API client instead of
+// collapsing into a bare 500 INTERNAL_ERROR.
+func TestToAPIError_WorkspaceProvisionFailedKeepsCause(t *testing.T) {
+	err := fmt.Errorf("spawn mer-1: gitworktree: worktree add existing branch \"x\": %w: exit status 254: dofork: child -1 died unexpectedly", ports.ErrWorkspaceProvisionFailed)
+	mapped := toAPIError(err)
+	var e *apierr.Error
+	if !errors.As(mapped, &e) || e.Kind != apierr.KindInvalid || e.Code != "WORKSPACE_PROVISION_FAILED" {
+		t.Fatalf("mapped = %v, want Invalid WORKSPACE_PROVISION_FAILED", mapped)
+	}
+	if !strings.Contains(e.Message, "dofork: child -1 died unexpectedly") {
+		t.Fatalf("message = %q, want git stderr excerpt preserved", e.Message)
 	}
 }
 
@@ -1095,12 +1182,46 @@ func TestListPRSummariesOnlyEmitsMergeReasonsForBlockedStates(t *testing.T) {
 	}
 }
 
+func TestListPRSummariesBatchesDetailsAcrossPRs(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+	now := time.Now().UTC()
+	stList := &multiPRFakeStore{fakeStore: st, prs: []domain.PullRequest{
+		{URL: "pr-1", SessionID: "mer-1", Number: 1, UpdatedAt: now},
+		{URL: "pr-2", SessionID: "mer-1", Number: 2, UpdatedAt: now.Add(time.Second)},
+	}}
+	st.checks["pr-1"] = []domain.PullRequestCheck{{Name: "unit", Status: domain.PRCheckPassed}}
+	st.reviews["pr-2"] = []domain.PullRequestReview{{ID: "review-1", State: domain.ReviewApproved}}
+	st.comments["pr-2"] = []domain.PullRequestComment{{ID: "comment-1", Author: "ada"}}
+
+	got, err := (&Service{store: stList}).ListPRSummaries(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("summaries = %+v", got)
+	}
+	if st.checksBatchCalls != 1 || st.reviewsBatchCalls != 1 || st.commentsBatchCalls != 1 {
+		t.Fatalf("batch calls: checks=%d reviews=%d comments=%d", st.checksBatchCalls, st.reviewsBatchCalls, st.commentsBatchCalls)
+	}
+	if st.checksSingleCalls != 0 || st.reviewsSingleCalls != 0 || st.commentsSingleCalls != 0 {
+		t.Fatalf("single calls: checks=%d reviews=%d comments=%d", st.checksSingleCalls, st.reviewsSingleCalls, st.commentsSingleCalls)
+	}
+	if st.getSessionCalls != 1 || st.listPRsBySessionCalls != 1 {
+		t.Fatalf("base calls: get-session=%d list-prs=%d", st.getSessionCalls, st.listPRsBySessionCalls)
+	}
+	if total := st.getSessionCalls + st.listPRsBySessionCalls + st.checksBatchCalls + st.reviewsBatchCalls + st.commentsBatchCalls; total != 5 {
+		t.Fatalf("total persistence calls = %d, want 5", total)
+	}
+}
+
 type multiPRFakeStore struct {
 	*fakeStore
 	prs []domain.PullRequest
 }
 
 func (f *multiPRFakeStore) ListPRsBySession(context.Context, domain.SessionID) ([]domain.PullRequest, error) {
+	f.listPRsBySessionCalls++
 	return f.prs, nil
 }
 

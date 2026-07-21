@@ -8,6 +8,7 @@ package gen
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -230,6 +231,91 @@ func (q *Queries) ListPRFactsBySession(ctx context.Context, sessionID domain.Ses
 	for rows.Next() {
 		var i ListPRFactsBySessionRow
 		if err := rows.Scan(
+			&i.URL,
+			&i.Number,
+			&i.PRState,
+			&i.ReviewDecision,
+			&i.CIState,
+			&i.Mergeability,
+			&i.SourceBranch,
+			&i.TargetBranch,
+			&i.UpdatedAt,
+			&i.ReviewComments,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPRFactsBySessions = `-- name: ListPRFactsBySessions :many
+SELECT
+    pr.session_id,
+    pr.url,
+    pr.number,
+    pr.pr_state,
+    pr.review_decision,
+    pr.ci_state,
+    pr.mergeability,
+    pr.source_branch,
+    pr.target_branch,
+    pr.updated_at,
+    EXISTS (
+        SELECT 1
+        FROM pr_comment
+        WHERE pr_comment.pr_url = pr.url
+          AND pr_comment.resolved = 0
+          AND pr_comment.is_bot = 0
+    ) AS review_comments
+FROM pr
+WHERE pr.session_id IN (/*SLICE:session_ids*/?)
+ORDER BY pr.session_id, pr.updated_at DESC
+`
+
+type ListPRFactsBySessionsRow struct {
+	SessionID      domain.SessionID
+	URL            string
+	Number         int64
+	PRState        domain.PRState
+	ReviewDecision domain.ReviewDecision
+	CIState        domain.CIState
+	Mergeability   domain.Mergeability
+	SourceBranch   string
+	TargetBranch   string
+	UpdatedAt      time.Time
+	ReviewComments bool
+}
+
+// Batch form used by the session list read model. Keep the projection aligned
+// with ListPRFactsBySession and include session_id for grouping in Go.
+func (q *Queries) ListPRFactsBySessions(ctx context.Context, sessionIds []domain.SessionID) ([]ListPRFactsBySessionsRow, error) {
+	query := listPRFactsBySessions
+	var queryParams []interface{}
+	if len(sessionIds) > 0 {
+		for _, v := range sessionIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:session_ids*/?", strings.Repeat(",?", len(sessionIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:session_ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPRFactsBySessionsRow{}
+	for rows.Next() {
+		var i ListPRFactsBySessionsRow
+		if err := rows.Scan(
+			&i.SessionID,
 			&i.URL,
 			&i.Number,
 			&i.PRState,

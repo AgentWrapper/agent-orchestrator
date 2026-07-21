@@ -10,12 +10,22 @@ func revParseVerifyArgs(repo, ref string) []string {
 	return []string{"-C", repo, "rev-parse", "--verify", "--quiet", ref}
 }
 
-func worktreeAddBranchArgs(repo, path, branch string) []string {
-	return []string{"-C", repo, "worktree", "add", path, branch}
+func worktreeAddBranchArgs(repo, path, branch string, hooksPath ...string) []string {
+	args := worktreeCommandPrefix(repo, hooksPath...)
+	return append(args, "worktree", "add", path, branch)
 }
 
-func worktreeAddNewBranchArgs(repo, branch, path, baseRef string) []string {
-	return []string{"-C", repo, "worktree", "add", "-b", branch, path, baseRef}
+func worktreeAddNewBranchArgs(repo, branch, path, baseRef string, hooksPath ...string) []string {
+	args := worktreeCommandPrefix(repo, hooksPath...)
+	return append(args, "worktree", "add", "-b", branch, path, baseRef)
+}
+
+func worktreeCommandPrefix(repo string, hooksPath ...string) []string {
+	args := make([]string, 0, 4)
+	if len(hooksPath) > 0 && strings.TrimSpace(hooksPath[0]) != "" {
+		args = append(args, "-c", "core.hooksPath="+hooksPath[0])
+	}
+	return append(args, "-C", repo)
 }
 
 // worktreeRemoveArgs intentionally omits --force: a dirty worktree (uncommitted
@@ -29,7 +39,7 @@ func worktreeRemoveArgs(repo, path string) []string {
 
 // worktreeForceRemoveArgs passes --force to bypass git's dirty-worktree check.
 // Only ForceDestroy may call this. It is safe only AFTER the session's
-// uncommitted work has been captured (Task 2's StashUncommitted). Callers that
+// uncommitted work has been captured (StashUncommitted). Callers that
 // have not yet captured work must use worktreeRemoveArgs / Destroy instead.
 func worktreeForceRemoveArgs(repo, path string) []string {
 	return []string{"-C", repo, "worktree", "remove", "--force", path}

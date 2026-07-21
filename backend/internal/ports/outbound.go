@@ -166,6 +166,11 @@ var (
 	// ErrWorkspaceBranchInvalid reports the requested branch name is not a valid
 	// git ref (rejected by `git check-ref-format`).
 	ErrWorkspaceBranchInvalid = errors.New("workspace: invalid branch name")
+	// ErrWorkspaceProvisionFailed reports the workspace checkout could not be
+	// materialised: the final `git worktree add` attempt failed after any
+	// retries. The wrapping message carries a bounded excerpt of git's stderr
+	// so API clients can see the underlying cause.
+	ErrWorkspaceProvisionFailed = errors.New("workspace provisioning failed")
 	// ErrWorkspaceDirty reports Destroy refused to remove a workspace because
 	// it holds uncommitted changes or untracked files. Teardown is never
 	// forced; callers treat the workspace as intentionally preserved.
@@ -202,6 +207,9 @@ type WorkspaceConfig struct {
 	RepoPath string
 	// Path optionally supplies an existing managed worktree path for restore.
 	Path string
+	// SkipCheckoutHooks disables repository checkout hooks for AO-owned,
+	// read-only helper sessions that do not depend on workspace provisioning.
+	SkipCheckoutHooks bool
 }
 
 // WorkspaceInfo describes a created workspace — where it lives and its branch.
@@ -219,14 +227,15 @@ type WorkspaceInfo struct {
 // WorkspaceProjectConfig describes a multi-repo workspace session. RootRepoPath
 // and child RepoPath values are absolute paths to the canonical repositories.
 type WorkspaceProjectConfig struct {
-	ProjectID     domain.ProjectID
-	SessionID     domain.SessionID
-	Kind          domain.SessionKind
-	SessionPrefix string
-	Branch        string
-	RootRepoPath  string
-	BaseBranch    string
-	Repos         []WorkspaceProjectRepoConfig
+	ProjectID         domain.ProjectID
+	SessionID         domain.SessionID
+	Kind              domain.SessionKind
+	SessionPrefix     string
+	Branch            string
+	RootRepoPath      string
+	BaseBranch        string
+	Repos             []WorkspaceProjectRepoConfig
+	SkipCheckoutHooks bool
 }
 
 // WorkspaceProjectRepoConfig describes one registered child repo in a

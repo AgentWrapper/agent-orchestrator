@@ -99,31 +99,31 @@ func (s *Service) ListPRSummaries(ctx context.Context, id domain.SessionID) ([]P
 	if err != nil {
 		return nil, err
 	}
+	prURLs := make([]string, 0, len(prs))
+	for _, pr := range prs {
+		prURLs = append(prURLs, pr.URL)
+	}
+	checksByPR, err := s.store.ListChecksForPRs(ctx, prURLs)
+	if err != nil {
+		return nil, err
+	}
+	reviewsByPR, err := s.store.ListPRReviewsForPRs(ctx, prURLs)
+	if err != nil {
+		return nil, err
+	}
+	commentsByPR, err := s.store.ListPRCommentsForPRs(ctx, prURLs)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]PRSummary, 0, len(prs))
 	for _, pr := range prs {
-		checks, err := s.store.ListChecks(ctx, pr.URL)
-		if err != nil {
-			return nil, err
-		}
-		threads, err := s.store.ListPRReviewThreads(ctx, pr.URL)
-		if err != nil {
-			return nil, err
-		}
-		reviews, err := s.store.ListPRReviews(ctx, pr.URL)
-		if err != nil {
-			return nil, err
-		}
-		comments, err := s.store.ListPRComments(ctx, pr.URL)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, summarizePR(pr, checks, reviews, threads, comments))
+		out = append(out, summarizePR(pr, checksByPR[pr.URL], reviewsByPR[pr.URL], commentsByPR[pr.URL]))
 	}
 	sortPRSummaries(out)
 	return out, nil
 }
 
-func summarizePR(pr domain.PullRequest, checks []domain.PullRequestCheck, reviews []domain.PullRequestReview, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment) PRSummary {
+func summarizePR(pr domain.PullRequest, checks []domain.PullRequestCheck, reviews []domain.PullRequestReview, comments []domain.PullRequestComment) PRSummary {
 	return PRSummary{
 		URL:              pr.URL,
 		HTMLURL:          firstNonEmpty(pr.HTMLURL, pr.URL),
@@ -141,7 +141,7 @@ func summarizePR(pr domain.PullRequest, checks []domain.PullRequestCheck, review
 		ChangedFiles:     pr.ChangedFiles,
 		CI:               summarizeCI(pr, checks),
 		Review:           summarizeReview(pr, comments, reviews),
-		Mergeability:     summarizeMergeability(pr, threads),
+		Mergeability:     summarizeMergeability(pr),
 		UpdatedAt:        pr.UpdatedAt,
 		ObservedAt:       pr.ObservedAt,
 		CIObservedAt:     pr.CIObservedAt,
@@ -261,7 +261,7 @@ func reviewAfter(a, b domain.PullRequestReview) bool {
 	return a.SubmittedAt.After(b.SubmittedAt)
 }
 
-func summarizeMergeability(pr domain.PullRequest, _ []domain.PullRequestReviewThread) PRMergeabilitySummary {
+func summarizeMergeability(pr domain.PullRequest) PRMergeabilitySummary {
 	return PRMergeabilitySummary{
 		State:   mergeabilityOrUnknown(pr.Mergeability),
 		Reasons: mergeabilityReasons(pr),
