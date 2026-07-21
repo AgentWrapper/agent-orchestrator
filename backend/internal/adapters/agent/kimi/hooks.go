@@ -191,10 +191,21 @@ func mergeKimiHooksConfig(existing string) string {
 	return joinKimiConfigParts(existing[:start], block, existing[end:])
 }
 
+// kimiHooksConfigBlock lists the hooks AO installs into the AO-managed Kimi
+// config. The tool-use trio (PreToolUse/PostToolUse/PostToolUseFailure,
+// verified present in Kimi Code 0.27.0's HOOK_EVENT_TYPES) keeps the activity
+// state active mid-turn: without it the Stop of a prior step parks the session
+// on idle for the rest of the turn even while the agent is executing tools.
+// Kimi's tool payloads identify the call as tool_call_id (not claude-code's
+// tool_use_id), so the signals reach the daemon name-tagged but without a
+// tool-use id.
 func kimiHooksConfigBlock() string {
 	return kimiHooksSentinelStart + "\n\n" +
 		kimiHookEntry("SessionStart", "startup", "ao hooks kimi session-start") +
 		kimiHookEntry("UserPromptSubmit", "", "ao hooks kimi user-prompt-submit") +
+		kimiHookEntry("PreToolUse", "", "ao hooks kimi pre-tool-use") +
+		kimiHookEntry("PostToolUse", "", "ao hooks kimi post-tool-use") +
+		kimiHookEntry("PostToolUseFailure", "", "ao hooks kimi post-tool-use-failure") +
 		kimiHookEntry("PermissionRequest", "", "ao hooks kimi permission-request") +
 		kimiHookEntry("Stop", "", "ao hooks kimi stop") +
 		kimiHooksSentinelEnd + "\n"
