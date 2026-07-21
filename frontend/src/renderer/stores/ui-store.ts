@@ -13,15 +13,22 @@ export { readStoredThemePreference, resolveTheme } from "../lib/theme";
 
 /** Worker detail view toggles — Changes (Git rail) is the default. */
 export type WorkbenchTab = "changes" | "files" | "terminal";
+export type InspectorView = "summary" | "reviews" | "browser" | "files";
+
+export type InspectorSessionState = {
+	isOpen: boolean;
+	view: InspectorView;
+	previewKey?: string;
+};
 
 // Selection (which project/session is open) now lives in the URL — the router
 // is the single source of truth, read via route params. This store holds only
-// ephemeral, route-independent UI: theme, sidebar/inspector collapse, and the
-// active workbench tab within a session.
+// ephemeral UI: theme, sidebar collapse, command palette, per-session inspector
+// state, and the active workbench tab within a session.
 type UiState = {
 	workbenchTab: WorkbenchTab;
 	isSidebarOpen: boolean;
-	isInspectorOpen: boolean;
+	inspectorSessions: Record<string, InspectorSessionState>;
 	isCommandPaletteOpen: boolean;
 	themePreference: ThemePreference;
 	/** Resolved light/dark for React consumers; may track OS while preference is system. */
@@ -42,7 +49,10 @@ type UiState = {
 	/** Refresh resolvedTheme from OS without writing light/dark to storage. */
 	syncSystemTheme: () => void;
 	toggleSidebar: () => void;
-	toggleInspector: () => void;
+	setInspectorOpen: (sessionId: string, isOpen: boolean) => void;
+	toggleInspector: (sessionId: string) => void;
+	setInspectorView: (sessionId: string, view: InspectorView) => void;
+	markInspectorPreviewSeen: (sessionId: string, previewKey: string) => void;
 	setCommandPaletteOpen: (open: boolean) => void;
 	setProjectRestarting: (projectId: string, restarting: boolean) => void;
 	setOrchestratorReplacementError: (projectId: string, message: string | null) => void;
@@ -52,7 +62,6 @@ type UiState = {
 };
 
 const sidebarStorageKey = "ao.sidebar.open";
-const inspectorStorageKey = "ao.inspector.open";
 
 function getLocalStorage() {
 	if (typeof window === "undefined" || !window.localStorage) return null;
@@ -63,8 +72,8 @@ function initialSidebarOpen() {
 	return getLocalStorage()?.getItem(sidebarStorageKey) !== "false";
 }
 
-function initialInspectorOpen() {
-	return getLocalStorage()?.getItem(inspectorStorageKey) !== "false";
+function inspectorState(sessions: Record<string, InspectorSessionState>, sessionId: string): InspectorSessionState {
+	return sessions[sessionId] ?? { isOpen: false, view: "summary" };
 }
 
 const initialThemePreference = readStoredThemePreference();
@@ -72,7 +81,7 @@ const initialThemePreference = readStoredThemePreference();
 export const useUiStore = create<UiState>((set) => ({
 	workbenchTab: "changes",
 	isSidebarOpen: initialSidebarOpen(),
-	isInspectorOpen: initialInspectorOpen(),
+	inspectorSessions: {},
 	isCommandPaletteOpen: false,
 	themePreference: initialThemePreference,
 	resolvedTheme: resolveTheme(initialThemePreference),
@@ -98,11 +107,45 @@ export const useUiStore = create<UiState>((set) => ({
 			getLocalStorage()?.setItem(sidebarStorageKey, String(isSidebarOpen));
 			return { isSidebarOpen };
 		}),
-	toggleInspector: () =>
+	setInspectorOpen: (sessionId, isOpen) =>
 		set((state) => {
-			const isInspectorOpen = !state.isInspectorOpen;
-			getLocalStorage()?.setItem(inspectorStorageKey, String(isInspectorOpen));
-			return { isInspectorOpen };
+			const current = inspectorState(state.inspectorSessions, sessionId);
+			return {
+				inspectorSessions: {
+					...state.inspectorSessions,
+					[sessionId]: { ...current, isOpen },
+				},
+			};
+		}),
+	toggleInspector: (sessionId) =>
+		set((state) => {
+			const current = inspectorState(state.inspectorSessions, sessionId);
+			return {
+				inspectorSessions: {
+					...state.inspectorSessions,
+					[sessionId]: { ...current, isOpen: !current.isOpen },
+				},
+			};
+		}),
+	setInspectorView: (sessionId, view) =>
+		set((state) => {
+			const current = inspectorState(state.inspectorSessions, sessionId);
+			return {
+				inspectorSessions: {
+					...state.inspectorSessions,
+					[sessionId]: { ...current, view },
+				},
+			};
+		}),
+	markInspectorPreviewSeen: (sessionId, previewKey) =>
+		set((state) => {
+			const current = inspectorState(state.inspectorSessions, sessionId);
+			return {
+				inspectorSessions: {
+					...state.inspectorSessions,
+					[sessionId]: { ...current, previewKey },
+				},
+			};
 		}),
 	setCommandPaletteOpen: (isCommandPaletteOpen) => set({ isCommandPaletteOpen }),
 	setProjectRestarting: (projectId, restarting) =>
