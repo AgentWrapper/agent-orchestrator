@@ -141,8 +141,6 @@ func Run() error {
 		}
 	}()
 
-	previewDone := preview.NewPoller(store, sessionSvc, "http://"+cfg.Addr(), preview.PollerConfig{Logger: log}).Start(ctx)
-
 	// Connect Mobile: the bridge service needs the LAN listener, but the LAN
 	// listener needs the built router's handler, which only exists once srv is
 	// constructed — and srv's router mounts the mobile controller, which needs
