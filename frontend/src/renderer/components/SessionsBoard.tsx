@@ -267,7 +267,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 					/>
 				) : (
 					<div className="grid h-full grid-cols-4 gap-2">
-						{COLUMNS.map((col) => (
+						{COLUMNS.map((col) =>
 							col.zone === "working" ? (
 								<WorkLaneColumn
 									key={`${projectId ?? "all"}:${col.zone}`}
@@ -282,8 +282,8 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 									sessions={byZone.get(col.zone) ?? []}
 									onOpen={openSession}
 								/>
-							)
-						))}
+							),
+						)}
 					</div>
 				)}
 			</div>
@@ -445,12 +445,7 @@ function WorkLaneColumn({
 					</div>
 				) : null}
 				{showWorking ? (
-					<WorkingSessionsSection
-						col={col}
-						sessions={workingSessions}
-						onOpen={onOpen}
-						standalone={!showIdle}
-					/>
+					<WorkingSessionsSection col={col} sessions={workingSessions} onOpen={onOpen} standalone={!showIdle} />
 				) : null}
 			</div>
 		</section>
@@ -488,9 +483,7 @@ function WorkingSessionsSection({
 					}}
 					aria-hidden="true"
 				/>
-				<span className={cn("text-caption font-semibold uppercase tracking-wide-md", col.titleClassName)}>
-					Working
-				</span>
+				<span className={cn("text-caption font-semibold uppercase tracking-wide-md", col.titleClassName)}>Working</span>
 				<span className="ml-auto font-mono text-caption leading-none text-passive">{sessions.length}</span>
 			</div>
 			<div className="min-h-0 flex-1 overflow-y-auto px-2.75 pb-3">
