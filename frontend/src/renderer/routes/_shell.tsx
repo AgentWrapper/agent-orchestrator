@@ -271,6 +271,14 @@ function ShellLayout() {
 		applyDocumentTheme(resolvedTheme);
 	}, [resolvedTheme]);
 
+	// Keep Electron's nativeTheme in step with the shell so the embedded preview
+	// WebContentsView (which follows prefers-color-scheme) flips at the same time.
+	// Send the preference, not the resolved theme, so "system" keeps both surfaces
+	// following the OS instead of freezing matchMedia to a forced value.
+	useEffect(() => {
+		void aoBridge.theme?.set(themePreference);
+	}, [themePreference]);
+
 	useEffect(() => {
 		if (daemonStatus.state !== "ready" || !daemonStatus.port) return;
 		if (agentCatalogPortRef.current === daemonStatus.port) return;

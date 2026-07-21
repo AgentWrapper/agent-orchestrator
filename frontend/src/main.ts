@@ -5,6 +5,7 @@ import {
 	dialog,
 	ipcMain,
 	Menu,
+	nativeTheme,
 	net,
 	nativeImage,
 	Notification as ElectronNotification,
@@ -1056,6 +1057,16 @@ ipcMain.handle("window:setOverlay", (_event, overlay: { color: string; symbolCol
 		mainWindow.setTitleBarOverlay({ ...overlay, height: TITLEBAR_HEIGHT });
 	} catch {
 		// Window has no overlay on this platform; ignore.
+	}
+});
+
+// Drive Electron's nativeTheme from the app's theme preference so embedded
+// preview WebContentsViews (which follow prefers-color-scheme) flip in step with
+// the shell. The three preference values map 1:1 onto themeSource; "system" keeps
+// both the preview and the shell's own matchMedia following the OS.
+ipcMain.handle("theme:set", (_event, preference: "light" | "dark" | "system") => {
+	if (preference === "light" || preference === "dark" || preference === "system") {
+		nativeTheme.themeSource = preference;
 	}
 });
 

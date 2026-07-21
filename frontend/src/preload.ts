@@ -74,6 +74,13 @@ const api = {
 		setOverlay: (overlay: { color: string; symbolColor: string }) =>
 			ipcRenderer.invoke("window:setOverlay", overlay) as Promise<void>,
 	},
+	theme: {
+		// Propagate the app's theme preference to Electron's nativeTheme so embedded
+		// WebContentsView previews (which follow prefers-color-scheme) stay in sync
+		// with the shell. "system" lets both follow the OS.
+		set: (preference: "light" | "dark" | "system") =>
+			ipcRenderer.invoke("theme:set", preference) as Promise<void>,
+	},
 	menu: {
 		action: (action: string) => ipcRenderer.invoke("menu:action", action) as Promise<void>,
 		notifyShellFocus: () => ipcRenderer.send("shell:focus"),
