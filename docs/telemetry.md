@@ -82,33 +82,33 @@ dropping repeated navigation churn inside the same surface.
 Read-only HogQL queries against PostHog project `475752` over the trailing
 30-day window found 3,203,364 total events. The dominant event names were:
 
-| Event | Count | Installs | Events/install |
-| --- | ---: | ---: | ---: |
-| `ao.cli.invoked` | 1,508,888 | 870 | 1,734.35 |
-| `ao.app.active` | 1,411,807 | 1,434 | 984.52 |
-| `ao.renderer.route_viewed` | 114,940 | 1,388 | 82.81 |
-| `ao.renderer.api_error` | 18,634 | 662 | 28.15 |
-| `ao.session.waiting_input_entered` | 17,583 | 377 | 46.64 |
-| `$exception` | 16,563 | 681 | 24.32 |
-| `ao.cli.usage_errors` | 15,349 | 215 | 71.39 |
-| `ao.session.waiting_input_exited` | 15,343 | 339 | 45.26 |
-| `$set` | 13,211 | 1,137 | 11.62 |
-| `ao.session.spawned` | 11,439 | 887 | 12.90 |
+| Event                              |     Count | Installs | Events/install |
+| ---------------------------------- | --------: | -------: | -------------: |
+| `ao.cli.invoked`                   | 1,508,888 |      870 |       1,734.35 |
+| `ao.app.active`                    | 1,411,807 |    1,434 |         984.52 |
+| `ao.renderer.route_viewed`         |   114,940 |    1,388 |          82.81 |
+| `ao.renderer.api_error`            |    18,634 |      662 |          28.15 |
+| `ao.session.waiting_input_entered` |    17,583 |      377 |          46.64 |
+| `$exception`                       |    16,563 |      681 |          24.32 |
+| `ao.cli.usage_errors`              |    15,349 |      215 |          71.39 |
+| `ao.session.waiting_input_exited`  |    15,343 |      339 |          45.26 |
+| `$set`                             |    13,211 |    1,137 |          11.62 |
+| `ao.session.spawned`               |    11,439 |      887 |          12.90 |
 
 The top two events were almost entirely CLI-sourced and moved together:
 `ao.cli.invoked` had 1,508,888 events and CLI-channel `ao.app.active` had
 1,403,170 events. The largest command paths were polling/hook paths:
 
-| Command path | `ao.cli.invoked` count | Install-days | Projected events saved by persistent daily cap |
-| --- | ---: | ---: | ---: |
-| `ao hooks` | 589,338 | 1,624 | 587,714 |
-| `ao session ls` | 270,977 | 764 | 270,213 |
-| `ao orchestrator ls` | 236,877 | 177 | 236,700 |
-| `ao status` | 220,436 | 524 | 219,912 |
-| `ao session get` | 75,946 | 603 | 75,343 |
-| `ao project ls` | 40,435 | 462 | 39,973 |
-| `ao project get` | 31,048 | 356 | 30,692 |
-| `ao send` | 19,104 | 536 | 18,568 |
+| Command path         | `ao.cli.invoked` count | Install-days | Projected events saved by persistent daily cap |
+| -------------------- | ---------------------: | -----------: | ---------------------------------------------: |
+| `ao hooks`           |                589,338 |        1,624 |                                        587,714 |
+| `ao session ls`      |                270,977 |          764 |                                        270,213 |
+| `ao orchestrator ls` |                236,877 |          177 |                                        236,700 |
+| `ao status`          |                220,436 |          524 |                                        219,912 |
+| `ao session get`     |                 75,946 |          603 |                                         75,343 |
+| `ao project ls`      |                 40,435 |          462 |                                         39,973 |
+| `ao project get`     |                 31,048 |          356 |                                         30,692 |
+| `ao send`            |                 19,104 |          536 |                                         18,568 |
 
 Using `ao.session.spawned` as the AO-session denominator, the 30-day window had
 11,439 spawned sessions, 131.91 `ao.cli.invoked` events per spawned session,
