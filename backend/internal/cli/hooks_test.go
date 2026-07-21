@@ -490,7 +490,7 @@ func TestHooks_CopilotSessionStartReportsSessionID(t *testing.T) {
 	}
 }
 
-func TestHooks_DevinSessionStartInjectsSystemPromptContext(t *testing.T) {
+func TestHooks_DevinSessionStartReportsSessionIDAndInjectsSystemPromptContext(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "ao-7")
 	cfg := setConfigEnv(t)
 	promptDir := filepath.Join(cfg.dataDir, "prompts", "ao-7")
@@ -504,7 +504,7 @@ func TestHooks_DevinSessionStartInjectsSystemPromptContext(t *testing.T) {
 	writeRunFileFor(t, cfg, srv)
 
 	out, _, err := executeCLI(t, Deps{
-		In:           strings.NewReader(`{"source":"startup"}`),
+		In:           strings.NewReader(`{"source":"startup","session_id":"devin-native-1"}`),
 		ProcessAlive: func(int) bool { return true },
 	}, "hooks", "devin", "session-start")
 	if err != nil {
@@ -525,8 +525,16 @@ func TestHooks_DevinSessionStartInjectsSystemPromptContext(t *testing.T) {
 	if got.HookSpecificOutput.AdditionalContext != "follow AO standing instructions" {
 		t.Fatalf("additionalContext = %q", got.HookSpecificOutput.AdditionalContext)
 	}
-	if got := capturedState(t, capture); got != "active" {
-		t.Errorf("state = %q, want active", got)
+	if capture.hits != 1 {
+		t.Fatalf("daemon calls = %d, want 1", capture.hits)
+	}
+	var req setActivityAPIRequest
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
+	}
+	want := setActivityAPIRequest{State: "active", Event: "session-start", AgentSessionID: "devin-native-1"}
+	if req != want {
+		t.Fatalf("body = %+v, want %+v", req, want)
 	}
 }
 
