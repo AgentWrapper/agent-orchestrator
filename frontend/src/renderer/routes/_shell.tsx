@@ -97,9 +97,12 @@ function ShellLayout() {
 	const isSessionRoute =
 		Boolean(matchRoute({ to: "/projects/$projectId/sessions/$sessionId", fuzzy: true })) ||
 		Boolean(matchRoute({ to: "/sessions/$sessionId", fuzzy: true }));
+	// First-launch root board only — not /prs or other shell routes with zero projects.
+	const isWelcomeBoard = Boolean(matchRoute({ to: "/" })) && workspaces.length === 0;
 	const isSettingsRoute =
 		Boolean(matchRoute({ to: "/settings", fuzzy: true })) ||
 		Boolean(matchRoute({ to: "/projects/$projectId/settings", fuzzy: true }));
+	const hideShellTopbar = isWelcomeBoard || isSettingsRoute;
 	const setProjectRestarting = useUiStore((state) => state.setProjectRestarting);
 	const orchestratorReplacementErrors = useUiStore((state) => state.orchestratorReplacementErrors);
 	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
@@ -338,7 +341,7 @@ function ShellLayout() {
 				{/* Windows-only custom title bar (logo + File/Edit/View/… menu); paints
             the chrome the frameless window drops. Renders null on macOS/Linux. */}
 				<WindowTitlebar />
-				{!isSettingsRoute ? <ShellTopbar /> : null}
+				{!hideShellTopbar ? <ShellTopbar /> : null}
 				{/* Controlled by the ui-store so TitlebarNav / Topbar toggles (which
             call the store directly) stay in sync. --sidebar-width chains to
             the drag-resizable --ao-sidebar-w set on :root by useResizable. */}
@@ -353,13 +356,15 @@ function ShellLayout() {
 						} as CSSProperties
 					}
 				>
-					{/* macOS TitlebarNav and the Windows WindowTitlebar stay in the top band on
-            every route (including settings, where ShellTopbar is hidden), so the
-            sidebar must hang below that strip on those platforms. Linux only
-            offsets under the topbar on session routes. */}
+					{/* Hang the fixed sidebar below shell chrome: macOS TitlebarNav and the
+            Windows WindowTitlebar stay in the top band on every route; when the
+            shell topbar is hidden (welcome board or settings), Windows clears
+            only the 36px titlebar. Linux offsets under the topbar on session
+            routes when the shell topbar is visible. */}
 					<Sidebar
-						underTopbar={isMac || isWindows || (!isSettingsRoute && (isLinux ? isSessionRoute : true))}
-						topbarOffset={isWindows && isSettingsRoute ? "titlebar" : "toolbar"}
+						hideEdgeBorder={isWelcomeBoard}
+						underTopbar={isMac || isWindows || (!hideShellTopbar && (isLinux ? isSessionRoute : true))}
+						topbarOffset={isWindows && hideShellTopbar ? "titlebar" : "toolbar"}
 						onCreateProject={createProject}
 						onInitializeProject={initializeProjectRepository}
 						onRemoveProject={removeProject}
@@ -371,15 +376,29 @@ function ShellLayout() {
 							<Outlet />
 						</div>
 					</main>
+					{/* When ShellTopbar is hidden on the welcome board, keep a macOS
+              window-drag strip in the same 56px band — otherwise only
+              TitlebarNav's no-drag buttons remain and the top chrome can't
+              move the window. Invisible/fixed so the start-page layout is
+              unchanged. */}
+					{isWelcomeBoard && isMac ? (
+						<div
+							aria-hidden="true"
+							className="fixed inset-x-0 top-0 z-chrome h-toolbar"
+							style={{ WebkitAppRegion: "drag" } as CSSProperties}
+						/>
+					) : null}
 					{/* Fixed macOS titlebar cluster beside the traffic lights — rendered
               once here so the toggle/history buttons never move when the
-              sidebar collapses or expands. MUST come after the topbar in the
-              DOM: Electron builds the window-drag region in document order
-              (drag rects add, no-drag rects subtract), so the cluster's
-              no-drag holes only survive if they're processed after the drag
-              strips they overlap. Rendered first, real clicks get swallowed
-              by window-drag even though DOM hit-testing looks correct. */}
-					<TitlebarNav />
+              sidebar collapses or expands. History arrows stay visible but
+              locked on the empty start page. MUST come after the drag strip
+              (ShellTopbar or the welcome substitute) in the DOM: Electron
+              builds the window-drag region in document order (drag rects add,
+              no-drag rects subtract), so the cluster's no-drag holes only
+              survive if they're processed after the drag strips they overlap.
+              Rendered first, real clicks get swallowed by window-drag even
+              though DOM hit-testing looks correct. */}
+					<TitlebarNav historyLocked={isWelcomeBoard} />
 				</SidebarProvider>
 				<OrchestratorReplacementDialog
 					error={replacementErrorProjectId ? orchestratorReplacementErrors[replacementErrorProjectId] : undefined}

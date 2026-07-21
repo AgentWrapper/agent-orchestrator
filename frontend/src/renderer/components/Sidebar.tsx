@@ -72,6 +72,8 @@ const SIDEBAR_MAX_WIDTH = 420;
 const SIDEBAR_COLLAPSE_THRESHOLD = SIDEBAR_MIN_WIDTH;
 
 type SidebarProps = {
+	/** Hide the sidebar's right edge stroke on the welcome board inset chrome. */
+	hideEdgeBorder?: boolean;
 	underTopbar?: boolean;
 	/** Chrome height to clear when underTopbar is set. Defaults to the 56px shell toolbar. */
 	topbarOffset?: "toolbar" | "titlebar";
@@ -113,6 +115,7 @@ function SessionDot({ session }: { session: WorkspaceSession }) {
 // replaces the old hand-rolled CollapsedRail — the same tree restyles itself
 // via group-data-[collapsible=icon] into the 48px letter rail.
 export function Sidebar({
+	hideEdgeBorder = false,
 	underTopbar = true,
 	topbarOffset = "toolbar",
 	workspaceError,
@@ -185,13 +188,15 @@ export function Sidebar({
 
 	return (
 		// The container is fixed-positioned by the shadcn primitive; offset it
-		// below the 56px shell topbar so the bar runs edge-to-edge above it
-		// (same override as shadcn's header-above-sidebar block).
+		// below the shell chrome so the bar runs edge-to-edge above it (same
+		// override as shadcn's header-above-sidebar block). Prefer the 56px
+		// toolbar offset; on Windows welcome only the 36px WindowTitlebar is
+		// present, so hang below that instead of covering File/Edit/….
 		<SidebarRoot
 			collapsible="icon"
 			data-expanded-chrome={expandedChromeVisible ? "visible" : "hidden"}
 			className={cn(
-				"border-r-0 group-data-[side=left]:border-r-0",
+				hideEdgeBorder ? "border-transparent" : "border-r-0 group-data-[side=left]:border-r-0",
 				underTopbar
 					? topbarOffset === "titlebar"
 						? "top-9 h-[calc(100svh-2.25rem)]!"
@@ -262,7 +267,10 @@ export function Sidebar({
 						<SidebarGroupLabel className="h-auto rounded-none p-0 text-2xs font-semibold uppercase tracking-wide-lg text-passive">
 							Projects
 						</SidebarGroupLabel>
-						<CreateProjectButton onCreateProject={onCreateProject} onInitializeProject={onInitializeProject} />
+						{/* Hide on the empty start page — import lives in the welcome board. */}
+						{workspaces.length > 0 ? (
+							<CreateProjectButton onCreateProject={onCreateProject} onInitializeProject={onInitializeProject} />
+						) : null}
 					</div>
 
 					{/* Tree (project-sidebar__tree) */}
@@ -272,14 +280,7 @@ export function Sidebar({
 								<p className="text-xs text-foreground">Could not load projects.</p>
 								<p className="mt-1 text-caption text-passive">{workspaceError}</p>
 							</div>
-						) : workspaces.length === 0 ? (
-							<div className="sidebar-expanded-chrome px-2 py-3 group-data-[collapsible=icon]:hidden">
-								<p className="text-xs text-passive">No projects yet.</p>
-								<p className="mt-1 text-caption text-passive">
-									Click <span className="text-foreground">+</span> above to register a repo or workspace.
-								</p>
-							</div>
-						) : (
+						) : workspaces.length === 0 ? null : (
 							<SidebarMenu className="gap-0 group-data-[collapsible=icon]:gap-1">
 								{workspaces.map((workspace) => (
 									<ProjectItem

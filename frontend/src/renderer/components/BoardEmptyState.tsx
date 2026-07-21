@@ -1,52 +1,25 @@
 import { Plus } from "lucide-react";
 import { useShell } from "../lib/shell-context";
-import aoLogo from "../assets/ao-logo.png";
 import { CreateProjectFlow } from "./CreateProjectFlow";
 import { TopbarButton } from "./TopbarButton";
+import { WelcomePanel } from "./WelcomePanel";
 import { OrchestratorIcon } from "./icons";
 
 // First-launch board state (no projects registered yet): replaces the four
-// empty kanban columns with orientation and the same create-project flow the
-// sidebar's + runs.
+// empty kanban columns with the import chooser inside an inset panel.
 export function BoardWelcome() {
 	const { createProject, initializeProjectRepository } = useShell();
 	return (
-		<div className="flex h-full min-h-0 items-center justify-center overflow-y-auto">
-			<div className="flex w-full max-w-board-empty flex-col items-center pb-empty-offset-y text-center">
-				<img src={aoLogo} alt="" aria-hidden="true" className="size-10 rounded-lg object-cover" />
-				<h2 className="mt-5 text-heading-sm font-semibold tracking-tight-lg text-foreground">
-					Welcome to Agent Orchestrator
-				</h2>
-				<p className="mt-1.5 max-w-[320px] text-[12.5px] leading-[1.65] text-muted-foreground">
-					Add a repository and describe the work. AO runs agents on isolated branches, from start to merge.
-				</p>
-
+		<WelcomePanel>
+			<div className="flex h-full min-h-0 items-center justify-center overflow-y-auto px-6 py-8">
 				<CreateProjectFlow
-					idleLabel="Add your first project"
+					embedded
+					mode="choose"
 					onCreateProject={createProject}
 					onInitializeProject={initializeProjectRepository}
-				>
-					{({ choosePath, disabled, error, label }) => (
-						<>
-							<TopbarButton
-								aria-label="Add your first project"
-								className="mt-7"
-								disabled={disabled}
-								onClick={choosePath}
-								variant="primary"
-							>
-								<Plus className="size-icon-md" aria-hidden="true" />
-								{label}
-							</TopbarButton>
-							{error && <p className="mt-3 text-caption leading-body text-error">{error}</p>}
-						</>
-					)}
-				</CreateProjectFlow>
-				<p className="mt-3 text-caption text-passive">
-					Adding a project starts its orchestrator — the agent you talk to.
-				</p>
+				/>
 			</div>
-		</div>
+		</WelcomePanel>
 	);
 }
 
