@@ -74,11 +74,6 @@ const hookBinaryName = "ao"
 type lifecycleRecorder interface {
 	MarkSpawned(ctx context.Context, id domain.SessionID, metadata domain.SessionMetadata) error
 	MarkTerminated(ctx context.Context, id domain.SessionID) error
-	// DispatchPendingWorkerIdleEvents delivers a project's pending worker_idle
-	// events to its orchestrator. Called after an orchestrator spawn/restore so a
-	// freshly available orchestrator immediately picks up completions that queued
-	// while no orchestrator existed.
-	DispatchPendingWorkerIdleEvents(ctx context.Context, project domain.ProjectID)
 }
 
 type runtimeController interface {
@@ -384,9 +379,6 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 			m.markSpawnFailedTerminatedWithoutWorkspace(ctx, id)
 			return domain.SessionRecord{}, fmt.Errorf("spawn %s: deliver prompt: %w", id, err)
 		}
-	}
-	if cfg.Kind == domain.KindOrchestrator {
-		m.lcm.DispatchPendingWorkerIdleEvents(ctx, cfg.ProjectID)
 	}
 	return m.getRecord(ctx, id)
 }
@@ -884,9 +876,6 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 			return domain.SessionRecord{}, fmt.Errorf("restore %s: deliver prompt: %w", rec.ID, err)
 		}
 	}
-	if rec.Kind == domain.KindOrchestrator {
-		m.lcm.DispatchPendingWorkerIdleEvents(ctx, rec.ProjectID)
-	}
 	return m.getRecord(ctx, rec.ID)
 }
 
@@ -1186,12 +1175,16 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 
 		// Step 3: relaunch the agent in the restored workspace.
 		if _, err := m.relaunchRestoredSession(ctx, rec, project, ws); err != nil {
-			// A promptless, unresumable worker is intentionally left terminated
-			// (ErrNotResumable): expected, not an operational failure, so log it
-			// quietly rather than as an error.
-			if errors.Is(err, ErrNotResumable) {
+			switch {
+			case errors.Is(err, ErrNotResumable):
+				// A promptless, unresumable worker is intentionally left terminated:
+				// expected, not an operational failure, so log it quietly.
 				m.logger.Warn("restore-all: session left terminated (nothing to resume)", "sessionID", rec.ID)
-			} else {
+			case errors.Is(err, ErrNotFound):
+				// The row was reaped between listing and relaunch (a stale id during
+				// reconciliation): skip it and keep restoring the rest.
+				m.logger.Warn("restore-all: session vanished before relaunch, skipping", "sessionID", rec.ID)
+			default:
 				m.logger.Error("restore-all: relaunch failed", "sessionID", rec.ID, "error", err)
 			}
 			continue

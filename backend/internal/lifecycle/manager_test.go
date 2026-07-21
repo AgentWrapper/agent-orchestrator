@@ -1777,6 +1777,67 @@ func TestActivity_SteerableOrchestratorLeavingBlockedDispatches(t *testing.T) {
 	}
 }
 
+func TestDispatch_DeliversAtMostOnePerCycleAndDrainsOnReturnToIdle(t *testing.T) {
+	st := newFakeStore()
+	now := time.Now()
+	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
+	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
+	st.sessions["mer-9"] = domain.SessionRecord{ID: "mer-9", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
+	st.idleEvents = []domain.WorkerIdleEvent{
+		{ID: "wie_1", ProjectID: "mer", WorkerID: "mer-8", TransitionAt: now, CreatedAt: now},
+		{ID: "wie_2", ProjectID: "mer", WorkerID: "mer-9", TransitionAt: now.Add(time.Second), CreatedAt: now.Add(time.Second)},
+	}
+	msg := &fakeMessenger{}
+	m := New(st, msg)
+
+	// One cycle delivers exactly one, even with two pending: pasting the nudge
+	// changes the orchestrator's state only asynchronously.
+	m.DispatchPendingWorkerIdleEvents(ctx, "mer")
+	if len(msg.msgs) != 1 {
+		t.Fatalf("first cycle deliveries = %d, want 1", len(msg.msgs))
+	}
+
+	// The orchestrator processes the nudge (active) then returns to idle, which
+	// re-triggers dispatch and drains the second event.
+	if err := m.ApplyActivitySignal(ctx, "mer-orch", ports.ActivitySignal{Valid: true, State: domain.ActivityActive, Timestamp: now.Add(time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.ApplyActivitySignal(ctx, "mer-orch", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle, Timestamp: now.Add(2 * time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 2 {
+		t.Fatalf("after return-to-idle deliveries = %d, want 2", len(msg.msgs))
+	}
+	if pending, _ := st.ListPendingWorkerIdleEvents(ctx); len(pending) != 0 {
+		t.Fatalf("pending after drain = %d, want 0", len(pending))
+	}
+}
+
+func TestDispatch_UnsettledOrchestratorRetainsUntilFirstSignal(t *testing.T) {
+	st := newFakeStore()
+	now := time.Now()
+	// A freshly restored orchestrator: seeded idle but no authentic signal yet.
+	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}}
+	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
+	st.idleEvents = []domain.WorkerIdleEvent{{ID: "wie_1", ProjectID: "mer", WorkerID: "mer-8", TransitionAt: now, CreatedAt: now}}
+	msg := &fakeMessenger{}
+	m := New(st, msg)
+
+	// Boot/sweep dispatch must not write into a runtime that hasn't proven it's up.
+	m.DispatchAllPendingWorkerIdleEvents(ctx)
+	if len(msg.msgs) != 0 {
+		t.Fatalf("delivered to unsettled orchestrator: %d, want 0", len(msg.msgs))
+	}
+
+	// Its first authentic activity signal marks the runtime settled and delivers.
+	if err := m.ApplyActivitySignal(ctx, "mer-orch", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle, Timestamp: now.Add(time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.ids) != 1 || msg.ids[0] != "mer-orch" {
+		t.Fatalf("first signal did not deliver: ids = %v", msg.ids)
+	}
+}
+
 func TestActivity_WorkerIdleNoOrchestratorNoNudge(t *testing.T) {
 	m, st, msg := newManager()
 	now := time.Now()

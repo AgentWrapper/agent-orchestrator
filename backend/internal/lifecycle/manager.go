@@ -266,9 +266,14 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		}
 	}
 	waitingEvents := m.waitingInputEvents(next, prevState, prevAt, now)
-	// Two triggers re-attempt delivery of pending worker_idle events: a fresh
-	// event, and the orchestrator crossing into a deliverable state.
-	dispatch := idleEvent != nil || m.orchestratorBecameDeliverable(prevState, next)
+	// Re-attempt delivery of pending worker_idle events on: a fresh event; the
+	// orchestrator crossing into a deliverable state; or the orchestrator's first
+	// authentic activity signal (its runtime has proven it is up, so a restored
+	// orchestrator seeded idle is not written into before it is ready).
+	firstSignal := rec.FirstSignalAt.IsZero() && !next.FirstSignalAt.IsZero()
+	dispatch := idleEvent != nil ||
+		m.orchestratorDispatchTrigger(prevState, next) ||
+		(firstSignal && next.Kind == domain.KindOrchestrator && m.safeToDeliver(next))
 	m.mu.Unlock()
 	for _, ev := range waitingEvents {
 		m.emitTelemetry(ctx, ev)
@@ -300,29 +305,42 @@ func crossedToIdle(prev domain.ActivityState, next domain.SessionRecord) bool {
 		!next.IsTerminated
 }
 
-// orchestratorBecameDeliverable reports the orchestrator crossing INTO a state
-// that accepts a coordination write — idle, or an active turn on a harness that
-// steers — from one that did not. Keying on the policy (not on idle alone) means
-// a steerable harness leaving blocked/waiting for active delivers immediately
-// instead of waiting for the recovery sweep.
-func (m *Manager) orchestratorBecameDeliverable(prev domain.ActivityState, next domain.SessionRecord) bool {
-	if next.Kind != domain.KindOrchestrator {
+// orchestratorDispatchTrigger reports an orchestrator transition after which a
+// pending report should be (re)attempted:
+//   - entering idle from any state — the orchestrator is free, and this is how a
+//     backlog drains one nudge per turn (each delivery moves it out of idle;
+//     coming back re-triggers the next).
+//   - resuming an active turn from a user pause (blocked/waiting_input) on a
+//     steerable harness — safe to steer, so deliver now rather than wait for the
+//     sweep. Entering active from idle is ordinary work and must NOT pull the
+//     backlog into a fresh turn.
+func (m *Manager) orchestratorDispatchTrigger(prev domain.ActivityState, next domain.SessionRecord) bool {
+	if next.Kind != domain.KindOrchestrator || next.IsTerminated || next.Activity.State == prev {
 		return false
 	}
-	was := next
-	was.Activity.State = prev
-	return m.safeToDeliver(next) && !m.safeToDeliver(was)
+	switch next.Activity.State {
+	case domain.ActivityIdle:
+		return true
+	case domain.ActivityActive:
+		return m.steerActive(next.Harness) &&
+			(prev == domain.ActivityBlocked || prev == domain.ActivityWaitingInput)
+	default:
+		return false
+	}
 }
 
-// DispatchPendingWorkerIdleEvents delivers this project's pending worker_idle
-// events to its current orchestrator. The snapshot check here only avoids
-// pointless work — the binding safety decision is re-evaluated inside the guard
-// at the write boundary, so an orchestrator that becomes active (or blocked)
-// mid-loop is not written into. Undelivered events stay pending for a later
-// trigger. Best-effort: errors are logged, never propagated.
+// DispatchPendingWorkerIdleEvents delivers AT MOST ONE of this project's pending
+// worker_idle events to its current orchestrator, then returns. Delivering the
+// nudge moves the orchestrator out of idle, but that state change lands
+// asynchronously via its activity hook — so sending more in the same pass would
+// dump the whole backlog into one turn before the state reflects the first send.
+// The orchestrator's next entry into idle re-triggers this to deliver the next
+// event, draining the backlog one nudge per turn.
 //
 // Delivery is serialized per project so overlapping triggers cannot both read
-// and send the same pending row.
+// and send the same pending row. The binding safety decision is re-evaluated
+// inside the guard at the write boundary; the snapshot check here only avoids
+// pointless work.
 func (m *Manager) DispatchPendingWorkerIdleEvents(ctx context.Context, project domain.ProjectID) {
 	if m.guard == nil {
 		return
@@ -344,19 +362,19 @@ func (m *Manager) DispatchPendingWorkerIdleEvents(ctx context.Context, project d
 		slog.Default().Error("lifecycle: list pending worker events", "project", project, "err", err)
 		return
 	}
-	for _, ev := range events {
-		outcome, err := m.guard.NudgeCoordination(ctx, orch.ID, m.workerIdleNudgeMessage(ctx, ev.WorkerID), m.steerActive)
-		if err != nil {
-			slog.Default().Error("lifecycle: deliver worker idle", "worker", ev.WorkerID, "orchestrator", orch.ID, "err", err)
-		}
-		if outcome != sessionguard.Sent {
-			// The orchestrator is no longer safe to write to (commonly because the
-			// delivery just above woke it): leave this and the rest pending.
-			return
-		}
-		if err := m.store.MarkWorkerIdleEventDelivered(ctx, ev.ID, m.clock()); err != nil {
-			slog.Default().Error("lifecycle: mark worker idle delivered", "event", ev.ID, "err", err)
-		}
+	if len(events) == 0 {
+		return
+	}
+	ev := events[0]
+	outcome, err := m.guard.NudgeCoordination(ctx, orch.ID, m.workerIdleNudgeMessage(ctx, ev.WorkerID), m.steerActive)
+	if err != nil {
+		slog.Default().Error("lifecycle: deliver worker idle", "worker", ev.WorkerID, "orchestrator", orch.ID, "err", err)
+	}
+	if outcome != sessionguard.Sent {
+		return
+	}
+	if err := m.store.MarkWorkerIdleEventDelivered(ctx, ev.ID, m.clock()); err != nil {
+		slog.Default().Error("lifecycle: mark worker idle delivered", "event", ev.ID, "err", err)
 	}
 }
 
@@ -389,8 +407,12 @@ func (m *Manager) projectDispatchLock(project domain.ProjectID) *sync.Mutex {
 // safeToDeliver reports whether the orchestrator can receive a coordination
 // write now: idle always, active only for a harness that steers an active turn;
 // blocked, waiting_input, exited, and terminated defer.
+//
+// A zero FirstSignalAt means the orchestrator has produced no authentic activity
+// signal since it was spawned/restored — its runtime is not proven up yet — so a
+// seeded-idle row is not written into until the runtime settles.
 func (m *Manager) safeToDeliver(orch domain.SessionRecord) bool {
-	if orch.IsTerminated {
+	if orch.IsTerminated || orch.FirstSignalAt.IsZero() {
 		return false
 	}
 	switch orch.Activity.State {
