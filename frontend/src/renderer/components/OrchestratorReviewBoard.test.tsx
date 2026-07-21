@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession } from "../types/workspace";
@@ -326,6 +326,7 @@ describe("review selection and translation", () => {
 		const contexts = candidates.map((candidate, index) => ({
 			sessionId: candidate.id,
 			artifactPath: `docs/${"界".repeat(80)}-${index}.md`,
+			latestAgentMessage: `Detailed implementation evidence ${"界".repeat(700)}`,
 			pullRequests: [
 				{
 					number: index + 1,
@@ -340,9 +341,9 @@ describe("review selection and translation", () => {
 			],
 		}));
 
-		expect(new TextEncoder().encode(reviewAgentPrompt(candidates, "deadbeef", contexts)).byteLength).toBeLessThanOrEqual(
-			4096,
-		);
+		const prompt = reviewAgentPrompt(candidates, "deadbeef", contexts);
+		expect(new TextEncoder().encode(prompt).byteLength).toBeLessThanOrEqual(4096);
+		for (const candidate of candidates) expect(prompt).toContain(candidate.id);
 	});
 
 	it("keeps a review batch stable across database-only timestamp refreshes", () => {
@@ -363,6 +364,30 @@ describe("review selection and translation", () => {
 });
 
 describe("review board", () => {
+	it("shows the background manager error and sends dialog refreshes back to it", async () => {
+		const candidate = worker({ prs: [openPr] });
+		const onRefresh = vi.fn();
+		const batchId = reviewBatchId([candidate], 0);
+		render(
+			<QueryClientProvider client={new QueryClient()}>
+				<OrchestratorReviewBoard
+					daemonReady={false}
+					manageAgent={false}
+					managerState={{ batchId, working: false, error: "prompt is too long (PROMPT_TOO_LONG)" }}
+					onRefresh={onRefresh}
+					orchestrator={orchestrator}
+					refreshNonce={0}
+					sessions={[orchestrator, candidate]}
+					theme="dark"
+				/>
+			</QueryClientProvider>,
+		);
+
+		expect(screen.getByText(/prompt is too long \(PROMPT_TOO_LONG\)/i)).toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+		await waitFor(() => expect(onRefresh).toHaveBeenCalledOnce());
+	});
+
 	it("keeps missing context queued for the dedicated reviewer", () => {
 		renderBoard([worker()]);
 
@@ -379,7 +404,7 @@ describe("review board", () => {
 		expect(screen.queryByRole("button", { name: /Open task/i })).not.toBeInTheDocument();
 	});
 
-	it("sends the next batch to the idle dedicated review agent", async () => {
+	it("starts a clean reviewer for the next batch instead of reusing an idle agent", async () => {
 		const candidate = worker({
 			prs: [openPr],
 			previewUrl: "http://127.0.0.1/api/v1/sessions/worker-1/preview/files/docs/cache-policy.md",
@@ -399,11 +424,14 @@ describe("review board", () => {
 		renderBoard([candidate, helper], true);
 
 		await waitFor(() =>
-			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/send", {
-				params: { path: { sessionId: "review-helper-1" } },
-				body: { message: expect.stringContaining(`AO_REVIEW_BOARD_${batchId}_START`) },
-			}),
+			expect(postMock).toHaveBeenCalledWith(
+				"/api/v1/sessions",
+				expect.objectContaining({
+					body: expect.objectContaining({ prompt: expect.stringContaining(`AO_REVIEW_BOARD_${batchId}_START`) }),
+				}),
+			),
 		);
+		expect(postMock.mock.calls.some(([path]) => path === "/api/v1/sessions/{sessionId}/send")).toBe(false);
 	});
 
 	it("waits for an active helper instead of sending a second prompt into it", async () => {
@@ -482,48 +510,31 @@ describe("review board", () => {
 		).toBe(false);
 	});
 
-	it("starts a fresh reviewer when sending to the existing helper fails", async () => {
-		vi.useFakeTimers();
-		try {
-			const candidate = worker({
-				prs: [openPr],
-				previewUrl: "http://127.0.0.1/api/v1/sessions/worker-1/preview/files/docs/cache-policy.md",
-			});
-			const helper = worker({
-				id: "review-helper-1",
-				title: "Review helper",
-				issueId: reviewAgentIssueId,
-				terminalHandleId: "review-terminal-1",
-				status: "idle",
-				activity: { state: "idle", lastActivityAt: "2026-07-16T10:00:01Z" },
-			});
-			postMock.mockImplementation((path: string) =>
-				path === "/api/v1/sessions/{sessionId}/send"
-					? Promise.resolve({ data: undefined, error: { message: "PTY is closed" } })
-					: Promise.resolve({ data: { session: { id: "review-helper-2" } }, error: undefined }),
-			);
+	it("starts a fresh reviewer instead of reusing an idle helper from an older batch", async () => {
+		const candidate = worker({
+			prs: [openPr],
+			previewUrl: "http://127.0.0.1/api/v1/sessions/worker-1/preview/files/docs/cache-policy.md",
+		});
+		const helper = worker({
+			id: "review-helper-1",
+			title: "Review helper",
+			issueId: reviewAgentIssueId,
+			terminalHandleId: "review-terminal-1",
+			status: "idle",
+			activity: { state: "idle", lastActivityAt: "2026-07-16T10:00:01Z" },
+		});
 
-			renderBoard([candidate, helper], true);
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-			expect(postMock).toHaveBeenCalledWith(
-				"/api/v1/sessions/{sessionId}/send",
-				expect.objectContaining({ params: { path: { sessionId: "review-helper-1" } } }),
-			);
+		renderBoard([candidate, helper], true);
 
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(5_100);
-			});
+		await waitFor(() =>
 			expect(postMock).toHaveBeenCalledWith(
 				"/api/v1/sessions",
 				expect.objectContaining({
 					body: expect.objectContaining({ displayName: "Review agent", issueId: reviewAgentIssueId }),
 				}),
-			);
-		} finally {
-			vi.useRealTimers();
-		}
+			),
+		);
+		expect(postMock.mock.calls.some(([path]) => path === "/api/v1/sessions/{sessionId}/send")).toBe(false);
 	});
 
 	it("does not resend a durable review request after remounting", async () => {
@@ -684,15 +695,15 @@ describe("review board", () => {
 
 		await waitFor(() =>
 			expect(postMock).toHaveBeenCalledWith(
-				"/api/v1/sessions/{sessionId}/send",
+				"/api/v1/sessions",
 				expect.objectContaining({
 					body: expect.objectContaining({
-						message: expect.stringContaining(`AO_REVIEW_BOARD_${refreshedBatchId}_START`),
+						prompt: expect.stringContaining(`AO_REVIEW_BOARD_${refreshedBatchId}_START`),
 					}),
 				}),
 			),
 		);
-		expect(postMock.mock.calls.at(-1)?.[1]?.body.message).not.toContain(
+		expect(postMock.mock.calls.at(-1)?.[1]?.body.prompt).not.toContain(
 			`AO_REVIEW_BOARD_${initialBatchId}_START`,
 		);
 	});
