@@ -2,6 +2,7 @@ import { createFileRoute, Outlet, useMatchRoute, useNavigate, useParams } from "
 import { useQueryClient } from "@tanstack/react-query";
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 import { CommandPalette } from "../components/CommandPalette";
+import { CenterPanelShell } from "../components/CenterPanelShell";
 import { NotificationRuntime } from "../components/NotificationCenter";
 import { GlobalNewTaskDialog } from "../components/GlobalNewTaskDialog";
 import { KeyboardShortcutsDialog } from "../components/KeyboardShortcutsDialog";
@@ -339,8 +340,9 @@ function ShellLayout() {
           in the layout, not the screens, so the crumb and actions never shift
           when the outlet content swaps. */}
 			<div className="flex h-screen min-h-0 flex-col bg-sidebar text-foreground">
-				{/* Windows-only custom title bar (logo + File/Edit/View/… menu); paints
-            the chrome the frameless window drops. Renders null on macOS/Linux. */}
+				{/* Windows-only custom title bar (sidebar toggle + File/Edit/View/…
+            menu); paints the chrome the frameless window drops. Renders null on
+            macOS/Linux. */}
 				<WindowTitlebar />
 				{!hideShellTopbar ? <ShellTopbar /> : null}
 				{/* Controlled by the ui-store so TitlebarNav / Topbar toggles (which
@@ -374,7 +376,16 @@ function ShellLayout() {
 					/>
 					<main className="flex min-w-0 flex-1 flex-col overflow-x-hidden">
 						<div className="min-h-0 flex-1 overflow-x-hidden">
-							<Outlet />
+							{/* Board/session routes render inside the same inset box the
+							    welcome board and settings paint for themselves, so every
+							    screen sits within the app's outer boundary. */}
+							{hideShellTopbar ? (
+								<Outlet />
+							) : (
+								<CenterPanelShell variant="app">
+									<Outlet />
+								</CenterPanelShell>
+							)}
 						</div>
 					</main>
 					{/* When ShellTopbar is hidden on the welcome board, keep a macOS

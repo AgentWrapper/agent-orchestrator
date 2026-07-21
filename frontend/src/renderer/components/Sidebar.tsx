@@ -55,6 +55,13 @@ import { ResizeHandle } from "./ResizeHandle";
 // sidebar row); the sidebar itself starts below the 56px header, so its border
 // never crosses the titlebar strip.
 const isMac = typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
+const isWindows =
+	typeof navigator !== "undefined" &&
+	/win/i.test(
+		(navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ??
+			navigator.platform ??
+			"",
+	);
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
 // Shared styling for the per-project hover action buttons (dashboard,
@@ -237,9 +244,10 @@ export function Sidebar({
 							nightly
 						</span>
 					)}
-					{/* On macOS the toggle lives in the titlebar cluster instead. One trigger
-					    for Win/Linux — SidebarTrigger already toggles open/closed. */}
-					{!isMac && (
+					{/* On macOS the toggle lives in the TitlebarNav cluster, on Windows in
+					    the WindowTitlebar — only Linux keeps the in-header trigger.
+					    SidebarTrigger already toggles open/closed. */}
+					{!isMac && !isWindows && (
 						<Tooltip>
 							<TooltipTrigger asChild>
 								<SidebarTrigger
