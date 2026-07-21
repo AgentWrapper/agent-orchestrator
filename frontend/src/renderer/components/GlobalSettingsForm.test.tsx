@@ -152,6 +152,15 @@ describe("GlobalSettingsForm", () => {
 		expect(screen.queryByText(/Nightly builds are cut every day/i)).not.toBeInTheDocument();
 	});
 
+	it("hides the nightly warning when Feature Releases is selected", async () => {
+		getUpdate.mockResolvedValue({ enabled: true, channel: "nightly", nightlyAck: true, feature: null });
+		renderForm();
+		expect(await screen.findByText(/Nightly builds are cut every day/i)).toBeInTheDocument();
+		await userEvent.click(screen.getByLabelText("Updates channel"));
+		await userEvent.click(await screen.findByRole("menuitem", { name: "Feature Releases" }));
+		expect(screen.queryByText(/Nightly builds are cut every day/i)).not.toBeInTheDocument();
+	});
+
 	it("shows the current app version", async () => {
 		renderForm();
 		expect(await screen.findByText(/Current version - v1\.4\.0/)).toBeInTheDocument();

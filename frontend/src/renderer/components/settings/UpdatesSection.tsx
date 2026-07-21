@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, Check, HardDriveDownload, History, Loader2, RefreshCw } from "lucide-react";
+import { AlertTriangle, Check, GitPullRequest, HardDriveDownload, History, Loader2, RefreshCw } from "lucide-react";
 import { aoBridge } from "../../lib/bridge";
+import { formatTimeCompact } from "../../lib/format-time";
 import { useUpdateStatus } from "../../hooks/useUpdateStatus";
 import type { UpdateChannel, UpdateSettings, UpdateState, UpdateStatus } from "../../../main/update-settings";
 import { ConfirmDialog } from "../ConfirmDialog";
@@ -35,17 +36,6 @@ let updateRequestSequence = 0;
 function nextUpdateRequestId(): string {
 	updateRequestSequence += 1;
 	return `feature-update-${updateRequestSequence}`;
-}
-
-function relativeAge(iso: string): string {
-	const diffMs = Date.now() - new Date(iso).getTime();
-	const mins = Math.floor(diffMs / 60000);
-	if (mins < 1) return "just now";
-	if (mins < 60) return `${mins}m ago`;
-	const hours = Math.floor(mins / 60);
-	if (hours < 24) return `${hours}h ago`;
-	const days = Math.floor(hours / 24);
-	return `${days}d ago`;
 }
 
 export function UpdatesSection() {
@@ -215,7 +205,7 @@ export function UpdatesSection() {
 					<FeatureBuildsSelect currentPr={form.feature?.pr ?? null} onPin={handlePinBuild} />
 				)}
 
-				{form.channel === "nightly" && form.feature === null && form.enabled && (
+				{primaryValue === "nightly" && form.enabled && (
 					<p className="flex items-center gap-2 px-1 text-xs leading-row text-warning">
 						<AlertTriangle className="size-icon-sm shrink-0" aria-hidden="true" />
 						<span>
@@ -264,7 +254,7 @@ function FeatureBuildsSelect({
 
 	if (buildsQuery.isLoading) {
 		return (
-			<SettingsRow label="Feature build">
+			<SettingsRow icon={GitPullRequest} label="Feature build">
 				<div className="flex w-48 flex-col gap-1">
 					<Skeleton className="h-control-form w-full" />
 				</div>
@@ -285,11 +275,11 @@ function FeatureBuildsSelect({
 
 	const options = builds.map((build) => ({
 		value: build.pr.toString(),
-		label: `PR #${build.pr}: ${build.title}`,
+		label: `PR #${build.pr}`,
 	}));
 
 	return (
-		<SettingsRow label="Feature build">
+		<SettingsRow icon={GitPullRequest} label="Feature build">
 			<SettingsOptionMenu
 				aria-label="Feature build"
 				value={currentPr === null ? "__none__" : currentPr.toString()}
@@ -308,15 +298,15 @@ function FeatureBuildsSelect({
 
 					const ageMs = Date.now() - new Date(build.publishedAt).getTime();
 					const isStale = ageMs > STALE_THRESHOLD_MS;
-					const ageLabel = relativeAge(build.publishedAt);
+					const ageLabel = formatTimeCompact(build.publishedAt);
 
 					return (
-						<div className="flex min-w-0 flex-col gap-0.5">
-							<span>
+						<div className="flex w-full min-w-0 flex-col gap-0.5">
+							<span className="line-clamp-2 break-words">
 								PR #{build.pr}: {build.title}
 							</span>
-							<div className="flex items-center gap-1.5">
-								<span className="font-mono text-caption text-passive">{build.buildId}</span>
+							<div className="flex min-w-0 items-center gap-1.5">
+								<span className="min-w-0 truncate font-mono text-caption text-passive">{build.buildId}</span>
 								<Badge variant={isStale ? "warning" : "neutral"}>{ageLabel}</Badge>
 							</div>
 						</div>

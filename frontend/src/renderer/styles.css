@@ -408,6 +408,7 @@ button.settings-row-bar {
 	display: flex;
 	min-width: 11rem;
 	width: max-content;
+	max-width: min(18rem, calc(100vw - 2rem));
 	flex-direction: column;
 	border-radius: var(--radius-settings-panel);
 	border: 1px solid var(--color-border-settings-menu);
