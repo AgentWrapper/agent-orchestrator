@@ -125,8 +125,8 @@ func TestManager_AddListGetRemove(t *testing.T) {
 	m := newManager(t)
 	repo := gitRepo(t)
 
-	if got, err := m.List(ctx); err != nil || len(got) != 0 {
-		t.Fatalf("List() = %v, %v; want empty", got, err)
+	if got, err := m.List(ctx); err != nil || len(got) != 1 || got[0].ID != domain.ScratchProjectID {
+		t.Fatalf("List() = %v, %v; want [scratch]", got, err)
 	}
 
 	proj, err := m.Add(ctx, project.AddInput{Path: repo, ProjectID: ptr("ao"), Name: ptr("Agent Orchestrator")})
@@ -138,8 +138,8 @@ func TestManager_AddListGetRemove(t *testing.T) {
 	}
 
 	list, err := m.List(ctx)
-	if err != nil || len(list) != 1 || list[0].ID != "ao" {
-		t.Fatalf("List() = %v, %v; want [ao]", list, err)
+	if err != nil || len(list) != 2 || list[0].ID != domain.ScratchProjectID || list[1].ID != "ao" {
+		t.Fatalf("List() = %v, %v; want [scratch ao]", list, err)
 	}
 
 	res, err := m.Get(ctx, "ao")
@@ -157,8 +157,8 @@ func TestManager_AddListGetRemove(t *testing.T) {
 	if rm.ProjectID != "ao" || rm.RemovedStorageDir {
 		t.Fatalf("Remove = %#v", rm)
 	}
-	if list, _ := m.List(ctx); len(list) != 0 {
-		t.Fatalf("active list after remove = %d, want 0", len(list))
+	if list, _ := m.List(ctx); len(list) != 1 || list[0].ID != domain.ScratchProjectID {
+		t.Fatalf("active list after remove = %v, want [scratch]", list)
 	}
 	_, err = m.Get(ctx, "ao")
 	wantCode(t, err, "PROJECT_NOT_FOUND")
@@ -288,11 +288,11 @@ func TestManager_DefaultsWhenUnconfigured(t *testing.T) {
 	}
 
 	list, err := m.List(ctx)
-	if err != nil || len(list) != 1 {
+	if err != nil || len(list) != 2 || list[0].ID != domain.ScratchProjectID {
 		t.Fatalf("List = %v, %v", list, err)
 	}
-	if list[0].SessionPrefix != "ao" {
-		t.Fatalf("default session prefix = %q, want derived 'ao'", list[0].SessionPrefix)
+	if list[1].SessionPrefix != "ao" {
+		t.Fatalf("default session prefix = %q, want derived 'ao'", list[1].SessionPrefix)
 	}
 }
 
@@ -467,11 +467,11 @@ func TestManager_ListIncludesOnlySummarySafeProjectConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if len(list) != 1 {
-		t.Fatalf("List len = %d, want 1", len(list))
+	if len(list) != 2 || list[0].ID != domain.ScratchProjectID {
+		t.Fatalf("List len = %d, want 2 with scratch first", len(list))
 	}
-	if list[0].OrchestratorAgent != domain.HarnessCodex {
-		t.Fatalf("summary orchestrator agent = %q, want codex", list[0].OrchestratorAgent)
+	if list[1].OrchestratorAgent != domain.HarnessCodex {
+		t.Fatalf("summary orchestrator agent = %q, want codex", list[1].OrchestratorAgent)
 	}
 }
 
@@ -1158,4 +1158,68 @@ func TestManager_AddWorkspaceRejectsBareParent(t *testing.T) {
 
 	_, err := m.Add(ctx, project.AddInput{Path: bareParent, ProjectID: ptr("bare"), AsWorkspace: true})
 	wantCode(t, err, "WORKSPACE_PARENT_BARE")
+}
+
+// TestManager_ListPinsScratchFirst asserts that the built-in Scratch pseudo-project
+// is always present and pinned to the front of the project list.
+func TestManager_ListPinsScratchFirst(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+
+	list, err := m.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("List = %v, want 1 entry", list)
+	}
+	if list[0].ID != domain.ScratchProjectID || list[0].Name != "Scratch" || list[0].Kind != domain.ProjectKindScratch {
+		t.Fatalf("scratch summary = %+v", list[0])
+	}
+}
+
+// TestManager_RemoveRejectsScratch asserts the built-in Scratch pseudo-project
+// cannot be archived: its seeded row backs the session foreign keys.
+func TestManager_RemoveRejectsScratch(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+
+	_, err := m.Remove(ctx, domain.ScratchProjectID)
+	wantCode(t, err, "PROJECT_SCRATCH_RESERVED")
+}
+
+// TestManager_AddRejectsScratchID asserts the reserved scratch id cannot be
+// claimed by a user-registered project, whether given explicitly or derived
+// from a repo named "scratch".
+func TestManager_AddRejectsScratchID(t *testing.T) {
+	configureCommitter(t)
+	ctx := context.Background()
+	m := newManager(t)
+
+	repo := gitRepoWithCommit(t, filepath.Join(t.TempDir(), "scratch"))
+	if _, err := m.Add(ctx, project.AddInput{Path: repo, ProjectID: ptr(string(domain.ScratchProjectID))}); err == nil {
+		t.Fatal("Add with explicit scratch id succeeded")
+	} else {
+		wantCode(t, err, "PROJECT_SCRATCH_RESERVED")
+	}
+	if _, err := m.Add(ctx, project.AddInput{Path: repo}); err == nil {
+		t.Fatal("Add of repo named scratch succeeded")
+	} else {
+		wantCode(t, err, "PROJECT_SCRATCH_RESERVED")
+	}
+}
+
+// TestManager_GetScratchPresentsPseudoProject asserts the seeded scratch row is
+// presented with the scratch kind even though the stored kind is single_repo.
+func TestManager_GetScratchPresentsPseudoProject(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+
+	got, err := m.Get(ctx, domain.ScratchProjectID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Project == nil || got.Project.Kind != domain.ProjectKindScratch || got.Project.Name != "Scratch" {
+		t.Fatalf("scratch get = %+v", got.Project)
+	}
 }

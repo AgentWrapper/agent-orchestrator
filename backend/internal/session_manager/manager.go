@@ -408,6 +408,9 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 // unregistered yet still have live sessions, and an empty config simply means
 // every field falls back to its default.
 func (m *Manager) loadProject(ctx context.Context, projectID domain.ProjectID) (domain.ProjectRecord, error) {
+	if projectID == domain.ScratchProjectID {
+		return domain.ProjectRecord{ID: string(projectID), DisplayName: "Scratch", Kind: domain.ProjectKindScratch}, nil
+	}
 	row, ok, err := m.store.GetProject(ctx, string(projectID))
 	if err != nil {
 		return domain.ProjectRecord{}, fmt.Errorf("load project: %w", err)
@@ -418,7 +421,90 @@ func (m *Manager) loadProject(ctx context.Context, projectID domain.ProjectID) (
 	return row, nil
 }
 
+// scratchRepoPath returns the throwaway bare-repo path backing a scratch
+// session. The location is deterministic, so workspace operations after spawn
+// (kill, shutdown save, restore) derive it instead of persisting it.
+func (m *Manager) scratchRepoPath(id domain.SessionID) string {
+	if strings.TrimSpace(m.dataDir) == "" {
+		return ""
+	}
+	return filepath.Join(m.dataDir, "scratch", string(id))
+}
+
+// ensureScratchRepo creates a disposable bare git repository for a scratch
+// session under the data dir. The existing gitworktree adapter materialises the
+// session worktree from this repo, so no workspace machinery changes are needed.
+func (m *Manager) ensureScratchRepo(ctx context.Context, id domain.SessionID) (string, error) {
+	repoPath := m.scratchRepoPath(id)
+	if repoPath == "" {
+		return "", fmt.Errorf("scratch session %s: data dir is not configured", id)
+	}
+	if err := os.MkdirAll(repoPath, 0o700); err != nil {
+		return "", fmt.Errorf("scratch session %s: create repo dir: %w", id, err)
+	}
+	// A bare repo keeps the backing repository and the checked-out worktree
+	// separate, which matches how registered projects are used.
+	if _, err := aoprocess.CommandContext(ctx, "git", "init", "--bare", repoPath).CombinedOutput(); err != nil {
+		return "", fmt.Errorf("scratch session %s: git init: %w", id, err)
+	}
+	if err := initEmptyCommit(ctx, repoPath); err != nil {
+		return "", fmt.Errorf("scratch session %s: initial commit: %w", id, err)
+	}
+	return repoPath, nil
+}
+
+// initEmptyCommit creates an initial empty commit on the default branch in a
+// bare repository so the gitworktree adapter has a base ref to create worktrees.
+func initEmptyCommit(ctx context.Context, repoPath string) error {
+	// Resolve the empty-tree oid through mktree so the repo's object format
+	// (sha1 or sha256, via init.defaultObjectFormat) is honoured; the sha1 oid
+	// must not be hard-coded.
+	mktreeCmd := aoprocess.CommandContext(ctx, "git", "-C", repoPath, "mktree")
+	mktreeCmd.Stdin = strings.NewReader("")
+	treeOut, err := mktreeCmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("mktree: %w: %s", err, strings.TrimSpace(string(treeOut)))
+	}
+	emptyTree := strings.TrimSpace(string(treeOut))
+	commitCmd := aoprocess.CommandContext(ctx, "git", "-C", repoPath, "commit-tree", "-m", "initial commit", emptyTree)
+	commitCmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=Agent Orchestrator",
+		"GIT_AUTHOR_EMAIL=ao@example.com",
+		"GIT_COMMITTER_NAME=Agent Orchestrator",
+		"GIT_COMMITTER_EMAIL=ao@example.com",
+	)
+	out, err := commitCmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("commit-tree: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	commitSHA := strings.TrimSpace(string(out))
+	branch := "refs/heads/" + domain.DefaultBranchName
+	if _, err := aoprocess.CommandContext(ctx, "git", "-C", repoPath, "update-ref", branch, commitSHA).CombinedOutput(); err != nil {
+		return fmt.Errorf("update-ref %s: %w", branch, err)
+	}
+	if _, err := aoprocess.CommandContext(ctx, "git", "-C", repoPath, "symbolic-ref", "HEAD", branch).CombinedOutput(); err != nil {
+		return fmt.Errorf("set HEAD: %w", err)
+	}
+	return nil
+}
+
 func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.ProjectRecord, cfg ports.SpawnConfig, id domain.SessionID, branch string) (ports.WorkspaceInfo, *ports.WorkspaceProjectInfo, error) {
+	if project.Kind.WithDefault() == domain.ProjectKindScratch {
+		repoPath, err := m.ensureScratchRepo(ctx, id)
+		if err != nil {
+			return ports.WorkspaceInfo{}, nil, err
+		}
+		ws, err := m.workspace.Create(ctx, ports.WorkspaceConfig{
+			ProjectID:     cfg.ProjectID,
+			SessionID:     id,
+			Kind:          cfg.Kind,
+			SessionPrefix: sessionPrefix(project),
+			Branch:        branch,
+			BaseBranch:    project.Config.WithDefaults().DefaultBranch,
+			RepoPath:      repoPath,
+		})
+		return ws, nil, err
+	}
 	if project.Kind.WithDefault() != domain.ProjectKindWorkspace {
 		ws, err := m.workspace.Create(ctx, ports.WorkspaceConfig{
 			ProjectID:     cfg.ProjectID,
@@ -485,6 +571,9 @@ func (m *Manager) destroySpawnWorkspace(ctx context.Context, ws ports.WorkspaceI
 	}
 	err := m.workspace.Destroy(ctx, ws)
 	_ = m.store.DeleteSessionWorktrees(ctx, ws.SessionID)
+	if err == nil {
+		m.removeScratchRepo(ctx, ws.ProjectID, ws.SessionID)
+	}
 	return err == nil
 }
 
@@ -637,7 +726,7 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 		return false, nil // already gone: benign race
 	}
 	handle := runtimeHandle(rec.Metadata)
-	ws := workspaceInfo(rec)
+	ws := m.workspaceInfo(rec)
 
 	var workspaceProjectRows []ports.WorkspaceRepoInfo
 	workspaceProject := false
@@ -686,6 +775,7 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 		}
 		freed = true
 		m.cleanupAgentWorkspace(ctx, rec, ws.Path)
+		m.removeScratchRepo(ctx, rec.ProjectID, id)
 	}
 	// Clear the restore marker so the next boot's RestoreAll cannot resurrect a
 	// killed session (#2319). For workspace projects this must happen after
@@ -737,7 +827,7 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 		return m.retireWorkspaceProjectForReplacement(ctx, rec, rows)
 	}
 
-	ws := workspaceInfo(rec)
+	ws := m.workspaceInfo(rec)
 	staleWorkspace := false
 	if _, err := m.workspace.StashUncommitted(ctx, ws); err != nil {
 		if !errors.Is(err, ports.ErrWorkspaceStale) {
@@ -967,7 +1057,7 @@ func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionReco
 	}
 
 	// 1. Capture uncommitted work (ref may be "" for clean worktrees).
-	ws := workspaceInfo(rec)
+	ws := m.workspaceInfo(rec)
 	ref, err := m.workspace.StashUncommitted(ctx, ws)
 	if err != nil {
 		return fmt.Errorf("save %s: stash: %w", rec.ID, err)
@@ -1168,13 +1258,7 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 			ws = workspaceInfoFromRepoInfo(root)
 		} else {
 			var restoreErr error
-			ws, restoreErr = m.workspace.Restore(ctx, ports.WorkspaceConfig{
-				ProjectID:     rec.ProjectID,
-				SessionID:     rec.ID,
-				Kind:          rec.Kind,
-				SessionPrefix: sessionPrefix(project),
-				Branch:        rec.Metadata.Branch,
-			})
+			ws, restoreErr = m.workspace.Restore(ctx, m.restoreWorkspaceConfig(project, rec))
 			if restoreErr != nil {
 				m.logger.Error("restore-all: workspace restore failed", "sessionID", rec.ID, "error", restoreErr)
 				continue
@@ -1267,15 +1351,25 @@ func (m *Manager) markSessionWorktreesActive(ctx context.Context, rows []domain.
 	return nil
 }
 
+// restoreWorkspaceConfig builds the workspace restore config for a session,
+// deriving the throwaway repo path for scratch sessions (see scratchRepoPath).
+func (m *Manager) restoreWorkspaceConfig(project domain.ProjectRecord, rec domain.SessionRecord) ports.WorkspaceConfig {
+	cfg := ports.WorkspaceConfig{
+		ProjectID:     rec.ProjectID,
+		SessionID:     rec.ID,
+		Kind:          rec.Kind,
+		SessionPrefix: sessionPrefix(project),
+		Branch:        rec.Metadata.Branch,
+	}
+	if rec.ProjectID == domain.ScratchProjectID {
+		cfg.RepoPath = m.scratchRepoPath(rec.ID)
+	}
+	return cfg
+}
+
 func (m *Manager) restoreSessionWorkspace(ctx context.Context, project domain.ProjectRecord, rec domain.SessionRecord) (ports.WorkspaceInfo, error) {
 	if project.Kind.WithDefault() != domain.ProjectKindWorkspace {
-		return m.workspace.Restore(ctx, ports.WorkspaceConfig{
-			ProjectID:     rec.ProjectID,
-			SessionID:     rec.ID,
-			Kind:          rec.Kind,
-			SessionPrefix: sessionPrefix(project),
-			Branch:        rec.Metadata.Branch,
-		})
+		return m.workspace.Restore(ctx, m.restoreWorkspaceConfig(project, rec))
 	}
 	rows, err := m.workspaceProjectRestoreRows(ctx, project, rec)
 	if err != nil {
@@ -1756,7 +1850,7 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 		if !rec.IsTerminated {
 			continue
 		}
-		ws := workspaceInfo(rec)
+		ws := m.workspaceInfo(rec)
 		if ws.Path == "" {
 			m.cleanupSystemPromptDir(rec.ID)
 			continue
@@ -1787,6 +1881,7 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 			continue
 		} else {
 			m.cleanupAgentWorkspace(ctx, rec, ws.Path)
+			m.removeScratchRepo(ctx, rec.ProjectID, rec.ID)
 		}
 		m.cleanupSystemPromptDir(rec.ID)
 		result.Cleaned = append(result.Cleaned, rec.ID)
@@ -2545,6 +2640,33 @@ func workspaceInfo(rec domain.SessionRecord) ports.WorkspaceInfo {
 		Branch:    rec.Metadata.Branch,
 		SessionID: rec.ID,
 		ProjectID: rec.ProjectID,
+	}
+}
+
+// workspaceInfo builds the adapter-facing workspace handle for a session
+// record, deriving the throwaway repo path for scratch sessions so post-spawn
+// operations (kill, shutdown save, cleanup) resolve the same repo spawn used.
+func (m *Manager) workspaceInfo(rec domain.SessionRecord) ports.WorkspaceInfo {
+	info := workspaceInfo(rec)
+	if rec.ProjectID == domain.ScratchProjectID {
+		info.RepoPath = m.scratchRepoPath(rec.ID)
+	}
+	return info
+}
+
+// removeScratchRepo deletes the throwaway bare repo backing a scratch session
+// after its worktree has been destroyed. Best-effort: leftover disk is a leak,
+// not a correctness problem, so a failure only logs.
+func (m *Manager) removeScratchRepo(ctx context.Context, projectID domain.ProjectID, sessionID domain.SessionID) {
+	if projectID != domain.ScratchProjectID {
+		return
+	}
+	repoPath := m.scratchRepoPath(sessionID)
+	if repoPath == "" {
+		return
+	}
+	if err := os.RemoveAll(repoPath); err != nil {
+		m.logger.WarnContext(ctx, "scratch repo removal failed", "sessionID", sessionID, "path", repoPath, "error", err)
 	}
 }
 

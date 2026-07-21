@@ -108,6 +108,7 @@ type Service struct {
 	tracker             ports.Tracker
 	clock               func() time.Time
 	telemetry           ports.EventSink
+	defaultHarness      domain.AgentHarness
 	orchestratorLocksMu sync.Mutex
 	orchestratorLocks   map[domain.ProjectID]*sync.Mutex
 	// signalCapable reports whether a harness has a hook pipeline that can
@@ -133,6 +134,9 @@ type Deps struct {
 	Tracker   ports.Tracker
 	Clock     func() time.Time
 	Telemetry ports.EventSink
+	// DefaultHarness is the daemon's configured default agent (AO_AGENT).
+	// Scratch sessions fall back to this harness when the spawn request names none.
+	DefaultHarness domain.AgentHarness
 	// SignalCapable gates the no_signal status downgrade per harness; daemon
 	// wiring passes activitydispatch.SupportsHarness. Left nil, no session is
 	// ever downgraded to no_signal.
@@ -141,7 +145,7 @@ type Deps struct {
 
 // NewWithDeps wires a session service with optional PR-claim dependencies.
 func NewWithDeps(d Deps) *Service {
-	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, tracker: d.Tracker, clock: d.Clock, signalCapable: d.SignalCapable, telemetry: d.Telemetry}
+	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, tracker: d.Tracker, clock: d.Clock, signalCapable: d.SignalCapable, telemetry: d.Telemetry, defaultHarness: d.DefaultHarness}
 	if s.prClaimer == nil {
 		if w, ok := d.Store.(ports.PRClaimer); ok {
 			s.prClaimer = w
@@ -155,9 +159,15 @@ func NewWithDeps(d Deps) *Service {
 
 // Spawn creates a session and returns the API-facing read model.
 func (s *Service) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, error) {
+	if cfg.ProjectID == "" {
+		cfg.ProjectID = domain.ScratchProjectID
+	}
 	project, err := s.requireProject(ctx, cfg.ProjectID)
 	if err != nil {
 		return domain.Session{}, err
+	}
+	if project.Kind.WithDefault() == domain.ProjectKindScratch && cfg.Harness == "" && s.defaultHarness != "" {
+		cfg.Harness = s.defaultHarness
 	}
 	start := s.now()
 	firstSession, err := s.isFirstSession(ctx)
@@ -183,6 +193,9 @@ func (s *Service) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 func (s *Service) requireProject(ctx context.Context, id domain.ProjectID) (domain.ProjectRecord, error) {
 	if id == "" {
 		return domain.ProjectRecord{}, apierr.Invalid("PROJECT_ID_REQUIRED", "projectId is required", nil)
+	}
+	if id == domain.ScratchProjectID {
+		return domain.ProjectRecord{ID: string(id), DisplayName: "Scratch", Kind: domain.ProjectKindScratch}, nil
 	}
 	if s.store == nil {
 		return domain.ProjectRecord{ID: string(id)}, nil

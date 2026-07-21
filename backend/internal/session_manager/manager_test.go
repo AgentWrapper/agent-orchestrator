@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/gitworktree"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -4790,4 +4792,191 @@ func (m *flipOnNudgeMessenger) Send(_ context.Context, _ domain.SessionID, msg s
 		m.flipped = true
 	}
 	return nil
+}
+
+// TestSpawn_ScratchCreatesBareRepoAndWorktree exercises the project-less spawn
+// path end-to-end with a real gitworktree adapter. It verifies that a throwaway
+// bare repo is created under the data dir and that the session worktree is
+// materialised from it without changing the workspace adapter.
+func TestSpawn_ScratchCreatesBareRepoAndWorktree(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	dataDir := t.TempDir()
+	ws, err := gitworktree.New(gitworktree.Options{
+		ManagedRoot:  filepath.Join(dataDir, "worktrees"),
+		RepoResolver: gitworktree.StaticRepoResolver{},
+	})
+	if err != nil {
+		t.Fatalf("gitworktree.New: %v", err)
+	}
+	st := newFakeStore()
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	agent := &recordingAgent{}
+	m := New(Deps{
+		Runtime:   &fakeRuntime{},
+		Agents:    singleAgent{agent: agent},
+		Workspace: ws,
+		Store:     st,
+		Messenger: &fakeMessenger{},
+		Lifecycle: &fakeLCM{store: st},
+		DataDir:   dataDir,
+		LookPath:  lookPath,
+	})
+
+	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: domain.ScratchProjectID, Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode, Prompt: "explore"})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+
+	repoPath := filepath.Join(dataDir, "scratch", string(s.ID))
+	if info, err := os.Stat(filepath.Join(repoPath, "HEAD")); err != nil || info.IsDir() {
+		t.Fatalf("scratch bare repo missing HEAD at %s: %v", repoPath, err)
+	}
+	if out, err := exec.Command("git", "-C", repoPath, "rev-parse", "--verify", "HEAD").CombinedOutput(); err != nil {
+		t.Fatalf("scratch repo has no HEAD: %v (%s)", err, out)
+	}
+	if agent.lastLaunch.WorkspacePath == "" {
+		t.Fatal("workspace path was not set")
+	}
+	if !strings.Contains(agent.lastLaunch.SystemPrompt, "Scratch") && !strings.Contains(agent.lastLaunch.SystemPrompt, "scratch") {
+		t.Fatalf("system prompt should reference scratch context; got:\n%s", agent.lastLaunch.SystemPrompt)
+	}
+}
+
+// recordingInfoWorkspace wraps fakeWorkspace and captures the WorkspaceInfo /
+// WorkspaceConfig values the manager passes in, so tests can assert the derived
+// scratch repo path reaches the adapter on post-spawn paths.
+type recordingInfoWorkspace struct {
+	fakeWorkspace
+	stashInfo  ports.WorkspaceInfo
+	restoreCfg ports.WorkspaceConfig
+}
+
+func (w *recordingInfoWorkspace) StashUncommitted(_ context.Context, info ports.WorkspaceInfo) (string, error) {
+	w.stashInfo = info
+	return "", nil
+}
+
+func (w *recordingInfoWorkspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
+	w.restoreCfg = cfg
+	return w.fakeWorkspace.Restore(ctx, cfg)
+}
+
+// TestKill_ScratchDestroysWorktreeAndRemovesRepo covers the post-spawn teardown
+// path for scratch sessions with a real gitworktree adapter: Kill must resolve
+// the derived scratch repo (not the project repo resolver) and remove the
+// throwaway bare repo so it does not leak under the data dir.
+func TestKill_ScratchDestroysWorktreeAndRemovesRepo(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	dataDir := t.TempDir()
+	ws, err := gitworktree.New(gitworktree.Options{
+		ManagedRoot:  filepath.Join(dataDir, "worktrees"),
+		RepoResolver: gitworktree.StaticRepoResolver{},
+	})
+	if err != nil {
+		t.Fatalf("gitworktree.New: %v", err)
+	}
+	st := newFakeStore()
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{
+		Runtime:   &fakeRuntime{},
+		Agents:    singleAgent{agent: &recordingAgent{}},
+		Workspace: ws,
+		Store:     st,
+		Messenger: &fakeMessenger{},
+		Lifecycle: &fakeLCM{store: st},
+		DataDir:   dataDir,
+		LookPath:  lookPath,
+	})
+
+	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: domain.ScratchProjectID, Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode, Prompt: "explore"})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	repoPath := filepath.Join(dataDir, "scratch", string(s.ID))
+	worktreePath := st.sessions[s.ID].Metadata.WorkspacePath
+
+	freed, err := m.Kill(ctx, s.ID)
+	if err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+	if !freed {
+		t.Fatal("Kill did not free the scratch workspace")
+	}
+	if !st.sessions[s.ID].IsTerminated {
+		t.Fatal("scratch session not marked terminated after Kill")
+	}
+	if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
+		t.Fatalf("scratch worktree still present at %s", worktreePath)
+	}
+	if _, err := os.Stat(repoPath); !os.IsNotExist(err) {
+		t.Fatalf("throwaway scratch repo leaked at %s", repoPath)
+	}
+}
+
+// TestSaveAndTeardownAll_ScratchDerivesRepoPath asserts the shutdown-save path
+// hands the adapter the derived scratch repo path instead of letting it fall
+// back to the project repo resolver (which has no entry for scratch).
+func TestSaveAndTeardownAll_ScratchDerivesRepoPath(t *testing.T) {
+	dataDir := t.TempDir()
+	st := newFakeStore()
+	rt := &fakeRuntime{}
+	ws := &recordingInfoWorkspace{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{
+		Runtime:   rt,
+		Agents:    fakeAgents{},
+		Workspace: ws,
+		Store:     st,
+		Messenger: &fakeMessenger{},
+		Lifecycle: &fakeLCM{store: st},
+		DataDir:   dataDir,
+		LookPath:  lookPath,
+	})
+	st.sessions["scratch-1"] = domain.SessionRecord{
+		ID:        "scratch-1",
+		ProjectID: domain.ScratchProjectID,
+		Kind:      domain.KindWorker,
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/scratch-1", Branch: "ao/scratch-1/root", RuntimeHandleID: "h1"},
+		Activity:  domain.Activity{State: domain.ActivityActive},
+	}
+
+	if err := m.SaveAndTeardownAll(ctx); err != nil {
+		t.Fatalf("SaveAndTeardownAll: %v", err)
+	}
+	want := filepath.Join(dataDir, "scratch", "scratch-1")
+	if ws.stashInfo.RepoPath != want {
+		t.Fatalf("StashUncommitted RepoPath = %q, want %q", ws.stashInfo.RepoPath, want)
+	}
+}
+
+// TestRestoreWorkspaceConfig_ScratchDerivesRepoPath pins the restore config for
+// scratch sessions: the repo path is derived from the data dir, and non-scratch
+// sessions keep relying on the project repo resolver.
+func TestRestoreWorkspaceConfig_ScratchDerivesRepoPath(t *testing.T) {
+	dataDir := t.TempDir()
+	m := New(Deps{DataDir: dataDir})
+
+	scratch := m.restoreWorkspaceConfig(domain.ProjectRecord{}, domain.SessionRecord{
+		ID:        "scratch-1",
+		ProjectID: domain.ScratchProjectID,
+		Kind:      domain.KindWorker,
+		Metadata:  domain.SessionMetadata{Branch: "ao/scratch-1/root"},
+	})
+	if want := filepath.Join(dataDir, "scratch", "scratch-1"); scratch.RepoPath != want {
+		t.Fatalf("scratch RepoPath = %q, want %q", scratch.RepoPath, want)
+	}
+
+	registered := m.restoreWorkspaceConfig(domain.ProjectRecord{}, domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		Metadata:  domain.SessionMetadata{Branch: "ao/mer-1/root"},
+	})
+	if registered.RepoPath != "" {
+		t.Fatalf("registered RepoPath = %q, want empty (resolver-backed)", registered.RepoPath)
+	}
 }
