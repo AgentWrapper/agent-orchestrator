@@ -154,7 +154,7 @@ func (s *Store) MarkUsageSourceState(ctx context.Context, id int64, state domain
 
 // ApplyUsageChunk atomically writes parsed usage events and advances the source
 // cursor/baselines. The cursor never moves unless all event writes commit.
-func (s *Store) ApplyUsageChunk(ctx context.Context, sourceID int64, expectedOffset int64, nextState domain.SourceCursorState, events []domain.ModelUsageEvent) (domain.ApplyUsageChunkResult, error) {
+func (s *Store) ApplyUsageChunk(ctx context.Context, sourceID, expectedOffset int64, nextState domain.SourceCursorState, events []domain.ModelUsageEvent) (domain.ApplyUsageChunkResult, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
