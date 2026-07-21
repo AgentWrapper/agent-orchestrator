@@ -10,6 +10,7 @@ import (
 // sources get persisted in the V1 usage pipeline.
 type UsageSourceKind string
 
+// UsageSourceKind values identify certified native usage artifact shapes.
 const (
 	UsageSourceClaudeMain     UsageSourceKind = "claude_main"
 	UsageSourceClaudeSubagent UsageSourceKind = "claude_subagent"
@@ -19,6 +20,7 @@ const (
 // UsageBindingState tracks the root native-session binding lifecycle.
 type UsageBindingState string
 
+// UsageBindingState values describe root native-session binding lifecycle.
 const (
 	UsageBindingDiscovering UsageBindingState = "discovering"
 	UsageBindingActive      UsageBindingState = "active"
@@ -30,6 +32,7 @@ const (
 // UsageSourceState tracks one physical JSONL artifact generation.
 type UsageSourceState string
 
+// UsageSourceState values describe one physical source artifact lifecycle.
 const (
 	UsageSourcePending  UsageSourceState = "pending"
 	UsageSourceActive   UsageSourceState = "active"
@@ -41,6 +44,7 @@ const (
 // collection pipeline. It is independent from per-metric coverage.
 type UsageCollectionState string
 
+// UsageCollectionState values summarize session-level usage collection.
 const (
 	UsageCollectionWaiting     UsageCollectionState = "waiting"
 	UsageCollectionCollecting  UsageCollectionState = "collecting"
@@ -52,6 +56,7 @@ const (
 // UsageCoverage reports whether a metric represents the full known scope.
 type UsageCoverage string
 
+// UsageCoverage values describe metric completeness over a scope.
 const (
 	UsageCoverageComplete    UsageCoverage = "complete"
 	UsageCoveragePartial     UsageCoverage = "partial"
@@ -61,15 +66,17 @@ const (
 // TokenConfidence records how token facts were obtained.
 type TokenConfidence string
 
+// TokenConfidence values describe normalized token metric provenance.
 const (
 	TokenConfidenceProvider TokenConfidence = "provider_reported"
-	TokenConfidenceParsed   TokenConfidence = "parsed_jsonl"
+	TokenConfidenceParsed   TokenConfidence = "parsed_jsonl" //nolint:gosec // provenance enum label, not a credential value.
 	TokenConfidenceNone     TokenConfidence = "unavailable"
 )
 
 // CostConfidence records how money facts were obtained.
 type CostConfidence string
 
+// CostConfidence values describe normalized cost metric provenance.
 const (
 	CostConfidenceProvider CostConfidence = "provider_reported"
 	CostConfidenceEstimate CostConfidence = "api_pricing_estimate"
@@ -79,12 +86,15 @@ const (
 // CostBasis records the event-level pricing basis.
 type CostBasis string
 
+// CostBasis values describe the pricing basis for one usage event.
 const (
 	CostBasisProviderReported CostBasis = "provider_reported"
 	CostBasisAPIEstimate      CostBasis = "api_pricing_estimate"
 	CostBasisUnavailable      CostBasis = "unavailable"
 )
 
+// Usage error code constants are safe storage/display identifiers for observer
+// and ingestion failures.
 const (
 	UsageErrorSourceDiscoveryPending      = "source_discovery_pending"
 	UsageErrorArtifactPathRejected        = "artifact_path_rejected"
@@ -100,6 +110,7 @@ const (
 	UsageErrorPartialReasoningCoverage    = "partial_reasoning_coverage"
 )
 
+// Usage ingestion sentinel errors report replay and cursor conflicts.
 var (
 	ErrUsageSourceOffsetConflict = errors.New("usage source cursor offset conflict")
 	ErrUsageSourceEventConflict  = errors.New("usage source event conflict")
