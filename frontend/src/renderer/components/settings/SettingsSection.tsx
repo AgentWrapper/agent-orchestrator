@@ -5,7 +5,15 @@ import type { ReactNode } from "react";
  * `sectionId` (optional) marks the section for the renderer smoke suite as
  * [data-testid="settings-section"][data-section=<id>].
  */
-export function SettingsSection({ title, sectionId, children }: { title: string; sectionId?: string; children: ReactNode }) {
+export function SettingsSection({
+	title,
+	sectionId,
+	children,
+}: {
+	title: string;
+	sectionId?: string;
+	children: ReactNode;
+}) {
 	return (
 		<section
 			className="flex w-full flex-col items-stretch gap-(--size-settings-section-inner-gap)"
