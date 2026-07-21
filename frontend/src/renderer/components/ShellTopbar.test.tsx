@@ -2,14 +2,16 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useUiStore } from "../stores/ui-store";
 import type { SessionActivityState, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { ShellTopbar, TopbarKillButton } from "./ShellTopbar";
 
-const { navigateMock, onKilledMock, paramsMock, postMock, useWorkspaceQueryMock } = vi.hoisted(() => ({
+const { navigateMock, onKilledMock, paramsMock, postMock, spawnMock, useWorkspaceQueryMock } = vi.hoisted(() => ({
 	navigateMock: vi.fn(),
 	onKilledMock: vi.fn(),
 	paramsMock: { projectId: undefined as string | undefined, sessionId: undefined as string | undefined },
 	postMock: vi.fn(),
+	spawnMock: vi.fn(),
 	useWorkspaceQueryMock: vi.fn(),
 }));
 
@@ -40,7 +42,7 @@ vi.mock("../lib/api-client", () => ({
 	},
 }));
 
-vi.mock("../lib/spawn-orchestrator", () => ({ spawnOrchestrator: vi.fn() }));
+vi.mock("../lib/spawn-orchestrator", () => ({ spawnOrchestrator: spawnMock }));
 vi.mock("../lib/telemetry", () => ({
 	addRendererExceptionStep: vi.fn(),
 	captureRendererEvent: vi.fn(),
@@ -124,8 +126,11 @@ beforeEach(() => {
 	paramsMock.sessionId = undefined;
 	postMock.mockReset();
 	postMock.mockResolvedValue({ data: { ok: true, sessionId: "sess-1" }, error: undefined });
+	spawnMock.mockReset();
+	spawnMock.mockResolvedValue("orch-2");
 	useWorkspaceQueryMock.mockReset();
 	useWorkspaceQueryMock.mockReturnValue({ data: [], isError: false, isLoading: false });
+	useUiStore.setState({ orchestratorReplacementErrors: {}, restartingProjectIds: new Set() });
 });
 
 describe("ShellTopbar status pill", () => {
@@ -178,6 +183,37 @@ describe("ShellTopbar orchestrator actions", () => {
 		expect(screen.getByRole("button", { name: "Open Kanban" })).toHaveClass("bg-primary");
 		expect(screen.getByRole("button", { name: "New task" })).toHaveClass("bg-raised");
 		expect(screen.getByRole("button", { name: "New task" })).not.toHaveClass("bg-primary");
+	});
+
+	it("starts a fresh orchestrator context only after confirmation", async () => {
+		renderTopbar(orchestrator);
+
+		await userEvent.click(screen.getByRole("button", { name: "Start new orchestrator context" }));
+		expect(spawnMock).not.toHaveBeenCalled();
+
+		await userEvent.click(screen.getByRole("button", { name: "Confirm new orchestrator context" }));
+
+		await waitFor(() => expect(spawnMock).toHaveBeenCalledWith("proj-1", "restart", true));
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "proj-1", sessionId: "orch-2" },
+		});
+	});
+
+	it("can cancel starting a fresh orchestrator context", async () => {
+		renderTopbar(orchestrator);
+
+		await userEvent.click(screen.getByRole("button", { name: "Start new orchestrator context" }));
+		await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+		expect(spawnMock).not.toHaveBeenCalled();
+		expect(screen.getByRole("button", { name: "Start new orchestrator context" })).toBeInTheDocument();
+	});
+
+	it("does not show the new-context action for worker sessions", () => {
+		renderTopbar(worker);
+
+		expect(screen.queryByRole("button", { name: "Start new orchestrator context" })).not.toBeInTheDocument();
 	});
 });
 
