@@ -32,8 +32,12 @@ const (
 	DefaultReviewInterval = 2 * time.Minute
 	// DefaultCacheMax bounds each in-memory ETag/review cache map.
 	DefaultCacheMax = 512
-	// DefaultPRMaxAge is the maximum time a locally-open tracked PR may go
-	// without a forced re-fetch regardless of ETag signals.
+	// DefaultPRMaxAge bounds how long a locally-open tracked PR may go without a
+	// forced re-fetch. It is a bounded-staleness backstop, not a distrust of the
+	// ETag: the refresh signals the observer consults (the repo PR-list guard and
+	// the per-commit checks guard) do not track a PR's own state, so a merged or
+	// closed PR whose head SHA is unchanged can otherwise read stale. This caps
+	// how long that inference can persist.
 	DefaultPRMaxAge = 5 * time.Minute
 	// BatchSize is the maximum number of PRs in one provider batch fetch.
 	BatchSize = 25
