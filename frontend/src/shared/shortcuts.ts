@@ -4,6 +4,10 @@
 
 export type ShortcutChord = {
 	key: string;
+	// Physical key (KeyboardEvent.code / Electron input.code), independent of
+	// layout and modifiers. Needed for chords whose character shifts — e.g.
+	// Ctrl+Shift+` reports key "~" on a US layout but code "Backquote".
+	code?: string;
 	ctrl: boolean;
 	meta: boolean;
 	shift: boolean;
@@ -11,12 +15,7 @@ export type ShortcutChord = {
 };
 
 export type AppShortcutId =
-	| "new-session"
-	| "new-shell-terminal"
-	| "keyboard-shortcuts"
-	| "toggle-sidebar"
-	| "open-project"
-	| "toggle-inspector";
+	"new-session" | "new-shell-terminal" | "keyboard-shortcuts" | "toggle-sidebar" | "open-project" | "toggle-inspector";
 
 export type ShortcutCategory = "General" | "Navigation" | "Session";
 
@@ -114,10 +113,13 @@ export function matchesNewSessionShortcut(chord: ShortcutChord, isMac: boolean):
 // The tradeoff is deliberate and matches VS Code: no shell or TUI in a pane can
 // receive Ctrl+` / Ctrl+Shift+` while AO owns them. Almost nothing binds them.
 export function matchesNewShellTerminalShortcut(chord: ShortcutChord, _isMac: boolean): boolean {
-	// Keyboards that need a modifier for the backtick can report the physical
-	// key instead of the character, so accept either spelling. Shift is optional
-	// (Ctrl+` and Ctrl+Shift+` both open a terminal); ⌘/Alt must not be held.
-	if (chord.key !== "`" && chord.key !== "Backquote") return false;
+	// Match on the physical `code` (Backquote), not the character: with Shift
+	// held the character is layout-shifted — US Ctrl+Shift+` reports key "~", not
+	// "`" — so keying off `key` would miss the advertised Ctrl+Shift+` chord.
+	// Fall back to the `key` spelling for chords supplied without a code. Shift is
+	// optional (Ctrl+` and Ctrl+Shift+` both open a terminal); ⌘/Alt must not hold.
+	const isBackquote = chord.code === "Backquote" || chord.key === "`" || chord.key === "Backquote";
+	if (!isBackquote) return false;
 	return chord.ctrl && !chord.meta && !chord.alt;
 }
 

@@ -12,6 +12,7 @@ import {
 // locally so tests can supply a plain fake while WebContents still satisfies it.
 type BeforeInput = {
 	key: string;
+	code?: string;
 	control: boolean;
 	meta: boolean;
 	shift: boolean;
@@ -53,6 +54,7 @@ export function attachAppShortcuts(
 		const channel = appShortcutChannel(
 			{
 				key: input.key,
+				code: input.code,
 				ctrl: input.control,
 				meta: input.meta,
 				shift: input.shift,
