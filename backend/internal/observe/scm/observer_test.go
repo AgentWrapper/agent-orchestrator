@@ -1116,6 +1116,71 @@ func TestPoll_PartialReviewRefreshUsesMergeMode(t *testing.T) {
 	}
 }
 
+func TestPoll_PartialCIPreservesDurableChecks(t *testing.T) {
+	store := testStoreWithSession()
+	local := knownPR(1)
+	local.CI = domain.CIPassing
+	local.ObservedAt = time.Unix(10, 0).UTC()
+	local.CIObservedAt = time.Unix(11, 0).UTC()
+	durableChecks := []domain.PullRequestCheck{
+		{Name: "build", CommitHash: "sha1", Status: domain.PRCheckPassed, Conclusion: "success", URL: "ci"},
+		{Name: "lint", CommitHash: "sha1", Status: domain.PRCheckPassed, Conclusion: "success", URL: "ci-lint"},
+	}
+	store.checks[local.URL] = durableChecks
+	// Compute the durable CI hash from the full two-check snapshot so the
+	// incoming one-check partial observation differs and would trigger a
+	// CI change write without the gate.
+	durableObs := testObs(1)
+	durableObs.CI = ports.SCMCIObservation{
+		Summary: string(domain.CIPassing),
+		HeadSHA: "sha1",
+		Checks: []ports.SCMCheckObservation{
+			{Name: "build", Status: string(domain.PRCheckPassed), Conclusion: "success", URL: "ci"},
+			{Name: "lint", Status: string(domain.PRCheckPassed), Conclusion: "success", URL: "ci-lint"},
+		},
+	}
+	local.CIHash = ciSemanticHash(durableObs.CI)
+	local.MetadataHash = metadataSemanticHash(durableObs)
+	store.prs["p-1"] = []domain.PullRequest{local}
+	// Provider returns a truncated CI snapshot: Partial=true, only one of
+	// the two durable checks is present. Without the CI.Partial gate this
+	// capped snapshot would be persisted as Fetched=true complete and
+	// overwrite the durable lint check. The title differs so a metadata
+	// change forces a write even when the CI hash is preserved by the gate.
+	partialObs := testObs(1)
+	partialObs.PR.Title = "PR (updated)"
+	partialObs.CI = ports.SCMCIObservation{
+		Summary: string(domain.CIPassing),
+		HeadSHA: "sha1",
+		Partial: true,
+		Checks:  []ports.SCMCheckObservation{{Name: "build", Status: string(domain.PRCheckPassed), Conclusion: "success", URL: "ci"}},
+	}
+	provider := &fakeProvider{
+		repoGuards:   map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo", NotModified: true}},
+		checkGuards:  map[string]ports.SCMGuardResult{commitKey(testRepo, "sha1"): {ETag: "ci2"}},
+		observations: map[string]ports.SCMObservation{prKey(testRepo, 1): partialObs},
+	}
+	obs := newTestObserver(store, provider, nil, time.Unix(210, 0).UTC())
+	obs.Cache.RepoPRListETag[prKey(testRepo, 0)] = "repo"
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.writes) != 1 {
+		t.Fatalf("writes = %#v, want one write", store.writes)
+	}
+	write := store.writes[0]
+	// The durable CI hash must be preserved — the capped snapshot must
+	// not advance it as if it were a complete observation.
+	if write.pr.CIHash != local.CIHash {
+		t.Fatalf("CI hash = %q, want preserved durable %q", write.pr.CIHash, local.CIHash)
+	}
+	// CIObservedAt must not advance — the partial snapshot is not an
+	// authoritative complete observation.
+	if !write.pr.CIObservedAt.Equal(local.CIObservedAt) {
+		t.Fatalf("CIObservedAt = %s, want preserved durable %s", write.pr.CIObservedAt, local.CIObservedAt)
+	}
+}
+
 func TestPoll_ReviewOnlyRefreshPreservesLocalCIAndMetadata(t *testing.T) {
 	store := testStoreWithSession()
 	localObs := testObs(1)

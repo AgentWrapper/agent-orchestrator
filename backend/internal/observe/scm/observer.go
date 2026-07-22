@@ -518,7 +518,7 @@ func (o *Observer) Poll(ctx context.Context) error {
 		opts := persistenceOptions{
 			reviewFetched:               reviewMode != ports.ReviewWritePreserve,
 			preserveLocalMetadataHash:   localOnlyObservations[key],
-			preserveLocalCIHash:         localOnlyObservations[key],
+			preserveLocalCIHash:         localOnlyObservations[key] || obs.CI.Partial,
 			preserveLocalReviewHash:     reviewStale[key],
 			preserveLocalReviewDecision: reviewStale[key],
 		}
