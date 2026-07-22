@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { AlertTriangle, ChevronRight, Plus, RotateCw } from "lucide-react";
-import { DashboardSubhead } from "./DashboardSubhead";
 import {
 	type WorkspaceSession,
 	canonicalTrackerIssueId,
@@ -23,21 +22,19 @@ import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSession
 import { useRestoreSession } from "../hooks/useRestoreSession";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { NotificationCenter } from "./NotificationCenter";
-import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyState";
+import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyStates";
 import { OrchestratorIcon } from "./icons";
 import { TopbarButton, TopbarKillError } from "./TopbarButton";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { cn } from "../lib/utils";
+import { isLinuxPlatform, usesBoardActionsInFramedTopbar } from "../lib/platform";
 import { useUiStore } from "../stores/ui-store";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
 
-const isLinux =
-	typeof navigator !== "undefined" &&
-	((navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform)
-		.toLowerCase()
-		.includes("linux");
+const isLinux = isLinuxPlatform();
+const boardActionsInFramedTopbar = usesBoardActionsInFramedTopbar();
 type SessionsBoardProps = {
 	/** When set, the board shows only this project's sessions. */
 	projectId?: string;
@@ -232,19 +229,17 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	) : undefined;
 
 	return (
-		<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
+		<div className="flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="board">
 			{/* The first-launch welcome carries its own orientation; a "Board"
 			    header above it would describe a board that isn't rendered
-			    (review feedback on #2432). */}
-			{!showWelcome && (
-				<DashboardSubhead
-					title="Board"
-					subtitle="Live agent sessions flowing from work → review → merge."
-					actions={actions}
-				/>
-			)}
+			    (review feedback on #2432). The shell topbar crumb already
+			    names the board/project, so only the actions row stays here —
+			    and on inset-topbar platforms even that moves into the framed topbar. */}
+			{!showWelcome && actions && !boardActionsInFramedTopbar ? (
+				<div className="flex items-center justify-end gap-2 px-4.5 pt-4">{actions}</div>
+			) : null}
 
-			<div className="min-h-0 flex-1 overflow-hidden p-4.5">
+			<div className={cn("min-h-0 flex-1 overflow-hidden", showWelcome ? "p-0" : "p-4.5")}>
 				{projectId && health.state !== "ok" ? (
 					<div className="mb-3 flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-xs text-muted-foreground">
 						<AlertTriangle className="size-icon-base shrink-0 text-warning" aria-hidden="true" />
@@ -287,9 +282,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			{done.length > 0 && (
 				<div className="shrink-0 border-t border-border px-4.5">
 					{/* agent-orchestrator's done-bar (Dashboard.tsx + globals.css):
-					    a full-width chevron + label + count toggle row. min-h matches
-					    the sidebar footer (7px pad ×2 + 37px Settings button) so this
-					    border-t aligns with the sidebar's footer border. The button is
+					    a full-width chevron + label + count toggle row. The button is
 					    37px (not the 35.5px its text-control implies) because the
 					    unlayered `button { font: inherit }` in styles.css outranks
 					    Tailwind's layered text utilities, leaving it at 14px/21px. */}
@@ -361,6 +354,8 @@ function ZoneColumn({
 	return (
 		<section
 			className="flex min-w-0 flex-col overflow-hidden rounded-panel"
+			data-testid="board-column"
+			data-column={col.zone}
 			style={{
 				background: `linear-gradient(180deg, ${col.glow}, transparent var(--size-kanban-glow)), var(--color-overlay-subtle)`,
 			}}
@@ -490,6 +485,8 @@ function SessionCard({
 				"group relative w-full rounded-md border border-border bg-surface text-left transition-colors",
 				interactive && "hover:border-border-strong",
 			)}
+			data-testid="board-session-card"
+			data-session-id={session.id}
 		>
 			<div {...cardBodyProps}>
 				<div className="flex items-center gap-2 px-3.25 pb-2.25 pt-3">

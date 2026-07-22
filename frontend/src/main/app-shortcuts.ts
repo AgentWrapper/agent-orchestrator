@@ -2,7 +2,9 @@ import {
 	KEYBOARD_SHORTCUTS_HELP_CHANNEL,
 	matchesKeyboardShortcutsHelpShortcut,
 	matchesNewSessionShortcut,
+	matchesNewShellTerminalShortcut,
 	NEW_SESSION_SHORTCUT_CHANNEL,
+	NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL,
 	type ShortcutChord,
 } from "../shared/shortcuts";
 
@@ -32,6 +34,7 @@ type ShortcutTargetContents = {
 
 const appShortcutChannel = (chord: ShortcutChord, isMac: boolean): string | null => {
 	if (matchesNewSessionShortcut(chord, isMac)) return NEW_SESSION_SHORTCUT_CHANNEL;
+	if (matchesNewShellTerminalShortcut(chord, isMac)) return NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL;
 	if (matchesKeyboardShortcutsHelpShortcut(chord, isMac)) return KEYBOARD_SHORTCUTS_HELP_CHANNEL;
 	return null;
 };

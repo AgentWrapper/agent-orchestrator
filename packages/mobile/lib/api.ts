@@ -325,6 +325,35 @@ export async function refreshAgents(cfg: ServerConfig): Promise<AgentCatalog> {
 	};
 }
 
+// ---- Push notifications -----------------------------------------------------
+
+// Register (idempotent upsert) this device's Expo push token with the daemon so
+// its dispatcher can deliver OS push notifications. Keyed daemon-side by token.
+export async function registerPushDevice(
+	cfg: ServerConfig,
+	device: { token: string; platform?: string; deviceName?: string },
+): Promise<void> {
+	await req(cfg, `${API}/push/devices`, {
+		method: "POST",
+		body: JSON.stringify(device),
+	});
+}
+
+// Unregister this device's push token (best-effort on disconnect/unpair). The
+// token's [ ] brackets must be URL-encoded for the path segment.
+export async function unregisterPushDevice(cfg: ServerConfig, token: string): Promise<void> {
+	await req(cfg, `${API}/push/devices/${encodeURIComponent(token)}`, { method: "DELETE" });
+}
+
+// Mark a notification read (best-effort on notification tap) so unread counts
+// stay consistent with the web dashboard.
+export async function markNotificationRead(cfg: ServerConfig, id: string): Promise<void> {
+	await req(cfg, `${API}/notifications/${encodeURIComponent(id)}`, {
+		method: "PATCH",
+		body: JSON.stringify({ status: "read" }),
+	});
+}
+
 // ---- Writes / actions -------------------------------------------------------
 
 export async function killSession(cfg: ServerConfig, id: string): Promise<void> {

@@ -7,6 +7,7 @@ import { attentionOf, type DashboardSession, type OrchestratorLink } from "../..
 import { haptics } from "../../lib/haptics";
 import { useApp } from "../../lib/store";
 import { attentionMeta, statusVisual, theme, type AttentionLevel, type StatusVisual } from "../../lib/theme";
+import { useTabScrollToTop } from "../../lib/useTabScrollToTop";
 import { Button, ConnectionPill, Dot, EmptyState, ScreenHeader } from "../../lib/ui";
 
 const ZONE_ORDER: AttentionLevel[] = ["merge", "respond", "review", "pending", "working", "done"];
@@ -15,6 +16,8 @@ export default function OrchestratorScreen() {
 	const insets = useSafeAreaInsets();
 	const { configured, connection, projects, sessions, orchestrators, refresh } = useApp();
 	const [refreshing, setRefreshing] = useState(false);
+
+	const scrollRef = useTabScrollToTop<ScrollView>();
 
 	// Always show every project's orchestrator here - no per-project filtering.
 	const visibleProjects = projects;
@@ -45,6 +48,7 @@ export default function OrchestratorScreen() {
 			/>
 
 			<ScrollView
+				ref={scrollRef}
 				contentContainerStyle={{ paddingBottom: 110, paddingTop: 4 }}
 				refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.blue} />}
 			>

@@ -37,7 +37,7 @@ type SessionService interface {
 	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, error)
 	SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error)
 	Get(ctx context.Context, id domain.SessionID) (domain.Session, error)
-	Restore(ctx context.Context, id domain.SessionID) (domain.Session, error)
+	Restore(ctx context.Context, id domain.SessionID) (sessionsvc.RestoreOutcome, error)
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 	RollbackSpawn(ctx context.Context, id domain.SessionID) (sessionsvc.RollbackOutcome, error)
 	Cleanup(ctx context.Context, project domain.ProjectID) (sessionsvc.CleanupOutcome, error)
@@ -471,12 +471,12 @@ func (c *SessionsController) restore(w http.ResponseWriter, r *http.Request) {
 		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/restore")
 		return
 	}
-	sess, err := c.Svc.Restore(r.Context(), sessionID(r))
+	out, err := c.Svc.Restore(r.Context(), sessionID(r))
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, RestoreSessionResponse{OK: true, SessionID: sessionID(r), Session: sessionView(sess)})
+	envelope.WriteJSON(w, http.StatusOK, RestoreSessionResponse{OK: true, SessionID: sessionID(r), RestoreMode: out.Mode, Session: sessionView(out.Session)})
 }
 
 func (c *SessionsController) kill(w http.ResponseWriter, r *http.Request) {

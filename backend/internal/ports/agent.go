@@ -130,6 +130,16 @@ type ActivitySignaler interface {
 	EmitsBlockedActivity() bool
 }
 
+// ActiveTurnSteerer is an OPTIONAL capability an Agent adapter implements when
+// submitting input while its harness is mid-turn STEERS the running turn rather
+// than being swallowed, queued, or applied to a dialog. AO uses it to decide
+// whether an unsolicited coordination message may be written into an active
+// session. Adapters that do not implement it are treated as unsafe to steer, so
+// an unknown harness is only ever written to while idle.
+type ActiveTurnSteerer interface {
+	SteersActiveTurn() bool
+}
+
 // MetadataKeyAgentSessionID is the SessionRef.Metadata key that carries an
 // agent's native session id. It matches the json tag on
 // domain.SessionMetadata.AgentSessionID and the key the adapters read, so the

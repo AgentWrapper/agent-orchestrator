@@ -55,6 +55,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/dev/import-projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run the developer project-registry import through the daemon store */
+        post: operations["runDevImportProjects"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/events": {
         parameters: {
             query?: never;
@@ -360,6 +377,40 @@ export interface paths {
         /** Resolve review threads on a pull request */
         post: operations["resolveComments"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/push/devices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Register (upsert) a phone's Expo push token */
+        post: operations["registerPushDevice"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/push/devices/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Unregister a phone's Expo push token */
+        delete: operations["unregisterPushDevice"];
         options?: never;
         head?: never;
         patch?: never;
@@ -675,6 +726,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/shell-terminals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the standalone shell terminals owned by the current app run */
+        get: operations["listShellTerminals"];
+        put?: never;
+        /** Open a standalone shell terminal */
+        post: operations["openShellTerminal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/shell-terminals/{handleId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Close a standalone shell terminal and destroy its PTY */
+        delete: operations["closeShellTerminal"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -761,6 +847,29 @@ export interface components {
             path: string;
             resolveError: string;
         };
+        DevImportProjectsConflict: {
+            path: string;
+            projectId: string;
+            reason: string;
+            targetId?: string;
+            targetPath?: string;
+        };
+        DevImportProjectsReport: {
+            conflicts?: components["schemas"]["DevImportProjectsConflict"][];
+            dryRun: boolean;
+            inserted: number;
+            skipped: number;
+            sourceDataDir: string;
+            targetDataDir: string;
+            updated: number;
+        };
+        DevImportProjectsRequest: {
+            dryRun: boolean;
+            sourceDataDir: string;
+        };
+        DevImportProjectsResponse: {
+            report: components["schemas"]["DevImportProjectsReport"];
+        };
         DomainActivity: {
             /** Format: date-time */
             lastActivityAt: string;
@@ -818,6 +927,9 @@ export interface components {
         ListSessionsResponse: {
             sessions: components["schemas"]["ControllersSessionView"][];
         };
+        ListShellTerminalsResponse: {
+            shellTerminals: components["schemas"]["ShellTerminalResponse"][];
+        };
         ListWorkspaceFilesResponse: {
             files: components["schemas"]["WorkspaceFileSummary"][];
             sessionId: string;
@@ -868,6 +980,10 @@ export interface components {
             kind: "session" | "pr";
             prUrl?: string;
             sessionId: string;
+        };
+        OpenShellTerminalRequest: {
+            /** @description Project whose root the shell starts in. Omitted opens the shell in the daemon data dir. */
+            projectId?: string;
         };
         OrchestratorResponse: {
             id: string;
@@ -934,6 +1050,29 @@ export interface components {
             resolveError?: string;
             sessionPrefix: string;
         };
+        PushDeviceEnvelope: {
+            device: components["schemas"]["PushDeviceResponse"];
+        };
+        PushDeviceResponse: {
+            /** Format: date-time */
+            createdAt: string;
+            deviceName?: string;
+            /** Format: date-time */
+            lastSeenAt: string;
+            platform?: string;
+            token: string;
+        };
+        RegisterPushDeviceRequest: {
+            /** @description Human-friendly device label. */
+            deviceName?: string;
+            /**
+             * @description Device platform.
+             * @enum {string}
+             */
+            platform?: "ios" | "android";
+            /** @description Expo push token, e.g. ExponentPushToken[...]. */
+            token: string;
+        };
         RemoveProjectResult: {
             projectId: string;
             removedStorageDir: boolean;
@@ -952,6 +1091,8 @@ export interface components {
         };
         RestoreSessionResponse: {
             ok: boolean;
+            /** @enum {string} */
+            restoreMode: "native" | "saved_prompt" | "fresh";
             session: components["schemas"]["ControllersSessionView"];
             sessionId: string;
         };
@@ -1115,6 +1256,17 @@ export interface components {
             /** @description Preview target URL. When empty, the daemon autodetects a static entry point in the session workspace. */
             url?: string;
         };
+        ShellTerminalEnvelope: {
+            shellTerminal: components["schemas"]["ShellTerminalResponse"];
+        };
+        ShellTerminalResponse: {
+            /** Format: date-time */
+            createdAt: string;
+            handleId: string;
+            projectId?: string;
+            title: string;
+            workingDir: string;
+        };
         SpawnOrchestratorRequest: {
             clean?: boolean;
             projectId: string;
@@ -1126,7 +1278,7 @@ export interface components {
             branch?: string;
             displayName?: string;
             /** @enum {string} */
-            harness?: "claude-code" | "codex" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "kiro" | "kilocode" | "vibe" | "pi" | "autohand";
+            harness?: "claude-code" | "codex" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "kiro" | "kilocode" | "vibe" | "pi" | "autohand" | "fake";
             issueId?: string;
             /** @enum {string} */
             kind?: "worker" | "orchestrator";
@@ -1165,6 +1317,10 @@ export interface components {
         TriggerReviewResponse: {
             reviewerHandleId: string;
             reviews: components["schemas"]["PRReviewState"][];
+        };
+        UnregisterPushDeviceResponse: {
+            deleted: boolean;
+            token: string;
         };
         WorkspaceFileResponse: {
             additions: number;
@@ -1310,6 +1466,57 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ListAgentsResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    runDevImportProjects: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DevImportProjectsRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DevImportProjectsResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Internal Server Error */
@@ -2310,6 +2517,98 @@ export interface operations {
             };
             /** @description Unprocessable Entity */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    registerPushDevice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegisterPushDeviceRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PushDeviceEnvelope"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    unregisterPushDevice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Expo push token (URL-encoded) identifying the device. */
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnregisterPushDeviceResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3494,6 +3793,161 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CleanupSessionsResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    listShellTerminals: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListShellTerminalsResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    openShellTerminal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OpenShellTerminalRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShellTerminalEnvelope"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    closeShellTerminal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Shell terminal runtime handle identifier. */
+                handleId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Internal Server Error */

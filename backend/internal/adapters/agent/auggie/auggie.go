@@ -143,7 +143,8 @@ var auggieBinarySpec = binaryutil.BinarySpec{
 	Names:         []string{"auggie"},
 	WinNames:      []string{"auggie.cmd", "auggie.exe", "auggie"},
 	UnixPaths:     []string{"/usr/local/bin/auggie", "/opt/homebrew/bin/auggie"},
-	UnixHomePaths: [][]string{{".local", "bin", "auggie"}, {".npm", "bin", "auggie"}, {".npm-global", "bin", "auggie"}},
+	UnixHomePaths: binaryutil.NodeManagedUnixHomePaths("auggie"),
+	NodeManaged:   true,
 	WinPaths: []binaryutil.WinPath{
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "auggie.cmd"}},
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "auggie.exe"}},
@@ -151,8 +152,8 @@ var auggieBinarySpec = binaryutil.BinarySpec{
 }
 
 // ResolveAuggieBinary finds the `auggie` binary, searching PATH then common
-// install locations. It returns "auggie" as a last resort so callers get the
-// shell's normal command-not-found behavior if Auggie is absent.
+// install locations. It returns a wrapped ports.ErrAgentBinaryNotFound when
+// Auggie is absent.
 func ResolveAuggieBinary(ctx context.Context) (string, error) {
 	return binaryutil.ResolveBinary(ctx, auggieBinarySpec)
 }

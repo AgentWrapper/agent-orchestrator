@@ -3,8 +3,41 @@ package skillassets
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	yaml "gopkg.in/yaml.v3"
 )
+
+func TestEmbeddedSkillFrontmatterIsValidYAML(t *testing.T) {
+	body, err := files.ReadFile("using-ao/SKILL.md")
+	if err != nil {
+		t.Fatalf("read embedded SKILL.md: %v", err)
+	}
+
+	parts := strings.SplitN(string(body), "---", 3)
+	if len(parts) != 3 {
+		t.Fatal("embedded SKILL.md is missing YAML frontmatter delimiters")
+	}
+
+	var frontmatter struct {
+		Name        string `yaml:"name"`
+		Description string `yaml:"description"`
+		Trigger     string `yaml:"trigger"`
+	}
+	if err := yaml.Unmarshal([]byte(parts[1]), &frontmatter); err != nil {
+		t.Fatalf("parse embedded SKILL.md frontmatter: %v", err)
+	}
+	if frontmatter.Name != SkillName {
+		t.Fatalf("frontmatter name = %q, want %q", frontmatter.Name, SkillName)
+	}
+	if strings.TrimSpace(frontmatter.Description) == "" {
+		t.Fatal("frontmatter description is empty")
+	}
+	if strings.TrimSpace(frontmatter.Trigger) == "" {
+		t.Fatal("frontmatter trigger is empty")
+	}
+}
 
 // TestInstall_WritesSkillAndIsIdempotent: Install must lay down the embedded
 // skill (SKILL.md plus a commands file) under <dataDir>/skills/using-ao, and a

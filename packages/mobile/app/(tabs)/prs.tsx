@@ -7,6 +7,7 @@ import { haptics } from "../../lib/haptics";
 import { ProjectSwitcher } from "../../lib/ProjectSwitcher";
 import { useApp, usePRs } from "../../lib/store";
 import { ciVisual, theme } from "../../lib/theme";
+import { useTabScrollToTop } from "../../lib/useTabScrollToTop";
 import { Button, Chip, ConnectionPill, EmptyState, Pill, ScreenHeader } from "../../lib/ui";
 
 type Filter = "open" | "merged" | "all";
@@ -18,6 +19,8 @@ export default function PRsScreen() {
 	const prs = usePRs();
 	const [filter, setFilter] = useState<Filter>("open");
 	const [refreshing, setRefreshing] = useState(false);
+
+	const scrollRef = useTabScrollToTop<ScrollView>();
 
 	const filtered = useMemo(() => {
 		return prs.filter(({ pr }) => {
@@ -68,6 +71,7 @@ export default function PRsScreen() {
 			</View>
 
 			<ScrollView
+				ref={scrollRef}
 				contentContainerStyle={{ paddingBottom: 110, paddingTop: 4 }}
 				refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.blue} />}
 			>

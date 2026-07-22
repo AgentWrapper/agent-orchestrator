@@ -107,12 +107,12 @@ func (f *fakeSessionService) SetPreview(_ context.Context, id domain.SessionID, 
 	return s, nil
 }
 
-func (f *fakeSessionService) Restore(_ context.Context, id domain.SessionID) (domain.Session, error) {
+func (f *fakeSessionService) Restore(_ context.Context, id domain.SessionID) (sessionsvc.RestoreOutcome, error) {
 	s := f.sessions[id]
 	s.IsTerminated = false
 	s.Status = domain.StatusIdle
 	f.sessions[id] = s
-	return s, nil
+	return sessionsvc.RestoreOutcome{Session: s, Mode: sessionsvc.RestoreModeView("native")}, nil
 }
 
 func (f *fakeSessionService) Kill(_ context.Context, id domain.SessionID) (bool, error) {
@@ -368,6 +368,14 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ao-2/restore", "")
 	if status != http.StatusOK {
 		t.Fatalf("restore = %d, want 200; body=%s", status, body)
+	}
+	var restored struct {
+		SessionID   string `json:"sessionId"`
+		RestoreMode string `json:"restoreMode"`
+	}
+	mustJSON(t, body, &restored)
+	if restored.SessionID != "ao-2" || restored.RestoreMode != "native" {
+		t.Fatalf("restore response = %#v", restored)
 	}
 
 	body, status, _ = doRequest(t, srv, "PATCH", "/api/v1/sessions/ao-2", `{"displayName":"Renamed"}`)

@@ -136,3 +136,18 @@ sql:
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
               type: "ReviewVerdict"
+          # Nullable: a shell terminal opened with no project context has no
+          # project row to point at (it starts in the daemon's data dir).
+          - column: "shell_terminals.project_id"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "ProjectID"
+              pointer: true
+          - column: "worker_idle_events.project_id"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "ProjectID"
+          - column: "worker_idle_events.worker_id"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "SessionID"

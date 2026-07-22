@@ -295,6 +295,10 @@ describe("toAgentProvider", () => {
 		expect(toAgentProvider("totally-unknown")).toBe("codex");
 		expect(toAgentProvider(undefined)).toBe("codex");
 	});
+
+	it("keeps the fake harness (test sessions must not normalize to codex)", () => {
+		expect(toAgentProvider("fake")).toBe("fake");
+	});
 });
 
 describe("PR helpers", () => {

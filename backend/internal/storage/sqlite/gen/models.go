@@ -193,6 +193,15 @@ type SessionWorktree struct {
 	State        string
 }
 
+type ShellTerminal struct {
+	HandleID   string
+	ProjectID  *domain.ProjectID
+	WorkingDir string
+	Title      string
+	AppRunID   string
+	CreatedAt  time.Time
+}
+
 type TelemetryEvent struct {
 	ID          string
 	OccurredAt  time.Time
@@ -203,6 +212,16 @@ type TelemetryEvent struct {
 	SessionID   sql.NullString
 	RequestID   string
 	PayloadJson string
+}
+
+type WorkerIdleEvent struct {
+	ID            string
+	ProjectID     domain.ProjectID
+	WorkerID      domain.SessionID
+	TransitionAt  time.Time
+	DeliveryState string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 type WorkspaceRepo struct {

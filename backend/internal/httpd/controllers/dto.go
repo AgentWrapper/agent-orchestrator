@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/devimport"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/legacyimport"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
@@ -154,7 +155,7 @@ type SpawnSessionRequest struct {
 	ProjectID domain.ProjectID    `json:"projectId"`
 	IssueID   domain.IssueID      `json:"issueId,omitempty"`
 	Kind      domain.SessionKind  `json:"kind,omitempty" enum:"worker,orchestrator"`
-	Harness   domain.AgentHarness `json:"harness,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,kiro,kilocode,vibe,pi,autohand"`
+	Harness   domain.AgentHarness `json:"harness,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,kiro,kilocode,vibe,pi,autohand,fake"`
 	Branch    string              `json:"branch,omitempty"`
 	Prompt    string              `json:"prompt,omitempty" maxLength:"4096"`
 	// DisplayName is the sidebar label for the session, capped at 20 characters.
@@ -229,9 +230,10 @@ type RenameSessionResponse struct {
 
 // RestoreSessionResponse is the body of POST /api/v1/sessions/{sessionId}/restore.
 type RestoreSessionResponse struct {
-	OK        bool             `json:"ok"`
-	SessionID domain.SessionID `json:"sessionId"`
-	Session   SessionView      `json:"session"`
+	OK          bool                       `json:"ok"`
+	SessionID   domain.SessionID           `json:"sessionId"`
+	RestoreMode sessionsvc.RestoreModeView `json:"restoreMode" enum:"native,saved_prompt,fresh"`
+	Session     SessionView                `json:"session"`
 }
 
 // KillSessionResponse is the body of POST /api/v1/sessions/{sessionId}/kill.
@@ -554,6 +556,39 @@ type NotificationEnvelope struct {
 	Notification NotificationResponse `json:"notification"`
 }
 
+// ShellTerminalHandleIDParam is the {handleId} path parameter for shell
+// terminal routes. It is the runtime handle the terminal mux attaches to, not
+// a session id.
+type ShellTerminalHandleIDParam struct {
+	HandleID string `path:"handleId" description:"Shell terminal runtime handle identifier."`
+}
+
+// OpenShellTerminalRequest is the body of POST /api/v1/shell-terminals.
+type OpenShellTerminalRequest struct {
+	ProjectID string `json:"projectId,omitempty" description:"Project whose root the shell starts in. Omitted opens the shell in the daemon data dir."`
+}
+
+// ShellTerminalResponse is one standalone shell terminal. HandleID is what the
+// client opens on the terminal mux, exactly as it would a session's pane.
+type ShellTerminalResponse struct {
+	HandleID   string    `json:"handleId"`
+	ProjectID  string    `json:"projectId,omitempty"`
+	WorkingDir string    `json:"workingDir"`
+	Title      string    `json:"title"`
+	CreatedAt  time.Time `json:"createdAt"`
+}
+
+// ListShellTerminalsResponse is the body of GET /api/v1/shell-terminals.
+type ListShellTerminalsResponse struct {
+	ShellTerminals []ShellTerminalResponse `json:"shellTerminals"`
+}
+
+// ShellTerminalEnvelope is the { shellTerminal } response body for shell
+// terminal mutations.
+type ShellTerminalEnvelope struct {
+	ShellTerminal ShellTerminalResponse `json:"shellTerminal"`
+}
+
 // MarkAllNotificationsReadResponse is the body of POST /api/v1/notifications/read-all.
 type MarkAllNotificationsReadResponse struct {
 	Notifications []NotificationResponse `json:"notifications"`
@@ -570,6 +605,17 @@ type ImportStatusResponse struct {
 // of the import run (counts + notes), reused verbatim from the import engine.
 type ImportRunResponse struct {
 	Report legacyimport.Report `json:"report"`
+}
+
+// DevImportProjectsRequest is the body of POST /api/v1/dev/import-projects.
+type DevImportProjectsRequest struct {
+	SourceDataDir string `json:"sourceDataDir" minLength:"1"`
+	DryRun        bool   `json:"dryRun"`
+}
+
+// DevImportProjectsResponse is the body of POST /api/v1/dev/import-projects.
+type DevImportProjectsResponse struct {
+	Report devimport.Report `json:"report"`
 }
 
 // PRIDParam is the {id} path parameter shared by the /prs/{id} routes.
@@ -604,4 +650,38 @@ type MobileStatusResponse struct {
 	Port     int    `json:"port"`
 	Password string `json:"password"`
 	Warning  string `json:"warning"`
+}
+
+// PushDeviceTokenParam is the {token} path parameter for push-device routes.
+type PushDeviceTokenParam struct {
+	Token string `path:"token" description:"Expo push token (URL-encoded) identifying the device."`
+}
+
+// RegisterPushDeviceRequest is the body of POST /api/v1/push/devices. The phone
+// sends its Expo push token plus a bit of descriptive metadata; the daemon keys
+// the registry on the token and re-registering is an idempotent upsert.
+type RegisterPushDeviceRequest struct {
+	Token      string `json:"token" description:"Expo push token, e.g. ExponentPushToken[...]."`
+	Platform   string `json:"platform,omitempty" enum:"ios,android" description:"Device platform."`
+	DeviceName string `json:"deviceName,omitempty" description:"Human-friendly device label."`
+}
+
+// PushDeviceResponse is the stored view of a registered push device.
+type PushDeviceResponse struct {
+	Token      string    `json:"token"`
+	Platform   string    `json:"platform,omitempty"`
+	DeviceName string    `json:"deviceName,omitempty"`
+	CreatedAt  time.Time `json:"createdAt"`
+	LastSeenAt time.Time `json:"lastSeenAt"`
+}
+
+// PushDeviceEnvelope is the { device } response body for a registered push device.
+type PushDeviceEnvelope struct {
+	Device PushDeviceResponse `json:"device"`
+}
+
+// UnregisterPushDeviceResponse is the body of DELETE /api/v1/push/devices/{token} (200).
+type UnregisterPushDeviceResponse struct {
+	Token   string `json:"token"`
+	Deleted bool   `json:"deleted"`
 }

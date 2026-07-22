@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"sync"
 	"testing"
@@ -45,6 +46,19 @@ func sampleRecord(project string) domain.SessionRecord {
 	}
 }
 
+// Regression: the sessions.harness CHECK must allow the 'fake' harness (added
+// in migration 0024) so fake-driven e2e sessions can be created.
+func TestSessionCreateAllowsFakeHarness(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	rec := sampleRecord("mer")
+	rec.Harness = domain.HarnessFake
+	if _, err := s.CreateSession(ctx, rec); err != nil {
+		t.Fatalf("create fake-harness session: %v", err)
+	}
+}
+
 func TestProjectCRUDAndArchive(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -69,6 +83,38 @@ func TestProjectCRUDAndArchive(t *testing.T) {
 	}
 	if _, ok, _ := s.GetProject(ctx, "mer"); !ok {
 		t.Fatal("archived project must still resolve by id")
+	}
+}
+
+func TestImportWorkspaceProjectConflictsWithArchivedSameID(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	archivedAt := time.Now().UTC().Truncate(time.Second)
+	if err := s.UpsertWorkspaceProject(ctx, domain.ProjectRecord{
+		ID: "alpha", Path: "/tmp/target", RegisteredAt: time.Now().UTC().Truncate(time.Second),
+	}, nil); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	if ok, err := s.ArchiveProject(ctx, "alpha", archivedAt); err != nil || !ok {
+		t.Fatalf("archive: ok=%v err=%v", ok, err)
+	}
+
+	err := s.ImportWorkspaceProject(ctx, domain.ProjectRecord{
+		ID: "alpha", Path: "/tmp/source", RegisteredAt: time.Now().UTC().Truncate(time.Second),
+	}, nil)
+	var conflict *domain.ProjectImportConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("err = %v, want project import conflict", err)
+	}
+	if conflict.Conflict.Reason != domain.ProjectImportConflictSameIDArchivedTarget || conflict.Conflict.TargetPath != "/tmp/target" {
+		t.Fatalf("conflict = %#v", conflict.Conflict)
+	}
+	got, ok, err := s.GetProject(ctx, "alpha")
+	if err != nil || !ok {
+		t.Fatalf("get project: ok=%v err=%v", ok, err)
+	}
+	if got.ArchivedAt.IsZero() || got.Path != "/tmp/target" {
+		t.Fatalf("project = %+v, want archived target preserved", got)
 	}
 }
 

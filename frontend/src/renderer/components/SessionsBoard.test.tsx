@@ -4,8 +4,9 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 
-const { navigateMock, postMock, workspaceQueryMock } = vi.hoisted(() => ({
+const { navigateMock, notificationShowMock, postMock, workspaceQueryMock } = vi.hoisted(() => ({
 	navigateMock: vi.fn(),
+	notificationShowMock: vi.fn(),
 	postMock: vi.fn(),
 	workspaceQueryMock: vi.fn(),
 }));
@@ -22,6 +23,14 @@ vi.mock("../hooks/useWorkspaceQuery", () => ({
 vi.mock("../lib/api-client", () => ({
 	apiClient: { POST: (...args: unknown[]) => postMock(...args) },
 	apiErrorMessage: (_error: unknown, fallback: string) => fallback,
+}));
+
+vi.mock("../lib/bridge", () => ({
+	aoBridge: {
+		notifications: {
+			show: (...args: unknown[]) => notificationShowMock(...args),
+		},
+	},
 }));
 
 import { SessionsBoard } from "./SessionsBoard";
@@ -42,6 +51,7 @@ function renderBoardWithClient(queryClient: QueryClient, projectId?: string) {
 
 beforeEach(() => {
 	navigateMock.mockReset();
+	notificationShowMock.mockReset().mockResolvedValue(undefined);
 	postMock.mockReset().mockResolvedValue({ data: {} });
 	workspaceQueryMock.mockReset().mockReturnValue({ data: [], isError: false });
 });
@@ -409,6 +419,44 @@ describe("SessionsBoard", () => {
 			to: "/projects/$projectId/sessions/$sessionId",
 			params: { projectId: "p1", sessionId: "s-dead" },
 		});
+	});
+
+	it("shows a toast when restore falls back to a saved-prompt conversation", async () => {
+		postMock.mockResolvedValueOnce({ data: { restoreMode: "saved_prompt" } });
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([terminatedSession()])],
+			isError: false,
+			isSuccess: true,
+		});
+		renderBoard("p1");
+
+		await userEvent.click(screen.getByRole("button", { name: /done \/ terminated/i }));
+		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
+
+		await waitFor(() =>
+			expect(notificationShowMock).toHaveBeenCalledWith(
+				expect.objectContaining({
+					title: "Started from saved prompt",
+					body: expect.stringContaining("started a new conversation from the saved prompt"),
+				}),
+			),
+		);
+	});
+
+	it("does not show a fallback toast when restore uses native resume", async () => {
+		postMock.mockResolvedValueOnce({ data: { restoreMode: "native" } });
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([terminatedSession()])],
+			isError: false,
+			isSuccess: true,
+		});
+		renderBoard("p1");
+
+		await userEvent.click(screen.getByRole("button", { name: /done \/ terminated/i }));
+		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
+
+		await waitFor(() => expect(postMock).toHaveBeenCalled());
+		expect(notificationShowMock).not.toHaveBeenCalled();
 	});
 
 	it("keeps other restore buttons hidden while one session is restoring", async () => {
