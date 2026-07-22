@@ -19,6 +19,9 @@ const {
 	openExternal,
 	featListBuilds,
 	featGetActive,
+	getMock,
+	putMock,
+	daemonRestart,
 } = vi.hoisted(() => ({
 	getUpdate: vi.fn(),
 	setUpdate: vi.fn(),
@@ -34,6 +37,18 @@ const {
 	openExternal: vi.fn(),
 	featListBuilds: vi.fn(),
 	featGetActive: vi.fn(),
+	getMock: vi.fn(),
+	putMock: vi.fn(),
+	daemonRestart: vi.fn(),
+}));
+
+// PipelinesSection reads/writes the persisted pipelines flag over the daemon
+// HTTP API and restarts the daemon on save; mock both seams so mounting the
+// form never issues real requests.
+vi.mock("../lib/api-client", () => ({
+	apiClient: { GET: getMock, PUT: putMock },
+	apiErrorMessage: (e: unknown, fb = "Request failed") =>
+		e instanceof Error ? e.message : ((e as { message?: string })?.message ?? fb),
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => {
@@ -48,7 +63,7 @@ vi.mock("../lib/bridge", () => ({
 	aoBridge: {
 		app: { getVersion, openExternal },
 		clipboard: { writeText },
-		daemon: { getStatus: getDaemonStatus },
+		daemon: { getStatus: getDaemonStatus, restart: daemonRestart },
 		updateSettings: { get: getUpdate, set: setUpdate },
 		updates: {
 			getStatus: updGetStatus,
@@ -87,6 +102,9 @@ beforeEach(() => {
 		getDaemonStatus,
 		featListBuilds,
 		featGetActive,
+		getMock,
+		putMock,
+		daemonRestart,
 	]) {
 		m.mockReset();
 	}
@@ -103,6 +121,9 @@ beforeEach(() => {
 	openExternal.mockResolvedValue(undefined);
 	featListBuilds.mockResolvedValue([]);
 	featGetActive.mockResolvedValue(null);
+	getMock.mockResolvedValue({ data: { enabled: false }, error: undefined });
+	putMock.mockResolvedValue({ data: { enabled: true }, error: undefined });
+	daemonRestart.mockResolvedValue({ state: "ready", port: 3001 });
 });
 
 describe("GlobalSettingsForm", () => {
@@ -114,6 +135,12 @@ describe("GlobalSettingsForm", () => {
 		expect(screen.getByText("Updates")).toBeInTheDocument();
 		expect(screen.getByText("Get help")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Report a problem" })).toBeInTheDocument();
+	});
+
+	it("renders the Pipelines section inside the settings panel", async () => {
+		renderForm();
+		await screen.findByText("Updates");
+		expect(screen.getByText("Pipelines")).toBeInTheDocument();
 	});
 
 	it("shows the nightly warning when the nightly channel is loaded", async () => {

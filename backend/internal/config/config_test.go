@@ -10,7 +10,7 @@ import (
 func TestLoadDefaults(t *testing.T) {
 	// Clear every recognised var so we observe pure defaults regardless of the
 	// surrounding environment.
-	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR", "AO_AGENT", "AO_ALLOWED_ORIGINS", "AO_TELEMETRY_EVENTS", "AO_TELEMETRY_METRICS", "AO_TELEMETRY_REMOTE", "AO_TELEMETRY_POSTHOG_KEY", "AO_TELEMETRY_POSTHOG_HOST"} {
+	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR", "AO_AGENT", "AO_ALLOWED_ORIGINS", "AO_TELEMETRY_EVENTS", "AO_TELEMETRY_METRICS", "AO_TELEMETRY_REMOTE", "AO_TELEMETRY_POSTHOG_KEY", "AO_TELEMETRY_POSTHOG_HOST", "AO_PIPELINES"} {
 		t.Setenv(k, "")
 	}
 
@@ -51,6 +51,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Telemetry.Remote != TelemetryRemoteOff || cfg.Telemetry.PostHogHost != DefaultTelemetryPostHogHost {
 		t.Fatalf("Telemetry defaults = %+v", cfg.Telemetry)
 	}
+	if cfg.PipelinesEnv != nil {
+		t.Errorf("PipelinesEnv = %v, want nil (unset) by default", *cfg.PipelinesEnv)
+	}
 }
 
 func TestLoadOverrides(t *testing.T) {
@@ -64,10 +67,14 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv("AO_TELEMETRY_REMOTE", "posthog")
 	t.Setenv("AO_TELEMETRY_POSTHOG_KEY", "phc_test")
 	t.Setenv("AO_TELEMETRY_POSTHOG_HOST", "https://eu.i.posthog.com")
+	t.Setenv("AO_PIPELINES", "on")
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
+	}
+	if cfg.PipelinesEnv == nil || !*cfg.PipelinesEnv {
+		t.Errorf("PipelinesEnv = %v, want &true when AO_PIPELINES=on", cfg.PipelinesEnv)
 	}
 	if cfg.Addr() != "127.0.0.1:4002" {
 		t.Errorf("Addr() = %q, want 127.0.0.1:4002", cfg.Addr())
@@ -110,6 +117,7 @@ func TestLoadInvalid(t *testing.T) {
 		{"bad telemetry events", map[string]string{"AO_TELEMETRY_EVENTS": "maybe"}},
 		{"bad telemetry metrics", map[string]string{"AO_TELEMETRY_METRICS": "maybe"}},
 		{"bad telemetry remote", map[string]string{"AO_TELEMETRY_REMOTE": "otlp"}},
+		{"bad pipelines toggle", map[string]string{"AO_PIPELINES": "maybe"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -155,6 +163,44 @@ func TestLoadAllowedOrigins(t *testing.T) {
 			if cfg.AllowedOrigins[i] != origin {
 				t.Errorf("AllowedOrigins[%d] = %q, want %q", i, cfg.AllowedOrigins[i], origin)
 			}
+		}
+	})
+}
+
+// TestLoadPipelinesEnvTristate covers the AO_PIPELINES env override's three
+// states: on -> &true, off -> &false, unset -> nil (let the persisted app-setting
+// decide). The daemon combines this with the store; see resolvePipelinesEnabled.
+func TestLoadPipelinesEnvTristate(t *testing.T) {
+	t.Run("on", func(t *testing.T) {
+		t.Setenv("AO_PIPELINES", "on")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.PipelinesEnv == nil || !*cfg.PipelinesEnv {
+			t.Errorf("PipelinesEnv = %v, want &true", cfg.PipelinesEnv)
+		}
+	})
+	t.Run("off", func(t *testing.T) {
+		t.Setenv("AO_PIPELINES", "off")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.PipelinesEnv == nil || *cfg.PipelinesEnv {
+			t.Errorf("PipelinesEnv = %v, want &false", cfg.PipelinesEnv)
+		}
+	})
+	t.Run("unset", func(t *testing.T) {
+		// Empty string is treated as unset by Load (LookupEnv ok but blank),
+		// and neutralises any AO_PIPELINES inherited from the ambient env.
+		t.Setenv("AO_PIPELINES", "")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.PipelinesEnv != nil {
+			t.Errorf("PipelinesEnv = %v, want nil when unset", *cfg.PipelinesEnv)
 		}
 	})
 }

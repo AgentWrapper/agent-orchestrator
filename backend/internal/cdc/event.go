@@ -28,6 +28,15 @@ const (
 	EventPRSessionChanged       EventType = "pr_session_changed"
 	EventPRReviewThreadAdded    EventType = "pr_review_thread_added"
 	EventPRReviewThreadResolved EventType = "pr_review_thread_resolved"
+
+	// Pipeline events ride the same change_log stream, emitted by the CDC
+	// triggers on the pipeline_* tables (migration 0040). They are project-level
+	// (Event.SessionID is empty) because a run's session id may be a manual-run
+	// placeholder that is not a real sessions row.
+	EventPipelineDefinitionChanged EventType = "pipeline_definition_changed"
+	EventPipelineRunUpdated        EventType = "pipeline_run_updated"
+	EventPipelineStageRunUpdated   EventType = "pipeline_stage_run_updated"
+	EventPipelineArtifactUpdated   EventType = "pipeline_artifact_updated"
 )
 
 // Event is one CDC change read from change_log. Seq is the monotonic ordering +

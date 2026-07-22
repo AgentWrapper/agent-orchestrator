@@ -29,6 +29,7 @@ import { listFeatureBuilds, getActiveFeatureBuild } from "./main/feature-builds"
 import { readUpdateSettings, type UpdateSettings, type UpdateStatus } from "./main/update-settings";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
 import { closeSync, existsSync, openSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -1048,9 +1049,27 @@ function stopDaemon(): DaemonStatus {
 	return daemonStatus;
 }
 
+// Restarts the app-owned daemon so a persisted setting change (e.g. the
+// Pipelines toggle in Global Settings, T12) takes effect without the user
+// quitting the whole app. Waits for the old process to actually exit before
+// respawning, so startDaemon doesn't attach to the still-dying daemon and
+// skip a fresh spawn.
+async function restartDaemon(): Promise<DaemonStatus> {
+	const proc = daemonProcess;
+	stopDaemon();
+	// When we're only attached to a headless `ao start` daemon (proc == null),
+	// there is nothing to restart here; the persisted setting applies on its
+	// next boot.
+	if (proc && proc.exitCode === null && proc.signalCode === null) {
+		await Promise.race([once(proc, "exit"), new Promise((resolve) => setTimeout(resolve, 5000))]).catch(() => {});
+	}
+	return startDaemon();
+}
+
 ipcMain.handle("daemon:getStatus", () => refreshDaemonStatus());
 ipcMain.handle("daemon:start", () => startDaemon());
 ipcMain.handle("daemon:stop", () => stopDaemon());
+ipcMain.handle("daemon:restart", () => restartDaemon());
 ipcMain.handle("app:getVersion", () => app.getVersion());
 ipcMain.handle("app:openExternal", async (_event, url: string) => {
 	await openAllowedAppExternalURL(url, shell);

@@ -105,6 +105,14 @@ type Config struct {
 	AllowedOrigins []string
 	// Telemetry controls local/remote telemetry sinks.
 	Telemetry TelemetryConfig
+	// PipelinesEnv is the explicit AO_PIPELINES override and is non-nil only when
+	// that env var is set. It is a dev/CI escape hatch that wins over the persisted
+	// setting: when non-nil its value is authoritative. When nil (env unset), the
+	// daemon falls through to the "pipelines.enabled" row in its own app_settings
+	// store (see backend/internal/daemon.resolvePipelinesEnabled); absent both, the
+	// pipelines v1 subsystem stays off — no engines, no CDC trigger bridge, and the
+	// API returns 501 on every pipelines route. See docs/pipelines.md.
+	PipelinesEnv *bool
 }
 
 // Addr returns the host:port the HTTP server binds. It uses net.JoinHostPort so
@@ -133,6 +141,9 @@ func (c Config) Addr() string {
 //	AO_TELEMETRY_REMOTE  remote exporter off|posthog (default off)
 //	AO_TELEMETRY_POSTHOG_KEY   PostHog project key
 //	AO_TELEMETRY_POSTHOG_HOST  PostHog host (default DefaultTelemetryPostHogHost)
+//	AO_PIPELINES         pipelines subsystem off|on — dev/CI override. When set it
+//	                     wins over the persisted "pipelines.enabled" app-setting;
+//	                     when unset that setting decides (default off).
 //
 // The bind host is not configurable: the daemon is loopback-only by design.
 func Load() (Config, error) {
@@ -234,6 +245,14 @@ func Load() (Config, error) {
 	}
 	if raw := os.Getenv("AO_TELEMETRY_POSTHOG_HOST"); raw != "" {
 		cfg.Telemetry.PostHogHost = raw
+	}
+
+	if raw, ok := os.LookupEnv("AO_PIPELINES"); ok && raw != "" {
+		v, err := parseToggleEnv("AO_PIPELINES", raw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.PipelinesEnv = &v
 	}
 
 	runFile, err := resolveRunFilePath()

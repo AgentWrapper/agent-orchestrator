@@ -1,0 +1,273 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-orchestrator.dev/schema/pipeline-definition.json",
+  "title": "Pipeline definition",
+  "description": "A single pipeline definition document (v1: one pipeline per YAML document, authored in the definitions editor and stored in SQLite). Mirrors backend/internal/pipeline/types.go; kept in sync by hand.",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable pipeline name. Required; there is no map key to default it from."
+    },
+    "scope": {
+      "type": "string",
+      "enum": ["worker"],
+      "description": "Pipeline-v3 scope. Only \"worker\" is accepted in v1; \"orchestrator\" and \"workstream\" are deferred to phase 2."
+    },
+    "stages": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/stage" }
+    },
+    "maxConcurrentStages": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Defaults to 1 (serial execution) when unset."
+    },
+    "allowForkPRs": {
+      "type": "boolean",
+      "description": "Opt in to running command-executor stages for fork PRs. Defaults to false."
+    },
+    "exitPredicates": { "$ref": "#/$defs/exitPredicates" }
+  },
+  "required": ["name", "stages"],
+  "additionalProperties": false,
+
+  "$defs": {
+    "stage": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "trigger": { "$ref": "#/$defs/stageTrigger" },
+        "executor": { "$ref": "#/$defs/stageExecutor" },
+        "task": { "$ref": "#/$defs/taskSpec" },
+        "policy": { "$ref": "#/$defs/stagePolicy" },
+        "budget": { "$ref": "#/$defs/stageBudget" },
+        "timeoutMs": { "type": "integer", "minimum": 0 },
+        "retries": { "type": "integer", "minimum": 0 },
+        "maxLoopRounds": { "type": "integer", "minimum": 1 },
+        "dependsOn": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "routes": { "$ref": "#/$defs/stageRoutes" },
+        "workspace": {
+          "type": "string",
+          "enum": ["shared-ro", "isolated-rw"]
+        }
+      },
+      "required": ["name", "trigger", "executor"],
+      "additionalProperties": false
+    },
+
+    "stageTrigger": {
+      "type": "object",
+      "properties": {
+        "on": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["pr.opened", "pr.updated", "pr.merge_ready", "pr.merged", "manual"]
+          }
+        }
+      },
+      "required": ["on"],
+      "additionalProperties": false
+    },
+
+    "stageExecutor": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "agent" },
+            "plugin": { "type": "string", "minLength": 1 },
+            "mode": { "type": "string", "enum": ["review", "code", "answer"] },
+            "config": { "type": "object" }
+          },
+          "required": ["kind", "plugin", "mode"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "command" },
+            "command": { "type": "string", "minLength": 1 },
+            "args": { "type": "array", "items": { "type": "string" } },
+            "env": { "type": "object", "additionalProperties": { "type": "string" } },
+            "cwd": { "type": "string" }
+          },
+          "required": ["kind", "command"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "builtin" },
+            "name": { "type": "string", "enum": ["router", "compose"] },
+            "config": { "type": "object" }
+          },
+          "required": ["kind", "name"],
+          "additionalProperties": false
+        }
+      ]
+    },
+
+    "taskSpec": {
+      "type": "object",
+      "properties": {
+        "prompt": { "type": "string" },
+        "outputSchema": { "type": "object" },
+        "inputs": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+
+    "stagePolicy": {
+      "type": "object",
+      "properties": {
+        "blocksMerge": { "type": "boolean" },
+        "stallWindow": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+
+    "stageBudget": {
+      "type": "object",
+      "properties": {
+        "maxUsd": { "type": "number", "minimum": 0 },
+        "maxDurationMs": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+
+    "stageRoutes": {
+      "type": "object",
+      "properties": {
+        "when": { "$ref": "#/$defs/predicate" }
+      },
+      "required": ["when"],
+      "additionalProperties": false
+    },
+
+    "exitPredicates": {
+      "type": "object",
+      "properties": {
+        "done": { "$ref": "#/$defs/predicate" },
+        "stalled": { "$ref": "#/$defs/predicate" },
+        "blocksMerge": { "$ref": "#/$defs/predicate" }
+      },
+      "additionalProperties": false
+    },
+
+    "predicate": {
+      "description": "Typed predicate DSL node. Recursive union discriminated on \"kind\".",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "all_pass" },
+            "stages": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+          },
+          "required": ["kind", "stages"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "any_pass" },
+            "stages": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+          },
+          "required": ["kind", "stages"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "majority_pass" },
+            "stages": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+          },
+          "required": ["kind", "stages"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "no_open_findings" },
+            "stage": { "type": "string", "minLength": 1 }
+          },
+          "required": ["kind"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "finding_count_below" },
+            "max": { "type": "integer", "minimum": 0 },
+            "stage": { "type": "string", "minLength": 1 },
+            "severity": { "type": "string", "enum": ["error", "warning", "info"] }
+          },
+          "required": ["kind", "max"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "loop_rounds_at_least" },
+            "n": { "type": "integer", "minimum": 1 }
+          },
+          "required": ["kind", "n"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "stage_retried_at_least" },
+            "stage": { "type": "string", "minLength": 1 },
+            "n": { "type": "integer", "minimum": 1 }
+          },
+          "required": ["kind", "stage", "n"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "stage_verdict" },
+            "stage": { "type": "string", "minLength": 1 },
+            "verdict": { "type": "string", "enum": ["pass", "fail", "neutral"] }
+          },
+          "required": ["kind", "stage", "verdict"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "and" },
+            "predicates": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/predicate" } }
+          },
+          "required": ["kind", "predicates"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "or" },
+            "predicates": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/predicate" } }
+          },
+          "required": ["kind", "predicates"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "not" },
+            "predicate": { "$ref": "#/$defs/predicate" }
+          },
+          "required": ["kind", "predicate"],
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

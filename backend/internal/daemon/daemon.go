@@ -29,6 +29,7 @@ import (
 	devimportsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/devimport"
 	importsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/importer"
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
+	pipelinesvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pipeline"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	"github.com/aoagents/agent-orchestrator/backend/internal/skillassets"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
@@ -150,6 +151,25 @@ func Run() error {
 		return fmt.Errorf("wire session service: %w", err)
 	}
 	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, log)
+
+	// Pipelines v1 (spec §4b T5/T11/T12): one actor-loop engine per project,
+	// driving the pure reducer + executors + store. Enablement resolves from the
+	// AO_PIPELINES env override (dev/CI) falling through to the persisted
+	// "pipelines.enabled" app-setting the Settings UI writes: see
+	// resolvePipelinesEnabled. When off, no engines and no CDC trigger bridge
+	// start, and Pipelines stays nil below so every API route returns 501.
+	// pipelineStk.Stop is nil-safe, so teardown needs no extra guard.
+	var pipelineStk *pipelineStack
+	var pipelinesSvc pipelinesvc.Manager
+	if resolvePipelinesEnabled(ctx, cfg, store, log) {
+		pipelineStk = startPipelineEngine(ctx, store, sessionSvc, cdcPipe.Broadcaster, log)
+		pipelinesSvc = pipelinesvc.New(store, pipelinesvc.SupervisorEngines(pipelineStk.supervisor))
+		// Let the lifecycle merge-readiness path veto a ready-to-merge PR whose
+		// latest settled pipeline run blocks merge. Only wired when pipelines are
+		// enabled, so the gate stays a no-op otherwise.
+		lcStack.LCM.SetPipelineMergeGate(pipelinesSvc)
+	}
+
 	agentSvc := agentsvc.New()
 	go func() {
 		if _, err := agentSvc.Refresh(ctx); err != nil {
@@ -211,6 +231,8 @@ func Run() error {
 		NotificationStream: notificationHub,
 		Push:               pushRegistry,
 		Import:             importsvc.New(importsvc.Deps{Store: store}),
+		Pipelines:          pipelinesSvc,
+		Settings:           store,
 		ShellTerminals:     shellTermSvc,
 		CDC:                store,
 		Events:             cdcPipe.Broadcaster,
@@ -227,6 +249,7 @@ func Run() error {
 	})
 	if err != nil {
 		stop()
+		pipelineStk.Stop(context.Background())
 		lcStack.Stop()
 		if cdcErr := cdcPipe.Stop(); cdcErr != nil {
 			log.Error("cdc pipeline shutdown", "err", cdcErr)
@@ -293,6 +316,10 @@ func Run() error {
 	// runs before the cancel: a non-signal exit path would hang otherwise.
 	stop()
 	<-previewDone
+	// Stop pipeline engines before the lifecycle stack: cancelling in-flight runs
+	// kills their stage sessions (reclaiming worktrees) through the still-live
+	// session manager.
+	pipelineStk.Stop(context.Background())
 	lcStack.Stop()
 	lanStopCtx, lanCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer lanCancel()

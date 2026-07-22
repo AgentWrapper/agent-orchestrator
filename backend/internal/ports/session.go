@@ -20,7 +20,12 @@ type SpawnConfig struct {
 	Kind         domain.SessionKind
 	Harness      domain.AgentHarness
 	Branch       string
-	Prompt       string
+	// BaseBranch overrides the base the new session branch is created from. Empty
+	// falls back to the project's default branch. The pipeline spawn path sets it
+	// to a PR source branch so a fallback derived branch starts at the PR head when
+	// the source branch is already checked out in another worktree.
+	BaseBranch string
+	Prompt     string
 
 	// DisplayName is the user-facing sidebar label. Empty falls back to the
 	// session id in the read model (e.g. orchestrator sessions).

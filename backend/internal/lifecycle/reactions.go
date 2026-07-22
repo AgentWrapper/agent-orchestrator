@@ -348,15 +348,35 @@ func (m *Manager) notificationIntentForCurrentSCM(ctx context.Context, id domain
 	// Serialize the session snapshot with activity transitions so ready-to-merge
 	// notifications do not race against a simultaneous waiting_input update.
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
+		m.mu.Unlock()
 		return nil, err
 	}
 	if !ok {
+		m.mu.Unlock()
 		return nil, nil
 	}
-	return m.notificationIntentForSCM(rec, o), nil
+	intent := m.notificationIntentForSCM(rec, o)
+	gate := m.pipelineGate
+	m.mu.Unlock()
+
+	// A pipeline configured to block merge overrides an otherwise ready-to-merge
+	// PR. Consult the gate only for a ready-to-merge intent (the sole state a
+	// pipeline can veto) and outside the lock, since it does store I/O. No gate,
+	// no matching settled run, or a stale-SHA run means no opinion: the intent
+	// stands.
+	if intent != nil && intent.Type == domain.NotificationReadyToMerge && gate != nil {
+		headSHA := firstSCMNonEmpty(o.CI.HeadSHA, o.PR.HeadSHA)
+		blocked, err := gate.PRBlocksMerge(ctx, rec.ProjectID, intent.PRURL, headSHA)
+		if err != nil {
+			return nil, err
+		}
+		if blocked {
+			return nil, nil
+		}
+	}
+	return intent, nil
 }
 
 func (m *Manager) notificationIntentForSCM(rec domain.SessionRecord, o ports.SCMObservation) *ports.NotificationIntent {

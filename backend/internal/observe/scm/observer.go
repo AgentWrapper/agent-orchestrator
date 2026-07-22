@@ -1098,6 +1098,7 @@ func domainFromObservation(sessionID domain.SessionID, obs ports.SCMObservation,
 		ObservedAt:               observedAt,
 		CIObservedAt:             ciObservedAt,
 		ReviewObservedAt:         reviewObservedAt,
+		IsFromFork:               forkFromRepos(obs.Repo, obs.PR.HeadRepo),
 	}
 	checks := make([]domain.PullRequestCheck, 0, len(obs.CI.Checks))
 	for _, ch := range obs.CI.Checks {
@@ -1127,6 +1128,18 @@ func domainFromObservation(sessionID domain.SessionID, obs ports.SCMObservation,
 		}
 	}
 	return pr, checks, reviews, threads, comments
+}
+
+// forkFromRepos derives fork provenance for the pr.is_from_fork column: the PR
+// is from a fork when its head repo differs from the base repo. When either
+// repo is unknown the result is nil (fail-safe unknown) so the command-executor
+// gate keeps blocking rather than assuming same-repo.
+func forkFromRepos(baseRepo, headRepo string) *bool {
+	if baseRepo == "" || headRepo == "" {
+		return nil
+	}
+	v := !strings.EqualFold(baseRepo, headRepo)
+	return &v
 }
 
 func observationFromLocal(repo ports.SCMRepo, pr domain.PullRequest, checks []domain.PullRequestCheck) ports.SCMObservation {

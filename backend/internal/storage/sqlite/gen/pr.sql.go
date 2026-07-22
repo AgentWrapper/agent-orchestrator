@@ -55,6 +55,8 @@ SELECT
     pr.review_decision,
     pr.ci_state,
     pr.mergeability,
+    pr.head_sha,
+    pr.is_from_fork,
     pr.updated_at,
     EXISTS (
         SELECT 1
@@ -78,6 +80,8 @@ type GetDisplayPRFactsBySessionRow struct {
 	ReviewDecision domain.ReviewDecision
 	CIState        domain.CIState
 	Mergeability   domain.Mergeability
+	HeadSha        string
+	IsFromFork     sql.NullInt64
 	UpdatedAt      time.Time
 	ReviewComments bool
 }
@@ -92,6 +96,8 @@ func (q *Queries) GetDisplayPRFactsBySession(ctx context.Context, sessionID doma
 		&i.ReviewDecision,
 		&i.CIState,
 		&i.Mergeability,
+		&i.HeadSha,
+		&i.IsFromFork,
 		&i.UpdatedAt,
 		&i.ReviewComments,
 	)
@@ -99,7 +105,7 @@ func (q *Queries) GetDisplayPRFactsBySession(ctx context.Context, sessionID doma
 }
 
 const getPR = `-- name: GetPR :one
-SELECT url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, provider, host, repo, source_branch, target_branch, head_sha, title, additions, deletions, changed_files, author, base_sha, merge_commit_sha, is_draft, is_merged, is_closed, provider_state, provider_mergeable, provider_merge_state_status, html_url, created_at_provider, updated_at_provider, merged_at_provider, closed_at_provider, metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at, last_nudge_signature FROM pr WHERE url = ?
+SELECT url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, provider, host, repo, source_branch, target_branch, head_sha, title, additions, deletions, changed_files, author, base_sha, merge_commit_sha, is_draft, is_merged, is_closed, provider_state, provider_mergeable, provider_merge_state_status, html_url, created_at_provider, updated_at_provider, merged_at_provider, closed_at_provider, metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at, last_nudge_signature, is_from_fork FROM pr WHERE url = ?
 `
 
 func (q *Queries) GetPR(ctx context.Context, url string) (PR, error) {
@@ -145,6 +151,7 @@ func (q *Queries) GetPR(ctx context.Context, url string) (PR, error) {
 		&i.CIObservedAt,
 		&i.ReviewObservedAt,
 		&i.LastNudgeSignature,
+		&i.IsFromFork,
 	)
 	return i, err
 }
@@ -167,6 +174,54 @@ func (q *Queries) GetPRClaimAndOwner(ctx context.Context, url string) (GetPRClai
 	row := q.db.QueryRowContext(ctx, getPRClaimAndOwner, url)
 	var i GetPRClaimAndOwnerRow
 	err := row.Scan(&i.SessionID, &i.IsTerminated)
+	return i, err
+}
+
+const getPRFactsByURL = `-- name: GetPRFactsByURL :one
+SELECT
+    pr.url,
+    pr.number,
+    pr.pr_state,
+    pr.review_decision,
+    pr.ci_state,
+    pr.mergeability,
+    pr.head_sha,
+    pr.is_from_fork,
+    pr.updated_at
+FROM pr
+WHERE pr.url = ?
+`
+
+type GetPRFactsByURLRow struct {
+	URL            string
+	Number         int64
+	PRState        domain.PRState
+	ReviewDecision domain.ReviewDecision
+	CIState        domain.CIState
+	Mergeability   domain.Mergeability
+	HeadSha        string
+	IsFromFork     sql.NullInt64
+	UpdatedAt      time.Time
+}
+
+// Exact-PR facts for the pipeline trigger bridge (T6): the changed PR named in
+// a CDC pr_created/pr_updated payload, including head_sha for new-SHA detection.
+// Keyed by url (not session) so a stacked-PR session attributes each event to
+// the right PR.
+func (q *Queries) GetPRFactsByURL(ctx context.Context, url string) (GetPRFactsByURLRow, error) {
+	row := q.db.QueryRowContext(ctx, getPRFactsByURL, url)
+	var i GetPRFactsByURLRow
+	err := row.Scan(
+		&i.URL,
+		&i.Number,
+		&i.PRState,
+		&i.ReviewDecision,
+		&i.CIState,
+		&i.Mergeability,
+		&i.HeadSha,
+		&i.IsFromFork,
+		&i.UpdatedAt,
+	)
 	return i, err
 }
 
@@ -255,7 +310,7 @@ func (q *Queries) ListPRFactsBySession(ctx context.Context, sessionID domain.Ses
 }
 
 const listPRsBySession = `-- name: ListPRsBySession :many
-SELECT url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, provider, host, repo, source_branch, target_branch, head_sha, title, additions, deletions, changed_files, author, base_sha, merge_commit_sha, is_draft, is_merged, is_closed, provider_state, provider_mergeable, provider_merge_state_status, html_url, created_at_provider, updated_at_provider, merged_at_provider, closed_at_provider, metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at, last_nudge_signature FROM pr
+SELECT url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, provider, host, repo, source_branch, target_branch, head_sha, title, additions, deletions, changed_files, author, base_sha, merge_commit_sha, is_draft, is_merged, is_closed, provider_state, provider_mergeable, provider_merge_state_status, html_url, created_at_provider, updated_at_provider, merged_at_provider, closed_at_provider, metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at, last_nudge_signature, is_from_fork FROM pr
 WHERE session_id = ?
 ORDER BY updated_at DESC
 `
@@ -309,6 +364,7 @@ func (q *Queries) ListPRsBySession(ctx context.Context, sessionID domain.Session
 			&i.CIObservedAt,
 			&i.ReviewObservedAt,
 			&i.LastNudgeSignature,
+			&i.IsFromFork,
 		); err != nil {
 			return nil, err
 		}
@@ -394,9 +450,10 @@ INSERT INTO pr (
     is_draft, is_merged, is_closed,
     provider_state, provider_mergeable, provider_merge_state_status, html_url,
     created_at_provider, updated_at_provider, merged_at_provider, closed_at_provider,
-    metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at
+    metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at,
+    is_from_fork
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (url) DO UPDATE SET
     number = excluded.number,
     pr_state = excluded.pr_state,
@@ -433,7 +490,8 @@ ON CONFLICT (url) DO UPDATE SET
     review_hash = excluded.review_hash,
     observed_at = excluded.observed_at,
     ci_observed_at = excluded.ci_observed_at,
-    review_observed_at = excluded.review_observed_at
+    review_observed_at = excluded.review_observed_at,
+    is_from_fork = excluded.is_from_fork
 `
 
 type UpsertPRParams struct {
@@ -475,6 +533,7 @@ type UpsertPRParams struct {
 	ObservedAt               sql.NullTime
 	CIObservedAt             sql.NullTime
 	ReviewObservedAt         sql.NullTime
+	IsFromFork               sql.NullInt64
 }
 
 func (q *Queries) UpsertPR(ctx context.Context, arg UpsertPRParams) error {
@@ -517,6 +576,7 @@ func (q *Queries) UpsertPR(ctx context.Context, arg UpsertPRParams) error {
 		arg.ObservedAt,
 		arg.CIObservedAt,
 		arg.ReviewObservedAt,
+		arg.IsFromFork,
 	)
 	return err
 }

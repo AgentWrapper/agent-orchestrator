@@ -429,7 +429,7 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 			Kind:          cfg.Kind,
 			SessionPrefix: sessionPrefix(project),
 			Branch:        branch,
-			BaseBranch:    project.Config.WithDefaults().DefaultBranch,
+			BaseBranch:    firstNonEmptyString(cfg.BaseBranch, project.Config.WithDefaults().DefaultBranch),
 		})
 		return ws, nil, err
 	}
@@ -456,7 +456,7 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 		SessionPrefix: sessionPrefix(project),
 		Branch:        branch,
 		RootRepoPath:  project.Path,
-		BaseBranch:    project.Config.WithDefaults().DefaultBranch,
+		BaseBranch:    firstNonEmptyString(cfg.BaseBranch, project.Config.WithDefaults().DefaultBranch),
 		Repos:         childRepos,
 	})
 	if err != nil {

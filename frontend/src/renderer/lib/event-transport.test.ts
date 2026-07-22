@@ -40,12 +40,17 @@ class EventSourceStub {
 	onerror: (() => void) | null = null;
 	onmessage: (() => void) | null = null;
 	listeners: string[] = [];
+	handlers: Record<string, () => void> = {};
 	constructor(url: string) {
 		this.url = url;
 		EventSourceStub.instances.push(this);
 	}
-	addEventListener(type: string) {
+	addEventListener(type: string, handler: () => void) {
 		this.listeners.push(type);
+		this.handlers[type] = handler;
+	}
+	emit(type: string) {
+		this.handlers[type]?.();
 	}
 	close() {
 		this.closed = true;
@@ -82,6 +87,16 @@ describe("createEventTransport", () => {
 		// All CDC event types plus onmessage are wired up.
 		expect(EventSourceStub.instances[0].listeners).toContain("session_updated");
 		expect(EventSourceStub.instances[0].onmessage).toBeTypeOf("function");
+	});
+
+	it("invalidates the pipelines-enabled capability probe on a daemon status change", () => {
+		const queryClient = fakeQueryClient();
+		createEventTransport(queryClient).connect();
+		const onStatusHandler = onStatusMock.mock.calls[0][0] as () => void;
+
+		onStatusHandler();
+
+		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["pipelines-enabled"] });
 	});
 
 	it("does not reconnect when a daemon status keeps the same base URL", () => {
@@ -127,10 +142,42 @@ describe("createEventTransport", () => {
 			const onStatusHandler = onStatusMock.mock.calls[0][0] as () => void;
 
 			onStatusHandler();
-			expect(queryClient.invalidateQueries).not.toHaveBeenCalled();
+			// The pipelines-enabled re-probe fires synchronously (it is a cheap,
+			// one-shot capability check); workspace/SCM invalidation is debounced.
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["pipelines-enabled"] });
+			expect(queryClient.invalidateQueries).not.toHaveBeenCalledWith({ queryKey: ["workspaces"] });
 			vi.advanceTimersByTime(200);
 			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["workspaces"] });
 			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-scm-summary"] });
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("invalidates the pipeline query family on a pipeline_* event, debounced", () => {
+		vi.useFakeTimers();
+		try {
+			const queryClient = fakeQueryClient();
+			createEventTransport(queryClient).connect();
+			const source = EventSourceStub.instances[0];
+			// All four pipeline event types are subscribed alongside the CDC ones.
+			expect(source.listeners).toContain("pipeline_run_updated");
+			expect(source.listeners).toContain("pipeline_stage_run_updated");
+			expect(source.listeners).toContain("pipeline_artifact_updated");
+			expect(source.listeners).toContain("pipeline_definition_changed");
+
+			source.emit("pipeline_run_updated");
+			expect(queryClient.invalidateQueries).not.toHaveBeenCalled();
+			vi.advanceTimersByTime(200);
+
+			const call = (queryClient.invalidateQueries as ReturnType<typeof vi.fn>).mock.calls.find(
+				(args) => typeof (args[0] as { predicate?: unknown })?.predicate === "function",
+			);
+			expect(call).toBeTruthy();
+			const predicate = (call![0] as { predicate: (q: { queryKey: readonly unknown[] }) => boolean }).predicate;
+			expect(predicate({ queryKey: ["pipeline-runs", "proj-1"] })).toBe(true);
+			expect(predicate({ queryKey: ["pipeline-run", "run-1"] })).toBe(true);
+			expect(predicate({ queryKey: ["workspaces"] })).toBe(false);
 		} finally {
 			vi.useRealTimers();
 		}

@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
-import { ChevronRight, LayoutDashboard, MoreVertical, Pencil, Plus, RefreshCw, Settings, Trash2 } from "lucide-react";
+import { ChevronRight, LayoutDashboard, MoreVertical, Pencil, Plus, RefreshCw, Settings, Trash2, Workflow } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { UpdateStatus } from "../../main/update-settings";
 import {
@@ -15,6 +15,7 @@ import { aoBridge } from "../lib/bridge";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { renameSession } from "../lib/rename-session";
+import { usePipelinesEnabled } from "../hooks/usePipelinesEnabled";
 import { useResizable } from "../hooks/useResizable";
 import { useShellMaybe } from "../lib/shell-context";
 import { useUpdateStatus } from "../hooks/useUpdateStatus";
@@ -103,6 +104,7 @@ function useSelection() {
 		activeProjectId: params.projectId,
 		activeSessionId: params.sessionId,
 		goHome: () => void navigate({ to: "/" }),
+		goPipelines: () => void navigate({ to: "/pipelines" }),
 		goGlobalSettings: () => void navigate({ to: "/settings" }),
 		goSettings: (projectId: string) => void navigate({ to: "/projects/$projectId/settings", params: { projectId } }),
 		goProject: (projectId: string) => void navigate({ to: "/projects/$projectId", params: { projectId } }),
@@ -133,6 +135,7 @@ export function Sidebar({
 	onRemoveProject,
 }: SidebarProps) {
 	const selection = useSelection();
+	const { enabled: pipelinesEnabled } = usePipelinesEnabled();
 	const { state, setOpen } = useSidebar();
 	const isCollapsed = state === "collapsed";
 	const [expandedChromeVisible, setExpandedChromeVisible] = useState(!isCollapsed);
@@ -332,6 +335,17 @@ export function Sidebar({
 						<Settings aria-hidden="true" />
 						<span className="tracking-tight">Settings</span>
 					</button>
+					{pipelinesEnabled && (
+						<button
+							aria-label="Pipelines"
+							className="flex w-full items-center justify-center gap-2.5 rounded-md border border-border p-2 text-control font-medium text-passive transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-lg [&_svg]:text-passive"
+							onClick={() => selection.goPipelines()}
+							type="button"
+						>
+							<Workflow aria-hidden="true" />
+							<span className="tracking-tight">Pipelines</span>
+						</button>
+					)}
 				</div>
 				<div className="pointer-events-none absolute inset-x-1.5 top-[7px] flex min-h-[52px] flex-col items-center justify-center gap-1 opacity-0 transition-opacity duration-150 ease-out group-data-[collapsible=icon]:pointer-events-auto group-data-[collapsible=icon]:opacity-100">
 					<RestartToUpdateRailButton status={updateStatus} />
@@ -348,6 +362,21 @@ export function Sidebar({
 						</TooltipTrigger>
 						<TooltipContent side="right">Settings</TooltipContent>
 					</Tooltip>
+					{pipelinesEnabled && (
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<button
+									aria-label="Pipelines"
+									className="grid size-control-board place-items-center rounded-lg border border-border text-passive transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-base"
+									onClick={() => selection.goPipelines()}
+									type="button"
+								>
+									<Workflow aria-hidden="true" />
+								</button>
+							</TooltipTrigger>
+							<TooltipContent side="right">Pipelines</TooltipContent>
+						</Tooltip>
+					)}
 				</div>
 			</SidebarFooter>
 

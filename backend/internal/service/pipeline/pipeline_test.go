@@ -1,0 +1,477 @@
+package pipelinesvc
+
+import (
+	"context"
+	"errors"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
+	"github.com/aoagents/agent-orchestrator/backend/internal/pipeline"
+	"github.com/aoagents/agent-orchestrator/backend/internal/pipeline/engine"
+	"github.com/aoagents/agent-orchestrator/backend/internal/pipeline/executors"
+	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
+)
+
+// ---------------------------------------------------------------------------
+// Test doubles: a real engine over a real store + a scripted executor, so the
+// service's lifecycle mutations exercise the actual reducer transition (not a
+// recorded-call fake) — the DoD's "route through the engine, assert state
+// transition" requirement.
+// ---------------------------------------------------------------------------
+
+type fakeHandle struct {
+	runID      pipeline.RunID
+	stageRunID pipeline.StageRunID
+	stageName  string
+}
+
+func (h fakeHandle) RunID() pipeline.RunID           { return h.runID }
+func (h fakeHandle) StageRunID() pipeline.StageRunID { return h.stageRunID }
+func (h fakeHandle) StageName() string               { return h.stageName }
+
+// fakeExecutor keeps every stage "running" until the test marks an outcome.
+type fakeExecutor struct {
+	mu      sync.Mutex
+	outcome map[string]executors.Outcome
+	ready   map[string]bool
+}
+
+func newFakeExecutor() *fakeExecutor {
+	return &fakeExecutor{outcome: map[string]executors.Outcome{}, ready: map[string]bool{}}
+}
+
+func (f *fakeExecutor) Start(_ context.Context, in executors.StartInput) (executors.Handle, error) {
+	return fakeHandle{runID: in.RunID, stageRunID: in.StageRunID, stageName: in.Stage.Name}, nil
+}
+
+func (f *fakeExecutor) Poll(_ context.Context, h executors.Handle) (executors.Outcome, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.ready[h.StageName()] {
+		return f.outcome[h.StageName()], nil
+	}
+	return executors.Outcome{Status: executors.OutcomeRunning}, nil
+}
+
+func (f *fakeExecutor) Cancel(context.Context, executors.Handle) error { return nil }
+
+func (f *fakeExecutor) fail(stage, msg string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.outcome[stage] = executors.Outcome{Status: executors.OutcomeFailed, ErrorMessage: msg}
+	f.ready[stage] = true
+}
+
+func (f *fakeExecutor) complete(stage string, arts ...pipeline.ArtifactInput) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.outcome[stage] = executors.Outcome{Status: executors.OutcomeCompleted, Verdict: pipeline.VerdictPass, Artifacts: arts}
+	f.ready[stage] = true
+}
+
+// staticEngines hands the same engine back for any project.
+type staticEngines struct{ eng Engine }
+
+func (s staticEngines) For(context.Context, domain.ProjectID) (Engine, error) { return s.eng, nil }
+
+const reviewYAML = `name: review
+stages:
+  - name: review
+    trigger:
+      on: [manual]
+    executor:
+      kind: agent
+      plugin: claude-code
+      mode: review
+`
+
+const guardYAML = `name: guard
+stages:
+  - name: check
+    trigger:
+      on: [manual]
+    executor:
+      kind: agent
+      plugin: claude-code
+      mode: review
+`
+
+func newStore(t *testing.T, projectID string) *sqlite.Store {
+	t.Helper()
+	s, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	if err := s.UpsertProject(context.Background(), domain.ProjectRecord{
+		ID: projectID, Path: "/tmp/" + projectID, RegisteredAt: time.Now().UTC().Truncate(time.Second),
+	}); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	return s
+}
+
+func newEngine(t *testing.T, store *sqlite.Store, projectID string, fake executors.StageExecutor) *engine.Engine {
+	t.Helper()
+	e := engine.New(engine.Config{
+		ProjectID:    domain.ProjectID(projectID),
+		Store:        store,
+		Executors:    executors.NewSet(fake, fake, fake),
+		TickInterval: time.Hour, // disable heartbeat; the test drives progress
+	})
+	if err := e.Start(context.Background()); err != nil {
+		t.Fatalf("engine start: %v", err)
+	}
+	t.Cleanup(func() { _ = e.Stop(context.Background()) })
+	return e
+}
+
+func newHarness(t *testing.T) (*Service, *engine.Engine, *sqlite.Store, *fakeExecutor) {
+	t.Helper()
+	store := newStore(t, "mer")
+	fake := newFakeExecutor()
+	eng := newEngine(t, store, "mer", fake)
+	svc := New(store, staticEngines{eng: eng})
+	return svc, eng, store, fake
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+// TestTriggerAppearsInListAndCancelTransitions covers the manual-trigger →
+// list → cancel path end to end: the trigger returns a run id, the run shows up
+// in the list, and cancelling drives it to a terminal state that is persisted.
+func TestTriggerAppearsInListAndCancelTransitions(t *testing.T) {
+	ctx := context.Background()
+	svc, _, store, _ := newHarness(t)
+
+	if _, err := svc.CreateDefinition(ctx, "mer", reviewYAML); err != nil {
+		t.Fatalf("create definition: %v", err)
+	}
+
+	runID, err := svc.TriggerRun(ctx, "mer", TriggerInput{Ref: "review", SessionID: "mer-1", HeadSHA: "sha1"})
+	if err != nil {
+		t.Fatalf("trigger: %v", err)
+	}
+	if runID == "" {
+		t.Fatal("trigger returned empty run id")
+	}
+
+	runs, err := svc.ListRuns(ctx, "mer", pipeline.RunFilter{})
+	if err != nil {
+		t.Fatalf("list runs: %v", err)
+	}
+	if len(runs) != 1 || runs[0].RunID != runID {
+		t.Fatalf("runs = %+v, want the triggered run %s", runs, runID)
+	}
+	if runs[0].LoopState != pipeline.LoopRunning {
+		t.Fatalf("triggered run loop state = %s, want running", runs[0].LoopState)
+	}
+
+	cancelled, err := svc.CancelRun(ctx, "mer", runID)
+	if err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	if !cancelled.LoopState.IsTerminal() {
+		t.Fatalf("cancelled run loop state = %s, want terminal", cancelled.LoopState)
+	}
+	// The transition is durable, not just reflected in the return value.
+	persisted, ok, err := store.GetPipelineRun(ctx, runID)
+	if err != nil || !ok {
+		t.Fatalf("get persisted run: ok=%v err=%v", ok, err)
+	}
+	if persisted.LoopState != pipeline.LoopTerminated {
+		t.Fatalf("persisted loop state = %s, want terminated", persisted.LoopState)
+	}
+}
+
+// TestResumeReArmsFailedRun drives a stage to failure (stalling the run), then
+// resumes through the service and asserts the run is running again.
+func TestResumeReArmsFailedRun(t *testing.T) {
+	ctx := context.Background()
+	svc, eng, _, fake := newHarness(t)
+	if _, err := svc.CreateDefinition(ctx, "mer", reviewYAML); err != nil {
+		t.Fatalf("create definition: %v", err)
+	}
+	runID, err := svc.TriggerRun(ctx, "mer", TriggerInput{Ref: "review", SessionID: "mer-1"})
+	if err != nil {
+		t.Fatalf("trigger: %v", err)
+	}
+
+	// Fail the stage and drive one tick; the run stalls.
+	fake.fail("review", "boom")
+	eng.Tick()
+	stalled, err := svc.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if stalled.LoopState != pipeline.LoopStalled {
+		t.Fatalf("loop state after failure = %s, want stalled", stalled.LoopState)
+	}
+
+	resumed, err := svc.ResumeRun(ctx, "mer", runID)
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if resumed.LoopState != pipeline.LoopRunning {
+		t.Fatalf("loop state after resume = %s, want running", resumed.LoopState)
+	}
+	if st := resumed.Stages["review"]; st.Status != pipeline.StageStatusRunning {
+		t.Fatalf("review stage after resume = %s, want running", st.Status)
+	}
+}
+
+// TestUpdateDefinitionTerminatesInFlightRun asserts an edit dispatches
+// CONFIG_CHANGED for the affected loop so the in-flight run of the old config
+// terminates (spec §6).
+func TestUpdateDefinitionTerminatesInFlightRun(t *testing.T) {
+	ctx := context.Background()
+	svc, _, _, _ := newHarness(t)
+	def, err := svc.CreateDefinition(ctx, "mer", reviewYAML)
+	if err != nil {
+		t.Fatalf("create definition: %v", err)
+	}
+	runID, err := svc.TriggerRun(ctx, "mer", TriggerInput{Ref: "review", SessionID: "mer-1"})
+	if err != nil {
+		t.Fatalf("trigger: %v", err)
+	}
+
+	if _, err := svc.UpdateDefinition(ctx, def.ID, reviewYAML); err != nil {
+		t.Fatalf("update definition: %v", err)
+	}
+
+	run, err := svc.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if run.LoopState != pipeline.LoopTerminated || run.TerminationReason != pipeline.TerminationConfigChange {
+		t.Fatalf("run after config change = %s/%s, want terminated/config_change", run.LoopState, run.TerminationReason)
+	}
+}
+
+// TestUpdateRenameToTakenNameConflicts asserts renaming a definition to a name
+// already used by another definition in the project is a 409 (mirroring create),
+// not a raw 500 from the UNIQUE(project_id, name) constraint. Renaming to a free
+// name still succeeds.
+func TestUpdateRenameToTakenNameConflicts(t *testing.T) {
+	ctx := context.Background()
+	svc, _, _, _ := newHarness(t)
+	reviewDef, err := svc.CreateDefinition(ctx, "mer", reviewYAML)
+	if err != nil {
+		t.Fatalf("create review: %v", err)
+	}
+	if _, err := svc.CreateDefinition(ctx, "mer", guardYAML); err != nil {
+		t.Fatalf("create guard: %v", err)
+	}
+
+	// Rename "review" -> "guard": collides with the second definition.
+	_, err = svc.UpdateDefinition(ctx, reviewDef.ID, guardYAML)
+	var apiErr *apierr.Error
+	if !errors.As(err, &apiErr) || apiErr.Kind != apierr.KindConflict || apiErr.Code != "PIPELINE_NAME_TAKEN" {
+		t.Fatalf("rename-to-taken err = %v, want 409 PIPELINE_NAME_TAKEN", err)
+	}
+
+	// Renaming to a free name is allowed.
+	freshYAML := "name: review-2\nstages:\n  - name: review\n    trigger:\n      on: [manual]\n    executor:\n      kind: agent\n      plugin: claude-code\n      mode: review\n"
+	updated, err := svc.UpdateDefinition(ctx, reviewDef.ID, freshYAML)
+	if err != nil {
+		t.Fatalf("rename to free name: %v", err)
+	}
+	if updated.Name != "review-2" {
+		t.Fatalf("updated name = %q, want review-2", updated.Name)
+	}
+}
+
+// TestCreateDefinitionValidationPassesThrough asserts a semantic validation
+// failure surfaces as a *pipeline.ValidationError carrying every issue.
+func TestCreateDefinitionValidationPassesThrough(t *testing.T) {
+	ctx := context.Background()
+	svc, _, _, _ := newHarness(t)
+
+	_, err := svc.CreateDefinition(ctx, "mer", "name: \"\"\nstages: []\n")
+	var verr *pipeline.ValidationError
+	if !errors.As(err, &verr) {
+		t.Fatalf("err = %v, want *pipeline.ValidationError", err)
+	}
+	if len(verr.Issues) < 2 {
+		t.Fatalf("issues = %+v, want the name + stages problems", verr.Issues)
+	}
+}
+
+// TestCreateDuplicateNameConflicts asserts a second definition with the same
+// name in a project is rejected as a conflict.
+func TestCreateDuplicateNameConflicts(t *testing.T) {
+	ctx := context.Background()
+	svc, _, _, _ := newHarness(t)
+	if _, err := svc.CreateDefinition(ctx, "mer", reviewYAML); err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+	_, err := svc.CreateDefinition(ctx, "mer", reviewYAML)
+	var apiErr *apierr.Error
+	if !errors.As(err, &apiErr) || apiErr.Kind != apierr.KindConflict {
+		t.Fatalf("err = %v, want conflict apierr", err)
+	}
+}
+
+// TestValidateDefinition covers the dry-run validate path: a valid document is
+// (true, nil, nil); a semantic validation failure surfaces the full issue list
+// as data with err=nil; a bare YAML syntax error becomes a single root issue.
+func TestValidateDefinition(t *testing.T) {
+	ctx := context.Background()
+	svc, _, _, _ := newHarness(t)
+
+	valid, issues, err := svc.ValidateDefinition(ctx, reviewYAML)
+	if err != nil || !valid || len(issues) != 0 {
+		t.Fatalf("valid config = (%v, %+v, %v), want (true, nil, nil)", valid, issues, err)
+	}
+
+	valid, issues, err = svc.ValidateDefinition(ctx, "name: \"\"\nstages: []\n")
+	if err != nil {
+		t.Fatalf("validation failure must not error: %v", err)
+	}
+	if valid || len(issues) < 2 {
+		t.Fatalf("invalid config = (%v, %+v), want valid=false with the name + stages problems", valid, issues)
+	}
+
+	valid, issues, err = svc.ValidateDefinition(ctx, "name: [oops\n")
+	if err != nil {
+		t.Fatalf("syntax error must not error: %v", err)
+	}
+	if valid || len(issues) != 1 {
+		t.Fatalf("syntax error = (%v, %+v), want valid=false with one root issue", valid, issues)
+	}
+}
+
+// TestTriggerUnknownRefNotFound asserts an unresolvable reference is a 404.
+func TestTriggerUnknownRefNotFound(t *testing.T) {
+	ctx := context.Background()
+	svc, _, _, _ := newHarness(t)
+	_, err := svc.TriggerRun(ctx, "mer", TriggerInput{Ref: "nope"})
+	var apiErr *apierr.Error
+	if !errors.As(err, &apiErr) || apiErr.Kind != apierr.KindNotFound {
+		t.Fatalf("err = %v, want not-found apierr", err)
+	}
+}
+
+// TestPRBlocksMerge covers the merge-readiness gate: it blocks only when the
+// latest settled run for the PR is fresh (its head SHA matches the PR head) and
+// its terminal decision was BlocksMerge; a stale-SHA run, no settled run, a
+// newer clearing run, or empty inputs are all no opinion.
+func TestPRBlocksMerge(t *testing.T) {
+	ctx := context.Background()
+	svc, _, store, _ := newHarness(t)
+	const prURL = "https://github.com/o/r/pull/9"
+	base := time.Now().UTC().Truncate(time.Second)
+
+	save := func(id string, state pipeline.LoopStateName, headSHA string, blocks bool, at time.Time) {
+		run := pipeline.RunState{
+			RunID: pipeline.RunID(id), PipelineID: "pl-review", PipelineName: "review", SessionID: "mer-1",
+			HeadSHA: headSHA, Context: pipeline.RunContext{PRURL: prURL, HeadSHA: headSHA},
+			LoopState: state, BlocksMerge: blocks, Stages: map[string]pipeline.StageState{},
+			CreatedAt: at, UpdatedAt: at,
+		}
+		if err := store.SavePipelineRun(ctx, "mer", run); err != nil {
+			t.Fatalf("save %s: %v", id, err)
+		}
+	}
+	check := func(headSHA string, want bool) {
+		t.Helper()
+		got, err := svc.PRBlocksMerge(ctx, "mer", prURL, headSHA)
+		if err != nil {
+			t.Fatalf("PRBlocksMerge: %v", err)
+		}
+		if got != want {
+			t.Fatalf("PRBlocksMerge(sha=%s) = %v, want %v", headSHA, got, want)
+		}
+	}
+
+	// No settled run yet: no opinion.
+	check("sha1", false)
+
+	// Latest settled run blocks on sha1.
+	save("r1", pipeline.LoopStalled, "sha1", true, base)
+	check("sha1", true)
+	// Same blocking run, but the PR has advanced to sha2: stale decision, no opinion.
+	check("sha2", false)
+
+	// A newer settled run on sha2 that does not block clears the veto.
+	save("r2", pipeline.LoopDone, "sha2", false, base.Add(time.Minute))
+	check("sha2", false)
+
+	// Empty inputs are always no opinion.
+	check("", false)
+	if got, _ := svc.PRBlocksMerge(ctx, "mer", "", "sha1"); got {
+		t.Fatal("empty prURL should be no opinion")
+	}
+}
+
+// TestUpdateArtifactStatusDismissAndReopen drives a run that emits a finding,
+// then dismisses it through the service and reopens it, asserting the status
+// flips durably each time and that bad inputs are rejected.
+func TestUpdateArtifactStatusDismissAndReopen(t *testing.T) {
+	ctx := context.Background()
+	svc, eng, store, fake := newHarness(t)
+	if _, err := svc.CreateDefinition(ctx, "mer", reviewYAML); err != nil {
+		t.Fatalf("create definition: %v", err)
+	}
+	runID, err := svc.TriggerRun(ctx, "mer", TriggerInput{Ref: "review", SessionID: "mer-1"})
+	if err != nil {
+		t.Fatalf("trigger: %v", err)
+	}
+
+	fake.complete("review", pipeline.ArtifactInput{
+		Kind: pipeline.ArtifactKindFinding, FilePath: "main.go", StartLine: 1, EndLine: 2,
+		Title: "bug", Category: "correctness", Severity: pipeline.SeverityError,
+	})
+	eng.Tick()
+
+	run, err := svc.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if len(run.Findings) != 1 {
+		t.Fatalf("want 1 finding, got %d", len(run.Findings))
+	}
+	artID := run.Findings[0].ArtifactID
+
+	// Dismiss.
+	got, err := svc.UpdateArtifactStatus(ctx, "mer", runID, artID, pipeline.ArtifactStatusDismissed)
+	if err != nil {
+		t.Fatalf("dismiss: %v", err)
+	}
+	if got.Status != pipeline.ArtifactStatusDismissed {
+		t.Fatalf("returned status = %s, want dismissed", got.Status)
+	}
+	persisted, _, _ := store.GetPipelineArtifact(ctx, artID)
+	if persisted.Status != pipeline.ArtifactStatusDismissed {
+		t.Fatalf("persisted status = %s, want dismissed", persisted.Status)
+	}
+
+	// Reopen.
+	got, err = svc.UpdateArtifactStatus(ctx, "mer", runID, artID, pipeline.ArtifactStatusOpen)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	if got.Status != pipeline.ArtifactStatusOpen {
+		t.Fatalf("returned status = %s, want open", got.Status)
+	}
+
+	// Bad status is rejected before touching the engine.
+	if _, err := svc.UpdateArtifactStatus(ctx, "mer", runID, artID, pipeline.ArtifactStatus("nonsense")); err == nil {
+		t.Fatal("bad status must error")
+	}
+
+	// Unknown artifact is a 404-style error.
+	if _, err := svc.UpdateArtifactStatus(ctx, "mer", runID, "no-such-artifact", pipeline.ArtifactStatusDismissed); err == nil {
+		t.Fatal("unknown artifact must error")
+	}
+
+	// An artifact that belongs to a different run is not found on this run.
+	if _, err := svc.UpdateArtifactStatus(ctx, "mer", "run-other", artID, pipeline.ArtifactStatusDismissed); err == nil {
+		t.Fatal("artifact on a mismatched run must error")
+	}
+}

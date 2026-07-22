@@ -50,6 +50,19 @@ vi.mock("../lib/api-client", () => ({
 	},
 }));
 
+// Routes getMock's apiClient.GET calls by URL: the agents catalog fetch gets
+// `agentsResponse` (or, for the deferred-catalog test, a pending promise the
+// test resolves manually), while the pipelines-flag probe always gets an
+// immediate 501 (flag off), matching this suite's daemon which never wires
+// up pipelines.
+function mockGetByUrl(agentsResponse: unknown) {
+	getMock.mockImplementation(async (url: string) => {
+		if (url === "/api/v1/agents") return agentsResponse;
+		if (url === "/api/v1/pipelines/schema") return { response: { status: 501 }, error: {} };
+		throw new Error(`unexpected GET ${url}`);
+	});
+}
+
 const workspace: WorkspaceSummary = {
 	id: "proj-1",
 	name: "Project One",
@@ -175,7 +188,11 @@ beforeEach(() => {
 	window.localStorage.clear();
 	document.documentElement.style.removeProperty("--ao-sidebar-w");
 	getMock.mockReset();
-	getMock.mockResolvedValue({
+	// The Sidebar tree makes two independent apiClient.GET calls: the agents
+	// catalog (CreateProjectFlow, on dialog open) and the AO_PIPELINES flag
+	// probe (usePipelinesEnabled, on mount). Route by URL so the probe firing
+	// first doesn't consume a response meant for the agents call.
+	mockGetByUrl({
 		data: {
 			supported: [
 				{ id: "claude-code", label: "Claude Code" },
@@ -334,7 +351,11 @@ describe("Sidebar", () => {
 		const user = userEvent.setup();
 		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;
 		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/new-project");
-		getMock.mockResolvedValueOnce({
+		// Route by URL (not mockResolvedValueOnce): the Sidebar fires the agents
+		// fetch AND the pipelines-schema probe on mount, so a single queued
+		// once-value races between them and is consumed out of order. Pin the
+		// agents catalog to its URL so the order of the two GETs is irrelevant.
+		mockGetByUrl({
 			data: {
 				supported: [
 					{ id: "goose", label: "Goose" },
@@ -584,7 +605,7 @@ describe("Sidebar", () => {
 		const user = userEvent.setup();
 		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;
 		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/new-project");
-		getMock.mockResolvedValueOnce({
+		mockGetByUrl({
 			data: {
 				supported: [
 					{ id: "claude-code", label: "Claude Code" },
@@ -635,11 +656,14 @@ describe("Sidebar", () => {
 			};
 			error: undefined;
 		}) => void;
-		getMock.mockReturnValueOnce(
-			new Promise((resolve) => {
-				resolveAgents = resolve;
-			}),
-		);
+		getMock.mockImplementation(async (url: string) => {
+			if (url === "/api/v1/agents") {
+				return new Promise((resolve) => {
+					resolveAgents = resolve;
+				});
+			}
+			return { response: { status: 501 }, error: {} };
+		});
 		renderSidebar({ onCreateProject, seedAgents: false });
 
 		await user.click(screen.getByLabelText("New project"));

@@ -583,6 +583,610 @@ paths:
       summary: Fetch one orchestrator session
       tags:
       - sessions
+  /api/v1/pipelines:
+    get:
+      operationId: listPipelineDefinitions
+      parameters:
+      - description: Project id the pipeline belongs to (required).
+        in: query
+        name: project
+        schema:
+          description: Project id the pipeline belongs to (required).
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListPipelineDefinitionsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List a project's pipeline definitions
+      tags:
+      - pipelines
+    post:
+      operationId: createPipelineDefinition
+      parameters:
+      - description: Project id the pipeline belongs to (required).
+        in: query
+        name: project
+        schema:
+          description: Project id the pipeline belongs to (required).
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SavePipelineDefinitionRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineDefinitionResponse'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Create a pipeline definition from raw YAML
+      tags:
+      - pipelines
+  /api/v1/pipelines/{id}:
+    delete:
+      operationId: deletePipelineDefinition
+      parameters:
+      - description: Pipeline definition identifier.
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Pipeline definition identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeletePipelineDefinitionResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Delete a pipeline definition
+      tags:
+      - pipelines
+    put:
+      operationId: updatePipelineDefinition
+      parameters:
+      - description: Pipeline definition identifier.
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Pipeline definition identifier.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SavePipelineDefinitionRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineDefinitionResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Update a pipeline definition's YAML
+      tags:
+      - pipelines
+  /api/v1/pipelines/runs:
+    get:
+      operationId: listPipelineRuns
+      parameters:
+      - description: Project id (required).
+        in: query
+        name: project
+        schema:
+          description: Project id (required).
+          type: string
+      - description: Filter runs to one pipeline name.
+        in: query
+        name: pipeline
+        schema:
+          description: Filter runs to one pipeline name.
+          type: string
+      - description: Filter runs by loop state (running|awaiting_context|done|stalled|terminated).
+        in: query
+        name: status
+        schema:
+          description: Filter runs by loop state (running|awaiting_context|done|stalled|terminated).
+          type: string
+      - description: Cap the number of runs returned (newest first).
+        in: query
+        name: limit
+        schema:
+          description: Cap the number of runs returned (newest first).
+          minimum: 1
+          type:
+          - "null"
+          - integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListPipelineRunsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List a project's pipeline runs, newest first
+      tags:
+      - pipelines
+    post:
+      operationId: triggerPipelineRun
+      parameters:
+      - description: Project id the pipeline belongs to (required).
+        in: query
+        name: project
+        schema:
+          description: Project id the pipeline belongs to (required).
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TriggerPipelineRunRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TriggerPipelineRunResponse'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Trigger a manual pipeline run
+      tags:
+      - pipelines
+  /api/v1/pipelines/runs/{runId}:
+    get:
+      operationId: getPipelineRun
+      parameters:
+      - description: Pipeline run identifier.
+        in: path
+        name: runId
+        required: true
+        schema:
+          description: Pipeline run identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineRunDetailResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Fetch one pipeline run with its stages and findings
+      tags:
+      - pipelines
+  /api/v1/pipelines/runs/{runId}/artifacts/{artifactId}:
+    get:
+      operationId: getPipelineArtifact
+      parameters:
+      - description: Pipeline run identifier.
+        in: path
+        name: runId
+        required: true
+        schema:
+          description: Pipeline run identifier.
+          type: string
+      - description: Artifact identifier.
+        in: path
+        name: artifactId
+        required: true
+        schema:
+          description: Artifact identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineArtifactResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Fetch one pipeline run artifact by id
+      tags:
+      - pipelines
+  /api/v1/pipelines/runs/{runId}/artifacts/{artifactId}/status:
+    post:
+      operationId: updatePipelineArtifactStatus
+      parameters:
+      - description: Pipeline run identifier.
+        in: path
+        name: runId
+        required: true
+        schema:
+          description: Pipeline run identifier.
+          type: string
+      - description: Artifact identifier.
+        in: path
+        name: artifactId
+        required: true
+        schema:
+          description: Artifact identifier.
+          type: string
+      - description: Project id the pipeline belongs to (required).
+        in: query
+        name: project
+        schema:
+          description: Project id the pipeline belongs to (required).
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControllersUpdatePipelineArtifactStatusRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineArtifactResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Change a pipeline finding's lifecycle status (dismiss, reopen, resolve)
+      tags:
+      - pipelines
+  /api/v1/pipelines/runs/{runId}/cancel:
+    post:
+      operationId: cancelPipelineRun
+      parameters:
+      - description: Pipeline run identifier.
+        in: path
+        name: runId
+        required: true
+        schema:
+          description: Pipeline run identifier.
+          type: string
+      - description: Project id the pipeline belongs to (required).
+        in: query
+        name: project
+        schema:
+          description: Project id the pipeline belongs to (required).
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineRunDetailResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Cancel an in-flight pipeline run
+      tags:
+      - pipelines
+  /api/v1/pipelines/runs/{runId}/resume:
+    post:
+      operationId: resumePipelineRun
+      parameters:
+      - description: Pipeline run identifier.
+        in: path
+        name: runId
+        required: true
+        schema:
+          description: Pipeline run identifier.
+          type: string
+      - description: Project id the pipeline belongs to (required).
+        in: query
+        name: project
+        schema:
+          description: Project id the pipeline belongs to (required).
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineRunDetailResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Resume a stalled or failed pipeline run
+      tags:
+      - pipelines
+  /api/v1/pipelines/schema:
+    get:
+      operationId: getPipelineConfigSchema
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: OK
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Fetch the JSON schema for the pipeline YAML definition format
+      tags:
+      - pipelines
+  /api/v1/pipelines/validate:
+    post:
+      operationId: validatePipelineDefinition
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ValidatePipelineDefinitionRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidatePipelineDefinitionResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Validate a pipeline definition without persisting it
+      tags:
+      - pipelines
   /api/v1/projects:
     get:
       operationId: listProjects
@@ -1902,6 +2506,55 @@ paths:
       summary: Clean up terminated session workspaces
       tags:
       - sessions
+  /api/v1/settings/pipelines:
+    get:
+      operationId: getPipelinesSetting
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelinesSettingResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Read the persisted pipelines feature flag
+      tags:
+      - settings
+    put:
+      operationId: setPipelinesSetting
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetPipelinesSettingRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelinesSettingResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Persist the pipelines feature flag (takes effect on daemon restart)
+      tags:
+      - settings
   /api/v1/shell-terminals:
     get:
       operationId: listShellTerminals
@@ -2212,6 +2865,14 @@ components:
       - status
       - prs
       type: object
+    ControllersUpdatePipelineArtifactStatusRequest:
+      properties:
+        status:
+          description: 'New artifact status: open | resolved | dismissed.'
+          type: string
+      required:
+      - status
+      type: object
     DegradedProject:
       properties:
         id:
@@ -2230,6 +2891,16 @@ components:
       - kind
       - path
       - resolveError
+      type: object
+    DeletePipelineDefinitionResponse:
+      properties:
+        deleted:
+          type: boolean
+        id:
+          type: string
+      required:
+      - id
+      - deleted
       type: object
     DevImportProjectsConflict:
       properties:
@@ -2403,6 +3074,24 @@ components:
           type: array
       required:
       - notifications
+      type: object
+    ListPipelineDefinitionsResponse:
+      properties:
+        definitions:
+          items:
+            $ref: '#/components/schemas/PipelineDefinitionSummary'
+          type: array
+      required:
+      - definitions
+      type: object
+    ListPipelineRunsResponse:
+      properties:
+        runs:
+          items:
+            $ref: '#/components/schemas/PipelineRunSummary'
+          type: array
+      required:
+      - runs
       type: object
     ListProjectsResponse:
       properties:
@@ -2631,6 +3320,282 @@ components:
       - title
       - targetSha
       - status
+      type: object
+    PipelineArtifact:
+      properties:
+        anchorSignature:
+          type: string
+        artifactId:
+          type: string
+        belowConfidenceThreshold:
+          type: boolean
+        category:
+          type: string
+        confidence:
+          format: double
+          type: number
+        createdAt:
+          format: date-time
+          type: string
+        data:
+          additionalProperties: {}
+          type: object
+        description:
+          type: string
+        endLine:
+          type: integer
+        filePath:
+          type: string
+        fingerprint:
+          type: string
+        kind:
+          type: string
+        pipelineRunId:
+          type: string
+        sentToAgentAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        severity:
+          type: string
+        stageName:
+          type: string
+        stageRunId:
+          type: string
+        startLine:
+          type: integer
+        status:
+          type: string
+        title:
+          type: string
+      required:
+      - kind
+      - artifactId
+      - pipelineRunId
+      - stageRunId
+      - stageName
+      - status
+      - createdAt
+      type: object
+    PipelineArtifactResponse:
+      properties:
+        artifact:
+          $ref: '#/components/schemas/PipelineArtifact'
+      required:
+      - artifact
+      type: object
+    PipelineDefinitionResponse:
+      properties:
+        definition:
+          $ref: '#/components/schemas/PipelineDefinitionSummary'
+      required:
+      - definition
+      type: object
+    PipelineDefinitionSummary:
+      properties:
+        createdAt:
+          format: date-time
+          type: string
+        id:
+          type: string
+        name:
+          type: string
+        projectId:
+          type: string
+        updatedAt:
+          format: date-time
+          type: string
+        yamlSource:
+          type: string
+      required:
+      - id
+      - projectId
+      - name
+      - yamlSource
+      - createdAt
+      - updatedAt
+      type: object
+    PipelineRunDetail:
+      properties:
+        blocksMerge:
+          type: boolean
+        createdAt:
+          format: date-time
+          type: string
+        findings:
+          items:
+            $ref: '#/components/schemas/PipelineArtifact'
+          type: array
+        hasOpenFindings:
+          type: boolean
+        headSha:
+          type: string
+        loopRounds:
+          type: integer
+        loopState:
+          type: string
+        pipelineId:
+          type: string
+        pipelineName:
+          type: string
+        runId:
+          type: string
+        sessionId:
+          type: string
+        stageCount:
+          type: integer
+        stageStatuses:
+          additionalProperties:
+            type: string
+          type:
+          - object
+          - "null"
+        stages:
+          items:
+            $ref: '#/components/schemas/PipelineStageView'
+          type: array
+        terminationReason:
+          type: string
+        updatedAt:
+          format: date-time
+          type: string
+      required:
+      - runId
+      - pipelineId
+      - pipelineName
+      - sessionId
+      - loopState
+      - loopRounds
+      - headSha
+      - stageCount
+      - stageStatuses
+      - hasOpenFindings
+      - blocksMerge
+      - createdAt
+      - updatedAt
+      - stages
+      - findings
+      type: object
+    PipelineRunDetailResponse:
+      properties:
+        run:
+          $ref: '#/components/schemas/PipelineRunDetail'
+      required:
+      - run
+      type: object
+    PipelineRunSummary:
+      properties:
+        blocksMerge:
+          type: boolean
+        createdAt:
+          format: date-time
+          type: string
+        hasOpenFindings:
+          type: boolean
+        headSha:
+          type: string
+        loopRounds:
+          type: integer
+        loopState:
+          type: string
+        pipelineId:
+          type: string
+        pipelineName:
+          type: string
+        runId:
+          type: string
+        sessionId:
+          type: string
+        stageCount:
+          type: integer
+        stageStatuses:
+          additionalProperties:
+            type: string
+          type:
+          - object
+          - "null"
+        terminationReason:
+          type: string
+        updatedAt:
+          format: date-time
+          type: string
+      required:
+      - runId
+      - pipelineId
+      - pipelineName
+      - sessionId
+      - loopState
+      - loopRounds
+      - headSha
+      - stageCount
+      - stageStatuses
+      - hasOpenFindings
+      - blocksMerge
+      - createdAt
+      - updatedAt
+      type: object
+    PipelineStageView:
+      properties:
+        artifactIds:
+          items:
+            type: string
+          type: array
+        attempt:
+          type: integer
+        completedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        errorMessage:
+          type: string
+        notes:
+          items:
+            type: string
+          type: array
+        output:
+          type: string
+        sessionId:
+          type: string
+        stageName:
+          type: string
+        stageRunId:
+          type: string
+        startedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        status:
+          type: string
+        verdict:
+          type: string
+      required:
+      - stageName
+      - stageRunId
+      - status
+      - attempt
+      - artifactIds
+      type: object
+    PipelineValidationIssue:
+      properties:
+        message:
+          description: Human-readable description of the problem.
+          type: string
+        path:
+          description: Dotted path to the offending location, e.g. stages[2].dependsOn.
+          type: string
+      required:
+      - path
+      - message
+      type: object
+    PipelinesSettingResponse:
+      properties:
+        enabled:
+          type: boolean
+      required:
+      - enabled
       type: object
     ProbeAgentResponse:
       properties:
@@ -2945,6 +3910,14 @@ components:
       required:
       - ok
       - sessionId
+      type: object
+    SavePipelineDefinitionRequest:
+      properties:
+        yamlSource:
+          description: Raw YAML pipeline definition document.
+          type: string
+      required:
+      - yamlSource
       type: object
     SendSessionMessageRequest:
       properties:
@@ -3265,6 +4238,13 @@ components:
       - sessionId
       - state
       type: object
+    SetPipelinesSettingRequest:
+      properties:
+        enabled:
+          type: boolean
+      required:
+      - enabled
+      type: object
     SetProjectConfigInput:
       properties:
         config:
@@ -3421,6 +4401,27 @@ components:
         repo:
           type: string
       type: object
+    TriggerPipelineRunRequest:
+      properties:
+        headSha:
+          description: Head commit SHA to pin the run to.
+          type: string
+        pipeline:
+          description: 'Definition reference to run: its id or name.'
+          type: string
+        sessionId:
+          description: Session id to scope the run's loop key.
+          type: string
+      required:
+      - pipeline
+      type: object
+    TriggerPipelineRunResponse:
+      properties:
+        runId:
+          type: string
+      required:
+      - runId
+      type: object
     TriggerReviewResponse:
       properties:
         reviewerHandleId:
@@ -3442,6 +4443,26 @@ components:
       required:
       - token
       - deleted
+      type: object
+    ValidatePipelineDefinitionRequest:
+      properties:
+        yamlSource:
+          description: Raw YAML pipeline definition document to validate.
+          type: string
+      required:
+      - yamlSource
+      type: object
+    ValidatePipelineDefinitionResponse:
+      properties:
+        issues:
+          items:
+            $ref: '#/components/schemas/PipelineValidationIssue'
+          type: array
+        valid:
+          type: boolean
+      required:
+      - valid
+      - issues
       type: object
     WorkspaceFileResponse:
       properties:
@@ -3553,5 +4574,7 @@ tags:
   name: import
 - description: Developer-only maintenance operations
   name: dev
+- description: Pipeline definitions, runs, manual triggers, and artifacts
+  name: pipelines
 - description: Connect Mobile LAN bridge control (loopback/desktop only)
   name: mobile

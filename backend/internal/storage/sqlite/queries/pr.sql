@@ -6,9 +6,10 @@ INSERT INTO pr (
     is_draft, is_merged, is_closed,
     provider_state, provider_mergeable, provider_merge_state_status, html_url,
     created_at_provider, updated_at_provider, merged_at_provider, closed_at_provider,
-    metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at
+    metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at,
+    is_from_fork
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (url) DO UPDATE SET
     number = excluded.number,
     pr_state = excluded.pr_state,
@@ -45,7 +46,8 @@ ON CONFLICT (url) DO UPDATE SET
     review_hash = excluded.review_hash,
     observed_at = excluded.observed_at,
     ci_observed_at = excluded.ci_observed_at,
-    review_observed_at = excluded.review_observed_at;
+    review_observed_at = excluded.review_observed_at,
+    is_from_fork = excluded.is_from_fork;
 
 -- name: UpsertLegacyPR :exec
 INSERT INTO pr (
@@ -86,6 +88,8 @@ SELECT
     pr.review_decision,
     pr.ci_state,
     pr.mergeability,
+    pr.head_sha,
+    pr.is_from_fork,
     pr.updated_at,
     EXISTS (
         SELECT 1
@@ -100,6 +104,24 @@ ORDER BY
     CASE WHEN pr.pr_state NOT IN ('merged', 'closed') THEN 0 ELSE 1 END,
     pr.updated_at DESC
 LIMIT 1;
+
+-- name: GetPRFactsByURL :one
+-- Exact-PR facts for the pipeline trigger bridge (T6): the changed PR named in
+-- a CDC pr_created/pr_updated payload, including head_sha for new-SHA detection.
+-- Keyed by url (not session) so a stacked-PR session attributes each event to
+-- the right PR.
+SELECT
+    pr.url,
+    pr.number,
+    pr.pr_state,
+    pr.review_decision,
+    pr.ci_state,
+    pr.mergeability,
+    pr.head_sha,
+    pr.is_from_fork,
+    pr.updated_at
+FROM pr
+WHERE pr.url = ?;
 
 -- name: ListPRFactsBySession :many
 -- All PR snapshots for a session (every state), with source/target branch for
