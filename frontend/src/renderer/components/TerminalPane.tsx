@@ -19,9 +19,10 @@ type TerminalPaneProps = {
 	daemonReady: boolean;
 	terminalTarget?: TerminalTarget;
 	fontSize: number;
+	refreshToken?: number;
 };
 
-export function TerminalPane({ session, theme, daemonReady, terminalTarget, fontSize }: TerminalPaneProps) {
+export function TerminalPane({ session, theme, daemonReady, terminalTarget, fontSize, refreshToken = 0 }: TerminalPaneProps) {
 	const terminalKey =
 		terminalTarget?.kind === "reviewer" ? terminalTarget.handleId : (session?.terminalHandleId ?? "empty");
 
@@ -66,6 +67,7 @@ export function TerminalPane({ session, theme, daemonReady, terminalTarget, font
 			theme={theme}
 			daemonReady={daemonReady}
 			fontSize={fontSize}
+			refreshToken={refreshToken}
 			terminalTarget={terminalTarget}
 		/>
 	);
@@ -201,7 +203,7 @@ function bannerText(state: TerminalSessionState, error?: string): string | undef
 	return undefined;
 }
 
-function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSize }: TerminalPaneProps) {
+function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSize, refreshToken = 0 }: TerminalPaneProps) {
 	const attachSession =
 		session && terminalTarget?.kind === "reviewer"
 			? { ...session, terminalHandleId: terminalTarget.handleId }
@@ -216,10 +218,11 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	const [restoreUnavailable, setRestoreUnavailable] = useState(false);
 	const queryClient = useQueryClient();
 	const restoreSessionById = useRestoreSession();
-	const { attach, state, error } = useTerminalSession(attachSession, { daemonReady });
+	const { attach, refresh, state, error } = useTerminalSession(attachSession, { daemonReady });
 	const handleId = attachSession?.terminalHandleId;
 	const provider = terminalTarget?.kind === "reviewer" ? terminalTarget.harness : session?.provider;
 	const hadAttachmentRef = useRef(false);
+	const previousRefreshTokenRef = useRef(refreshToken);
 	const canRestoreSession = terminalTarget?.kind !== "reviewer" && session?.status === "terminated";
 
 	const handleReady = useCallback((handle: AttachableTerminal) => {
@@ -292,6 +295,12 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 		hadAttachmentRef.current = true;
 		return attach(terminal);
 	}, [terminal, handleId, attach, attachSession?.id]);
+
+	useEffect(() => {
+		if (previousRefreshTokenRef.current === refreshToken) return;
+		previousRefreshTokenRef.current = refreshToken;
+		refresh();
+	}, [refresh, refreshToken]);
 
 	if (initFailed) {
 		return (

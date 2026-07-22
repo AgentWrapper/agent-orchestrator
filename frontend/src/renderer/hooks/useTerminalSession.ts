@@ -282,6 +282,16 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 	}, [clearOpenTimer, invalidateWorkspaces, isCurrentAttachment, scheduleReattach, teardownMux, transition]);
 	connectRef.current = connect;
 
+	const refresh = useCallback(() => {
+		const r = runtime.current;
+		if (!r.terminal || !r.handle || r.detached) return;
+		r.attempts = 0;
+		setError(undefined);
+		transition(optionsRef.current.daemonReady ? "connecting" : "reattaching");
+		if (!optionsRef.current.daemonReady) return;
+		connect();
+	}, [connect, transition]);
+
 	/**
 	 * Bind a terminal to the current session's PTY. Call once the terminal is
 	 * opened (and fitted); returns the detach function for effect cleanup.
@@ -362,5 +372,5 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		[teardownMux],
 	);
 
-	return { attach, state, error };
+	return { attach, refresh, state, error };
 }

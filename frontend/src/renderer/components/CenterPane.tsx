@@ -1,4 +1,4 @@
-import { ChevronLeft, Maximize2, Minimize2, Shield } from "lucide-react";
+import { ChevronLeft, Maximize2, Minimize2, RefreshCw, Shield } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type WheelEvent } from "react";
 import { TERMINAL_FONT_SIZE_DEFAULT, TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from "../lib/design-tokens";
 import type { Theme } from "../stores/ui-store";
@@ -36,6 +36,7 @@ export function CenterPane({ session, theme, daemonReady, terminalTarget, onSele
 	const lastWheelZoomAtRef = useRef(0);
 	const [fontSize, setFontSize] = useState(initialTerminalFontSize);
 	const [isFullscreen, setIsFullscreen] = useState(false);
+	const [refreshToken, setRefreshToken] = useState(0);
 	const target = terminalTarget ?? { kind: "worker" };
 
 	useEffect(() => {
@@ -128,6 +129,16 @@ export function CenterPane({ session, theme, daemonReady, terminalTarget, onSele
 						+
 					</button>
 					<button
+						aria-label="Refresh terminal"
+						className="ml-1.5 inline-flex size-control-sm items-center justify-center rounded-sm bg-transparent text-control leading-none transition-[background,color,opacity] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-passive"
+						disabled={!daemonReady || !session?.terminalHandleId || session?.status === "terminated"}
+						onClick={() => setRefreshToken((current) => current + 1)}
+						title="Refresh terminal"
+						type="button"
+					>
+						<RefreshCw aria-hidden="true" className="size-icon-md" />
+					</button>
+					<button
 						aria-label={isFullscreen ? "Exit terminal fullscreen" : "Open terminal fullscreen"}
 						aria-pressed={isFullscreen}
 						className="ml-1.5 inline-flex size-control-sm items-center justify-center rounded-sm bg-transparent text-control leading-none transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
@@ -165,6 +176,7 @@ export function CenterPane({ session, theme, daemonReady, terminalTarget, onSele
 				<TerminalPane
 					daemonReady={daemonReady}
 					fontSize={fontSize}
+					refreshToken={refreshToken}
 					session={session}
 					terminalTarget={target}
 					theme={theme}
