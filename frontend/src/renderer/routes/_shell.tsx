@@ -9,6 +9,8 @@ import { KeyboardShortcutsDialog } from "../components/KeyboardShortcutsDialog";
 import { ShellTopbar } from "../components/ShellTopbar";
 import { OrchestratorReplacementDialog } from "../components/OrchestratorReplacementDialog";
 import { Sidebar } from "../components/Sidebar";
+import { CloudWorkspaceSetup } from "../components/CloudWorkspaceSetup";
+import type { WorkspaceMode } from "../components/WorkspaceModeSwitch";
 import { SidebarProvider } from "../components/ui/sidebar";
 import { TitlebarNav } from "../components/TitlebarNav";
 import { WindowTitlebar } from "../components/WindowTitlebar";
@@ -82,6 +84,8 @@ function ShellLayout() {
 	const requestNewShellTerminal = useUiStore((state) => state.requestNewShellTerminal);
 	const newShellTerminalNonce = useUiStore((state) => state.newShellTerminalNonce);
 	const setActiveShellTerminal = useUiStore((state) => state.setActiveShellTerminal);
+	const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("local");
+	const [cloudSetupNonce, setCloudSetupNonce] = useState(0);
 	const openShellTerminal = useOpenShellTerminal();
 	// Seeded to the current value so a mount never opens a terminal unasked.
 	const handledShellNonceRef = useRef(newShellTerminalNonce);
@@ -99,11 +103,11 @@ function ShellLayout() {
 		Boolean(matchRoute({ to: "/projects/$projectId/sessions/$sessionId", fuzzy: true })) ||
 		Boolean(matchRoute({ to: "/sessions/$sessionId", fuzzy: true }));
 	// First-launch root board only (no projects in scope).
-	const isWelcomeBoard = Boolean(matchRoute({ to: "/" })) && workspaces.length === 0;
+	const isWelcomeBoard = workspaceMode === "local" && Boolean(matchRoute({ to: "/" })) && workspaces.length === 0;
 	const isSettingsRoute =
 		Boolean(matchRoute({ to: "/settings", fuzzy: true })) ||
 		Boolean(matchRoute({ to: "/projects/$projectId/settings", fuzzy: true }));
-	const hideShellTopbar = isWelcomeBoard || isSettingsRoute;
+	const hideShellTopbar = workspaceMode === "cloud" || isWelcomeBoard || isSettingsRoute;
 	const setProjectRestarting = useUiStore((state) => state.setProjectRestarting);
 	const orchestratorReplacementErrors = useUiStore((state) => state.orchestratorReplacementErrors);
 	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
@@ -405,6 +409,12 @@ function ShellLayout() {
 					{/* Hang the fixed sidebar below shell chrome. macOS keeps room for the traffic-light/titlebar controls; Windows clears only its custom titlebar because the app topbar is inside the framed panel. When the topbar lives inside the framed panel (framedAppTopbar), Linux reserves no offset — otherwise the sidebar would clear a full-width topbar that isn't there. */}
 					<Sidebar
 						hideEdgeBorder={isWelcomeBoard}
+						mode={workspaceMode}
+						onModeChange={setWorkspaceMode}
+						onNewCloudWorkspace={() => {
+							setWorkspaceMode("cloud");
+							setCloudSetupNonce((nonce) => nonce + 1);
+						}}
 						underTopbar={
 							isMac || isWindows || (!framedAppTopbar && !hideShellTopbar && (isLinux ? isSessionRoute : true))
 						}
@@ -418,7 +428,11 @@ function ShellLayout() {
 					<main className="flex min-w-0 flex-1 flex-col overflow-x-hidden">
 						<div className="min-h-0 flex-1 overflow-x-hidden">
 							{/* Board/session routes render inside the same inset box the welcome board and settings paint for themselves, so every screen sits within the app's outer boundary. */}
-							{hideShellTopbar ? (
+							{workspaceMode === "cloud" ? (
+								<CenterPanelShell className={isMac ? "center-panel-shell--mac" : undefined} variant="app">
+									<CloudWorkspaceSetup resetSignal={cloudSetupNonce} />
+								</CenterPanelShell>
+							) : hideShellTopbar ? (
 								<Outlet />
 							) : framedAppTopbar ? (
 								<CenterPanelShell className={isMac ? "center-panel-shell--mac" : undefined} variant="app">

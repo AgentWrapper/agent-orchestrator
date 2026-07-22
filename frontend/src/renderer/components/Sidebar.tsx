@@ -50,6 +50,8 @@ import { useUiStore } from "../stores/ui-store";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CreateProjectInput } from "./CreateProjectFlow";
 import { ResizeHandle } from "./ResizeHandle";
+import { CloudWorkspaceSidebar } from "./CloudWorkspaceSidebar";
+import { WorkspaceModeSwitch, type WorkspaceMode } from "./WorkspaceModeSwitch";
 
 // The macOS hiddenInset traffic lights and the fixed TitlebarNav overlay live
 // in the full-width topbar's left inset (_shell renders the bar above the
@@ -90,6 +92,9 @@ type SidebarProps = {
 	onCreateProject: (input: CreateProjectInput) => Promise<void>;
 	onInitializeProject: (path: string) => Promise<void>;
 	onRemoveProject: (projectId: string) => Promise<void>;
+	mode?: WorkspaceMode;
+	onModeChange?: (mode: WorkspaceMode) => void;
+	onNewCloudWorkspace?: () => void;
 };
 
 // Selection state comes from the URL: which project/session is active is the
@@ -131,6 +136,9 @@ export function Sidebar({
 	onCreateProject,
 	onInitializeProject,
 	onRemoveProject,
+	mode = "local",
+	onModeChange = () => undefined,
+	onNewCloudWorkspace = () => undefined,
 }: SidebarProps) {
 	const selection = useSelection();
 	const { state, setOpen } = useSidebar();
@@ -270,8 +278,12 @@ export function Sidebar({
 						</Tooltip>
 					)}
 				</div>
+				<WorkspaceModeSwitch mode={mode} onChange={onModeChange} />
 			</SidebarHeader>
 
+			{mode === "cloud" ? (
+				<CloudWorkspaceSidebar onNewWorkspace={onNewCloudWorkspace} />
+			) : (
 			<SidebarContent className="gap-0 pl-2.5 pr-1.75 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
 				<SidebarGroup className="p-0">
 					{/* Section label (project-sidebar__nav-label) */}
@@ -311,6 +323,7 @@ export function Sidebar({
 					</SidebarGroupContent>
 				</SidebarGroup>
 			</SidebarContent>
+			)}
 
 			{/* Footer — Settings opens the global settings page directly. */}
 			<SidebarFooter className="relative mb-2 mt-auto gap-0 overflow-hidden px-1.75 pb-2.5 pt-1.75 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-[64px] group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pb-1.5 group-data-[collapsible=icon]:pt-1.5">
