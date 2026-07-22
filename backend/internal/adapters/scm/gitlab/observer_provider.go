@@ -200,6 +200,16 @@ func (p *Provider) ListPRsByRepo(ctx context.Context, repo ports.SCMRepo, update
 			return fmt.Errorf("gitlab scm: unmarshal MR list: %w", err)
 		}
 		for i := range mrs {
+			// Store the full restMR into the MR-detail cache (ticket 03). The
+			// list and detail MR responses share the same shape for the fields
+			// AO uses, so the cached restMR is a valid substitute for the detail
+			// response when fetchSingleMR consults the cache seconds later in the
+			// same cycle. diff_refs.base_sha is populated from the list response
+			// via the nested-struct field (ticket 02's fix), so the cached entry
+			// carries the base SHA correctly. The pointer targets this page's
+			// backing array, which is not reused on the next page (each page
+			// gets a fresh `mrs` slice), so the cached pointer is safe to retain.
+			p.cache.setMRDetail(repo.Host, repo.Repo, mrs[i].IID, &mrs[i])
 			result = append(result, mrToSCMPRObservation(repo, &mrs[i]))
 		}
 		return nil
@@ -234,7 +244,7 @@ type restMR struct {
 	// endpoints, so the cached restMR from ListPRsByRepo carries the base
 	// SHA without any manual second-pass unmarshal.
 	DiffRefs       restDiffRefs `json:"diff_refs"`
-	MergeCommitSHA string      `json:"merge_commit_sha"`
+	MergeCommitSHA string       `json:"merge_commit_sha"`
 
 	CreatedAt *time.Time `json:"created_at"`
 	UpdatedAt *time.Time `json:"updated_at"`
@@ -410,20 +420,32 @@ func (p *Provider) fetchSingleMR(ctx context.Context, ref ports.SCMPRRef) (ports
 	repo := ref.Repo
 	now := time.Now()
 
-	// 1. Fetch MR detail
-	mrPath := fmt.Sprintf("/projects/%s/merge_requests/%d", projectPath(repo.Owner, repo.Name), ref.Number)
 	hc, err := p.clientForRepoErr(repo)
 	if err != nil {
 		return ports.SCMObservation{}, err
 	}
 
-	mrResp, err := hc.doGET(ctx, mrPath, nil)
-	if err != nil {
-		return ports.SCMObservation{}, err
-	}
+	// 1. Fetch MR detail. Consult the MR-detail cache first (ticket 03): if
+	// ListPRsByRepo populated a fresh entry for this (host, repo, iid) within
+	// the 60s TTL, reuse the cached restMR directly and skip the HTTP GET
+	// entirely. On a miss (entry expired, or the MR was not in the listing —
+	// e.g. a brand-new MR that appeared between listing and fetch), fall back
+	// to the HTTP fetch. GitLab's list and detail MR responses share the same
+	// shape for the fields AO uses, so the cached restMR is a valid
+	// substitute; diff_refs.base_sha (ticket 02) is populated from the list
+	// response.
 	var mr restMR
-	if err := json.Unmarshal(mrResp.Body, &mr); err != nil {
-		return ports.SCMObservation{}, fmt.Errorf("gitlab scm: unmarshal MR detail: %w", err)
+	if cached, ok := p.cache.getMRDetail(repo.Host, repo.Repo, ref.Number); ok {
+		mr = *cached
+	} else {
+		mrPath := fmt.Sprintf("/projects/%s/merge_requests/%d", projectPath(repo.Owner, repo.Name), ref.Number)
+		mrResp, err := hc.doGET(ctx, mrPath, nil)
+		if err != nil {
+			return ports.SCMObservation{}, err
+		}
+		if err := json.Unmarshal(mrResp.Body, &mr); err != nil {
+			return ports.SCMObservation{}, fmt.Errorf("gitlab scm: unmarshal MR detail: %w", err)
+		}
 	}
 
 	prObs := mrToSCMPRObservation(repo, &mr)

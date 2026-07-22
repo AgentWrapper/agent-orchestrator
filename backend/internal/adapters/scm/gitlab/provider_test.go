@@ -1815,6 +1815,188 @@ func TestFetchPullRequests_DiffStatsNotParsed(t *testing.T) {
 	}
 }
 
+// mrDetailFixture returns a GitLab MR JSON payload (as a Go map) suitable for
+// both the list and detail endpoints — GitLab returns the same shape for the
+// fields AO uses, which is what ticket 03's MR-detail cache relies on.
+func mrDetailFixture(iid int, baseSHA string) map[string]any {
+	return map[string]any{
+		"iid":               iid,
+		"title":             "Fix bug",
+		"state":             "opened",
+		"draft":             false,
+		"web_url":           "https://gitlab.com/myorg/myrepo/-/merge_requests/" + strconv.Itoa(iid),
+		"source_branch":     "fix-bug",
+		"target_branch":     "main",
+		"sha":               "abc123",
+		"merge_status":      "can_be_merged",
+		"author":            map[string]any{"username": "alice"},
+		"source_project_id": 10,
+		"target_project_id": 10,
+		"diff_refs":         map[string]any{"base_sha": baseSHA, "head_sha": "abc123", "start_sha": "parent789"},
+	}
+}
+
+// registerMRSupportingEndpoints wires the CI/approvals sub-fetch endpoints
+// that FetchPullRequests calls after the MR detail. They return minimal
+// success payloads so fetchSingleMR completes without error.
+func registerMRSupportingEndpoints(mux *http.ServeMux) {
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/pipelines", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{
+			{"id": 100, "status": "success", "sha": "abc123"},
+		})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/pipelines/100/jobs", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{
+			{"id": 200, "name": "build", "status": "success", "web_url": "https://gitlab.com/jobs/200"},
+		})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1/approvals", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"approved": true, "approvals_required": 1, "approved_by": []any{}})
+	})
+}
+
+// TestFetchPullRequests_ReusesMRDetailFromListCache verifies ticket 03's core
+// behavior: after ListPRsByRepo fetches the MR list, FetchPullRequests for one
+// of the listed MRs within the MR-detail TTL does NOT issue a redundant
+// GET /merge_requests/:iid. The cached restMR from the listing is a valid
+// substitute for the detail response (same shape for the fields AO uses), and
+// diff_refs.base_sha must be populated from the list payload.
+func TestFetchPullRequests_ReusesMRDetailFromListCache(t *testing.T) {
+	var mrDetailHits atomic.Int32
+	mux := http.NewServeMux()
+	// MR list endpoint returns the MR that will later be fetched by detail.
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests", func(w http.ResponseWriter, r *http.Request) {
+		// state=all + pagination are fine; return one MR.
+		json.NewEncoder(w).Encode([]map[string]any{mrDetailFixture(1, "base123")})
+	})
+	// MR detail endpoint — this is what ticket 03 must SKIP. If it is hit,
+	// the test fails.
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1", func(w http.ResponseWriter, r *http.Request) {
+		mrDetailHits.Add(1)
+		json.NewEncoder(w).Encode(mrDetailFixture(1, "base123"))
+	})
+	registerMRSupportingEndpoints(mux)
+	_, p := testServer(t, mux)
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "myorg", Name: "myrepo", Repo: "myorg/myrepo"}
+
+	// Populate the MR-detail cache via the listing.
+	if _, err := p.ListPRsByRepo(context.Background(), repo, time.Time{}); err != nil {
+		t.Fatalf("ListPRsByRepo: %v", err)
+	}
+
+	ref := ports.SCMPRRef{Repo: repo, Number: 1, URL: "https://gitlab.com/myorg/myrepo/-/merge_requests/1"}
+	obs, err := p.FetchPullRequests(context.Background(), []ports.SCMPRRef{ref})
+	if err != nil {
+		t.Fatalf("FetchPullRequests: %v", err)
+	}
+	if len(obs) != 1 || !obs[0].Fetched {
+		t.Fatalf("expected one fetched observation, got %+v", obs)
+	}
+	// The MR detail endpoint must NOT have been hit — the list-cached restMR
+	// is reused.
+	if got := mrDetailHits.Load(); got != 0 {
+		t.Errorf("MR detail endpoint hits = %d, want 0 (cached restMR from listing must be reused)", got)
+	}
+	// Base SHA must be populated from the list-cached restMR (acceptance
+	// criterion: diff_refs.base_sha correctly populated when served from the
+	// list cache).
+	if got, want := obs[0].PR.BaseSHA, "base123"; got != want {
+		t.Errorf("PR.BaseSHA = %q, want %q (served from list cache)", got, want)
+	}
+	// Sanity: the other observation fields are correct (the cached restMR is
+	// a valid substitute for the detail response).
+	if got, want := obs[0].PR.Number, 1; got != want {
+		t.Errorf("PR.Number = %d, want %d", got, want)
+	}
+	if got, want := obs[0].PR.HeadSHA, "abc123"; got != want {
+		t.Errorf("PR.HeadSHA = %q, want %q", got, want)
+	}
+}
+
+// TestFetchPullRequests_ColdCache_FetchesMRDetailViaHTTP verifies the
+// fallback path: with no prior listing (cold MR-detail cache), FetchPullRequests
+// fetches the MR detail endpoint via HTTP and returns the correct result.
+func TestFetchPullRequests_ColdCache_FetchesMRDetailViaHTTP(t *testing.T) {
+	var mrDetailHits atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1", func(w http.ResponseWriter, r *http.Request) {
+		mrDetailHits.Add(1)
+		json.NewEncoder(w).Encode(mrDetailFixture(1, "base123"))
+	})
+	registerMRSupportingEndpoints(mux)
+	_, p := testServer(t, mux)
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "myorg", Name: "myrepo", Repo: "myorg/myrepo"}
+	ref := ports.SCMPRRef{Repo: repo, Number: 1, URL: "https://gitlab.com/myorg/myrepo/-/merge_requests/1"}
+
+	obs, err := p.FetchPullRequests(context.Background(), []ports.SCMPRRef{ref})
+	if err != nil {
+		t.Fatalf("FetchPullRequests: %v", err)
+	}
+	if len(obs) != 1 || !obs[0].Fetched {
+		t.Fatalf("expected one fetched observation, got %+v", obs)
+	}
+	// Cold cache → the MR detail endpoint MUST be hit exactly once.
+	if got := mrDetailHits.Load(); got != 1 {
+		t.Errorf("MR detail endpoint hits = %d, want 1 (cold cache must fall back to HTTP)", got)
+	}
+	if got, want := obs[0].PR.BaseSHA, "base123"; got != want {
+		t.Errorf("PR.BaseSHA = %q, want %q", got, want)
+	}
+	if got, want := obs[0].PR.Number, 1; got != want {
+		t.Errorf("PR.Number = %d, want %d", got, want)
+	}
+}
+
+// TestFetchPullRequests_MRDetailCacheTTLExpiry verifies that after the
+// MR-detail TTL elapses, a FetchPullRequests call falls back to the HTTP
+// fetch even though ListPRsByRepo populated the cache earlier. This guards the
+// staleness bound (~60s, one poll interval) and the miss → HTTP fallback path.
+func TestFetchPullRequests_MRDetailCacheTTLExpiry(t *testing.T) {
+	var mrDetailHits atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{mrDetailFixture(1, "base123")})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1", func(w http.ResponseWriter, r *http.Request) {
+		mrDetailHits.Add(1)
+		json.NewEncoder(w).Encode(mrDetailFixture(1, "base123"))
+	})
+	registerMRSupportingEndpoints(mux)
+	_, p := testServer(t, mux)
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "myorg", Name: "myrepo", Repo: "myorg/myrepo"}
+
+	// Inject a controllable clock so TTL expiry is fast and deterministic
+	// (no real sleeping). syntheticClock is defined in cache_test.go.
+	clock := &syntheticClock{t: time.Now()}
+	p.cache.now = clock.now
+
+	// Populate the MR-detail cache via the listing.
+	if _, err := p.ListPRsByRepo(context.Background(), repo, time.Time{}); err != nil {
+		t.Fatalf("ListPRsByRepo: %v", err)
+	}
+
+	// Advance past the MR-detail TTL (60s). The cached entry must now be
+	// treated as a miss.
+	clock.advance(mrDetailCacheTTL + time.Second)
+
+	ref := ports.SCMPRRef{Repo: repo, Number: 1, URL: "https://gitlab.com/myorg/myrepo/-/merge_requests/1"}
+	obs, err := p.FetchPullRequests(context.Background(), []ports.SCMPRRef{ref})
+	if err != nil {
+		t.Fatalf("FetchPullRequests: %v", err)
+	}
+	if len(obs) != 1 || !obs[0].Fetched {
+		t.Fatalf("expected one fetched observation, got %+v", obs)
+	}
+	// After TTL expiry, the MR detail endpoint MUST be hit (cache expired,
+	// fell back to HTTP).
+	if got := mrDetailHits.Load(); got != 1 {
+		t.Errorf("MR detail endpoint hits = %d, want 1 (cache expired, must fall back to HTTP)", got)
+	}
+	if got, want := obs[0].PR.BaseSHA, "base123"; got != want {
+		t.Errorf("PR.BaseSHA = %q, want %q (served from HTTP after expiry)", got, want)
+	}
+}
+
 // TestRestMR_DiffRefsBaseSHA_FromListResponse verifies the restMR struct tag
 // correctly parses diff_refs.base_sha from a GitLab MR list payload. The list
 // and detail MR responses share the same shape for diff_refs, so this also
