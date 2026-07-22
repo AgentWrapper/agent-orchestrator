@@ -263,6 +263,21 @@ describe("useTerminalSession", () => {
 		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: workspaceQueryKey });
 	});
 
+	it("refreshes an attached terminal with a fresh mux and clears the stale screen", () => {
+		const { view, terminal, muxes } = setup();
+		act(() => muxes[0].emitOpened("handle-1"));
+
+		act(() => view.result.current.refresh());
+
+		expect(view.result.current.state).toBe("connecting");
+		expect(muxes).toHaveLength(2);
+		expect(muxes[0].disposed).toBe(true);
+		expect(terminal.clears).toBe(1);
+		expect(muxes[1].opens).toEqual([["handle-1", 80, 24]]);
+		act(() => muxes[1].emitOpened("handle-1"));
+		expect(view.result.current.state).toBe("attached");
+	});
+
 	it("reconnects when a restored session becomes live with the same terminal handle", () => {
 		const muxes: FakeMux[] = [];
 		const createMux = () => {
