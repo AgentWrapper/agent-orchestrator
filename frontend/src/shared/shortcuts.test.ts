@@ -43,31 +43,53 @@ describe("matchesNewSessionShortcut", () => {
 });
 
 describe("matchesNewShellTerminalShortcut", () => {
-	it("matches Ctrl+` on both platforms", () => {
-		expect(matchesNewShellTerminalShortcut(chord({ key: "`", ctrl: true }), false)).toBe(true);
-		expect(matchesNewShellTerminalShortcut(chord({ key: "`", ctrl: true }), true)).toBe(true);
+	// VS Code / Cursor / Codex "Create New Terminal", identical on every platform.
+	// Matched on the physical `code`: Shift shifts the character (US delivers key
+	// "~" for Ctrl+Shift+`), so the runtime chord carries code "Backquote".
+	it("matches Ctrl+Shift+` even though the character arrives shifted", () => {
+		expect(
+			matchesNewShellTerminalShortcut(chord({ code: "Backquote", key: "~", ctrl: true, shift: true }), false),
+		).toBe(true);
+		expect(matchesNewShellTerminalShortcut(chord({ code: "Backquote", key: "~", ctrl: true, shift: true }), true)).toBe(
+			true,
+		);
 	});
 
-	// Layouts that need a modifier for the backtick report the physical key.
-	it("matches the Backquote key name", () => {
+	it("also matches plain Ctrl+` (toggle) on both platforms", () => {
+		expect(matchesNewShellTerminalShortcut(chord({ code: "Backquote", key: "`", ctrl: true }), false)).toBe(true);
+		expect(matchesNewShellTerminalShortcut(chord({ code: "Backquote", key: "`", ctrl: true }), true)).toBe(true);
+	});
+
+	// Chords supplied without a code fall back to the key spelling.
+	it("falls back to the key spelling when no code is present", () => {
+		expect(matchesNewShellTerminalShortcut(chord({ key: "`", ctrl: true }), false)).toBe(true);
 		expect(matchesNewShellTerminalShortcut(chord({ key: "Backquote", ctrl: true }), false)).toBe(true);
 	});
 
-	// ⌘` is the macOS "cycle windows" binding and must stay with the OS.
+	// The binding uses Ctrl on every platform, never ⌘ — ⌘` is the macOS
+	// "cycle windows" binding and must stay with the OS.
 	it("does not match Command+backtick on macOS", () => {
-		expect(matchesNewShellTerminalShortcut(chord({ key: "`", meta: true }), true)).toBe(false);
+		expect(matchesNewShellTerminalShortcut(chord({ code: "Backquote", key: "`", meta: true }), true)).toBe(false);
+		expect(matchesNewShellTerminalShortcut(chord({ code: "Backquote", key: "~", meta: true, shift: true }), true)).toBe(
+			false,
+		);
 	});
 
-	it("requires Ctrl and rejects extra modifiers", () => {
-		expect(matchesNewShellTerminalShortcut(chord({ key: "`" }), false)).toBe(false);
-		expect(matchesNewShellTerminalShortcut(chord({ key: "`", ctrl: true, shift: true }), false)).toBe(false);
-		expect(matchesNewShellTerminalShortcut(chord({ key: "`", ctrl: true, alt: true }), false)).toBe(false);
-		expect(matchesNewShellTerminalShortcut(chord({ key: "`", ctrl: true, meta: true }), false)).toBe(false);
+	it("requires Ctrl and rejects Alt / Meta", () => {
+		expect(matchesNewShellTerminalShortcut(chord({ code: "Backquote", key: "`" }), false)).toBe(false);
+		expect(matchesNewShellTerminalShortcut(chord({ code: "Backquote", key: "`", ctrl: true, alt: true }), false)).toBe(
+			false,
+		);
+		expect(matchesNewShellTerminalShortcut(chord({ code: "Backquote", key: "`", ctrl: true, meta: true }), false)).toBe(
+			false,
+		);
 	});
 
 	it("ignores other keys", () => {
-		expect(matchesNewShellTerminalShortcut(chord({ key: "1", ctrl: true }), false)).toBe(false);
-		expect(matchesNewShellTerminalShortcut(chord({ key: "~", ctrl: true }), false)).toBe(false);
+		expect(matchesNewShellTerminalShortcut(chord({ code: "Digit1", key: "1", ctrl: true }), false)).toBe(false);
+		expect(matchesNewShellTerminalShortcut(chord({ code: "KeyT", key: "t", ctrl: true, shift: true }), false)).toBe(
+			false,
+		);
 	});
 });
 

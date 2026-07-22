@@ -3,7 +3,7 @@ import { useEffect } from "react";
 import { useCloseShellTerminal, useShellTerminals } from "../hooks/useShellTerminals";
 import { useShell } from "../lib/shell-context";
 import { cn } from "../lib/utils";
-import { useUiStore } from "../stores/ui-store";
+import { useResolvedTheme, useUiStore } from "../stores/ui-store";
 import { TerminalPane } from "./TerminalPane";
 
 // The standalone terminals screen: shells with no agent session behind them,
@@ -15,7 +15,7 @@ import { TerminalPane } from "./TerminalPane";
 // beside that session's pane; this screen is where they live otherwise.
 export function ShellTerminalsView() {
 	const { daemonStatus } = useShell();
-	const { theme } = useUiStore();
+	const theme = useResolvedTheme();
 	const shellTerminals = useShellTerminals().data ?? [];
 	const closeShellTerminal = useCloseShellTerminal();
 	const requestNewShellTerminal = useUiStore((state) => state.requestNewShellTerminal);
