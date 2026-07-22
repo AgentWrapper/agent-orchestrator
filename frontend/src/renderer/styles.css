@@ -338,6 +338,13 @@
 	padding-left: 0;
 }
 
+/* macOS: drop the framed panel below the traffic-light/TitlebarNav band
+ * (56px toolbar height) so its top edge lines up with the sidebar brand and
+ * the pinned toggle/history cluster no longer overlaps the panel's topbar. */
+.center-panel-shell--mac {
+	padding-top: var(--size-toolbar);
+}
+
 @utility center-panel-welcome {
 	display: flex;
 	min-height: 0;
@@ -358,6 +365,17 @@
 	border-radius: var(--radius-settings-panel);
 	border: 1px solid var(--color-border-settings);
 	background-color: var(--color-bg-settings-panel);
+}
+
+@utility center-panel-app {
+	display: flex;
+	min-height: 0;
+	flex: 1 1 0%;
+	flex-direction: column;
+	overflow: hidden;
+	border-radius: var(--radius-center-panel);
+	border: 1px solid var(--color-border-strong);
+	background-color: var(--color-bg-primary);
 }
 
 @utility settings-row-bar {
@@ -409,6 +427,7 @@ button.settings-row-bar {
 	display: flex;
 	min-width: 11rem;
 	width: max-content;
+	max-width: min(18rem, calc(100vw - 2rem));
 	flex-direction: column;
 	border-radius: var(--radius-settings-panel);
 	border: 1px solid var(--color-border-settings-menu);
@@ -972,11 +991,12 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	height: 28px;
 }
 
-/* Windows custom title bar (WindowTitlebar): the app paints the logo + menu on
- * one row while Electron overlays the native min/max/close buttons on the right.
- * Height must match TITLEBAR_HEIGHT + the Window Controls Overlay height in
- * main.ts so the native buttons line up. The whole strip is the window-drag
- * region; interactive children opt out with -webkit-app-region: no-drag. */
+/* Windows custom title bar (WindowTitlebar): the app paints the sidebar toggle
+ * + menu on one row while Electron overlays the native min/max/close buttons on
+ * the right. Height must match TITLEBAR_HEIGHT + the Window Controls Overlay
+ * height in main.ts so the native buttons line up. The whole strip is the
+ * window-drag region; interactive children opt out with
+ * -webkit-app-region: no-drag. */
 .window-titlebar {
 	display: flex;
 	height: 36px;
@@ -985,24 +1005,35 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	gap: 8px;
 	padding: 0 10px;
 	border-bottom: 1px solid var(--border);
-	background: var(--bg);
+	/* Matches the shell chrome (bg-sidebar) and the Window Controls Overlay
+	   color pushed in WindowTitlebar/main.ts, so the native min/max/close
+	   strip blends into the bar instead of reading as a separate box. */
+	background: var(--color-bg-sidebar);
 	-webkit-app-region: drag;
 	user-select: none;
 }
 
-.window-titlebar__logo {
-	width: 20px;
-	height: 20px;
-	object-fit: contain;
+.window-titlebar__toggle {
+	display: grid;
+	place-items: center;
+	width: 28px;
+	height: 28px;
+	border-radius: 6px;
+	color: var(--fg-muted);
+	-webkit-app-region: no-drag;
+	transition:
+		background-color 0.12s ease,
+		color 0.12s ease;
 }
 
-.window-titlebar__title {
-	margin-right: 6px;
-	font-size: 12.5px;
-	font-weight: 600;
-	letter-spacing: -0.01em;
+.window-titlebar__toggle:hover {
+	background: color-mix(in srgb, var(--fg) 8%, transparent);
 	color: var(--fg);
-	white-space: nowrap;
+}
+
+.window-titlebar__toggle-icon {
+	width: 16px;
+	height: 16px;
 }
 
 .window-titlebar__menus {

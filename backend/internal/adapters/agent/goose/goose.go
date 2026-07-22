@@ -118,10 +118,13 @@ func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, _ ports.LaunchCo
 
 // GetRestoreCommand rebuilds the argv that continues an existing Goose session:
 //
-//	[env GOOSE_MODE=<mode>] goose run --resume --session-id <agentSessionId>
+//	[env GOOSE_MODE=<mode>] goose run --system <text> --resume --session-id <agentSessionId>
 //
 // ok is false when the hook-derived native session id has not landed yet, so
-// callers can fall back to fresh launch behavior.
+// callers can fall back to fresh launch behavior. AO deliberately uses run
+// rather than session here: run supports --system alongside --resume, so the
+// current derived system instructions are reapplied without replaying the
+// original task or relying on Goose to persist invocation-level instructions.
 func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig) (cmd []string, ok bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err

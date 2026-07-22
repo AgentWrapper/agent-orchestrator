@@ -12,11 +12,10 @@
 // ("auto-approves all tool executions"). PermissionModeDefault emits no flag so
 // Vibe resolves its starting agent from the user's `default_agent` config.
 //
-// Vibe has no usable lifecycle-hook surface for AO activity: its only hook type
-// is an experimental, off-by-default POST_AGENT_TURN hook with no
-// session-start/user-prompt-submit/stop/permission-request taxonomy, and it is
-// not Claude-Code compatible. Hook installation and SessionInfo are therefore
-// intentionally no-ops (Tier C).
+// Vibe hooks receive the native session id on every callback. AO installs
+// workspace-local pre_tool, post_tool, and post_agent hooks to persist that id
+// for restore and to report conservative activity signals without mutating the
+// user's global Vibe configuration.
 //
 // Restore uses `--resume <session id>` (Vibe matches by partial/short id) when
 // a native session id is available in metadata.
@@ -146,6 +145,15 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	}
 	cmd = append(cmd, "--resume", agentSessionID)
 	return cmd, true, nil
+}
+
+// SessionInfo surfaces the native session id captured by AO's Vibe hooks.
+func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (ports.SessionInfo, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.SessionInfo{}, false, err
+	}
+	info, ok := agentbase.StandardSessionInfo(session)
+	return info, ok, nil
 }
 
 // appendWorkdirFlag adds Vibe's explicit `--workdir` flag. Vibe validates its

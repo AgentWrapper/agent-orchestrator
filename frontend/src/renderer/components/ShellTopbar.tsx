@@ -26,6 +26,13 @@ import { useUiStore } from "../stores/ui-store";
 import { OrchestratorIcon } from "./icons";
 import { cn } from "../lib/utils";
 import { getAgentActivityView } from "../lib/session-presentation";
+import {
+	isLinuxPlatform,
+	isMacPlatform,
+	isWindowsPlatform,
+	usesBoardActionsInFramedTopbar,
+	usesFramedAppTopbar,
+} from "../lib/platform";
 import { StatusPill } from "./StatusPill";
 import {
 	TopbarButton,
@@ -35,12 +42,11 @@ import {
 	topbarProjectLabelClass,
 } from "./TopbarButton";
 
-const isMac = typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
-const isLinux =
-	typeof navigator !== "undefined" &&
-	((navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform)
-		.toLowerCase()
-		.includes("linux");
+const isMac = isMacPlatform();
+const isLinux = isLinuxPlatform();
+const isWindows = isWindowsPlatform();
+const boardActionsInFramedTopbar = usesBoardActionsInFramedTopbar();
+const topbarNeedsTitlebarOffset = isMac && !usesFramedAppTopbar();
 const dragStyle = isMac ? ({ WebkitAppRegion: "drag" } as React.CSSProperties) : undefined;
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
@@ -69,6 +75,8 @@ export function ShellTopbar() {
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
 	const requestNewShellTerminal = useUiStore((state) => state.requestNewShellTerminal);
 	const [isSpawning, setIsSpawning] = useState(false);
+	// Board-scope spawn failures surface where the board actions render.
+	const [boardSpawnError, setBoardSpawnError] = useState<string | null>(null);
 	const all = useWorkspaceQuery().data ?? [];
 
 	const session = params.sessionId
@@ -80,18 +88,14 @@ export function ShellTopbar() {
 	// cross-project /sessions/$sessionId route still resolves a crumb. A
 	// projectId that no longer resolves (stale route after the project was
 	// removed, or data still loading) shows an empty crumb — never the raw
-	// route slug. "agent-orchestrator" is the root-board crumb only.
+	// route slug. "Board" is the root-board crumb only.
 	const projectId = session?.workspaceId ?? params.projectId;
 	const isProjectBoardRoute = !isSessionRoute && Boolean(projectId);
 	const isRootBoardRoute = !isSessionRoute && !isProjectBoardRoute;
 	const project = projectId ? all.find((workspace) => workspace.id === projectId) : undefined;
-	const projectLabel = project?.name ?? session?.workspaceName ?? (projectId ? "" : "agent-orchestrator");
+	const projectLabel = project?.name ?? session?.workspaceName ?? (projectId ? "" : "Board");
 	const orchestrator = projectId ? findProjectOrchestrator(all, projectId) : undefined;
 	const isProjectRestarting = projectId ? restartingProjectIds.has(projectId) : false;
-
-	if (isLinux && !isSessionRoute) {
-		return null;
-	}
 
 	const openBoard = () =>
 		projectId ? void navigate({ to: "/projects/$projectId", params: { projectId } }) : void navigate({ to: "/" });
@@ -108,6 +112,7 @@ export function ShellTopbar() {
 
 	const openOrchestrator = async () => {
 		if (!projectId) return;
+		setBoardSpawnError(null);
 		void addRendererExceptionStep("Orchestrator open requested", {
 			source: "orchestrator-open",
 			operation: "open_orchestrator",
@@ -138,13 +143,14 @@ export function ShellTopbar() {
 				project_id: projectId,
 			});
 			console.error("Failed to spawn orchestrator:", error);
+			setBoardSpawnError(error instanceof Error ? error.message : "Could not spawn orchestrator");
 		} finally {
 			setIsSpawning(false);
 		}
 	};
 
 	return (
-		<header className={cn(topbarHeaderClass, isMac && topbarHeaderMacClass)} style={dragStyle}>
+		<header className={cn(topbarHeaderClass, topbarNeedsTitlebarOffset && topbarHeaderMacClass)} style={dragStyle}>
 			<div className="flex min-w-0 items-center gap-3">
 				{isSessionRoute && isOrchestrator ? (
 					<div className="inline-flex min-w-0 items-center gap-2">
@@ -167,7 +173,8 @@ export function ShellTopbar() {
 						</div>
 						{session ? <SessionStatusPill session={session} /> : null}
 					</div>
-				) : isProjectBoardRoute || (isMac && isRootBoardRoute) ? null : (
+				) : (isProjectBoardRoute && !boardActionsInFramedTopbar) ||
+				  (isMac && isRootBoardRoute && !boardActionsInFramedTopbar) ? null : (
 					<div className="inline-flex min-w-0 items-center gap-1.5">
 						<span className={topbarProjectLabelClass}>{projectLabel}</span>
 					</div>
@@ -178,7 +185,8 @@ export function ShellTopbar() {
 
 			<div className="flex shrink-0 items-center gap-1.5">
 				{/* Standalone shell, independent of any agent session — the same action
-				    Ctrl+` fires, routed through the store so the two cannot drift. */}
+				    Ctrl+` fires, routed through the store so the two cannot drift. Leads
+				    the actions row so it stays visible on every route. */}
 				<TopbarButton
 					aria-label="New terminal"
 					onClick={requestNewShellTerminal}
@@ -188,7 +196,43 @@ export function ShellTopbar() {
 				>
 					<SquareTerminal className="size-icon-md" aria-hidden="true" />
 				</TopbarButton>
-				{!isLinux ? <NotificationCenter style={noDragStyle} /> : null}
+				{/* Native-titlebar platforms keep the bell leading the actions row; the custom titlebar pins it to the far edge. */}
+				{!boardActionsInFramedTopbar && !isLinux && !isWindows ? <NotificationCenter style={noDragStyle} /> : null}
+				{boardActionsInFramedTopbar && isProjectBoardRoute ? (
+					<>
+						{boardSpawnError ? (
+							<TopbarKillError className="max-w-content-max truncate" title={boardSpawnError}>
+								{boardSpawnError}
+							</TopbarKillError>
+						) : null}
+						<TopbarButton
+							aria-label="New task"
+							disabled={isProjectRestarting}
+							onClick={openNewTask}
+							style={noDragStyle}
+							variant="accent"
+						>
+							<Plus className="size-icon-md" aria-hidden="true" />
+							New task
+						</TopbarButton>
+						<TopbarButton
+							aria-label={orchestrator ? "Orchestrator" : "Spawn Orchestrator"}
+							disabled={isSpawning || isProjectRestarting}
+							onClick={() => void openOrchestrator()}
+							style={noDragStyle}
+							variant="primary"
+						>
+							<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
+							{isProjectRestarting
+								? "Restarting…"
+								: isSpawning
+									? "Spawning…"
+									: orchestrator
+										? "Orchestrator"
+										: "Spawn Orchestrator"}
+						</TopbarButton>
+					</>
+				) : null}
 				{isSessionRoute ? (
 					<>
 						{isOrchestrator ? (
@@ -258,6 +302,8 @@ export function ShellTopbar() {
 						)}
 					</>
 				) : null}
+				{/* Custom-titlebar platforms pin the bell to the far right. */}
+				{boardActionsInFramedTopbar ? <NotificationCenter style={noDragStyle} /> : null}
 			</div>
 		</header>
 	);

@@ -31,6 +31,10 @@ session-events.jsonl.*
 # Agent Orchestrator local session state
 .ao/
 
+# Local scratch workspace (icon generation, throwaway scripts)
+.cache/
+frontend/.tanstack/
+
 # AO reviewer scratch output. The reviewer agent runs inside the worker's
 # worktree; its review writeup must never be committed onto the worker branch.
 /review.md

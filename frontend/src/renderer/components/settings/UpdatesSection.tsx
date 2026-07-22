@@ -1,13 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, Check, HardDriveDownload, History, Loader2, RefreshCw } from "lucide-react";
+import { AlertTriangle, Check, GitPullRequest, HardDriveDownload, History, Loader2, RefreshCw } from "lucide-react";
 import { aoBridge } from "../../lib/bridge";
+import { formatTimeCompact } from "../../lib/format-time";
 import { useUpdateStatus } from "../../hooks/useUpdateStatus";
 import type { UpdateChannel, UpdateSettings, UpdateState, UpdateStatus } from "../../../main/update-settings";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { Skeleton } from "../ui/skeleton";
 import { SettingsOptionMenu } from "./SettingsOptionMenu";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
@@ -35,17 +35,6 @@ let updateRequestSequence = 0;
 function nextUpdateRequestId(): string {
 	updateRequestSequence += 1;
 	return `feature-update-${updateRequestSequence}`;
-}
-
-function relativeAge(iso: string): string {
-	const diffMs = Date.now() - new Date(iso).getTime();
-	const mins = Math.floor(diffMs / 60000);
-	if (mins < 1) return "just now";
-	if (mins < 60) return `${mins}m ago`;
-	const hours = Math.floor(mins / 60);
-	if (hours < 24) return `${hours}h ago`;
-	const days = Math.floor(hours / 24);
-	return `${days}d ago`;
 }
 
 export function UpdatesSection() {
@@ -173,7 +162,7 @@ export function UpdatesSection() {
 
 	return (
 		<>
-			<SettingsSection title="Updates">
+			<SettingsSection title="Updates" sectionId="updates">
 				{activeBuild && (
 					<div className="flex flex-col gap-2">
 						<div className="settings-row-bar h-auto min-h-(--size-settings-row) flex-wrap gap-2">
@@ -215,7 +204,7 @@ export function UpdatesSection() {
 					<FeatureBuildsSelect currentPr={form.feature?.pr ?? null} onPin={handlePinBuild} />
 				)}
 
-				{form.channel === "nightly" && form.feature === null && form.enabled && (
+				{primaryValue === "nightly" && form.enabled && (
 					<p className="flex items-center gap-2 px-1 text-xs leading-row text-warning">
 						<AlertTriangle className="size-icon-sm shrink-0" aria-hidden="true" />
 						<span>
@@ -262,19 +251,9 @@ function FeatureBuildsSelect({
 		queryFn: () => aoBridge.featureBuilds.list(),
 	});
 
-	if (buildsQuery.isLoading) {
-		return (
-			<SettingsRow label="Feature build">
-				<div className="flex w-48 flex-col gap-1">
-					<Skeleton className="h-control-form w-full" />
-				</div>
-			</SettingsRow>
-		);
-	}
-
 	const builds = buildsQuery.data ?? [];
 
-	if (builds.length === 0) {
+	if (!buildsQuery.isLoading && builds.length === 0) {
 		return (
 			<div className="px-1 text-xs text-settings-muted">
 				<span className="sr-only">Feature build</span>
@@ -285,16 +264,17 @@ function FeatureBuildsSelect({
 
 	const options = builds.map((build) => ({
 		value: build.pr.toString(),
-		label: `PR #${build.pr}: ${build.title}`,
+		label: `PR #${build.pr}`,
 	}));
 
 	return (
-		<SettingsRow label="Feature build">
+		<SettingsRow icon={GitPullRequest} label="Feature build">
 			<SettingsOptionMenu
 				aria-label="Feature build"
 				value={currentPr === null ? "__none__" : currentPr.toString()}
 				placeholder="Select a feature build..."
 				options={options}
+				disabled={buildsQuery.isLoading}
 				onChange={(nextPr) => {
 					const pr = Number(nextPr);
 					const build = builds.find((b) => b.pr === pr);
@@ -308,16 +288,18 @@ function FeatureBuildsSelect({
 
 					const ageMs = Date.now() - new Date(build.publishedAt).getTime();
 					const isStale = ageMs > STALE_THRESHOLD_MS;
-					const ageLabel = relativeAge(build.publishedAt);
+					const ageLabel = formatTimeCompact(build.publishedAt);
 
 					return (
-						<div className="flex min-w-0 flex-col gap-0.5">
-							<span>
+						<div className="flex w-full min-w-0 flex-col gap-0.5">
+							<span className="line-clamp-2 break-words">
 								PR #{build.pr}: {build.title}
 							</span>
-							<div className="flex items-center gap-1.5">
-								<span className="font-mono text-caption text-passive">{build.buildId}</span>
-								<Badge variant={isStale ? "warning" : "neutral"}>{ageLabel}</Badge>
+							<div className="flex min-w-0 items-center gap-1.5">
+								<span className="min-w-0 truncate font-mono text-caption text-passive">{build.buildId}</span>
+								<Badge variant={isStale ? "warning" : "neutral"} className="h-3.5 px-1 text-[9px] leading-none">
+									{ageLabel}
+								</Badge>
 							</div>
 						</div>
 					);
@@ -346,7 +328,7 @@ function UpdateActions({ status }: { status: UpdateStatus }) {
 		<>
 			<SettingsRow icon={Check} label="Checks for Updates">
 				<div className="flex items-center gap-2">
-					<span className="text-control text-settings-muted">
+					<span className="text-control text-settings-muted" data-testid="app-version">
 						Current version - {version.data ? `v${version.data}` : "…"}
 					</span>
 					<button

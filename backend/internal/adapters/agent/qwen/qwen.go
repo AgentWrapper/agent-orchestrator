@@ -112,7 +112,7 @@ func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.Launch
 }
 
 // GetRestoreCommand rebuilds the argv that continues an existing Qwen Code
-// session: `qwen [--approval-mode <mode>] -r <agentSessionId>`. ok is false when
+// session: `qwen [--approval-mode <mode>] --resume <agentSessionId>`. ok is false when
 // the hook-derived native session id has not landed yet, so callers can fall
 // back to fresh launch behavior. Note: ports.RestoreConfig carries no Prompt.
 func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig) (cmd []string, ok bool, err error) {
@@ -139,7 +139,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	if systemPrompt != "" {
 		cmd = append(cmd, "--append-system-prompt", systemPrompt)
 	}
-	cmd = append(cmd, "-r", agentSessionID)
+	cmd = append(cmd, "--resume", agentSessionID)
 	return cmd, true, nil
 }
 

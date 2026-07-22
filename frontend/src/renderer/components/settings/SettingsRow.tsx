@@ -4,9 +4,9 @@ import { cn } from "../../lib/utils";
 
 function SettingsRowLabel({ icon: Icon, label }: { icon?: LucideIcon; label: string }) {
 	return (
-		<div className="flex min-w-0 flex-1 items-center gap-(--size-settings-row-icon-gap)">
+		<div className="flex shrink-0 items-center gap-(--size-settings-row-icon-gap)">
 			{Icon ? <Icon className="size-icon-lg shrink-0 text-settings-muted" aria-hidden="true" /> : null}
-			<span className="text-sm leading-5 text-settings-label">{label}</span>
+			<span className="whitespace-nowrap text-sm leading-5 text-settings-label">{label}</span>
 		</div>
 	);
 }
@@ -26,7 +26,7 @@ export function SettingsRow({
 	return (
 		<div className={cn("settings-row-bar", className)}>
 			<SettingsRowLabel icon={icon} label={label} />
-			<div className="flex shrink-0 items-center justify-end">{children}</div>
+			<div className="flex min-w-0 flex-1 items-center justify-end">{children}</div>
 		</div>
 	);
 }

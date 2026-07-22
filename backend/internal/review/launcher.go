@@ -45,6 +45,7 @@ type LaunchSpec struct {
 // satisfies it.
 type reviewerRuntime interface {
 	Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error)
+	Destroy(ctx context.Context, handle ports.RuntimeHandle) error
 	Interrupt(ctx context.Context, handle ports.RuntimeHandle) error
 	IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error)
 	SendMessage(ctx context.Context, handle ports.RuntimeHandle, message string) error
@@ -104,6 +105,15 @@ func (l *agentLauncher) Spawn(ctx context.Context, spec LaunchSpec) (string, err
 	cmd, err := reviewer.ReviewCommand(ctx, inv)
 	if err != nil {
 		return "", fmt.Errorf("reviewer command: %w", err)
+	}
+	// The reviewer handle is stable per worker, so a still-live pane from a
+	// previous pass would otherwise block `tmux new-session` (duplicate name) or,
+	// worse, keep serving under its old harness. Destroy any stale pane on this
+	// handle first so the reviewer always (re)launches under spec.Harness's
+	// sandbox/permissions/env — which are applied only here at Create, never by
+	// Notify. Destroy is idempotent when no pane exists (first spawn / dead pane).
+	if err := l.runtime.Destroy(ctx, ports.RuntimeHandle{ID: handleID}); err != nil {
+		return "", fmt.Errorf("reviewer replace stale pane: %w", err)
 	}
 	handle, err := l.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     domain.SessionID(handleID),
