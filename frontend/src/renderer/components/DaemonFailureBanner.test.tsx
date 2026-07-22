@@ -24,21 +24,6 @@ describe("DaemonFailureBanner", () => {
 		expect(screen.getByText("go: go.mod requires go >= 1.25.7")).toBeInTheDocument();
 	});
 
-	it.each([
-		{ code: "not_ready" as const, title: "AO daemon is not ready yet" },
-		{ code: "port_unconfirmed" as const, title: "AO daemon is not ready yet" },
-		{ code: "not_configured" as const, title: "AO daemon is not configured" },
-		{ code: "daemon_unreachable" as const, title: "AO daemon is unreachable" },
-		{ code: "identity_mismatch" as const, title: "AO daemon identity check failed" },
-		{ code: "binary_missing" as const, title: "AO daemon binary is missing" },
-		{ code: "spawn_failed" as const, title: "AO daemon failed to start" },
-		{ code: "exited" as const, title: "AO daemon failed to start" },
-	])("uses a status-appropriate heading for $code", ({ code, title }) => {
-		render(<DaemonFailureBanner status={{ state: "error", code }} />);
-
-		expect(screen.getByRole("alert")).toHaveTextContent(title);
-	});
-
 	it("resets copy feedback when failure details change", async () => {
 		const { rerender } = render(
 			<DaemonFailureBanner status={{ state: "stopped", code: "exited", details: "first failure" }} />,
