@@ -21,7 +21,7 @@ import {
 	isLinuxPlatform,
 	isMacPlatform,
 	isWindowsPlatform,
-	usesBoardActionsInFramedTopbar,
+	usesBoardActionsInPanel,
 	usesFramedAppTopbar,
 } from "../lib/platform";
 import { StatusPill } from "./StatusPill";
@@ -36,23 +36,22 @@ import {
 const isMac = isMacPlatform();
 const isLinux = isLinuxPlatform();
 const isWindows = isWindowsPlatform();
-const boardActionsInFramedTopbar = usesBoardActionsInFramedTopbar();
+const boardActionsInPanel = usesBoardActionsInPanel();
 const topbarNeedsTitlebarOffset = isMac && !usesFramedAppTopbar();
 const dragStyle = isMac ? ({ WebkitAppRegion: "drag" } as React.CSSProperties) : undefined;
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
-// The one app topbar (.dashboard-app-header), rendered by the shell layout
-// across the full window width — above both the sidebar and the route outlet —
-// so the crumb and actions sit at identical offsets on every screen and the
-// macOS traffic lights + TitlebarNav cluster live in its left inset
-// (.is-under-titlebar-nav pads past them). The
-// variant is derived from the route, not props: a sessionId in the URL swaps
-// the lead to the session identity (orchestrator crumb + mode badge, or worker
-// branch + status pill) and the actions to board/orchestrator + inspector
-// controls (orchestrators open the Kanban board; workers open their orchestrator);
-// otherwise it's the dashboard crumb plus the Orchestrator launcher when a
-// project is in scope. Merges the old DashboardTopbar/Topbar pair —
-// agent-orchestrator keeps those as two components aligned only by CSS.
+// The one app topbar (.dashboard-app-header). On Win/Linux the shell mounts it
+// inside the framed center panel; when the platform hides the shell topbar
+// (macOS), SessionView mounts the same component in-panel so Kill / Orchestrator
+// / inspector stay available. The variant is derived from the route, not props:
+// a sessionId in the URL swaps the lead to the session identity (orchestrator
+// crumb + mode badge, or worker branch + status pill) and the actions to
+// board/orchestrator + inspector controls (orchestrators open the Kanban board;
+// workers open their orchestrator); otherwise it's the dashboard crumb plus the
+// Orchestrator launcher when a project is in scope. Merges the old
+// DashboardTopbar/Topbar pair — agent-orchestrator keeps those as two components
+// aligned only by CSS.
 export function ShellTopbar() {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
@@ -163,8 +162,8 @@ export function ShellTopbar() {
 						</div>
 						{session ? <SessionStatusPill session={session} /> : null}
 					</div>
-				) : (isProjectBoardRoute && !boardActionsInFramedTopbar) ||
-				  (isMac && isRootBoardRoute && !boardActionsInFramedTopbar) ? null : (
+				) : (isProjectBoardRoute && boardActionsInPanel) ||
+				  (isMac && isRootBoardRoute && boardActionsInPanel) ? null : (
 					<div className="inline-flex min-w-0 items-center gap-1.5">
 						<span className={topbarProjectLabelClass}>{projectLabel}</span>
 					</div>
@@ -175,8 +174,8 @@ export function ShellTopbar() {
 
 			<div className="flex shrink-0 items-center gap-1.5">
 				{/* Native-titlebar platforms keep the bell leading the actions row; the custom titlebar pins it to the far edge. */}
-				{!boardActionsInFramedTopbar && !isLinux && !isWindows ? <NotificationCenter style={noDragStyle} /> : null}
-				{boardActionsInFramedTopbar && isProjectBoardRoute ? (
+				{boardActionsInPanel && !isLinux && !isWindows ? <NotificationCenter style={noDragStyle} /> : null}
+				{!boardActionsInPanel && isProjectBoardRoute ? (
 					<>
 						{boardSpawnError ? (
 							<TopbarKillError className="max-w-content-max truncate" title={boardSpawnError}>
@@ -281,7 +280,7 @@ export function ShellTopbar() {
 					</>
 				) : null}
 				{/* Custom-titlebar platforms pin the bell to the far right. */}
-				{boardActionsInFramedTopbar ? <NotificationCenter style={noDragStyle} /> : null}
+				{!boardActionsInPanel ? <NotificationCenter style={noDragStyle} /> : null}
 			</div>
 		</header>
 	);
