@@ -42,6 +42,39 @@ base_url = "https://api.z.ai/api/coding/paas/v4"
 	}
 }
 
+func TestKimiLocalAuthStatusAuthorizedWithOAuthCredential(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv(kimiCodeHomeEnv, home)
+	writeKimiOAuthCredential(t, home, "access-token", "refresh-token")
+
+	status, ok, err := kimiLocalAuthStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || status != ports.AgentAuthStatusAuthorized {
+		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusAuthorized)
+	}
+}
+
+func TestKimiOAuthCredentialAuthStatusUnauthorizedWithoutTokens(t *testing.T) {
+	home := t.TempDir()
+	path := kimiOAuthCredentialPath(home)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"expires_at": 123}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	status, ok, err := kimiOAuthCredentialAuthStatus(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || status != ports.AgentAuthStatusUnauthorized {
+		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusUnauthorized)
+	}
+}
+
 func TestKimiConfigAuthStatusAuthorizedWithProviderAPIKey(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	if err := os.WriteFile(path, []byte(`
@@ -76,4 +109,17 @@ api_key = ""
 	if !ok || status != ports.AgentAuthStatusUnauthorized {
 		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusUnauthorized)
 	}
+}
+
+func writeKimiOAuthCredential(t *testing.T, home, accessToken, refreshToken string) []byte {
+	t.Helper()
+	path := kimiOAuthCredentialPath(home)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte(`{"access_token":"` + accessToken + `","refresh_token":"` + refreshToken + `"}`)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return data
 }

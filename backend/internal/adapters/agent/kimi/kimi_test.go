@@ -6,10 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -29,6 +31,33 @@ func TestManifest(t *testing.T) {
 	}
 	if !hasAgent {
 		t.Fatal("missing CapabilityAgent")
+	}
+}
+
+func TestKimiBinarySpecFindsOfficialInstallScriptPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix install-script path")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", t.TempDir())
+	bin := filepath.Join(home, ".kimi-code", "bin", "kimi")
+	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	spec := kimiBinarySpec
+	spec.UnixPaths = nil
+	spec.NodeManaged = false
+	got, err := binaryutil.ResolveBinary(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != bin {
+		t.Fatalf("ResolveBinary() = %q, want %q", got, bin)
 	}
 }
 
@@ -320,6 +349,98 @@ default_model = "kimi-code/kimi-for-coding"
 	}
 	if string(source) != userConfig {
 		t.Fatalf("source config mutated:\n%s", source)
+	}
+}
+
+func TestGetAgentHooksSeedsAOManagedOAuthStateFromUserKimiHome(t *testing.T) {
+	workspace := t.TempDir()
+	userHome := t.TempDir()
+	aoHome := t.TempDir()
+	t.Setenv(kimiCodeHomeEnv, userHome)
+	userConfig := `default_model = "kimi-code/kimi-for-coding"
+
+[providers."managed:kimi-code"]
+type = "kimi"
+api_key = ""
+
+[providers."managed:kimi-code".oauth]
+storage = "file"
+key = "oauth/kimi-code"
+`
+	if err := os.WriteFile(filepath.Join(userHome, "config.toml"), []byte(userConfig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sourceCredential := writeKimiOAuthCredential(t, userHome, "access-token", "refresh-token")
+
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		Env:           map[string]string{kimiCodeHomeEnv: aoHome},
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	config, err := os.ReadFile(filepath.Join(aoHome, "config.toml"))
+	if err != nil {
+		t.Fatalf("read AO config: %v", err)
+	}
+	for _, want := range []string{
+		`default_model = "kimi-code/kimi-for-coding"`,
+		`[providers."managed:kimi-code".oauth]`,
+		`command = "ao hooks kimi session-start"`,
+	} {
+		if !strings.Contains(string(config), want) {
+			t.Fatalf("AO config missing %q:\n%s", want, config)
+		}
+	}
+
+	targetCredentialPath := kimiOAuthCredentialPath(aoHome)
+	targetCredential, err := os.ReadFile(targetCredentialPath)
+	if err != nil {
+		t.Fatalf("read AO OAuth credential: %v", err)
+	}
+	if !reflect.DeepEqual(targetCredential, sourceCredential) {
+		t.Fatal("AO OAuth credential does not match source credential")
+	}
+	info, err := os.Stat(targetCredentialPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := info.Mode().Perm(), os.FileMode(0o600); got != want {
+		t.Fatalf("credential mode = %o, want %o", got, want)
+	}
+	dirInfo, err := os.Stat(filepath.Dir(targetCredentialPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := dirInfo.Mode().Perm(), os.FileMode(0o700); got != want {
+		t.Fatalf("credential dir mode = %o, want %o", got, want)
+	}
+}
+
+func TestGetAgentHooksPreservesExistingAOManagedOAuthCredential(t *testing.T) {
+	workspace := t.TempDir()
+	userHome := t.TempDir()
+	aoHome := t.TempDir()
+	t.Setenv(kimiCodeHomeEnv, userHome)
+	if err := os.WriteFile(filepath.Join(userHome, "config.toml"), []byte(`api_key = "user-key"`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writeKimiOAuthCredential(t, userHome, "source-access", "source-refresh")
+	targetCredential := writeKimiOAuthCredential(t, aoHome, "target-access", "target-refresh")
+
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		Env:           map[string]string{kimiCodeHomeEnv: aoHome},
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	got, err := os.ReadFile(kimiOAuthCredentialPath(aoHome))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, targetCredential) {
+		t.Fatal("existing AO-managed OAuth credential was overwritten")
 	}
 }
 

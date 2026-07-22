@@ -37,7 +37,7 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 		return errors.New("kimi.GetAgentHooks: WorkspacePath is required")
 	}
 
-	if err := installKimiConfigHooks(cfg); err != nil {
+	if err := installKimiConfigHooks(ctx, cfg); err != nil {
 		return fmt.Errorf("kimi.GetAgentHooks: %w", err)
 	}
 
@@ -72,17 +72,20 @@ func kimiInstructionsPath(workspacePath string) string {
 	return filepath.Join(workspacePath, kimiInstructionsDirName, kimiInstructionsFileName)
 }
 
-func installKimiConfigHooks(cfg ports.WorkspaceHookConfig) error {
+func installKimiConfigHooks(ctx context.Context, cfg ports.WorkspaceHookConfig) error {
 	home, ok := kimiCodeHomeFromEnv(cfg.Env)
 	if !ok {
 		return errors.New("kimi: AO-managed Kimi Code home is unavailable")
+	}
+	if err := kimiSeedOAuthCredential(ctx, home); err != nil {
+		return err
 	}
 	path := filepath.Join(home, "config.toml")
 	data, err := os.ReadFile(path) //nolint:gosec // path is the AO-managed Kimi config under KIMI_CODE_HOME.
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("read %s: %w", path, err)
 	}
-	if seeded, ok, err := kimiSeedConfig(path, data); err != nil {
+	if seeded, ok, err := kimiSeedConfig(ctx, path, data); err != nil {
 		return err
 	} else if ok {
 		data = seeded
@@ -106,7 +109,10 @@ func kimiCodeHomeFromEnv(env map[string]string) (string, bool) {
 	return "", false
 }
 
-func kimiSeedConfig(targetPath string, existing []byte) ([]byte, bool, error) {
+func kimiSeedConfig(ctx context.Context, targetPath string, existing []byte) ([]byte, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
 	if kimiConfigHasAPIKey(existing) {
 		return nil, false, nil
 	}
@@ -128,10 +134,60 @@ func kimiSeedConfig(targetPath string, existing []byte) ([]byte, bool, error) {
 	if err != nil {
 		return nil, false, fmt.Errorf("read source Kimi config %s: %w", sourcePath, err)
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
 	if !kimiConfigHasAPIKey(source) {
-		return nil, false, nil
+		status, known, err := kimiOAuthCredentialAuthStatus(ctx, kimiOAuthCredentialPath(sourceHome))
+		if err != nil {
+			return nil, false, fmt.Errorf("read source Kimi OAuth credential: %w", err)
+		}
+		if !known || status != ports.AgentAuthStatusAuthorized {
+			return nil, false, nil
+		}
 	}
 	return source, true, nil
+}
+
+// kimiSeedOAuthCredential bootstraps AO's isolated Kimi home from the user's
+// existing device-code login. It never overwrites credentials that Kimi has
+// already created or refreshed inside the AO-managed home.
+func kimiSeedOAuthCredential(ctx context.Context, targetHome string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	sourceHome, ok := kimiCodeHome()
+	if !ok || sameKimiConfigPath(sourceHome, targetHome) {
+		return nil
+	}
+	targetPath := kimiOAuthCredentialPath(targetHome)
+	if _, err := os.Stat(targetPath); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect AO-managed Kimi OAuth credential %s: %w", targetPath, err)
+	}
+
+	sourcePath := kimiOAuthCredentialPath(sourceHome)
+	source, err := os.ReadFile(sourcePath) //nolint:gosec // user Kimi credential used only to seed AO's managed home.
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read source Kimi OAuth credential %s: %w", sourcePath, err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !kimiOAuthCredentialAuthorized(source) {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o700); err != nil {
+		return fmt.Errorf("create AO-managed Kimi credential dir: %w", err)
+	}
+	if err := hookutil.AtomicWriteFile(targetPath, source, 0o600); err != nil {
+		return fmt.Errorf("write AO-managed Kimi OAuth credential %s: %w", targetPath, err)
+	}
+	return nil
 }
 
 func kimiConfigCanSeed(existing []byte) bool {

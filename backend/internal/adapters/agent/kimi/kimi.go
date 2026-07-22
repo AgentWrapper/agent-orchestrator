@@ -183,12 +183,16 @@ func normalizePermissionMode(mode ports.PermissionMode) ports.PermissionMode {
 }
 
 var kimiBinarySpec = binaryutil.BinarySpec{
-	Label:         "kimi",
-	Names:         []string{"kimi"},
-	WinNames:      []string{"kimi.cmd", "kimi.exe", "kimi"},
-	UnixPaths:     []string{"/usr/local/bin/kimi", "/opt/homebrew/bin/kimi"},
-	UnixHomePaths: binaryutil.NodeManagedUnixHomePaths("kimi", []string{".cargo", "bin", "kimi"}),
-	NodeManaged:   true,
+	Label:     "kimi",
+	Names:     []string{"kimi"},
+	WinNames:  []string{"kimi.cmd", "kimi.exe", "kimi"},
+	UnixPaths: []string{"/usr/local/bin/kimi", "/opt/homebrew/bin/kimi"},
+	UnixHomePaths: binaryutil.NodeManagedUnixHomePaths(
+		"kimi",
+		[]string{".kimi-code", "bin", "kimi"},
+		[]string{".cargo", "bin", "kimi"},
+	),
+	NodeManaged: true,
 	WinPaths: []binaryutil.WinPath{
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "kimi.cmd"}},
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "kimi.exe"}},
@@ -197,7 +201,8 @@ var kimiBinarySpec = binaryutil.BinarySpec{
 }
 
 // ResolveKimiBinary finds the `kimi` binary, searching PATH then common install
-// locations (npm global dirs, ~/.local/bin, Homebrew, and ~/.cargo/bin).
+// locations (npm global dirs, the official ~/.kimi-code/bin install, Homebrew,
+// ~/.local/bin, and ~/.cargo/bin).
 func ResolveKimiBinary(ctx context.Context) (string, error) {
 	return binaryutil.ResolveBinary(ctx, kimiBinarySpec)
 }
