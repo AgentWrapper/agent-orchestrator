@@ -124,13 +124,6 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		mutationFn: async () => {
 			void captureRendererEvent("ao.renderer.settings_save_requested", { project_id: projectId });
 			const displayName = form.displayName.trim();
-			if (displayName !== project.name) {
-				const { error } = await apiClient.PATCH("/api/v1/projects/{id}", {
-					params: { path: { id: projectId } },
-					body: { displayName },
-				});
-				if (error) throw new Error(apiErrorMessage(error));
-			}
 			// PUT replaces the whole config; merge the edited fields over what loaded
 			// so we don't drop env/symlinks/postCreate the form doesn't expose.
 			const next: ProjectConfig = {
@@ -152,6 +145,13 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				body: { config: next },
 			});
 			if (error) throw new Error(apiErrorMessage(error));
+			if (displayName !== project.name) {
+				const { error } = await apiClient.PATCH("/api/v1/projects/{id}", {
+					params: { path: { id: projectId } },
+					body: { displayName },
+				});
+				if (error) throw new Error(apiErrorMessage(error));
+			}
 			if (
 				form.orchestratorAgent !== initialOrchestratorAgent ||
 				(activeOrchestrator && activeOrchestrator.provider !== form.orchestratorAgent)

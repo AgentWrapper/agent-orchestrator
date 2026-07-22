@@ -128,7 +128,9 @@ describe("ProjectSettingsForm", () => {
 		await userEvent.type(projectName, "TG Content Factory");
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
 		await waitFor(() => expect(patchMock).toHaveBeenCalledTimes(1));
+		expect(putMock.mock.invocationCallOrder[0]).toBeLessThan(patchMock.mock.invocationCallOrder[0] ?? Infinity);
 		expect(patchMock).toHaveBeenCalledWith("/api/v1/projects/{id}", {
 			params: { path: { id: "tg_content_factory_5863f66be3" } },
 			body: { displayName: "TG Content Factory" },
@@ -241,10 +243,14 @@ describe("ProjectSettingsForm", () => {
 
 		renderSettings();
 
+		const projectName = await screen.findByLabelText("Project name");
+		await userEvent.clear(projectName);
+		await userEvent.type(projectName, "Updated Project");
 		await userEvent.click(await screen.findByRole("button", { name: "Save changes" }));
 
 		expect(await screen.findByText("invalid permissions")).toBeInTheDocument();
 		expect(screen.queryByText("Saved.")).not.toBeInTheDocument();
+		expect(patchMock).not.toHaveBeenCalled();
 		expect(postMock).not.toHaveBeenCalled();
 	});
 
