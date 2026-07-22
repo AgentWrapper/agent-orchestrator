@@ -1,3 +1,6 @@
+import Image from "next/image";
+import Link from "next/link";
+
 // NOT IN USE
 const LOGO_URL = "/ao-logo-transparent.png";
 
@@ -7,25 +10,26 @@ const columns = [
 		links: [
 			{ label: "Features", href: "#features" },
 			{ label: "Agents", href: "#agents" },
-			{ label: "Install", href: "/docs/installation" },
-			{ label: "CLI", href: "/docs/cli" },
+			{ label: "Install", href: "/docs/installation/" },
+			{ label: "CLI", href: "/docs/cli/" },
+			{ label: "Design partners", href: "/design-partners/" },
 		],
 	},
 	{
 		title: "Docs",
 		links: [
-			{ label: "Overview", href: "/docs" },
-			{ label: "Architecture", href: "/docs/architecture" },
-			{ label: "Plugins", href: "/docs/plugins" },
-			{ label: "Changelog", href: "/docs/changelog" },
+			{ label: "Overview", href: "/docs/" },
+			{ label: "Architecture", href: "/docs/architecture/" },
+			{ label: "Plugins", href: "/docs/plugins/" },
+			{ label: "Changelog", href: "/docs/changelog/" },
 		],
 	},
 	{
 		title: "Community",
 		links: [
 			{ label: "GitHub", href: "https://github.com/AgentWrapper/agent-orchestrator" },
-			{ label: "Issues", href: "https://github.com/AgentWrapper/agent-orchestrator/issues" },
-			{ label: "Pull requests", href: "https://github.com/AgentWrapper/agent-orchestrator/pulls" },
+			{ label: "Discord", href: "https://discord.com/invite/UZv7JjxbwG" },
+			{ label: "X", href: "https://x.com/aoagents" },
 			{ label: "Releases", href: "https://github.com/AgentWrapper/agent-orchestrator/releases" },
 		],
 	},
@@ -45,10 +49,16 @@ export function LandingFooter() {
 			<div className="container-page py-12 sm:py-24">
 				<div className="grid gap-10 lg:grid-cols-[0.95fr_1.05fr]">
 					<div className="max-w-md">
-						<a href="/" className="inline-flex items-center gap-3">
-							<img src={LOGO_URL} alt="Agent Orchestrator" className="h-10 w-10 object-contain" />
+						<Link href="/" className="inline-flex items-center gap-3">
+							<Image
+								src={LOGO_URL}
+								alt="Agent Orchestrator"
+								width={40}
+								height={40}
+								className="h-10 w-10 object-contain"
+							/>
 							<span className="text-[16px] font-semibold text-[color:var(--fg)]">Agent Orchestrator</span>
-						</a>
+						</Link>
 						<p className="mt-4 max-w-md text-[14px] leading-relaxed text-[color:var(--fg-muted)]">
 							Open-source orchestration for terminal-native coding agents. Local daemon, isolated worktrees, live
 							sessions, and PR feedback routed to the right worker.
@@ -65,9 +75,6 @@ export function LandingFooter() {
 							</a>
 							<span className="inline-flex items-center rounded-sm border border-[color:var(--border)] bg-white/[0.015] px-3 py-2 font-mono text-[12px] text-[color:var(--fg-dim)]">
 								Apache 2.0
-							</span>
-							<span className="inline-flex items-center rounded-sm border border-[color:var(--border)] bg-white/[0.015] px-3 py-2 font-mono text-[12px] text-[color:var(--fg-dim)]">
-								127.0.0.1
 							</span>
 						</div>
 					</div>
@@ -99,7 +106,14 @@ export function LandingFooter() {
 				</div>
 
 				<div className="mt-20 flex flex-col justify-between gap-3 border-t border-[color:var(--border)] pt-5 font-mono text-[10px] uppercase tracking-[0.2em] text-[color:var(--fg-dim)] sm:flex-row">
-					<span>AgentWrapper/agent-orchestrator</span>
+					<a
+						href="https://github.com/AgentWrapper/agent-orchestrator"
+						target="_blank"
+						rel="noreferrer"
+						className="transition-colors duration-200 hover:text-[color:var(--fg)]"
+					>
+						AgentWrapper/agent-orchestrator
+					</a>
 					<span>Runs locally on your laptop.</span>
 				</div>
 			</div>

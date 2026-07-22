@@ -1,12 +1,15 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { TerminalTarget } from "../types/terminal";
 import type { WorkspaceSession } from "../types/workspace";
 import type { Theme } from "../stores/ui-store";
 import { useTerminalSession, type AttachableTerminal, type TerminalSessionState } from "../hooks/useTerminalSession";
-import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { apiClient } from "../lib/api-client";
 import { isLoopbackHostname } from "../lib/loopback";
+import { cn } from "../lib/utils";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { useRestoreSession } from "../hooks/useRestoreSession";
 import { XtermTerminal } from "./XtermTerminal";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
 
@@ -20,15 +23,34 @@ type TerminalPaneProps = {
 
 export function TerminalPane({ session, theme, daemonReady, terminalTarget, fontSize }: TerminalPaneProps) {
 	const terminalKey =
-		terminalTarget?.kind === "reviewer" ? terminalTarget.handleId : (session?.terminalHandleId ?? "empty");
+		terminalTarget?.kind === "reviewer" || terminalTarget?.kind === "shell"
+			? terminalTarget.handleId
+			: (session?.terminalHandleId ?? "empty");
 
 	if (!window.ao) {
+		// A standalone shell has no agent and no branch, so it previews as a plain
+		// prompt rather than borrowing the session's agent transcript.
+		if (terminalTarget?.kind === "shell") {
+			return (
+				<pre
+					className="h-full overflow-auto bg-terminal p-4 font-mono leading-relaxed text-terminal"
+					style={{ fontSize }}
+				>
+					<span className="text-terminal-dim">{terminalTarget.title}</span> $ {"\n"}
+					<span className="text-terminal-dim">
+						{"(standalone shell — a live PTY here in the desktop app)"}
+						{"\n"}
+					</span>
+				</pre>
+			);
+		}
 		const provider = terminalTarget?.kind === "reviewer" ? terminalTarget.harness : (session?.provider ?? "claude");
 		const lines =
 			terminalTarget?.kind === "reviewer" ? reviewerPreviewLines(session) : workerPreviewLines(session, provider);
 		return (
 			<pre
-				className="h-full overflow-auto bg-terminal p-4 font-mono leading-relaxed text-terminal"
+				className="h-full overflow-auto bg-terminal p-4 font-mono leading-relaxed text-terminal-foreground"
+				data-testid="session-terminal"
 				style={{ fontSize }}
 			>
 				<span className="text-terminal-dim">~/{session?.workspaceName ?? "reverbcode"}</span>{" "}
@@ -42,9 +64,9 @@ export function TerminalPane({ session, theme, daemonReady, terminalTarget, font
 								? "text-success"
 								: line.startsWith("WARN") || line.startsWith("TODO")
 									? "text-warning"
-									: line.startsWith("$")
+									: line.startsWith("$") || line.startsWith("▲")
 										? "text-accent"
-										: "text-terminal"
+										: "text-terminal-foreground"
 						}
 					>
 						{line}
@@ -68,6 +90,40 @@ export function TerminalPane({ session, theme, daemonReady, terminalTarget, font
 }
 
 function workerPreviewLines(session: WorkspaceSession | undefined, provider: string): string[] {
+	if (session?.id === "ao-demo-orchestrator") {
+		return [
+			"> Go through my Linear backlog and let's plan which tasks to spawn off",
+			"",
+			"Ran 3 shell commands",
+			"",
+			"Here's the backlog triage. Half of it is already in flight — don't spawn those.",
+			"",
+			"Already covered — don't spawn (session → PR):",
+			"— terminal polish → PR #318, changes requested",
+			"— browser preview stack → PRs #319/#320, in review",
+			"— README screenshot assets → PR #323, approved and mergeable",
+			"",
+			"Plan: 3 sessions worth spawning",
+			"",
+			"┌───┬────────────────────┬──────────────────────────────────────────┬──────────────────────────────────┐",
+			"│ # │ Session            │ Scope                                    │ Why now                          │",
+			"├───┼────────────────────┼──────────────────────────────────────────┼──────────────────────────────────┤",
+			"│ 1 │ new-task-flake     │ NewTaskDialog smoke test flakes on Enter │ Failing PR #324's e2e; small fix │",
+			"│ 2 │ checkout-retries   │ e2e retries leak state between runs      │ Flakes 1-in-5 on CI; well scoped │",
+			"│ 3 │ session-pr-surface │ PR checks missing on board cards         │ Additive; touches board only     │",
+			"└───┴────────────────────┴──────────────────────────────────────────┴──────────────────────────────────┘",
+			"",
+			"Want me to spawn all three? I'd put #1–2 on codex and #3 on claude-code.",
+			"",
+			"> yes, spawn all three",
+			"",
+			"Running 3 shell commands…",
+			'└ $ ao spawn --project ao-demo --name "new-task-flake" --agent codex --prompt',
+			'  "Fix the flaky NewTaskDialog smoke test: submit is debounced 300ms while the',
+			'  e2e check asserts synchronously. Reproduce, fix, and push to update PR #324."',
+			"PASS 3 sessions spawned — board updated",
+		];
+	}
 	if (session?.id === "demo-review-stack") {
 		return [
 			'$ rg "previewUrl|Browser" frontend/src/renderer',
@@ -97,6 +153,33 @@ function workerPreviewLines(session: WorkspaceSession | undefined, provider: str
 			"frontend/src/renderer/styles.css                 | 27 +++++++++++",
 			"WARN reviewer requested a tighter terminal activity sample",
 			"TODO confirm whether to keep the toolbar density change",
+		];
+	}
+	if (session?.id === "demo-ci-failed") {
+		return [
+			"╭────────────────────────────────────────────╮",
+			"│ >_ OpenAI Codex (v0.133.0)                 │",
+			"│ model:        gpt-5.5 high  /model to change",
+			"│ directory:    ~/ao-demo/demo-new-task-flake",
+			"│ permissions:  YOLO mode                    │",
+			"╰────────────────────────────────────────────╯",
+			"",
+			"• I'll start from the failing check output, reproduce the Enter-submit",
+			"  path locally, then patch and push.",
+			"",
+			"• Ran npm test -- NewTaskDialog",
+			"└ PASS 12 tests passed",
+			"",
+			"▲ ao send · CI failed on PR #324. The failing checks are e2e (NewTaskDialog",
+			"  submits with Enter). Investigate and push a fix.",
+			"",
+			'• Ran rg -n "onKeyDown|Enter" src/components/NewTaskDialog.tsx',
+			'└ src/components/NewTaskDialog.tsx:88:  onKeyDown={(e) => e.key === "Enter" && scheduleSubmit()}',
+			"  src/components/NewTaskDialog.tsx:141: const scheduleSubmit = debounce(submit, 300)",
+			"  … +42 lines (ctrl + t to view transcript)",
+			"",
+			"Found it: submit is debounced 300ms, the check asserts immediately.",
+			"Patching the handler and re-running e2e…",
 		];
 	}
 	return [
@@ -150,11 +233,17 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	const [restoreError, setRestoreError] = useState<string | undefined>();
 	const [restoreUnavailable, setRestoreUnavailable] = useState(false);
 	const queryClient = useQueryClient();
-	const { attach, state, error } = useTerminalSession(attachSession, { daemonReady });
-	const handleId = attachSession?.terminalHandleId;
+	const restoreSessionById = useRestoreSession();
+	// A shell pane has no session, so it hands the hook its handle directly
+	// instead of reading one off `attachSession`.
+	const shellTerminalHandleId = terminalTarget?.kind === "shell" ? terminalTarget.handleId : undefined;
+	const { attach, state, error } = useTerminalSession(attachSession, { daemonReady, shellTerminalHandleId });
+	const handleId = shellTerminalHandleId ?? attachSession?.terminalHandleId;
 	const provider = terminalTarget?.kind === "reviewer" ? terminalTarget.harness : session?.provider;
 	const hadAttachmentRef = useRef(false);
-	const canRestoreSession = terminalTarget?.kind !== "reviewer" && session?.status === "terminated";
+	// A standalone shell is never restorable: there is no session row to restore.
+	const canRestoreSession =
+		terminalTarget?.kind !== "reviewer" && terminalTarget?.kind !== "shell" && session?.status === "terminated";
 
 	const handleReady = useCallback((handle: AttachableTerminal) => {
 		setTerminal(handle);
@@ -195,24 +284,20 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 		setIsRestoring(true);
 		setRestoreError(undefined);
 		try {
-			const { error: restoreError } = await apiClient.POST("/api/v1/sessions/{sessionId}/restore", {
-				params: { path: { sessionId: session.id } },
-			});
-			if (restoreError) {
-				const code = (restoreError as { code?: string }).code;
-				if (code === "SESSION_NOT_RESUMABLE") {
-					setRestoreUnavailable(true);
-					return;
-				}
-				throw new Error(apiErrorMessage(restoreError, "Unable to restore session"));
+			const result = await restoreSessionById(session.id);
+			if (result.status === "not_resumable") {
+				setRestoreUnavailable(true);
+				return;
 			}
-			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			if (result.status === "error") {
+				setRestoreError(result.message);
+			}
 		} catch (err) {
 			setRestoreError(err instanceof Error ? err.message : "Unable to restore session");
 		} finally {
 			setIsRestoring(false);
 		}
-	}, [canRestoreSession, isRestoring, queryClient, session?.id]);
+	}, [canRestoreSession, isRestoring, restoreSessionById, session?.id]);
 
 	useEffect(() => {
 		if (!terminal) return;
@@ -241,7 +326,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 
 	const banner = bannerText(state, error);
 	const showEmptyState = !handleId;
-	const showExitedState = state === "exited";
+	const showEndedState = state === "exited" || canRestoreSession;
 	const emptyStateTitle = session ? "Starting session" : "Agent Orchestrator";
 	const emptyStateMessage = session
 		? session.kind === "orchestrator"
@@ -250,19 +335,21 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 		: "No session selected. Pick a worker to attach its terminal.";
 
 	return (
-		<div className="flex h-full min-h-0 flex-col bg-terminal">
-			{showExitedState && (
+		<div className="flex h-full min-h-0 flex-col bg-terminal" data-testid="session-terminal">
+			{showEndedState && (
 				<TerminalEndedStrip
 					canRestore={canRestoreSession}
 					error={restoreError}
 					isRestoring={isRestoring}
 					onRestore={restoreSession}
-					variant={terminalTarget?.kind === "reviewer" ? "reviewer" : "session"}
+					variant={
+						terminalTarget?.kind === "reviewer" ? "reviewer" : terminalTarget?.kind === "shell" ? "shell" : "session"
+					}
 				/>
 			)}
 			<div className="relative min-h-0 flex-1">
 				<XtermTerminal
-					ariaLabel="Session terminal"
+					ariaLabel={terminalTarget?.kind === "shell" ? "Shell terminal" : "Session terminal"}
 					fontSize={fontSize}
 					onError={handleInitError}
 					onLinkOpen={handleLinkOpen}
@@ -303,7 +390,7 @@ type TerminalEndedStripProps = {
 	error?: string;
 	isRestoring: boolean;
 	onRestore: () => void;
-	variant: "reviewer" | "session";
+	variant: "reviewer" | "session" | "shell";
 };
 
 function TerminalEndedStrip({ canRestore, error, isRestoring, onRestore, variant }: TerminalEndedStripProps) {
@@ -311,7 +398,9 @@ function TerminalEndedStrip({ canRestore, error, isRestoring, onRestore, variant
 		? "Restore the session to attach a live terminal and continue writing."
 		: variant === "reviewer"
 			? "This reviewer terminal has ended. Re-run review from the summary panel, or switch back to the agent terminal."
-			: "This terminal process ended, but the session is not marked terminated yet.";
+			: variant === "shell"
+				? "This shell exited. Close the tab, or open a new terminal."
+				: "This terminal process ended, but the session is not marked terminated yet.";
 
 	return (
 		<div className="shrink-0 border-b border-border bg-surface/80 px-4 py-2">
@@ -326,11 +415,13 @@ function TerminalEndedStrip({ canRestore, error, isRestoring, onRestore, variant
 				{canRestore && (
 					<button
 						type="button"
-						className="h-control-form shrink-0 rounded-md border border-border bg-raised px-3 text-xs font-medium text-foreground transition hover:bg-interactive-hover disabled:cursor-not-allowed disabled:opacity-50"
+						aria-label="Restore session"
+						title="Restore session"
+						className="inline-flex size-control-form shrink-0 items-center justify-center rounded-md border border-border bg-raised text-foreground transition hover:bg-interactive-hover disabled:cursor-not-allowed disabled:opacity-50"
 						disabled={isRestoring}
 						onClick={onRestore}
 					>
-						{isRestoring ? "Restoring..." : "Restore session"}
+						<RotateCcw className={cn("size-icon-base", isRestoring && "animate-spin")} aria-hidden="true" />
 					</button>
 				)}
 			</div>

@@ -30,10 +30,28 @@ func (s *Store) UpsertWorkspaceProject(ctx context.Context, r domain.ProjectReco
 	if err != nil {
 		return err
 	}
+	return s.writeWorkspaceProject(ctx, "upsert workspace project", r, repos, func(q *gen.Queries) error {
+		return upsertProject(ctx, q, r, config)
+	})
+}
+
+// ImportWorkspaceProject inserts or replaces a workspace project from an
+// authoritative import source, including the source registration timestamp.
+func (s *Store) ImportWorkspaceProject(ctx context.Context, r domain.ProjectRecord, repos []domain.WorkspaceRepoRecord) error {
+	config, err := marshalProjectConfig(r.Config)
+	if err != nil {
+		return err
+	}
+	return s.writeWorkspaceProject(ctx, "import workspace project", r, repos, func(q *gen.Queries) error {
+		return importProject(ctx, q, r, config)
+	})
+}
+
+func (s *Store) writeWorkspaceProject(ctx context.Context, label string, r domain.ProjectRecord, repos []domain.WorkspaceRepoRecord, writeProject func(*gen.Queries) error) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	return s.inTx(ctx, "upsert workspace project", func(q *gen.Queries) error {
-		if err := upsertProject(ctx, q, r, config); err != nil {
+	return s.inTx(ctx, label, func(q *gen.Queries) error {
+		if err := writeProject(q); err != nil {
 			return err
 		}
 		if err := q.DeleteWorkspaceReposByProject(ctx, domain.ProjectID(r.ID)); err != nil {
@@ -76,6 +94,59 @@ func (s *Store) ListWorkspaceRepos(ctx context.Context, projectID string) ([]dom
 func upsertProject(ctx context.Context, q *gen.Queries, r domain.ProjectRecord, config sql.NullString) error {
 	kind := r.Kind.WithDefault()
 	return q.UpsertProject(ctx, gen.UpsertProjectParams{
+		ID:            domain.ProjectID(r.ID),
+		Path:          r.Path,
+		RepoOriginURL: r.RepoOriginURL,
+		DisplayName:   r.DisplayName,
+		RegisteredAt:  r.RegisteredAt,
+		ArchivedAt:    nullTime(r.ArchivedAt),
+		Config:        config,
+		Kind:          string(kind),
+	})
+}
+
+func importProject(ctx context.Context, q *gen.Queries, r domain.ProjectRecord, config sql.NullString) error {
+	existingByID, err := q.GetProject(ctx, domain.ProjectID(r.ID))
+	if err == nil {
+		if existingByID.ArchivedAt.Valid {
+			return &domain.ProjectImportConflictError{Conflict: domain.ProjectImportConflict{
+				ProjectID:  r.ID,
+				Path:       r.Path,
+				Reason:     domain.ProjectImportConflictSameIDArchivedTarget,
+				TargetID:   string(existingByID.ID),
+				TargetPath: existingByID.Path,
+			}}
+		}
+		if existingByID.Path != r.Path {
+			return &domain.ProjectImportConflictError{Conflict: domain.ProjectImportConflict{
+				ProjectID:  r.ID,
+				Path:       r.Path,
+				Reason:     domain.ProjectImportConflictSameIDDifferentActivePath,
+				TargetID:   string(existingByID.ID),
+				TargetPath: existingByID.Path,
+			}}
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("check imported project id conflict: %w", err)
+	}
+
+	existingByPath, err := q.FindProjectByPath(ctx, r.Path)
+	if err == nil {
+		if existingByPath.ID != domain.ProjectID(r.ID) {
+			return &domain.ProjectImportConflictError{Conflict: domain.ProjectImportConflict{
+				ProjectID:  r.ID,
+				Path:       r.Path,
+				Reason:     domain.ProjectImportConflictSamePathDifferentActiveID,
+				TargetID:   string(existingByPath.ID),
+				TargetPath: existingByPath.Path,
+			}}
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("check imported project path conflict: %w", err)
+	}
+
+	kind := r.Kind.WithDefault()
+	return q.UpsertImportedProject(ctx, gen.UpsertImportedProjectParams{
 		ID:            domain.ProjectID(r.ID),
 		Path:          r.Path,
 		RepoOriginURL: r.RepoOriginURL,

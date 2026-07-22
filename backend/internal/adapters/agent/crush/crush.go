@@ -155,7 +155,8 @@ var crushBinarySpec = binaryutil.BinarySpec{
 	Names:         []string{"crush"},
 	WinNames:      []string{"crush.cmd", "crush.exe", "crush"},
 	UnixPaths:     []string{"/usr/local/bin/crush", "/opt/homebrew/bin/crush"},
-	UnixHomePaths: [][]string{{".local", "bin", "crush"}, {".cargo", "bin", "crush"}, {".npm", "bin", "crush"}},
+	UnixHomePaths: binaryutil.NodeManagedUnixHomePaths("crush", []string{".cargo", "bin", "crush"}),
+	NodeManaged:   true,
 	WinPaths: []binaryutil.WinPath{
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "crush.cmd"}},
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "crush.exe"}},

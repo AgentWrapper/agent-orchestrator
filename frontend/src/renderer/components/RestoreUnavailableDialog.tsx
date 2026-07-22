@@ -35,7 +35,7 @@ export function RestoreUnavailableDialog({ open, session, onOpenChange, onRecrea
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
-				<Dialog.Overlay className="fixed inset-0 z-overlay bg-scrim" />
+				<Dialog.Overlay className="dialog-overlay" />
 				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-dialog-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-surface p-5 shadow-lg">
 					<Dialog.Title className="text-sm font-medium text-foreground">Session can no longer be restored</Dialog.Title>
 					<Dialog.Description className="mt-2 text-control text-muted-foreground">

@@ -145,9 +145,21 @@ func (e env) startDaemon(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("spawn ao daemon: %v", err)
 	}
+	waitDone := make(chan error, 1)
+	go func() { waitDone <- cmd.Wait() }()
 	t.Cleanup(func() {
 		e.run(t, "stop")
-		_, _ = cmd.Process.Wait()
+		select {
+		case <-waitDone:
+			return
+		case <-time.After(5 * time.Second):
+		}
+		// The daemon did not exit on `ao stop` within the timeout: a shutdown
+		// regression is hiding behind a green test. Fail, force-kill, and wait
+		// for the child to be reaped so it cannot survive the test.
+		t.Errorf("daemon process did not exit within 5s of `ao stop`; forcing kill")
+		_ = cmd.Process.Kill()
+		<-waitDone
 	})
 
 	deadline := time.Now().Add(10 * time.Second)

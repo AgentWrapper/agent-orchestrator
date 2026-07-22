@@ -177,7 +177,7 @@ func copilotAgentProfile(agentName, sessionID, systemPrompt string) string {
 }
 
 func ignoreCopilotPath(workspacePath, pattern string) error {
-	gitDir, err := workspaceGitDir(workspacePath)
+	gitDir, err := workspaceGitCommonDir(workspacePath)
 	if err != nil {
 		return err
 	}
@@ -207,7 +207,7 @@ func ignoreCopilotPath(workspacePath, pattern string) error {
 	return nil
 }
 
-func workspaceGitDir(workspacePath string) (string, error) {
+func workspaceGitCommonDir(workspacePath string) (string, error) {
 	gitPath := filepath.Join(workspacePath, ".git")
 	info, err := os.Stat(gitPath)
 	if err != nil {
@@ -217,7 +217,7 @@ func workspaceGitDir(workspacePath string) (string, error) {
 		return "", fmt.Errorf("stat %s: %w", gitPath, err)
 	}
 	if info.IsDir() {
-		return gitPath, nil
+		return gitCommonDir(gitPath)
 	}
 	data, err := os.ReadFile(gitPath) //nolint:gosec // path built from caller-owned workspace dir
 	if err != nil {
@@ -233,9 +233,28 @@ func workspaceGitDir(workspacePath string) (string, error) {
 		return "", nil
 	}
 	if filepath.IsAbs(dir) {
-		return dir, nil
+		return gitCommonDir(dir)
 	}
-	return filepath.Clean(filepath.Join(workspacePath, dir)), nil
+	return gitCommonDir(filepath.Clean(filepath.Join(workspacePath, dir)))
+}
+
+func gitCommonDir(gitDir string) (string, error) {
+	commonPath := filepath.Join(gitDir, "commondir")
+	data, err := os.ReadFile(commonPath) //nolint:gosec // path derived from the workspace .git metadata
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return gitDir, nil
+		}
+		return "", fmt.Errorf("read %s: %w", commonPath, err)
+	}
+	dir := strings.TrimSpace(string(data))
+	if dir == "" {
+		return gitDir, nil
+	}
+	if filepath.IsAbs(dir) {
+		return filepath.Clean(dir), nil
+	}
+	return filepath.Clean(filepath.Join(gitDir, dir)), nil
 }
 
 // UninstallHooks removes AO's Copilot hooks from the workspace-local
