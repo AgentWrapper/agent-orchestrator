@@ -110,3 +110,48 @@ func TestGuard_MessengerErrorIsSentPlusError(t *testing.T) {
 		t.Errorf("outcome = %v, want Sent (the write was attempted)", got)
 	}
 }
+
+// TestGuard_NudgeCoordinationEnforcesSteeringAtWriteBoundary pins the binding
+// safety decision to the guard's own just-in-time read: an active session is
+// refused unless its harness declares it can be steered mid-turn, no matter what
+// the caller believed when it decided to dispatch.
+func TestGuard_NudgeCoordinationEnforcesSteeringAtWriteBoundary(t *testing.T) {
+	steersCodex := func(h domain.AgentHarness) bool { return h == domain.HarnessCodex }
+	cases := []struct {
+		name    string
+		state   domain.ActivityState
+		harness domain.AgentHarness
+		steers  func(domain.AgentHarness) bool
+		want    Outcome
+	}{
+		{"idle delivers", domain.ActivityIdle, domain.HarnessClaudeCode, steersCodex, Sent},
+		{"active non-steering suppressed", domain.ActivityActive, domain.HarnessClaudeCode, steersCodex, SuppressedBusy},
+		{"active steering delivers", domain.ActivityActive, domain.HarnessCodex, steersCodex, Sent},
+		{"active nil predicate suppressed", domain.ActivityActive, domain.HarnessCodex, nil, SuppressedBusy},
+		{"waiting_input suppressed", domain.ActivityWaitingInput, domain.HarnessCodex, steersCodex, SuppressedAwaitingUser},
+		{"blocked suppressed", domain.ActivityBlocked, domain.HarnessCodex, steersCodex, SuppressedAwaitingUser},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := record(tc.state, false)
+			rec.Harness = tc.harness
+			msg := &fakeMessenger{}
+			g := New(&fakeStore{rec: rec, ok: true}, msg, nil)
+
+			got, err := g.NudgeCoordination(context.Background(), "s1", "x", tc.steers)
+			if err != nil {
+				t.Fatalf("NudgeCoordination: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("outcome = %v, want %v", got, tc.want)
+			}
+			wantSends := 0
+			if tc.want == Sent {
+				wantSends = 1
+			}
+			if len(msg.sent) != wantSends {
+				t.Fatalf("sends = %d, want %d", len(msg.sent), wantSends)
+			}
+		})
+	}
+}

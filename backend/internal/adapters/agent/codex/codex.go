@@ -53,8 +53,15 @@ func (p *Plugin) ExitDetectionMode() ports.AgentExitDetectionMode {
 	return ports.AgentExitDetectionSupervisor
 }
 
+// SteersActiveTurn is true: submitting input to the codex TUI mid-turn steers
+// the running turn rather than being swallowed or queued, so AO may write an
+// unsolicited coordination message into an active codex session. See
+// ports.ActiveTurnSteerer.
+func (p *Plugin) SteersActiveTurn() bool { return true }
+
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
+var _ ports.ActiveTurnSteerer = (*Plugin)(nil)
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
 
 // Manifest returns the adapter's static self-description.
