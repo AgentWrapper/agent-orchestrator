@@ -1220,12 +1220,15 @@ func TestRequireSameRepoGitLab(t *testing.T) {
 		{"mismatch", "https://gitlab.com/castai/ctxd/-/merge_requests/9", "https://github.com/other/repo", ErrProjectMismatch},
 		{"gitlab mismatch repo", "https://gitlab.com/castai/ctxd/-/merge_requests/9", "https://gitlab.com/other/repo", ErrProjectMismatch},
 		// Cross-provider mismatch: same owner/repo name on GitHub and GitLab
-		// must not validate		{"cross-provider github origin vs gitlab mr", "https://gitlab.com/owner/repo/-/merge_requests/1", "https://github.com/owner/repo.git", ErrProjectMismatch},
+		// must not validate
+		{"cross-provider github origin vs gitlab mr", "https://gitlab.com/owner/repo/-/merge_requests/1", "https://github.com/owner/repo.git", ErrProjectMismatch},
 		{"cross-provider gitlab origin vs github pr", "https://github.com/owner/repo/pull/1", "https://gitlab.com/owner/repo.git", ErrProjectMismatch},
 		// Cross-host mismatch: gitlab.com origin vs self-managed gitlab MR
-		// must not validate even though both are GitLab		{"cross-host gitlab.com origin vs self-managed mr", "https://gitlab.mycompany.com/owner/repo/-/merge_requests/1", "https://gitlab.com/owner/repo.git", ErrProjectMismatch},
+		// must not validate even though both are GitLab
+		{"cross-host gitlab.com origin vs self-managed mr", "https://gitlab.mycompany.com/owner/repo/-/merge_requests/1", "https://gitlab.com/owner/repo.git", ErrProjectMismatch},
 		{"matching self-managed gitlab", "https://gitlab.mycompany.com/eng/team/-/merge_requests/3", "https://gitlab.mycompany.com/eng/team.git", nil},
-		// Nested namespaces must match end-to-end		{"matching nested namespace gitlab", "https://gitlab.com/group/subgroup/repo/-/merge_requests/5", "https://gitlab.com/group/subgroup/repo.git", nil},
+		// Nested namespaces must match end-to-end
+		{"matching nested namespace gitlab", "https://gitlab.com/group/subgroup/repo/-/merge_requests/5", "https://gitlab.com/group/subgroup/repo.git", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
