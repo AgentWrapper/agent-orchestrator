@@ -55,6 +55,9 @@ struct SessionView: View {
 		case .idle, .connecting:
 			Label("Connecting…", systemImage: "dot.radiowaves.left.and.right")
 				.font(.caption2).foregroundStyle(.secondary)
+		case .socketOpen:
+			Label("Handshaking…", systemImage: "dot.radiowaves.left.and.right")
+				.font(.caption2).foregroundStyle(.yellow)
 		case .live:
 			Label("Live", systemImage: "dot.radiowaves.left.and.right")
 				.font(.caption2).foregroundStyle(.green)

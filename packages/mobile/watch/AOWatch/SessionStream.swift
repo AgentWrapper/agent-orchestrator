@@ -4,19 +4,22 @@ import Foundation
 // WebSocket as a SECONDARY terminal client (so it never changes the PTY size the
 // desktop drives), decodes the base64 PTY stream, strips terminal control codes,
 // and publishes a plain-text tail. Mirrors the resilient bits of
-// packages/mobile/lib/mux.ts: auto-reconnect with backoff + keep-alive ping,
-// which matters on the watch where the link (often relayed via the phone) is
-// slower and flakier than a direct connection.
+// packages/mobile/lib/mux.ts (auto-reconnect + keep-alive ping), which matter on
+// the watch where the link (often relayed via the phone) is slow and flaky.
+//
+// The handshake (subscribe + terminal open) is sent from the delegate's
+// didOpen callback, i.e. only once the socket is truly open — sending before the
+// upgrade completed left the daemon with no "open" and thus no data on the watch.
 @MainActor
-final class SessionStream: ObservableObject {
+final class SessionStream: NSObject, ObservableObject, URLSessionWebSocketDelegate {
 	enum Status: Equatable {
-		case idle, connecting, live, closed
+		case idle, connecting, socketOpen, live, closed
 		case error(String)
 	}
 
 	@Published private(set) var output = ""
 	@Published private(set) var status: Status = .idle
-	// Surfaced on-device so we can diagnose connection failures without a debugger.
+	// Surfaced on-device so we can diagnose without a debugger.
 	@Published private(set) var detail: String?
 	@Published private(set) var attempts = 0
 
@@ -24,6 +27,7 @@ final class SessionStream: ObservableObject {
 	private var sessionId = ""
 	private var projectId: String?
 
+	private var session: URLSession?
 	private var task: URLSessionWebSocketTask?
 	private var pingTask: Task<Void, Never>?
 	private var runLoopTask: Task<Void, Never>?
@@ -48,7 +52,9 @@ final class SessionStream: ObservableObject {
 		pingTask?.cancel()
 		runLoopTask?.cancel()
 		task?.cancel(with: .goingAway, reason: nil)
+		session?.invalidateAndCancel()
 		task = nil
+		session = nil
 		if status != .closed { status = .closed }
 	}
 
@@ -59,55 +65,37 @@ final class SessionStream: ObservableObject {
 		while !stopped {
 			let hadData = await connectAndReceive()
 			if stopped { break }
-			// If we got output before dropping, reset backoff so a brief blip
-			// reconnects fast; otherwise back off up to 15s.
 			backoffSeconds = hadData ? 1 : min(backoffSeconds * 2, 15)
 			if status != .closed { status = .connecting }
 			try? await Task.sleep(nanoseconds: backoffSeconds * 1_000_000_000)
 		}
 	}
 
-	/// Opens one socket and pumps it until it errors/closes. Returns whether any
-	/// terminal data arrived on this attempt.
 	private func connectAndReceive() async -> Bool {
 		guard let config,
 		      let base = config.baseURL,
 		      var comps = URLComponents(url: base, resolvingAgainstBaseURL: false)
-		else {
-			status = .error("Bad server address.")
-			return false
-		}
+		else { status = .error("Bad server address."); return false }
 		comps.scheme = config.secure ? "wss" : "ws"
 		comps.path = "/mux"
-		guard let url = comps.url else {
-			status = .error("Bad server address.")
-			return false
-		}
+		guard let url = comps.url else { status = .error("Bad server address."); return false }
 
 		var req = URLRequest(url: url)
-		req.timeoutInterval = 30 // the watch link can be slow; don't bail early
-		// The daemon 403s any non-loopback WS Origin before the upgrade; pin a
-		// loopback Origin so the handshake passes (see lib/mux.ts).
+		req.timeoutInterval = 30
 		req.setValue("http://localhost", forHTTPHeaderField: "Origin")
 		if !config.password.isEmpty {
 			req.setValue("Bearer \(config.password)", forHTTPHeaderField: "Authorization")
 		}
 
 		let cfg = URLSessionConfiguration.ephemeral
-		cfg.waitsForConnectivity = true
 		cfg.timeoutIntervalForRequest = 30
-		let session = URLSession(configuration: cfg)
-		let t = session.webSocketTask(with: req)
+		let s = URLSession(configuration: cfg, delegate: self, delegateQueue: nil)
+		let t = s.webSocketTask(with: req)
+		session = s
 		task = t
 		attempts += 1
 		if status != .live { status = .connecting }
 		t.resume()
-
-		sendJSON(["ch": "subscribe", "topics": ["sessions", "notifications"]])
-		var open: [String: Any] = ["ch": "terminal", "id": sessionId, "type": "open", "role": "secondary"]
-		if let projectId { open["projectId"] = projectId }
-		sendJSON(open)
-		startPing()
 
 		var sawData = false
 		while !stopped {
@@ -121,7 +109,33 @@ final class SessionStream: ObservableObject {
 			}
 		}
 		pingTask?.cancel()
+		s.invalidateAndCancel()
 		return sawData
+	}
+
+	// MARK: - URLSessionWebSocketDelegate (called off the main actor)
+
+	nonisolated func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
+	                            didOpenWithProtocol protocol: String?) {
+		Task { @MainActor in self.onSocketOpen() }
+	}
+
+	nonisolated func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
+	                            didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
+		let code = closeCode.rawValue
+		let why = reason.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+		Task { @MainActor in self.detail = "closed \(code)\(why.isEmpty ? "" : ": \(why)")" }
+	}
+
+	private func onSocketOpen() {
+		if status == .connecting { status = .socketOpen }
+		detail = "socket open; sent open, awaiting data"
+		// Now that the upgrade completed, ask for session status + this terminal.
+		sendJSON(["ch": "subscribe", "topics": ["sessions", "notifications"]])
+		var open: [String: Any] = ["ch": "terminal", "id": sessionId, "type": "open", "role": "secondary"]
+		if let projectId { open["projectId"] = projectId }
+		sendJSON(open)
+		startPing()
 	}
 
 	// MARK: - Internals
@@ -185,23 +199,12 @@ final class SessionStream: ObservableObject {
 	// Not a terminal emulator — full-screen TUI redraws will still look rough.
 	static func sanitize(_ s: String) -> String {
 		var t = s
-		// OSC: ESC ] … (BEL | ESC \)
-		t = t.replacingOccurrences(
-			of: "\u{1B}\\][^\u{07}\u{1B}]*(?:\u{07}|\u{1B}\\\\)",
-			with: "", options: .regularExpression)
-		// CSI: ESC [ … final byte
-		t = t.replacingOccurrences(
-			of: "\u{1B}\\[[0-9;?]*[ -/]*[@-~]",
-			with: "", options: .regularExpression)
-		// Any other two-char ESC sequence
+		t = t.replacingOccurrences(of: "\u{1B}\\][^\u{07}\u{1B}]*(?:\u{07}|\u{1B}\\\\)", with: "", options: .regularExpression)
+		t = t.replacingOccurrences(of: "\u{1B}\\[[0-9;?]*[ -/]*[@-~]", with: "", options: .regularExpression)
 		t = t.replacingOccurrences(of: "\u{1B}.", with: "", options: .regularExpression)
-		// Normalize line endings
 		t = t.replacingOccurrences(of: "\r\n", with: "\n")
 		t = t.replacingOccurrences(of: "\r", with: "\n")
-		// Drop remaining C0 control chars except newline and tab
-		t = t.replacingOccurrences(
-			of: "[\u{00}-\u{08}\u{0B}-\u{1F}\u{7F}]",
-			with: "", options: .regularExpression)
+		t = t.replacingOccurrences(of: "[\u{00}-\u{08}\u{0B}-\u{1F}\u{7F}]", with: "", options: .regularExpression)
 		return t
 	}
 }
