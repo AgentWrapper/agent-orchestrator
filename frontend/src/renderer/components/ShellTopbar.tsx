@@ -15,21 +15,18 @@ import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { useUiStore } from "../stores/ui-store";
 import { OrchestratorIcon } from "./icons";
-import { cn } from "../lib/utils";
 import { getAgentActivityView } from "../lib/session-presentation";
 import {
 	isLinuxPlatform,
 	isMacPlatform,
 	isWindowsPlatform,
 	usesBoardActionsInPanel,
-	usesFramedAppTopbar,
 } from "../lib/platform";
 import { StatusPill } from "./StatusPill";
 import {
 	TopbarButton,
 	TopbarKillError,
 	topbarHeaderClass,
-	topbarHeaderMacClass,
 	topbarProjectLabelClass,
 } from "./TopbarButton";
 
@@ -37,7 +34,6 @@ const isMac = isMacPlatform();
 const isLinux = isLinuxPlatform();
 const isWindows = isWindowsPlatform();
 const boardActionsInPanel = usesBoardActionsInPanel();
-const topbarNeedsTitlebarOffset = isMac && !usesFramedAppTopbar();
 const dragStyle = isMac ? ({ WebkitAppRegion: "drag" } as React.CSSProperties) : undefined;
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
@@ -139,7 +135,7 @@ export function ShellTopbar() {
 	};
 
 	return (
-		<header className={cn(topbarHeaderClass, topbarNeedsTitlebarOffset && topbarHeaderMacClass)} style={dragStyle}>
+		<header className={topbarHeaderClass} style={dragStyle}>
 			<div className="flex min-w-0 items-center gap-3">
 				{isSessionRoute && isOrchestrator ? (
 					<div className="inline-flex min-w-0 items-center gap-2">

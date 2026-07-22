@@ -225,38 +225,24 @@ export function Sidebar({
 				)}
 			>
 				{isMac ? <TitlebarNav historyLocked={historyLocked} /> : null}
-				{/* Brand: logo is pinned in the same 48px icon-rail column as the
-				    toggle so it does not resize or reflow during the width
-				    animation. Wordmark fades in beside it when expanded. */}
+				{/* Brand: logo stays in the --size-sidebar-icon column at a fixed
+				    size so it does not resize or reflow during the width animation.
+				    Wordmark fades in beside it when expanded. */}
 				<div
 					className={cn(
-						"flex shrink-0 items-center pb-4.5",
-						isMac ? "group-data-[collapsible=icon]:pb-2" : "gap-2.5 px-2 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:pb-2",
+						"flex shrink-0 items-center pb-4.5 group-data-[collapsible=icon]:pb-2",
+						!isMac &&
+							"group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:gap-1",
 					)}
 				>
-					<div
-						className={cn(
-							isMac && "flex w-(--size-sidebar-icon) shrink-0 items-center justify-center",
-						)}
-					>
+					<div className="flex w-(--size-sidebar-icon) shrink-0 items-center justify-center">
 						<Tooltip>
 							<TooltipTrigger asChild>
 								<button
 									aria-label="Orchestrator board"
 									className={cn(
-										"grid shrink-0 place-items-center rounded-lg",
-										isMac
-											? cn(
-													"size-control-board",
-													selection.isHome ? "bg-interactive-active" : "hover:bg-interactive-hover",
-												)
-											: cn(
-													"h-5.5 w-5.5",
-													"group-data-[collapsible=icon]:size-control-board",
-													selection.isHome
-														? "group-data-[collapsible=icon]:bg-interactive-active"
-														: "group-data-[collapsible=icon]:hover:bg-interactive-hover",
-												),
+										"grid size-control-board shrink-0 place-items-center rounded-lg",
+										selection.isHome ? "bg-interactive-active" : "hover:bg-interactive-hover",
 									)}
 									onClick={selection.goHome}
 									type="button"

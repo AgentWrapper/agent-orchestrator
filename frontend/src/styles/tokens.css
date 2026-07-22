@@ -207,7 +207,6 @@
 	/* Clears macOS traffic lights (y:20 discs) before in-sidebar TitlebarNav;
 	   keep Sidebar header padding and the shell drag strip on this same token. */
 	--size-traffic-light-clearance: 36px;
-	--size-titlebar-content-offset: 180px;
 	--size-resize-handle: 7px;
 	--size-resize-handle-offset: 3px;
 	--size-kanban-glow: 130px;

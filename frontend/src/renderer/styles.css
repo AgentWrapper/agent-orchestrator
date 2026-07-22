@@ -163,7 +163,6 @@
 	/* Layout — toolbar offset for fixed sidebar below topbar */
 	--spacing-toolbar: var(--size-toolbar);
 	--spacing-traffic-light-clearance: var(--size-traffic-light-clearance);
-	--spacing-titlebar-content-offset: var(--size-titlebar-content-offset);
 	--spacing-control-xs: var(--size-control-xs);
 	--spacing-control-sm: var(--size-control-sm);
 	--spacing-control-form: var(--size-control-form);
