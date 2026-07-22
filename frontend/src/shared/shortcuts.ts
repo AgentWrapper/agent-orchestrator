@@ -45,8 +45,8 @@ export const APP_SHORTCUTS: readonly ShortcutDefinition[] = [
 		id: "new-shell-terminal",
 		label: "New terminal",
 		category: "General",
-		mac: ["Ctrl", "`"],
-		windowsLinux: ["Ctrl", "`"],
+		mac: ["⌃", "⇧", "`"],
+		windowsLinux: ["Ctrl", "Shift", "`"],
 	},
 	{
 		id: "keyboard-shortcuts",
@@ -103,19 +103,22 @@ export function matchesNewSessionShortcut(chord: ShortcutChord, isMac: boolean):
 		: chord.ctrl && chord.shift && !chord.alt && !chord.meta;
 }
 
-// New standalone terminal: Ctrl+` on every platform, matching VS Code and most
-// IDEs. Ctrl (not ⌘) on macOS too — that is the conventional binding there, and
-// ⌘` is already taken by the OS for cycling an app's windows.
+// New standalone terminal, bound to the backtick chords VS Code / Cursor /
+// Codex use for the integrated terminal — identical on macOS, Windows, and
+// Linux (Ctrl, never ⌘, so there is nothing platform-specific to learn):
 //
-// Like the other app shortcuts this is handled in the main process, so it fires
-// even while focus is inside xterm. The tradeoff is deliberate: no shell or TUI
-// running in a pane can receive Ctrl+` while AO owns it. Almost nothing binds
-// that chord, and VS Code makes the same trade.
+//   • Ctrl+Shift+` — "Create New Terminal" (the primary, advertised binding).
+//   • Ctrl+`       — VS Code's toggle/focus chord; also opens one here.
+//
+// Handled in the main process so they fire even while focus is inside xterm.
+// The tradeoff is deliberate and matches VS Code: no shell or TUI in a pane can
+// receive Ctrl+` / Ctrl+Shift+` while AO owns them. Almost nothing binds them.
 export function matchesNewShellTerminalShortcut(chord: ShortcutChord, _isMac: boolean): boolean {
 	// Keyboards that need a modifier for the backtick can report the physical
-	// key instead of the character, so accept either spelling.
+	// key instead of the character, so accept either spelling. Shift is optional
+	// (Ctrl+` and Ctrl+Shift+` both open a terminal); ⌘/Alt must not be held.
 	if (chord.key !== "`" && chord.key !== "Backquote") return false;
-	return chord.ctrl && !chord.meta && !chord.alt && !chord.shift;
+	return chord.ctrl && !chord.meta && !chord.alt;
 }
 
 // Keyboard shortcut help: ⌘/ on macOS, Ctrl+/ on Windows/Linux. This is also
