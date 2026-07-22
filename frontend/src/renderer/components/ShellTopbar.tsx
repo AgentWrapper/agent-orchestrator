@@ -68,7 +68,8 @@ export function ShellTopbar() {
 	const isProjectBoardRoute = !isSessionRoute && Boolean(projectId);
 	const isRootBoardRoute = !isSessionRoute && !isProjectBoardRoute;
 	const project = projectId ? all.find((workspace) => workspace.id === projectId) : undefined;
-	const projectLabel = project?.name ?? session?.workspaceName ?? (projectId ? "" : "agent-orchestrator");
+	const isBoardEmpty = isProjectBoardRoute && (project?.sessions.filter((s) => s.kind === "worker").length ?? 0) === 0;
+	const projectLabel = project?.name ?? session?.workspaceName ?? (projectId ? "" : "Board");
 	const orchestrator = projectId ? findProjectOrchestrator(all, projectId) : undefined;
 	const isProjectRestarting = projectId ? restartingProjectIds.has(projectId) : false;
 
@@ -150,8 +151,13 @@ export function ShellTopbar() {
 						) : null}
 						{session ? <SessionStatusPill session={session} /> : null}
 					</div>
+<<<<<<< HEAD
 				) : (isProjectBoardRoute && boardActionsInPanel) ||
 				  (isMac && isRootBoardRoute && boardActionsInPanel) ? null : (
+=======
+				) : (isProjectBoardRoute && !boardActionsInFramedTopbar) ||
+					(isMac && isRootBoardRoute && !boardActionsInFramedTopbar) ? null : (
+>>>>>>> 001965fe5 (fix(ui): use valid topbar button variants and define isBoardEmpty)
 					<div className="inline-flex min-w-0 items-center gap-1.5">
 						<span className={topbarProjectLabelClass}>{projectLabel}</span>
 					</div>
@@ -207,7 +213,7 @@ export function ShellTopbar() {
 									disabled={isProjectRestarting}
 									onClick={openNewTask}
 									style={noDragStyle}
-									variant={isBoardEmpty ? "outline" : "accent"}
+									variant={isBoardEmpty ? "primary" : "accent"}
 								>
 									<Plus className="size-icon-md" aria-hidden="true" />
 									New task
@@ -242,7 +248,7 @@ export function ShellTopbar() {
 								disabled={isSpawning || isProjectRestarting}
 								onClick={() => void openOrchestrator()}
 								style={noDragStyle}
-								variant={isBoardEmpty ? "outline" :"primary"}
+								variant={isBoardEmpty ? "icon" : "primary"}
 							>
 								<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
 								{isProjectRestarting ? "Restarting…" : isSpawning ? "Spawning…" : "Orchestrator"}
