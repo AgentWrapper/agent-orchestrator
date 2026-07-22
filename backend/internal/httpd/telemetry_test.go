@@ -114,6 +114,40 @@ func TestCLIInvokedRouteSeparatesAgentAndSystemInvocationsFromActiveUsers(t *tes
 	}
 }
 
+func TestCLIInvokedRouteDedupeIncludesActorType(t *testing.T) {
+	sink := &captureSink{}
+	r := NewRouterWithControl(config.Config{DataDir: t.TempDir()}, discardLogger(), nil, APIDeps{Telemetry: sink}, ControlDeps{})
+
+	postInvoked := func(body string) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/internal/telemetry/cli-invoked", strings.NewReader(body))
+		req.Host = "127.0.0.1:3001"
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("status = %d, want 202", rec.Code)
+		}
+	}
+
+	postInvoked(`{"command":"ls","commandPath":"ao session ls","actorType":"agent"}`)
+	postInvoked(`{"command":"ls","commandPath":"ao session ls","actorType":"agent"}`)
+	if len(sink.events) != 1 {
+		t.Fatalf("events after repeated agent command = %d, want 1", len(sink.events))
+	}
+
+	postInvoked(`{"command":"ls","commandPath":"ao session ls","actorType":"user"}`)
+	if len(sink.events) != 3 {
+		t.Fatalf("events after same user command = %d, want 3", len(sink.events))
+	}
+	if sink.events[1].Name != "ao.cli.invoked" || sink.events[1].Payload["actor_type"] != "user" {
+		t.Fatalf("second emitted event = %#v, want user ao.cli.invoked", sink.events[1])
+	}
+	if sink.events[2].Name != "ao.app.active" {
+		t.Fatalf("third emitted event = %#v, want ao.app.active", sink.events[2])
+	}
+}
+
 func TestCLIInvokedRouteRequiresLoopback(t *testing.T) {
 	sink := &captureSink{}
 	r := NewRouterWithControl(config.Config{DataDir: t.TempDir()}, discardLogger(), nil, APIDeps{Telemetry: sink}, ControlDeps{})
