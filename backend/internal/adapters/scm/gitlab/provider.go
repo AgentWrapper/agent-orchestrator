@@ -64,6 +64,13 @@ type Provider struct {
 	hostClients   map[string]*Client
 	hostClientCfg ClientOptions
 	hostMu        sync.Mutex
+
+	// cache is the provider-level in-memory TTL cache shared across three
+	// domains: MR detail (60s), approvals (60s), and fork-project path
+	// resolution (5min). It is transparent to callers — the scm.Provider
+	// interface is unchanged. Populated and consulted by FetchPullRequests,
+	// FetchReviewThreads, ListPRsByRepo, and the fork-resolution path.
+	cache *cache
 }
 
 // NewProvider creates a GitLab SCM provider. If SkipTokenPreflight is false
@@ -118,6 +125,7 @@ func NewProvider(opts ProviderOptions) (*Provider, error) {
 			RESTBase:   opts.RESTBase,
 		},
 		hostClients: map[string]*Client{},
+		cache:       newCache(),
 	}, nil
 }
 
