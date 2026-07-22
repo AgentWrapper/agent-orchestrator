@@ -227,6 +227,25 @@ describe("NewTaskDialog", () => {
 		expect(postMock).not.toHaveBeenCalled();
 	});
 
+	it("submits on Enter and inserts a newline on Shift+Enter in the brief", async () => {
+		renderDialog();
+		const user = userEvent.setup();
+		await waitForAgentCatalog();
+
+		await user.type(screen.getByLabelText("Title"), "Fix fallback renderer");
+		const brief = screen.getByLabelText("Brief");
+		await user.type(brief, "First line");
+		// Shift+Enter must NOT submit — it adds a newline.
+		await user.keyboard("{Shift>}{Enter}{/Shift}");
+		await user.type(brief, "Second line");
+		expect(postMock).not.toHaveBeenCalled();
+
+		// Plain Enter submits the task.
+		await user.keyboard("{Enter}");
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		expect(spawnBody().prompt).toContain("\n");
+	});
+
 	it.each([
 		{
 			code: "AGENT_BINARY_NOT_FOUND",
