@@ -221,11 +221,24 @@ type SetSessionPreviewRequest struct {
 	URL string `json:"url,omitempty" description:"Preview target URL. When empty, the daemon autodetects a static entry point in the session workspace."`
 }
 
+// SetSessionMergePolicyRequest is the body of PATCH /api/v1/sessions/{sessionId}/merge-policy.
+type SetSessionMergePolicyRequest struct {
+	TerminateOnPRMerge bool `json:"terminateOnPrMerge"`
+}
+
 // RenameSessionResponse is the body of PATCH /api/v1/sessions/{sessionId}.
 type RenameSessionResponse struct {
 	OK          bool             `json:"ok"`
 	SessionID   domain.SessionID `json:"sessionId"`
 	DisplayName string           `json:"displayName"`
+}
+
+// SetSessionMergePolicyResponse is the body of PATCH /api/v1/sessions/{sessionId}/merge-policy.
+type SetSessionMergePolicyResponse struct {
+	OK                 bool             `json:"ok"`
+	SessionID          domain.SessionID `json:"sessionId"`
+	TerminateOnPRMerge bool             `json:"terminateOnPrMerge"`
+	Session            SessionView      `json:"session"`
 }
 
 // RestoreSessionResponse is the body of POST /api/v1/sessions/{sessionId}/restore.
@@ -471,6 +484,7 @@ type SetActivityRequest struct {
 	ToolName       string `json:"toolName,omitempty" description:"Native tool name, for tool-use hook events."`
 	ToolUseID      string `json:"toolUseId,omitempty" description:"Native tool-use id, for tool-use hook events."`
 	AgentSessionID string `json:"agentSessionId,omitempty" description:"Native agent session identifier used to resume its transcript."`
+	LaunchID       string `json:"launchId,omitempty" description:"AO process generation that produced the signal."`
 }
 
 // SetActivityResponse is the body of POST /api/v1/sessions/{sessionId}/activity.

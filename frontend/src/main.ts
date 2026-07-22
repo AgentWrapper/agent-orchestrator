@@ -150,6 +150,44 @@ const TITLEBAR_HEIGHT = 36;
 const MAC_WINDOW_BUTTON_X = 14;
 const MAC_WINDOW_BUTTON_EXPANDED_Y = 20;
 const MAC_WINDOW_BUTTON_COLLAPSED_Y = 33;
+const MAC_WINDOW_BUTTON_TRANSITION_MS = 200;
+let macWindowButtonY = MAC_WINDOW_BUTTON_EXPANDED_Y;
+let macWindowButtonTransition: ReturnType<typeof setInterval> | undefined;
+
+function stopMacWindowButtonTransition(): void {
+	if (macWindowButtonTransition === undefined) return;
+	clearInterval(macWindowButtonTransition);
+	macWindowButtonTransition = undefined;
+}
+
+function animateMacWindowButtons(inset: boolean): void {
+	const win = mainWindow;
+	if (process.platform !== "darwin" || !win || win.isDestroyed()) return;
+
+	stopMacWindowButtonTransition();
+	const startY = macWindowButtonY;
+	const targetY = inset ? MAC_WINDOW_BUTTON_COLLAPSED_Y : MAC_WINDOW_BUTTON_EXPANDED_Y;
+	if (startY === targetY) return;
+
+	const startedAt = Date.now();
+	const tick = () => {
+		if (win.isDestroyed()) {
+			stopMacWindowButtonTransition();
+			return;
+		}
+		const progress = Math.min(1, (Date.now() - startedAt) / MAC_WINDOW_BUTTON_TRANSITION_MS);
+		const eased = progress < 0.5 ? 4 * progress ** 3 : 1 - (-2 * progress + 2) ** 3 / 2;
+		const nextY = Math.round(startY + (targetY - startY) * eased);
+		if (nextY !== macWindowButtonY) {
+			macWindowButtonY = nextY;
+			win.setWindowButtonPosition({ x: MAC_WINDOW_BUTTON_X, y: nextY });
+		}
+		if (progress === 1) stopMacWindowButtonTransition();
+	};
+
+	macWindowButtonTransition = setInterval(tick, 16);
+	tick();
+}
 
 const RENDERER_SCHEME = "app";
 const RENDERER_HOST = "renderer";
@@ -277,6 +315,8 @@ function buildWindowsAppMenu(): Menu {
 }
 
 function createWindow(): void {
+	stopMacWindowButtonTransition();
+	macWindowButtonY = MAC_WINDOW_BUTTON_EXPANDED_Y;
 	browserViewHost?.dispose();
 	browserViewHost = null;
 	mainWindow = new BrowserWindow({
@@ -365,6 +405,7 @@ function createWindow(): void {
 	}
 
 	mainWindow.on("closed", () => {
+		stopMacWindowButtonTransition();
 		browserViewHost?.dispose();
 		browserViewHost = null;
 		mainWindow = null;
@@ -1057,11 +1098,7 @@ ipcMain.handle("window:setOverlay", (_event, overlay: { color: string; symbolCol
 });
 
 ipcMain.handle("window:setTrafficLightsInset", (_event, inset: boolean) => {
-	if (process.platform !== "darwin" || !mainWindow) return;
-	mainWindow.setWindowButtonPosition({
-		x: MAC_WINDOW_BUTTON_X,
-		y: inset ? MAC_WINDOW_BUTTON_COLLAPSED_Y : MAC_WINDOW_BUTTON_EXPANDED_Y,
-	});
+	animateMacWindowButtons(inset);
 });
 
 // Renderer calls this when focus lands on real shell UI (not the titlebar menu), so menu:action's panel fallback below doesn't go stale.

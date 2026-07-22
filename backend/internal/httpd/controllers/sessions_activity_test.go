@@ -88,11 +88,11 @@ func TestSessionsAPI_ActivityThreadsCorrelationFields(t *testing.T) {
 	srv := newActivityTestServer(t, rec)
 
 	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity",
-		`{"state":"active","event":"post-tool-use","toolName":"Bash","toolUseId":"toolu_42"}`)
+		`{"state":"active","event":"post-tool-use","toolName":"Bash","toolUseId":"toolu_42","launchId":"launch-7"}`)
 	if status != http.StatusOK {
 		t.Fatalf("activity = %d, want 200; body=%s", status, body)
 	}
-	want := ports.ActivitySignal{Valid: true, State: domain.ActivityActive, Event: "post-tool-use", ToolName: "Bash", ToolUseID: "toolu_42"}
+	want := ports.ActivitySignal{Valid: true, State: domain.ActivityActive, Event: "post-tool-use", ToolName: "Bash", ToolUseID: "toolu_42", LaunchID: "launch-7"}
 	if rec.gotSignal != want {
 		t.Fatalf("recorder signal = %#v, want %#v", rec.gotSignal, want)
 	}

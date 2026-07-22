@@ -243,6 +243,12 @@ func (a launchArgvAgent) GetRestoreCommand(context.Context, ports.RestoreConfig)
 	return a.argv, true, nil
 }
 
+type supervisedLaunchAgent struct{ launchArgvAgent }
+
+func (supervisedLaunchAgent) ExitDetectionMode() ports.AgentExitDetectionMode {
+	return ports.AgentExitDetectionSupervisor
+}
+
 // fakeAgents resolves every harness to the same fakeAgent.
 type fakeAgents struct{}
 
@@ -681,6 +687,65 @@ func TestSpawn_ResolvesProjectConfig(t *testing.T) {
 	}
 	if !agent.lastConfig.IsZero() {
 		t.Fatalf("launch config = %#v, want zero for project without config", agent.lastConfig)
+	}
+}
+
+func TestSpawn_WrapsSupervisedAgentAndPersistsGeneration(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{}
+	agent := supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "--model", "gpt-5"}}}
+	m := New(Deps{
+		Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath:    func(string) (string, error) { return "/bin/true", nil },
+		Executable:  func() (string, error) { return "/opt/ao", nil },
+		NewLaunchID: func() string { return "launch-7" },
+	})
+
+	rec, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessCodex})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantArgv := []string{"/opt/ao", "agent-process", "supervise", "--session", "mer-1", "--launch", "launch-7", "--", "codex", "--model", "gpt-5"}
+	if !reflect.DeepEqual(rt.lastCfg.Argv, wantArgv) {
+		t.Fatalf("runtime argv = %#v, want %#v", rt.lastCfg.Argv, wantArgv)
+	}
+	if got := rt.lastCfg.Env[EnvRuntimeLaunchID]; got != "launch-7" {
+		t.Fatalf("runtime launch env = %q, want launch-7", got)
+	}
+	if rec.Metadata.RuntimeLaunchID != "launch-7" {
+		t.Fatalf("stored launch id = %q, want launch-7", rec.Metadata.RuntimeLaunchID)
+	}
+}
+
+func TestRestore_RotatesSupervisedAgentGeneration(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x", RuntimeLaunchID: "launch-old"})
+	rt := &fakeRuntime{}
+	agent := supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "resume", "agent-x"}}}
+	m := New(Deps{
+		Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath:    func(string) (string, error) { return "/bin/true", nil },
+		Executable:  func() (string, error) { return "/opt/ao", nil },
+		NewLaunchID: func() string { return "launch-new" },
+	})
+
+	result, err := m.RestoreWithMode(ctx, "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Session.Metadata.RuntimeLaunchID != "launch-new" {
+		t.Fatalf("restored launch id = %q, want launch-new", result.Session.Metadata.RuntimeLaunchID)
+	}
+	if got := rt.lastCfg.Env[EnvRuntimeLaunchID]; got != "launch-new" {
+		t.Fatalf("restored launch env = %q, want launch-new", got)
+	}
+	wantArgv := []string{"/opt/ao", "agent-process", "supervise", "--session", "mer-1", "--launch", "launch-new", "--", "codex", "resume", "agent-x"}
+	if !reflect.DeepEqual(rt.lastCfg.Argv, wantArgv) {
+		t.Fatalf("restored runtime argv = %#v, want %#v", rt.lastCfg.Argv, wantArgv)
 	}
 }
 

@@ -149,12 +149,19 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 	// PR row before calling lifecycle, so the store already reflects this
 	// transition when sessionComplete reads it.
 	if o.Merged || o.Closed {
+		rec, ok, err := m.store.GetSession(ctx, id)
+		if err != nil || !ok {
+			return err
+		}
+		if rec.IsTerminated || !rec.TerminateOnPRMerge {
+			return nil
+		}
 		done, err := m.sessionComplete(ctx, id)
 		if err != nil {
 			return err
 		}
 		if done {
-			return m.MarkTerminated(ctx, id)
+			return m.terminateCompletedSession(ctx, id)
 		}
 		return nil
 	}
@@ -238,6 +245,19 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 	// Surface a deferred parent-stack read error only after the independent
 	// CI/review nudges have been sent, so none of them are lost to it.
 	return blockedCheckErr
+}
+
+func (m *Manager) terminateCompletedSession(ctx context.Context, id domain.SessionID) error {
+	m.mu.Lock()
+	terminator := m.completionTerminator
+	m.mu.Unlock()
+	if terminator == nil {
+		return fmt.Errorf("terminate completed session %s: session terminator is not configured", id)
+	}
+	if _, err := terminator.Kill(ctx, id); err != nil {
+		return fmt.Errorf("terminate completed session %s: %w", id, err)
+	}
+	return nil
 }
 
 // ApplyReviewResult reacts to a completed AO-internal review pass after the

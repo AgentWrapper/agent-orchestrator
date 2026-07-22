@@ -768,6 +768,43 @@ describe("SessionsBoard", () => {
 		expect(within(archivedMergedCard!).getByText("Merged").closest("span")).toHaveClass("text-status-merged");
 		expect(within(archive).getByRole("button", { name: "Restore archived merged worker" })).toBeInTheDocument();
 	});
+
+	it("terminates a live merged session from its card without opening the session", async () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([boardSession({ id: "s-merged", title: "merged worker", status: "merged" })])],
+			isError: false,
+			isSuccess: true,
+		});
+		renderBoard("p1");
+
+		await userEvent.click(screen.getByRole("button", { name: "Terminate merged worker" }));
+		expect(navigateMock).not.toHaveBeenCalled();
+		const dialog = screen.getByRole("dialog", { name: "Terminate merged worker?" });
+		await userEvent.click(within(dialog).getByRole("button", { name: "Terminate session" }));
+
+		await waitFor(() =>
+			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/kill", {
+				params: { path: { sessionId: "s-merged" } },
+			}),
+		);
+		expect(navigateMock).not.toHaveBeenCalled();
+	});
+
+	it("keeps the merged-card confirmation open when termination fails", async () => {
+		postMock.mockResolvedValueOnce({ error: { message: "runtime failed" }, response: { status: 500 } });
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([boardSession({ id: "s-merged", title: "merged worker", status: "merged" })])],
+			isError: false,
+			isSuccess: true,
+		});
+		renderBoard("p1");
+
+		await userEvent.click(screen.getByRole("button", { name: "Terminate merged worker" }));
+		await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Terminate session" }));
+
+		expect(await screen.findByText("Failed to terminate session (500)")).toBeInTheDocument();
+		expect(screen.getByRole("dialog")).toBeInTheDocument();
+	});
 });
 
 function workspaceWithSessions(sessions: WorkspaceSession[]): WorkspaceSummary {

@@ -34,10 +34,11 @@ type lifecycleStack struct {
 	// LCM is the Lifecycle Manager (the canonical write path). It is exposed so
 	// startSession can share the same reducer the reaper drives, rather than
 	// standing up a second store+LCM pair that would diverge under writes.
-	LCM         *lifecycle.Manager
-	reaperDone  <-chan struct{}
-	scmDone     <-chan struct{}
-	trackerDone <-chan struct{}
+	LCM           *lifecycle.Manager
+	runtimeReaper *reaper.Reaper
+	reaperDone    <-chan struct{}
+	scmDone       <-chan struct{}
+	trackerDone   <-chan struct{}
 }
 
 // startLifecycle constructs the Lifecycle Manager over the store and starts the
@@ -47,7 +48,14 @@ type lifecycleStack struct {
 func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runtime, messenger ports.AgentMessenger, notifier notificationSink, telemetry ports.EventSink, logger *slog.Logger) *lifecycleStack {
 	lcm := lifecycle.New(store, messenger, lifecycle.WithNotificationSink(notifier), lifecycle.WithTelemetry(telemetry))
 	rp := reaper.New(lcm, store, runtime, reaper.Config{Logger: logger})
-	return &lifecycleStack{LCM: lcm, reaperDone: rp.Start(ctx)}
+	return &lifecycleStack{LCM: lcm, runtimeReaper: rp, reaperDone: rp.Start(ctx)}
+}
+
+// ReconcileRuntime runs the same conservative runtime/workload observation as
+// the periodic reaper. The daemon calls it after session-manager reconciliation
+// so exits missed while AO was stopped are folded before the API starts serving.
+func (l *lifecycleStack) ReconcileRuntime(ctx context.Context) error {
+	return l.runtimeReaper.Tick(ctx)
 }
 
 // Stop waits for the reaper goroutine to exit. The caller must cancel the ctx
@@ -80,7 +88,7 @@ type sessionLifecycle interface {
 // store + LCM, the per-session agent resolver, and the agent messenger. The
 // returned service is mounted at httpd APIDeps.Sessions. It also returns the
 // manager so the caller can wire Reconcile into the boot sequence.
-func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
+func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, *sessionmanager.Manager, error) {
 	defaultAgent := cfg.Agent
 	if defaultAgent == "" {
 		defaultAgent = config.DefaultAgent

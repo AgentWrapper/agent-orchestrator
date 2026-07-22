@@ -7,14 +7,21 @@ import { SessionInspector } from "./SessionInspector";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
 import type { PRState, PullRequestFacts, WorkspaceSession } from "../types/workspace";
 
-const { getMock, postMock } = vi.hoisted(() => ({
+const { getMock, navigateMock, patchMock, postMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
+	navigateMock: vi.fn(),
+	patchMock: vi.fn(),
 	postMock: vi.fn(),
+}));
+
+vi.mock("@tanstack/react-router", () => ({
+	useNavigate: () => navigateMock,
 }));
 
 vi.mock("../lib/api-client", () => ({
 	apiClient: {
 		GET: getMock,
+		PATCH: patchMock,
 		POST: postMock,
 	},
 	apiErrorMessage: (error: unknown, fallback = "Request failed") => {
@@ -151,8 +158,11 @@ const reviewState = (n: number, status: string, targetSha = `sha-${n}`) => ({
 
 beforeEach(() => {
 	getMock.mockReset();
+	navigateMock.mockReset();
+	patchMock.mockReset();
 	postMock.mockReset();
 	getMock.mockResolvedValue({ data: { reviewerHandleId: "", reviews: [] }, error: undefined });
+	patchMock.mockResolvedValue({ data: { ok: true }, error: undefined, response: { status: 200 } });
 	postMock.mockResolvedValue({ data: { ok: true, sessionId: "sess-1" }, error: undefined });
 });
 
@@ -206,6 +216,7 @@ describe("SessionInspector PR section", () => {
 		expect(prSection("Pull request").getByText("PR #7")).toBeInTheDocument();
 		// CI/Merge/Review facts surface per card.
 		expect(prSection("Pull request").getAllByText("Passing").length).toBeGreaterThan(0);
+		expect(prSection("Pull request").getByText("open")).toHaveClass("text-[9px]", "leading-none");
 	});
 
 	it("shows the empty state when there are no PRs", () => {
@@ -220,6 +231,57 @@ describe("SessionInspector PR section", () => {
 			"https://example.com/pr/41",
 			"https://example.com/pr/42",
 		]);
+	});
+});
+
+describe("SessionInspector completion controls", () => {
+	it("persists the terminate-on-merge preference", async () => {
+		renderWithQuery(<SessionInspector session={session([])} />);
+
+		await userEvent.click(screen.getByRole("switch", { name: "Terminate session when pull requests merge" }));
+
+		await waitFor(() =>
+			expect(patchMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/merge-policy", {
+				params: { path: { sessionId: "sess-1" } },
+				body: { terminateOnPrMerge: true },
+			}),
+		);
+	});
+
+	it("terminates a live merged session and returns to its project after success", async () => {
+		renderWithQuery(<SessionInspector session={session([pr(7, "merged")], { status: "merged" })} />);
+
+		await userEvent.click(screen.getByRole("button", { name: "Terminate session" }));
+		expect(screen.getByRole("dialog", { name: "Terminate do the thing?" })).toBeInTheDocument();
+		await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Terminate session" }));
+
+		await waitFor(() =>
+			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/kill", {
+				params: { path: { sessionId: "sess-1" } },
+			}),
+		);
+		await waitFor(() =>
+			expect(navigateMock).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "ws-1" } }),
+		);
+	});
+
+	it("keeps the confirmation open and does not navigate when termination fails", async () => {
+		postMock.mockResolvedValueOnce({ error: new Error("runtime teardown failed"), response: { status: 500 } });
+		renderWithQuery(<SessionInspector session={session([pr(7, "merged")], { status: "merged" })} />);
+
+		await userEvent.click(screen.getByRole("button", { name: "Terminate session" }));
+		await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Terminate session" }));
+
+		expect(await screen.findByText("runtime teardown failed")).toBeInTheDocument();
+		expect(screen.getByRole("dialog")).toBeInTheDocument();
+		expect(navigateMock).not.toHaveBeenCalled();
+	});
+
+	it("does not show completion controls for orchestrator sessions", () => {
+		renderWithQuery(<SessionInspector session={session([], { kind: "orchestrator" })} />);
+
+		expect(screen.queryByText("Completion")).not.toBeInTheDocument();
+		expect(screen.queryByRole("switch")).not.toBeInTheDocument();
 	});
 });
 

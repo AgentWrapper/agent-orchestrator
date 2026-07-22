@@ -119,7 +119,6 @@ func Run() error {
 	// lifecycle write path live (reducer write -> store -> DB trigger ->
 	// change_log -> poller -> broadcaster) and gives startSession the shared LCM.
 	lcStack := startLifecycle(ctx, store, runtimeAdapter, messenger, notificationWriter, telemetrySink, log)
-	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
 
 	// Wire the controller-facing session service over the same store + LCM, the
 	// selected runtime, a gitworktree workspace, the per-session agent resolver
@@ -134,6 +133,8 @@ func Run() error {
 		}
 		return fmt.Errorf("wire session service: %w", err)
 	}
+	lcStack.LCM.SetCompletionTerminator(sessMgr)
+	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
 	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, log)
 	agentSvc := agentsvc.New()
 	go func() {
@@ -231,6 +232,9 @@ func Run() error {
 	// before srv.Run so sessions are consistent before the server serves.
 	if reconcileErr := sessMgr.Reconcile(ctx); reconcileErr != nil {
 		log.Error("reconcile sessions on boot failed", "err", reconcileErr)
+	}
+	if reconcileErr := lcStack.ReconcileRuntime(ctx); reconcileErr != nil {
+		log.Error("reconcile agent processes on boot failed", "err", reconcileErr)
 	}
 
 	// ponytail: 5s tolerates a brief frontend restart; tune if dev hot-reload trips it.

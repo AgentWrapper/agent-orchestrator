@@ -71,6 +71,25 @@ type AgentBinaryResolver interface {
 	ResolveBinary(ctx context.Context) (path string, err error)
 }
 
+// AgentExitDetectionMode describes how AO learns that an agent CLI process
+// ended while its terminal runtime remains alive.
+type AgentExitDetectionMode string
+
+const (
+	// AgentExitDetectionNativeHook means the adapter's own hook pipeline emits
+	// an authoritative session-end signal.
+	AgentExitDetectionNativeHook AgentExitDetectionMode = "native_hook"
+	// AgentExitDetectionSupervisor means AO must wrap the CLI in its generic
+	// process supervisor because the adapter has no reliable exit hook.
+	AgentExitDetectionSupervisor AgentExitDetectionMode = "supervisor"
+)
+
+// AgentExitDetector is an optional adapter capability. Adapters that omit it
+// keep their existing launch behavior.
+type AgentExitDetector interface {
+	ExitDetectionMode() AgentExitDetectionMode
+}
+
 // AgentPromptReadinessProvider is an optional capability for interactive
 // adapters that receive their first task after startup. It lets AO wait until a
 // terminal UI is ready before injecting text through the runtime.

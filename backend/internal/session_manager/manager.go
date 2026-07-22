@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
@@ -64,6 +66,8 @@ const (
 	EnvSessionID = "AO_SESSION_ID"
 	EnvProjectID = "AO_PROJECT_ID"
 	EnvIssueID   = "AO_ISSUE_ID"
+	// EnvRuntimeLaunchID identifies the current supervised agent generation.
+	EnvRuntimeLaunchID = "AO_RUNTIME_LAUNCH_ID"
 	// EnvDataDir tells a spawned agent's AO hook commands where the store lives.
 	EnvDataDir = "AO_DATA_DIR"
 )
@@ -162,7 +166,8 @@ type Manager struct {
 	// executable resolves the daemon's own binary (os.Executable in
 	// production); its directory is prepended to spawned sessions' PATH so the
 	// workspace hook commands resolve back to this daemon. Tests inject a stub.
-	executable func() (string, error)
+	executable  func() (string, error)
+	newLaunchID func() string
 	// sendConfirm bounds the best-effort post-send confirmation that the session
 	// actually became active (the agent accepted the prompt). New fills in the
 	// sendConfirm* defaults; tests in this package shrink the timings directly.
@@ -215,6 +220,8 @@ type Deps struct {
 	// hookPATH). Production wiring leaves this nil; tests inject a stub so they
 	// control what the test binary appears to be.
 	Executable func() (string, error)
+	// NewLaunchID overrides supervised-process generation for deterministic tests.
+	NewLaunchID func() string
 	// Logger receives spawn-time diagnostics (e.g. when the session PATH
 	// cannot be pinned to the daemon binary). Nil defaults to slog.Default().
 	Logger *slog.Logger
@@ -224,15 +231,16 @@ type Deps struct {
 // time.Now when Deps.Clock is nil.
 func New(d Deps) *Manager {
 	m := &Manager{
-		runtime:    d.Runtime,
-		agents:     d.Agents,
-		workspace:  d.Workspace,
-		store:      d.Store,
-		lcm:        d.Lifecycle,
-		dataDir:    d.DataDir,
-		clock:      d.Clock,
-		lookPath:   d.LookPath,
-		executable: d.Executable,
+		runtime:     d.Runtime,
+		agents:      d.Agents,
+		workspace:   d.Workspace,
+		store:       d.Store,
+		lcm:         d.Lifecycle,
+		dataDir:     d.DataDir,
+		clock:       d.Clock,
+		lookPath:    d.LookPath,
+		executable:  d.Executable,
+		newLaunchID: d.NewLaunchID,
 		sendConfirm: sendConfirmConfig{
 			pollInterval:    sendConfirmPollInterval,
 			attemptDeadline: sendConfirmAttemptDeadline,
@@ -251,6 +259,9 @@ func New(d Deps) *Manager {
 	}
 	if m.executable == nil {
 		m.executable = os.Executable
+	}
+	if m.newLaunchID == nil {
+		m.newLaunchID = uuid.NewString
 	}
 	if m.logger == nil {
 		m.logger = slog.Default()
@@ -376,6 +387,12 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
 	}
 	m.augmentRuntimePATHForLaunchBinary(ctx, env, argv)
+	argv, launchID, err := m.superviseAgentProcess(agent, id, env, argv)
+	if err != nil {
+		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
+		m.rollbackSpawnSeedRow(ctx, id)
+		return domain.SessionRecord{}, fmt.Errorf("spawn %s: supervisor: %w", id, err)
+	}
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     id,
 		WorkspacePath: ws.Path,
@@ -388,7 +405,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: runtime: %w", id, err)
 	}
 
-	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, Prompt: prompt}
+	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, RuntimeLaunchID: launchID, Prompt: prompt}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
@@ -877,7 +894,16 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 		m.cleanupSystemPromptDir(rec.ID)
 		return RestoreResult{}, fmt.Errorf("restore %s: %w", rec.ID, err)
 	}
+	if err := m.validateAgentBinary(argv); err != nil {
+		m.cleanupSystemPromptDir(rec.ID)
+		return RestoreResult{}, fmt.Errorf("restore %s: %w", rec.ID, err)
+	}
 	m.augmentRuntimePATHForLaunchBinary(ctx, env, argv)
+	argv, launchID, err := m.superviseAgentProcess(agent, rec.ID, env, argv)
+	if err != nil {
+		m.cleanupSystemPromptDir(rec.ID)
+		return RestoreResult{}, fmt.Errorf("restore %s: supervisor: %w", rec.ID, err)
+	}
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     rec.ID,
 		WorkspacePath: ws.Path,
@@ -888,7 +914,7 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 		m.cleanupSystemPromptDir(rec.ID)
 		return RestoreResult{}, fmt.Errorf("restore %s: runtime: %w", rec.ID, err)
 	}
-	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, AgentSessionID: rec.Metadata.AgentSessionID, Prompt: rec.Metadata.Prompt}
+	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, RuntimeLaunchID: launchID, AgentSessionID: rec.Metadata.AgentSessionID, Prompt: rec.Metadata.Prompt}
 	if err := m.lcm.MarkSpawned(ctx, rec.ID, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		m.cleanupSystemPromptDir(rec.ID)
@@ -2775,6 +2801,27 @@ func (m *Manager) validateRuntimePrerequisites() error {
 		return fmt.Errorf("%w: tmux required on macOS/Linux but not in PATH", ports.ErrRuntimePrerequisite)
 	}
 	return nil
+}
+
+func (m *Manager) superviseAgentProcess(agent ports.Agent, id domain.SessionID, env map[string]string, argv []string) ([]string, string, error) {
+	detector, ok := agent.(ports.AgentExitDetector)
+	if !ok || detector.ExitDetectionMode() != ports.AgentExitDetectionSupervisor {
+		delete(env, EnvRuntimeLaunchID)
+		return argv, "", nil
+	}
+	executable, err := m.executable()
+	if err != nil {
+		return nil, "", fmt.Errorf("resolve AO executable: %w", err)
+	}
+	launchID := m.newLaunchID()
+	if strings.TrimSpace(launchID) == "" {
+		return nil, "", errors.New("generated empty launch id")
+	}
+	env[EnvRuntimeLaunchID] = launchID
+	wrapped := make([]string, 0, 8+len(argv))
+	wrapped = append(wrapped, executable, "agent-process", "supervise", "--session", string(id), "--launch", launchID, "--")
+	wrapped = append(wrapped, argv...)
+	return wrapped, launchID, nil
 }
 
 func runtimeHandle(meta domain.SessionMetadata) ports.RuntimeHandle {

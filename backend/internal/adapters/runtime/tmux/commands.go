@@ -44,6 +44,12 @@ func setWindowSizeLargestArgs(id string) []string {
 	return []string{"set-option", "-t", id, "window-size", "largest"}
 }
 
+// panePIDArgs returns the pid of tmux's direct pane process. AO walks its
+// descendants to find the exact supervisor for the current launch.
+func panePIDArgs(id string) []string {
+	return []string{"display-message", "-p", "-t", id + ":0.0", "#{pane_pid}"}
+}
+
 // killSessionArgs builds args for `tmux kill-session -t =<id>`. The `=` prefix
 // requests exact-name matching so a session "foo" does not accidentally match
 // "foobar" (tmux otherwise does unique-prefix matching).

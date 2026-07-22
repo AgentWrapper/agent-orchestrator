@@ -103,6 +103,21 @@ type RuntimeHandle struct {
 	ID string
 }
 
+// SupervisedProcessRef identifies the AO-owned supervisor belonging to one
+// managed agent launch. LaunchID fences process observations from older
+// spawn/restore generations of the same session.
+type SupervisedProcessRef struct {
+	SessionID domain.SessionID
+	LaunchID  string
+}
+
+// SupervisedProcessInspector is an optional runtime capability used by the
+// reaper for agents without native exit hooks. A false result is definitive
+// only when err is nil; inspection errors must never be interpreted as exit.
+type SupervisedProcessInspector interface {
+	IsSupervisedProcessAlive(ctx context.Context, handle RuntimeHandle, ref SupervisedProcessRef) (bool, error)
+}
+
 // Stream is one live terminal attach: PTY-like bytes plus resize. Returned
 // already-open by a Runtime's Attach. tmux backs it with a local PTY around
 // their attach CLI; conpty backs it with a loopback connection to the pty-host.

@@ -36,6 +36,10 @@ type notificationSink interface {
 	Notify(ctx context.Context, intent ports.NotificationIntent) error
 }
 
+type sessionTerminator interface {
+	Kill(ctx context.Context, id domain.SessionID) (bool, error)
+}
+
 // Option customizes a Manager.
 type Option func(*Manager)
 
@@ -58,6 +62,9 @@ type Manager struct {
 	// nudges become no-ops but the reducer still runs.
 	guard         *sessionguard.Guard
 	notifications notificationSink
+	// completionTerminator is late-bound because Session Manager itself depends
+	// on this lifecycle reducer. It is required before the SCM observer starts.
+	completionTerminator sessionTerminator
 
 	mu        sync.Mutex
 	window    time.Duration
@@ -86,6 +93,14 @@ func New(store sessionStore, messenger ports.AgentMessenger, opts ...Option) *Ma
 	return m
 }
 
+// SetCompletionTerminator wires merge completion to the same teardown path as
+// an explicit user kill.
+func (m *Manager) SetCompletionTerminator(terminator sessionTerminator) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.completionTerminator = terminator
+}
+
 func (m *Manager) mutate(ctx context.Context, id domain.SessionID, fn func(domain.SessionRecord, time.Time) (domain.SessionRecord, bool)) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -107,10 +122,28 @@ func (m *Manager) mutate(ctx context.Context, id domain.SessionID, fn func(domai
 }
 
 // ApplyRuntimeObservation only writes when runtime liveness is unambiguous. A
-// failed probe or liveness disagreement is ignored; no transient lifecycle state is stored.
+// failed probe or liveness disagreement is ignored. Runtime death keeps the
+// existing recent-activity guard; supervised workload death is independently
+// fenced by the launch generation and never terminates the runtime.
 func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.SessionID, f ports.RuntimeFacts) error {
 	return m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
-		if cur.IsTerminated || !runtimeClearlyDead(f, cur.Activity, now, m.window) {
+		if cur.IsTerminated {
+			return cur, false
+		}
+		currentLaunch := cur.Metadata.RuntimeLaunchID
+		if currentLaunch != "" && f.LaunchID != currentLaunch {
+			return cur, false
+		}
+		if currentLaunch != "" && f.Runtime == ports.ProbeAlive && f.Workload == ports.ProbeDead {
+			if cur.Activity.State == domain.ActivityExited {
+				return cur, false
+			}
+			next := cur
+			next.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: timeOr(f.ObservedAt, now)}
+			delete(m.flights, id)
+			return next, true
+		}
+		if !runtimeClearlyDead(f, cur.Activity, now, m.window) {
 			return cur, false
 		}
 		next := cur
@@ -131,6 +164,7 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 // existing activity and first-signal facts untouched.
 func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, s ports.ActivitySignal) error {
 	s.AgentSessionID = strings.TrimSpace(s.AgentSessionID)
+	s.LaunchID = strings.TrimSpace(s.LaunchID)
 	if !s.Valid && s.AgentSessionID == "" {
 		return nil
 	}
@@ -148,6 +182,16 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	now := m.clock()
 	if rec.IsTerminated {
 		delete(m.flights, id)
+		m.mu.Unlock()
+		return nil
+	}
+	if s.LaunchID != "" && s.LaunchID != rec.Metadata.RuntimeLaunchID {
+		m.mu.Unlock()
+		return nil
+	}
+	// Process exit is terminal for one managed launch. Delayed turn hooks from
+	// that launch cannot resurrect it; MarkSpawned is the sole reset point.
+	if rec.Activity.State == domain.ActivityExited && s.Valid && s.State != domain.ActivityExited {
 		m.mu.Unlock()
 		return nil
 	}
@@ -272,7 +316,7 @@ func isToolUseEvent(event string) bool {
 // dialog is gone: a prompt cannot be submitted while a dialog holds the
 // composer, and a turn cannot end (or the session exit) with one on screen.
 func isTurnBoundaryEvent(event string) bool {
-	return event == "user-prompt-submit" || event == "stop" || event == "session-end"
+	return event == "user-prompt-submit" || event == "stop" || event == "session-end" || event == "process-exited"
 }
 
 // applyToolPrecedenceLocked folds an event-tagged activity signal through the
@@ -497,6 +541,7 @@ func mergeMetadata(base, in domain.SessionMetadata) domain.SessionMetadata {
 	set(&base.Branch, in.Branch)
 	set(&base.WorkspacePath, in.WorkspacePath)
 	set(&base.RuntimeHandleID, in.RuntimeHandleID)
+	base.RuntimeLaunchID = in.RuntimeLaunchID
 	set(&base.AgentSessionID, in.AgentSessionID)
 	set(&base.Prompt, in.Prompt)
 	return base

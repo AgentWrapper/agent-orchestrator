@@ -52,7 +52,7 @@ export function TitlebarNav({
 
 	return (
 		<div
-			className={`fixed left-titlebar-cluster-left z-titlebar flex h-toolbar items-center gap-1 ${isSidebarOpen ? "top-0" : "top-3.25"}`}
+			className={`fixed left-titlebar-cluster-left z-titlebar flex h-toolbar items-center gap-1 transition-[top] duration-200 ease-in-out motion-reduce:transition-none ${isSidebarOpen ? "top-0" : "top-3.25"}`}
 			style={noDragStyle}
 		>
 			<TitlebarButton

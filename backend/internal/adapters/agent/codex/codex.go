@@ -47,6 +47,12 @@ func (p *Plugin) EmitsSubmitActivity() bool { return true }
 // ports.ActivitySignaler.
 func (p *Plugin) EmitsBlockedActivity() bool { return false }
 
+// ExitDetectionMode opts Codex into AO's process supervisor. Codex hooks
+// expose turn boundaries but no reliable session-end event.
+func (p *Plugin) ExitDetectionMode() ports.AgentExitDetectionMode {
+	return ports.AgentExitDetectionSupervisor
+}
+
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
 var _ ports.AgentAuthChecker = (*Plugin)(nil)

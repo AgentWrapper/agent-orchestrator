@@ -92,6 +92,9 @@ func TestCommandBuilders(t *testing.T) {
 	if got, want := hasSessionArgs("sess-1"), []string{"has-session", "-t", "=sess-1"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("hasSessionArgs = %#v, want %#v", got, want)
 	}
+	if got, want := panePIDArgs("sess-1"), []string{"display-message", "-p", "-t", "sess-1:0.0", "#{pane_pid}"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("panePIDArgs = %#v, want %#v", got, want)
+	}
 	if got, want := sendKeysLiteralArgs("sess-1", "hello"), []string{"send-keys", "-t", "sess-1", "-l", "hello"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("sendKeysLiteralArgs = %#v, want %#v", got, want)
 	}
@@ -396,6 +399,47 @@ func TestDestroyArgs(t *testing.T) {
 	// killSessionArgs uses exact-match target =<id>.
 	if got, want := fr.calls[0].args, killSessionArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("destroy args = %#v, want %#v", got, want)
+	}
+}
+
+func TestIsSupervisedProcessAliveFindsExactDescendant(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{
+		[]byte("100\n"),
+		[]byte("100 1 /bin/sh -c launch\n101 100 /opt/ao agent-process supervise --session sess-1 --launch launch-2 -- codex\n102 101 codex\n"),
+	}
+
+	alive, err := r.IsSupervisedProcessAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, ports.SupervisedProcessRef{
+		SessionID: "sess-1",
+		LaunchID:  "launch-2",
+	})
+	if err != nil || !alive {
+		t.Fatalf("IsSupervisedProcessAlive = (%v, %v), want (true, nil)", alive, err)
+	}
+	if len(fr.calls) != 2 || fr.calls[1].name != "ps" {
+		t.Fatalf("calls = %#v, want tmux pane lookup followed by ps", fr.calls)
+	}
+}
+
+func TestIsSupervisedProcessAliveRejectsStaleAndUnrelatedProcesses(t *testing.T) {
+	entries, err := parseProcessTable("100 1 /bin/sh\n101 100 /opt/ao agent-process supervise --session sess-1 --launch launch-old -- codex\n200 1 /opt/ao agent-process supervise --session sess-1 --launch launch-new -- codex\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsSupervisor(entries, 100, "sess-1", "launch-new") {
+		t.Fatal("stale descendant or matching process outside the pane tree was accepted")
+	}
+	if !containsSupervisor(entries, 100, "sess-1", "launch-old") {
+		t.Fatal("exact supervised descendant was not found")
+	}
+}
+
+func TestIsSupervisedProcessAliveRejectsInvalidPanePID(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{[]byte("not-a-pid\n")}
+
+	if _, err := r.IsSupervisedProcessAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, ports.SupervisedProcessRef{}); err == nil {
+		t.Fatal("invalid pane pid should remain an inconclusive probe error")
 	}
 }
 

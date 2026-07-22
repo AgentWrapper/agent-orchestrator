@@ -888,6 +888,23 @@ describe("Sidebar", () => {
 		expect(idleDraftDot).not.toHaveClass("animate-status-pulse");
 	});
 
+	it("keeps merged sessions in the list until they are terminated", () => {
+		renderSidebar({
+			workspaces: [
+				{
+					...workspace,
+					sessions: [
+						{ ...session, id: "merged-live", title: "merged live task", status: "merged", isTerminated: false },
+						{ ...session, id: "merged-done", title: "merged terminated task", status: "merged", isTerminated: true },
+					],
+				},
+			],
+		});
+
+		expect(screen.getByLabelText("Open merged live task")).toBeInTheDocument();
+		expect(screen.queryByLabelText("Open merged terminated task")).not.toBeInTheDocument();
+	});
+
 	it("does not render the restart-to-update row unless an update is downloaded", async () => {
 		updateStatusMock.mockResolvedValue({ state: "available", version: "9.9.9" });
 		renderSidebar();

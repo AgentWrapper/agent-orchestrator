@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { AlertTriangle, LayoutGrid, Plus, RotateCcw, RotateCw, Rows3 } from "lucide-react";
+import { AlertTriangle, LayoutGrid, Plus, RotateCcw, RotateCw, Rows3, Square } from "lucide-react";
 import {
 	type WorkspaceSession,
 	canonicalTrackerIssueId,
@@ -21,6 +21,7 @@ import {
 } from "../lib/session-presentation";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { useRestoreSession } from "../hooks/useRestoreSession";
+import { useTerminateSession } from "../hooks/useTerminateSession";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { NotificationCenter } from "./NotificationCenter";
 import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyStates";
@@ -35,6 +36,7 @@ import { isLinuxPlatform, usesBoardActionsInFramedTopbar } from "../lib/platform
 import { useUiStore } from "../stores/ui-store";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { SessionTerminationDialog } from "./SessionTerminationDialog";
 
 const isLinux = isLinuxPlatform();
 const boardActionsInFramedTopbar = usesBoardActionsInFramedTopbar();
@@ -120,12 +122,15 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const [restoringSessionId, setRestoringSessionId] = useState<string | undefined>();
 	const [restoreErrors, setRestoreErrors] = useState<Record<string, string>>({});
 	const [restoreUnavailableSession, setRestoreUnavailableSession] = useState<WorkspaceSession | undefined>();
+	const [terminationSession, setTerminationSession] = useState<WorkspaceSession | undefined>();
+	const terminateSession = useTerminateSession({ onSuccess: () => setTerminationSession(undefined) });
 	const activeProjectIdRef = useRef(projectId);
 	activeProjectIdRef.current = projectId;
 	useEffect(() => {
 		setRestoringSessionId(undefined);
 		setRestoreErrors({});
 		setRestoreUnavailableSession(undefined);
+		setTerminationSession(undefined);
 	}, [projectId]);
 
 	const openSession = (session: WorkspaceSession) =>
@@ -295,6 +300,10 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 									col={col}
 									sessions={byZone.get(col.zone) ?? []}
 									onOpen={openSession}
+									onTerminate={(session) => {
+										terminateSession.reset();
+										setTerminationSession(session);
+									}}
 								/>
 							))}
 						</div>
@@ -391,6 +400,16 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 					}}
 				/>
 			)}
+			<SessionTerminationDialog
+				busy={terminateSession.isPending}
+				error={terminateSession.error instanceof Error ? terminateSession.error.message : null}
+				onConfirm={() => terminationSession && terminateSession.mutate(terminationSession)}
+				onOpenChange={(open) => {
+					if (!open && !terminateSession.isPending) setTerminationSession(undefined);
+				}}
+				open={terminationSession !== undefined}
+				session={terminationSession}
+			/>
 		</div>
 	);
 }
@@ -399,13 +418,15 @@ function BoardColumn({
 	col,
 	sessions,
 	onOpen,
+	onTerminate,
 }: {
 	col: Column;
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
+	onTerminate: (s: WorkspaceSession) => void;
 }) {
 	if (col.zone === "working") return <WorkLaneColumn sessions={sessions} onOpen={onOpen} />;
-	if (col.zone === "merge") return <MergeLaneColumn sessions={sessions} onOpen={onOpen} />;
+	if (col.zone === "merge") return <MergeLaneColumn sessions={sessions} onOpen={onOpen} onTerminate={onTerminate} />;
 	return <ZoneColumn col={col} sessions={sessions} onOpen={onOpen} />;
 }
 
@@ -519,9 +540,11 @@ function WorkLaneColumn({ sessions, onOpen }: { sessions: WorkspaceSession[]; on
 function MergeLaneColumn({
 	sessions,
 	onOpen,
+	onTerminate,
 }: {
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
+	onTerminate: (s: WorkspaceSession) => void;
 }) {
 	const mergedSessions = sessions.filter((session) => session.status === "merged");
 	const readySessions = sessions.filter((session) => session.status !== "merged");
@@ -534,6 +557,7 @@ function MergeLaneColumn({
 			secondarySessions={mergedSessions}
 			secondaryTone={mergedLaneTone}
 			onOpen={onOpen}
+			onTerminateSecondary={onTerminate}
 		/>
 	);
 }
@@ -545,6 +569,7 @@ function SplitLaneColumn({
 	secondarySessions,
 	secondaryTone,
 	onOpen,
+	onTerminateSecondary,
 }: {
 	ariaLabel: string;
 	primarySessions: WorkspaceSession[];
@@ -552,6 +577,7 @@ function SplitLaneColumn({
 	secondarySessions: WorkspaceSession[];
 	secondaryTone: SplitLaneTone;
 	onOpen: (s: WorkspaceSession) => void;
+	onTerminateSecondary?: (s: WorkspaceSession) => void;
 }) {
 	const showPrimary = primarySessions.length > 0;
 	const showSecondary = secondarySessions.length > 0;
@@ -602,6 +628,7 @@ function SplitLaneColumn({
 						standalone={!showPrimary}
 						tone={secondaryTone}
 						onOpen={onOpen}
+						onTerminate={onTerminateSecondary}
 					/>
 				) : null}
 			</div>
@@ -629,11 +656,13 @@ function SessionCount({ count, label }: { count: number; label: string }) {
 function SecondaryLaneSection({
 	sessions,
 	onOpen,
+	onTerminate,
 	standalone,
 	tone,
 }: {
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
+	onTerminate?: (s: WorkspaceSession) => void;
 	standalone: boolean;
 	tone: SplitLaneTone;
 }) {
@@ -657,7 +686,12 @@ function SecondaryLaneSection({
 			<div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
 				<div className="flex min-h-full flex-col gap-2">
 					{sessions.map((session) => (
-						<SessionCard key={session.id} session={session} onOpen={() => onOpen(session)} />
+						<SessionCard
+							key={session.id}
+							session={session}
+							onOpen={() => onOpen(session)}
+							onTerminate={onTerminate ? () => onTerminate(session) : undefined}
+						/>
 					))}
 				</div>
 			</div>
@@ -668,10 +702,12 @@ function SecondaryLaneSection({
 function SessionCard({
 	session,
 	onOpen,
+	onTerminate,
 	interactive = true,
 }: {
 	session: WorkspaceSession;
 	onOpen?: () => void;
+	onTerminate?: () => void;
 	interactive?: boolean;
 }) {
 	const badge = getSessionStatusView(session.status);
@@ -679,6 +715,7 @@ function SessionCard({
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
+	const showTerminate = interactive && session.status === "merged" && session.isTerminated !== true && onTerminate;
 	const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
 		if (!interactive || !onOpen) return;
 		if (event.currentTarget !== event.target) return;
@@ -702,6 +739,24 @@ function SessionCard({
 				interactive && "hover:border-border-strong",
 			)}
 		>
+			{showTerminate ? (
+				<Tooltip>
+					<TooltipTrigger asChild>
+						<button
+							aria-label={`Terminate ${session.title}`}
+							className="absolute right-2 top-1.5 z-10 inline-flex size-control-md items-center justify-center rounded-md text-passive transition-colors hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+							onClick={(event) => {
+								event.stopPropagation();
+								onTerminate();
+							}}
+							type="button"
+						>
+							<Square className="size-icon-sm" aria-hidden="true" />
+						</button>
+					</TooltipTrigger>
+					<TooltipContent>Terminate session</TooltipContent>
+				</Tooltip>
+			) : null}
 			<div {...cardBodyProps}>
 				<div className="flex items-center gap-2 px-3 pb-2 pt-2.5">
 					<span className={cn("inline-flex items-center gap-1.5 text-caption font-medium", badge.className)}>
@@ -716,7 +771,7 @@ function SessionCard({
 							{issueId}
 						</span>
 					)}
-					<span className="ml-auto shrink-0 font-mono text-2xs tracking-wide-xs text-passive">
+					<span className={cn("ml-auto shrink-0 font-mono text-2xs tracking-wide-xs text-passive", showTerminate && "mr-7")}>
 						{agentLabel(session.provider)}
 					</span>
 				</div>

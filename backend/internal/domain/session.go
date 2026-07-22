@@ -28,6 +28,7 @@ type SessionMetadata struct {
 	Branch          string `json:"branch,omitempty"`
 	WorkspacePath   string `json:"workspacePath,omitempty"`
 	RuntimeHandleID string `json:"runtimeHandleId,omitempty"`
+	RuntimeLaunchID string `json:"runtimeLaunchId,omitempty"`
 	AgentSessionID  string `json:"agentSessionId,omitempty"`
 	Prompt          string `json:"prompt,omitempty"`
 	// PreviewURL is the browser preview target the desktop app opens for this
@@ -56,11 +57,14 @@ type SessionRecord struct {
 	// activity state. Zero means no hook has ever reported, which deriveStatus
 	// surfaces as StatusNoSignal after a grace period. Internal fact, not part
 	// of the API read model.
-	FirstSignalAt time.Time       `json:"-"`
-	IsTerminated  bool            `json:"isTerminated"`
-	Metadata      SessionMetadata `json:"-"`
-	CreatedAt     time.Time       `json:"createdAt"`
-	UpdatedAt     time.Time       `json:"updatedAt"`
+	FirstSignalAt time.Time `json:"-"`
+	IsTerminated  bool      `json:"isTerminated"`
+	// TerminateOnPRMerge is a user-controlled lifecycle policy. When enabled,
+	// completing the session's PR set through a merge tears down the session.
+	TerminateOnPRMerge bool            `json:"terminateOnPrMerge"`
+	Metadata           SessionMetadata `json:"-"`
+	CreatedAt          time.Time       `json:"createdAt"`
+	UpdatedAt          time.Time       `json:"updatedAt"`
 }
 
 // Session is the read-model returned across the API boundary: a SessionRecord

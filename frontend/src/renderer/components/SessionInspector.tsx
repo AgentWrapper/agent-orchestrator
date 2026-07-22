@@ -1,13 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
-import { ArrowUpRight, Files as FilesIcon, GitPullRequest, Play, Shield, Terminal, X } from "lucide-react";
+import { ArrowUpRight, Files as FilesIcon, GitPullRequest, Play, Shield, Square, Terminal, X } from "lucide-react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
+import { useTerminateSession } from "../hooks/useTerminateSession";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
-import type { WorkspaceSession } from "../types/workspace";
+import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { canonicalTrackerIssueId, sortedPRs } from "../types/workspace";
 import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session-presentation";
 import { BrowserPanelView, type BrowserAnnotationQueueModel } from "./BrowserPanel";
@@ -17,6 +19,8 @@ import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
 import { PRSummaryMeta, PRSummaryParts } from "./PRSummaryDisplay";
 import { StatusPill } from "./StatusPill";
+import { SessionTerminationDialog } from "./SessionTerminationDialog";
+import { Switch } from "./ui/switch";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
@@ -253,6 +257,8 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 				)}
 			</Section>
 
+			{session.kind !== "orchestrator" ? <CompletionControls session={session} /> : null}
+
 			<Section title="Activity">
 				<ActivityTimeline prs={prSummaries} session={session} />
 			</Section>
@@ -270,13 +276,112 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 	);
 }
 
+function CompletionControls({ session }: { session: WorkspaceSession }) {
+	const navigate = useNavigate();
+	const queryClient = useQueryClient();
+	const [confirmOpen, setConfirmOpen] = useState(false);
+	const terminate = useTerminateSession({
+		onSuccess: (terminated) => {
+			setConfirmOpen(false);
+			void navigate({ to: "/projects/$projectId", params: { projectId: terminated.workspaceId } });
+		},
+	});
+	const policy = useMutation({
+		mutationFn: async (terminateOnPrMerge: boolean) => {
+			if (usePreviewData) return;
+			const { error, response } = await apiClient.PATCH("/api/v1/sessions/{sessionId}/merge-policy", {
+				params: { path: { sessionId: session.id } },
+				body: { terminateOnPrMerge },
+			});
+			if (error) throw new Error(apiErrorMessage(error, `Failed to update merge policy (${response.status})`));
+		},
+		onMutate: async (terminateOnPrMerge) => {
+			await queryClient.cancelQueries({ queryKey: workspaceQueryKey });
+			const previous = queryClient.getQueryData<WorkspaceSummary[]>(workspaceQueryKey);
+			queryClient.setQueryData<WorkspaceSummary[]>(workspaceQueryKey, (current) =>
+				updateSessionMergePolicy(current, session.id, terminateOnPrMerge),
+			);
+			return { previous };
+		},
+		onError: (_error, _next, context) => {
+			if (context?.previous) queryClient.setQueryData(workspaceQueryKey, context.previous);
+		},
+		onSettled: () => {
+			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+		},
+	});
+	const policyError = policy.error instanceof Error ? policy.error.message : null;
+	const terminateError = terminate.error instanceof Error ? terminate.error.message : null;
+	const canTerminateNow = session.status === "merged" && session.isTerminated !== true;
+
+	return (
+		<Section title="Completion">
+			<div className="flex items-center justify-between gap-3 py-1">
+				<label className="min-w-0 text-xs font-medium text-foreground" htmlFor={`merge-policy-${session.id}`}>
+					Terminate on merge
+				</label>
+				<Switch
+					aria-label="Terminate session when pull requests merge"
+					checked={Boolean(session.terminateOnPrMerge)}
+					disabled={policy.isPending || session.isTerminated === true}
+					id={`merge-policy-${session.id}`}
+					onCheckedChange={(checked) => policy.mutate(checked)}
+				/>
+			</div>
+			{policyError ? (
+				<p className="mt-1 text-2xs leading-normal text-error" role="status">
+					{policyError}
+				</p>
+			) : null}
+			{canTerminateNow ? (
+				<Button
+					className="mt-3 w-full border-error/45 text-error hover:bg-error/10 hover:text-error"
+					onClick={() => {
+						terminate.reset();
+						setConfirmOpen(true);
+					}}
+					size="sm"
+					type="button"
+					variant="outline"
+				>
+					<Square className="size-icon-sm" aria-hidden="true" />
+					Terminate session
+				</Button>
+			) : null}
+			<SessionTerminationDialog
+				busy={terminate.isPending}
+				error={terminateError}
+				onConfirm={() => terminate.mutate(session)}
+				onOpenChange={(open) => {
+					if (!terminate.isPending) setConfirmOpen(open);
+				}}
+				open={confirmOpen}
+				session={session}
+			/>
+		</Section>
+	);
+}
+
+function updateSessionMergePolicy(
+	workspaces: WorkspaceSummary[] | undefined,
+	sessionId: string,
+	terminateOnPrMerge: boolean,
+): WorkspaceSummary[] | undefined {
+	return workspaces?.map((workspace) => ({
+		...workspace,
+		sessions: workspace.sessions.map((candidate) =>
+			candidate.id === sessionId ? { ...candidate, terminateOnPrMerge } : candidate,
+		),
+	}));
+}
+
 function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 	return (
 		<div className="rounded-md border border-border bg-surface px-3 py-2">
 			<div className="flex items-center gap-2">
 				<GitPullRequest className="size-icon-md shrink-0 text-passive" aria-hidden="true" />
 				<span className="text-md-sm font-medium text-foreground">PR #{pr.number}</span>
-				<Badge variant="outline" className={cn("h-5 px-1.5 text-micro font-medium", prStateTone[pr.state])}>
+				<Badge variant="outline" className={cn("h-5 px-1.5 text-[9px] leading-none font-medium", prStateTone[pr.state])}>
 					{pr.state}
 				</Badge>
 				<a
