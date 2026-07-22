@@ -169,7 +169,7 @@ func (p *fakeProvider) RepoPRListGuard(_ context.Context, repo ports.SCMRepo, _ 
 	p.repoGuardCalls++
 	return p.repoGuards[prKey(repo, 0)], nil
 }
-func (p *fakeProvider) ListOpenPRsByRepo(_ context.Context, repo ports.SCMRepo) ([]ports.SCMPRObservation, error) {
+func (p *fakeProvider) ListPRsByRepo(_ context.Context, repo ports.SCMRepo, _ time.Time) ([]ports.SCMPRObservation, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.listCalls++

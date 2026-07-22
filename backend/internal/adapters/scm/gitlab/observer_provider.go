@@ -137,35 +137,34 @@ func (p *Provider) RepoPRListGuard(ctx context.Context, repo ports.SCMRepo, etag
 // ListOpenPRsByRepo
 // ---------------------------------------------------------------------------
 
-// ListOpenPRsByRepo lists all open merge requests in a project, paginating
-// through all results.
-func (p *Provider) ListOpenPRsByRepo(ctx context.Context, repo ports.SCMRepo) ([]ports.SCMPRObservation, error) {
+// ListPRsByRepo lists merge requests in a project, optionally filtered to
+// those updated after updatedAfter (zero = full listing). Uses state=all so
+// closed/merged MRs are also discovered for state-transition tracking, and
+// follows Link rel=next to paginate all pages.
+func (p *Provider) ListPRsByRepo(ctx context.Context, repo ports.SCMRepo, updatedAfter time.Time) ([]ports.SCMPRObservation, error) {
 	var result []ports.SCMPRObservation
-	page := 1
-	for {
-		path := fmt.Sprintf("/projects/%s/merge_requests", projectPath(repo.Owner, repo.Name))
-		q := url.Values{
-			"state":    {"opened"},
-			"order_by": {"updated_at"},
-			"sort":     {"desc"},
-			"per_page": {"100"},
-			"page":     {strconv.Itoa(page)},
-		}
-		resp, err := p.client.doGET(ctx, path, q)
-		if err != nil {
-			return nil, err
-		}
+	q := url.Values{
+		"state":    {"all"},
+		"order_by": {"updated_at"},
+		"sort":     {"desc"},
+		"per_page": {"100"},
+	}
+	if !updatedAfter.IsZero() {
+		q.Set("updated_after", updatedAfter.UTC().Format(time.RFC3339Nano))
+	}
+	path := fmt.Sprintf("/projects/%s/merge_requests", projectPath(repo.Owner, repo.Name))
+	_, err := p.clientForHost(repo.Host).doGETPaginated(ctx, path, q, func(body []byte) error {
 		var mrs []restMR
-		if err := json.Unmarshal(resp.Body, &mrs); err != nil {
-			return nil, fmt.Errorf("gitlab scm: unmarshal MR list: %w", err)
+		if err := json.Unmarshal(body, &mrs); err != nil {
+			return fmt.Errorf("gitlab scm: unmarshal MR list: %w", err)
 		}
 		for i := range mrs {
 			result = append(result, mrToSCMPRObservation(repo, &mrs[i]))
 		}
-		if len(mrs) < 100 {
-			break
-		}
-		page++
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return result, nil
 }

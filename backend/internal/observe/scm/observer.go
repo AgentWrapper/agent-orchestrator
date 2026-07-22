@@ -40,7 +40,7 @@ const (
 type Provider interface {
 	ParseRepository(remote string) (ports.SCMRepo, bool)
 	RepoPRListGuard(ctx context.Context, repo ports.SCMRepo, etag string) (ports.SCMGuardResult, error)
-	ListOpenPRsByRepo(ctx context.Context, repo ports.SCMRepo) ([]ports.SCMPRObservation, error)
+	ListPRsByRepo(ctx context.Context, repo ports.SCMRepo, updatedAfter time.Time) ([]ports.SCMPRObservation, error)
 	CommitChecksGuard(ctx context.Context, repo ports.SCMRepo, headSHA, etag string) (ports.SCMGuardResult, error)
 	FetchPullRequests(ctx context.Context, refs []ports.SCMPRRef) ([]ports.SCMObservation, error)
 	FetchFailedCheckLogTail(ctx context.Context, repo ports.SCMRepo, check ports.SCMCheckObservation) (string, error)
@@ -66,6 +66,63 @@ type Lifecycle interface {
 
 type credentialChecker interface {
 	SCMCredentialsAvailable(ctx context.Context) (bool, error)
+}
+
+// rateLimitedError is the optional capability of a provider error that carries
+// structured retry hints (Retry-After / RateLimit-Reset). The gitlab and
+// github adapters' RateLimitError types both satisfy this via errors.As; a
+// bare sentinel without structured hints falls through to the bounded default.
+type rateLimitedError interface {
+	GetRetryAfter() time.Duration
+	GetResetAt() time.Time
+}
+
+// rateLimitCooldown extracts the cooldown duration from a provider rate-limit
+// error. It prefers the provider's Retry-After, falls back to ResetAt, and
+// finally to a bounded default with jitter so the observer does not hammer
+// the API every 30s while rate-limited. Returns ok=false
+// when err is not a rate-limit error.
+func rateLimitCooldown(now time.Time, err error) (time.Duration, bool) {
+	var rl rateLimitedError
+	if !errors.As(err, &rl) {
+		return 0, false
+	}
+	if ra := rl.GetRetryAfter(); ra > 0 {
+		return boundedCooldown(ra), true
+	}
+	if reset := rl.GetResetAt(); !reset.IsZero() && reset.After(now) {
+		return boundedCooldown(reset.Sub(now)), true
+	}
+	return defaultRateLimitCooldown(now), true
+}
+
+// boundedCooldown clamps the provider-suggested cooldown to a sane window so a
+// misbehaving server cannot force the observer to sleep for hours.
+const (
+	minRateLimitCooldown = 30 * time.Second
+	maxRateLimitCooldown = 10 * time.Minute
+	// incrementalDiscoveryOverlap is subtracted from the last sync cursor so
+	// MRs updated near the cursor boundary are not missed due to clock skew
+	// or updated_at granularity
+	incrementalDiscoveryOverlap = 5 * time.Minute
+)
+
+func boundedCooldown(d time.Duration) time.Duration {
+	if d < minRateLimitCooldown {
+		d = minRateLimitCooldown
+	}
+	if d > maxRateLimitCooldown {
+		d = maxRateLimitCooldown
+	}
+	return d
+}
+
+func defaultRateLimitCooldown(now time.Time) time.Duration {
+	// 60s ± 15s jitter, deterministic per clock tick so tests using a fixed
+	// clock are reproducible.
+	base := 60 * time.Second
+	jitter := time.Duration(int64(now.UnixNano())%int64(15*time.Second)) - 7*time.Second
+	return boundedCooldown(base + jitter)
 }
 
 // Config holds optional observer knobs. Zero values use production defaults.
@@ -94,6 +151,11 @@ type ObserverCache struct {
 	// ReviewRefreshFailed marks PRs whose review-thread refresh failed; the
 	// next poll retries regardless of the normal review cadence/status rules.
 	ReviewRefreshFailed map[string]bool
+	// LastSyncCursor maps repository keys to the last successful incremental
+	// PR-list sync timestamp. ListPRsByRepo is called with updated_after =
+	// cursor - overlap; the cursor advances only after successful persistence
+	//
+	LastSyncCursor map[string]time.Time
 	// repoOrder tracks FIFO eviction order for RepoPRListETag.
 	repoOrder []string
 	// commitOrder tracks FIFO eviction order for CommitChecksETag.
@@ -115,6 +177,7 @@ func newCache(maxEntries int) ObserverCache {
 		CommitChecksETag:    map[string]string{},
 		LastReviewPollAt:    map[string]time.Time{},
 		ReviewRefreshFailed: map[string]bool{},
+		LastSyncCursor:      map[string]time.Time{},
 		max:                 maxEntries,
 	}
 }
@@ -269,12 +332,12 @@ func (o *Observer) Poll(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	o.discoverNewPRs(ctx, sessionRepos, subjects, repoGuards, now, markRepoRefreshFailed)
+	listedPRs, listedRepos := o.discoverNewPRs(ctx, sessionRepos, subjects, repoGuards, now, markRepoRefreshFailed)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 
-	selection := o.selectRefreshCandidates(ctx, subjects, repoGuards, markRepoRefreshFailed)
+	selection := o.selectRefreshCandidates(ctx, subjects, repoGuards, listedPRs, markRepoRefreshFailed)
 	observations := map[string]ports.SCMObservation{}
 	prRefreshOK := map[string]bool{}
 	for key := range selection.candidateKeys {
@@ -410,6 +473,13 @@ func (o *Observer) Poll(ctx context.Context) error {
 		}
 		if etag := repoGuards[key].result.ETag; etag != "" {
 			o.cacheSetString(o.Cache.RepoPRListETag, &o.Cache.repoOrder, key, etag)
+		}
+		// Advance the incremental-discovery cursor only after the repo's PR
+		// list was fetched AND all its observations were successfully
+		// persisted, so a transient failure does not skip MRs updated during
+		// the failed poll
+		if listedRepos[key] {
+			o.Cache.LastSyncCursor[key] = now
 		}
 	}
 	return nil
@@ -683,7 +753,7 @@ func pendingRepoRefreshes(guards map[string]repoGuardState) map[string]bool {
 // PRs (its root plus stacked children). Repos whose PR-list guard reports
 // NotModified against a known ETag are skipped, since nothing new can have
 // appeared since the last poll.
-func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRepo, subjects map[string]*subject, guards map[string]repoGuardState, now time.Time, markRepoFailed func(ports.SCMRepo)) {
+func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRepo, subjects map[string]*subject, guards map[string]repoGuardState, now time.Time, markRepoFailed func(ports.SCMRepo)) (listedPRs map[string]bool, listedRepos map[string]bool) {
 	byRepo := map[string][]sessionRepo{}
 	repos := map[string]ports.SCMRepo{}
 	for _, sr := range sessionRepos {
@@ -691,6 +761,12 @@ func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRep
 		byRepo[key] = append(byRepo[key], sr)
 		repos[key] = sr.repo
 	}
+	// listed tracks which repos had their PR list fetched this poll, and
+	// listedPRs tracks which specific PRs were in the updated set. These drive
+	// incremental refresh candidate selection so only updated MRs are
+	// re-fetched
+	listedPRs = map[string]bool{}
+	listedRepos = map[string]bool{}
 	for repoKey, repo := range repos {
 		g := guards[repoKey]
 		if g.err != nil {
@@ -699,13 +775,28 @@ func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRep
 		if g.result.NotModified && g.hadETag {
 			continue
 		}
-		pulls, err := o.provider.ListOpenPRsByRepo(ctx, repo)
+		// Incremental discovery: request only MRs updated since the last
+		// successful cursor minus an overlap window. Zero cursor (first poll)
+		// requests a full listing
+		repoKey := prKey(repo, 0)
+		cursor := o.Cache.LastSyncCursor[repoKey]
+		updatedAfter := time.Time{}
+		if !cursor.IsZero() {
+			updatedAfter = cursor.Add(-incrementalDiscoveryOverlap)
+		}
+		pulls, err := o.provider.ListPRsByRepo(ctx, repo, updatedAfter)
 		if err != nil {
 			o.logger.Debug("scm observer: open PR list failed", "repo", repoFullName(repo), "err", err)
 			if markRepoFailed != nil && !errors.Is(err, ports.ErrSCMNotFound) {
 				markRepoFailed(repo)
 			}
 			continue
+		}
+		// Record the listed PR numbers so selectRefreshCandidates can
+		// restrict refresh to only updated MRs rather than every tracked MR.
+		listedRepos[repoKey] = true
+		for _, pr := range pulls {
+			listedPRs[prKey(repo, pr.Number)] = true
 		}
 		for _, pr := range pulls {
 			if pr.Number <= 0 || pr.SourceBranch == "" {
@@ -762,6 +853,7 @@ func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRep
 			}
 		}
 	}
+	return listedPRs, listedRepos
 }
 
 // matchSession picks the session that owns sourceBranch. A session owns the
@@ -817,7 +909,7 @@ func sessionBranchPrefixes(branch string) []string {
 	return prefixes
 }
 
-func (o *Observer) selectRefreshCandidates(ctx context.Context, subjects map[string]*subject, guards map[string]repoGuardState, markRepoFailed func(ports.SCMRepo)) refreshSelection {
+func (o *Observer) selectRefreshCandidates(ctx context.Context, subjects map[string]*subject, guards map[string]repoGuardState, listedPRs map[string]bool, markRepoFailed func(ports.SCMRepo)) refreshSelection {
 	selection := refreshSelection{
 		subjectsByPR:  map[string]*subject{},
 		commitETags:   map[string]pendingCacheString{},
@@ -830,9 +922,20 @@ func (o *Observer) selectRefreshCandidates(ctx context.Context, subjects map[str
 		key := prKey(s.repo, s.known.Number)
 		selection.subjectsByPR[key] = s
 		candidate := missingLocalState(s.known)
+		repoCursor := o.Cache.LastSyncCursor[prKey(s.repo, 0)]
+		hasCursor := !repoCursor.IsZero()
 		g := guards[prKey(s.repo, 0)]
 		if g.err == nil && !g.result.NotModified {
-			candidate = true
+			// Incremental discovery: on polls after the first (hasCursor), only
+			// refresh MRs that appeared in the updated set. On the first poll
+			// (no cursor), refresh all tracked MRs
+			if hasCursor && listedPRs != nil {
+				if listedPRs[key] {
+					candidate = true
+				}
+			} else {
+				candidate = true
+			}
 		}
 		if s.known.HeadSHA != "" {
 			commitKey := commitKey(s.repo, s.known.HeadSHA)
@@ -844,9 +947,15 @@ func (o *Observer) selectRefreshCandidates(ctx context.Context, subjects map[str
 					markRepoFailed(s.repo)
 				}
 			} else if !res.NotModified {
-				candidate = true
-				if res.ETag != "" {
-					selection.commitETags[key] = pendingCacheString{key: commitKey, value: res.ETag}
+				// Only promote to candidate if the PR is in the incremental
+				// updated set (or no cursor / listedPRs is nil = full listing).
+				// The commit guard changing does not mean every tracked MR
+				// changed
+				if !hasCursor || listedPRs == nil || listedPRs[key] {
+					candidate = true
+					if res.ETag != "" {
+						selection.commitETags[key] = pendingCacheString{key: commitKey, value: res.ETag}
+					}
 				}
 			}
 		}

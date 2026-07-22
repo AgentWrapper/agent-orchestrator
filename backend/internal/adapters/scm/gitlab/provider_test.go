@@ -76,6 +76,25 @@ func TestParseRepository(t *testing.T) {
 			remote: "myorg/myrepo",
 			ok:     false,
 		},
+		// Nested GitLab namespaces: group/subgroup/repo
+		{
+			name:   "ssh nested namespace",
+			remote: "git@gitlab.com:group/subgroup/repo.git",
+			want:   ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "group/subgroup", Name: "repo", Repo: "group/subgroup/repo"},
+			ok:     true,
+		},
+		{
+			name:   "https nested namespace",
+			remote: "https://gitlab.com/group/subgroup/repo.git",
+			want:   ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "group/subgroup", Name: "repo", Repo: "group/subgroup/repo"},
+			ok:     true,
+		},
+		{
+			name:   "ssh self-managed nested namespace",
+			remote: "git@gitlab.mycompany.com:eng/team/widget.git",
+			want:   ports.SCMRepo{Provider: "gitlab", Host: "gitlab.mycompany.com", Owner: "eng/team", Name: "widget", Repo: "eng/team/widget"},
+			ok:     true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
