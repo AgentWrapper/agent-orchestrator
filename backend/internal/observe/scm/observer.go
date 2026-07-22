@@ -121,7 +121,7 @@ func defaultRateLimitCooldown(now time.Time) time.Duration {
 	// 60s ± 15s jitter, deterministic per clock tick so tests using a fixed
 	// clock are reproducible.
 	base := 60 * time.Second
-	jitter := time.Duration(int64(now.UnixNano())%int64(15*time.Second)) - 7*time.Second
+	jitter := time.Duration(now.UnixNano()%int64(15*time.Second)) - 7*time.Second
 	return boundedCooldown(base + jitter)
 }
 
@@ -1566,4 +1566,31 @@ func (o *Observer) cacheSetBool(m map[string]bool, order *[]string, key string, 
 
 func cacheDelete[V any](m map[string]V, order *[]string, key string) {
 	observe.CacheDelete(m, order, key)
+}
+
+// inRateLimitCooldown reports whether the named provider is currently under a
+// rate-limit cooldown. Provider key is the SCMRepo.Provider
+// value (e.g. "gitlab", "github").
+func (o *Observer) inRateLimitCooldown(now time.Time, providerKey string) bool {
+	if o.rateLimitUntil == nil {
+		return false
+	}
+	until, ok := o.rateLimitUntil[providerKey]
+	if !ok {
+		return false
+	}
+	if now.Before(until) {
+		return true
+	}
+	// Cooldown expired — clear the entry so it doesn't grow unboundedly.
+	delete(o.rateLimitUntil, providerKey)
+	return false
+}
+
+// setRateLimitCooldown records that providerKey should be skipped until now+d.
+func (o *Observer) setRateLimitCooldown(now time.Time, providerKey string, d time.Duration) {
+	if o.rateLimitUntil == nil {
+		o.rateLimitUntil = map[string]time.Time{}
+	}
+	o.rateLimitUntil[providerKey] = now.Add(d)
 }
