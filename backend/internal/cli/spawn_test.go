@@ -733,4 +733,14 @@ func TestResolveSpawnHarness_OrchestratorDefault(t *testing.T) {
 	if got, err := resolveSpawnHarness("aider", "orchestrator", project); err != nil || got != "aider" {
 		t.Fatalf("explicit agent: got %q err %v, want aider", got, err)
 	}
+	// Unset kind is the default `ao spawn` path and must resolve to worker.agent.
+	if got, err := resolveSpawnHarness("", "", project); err != nil || got != "codex" {
+		t.Fatalf("unset kind: got %q err %v, want codex", got, err)
+	}
+	// Orchestrator spawn with no orchestrator.agent configured surfaces the
+	// --orchestrator-agent hint (the error branch this PR adds).
+	noOrch := projectDetails{ID: "demo", Config: &projectConfig{Worker: roleOverride{Agent: "codex"}}}
+	if _, err := resolveSpawnHarness("", "orchestrator", noOrch); err == nil || !strings.Contains(err.Error(), "--orchestrator-agent") {
+		t.Fatalf("missing orchestrator agent: err=%v, want --orchestrator-agent hint", err)
+	}
 }

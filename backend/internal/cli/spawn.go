@@ -65,8 +65,8 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 	var opts spawnOptions
 	cmd := &cobra.Command{
 		Use:   "spawn",
-		Short: "Spawn a worker agent session in a registered project",
-		Long: "Spawn a worker agent session in a registered project.\n\n" +
+		Short: "Spawn an agent session in a registered project",
+		Long: "Spawn an agent session (worker or orchestrator) in a registered project.\n\n" +
 			"The session runs the chosen agent in a\n" +
 			"fresh git worktree. Register the project first with `ao project add`.",
 		Args: noArgs,
