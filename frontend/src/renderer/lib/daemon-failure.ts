@@ -6,6 +6,26 @@ export function daemonFailureMessage(status: DaemonStatus): string {
 	return "AO daemon is not ready.";
 }
 
+export function daemonFailureTitle(status: DaemonStatus): string {
+	switch (status.code) {
+		case "not_ready":
+		case "port_unconfirmed":
+			return "AO daemon is not ready yet";
+		case "not_configured":
+			return "AO daemon is not configured";
+		case "daemon_unreachable":
+			return "AO daemon is unreachable";
+		case "identity_mismatch":
+			return "AO daemon identity check failed";
+		case "binary_missing":
+			return "AO daemon binary is missing";
+		case "spawn_failed":
+		case "exited":
+		default:
+			return "AO daemon failed to start";
+	}
+}
+
 export function daemonFailureHint(status: DaemonStatus): string {
 	switch (status.code) {
 		case "binary_missing":

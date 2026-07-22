@@ -1,7 +1,7 @@
 import { AlertTriangle } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { DaemonStatus } from "../../shared/daemon-status";
-import { daemonFailureHint, daemonFailureMessage } from "../lib/daemon-failure";
+import { daemonFailureHint, daemonFailureMessage, daemonFailureTitle } from "../lib/daemon-failure";
 import { aoBridge } from "../lib/bridge";
 
 export function DaemonFailureBanner({ status }: { status: DaemonStatus }) {
@@ -12,17 +12,30 @@ export function DaemonFailureBanner({ status }: { status: DaemonStatus }) {
 function DaemonFailureContent({ status }: { status: DaemonStatus }) {
 	const [detailsOpen, setDetailsOpen] = useState(false);
 	const [copied, setCopied] = useState(false);
+	const copiedTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const details = status.details?.trim();
 	const hint = daemonFailureHint(status);
+	const title = daemonFailureTitle(status);
+	useEffect(() => {
+		setCopied(false);
+		return () => {
+			if (copiedTimeout.current !== null) clearTimeout(copiedTimeout.current);
+		};
+	}, [details]);
 	const copyDetails = async () => {
 		const lines = [
-			"AO daemon startup failure",
+			title,
 			`Code: ${status.code ?? "unknown"}`,
 			`Message: ${daemonFailureMessage(status)}`,
 			details ? `\nDetails:\n${details}` : "",
 		];
 		await aoBridge.clipboard.writeText(lines.filter(Boolean).join("\n"));
 		setCopied(true);
+		if (copiedTimeout.current !== null) clearTimeout(copiedTimeout.current);
+		copiedTimeout.current = setTimeout(() => {
+			setCopied(false);
+			copiedTimeout.current = null;
+		}, 2_000);
 	};
 	return (
 		<section
@@ -32,7 +45,7 @@ function DaemonFailureContent({ status }: { status: DaemonStatus }) {
 		>
 			<AlertTriangle className="mt-0.5 size-icon-base shrink-0 text-error" aria-hidden="true" />
 			<div className="min-w-0 flex-1">
-				<p className="font-medium text-foreground">AO daemon failed to start</p>
+				<p className="font-medium text-foreground">{title}</p>
 				<p className="mt-0.5 break-words text-muted-foreground">{daemonFailureMessage(status)}</p>
 				{hint ? <p className="mt-1 text-muted-foreground">{hint}</p> : null}
 				{details ? (
