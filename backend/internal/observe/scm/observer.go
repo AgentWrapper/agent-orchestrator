@@ -203,6 +203,11 @@ type Observer struct {
 	credentialsChecked bool
 	// disabled is set after the credential gate reports unavailable credentials.
 	disabled bool
+	// rateLimitUntil records, per provider key, the time until which that
+	// provider's calls should be skipped. Set when a provider returns a
+	// rate-limit error so the observer applies a cooldown instead of polling
+	// every 30s
+	rateLimitUntil map[string]time.Time
 	// Cache holds bounded in-memory provider ETags and review poll timestamps.
 	Cache ObserverCache
 }
@@ -210,7 +215,7 @@ type Observer struct {
 // New constructs an Observer with default cadence/cache settings for zero
 // values in cfg.
 func New(provider Provider, store Store, lifecycle Lifecycle, cfg Config) *Observer {
-	o := &Observer{provider: provider, store: store, lifecycle: lifecycle, tick: cfg.Tick, reviewInterval: cfg.ReviewInterval, clock: cfg.Clock, logger: cfg.Logger, Cache: newCache(cfg.CacheMax)}
+	o := &Observer{provider: provider, store: store, lifecycle: lifecycle, tick: cfg.Tick, reviewInterval: cfg.ReviewInterval, clock: cfg.Clock, logger: cfg.Logger, Cache: newCache(cfg.CacheMax), rateLimitUntil: map[string]time.Time{}}
 	if o.tick <= 0 {
 		o.tick = DefaultTickInterval
 	}
@@ -347,10 +352,37 @@ func (o *Observer) Poll(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		batch, err := o.provider.FetchPullRequests(ctx, chunk)
+		// Skip the entire chunk if every ref's provider is under a rate-limit
+		// cooldown; otherwise filter out the cooled-down providers so a
+		// rate-limited GitLab does not suppress healthy GitHub refs in the
+		// same chunk
+		active := chunk[:0]
+		for _, ref := range chunk {
+			if o.inRateLimitCooldown(now, ref.Repo.Provider) {
+				continue
+			}
+			active = append(active, ref)
+		}
+		if len(active) == 0 {
+			continue
+		}
+		batch, err := o.provider.FetchPullRequests(ctx, active)
 		if err != nil {
+			// If the failure is a rate-limit error, apply a per-provider
+			// cooldown so subsequent polls back off instead of hammering
+			// every 30s
+			if cooldown, ok := rateLimitCooldown(now, err); ok {
+				for _, ref := range active {
+					o.setRateLimitCooldown(now, ref.Repo.Provider, cooldown)
+				}
+				o.logger.Warn("scm observer: provider rate-limited; entering cooldown", "cooldown", cooldown, "err", err)
+				for _, ref := range active {
+					markRepoRefreshFailed(ref.Repo)
+				}
+				continue
+			}
 			o.logger.Error("scm observer: GraphQL PR batch failed", "err", err)
-			for _, ref := range chunk {
+			for _, ref := range active {
 				markRepoRefreshFailed(ref.Repo)
 			}
 			continue
@@ -362,10 +394,18 @@ func (o *Observer) Poll(ctx context.Context) error {
 			if key == "" {
 				continue
 			}
+			// Reject Fetched=false observations from transient failures so
+			// they do not overwrite durable metadata/CI/review facts. The
+			// provider returns Fetched=false + a non-nil error; the
+			// placeholder must not advance ETags or be persisted (review
+			// finding #1).
+			if !obs.Fetched {
+				continue
+			}
 			observations[key] = obs
 			chunkSeen[key] = true
 		}
-		for _, ref := range chunk {
+		for _, ref := range active {
 			key := prKey(ref.Repo, ref.Number)
 			if !chunkSeen[key] {
 				markRepoRefreshFailed(ref.Repo)

@@ -299,7 +299,7 @@ func (p *Provider) CommitChecksGuard(ctx context.Context, repo ports.SCMRepo, he
 		"order_by": {"id"},
 		"sort":     {"desc"},
 	}
-	resp, err := p.client.doGET(ctx, path, q)
+	resp, err := p.clientForHost(repo.Host).doGET(ctx, path, q)
 	if err != nil {
 		return ports.SCMGuardResult{}, err
 	}
@@ -348,7 +348,11 @@ func (p *Provider) FetchPullRequests(ctx context.Context, refs []ports.SCMPRRef)
 				if firstErr == nil {
 					firstErr = err
 				}
+				// Placeholder with Fetched=false so the observer can reject it
+				// without advancing durable state. The non-nil return error is
+				// the primary signal; Fetched=false is the defensive belt.
 				results[idx] = ports.SCMObservation{
+					Fetched:  false,
 					Provider: "gitlab",
 					Host:     r.Repo.Host,
 					Repo:     r.Repo.Repo,
@@ -360,7 +364,7 @@ func (p *Provider) FetchPullRequests(ctx context.Context, refs []ports.SCMPRRef)
 		}(i, ref)
 	}
 	wg.Wait()
-	return results, nil
+	return results, firstErr
 }
 
 func (p *Provider) fetchSingleMR(ctx context.Context, ref ports.SCMPRRef) (ports.SCMObservation, error) {
@@ -369,7 +373,7 @@ func (p *Provider) fetchSingleMR(ctx context.Context, ref ports.SCMPRRef) (ports
 
 	// 1. Fetch MR detail
 	mrPath := fmt.Sprintf("/projects/%s/merge_requests/%d", projectPath(repo.Owner, repo.Name), ref.Number)
-	mrResp, err := p.client.doGET(ctx, mrPath, nil)
+	mrResp, err := p.clientForHost(repo.Host).doGET(ctx, mrPath, nil)
 	if err != nil {
 		return ports.SCMObservation{}, err
 	}

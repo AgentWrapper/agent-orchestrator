@@ -208,7 +208,7 @@ func TestListOpenPRsByRepo(t *testing.T) {
 	_, p := testServer(t, mux)
 	repo := ports.SCMRepo{Provider: "gitlab", Owner: "myorg", Name: "myrepo", Repo: "myorg/myrepo"}
 
-	prs, err := p.ListOpenPRsByRepo(context.Background(), repo)
+	prs, err := p.ListPRsByRepo(context.Background(), repo, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -431,6 +431,144 @@ func TestFetchReviewThreads(t *testing.T) {
 	}
 	if th.Line != 42 {
 		t.Errorf("Line = %d, want %d", th.Line, 42)
+	}
+}
+
+// TestFetchReviewThreads_SingleApprovalsCall verifies that FetchReviewThreads
+// makes exactly ONE approvals API call, not two. The
+// previous implementation called fetchApprovalDecision AND re-fetched the
+// approvals endpoint separately.
+func TestFetchReviewThreads_SingleApprovalsCall(t *testing.T) {
+	approvalsHits := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1/discussions", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]any{})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1/approvals", func(w http.ResponseWriter, r *http.Request) {
+		approvalsHits++
+		json.NewEncoder(w).Encode(map[string]any{
+			"approved":           true,
+			"approvals_required": 2,
+			"approved_by": []map[string]any{
+				{"user": map[string]any{"username": "reviewer1"}},
+				{"user": map[string]any{"username": "reviewer2"}},
+			},
+		})
+	})
+	_, p := testServer(t, mux)
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "myorg", Name: "myrepo", Repo: "myorg/myrepo"}
+	ref := ports.SCMPRRef{Repo: repo, Number: 1, URL: "https://gitlab.com/myorg/myrepo/-/merge_requests/1"}
+
+	review, err := p.FetchReviewThreads(context.Background(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if approvalsHits != 1 {
+		t.Fatalf("approvals endpoint hit %d times, want exactly 1", approvalsHits)
+	}
+	if review.Decision != "approved" {
+		t.Errorf("Decision = %q, want %q", review.Decision, "approved")
+	}
+	if len(review.Reviews) != 2 {
+		t.Fatalf("Reviews = %d, want 2", len(review.Reviews))
+	}
+}
+
+// TestFetchReviewThreads_StableReviewIDs verifies that review summaries have
+// stable, unique IDs so multiple approvers don't overwrite each other in
+// persistence
+func TestFetchReviewThreads_StableReviewIDs(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1/discussions", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]any{})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1/approvals", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"approved":           true,
+			"approvals_required": 2,
+			"approved_by": []map[string]any{
+				{"user": map[string]any{"username": "reviewer1"}},
+				{"user": map[string]any{"username": "reviewer2"}},
+			},
+		})
+	})
+	_, p := testServer(t, mux)
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "myorg", Name: "myrepo", Repo: "myorg/myrepo"}
+	ref := ports.SCMPRRef{Repo: repo, Number: 1, URL: "https://gitlab.com/myorg/myrepo/-/merge_requests/1"}
+
+	review, err := p.FetchReviewThreads(context.Background(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(review.Reviews) != 2 {
+		t.Fatalf("Reviews = %d, want 2", len(review.Reviews))
+	}
+	seen := map[string]bool{}
+	for _, r := range review.Reviews {
+		if r.ID == "" {
+			t.Error("review summary has empty ID — multiple approvers would overwrite each other")
+		}
+		if seen[r.ID] {
+			t.Errorf("duplicate review ID %q — approvers collide in persistence", r.ID)
+		}
+		seen[r.ID] = true
+		if r.Author == "reviewer1" && r.ID != "approval:reviewer1" {
+			t.Errorf("reviewer1 ID = %q, want %q", r.ID, "approval:reviewer1")
+		}
+		if r.Author == "reviewer2" && r.ID != "approval:reviewer2" {
+			t.Errorf("reviewer2 ID = %q, want %q", r.ID, "approval:reviewer2")
+		}
+	}
+}
+
+// TestFetchApprovalDecision_TrustsApprovedField verifies that the approved
+// field is trusted regardless of len(approved_by) — approved_by can contain
+// approvals that don't satisfy the applicable rules
+func TestFetchApprovalDecision_TrustsApprovedField(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1/approvals", func(w http.ResponseWriter, r *http.Request) {
+		// approved=true but approved_by is EMPTY — the adapter must trust
+		// the approved field, not compare len(approved_by).
+		json.NewEncoder(w).Encode(map[string]any{
+			"approved":           true,
+			"approvals_required": 2,
+			"approved_by":        []any{},
+		})
+	})
+	_, p := testServer(t, mux)
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "myorg", Name: "myrepo", Repo: "myorg/myrepo"}
+
+	decision, err := p.fetchApprovalDecision(context.Background(), repo, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision != "approved" {
+		t.Errorf("decision = %q, want %q (must trust approved field, not len(approved_by))", decision, "approved")
+	}
+}
+
+// TestFetchApprovalDecision_NotApproved verifies that approved=false with
+// approvals_required>0 yields ReviewRequired
+func TestFetchApprovalDecision_NotApproved(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1/approvals", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"approved":           false,
+			"approvals_required": 2,
+			"approved_by": []map[string]any{
+				{"user": map[string]any{"username": "reviewer1"}},
+			},
+		})
+	})
+	_, p := testServer(t, mux)
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "myorg", Name: "myrepo", Repo: "myorg/myrepo"}
+
+	decision, err := p.fetchApprovalDecision(context.Background(), repo, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision != "review_required" {
+		t.Errorf("decision = %q, want %q", decision, "review_required")
 	}
 }
 
