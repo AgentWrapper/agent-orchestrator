@@ -8,6 +8,7 @@ import (
 	scmgithub "github.com/aoagents/agent-orchestrator/backend/internal/adapters/scm/github"
 	scmgitlab "github.com/aoagents/agent-orchestrator/backend/internal/adapters/scm/gitlab"
 	scmmulti "github.com/aoagents/agent-orchestrator/backend/internal/adapters/scm/multi"
+	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	scmobserve "github.com/aoagents/agent-orchestrator/backend/internal/observe/scm"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
@@ -17,7 +18,7 @@ import (
 // and GitLab providers via a multi Provider dispatcher. Missing credentials
 // for one provider do not prevent the other from starting; the observer is
 // disabled only when no provider has usable credentials.
-func startSCMObserver(ctx context.Context, store *sqlite.Store, lcm *lifecycle.Manager, logger *slog.Logger) <-chan struct{} {
+func startSCMObserver(ctx context.Context, store *sqlite.Store, lcm *lifecycle.Manager, gitlabCfg config.GitLabConfig, logger *slog.Logger) <-chan struct{} {
 	var named []scmmulti.NamedProvider
 
 	ghProvider, ghErr := newGitHubSCMProvider(logger)
@@ -27,7 +28,7 @@ func startSCMObserver(ctx context.Context, store *sqlite.Store, lcm *lifecycle.M
 		named = append(named, scmmulti.NamedProvider{Key: "github", Provider: ghProvider})
 	}
 
-	glProvider, glErr := newGitLabSCMProvider(logger)
+	glProvider, glErr := newGitLabSCMProvider(gitlabCfg, logger)
 	if glErr != nil {
 		logSCMProviderDisabled(logger, "gitlab", glErr)
 	} else {
@@ -52,12 +53,22 @@ func newGitHubSCMProvider(logger *slog.Logger) (*scmgithub.Provider, error) {
 	return scmgithub.NewProvider(scmgithub.ProviderOptions{Token: tokens, SkipTokenPreflight: true, Logger: logger})
 }
 
-func newGitLabSCMProvider(logger *slog.Logger) (*scmgitlab.Provider, error) {
+func newGitLabSCMProvider(gitlabCfg config.GitLabConfig, logger *slog.Logger) (*scmgitlab.Provider, error) {
 	tokens := scmgitlab.FallbackTokenSource{
 		scmgitlab.EnvTokenSource{EnvVars: []string{"AO_GITLAB_TOKEN"}},
 		&scmgitlab.GLabTokenSource{},
 	}
-	return scmgitlab.NewProvider(scmgitlab.ProviderOptions{Token: tokens, SkipTokenPreflight: true, Logger: logger})
+	hostTokens := make(map[string]scmgitlab.TokenSource, len(gitlabCfg.HostTokens))
+	for host, token := range gitlabCfg.HostTokens {
+		hostTokens[host] = scmgitlab.StaticTokenSource(token)
+	}
+	return scmgitlab.NewProvider(scmgitlab.ProviderOptions{
+		Token:              tokens,
+		SkipTokenPreflight: true,
+		Logger:             logger,
+		AllowedHosts:       gitlabCfg.AllowedHosts,
+		HostTokens:         hostTokens,
+	})
 }
 
 func logSCMProviderDisabled(logger *slog.Logger, provider string, err error) {
@@ -72,12 +83,12 @@ func logSCMProviderDisabled(logger *slog.Logger, provider string, err error) {
 // newMultiSCMProvider builds a multi-provider for use outside the polling
 // observer (e.g. session service PR claiming). Returns nil when no provider
 // has usable credentials — callers must tolerate a nil SCM.
-func newMultiSCMProvider(logger *slog.Logger) *scmmulti.Provider {
+func newMultiSCMProvider(gitlabCfg config.GitLabConfig, logger *slog.Logger) *scmmulti.Provider {
 	var named []scmmulti.NamedProvider
 	if gh, err := newGitHubSCMProvider(logger); err == nil {
 		named = append(named, scmmulti.NamedProvider{Key: "github", Provider: gh})
 	}
-	if gl, err := newGitLabSCMProvider(logger); err == nil {
+	if gl, err := newGitLabSCMProvider(gitlabCfg, logger); err == nil {
 		named = append(named, scmmulti.NamedProvider{Key: "gitlab", Provider: gl})
 	}
 	if len(named) == 0 {

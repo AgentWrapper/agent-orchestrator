@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
-	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -32,21 +31,55 @@ const (
 // ---------------------------------------------------------------------------
 
 // ParseRepository parses a Git remote URL and returns an SCMRepo if the host
-// belongs to a GitLab instance.
+// belongs to a GitLab instance the provider is configured to trust. gitlab.com
+// is always accepted; self-managed hosts must appear in the provider's
+// AllowedHosts list. A host that is neither gitlab.com nor allowlisted is
+// rejected so credentials are never attached to an untrusted host (review
+// Item 5).
+//
+// Supported remote formats:
+//
+//   - SSH:   git@gitlab.com:owner/repo.git
+//   - SSH:   ssh://git@gitlab.internal:8443/group/repo.git  (port preserved)
+//   - HTTPS: https://gitlab.com/owner/repo.git
+//   - HTTPS: https://gitlab.internal:8443/group/repo.git      (port preserved)
+//
+// ssh:// remotes parse to the same host:port as their https:// equivalents
+// (review S1).
 func (p *Provider) ParseRepository(remote string) (ports.SCMRepo, bool) {
-	return parseGitLabRepo(remote)
+	return p.parseGitLabRepo(remote)
 }
 
-func parseGitLabRepo(remote string) (ports.SCMRepo, bool) {
+func (p *Provider) parseGitLabRepo(remote string) (ports.SCMRepo, bool) {
 	remote = strings.TrimSpace(remote)
 	if remote == "" {
 		return ports.SCMRepo{}, false
 	}
 
-	// SSH: git@gitlab.com:owner/repo.git
+	// ssh://git@host[:port]/owner/repo.git — the host:port is extracted from
+	// the URL's Host field so it matches the https:// form exactly.
+	if strings.HasPrefix(remote, "ssh://") {
+		u, err := url.Parse(remote)
+		if err != nil || u.Host == "" {
+			return ports.SCMRepo{}, false
+		}
+		host := u.Host // includes port if present, e.g. "gitlab.internal:8443"
+		if !p.isHostAllowed(host) {
+			return ports.SCMRepo{}, false
+		}
+		path := strings.TrimPrefix(u.Path, "/")
+		path = strings.TrimSuffix(path, ".git")
+		owner, name, ok := splitOwnerRepo(path)
+		if !ok {
+			return ports.SCMRepo{}, false
+		}
+		return makeGitLabRepo(host, owner, name), true
+	}
+
+	// SSH scp-like: git@gitlab.com:owner/repo.git
 	if m := sshRemoteRe.FindStringSubmatch(remote); m != nil {
 		host := m[1]
-		if !isGitLabHost(host) {
+		if !p.isHostAllowed(host) {
 			return ports.SCMRepo{}, false
 		}
 		owner, name, ok := splitOwnerRepo(strings.TrimSuffix(m[2], ".git"))
@@ -59,8 +92,8 @@ func parseGitLabRepo(remote string) (ports.SCMRepo, bool) {
 	// HTTPS: https://gitlab.com/owner/repo.git
 	u, err := url.Parse(remote)
 	if err == nil && (u.Scheme == "https" || u.Scheme == "http") && u.Host != "" {
-		host := u.Hostname()
-		if !isGitLabHost(host) {
+		host := u.Host // includes port if present, e.g. "gitlab.internal:8443"
+		if !p.isHostAllowed(host) {
 			return ports.SCMRepo{}, false
 		}
 		path := strings.TrimPrefix(u.Path, "/")
@@ -107,20 +140,6 @@ func makeGitLabRepo(host, owner, name string) ports.SCMRepo {
 	}
 }
 
-func isGitLabHost(host string) bool {
-	if host == "gitlab.com" || host == "www.gitlab.com" {
-		return true
-	}
-	if customHost := os.Getenv("AO_GITLAB_HOST"); customHost != "" && host == customHost {
-		return true
-	}
-	if host == "github.com" || host == "www.github.com" || host == "api.github.com" ||
-		strings.HasSuffix(host, ".github.com") || strings.HasSuffix(host, ".ghe.io") {
-		return false
-	}
-	return strings.Contains(host, "gitlab")
-}
-
 // ---------------------------------------------------------------------------
 // RepoPRListGuard
 // ---------------------------------------------------------------------------
@@ -135,7 +154,12 @@ func (p *Provider) RepoPRListGuard(ctx context.Context, repo ports.SCMRepo, etag
 		"sort":     {"desc"},
 		"per_page": {"1"},
 	}
-	resp, err := p.clientForHost(repo.Host).doRESTWithETag(ctx, path, q, etag)
+	hc, err := p.clientForRepoErr(repo)
+	if err != nil {
+		return ports.SCMGuardResult{}, err
+	}
+
+	resp, err := hc.doRESTWithETag(ctx, path, q, etag)
 	if err != nil {
 		return ports.SCMGuardResult{}, err
 	}
@@ -165,7 +189,12 @@ func (p *Provider) ListPRsByRepo(ctx context.Context, repo ports.SCMRepo, update
 		q.Set("updated_after", updatedAfter.UTC().Format(time.RFC3339Nano))
 	}
 	path := fmt.Sprintf("/projects/%s/merge_requests", projectPath(repo.Owner, repo.Name))
-	_, err := p.clientForHost(repo.Host).doGETPaginated(ctx, path, q, func(body []byte) error {
+	hc, err := p.clientForRepoErr(repo)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = hc.doGETPaginated(ctx, path, q, func(body []byte) error {
 		var mrs []restMR
 		if err := json.Unmarshal(body, &mrs); err != nil {
 			return fmt.Errorf("gitlab scm: unmarshal MR list: %w", err)
@@ -299,7 +328,12 @@ func (p *Provider) CommitChecksGuard(ctx context.Context, repo ports.SCMRepo, he
 		"order_by": {"id"},
 		"sort":     {"desc"},
 	}
-	resp, err := p.clientForHost(repo.Host).doGET(ctx, path, q)
+	hc, err := p.clientForRepoErr(repo)
+	if err != nil {
+		return ports.SCMGuardResult{}, err
+	}
+
+	resp, err := hc.doGET(ctx, path, q)
 	if err != nil {
 		return ports.SCMGuardResult{}, err
 	}
@@ -373,7 +407,12 @@ func (p *Provider) fetchSingleMR(ctx context.Context, ref ports.SCMPRRef) (ports
 
 	// 1. Fetch MR detail
 	mrPath := fmt.Sprintf("/projects/%s/merge_requests/%d", projectPath(repo.Owner, repo.Name), ref.Number)
-	mrResp, err := p.clientForHost(repo.Host).doGET(ctx, mrPath, nil)
+	hc, err := p.clientForRepoErr(repo)
+	if err != nil {
+		return ports.SCMObservation{}, err
+	}
+
+	mrResp, err := hc.doGET(ctx, mrPath, nil)
 	if err != nil {
 		return ports.SCMObservation{}, err
 	}
@@ -441,7 +480,12 @@ func (p *Provider) fetchCI(ctx context.Context, repo ports.SCMRepo, headSHA stri
 		"order_by": {"id"},
 		"sort":     {"desc"},
 	}
-	resp, err := p.clientForHost(repo.Host).doGET(ctx, path, q)
+	hc, err := p.clientForRepoErr(repo)
+	if err != nil {
+		return ports.SCMCIObservation{}, err
+	}
+
+	resp, err := hc.doGET(ctx, path, q)
 	if err != nil {
 		return ports.SCMCIObservation{}, fmt.Errorf("fetch pipelines: %w", err)
 	}
@@ -484,7 +528,12 @@ func (p *Provider) fetchPipelineJobs(ctx context.Context, repo ports.SCMRepo, pi
 	path := fmt.Sprintf("/projects/%s/pipelines/%d/jobs", projectPath(repo.Owner, repo.Name), pipelineID)
 	q := url.Values{"per_page": {strconv.Itoa(pipelineJobsPageSize)}}
 	var allJobs []restJob
-	_, err := p.clientForHost(repo.Host).doGETPaginated(ctx, path, q, func(body []byte) error {
+	hc, err := p.clientForRepoErr(repo)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	_, err = hc.doGETPaginated(ctx, path, q, func(body []byte) error {
 		var jobs []restJob
 		if err := json.Unmarshal(body, &jobs); err != nil {
 			return fmt.Errorf("unmarshal pipeline jobs: %w", err)
@@ -523,7 +572,12 @@ type restJob struct {
 
 func (p *Provider) fetchApprovalDecision(ctx context.Context, repo ports.SCMRepo, mrIID int) (domain.ReviewDecision, error) {
 	path := fmt.Sprintf("/projects/%s/merge_requests/%d/approvals", projectPath(repo.Owner, repo.Name), mrIID)
-	resp, err := p.clientForHost(repo.Host).doGET(ctx, path, nil)
+	hc, err := p.clientForRepoErr(repo)
+	if err != nil {
+		return domain.ReviewNone, err
+	}
+
+	resp, err := hc.doGET(ctx, path, nil)
 	if err != nil {
 		return domain.ReviewNone, fmt.Errorf("fetch approvals: %w", err)
 	}
@@ -570,7 +624,12 @@ func (p *Provider) FetchFailedCheckLogTail(ctx context.Context, repo ports.SCMRe
 		return "", fmt.Errorf("gitlab scm: empty job ID")
 	}
 	path := fmt.Sprintf("/projects/%s/jobs/%s/trace", projectPath(repo.Owner, repo.Name), jobID)
-	body, err := p.clientForHost(repo.Host).doGETRaw(ctx, path, nil)
+	hc, err := p.clientForRepoErr(repo)
+	if err != nil {
+		return "", err
+	}
+
+	body, err := hc.doGETRaw(ctx, path, nil)
 	if err != nil {
 		return "", err
 	}
@@ -591,7 +650,12 @@ func (p *Provider) FetchReviewThreads(ctx context.Context, ref ports.SCMPRRef) (
 	path := fmt.Sprintf("/projects/%s/merge_requests/%d/discussions", projectPath(repo.Owner, repo.Name), ref.Number)
 	q := url.Values{"per_page": {strconv.Itoa(reviewDiscussionPageSize)}}
 	var discussions []restDiscussion
-	truncated, err := p.clientForHost(repo.Host).doGETPaginated(ctx, path, q, func(body []byte) error {
+	hc, err := p.clientForRepoErr(repo)
+	if err != nil {
+		return ports.SCMReviewObservation{}, err
+	}
+
+	truncated, err := hc.doGETPaginated(ctx, path, q, func(body []byte) error {
 		var page []restDiscussion
 		if err := json.Unmarshal(body, &page); err != nil {
 			return fmt.Errorf("gitlab scm: unmarshal discussions: %w", err)
@@ -662,7 +726,8 @@ func (p *Provider) FetchReviewThreads(ctx context.Context, ref ports.SCMPRRef) (
 	// review summaries. The previous implementation called
 	// fetchApprovalDecision AND re-fetched the approvals endpoint separately.
 	approvalPath := fmt.Sprintf("/projects/%s/merge_requests/%d/approvals", projectPath(repo.Owner, repo.Name), ref.Number)
-	approvalResp, err := p.clientForHost(repo.Host).doGET(ctx, approvalPath, nil)
+
+	approvalResp, err := hc.doGET(ctx, approvalPath, nil)
 	if err != nil {
 		return ports.SCMReviewObservation{}, fmt.Errorf("gitlab scm: fetch approvals: %w", err)
 	}

@@ -155,7 +155,7 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		DataDir:   cfg.DataDir,
 		Logger:    log,
 	})
-	scmProvider := newMultiSCMProvider(log)
+	scmProvider := newMultiSCMProvider(cfg.GitLab, log)
 	// Build the GitHub tracker, but keep a true nil ports.Tracker interface on
 	// failure. newGitHubTracker returns (*github.Tracker)(nil) on ErrNoToken,
 	// which Go wraps as a non-nil typed-nil interface — that slips past the
