@@ -35,18 +35,26 @@ const (
 	maxAttachments      = 8
 	maxAttachmentBytes  = 10 << 20 // 10 MiB per image, decoded
 	maxAttachmentsBytes = 25 << 20 // 25 MiB total, decoded
+	// maxSpawnBodyBytes bounds the raw request body before it is decoded. The
+	// per-attachment and total caps above only apply after the whole body is
+	// materialized, so without this an oversized body (base64 inflates the
+	// decoded total by ~4/3) would allocate in full first. Derived from the
+	// decoded total plus headroom for the prompt and JSON envelope.
+	maxSpawnBodyBytes = maxAttachmentsBytes*4/3 + (2 << 20)
 )
 
 // attachmentExtByMime maps the accepted image MIME types to the file extension
-// used when the image is written into the worktree.
+// used when the image is written into the worktree. Raster formats only: the
+// agent is told to open the file for visual context, so active-content formats
+// (notably image/svg+xml, which is XML that can carry scripts/external entities)
+// are intentionally excluded.
 var attachmentExtByMime = map[string]string{
-	"image/png":     ".png",
-	"image/jpeg":    ".jpg",
-	"image/jpg":     ".jpg",
-	"image/gif":     ".gif",
-	"image/webp":    ".webp",
-	"image/svg+xml": ".svg",
-	"image/bmp":     ".bmp",
+	"image/png":  ".png",
+	"image/jpeg": ".jpg",
+	"image/jpg":  ".jpg",
+	"image/gif":  ".gif",
+	"image/webp": ".webp",
+	"image/bmp":  ".bmp",
 }
 
 var errPreviewFileNotFound = errors.New("preview file not found")
@@ -134,6 +142,11 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions")
 		return
 	}
+	// Bound the body before decoding: this route is served on the LAN listener
+	// (AO Mobile), not just loopback, and the attachment caps only run after the
+	// whole body is decoded. MaxBytesReader stops the read past the limit so an
+	// oversized base64 payload can't allocate in full first.
+	r.Body = http.MaxBytesReader(w, r.Body, maxSpawnBodyBytes)
 	var in SpawnSessionRequest
 	if err := decodeJSON(r, &in); err != nil {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)

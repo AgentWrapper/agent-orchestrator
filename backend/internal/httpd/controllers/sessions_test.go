@@ -401,6 +401,20 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	}
 }
 
+func TestSessionsAPI_SpawnRejectsOversizedBody(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	// A body past the ~35 MiB maxSpawnBodyBytes cap is rejected while decoding
+	// (MaxBytesReader), before the attachment size caps and without materializing
+	// the whole body. 40 MiB comfortably exceeds the cap.
+	oversized := `{"projectId":"ao","prompt":"` + strings.Repeat("a", 40<<20) + `"}`
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions", oversized)
+	if status != http.StatusBadRequest {
+		t.Fatalf("oversized spawn body = %d, want 400; body=%s", status, body)
+	}
+}
+
 func TestSessionsAPI_PreviewDiscoversAndServesStaticIndex(t *testing.T) {
 	svc := newFakeSessionService()
 	workspace := t.TempDir()

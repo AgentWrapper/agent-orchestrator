@@ -52,6 +52,14 @@ func TestDecodeSpawnAttachments(t *testing.T) {
 		}
 	})
 
+	// SVG is XML that can carry active content; the raster-only allowlist rejects it.
+	t.Run("rejects svg", func(t *testing.T) {
+		_, err := decodeSpawnAttachments([]SpawnAttachmentInput{{MimeType: "image/svg+xml", Data: b64([]byte("<svg/>"))}})
+		if err == nil || err.code != "UNSUPPORTED_ATTACHMENT_TYPE" {
+			t.Fatalf("want UNSUPPORTED_ATTACHMENT_TYPE got %v", err)
+		}
+	})
+
 	t.Run("rejects invalid base64", func(t *testing.T) {
 		_, err := decodeSpawnAttachments([]SpawnAttachmentInput{{MimeType: "image/png", Data: "!!!not base64!!!"}})
 		if err == nil || err.code != "INVALID_ATTACHMENT_DATA" {
