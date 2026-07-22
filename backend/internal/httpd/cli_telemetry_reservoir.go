@@ -15,18 +15,21 @@ type cliTelemetryReservoir struct {
 
 	path        string
 	activeDay   string
+	activeSlots map[int]struct{}
 	invokedDay  string
 	invokedSeen map[string]struct{}
 }
 
 type cliTelemetryState struct {
 	ActiveDay   string   `json:"active_day"`
+	ActiveSlots []int    `json:"active_slots"`
 	InvokedDay  string   `json:"invoked_day"`
 	InvokedSeen []string `json:"invoked_seen"`
 }
 
 func newCLITelemetryReservoir(dataDir string) *cliTelemetryReservoir {
 	r := &cliTelemetryReservoir{
+		activeSlots: make(map[int]struct{}),
 		invokedSeen: make(map[string]struct{}),
 	}
 	if dataDir != "" {
@@ -38,13 +41,18 @@ func newCLITelemetryReservoir(dataDir string) *cliTelemetryReservoir {
 
 func (r *cliTelemetryReservoir) reserveActive(now time.Time) bool {
 	day := telemetryUTCDate(now)
+	slot := activeCaptureSlot(now)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.activeDay == day {
+	if r.activeDay != day {
+		r.activeDay = day
+		r.activeSlots = make(map[int]struct{})
+	}
+	if _, seen := r.activeSlots[slot]; seen {
 		return false
 	}
-	r.activeDay = day
+	r.activeSlots[slot] = struct{}{}
 	_ = r.saveLocked()
 	return true
 }
@@ -71,6 +79,10 @@ func telemetryUTCDate(now time.Time) string {
 	return now.UTC().Format("2006-01-02")
 }
 
+func activeCaptureSlot(now time.Time) int {
+	return now.UTC().Hour() / 6
+}
+
 func cliInvokedReservationKey(actorType, commandPath string) string {
 	return actorType + "\t" + commandPath
 }
@@ -88,6 +100,15 @@ func (r *cliTelemetryReservoir) load() {
 		return
 	}
 	r.activeDay = st.ActiveDay
+	r.activeSlots = make(map[int]struct{}, len(st.ActiveSlots))
+	for _, slot := range st.ActiveSlots {
+		if slot >= 0 && slot < 4 {
+			r.activeSlots[slot] = struct{}{}
+		}
+	}
+	if r.activeDay != "" && len(r.activeSlots) == 0 {
+		r.activeSlots[0] = struct{}{}
+	}
 	r.invokedDay = st.InvokedDay
 	r.invokedSeen = make(map[string]struct{}, len(st.InvokedSeen))
 	for _, commandPath := range st.InvokedSeen {
@@ -101,12 +122,17 @@ func (r *cliTelemetryReservoir) saveLocked() error {
 	if r.path == "" {
 		return nil
 	}
+	activeSlots := make([]int, 0, len(r.activeSlots))
+	for slot := range r.activeSlots {
+		activeSlots = append(activeSlots, slot)
+	}
 	seen := make([]string, 0, len(r.invokedSeen))
 	for commandPath := range r.invokedSeen {
 		seen = append(seen, commandPath)
 	}
 	body, err := json.Marshal(cliTelemetryState{
 		ActiveDay:   r.activeDay,
+		ActiveSlots: activeSlots,
 		InvokedDay:  r.invokedDay,
 		InvokedSeen: seen,
 	})

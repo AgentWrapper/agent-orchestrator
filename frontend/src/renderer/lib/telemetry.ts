@@ -9,7 +9,7 @@ const POSTHOG_HOST = import.meta.env.VITE_AO_POSTHOG_HOST?.trim() || DEFAULT_POS
 const RELEASE_TAG = "2026-01-30";
 const REDACTED_LOCAL_URL = "[redacted-local-url]";
 const REDACTED_LOCAL_PATH = "[redacted-local-path]";
-const DAILY_ACTIVE_STORAGE_KEY = "ao.telemetry.lastActiveDate";
+const ACTIVE_STORAGE_KEY = "ao.telemetry.activeSlotsByDate";
 const ROUTE_VIEW_STORAGE_KEY = "ao.telemetry.routeViewsByDate";
 const EMBEDDED_LOCAL_URL_PATTERN =
 	/(?:\bfile:\/\/\/\S+|\bapp:\/\/renderer\/\S+|\bhttps?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?\S*)/gi;
@@ -17,7 +17,8 @@ const EMBEDDED_LOCAL_URL_PATTERN =
 let initPromise: Promise<boolean> | null = null;
 let errorHandlersBound = false;
 let telemetryContext: TelemetryProperties = {};
-let fallbackDailyActiveDate = "";
+let fallbackActiveDate = "";
+let fallbackActiveSlots = new Set<number>();
 let fallbackRouteViewDate = "";
 let fallbackRouteViewSurfaces = new Set<string>();
 
@@ -87,20 +88,36 @@ export function withTelemetryContext(properties: TelemetryProperties): Telemetry
 
 export function reserveDailyActiveCapture(storage?: DailyActiveStorage, now = new Date()): boolean {
 	const utcDate = now.toISOString().slice(0, 10);
-	if (!storage) {
-		if (fallbackDailyActiveDate === utcDate) return false;
-		fallbackDailyActiveDate = utcDate;
+	const slot = activeCaptureSlot(now);
+	const reserveFallback = () => {
+		if (fallbackActiveDate !== utcDate) {
+			fallbackActiveDate = utcDate;
+			fallbackActiveSlots = new Set<number>();
+		}
+		if (fallbackActiveSlots.has(slot)) return false;
+		fallbackActiveSlots.add(slot);
 		return true;
-	}
+	};
+
+	if (!storage) return reserveFallback();
 	try {
-		if (storage.getItem(DAILY_ACTIVE_STORAGE_KEY) === utcDate) return false;
-		storage.setItem(DAILY_ACTIVE_STORAGE_KEY, utcDate);
+		const raw = storage.getItem(ACTIVE_STORAGE_KEY);
+		const parsed = raw ? (JSON.parse(raw) as { date?: unknown; slots?: unknown }) : {};
+		const slots =
+			parsed.date === utcDate && Array.isArray(parsed.slots)
+				? parsed.slots.filter((value): value is number => Number.isInteger(value) && value >= 0 && value < 4)
+				: [];
+		if (slots.includes(slot)) return false;
+		slots.push(slot);
+		storage.setItem(ACTIVE_STORAGE_KEY, JSON.stringify({ date: utcDate, slots }));
 		return true;
 	} catch {
-		if (fallbackDailyActiveDate === utcDate) return false;
-		fallbackDailyActiveDate = utcDate;
-		return true;
+		return reserveFallback();
 	}
+}
+
+function activeCaptureSlot(now: Date): number {
+	return Math.floor(now.getUTCHours() / 6);
 }
 
 export function reserveRouteViewCapture(

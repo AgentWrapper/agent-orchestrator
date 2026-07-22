@@ -8,7 +8,8 @@ telemetry is enabled.
 ## What is collected
 
 - App activation events: `ao.app.active` from the renderer and user-context
-  CLI, each capped at once per UTC day per install
+  CLI, each capped to one event per six-hour UTC slot, or four per day per
+  install/channel
 - Renderer load and daily route-surface usage, grouped by coarse surface names
 - Project/task/session UI actions, with project identifiers SHA-256 hashed
 - Renderer exceptions, reduced to error name and coarse context
@@ -99,9 +100,10 @@ paths, git remotes, emails in repo config, or other local data.
 
 The minimum signals for accurate usage analytics are:
 
-- `ao.app.active`: one event per UTC day per install/account when a human uses
-  the desktop app or runs a user-context CLI command. This powers DAU, WAU, MAU,
-  retention, and churn.
+- `ao.app.active`: up to one event per six-hour UTC slot per install/account
+  when a human uses the desktop app or runs a user-context CLI command. This
+  powers DAU, WAU, MAU, retention, and churn while keeping arbitrary rolling
+  windows from undercounting long-running usage.
 - `ao.projects.created` and `ao.onboarding.first_project_added`: activation
   funnel from install to first project.
 - `ao.session.spawned`, `ao.session.spawn_failed`, and
@@ -168,12 +170,13 @@ install-day cardinalities:
 
 - Persisting the CLI command daily cap: `ao.cli.invoked` drops from 1,508,888
   to about 8,416 events, saving about 1,500,472 events.
-- Persisting the CLI active daily cap: CLI-channel `ao.app.active` drops from
-  1,403,170 to about 1,877 events, saving about 1,401,293 events.
+- Persisting the CLI active six-hour slot cap: CLI-channel `ao.app.active`
+  drops from 1,403,170 to at most about 7,508 events, saving at least about
+  1,395,662 events.
 - Daily renderer route-surface capping: `ao.renderer.route_viewed` drops from
   114,940 to about 8,483 events, saving about 106,457 events.
 
-Total projected event-volume savings from those three changes are roughly
+Total projected event-volume savings from those three changes are still roughly
 3.0M events per trailing 30 days before adoption effects.
 
 Anonymous-vs-identified check: all events had a `person_id` in HogQL, but the
@@ -222,9 +225,9 @@ Use `ao.app.active` as the active-user event for DAU, weekly retention, and
 country-level active-user maps. AO emits it from:
 
 - `channel=renderer` when the desktop app initializes and at most once per UTC
-  day while the app stays open
+  six-hour slot while the app stays open
 - `channel=cli` when the CLI reports a user-typed command invocation to the
-  local daemon, at most once per UTC day per daemon
+  local daemon, at most once per UTC six-hour slot per install
 
 Recommended PostHog setup:
 
