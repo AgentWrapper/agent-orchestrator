@@ -30,6 +30,12 @@ type reviewRun struct {
 	DeliveredAt    *time.Time `json:"deliveredAt,omitempty"`
 }
 
+// triggerReviewResponse mirrors controllers.TriggerReviewResponse. Only the
+// Created flag is needed here, to report whether a new pass was started.
+type triggerReviewResponse struct {
+	Created bool `json:"created"`
+}
+
 // reviewRunResponse mirrors controllers.ReviewRunResponse.
 type reviewRunResponse struct {
 	Review           reviewRun   `json:"review"`
@@ -221,10 +227,17 @@ func (c *commandContext) restartReview(cmd *cobra.Command, args []string, opts r
 		return usageError{errors.New("usage: worker session id is required (positional or --session)")}
 	}
 	path := "sessions/" + url.PathEscape(session) + "/reviews/trigger"
-	if err := c.postJSON(cmd.Context(), path, struct{}{}, nil); err != nil {
+	// Decode the response so we can tell whether a new pass was started or an
+	// existing run for the same commit was reused, and report it accurately.
+	var res triggerReviewResponse
+	if err := c.postJSON(cmd.Context(), path, struct{}{}, &res); err != nil {
 		return err
 	}
-	_, err := fmt.Fprintf(cmd.OutOrStdout(), "triggered review for %s\n", session)
+	msg := "reused the existing review for %s\n"
+	if res.Created {
+		msg = "started a new review for %s\n"
+	}
+	_, err := fmt.Fprintf(cmd.OutOrStdout(), msg, session)
 	return err
 }
 

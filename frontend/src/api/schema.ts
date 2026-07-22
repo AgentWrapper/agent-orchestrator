@@ -1122,6 +1122,8 @@ export interface components {
             repo?: string;
         };
         TriggerReviewResponse: {
+            /** @description True when a new review pass was started; false when an existing run for the same commit was reused. */
+            created: boolean;
             reviewerHandleId: string;
             reviews: components["schemas"]["PRReviewState"][];
         };

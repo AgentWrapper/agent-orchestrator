@@ -219,6 +219,11 @@ func TestReviewStopTooManyArgsIsUsageError(t *testing.T) {
 	if got := ExitCode(err); got != 2 {
 		t.Fatalf("exit code = %d, want 2 (usage); err=%v", got, err)
 	}
+	// Assert the message so the test distinguishes the cobra atMostOneArg error
+	// from the fallback "worker session id is required" usage error (both exit 2).
+	if err == nil || !strings.Contains(err.Error(), "accepts at most 1 arg") {
+		t.Fatalf("err = %v, want an \"accepts at most 1 arg\" usage error", err)
+	}
 }
 
 func TestReviewRestartTooManyArgsIsUsageError(t *testing.T) {
@@ -227,11 +232,17 @@ func TestReviewRestartTooManyArgsIsUsageError(t *testing.T) {
 	if got := ExitCode(err); got != 2 {
 		t.Fatalf("exit code = %d, want 2 (usage); err=%v", got, err)
 	}
+	// Assert the message so the test distinguishes the cobra atMostOneArg error
+	// from the fallback "worker session id is required" usage error (both exit 2).
+	if err == nil || !strings.Contains(err.Error(), "accepts at most 1 arg") {
+		t.Fatalf("err = %v, want an \"accepts at most 1 arg\" usage error", err)
+	}
 }
 
-func TestReviewRestartPostsTrigger(t *testing.T) {
+func TestReviewRestartPostsTriggerCreated(t *testing.T) {
 	cfg := setConfigEnv(t)
-	srv, capture := reviewServer(t, http.StatusOK, `{}`)
+	// 201 with created:true means a new review pass was started.
+	srv, capture := reviewServer(t, http.StatusCreated, `{"created":true}`)
 	writeRunFileFor(t, cfg, srv)
 
 	out, errOut, err := executeCLI(t, aliveDeps(), "review", "restart", "mer-1")
@@ -241,8 +252,26 @@ func TestReviewRestartPostsTrigger(t *testing.T) {
 	if capture.method != http.MethodPost || capture.path != "/api/v1/sessions/mer-1/reviews/trigger" {
 		t.Fatalf("request = %s %s", capture.method, capture.path)
 	}
-	if !strings.Contains(out, "triggered review for mer-1") {
-		t.Fatalf("stdout = %q", out)
+	if !strings.Contains(out, "started a new review for mer-1") {
+		t.Fatalf("stdout = %q, want the created message", out)
+	}
+}
+
+func TestReviewRestartPostsTriggerReused(t *testing.T) {
+	cfg := setConfigEnv(t)
+	// 200 with created:false means an existing run for the same commit was reused.
+	srv, capture := reviewServer(t, http.StatusOK, `{"created":false}`)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, aliveDeps(), "review", "restart", "mer-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if capture.method != http.MethodPost || capture.path != "/api/v1/sessions/mer-1/reviews/trigger" {
+		t.Fatalf("request = %s %s", capture.method, capture.path)
+	}
+	if !strings.Contains(out, "reused the existing review for mer-1") {
+		t.Fatalf("stdout = %q, want the reused message", out)
 	}
 }
 
