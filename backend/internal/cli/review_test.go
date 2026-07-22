@@ -63,6 +63,57 @@ func TestReviewSubmitReadsBodyFile(t *testing.T) {
 	}
 }
 
+func TestReviewListCallsDaemon(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := reviewServer(t, http.StatusOK, `{"reviewerHandleId":"reviewer-1","reviews":[{"prUrl":"https://github.com/o/r/pull/42","prNumber":42,"title":"Fix auth","targetSha":"abc123","status":"needs_review"}]}`)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, aliveDeps(), "review", "ls", "mer-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if capture.method != http.MethodGet || capture.path != "/api/v1/sessions/mer-1/reviews" {
+		t.Fatalf("request = %s %s", capture.method, capture.path)
+	}
+	if !strings.Contains(out, "reviewer: reviewer-1") || !strings.Contains(out, "#42 needs_review abc123 Fix auth") {
+		t.Fatalf("stdout = %q", out)
+	}
+}
+
+func TestReviewTriggerExecuteAliasCallsDaemon(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := reviewServer(t, http.StatusCreated, `{"reviewerHandleId":"reviewer-1","reviews":[{"prNumber":42,"title":"Fix auth","targetSha":"abc123","status":"running"}]}`)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, aliveDeps(), "review", "execute", "mer-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if capture.method != http.MethodPost || capture.path != "/api/v1/sessions/mer-1/reviews/trigger" {
+		t.Fatalf("request = %s %s", capture.method, capture.path)
+	}
+	if !strings.Contains(out, "triggered review for mer-1") || !strings.Contains(out, "#42 running abc123 Fix auth") {
+		t.Fatalf("stdout = %q", out)
+	}
+}
+
+func TestReviewCancelCallsDaemon(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := reviewServer(t, http.StatusOK, `{"reviewerHandleId":"reviewer-1","reviews":[]}`)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, aliveDeps(), "review", "cancel", "mer-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if capture.method != http.MethodPost || capture.path != "/api/v1/sessions/mer-1/reviews/cancel" {
+		t.Fatalf("request = %s %s", capture.method, capture.path)
+	}
+	if !strings.Contains(out, "cancelled review for mer-1") || !strings.Contains(out, "no reviews for mer-1") {
+		t.Fatalf("stdout = %q", out)
+	}
+}
+
 func TestReviewSubmitReadsBodyFromStdin(t *testing.T) {
 	cfg := setConfigEnv(t)
 	srv, capture := reviewServer(t, http.StatusOK, `{"review":{"verdict":"changes_requested"}}`)

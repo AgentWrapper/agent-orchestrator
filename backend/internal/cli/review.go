@@ -37,6 +37,22 @@ type reviewRunResponse struct {
 	ReviewerHandleID string      `json:"reviewerHandleId"`
 }
 
+// prReviewState mirrors review.PRReviewState.
+type prReviewState struct {
+	PRURL     string     `json:"prUrl"`
+	PRNumber  int        `json:"prNumber"`
+	Title     string     `json:"title"`
+	TargetSHA string     `json:"targetSha"`
+	Status    string     `json:"status"`
+	LatestRun *reviewRun `json:"latestRun,omitempty"`
+}
+
+// reviewStateResponse mirrors the daemon's list/trigger/cancel review bodies.
+type reviewStateResponse struct {
+	ReviewerHandleID string          `json:"reviewerHandleId"`
+	Reviews          []prReviewState `json:"reviews"`
+}
+
 // submitReviewItem mirrors controllers.SubmitReviewItem.
 type submitReviewItem struct {
 	RunID          string `json:"runId"`
@@ -68,8 +84,78 @@ func newReviewCommand(ctx *commandContext) *cobra.Command {
 		Use:   "review",
 		Short: "Manage AO code reviews of a worker's PR",
 	}
+	cmd.AddCommand(newReviewListCommand(ctx))
+	cmd.AddCommand(newReviewTriggerCommand(ctx))
+	cmd.AddCommand(newReviewCancelCommand(ctx))
 	cmd.AddCommand(newReviewSubmitCommand(ctx))
 	return cmd
+}
+
+func newReviewListCommand(ctx *commandContext) *cobra.Command {
+	return &cobra.Command{
+		Use:     "ls <worker-session-id>",
+		Aliases: []string{"list"},
+		Short:   "List review state for a worker's PRs",
+		Args:    oneSessionIDArg,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			session, err := normalizeSessionID(args[0])
+			if err != nil {
+				return err
+			}
+			var res reviewStateResponse
+			if err := ctx.getJSON(cmd.Context(), "sessions/"+url.PathEscape(session)+"/reviews", &res); err != nil {
+				return err
+			}
+			return printReviewState(cmd, session, res)
+		},
+	}
+}
+
+func newReviewTriggerCommand(ctx *commandContext) *cobra.Command {
+	return &cobra.Command{
+		Use:     "trigger <worker-session-id>",
+		Aliases: []string{"execute"},
+		Short:   "Trigger a code review for a worker's PRs",
+		Args:    oneSessionIDArg,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			session, err := normalizeSessionID(args[0])
+			if err != nil {
+				return err
+			}
+			var res reviewStateResponse
+			path := "sessions/" + url.PathEscape(session) + "/reviews/trigger"
+			if err := ctx.postJSON(cmd.Context(), path, nil, &res); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "triggered review for %s\n", session); err != nil {
+				return err
+			}
+			return printReviewState(cmd, session, res)
+		},
+	}
+}
+
+func newReviewCancelCommand(ctx *commandContext) *cobra.Command {
+	return &cobra.Command{
+		Use:   "cancel <worker-session-id>",
+		Short: "Cancel a running code review for a worker",
+		Args:  oneSessionIDArg,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			session, err := normalizeSessionID(args[0])
+			if err != nil {
+				return err
+			}
+			var res reviewStateResponse
+			path := "sessions/" + url.PathEscape(session) + "/reviews/cancel"
+			if err := ctx.postJSON(cmd.Context(), path, nil, &res); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "cancelled review for %s\n", session); err != nil {
+				return err
+			}
+			return printReviewState(cmd, session, res)
+		},
+	}
 }
 
 func newReviewSubmitCommand(ctx *commandContext) *cobra.Command {
@@ -185,4 +271,33 @@ func readReviewItems(cmd *cobra.Command, path string) ([]submitReviewItem, error
 		return nil, usageError{errors.New("usage: --reviews requires at least one review result")}
 	}
 	return reviews, nil
+}
+
+func printReviewState(cmd *cobra.Command, session string, res reviewStateResponse) error {
+	out := cmd.OutOrStdout()
+	if res.ReviewerHandleID != "" {
+		if _, err := fmt.Fprintf(out, "reviewer: %s\n", res.ReviewerHandleID); err != nil {
+			return err
+		}
+	}
+	if len(res.Reviews) == 0 {
+		_, err := fmt.Fprintf(out, "no reviews for %s\n", session)
+		return err
+	}
+	for _, review := range res.Reviews {
+		title := strings.TrimSpace(review.Title)
+		if title != "" {
+			title = " " + title
+		}
+		if review.PRNumber > 0 {
+			if _, err := fmt.Fprintf(out, "#%d %s %s%s\n", review.PRNumber, review.Status, review.TargetSHA, title); err != nil {
+				return err
+			}
+			continue
+		}
+		if _, err := fmt.Fprintf(out, "%s %s %s%s\n", review.PRURL, review.Status, review.TargetSHA, title); err != nil {
+			return err
+		}
+	}
+	return nil
 }

@@ -56,6 +56,12 @@ Every product command resolves to a daemon HTTP route. Run `ao <command>
 | `ao orchestrator ls`                | `GET /api/v1/orchestrators`                    |
 | `ao send`                           | `POST /api/v1/sessions/{id}/send`              |
 | `ao preview [url]`                  | `POST /api/v1/sessions/{id}/preview`           |
+| `ao pr merge <id>`                  | `POST /api/v1/prs/{id}/merge`                  |
+| `ao pr resolve-comments <id>`       | `POST /api/v1/prs/{id}/resolve-comments`       |
+| `ao review ls <id>`                 | `GET /api/v1/sessions/{id}/reviews`            |
+| `ao review trigger <id>`            | `POST /api/v1/sessions/{id}/reviews/trigger`   |
+| `ao review cancel <id>`             | `POST /api/v1/sessions/{id}/reviews/cancel`    |
+| `ao review submit <id>`             | `POST /api/v1/sessions/{id}/reviews/submit`    |
 | `ao hooks <agent> <event>`          | `POST /api/v1/sessions/{id}/activity` (hidden) |
 
 `ao agent ls` prints the daemon-supported agent catalog with local install/auth
@@ -80,11 +86,16 @@ spawn remains the authoritative runtime validation point. Use
 autodetects an `index.html` in the session workspace; with a URL argument it
 opens that URL verbatim (`file://`, `http`, `https`).
 
-`go run .` in `backend/` remains a compatibility wrapper around the daemon.
+`ao pr merge` and `ao pr resolve-comments` call the daemon's PR action routes.
+`ao pr resolve-comments <id>` with no comment ids asks the daemon to resolve all
+unresolved review threads; pass one or more ids to target specific comments.
 
-PR and review actions (merge, resolve-comments, review execute/send) are
-HTTP-only today and driven by the frontend; there are no `ao pr` / `ao review`
-commands yet.
+`ao review trigger <worker-session-id>` starts or reuses review runs for the
+worker's PRs. `ao review execute` is an alias for `trigger`, matching the
+desktop action wording. `ao review submit` is the reviewer-agent reporting path;
+it records one result via `--run` / `--verdict`, or a batch via `--reviews`.
+
+`go run .` in `backend/` remains a compatibility wrapper around the daemon.
 
 ## Configuration
 
@@ -126,8 +137,7 @@ rm -rf "$tmp"
 Add a product command only when a daemon HTTP route owns the corresponding
 mutation/read; the CLI must call that route rather than reimplementing daemon
 behavior. Commands not yet exposed but with backend routes in place include
-`ao events ...` (over the CDC/SSE endpoint) and CLI parity for PR/review
-actions.
+`ao events ...` over the CDC/SSE endpoint.
 
 Do not port old in-process TypeScript CLI behavior that mixed command handling
 with storage and runtime implementation details.
