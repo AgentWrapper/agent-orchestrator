@@ -49,8 +49,9 @@ func (r *cliTelemetryReservoir) reserveActive(now time.Time) bool {
 	return true
 }
 
-func (r *cliTelemetryReservoir) reserveInvoked(now time.Time, commandPath string) bool {
+func (r *cliTelemetryReservoir) reserveInvoked(now time.Time, actorType, commandPath string) bool {
 	day := telemetryUTCDate(now)
+	key := cliInvokedReservationKey(actorType, commandPath)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -58,16 +59,20 @@ func (r *cliTelemetryReservoir) reserveInvoked(now time.Time, commandPath string
 		r.invokedDay = day
 		r.invokedSeen = make(map[string]struct{})
 	}
-	if _, seen := r.invokedSeen[commandPath]; seen {
+	if _, seen := r.invokedSeen[key]; seen {
 		return false
 	}
-	r.invokedSeen[commandPath] = struct{}{}
+	r.invokedSeen[key] = struct{}{}
 	_ = r.saveLocked()
 	return true
 }
 
 func telemetryUTCDate(now time.Time) string {
 	return now.UTC().Format("2006-01-02")
+}
+
+func cliInvokedReservationKey(actorType, commandPath string) string {
+	return actorType + "\t" + commandPath
 }
 
 func (r *cliTelemetryReservoir) load() {

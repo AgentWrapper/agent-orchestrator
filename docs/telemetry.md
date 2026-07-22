@@ -59,10 +59,10 @@ false`; the renderer never calls `identify()`). The install ID still
 deduplicates unique-user counts, but no person profiles are created — person
 properties and person-property cohorts are intentionally unavailable.
 
-`ao.cli.invoked` is capped at once per command path per UTC day per install, so
-script- or agent-driven polling (`ao status`, `ao session ls`, `ao hooks`
-firing on every agent hook event, ...) reports as "this install used this
-command today" rather than one event per call. Commands that never reflect
+`ao.cli.invoked` is capped at once per actor type and command path per UTC day
+per install, so script- or agent-driven polling (`ao status`, `ao session ls`,
+`ao hooks` firing on every agent hook event, ...) reports as "this install used
+this command today" rather than one event per call. Commands that never reflect
 product activity — the supervisor-driven `ao daemon`/`ao start`, the
 self-documenting `ao completion`/`ao help`, and the internal Windows
 `ao pty-host` runtime host — are excluded outright.

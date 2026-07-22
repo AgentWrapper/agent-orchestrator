@@ -13,7 +13,7 @@ func TestCLITelemetryReservoirPersistsDailyReservations(t *testing.T) {
 	if !first.reserveActive(now) {
 		t.Fatal("first active reservation = false, want true")
 	}
-	if !first.reserveInvoked(now, "ao status") {
+	if !first.reserveInvoked(now, "user", "ao status") {
 		t.Fatal("first invoked reservation = false, want true")
 	}
 
@@ -21,10 +21,13 @@ func TestCLITelemetryReservoirPersistsDailyReservations(t *testing.T) {
 	if second.reserveActive(now) {
 		t.Fatal("active reservation after reload = true, want false")
 	}
-	if second.reserveInvoked(now, "ao status") {
+	if second.reserveInvoked(now, "user", "ao status") {
 		t.Fatal("invoked reservation after reload = true, want false")
 	}
-	if !second.reserveInvoked(now, "ao session ls") {
+	if !second.reserveInvoked(now, "agent", "ao status") {
+		t.Fatal("same command with different actor after reload = false, want true")
+	}
+	if !second.reserveInvoked(now, "user", "ao session ls") {
 		t.Fatal("new command reservation after reload = false, want true")
 	}
 }
@@ -35,13 +38,13 @@ func TestCLITelemetryReservoirResetsOnNewUTCDay(t *testing.T) {
 	secondDay := time.Date(2026, 7, 21, 0, 1, 0, 0, time.UTC)
 
 	r := newCLITelemetryReservoir(dir)
-	if !r.reserveActive(firstDay) || !r.reserveInvoked(firstDay, "ao status") {
+	if !r.reserveActive(firstDay) || !r.reserveInvoked(firstDay, "user", "ao status") {
 		t.Fatal("initial reservations failed")
 	}
 	if !r.reserveActive(secondDay) {
 		t.Fatal("active reservation on new UTC day = false, want true")
 	}
-	if !r.reserveInvoked(secondDay, "ao status") {
+	if !r.reserveInvoked(secondDay, "user", "ao status") {
 		t.Fatal("invoked reservation on new UTC day = false, want true")
 	}
 }
