@@ -1504,6 +1504,21 @@ func TestCleanup_ReportsSkippedWorkspaces(t *testing.T) {
 	if strings.Contains(res.Skipped[0].Reason, "disk on fire") {
 		t.Fatalf("raw internal error leaked into public reason: %q", res.Skipped[0].Reason)
 	}
+
+	// A teardown that fails because the session's project is archived or
+	// unregistered (its repo can no longer be resolved) is reported with a
+	// distinct reason telling the user the worktree must be removed by hand.
+	ws.destroyErr = fmt.Errorf("resolve project repo: %w", ErrProjectNotResolvable)
+	res, err = m.Cleanup(ctx, "mer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Skipped) != 1 || res.Skipped[0].SessionID != "mer-1" {
+		t.Fatalf("skipped = %v, want mer-1", res.Skipped)
+	}
+	if res.Skipped[0].Reason != "project is archived or unregistered — remove worktree manually" {
+		t.Fatalf("reason = %q, want archived-project reason", res.Skipped[0].Reason)
+	}
 }
 
 func TestCleanup_WorkspaceProjectDestroysChildrenBeforeRoot(t *testing.T) {
