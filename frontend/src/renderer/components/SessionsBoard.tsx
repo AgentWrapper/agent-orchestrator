@@ -40,7 +40,7 @@ import { formatTimeCompact } from "../lib/format-time";
 import { cn } from "../lib/utils";
 import { useShell } from "../lib/shell-context";
 import { useUiStore } from "../stores/ui-store";
-import { OrchestratorReviewBoard } from "./OrchestratorReviewBoard";
+import { OrchestratorReviewBoard, type ReviewManagerState } from "./OrchestratorReviewBoard";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./ui/dialog";
 
 const isLinux =
@@ -111,6 +111,8 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const orchestrator = projectId ? newestActiveOrchestrator(workspaces[0]?.sessions ?? []) : undefined;
 	const [isNewTaskOpen, setIsNewTaskOpen] = useState(false);
 	const [reviewOpen, setReviewOpen] = useState(false);
+	const [reviewRefreshNonce, setReviewRefreshNonce] = useState(0);
+	const [reviewManagerState, setReviewManagerState] = useState<ReviewManagerState>();
 	const [isSpawning, setIsSpawning] = useState(false);
 	const [spawnError, setSpawnError] = useState<string | null>(null);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
@@ -288,11 +290,13 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 					</div>
 				) : null}
 				{projectId ? <RepositoryStewardCard projectId={projectId} /> : null}
-				{projectId && orchestrator && workspace && !reviewOpen ? (
+				{projectId && orchestrator && workspace ? (
 					<OrchestratorReviewBoard
 						backgroundOnly
 						daemonReady={daemonStatus.state === "ready"}
+						onManagerStateChange={setReviewManagerState}
 						orchestrator={orchestrator}
+						refreshNonce={reviewRefreshNonce}
 						sessions={workspace.sessions}
 						theme={theme}
 					/>
@@ -406,7 +410,11 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						</DialogDescription>
 						<OrchestratorReviewBoard
 							daemonReady={daemonStatus.state === "ready"}
+							manageAgent={false}
+							managerState={reviewManagerState}
+							onRefresh={() => setReviewRefreshNonce((nonce) => nonce + 1)}
 							orchestrator={orchestrator}
+							refreshNonce={reviewRefreshNonce}
 							sessions={workspace.sessions}
 							theme={theme}
 						/>
