@@ -197,7 +197,7 @@ func (s *Store) ListProjects(ctx context.Context) ([]domain.ProjectRecord, error
 
 // RenameProject updates only the user-facing display name for an active
 // project. It returns ok=false when the project is missing or archived.
-func (s *Store) RenameProject(ctx context.Context, id string, displayName string) (bool, error) {
+func (s *Store) RenameProject(ctx context.Context, id, displayName string) (bool, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	rows, err := s.qw.RenameProject(ctx, gen.RenameProjectParams{
