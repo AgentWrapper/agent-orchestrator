@@ -145,6 +145,30 @@ Download the latest desktop build for your platform:
 
 After installing, open Agent Orchestrator and point it at the repository you want AO to manage. The desktop app runs the daemon for you, so no CLI is required. Installed desktop builds check for updates on launch and periodically while the app is running. See the [installation guide](https://ao-agents.com/docs/installation) for agent CLI setup and troubleshooting.
 
+### Run From Source
+
+For frontend development, install dependencies in `frontend/` and start the
+renderer web preview:
+
+```bash
+cd frontend
+npm install
+npm run dev:web
+```
+
+`dev:web` is cross-platform and starts Vite with `VITE_NO_ELECTRON=1`, so the
+same command works on macOS, Linux, and Windows. If Windows PowerShell blocks
+the `npm.ps1` shim with a script execution policy error, call npm through
+`npm.cmd` instead:
+
+```powershell
+cd frontend
+npm.cmd install
+npm.cmd run dev:web
+```
+
+Use `npm run dev` from `frontend/` when you need the full Electron desktop app.
+
 <details>
 <summary>Install via npm (legacy CLI, no longer recommended)</summary>
 
