@@ -73,6 +73,22 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
+// GetConfigSpec reports the per-project agent config keys Goose understands.
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.ConfigSpec{}, err
+	}
+	return ports.ConfigSpec{
+		Fields: []ports.ConfigField{
+			{
+				Key:         "model",
+				Type:        ports.ConfigFieldString,
+				Description: "Model override passed to `goose run --model`.",
+			},
+		},
+	}, nil
+}
+
 // GetLaunchCommand builds the argv to start a new interactive Goose session:
 //
 //	[env GOOSE_MODE=<mode>] goose run [--system <text>] -t "" --interactive
@@ -100,6 +116,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	if systemPrompt != "" {
 		cmd = append(cmd, "--system", systemPrompt)
 	}
+	appendModelFlag(&cmd, cfg.Config)
 
 	cmd = append(cmd, "-t", "", "--interactive")
 
@@ -147,6 +164,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	if systemPrompt != "" {
 		cmd = append(cmd, "--system", systemPrompt)
 	}
+	appendModelFlag(&cmd, cfg.Config)
 	cmd = append(cmd, "--resume", "--session-id", agentSessionID)
 	return cmd, true, nil
 }
@@ -187,6 +205,16 @@ func systemPromptTextFrom(inline, file string) (string, error) {
 		return text, nil
 	}
 	return "", nil
+}
+
+// appendModelFlag appends a trimmed --model flag when a model override is
+// configured. Goose pairs a model with a --provider; a bare --model overrides
+// the model within the configured provider, which matches AO's single-string
+// agentConfig.model contract.
+func appendModelFlag(cmd *[]string, cfg ports.AgentConfig) {
+	if model := strings.TrimSpace(cfg.Model); model != "" {
+		*cmd = append(*cmd, "--model", model)
+	}
 }
 
 // gooseModeEnvPrefix renders mode as an `env GOOSE_MODE=<mode>` argv prefix, or
