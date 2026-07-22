@@ -279,6 +279,19 @@ func (c *Client) doGETPaginated(ctx context.Context, path string, q url.Values, 
 		if next == "" {
 			return false, nil
 		}
+		// Validate the next-page URL against the configured REST base before
+		// following it. An absolute Link: <https://other-host/...>; rel="next"
+		// would otherwise be fetched on the next iteration, re-attaching the
+		// Authorization header (Bearer token) to a different host. Require the
+		// same scheme, host, port, and API base path as restBase; reject
+		// HTTPS-to-HTTP downgrades and hosts not in the allowlist (the per-host
+		// trust boundary from ticket 01 — a client's restBase is already scoped to
+		// an allowlisted host, so any host mismatch is implicitly non-allowlisted).
+		// On rejection the pagination loop returns an error without advancing any
+		// ETag or sync cursor (the cross-cutting durable-state rule).
+		if err := c.validatePaginationURL(next); err != nil {
+			return false, err
+		}
 		nextURL = next
 	}
 	// Hit the page cap — response is truncated.
@@ -306,6 +319,61 @@ func parseNextLink(linkHeader string) string {
 		return part[lt+1 : gt]
 	}
 	return ""
+}
+
+// ErrPaginationURLRejected is returned when a Link: rel="next" pagination URL
+// fails validation against the configured REST base. The URL is not followed,
+// so the GitLab token is never attached to a different host (review Item 6).
+// The error is transient: callers must not advance any ETag or sync cursor on
+// this failure (the cross-cutting durable-state rule).
+var ErrPaginationURLRejected = fmt.Errorf("gitlab scm: pagination URL rejected")
+
+// validatePaginationURL validates a Link: rel="next" URL against the client's
+// configured REST base before the URL is followed. It requires the same scheme,
+// host, port, and API base path as restBase, and rejects HTTPS-to-HTTP
+// downgrades. The host check implicitly enforces the per-host trust boundary
+// from ticket 01: a client's restBase is already scoped to an allowlisted host
+// (gitlab.com or an entry in AO_GITLAB_ALLOWED_HOSTS), so any next URL whose
+// host differs from restBase's host is, by construction, not in the allowlist
+// for this client and is rejected before the Authorization header is attached.
+//
+// Relative next URLs (no scheme/host) are accepted — GitLab's own pagination
+// sometimes returns relative references, and the base is already trusted.
+func (c *Client) validatePaginationURL(next string) error {
+	nextURL, err := url.Parse(next)
+	if err != nil {
+		return fmt.Errorf("gitlab scm: parse pagination URL: %w", ErrPaginationURLRejected)
+	}
+	// Relative next URLs (no host) are safe — they resolve against the trusted
+	// restBase on the next request.
+	if nextURL.Host == "" {
+		return nil
+	}
+	base, err := url.Parse(c.restBase)
+	if err != nil {
+		return fmt.Errorf("gitlab scm: parse REST base: %w", ErrPaginationURLRejected)
+	}
+	// Reject HTTPS-to-HTTP downgrades explicitly (the reviewer's verbatim rule).
+	if base.Scheme == "https" && nextURL.Scheme == "http" {
+		return fmt.Errorf("gitlab scm: pagination URL downgrades https to http: %w", ErrPaginationURLRejected)
+	}
+	// Require same scheme, host, and port as the configured REST base.
+	if !strings.EqualFold(nextURL.Scheme, base.Scheme) {
+		return fmt.Errorf("gitlab scm: pagination URL scheme %q != base %q: %w", nextURL.Scheme, base.Scheme, ErrPaginationURLRejected)
+	}
+	if !strings.EqualFold(nextURL.Hostname(), base.Hostname()) {
+		return fmt.Errorf("gitlab scm: pagination URL host %q != base %q: %w", nextURL.Hostname(), base.Hostname(), ErrPaginationURLRejected)
+	}
+	if nextURL.Port() != base.Port() {
+		return fmt.Errorf("gitlab scm: pagination URL port %q != base %q: %w", nextURL.Port(), base.Port(), ErrPaginationURLRejected)
+	}
+	// Require the same API base path prefix (e.g. /api/v4). This prevents a
+	// same-host URL pointing at a different API version (e.g. /api/v5) from
+	// being followed.
+	if !strings.HasPrefix(nextURL.Path, base.Path) {
+		return fmt.Errorf("gitlab scm: pagination URL path %q does not start with API base %q: %w", nextURL.Path, base.Path, ErrPaginationURLRejected)
+	}
+	return nil
 }
 
 func (c *Client) storeCacheEntry(cacheKey, etag string, body []byte) {
