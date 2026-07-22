@@ -172,6 +172,15 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 	m.addMu.Lock()
 	defer m.addMu.Unlock()
 
+	// "scratch" is reserved for the built-in first-run project. Refuse reuse
+	// (including after archive) so a git project cannot demote that id.
+	if isReservedScratchProjectID(id) {
+		return Project{}, apierr.Conflict("SCRATCH_PROJECT_ID_RESERVED", `Project id "scratch" is reserved for the built-in Scratch project`, map[string]any{
+			"existingProjectId":  reservedScratchProjectID,
+			"suggestedProjectId": string(m.suggestID(ctx, domain.ProjectID("scratch-repo"))),
+		})
+	}
+
 	projectCountBefore, err := m.activeProjectCount(ctx)
 	if err != nil {
 		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
@@ -864,6 +873,14 @@ func defaultProjectID(path string) domain.ProjectID {
 }
 
 var projectIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// reservedScratchProjectID is the built-in first-run Scratch project id. Users
+// cannot register a different project under this id via project add.
+const reservedScratchProjectID = "scratch"
+
+func isReservedScratchProjectID(id domain.ProjectID) bool {
+	return strings.EqualFold(string(id), reservedScratchProjectID)
+}
 
 func validateProjectID(id domain.ProjectID) error {
 	raw := string(id)

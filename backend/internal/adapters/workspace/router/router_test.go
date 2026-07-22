@@ -200,3 +200,29 @@ func TestRouterPreservesWorkspaceProjectDelegation(t *testing.T) {
 		t.Fatalf("scratch create calls = %d, want 0", scratch.createCalls)
 	}
 }
+
+func TestRouterFailsClosedWhenProjectMissing(t *testing.T) {
+	git := &recordingWorkspace{}
+	scratch := &recordingWorkspace{}
+	r := workspacerouter.New(workspacerouter.Deps{
+		Git:      git,
+		Scratch:  scratch,
+		Projects: projectStore{projects: map[string]domain.ProjectRecord{}},
+	})
+
+	_, err := r.Create(context.Background(), ports.WorkspaceConfig{ProjectID: "missing", SessionID: "s-1", Kind: domain.KindWorker})
+	if err == nil {
+		t.Fatal("Create missing project: want error, got nil")
+	}
+	if git.createCalls != 0 || scratch.createCalls != 0 {
+		t.Fatalf("create calls git/scratch = %d/%d, want 0/0 (must not fall back to git)", git.createCalls, scratch.createCalls)
+	}
+
+	err = r.Destroy(context.Background(), ports.WorkspaceInfo{ProjectID: "missing", SessionID: "s-1", Path: "/tmp/missing"})
+	if err == nil {
+		t.Fatal("Destroy missing project: want error, got nil")
+	}
+	if git.destroyCalls != 0 || scratch.destroyCalls != 0 {
+		t.Fatalf("destroy calls git/scratch = %d/%d, want 0/0", git.destroyCalls, scratch.destroyCalls)
+	}
+}

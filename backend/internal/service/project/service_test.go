@@ -873,6 +873,44 @@ func TestManager_AddValidationAndConflicts(t *testing.T) {
 	wantCode(t, err, "ID_ALREADY_REGISTERED")
 }
 
+func TestManager_AddRejectsReservedScratchProjectID(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	m := project.NewWithDeps(project.Deps{Store: store, DefaultHarness: domain.HarnessCodex})
+
+	// Active built-in Scratch must not be replaceable via project add.
+	if _, err := m.EnsureDefaultScratchProject(ctx, filepath.Join(t.TempDir(), "scratch", "default")); err != nil {
+		t.Fatalf("EnsureDefaultScratchProject: %v", err)
+	}
+	_, err = m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("scratch")})
+	wantCode(t, err, "SCRATCH_PROJECT_ID_RESERVED")
+
+	// Archived Scratch still reserves the id so a git project cannot demote it.
+	if ok, archErr := store.ArchiveProject(ctx, "scratch", time.Now().UTC()); archErr != nil || !ok {
+		t.Fatalf("archive scratch: ok=%v err=%v", ok, archErr)
+	}
+	_, err = m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("scratch")})
+	wantCode(t, err, "SCRATCH_PROJECT_ID_RESERVED")
+
+	// Path basename "scratch" also resolves to the reserved id.
+	dir := filepath.Join(t.TempDir(), "scratch")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if out, initErr := exec.Command("git", "init", "-b", "main", dir).CombinedOutput(); initErr != nil {
+		t.Fatalf("git init: %v (%s)", initErr, out)
+	}
+	if out, commitErr := exec.Command("git", "-C", dir, "commit", "--allow-empty", "-m", "init").CombinedOutput(); commitErr != nil {
+		t.Fatalf("git commit: %v (%s)", commitErr, out)
+	}
+	_, err = m.Add(ctx, project.AddInput{Path: dir})
+	wantCode(t, err, "SCRATCH_PROJECT_ID_RESERVED")
+}
+
 // gitRepoWithOrigin creates a real git repo with an `origin` remote pointing
 // at `originURL`. Used to assert project.Add captures the origin at add time.
 func gitRepoWithOrigin(t *testing.T, originURL string) string {

@@ -7,6 +7,7 @@ import { DaemonFailureBanner } from "../components/DaemonFailureBanner";
 import { NotificationRuntime } from "../components/NotificationCenter";
 import { GlobalNewTaskDialog } from "../components/GlobalNewTaskDialog";
 import { KeyboardShortcutsDialog } from "../components/KeyboardShortcutsDialog";
+import { MigrationPopup } from "../components/MigrationPopup";
 import { ShellTopbar } from "../components/ShellTopbar";
 import { OrchestratorReplacementDialog } from "../components/OrchestratorReplacementDialog";
 import { Sidebar } from "../components/Sidebar";
@@ -516,6 +517,9 @@ function ShellLayout() {
 					projectId={replacementErrorProjectId}
 					workspaces={workspaces}
 				/>
+				{/* Mounted on the shell (not the index board) so the first-run
+				    scratch redirect to /projects/scratch cannot unmount it. */}
+				<MigrationPopup />
 				<CommandPalette />
 			</div>
 		</ShellProvider>
