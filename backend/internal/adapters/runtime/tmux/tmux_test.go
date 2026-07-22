@@ -40,13 +40,29 @@ func (f *fakeRunner) Run(_ context.Context, env []string, name string, args ...s
 	return out, nil
 }
 
+// -- reapSessions test seam --
+
+// recordingReaper captures reapSessions calls instead of signaling real
+// processes, so unit tests exercising Destroy never touch the host's process
+// table.
+type recordingReaper struct {
+	pids   [][]int
+	graces []time.Duration
+}
+
+func (rr *recordingReaper) reap(_ context.Context, pids []int, grace time.Duration) {
+	rr.pids = append(rr.pids, append([]int(nil), pids...))
+	rr.graces = append(rr.graces, grace)
+}
+
 // -- helpers --
 
 func newTestRuntime(chunkSize int) (*Runtime, *fakeRunner) {
 	fr := &fakeRunner{}
 	r := New(Options{Binary: "tmux-test", Timeout: time.Second, Shell: "/bin/sh", ChunkSize: chunkSize})
 	r.runner = fr
-	r.enterDelay = 0 // tests must not pay the real 300ms pre-Enter pause
+	r.enterDelay = 0                           // tests must not pay the real 300ms pre-Enter pause
+	r.reapSessions = (&recordingReaper{}).reap // never signal real processes from unit tests
 	return r, fr
 }
 
@@ -91,6 +107,10 @@ func TestCommandBuilders(t *testing.T) {
 	}
 	if got, want := hasSessionArgs("sess-1"), []string{"has-session", "-t", "=sess-1"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("hasSessionArgs = %#v, want %#v", got, want)
+	}
+	// list-panes reaps whole-session (-s) with exact-match target and prints pane pids.
+	if got, want := listPanePIDsArgs("sess-1"), []string{"list-panes", "-s", "-t", "=sess-1", "-F", "#{pane_pid}"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("listPanePIDsArgs = %#v, want %#v", got, want)
 	}
 	if got, want := sendKeysLiteralArgs("sess-1", "hello"), []string{"send-keys", "-t", "sess-1", "-l", "hello"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("sendKeysLiteralArgs = %#v, want %#v", got, want)
@@ -355,20 +375,22 @@ func (f *fakeRunnerSelectiveErr) Run(_ context.Context, env []string, name strin
 
 func TestDestroyIsIdempotentWhenSessionMissing(t *testing.T) {
 	r, fr := newTestRuntime(0)
-	fr.outputs = [][]byte{[]byte("can't find session: sess-1")}
+	// First output feeds list-panes (which also errors here → no sids); the
+	// missing-session marker must land on the kill-session call.
+	fr.outputs = [][]byte{nil, []byte("can't find session: sess-1")}
 	fr.err = &exec.ExitError{}
 
 	if err := r.Destroy(context.Background(), ports.RuntimeHandle{ID: "sess-1"}); err != nil {
 		t.Fatalf("Destroy: %v", err)
 	}
-	if len(fr.calls) != 1 || fr.calls[0].args[0] != "kill-session" {
-		t.Fatalf("calls = %#v, want only kill-session", fr.calls)
+	if len(fr.calls) != 2 || fr.calls[0].args[0] != "list-panes" || fr.calls[1].args[0] != "kill-session" {
+		t.Fatalf("calls = %#v, want list-panes then kill-session", fr.calls)
 	}
 }
 
 func TestDestroyIsIdempotentWhenNoServer(t *testing.T) {
 	r, fr := newTestRuntime(0)
-	fr.outputs = [][]byte{[]byte("no server running on /tmp/tmux-1000/default")}
+	fr.outputs = [][]byte{nil, []byte("no server running on /tmp/tmux-1000/default")}
 	fr.err = &exec.ExitError{}
 
 	if err := r.Destroy(context.Background(), ports.RuntimeHandle{ID: "sess-1"}); err != nil {
@@ -378,7 +400,7 @@ func TestDestroyIsIdempotentWhenNoServer(t *testing.T) {
 
 func TestDestroyReportsUnexpectedFailures(t *testing.T) {
 	r, fr := newTestRuntime(0)
-	fr.outputs = [][]byte{[]byte("permission denied")}
+	fr.outputs = [][]byte{nil, []byte("permission denied")}
 	fr.err = &exec.ExitError{}
 
 	if err := r.Destroy(context.Background(), ports.RuntimeHandle{ID: "sess-1"}); err == nil {
@@ -388,14 +410,43 @@ func TestDestroyReportsUnexpectedFailures(t *testing.T) {
 
 func TestDestroyArgs(t *testing.T) {
 	r, fr := newTestRuntime(0)
-	fr.outputs = [][]byte{nil}
+	fr.outputs = [][]byte{nil, nil}
 
 	if err := r.Destroy(context.Background(), ports.RuntimeHandle{ID: "sess-1"}); err != nil {
 		t.Fatalf("Destroy: %v", err)
 	}
-	// killSessionArgs uses exact-match target =<id>.
-	if got, want := fr.calls[0].args, killSessionArgs("sess-1"); !reflect.DeepEqual(got, want) {
+	// list-panes discovers pane sessions; kill-session (exact-match target
+	// =<id>) tears the session down.
+	if got, want := fr.calls[0].args, listPanePIDsArgs("sess-1"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("list-panes args = %#v, want %#v", got, want)
+	}
+	if got, want := fr.calls[1].args, killSessionArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("destroy args = %#v, want %#v", got, want)
+	}
+}
+
+// Destroy must reap the pane sessions it discovered so a worker's backgrounded
+// dev servers do not outlive the session.
+func TestDestroyReapsDiscoveredPaneSessions(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	// list-panes lists two pane pids (one per line, plus noise the parser must
+	// drop); kill-session then succeeds.
+	fr.outputs = [][]byte{[]byte("4242\n4243\n\n1\n"), nil}
+	reaper := &recordingReaper{}
+	r.reapSessions = reaper.reap
+
+	if err := r.Destroy(context.Background(), ports.RuntimeHandle{ID: "sess-1"}); err != nil {
+		t.Fatalf("Destroy: %v", err)
+	}
+	if len(reaper.pids) != 1 {
+		t.Fatalf("reaper called %d times, want 1", len(reaper.pids))
+	}
+	// pids <= 1 and blank lines are dropped; the real sids reach the reaper.
+	if got, want := reaper.pids[0], []int{4242, 4243}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("reaped session ids = %#v, want %#v", got, want)
+	}
+	if reaper.graces[0] != r.reapGrace {
+		t.Fatalf("reap grace = %v, want %v", reaper.graces[0], r.reapGrace)
 	}
 }
 
