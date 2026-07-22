@@ -11,6 +11,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -27,6 +28,9 @@ type ProviderOptions struct {
 	Client     *Client
 	HTTPClient *http.Client
 	Token      TokenSource
+	// SSHHostResolver resolves an SSH config alias to its effective hostname.
+	// Production uses `ssh -G`; tests inject a resolver to avoid local config.
+	SSHHostResolver func(host string) (string, bool)
 	// SkipTokenPreflight defers token validation until the first provider call.
 	// Daemon wiring uses this so gh-token shell-out never blocks readiness.
 	SkipTokenPreflight bool
@@ -41,8 +45,16 @@ type ProviderOptions struct {
 // loop in v1 — the loop is a follow-up PR (#35); this adapter is the
 // observation primitive that loop will call.
 type Provider struct {
-	client *Client
-	logger *slog.Logger
+	client          *Client
+	logger          *slog.Logger
+	sshHostResolver func(host string) (string, bool)
+	sshHostMu       sync.Mutex
+	sshHosts        map[string]sshHostResolution
+}
+
+type sshHostResolution struct {
+	host string
+	ok   bool
 }
 
 // NewProvider returns a Provider. If opts.Client is supplied it is used
@@ -71,7 +83,16 @@ func NewProvider(opts ProviderOptions) (*Provider, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Provider{client: c, logger: logger}, nil
+	sshHostResolver := opts.SSHHostResolver
+	if sshHostResolver == nil {
+		sshHostResolver = resolveSSHConfigHost
+	}
+	return &Provider{
+		client:          c,
+		logger:          logger,
+		sshHostResolver: sshHostResolver,
+		sshHosts:        make(map[string]sshHostResolution),
+	}, nil
 }
 
 // SCMCredentialsAvailable checks whether this provider can obtain a token. The

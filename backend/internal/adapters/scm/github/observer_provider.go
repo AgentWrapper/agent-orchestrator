@@ -19,6 +19,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 )
 
 const scmBatchCheckContextLimit = 20
@@ -39,9 +40,10 @@ const (
 
 // ParseRepository normalizes a GitHub remote/origin URL into a provider-neutral
 // repository key. It accepts https://github.com/owner/repo(.git),
-// git@github.com:owner/repo(.git), and path-only owner/repo inputs used by tests.
+// git@github.com:owner/repo(.git), SSH aliases whose effective hostname is a
+// GitHub host, and path-only owner/repo inputs used by tests.
 func (p *Provider) ParseRepository(remote string) (ports.SCMRepo, bool) {
-	repo, ok := parseGitHubRepo(remote)
+	repo, ok := parseGitHubRepo(remote, p.resolveSSHHost)
 	return repo, ok
 }
 
@@ -620,7 +622,7 @@ func scmThreadFromGraphQL(th map[string]any) ports.SCMReviewThreadObservation {
 	return out
 }
 
-func parseGitHubRepo(remote string) (ports.SCMRepo, bool) {
+func parseGitHubRepo(remote string, resolveSSHHost func(string) (string, bool)) (ports.SCMRepo, bool) {
 	raw := strings.TrimSpace(remote)
 	if raw == "" {
 		return ports.SCMRepo{}, false
@@ -632,6 +634,11 @@ func parseGitHubRepo(remote string) (ports.SCMRepo, bool) {
 			return ports.SCMRepo{}, false
 		}
 		host := strings.ToLower(parts[0])
+		if !isGitHubHost(host) && resolveSSHHost != nil {
+			if resolved, ok := resolveSSHHost(host); ok {
+				host = strings.ToLower(resolved)
+			}
+		}
 		owner, name, ok := splitOwnerRepo(parts[1])
 		return makeGitHubRepo(host, owner, name), ok && isGitHubHost(host)
 	}
@@ -643,9 +650,60 @@ func parseGitHubRepo(remote string) (ports.SCMRepo, bool) {
 	if err != nil {
 		return ports.SCMRepo{}, false
 	}
-	host := strings.ToLower(u.Host)
+	host := strings.ToLower(u.Hostname())
+	if strings.EqualFold(u.Scheme, "ssh") && !isGitHubHost(host) && resolveSSHHost != nil {
+		if resolved, ok := resolveSSHHost(host); ok {
+			host = strings.ToLower(resolved)
+		}
+	}
 	owner, name, ok := splitOwnerRepo(u.Path)
 	return makeGitHubRepo(host, owner, name), ok && isGitHubHost(host)
+}
+
+func (p *Provider) resolveSSHHost(host string) (string, bool) {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" || p == nil || p.sshHostResolver == nil {
+		return "", false
+	}
+	p.sshHostMu.Lock()
+	if result, ok := p.sshHosts[host]; ok {
+		p.sshHostMu.Unlock()
+		return result.host, result.ok
+	}
+	p.sshHostMu.Unlock()
+
+	resolved, ok := p.sshHostResolver(host)
+	resolved = strings.ToLower(strings.TrimSpace(resolved))
+	ok = ok && resolved != ""
+
+	p.sshHostMu.Lock()
+	if p.sshHosts == nil {
+		p.sshHosts = make(map[string]sshHostResolution)
+	}
+	p.sshHosts[host] = sshHostResolution{host: resolved, ok: ok}
+	p.sshHostMu.Unlock()
+	return resolved, ok
+}
+
+func resolveSSHConfigHost(host string) (string, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	out, err := aoprocess.CommandContext(ctx, "ssh", "-G", host).Output()
+	if err != nil {
+		return "", false
+	}
+	return sshConfigHostname(string(out))
+}
+
+func sshConfigHostname(config string) (string, bool) {
+	for _, line := range strings.Split(config, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && strings.EqualFold(fields[0], "hostname") {
+			resolved := strings.TrimSpace(fields[1])
+			return resolved, resolved != ""
+		}
+	}
+	return "", false
 }
 
 func splitOwnerRepo(p string) (string, string, bool) {
