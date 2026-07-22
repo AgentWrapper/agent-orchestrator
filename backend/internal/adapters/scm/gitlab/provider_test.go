@@ -320,6 +320,11 @@ func TestFetchPullRequests(t *testing.T) {
 	if len(o.CI.Checks) != 2 {
 		t.Errorf("CI.Checks = %d, want 2", len(o.CI.Checks))
 	}
+	// base_sha arrives nested under diff_refs in the MR detail response;
+	// it must be parsed via the nested struct (not the broken dotted tag).
+	if got, want := o.PR.BaseSHA, "base123"; got != want {
+		t.Errorf("PR.BaseSHA = %q, want %q", got, want)
+	}
 }
 
 func TestFetchPullRequests_FailingCI(t *testing.T) {
@@ -1724,5 +1729,43 @@ func TestFetchPullRequests_DiffStatsNotParsed(t *testing.T) {
 				t.Errorf("PR.ChangedFiles = %d, want %d (diff_stats must not be parsed)", pr.ChangedFiles, tt.wantChg)
 			}
 		})
+	}
+}
+
+// TestRestMR_DiffRefsBaseSHA_FromListResponse verifies the restMR struct tag
+// correctly parses diff_refs.base_sha from a GitLab MR list payload. The list
+// and detail MR responses share the same shape for diff_refs, so this also
+// covers the list path that the MR-detail cache (ticket 03) will rely on.
+//
+// This test is the regression guard for the dead-code dotted tag
+// json:"diff_refs.base_sha" (Go does not do dotted JSON tag nesting).
+func TestRestMR_DiffRefsBaseSHA_FromListResponse(t *testing.T) {
+	payload := `[
+	  {
+	    "iid": 1,
+	    "sha": "abc123",
+	    "diff_refs": {
+	      "base_sha": "base456",
+	      "head_sha": "abc123",
+	      "start_sha": "parent789"
+	    }
+	  }
+	]`
+	var mrs []restMR
+	if err := json.Unmarshal([]byte(payload), &mrs); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(mrs) != 1 {
+		t.Fatalf("got %d MRs, want 1", len(mrs))
+	}
+	mr := mrs[0]
+	if mr.DiffRefs.BaseSHA != "base456" {
+		t.Errorf("DiffRefs.BaseSHA = %q, want %q", mr.DiffRefs.BaseSHA, "base456")
+	}
+	if mr.DiffRefs.HeadSHA != "abc123" {
+		t.Errorf("DiffRefs.HeadSHA = %q, want %q", mr.DiffRefs.HeadSHA, "abc123")
+	}
+	if mr.DiffRefs.StartSHA != "parent789" {
+		t.Errorf("DiffRefs.StartSHA = %q, want %q", mr.DiffRefs.StartSHA, "parent789")
 	}
 }

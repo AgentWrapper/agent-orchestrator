@@ -229,8 +229,12 @@ type restMR struct {
 	SourceProjectID int `json:"source_project_id"`
 	TargetProjectID int `json:"target_project_id"`
 
-	BaseSHA        string `json:"diff_refs.base_sha"`
-	MergeCommitSHA string `json:"merge_commit_sha"`
+	// DiffRefs is populated from the nested diff_refs object in the MR
+	// response. GitLab returns the same shape from both the list and detail
+	// endpoints, so the cached restMR from ListPRsByRepo carries the base
+	// SHA without any manual second-pass unmarshal.
+	DiffRefs       restDiffRefs `json:"diff_refs"`
+	MergeCommitSHA string      `json:"merge_commit_sha"`
 
 	CreatedAt *time.Time `json:"created_at"`
 	UpdatedAt *time.Time `json:"updated_at"`
@@ -248,7 +252,9 @@ type restProject struct {
 }
 
 type restDiffRefs struct {
-	BaseSHA string `json:"base_sha"`
+	BaseSHA  string `json:"base_sha"`
+	HeadSHA  string `json:"head_sha"`
+	StartSHA string `json:"start_sha"`
 }
 
 func mrToSCMPRObservation(repo ports.SCMRepo, mr *restMR) ports.SCMPRObservation {
@@ -420,19 +426,8 @@ func (p *Provider) fetchSingleMR(ctx context.Context, ref ports.SCMPRRef) (ports
 		return ports.SCMObservation{}, fmt.Errorf("gitlab scm: unmarshal MR detail: %w", err)
 	}
 
-	// Decode diff_refs for base SHA
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(mrResp.Body, &raw); err == nil {
-		if drRaw, ok := raw["diff_refs"]; ok {
-			var dr restDiffRefs
-			if json.Unmarshal(drRaw, &dr) == nil {
-				mr.BaseSHA = dr.BaseSHA
-			}
-		}
-	}
-
 	prObs := mrToSCMPRObservation(repo, &mr)
-	prObs.BaseSHA = mr.BaseSHA
+	prObs.BaseSHA = mr.DiffRefs.BaseSHA
 	prObs.MergeCommitSHA = mr.MergeCommitSHA
 
 	// Fork MR: resolve the head repository to the source project's
