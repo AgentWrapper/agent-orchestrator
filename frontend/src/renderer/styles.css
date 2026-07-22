@@ -69,8 +69,9 @@
 	--spacing-8: var(--space-8);
 	--spacing-10: var(--space-10);
 
-	/* Z-index — z-chrome, z-titlebar, z-overlay */
+	/* Z-index — z-chrome, z-sidebar-preview, z-titlebar, z-overlay */
 	--z-index-chrome: var(--z-chrome);
+	--z-index-sidebar-preview: var(--z-sidebar-preview);
 	--z-index-titlebar: var(--z-titlebar);
 	--z-index-overlay: var(--z-overlay);
 
@@ -347,16 +348,9 @@
 	width: 100%;
 	background-color: var(--color-bg-sidebar);
 	padding-top: var(--size-center-panel-inset);
-	padding-right: var(--size-center-panel-inset);
-	padding-bottom: var(--size-center-panel-inset);
+	padding-right: var(--size-center-panel-inline-inset);
+	padding-bottom: var(--size-center-panel-bottom-inset);
 	padding-left: 0;
-}
-
-/* macOS: drop the framed panel below the traffic-light/TitlebarNav band
- * (56px toolbar height) so its top edge lines up with the sidebar brand and
- * the pinned toggle/history cluster no longer overlaps the panel's topbar. */
-.center-panel-shell--mac {
-	padding-top: var(--size-toolbar);
 }
 
 @utility center-panel-welcome {
@@ -390,6 +384,12 @@
 	border-radius: var(--radius-center-panel);
 	border: 1px solid var(--color-border-strong);
 	background-color: var(--color-bg-primary);
+}
+
+/* A fully hidden sidebar no longer contributes a left layout gutter. Restore
+ * the shared frame inset while transient hover previews overlay this surface. */
+.sidebar-hidden .center-panel-shell {
+	padding-left: var(--size-center-panel-inline-inset);
 }
 
 @utility settings-row-bar {
@@ -983,10 +983,10 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 
 /* ── macOS titlebar cluster (TitlebarNav) ─────────────────────────────────
  * Fixed beside the traffic lights so the toggle/history buttons occupy the
- * exact same spot in both sidebar states. The 56px strip matches the
- * .dashboard-app-header height so the buttons share the topbar's center line
- * (y 28) with the project crumb / bell; the lights match via
- * trafficLightPosition y:20 in main.ts. Lights span x=14–66; the cluster
+ * matching native row in each sidebar state. When collapsed, the 56px strip
+ * starts after the framed panel's 12px top inset and 1px border, sharing the
+ * project/session center line at y=41; main.ts moves the native lights through
+ * window:setTrafficLightsInset. Lights span x=14–66; the cluster
  * starts a 13px group gap after them (the .dashboard-app-header gap), so
  * the toggle reads as its own group rather than a fourth light. */
 .titlebar-nav {

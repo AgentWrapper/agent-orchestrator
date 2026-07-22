@@ -2,6 +2,7 @@ package controllers_test
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	previewutil "github.com/aoagents/agent-orchestrator/backend/internal/preview"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
@@ -205,7 +207,9 @@ func (f *fakeSessionService) ListPRSummaries(_ context.Context, id domain.Sessio
 			Reasons: []string{"conflicts"},
 			PRURL:   "https://github.com/aoagents/agent-orchestrator/pull/142",
 		},
-		UpdatedAt: time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC),
+		StateChangedAt: time.Date(2026, 6, 4, 11, 30, 0, 0, time.UTC),
+		CreatedAt:      time.Date(2026, 6, 4, 9, 0, 0, 0, time.UTC),
+		UpdatedAt:      time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC),
 	}}, nil
 }
 
@@ -1211,11 +1215,13 @@ func TestSessionsAPI_PRRoutes(t *testing.T) {
 	var listed struct {
 		SessionID string `json:"sessionId"`
 		PRs       []struct {
-			URL    string `json:"url"`
-			Number int    `json:"number"`
-			Title  string `json:"title"`
-			State  string `json:"state"`
-			CI     struct {
+			URL            string `json:"url"`
+			Number         int    `json:"number"`
+			Title          string `json:"title"`
+			State          string `json:"state"`
+			StateChangedAt string `json:"stateChangedAt"`
+			CreatedAt      string `json:"createdAt"`
+			CI             struct {
 				State         string `json:"state"`
 				FailingChecks []struct {
 					Name       string `json:"name"`
@@ -1253,6 +1259,12 @@ func TestSessionsAPI_PRRoutes(t *testing.T) {
 	if listed.SessionID != "ao-1" || len(listed.PRs) != 1 || listed.PRs[0].State != "open" || listed.PRs[0].Title == "" {
 		t.Fatalf("GET shape = %#v", listed)
 	}
+	if listed.PRs[0].StateChangedAt != "2026-06-04T11:30:00Z" {
+		t.Fatalf("stateChangedAt = %q, want backend-selected PR state time", listed.PRs[0].StateChangedAt)
+	}
+	if listed.PRs[0].CreatedAt != "2026-06-04T09:00:00Z" {
+		t.Fatalf("createdAt = %q, want provider PR creation time", listed.PRs[0].CreatedAt)
+	}
 	if checks := listed.PRs[0].CI.FailingChecks; len(checks) != 1 || checks[0].Name != "unit" || checks[0].LogTail != "" {
 		t.Fatalf("failing checks = %#v", checks)
 	}
@@ -1277,6 +1289,23 @@ func TestSessionsAPI_PRRoutes(t *testing.T) {
 	mustJSON(t, body, &claimed)
 	if !claimed.OK || claimed.SessionID != "ao-1" || len(claimed.PRs) != 1 || !claimed.BranchChanged || len(claimed.TakenOverFrom) != 0 {
 		t.Fatalf("claim shape = %#v", claimed)
+	}
+}
+
+func TestSessionPRSummaryOmitsUnavailableLifecycleTimes(t *testing.T) {
+	payload, err := json.Marshal(controllers.NewSessionPRSummary(sessionsvc.PRSummary{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(payload, &got); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got["createdAt"]; ok {
+		t.Fatalf("createdAt must be omitted when provider creation time is unavailable: %s", payload)
+	}
+	if _, ok := got["stateChangedAt"]; ok {
+		t.Fatalf("stateChangedAt must be omitted when lifecycle time is unavailable: %s", payload)
 	}
 }
 

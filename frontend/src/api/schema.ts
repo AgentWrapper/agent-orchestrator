@@ -1150,6 +1150,8 @@ export interface components {
             ci: components["schemas"]["SessionPRCISummary"];
             /** Format: date-time */
             ciObservedAt?: string;
+            /** Format: date-time */
+            createdAt?: null | string;
             deletions: number;
             headSha: string;
             htmlUrl?: string;
@@ -1166,6 +1168,8 @@ export interface components {
             sourceBranch: string;
             /** @enum {string} */
             state: "draft" | "open" | "merged" | "closed";
+            /** Format: date-time */
+            stateChangedAt?: null | string;
             targetBranch: string;
             title: string;
             /** Format: date-time */

@@ -313,6 +313,8 @@ type SessionPRSummary struct {
 	CI               SessionPRCISummary           `json:"ci"`
 	Review           SessionPRReviewSummary       `json:"review"`
 	Mergeability     SessionPRMergeabilitySummary `json:"mergeability"`
+	StateChangedAt   *time.Time                   `json:"stateChangedAt,omitempty"`
+	CreatedAt        *time.Time                   `json:"createdAt,omitempty"`
 	UpdatedAt        time.Time                    `json:"updatedAt"`
 	ObservedAt       time.Time                    `json:"observedAt,omitempty"`
 	CIObservedAt     time.Time                    `json:"ciObservedAt,omitempty"`
@@ -396,11 +398,20 @@ func NewSessionPRSummary(in sessionsvc.PRSummary) SessionPRSummary {
 		CI:               newSessionPRCISummary(in.CI),
 		Review:           newSessionPRReviewSummary(in.Review),
 		Mergeability:     newSessionPRMergeabilitySummary(in.Mergeability),
+		StateChangedAt:   optionalTime(in.StateChangedAt),
+		CreatedAt:        optionalTime(in.CreatedAt),
 		UpdatedAt:        in.UpdatedAt,
 		ObservedAt:       in.ObservedAt,
 		CIObservedAt:     in.CIObservedAt,
 		ReviewObservedAt: in.ReviewObservedAt,
 	}
+}
+
+func optionalTime(value time.Time) *time.Time {
+	if value.IsZero() {
+		return nil
+	}
+	return &value
 }
 
 func newSessionPRCISummary(in sessionsvc.PRCISummary) SessionPRCISummary {

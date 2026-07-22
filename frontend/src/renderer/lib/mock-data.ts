@@ -246,6 +246,8 @@ const prSummary = (sessionId: string, number: number, overrides: Partial<Session
 			prUrl: url,
 			conflictFiles: [],
 		},
+		createdAt: facts?.updatedAt ?? now,
+		stateChangedAt: facts?.updatedAt ?? now,
 		updatedAt: facts?.updatedAt ?? now,
 		observedAt: facts?.updatedAt ?? now,
 		ciObservedAt: facts?.updatedAt ?? now,
@@ -255,6 +257,33 @@ const prSummary = (sessionId: string, number: number, overrides: Partial<Session
 };
 
 export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
+	"demo-review-stack": [
+		prSummary("demo-review-stack", 321, {
+			createdAt: hoursAgo(2),
+			stateChangedAt: hoursAgo(2),
+		}),
+		prSummary("demo-review-stack", 319, {
+			createdAt: hoursAgo(6),
+			stateChangedAt: hoursAgo(5),
+		}),
+		prSummary("demo-review-stack", 320, {
+			createdAt: hoursAgo(4),
+			stateChangedAt: hoursAgo(3),
+		}),
+		prSummary("demo-review-stack", 317, {
+			url: "https://github.com/acme-inc/ao-demo/pull/317",
+			htmlUrl: "https://github.com/acme-inc/ao-demo/pull/317",
+			state: "merged",
+			createdAt: hoursAgo(7),
+			stateChangedAt: hoursAgo(1),
+			mergeability: {
+				state: "mergeable",
+				reasons: [],
+				prUrl: "https://github.com/acme-inc/ao-demo/pull/317",
+				conflictFiles: [],
+			},
+		}),
+	],
 	"fix-auth-timeouts": [
 		prSummary("fix-auth-timeouts", 184, {
 			changedFiles: 5,

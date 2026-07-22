@@ -23,6 +23,7 @@ import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { captureOrchestratorReplacementFailure } from "../lib/orchestrator-replacement-telemetry";
 import { applyDocumentTheme } from "../lib/theme";
 import { aoBridge } from "../lib/bridge";
+import { cn } from "../lib/utils";
 import { isLinuxPlatform, isMacPlatform, isWindowsPlatform, usesFramedAppTopbar } from "../lib/platform";
 import { useUiStore } from "../stores/ui-store";
 import type { WorkspaceSummary } from "../types/workspace";
@@ -79,6 +80,8 @@ function ShellLayout() {
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
 	const requestCreateProject = useUiStore((state) => state.requestCreateProject);
 	const [isKeyboardShortcutsOpen, setIsKeyboardShortcutsOpen] = useState(false);
+	const [isSidebarPeekOpen, setIsSidebarPeekOpen] = useState(false);
+	const sidebarPeekCloseTimerRef = useRef<number | undefined>(undefined);
 	const routeParams = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
 	// Project in scope for a new-session shortcut: the route's project, or the
 	// workspace owning the open session (so the shortcut works from a worker's
@@ -102,6 +105,27 @@ function ShellLayout() {
 	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
 	const setOrchestratorStartupError = useUiStore((state) => state.setOrchestratorStartupError);
 	const replacementErrorProjectId = Object.keys(orchestratorReplacementErrors)[0] ?? null;
+
+	const cancelSidebarPeekClose = useCallback(() => {
+		if (sidebarPeekCloseTimerRef.current === undefined) return;
+		window.clearTimeout(sidebarPeekCloseTimerRef.current);
+		sidebarPeekCloseTimerRef.current = undefined;
+	}, []);
+
+	const previewSidebar = useCallback(() => {
+		if (isSidebarOpen) return;
+		cancelSidebarPeekClose();
+		setIsSidebarPeekOpen(true);
+	}, [cancelSidebarPeekClose, isSidebarOpen]);
+
+	const scheduleSidebarPeekClose = useCallback(() => {
+		if (isSidebarOpen) return;
+		cancelSidebarPeekClose();
+		sidebarPeekCloseTimerRef.current = window.setTimeout(() => {
+			setIsSidebarPeekOpen(false);
+			sidebarPeekCloseTimerRef.current = undefined;
+		}, 140);
+	}, [cancelSidebarPeekClose, isSidebarOpen]);
 
 	const updateWorkspaces = useCallback(
 		(updater: (workspaces: WorkspaceSummary[]) => WorkspaceSummary[]) => {
@@ -266,6 +290,45 @@ function ShellLayout() {
 	}, [resolvedTheme]);
 
 	useEffect(() => {
+		void aoBridge.window.setTrafficLightsInset(!isSidebarOpen);
+	}, [isSidebarOpen]);
+
+	useEffect(() => {
+		if (!isSidebarOpen) return;
+		cancelSidebarPeekClose();
+		setIsSidebarPeekOpen(false);
+	}, [cancelSidebarPeekClose, isSidebarOpen]);
+
+	useEffect(() => cancelSidebarPeekClose, [cancelSidebarPeekClose]);
+
+	useEffect(() => {
+		if (!isSidebarPeekOpen || isSidebarOpen) return;
+
+		const handlePointerMove = (event: PointerEvent) => {
+			const target = event.target instanceof Element ? event.target : null;
+			const isInSidebarPortal = Boolean(target?.closest('[role="dialog"], [role="listbox"], [role="menu"]'));
+			const sidebar = document.querySelector<HTMLElement>('[data-slot="sidebar-container"]');
+			const bounds = sidebar?.getBoundingClientRect();
+			const isInSidebar = Boolean(
+				bounds &&
+				event.clientX >= bounds.left &&
+				event.clientX <= bounds.right &&
+				event.clientY >= bounds.top &&
+				event.clientY <= bounds.bottom,
+			);
+
+			if (isInSidebar || isInSidebarPortal) {
+				cancelSidebarPeekClose();
+				return;
+			}
+			scheduleSidebarPeekClose();
+		};
+
+		window.addEventListener("pointermove", handlePointerMove);
+		return () => window.removeEventListener("pointermove", handlePointerMove);
+	}, [cancelSidebarPeekClose, isSidebarOpen, isSidebarPeekOpen, scheduleSidebarPeekClose]);
+
+	useEffect(() => {
 		if (daemonStatus.state !== "ready" || !daemonStatus.port) return;
 		if (agentCatalogPortRef.current === daemonStatus.port) return;
 
@@ -325,17 +388,15 @@ function ShellLayout() {
 			<NotificationRuntime />
 			<GlobalNewTaskDialog />
 			<KeyboardShortcutsDialog open={isKeyboardShortcutsOpen} onOpenChange={setIsKeyboardShortcutsOpen} />
-			{/* The topbar spans the full window width above the sidebar row (the
-          macOS traffic lights + TitlebarNav cluster sit in its left inset),
-          and the sidebar hangs below it — so the sidebar border stops at the
-          header instead of cutting through the titlebar strip. The bar lives
-          in the layout, not the screens, so the crumb and actions never shift
-          when the outlet content swaps. */}
+			{/* The topbar lives in the shared shell so its crumb and actions do not
+			  shift when the outlet swaps. On macOS, its left inset clears the
+			  traffic lights and TitlebarNav while the framed panel keeps the same
+			  outer inset as Settings. */}
 			<div className="flex h-screen min-h-0 flex-col bg-sidebar text-foreground">
 				{/* Windows-only custom title bar (sidebar toggle + File/Edit/View/…
             menu); paints the chrome the frameless window drops. Renders null on
             macOS/Linux. */}
-				<WindowTitlebar />
+				<WindowTitlebar onSidebarPreviewEnter={previewSidebar} />
 				{/* App routes render their topbar inside the framed panel, matching the board chrome across platforms while leaving OS titlebars native. */}
 				{!framedAppTopbar && !hideShellTopbar ? <ShellTopbar /> : null}
 				{/* Controlled by the ui-store so TitlebarNav / Topbar toggles (which
@@ -343,8 +404,12 @@ function ShellLayout() {
             the drag-resizable --ao-sidebar-w set on :root by useResizable. */}
 				<SidebarProvider
 					className="min-h-0 flex-1 overflow-x-hidden"
-					onOpenChange={(open) => open !== isSidebarOpen && toggleSidebar()}
-					open={isSidebarOpen}
+					onOpenChange={(open) => {
+						cancelSidebarPeekClose();
+						setIsSidebarPeekOpen(false);
+						if (open !== isSidebarOpen) toggleSidebar();
+					}}
+					open={isSidebarOpen || isSidebarPeekOpen}
 					style={
 						{
 							"--sidebar-width": "var(--ao-sidebar-w, var(--size-sidebar-default))",
@@ -355,6 +420,8 @@ function ShellLayout() {
 					{/* Hang the fixed sidebar below shell chrome. macOS keeps room for the traffic-light/titlebar controls; Windows clears only its custom titlebar because the app topbar is inside the framed panel. When the topbar lives inside the framed panel (framedAppTopbar), Linux reserves no offset — otherwise the sidebar would clear a full-width topbar that isn't there. */}
 					<Sidebar
 						hideEdgeBorder={isWelcomeBoard}
+						isOverlay={isSidebarPeekOpen && !isSidebarOpen}
+						onPreviewLeave={scheduleSidebarPeekClose}
 						underTopbar={
 							isMac || isWindows || (!framedAppTopbar && !hideShellTopbar && (isLinux ? isSessionRoute : true))
 						}
@@ -365,13 +432,13 @@ function ShellLayout() {
 						workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}
 						workspaces={workspaces}
 					/>
-					<main className="flex min-w-0 flex-1 flex-col overflow-x-hidden">
+					<main className={cn("flex min-w-0 flex-1 flex-col overflow-x-hidden", !isSidebarOpen && "sidebar-hidden")}>
 						<div className="min-h-0 flex-1 overflow-x-hidden">
 							{/* Board/session routes render inside the same inset box the welcome board and settings paint for themselves, so every screen sits within the app's outer boundary. */}
 							{hideShellTopbar ? (
 								<Outlet />
 							) : framedAppTopbar ? (
-								<CenterPanelShell className={isMac ? "center-panel-shell--mac" : undefined} variant="app">
+								<CenterPanelShell variant="app">
 									<ShellTopbar />
 									<div className="flex min-h-0 flex-1 flex-col">
 										<Outlet />
@@ -406,7 +473,7 @@ function ShellLayout() {
               survive if they're processed after the drag strips they overlap.
               Rendered first, real clicks get swallowed by window-drag even
               though DOM hit-testing looks correct. */}
-					<TitlebarNav historyLocked={isWelcomeBoard} />
+					<TitlebarNav historyLocked={isWelcomeBoard} onSidebarPreviewEnter={previewSidebar} />
 				</SidebarProvider>
 				<OrchestratorReplacementDialog
 					error={replacementErrorProjectId ? orchestratorReplacementErrors[replacementErrorProjectId] : undefined}

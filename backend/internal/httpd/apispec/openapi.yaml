@@ -3006,6 +3006,11 @@ components:
         ciObservedAt:
           format: date-time
           type: string
+        createdAt:
+          format: date-time
+          type:
+          - "null"
+          - string
         deletions:
           type: integer
         headSha:
@@ -3039,6 +3044,11 @@ components:
           - merged
           - closed
           type: string
+        stateChangedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
         targetBranch:
           type: string
         title:

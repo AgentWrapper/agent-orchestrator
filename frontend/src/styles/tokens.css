@@ -163,6 +163,7 @@
 	   ═══════════════════════════════════════════════════════════════ */
 
 	--z-chrome: 10;
+	--z-sidebar-preview: 15;
 	--z-titlebar: 20;
 	--z-overlay: 50;
 
@@ -217,7 +218,7 @@
 	--size-sidebar-default: 240px;
 	--size-sidebar-mobile: 288px;
 	--size-titlebar-cluster-left: 79px;
-	--size-titlebar-content-offset: 180px;
+	--size-titlebar-content-offset: 174px;
 	--size-resize-handle: 7px;
 	--size-resize-handle-offset: 3px;
 	--size-kanban-glow: 130px;
@@ -245,7 +246,9 @@
 	--size-sidebar-project-actions: 84px;
 
 	/* Shared inset-panel geometry (welcome board + settings page) */
-	--size-center-panel-inset: 14px;
+	--size-center-panel-inset: 12px;
+	--size-center-panel-inline-inset: 8px;
+	--size-center-panel-bottom-inset: 6px;
 	--radius-center-panel: 17px;
 
 	/* Welcome board inset panel */

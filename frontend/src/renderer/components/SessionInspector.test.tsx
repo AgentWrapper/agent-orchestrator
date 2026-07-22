@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionInspector } from "./SessionInspector";
+import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
 import type { PRState, PullRequestFacts, WorkspaceSession } from "../types/workspace";
 
 const { getMock, postMock } = vi.hoisted(() => ({
@@ -55,6 +56,35 @@ const sessionWithProvider = (prs: PullRequestFacts[], provider: WorkspaceSession
 	...session(prs),
 	provider,
 });
+
+const prSummary = (
+	number: number,
+	state: SessionPRSummary["state"],
+	overrides: Partial<SessionPRSummary> = {},
+): SessionPRSummary => {
+	const url = `https://github.com/acme/repo/pull/${number}`;
+	return {
+		url: `https://api.github.com/repos/acme/repo/pulls/${number}`,
+		htmlUrl: url,
+		number,
+		title: `PR ${number}`,
+		state,
+		provider: "github",
+		repo: "acme/repo",
+		author: "ada",
+		sourceBranch: `feat/${number}`,
+		targetBranch: "main",
+		headSha: `sha-${number}`,
+		additions: 4,
+		deletions: 1,
+		changedFiles: 2,
+		ci: { state: "passing", failingChecks: [] },
+		review: { decision: "none", hasUnresolvedHumanComments: false, unresolvedBy: [] },
+		mergeability: { state: "mergeable", reasons: [], prUrl: url, conflictFiles: [] },
+		updatedAt: "2026-06-15T12:00:00Z",
+		...overrides,
+	};
+};
 
 function renderWithQuery(children: ReactNode) {
 	const client = new QueryClient({
@@ -185,7 +215,7 @@ describe("SessionInspector PR section", () => {
 
 	it("links each PR to its url", () => {
 		renderWithQuery(<SessionInspector session={session([pr(41, "open"), pr(42, "draft")])} />);
-		const links = screen.getAllByRole("link", { name: /Open/ });
+		const links = prSection("Pull requests (2)").getAllByRole("link", { name: "Open" });
 		expect(links.map((a) => a.getAttribute("href"))).toEqual([
 			"https://example.com/pr/41",
 			"https://example.com/pr/42",
@@ -365,6 +395,57 @@ describe("SessionInspector Activity section", () => {
 			.closest("[data-testid='inspector-timeline-event']") as HTMLElement;
 		expect(within(activityRow).getByText("CI Failed")).toBeInTheDocument();
 		expect(within(activityRow).getByText("Changes Requested")).toBeInTheDocument();
+	});
+
+	it("links and timestamps draft, opened, and merged PR milestones from backend lifecycle times", async () => {
+		const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60 * 1000).toISOString();
+		const summaries = [
+			prSummary(8, "draft", {
+				createdAt: minutesAgo(120),
+				stateChangedAt: minutesAgo(120),
+			}),
+			prSummary(7, "open", {
+				createdAt: minutesAgo(60),
+				stateChangedAt: minutesAgo(15),
+			}),
+			prSummary(6, "merged", {
+				createdAt: minutesAgo(180),
+				stateChangedAt: minutesAgo(30),
+			}),
+		];
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/sessions/{sessionId}/pr") {
+				return { data: { sessionId: "sess-1", prs: summaries }, error: undefined };
+			}
+			return { data: { reviewerHandleId: "", reviews: [] }, error: undefined };
+		});
+
+		renderWithQuery(
+			<SessionInspector
+				session={session([pr(8, "draft"), pr(7, "open"), pr(6, "merged")], {
+					status: "merged",
+					activity: { state: "idle", lastActivityAt: "2026-06-15T11:50:00Z" },
+				})}
+			/>,
+		);
+
+		await waitFor(() => {
+			expect(screen.getByRole("link", { name: "Draft PR #8" })).toHaveAttribute(
+				"href",
+				"https://github.com/acme/repo/pull/8",
+			);
+		});
+		const draftLink = screen.getByRole("link", { name: "Draft PR #8" });
+		expect(within(draftLink.closest("[data-testid='inspector-timeline-event']") as HTMLElement).getByText("2h ago")).toBeInTheDocument();
+
+		const openLink = screen.getByRole("link", { name: "Opened PR #7" });
+		expect(within(openLink.closest("[data-testid='inspector-timeline-event']") as HTMLElement).getByText("1h ago")).toBeInTheDocument();
+
+		const mergedOpenedLink = screen.getByRole("link", { name: "Opened PR #6" });
+		expect(within(mergedOpenedLink.closest("[data-testid='inspector-timeline-event']") as HTMLElement).getByText("3h ago")).toBeInTheDocument();
+
+		const mergedLink = screen.getByRole("link", { name: "Merged PR #6" });
+		expect(within(mergedLink.closest("[data-testid='inspector-timeline-event']") as HTMLElement).getByText("30m ago")).toBeInTheDocument();
 	});
 
 	it("orders timeline milestones around the combined current state row", () => {

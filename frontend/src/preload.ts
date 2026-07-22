@@ -74,6 +74,8 @@ const api = {
 	window: {
 		setOverlay: (overlay: { color: string; symbolColor: string }) =>
 			ipcRenderer.invoke("window:setOverlay", overlay) as Promise<void>,
+		setTrafficLightsInset: (inset: boolean) =>
+			ipcRenderer.invoke("window:setTrafficLightsInset", inset) as Promise<void>,
 	},
 	menu: {
 		action: (action: string) => ipcRenderer.invoke("menu:action", action) as Promise<void>,

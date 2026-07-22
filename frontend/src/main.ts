@@ -147,6 +147,9 @@ const DEV_STATE_SUBDIR = "dev"; // ~/.ao/dev/
 // Controls Overlay height passed to BrowserWindow and the .window-titlebar height
 // in styles.css, so the native min/max/close buttons line up with the app's bar.
 const TITLEBAR_HEIGHT = 36;
+const MAC_WINDOW_BUTTON_X = 14;
+const MAC_WINDOW_BUTTON_EXPANDED_Y = 20;
+const MAC_WINDOW_BUTTON_COLLAPSED_Y = 33;
 
 const RENDERER_SCHEME = "app";
 const RENDERER_HOST = "renderer";
@@ -299,11 +302,9 @@ function createWindow(): void {
 				}
 			: {
 					titleBarStyle: "hiddenInset" as const,
-					// Lights visually centered at y=28 — the 56px topbar/.titlebar-nav
-					// center line — so lights + nav cluster + header content share one
-					// row. macOS draws the 12pt disc 2pt below the given y (measured:
-					// center = y + 8), hence 20, not 22.
-					trafficLightPosition: { x: 14, y: 20 },
+					// Start in the expanded-sidebar position. The renderer synchronizes
+					// this after hydration and whenever persistent sidebar state changes.
+					trafficLightPosition: { x: MAC_WINDOW_BUTTON_X, y: MAC_WINDOW_BUTTON_EXPANDED_Y },
 				}),
 		webPreferences: {
 			preload: preloadPath(),
@@ -1053,6 +1054,14 @@ ipcMain.handle("window:setOverlay", (_event, overlay: { color: string; symbolCol
 	} catch {
 		// Window has no overlay on this platform; ignore.
 	}
+});
+
+ipcMain.handle("window:setTrafficLightsInset", (_event, inset: boolean) => {
+	if (process.platform !== "darwin" || !mainWindow) return;
+	mainWindow.setWindowButtonPosition({
+		x: MAC_WINDOW_BUTTON_X,
+		y: inset ? MAC_WINDOW_BUTTON_COLLAPSED_Y : MAC_WINDOW_BUTTON_EXPANDED_Y,
+	});
 });
 
 // Renderer calls this when focus lands on real shell UI (not the titlebar menu), so menu:action's panel fallback below doesn't go stale.

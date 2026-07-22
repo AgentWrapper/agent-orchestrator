@@ -68,6 +68,7 @@ if (typeof window !== "undefined") {
 		},
 		window: {
 			setOverlay: async () => undefined,
+			setTrafficLightsInset: async () => undefined,
 		},
 		menu: {
 			action: async () => undefined,

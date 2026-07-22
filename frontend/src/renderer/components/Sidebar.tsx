@@ -81,9 +81,12 @@ const SIDEBAR_COLLAPSE_THRESHOLD = SIDEBAR_MIN_WIDTH;
 type SidebarProps = {
 	/** Hide the sidebar's right edge stroke on the welcome board inset chrome. */
 	hideEdgeBorder?: boolean;
+	/** Render the expanded sidebar over content without reserving layout width. */
+	isOverlay?: boolean;
 	underTopbar?: boolean;
 	/** Chrome height to clear when underTopbar is set. Defaults to the 56px shell toolbar. */
 	topbarOffset?: "toolbar" | "titlebar";
+	onPreviewLeave?: () => void;
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];
 	onCreateProject: (input: CreateProjectInput) => Promise<void>;
@@ -117,13 +120,15 @@ function SessionDot({ session }: { session: WorkspaceSession }) {
 }
 
 // Built on shadcn's sidebar primitives (components/ui/sidebar): the provider in
-// _shell owns open state (synced to the ui-store) and `collapsible="icon"`
-// replaces the old hand-rolled CollapsedRail — the same tree restyles itself
-// via group-data-[collapsible=icon] into the 48px letter rail.
+// _shell owns the persistent open state plus a transient hover-preview state.
+// Collapsed sidebars move fully off-canvas; previews return as overlays without
+// reserving layout width.
 export function Sidebar({
 	hideEdgeBorder = false,
+	isOverlay = false,
 	underTopbar = true,
 	topbarOffset = "toolbar",
+	onPreviewLeave,
 	workspaceError,
 	workspaces,
 	onCreateProject,
@@ -193,27 +198,35 @@ export function Sidebar({
 	});
 
 	return (
-		// The container is fixed-positioned by the shadcn primitive; offset it
-		// below the shell chrome so the bar runs edge-to-edge above it (same
-		// override as shadcn's header-above-sidebar block). Prefer the 56px
-		// toolbar offset; on Windows welcome only the 36px WindowTitlebar is
-		// present, so hang below that instead of covering File/Edit/….
+		// Pinned sidebars start below shell chrome. Hover previews paint a
+		// full-height surface behind the titlebar while their content keeps the
+		// same chrome clearance, leaving the titlebar controls unobstructed.
 		<SidebarRoot
-			collapsible="icon"
+			collapsible="offcanvas"
 			data-expanded-chrome={expandedChromeVisible ? "visible" : "hidden"}
+			onPointerLeave={onPreviewLeave}
+			overlay={isOverlay}
 			className={cn(
 				hideEdgeBorder ? "border-transparent" : "border-r-0 group-data-[side=left]:border-r-0",
-				underTopbar
-					? topbarOffset === "titlebar"
-						? "top-9 h-[calc(100svh-2.25rem)]!"
-						: "top-14 h-[calc(100svh-3.5rem)]!"
-					: "top-0 h-svh!",
+				isOverlay && "z-sidebar-preview shadow-2xl",
+				isOverlay
+					? "top-0 h-svh!"
+					: underTopbar
+						? topbarOffset === "titlebar"
+							? "top-9 h-[calc(100svh-2.25rem)]!"
+							: "top-14 h-[calc(100svh-3.5rem)]!"
+						: "top-0 h-svh!",
 			)}
 		>
-			<SidebarHeader className="gap-0 p-0 pl-2.5 pr-1.75 pt-2.5 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pt-2">
+			<SidebarHeader
+				className={cn(
+					"gap-0 p-0 pl-1.5 pr-1.75 pt-1 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pt-1",
+					isOverlay && (topbarOffset === "titlebar" ? "pt-10!" : "pt-15!"),
+				)}
+			>
 				{/* Brand (project-sidebar__brand); in the icon rail it becomes the old
             36px board button wrapping the 22px accent mark. */}
-				<div className="flex shrink-0 items-center gap-2.5 px-2 pb-4.5 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:pb-2">
+				<div className="flex shrink-0 items-center gap-2.5 px-1.5 pb-3 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:pb-2">
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<button
@@ -267,10 +280,10 @@ export function Sidebar({
 				</div>
 			</SidebarHeader>
 
-			<SidebarContent className="gap-0 pl-2.5 pr-1.75 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
+			<SidebarContent className="gap-0 pl-1.5 pr-1.75 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
 				<SidebarGroup className="p-0">
 					{/* Section label (project-sidebar__nav-label) */}
-					<div className="sidebar-expanded-chrome flex shrink-0 items-center justify-between px-2 pb-2 group-data-[collapsible=icon]:hidden">
+					<div className="sidebar-expanded-chrome flex shrink-0 items-center justify-between px-1.5 pb-2 group-data-[collapsible=icon]:hidden">
 						<SidebarGroupLabel className="h-auto rounded-none p-0 text-2xs font-semibold uppercase tracking-wide-lg text-passive">
 							Projects
 						</SidebarGroupLabel>
@@ -284,7 +297,7 @@ export function Sidebar({
 					{/* Tree (project-sidebar__tree) */}
 					<SidebarGroupContent>
 						{workspaceError ? (
-							<div className="sidebar-expanded-chrome px-2 py-3 group-data-[collapsible=icon]:hidden">
+							<div className="sidebar-expanded-chrome px-1.5 py-3 group-data-[collapsible=icon]:hidden">
 								<p className="text-xs text-foreground">Could not load projects.</p>
 								<p className="mt-1 text-caption text-passive">{workspaceError}</p>
 							</div>
@@ -340,7 +353,7 @@ export function Sidebar({
 			</SidebarFooter>
 
 			<ResizeHandle
-				className="group-data-[collapsible=icon]:hidden"
+				className="group-data-[state=collapsed]:hidden"
 				onDoubleClick={onResizeDoubleClick}
 				onPointerDown={onResizePointerDown}
 				side="right"
@@ -547,7 +560,7 @@ function ProjectItem({
 			{/* project-sidebar__sessions: indented under the project parent so worker
           sessions read as children without adding a persistent guide rail. */}
 			{expanded && sessions.length > 0 && (
-				<SidebarMenuSub className="sidebar-expanded-chrome mx-0 ml-4.5 translate-x-0 gap-0 border-l-0 px-0 py-1 pl-2.5">
+				<SidebarMenuSub className="sidebar-expanded-chrome mx-0 ml-3.5 translate-x-0 gap-0 border-l-0 px-0 py-1">
 					{sessions.map((session) => (
 						<SessionRow
 							key={session.id}
@@ -621,7 +634,7 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 	if (isEditing) {
 		return (
 			<SidebarMenuSubItem>
-				<div className="relative flex h-auto w-full items-center gap-2.25 rounded-sm py-1.25 pl-2.5 pr-1.5">
+				<div className="relative flex h-auto w-full items-center gap-2.25 rounded-sm py-1.25 pl-1.5 pr-1.5">
 					<SessionDot session={session} />
 					<input
 						aria-label={`Rename ${session.title}`}
@@ -654,7 +667,7 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 				aria-current={active ? "page" : undefined}
 				aria-label={`Open ${session.title}`}
 				className={cn(
-					"relative flex h-auto w-full items-center gap-2.25 rounded-sm py-1.25 pl-2.5 pr-7 text-left outline-hidden transition-[color]",
+					"relative flex h-auto w-full items-center gap-2.25 rounded-sm py-1.25 pl-1.5 pr-7 text-left outline-hidden transition-[color]",
 					"before:absolute before:top-1.5 before:bottom-1.5 before:left-0 before:w-px before:rounded-full before:bg-transparent",
 					"hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring",
 					active && "text-foreground before:bg-accent",

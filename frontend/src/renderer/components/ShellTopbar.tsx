@@ -17,13 +17,7 @@ import { useUiStore } from "../stores/ui-store";
 import { OrchestratorIcon } from "./icons";
 import { cn } from "../lib/utils";
 import { getAgentActivityView } from "../lib/session-presentation";
-import {
-	isLinuxPlatform,
-	isMacPlatform,
-	isWindowsPlatform,
-	usesBoardActionsInFramedTopbar,
-	usesFramedAppTopbar,
-} from "../lib/platform";
+import { isLinuxPlatform, isMacPlatform, isWindowsPlatform, usesBoardActionsInFramedTopbar } from "../lib/platform";
 import { StatusPill } from "./StatusPill";
 import {
 	TopbarButton,
@@ -37,15 +31,13 @@ const isMac = isMacPlatform();
 const isLinux = isLinuxPlatform();
 const isWindows = isWindowsPlatform();
 const boardActionsInFramedTopbar = usesBoardActionsInFramedTopbar();
-const topbarNeedsTitlebarOffset = isMac && !usesFramedAppTopbar();
+const topbarNeedsTitlebarOffset = isMac;
 const dragStyle = isMac ? ({ WebkitAppRegion: "drag" } as React.CSSProperties) : undefined;
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
-// The one app topbar (.dashboard-app-header), rendered by the shell layout
-// across the full window width — above both the sidebar and the route outlet —
-// so the crumb and actions sit at identical offsets on every screen and the
-// macOS traffic lights + TitlebarNav cluster live in its left inset
-// (.is-under-titlebar-nav pads past them). The
+// The one app topbar (.dashboard-app-header), rendered by the shell layout so
+// the crumb and actions sit at identical offsets on every screen. On macOS,
+// its left inset clears the traffic lights + TitlebarNav cluster. The
 // variant is derived from the route, not props: a sessionId in the URL swaps
 // the lead to the session identity (orchestrator crumb + mode badge, or worker
 // branch + status pill) and the actions to board/orchestrator + inspector
@@ -58,8 +50,9 @@ export function ShellTopbar() {
 	const queryClient = useQueryClient();
 	const params = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
 	const currentSessionId = params.sessionId;
+	const isSidebarOpen = useUiStore((state) => state.isSidebarOpen);
 	const isInspectorOpen = useUiStore((state) =>
-		currentSessionId ? (state.inspectorSessions[currentSessionId]?.isOpen ?? false) : false,
+		currentSessionId ? (state.inspectorSessions[currentSessionId]?.isOpen ?? true) : false,
 	);
 	const toggleInspector = useUiStore((state) => state.toggleInspector);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
@@ -140,7 +133,10 @@ export function ShellTopbar() {
 	};
 
 	return (
-		<header className={cn(topbarHeaderClass, topbarNeedsTitlebarOffset && topbarHeaderMacClass)} style={dragStyle}>
+		<header
+			className={cn(topbarHeaderClass, topbarNeedsTitlebarOffset && !isSidebarOpen && topbarHeaderMacClass)}
+			style={dragStyle}
+		>
 			<div className="flex min-w-0 items-center gap-3">
 				{isSessionRoute && isOrchestrator ? (
 					<div className="inline-flex min-w-0 items-center gap-2">
