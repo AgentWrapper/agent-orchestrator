@@ -237,9 +237,28 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	// changed between renders.
 	const callbacksRef = useRef(props);
 
-	const setContextMenuOpen = useCallback((open: boolean) => {
-		setContextMenu((current) => ({ ...current, open }));
+	// Prefer termRef over a mount-effect closure so dismiss paths outside the
+	// effect (Escape, outside click, onOpenChange) can restore focus too.
+	const focusTerminal = useCallback(() => {
+		try {
+			termRef.current?.focus();
+		} catch {
+			// Terminal is being torn down or its hidden textarea is unavailable.
+		}
 	}, []);
+
+	const setContextMenuOpen = useCallback(
+		(open: boolean) => {
+			setContextMenu((current) => ({ ...current, open }));
+			if (!open) {
+				// Radix moves focus into the menu content. Always return it to the
+				// xterm helper textarea on dismiss — item select, Escape, or outside
+				// click — otherwise typing silently stops until the user clicks.
+				focusTerminal();
+			}
+		},
+		[focusTerminal],
+	);
 
 	const runContextMenuAction = useCallback(
 		(action: TerminalContextMenuAction) => {
@@ -388,29 +407,21 @@ export function XtermTerminal(props: XtermTerminalProps) {
 					console.warn("Unable to paste terminal clipboard text", error);
 				});
 		};
-		const focusTerminal = () => {
-			try {
-				term.focus();
-			} catch {
-				// Terminal is being torn down or its hidden textarea is unavailable.
-			}
-		};
+		// Actions only mutate selection/clipboard/buffer; focus is restored by
+		// setContextMenuOpen(false) so Escape/outside dismiss share the same path.
+		// Clear matches AttachableTerminal.clear (CLEAR_SEQUENCE), not term.clear().
 		contextMenuActionsRef.current = {
 			clear: () => {
-				term.clear();
-				focusTerminal();
+				term.write(CLEAR_SEQUENCE);
 			},
 			copy: () => {
 				copySelection();
-				focusTerminal();
 			},
 			paste: () => {
 				pasteFromClipboard();
-				focusTerminal();
 			},
 			selectAll: () => {
 				term.selectAll();
-				focusTerminal();
 			},
 		};
 		const openContextMenu = (event: MouseEvent) => {
