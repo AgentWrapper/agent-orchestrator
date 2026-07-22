@@ -1327,19 +1327,19 @@ func TestFetchPullRequests_ForkMR_ResolvesSourceProjectHeadRepo(t *testing.T) {
 	// — this is the signal that the MR comes from a fork.
 	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{
-			"iid":                1,
-			"title":              "Fork contribution",
-			"state":              "opened",
-			"draft":              false,
-			"web_url":            "https://gitlab.com/myorg/myrepo/-/merge_requests/1",
-			"source_branch":      "fix-bug",
-			"target_branch":      "main",
-			"sha":                "abc123",
-			"merge_status":       "can_be_merged",
-			"author":             map[string]any{"username": "alice"},
-			"source_project_id":  99,
-			"target_project_id":  10,
-			"diff_refs":          map[string]any{"base_sha": "base123"},
+			"iid":               1,
+			"title":             "Fork contribution",
+			"state":             "opened",
+			"draft":             false,
+			"web_url":           "https://gitlab.com/myorg/myrepo/-/merge_requests/1",
+			"source_branch":     "fix-bug",
+			"target_branch":     "main",
+			"sha":               "abc123",
+			"merge_status":      "can_be_merged",
+			"author":            map[string]any{"username": "alice"},
+			"source_project_id": 99,
+			"target_project_id": 10,
+			"diff_refs":         map[string]any{"base_sha": "base123"},
 		})
 	})
 	// Source project lookup: projects/:id returns path_with_namespace of the
@@ -1402,19 +1402,19 @@ func TestFetchPullRequests_NonForkMR_DoesNotFetchSourceProject(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{
-			"iid":                1,
-			"title":              "Same-repo MR",
-			"state":              "opened",
-			"draft":              false,
-			"web_url":            "https://gitlab.com/myorg/myrepo/-/merge_requests/1",
-			"source_branch":      "fix-bug",
-			"target_branch":      "main",
-			"sha":                "abc123",
-			"merge_status":       "can_be_merged",
-			"author":             map[string]any{"username": "alice"},
-			"source_project_id":  10,
-			"target_project_id":  10,
-			"diff_refs":          map[string]any{"base_sha": "base123"},
+			"iid":               1,
+			"title":             "Same-repo MR",
+			"state":             "opened",
+			"draft":             false,
+			"web_url":           "https://gitlab.com/myorg/myrepo/-/merge_requests/1",
+			"source_branch":     "fix-bug",
+			"target_branch":     "main",
+			"sha":               "abc123",
+			"merge_status":      "can_be_merged",
+			"author":            map[string]any{"username": "alice"},
+			"source_project_id": 10,
+			"target_project_id": 10,
+			"diff_refs":         map[string]any{"base_sha": "base123"},
 		})
 	})
 	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/pipelines", func(w http.ResponseWriter, r *http.Request) {
@@ -1467,19 +1467,19 @@ func TestFetchPullRequests_ForkMR_SourceProjectFetchFails_FailClosed(t *testing.
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{
-			"iid":                1,
-			"title":              "Fork with unresolvable source",
-			"state":              "opened",
-			"draft":              false,
-			"web_url":            "https://gitlab.com/myorg/myrepo/-/merge_requests/1",
-			"source_branch":      "fix-bug",
-			"target_branch":      "main",
-			"sha":                "abc123",
-			"merge_status":       "can_be_merged",
-			"author":             map[string]any{"username": "alice"},
-			"source_project_id":  99,
-			"target_project_id":  10,
-			"diff_refs":          map[string]any{"base_sha": "base123"},
+			"iid":               1,
+			"title":             "Fork with unresolvable source",
+			"state":             "opened",
+			"draft":             false,
+			"web_url":           "https://gitlab.com/myorg/myrepo/-/merge_requests/1",
+			"source_branch":     "fix-bug",
+			"target_branch":     "main",
+			"sha":               "abc123",
+			"merge_status":      "can_be_merged",
+			"author":            map[string]any{"username": "alice"},
+			"source_project_id": 99,
+			"target_project_id": 10,
+			"diff_refs":         map[string]any{"base_sha": "base123"},
 		})
 	})
 	// Source project lookup 404s — e.g. the fork was deleted or made private.
@@ -1679,9 +1679,9 @@ func TestFetchPullRequests_DiffStatsNotParsed(t *testing.T) {
 				// ignored (not parsed) so the observation does not depend on
 				// undocumented fields.
 				"diff_stats": map[string]any{
-					"additions":  42,
-					"deletions":  7,
-					"changes":    3,
+					"additions": 42,
+					"deletions": 7,
+					"changes":   3,
 				},
 			},
 			wantAdd: 0, wantDel: 0, wantChg: 0,

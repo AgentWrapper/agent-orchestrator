@@ -135,22 +135,6 @@ func (p *Provider) isHostAllowed(host string) bool {
 	return p.allowedHosts[host]
 }
 
-// tokenForHost returns the TokenSource for the given host. Self-managed hosts
-// with an explicit per-host token use that; all others (including gitlab.com)
-// fall back to the default token (p.client.tokens).
-func (p *Provider) tokenForHost(host string) TokenSource {
-	host = strings.ToLower(strings.TrimSpace(host))
-	if src, ok := p.hostTokens[host]; ok {
-		return src
-	}
-	// Fall back to the default token (gitlab.com or allowlisted host without
-	// an explicit per-host token).
-	if p.client != nil {
-		return p.client.tokens
-	}
-	return nil
-}
-
 // clientForHost returns the client whose REST base matches the given host.
 // The default client (gitlab.com) is used for gitlab.com; self-managed hosts
 // get a lazily-created client with RESTBase derived as https://<host>/api/v4.

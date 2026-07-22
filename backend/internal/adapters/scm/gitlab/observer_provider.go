@@ -595,11 +595,11 @@ func (p *Provider) fetchPipelineJobs(ctx context.Context, repo ports.SCMRepo, pi
 }
 
 type restJob struct {
-	ID          int    `json:"id"`
-	Name        string `json:"name"`
-	Status      string `json:"status"`
-	WebURL      string `json:"web_url"`
-	AllowFailure bool  `json:"allow_failure"`
+	ID           int    `json:"id"`
+	Name         string `json:"name"`
+	Status       string `json:"status"`
+	WebURL       string `json:"web_url"`
+	AllowFailure bool   `json:"allow_failure"`
 }
 
 func (p *Provider) fetchApprovalDecision(ctx context.Context, repo ports.SCMRepo, mrIID int) (domain.ReviewDecision, error) {
@@ -661,7 +661,7 @@ func (p *Provider) FetchFailedCheckLogTail(ctx context.Context, repo ports.SCMRe
 		return "", err
 	}
 
-	body, err := hc.doGETRaw(ctx, path, nil)
+	body, err := hc.doGETRaw(ctx, path)
 	if err != nil {
 		return "", err
 	}

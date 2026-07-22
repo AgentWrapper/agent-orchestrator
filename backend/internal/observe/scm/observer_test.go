@@ -1732,8 +1732,8 @@ func TestPoll_PerObservationRateLimitError_TriggersCooldown(t *testing.T) {
 
 	rle := &testRateLimitError{retryAfter: 2 * time.Minute}
 	provider := &fakeProvider{
-		repoGuards:   map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo2"}},
-		observations: map[string]ports.SCMObservation{prKey(testRepo, 1): testObs(1)},
+		repoGuards:     map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo2"}},
+		observations:   map[string]ports.SCMObservation{prKey(testRepo, 1): testObs(1)},
 		fetchObsErrors: map[string]error{prKey(testRepo, 1): rle},
 	}
 
@@ -1770,8 +1770,8 @@ func TestPoll_PerObservationNonRateLimitError_MarksRefreshIncomplete(t *testing.
 	store.prs["p-1"] = []domain.PullRequest{local}
 
 	provider := &fakeProvider{
-		repoGuards:   map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo2"}},
-		observations: map[string]ports.SCMObservation{prKey(testRepo, 1): testObs(1)},
+		repoGuards:     map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo2"}},
+		observations:   map[string]ports.SCMObservation{prKey(testRepo, 1): testObs(1)},
 		fetchObsErrors: map[string]error{prKey(testRepo, 1): errors.New("gitlab 503")},
 	}
 
@@ -1820,7 +1820,7 @@ func TestPoll_PerObservationError_NiledBeforePersistence(t *testing.T) {
 	}
 	for _, o := range lc.observed {
 		if o.Error != nil {
-		t.Errorf("lifecycle observed Error = %v, want nil (transient metadata must be nil-ed before persistence)", o.Error)
+			t.Errorf("lifecycle observed Error = %v, want nil (transient metadata must be nil-ed before persistence)", o.Error)
 		}
 	}
 	for _, w := range store.writes {
