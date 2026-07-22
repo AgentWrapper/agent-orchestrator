@@ -68,6 +68,12 @@ import { Accordions, Accordion } from "fumadocs-ui/components/accordion";
 	doesn't merge. The session works on its own branch.
 </Accordion>
 
+<Accordion title="Can I still install AO via npm?">
+	Yes, npm still works, but it is no longer recommended. `0.10.0` is the final version published to npm, and the
+	`@aoagents/ao` package is frozen and will not receive further updates. Prefer the [desktop
+	download](/docs/installation). Existing CLI users can run `ao start` to fetch and open the desktop build.
+</Accordion>
+
   <Accordion title="How do I completely uninstall?">
     `npm uninstall -g @aoagents/ao`, then `rm -rf ~/.agent-orchestrator` if you want to wipe all session history.
   </Accordion>

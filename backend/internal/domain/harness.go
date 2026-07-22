@@ -28,6 +28,9 @@ const (
 	HarnessVibe       AgentHarness = "vibe"
 	HarnessPi         AgentHarness = "pi"
 	HarnessAutohand   AgentHarness = "autohand"
+	// HarnessFake is a deterministic, LLM-free harness used by e2e tests to
+	// drive the session lifecycle on a scripted timeline (no network, no tokens).
+	HarnessFake AgentHarness = "fake"
 )
 
 // AllHarnesses lists every supported harness. It is the canonical set used to
@@ -37,7 +40,7 @@ var AllHarnesses = []AgentHarness{
 	HarnessDroid, HarnessAmp, HarnessAgy, HarnessCrush, HarnessCursor, HarnessQwen,
 	HarnessCopilot, HarnessGoose, HarnessAuggie, HarnessContinue, HarnessDevin,
 	HarnessCline, HarnessKimi, HarnessKiro, HarnessKilocode, HarnessVibe, HarnessPi,
-	HarnessAutohand,
+	HarnessAutohand, HarnessFake,
 }
 
 // IsKnown reports whether h is one of the supported harnesses.

@@ -1,6 +1,7 @@
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import { PushManager } from "../lib/PushManager";
 import { AppProvider } from "../lib/store";
 import { theme } from "../lib/theme";
 
@@ -9,6 +10,7 @@ export default function RootLayout() {
 		<SafeAreaProvider>
 			<AppProvider>
 				<StatusBar style="light" />
+				<PushManager />
 				<Stack
 					screenOptions={{
 						headerStyle: { backgroundColor: theme.bgSurface },

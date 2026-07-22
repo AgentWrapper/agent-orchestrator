@@ -150,7 +150,8 @@ var autohandBinarySpec = binaryutil.BinarySpec{
 	Names:         []string{"autohand"},
 	WinNames:      []string{"autohand.cmd", "autohand.exe", "autohand"},
 	UnixPaths:     []string{"/usr/local/bin/autohand", "/opt/homebrew/bin/autohand"},
-	UnixHomePaths: [][]string{{".local", "bin", "autohand"}, {".npm", "bin", "autohand"}},
+	UnixHomePaths: binaryutil.NodeManagedUnixHomePaths("autohand"),
+	NodeManaged:   true,
 	WinPaths: []binaryutil.WinPath{
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "autohand.cmd"}},
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "autohand.exe"}},

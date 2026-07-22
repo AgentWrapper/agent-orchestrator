@@ -22,11 +22,13 @@
 		},
 		"android": {
 			"package": "aoagents.ao",
+			"googleServicesFile": "./google-services.json",
 			"adaptiveIcon": {
 				"backgroundColor": "#0a0b0d",
 				"foregroundImage": "./assets/android-icon-foreground.png"
 			},
-			"predictiveBackGestureEnabled": false
+			"predictiveBackGestureEnabled": false,
+			"permissions": ["android.permission.CAMERA"]
 		},
 		"web": {
 			"favicon": "./assets/favicon.png",
@@ -50,10 +52,20 @@
 					"recordAudioAndroid": false
 				}
 			],
+			[
+				"expo-notifications",
+				{
+					"color": "#0a0b0d"
+				}
+			],
 			"expo-secure-store"
 		],
 		"extra": {
-			"router": {}
-		}
+			"router": {},
+			"eas": {
+				"projectId": "2d7dec61-2206-4943-8582-a37e160907ea"
+			}
+		},
+		"owner": "untrivial"
 	}
 }

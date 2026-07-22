@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/activitydispatch"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
 // sessionIDPattern bounds the AO_SESSION_ID we will place in a request path to
@@ -37,13 +38,14 @@ const (
 // POST /api/v1/sessions/{id}/activity. The CLI keeps its own copy so it need
 // not import httpd. Event carries the AO hook sub-command that produced the
 // state; ToolName/ToolUseID are the tool-use correlation facts lifted from the
-// native payload when present. All three are optional: an old daemon decodes
+// native payload when present. All four are optional: an old daemon decodes
 // the body leniently and simply ignores them.
 type setActivityAPIRequest struct {
-	State     string `json:"state"`
-	Event     string `json:"event,omitempty"`
-	ToolName  string `json:"toolName,omitempty"`
-	ToolUseID string `json:"toolUseId,omitempty"`
+	State          string `json:"state,omitempty"`
+	Event          string `json:"event,omitempty"`
+	ToolName       string `json:"toolName,omitempty"`
+	ToolUseID      string `json:"toolUseId,omitempty"`
+	AgentSessionID string `json:"agentSessionId,omitempty"`
 }
 
 // maxActivityMetaLen caps the correlation fields lifted from a native hook
@@ -70,6 +72,34 @@ func activityMeta(payload []byte) (toolName, toolUseID string) {
 		p.ToolUseID = ""
 	}
 	return p.ToolName, p.ToolUseID
+}
+
+// hookAgentSessionID extracts the native resume handle shared by Agy, Copilot,
+// Codex, Claude Code, and other hook payloads. It is independent of activity
+// derivation because SessionStart is intentionally metadata-only for harnesses
+// where process startup is not proof that a turn is active.
+func hookAgentSessionID(payload []byte) string {
+	var p struct {
+		SessionID           string `json:"session_id"`
+		SessionIDCamel      string `json:"sessionId"`
+		ConversationID      string `json:"conversation_id"`
+		ConversationIDCamel string `json:"conversationId"`
+	}
+	_ = json.Unmarshal(payload, &p)
+	id := strings.TrimSpace(p.SessionID)
+	if id == "" {
+		id = strings.TrimSpace(p.SessionIDCamel)
+	}
+	if id == "" {
+		id = strings.TrimSpace(p.ConversationID)
+	}
+	if id == "" {
+		id = strings.TrimSpace(p.ConversationIDCamel)
+	}
+	if len(id) > maxActivityMetaLen {
+		return ""
+	}
+	return id
 }
 
 type sessionStartHookOutput struct {
@@ -118,15 +148,29 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 		c.emitSessionStartContext(agent, event, sessionID)
 	}
 
-	state, ok := activitydispatch.Derive(agent, event, payload)
-	if !ok {
-		// Unknown agent, or an event that carries no activity signal: report nothing.
+	state, hasActivity := activitydispatch.Derive(agent, event, payload)
+	agentSessionID := ""
+	if activitydispatch.SupportsHarness(domain.AgentHarness(agent)) {
+		agentSessionID = hookAgentSessionID(payload)
+	}
+	if !hasActivity && agentSessionID == "" {
+		// Unknown agent, or an event carrying neither activity nor resumable
+		// session metadata: report nothing.
 		return nil
 	}
 
 	toolName, toolUseID := activityMeta(payload)
 	path := "sessions/" + url.PathEscape(sessionID) + "/activity"
-	if err := c.postJSON(ctx, path, setActivityAPIRequest{State: string(state), Event: event, ToolName: toolName, ToolUseID: toolUseID}, nil); err != nil {
+	req := setActivityAPIRequest{
+		Event:          event,
+		ToolName:       toolName,
+		ToolUseID:      toolUseID,
+		AgentSessionID: agentSessionID,
+	}
+	if hasActivity {
+		req.State = string(state)
+	}
+	if err := c.postJSON(ctx, path, req, nil); err != nil {
 		// Surface the failure for diagnosis, but exit 0: a failed activity
 		// report must not disrupt the agent.
 		c.reportHookFailure(agent, event, sessionID, err)

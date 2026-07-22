@@ -35,7 +35,7 @@ func TestSpawnCommand_MissingProjectContext(t *testing.T) {
 	t.Cleanup(srv.Close)
 	writeRunFileFor(t, cfg, srv)
 
-	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--agent", "codex")
+	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--agent", "codex", "--name", "worker")
 	if err == nil {
 		t.Fatal("expected an error when project context is missing")
 	}
@@ -157,6 +157,15 @@ func TestSpawnNoTakeoverRequiresClaimPR(t *testing.T) {
 	}
 }
 
+// TestSpawnCommand_RequiresName asserts `ao spawn` rejects a missing --name
+// without contacting the daemon.
+func TestSpawnCommand_RequiresName(t *testing.T) {
+	_, _, err := executeCLI(t, Deps{}, "spawn", "--project", "demo", "--agent", "codex")
+	if err == nil || ExitCode(err) != 2 || !strings.Contains(err.Error(), "--name is required") {
+		t.Fatalf("err=%v exit=%d, want --name is required", err, ExitCode(err))
+	}
+}
+
 // TestSpawnCommand_RejectsOverlongName asserts `ao spawn` rejects a --name
 // longer than 20 characters without contacting the daemon.
 func TestSpawnCommand_RejectsOverlongName(t *testing.T) {
@@ -191,14 +200,14 @@ func TestSpawnResolvesProjectFromEnvAndDefaultAgent(t *testing.T) {
 	writeRunFileFor(t, cfg, srv)
 	t.Setenv("AO_PROJECT_ID", "demo")
 
-	out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--prompt", "Fix failing tests in auth")
+	out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--prompt", "Fix failing tests in auth", "--name", "worker")
 	if err != nil {
 		t.Fatalf("spawn failed: %v stderr=%s", err, errOut)
 	}
 	if !strings.Contains(out, "spawned session demo-11") {
 		t.Fatalf("output missing spawn: %s", out)
 	}
-	if req.ProjectID != "demo" || req.Harness != "codex" || req.DisplayName != "Fix failing tests in" {
+	if req.ProjectID != "demo" || req.Harness != "codex" || req.DisplayName != "worker" {
 		t.Fatalf("spawn request = %#v", req)
 	}
 	want := []string{"GET /api/v1/projects/demo", "POST /api/v1/agents/refresh", "POST /api/v1/sessions"}
@@ -234,7 +243,7 @@ func TestSpawnResolvesProjectFromAOSessionID(t *testing.T) {
 	writeRunFileFor(t, cfg, srv)
 	t.Setenv("AO_SESSION_ID", "demo-1")
 
-	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--prompt", "Fix tests")
+	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--prompt", "Fix tests", "--name", "worker")
 	if err != nil {
 		t.Fatalf("spawn failed: %v stderr=%s", err, errOut)
 	}
@@ -265,7 +274,7 @@ func TestSpawnAOSessionIDFailureRequiresProject(t *testing.T) {
 	writeRunFileFor(t, cfg, srv)
 	t.Setenv("AO_SESSION_ID", "missing")
 
-	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--agent", "codex")
+	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--agent", "codex", "--name", "worker")
 	if err == nil || !strings.Contains(err.Error(), `project could not be resolved from AO_SESSION_ID "missing"; pass --project`) {
 		t.Fatalf("err=%v, want AO_SESSION_ID project error", err)
 	}
@@ -313,7 +322,7 @@ func TestSpawnResolvesProjectFromCWD(t *testing.T) {
 	t.Cleanup(srv.Close)
 	writeRunFileFor(t, cfg, srv)
 
-	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--prompt", "Fix tests")
+	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--prompt", "Fix tests", "--name", "worker")
 	if err != nil {
 		t.Fatalf("spawn failed: %v stderr=%s", err, errOut)
 	}
@@ -348,7 +357,7 @@ func TestSpawnStaleUnauthorizedAgentRefreshesProbesThenAllows(t *testing.T) {
 	t.Cleanup(srv.Close)
 	writeRunFileFor(t, cfg, srv)
 
-	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex")
+	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex", "--name", "worker")
 	if err != nil {
 		t.Fatalf("spawn failed: %v stderr=%s", err, errOut)
 	}
@@ -390,7 +399,7 @@ func TestSpawnFreshUnauthorizedWarnsAndAllows(t *testing.T) {
 	t.Cleanup(srv.Close)
 	writeRunFileFor(t, cfg, srv)
 
-	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex")
+	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex", "--name", "worker")
 	if err != nil {
 		t.Fatalf("spawn failed: %v stderr=%s", err, errOut)
 	}
@@ -433,7 +442,7 @@ func TestSpawnUnavailableFreshProbeWarnsAndAllows(t *testing.T) {
 	t.Cleanup(srv.Close)
 	writeRunFileFor(t, cfg, srv)
 
-	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex")
+	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex", "--name", "worker")
 	if err != nil {
 		t.Fatalf("spawn failed: %v stderr=%s", err, errOut)
 	}
@@ -467,7 +476,7 @@ func TestSpawnUnsupportedAgentRefreshesThenBlocks(t *testing.T) {
 	t.Cleanup(srv.Close)
 	writeRunFileFor(t, cfg, srv)
 
-	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "unknown")
+	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "unknown", "--name", "worker")
 	if err == nil || !strings.Contains(err.Error(), "agent \"unknown\" is not supported") {
 		t.Fatalf("err=%v, want unsupported", err)
 	}
@@ -497,7 +506,7 @@ func TestSpawnNotInstalledAgentRefreshesThenBlocks(t *testing.T) {
 	t.Cleanup(srv.Close)
 	writeRunFileFor(t, cfg, srv)
 
-	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex")
+	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex", "--name", "worker")
 	if err == nil || !strings.Contains(err.Error(), "agent \"codex\" needs install") {
 		t.Fatalf("err=%v, want needs install", err)
 	}
@@ -533,7 +542,7 @@ func TestSpawnStaleNotInstalledFreshInstalledWarnsAndAllows(t *testing.T) {
 	t.Cleanup(srv.Close)
 	writeRunFileFor(t, cfg, srv)
 
-	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex")
+	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex", "--name", "worker")
 	if err != nil {
 		t.Fatalf("spawn failed: %v stderr=%s", err, errOut)
 	}
@@ -576,7 +585,7 @@ func TestSpawnUnavailableFreshProbeForNotInstalledWarnsAndAllows(t *testing.T) {
 	t.Cleanup(srv.Close)
 	writeRunFileFor(t, cfg, srv)
 
-	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex")
+	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex", "--name", "worker")
 	if err != nil {
 		t.Fatalf("spawn failed: %v stderr=%s", err, errOut)
 	}
@@ -613,7 +622,7 @@ func TestSpawnFreshProbeServerErrorBlocks(t *testing.T) {
 	t.Cleanup(srv.Close)
 	writeRunFileFor(t, cfg, srv)
 
-	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex")
+	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex", "--name", "worker")
 	if err == nil || !strings.Contains(err.Error(), "probe failed (PROBE_FAILED) [request req-1]") {
 		t.Fatalf("err=%v, want probe server error", err)
 	}
@@ -645,7 +654,7 @@ func TestSpawnSkipAgentCheckBypassesOnlyPreflight(t *testing.T) {
 	t.Cleanup(srv.Close)
 	writeRunFileFor(t, cfg, srv)
 
-	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "unsupported", "--skip-agent-check")
+	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "unsupported", "--skip-agent-check", "--name", "worker")
 	if err != nil {
 		t.Fatalf("spawn failed: %v stderr=%s", err, errOut)
 	}
@@ -680,7 +689,7 @@ func TestSpawnUnknownAuthRefreshesWarnsAndAllows(t *testing.T) {
 	t.Cleanup(srv.Close)
 	writeRunFileFor(t, cfg, srv)
 
-	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex")
+	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex", "--name", "worker")
 	if err != nil {
 		t.Fatalf("spawn failed: %v stderr=%s", err, errOut)
 	}

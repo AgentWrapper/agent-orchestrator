@@ -1,7 +1,8 @@
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import { sessionTitle, type DashboardSession } from "./api";
+import { sessionTitle, shortLabel, shortSessionId, type DashboardSession } from "./api";
+import { haptics } from "./haptics";
 import { ciColor, statusVisual, theme } from "./theme";
 import { Dot } from "./ui";
 
@@ -13,20 +14,27 @@ export function SessionCard({ session, showProject = false }: { session: Dashboa
 
 	return (
 		<Pressable
-			onPress={() =>
+			onPress={() => {
+				haptics.tap();
 				router.push({
 					pathname: "/session/[id]",
 					params: { id: session.id, projectId: session.projectId },
-				})
-			}
+				});
+			}}
 			style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
 		>
 			<View style={styles.top}>
 				<Dot color={v.color} breathing={v.breathing} size={8} />
 				<Text style={[styles.status, { color: v.color }]}>{v.label}</Text>
 				<View style={{ flex: 1 }} />
-				{showProject ? <Text style={styles.project}>{session.projectId}</Text> : null}
-				<Text style={styles.id}>{session.id}</Text>
+				{showProject ? (
+					<Text style={styles.project} numberOfLines={1}>
+						{shortLabel(session.projectId)}
+					</Text>
+				) : null}
+				<Text style={styles.id} numberOfLines={1}>
+					{shortSessionId(session)}
+				</Text>
 			</View>
 
 			<Text style={styles.title} numberOfLines={2}>
@@ -80,8 +88,12 @@ const styles = StyleSheet.create({
 		fontSize: 11,
 		fontFamily: theme.fontMono,
 		marginRight: 8,
+		// The labels are pre-shortened, but let the project still give way rather
+		// than push anything off the card if a name ever outgrows its budget.
+		flexShrink: 1,
 	},
-	id: { color: theme.textTertiary, fontSize: 11, fontFamily: theme.fontMono },
+	// The `#n` discriminator is what tells sibling sessions apart - never shrink it.
+	id: { color: theme.textTertiary, fontSize: 11, fontFamily: theme.fontMono, flexShrink: 0 },
 	title: { color: theme.textPrimary, fontSize: 15, fontWeight: "500", lineHeight: 20 },
 	meta: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 10 },
 	metaItem: { flexDirection: "row", alignItems: "center", gap: 4, flexShrink: 1 },

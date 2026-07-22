@@ -59,10 +59,20 @@ func hasSessionArgs(id string) []string {
 
 // exactSessionTarget wraps id in tmux's exact-match prefix `=` so session-
 // selection commands (-t) target only the session with that precise name.
-// Only kill-session and has-session support this prefix; pane-targeting
-// commands (send-keys, capture-pane, set-option) use a plain session name.
+// Session-selection commands like kill-session, has-session, and list-panes
+// support this prefix; pane-targeting commands (send-keys, capture-pane,
+// set-option) use a plain session name.
 func exactSessionTarget(id string) string {
 	return "=" + id
+}
+
+// listPanePIDsArgs builds args for `tmux list-panes -s -t =<id> -F #{pane_pid}`.
+// -s lists every pane in the whole session (not just the active window); the
+// exact-match target `=` avoids prefix collisions (see killSessionArgs). Each
+// #{pane_pid} is the pane's session-leader pid, used to reap the pane's
+// descendants when the session is destroyed.
+func listPanePIDsArgs(id string) []string {
+	return []string{"list-panes", "-s", "-t", exactSessionTarget(id), "-F", "#{pane_pid}"}
 }
 
 // sendKeysLiteralArgs builds args for `tmux send-keys -t <id> -l <chunk>`.

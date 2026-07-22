@@ -31,11 +31,17 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 const adapterID = "copilot"
+
+var copilotUnixPaths = []string{
+	"/usr/local/bin/copilot",
+	"/opt/homebrew/bin/copilot",
+}
 
 // Plugin is the GitHub Copilot CLI agent adapter. It is safe for concurrent use;
 // the binary path is resolved once and cached under binaryMu.
@@ -194,17 +200,20 @@ func ResolveCopilotBinary(ctx context.Context) (string, error) {
 		return path, nil
 	}
 
-	candidates := []string{
-		"/usr/local/bin/copilot",
-		"/opt/homebrew/bin/copilot",
-	}
+	candidates := append([]string(nil), copilotUnixPaths...)
 	if home, err := os.UserHomeDir(); err == nil {
 		candidates = append(candidates,
-			filepath.Join(home, ".copilot", "bin", "copilot"),
+			filepath.Join(home, ".npm-global", "bin", "copilot"),
 			filepath.Join(home, ".npm", "bin", "copilot"),
 			filepath.Join(home, ".local", "bin", "copilot"),
+			filepath.Join(home, ".copilot", "bin", "copilot"),
 			filepath.Join(home, "Library", "Application Support", "Code", "User", "globalStorage", "github.copilot-chat", "copilotCli", "copilot"),
 		)
+		nodeManagerCandidates, err := binaryutil.UnixNodeManagerBinCandidates(ctx, home, "copilot")
+		if err != nil {
+			return "", err
+		}
+		candidates = append(candidates, nodeManagerCandidates...)
 	}
 
 	for _, candidate := range candidates {

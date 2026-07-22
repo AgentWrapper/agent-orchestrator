@@ -1,10 +1,15 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession } from "../types/workspace";
 import { TerminalPane, providerScrollsByKeyboard } from "./TerminalPane";
 
-const postMock = vi.fn();
+const { postMock, terminalError, terminalState } = vi.hoisted(() => ({
+	postMock: vi.fn(),
+	terminalError: { value: undefined as string | undefined },
+	terminalState: { value: "idle" },
+}));
 let terminalLinkHandler: ((uri: string) => void) | undefined;
 
 vi.mock("../lib/api-client", () => ({
@@ -22,8 +27,8 @@ vi.mock("./XtermTerminal", () => ({
 vi.mock("../hooks/useTerminalSession", () => ({
 	useTerminalSession: () => ({
 		attach: vi.fn(),
-		state: "idle",
-		error: undefined,
+		state: terminalState.value,
+		error: terminalError.value,
 	}),
 }));
 
@@ -50,6 +55,8 @@ const orchestrator = {
 beforeEach(() => {
 	postMock.mockReset();
 	postMock.mockResolvedValue({ data: {} });
+	terminalError.value = undefined;
+	terminalState.value = "idle";
 	terminalLinkHandler = undefined;
 });
 
@@ -107,6 +114,31 @@ describe("TerminalPane empty states", () => {
 				),
 			).toBeInTheDocument();
 			expect(screen.queryByText(/worker terminal/i)).not.toBeInTheDocument();
+		} finally {
+			view.restore();
+		}
+	});
+});
+
+describe("terminal restore", () => {
+	it.each([
+		["exited", undefined],
+		["error", "terminal handle missing"],
+		["idle", undefined],
+	])("posts restore from the terminal-ended strip when mux state is %s", async (state, error) => {
+		terminalState.value = state;
+		terminalError.value = error;
+		const view = renderPane({ ...worker, status: "terminated", terminalHandleId: "term-1" });
+		const invalidate = vi.spyOn(view.queryClient, "invalidateQueries").mockResolvedValue(undefined);
+		try {
+			await userEvent.click(screen.getByRole("button", { name: "Restore session" }));
+
+			await waitFor(() =>
+				expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/restore", {
+					params: { path: { sessionId: "sess-1" } },
+				}),
+			);
+			expect(invalidate).toHaveBeenCalledWith({ queryKey: ["workspaces"] });
 		} finally {
 			view.restore();
 		}

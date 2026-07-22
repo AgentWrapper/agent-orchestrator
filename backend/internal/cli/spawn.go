@@ -8,15 +8,12 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/tmux"
 )
 
 // maxDisplayNameLen caps the sidebar label set by `--name`. Mirrored by the
@@ -43,7 +40,7 @@ type spawnRequest struct {
 	Harness     string `json:"harness,omitempty"`
 	Branch      string `json:"branch,omitempty"`
 	Prompt      string `json:"prompt,omitempty"`
-	DisplayName string `json:"displayName,omitempty"`
+	DisplayName string `json:"displayName"`
 }
 
 type spawnResult struct {
@@ -72,7 +69,11 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 			if opts.noTakeover && opts.claimPR == "" {
 				return usageError{fmt.Errorf("--no-takeover requires --claim-pr")}
 			}
-			if explicitName := strings.TrimSpace(opts.name); utf8.RuneCountInString(explicitName) > maxDisplayNameLen {
+			name := strings.TrimSpace(opts.name)
+			if name == "" {
+				return usageError{fmt.Errorf("--name is required")}
+			}
+			if utf8.RuneCountInString(name) > maxDisplayNameLen {
 				return usageError{fmt.Errorf("--name must be %d characters or fewer", maxDisplayNameLen)}
 			}
 
@@ -88,7 +89,6 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 			}
 			opts.harness = harness
 
-			name := resolveSpawnDisplayName(opts.name, opts.prompt)
 			if !opts.skipAgentCheck {
 				if err := ctx.preflightSpawnAgentAuth(cmd.Context(), cmd, opts.harness); err != nil {
 					return err
@@ -131,19 +131,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 			if claimed != "" {
 				claimLabel = fmt.Sprintf(" (claimed %s)", claimed)
 			}
-			if _, err := fmt.Fprintf(out, "spawned session %s (%s)%s\n", res.Session.ID, res.Session.Status, claimLabel); err != nil {
-				return err
-			}
-			// Print a copy-pasteable attach hint for the selected runtime.
-			// On Darwin/Linux: tmux attach-session using the sanitised session name.
-			// On Windows: ConPTY has no user-facing attach CLI; use the AO dashboard.
-			var attach string
-			if runtime.GOOS != "windows" {
-				attach = fmt.Sprintf("tmux attach -t %s", tmux.SessionName(res.Session.ID))
-			} else {
-				attach = "Attach from the AO dashboard (ConPTY sessions have no CLI attach command)"
-			}
-			_, err = fmt.Fprintf(out, "attach with: %s\n", attach)
+			_, err = fmt.Fprintf(out, "spawned session %s (%s)%s\n", res.Session.ID, res.Session.Status, claimLabel)
 			return err
 		},
 	}
@@ -157,11 +145,11 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 		return pflag.NormalizedName(name)
 	})
 	f.StringVar(&opts.project, "project", "", "Project id to spawn the session in (default: AO_PROJECT_ID or current registered repo)")
-	f.StringVar(&opts.harness, "harness", "", "Agent harness / --agent: claude-code, codex, aider, opencode, grok, droid, amp, agy, crush, cursor, qwen, copilot, goose, auggie, continue, devin, cline, kimi, kiro, kilocode, vibe, pi, autohand (default: project worker.agent; required if the project has none)")
+	f.StringVar(&opts.harness, "harness", "", "Agent harness / --agent: claude-code, codex, aider, opencode, grok, droid, amp, agy, crush, cursor, qwen, copilot, goose, auggie, continue, devin, cline, kimi, kiro, kilocode, vibe, pi, autohand, fake (default: project worker.agent; required if the project has none)")
 	f.StringVar(&opts.branch, "branch", "", "Branch for the session worktree (default: ao/<session-id>/root)")
 	f.StringVar(&opts.prompt, "prompt", "", "Initial prompt for the agent")
 	f.StringVar(&opts.issue, "issue", "", "Issue id to associate with the session")
-	f.StringVar(&opts.name, "name", "", "Display name shown in the sidebar (default: derived from --prompt, max 20 characters)")
+	f.StringVar(&opts.name, "name", "", "Display name shown in the sidebar (required, max 20 characters)")
 	f.StringVar(&opts.claimPR, "claim-pr", "", "Immediately claim an existing PR for the spawned session")
 	f.BoolVar(&opts.noTakeover, "no-takeover", false, "Refuse if another active session owns the claimed PR (requires --claim-pr)")
 	f.BoolVar(&opts.skipAgentCheck, "skip-agent-check", false, "Skip advisory agent catalog install/auth preflight before spawning")
@@ -304,35 +292,6 @@ func resolveSpawnHarness(explicit string, project projectDetails) (string, error
 		}
 	}
 	return "", usageError{fmt.Errorf("agent could not be resolved; pass --agent or configure `ao project set-config %s --worker-agent <agent>`", project.ID)}
-}
-
-func resolveSpawnDisplayName(explicit, prompt string) string {
-	if name := strings.TrimSpace(explicit); name != "" {
-		return name
-	}
-	return deriveDisplayNameFromPrompt(prompt)
-}
-
-func deriveDisplayNameFromPrompt(prompt string) string {
-	fields := strings.Fields(strings.TrimSpace(prompt))
-	if len(fields) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	for _, field := range fields {
-		next := strings.Trim(field, " \t\r\n.,;:!?()[]{}\"'")
-		if next == "" {
-			continue
-		}
-		if b.Len() > 0 {
-			next = " " + next
-		}
-		if utf8.RuneCountInString(b.String()+next) > maxDisplayNameLen {
-			break
-		}
-		b.WriteString(next)
-	}
-	return b.String()
 }
 
 func (c *commandContext) preflightSpawnAgentAuth(ctx context.Context, cmd *cobra.Command, agentID string) error {
