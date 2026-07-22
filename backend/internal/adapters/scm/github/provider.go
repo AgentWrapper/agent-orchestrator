@@ -49,12 +49,10 @@ type Provider struct {
 	logger          *slog.Logger
 	sshHostResolver func(host string) (string, bool)
 	sshHostMu       sync.Mutex
-	sshHosts        map[string]sshHostResolution
-}
-
-type sshHostResolution struct {
-	host string
-	ok   bool
+	// sshHosts caches successful alias → resolved hostname lookups only.
+	// Failures are not cached so a later poll can recover without restart.
+	// Keys keep the original alias casing so OpenSSH Host matches stay case-sensitive.
+	sshHosts map[string]string
 }
 
 // NewProvider returns a Provider. If opts.Client is supplied it is used
@@ -91,7 +89,7 @@ func NewProvider(opts ProviderOptions) (*Provider, error) {
 		client:          c,
 		logger:          logger,
 		sshHostResolver: sshHostResolver,
-		sshHosts:        make(map[string]sshHostResolution),
+		sshHosts:        make(map[string]string),
 	}, nil
 }
 

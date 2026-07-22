@@ -36,10 +36,37 @@ func TestParseRepository(t *testing.T) {
 			wantParsed: true,
 		},
 		{
+			name:   "case sensitive ssh alias",
+			remote: "git@GitHub-Work:acme/demo.git",
+			resolve: func(host string) (string, bool) {
+				// OpenSSH Host patterns are case-sensitive; only the exact alias matches.
+				if host == "GitHub-Work" {
+					return "github.com", true
+				}
+				return "", false
+			},
+			wantHost:   "github.com",
+			wantRepo:   "acme/demo",
+			wantParsed: true,
+		},
+		{
 			name:   "ssh url alias",
 			remote: "ssh://git@github-work/acme/demo.git",
 			resolve: func(string) (string, bool) {
 				return "github.com", true
+			},
+			wantHost:   "github.com",
+			wantRepo:   "acme/demo",
+			wantParsed: true,
+		},
+		{
+			name:   "ssh url case sensitive alias",
+			remote: "ssh://git@GitHub-Work/acme/demo.git",
+			resolve: func(host string) (string, bool) {
+				if host == "GitHub-Work" {
+					return "github.com", true
+				}
+				return "", false
 			},
 			wantHost:   "github.com",
 			wantRepo:   "acme/demo",
@@ -57,6 +84,14 @@ func TestParseRepository(t *testing.T) {
 			name:       "unresolved ssh alias",
 			remote:     "git@code-host:acme/demo.git",
 			resolve:    func(string) (string, bool) { return "", false },
+			wantParsed: false,
+		},
+		{
+			name:   "leading dash host rejected",
+			remote: "git@-oProxyCommand=evil:acme/demo.git",
+			resolve: func(string) (string, bool) {
+				return "github.com", true
+			},
 			wantParsed: false,
 		},
 	}
@@ -110,6 +145,65 @@ func TestParseRepositoryCachesSSHHostResolution(t *testing.T) {
 	}
 }
 
+func TestParseRepositoryDoesNotCacheSSHHostFailures(t *testing.T) {
+	t.Parallel()
+
+	calls := 0
+	provider, err := NewProvider(ProviderOptions{
+		Client: NewClient(ClientOptions{}),
+		SSHHostResolver: func(string) (string, bool) {
+			calls++
+			if calls == 1 {
+				return "", false
+			}
+			return "github.com", true
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
+	}
+
+	if _, ok := provider.ParseRepository("git@github-work:acme/demo.git"); ok {
+		t.Fatal("first ParseRepository should fail when resolver fails")
+	}
+	if _, ok := provider.ParseRepository("git@github-work:acme/demo.git"); !ok {
+		t.Fatal("second ParseRepository should succeed after resolver recovers")
+	}
+	if calls != 2 {
+		t.Fatalf("resolver calls = %d, want 2 (failure must not be cached)", calls)
+	}
+}
+
+func TestParseRepositoryPreservesSSHAliasCaseForResolver(t *testing.T) {
+	t.Parallel()
+
+	var seen []string
+	provider, err := NewProvider(ProviderOptions{
+		Client: NewClient(ClientOptions{}),
+		SSHHostResolver: func(host string) (string, bool) {
+			seen = append(seen, host)
+			if host == "GitHub-Work" {
+				return "github.com", true
+			}
+			return "", false
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
+	}
+
+	repo, ok := provider.ParseRepository("git@GitHub-Work:acme/demo.git")
+	if !ok {
+		t.Fatalf("ParseRepository ok=false; seen=%v", seen)
+	}
+	if repo.Host != "github.com" || repo.Repo != "acme/demo" {
+		t.Fatalf("repo=%+v", repo)
+	}
+	if len(seen) != 1 || seen[0] != "GitHub-Work" {
+		t.Fatalf("resolver hosts = %v, want exact [GitHub-Work]", seen)
+	}
+}
+
 func TestSSHConfigHostname(t *testing.T) {
 	t.Parallel()
 
@@ -133,5 +227,13 @@ func TestSSHConfigHostname(t *testing.T) {
 				t.Fatalf("sshConfigHostname() = %q, %v; want %q, %v", got, ok, tt.want, tt.ok)
 			}
 		})
+	}
+}
+
+func TestResolveSSHConfigHostRejectsLeadingDash(t *testing.T) {
+	t.Parallel()
+
+	if host, ok := resolveSSHConfigHost("-oProxyCommand=true"); ok || host != "" {
+		t.Fatalf("resolveSSHConfigHost(leading-dash) = %q, %v; want empty, false", host, ok)
 	}
 }
