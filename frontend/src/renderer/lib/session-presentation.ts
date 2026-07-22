@@ -145,7 +145,7 @@ const attentionZoneViews: Record<AttentionZone, AttentionZoneView> = {
 	},
 	done: {
 		zone: "done",
-		label: "Done",
+		label: "Terminated",
 		glow: "var(--color-overlay-faint)",
 		dot: "var(--color-status-terminated)",
 		dotGlow: false,
@@ -169,11 +169,11 @@ export function attentionZone(input: SessionStatus | Pick<WorkspaceSession, "sta
 	const status = typeof input === "string" ? input : input.status;
 	switch (status) {
 		case "merged":
-		case "terminated":
-			return "done";
 		case "approved":
 		case "mergeable":
 			return "merge";
+		case "terminated":
+			return "done";
 		case "needs_input":
 		case "exited":
 		case "no_signal":

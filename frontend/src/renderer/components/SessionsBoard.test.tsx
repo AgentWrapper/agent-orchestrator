@@ -235,8 +235,10 @@ describe("SessionsBoard", () => {
 		const idleRegion = within(workLane).getByRole("region", { name: "Idle sessions" });
 		const workingRegion = within(workLane).getByRole("region", { name: "Working sessions" });
 		const reviewRegion = screen.getByRole("region", { name: "In review sessions" });
+		const workSummary = within(workLane).getByRole("group", { name: "Idle / Working lane summary" });
 
-		expect(within(workLane).getByText("Idle / Working")).toBeInTheDocument();
+		expect(within(workSummary).getByText("Idle").querySelector("span")).toHaveClass("bg-status-idle");
+		expect(within(workSummary).getByText("Working").querySelector("span")).toHaveClass("bg-status-working");
 		expect(within(workLane).getByLabelText("2 idle sessions")).toHaveTextContent("2");
 		expect(within(workLane).getByLabelText("1 working session")).toHaveTextContent("1");
 		expect(screen.queryByRole("button", { name: /idle sessions/i })).not.toBeInTheDocument();
@@ -401,7 +403,7 @@ describe("SessionsBoard", () => {
 		expect(within(p2Lane).getByRole("region", { name: "Working sessions" })).toHaveTextContent("p2 active");
 	});
 
-	it("shows a restore action for terminated sessions in expanded Done / Terminated", async () => {
+	it("shows a restore action for terminated sessions in expanded Terminated", async () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [workspaceWithSessions([terminatedSession()])],
 			isError: false,
@@ -410,10 +412,10 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /done \/ terminated/i }));
+		await userEvent.click(screen.getByRole("button", { name: /terminated/i }));
 
-		expect(screen.getByText("dead worker")).toBeInTheDocument();
-		expect(screen.getByText("Terminated")).toBeInTheDocument();
+		const terminatedCard = screen.getByText("dead worker").closest('[role="button"]') as HTMLElement;
+		expect(within(terminatedCard).getByText("Terminated")).toBeInTheDocument();
 		expect(screen.getByText("Claude")).toBeInTheDocument();
 		expect(screen.getByText("ao/dead-worker")).toBeInTheDocument();
 		expect(screen.getByText("github:INT-17")).toBeInTheDocument();
@@ -430,7 +432,7 @@ describe("SessionsBoard", () => {
 		const queryClient = renderBoard("p1");
 		const invalidate = vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue(undefined);
 
-		await userEvent.click(screen.getByRole("button", { name: /done \/ terminated/i }));
+		await userEvent.click(screen.getByRole("button", { name: /terminated/i }));
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		await waitFor(() =>
@@ -454,7 +456,7 @@ describe("SessionsBoard", () => {
 		});
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /done \/ terminated/i }));
+		await userEvent.click(screen.getByRole("button", { name: /terminated/i }));
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		await waitFor(() =>
@@ -476,7 +478,7 @@ describe("SessionsBoard", () => {
 		});
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /done \/ terminated/i }));
+		await userEvent.click(screen.getByRole("button", { name: /terminated/i }));
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		await waitFor(() => expect(postMock).toHaveBeenCalled());
@@ -498,7 +500,7 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /done \/ terminated/i }));
+		await userEvent.click(screen.getByRole("button", { name: /terminated/i }));
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		const restoringButton = screen.getByRole("button", { name: "Restore dead worker" });
@@ -522,7 +524,7 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /done \/ terminated/i }));
+		await userEvent.click(screen.getByRole("button", { name: /terminated/i }));
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		expect(await screen.findByText("Session can no longer be restored")).toBeInTheDocument();
@@ -538,7 +540,7 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /done \/ terminated/i }));
+		await userEvent.click(screen.getByRole("button", { name: /terminated/i }));
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		expect(await screen.findByText("Unable to restore session")).toBeInTheDocument();
@@ -554,7 +556,7 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /done \/ terminated/i }));
+		await userEvent.click(screen.getByRole("button", { name: /terminated/i }));
 		await userEvent.click(screen.getByText("dead worker"));
 
 		expect(postMock).not.toHaveBeenCalled();
@@ -587,7 +589,7 @@ describe("SessionsBoard", () => {
 		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 		const view = renderBoardWithClient(queryClient, "p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /done \/ terminated/i }));
+		await userEvent.click(screen.getByRole("button", { name: /terminated/i }));
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		view.rerender(
@@ -626,7 +628,7 @@ describe("SessionsBoard", () => {
 		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 		const view = renderBoardWithClient(queryClient, "p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /done \/ terminated/i }));
+		await userEvent.click(screen.getByRole("button", { name: /terminated/i }));
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		view.rerender(
@@ -642,7 +644,7 @@ describe("SessionsBoard", () => {
 		expect(screen.queryByText("Session can no longer be restored")).not.toBeInTheDocument();
 	});
 
-	it("opens a merged Done session from the card body without showing restore", async () => {
+	it("shows a merged-only lane and opens its card without showing restore", async () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [workspaceWithSessions([terminatedSession({ id: "s-merged", title: "merged worker", status: "merged" })])],
 			isError: false,
@@ -651,8 +653,17 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /done \/ terminated/i }));
-
+		const mergeLane = screen.getByRole("region", { name: "Ready to merge / Merged sessions" });
+		const mergedRegion = within(mergeLane).getByRole("region", { name: "Merged sessions" });
+		const mergeSummary = within(mergeLane).getByRole("group", { name: "Ready to merge / Merged lane summary" });
+		expect(within(mergeSummary).getByText("Ready to merge").querySelector("span")).toHaveClass("bg-status-ready");
+		expect(within(mergeSummary).getByText("Merged").querySelector("span")).toHaveClass("bg-status-merged");
+		expect(within(mergeLane).getByLabelText("0 ready to merge sessions")).toHaveTextContent("0");
+		expect(within(mergeLane).getByLabelText("1 merged session")).toHaveTextContent("1");
+		expect(within(mergeLane).queryByRole("region", { name: "Ready to merge sessions" })).not.toBeInTheDocument();
+		expect(mergedRegion).toHaveClass("flex-1");
+		expect(within(mergedRegion).getByText("merged worker")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /terminated/i })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Restore merged worker" })).not.toBeInTheDocument();
 
 		await userEvent.click(screen.getByText("merged worker"));
@@ -662,6 +673,32 @@ describe("SessionsBoard", () => {
 			to: "/projects/$projectId/sessions/$sessionId",
 			params: { projectId: "p1", sessionId: "s-merged" },
 		});
+	});
+
+	it("splits ready and merged sessions into upper and lower regions", () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					boardSession({ id: "s-ready", title: "ready worker", status: "mergeable" }),
+					boardSession({ id: "s-merged", title: "merged worker", status: "merged" }),
+				]),
+			],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		const mergeLane = screen.getByRole("region", { name: "Ready to merge / Merged sessions" });
+		const readyRegion = within(mergeLane).getByRole("region", { name: "Ready to merge sessions" });
+		const mergedRegion = within(mergeLane).getByRole("region", { name: "Merged sessions" });
+		expect(within(mergeLane).getByLabelText("1 ready to merge session")).toHaveTextContent("1");
+		expect(within(mergeLane).getByLabelText("1 merged session")).toHaveTextContent("1");
+		expect(readyRegion).toHaveClass("flex-[3]");
+		expect(mergedRegion).toHaveClass("flex-[2]", "rounded-t-(--radius-panel)", "border-t");
+		expect(within(readyRegion).getByText("ready worker")).toBeInTheDocument();
+		expect(within(mergedRegion).getByText("merged worker")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /terminated/i })).not.toBeInTheDocument();
 	});
 
 	it("uses distinct card surfaces for merged and terminated sessions", async () => {
@@ -677,7 +714,7 @@ describe("SessionsBoard", () => {
 		});
 
 		renderBoard("p1");
-		await userEvent.click(screen.getByRole("button", { name: /done \/ terminated/i }));
+		await userEvent.click(screen.getByRole("button", { name: /terminated/i }));
 
 		const terminatedCard = screen.getByText("dead worker").closest('[role="button"]')?.parentElement;
 		const mergedCard = screen.getByText("merged worker").closest('[role="button"]')?.parentElement;

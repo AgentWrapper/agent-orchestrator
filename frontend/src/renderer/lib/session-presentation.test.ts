@@ -98,8 +98,8 @@ describe("session presentation", () => {
 		["draft", "pending", "In review"],
 		["working", "working", "Working"],
 		["idle", "working", "Working"],
-		["merged", "done", "Done"],
-		["terminated", "done", "Done"],
+		["merged", "merge", "Ready to merge"],
+		["terminated", "done", "Terminated"],
 	] as const)("maps %s to the %s attention zone", (status, zone, label) => {
 		expect(attentionZone(sessionWith({ status }))).toBe(zone);
 		expect(getAttentionZoneView(status)).toMatchObject({ zone, label });

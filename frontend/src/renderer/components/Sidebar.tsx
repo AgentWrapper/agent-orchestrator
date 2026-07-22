@@ -380,8 +380,8 @@ function ProjectItem({
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const isProjectRestarting = restartingProjectIds.has(workspace.id);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
-	// Live workers only: merged/terminated sessions leave the sidebar and stay
-	// reachable through the board's Done / Terminated bar (SessionsBoard).
+	// Live workers only: merged sessions stay on the board while terminated
+	// sessions remain reachable through its archive bar (SessionsBoard).
 	const sessions = workerSessions(workspace.sessions).filter(sessionIsActive);
 	// The project's live orchestrator (if any) backs the hover Orchestrator
 	// button: navigate to it when present, otherwise spawn one first.

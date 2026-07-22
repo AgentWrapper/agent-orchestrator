@@ -313,7 +313,7 @@ describe("attentionZone", () => {
 		["draft", "pending"],
 		["working", "working"],
 		["idle", "working"],
-		["merged", "done"],
+		["merged", "merge"],
 		["terminated", "done"],
 	];
 

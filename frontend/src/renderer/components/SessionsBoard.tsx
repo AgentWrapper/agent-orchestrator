@@ -40,7 +40,7 @@ type SessionsBoardProps = {
 	projectId?: string;
 };
 
-// The board renders active flow columns; "done" remains archived in the footer.
+// The board renders completed merges in-flow; terminated sessions remain archived in the footer.
 type Column = AttentionZoneView;
 const COLUMNS: Column[] = boardAttentionZoneOrder.map((zone) => getAttentionZoneViewForZone(zone));
 
@@ -89,7 +89,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 		const zone = attentionZone(session);
 		(byZone.get(zone) ?? byZone.set(zone, []).get(zone)!).push(session);
 	}
-	const done = byZone.get("done") ?? [];
+	const terminated = byZone.get("done") ?? [];
 	// First-run orientation replaces the empty column shells (only once the
 	// query has resolved, so the welcome never flashes over real data): the
 	// global board teaches the app before any project exists, and a fresh
@@ -97,9 +97,8 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const isLoaded = workspaceQuery.isSuccess;
 	const showWelcome = !projectId && isLoaded && all.length === 0;
 	const showProjectEmpty = projectId !== undefined && isLoaded && workspaces.length > 0 && sessions.length === 0;
-	// Collapsed by default, like agent-orchestrator's done-bar: finished and
-	// killed sessions cost one quiet line under the board until expanded.
-	const [doneExpanded, setDoneExpanded] = useState(false);
+	// Terminated sessions cost one quiet line under the board until expanded.
+	const [terminatedExpanded, setTerminatedExpanded] = useState(false);
 	const [restoringSessionId, setRestoringSessionId] = useState<string | undefined>();
 	const [restoreErrors, setRestoreErrors] = useState<Record<string, string>>({});
 	const [restoreUnavailableSession, setRestoreUnavailableSession] = useState<WorkspaceSession | undefined>();
@@ -268,44 +267,38 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				) : (
 					<div className="h-full overflow-x-auto overflow-y-hidden">
 						<div className="grid h-full min-w-[64rem] grid-cols-4 gap-2 xl:min-w-0">
-							{COLUMNS.map((col) =>
-								col.zone === "working" ? (
-									<WorkLaneColumn
-										key={`${projectId ?? "all"}:${col.zone}`}
-										col={col}
-										sessions={byZone.get(col.zone) ?? []}
-										onOpen={openSession}
-									/>
-								) : (
-									<ZoneColumn
-										key={`${projectId ?? "all"}:${col.zone}`}
-										col={col}
-										sessions={byZone.get(col.zone) ?? []}
-										onOpen={openSession}
-									/>
-								),
-							)}
+							{COLUMNS.map((col) => (
+								<BoardColumn
+									key={`${projectId ?? "all"}:${col.zone}`}
+									col={col}
+									sessions={byZone.get(col.zone) ?? []}
+									onOpen={openSession}
+								/>
+							))}
 						</div>
 					</div>
 				)}
 			</div>
 
-			{done.length > 0 && (
+			{terminated.length > 0 && (
 				<div className="shrink-0 border-t border-border px-4.5">
-					{/* agent-orchestrator's done-bar (Dashboard.tsx + globals.css):
+					{/* agent-orchestrator's archive bar (Dashboard.tsx + globals.css):
 					    a full-width chevron + label + count toggle row. The button is
 					    37px (not the 35.5px its text-control implies) because the
 					    unlayered `button { font: inherit }` in styles.css outranks
 					    Tailwind's layered text utilities, leaving it at 14px/21px. */}
 					<button
-						aria-expanded={doneExpanded}
+						aria-expanded={terminatedExpanded}
 						className="group flex min-h-row-md w-full items-center gap-2 py-2 text-muted-foreground transition-colors hover:text-foreground"
-						onClick={() => setDoneExpanded((v) => !v)}
+						onClick={() => setTerminatedExpanded((v) => !v)}
 						type="button"
 					>
 						<svg
 							aria-hidden="true"
-							className={cn("size-icon-2xs shrink-0 transition-transform duration-normal", doneExpanded && "rotate-90")}
+							className={cn(
+								"size-icon-2xs shrink-0 transition-transform duration-normal",
+								terminatedExpanded && "rotate-90",
+							)}
 							fill="none"
 							stroke="currentColor"
 							strokeWidth="2"
@@ -313,12 +306,12 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						>
 							<path d="m9 18 6-6-6-6" />
 						</svg>
-						<span className="font-mono text-2xs font-medium uppercase tracking-wide-sm">Done / Terminated</span>
-						<span className="ml-auto shrink-0 font-mono text-micro text-passive">{done.length}</span>
+						<span className="font-mono text-2xs font-medium uppercase tracking-wide-sm">Terminated</span>
+						<span className="ml-auto shrink-0 font-mono text-micro text-passive">{terminated.length}</span>
 					</button>
-					{doneExpanded && (
+					{terminatedExpanded && (
 						<div className="grid max-h-[45vh] grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-2.5 overflow-y-auto pb-3 pt-1">
-							{done.map((s) => (
+							{terminated.map((s) => (
 								<SessionCard
 									key={s.id}
 									session={s}
@@ -347,6 +340,20 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			)}
 		</div>
 	);
+}
+
+function BoardColumn({
+	col,
+	sessions,
+	onOpen,
+}: {
+	col: Column;
+	sessions: WorkspaceSession[];
+	onOpen: (s: WorkspaceSession) => void;
+}) {
+	if (col.zone === "working") return <WorkLaneColumn sessions={sessions} onOpen={onOpen} />;
+	if (col.zone === "merge") return <MergeLaneColumn sessions={sessions} onOpen={onOpen} />;
+	return <ZoneColumn col={col} sessions={sessions} onOpen={onOpen} />;
 }
 
 function ZoneColumn({
@@ -390,86 +397,196 @@ function ZoneColumn({
 	);
 }
 
-function WorkLaneColumn({
-	col,
+type SplitLaneTone = {
+	label: string;
+	countLabel: string;
+	regionLabel: string;
+	dotClassName: string;
+	titleClassName: string;
+	color: string;
+	dotGlow: boolean;
+};
+
+const idleLaneTone: SplitLaneTone = {
+	label: "Idle",
+	countLabel: "idle",
+	regionLabel: "Idle sessions",
+	dotClassName: "bg-status-idle",
+	titleClassName: "text-status-idle",
+	color: "var(--color-status-idle)",
+	dotGlow: false,
+};
+
+const workingLaneTone: SplitLaneTone = {
+	label: "Working",
+	countLabel: "working",
+	regionLabel: "Working sessions",
+	dotClassName: "bg-status-working",
+	titleClassName: "text-status-working",
+	color: "var(--color-status-working)",
+	dotGlow: true,
+};
+
+const readyLaneTone: SplitLaneTone = {
+	label: "Ready to merge",
+	countLabel: "ready to merge",
+	regionLabel: "Ready to merge sessions",
+	dotClassName: "bg-status-ready",
+	titleClassName: "text-status-ready",
+	color: "var(--color-status-ready)",
+	dotGlow: true,
+};
+
+const mergedLaneTone: SplitLaneTone = {
+	label: "Merged",
+	countLabel: "merged",
+	regionLabel: "Merged sessions",
+	dotClassName: "bg-status-merged",
+	titleClassName: "text-status-merged",
+	color: "var(--color-status-merged)",
+	dotGlow: false,
+};
+
+function WorkLaneColumn({ sessions, onOpen }: { sessions: WorkspaceSession[]; onOpen: (s: WorkspaceSession) => void }) {
+	const idleSessions = sessions.filter(isSessionIdle);
+	const workingSessions = sessions.filter((session) => !isSessionIdle(session));
+
+	return (
+		<SplitLaneColumn
+			ariaLabel="Idle / Working sessions"
+			primarySessions={idleSessions}
+			primaryTone={idleLaneTone}
+			secondarySessions={workingSessions}
+			secondaryTone={workingLaneTone}
+			onOpen={onOpen}
+		/>
+	);
+}
+
+function MergeLaneColumn({
 	sessions,
 	onOpen,
 }: {
-	col: Column;
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
 }) {
-	const idleSessions = sessions.filter(isSessionIdle);
-	const workingSessions = sessions.filter((session) => !isSessionIdle(session));
-	const showIdle = idleSessions.length > 0;
-	const showWorking = workingSessions.length > 0;
+	const mergedSessions = sessions.filter((session) => session.status === "merged");
+	const readySessions = sessions.filter((session) => session.status !== "merged");
+
+	return (
+		<SplitLaneColumn
+			ariaLabel="Ready to merge / Merged sessions"
+			primarySessions={readySessions}
+			primaryTone={readyLaneTone}
+			secondarySessions={mergedSessions}
+			secondaryTone={mergedLaneTone}
+			onOpen={onOpen}
+		/>
+	);
+}
+
+function SplitLaneColumn({
+	ariaLabel,
+	primarySessions,
+	primaryTone,
+	secondarySessions,
+	secondaryTone,
+	onOpen,
+}: {
+	ariaLabel: string;
+	primarySessions: WorkspaceSession[];
+	primaryTone: SplitLaneTone;
+	secondarySessions: WorkspaceSession[];
+	secondaryTone: SplitLaneTone;
+	onOpen: (s: WorkspaceSession) => void;
+}) {
+	const showPrimary = primarySessions.length > 0;
+	const showSecondary = secondarySessions.length > 0;
 
 	return (
 		<section
-			aria-label="Idle / Working sessions"
+			aria-label={ariaLabel}
 			className="flex min-w-0 flex-col overflow-hidden rounded-panel"
 			style={{
-				background:
-					"linear-gradient(180deg, color-mix(in srgb, var(--color-status-idle) 7%, transparent), transparent var(--size-kanban-glow)), var(--color-overlay-subtle)",
+				background: `linear-gradient(180deg, color-mix(in srgb, ${primaryTone.color} 7%, transparent), transparent var(--size-kanban-glow)), var(--color-overlay-subtle)`,
 			}}
 		>
-			<div className="flex shrink-0 items-center gap-2.25 px-3.75 pb-2.75 pt-3.5">
-				<span className="size-dot-sm rounded-full bg-status-idle" aria-hidden="true" />
-				<span className="text-caption font-semibold uppercase tracking-wide-md text-status-idle">Idle / Working</span>
-				<div className="ml-auto flex shrink-0 items-center gap-2 font-mono text-caption leading-none text-passive">
-					<SessionCount count={idleSessions.length} label="idle" dotClassName="bg-status-idle" />
+			<div className="flex shrink-0 items-center gap-2 px-3.75 pb-2.75 pt-3.5">
+				<div
+					aria-label={`${primaryTone.label} / ${secondaryTone.label} lane summary`}
+					className="flex min-w-0 items-center gap-1.5 text-caption font-semibold uppercase tracking-wide-md"
+					role="group"
+				>
+					<LaneStatusLabel tone={primaryTone} />
+					<span className="text-passive" aria-hidden="true">
+						/
+					</span>
+					<LaneStatusLabel tone={secondaryTone} />
+				</div>
+				<div className="ml-auto flex shrink-0 items-center gap-1.5 font-mono text-caption leading-none text-passive">
+					<SessionCount count={primarySessions.length} label={primaryTone.countLabel} />
 					<span aria-hidden="true">/</span>
-					<SessionCount count={workingSessions.length} label="working" dotClassName="bg-status-working" />
+					<SessionCount count={secondarySessions.length} label={secondaryTone.countLabel} />
 				</div>
 			</div>
 			<div className="flex min-h-0 flex-1 flex-col">
-				{showIdle ? (
+				{showPrimary ? (
 					<div
-						aria-label="Idle sessions"
-						className={cn("min-h-0 overflow-y-auto px-2.75", showWorking ? "flex-[3] pb-3" : "flex-1 pb-3")}
+						aria-label={primaryTone.regionLabel}
+						className={cn("min-h-0 overflow-y-auto px-2.75", showSecondary ? "flex-[3] pb-3" : "flex-1 pb-3")}
 						role="region"
 					>
 						<div className="flex min-h-full flex-col gap-2.5">
-							{idleSessions.map((session) => (
+							{primarySessions.map((session) => (
 								<SessionCard key={session.id} session={session} onOpen={() => onOpen(session)} />
 							))}
 						</div>
 					</div>
 				) : null}
-				{showWorking ? (
-					<WorkingSessionsSection col={col} sessions={workingSessions} onOpen={onOpen} standalone={!showIdle} />
+				{showSecondary ? (
+					<SecondaryLaneSection
+						sessions={secondarySessions}
+						standalone={!showPrimary}
+						tone={secondaryTone}
+						onOpen={onOpen}
+					/>
 				) : null}
 			</div>
 		</section>
 	);
 }
 
-function SessionCount({ count, label, dotClassName }: { count: number; label: string; dotClassName: string }) {
+function LaneStatusLabel({ tone }: { tone: SplitLaneTone }) {
 	return (
-		<span
-			aria-label={`${count} ${label} ${count === 1 ? "session" : "sessions"}`}
-			className="inline-flex items-center gap-1"
-		>
-			<span className={cn("h-1.5 w-1.5 rounded-full", dotClassName)} aria-hidden="true" />
-			{count}
+		<span className={cn("inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap", tone.titleClassName)}>
+			<span
+				className={cn("size-dot-sm rounded-full", tone.dotClassName)}
+				style={{ boxShadow: tone.dotGlow ? `0 0 7px color-mix(in srgb, ${tone.color} 60%, transparent)` : undefined }}
+				aria-hidden="true"
+			/>
+			{tone.label}
 		</span>
 	);
 }
 
-function WorkingSessionsSection({
-	col,
+function SessionCount({ count, label }: { count: number; label: string }) {
+	return <span aria-label={`${count} ${label} ${count === 1 ? "session" : "sessions"}`}>{count}</span>;
+}
+
+function SecondaryLaneSection({
 	sessions,
 	onOpen,
 	standalone,
+	tone,
 }: {
-	col: Column;
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
 	standalone: boolean;
+	tone: SplitLaneTone;
 }) {
 	return (
 		<div
-			aria-label="Working sessions"
+			aria-label={tone.regionLabel}
 			className={cn(
 				"min-h-0 overflow-hidden",
 				standalone
@@ -479,15 +596,9 @@ function WorkingSessionsSection({
 			role="region"
 		>
 			<div className="flex shrink-0 items-center gap-2.25 px-3.75 pb-2.5 pt-3">
-				<span
-					className="size-dot-sm rounded-full"
-					style={{
-						background: col.dot,
-						boxShadow: col.dotGlow ? `0 0 7px color-mix(in srgb, ${col.dot} 60%, transparent)` : undefined,
-					}}
-					aria-hidden="true"
-				/>
-				<span className={cn("text-caption font-semibold uppercase tracking-wide-md", col.titleClassName)}>Working</span>
+				<div className="text-caption font-semibold uppercase tracking-wide-md">
+					<LaneStatusLabel tone={tone} />
+				</div>
 				<span className="ml-auto font-mono text-caption leading-none text-passive">{sessions.length}</span>
 			</div>
 			<div className="min-h-0 flex-1 overflow-y-auto px-2.75 pb-3">
