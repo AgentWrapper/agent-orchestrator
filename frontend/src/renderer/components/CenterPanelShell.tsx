@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { cn } from "../lib/utils";
 
 /**
  * Shared inset center panel: sidebar-colored outer frame with a bordered inner
@@ -15,7 +16,7 @@ export function CenterPanelShell({
 	children: ReactNode;
 }) {
 	return (
-		<div className={className ? `center-panel-shell ${className}` : "center-panel-shell"}>
+		<div className={cn("center-panel-shell", className)}>
 			<div className="center-panel-surface">{children}</div>
 		</div>
 	);

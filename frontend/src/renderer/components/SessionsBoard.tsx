@@ -201,7 +201,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 	const actions = projectId ? (
 		<>
-			{boardOwnsNotificationCenter ? <NotificationCenter style={noDragStyle} /> : null}
+			{boardOwnsNotificationCenter ? <NotificationCenter /> : null}
 			{visibleSpawnError && !showProjectEmpty && (
 				<TopbarKillError className="max-w-content-max truncate" title={visibleSpawnError}>
 					{visibleSpawnError}
@@ -211,7 +211,6 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				aria-label="New task"
 				disabled={isProjectRestarting}
 				onClick={() => projectId && requestNewTask(projectId)}
-				style={noDragStyle}
 				variant="accent"
 			>
 				<Plus className="size-icon-md" aria-hidden="true" />
@@ -221,7 +220,6 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				aria-label={orchestrator ? "Orchestrator" : "Spawn Orchestrator"}
 				disabled={isSpawning || isProjectRestarting}
 				onClick={() => void openOrchestrator()}
-				style={noDragStyle}
 				variant="primary"
 			>
 				<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
@@ -235,7 +233,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			</TopbarButton>
 		</>
 	) : boardOwnsNotificationCenter ? (
-		<NotificationCenter style={noDragStyle} />
+		<NotificationCenter />
 	) : undefined;
 
 	return (

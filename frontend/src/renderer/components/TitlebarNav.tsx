@@ -105,7 +105,6 @@ function TitlebarButton({
 			className="grid size-control-md place-items-center rounded-md text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent disabled:hover:text-passive"
 			disabled={disabled}
 			onClick={onClick}
-			style={noDragStyle}
 			tabIndex={tabIndex}
 			title={title}
 			type="button"
