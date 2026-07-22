@@ -12,7 +12,9 @@ it.
 ## What it does
 
 - **Sessions** — lists live worker sessions (`GET /api/v1/sessions`).
-- **Session** — dictate or type a message → `POST /api/v1/sessions/{id}/send`.
+- **Session** — **reads** the agent's live output (a plain-text tail of the PTY
+  stream over the `/mux` WebSocket, attached read-only as a `secondary` client)
+  **and** replies: dictate/type → `POST /api/v1/sessions/{id}/send`.
 - **New task (＋)** — pick a project, dictate a prompt → `POST /api/v1/sessions`.
 - **Connect (⚙)** — host / port / password for the daemon, stored on the watch.
 
@@ -75,4 +77,8 @@ every 7 days.
   through it) or on the same Wi-Fi; not when away on cellular.
 - **Password** is stored in `UserDefaults`, not the Keychain (the phone app uses
   the Keychain). Fine for a personal-device POC; harden before shipping.
-- No live terminal output, PRs, or orchestrator screens — send-only.
+- **Output rendering** strips ANSI/VT codes and shows a plain-text tail — it is
+  not a terminal emulator. Text-streaming agents read cleanly; full-screen TUI
+  agents that repaint via cursor moves will look rough. The daemon replays
+  scrollback on attach, so recent output shows immediately.
+- No PRs or orchestrator screens.
