@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { AlertTriangle, Plus, RotateCw } from "lucide-react";
+import { AlertTriangle, Plus, RotateCcw, RotateCw } from "lucide-react";
 import {
 	type WorkspaceSession,
 	canonicalTrackerIssueId,
@@ -28,10 +28,12 @@ import { TopbarButton, TopbarKillError } from "./TopbarButton";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
+import { formatTimeCompact } from "../lib/format-time";
 import { cn } from "../lib/utils";
 import { isLinuxPlatform, usesBoardActionsInFramedTopbar } from "../lib/platform";
 import { useUiStore } from "../stores/ui-store";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 const isLinux = isLinuxPlatform();
 const boardActionsInFramedTopbar = usesBoardActionsInFramedTopbar();
@@ -40,9 +42,14 @@ type SessionsBoardProps = {
 	projectId?: string;
 };
 
-// The board renders completed merges in-flow; terminated sessions remain archived in the footer.
+// Live merged sessions remain in-flow. A terminated runtime is archived even
+// when its SCM outcome remains `merged`.
 type Column = AttentionZoneView;
 const COLUMNS: Column[] = boardAttentionZoneOrder.map((zone) => getAttentionZoneViewForZone(zone));
+
+function isArchivedSession(session: WorkspaceSession): boolean {
+	return session.isTerminated === true || session.status === "terminated";
+}
 
 export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const navigate = useNavigate();
@@ -84,12 +91,14 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 		}
 	}, [orchestrator, orchestratorStartupError, projectId, setOrchestratorStartupError]);
 
+	const archived = sessions
+		.filter(isArchivedSession)
+		.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 	const byZone = new Map<AttentionZone, WorkspaceSession[]>();
-	for (const session of sessions) {
+	for (const session of sessions.filter((candidate) => !isArchivedSession(candidate))) {
 		const zone = attentionZone(session);
 		(byZone.get(zone) ?? byZone.set(zone, []).get(zone)!).push(session);
 	}
-	const terminated = byZone.get("done") ?? [];
 	// First-run orientation replaces the empty column shells (only once the
 	// query has resolved, so the welcome never flashes over real data): the
 	// global board teaches the app before any project exists, and a fresh
@@ -97,8 +106,8 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const isLoaded = workspaceQuery.isSuccess;
 	const showWelcome = !projectId && isLoaded && all.length === 0;
 	const showProjectEmpty = projectId !== undefined && isLoaded && workspaces.length > 0 && sessions.length === 0;
-	// Terminated sessions cost one quiet line under the board until expanded.
-	const [terminatedExpanded, setTerminatedExpanded] = useState(false);
+	// Archived sessions cost one quiet line under the board until expanded.
+	const [archiveExpanded, setArchiveExpanded] = useState(false);
 	const [restoringSessionId, setRestoringSessionId] = useState<string | undefined>();
 	const [restoreErrors, setRestoreErrors] = useState<Record<string, string>>({});
 	const [restoreUnavailableSession, setRestoreUnavailableSession] = useState<WorkspaceSession | undefined>();
@@ -116,7 +125,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			params: { projectId: session.workspaceId, sessionId: session.id },
 		});
 
-	const restoreDoneSession = async (event: MouseEvent<HTMLButtonElement>, session: WorkspaceSession) => {
+	const restoreArchivedSession = async (event: MouseEvent<HTMLButtonElement>, session: WorkspaceSession) => {
 		event.stopPropagation();
 		if (restoringSessionId) return;
 		const restoreProjectId = projectId;
@@ -280,7 +289,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				)}
 			</div>
 
-			{terminated.length > 0 && (
+			{archived.length > 0 && (
 				<div className="shrink-0 border-t border-border px-4.5">
 					{/* agent-orchestrator's archive bar (Dashboard.tsx + globals.css):
 					    a full-width chevron + label + count toggle row. The button is
@@ -288,16 +297,17 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 					    unlayered `button { font: inherit }` in styles.css outranks
 					    Tailwind's layered text utilities, leaving it at 14px/21px. */}
 					<button
-						aria-expanded={terminatedExpanded}
+						aria-expanded={archiveExpanded}
+						aria-label={`Archive, ${archived.length} ${archived.length === 1 ? "session" : "sessions"}`}
 						className="group flex min-h-row-md w-full items-center gap-2 py-2 text-muted-foreground transition-colors hover:text-foreground"
-						onClick={() => setTerminatedExpanded((v) => !v)}
+						onClick={() => setArchiveExpanded((v) => !v)}
 						type="button"
 					>
 						<svg
 							aria-hidden="true"
 							className={cn(
 								"size-icon-2xs shrink-0 transition-transform duration-normal",
-								terminatedExpanded && "rotate-90",
+								archiveExpanded && "rotate-90",
 							)}
 							fill="none"
 							stroke="currentColor"
@@ -306,17 +316,17 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						>
 							<path d="m9 18 6-6-6-6" />
 						</svg>
-						<span className="font-mono text-2xs font-medium uppercase tracking-wide-sm">Terminated</span>
-						<span className="ml-auto shrink-0 font-mono text-micro text-passive">{terminated.length}</span>
+						<span className="font-mono text-2xs font-medium uppercase tracking-wide-sm">Archive</span>
+						<span className="ml-auto shrink-0 font-mono text-micro text-passive">{archived.length}</span>
 					</button>
-					{terminatedExpanded && (
-						<div className="grid max-h-[45vh] grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-2.5 overflow-y-auto pb-3 pt-1">
-							{terminated.map((s) => (
-								<SessionCard
+					{archiveExpanded && (
+						<div aria-label="Archived sessions" className="max-h-[45vh] overflow-y-auto pb-3" role="list">
+							{archived.map((s) => (
+								<ArchiveSessionRow
 									key={s.id}
 									session={s}
 									onOpen={() => openSession(s)}
-									restoreAction={s.status === "terminated" ? (event) => void restoreDoneSession(event, s) : undefined}
+									restoreAction={(event) => void restoreArchivedSession(event, s)}
 									restoreError={restoreErrors[s.id]}
 									isRestoring={restoringSessionId === s.id}
 									isRestoreDisabled={restoringSessionId !== undefined}
@@ -616,18 +626,10 @@ function SessionCard({
 	session,
 	onOpen,
 	interactive = true,
-	restoreAction,
-	restoreError,
-	isRestoring = false,
-	isRestoreDisabled = false,
 }: {
 	session: WorkspaceSession;
 	onOpen?: () => void;
 	interactive?: boolean;
-	restoreAction?: (event: MouseEvent<HTMLButtonElement>) => void;
-	restoreError?: string;
-	isRestoring?: boolean;
-	isRestoreDisabled?: boolean;
 }) {
 	const badge = getSessionStatusView(session.status);
 	const issueId = canonicalTrackerIssueId(session.issueId);
@@ -686,13 +688,7 @@ function SessionCard({
 				</div>
 				{showBranch && <div className="px-3.25 pb-2.5 font-mono text-2xs text-passive">{branch}</div>}
 			</div>
-			{restoreError && (
-				<div className="border-t border-border px-3.25 py-1.5 text-2xs text-destructive">{restoreError}</div>
-			)}
-			<div
-				className={cn("border-t border-border px-3.25 py-2 font-mono text-2xs text-passive", restoreAction && "pr-20")}
-				onClick={(event) => event.stopPropagation()}
-			>
+			<div className="border-t border-border px-3.25 py-2 font-mono text-2xs text-passive">
 				{prSummaries.length === 0 ? (
 					"no PR yet"
 				) : (
@@ -703,22 +699,90 @@ function SessionCard({
 					</div>
 				)}
 			</div>
-			{restoreAction && (
+		</div>
+	);
+}
+
+function ArchiveSessionRow({
+	session,
+	onOpen,
+	restoreAction,
+	restoreError,
+	isRestoring,
+	isRestoreDisabled,
+}: {
+	session: WorkspaceSession;
+	onOpen: () => void;
+	restoreAction: (event: MouseEvent<HTMLButtonElement>) => void;
+	restoreError?: string;
+	isRestoring: boolean;
+	isRestoreDisabled: boolean;
+}) {
+	const badge = getSessionStatusView(session.status);
+	const issueId = canonicalTrackerIssueId(session.issueId);
+	const prSummaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
+	const branch = session.branch || "";
+
+	return (
+		<div className="border-t border-border first:border-t-0" role="listitem">
+			<div className="flex min-h-row-lg items-center">
 				<button
-					aria-label={`Restore ${session.title}`}
-					title={`Restore ${session.title}`}
-					className={cn(
-						"absolute bottom-1.5 right-2 z-10 inline-flex h-control-xs items-center justify-center rounded-sm border border-accent bg-accent px-2.5 text-2xs font-semibold text-accent-foreground opacity-0 shadow-sm transition-opacity duration-normal ease-out disabled:cursor-not-allowed",
-						!isRestoreDisabled &&
-							"hover:opacity-90 focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100",
-						isRestoring && "opacity-100",
-					)}
-					disabled={isRestoreDisabled}
-					onClick={restoreAction}
+					aria-label={`Open ${session.title}`}
+					className="min-w-0 flex-1 px-2 py-2 text-left transition-colors hover:bg-interactive-hover focus-visible:bg-interactive-hover focus-visible:outline-none"
+					onClick={onOpen}
 					type="button"
 				>
-					{isRestoring ? "Restoring" : "Restore"}
+					<div className="flex min-w-0 items-center gap-2">
+						<span className={cn("inline-flex shrink-0 items-center gap-1.5 text-caption font-medium", badge.className)}>
+							<span className="size-dot-sm rounded-full bg-current" aria-hidden="true" />
+							{badge.label}
+						</span>
+						<span className="min-w-0 truncate text-control font-medium text-foreground">{session.title}</span>
+						{issueId && (
+							<span className="hidden max-w-branch-chip shrink-0 truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent sm:inline">
+								{issueId}
+							</span>
+						)}
+						<span className="ml-auto hidden shrink-0 font-mono text-2xs text-passive md:inline">
+							{agentLabel(session.provider)}
+						</span>
+						<span className="w-15 shrink-0 text-right font-mono text-2xs text-passive">
+							{formatTimeCompact(session.updatedAt)}
+						</span>
+					</div>
+					<div className="mt-1 flex min-w-0 items-center gap-2 overflow-hidden font-mono text-2xs text-passive">
+						{branch && <span className="max-w-branch-chip shrink-0 truncate">{branch}</span>}
+						{branch && prSummaries.length > 0 && <span aria-hidden="true">·</span>}
+						{prSummaries.length > 0 ? (
+							<div className="flex min-w-0 items-center gap-2 overflow-hidden">
+								{groupPRsByLifecycle(prSummaries).map((group) => (
+									<BoardPRGroup group={group} key={group.status.label} linksInteractive={false} />
+								))}
+							</div>
+						) : (
+							<span>no PR yet</span>
+						)}
+					</div>
 				</button>
+				<Tooltip>
+					<TooltipTrigger asChild>
+						<button
+							aria-label={`Restore ${session.title}`}
+							className="mx-1.5 grid size-control-board-sm shrink-0 place-items-center rounded-md text-passive transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:cursor-not-allowed disabled:opacity-35"
+							disabled={isRestoreDisabled}
+							onClick={restoreAction}
+							type="button"
+						>
+							<RotateCcw className={cn("size-icon-md", isRestoring && "animate-spin")} aria-hidden="true" />
+						</button>
+					</TooltipTrigger>
+					<TooltipContent side="top">{isRestoring ? "Restoring session" : "Restore session"}</TooltipContent>
+				</Tooltip>
+			</div>
+			{restoreError && (
+				<div className="border-t border-border px-2 py-1.5 text-2xs text-destructive" role="alert">
+					{restoreError}
+				</div>
 			)}
 		</div>
 	);

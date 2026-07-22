@@ -220,6 +220,7 @@ describe("useWorkspaceQuery", () => {
 		await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
 		expect(result.current.data?.[0].sessions[0].status).toBe("merged");
+		expect(result.current.data?.[0].sessions[0].isTerminated).toBe(true);
 	});
 
 	it("falls back to terminated for terminated sessions without a known backend status", async () => {
@@ -245,6 +246,7 @@ describe("useWorkspaceQuery", () => {
 		await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
 		expect(result.current.data?.[0].sessions[0].status).toBe("terminated");
+		expect(result.current.data?.[0].sessions[0].isTerminated).toBe(true);
 	});
 
 	it("surfaces a projects fetch error", async () => {

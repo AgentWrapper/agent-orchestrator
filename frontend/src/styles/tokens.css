@@ -53,8 +53,8 @@
 	--color-status-working: #36c2b4;
 	--color-status-needs-you: #f2b84b;
 	--color-status-in-review: #5b8def;
-	--color-status-ready: #75c98d;
-	--color-status-merged: #4bae72;
+	--color-status-ready: #9ad97a;
+	--color-status-merged: #3e9b62;
 	--color-status-idle: #8e96a3;
 	--color-status-exited: #ee6a6a;
 	--color-status-terminated: #6f7680;
@@ -459,8 +459,8 @@
 	--color-status-working: #087f75;
 	--color-status-needs-you: #946200;
 	--color-status-in-review: #255fc4;
-	--color-status-ready: #237a3d;
-	--color-status-merged: #176b37;
+	--color-status-ready: #2f7d32;
+	--color-status-merged: #0d5f35;
 	--color-status-idle: #69717d;
 	--color-status-exited: #b83232;
 	--color-status-terminated: #626975;

@@ -34,6 +34,7 @@ vi.mock("../lib/bridge", () => ({
 }));
 
 import { SessionsBoard } from "./SessionsBoard";
+import { TooltipProvider } from "./ui/tooltip";
 
 function renderBoard(projectId?: string) {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -44,7 +45,9 @@ function renderBoard(projectId?: string) {
 function renderBoardWithClient(queryClient: QueryClient, projectId?: string) {
 	return render(
 		<QueryClientProvider client={queryClient}>
-			<SessionsBoard projectId={projectId} />
+			<TooltipProvider>
+				<SessionsBoard projectId={projectId} />
+			</TooltipProvider>
 		</QueryClientProvider>,
 	);
 }
@@ -393,7 +396,9 @@ describe("SessionsBoard", () => {
 
 		view.rerender(
 			<QueryClientProvider client={queryClient}>
-				<SessionsBoard projectId="p2" />
+				<TooltipProvider>
+					<SessionsBoard projectId="p2" />
+				</TooltipProvider>
 			</QueryClientProvider>,
 		);
 
@@ -403,7 +408,7 @@ describe("SessionsBoard", () => {
 		expect(within(p2Lane).getByRole("region", { name: "Working sessions" })).toHaveTextContent("p2 active");
 	});
 
-	it("shows a restore action for terminated sessions in expanded Terminated", async () => {
+	it("shows a compact archive row with a persistent restore action", async () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [workspaceWithSessions([terminatedSession()])],
 			isError: false,
@@ -412,10 +417,11 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /terminated/i }));
+		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
 
-		const terminatedCard = screen.getByText("dead worker").closest('[role="button"]') as HTMLElement;
-		expect(within(terminatedCard).getByText("Terminated")).toBeInTheDocument();
+		const archive = screen.getByRole("list", { name: "Archived sessions" });
+		const terminatedRow = within(archive).getByRole("button", { name: "Open dead worker" });
+		expect(within(terminatedRow).getByText("Terminated")).toBeInTheDocument();
 		expect(screen.getByText("Claude")).toBeInTheDocument();
 		expect(screen.getByText("ao/dead-worker")).toBeInTheDocument();
 		expect(screen.getByText("github:INT-17")).toBeInTheDocument();
@@ -432,7 +438,7 @@ describe("SessionsBoard", () => {
 		const queryClient = renderBoard("p1");
 		const invalidate = vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue(undefined);
 
-		await userEvent.click(screen.getByRole("button", { name: /terminated/i }));
+		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		await waitFor(() =>
@@ -456,7 +462,7 @@ describe("SessionsBoard", () => {
 		});
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /terminated/i }));
+		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		await waitFor(() =>
@@ -478,14 +484,14 @@ describe("SessionsBoard", () => {
 		});
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /terminated/i }));
+		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		await waitFor(() => expect(postMock).toHaveBeenCalled());
 		expect(notificationShowMock).not.toHaveBeenCalled();
 	});
 
-	it("keeps other restore buttons hidden while one session is restoring", async () => {
+	it("keeps restore actions visible and disables siblings while one session is restoring", async () => {
 		let finishRestore: ((value: { data: Record<string, never> }) => void) | undefined;
 		postMock.mockReturnValueOnce(
 			new Promise((resolve) => {
@@ -500,18 +506,18 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /terminated/i }));
+		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		const restoringButton = screen.getByRole("button", { name: "Restore dead worker" });
 		const otherButton = screen.getByRole("button", { name: "Restore other worker" });
-		expect(restoringButton).toHaveClass("opacity-100");
+		expect(restoringButton.querySelector("svg")).toHaveClass("animate-spin");
 		expect(otherButton).toBeDisabled();
-		expect(otherButton).toHaveClass("opacity-0");
-		expect(otherButton.className).not.toContain("group-hover:opacity-100");
-		expect(otherButton.className).not.toContain("group-focus-within:opacity-100");
+		expect(otherButton).not.toHaveClass("opacity-0");
 
-		finishRestore?.({ data: {} });
+		await act(async () => {
+			finishRestore?.({ data: {} });
+		});
 	});
 
 	it("opens the restore-unavailable dialog when a session is not resumable", async () => {
@@ -524,13 +530,13 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /terminated/i }));
+		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		expect(await screen.findByText("Session can no longer be restored")).toBeInTheDocument();
 	});
 
-	it("shows a card error when restore fails", async () => {
+	it("shows an archive row error when restore fails", async () => {
 		postMock.mockResolvedValueOnce({ error: { code: "RESTORE_FAILED", message: "boom" } });
 		workspaceQueryMock.mockReturnValue({
 			data: [workspaceWithSessions([terminatedSession()])],
@@ -540,14 +546,14 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /terminated/i }));
+		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		expect(await screen.findByText("Unable to restore session")).toBeInTheDocument();
 		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
-	it("opens a terminated session from the card body without restoring it", async () => {
+	it("opens a terminated session from its archive row without restoring it", async () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [workspaceWithSessions([terminatedSession()])],
 			isError: false,
@@ -556,8 +562,8 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /terminated/i }));
-		await userEvent.click(screen.getByText("dead worker"));
+		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await userEvent.click(screen.getByRole("button", { name: "Open dead worker" }));
 
 		expect(postMock).not.toHaveBeenCalled();
 		expect(navigateMock).toHaveBeenCalledWith({
@@ -589,12 +595,14 @@ describe("SessionsBoard", () => {
 		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 		const view = renderBoardWithClient(queryClient, "p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /terminated/i }));
+		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		view.rerender(
 			<QueryClientProvider client={queryClient}>
-				<SessionsBoard projectId="p2" />
+				<TooltipProvider>
+					<SessionsBoard projectId="p2" />
+				</TooltipProvider>
 			</QueryClientProvider>,
 		);
 		await act(async () => {
@@ -628,12 +636,14 @@ describe("SessionsBoard", () => {
 		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 		const view = renderBoardWithClient(queryClient, "p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /terminated/i }));
+		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		view.rerender(
 			<QueryClientProvider client={queryClient}>
-				<SessionsBoard projectId="p2" />
+				<TooltipProvider>
+					<SessionsBoard projectId="p2" />
+				</TooltipProvider>
 			</QueryClientProvider>,
 		);
 		await act(async () => {
@@ -646,7 +656,7 @@ describe("SessionsBoard", () => {
 
 	it("shows a merged-only lane and opens its card without showing restore", async () => {
 		workspaceQueryMock.mockReturnValue({
-			data: [workspaceWithSessions([terminatedSession({ id: "s-merged", title: "merged worker", status: "merged" })])],
+			data: [workspaceWithSessions([boardSession({ id: "s-merged", title: "merged worker", status: "merged" })])],
 			isError: false,
 			isSuccess: true,
 		});
@@ -663,7 +673,7 @@ describe("SessionsBoard", () => {
 		expect(within(mergeLane).queryByRole("region", { name: "Ready to merge sessions" })).not.toBeInTheDocument();
 		expect(mergedRegion).toHaveClass("flex-1");
 		expect(within(mergedRegion).getByText("merged worker")).toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: /terminated/i })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /archive/i })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Restore merged worker" })).not.toBeInTheDocument();
 
 		await userEvent.click(screen.getByText("merged worker"));
@@ -698,15 +708,15 @@ describe("SessionsBoard", () => {
 		expect(mergedRegion).toHaveClass("flex-[2]", "rounded-t-(--radius-panel)", "border-t");
 		expect(within(readyRegion).getByText("ready worker")).toBeInTheDocument();
 		expect(within(mergedRegion).getByText("merged worker")).toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: /terminated/i })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /archive/i })).not.toBeInTheDocument();
 	});
 
-	it("uses distinct card surfaces for merged and terminated sessions", async () => {
+	it("archives a terminated merged runtime without duplicating it in the merged lane", async () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
 				workspaceWithSessions([
-					terminatedSession(),
-					terminatedSession({ id: "s-merged", title: "merged worker", status: "merged" }),
+					boardSession({ id: "s-live-merged", title: "live merged worker", status: "merged" }),
+					terminatedSession({ id: "s-archived-merged", title: "archived merged worker", status: "merged" }),
 				]),
 			],
 			isError: false,
@@ -714,14 +724,16 @@ describe("SessionsBoard", () => {
 		});
 
 		renderBoard("p1");
-		await userEvent.click(screen.getByRole("button", { name: /terminated/i }));
 
-		const terminatedCard = screen.getByText("dead worker").closest('[role="button"]')?.parentElement;
-		const mergedCard = screen.getByText("merged worker").closest('[role="button"]')?.parentElement;
-		expect(terminatedCard).toHaveClass("session-card-terminated");
-		expect(mergedCard).toHaveClass("border-border", "bg-surface");
-		expect(mergedCard).not.toHaveClass("border-status-merged/40");
-		expect(mergedCard).not.toHaveClass("session-card-merged");
+		const mergedRegion = screen.getByRole("region", { name: "Merged sessions" });
+		expect(within(mergedRegion).getByText("live merged worker")).toBeInTheDocument();
+		expect(within(mergedRegion).queryByText("archived merged worker")).not.toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		const archive = screen.getByRole("list", { name: "Archived sessions" });
+		const archivedMergedRow = within(archive).getByRole("button", { name: "Open archived merged worker" });
+		expect(within(archivedMergedRow).getByText("Merged").closest("span")).toHaveClass("text-status-merged");
+		expect(within(archive).getByRole("button", { name: "Restore archived merged worker" })).toBeInTheDocument();
 	});
 });
 
@@ -759,6 +771,7 @@ function terminatedSession(overrides: Partial<WorkspaceSession> = {}): Workspace
 		kind: "worker",
 		branch: "ao/dead-worker",
 		status: "terminated",
+		isTerminated: true,
 		updatedAt: "2026-01-01T00:00:00Z",
 		prs: [
 			{

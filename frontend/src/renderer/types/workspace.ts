@@ -128,6 +128,8 @@ export type WorkspaceSession = {
 	kind?: SessionKind;
 	branch: string;
 	status: SessionStatus;
+	/** Durable runtime fact from the daemon; independent of the derived SCM-aware status. */
+	isTerminated?: boolean;
 	/** ISO timestamp from the daemon — used for relative time in the inspector. */
 	createdAt?: string;
 	/** ISO timestamp from the daemon. */
