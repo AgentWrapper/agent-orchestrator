@@ -23,12 +23,13 @@ package vibe
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
@@ -237,7 +238,10 @@ func vibeAgentFlag(mode ports.PermissionMode, inlinePrompt, promptFile, model, d
 			return "", "", fmt.Errorf("vibe: write prompt: %w", err)
 		}
 	}
-	agentConfig := vibeAgentTOML(vibePromptAgentName, mode, trimmedModel, hasPrompt)
+	agentConfig, err := vibeAgentTOML(vibePromptAgentName, mode, trimmedModel, hasPrompt)
+	if err != nil {
+		return "", "", err
+	}
 	if err := hookutil.AtomicWriteFile(filepath.Join(agentsDir, vibePromptAgentName+".toml"), []byte(agentConfig), 0o600); err != nil {
 		return "", "", fmt.Errorf("vibe: write agent config: %w", err)
 	}
@@ -254,27 +258,60 @@ func vibeAgentRoot(promptFile, dataDir, sessionID string) (string, error) {
 	return filepath.Join(dataDir, "prompts", sessionID, "vibe"), nil
 }
 
-func vibeAgentTOML(agentName string, mode ports.PermissionMode, model string, hasPrompt bool) string {
+func vibeAgentTOML(agentName string, mode ports.PermissionMode, model string, hasPrompt bool) (string, error) {
 	var b strings.Builder
 	b.WriteString(`agent_type = "agent"` + "\n")
 	b.WriteString(`display_name = "AO Session"` + "\n")
 	b.WriteString(`description = "AO session standing instructions."` + "\n")
 	b.WriteString(`safety = "neutral"` + "\n")
 	if hasPrompt {
+		promptID, err := vibeTOMLBasicString(agentName)
+		if err != nil {
+			return "", fmt.Errorf("vibe: encode system prompt id: %w", err)
+		}
 		b.WriteString("system_prompt_id = ")
-		b.WriteString(strconv.Quote(agentName))
+		b.WriteString(promptID)
 		b.WriteString("\n")
 	}
 	if model != "" {
+		activeModel, err := vibeTOMLBasicString(model)
+		if err != nil {
+			return "", fmt.Errorf("vibe: encode active model: %w", err)
+		}
 		b.WriteString("active_model = ")
-		b.WriteString(strconv.Quote(model))
+		b.WriteString(activeModel)
 		b.WriteString("\n")
 	}
 	if ports.NormalizePermissionMode(mode) == ports.PermissionModeAcceptEdits {
 		b.WriteString("\n[tools.write_file]\npermission = \"always\"\n")
 		b.WriteString("\n[tools.search_replace]\npermission = \"always\"\n")
 	}
-	return b.String()
+	return b.String(), nil
+}
+
+// vibeTOMLBasicString serializes a Go string as a TOML basic string. Go's
+// strconv.Quote is not suitable here because it may emit Go-only escapes such
+// as \a, \v, and \xNN, which TOML parsers reject.
+func vibeTOMLBasicString(s string) (string, error) {
+	if !utf8.ValidString(s) {
+		return "", errors.New("invalid UTF-8")
+	}
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range s {
+		switch {
+		case r == '\\':
+			b.WriteString(`\\`)
+		case r == '"':
+			b.WriteString(`\"`)
+		case r < 0x20 || r == 0x7f:
+			fmt.Fprintf(&b, `\u%04X`, r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('"')
+	return b.String(), nil
 }
 
 var vibeBinarySpec = binaryutil.BinarySpec{

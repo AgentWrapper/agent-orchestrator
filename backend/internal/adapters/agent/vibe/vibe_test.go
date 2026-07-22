@@ -11,6 +11,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/pelletier/go-toml/v2"
 )
 
 func TestManifest(t *testing.T) {
@@ -232,6 +233,47 @@ func TestGetLaunchCommandBuildsCustomAgentForModelOnly(t *testing.T) {
 	}
 }
 
+func TestGetLaunchCommandWritesParseableModelTOML(t *testing.T) {
+	tests := []struct {
+		name  string
+		model string
+	}{
+		{name: "quotes and backslashes", model: `mistral "medium" \ latest`},
+		{name: "newline", model: "mistral\nmedium"},
+		{name: "control characters", model: "mistral\a\v\x1f\x7fmedium"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &Plugin{resolvedBinary: "vibe"}
+			dataDir := t.TempDir()
+			_, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+				Config:    ports.AgentConfig{Model: tt.model},
+				DataDir:   dataDir,
+				SessionID: "mer-1",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			path := filepath.Join(dataDir, "prompts", "mer-1", "vibe", ".vibe", "agents", "ao-system-prompt.toml")
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var config struct {
+				ActiveModel string `toml:"active_model"`
+			}
+			if err := toml.Unmarshal(data, &config); err != nil {
+				t.Fatalf("parse generated agent TOML: %v\n%s", err, data)
+			}
+			if config.ActiveModel != tt.model {
+				t.Fatalf("active_model = %q, want %q", config.ActiveModel, tt.model)
+			}
+		})
+	}
+}
+
 func TestGetLaunchCommandBuildsCustomAgentForSystemPromptAndModel(t *testing.T) {
 	p := &Plugin{resolvedBinary: "vibe"}
 	promptFile := filepath.Join(t.TempDir(), "system.md")
@@ -257,14 +299,18 @@ func TestGetLaunchCommandBuildsCustomAgentForSystemPromptAndModel(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := string(agentData)
-	for _, wantText := range []string{
-		`system_prompt_id = "ao-system-prompt"`,
-		`active_model = "mistral \"medium\" \\ latest"`,
-	} {
-		if !strings.Contains(body, wantText) {
-			t.Fatalf("agent config missing %q:\n%s", wantText, body)
-		}
+	var config struct {
+		SystemPromptID string `toml:"system_prompt_id"`
+		ActiveModel    string `toml:"active_model"`
+	}
+	if err := toml.Unmarshal(agentData, &config); err != nil {
+		t.Fatalf("parse generated agent TOML: %v\n%s", err, agentData)
+	}
+	if config.SystemPromptID != "ao-system-prompt" {
+		t.Fatalf("system_prompt_id = %q, want ao-system-prompt", config.SystemPromptID)
+	}
+	if config.ActiveModel != `mistral "medium" \ latest` {
+		t.Fatalf("active_model = %q, want quoted model to round-trip", config.ActiveModel)
 	}
 }
 
