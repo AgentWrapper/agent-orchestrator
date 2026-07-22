@@ -76,6 +76,18 @@ const (
 	// does not block the observer's polling goroutine indefinitely (review
 	// finding #4). Matches the observer's DefaultTickInterval.
 	defaultHTTPTimeout = 30 * time.Second
+	// jobLogTailMaxBytes bounds how much of a job trace body doGETRaw retains.
+	// Job traces (CI logs) can be very large, but callers only keep the last
+	// ciFailureLogTailLines lines — streaming through a fixed-size rolling tail
+	// means one pathological trace cannot create unbounded memory pressure
+	// (review Item 12). 64 KB gives ~6-30x headroom over 20 typical CI log
+	// lines (2-10 KB). Matches the existing tail-lines-constant pattern; no
+	// env surface (the bound rarely needs tuning).
+	jobLogTailMaxBytes = 65536
+	// errorBodyMaxBytes caps how much of an error response body (status >= 400)
+	// is read before classification. Error payloads are only used to extract a
+	// short message; a multi-MB HTML error page must not be buffered in full.
+	errorBodyMaxBytes = 4096
 )
 
 // RESTResponse is the normalised result of a GitLab REST call.
@@ -213,6 +225,15 @@ func (c *Client) doGET(ctx context.Context, path string, q url.Values) (RESTResp
 }
 
 // doGETRaw performs a GET and returns the raw body bytes (e.g. job trace).
+//
+// The response body is streamed through a fixed-size rolling tail of
+// jobLogTailMaxBytes (64 KB) so one pathological trace cannot create
+// unbounded memory pressure (review Item 12). Callers that retain only the
+// last N lines (see FetchFailedCheckLogTail) operate on this bounded buffer
+// afterward — graceful degradation: if the last 20 lines exceed 64 KB (very
+// long lines), the tail contains fewer than 20 lines (whatever fits). Error
+// response bodies (status >= 400) are capped at errorBodyMaxBytes before
+// classification, since only the short message is needed.
 func (c *Client) doGETRaw(ctx context.Context, path string, q url.Values) ([]byte, error) {
 	u := c.restURL(path, q)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, http.NoBody)
@@ -228,11 +249,44 @@ func (c *Client) doGETRaw(ctx context.Context, path string, q url.Values) ([]byt
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
+		// Error bodies are only used to extract a short message for
+		// classification; cap the read so a multi-MB HTML error page does not
+		// get buffered in full.
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, errorBodyMaxBytes))
 		return nil, classifyError(resp, body)
 	}
-	return body, nil
+	return readTail(resp.Body, jobLogTailMaxBytes)
+}
+
+// readTail reads from r and returns the last at-most-maxBytes bytes as a
+// rolling tail. For bodies smaller than maxBytes the entire body is returned
+// unchanged; for larger bodies only the final maxBytes are retained, so the
+// caller (e.g. tailLines) operates on a bounded buffer regardless of input
+// size. The read is streaming — the prefix is discarded as it arrives, so peak
+// memory is maxBytes + a scratch buffer, not the full body length.
+func readTail(r io.Reader, maxBytes int) ([]byte, error) {
+	if maxBytes <= 0 {
+		return nil, nil
+	}
+	buf := make([]byte, 0, maxBytes)
+	chunk := make([]byte, 32*1024)
+	for {
+		n, err := r.Read(chunk)
+		if n > 0 {
+			buf = append(buf, chunk[:n]...)
+			// Trim the head down to the last maxBytes so peak memory stays bounded.
+			if len(buf) > maxBytes {
+				buf = append(buf[:0:0], buf[len(buf)-maxBytes:]...)
+			}
+		}
+		if err == io.EOF {
+			return buf, nil
+		}
+		if err != nil {
+			return buf, err
+		}
+	}
 }
 
 // doGETPaginated performs a GET and follows GitLab's Link: <...>; rel="next"
