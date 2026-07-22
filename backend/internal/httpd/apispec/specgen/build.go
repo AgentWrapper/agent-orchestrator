@@ -143,8 +143,6 @@ var schemaNames = map[string]string{
 	// httpd/controllers (wire envelopes)
 	"ControllersListProjectsResponse":             "ListProjectsResponse",
 	"ControllersProjectResponse":                  "ProjectResponse",
-	"ControllersRenameProjectRequest":             "RenameProjectRequest",
-	"ControllersRenameProjectResponse":            "RenameProjectResponse",
 	"ControllersAgentIDParam":                     "AgentIDParam",
 	"ControllersGetProjectResponse":               "ProjectGetResponse",
 	"ControllersProjectOrDegraded":                "ProjectOrDegraded",
@@ -238,6 +236,7 @@ var schemaNames = map[string]string{
 	"ProjectInitializeRepositoryResult": "InitializeRepositoryResult",
 	"ProjectRemoveResult":               "RemoveProjectResult",
 	"ProjectSetConfigInput":             "SetProjectConfigInput",
+	"ProjectUpdateSettingsInput":        "UpdateProjectSettingsInput",
 	"ProjectWorkspaceRepo":              "WorkspaceRepo",
 	"SessionWorkspaceFileStatus":        "WorkspaceFileStatus",
 }
@@ -646,12 +645,12 @@ func projectOperations() []operation {
 			},
 		},
 		{
-			method: http.MethodPatch, path: "/api/v1/projects/{id}", id: "renameProject", tag: "projects",
-			summary:    "Rename a project's user-facing display name",
+			method: http.MethodPut, path: "/api/v1/projects/{id}", id: "updateProjectSettings", tag: "projects",
+			summary:    "Atomically replace a project's display name and config",
 			pathParams: []any{controllers.ProjectIDParam{}},
-			reqBody:    controllers.RenameProjectRequest{},
+			reqBody:    projectsvc.UpdateSettingsInput{},
 			resps: []respUnit{
-				{http.StatusOK, controllers.RenameProjectResponse{}},
+				{http.StatusOK, controllers.ProjectResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},

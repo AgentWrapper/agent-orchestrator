@@ -709,8 +709,8 @@ paths:
       summary: Fetch one project; discriminates ok vs degraded
       tags:
       - projects
-    patch:
-      operationId: renameProject
+    put:
+      operationId: updateProjectSettings
       parameters:
       - description: Project identifier (registry key).
         in: path
@@ -723,14 +723,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/RenameProjectRequest'
+              $ref: '#/components/schemas/UpdateProjectSettingsInput'
         required: true
       responses:
         "200":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RenameProjectResponse'
+                $ref: '#/components/schemas/ProjectResponse'
           description: OK
         "400":
           content:
@@ -750,7 +750,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Internal Server Error
-      summary: Rename a project's user-facing display name
+      summary: Atomically replace a project's display name and config
       tags:
       - projects
   /api/v1/projects/{id}/config:
@@ -2733,21 +2733,6 @@ components:
       - projectId
       - removedStorageDir
       type: object
-    RenameProjectRequest:
-      properties:
-        displayName:
-          minLength: 1
-          type: string
-      required:
-      - displayName
-      type: object
-    RenameProjectResponse:
-      properties:
-        project:
-          $ref: '#/components/schemas/Project'
-      required:
-      - project
-      type: object
     RenameSessionRequest:
       properties:
         displayName:
@@ -3351,6 +3336,16 @@ components:
       required:
       - token
       - deleted
+      type: object
+    UpdateProjectSettingsInput:
+      properties:
+        config:
+          $ref: '#/components/schemas/ProjectConfig'
+        displayName:
+          type: string
+      required:
+      - displayName
+      - config
       type: object
     WorkspaceFileResponse:
       properties:

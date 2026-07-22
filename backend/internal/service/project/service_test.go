@@ -397,7 +397,7 @@ func TestManager_AddPrefersOriginHeadNonMain(t *testing.T) {
 	}
 }
 
-func TestManager_SetConfig(t *testing.T) {
+func TestManager_UpdateSettings(t *testing.T) {
 	ctx := context.Background()
 	m := newManager(t)
 	repo := gitRepo(t)
@@ -413,71 +413,49 @@ func TestManager_SetConfig(t *testing.T) {
 		OrchestratorRules: "Delegate implementation.",
 		AgentConfig:       domain.AgentConfig{Model: "claude-opus-4-5"},
 	}
-	proj, err := m.SetConfig(ctx, "ao", project.SetConfigInput{Config: cfg})
+	proj, err := m.UpdateSettings(ctx, "ao", project.UpdateSettingsInput{
+		DisplayName: "  AO Project  ",
+		Config:      cfg,
+	})
 	if err != nil {
-		t.Fatalf("SetConfig: %v", err)
+		t.Fatalf("UpdateSettings: %v", err)
 	}
-	if proj.Config == nil || proj.Config.AgentConfig.Model != "claude-opus-4-5" {
-		t.Fatalf("returned config = %#v", proj.Config)
+	if proj.Name != "AO Project" || proj.Config == nil || proj.Config.AgentConfig.Model != "claude-opus-4-5" {
+		t.Fatalf("returned project = %#v", proj)
 	}
 	if proj.DefaultBranch != "develop" {
 		t.Fatalf("DefaultBranch = %q, want develop", proj.DefaultBranch)
 	}
 
-	// The config persists and shows up on a fresh Get.
+	// Both values persist and show up together on a fresh Get.
 	got, err := m.Get(ctx, "ao")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.Project == nil || got.Project.Config == nil || got.Project.Config.Env["FOO"] != "bar" {
-		t.Fatalf("Get config = %#v", got.Project)
+	if got.Project == nil || got.Project.Name != "AO Project" || got.Project.Config == nil || got.Project.Config.Env["FOO"] != "bar" {
+		t.Fatalf("Get project = %#v", got.Project)
 	}
 	if got.Project.Config.AgentRules != "Run focused tests." || got.Project.Config.OrchestratorRules != "Delegate implementation." {
 		t.Fatalf("Get rules config = %#v", got.Project.Config)
 	}
 
-	// An invalid permission value is rejected when set.
-	_, err = m.SetConfig(ctx, "ao", project.SetConfigInput{Config: domain.ProjectConfig{AgentConfig: domain.AgentConfig{Permissions: "yolo"}}})
+	// Invalid fields are rejected before either value is persisted.
+	_, err = m.UpdateSettings(ctx, "ao", project.UpdateSettingsInput{
+		DisplayName: "Should Not Persist",
+		Config:      domain.ProjectConfig{AgentConfig: domain.AgentConfig{Permissions: "yolo"}},
+	})
 	wantCode(t, err, "INVALID_PROJECT_CONFIG")
-
-	// An unknown role-override harness is rejected too.
-	_, err = m.SetConfig(ctx, "ao", project.SetConfigInput{Config: domain.ProjectConfig{Worker: domain.RoleOverride{Harness: "nope"}}})
-	wantCode(t, err, "INVALID_PROJECT_CONFIG")
-
-	// Setting on an unknown project is a clean not-found.
-	_, err = m.SetConfig(ctx, "ghost", project.SetConfigInput{Config: cfg})
-	wantCode(t, err, "PROJECT_NOT_FOUND")
-}
-
-func TestManager_Rename(t *testing.T) {
-	ctx := context.Background()
-	m := newManager(t)
-	repo := gitRepo(t)
-
-	if _, err := m.Add(ctx, project.AddInput{Path: repo, ProjectID: ptr("legacy-project")}); err != nil {
-		t.Fatalf("Add: %v", err)
-	}
-
-	renamed, err := m.Rename(ctx, "legacy-project", "  Human-friendly project  ")
+	got, err = m.Get(ctx, "ao")
 	if err != nil {
-		t.Fatalf("Rename: %v", err)
+		t.Fatalf("Get after rejected update: %v", err)
 	}
-	if renamed.ID != "legacy-project" || renamed.Name != "Human-friendly project" {
-		t.Fatalf("renamed project = %#v", renamed)
+	if got.Project == nil || got.Project.Name != "AO Project" || got.Project.Config == nil || got.Project.Config.AgentConfig.Model != "claude-opus-4-5" {
+		t.Fatalf("project changed after rejected update = %#v", got.Project)
 	}
-
-	got, err := m.Get(ctx, "legacy-project")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if got.Project == nil || got.Project.ID != "legacy-project" || got.Project.Name != "Human-friendly project" {
-		t.Fatalf("persisted project = %#v", got.Project)
-	}
-
-	_, err = m.Rename(ctx, "legacy-project", "  ")
+	_, err = m.UpdateSettings(ctx, "ao", project.UpdateSettingsInput{DisplayName: "  ", Config: cfg})
 	wantCode(t, err, "DISPLAY_NAME_REQUIRED")
 
-	_, err = m.Rename(ctx, "missing", "Missing")
+	_, err = m.UpdateSettings(ctx, "missing", project.UpdateSettingsInput{DisplayName: "Missing", Config: cfg})
 	wantCode(t, err, "PROJECT_NOT_FOUND")
 }
 

@@ -172,13 +172,14 @@ func (f *fakeProjectManager) InitializeRepository(_ context.Context, in projects
 	return projectsvc.InitializeRepositoryResult(in), nil
 }
 
+func (f *fakeProjectManager) UpdateSettings(_ context.Context, id domain.ProjectID, in projectsvc.UpdateSettingsInput) (projectsvc.Project, error) {
+	cfg := in.Config
+	return projectsvc.Project{ID: id, Name: in.DisplayName, Config: &cfg}, nil
+}
+
 func (f *fakeProjectManager) SetConfig(_ context.Context, id domain.ProjectID, in projectsvc.SetConfigInput) (projectsvc.Project, error) {
 	cfg := in.Config
 	return projectsvc.Project{ID: id, Config: &cfg}, nil
-}
-
-func (f *fakeProjectManager) Rename(_ context.Context, id domain.ProjectID, displayName string) (projectsvc.Project, error) {
-	return projectsvc.Project{ID: id, Name: displayName}, nil
 }
 
 func (f *fakeProjectManager) Remove(context.Context, domain.ProjectID) (projectsvc.RemoveResult, error) {

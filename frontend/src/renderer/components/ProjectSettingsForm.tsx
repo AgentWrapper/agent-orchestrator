@@ -140,18 +140,11 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				reviewers: form.reviewerHarness ? [{ harness: form.reviewerHarness }] : undefined,
 				trackerIntake: buildIntake(intakeForm),
 			};
-			const { error } = await apiClient.PUT("/api/v1/projects/{id}/config", {
+			const { error } = await apiClient.PUT("/api/v1/projects/{id}", {
 				params: { path: { id: projectId } },
-				body: { config: next },
+				body: { displayName, config: next },
 			});
 			if (error) throw new Error(apiErrorMessage(error));
-			if (displayName !== project.name) {
-				const { error } = await apiClient.PATCH("/api/v1/projects/{id}", {
-					params: { path: { id: projectId } },
-					body: { displayName },
-				});
-				if (error) throw new Error(apiErrorMessage(error));
-			}
 			if (
 				form.orchestratorAgent !== initialOrchestratorAgent ||
 				(activeOrchestrator && activeOrchestrator.provider !== form.orchestratorAgent)
@@ -188,6 +181,10 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				setReplacementError(null);
 				if (missingRequiredAgent) {
 					setValidationError("Worker and orchestrator agents are required.");
+					return;
+				}
+				if (form.displayName.trim() === "") {
+					setValidationError("Project name is required.");
 					return;
 				}
 				if (intakeIncomplete) {

@@ -3,9 +3,8 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getMock, patchMock, putMock, postMock } = vi.hoisted(() => ({
+const { getMock, putMock, postMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
-	patchMock: vi.fn(),
 	putMock: vi.fn(),
 	postMock: vi.fn(),
 }));
@@ -13,7 +12,6 @@ const { getMock, patchMock, putMock, postMock } = vi.hoisted(() => ({
 vi.mock("../lib/api-client", () => ({
 	apiClient: {
 		GET: getMock,
-		PATCH: patchMock,
 		PUT: putMock,
 		POST: postMock,
 	},
@@ -94,10 +92,8 @@ function mockProject(project: Record<string, unknown>) {
 
 beforeEach(() => {
 	getMock.mockReset();
-	patchMock.mockReset();
 	putMock.mockReset();
 	postMock.mockReset();
-	patchMock.mockResolvedValue({ data: { project: {} }, error: undefined });
 	putMock.mockResolvedValue({ data: { project: {} }, error: undefined });
 	postMock.mockResolvedValue({
 		data: { orchestrator: { id: "proj-1-orch-2" } },
@@ -107,7 +103,7 @@ beforeEach(() => {
 });
 
 describe("ProjectSettingsForm", () => {
-	it("renames the project display name without changing its stable ID", async () => {
+	it("atomically saves the project display name and config without changing its stable ID", async () => {
 		mockProject({
 			id: "tg_content_factory_5863f66be3",
 			name: "tg_content_factory_5863f66be3",
@@ -129,11 +125,9 @@ describe("ProjectSettingsForm", () => {
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
-		await waitFor(() => expect(patchMock).toHaveBeenCalledTimes(1));
-		expect(putMock.mock.invocationCallOrder[0]).toBeLessThan(patchMock.mock.invocationCallOrder[0] ?? Infinity);
-		expect(patchMock).toHaveBeenCalledWith("/api/v1/projects/{id}", {
+		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}", {
 			params: { path: { id: "tg_content_factory_5863f66be3" } },
-			body: { displayName: "TG Content Factory" },
+			body: expect.objectContaining({ displayName: "TG Content Factory" }),
 		});
 		expect(screen.getByText("tg_content_factory_5863f66be3")).toBeInTheDocument();
 	});
@@ -194,9 +188,10 @@ describe("ProjectSettingsForm", () => {
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
-		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}/config", {
+		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}", {
 			params: { path: { id: "proj-1" } },
 			body: {
+				displayName: "Project One",
 				config: {
 					defaultBranch: "release",
 					sessionPrefix: "rel",
@@ -223,7 +218,7 @@ describe("ProjectSettingsForm", () => {
 		expect(await screen.findByText("Saved.")).toBeInTheDocument();
 	}, 20_000);
 
-	it("shows the daemon validation message when save fails", async () => {
+	it("shows the daemon validation message when the atomic settings save fails", async () => {
 		mockProject({
 			id: "proj-1",
 			name: "Project One",
@@ -250,8 +245,31 @@ describe("ProjectSettingsForm", () => {
 
 		expect(await screen.findByText("invalid permissions")).toBeInTheDocument();
 		expect(screen.queryByText("Saved.")).not.toBeInTheDocument();
-		expect(patchMock).not.toHaveBeenCalled();
 		expect(postMock).not.toHaveBeenCalled();
+	});
+
+	it("rejects a blank project name before sending the settings update", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings();
+
+		const projectName = await screen.findByLabelText("Project name");
+		await userEvent.clear(projectName);
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		expect(await screen.findByText("Project name is required.")).toBeInTheDocument();
+		expect(putMock).not.toHaveBeenCalled();
 	});
 
 	it("requires worker and orchestrator agents for existing projects missing role config", async () => {

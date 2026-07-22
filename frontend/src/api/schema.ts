@@ -305,14 +305,14 @@ export interface paths {
         };
         /** Fetch one project; discriminates ok vs degraded */
         get: operations["getProject"];
-        put?: never;
+        /** Atomically replace a project's display name and config */
+        put: operations["updateProjectSettings"];
         post?: never;
         /** Remove a project; stops sessions, cleans workspaces, unregisters */
         delete: operations["removeProject"];
         options?: never;
         head?: never;
-        /** Rename a project's user-facing display name */
-        patch: operations["renameProject"];
+        patch?: never;
         trace?: never;
     };
     "/api/v1/projects/{id}/config": {
@@ -1036,12 +1036,6 @@ export interface components {
             projectId: string;
             removedStorageDir: boolean;
         };
-        RenameProjectRequest: {
-            displayName: string;
-        };
-        RenameProjectResponse: {
-            project: components["schemas"]["Project"];
-        };
         RenameSessionRequest: {
             displayName: string;
         };
@@ -1275,6 +1269,10 @@ export interface components {
         UnregisterPushDeviceResponse: {
             deleted: boolean;
             token: string;
+        };
+        UpdateProjectSettingsInput: {
+            config: components["schemas"]["ProjectConfig"];
+            displayName: string;
         };
         WorkspaceFileResponse: {
             additions: number;
@@ -2225,7 +2223,7 @@ export interface operations {
             };
         };
     };
-    removeProject: {
+    updateProjectSettings: {
         parameters: {
             query?: never;
             header?: never;
@@ -2235,7 +2233,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateProjectSettingsInput"];
+            };
+        };
         responses: {
             /** @description OK */
             200: {
@@ -2243,7 +2245,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RemoveProjectResult"];
+                    "application/json": components["schemas"]["ProjectResponse"];
                 };
             };
             /** @description Bad Request */
@@ -2275,7 +2277,7 @@ export interface operations {
             };
         };
     };
-    renameProject: {
+    removeProject: {
         parameters: {
             query?: never;
             header?: never;
@@ -2285,11 +2287,7 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RenameProjectRequest"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description OK */
             200: {
@@ -2297,7 +2295,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RenameProjectResponse"];
+                    "application/json": components["schemas"]["RemoveProjectResult"];
                 };
             };
             /** @description Bad Request */

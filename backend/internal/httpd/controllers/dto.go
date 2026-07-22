@@ -43,16 +43,6 @@ type ProjectResponse struct {
 	Project projectsvc.Project `json:"project"`
 }
 
-// RenameProjectRequest is the body of PATCH /api/v1/projects/{id}.
-type RenameProjectRequest struct {
-	DisplayName string `json:"displayName" minLength:"1"`
-}
-
-// RenameProjectResponse is the body of PATCH /api/v1/projects/{id}.
-type RenameProjectResponse struct {
-	Project projectsvc.Project `json:"project"`
-}
-
 // GetProjectResponse is the { status, project } body of GET /projects/{id},
 // where project is oneOf Project|Degraded discriminated by status.
 type GetProjectResponse struct {

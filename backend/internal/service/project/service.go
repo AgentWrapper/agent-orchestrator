@@ -34,13 +34,13 @@ type Manager interface {
 	// InitializeRepository prepares a selected folder for project registration.
 	InitializeRepository(ctx context.Context, in InitializeRepositoryInput) (InitializeRepositoryResult, error)
 
+	// UpdateSettings atomically replaces a project's user-facing display name
+	// and per-project config, returning the updated read-model.
+	UpdateSettings(ctx context.Context, id domain.ProjectID, in UpdateSettingsInput) (Project, error)
+
 	// SetConfig replaces a project's per-project config, returning the updated
 	// read-model.
 	SetConfig(ctx context.Context, id domain.ProjectID, in SetConfigInput) (Project, error)
-
-	// Rename updates a project's user-facing display name without changing its
-	// stable project ID.
-	Rename(ctx context.Context, id domain.ProjectID, displayName string) (Project, error)
 
 	// Remove unregisters a project, stopping its sessions and reclaiming
 	// managed workspaces.
@@ -514,6 +514,36 @@ func (m *Service) emitProjectAdded(row domain.ProjectRecord, firstProject bool) 
 	})
 }
 
+// UpdateSettings atomically replaces the project's stored display name and
+// config. Both values are validated before a single database update.
+func (m *Service) UpdateSettings(ctx context.Context, id domain.ProjectID, in UpdateSettingsInput) (Project, error) {
+	if err := validateProjectID(id); err != nil {
+		return Project{}, err
+	}
+	displayName := strings.TrimSpace(in.DisplayName)
+	if displayName == "" {
+		return Project{}, apierr.Invalid("DISPLAY_NAME_REQUIRED", "Display name is required", nil)
+	}
+	if err := in.Config.Validate(); err != nil {
+		return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+	}
+	updated, err := m.store.UpdateProjectSettings(ctx, string(id), displayName, in.Config)
+	if err != nil {
+		return Project{}, apierr.Internal("PROJECT_SETTINGS_UPDATE_FAILED", "Failed to update project settings")
+	}
+	if !updated {
+		return Project{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
+	}
+	row, ok, err := m.store.GetProject(ctx, string(id))
+	if err != nil {
+		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
+	}
+	if !ok || !row.ArchivedAt.IsZero() {
+		return Project{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
+	}
+	return m.projectFromRow(row), nil
+}
+
 // SetConfig replaces the project's stored config. The typed config is validated
 // here so a bad value is rejected when set rather than surfacing at spawn.
 func (m *Service) SetConfig(ctx context.Context, id domain.ProjectID, in SetConfigInput) (Project, error) {
@@ -533,33 +563,6 @@ func (m *Service) SetConfig(ctx context.Context, id domain.ProjectID, in SetConf
 	row.Config = in.Config
 	if err := m.store.UpsertProject(ctx, row); err != nil {
 		return Project{}, apierr.Internal("PROJECT_CONFIG_UPDATE_FAILED", "Failed to update project config")
-	}
-	return m.projectFromRow(row), nil
-}
-
-// Rename updates a project's user-facing display name without changing its
-// stable project ID, storage paths, or branch naming.
-func (m *Service) Rename(ctx context.Context, id domain.ProjectID, displayName string) (Project, error) {
-	if err := validateProjectID(id); err != nil {
-		return Project{}, err
-	}
-	displayName = strings.TrimSpace(displayName)
-	if displayName == "" {
-		return Project{}, apierr.Invalid("DISPLAY_NAME_REQUIRED", "Display name is required", nil)
-	}
-	renamed, err := m.store.RenameProject(ctx, string(id), displayName)
-	if err != nil {
-		return Project{}, apierr.Internal("PROJECT_RENAME_FAILED", "Failed to rename project")
-	}
-	if !renamed {
-		return Project{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
-	}
-	row, ok, err := m.store.GetProject(ctx, string(id))
-	if err != nil {
-		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
-	}
-	if !ok || !row.ArchivedAt.IsZero() {
-		return Project{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
 	}
 	return m.projectFromRow(row), nil
 }
