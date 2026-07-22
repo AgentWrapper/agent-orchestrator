@@ -320,15 +320,19 @@ describe("reserveCapture", () => {
 });
 
 describe("daily active heartbeat", () => {
-	it("reserves one active capture per UTC date", () => {
+	it("reserves one active capture per six-hour UTC slot", () => {
 		const storage = memoryStorage();
 
-		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T23:59:00.000Z"))).toBe(true);
+		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T00:05:00.000Z"))).toBe(true);
+		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T05:59:59.000Z"))).toBe(false);
+		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T06:00:00.000Z"))).toBe(true);
+		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T12:00:00.000Z"))).toBe(true);
+		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T18:00:00.000Z"))).toBe(true);
 		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T23:59:59.000Z"))).toBe(false);
 		expect(reserveDailyActiveCapture(storage, new Date("2026-07-13T00:00:00.000Z"))).toBe(true);
 	});
 
-	it("emits at startup and then only after a later UTC date is observed on user activity", () => {
+	it("emits at startup and then only after a later UTC slot is observed on user activity", () => {
 		const storage = memoryStorage();
 		const captured: string[] = [];
 		let now = new Date("2026-07-12T08:00:00.000Z");
@@ -347,9 +351,9 @@ describe("daily active heartbeat", () => {
 			document.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
 			expect(captured).toHaveLength(1);
 
-			now = new Date("2026-07-13T09:00:00.000Z");
+			now = new Date("2026-07-12T12:00:00.000Z");
 			window.dispatchEvent(new Event("focus"));
-			expect(captured).toEqual(["2026-07-12T08:00:00.000Z", "2026-07-13T09:00:00.000Z"]);
+			expect(captured).toEqual(["2026-07-12T08:00:00.000Z", "2026-07-12T12:00:00.000Z"]);
 		} finally {
 			stop();
 		}
