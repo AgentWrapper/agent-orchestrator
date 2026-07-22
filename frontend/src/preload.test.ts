@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL } from "./shared/shortcuts";
+// prettier-ignore
+import { FOCUS_TERMINAL_SHORTCUT_CHANNEL, KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEXT_SESSION_SHORTCUT_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL, OPEN_SETTINGS_SHORTCUT_CHANNEL, PREVIOUS_SESSION_SHORTCUT_CHANNEL } from "./shared/shortcuts";
 import type { AoBridge } from "./preload";
 
 const electronMocks = vi.hoisted(() => {
@@ -67,5 +68,27 @@ describe("preload keyboard-shortcuts help bridge", () => {
 
 		dispose();
 		expect(electronMocks.off).toHaveBeenCalledWith(KEYBOARD_SHORTCUTS_HELP_CHANNEL, wrapped);
+	});
+});
+
+describe("preload application shortcut bridges", () => {
+	it.each([
+		[OPEN_SETTINGS_SHORTCUT_CHANNEL, (listener: () => void) => exposedBridge().app.onOpenSettingsShortcut(listener)],
+		[
+			PREVIOUS_SESSION_SHORTCUT_CHANNEL,
+			(listener: () => void) => exposedBridge().app.onPreviousSessionShortcut(listener),
+		],
+		[NEXT_SESSION_SHORTCUT_CHANNEL, (listener: () => void) => exposedBridge().app.onNextSessionShortcut(listener)],
+		[FOCUS_TERMINAL_SHORTCUT_CHANNEL, (listener: () => void) => exposedBridge().app.onFocusTerminalShortcut(listener)],
+	] as const)("delivers and disposes %s", (channel, subscribe) => {
+		const listener = vi.fn();
+		const dispose = subscribe(listener);
+		const wrapped = electronMocks.listeners.get(channel);
+
+		wrapped?.({});
+		expect(listener).toHaveBeenCalledTimes(1);
+
+		dispose();
+		expect(electronMocks.off).toHaveBeenCalledWith(channel, wrapped);
 	});
 });

@@ -37,12 +37,7 @@ export function KeyboardShortcutsDialog({ open, onOpenChange, isMac = isMacPlatf
 								<div className="flex flex-col">
 									{shortcuts.map((shortcut) => (
 										<div className="flex min-h-11 items-center justify-between gap-5 py-1.5" key={shortcut.id}>
-											<div className="min-w-0">
-												<p className="text-control font-medium text-foreground">{shortcut.label}</p>
-												{shortcut.context ? (
-													<p className="mt-0.5 text-caption text-passive">{shortcut.context}</p>
-												) : null}
-											</div>
+											<p className="min-w-0 text-control font-medium text-foreground">{shortcut.label}</p>
 											<div
 												className="flex shrink-0 items-center gap-1"
 												aria-label={shortcutKeys(shortcut, isMac).join("+")}

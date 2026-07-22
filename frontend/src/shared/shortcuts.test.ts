@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
 	APP_SHORTCUTS,
+	matchesFocusTerminalShortcut,
 	matchesKeyboardShortcutsHelpShortcut,
+	matchesNextSessionShortcut,
 	matchesNewSessionShortcut,
 	matchesNewShellTerminalShortcut,
+	matchesOpenSettingsShortcut,
+	matchesPreviousSessionShortcut,
 	shortcutKeys,
 	type ShortcutChord,
 } from "./shortcuts";
@@ -95,6 +99,28 @@ describe("matchesKeyboardShortcutsHelpShortcut", () => {
 		expect(matchesKeyboardShortcutsHelpShortcut(chord({ key: "/", ctrl: true }), true)).toBe(false);
 		expect(matchesKeyboardShortcutsHelpShortcut(chord({ key: "/", ctrl: true, shift: true }), false)).toBe(false);
 		expect(matchesKeyboardShortcutsHelpShortcut(chord({ key: "?", ctrl: true }), false)).toBe(false);
+	});
+});
+
+describe("additional application shortcuts", () => {
+	it("matches settings on each platform and rejects extra modifiers", () => {
+		expect(matchesOpenSettingsShortcut(chord({ key: ",", meta: true }), true)).toBe(true);
+		expect(matchesOpenSettingsShortcut(chord({ key: ",", ctrl: true }), false)).toBe(true);
+		expect(matchesOpenSettingsShortcut(chord({ key: ",", ctrl: true, shift: true }), false)).toBe(false);
+	});
+
+	it("matches previous and next session on each platform", () => {
+		expect(matchesPreviousSessionShortcut(chord({ key: "ArrowUp", meta: true, alt: true }), true)).toBe(true);
+		expect(matchesPreviousSessionShortcut(chord({ key: "Up", ctrl: true, alt: true }), false)).toBe(true);
+		expect(matchesNextSessionShortcut(chord({ key: "ArrowDown", meta: true, alt: true }), true)).toBe(true);
+		expect(matchesNextSessionShortcut(chord({ key: "Down", ctrl: true, alt: true }), false)).toBe(true);
+		expect(matchesNextSessionShortcut(chord({ key: "Down", ctrl: true }), false)).toBe(false);
+	});
+
+	it("matches focus terminal on each platform and rejects extra modifiers", () => {
+		expect(matchesFocusTerminalShortcut(chord({ key: "T", meta: true, shift: true }), true)).toBe(true);
+		expect(matchesFocusTerminalShortcut(chord({ key: "t", ctrl: true, shift: true }), false)).toBe(true);
+		expect(matchesFocusTerminalShortcut(chord({ key: "t", ctrl: true, shift: true, alt: true }), false)).toBe(false);
 	});
 });
 
