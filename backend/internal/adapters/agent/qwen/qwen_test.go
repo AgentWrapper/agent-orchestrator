@@ -224,6 +224,59 @@ func TestGetLaunchCommandWorkerRequiresDataDirForRemoteInput(t *testing.T) {
 	}
 }
 
+func TestGetLaunchCommandAppendsConfiguredModel(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "qwen"}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config:      domain.AgentConfig{Model: "qwen-plus"},
+		Permissions: ports.PermissionModeBypassPermissions,
+		Prompt:      "fix it",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsSubsequence(cmd, []string{"--model", "qwen-plus"}) {
+		t.Fatalf("command %#v missing --model qwen-plus", cmd)
+	}
+}
+
+func TestGetLaunchCommandOmitsBlankConfiguredModel(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "qwen"}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config:      domain.AgentConfig{Model: "  "},
+		Permissions: ports.PermissionModeBypassPermissions,
+		Prompt:      "fix it",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contains(cmd, "--model") {
+		t.Fatalf("command %#v contains unexpected --model flag", cmd)
+	}
+}
+
+func TestGetRestoreCommandAppendsConfiguredModel(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "qwen"}
+
+	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Config:      domain.AgentConfig{Model: "qwen-max"},
+		Permissions: ports.PermissionModeAuto,
+		Session: ports.SessionRef{
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "sess-123"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	if !containsSubsequence(cmd, []string{"--model", "qwen-max"}) {
+		t.Fatalf("command %#v missing --model qwen-max", cmd)
+	}
+}
+
 func TestGetPromptDeliveryStrategy(t *testing.T) {
 	plugin := &Plugin{}
 
@@ -244,15 +297,22 @@ func TestGetPromptDeliveryStrategy(t *testing.T) {
 	}
 }
 
-func TestGetConfigSpecHasNoCustomFieldsYet(t *testing.T) {
+func TestGetConfigSpecReportsModelField(t *testing.T) {
 	plugin := &Plugin{}
 
 	spec, err := plugin.GetConfigSpec(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(spec.Fields) != 0 {
-		t.Fatalf("unexpected config fields: %#v", spec.Fields)
+	if len(spec.Fields) != 1 {
+		t.Fatalf("want 1 config field, got %d: %#v", len(spec.Fields), spec.Fields)
+	}
+	f := spec.Fields[0]
+	if f.Key != "model" {
+		t.Fatalf("field key = %q, want %q", f.Key, "model")
+	}
+	if f.Type != ports.ConfigFieldString {
+		t.Fatalf("field type = %q, want %q", f.Type, ports.ConfigFieldString)
 	}
 }
 
