@@ -243,7 +243,9 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	const hadAttachmentRef = useRef(false);
 	// A standalone shell is never restorable: there is no session row to restore.
 	const canRestoreSession =
-		terminalTarget?.kind !== "reviewer" && terminalTarget?.kind !== "shell" && session?.status === "terminated";
+		terminalTarget?.kind !== "reviewer" &&
+		terminalTarget?.kind !== "shell" &&
+		(session?.status === "terminated" || session?.status === "merged");
 
 	const handleReady = useCallback((handle: AttachableTerminal) => {
 		setTerminal(handle);

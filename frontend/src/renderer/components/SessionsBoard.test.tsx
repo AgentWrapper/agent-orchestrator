@@ -618,7 +618,7 @@ describe("SessionsBoard", () => {
 		expect(screen.queryByText("Session can no longer be restored")).not.toBeInTheDocument();
 	});
 
-	it("opens a merged Done session from the card body without showing restore", async () => {
+	it("shows restore button for a merged Done session and can invoke it", async () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [workspaceWithSessions([terminatedSession({ id: "s-merged", title: "merged worker", status: "merged" })])],
 			isError: false,
@@ -629,7 +629,7 @@ describe("SessionsBoard", () => {
 
 		await userEvent.click(screen.getByRole("button", { name: /done \/ terminated/i }));
 
-		expect(screen.queryByRole("button", { name: "Restore merged worker" })).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Restore merged worker" })).toBeInTheDocument();
 
 		await userEvent.click(screen.getByText("merged worker"));
 

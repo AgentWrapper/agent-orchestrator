@@ -312,7 +312,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 									key={s.id}
 									session={s}
 									onOpen={() => openSession(s)}
-									restoreAction={s.status === "terminated" ? (event) => void restoreDoneSession(event, s) : undefined}
+									restoreAction={s.status === "terminated" || s.status === "merged" ? (event) => void restoreDoneSession(event, s) : undefined}
 									restoreError={restoreErrors[s.id]}
 									isRestoring={restoringSessionId === s.id}
 									isRestoreDisabled={restoringSessionId !== undefined}
