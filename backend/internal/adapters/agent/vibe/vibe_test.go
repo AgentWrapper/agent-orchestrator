@@ -32,13 +32,22 @@ func TestManifest(t *testing.T) {
 	}
 }
 
-func TestGetConfigSpecEmpty(t *testing.T) {
-	spec, err := (&Plugin{}).GetConfigSpec(context.Background())
+func TestGetConfigSpecReportsModelField(t *testing.T) {
+	plugin := &Plugin{}
+
+	spec, err := plugin.GetConfigSpec(context.Background())
 	if err != nil {
-		t.Fatalf("err: %v", err)
+		t.Fatal(err)
 	}
-	if len(spec.Fields) != 0 {
-		t.Fatalf("expected no fields, got %d", len(spec.Fields))
+	want := []ports.ConfigField{
+		{
+			Key:         "model",
+			Type:        ports.ConfigFieldString,
+			Description: "Model override written to generated Vibe agent config (`active_model`).",
+		},
+	}
+	if !reflect.DeepEqual(spec.Fields, want) {
+		t.Fatalf("config fields\nwant: %#v\n got: %#v", want, spec.Fields)
 	}
 }
 
@@ -190,6 +199,98 @@ func TestGetLaunchCommandBuildsCustomAgentForSystemPrompt(t *testing.T) {
 	}
 }
 
+func TestGetLaunchCommandBuildsCustomAgentForModelOnly(t *testing.T) {
+	p := &Plugin{resolvedBinary: "vibe"}
+	dataDir := t.TempDir()
+	workspace := t.TempDir()
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config:        ports.AgentConfig{Model: "mistral-medium-latest"},
+		DataDir:       dataDir,
+		SessionID:     "mer-1",
+		Prompt:        "add a health check",
+		WorkspacePath: workspace,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	addDir := filepath.Join(dataDir, "prompts", "mer-1", "vibe")
+	want := []string{"vibe", "--trust", "--workdir", workspace, "--add-dir", addDir, "--agent", "ao-system-prompt", "--", "add a health check"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+	agentData, err := os.ReadFile(filepath.Join(addDir, ".vibe", "agents", "ao-system-prompt.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(agentData)
+	if !strings.Contains(body, `active_model = "mistral-medium-latest"`) {
+		t.Fatalf("agent config missing active_model:\n%s", body)
+	}
+	if strings.Contains(body, "system_prompt_id") {
+		t.Fatalf("model-only agent config unexpectedly has system_prompt_id:\n%s", body)
+	}
+}
+
+func TestGetLaunchCommandBuildsCustomAgentForSystemPromptAndModel(t *testing.T) {
+	p := &Plugin{resolvedBinary: "vibe"}
+	promptFile := filepath.Join(t.TempDir(), "system.md")
+	workspace := t.TempDir()
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config:           ports.AgentConfig{Model: `mistral "medium" \ latest`},
+		Permissions:      ports.PermissionModeAuto,
+		Prompt:           "add a health check",
+		SystemPrompt:     "follow AO rules",
+		SystemPromptFile: promptFile,
+		WorkspacePath:    workspace,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	addDir := filepath.Join(filepath.Dir(promptFile), "vibe")
+	want := []string{"vibe", "--trust", "--workdir", workspace, "--add-dir", addDir, "--agent", "ao-system-prompt", "--auto-approve", "--", "add a health check"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+	agentData, err := os.ReadFile(filepath.Join(addDir, ".vibe", "agents", "ao-system-prompt.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(agentData)
+	for _, wantText := range []string{
+		`system_prompt_id = "ao-system-prompt"`,
+		`active_model = "mistral \"medium\" \\ latest"`,
+	} {
+		if !strings.Contains(body, wantText) {
+			t.Fatalf("agent config missing %q:\n%s", wantText, body)
+		}
+	}
+}
+
+func TestGetLaunchCommandOmitsBlankModelWithoutCustomAgent(t *testing.T) {
+	p := &Plugin{resolvedBinary: "vibe"}
+	dataDir := t.TempDir()
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config:    ports.AgentConfig{Model: " \t\n "},
+		DataDir:   dataDir,
+		SessionID: "mer-1",
+		Prompt:    "task",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"vibe", "--trust", "--", "task"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+	addDir := filepath.Join(dataDir, "prompts", "mer-1", "vibe")
+	if _, err := os.Stat(filepath.Join(addDir, ".vibe", "agents", "ao-system-prompt.toml")); !os.IsNotExist(err) {
+		t.Fatalf("blank model wrote custom agent config at %s: %v", addDir, err)
+	}
+}
+
 func TestGetLaunchCommandCustomAgentAcceptEdits(t *testing.T) {
 	p := &Plugin{resolvedBinary: "vibe"}
 	promptFile := filepath.Join(t.TempDir(), "system.md")
@@ -332,6 +433,45 @@ func TestGetRestoreCommandReappliesSystemPromptAgent(t *testing.T) {
 	want := []string{"vibe", "--trust", "--workdir", workspace, "--add-dir", addDir, "--agent", "ao-system-prompt", "--auto-approve", "--resume", "abcd1234"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+}
+
+func TestGetRestoreCommandBuildsCustomAgentForModelOnly(t *testing.T) {
+	p := &Plugin{resolvedBinary: "vibe"}
+	dataDir := t.TempDir()
+	workspace := t.TempDir()
+	cmd, ok, err := p.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Config:      ports.AgentConfig{Model: "mistral-medium-latest"},
+		DataDir:     dataDir,
+		Permissions: ports.PermissionModeAuto,
+		Session: ports.SessionRef{
+			ID:            "mer-1",
+			WorkspacePath: workspace,
+			Metadata:      map[string]string{ports.MetadataKeyAgentSessionID: "abcd1234"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("ok=false, want true")
+	}
+
+	addDir := filepath.Join(dataDir, "prompts", "mer-1", "vibe")
+	want := []string{"vibe", "--trust", "--workdir", workspace, "--add-dir", addDir, "--agent", "ao-system-prompt", "--auto-approve", "--resume", "abcd1234"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+	agentData, err := os.ReadFile(filepath.Join(addDir, ".vibe", "agents", "ao-system-prompt.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(agentData)
+	if !strings.Contains(body, `active_model = "mistral-medium-latest"`) {
+		t.Fatalf("agent config missing active_model:\n%s", body)
+	}
+	if strings.Contains(body, "system_prompt_id") {
+		t.Fatalf("model-only agent config unexpectedly has system_prompt_id:\n%s", body)
 	}
 }
 
