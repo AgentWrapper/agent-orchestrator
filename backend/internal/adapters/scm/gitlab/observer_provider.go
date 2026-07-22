@@ -393,11 +393,21 @@ func (p *Provider) fetchSingleMR(ctx context.Context, ref ports.SCMPRRef) (ports
 	prObs.BaseSHA = mr.BaseSHA
 	prObs.MergeCommitSHA = mr.MergeCommitSHA
 
-	// 2. Fetch CI (pipelines + jobs)
-	ciObs := p.fetchCI(ctx, repo, mr.SHA)
+	// 2. Fetch CI (pipelines + jobs). A transient failure here must propagate
+	// as an error so the observer preserves the last durable CI state rather
+	// than overwriting it with "unknown"
+	ciObs, err := p.fetchCI(ctx, repo, mr.SHA)
+	if err != nil {
+		return ports.SCMObservation{}, fmt.Errorf("gitlab scm: fetch CI: %w", err)
+	}
 
-	// 3. Fetch approvals for review decision
-	reviewDecision := p.fetchApprovalDecision(ctx, repo, ref.Number)
+	// 3. Fetch approvals for review decision. A transient failure here must
+	// propagate so the observer preserves the last durable review state
+	// rather than overwriting it with "none"
+	reviewDecision, err := p.fetchApprovalDecision(ctx, repo, ref.Number)
+	if err != nil {
+		return ports.SCMObservation{}, fmt.Errorf("gitlab scm: fetch approvals: %w", err)
+	}
 
 	// 4. Build mergeability
 	mergeObs := mergeabilityFromMR(&mr, ciObs.Summary, string(reviewDecision))
@@ -415,9 +425,9 @@ func (p *Provider) fetchSingleMR(ctx context.Context, ref ports.SCMPRRef) (ports
 	}, nil
 }
 
-func (p *Provider) fetchCI(ctx context.Context, repo ports.SCMRepo, headSHA string) ports.SCMCIObservation {
+func (p *Provider) fetchCI(ctx context.Context, repo ports.SCMRepo, headSHA string) (ports.SCMCIObservation, error) {
 	if headSHA == "" {
-		return ports.SCMCIObservation{Summary: string(domain.CIUnknown)}
+		return ports.SCMCIObservation{Summary: string(domain.CIUnknown)}, nil
 	}
 
 	path := fmt.Sprintf("/projects/%s/pipelines", projectPath(repo.Owner, repo.Name))
@@ -427,22 +437,27 @@ func (p *Provider) fetchCI(ctx context.Context, repo ports.SCMRepo, headSHA stri
 		"order_by": {"id"},
 		"sort":     {"desc"},
 	}
-	resp, err := p.client.doGET(ctx, path, q)
+	resp, err := p.clientForHost(repo.Host).doGET(ctx, path, q)
 	if err != nil {
-		p.logger.Warn("gitlab scm: fetch pipelines failed", "repo", repo.Repo, "err", err)
-		return ports.SCMCIObservation{Summary: string(domain.CIUnknown), HeadSHA: headSHA}
+		return ports.SCMCIObservation{}, fmt.Errorf("fetch pipelines: %w", err)
 	}
 
 	var pipelines []restPipeline
-	if err := json.Unmarshal(resp.Body, &pipelines); err != nil || len(pipelines) == 0 {
-		return ports.SCMCIObservation{Summary: string(domain.CIUnknown), HeadSHA: headSHA}
+	if err := json.Unmarshal(resp.Body, &pipelines); err != nil {
+		return ports.SCMCIObservation{}, fmt.Errorf("unmarshal pipelines: %w", err)
+	}
+	if len(pipelines) == 0 {
+		return ports.SCMCIObservation{Summary: string(domain.CIUnknown), HeadSHA: headSHA}, nil
 	}
 
 	latest := pipelines[0]
 	ciState := pipelineStatusToCI(latest.Status)
 
 	// Fetch jobs from the latest pipeline
-	checks, failedChecks := p.fetchPipelineJobs(ctx, repo, latest.ID)
+	checks, failedChecks, err := p.fetchPipelineJobs(ctx, repo, latest.ID)
+	if err != nil {
+		return ports.SCMCIObservation{}, fmt.Errorf("fetch pipeline jobs: %w", err)
+	}
 
 	fp := gitlabFailedFingerprint(headSHA, failedChecks)
 
@@ -461,22 +476,24 @@ type restPipeline struct {
 	SHA    string `json:"sha"`
 }
 
-func (p *Provider) fetchPipelineJobs(ctx context.Context, repo ports.SCMRepo, pipelineID int) ([]ports.SCMCheckObservation, []ports.SCMCheckObservation) {
+func (p *Provider) fetchPipelineJobs(ctx context.Context, repo ports.SCMRepo, pipelineID int) ([]ports.SCMCheckObservation, []ports.SCMCheckObservation, error) {
 	path := fmt.Sprintf("/projects/%s/pipelines/%d/jobs", projectPath(repo.Owner, repo.Name), pipelineID)
 	q := url.Values{"per_page": {strconv.Itoa(pipelineJobsPageSize)}}
-	resp, err := p.client.doGET(ctx, path, q)
+	var allJobs []restJob
+	_, err := p.clientForHost(repo.Host).doGETPaginated(ctx, path, q, func(body []byte) error {
+		var jobs []restJob
+		if err := json.Unmarshal(body, &jobs); err != nil {
+			return fmt.Errorf("unmarshal pipeline jobs: %w", err)
+		}
+		allJobs = append(allJobs, jobs...)
+		return nil
+	})
 	if err != nil {
-		p.logger.Warn("gitlab scm: fetch pipeline jobs failed", "repo", repo.Repo, "pipeline", pipelineID, "err", err)
-		return nil, nil
-	}
-
-	var jobs []restJob
-	if err := json.Unmarshal(resp.Body, &jobs); err != nil {
-		return nil, nil
+		return nil, nil, fmt.Errorf("fetch pipeline jobs: %w", err)
 	}
 
 	var checks, failed []ports.SCMCheckObservation
-	for _, j := range jobs {
+	for _, j := range allJobs {
 		status := jobStatusToCheckStatus(j.Status)
 		check := ports.SCMCheckObservation{
 			Name:       j.Name,
@@ -500,23 +517,29 @@ type restJob struct {
 	WebURL string `json:"web_url"`
 }
 
-func (p *Provider) fetchApprovalDecision(ctx context.Context, repo ports.SCMRepo, mrIID int) domain.ReviewDecision {
+func (p *Provider) fetchApprovalDecision(ctx context.Context, repo ports.SCMRepo, mrIID int) (domain.ReviewDecision, error) {
 	path := fmt.Sprintf("/projects/%s/merge_requests/%d/approvals", projectPath(repo.Owner, repo.Name), mrIID)
-	resp, err := p.client.doGET(ctx, path, nil)
+	resp, err := p.clientForHost(repo.Host).doGET(ctx, path, nil)
 	if err != nil {
-		p.logger.Warn("gitlab scm: fetch approvals failed", "repo", repo.Repo, "mr", mrIID, "err", err)
-		return domain.ReviewNone
+		return domain.ReviewNone, fmt.Errorf("fetch approvals: %w", err)
 	}
 
 	var approvals restApprovals
 	if err := json.Unmarshal(resp.Body, &approvals); err != nil {
-		return domain.ReviewNone
+		return domain.ReviewNone, fmt.Errorf("unmarshal approvals: %w", err)
 	}
+	return approvalDecision(approvals), nil
+}
 
-	if approvals.Approved {
+// approvalDecision derives the review decision from parsed approval state.
+// It trusts the `approved` bool rather than comparing len(approved_by) with
+// approvals_required, because approved_by can contain approvals that do not
+// satisfy the applicable rules.
+func approvalDecision(a restApprovals) domain.ReviewDecision {
+	if a.Approved {
 		return domain.ReviewApproved
 	}
-	if approvals.ApprovalsRequired > 0 && len(approvals.ApprovedBy) < approvals.ApprovalsRequired {
+	if a.ApprovalsRequired > 0 {
 		return domain.ReviewRequired
 	}
 	return domain.ReviewNone
@@ -543,7 +566,7 @@ func (p *Provider) FetchFailedCheckLogTail(ctx context.Context, repo ports.SCMRe
 		return "", fmt.Errorf("gitlab scm: empty job ID")
 	}
 	path := fmt.Sprintf("/projects/%s/jobs/%s/trace", projectPath(repo.Owner, repo.Name), jobID)
-	body, err := p.client.doGETRaw(ctx, path, nil)
+	body, err := p.clientForHost(repo.Host).doGETRaw(ctx, path, nil)
 	if err != nil {
 		return "", err
 	}
@@ -763,18 +786,29 @@ func mergeabilityFromMR(mr *restMR, ciState, reviewDecision string) ports.SCMMer
 			Blockers: blockers,
 		}
 
-	case "cannot_be_merged", "cannot_be_merged_recheck":
+	// Conflicting (current + legacy aliases).
+	case "conflict", "cannot_be_merged", "cannot_be_merged_recheck":
 		return ports.SCMMergeabilityObservation{
 			State:    string(domain.MergeConflicting),
 			Conflict: true,
 			Blockers: []string{"conflicts"},
 		}
 
-	case "checking", "unchecked", "":
+	// Unknown — mergeability is being computed or the diff is being prepared.
+	case "checking", "preparing", "unchecked", "approvals_syncing", "":
 		return ports.SCMMergeabilityObservation{
 			State: string(domain.MergeUnknown),
 		}
 
+	// Need rebase — head is behind base; a fast-forward merge is not possible.
+	case "need_rebase":
+		return ports.SCMMergeabilityObservation{
+			State:      string(domain.MergeBlocked),
+			BehindBase: true,
+			Blockers:   []string{"behind_base"},
+		}
+
+	// CI blockers (current + legacy).
 	case "ci_must_pass", "ci_still_running":
 		return ports.SCMMergeabilityObservation{
 			State:    string(domain.MergeBlocked),

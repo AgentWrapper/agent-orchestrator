@@ -466,30 +466,109 @@ func TestCommitChecksGuard(t *testing.T) {
 
 func TestMergeabilityFromMR(t *testing.T) {
 	tests := []struct {
-		mergeStatus string
-		ciState     string
-		review      string
-		draft       bool
-		wantState   string
+		name           string
+		detailedStatus string // populates restMR.DetailedMergeStatus (current GitLab enum)
+		legacyStatus   string // populates restMR.MergeStatus (deprecated since GitLab 15.6)
+		ciState        string
+		review         string
+		draft          bool
+		wantState      string
+		wantConflict   bool
+		wantBehind     bool
+		wantBlockers   []string
 	}{
-		{"can_be_merged", "passing", "approved", false, "mergeable"},
-		{"can_be_merged", "failing", "approved", false, "blocked"},
-		{"can_be_merged", "passing", "review_required", false, "blocked"},
-		{"can_be_merged", "passing", "approved", true, "blocked"},
-		{"cannot_be_merged", "passing", "approved", false, "conflicting"},
-		{"checking", "passing", "approved", false, "unknown"},
-		{"discussions_not_resolved", "passing", "approved", false, "blocked"},
-		{"not_approved", "passing", "none", false, "blocked"},
+		// Current detailed_merge_status values (GitLab >= 15.6).
+		{"mergeable", "mergeable", "", "passing", "approved", false, "mergeable", false, false, nil},
+		{"mergeable+failing-ci", "mergeable", "", "failing", "approved", false, "blocked", false, false, []string{"ci_failing"}},
+		{"mergeable+review-required", "mergeable", "", "passing", "review_required", false, "blocked", false, false, []string{"review_required"}},
+		{"mergeable+draft", "mergeable", "", "passing", "approved", true, "blocked", false, false, []string{"draft"}},
+		{"conflict", "conflict", "", "passing", "approved", false, "conflicting", true, false, []string{"conflicts"}},
+		{"checking", "checking", "", "passing", "approved", false, "unknown", false, false, nil},
+		{"preparing", "preparing", "", "passing", "approved", false, "unknown", false, false, nil},
+		{"unchecked", "unchecked", "", "passing", "approved", false, "unknown", false, false, nil},
+		{"need_rebase", "need_rebase", "", "passing", "approved", false, "blocked", false, true, []string{"behind_base"}},
+		{"requested_changes", "requested_changes", "", "passing", "approved", false, "blocked", false, false, []string{"review_required"}},
+		{"not_approved", "not_approved", "", "passing", "none", false, "blocked", false, false, []string{"review_required"}},
+		{"ci_must_pass", "ci_must_pass", "", "passing", "approved", false, "blocked", false, false, []string{"ci_failing"}},
+		{"ci_still_running", "ci_still_running", "", "passing", "approved", false, "blocked", false, false, []string{"ci_failing"}},
+		{"discussions_not_resolved", "discussions_not_resolved", "", "passing", "approved", false, "blocked", false, false, []string{"discussions_unresolved"}},
+		{"draft_status", "draft_status", "", "passing", "approved", false, "blocked", false, false, []string{"draft"}},
+		{"not_open", "not_open", "", "passing", "approved", false, "blocked", false, false, []string{"blocked_by_provider"}},
+		{"merge_request_blocked", "merge_request_blocked", "", "passing", "approved", false, "blocked", false, false, []string{"blocked_by_provider"}},
+
+		// Legacy merge_status values (deprecated since GitLab 15.6, still
+		// returned by older self-managed installations).
+		{"legacy-can_be_merged", "", "can_be_merged", "passing", "approved", false, "mergeable", false, false, nil},
+		{"legacy-cannot_be_merged", "", "cannot_be_merged", "passing", "approved", false, "conflicting", true, false, []string{"conflicts"}},
+		{"legacy-cannot_be_merged_recheck", "", "cannot_be_merged_recheck", "passing", "approved", false, "conflicting", true, false, []string{"conflicts"}},
+		{"legacy-checking", "", "checking", "passing", "approved", false, "unknown", false, false, nil},
+		{"legacy-unchecked", "", "unchecked", "passing", "approved", false, "unknown", false, false, nil},
 	}
 	for _, tt := range tests {
-		name := fmt.Sprintf("%s/%s/%s/draft=%v", tt.mergeStatus, tt.ciState, tt.review, tt.draft)
-		t.Run(name, func(t *testing.T) {
-			mr := &restMR{MergeStatus: tt.mergeStatus, Draft: tt.draft}
+		t.Run(tt.name, func(t *testing.T) {
+			mr := &restMR{MergeStatus: tt.legacyStatus, DetailedMergeStatus: tt.detailedStatus, Draft: tt.draft}
 			got := mergeabilityFromMR(mr, tt.ciState, tt.review)
 			if got.State != tt.wantState {
 				t.Errorf("State = %q, want %q", got.State, tt.wantState)
 			}
+			if got.Conflict != tt.wantConflict {
+				t.Errorf("Conflict = %v, want %v", got.Conflict, tt.wantConflict)
+			}
+			if got.BehindBase != tt.wantBehind {
+				t.Errorf("BehindBase = %v, want %v", got.BehindBase, tt.wantBehind)
+			}
+			if tt.wantBlockers != nil {
+				if len(got.Blockers) != len(tt.wantBlockers) {
+					t.Fatalf("Blockers = %v, want %v", got.Blockers, tt.wantBlockers)
+				}
+				for i, b := range tt.wantBlockers {
+					if got.Blockers[i] != b {
+						t.Errorf("Blockers[%d] = %q, want %q", i, got.Blockers[i], b)
+					}
+				}
+			}
 		})
+	}
+}
+
+// TestFetchPullRequests_DetailedMergeStatus verifies that a current GitLab
+// detailed_merge_status value ("mergeable") flows through to the observation's
+// Mergeability.State rather than being misclassified as blocked (review
+// finding #3).
+func TestFetchPullRequests_DetailedMergeStatus(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"iid": 1, "title": "Fix bug", "state": "opened", "draft": false,
+			"web_url":       "https://gitlab.com/myorg/myrepo/-/merge_requests/1",
+			"source_branch": "fix-bug", "target_branch": "main", "sha": "abc123",
+			"merge_status":          "can_be_merged", // deprecated legacy field
+			"detailed_merge_status": "mergeable",     // current authoritative field
+			"author":                map[string]any{"username": "alice"},
+		})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/pipelines", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{{"id": 100, "status": "success", "sha": "abc123"}})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/pipelines/100/jobs", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{{"id": 200, "name": "build", "status": "success", "web_url": "https://gitlab.com/jobs/200"}})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1/approvals", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"approved": true, "approvals_required": 1, "approved_by": []map[string]any{{"user": map[string]any{"username": "reviewer1"}}}})
+	})
+	_, p := testServer(t, mux)
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "myorg", Name: "myrepo", Repo: "myorg/myrepo"}
+	ref := ports.SCMPRRef{Repo: repo, Number: 1, URL: "https://gitlab.com/myorg/myrepo/-/merge_requests/1"}
+
+	obs, err := p.FetchPullRequests(context.Background(), []ports.SCMPRRef{ref})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if obs[0].Mergeability.State != "mergeable" {
+		t.Errorf("Mergeability.State = %q, want %q (detailed_merge_status=mergeable must map to mergeable, not blocked)", obs[0].Mergeability.State, "mergeable")
+	}
+	if obs[0].Mergeability.Conflict {
+		t.Error("Mergeability.Conflict = true, want false for mergeable MR")
 	}
 }
 
