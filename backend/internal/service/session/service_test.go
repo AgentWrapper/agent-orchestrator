@@ -191,17 +191,28 @@ func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectReco
 	return p, ok, nil
 }
 
-func TestSessionListDerivesStatusFromPRFacts(t *testing.T) {
-	st := newFakeStore()
-	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityActive}}
-	st.pr["mer-1"] = domain.PRFacts{URL: "pr1", CI: domain.CIFailing}
+func TestSessionListAppliesActivityBeforePRFacts(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		activity domain.ActivityState
+		want     domain.SessionStatus
+	}{
+		{"active", domain.ActivityActive, domain.StatusWorking},
+		{"idle", domain.ActivityIdle, domain.StatusCIFailed},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			st := newFakeStore()
+			st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: tt.activity}}
+			st.pr["mer-1"] = domain.PRFacts{URL: "pr1", CI: domain.CIFailing}
 
-	list, err := (&Service{store: st}).List(context.Background(), ListFilter{ProjectID: "mer"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(list) != 1 || list[0].Status != domain.StatusCIFailed {
-		t.Fatalf("got %+v", list)
+			list, err := (&Service{store: st}).List(context.Background(), ListFilter{ProjectID: "mer"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(list) != 1 || list[0].Status != tt.want {
+				t.Fatalf("got %+v, want status %q", list, tt.want)
+			}
+		})
 	}
 }
 
@@ -850,6 +861,7 @@ func TestToAPIErrorMapsWorkspaceBranchSentinels(t *testing.T) {
 		{"unknown harness", fmt.Errorf("spawn: %w: %q", sessionmanager.ErrUnknownHarness, "bogus"), apierr.KindInvalid, "UNKNOWN_HARNESS"},
 		{"missing harness", fmt.Errorf("spawn: %w: configure project worker.agent or pass --harness", sessionmanager.ErrMissingHarness), apierr.KindInvalid, "AGENT_REQUIRED"},
 		{"awaiting decision", fmt.Errorf("send mer-1: %w", sessionmanager.ErrAwaitingDecision), apierr.KindConflict, "SESSION_AWAITING_DECISION"},
+		{"agent exited", fmt.Errorf("send mer-1: %w", sessionmanager.ErrAgentExited), apierr.KindConflict, "AGENT_EXITED"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

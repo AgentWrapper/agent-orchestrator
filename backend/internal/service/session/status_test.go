@@ -43,6 +43,7 @@ func TestServiceDerivesStatusFromSessionFactsAndPR(t *testing.T) {
 		{"merged-pr", statusRec(domain.ActivityIdle, true), statusPR(domain.PRFacts{Merged: true}), false, domain.StatusMerged},
 		{"needs-input", statusRec(domain.ActivityWaitingInput, false), statusPR(domain.PRFacts{CI: domain.CIFailing}), false, domain.StatusNeedsInput},
 		{"needs-input-blocked", statusRec(domain.ActivityBlocked, false), statusPR(domain.PRFacts{CI: domain.CIFailing}), false, domain.StatusNeedsInput},
+		{"exited", statusRec(domain.ActivityExited, false), statusPR(domain.PRFacts{Mergeability: domain.MergeMergeable}), false, domain.StatusExited},
 		{"ci-failed", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{CI: domain.CIFailing}), false, domain.StatusCIFailed},
 		{"draft", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{Draft: true}), false, domain.StatusDraft},
 		{"changes-requested", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{Review: domain.ReviewChangesRequest}), false, domain.StatusChangesRequested},
@@ -74,6 +75,37 @@ func TestServiceDerivesStatusFromSessionFactsAndPR(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := deriveStatus(tt.rec, tt.pr, statusNow, !tt.hookless); got != tt.want {
+				t.Fatalf("got %q want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDeriveStatusActivityPrecedence(t *testing.T) {
+	tests := []struct {
+		name     string
+		activity domain.ActivityState
+		prs      []domain.PRFacts
+		want     domain.SessionStatus
+	}{
+		{"active-without-pr", domain.ActivityActive, nil, domain.StatusWorking},
+		{"active-with-open-pr", domain.ActivityActive, statusPR(domain.PRFacts{}), domain.StatusWorking},
+		{"active-with-draft-pr", domain.ActivityActive, statusPR(domain.PRFacts{Draft: true}), domain.StatusWorking},
+		{"active-with-review-pending", domain.ActivityActive, statusPR(domain.PRFacts{Review: domain.ReviewRequired}), domain.StatusWorking},
+		{"active-with-ci-failure", domain.ActivityActive, statusPR(domain.PRFacts{CI: domain.CIFailing}), domain.StatusWorking},
+		{"active-with-changes-requested", domain.ActivityActive, statusPR(domain.PRFacts{Review: domain.ReviewChangesRequest}), domain.StatusWorking},
+		{"active-with-approved-pr", domain.ActivityActive, statusPR(domain.PRFacts{Review: domain.ReviewApproved}), domain.StatusWorking},
+		{"active-with-mergeable-pr", domain.ActivityActive, statusPR(domain.PRFacts{Mergeability: domain.MergeMergeable}), domain.StatusWorking},
+		{"active-with-merged-pr", domain.ActivityActive, statusPR(domain.PRFacts{Merged: true}), domain.StatusWorking},
+		{"exited-without-pr", domain.ActivityExited, nil, domain.StatusExited},
+		{"exited-with-open-pr", domain.ActivityExited, statusPR(domain.PRFacts{}), domain.StatusExited},
+		{"exited-with-merged-pr", domain.ActivityExited, statusPR(domain.PRFacts{Merged: true}), domain.StatusExited},
+		{"waiting-with-pr", domain.ActivityWaitingInput, statusPR(domain.PRFacts{Mergeability: domain.MergeMergeable}), domain.StatusNeedsInput},
+		{"blocked-with-pr", domain.ActivityBlocked, statusPR(domain.PRFacts{Mergeability: domain.MergeMergeable}), domain.StatusNeedsInput},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := deriveStatus(statusRec(tt.activity, false), tt.prs, statusNow, true); got != tt.want {
 				t.Fatalf("got %q want %q", got, tt.want)
 			}
 		})

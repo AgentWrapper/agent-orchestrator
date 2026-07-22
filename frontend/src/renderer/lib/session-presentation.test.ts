@@ -68,6 +68,7 @@ describe("session presentation", () => {
 		["approved", "Approved"],
 		["mergeable", "Ready"],
 		["merged", "Merged"],
+		["exited", "Exited"],
 		["terminated", "Terminated"],
 		["unknown", "Unknown status"],
 	] as const)("maps %s session status to %s", (status, label) => {
@@ -75,17 +76,19 @@ describe("session presentation", () => {
 	});
 
 	it("uses distinct session-card tones for idle, no signal, and PR waiting states", () => {
-		expect(getSessionStatusView("idle").className).toBe("text-passive");
-		expect(getSessionStatusView("no_signal").className).toBe("text-warning");
-		expect(getSessionStatusView("draft").className).toBe("text-accent");
-		expect(getSessionStatusView("pr_open").className).toBe("text-accent");
-		expect(getSessionStatusView("review_pending").className).toBe("text-accent");
+		expect(getSessionStatusView("idle").className).toBe("text-status-idle");
+		expect(getSessionStatusView("no_signal").className).toBe("text-status-unknown");
+		expect(getSessionStatusView("draft").className).toBe("text-status-in-review");
+		expect(getSessionStatusView("pr_open").className).toBe("text-status-in-review");
+		expect(getSessionStatusView("review_pending").className).toBe("text-status-in-review");
+		expect(getSessionStatusView("exited").className).toBe("text-status-exited");
 	});
 
 	it.each([
 		["approved", "merge", "Ready to merge"],
 		["mergeable", "merge", "Ready to merge"],
 		["needs_input", "action", "Needs you"],
+		["exited", "action", "Needs you"],
 		["no_signal", "action", "Needs you"],
 		["ci_failed", "action", "Needs you"],
 		["changes_requested", "action", "Needs you"],
@@ -102,44 +105,25 @@ describe("session presentation", () => {
 		expect(getAttentionZoneView(status)).toMatchObject({ zone, label });
 	});
 
-	it("uses attention zones only for sidebar dot color and motion", () => {
-		const activeWorkingDotClass = getSessionDotView(
-			sessionWith({
-				status: "working",
-				activity: { state: "active", lastActivityAt: "" },
-			}),
-		).className;
-		const idleDotClass = getSessionDotView(sessionWith({ status: "idle" })).className;
-		const activeUnknownDotClass = getSessionDotView(
-			sessionWith({
-				status: "unknown",
-				activity: { state: "active", lastActivityAt: "" },
-			}),
-		).className;
-		const idleDraftDotClass = getSessionDotView(
-			sessionWith({
-				status: "draft",
-				activity: { state: "idle", lastActivityAt: "" },
-			}),
-		).className;
+	it("uses raw activity for sidebar dot color and motion", () => {
+		const dot = (activity?: WorkspaceSession["activity"]) =>
+			getSessionDotView(sessionWith({ status: "ci_failed", activity })).className;
 
-		expect(activeWorkingDotClass).toContain("bg-working");
-		expect(activeWorkingDotClass).not.toContain("animate-status-pulse");
-		expect(idleDotClass).toContain("bg-working");
-		expect(idleDotClass).not.toContain("animate-status-pulse");
-		expect(activeUnknownDotClass).toContain("bg-warning");
-		expect(activeUnknownDotClass).not.toContain("animate-status-pulse");
-		expect(idleDraftDotClass).toContain("bg-accent-dim");
-		expect(idleDraftDotClass).not.toContain("animate-status-pulse");
-		expect(getSessionDotView(sessionWith({ status: "ci_failed" })).className).toContain("bg-warning");
-		expect(getSessionDotView(sessionWith({ status: "unknown" })).className).toContain("bg-warning");
+		expect(dot({ state: "active", lastActivityAt: "" })).toContain("bg-status-working");
+		expect(dot({ state: "active", lastActivityAt: "" })).toContain("animate-status-pulse");
+		expect(dot({ state: "idle", lastActivityAt: "" })).toBe("bg-status-idle");
+		expect(dot({ state: "waiting_input", lastActivityAt: "" })).toBe("bg-status-needs-you");
+		expect(dot({ state: "blocked", lastActivityAt: "" })).toBe("bg-status-needs-you");
+		expect(dot({ state: "exited", lastActivityAt: "" })).toBe("bg-status-exited");
+		expect(dot({ state: "unknown", lastActivityAt: "" })).toBe("bg-status-unknown");
+		expect(dot()).toBe("bg-status-unknown");
 	});
 
 	it("uses a muted accent treatment for In Review instead of idle gray", () => {
 		expect(getAttentionZoneView("review_pending")).toMatchObject({
-			dot: "var(--color-accent-dim)",
-			titleClassName: "text-accent",
-			dotClassName: "bg-accent-dim",
+			dot: "var(--color-status-in-review)",
+			titleClassName: "text-status-in-review",
+			dotClassName: "bg-status-in-review",
 		});
 	});
 
@@ -162,7 +146,7 @@ describe("session presentation", () => {
 					prs: [openPr],
 				}),
 			),
-		).toBe(true);
+		).toBe(false);
 		expect(
 			isSessionInIdleStack(
 				sessionWith({
@@ -175,9 +159,9 @@ describe("session presentation", () => {
 	});
 
 	it.each([
-		["no_signal", "No Signal", "var(--color-text-muted)"],
-		["ci_failed", "CI Failed", "var(--color-danger)"],
-		["changes_requested", "Changes Requested", "var(--color-warning)"],
+		["no_signal", "No Signal", "var(--color-status-unknown)"],
+		["ci_failed", "CI Failed", "var(--color-status-exited)"],
+		["changes_requested", "Changes Requested", "var(--color-status-needs-you)"],
 	] as const)("centralizes the %s timeline pill", (status, label, tone) => {
 		expect(getSessionTimelinePillView(status)).toMatchObject({ label, tone, breathe: false });
 	});

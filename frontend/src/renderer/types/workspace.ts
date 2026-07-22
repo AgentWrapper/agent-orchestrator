@@ -11,6 +11,7 @@ export type SessionStatus =
 	| "mergeable"
 	| "merged"
 	| "needs_input"
+	| "exited"
 	| "no_signal"
 	| "idle"
 	| "terminated"
@@ -27,6 +28,7 @@ const sessionStatuses = new Set<SessionStatus>([
 	"mergeable",
 	"merged",
 	"needs_input",
+	"exited",
 	"no_signal",
 	"idle",
 	"terminated",
@@ -153,11 +155,6 @@ export type WorkspaceSession = {
 	 * done server-side, so {@link status} already reflects all of these.
 	 */
 	prs: PullRequestFacts[];
-	/**
-	 * Display status as derived by the daemon at read time. Optional override; when
-	 * absent it is derived from {@link SessionStatus} via {@link workerDisplayStatus}.
-	 */
-	displayStatus?: WorkerDisplayStatus;
 };
 
 // Tracker providers whose ids the intake daemon stamps sessions with, in
@@ -183,34 +180,6 @@ export type WorkspaceRepoSummary = {
 	relativePath: string;
 	repo: string;
 };
-
-/** Glanceable worker status. Maps 1:1 to the accent colors in DESIGN.md. */
-export type WorkerDisplayStatus =
-	"working" | "needs_you" | "mergeable" | "ci_failed" | "no_signal" | "done" | "unknown";
-
-export function workerDisplayStatus(session: WorkspaceSession): WorkerDisplayStatus {
-	if (session.displayStatus) return session.displayStatus;
-	switch (session.status) {
-		case "needs_input":
-		case "changes_requested":
-		case "review_pending":
-			return "needs_you";
-		case "ci_failed":
-			return "ci_failed";
-		case "no_signal":
-			return "no_signal";
-		case "approved":
-		case "mergeable":
-			return "mergeable";
-		case "merged":
-		case "terminated":
-			return "done";
-		case "unknown":
-			return "unknown";
-		default:
-			return "working";
-	}
-}
 
 // Open PRs (actionable) sort above merged/closed; ties break by number.
 const prStateRank: Record<PRState, number> = { open: 0, draft: 1, merged: 2, closed: 3 };
@@ -288,21 +257,6 @@ export function sessionIsActive(session: WorkspaceSession): boolean {
 
 export function sessionNeedsAttention(session: WorkspaceSession): boolean {
 	return presentationAttentionZone(session) === "action";
-}
-
-export const workerStatusLabel: Record<WorkerDisplayStatus, string> = {
-	working: "working",
-	needs_you: "needs you",
-	mergeable: "mergeable",
-	ci_failed: "ci failed",
-	no_signal: "no signal",
-	done: "done",
-	unknown: "unknown",
-};
-
-/** Whether a status should breathe (alive/working). */
-export function workerStatusPulses(status: WorkerDisplayStatus): boolean {
-	return status === "working" || status === "needs_you";
 }
 
 export { attentionZone, attentionZoneLabel, attentionZoneOrder } from "../lib/session-presentation";

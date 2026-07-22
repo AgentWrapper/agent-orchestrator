@@ -32,7 +32,12 @@ func deriveStatus(rec domain.SessionRecord, prs []domain.PRFacts, now time.Time,
 		return domain.StatusTerminated
 	}
 
-	if rec.Activity.State.NeedsInput() {
+	switch rec.Activity.State {
+	case domain.ActivityActive:
+		return domain.StatusWorking
+	case domain.ActivityExited:
+		return domain.StatusExited
+	case domain.ActivityWaitingInput, domain.ActivityBlocked:
 		return domain.StatusNeedsInput
 	}
 
@@ -42,10 +47,6 @@ func deriveStatus(rec domain.SessionRecord, prs []domain.PRFacts, now time.Time,
 	}
 	if anyMerged(prs) {
 		return domain.StatusMerged
-	}
-
-	if rec.Activity.State == domain.ActivityActive {
-		return domain.StatusWorking
 	}
 
 	// No hook callback has ever arrived for this spawn/restore even though the

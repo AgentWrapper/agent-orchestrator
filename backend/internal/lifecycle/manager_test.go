@@ -200,6 +200,33 @@ func TestActivity_MissingSessionReturnsNotFound(t *testing.T) {
 	}
 }
 
+func TestActivity_ExitedPreservesLiveSessionAndCanRelaunch(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.FirstSignalAt = time.Now().Add(-time.Minute)
+	st.sessions["mer-1"] = rec
+	m.flights["mer-1"] = &toolFlight{inflight: map[string]string{"tool-1": "Bash"}, blockedCandidate: "tool-1"}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityExited}); err != nil {
+		t.Fatal(err)
+	}
+	exited := st.sessions["mer-1"]
+	if exited.IsTerminated || exited.Activity.State != domain.ActivityExited {
+		t.Fatalf("agent exit should preserve live session, got %+v", exited)
+	}
+	if _, ok := m.flights["mer-1"]; ok {
+		t.Fatal("tool-flight state leaked after agent exit")
+	}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityActive}); err != nil {
+		t.Fatal(err)
+	}
+	relaunched := st.sessions["mer-1"]
+	if relaunched.IsTerminated || relaunched.Activity.State != domain.ActivityActive {
+		t.Fatalf("active signal should represent a relaunched agent, got %+v", relaunched)
+	}
+}
+
 func TestMarkTerminated(t *testing.T) {
 	m, st, _ := newManager()
 	st.sessions["mer-1"] = working("mer-1")
@@ -579,6 +606,20 @@ func TestPRObservation_MergeConflictNudgesAgent(t *testing.T) {
 	}
 }
 
+func TestPRObservation_ExitedAgentIsNotNudged(t *testing.T) {
+	m, st, msg := newManager()
+	rec := working("mer-1")
+	rec.Activity.State = domain.ActivityExited
+	st.sessions["mer-1"] = rec
+
+	if err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1", Mergeability: domain.MergeConflicting}); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("exited agent should not receive reaction nudges, got %v", msg.msgs)
+	}
+}
+
 func TestPRObservation_NudgeIncludesPRIdentity(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")
@@ -955,6 +996,11 @@ func TestApplyReviewResultNoopsWhenIrrelevant(t *testing.T) {
 			name:   "worker waiting input",
 			result: ReviewResult{RunID: "run-1", PRURL: "pr1", Verdict: domain.VerdictChangesRequested},
 			rec:    domain.SessionRecord{ID: "mer-1", Activity: domain.Activity{State: domain.ActivityWaitingInput}},
+		},
+		{
+			name:   "worker agent exited",
+			result: ReviewResult{RunID: "run-1", PRURL: "pr1", Verdict: domain.VerdictChangesRequested},
+			rec:    domain.SessionRecord{ID: "mer-1", Activity: domain.Activity{State: domain.ActivityExited}},
 		},
 	}
 	for _, tt := range tests {

@@ -594,6 +594,9 @@ func toAPIError(err error) error {
 		return apierr.Conflict("SESSION_NOT_RESTORABLE", "Session is not restorable", nil)
 	case errors.Is(err, sessionmanager.ErrTerminated):
 		return apierr.Conflict("SESSION_TERMINATED", "Session is terminated", nil)
+	case errors.Is(err, sessionmanager.ErrAgentExited):
+		return apierr.Conflict("AGENT_EXITED",
+			"The agent process exited; relaunch it before sending another message", nil)
 	case errors.Is(err, sessionmanager.ErrAwaitingDecision):
 		return apierr.Conflict("SESSION_AWAITING_DECISION",
 			"Session is paused on a permission decision; answer it in the session terminal first", nil)

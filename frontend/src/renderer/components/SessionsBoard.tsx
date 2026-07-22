@@ -266,15 +266,17 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						spawnError={visibleSpawnError}
 					/>
 				) : (
-					<div className="grid h-full grid-cols-4 gap-2">
-						{COLUMNS.map((col) => (
-							<ZoneColumn
-								key={`${projectId ?? "all"}:${col.zone}`}
-								col={col}
-								sessions={byZone.get(col.zone) ?? []}
-								onOpen={openSession}
-							/>
-						))}
+					<div className="h-full overflow-x-auto overflow-y-hidden">
+						<div className="grid h-full min-w-[64rem] grid-cols-4 gap-2 xl:min-w-0">
+							{COLUMNS.map((col) => (
+								<ZoneColumn
+									key={`${projectId ?? "all"}:${col.zone}`}
+									col={col}
+									sessions={byZone.get(col.zone) ?? []}
+									onOpen={openSession}
+								/>
+							))}
+						</div>
 					</div>
 				)}
 			</div>
@@ -425,7 +427,7 @@ function IdleSessionsStack({
 					)}
 					aria-hidden="true"
 				/>
-				<span className="size-dot-sm shrink-0 rounded-full bg-passive" aria-hidden="true" />
+				<span className="size-dot-sm shrink-0 rounded-full bg-status-idle" aria-hidden="true" />
 				<span className="font-mono text-2xs font-semibold uppercase tracking-wide-md">Idle</span>
 				<span className="ml-auto shrink-0 font-mono text-caption leading-none text-passive">{sessions.length}</span>
 			</button>
@@ -480,7 +482,8 @@ function SessionCard({
 	return (
 		<div
 			className={cn(
-				"group relative w-full rounded-md border border-border bg-surface text-left transition-colors",
+				"group relative w-full rounded-md border text-left transition-colors",
+				badge.cardClassName ?? "border-border bg-surface",
 				interactive && "hover:border-border-strong",
 			)}
 		>

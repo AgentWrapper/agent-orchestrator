@@ -49,10 +49,23 @@
 	--color-accent-weak: rgb(77 141 255 / 0.16);
 	--color-accent-dim: #24406e;
 
-	/* Status — matches daemon derived statuses */
-	--color-working: #f59f4c; /* agent working */
-	--color-warning: #e8c14a; /* needs-you / amber */
-	--color-success: #74b98a; /* mergeable */
+	/* Session status roles */
+	--color-status-working: #36c2b4;
+	--color-status-needs-you: #f2b84b;
+	--color-status-in-review: #5b8def;
+	--color-status-ready: #75c98d;
+	--color-status-merged: #4bae72;
+	--color-status-merged-surface: #173624;
+	--color-status-idle: #8e96a3;
+	--color-status-exited: #ee6a6a;
+	--color-status-terminated: #6f7680;
+	--color-status-terminated-foreground: #8e96a3;
+	--color-status-unknown: #a78bfa;
+
+	/* Compatibility roles used by non-session surfaces. */
+	--color-working: var(--color-status-working);
+	--color-warning: var(--color-status-needs-you);
+	--color-success: var(--color-status-ready);
 	--color-success-bright: #8bdc75; /* reviewer role highlight (was hardcoded) */
 	--color-danger: #ef6b6b; /* fail */
 	--color-purple: #a78bfa; /* accessory / magenta lane */
@@ -389,6 +402,17 @@
 	--bridge-success: var(--color-success);
 	--bridge-warning: var(--color-warning);
 	--bridge-danger: var(--color-danger);
+	--bridge-status-working: var(--color-status-working);
+	--bridge-status-needs-you: var(--color-status-needs-you);
+	--bridge-status-in-review: var(--color-status-in-review);
+	--bridge-status-ready: var(--color-status-ready);
+	--bridge-status-merged: var(--color-status-merged);
+	--bridge-status-merged-surface: var(--color-status-merged-surface);
+	--bridge-status-idle: var(--color-status-idle);
+	--bridge-status-exited: var(--color-status-exited);
+	--bridge-status-terminated: var(--color-status-terminated);
+	--bridge-status-terminated-foreground: var(--color-status-terminated-foreground);
+	--bridge-status-unknown: var(--color-status-unknown);
 	--bridge-interactive-hover: var(--color-interactive-hover);
 	--bridge-interactive-active: var(--color-interactive-active);
 	--bridge-scrim: var(--color-scrim);
@@ -434,9 +458,21 @@
 	--color-accent-weak: rgb(37 99 235 / 0.12);
 	--color-accent-dim: #bcd2f7;
 
-	--color-working: #c2410c;
-	--color-warning: #9a6b00;
-	--color-success: #1a7f37;
+	--color-status-working: #087f75;
+	--color-status-needs-you: #946200;
+	--color-status-in-review: #255fc4;
+	--color-status-ready: #237a3d;
+	--color-status-merged: #176b37;
+	--color-status-merged-surface: #d9f2e1;
+	--color-status-idle: #69717d;
+	--color-status-exited: #b83232;
+	--color-status-terminated: #626975;
+	--color-status-terminated-foreground: #626975;
+	--color-status-unknown: #6d46c2;
+
+	--color-working: var(--color-status-working);
+	--color-warning: var(--color-status-needs-you);
+	--color-success: var(--color-status-ready);
 	--color-success-bright: #176639;
 	--color-danger: #c0392b;
 	--color-purple: #7c3aed;

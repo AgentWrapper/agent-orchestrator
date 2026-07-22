@@ -2084,6 +2084,7 @@ components:
           - mergeable
           - merged
           - needs_input
+          - exited
           - idle
           - terminated
           - no_signal

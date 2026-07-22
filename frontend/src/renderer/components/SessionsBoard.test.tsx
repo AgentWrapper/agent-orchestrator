@@ -153,12 +153,41 @@ describe("SessionsBoard", () => {
 		const noSignalCard = screen.getByText("no-signal-card-task").closest('[role="button"]') as HTMLElement;
 		const draftCard = screen.getByText("draft-card-task").closest('[role="button"]') as HTMLElement;
 
-		expect(within(idleCard).getByText("Idle").closest("span")).toHaveClass("text-passive");
-		expect(within(noSignalCard).getByText("No signal").closest("span")).toHaveClass("text-warning");
-		expect(within(draftCard).getByText("Draft PR").closest("span")).toHaveClass("text-accent");
+		expect(within(idleCard).getByText("Idle").closest("span")).toHaveClass("text-status-idle");
+		expect(within(noSignalCard).getByText("No signal").closest("span")).toHaveClass("text-status-unknown");
+		expect(within(draftCard).getByText("Draft PR").closest("span")).toHaveClass("text-status-in-review");
 	});
 
-	it("collapses idle sessions into a nested Working-column stack", () => {
+	it("places an exited live session in Needs you with an Exited badge", () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					{
+						id: "s-exited",
+						workspaceId: "p1",
+						workspaceName: "radic",
+						title: "agent-exited-task",
+						provider: "codex",
+						branch: "ao/exited",
+						status: "exited",
+						activity: { state: "exited", lastActivityAt: "2026-01-01T00:00:00Z" },
+						updatedAt: "2026-01-01T00:00:00Z",
+						prs: [],
+					},
+				]),
+			],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		const needsYouColumn = screen.getByText("Needs you").closest("section") as HTMLElement;
+		expect(within(needsYouColumn).getByText("agent-exited-task")).toBeInTheDocument();
+		expect(within(needsYouColumn).getByText("Exited").closest("span")).toHaveClass("text-status-exited");
+	});
+
+	it("collapses only backend-derived idle sessions into the Working-column stack", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
 				{
@@ -185,7 +214,7 @@ describe("SessionsBoard", () => {
 							title: "idle-no-pr-task",
 							provider: "claude-code",
 							branch: "ao/radic-5",
-							status: "working",
+							status: "idle",
 							activity: { state: "idle", lastActivityAt: "2026-01-01T00:00:00Z" },
 							updatedAt: "2026-01-01T00:00:00Z",
 							prs: [],
@@ -197,7 +226,7 @@ describe("SessionsBoard", () => {
 							title: "idle-with-pr-task",
 							provider: "claude-code",
 							branch: "ao/radic-6",
-							status: "working",
+							status: "pr_open",
 							activity: { state: "idle", lastActivityAt: "2026-01-01T00:00:00Z" },
 							updatedAt: "2026-01-01T00:00:00Z",
 							prs: [{ number: 7, url: "https://github.com/acme/radic/pull/7", state: "open" }],
@@ -212,11 +241,11 @@ describe("SessionsBoard", () => {
 
 		expect(screen.getByText("active-task")).toBeInTheDocument();
 		expect(screen.queryByText("idle-no-pr-task")).not.toBeInTheDocument();
-		expect(screen.queryByText("idle-with-pr-task")).not.toBeInTheDocument();
+		expect(screen.getByText("idle-with-pr-task")).toBeInTheDocument();
 
 		const idleStackToggle = screen.getByRole("button", { name: /idle sessions/i });
 		expect(idleStackToggle).toHaveAttribute("aria-expanded", "false");
-		expect(within(idleStackToggle).getByText("2")).toBeInTheDocument();
+		expect(within(idleStackToggle).getByText("1")).toBeInTheDocument();
 
 		fireEvent.click(idleStackToggle);
 
@@ -224,9 +253,9 @@ describe("SessionsBoard", () => {
 		expect(screen.getByText("active-task")).toBeInTheDocument();
 		const idleCard = screen.getByText("idle-no-pr-task").closest('[role="button"]') as HTMLElement;
 		expect(screen.getByText("idle-with-pr-task")).toBeInTheDocument();
-		const badge = within(idleCard).getByText("Working").closest("span");
-		expect(badge).toHaveClass("text-working");
-		expect(badge).not.toHaveClass("text-passive");
+		const badge = within(idleCard).getByText("Idle").closest("span");
+		expect(badge).toHaveClass("text-status-idle");
+		expect(badge).not.toHaveClass("text-status-working");
 	});
 
 	it("toggles idle contents without hiding active cards or remounting the toggle", () => {
@@ -638,6 +667,27 @@ describe("SessionsBoard", () => {
 			to: "/projects/$projectId/sessions/$sessionId",
 			params: { projectId: "p1", sessionId: "s-merged" },
 		});
+	});
+
+	it("uses distinct card surfaces for merged and terminated sessions", async () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					terminatedSession(),
+					terminatedSession({ id: "s-merged", title: "merged worker", status: "merged" }),
+				]),
+			],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+		await userEvent.click(screen.getByRole("button", { name: /done \/ terminated/i }));
+
+		const terminatedCard = screen.getByText("dead worker").closest('[role="button"]')?.parentElement;
+		const mergedCard = screen.getByText("merged worker").closest('[role="button"]')?.parentElement;
+		expect(terminatedCard).toHaveClass("session-card-terminated");
+		expect(mergedCard).toHaveClass("session-card-merged");
 	});
 });
 

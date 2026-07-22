@@ -29,6 +29,7 @@ var (
 	ErrNotFound         = errors.New("session: not found")
 	ErrNotRestorable    = errors.New("session: not restorable (not terminal)")
 	ErrTerminated       = errors.New("session: terminated")
+	ErrAgentExited      = errors.New("session: agent exited")
 	ErrIncompleteHandle = errors.New("session: incomplete teardown handle")
 	// ErrProjectNotResolvable means the spawn's project has no usable repo
 	// (unregistered, archived, or missing a path). The API maps it to a 400.
@@ -1533,8 +1534,8 @@ func (m *Manager) applyWorkspaceProjectPreserved(ctx context.Context, rows []por
 
 // Send delivers a message to a running session's agent through the guarded
 // pane-write primitive, then best-effort confirms the agent actually accepted
-// it. The guard refuses delivery into a session that is gone, terminated, or
-// paused on a permission decision (pasting there could answer the dialog);
+// it. The guard refuses delivery into a session that is gone, terminated, has
+// an exited agent, or is paused on a permission decision;
 // those refusals surface as typed sentinels so the API reports why instead of
 // silently dropping the message. AO has no delivery ack: the messenger returns
 // nil the moment the runtime paste + Enter commands exit 0, and for a large
@@ -1557,6 +1558,8 @@ func (m *Manager) Send(ctx context.Context, id domain.SessionID, message string)
 		return fmt.Errorf("send %s: %w", id, ErrNotFound)
 	case sessionguard.SuppressedTerminated:
 		return fmt.Errorf("send %s: %w", id, ErrTerminated)
+	case sessionguard.SuppressedExited:
+		return fmt.Errorf("send %s: %w", id, ErrAgentExited)
 	case sessionguard.SuppressedAwaitingUser:
 		return fmt.Errorf("send %s: %w", id, ErrAwaitingDecision)
 	}
@@ -2394,6 +2397,8 @@ func (m *Manager) deliverAfterStartPrompt(ctx context.Context, agent ports.Agent
 		return fmt.Errorf("send %s: %w", id, ErrNotFound)
 	case sessionguard.SuppressedTerminated:
 		return fmt.Errorf("send %s: %w", id, ErrTerminated)
+	case sessionguard.SuppressedExited:
+		return fmt.Errorf("send %s: %w", id, ErrAgentExited)
 	case sessionguard.SuppressedAwaitingUser:
 		return fmt.Errorf("send %s: %w", id, ErrAwaitingDecision)
 	case sessionguard.SuppressedUnknown:

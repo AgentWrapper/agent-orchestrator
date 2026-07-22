@@ -220,6 +220,17 @@
 	--color-success-bright: var(--color-success-bright);
 	--color-warning: var(--bridge-warning);
 	--color-error: var(--bridge-danger);
+	--color-status-working: var(--bridge-status-working);
+	--color-status-needs-you: var(--bridge-status-needs-you);
+	--color-status-in-review: var(--bridge-status-in-review);
+	--color-status-ready: var(--bridge-status-ready);
+	--color-status-merged: var(--bridge-status-merged);
+	--color-status-merged-surface: var(--bridge-status-merged-surface);
+	--color-status-idle: var(--bridge-status-idle);
+	--color-status-exited: var(--bridge-status-exited);
+	--color-status-terminated: var(--bridge-status-terminated);
+	--color-status-terminated-foreground: var(--bridge-status-terminated-foreground);
+	--color-status-unknown: var(--bridge-status-unknown);
 	--color-destructive: var(--bridge-danger);
 	--color-destructive-foreground: var(--color-accent-foreground);
 
@@ -285,6 +296,16 @@
 	box-shadow:
 		0 0 0 3px var(--color-bg-primary),
 		0 0 8px var(--color-working);
+}
+
+@utility session-card-merged {
+	border-color: color-mix(in srgb, var(--color-status-merged) 38%, var(--color-border));
+	background-color: var(--color-status-merged-surface);
+}
+
+@utility session-card-terminated {
+	border-color: color-mix(in srgb, var(--color-status-terminated) 32%, var(--color-border));
+	background-color: color-mix(in srgb, var(--color-status-terminated) 7%, var(--color-bg-secondary));
 }
 
 @utility bg-surface-faint {

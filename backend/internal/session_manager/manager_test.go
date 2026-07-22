@@ -4764,6 +4764,22 @@ func TestSend_BlockedSessionRejectsDelivery(t *testing.T) {
 	}
 }
 
+func TestSend_ExitedAgentRejectsDelivery(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["s1"] = domain.SessionRecord{ID: "s1", Harness: "claude-code",
+		Activity: domain.Activity{State: domain.ActivityExited}}
+	msg := &fakeMessenger{}
+	m := newSendTestManager(t, signalingAgent{}, msg, st)
+
+	err := m.Send(context.Background(), "s1", "status update please")
+	if !errors.Is(err, ErrAgentExited) {
+		t.Fatalf("Send error = %v, want ErrAgentExited", err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("Send calls = %d, want 0 (no paste into an exited agent shell)", len(msg.msgs))
+	}
+}
+
 func TestSend_NoNudgeWhenBlockedAppearsMidWait(t *testing.T) {
 	// The permission dialog can appear between polls (e.g. the delivered prompt
 	// itself triggered a tool approval). The confirm loop must abort on the

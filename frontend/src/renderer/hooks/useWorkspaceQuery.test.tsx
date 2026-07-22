@@ -3,7 +3,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
-const { getMock, hasTrustedApiBaseUrlMock } = vi.hoisted(() => ({
+const { captureRendererEventMock, getMock, hasTrustedApiBaseUrlMock } = vi.hoisted(() => ({
+	captureRendererEventMock: vi.fn().mockResolvedValue(undefined),
 	getMock: vi.fn(),
 	hasTrustedApiBaseUrlMock: vi.fn(() => true),
 }));
@@ -12,6 +13,8 @@ vi.mock("../lib/api-client", () => ({
 	apiClient: { GET: getMock },
 	hasTrustedApiBaseUrl: hasTrustedApiBaseUrlMock,
 }));
+
+vi.mock("../lib/telemetry", () => ({ captureRendererEvent: captureRendererEventMock }));
 
 import { useWorkspaceQuery } from "./useWorkspaceQuery";
 
@@ -33,6 +36,7 @@ function respondWith(payload: {
 }
 
 beforeEach(() => {
+	captureRendererEventMock.mockClear();
 	getMock.mockReset();
 	hasTrustedApiBaseUrlMock.mockReset().mockReturnValue(true);
 });
@@ -124,6 +128,14 @@ describe("useWorkspaceQuery", () => {
 			provider: "codex",
 			status: "unknown",
 			branch: "session/sess-2",
+		});
+		expect(captureRendererEventMock).toHaveBeenCalledWith("ao.renderer.session_state_unknown", {
+			field: "status",
+			reason: "unrecognized",
+		});
+		expect(captureRendererEventMock).toHaveBeenCalledWith("ao.renderer.session_state_unknown", {
+			field: "activity",
+			reason: "missing",
 		});
 	});
 

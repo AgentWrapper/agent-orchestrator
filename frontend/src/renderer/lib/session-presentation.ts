@@ -4,16 +4,53 @@ export type AgentActivityView = {
 	state: SessionActivityState;
 	label: string;
 	tone: string;
+	dotClassName: string;
 	breathe: boolean;
 };
 
 const agentActivityViews: Record<SessionActivityState, AgentActivityView> = {
-	active: { state: "active", label: "Working", tone: "var(--color-working)", breathe: true },
-	idle: { state: "idle", label: "Idle", tone: "var(--color-text-muted)", breathe: false },
-	waiting_input: { state: "waiting_input", label: "Input Needed", tone: "var(--color-warning)", breathe: false },
-	blocked: { state: "blocked", label: "Awaiting Decision", tone: "var(--color-warning)", breathe: false },
-	exited: { state: "exited", label: "Exited", tone: "var(--color-text-muted)", breathe: false },
-	unknown: { state: "unknown", label: "Unknown", tone: "var(--color-text-muted)", breathe: false },
+	active: {
+		state: "active",
+		label: "Working",
+		tone: "var(--color-status-working)",
+		dotClassName: "bg-status-working",
+		breathe: true,
+	},
+	idle: {
+		state: "idle",
+		label: "Idle",
+		tone: "var(--color-status-idle)",
+		dotClassName: "bg-status-idle",
+		breathe: false,
+	},
+	waiting_input: {
+		state: "waiting_input",
+		label: "Input Needed",
+		tone: "var(--color-status-needs-you)",
+		dotClassName: "bg-status-needs-you",
+		breathe: false,
+	},
+	blocked: {
+		state: "blocked",
+		label: "Awaiting Decision",
+		tone: "var(--color-status-needs-you)",
+		dotClassName: "bg-status-needs-you",
+		breathe: false,
+	},
+	exited: {
+		state: "exited",
+		label: "Exited",
+		tone: "var(--color-status-exited)",
+		dotClassName: "bg-status-exited",
+		breathe: false,
+	},
+	unknown: {
+		state: "unknown",
+		label: "Unknown",
+		tone: "var(--color-status-unknown)",
+		dotClassName: "bg-status-unknown",
+		breathe: false,
+	},
 };
 
 export function getAgentActivityView(activity?: SessionActivity | null): AgentActivityView {
@@ -28,23 +65,29 @@ export function isAgentActivityWorking(activity?: SessionActivity | null): boole
 export type SessionStatusView = {
 	label: string;
 	className: string;
+	cardClassName?: string;
 };
 
 const sessionStatusViews: Record<SessionStatus, SessionStatusView> = {
-	working: { label: "Working", className: "text-working" },
-	idle: { label: "Idle", className: "text-passive" },
-	needs_input: { label: "Input needed", className: "text-warning" },
-	no_signal: { label: "No signal", className: "text-warning" },
-	ci_failed: { label: "CI failed", className: "text-error" },
-	changes_requested: { label: "Changes requested", className: "text-warning" },
-	review_pending: { label: "Review pending", className: "text-accent" },
-	draft: { label: "Draft PR", className: "text-accent" },
-	pr_open: { label: "PR open", className: "text-accent" },
-	approved: { label: "Approved", className: "text-success" },
-	mergeable: { label: "Ready", className: "text-success" },
-	merged: { label: "Merged", className: "text-passive" },
-	terminated: { label: "Terminated", className: "text-passive" },
-	unknown: { label: "Unknown status", className: "text-warning" },
+	working: { label: "Working", className: "text-status-working" },
+	idle: { label: "Idle", className: "text-status-idle" },
+	needs_input: { label: "Input needed", className: "text-status-needs-you" },
+	exited: { label: "Exited", className: "text-status-exited" },
+	no_signal: { label: "No signal", className: "text-status-unknown" },
+	ci_failed: { label: "CI failed", className: "text-status-exited" },
+	changes_requested: { label: "Changes requested", className: "text-status-needs-you" },
+	review_pending: { label: "Review pending", className: "text-status-in-review" },
+	draft: { label: "Draft PR", className: "text-status-in-review" },
+	pr_open: { label: "PR open", className: "text-status-in-review" },
+	approved: { label: "Approved", className: "text-status-ready" },
+	mergeable: { label: "Ready", className: "text-status-ready" },
+	merged: { label: "Merged", className: "text-status-merged", cardClassName: "session-card-merged" },
+	terminated: {
+		label: "Terminated",
+		className: "text-status-terminated-foreground",
+		cardClassName: "session-card-terminated",
+	},
+	unknown: { label: "Unknown status", className: "text-status-unknown" },
 };
 
 export function getSessionStatusView(status: SessionStatus): SessionStatusView {
@@ -67,47 +110,47 @@ const attentionZoneViews: Record<AttentionZone, AttentionZoneView> = {
 	working: {
 		zone: "working",
 		label: "Working",
-		glow: "color-mix(in srgb, var(--color-working) 7%, transparent)",
-		dot: "var(--color-working)",
+		glow: "color-mix(in srgb, var(--color-status-working) 7%, transparent)",
+		dot: "var(--color-status-working)",
 		dotGlow: true,
-		titleClassName: "text-working",
-		dotClassName: "bg-working",
+		titleClassName: "text-status-working",
+		dotClassName: "bg-status-working",
 	},
 	action: {
 		zone: "action",
 		label: "Needs you",
-		glow: "color-mix(in srgb, var(--color-warning) 6%, transparent)",
-		dot: "var(--color-warning)",
+		glow: "color-mix(in srgb, var(--color-status-needs-you) 6%, transparent)",
+		dot: "var(--color-status-needs-you)",
 		dotGlow: true,
-		titleClassName: "text-warning",
-		dotClassName: "bg-warning",
+		titleClassName: "text-status-needs-you",
+		dotClassName: "bg-status-needs-you",
 	},
 	pending: {
 		zone: "pending",
 		label: "In review",
-		glow: "color-mix(in srgb, var(--color-accent) 5%, transparent)",
-		dot: "var(--color-accent-dim)",
+		glow: "color-mix(in srgb, var(--color-status-in-review) 5%, transparent)",
+		dot: "var(--color-status-in-review)",
 		dotGlow: false,
-		titleClassName: "text-accent",
-		dotClassName: "bg-accent-dim",
+		titleClassName: "text-status-in-review",
+		dotClassName: "bg-status-in-review",
 	},
 	merge: {
 		zone: "merge",
 		label: "Ready to merge",
-		glow: "color-mix(in srgb, var(--color-success) 7%, transparent)",
-		dot: "var(--color-success)",
+		glow: "color-mix(in srgb, var(--color-status-ready) 7%, transparent)",
+		dot: "var(--color-status-ready)",
 		dotGlow: true,
-		titleClassName: "text-success",
-		dotClassName: "bg-success",
+		titleClassName: "text-status-ready",
+		dotClassName: "bg-status-ready",
 	},
 	done: {
 		zone: "done",
 		label: "Done",
 		glow: "var(--color-overlay-faint)",
-		dot: "var(--color-text-muted)",
+		dot: "var(--color-status-terminated)",
 		dotGlow: false,
-		titleClassName: "text-muted-foreground",
-		dotClassName: "bg-passive",
+		titleClassName: "text-status-terminated-foreground",
+		dotClassName: "bg-status-terminated",
 	},
 };
 
@@ -132,6 +175,7 @@ export function attentionZone(input: SessionStatus | Pick<WorkspaceSession, "sta
 		case "mergeable":
 			return "merge";
 		case "needs_input":
+		case "exited":
 		case "no_signal":
 		case "ci_failed":
 		case "changes_requested":
@@ -156,8 +200,9 @@ export function getAttentionZoneViewForZone(zone: AttentionZone): AttentionZoneV
 	return attentionZoneViews[zone];
 }
 
-export function getSessionDotView(session: Pick<WorkspaceSession, "status">): { className: string } {
-	return { className: getAttentionZoneView(session.status).dotClassName };
+export function getSessionDotView(session: Pick<WorkspaceSession, "activity">): { className: string } {
+	const activity = getAgentActivityView(session.activity);
+	return { className: `${activity.dotClassName}${activity.breathe ? " animate-status-pulse" : ""}` };
 }
 
 export type SessionTimelinePillStatus = Extract<SessionStatus, "no_signal" | "ci_failed" | "changes_requested">;
@@ -169,15 +214,15 @@ export type SessionTimelinePillView = {
 };
 
 const sessionTimelinePillViews: Record<SessionTimelinePillStatus, SessionTimelinePillView> = {
-	no_signal: { label: "No Signal", tone: "var(--color-text-muted)", breathe: false },
-	ci_failed: { label: "CI Failed", tone: "var(--color-danger)", breathe: false },
-	changes_requested: { label: "Changes Requested", tone: "var(--color-warning)", breathe: false },
+	no_signal: { label: "No Signal", tone: "var(--color-status-unknown)", breathe: false },
+	ci_failed: { label: "CI Failed", tone: "var(--color-status-exited)", breathe: false },
+	changes_requested: { label: "Changes Requested", tone: "var(--color-status-needs-you)", breathe: false },
 };
 
 export function getSessionTimelinePillView(status: SessionTimelinePillStatus): SessionTimelinePillView {
 	return sessionTimelinePillViews[status];
 }
 
-export function isSessionInIdleStack(session: Pick<WorkspaceSession, "status" | "activity">): boolean {
-	return session.status === "idle" || (session.status === "working" && session.activity?.state === "idle");
+export function isSessionInIdleStack(session: Pick<WorkspaceSession, "status">): boolean {
+	return session.status === "idle";
 }
