@@ -330,7 +330,13 @@ export function useBrowserView({
 				const id = viewIdRef.current;
 				if (id && activeRef.current && hasUrlRef.current) {
 					runMirror(id);
-					scheduleMeasure();
+					// Park the native view synchronously, in the same tick the overlay
+					// opened. `modalOpenRef` is already true, so measureAndSend() emits
+					// the `parked: true` bounds now instead of a frame later — deferring
+					// to rAF leaves a ~16ms window where the live view paints over the
+					// freshly-opened dropdown, which stacks into a stuck overlay under
+					// rapid toggling. rAF still refines geometry on later resize/scroll.
+					measureAndSend();
 				} else {
 					sendHiddenBounds();
 				}
@@ -347,14 +353,25 @@ export function useBrowserView({
 		};
 		update();
 		const observer = new MutationObserver(update);
-		observer.observe(document.body, { childList: true });
+		// Radix reuses its portal node and flips `data-state` in place rather than
+		// adding/removing a body child, so a `childList`-only observer misses the
+		// open/close transition under rapid toggling and `modalOpenRef` desyncs.
+		// Watch subtree attribute flips on `data-state` too so the transition is
+		// always observed. `update()` early-returns when the open state is unchanged,
+		// so the extra callbacks are cheap.
+		observer.observe(document.body, {
+			childList: true,
+			subtree: true,
+			attributes: true,
+			attributeFilter: ["data-state"],
+		});
 		return () => {
 			observer.disconnect();
 			clearMirrorTimer();
 			mirrorTokenRef.current += 1;
 			stopMirrorStream();
 		};
-	}, [hasNativeBrowser, runMirror, scheduleMeasure, scheduleSettleMeasure, sendHiddenBounds, stopMirrorStream]);
+	}, [hasNativeBrowser, measureAndSend, runMirror, scheduleSettleMeasure, sendHiddenBounds, stopMirrorStream]);
 
 	useEffect(() => {
 		const handle = () => scheduleMeasure();
