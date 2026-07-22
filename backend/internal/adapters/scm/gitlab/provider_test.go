@@ -1907,6 +1907,200 @@ func TestFetchPullRequests_ForkMR_SourceProjectCacheExpiresAfterTTL(t *testing.T
 	}
 }
 
+// TestFetchPullRequests_ConcurrentCacheAccess_RaceSafe verifies that the
+// provider-level TTL cache (added by ticket 01, consumed by tickets 03, 04, 05)
+// is thread-safe under the existing fetchConcurrency=5 parallelism exercised by
+// FetchPullRequests. This is the integration guard for ticket 07: it locks in
+// the concurrency invariant once all cache consumers are wired in.
+//
+// The test deliberately contends on every cache domain simultaneously:
+//
+//   - MR-detail cache: each ref's /merge_requests/:iid response is served from
+//     the same fork project (source_project_id=99) so the MR-detail path runs
+//     concurrently across refs.
+//   - Fork-project cache: 5+ fork MRs all resolve to source_project_id=99 —
+//     the same cache entry is read and written by concurrent goroutines, which
+//     is the exact write-write contention path the mutex must guard.
+//   - Approvals cache: every ref consults the approvals cache; the first
+//     goroutine to fetch populates it, the rest read it concurrently.
+//
+// Under go test -race the race detector flags any unsynchronized access to the
+// shared cache maps. The test asserts that all observations return correct
+// results (no missing/stale entries from a racing overwrite) and that the
+// source-project endpoint is not duplicated unnecessarily (no duplicate
+// cache writes producing stale or missing entries). 7 refs exceeds the
+// fetchConcurrency=5 cap, guaranteeing the semaphore is saturated and goroutines
+// queue — the exact interleaving most likely to surface a race.
+func TestFetchPullRequests_ConcurrentCacheAccess_RaceSafe(t *testing.T) {
+	var sourceProjectHits atomic.Int32
+	// Per-MR-detail hit counters so the test can verify each ref is fetched
+	// (the MR-detail cache is cold at the start of this test).
+	var mrDetailHits atomic.Int32
+	var approvalsHits atomic.Int32
+	var pipelinesHits atomic.Int32
+
+	mux := http.NewServeMux()
+
+	// 7 fork MRs, all with source_project_id=99. They share the same
+	// fork-project cache entry (host=gitlab.com, source_project_id=99) and
+	// each has its own approvals + MR-detail cache entry. fetchConcurrency=5
+	// means at most 5 of these run concurrently; the remaining 2 wait on the
+	// semaphore, so the mutex is contended from the very first cycle.
+	const numRefs = 7
+	for i := 1; i <= numRefs; i++ {
+		iid := i
+		sha := fmt.Sprintf("sha%d", iid)
+		mrPath := fmt.Sprintf("/api/v4/projects/myorg%%2Fmyrepo/merge_requests/%d", iid)
+		approvalsPath := fmt.Sprintf("/api/v4/projects/myorg%%2Fmyrepo/merge_requests/%d/approvals", iid)
+		jobsPath := fmt.Sprintf("/api/v4/projects/myorg%%2Fmyrepo/pipelines/%d/jobs", 100+iid)
+
+		mux.HandleFunc(mrPath, func(w http.ResponseWriter, r *http.Request) {
+			mrDetailHits.Add(1)
+			json.NewEncoder(w).Encode(map[string]any{
+				"iid":               iid,
+				"title":             fmt.Sprintf("Fork MR %d", iid),
+				"state":             "opened",
+				"draft":             false,
+				"web_url":           fmt.Sprintf("https://gitlab.com/myorg/myrepo/-/merge_requests/%d", iid),
+				"source_branch":     fmt.Sprintf("fix-bug-%d", iid),
+				"target_branch":     "main",
+				"sha":               sha,
+				"merge_status":      "can_be_merged",
+				"author":            map[string]any{"username": "alice"},
+				"source_project_id": 99, // same fork project for all refs → shared cache entry
+				"target_project_id": 10,
+				"diff_refs":         map[string]any{"base_sha": "base123"},
+			})
+		})
+		mux.HandleFunc(approvalsPath, func(w http.ResponseWriter, r *http.Request) {
+			approvalsHits.Add(1)
+			json.NewEncoder(w).Encode(map[string]any{
+				"approved":           false,
+				"approvals_required": 0,
+				"approved_by":        []any{},
+			})
+		})
+		mux.HandleFunc(jobsPath, func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"id": 200 + iid, "name": "build", "status": "success", "web_url": "https://gitlab.com/jobs/200"},
+			})
+		})
+	}
+
+	// Shared source-project endpoint: all 7 refs resolve to the same
+	// source_project_id=99, so under correct cache behavior this is fetched
+	// exactly once (the first goroutine populates the fork-project cache; the
+	// rest read the cached entry). A write-write race that creates duplicate
+	// entries would show up here as >1 hit (though under -race the detector
+	// flags the underlying map access, not the hit count — the hit count is
+	// the correctness assertion for the no-duplicated-entries criterion).
+	mux.HandleFunc("/api/v4/projects/99", func(w http.ResponseWriter, r *http.Request) {
+		sourceProjectHits.Add(1)
+		json.NewEncoder(w).Encode(map[string]any{
+			"id":                  99,
+			"path_with_namespace": "contributor/myrepo-fork",
+		})
+	})
+	// Pipelines list endpoint (per repo, not per ref). Track total hits so
+	// the test confirms CI state was fetched for every ref.
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/pipelines", func(w http.ResponseWriter, r *http.Request) {
+		pipelinesHits.Add(1)
+		sha := r.URL.Query().Get("sha")
+		// Return a pipeline whose id encodes the sha so the per-iid jobs
+		// handler above matches.
+		var pipelineID int
+		for i := 1; i <= numRefs; i++ {
+			if sha == fmt.Sprintf("sha%d", i) {
+				pipelineID = 100 + i
+				break
+			}
+		}
+		if pipelineID == 0 {
+			t.Errorf("unexpected pipelines query sha=%q", sha)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		json.NewEncoder(w).Encode([]map[string]any{
+			{"id": pipelineID, "status": "success", "sha": sha},
+		})
+	})
+
+	_, p := testServer(t, mux)
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "myorg", Name: "myrepo", Repo: "myorg/myrepo"}
+	refs := make([]ports.SCMPRRef, numRefs)
+	for i := 1; i <= numRefs; i++ {
+		refs[i-1] = ports.SCMPRRef{
+			Repo:   repo,
+			Number: i,
+			URL:    fmt.Sprintf("https://gitlab.com/myorg/myrepo/-/merge_requests/%d", i),
+		}
+	}
+
+	obs, err := p.FetchPullRequests(context.Background(), refs)
+	if err != nil {
+		t.Fatalf("FetchPullRequests under concurrent access: unexpected error: %v", err)
+	}
+	if len(obs) != numRefs {
+		t.Fatalf("got %d observations, want %d", len(obs), numRefs)
+	}
+
+	// Every observation must be Fetched=true with the correct fork head repo
+	// resolved from the shared source-project cache entry. A racing
+	// overwrite that dropped or corrupted the cached entry would surface as
+	// HeadRepo == "myorg/myrepo" (the fallback target repo) for at least one
+	// ref, or as Fetched=false.
+	for i, o := range obs {
+		if !o.Fetched {
+			t.Errorf("obs[%d].Fetched = false, want true (cache race may have dropped an entry)", i)
+			continue
+		}
+		if got, want := o.PR.HeadRepo, "contributor/myrepo-fork"; got != want {
+			t.Errorf("obs[%d].PR.HeadRepo = %q, want %q (shared fork-project cache entry corrupted by concurrent access)", i, got, want)
+		}
+		if got, want := o.PR.Number, i+1; got != want {
+			t.Errorf("obs[%d].PR.Number = %d, want %d (result ordering broken)", i, got, want)
+		}
+	}
+
+	// Correctness assertions for cache behavior under contention:
+	//
+	// source-project endpoint: the fork-project cache uses check-then-fetch-
+	// then-set (NOT single-flight) per the spec's design decision — the mutex
+	// guards map access, not the HTTP fetch. So all goroutines that start
+	// concurrently (up to fetchConcurrency=5) can see a miss before any of them
+	// completes and populates the entry; goroutines released from the semaphore
+	// after the first write sees a hit. The expected hit count is therefore
+	// 1 <= hits <= fetchConcurrency. Asserting exactly 1 would demand
+	// single-flight semantics the implementation deliberately does not
+	// provide; the acceptance criterion is "no stale or missing entries from
+	// write-write races" — and all concurrent writes store the identical value
+	// ("contributor/myrepo-fork"), so the final cache entry is correct.
+	//
+	//   - MR-detail endpoint hit once per ref (cold cache): each ref's
+	//     /merge_requests/:iid is fetched exactly once. The MR-detail cache
+	//     is keyed by (host, repo, iid) so refs do not collide here; this
+	//     counter confirms all refs were actually processed.
+	//   - approvals endpoint hit once per ref (cold cache): the approvals
+	//     cache is also keyed by iid, so each ref fetches its own approvals
+	//     exactly once. This is the contention path: concurrent goroutines
+	//     for *different* iids run the setApprovals path simultaneously on
+	//     the shared mutex.
+	if got := sourceProjectHits.Load(); got < 1 || got > int32(fetchConcurrency) {
+		t.Errorf("source-project endpoint hits = %d, want in [1, %d] (fork-project cache: at least one fetch, at most one per concurrent goroutine)", got, fetchConcurrency)
+	} else {
+		t.Logf("source-project endpoint hits = %d (cache stampede within fetchConcurrency=%d is expected; single-flight is not in scope per spec)", got, fetchConcurrency)
+	}
+	if got, want := mrDetailHits.Load(), int32(numRefs); got != want {
+		t.Errorf("MR-detail endpoint hits = %d, want %d (one fetch per ref, cache keyed by iid)", got, want)
+	}
+	if got, want := approvalsHits.Load(), int32(numRefs); got != want {
+		t.Errorf("approvals endpoint hits = %d, want %d (one fetch per ref, cache keyed by iid)", got, want)
+	}
+	if got, want := pipelinesHits.Load(), int32(numRefs); got != want {
+		t.Errorf("pipelines endpoint hits = %d, want %d (one fetch per ref)", got, want)
+	}
+}
+
 // TestFetchPullRequests_PipelineJobsTruncated_Partial verifies that when the
 // pipeline-jobs pagination hits the 10-page cap (more than 1,000 jobs), the
 // observation's CI.Partial flag is set to true so the observer does not
