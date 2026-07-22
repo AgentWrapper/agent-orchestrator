@@ -222,11 +222,12 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 									onChange={(event) => setPrompt(event.target.value)}
 									onPaste={handlePaste}
 									onKeyDown={(event) => {
-										// Chat-style, matching Claude Code / Codex: Enter starts the task,
-										// Shift+Enter inserts a newline. Alt+Enter is excluded so it can't
-										// submit by accident; Cmd+Enter is intentionally left submitting as a
-										// common chat-send affordance. Guard against IME composition so
-										// committing a CJK candidate with Enter doesn't submit.
+										// Chat-style, matching Claude Code / Codex. Submit affordances:
+										// plain Enter, and Cmd+Enter / Ctrl+Enter (common chat-send combos)
+										// which pass this guard because we only exclude Shift and Alt.
+										// Do NOT submit: Shift+Enter and Alt+Enter — both insert a newline
+										// (Alt is excluded so it can't submit by accident). Guard against IME
+										// composition so committing a CJK candidate with Enter doesn't submit.
 										if (event.key === "Enter" && !event.shiftKey && !event.altKey && !event.nativeEvent.isComposing) {
 											event.preventDefault();
 											event.currentTarget.form?.requestSubmit();

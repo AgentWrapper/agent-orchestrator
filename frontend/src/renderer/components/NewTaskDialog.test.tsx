@@ -246,6 +246,28 @@ describe("NewTaskDialog", () => {
 		expect(spawnBody().prompt).toContain("\n");
 	});
 
+	it("does not submit on Alt+Enter or Shift+Enter but does on plain Enter in the brief", async () => {
+		renderDialog();
+		const user = userEvent.setup();
+		await waitForAgentCatalog();
+
+		await user.type(screen.getByLabelText("Title"), "Fix fallback renderer");
+		const brief = screen.getByLabelText("Brief");
+		await user.type(brief, "Line");
+
+		// Alt+Enter must NOT submit — Alt is excluded so it can't submit by accident.
+		await user.keyboard("{Alt>}{Enter}{/Alt}");
+		expect(postMock).not.toHaveBeenCalled();
+
+		// Shift+Enter must NOT submit — it inserts a newline.
+		await user.keyboard("{Shift>}{Enter}{/Shift}");
+		expect(postMock).not.toHaveBeenCalled();
+
+		// Plain Enter submits the task.
+		await user.keyboard("{Enter}");
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+	});
+
 	it.each([
 		{
 			code: "AGENT_BINARY_NOT_FOUND",
