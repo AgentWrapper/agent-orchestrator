@@ -55,6 +55,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/dev/import-projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run the developer project-registry import through the daemon store */
+        post: operations["runDevImportProjects"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/events": {
         parameters: {
             query?: never;
@@ -365,6 +382,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/push/devices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Register (upsert) a phone's Expo push token */
+        post: operations["registerPushDevice"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/push/devices/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Unregister a phone's Expo push token */
+        delete: operations["unregisterPushDevice"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions": {
         parameters: {
             query?: never;
@@ -624,6 +675,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/workspace/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read one session workspace file and its git diff */
+        get: operations["getSessionWorkspaceFile"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/workspace/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List files in a session workspace with git change status */
+        get: operations["listSessionWorkspaceFiles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/cleanup": {
         parameters: {
             query?: never;
@@ -727,6 +812,29 @@ export interface components {
             path: string;
             resolveError: string;
         };
+        DevImportProjectsConflict: {
+            path: string;
+            projectId: string;
+            reason: string;
+            targetId?: string;
+            targetPath?: string;
+        };
+        DevImportProjectsReport: {
+            conflicts?: components["schemas"]["DevImportProjectsConflict"][];
+            dryRun: boolean;
+            inserted: number;
+            skipped: number;
+            sourceDataDir: string;
+            targetDataDir: string;
+            updated: number;
+        };
+        DevImportProjectsRequest: {
+            dryRun: boolean;
+            sourceDataDir: string;
+        };
+        DevImportProjectsResponse: {
+            report: components["schemas"]["DevImportProjectsReport"];
+        };
         DomainActivity: {
             /** Format: date-time */
             lastActivityAt: string;
@@ -783,6 +891,11 @@ export interface components {
         };
         ListSessionsResponse: {
             sessions: components["schemas"]["ControllersSessionView"][];
+        };
+        ListWorkspaceFilesResponse: {
+            files: components["schemas"]["WorkspaceFileSummary"][];
+            sessionId: string;
+            truncated: boolean;
         };
         MarkAllNotificationsReadResponse: {
             notifications: components["schemas"]["NotificationResponse"][];
@@ -895,6 +1008,29 @@ export interface components {
             resolveError?: string;
             sessionPrefix: string;
         };
+        PushDeviceEnvelope: {
+            device: components["schemas"]["PushDeviceResponse"];
+        };
+        PushDeviceResponse: {
+            /** Format: date-time */
+            createdAt: string;
+            deviceName?: string;
+            /** Format: date-time */
+            lastSeenAt: string;
+            platform?: string;
+            token: string;
+        };
+        RegisterPushDeviceRequest: {
+            /** @description Human-friendly device label. */
+            deviceName?: string;
+            /**
+             * @description Device platform.
+             * @enum {string}
+             */
+            platform?: "ios" | "android";
+            /** @description Expo push token, e.g. ExponentPushToken[...]. */
+            token: string;
+        };
         RemoveProjectResult: {
             projectId: string;
             removedStorageDir: boolean;
@@ -913,6 +1049,8 @@ export interface components {
         };
         RestoreSessionResponse: {
             ok: boolean;
+            /** @enum {string} */
+            restoreMode: "native" | "saved_prompt" | "fresh";
             session: components["schemas"]["ControllersSessionView"];
             sessionId: string;
         };
@@ -1050,13 +1188,15 @@ export interface components {
             session: components["schemas"]["ControllersSessionView"];
         };
         SetActivityRequest: {
+            /** @description Native agent session identifier used to resume its transcript. */
+            agentSessionId?: string;
             /** @description AO hook sub-command that produced this state (e.g. post-tool-use). */
             event?: string;
             /**
-             * @description Agent activity state reported by an agent hook.
+             * @description Agent activity state reported by an agent hook. Optional for metadata-only hooks.
              * @enum {string}
              */
-            state: "active" | "idle" | "waiting_input" | "blocked" | "exited";
+            state?: "active" | "idle" | "waiting_input" | "blocked" | "exited";
             /** @description Native tool name, for tool-use hook events. */
             toolName?: string;
             /** @description Native tool-use id, for tool-use hook events. */
@@ -1085,7 +1225,7 @@ export interface components {
             branch?: string;
             displayName?: string;
             /** @enum {string} */
-            harness?: "claude-code" | "codex" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "kiro" | "kilocode" | "vibe" | "pi" | "autohand";
+            harness?: "claude-code" | "codex" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "kiro" | "kilocode" | "vibe" | "pi" | "autohand" | "fake";
             issueId?: string;
             /** @enum {string} */
             kind?: "worker" | "orchestrator";
@@ -1124,6 +1264,36 @@ export interface components {
         TriggerReviewResponse: {
             reviewerHandleId: string;
             reviews: components["schemas"]["PRReviewState"][];
+        };
+        UnregisterPushDeviceResponse: {
+            deleted: boolean;
+            token: string;
+        };
+        WorkspaceFileResponse: {
+            additions: number;
+            binary: boolean;
+            content: string;
+            contentTruncated: boolean;
+            deleted: boolean;
+            deletions: number;
+            diff: string;
+            diffTruncated: boolean;
+            path: string;
+            sessionId: string;
+            /** Format: int64 */
+            size: number;
+            /** @enum {string} */
+            status: "unmodified" | "modified" | "added" | "deleted" | "renamed";
+        };
+        WorkspaceFileSummary: {
+            additions: number;
+            binary: boolean;
+            deletions: number;
+            path: string;
+            /** Format: int64 */
+            size: number;
+            /** @enum {string} */
+            status: "unmodified" | "modified" | "added" | "deleted" | "renamed";
         };
         WorkspaceRepo: {
             name: string;
@@ -1243,6 +1413,57 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ListAgentsResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    runDevImportProjects: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DevImportProjectsRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DevImportProjectsResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Internal Server Error */
@@ -2243,6 +2464,98 @@ export interface operations {
             };
             /** @description Unprocessable Entity */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    registerPushDevice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegisterPushDeviceRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PushDeviceEnvelope"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    unregisterPushDevice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Expo push token (URL-encoded) identifying the device. */
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnregisterPushDeviceResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3287,6 +3600,118 @@ export interface operations {
             };
             /** @description Internal Server Error */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getSessionWorkspaceFile: {
+        parameters: {
+            query?: {
+                /** @description Session-worktree-relative file path. */
+                path?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceFileResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    listSessionWorkspaceFiles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListWorkspaceFilesResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
                 headers: {
                     [name: string]: unknown;
                 };

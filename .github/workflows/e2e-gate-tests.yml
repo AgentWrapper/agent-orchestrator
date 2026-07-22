@@ -1,0 +1,39 @@
+name: e2e-gate tests
+
+# Runs the stable e2e-gate verdict-contract tests (the pure functions in
+# scripts/ao-e2e-pod-gate.mjs: deriveGateOutcome, parsePodVerdict, parseArgs,
+# validateGateArgs) on every PR that touches the gate runner or its tests.
+#
+# Without a job these tests were dead — exactly the failure mode that left the
+# renderer vitest suite silently unrun for months (see frontend.yml). @daytona/sdk
+# is imported lazily inside runPodSuite, so the pure tests run with node's built-in
+# test runner and need no dependency install.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "scripts/ao-e2e-pod-gate.mjs"
+      - "scripts/ao-e2e-pod-gate.test.mjs"
+      - ".github/workflows/e2e-gate-tests.yml"
+      # The gate runner's verdict parser is a contract against what the pod
+      # harness emits (AO_VERDICT lines from boot-real.sh) and what the release
+      # workflow invokes. Re-run the contract tests when either boundary moves,
+      # so a harness/consumer change that breaks the contract can't slip past.
+      - "test/e2e-pod/**"
+      - ".github/workflows/frontend-release.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Run verdict-contract tests
+        run: node --test scripts/ao-e2e-pod-gate.test.mjs

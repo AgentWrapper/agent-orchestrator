@@ -9,6 +9,10 @@
 // on-disk copy on every boot, so a new daemon build always refreshes it and the
 // two can never drift; there is no version marker or hash to keep in sync
 // because the daemon binary already is the version.
+//
+// Materialize writes that same embedded tree into an arbitrary destination
+// directory (used by the opencode adapter to place the skill where opencode's
+// skill tool discovers it under .opencode/skills/).
 package skillassets
 
 import (
@@ -16,6 +20,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"embed"
 )
@@ -39,17 +44,32 @@ func Dir(dataDir string) string {
 // concurrent readers yet. A failure is returned but is non-fatal to boot (the
 // skill enhances `ao --help`, it is not load-bearing).
 func Install(dataDir string) error {
-	dest := Dir(dataDir)
-	if err := os.RemoveAll(dest); err != nil {
-		return fmt.Errorf("clear skill dir %q: %w", dest, err)
+	return Materialize(Dir(dataDir))
+}
+
+// Materialize writes the embedded using-ao skill into destDir (the skill root
+// itself, e.g. <dataDir>/skills/using-ao or <workspace>/.opencode/skills/using-ao),
+// replacing any existing copy. Callers that need AO-ownership guards must apply
+// them before calling Materialize.
+func Materialize(destDir string) error {
+	if strings.TrimSpace(destDir) == "" {
+		return fmt.Errorf("skillassets.Materialize: destDir is required")
 	}
-	// embed.FS always uses forward-slash paths rooted at "using-ao"; map each
-	// onto <dataDir>/skills/<same path> with the platform separator.
+	if err := os.RemoveAll(destDir); err != nil {
+		return fmt.Errorf("clear skill dir %q: %w", destDir, err)
+	}
+	// embed.FS always uses forward-slash paths rooted at "using-ao"; strip that
+	// prefix and map each entry onto destDir with the platform separator.
 	return fs.WalkDir(files, SkillName, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		target := filepath.Join(dataDir, "skills", filepath.FromSlash(p))
+		rel := strings.TrimPrefix(p, SkillName)
+		rel = strings.TrimPrefix(rel, "/")
+		target := destDir
+		if rel != "" {
+			target = filepath.Join(destDir, filepath.FromSlash(rel))
+		}
 		if d.IsDir() {
 			return os.MkdirAll(target, 0o750)
 		}

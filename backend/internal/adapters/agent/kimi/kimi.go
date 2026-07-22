@@ -11,13 +11,14 @@
 //
 // Kimi exposes no system-prompt launch flag, so AO injects standing
 // instructions through Kimi's documented project instruction file
-// (.kimi-code/AGENTS.md) in the per-session worktree. Kimi lifecycle hooks are
-// not installed yet, so native session metadata and activity are still left to
-// future adapter work.
+// (.kimi-code/AGENTS.md) in the per-session worktree. AO also installs Kimi
+// lifecycle hooks into Kimi's config so native session metadata and activity can
+// flow back through `ao hooks`.
 package kimi
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -28,7 +29,11 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-const adapterID = "kimi"
+const (
+	adapterID       = "kimi"
+	kimiCodeHomeEnv = "KIMI_CODE_HOME"
+	kimiDataDirName = "kimi"
+)
 
 // Plugin is the Kimi CLI agent adapter. It is safe for concurrent use; the
 // binary path is resolved once and cached under binaryMu.
@@ -45,6 +50,19 @@ func New() *Plugin {
 
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
+
+func kimiCodeHomeDir(dataDir string) string {
+	return filepath.Join(dataDir, kimiDataDirName)
+}
+
+// AugmentRuntimeEnv points Kimi at AO's isolated Kimi home so session hooks and
+// other managed state stay under AO_DATA_DIR instead of the user's profile.
+func (p *Plugin) AugmentRuntimeEnv(env map[string]string, dataDir string) {
+	if strings.TrimSpace(dataDir) == "" {
+		return
+	}
+	env[kimiCodeHomeEnv] = kimiCodeHomeDir(dataDir)
+}
 
 // Manifest returns the adapter's static self-description.
 func (p *Plugin) Manifest() adapters.Manifest {
@@ -169,7 +187,8 @@ var kimiBinarySpec = binaryutil.BinarySpec{
 	Names:         []string{"kimi"},
 	WinNames:      []string{"kimi.cmd", "kimi.exe", "kimi"},
 	UnixPaths:     []string{"/usr/local/bin/kimi", "/opt/homebrew/bin/kimi"},
-	UnixHomePaths: [][]string{{".local", "bin", "kimi"}, {".cargo", "bin", "kimi"}},
+	UnixHomePaths: binaryutil.NodeManagedUnixHomePaths("kimi", []string{".cargo", "bin", "kimi"}),
+	NodeManaged:   true,
 	WinPaths: []binaryutil.WinPath{
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "kimi.cmd"}},
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "kimi.exe"}},
@@ -178,9 +197,7 @@ var kimiBinarySpec = binaryutil.BinarySpec{
 }
 
 // ResolveKimiBinary finds the `kimi` binary, searching PATH then common install
-// locations (the uv tool/curl installer drops it in ~/.local/bin, plus Homebrew
-// and ~/.cargo/bin). It returns "kimi" as a last resort so callers get the
-// shell's normal command-not-found behavior if Kimi is absent.
+// locations (npm global dirs, ~/.local/bin, Homebrew, and ~/.cargo/bin).
 func ResolveKimiBinary(ctx context.Context) (string, error) {
 	return binaryutil.ResolveBinary(ctx, kimiBinarySpec)
 }

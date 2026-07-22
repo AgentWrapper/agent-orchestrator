@@ -28,7 +28,7 @@ export function DocsMissingPage() {
 									search in the sidebar to find where it landed.
 								</p>
 								<div className="docs-missing-actions">
-									<Link href="/docs" className="docs-missing-primary">
+									<Link href="/docs/" className="docs-missing-primary">
 										Browse docs
 									</Link>
 									<Link href="/" className="docs-missing-secondary">

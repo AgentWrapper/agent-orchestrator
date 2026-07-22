@@ -66,18 +66,29 @@ func (f fakeReviewerResolver) Reviewer(domain.ReviewerHarness) (ports.Reviewer, 
 }
 
 type fakeRuntime struct {
-	createCfg  ports.RuntimeConfig
-	sentMsg    string
-	sentMsgs   []string
-	sentTo     string
-	alive      bool
-	interrupt  string
-	interrupts int
+	createCfg     ports.RuntimeConfig
+	sentMsg       string
+	sentMsgs      []string
+	sentTo        string
+	alive         bool
+	interrupt     string
+	interrupts    int
+	destroyed     string
+	destroyBefore bool
+	created       bool
 }
 
 func (f *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
 	f.createCfg = cfg
+	f.created = true
 	return ports.RuntimeHandle{ID: string(cfg.SessionID)}, nil
+}
+func (f *fakeRuntime) Destroy(_ context.Context, handle ports.RuntimeHandle) error {
+	f.destroyed = handle.ID
+	if !f.created {
+		f.destroyBefore = true
+	}
+	return nil
 }
 func (f *fakeRuntime) IsAlive(_ context.Context, _ ports.RuntimeHandle) (bool, error) {
 	return f.alive, nil
@@ -150,6 +161,26 @@ func TestLauncherSpawnReturnsStableHandle(t *testing.T) {
 	}
 	if !strings.Contains(string(system), "Code reviewer role") || !strings.Contains(string(system), "exact file path in that request") || strings.Contains(string(system), filepath.ToSlash(taskPath)) {
 		t.Fatalf("system prompt = %q", system)
+	}
+}
+
+// Spawn must replace any stale pane on the stable per-worker handle before
+// creating the new one — otherwise a reviewer-harness switch either collides
+// with the old pane's tmux session name or leaves it serving under the old
+// harness's sandbox/permissions/env (which are applied only at Create).
+func TestLauncherSpawnReplacesStalePane(t *testing.T) {
+	reviewer := &fakeReviewer{}
+	rt := &fakeRuntime{}
+	l := newTestLauncher(t, reviewer, rt)
+
+	if _, err := l.Spawn(context.Background(), launchSpec()); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if rt.destroyed != "review-mer-1" {
+		t.Fatalf("stale pane not destroyed: destroyed=%q, want review-mer-1", rt.destroyed)
+	}
+	if !rt.destroyBefore {
+		t.Fatal("stale pane must be destroyed before the fresh pane is created")
 	}
 }
 

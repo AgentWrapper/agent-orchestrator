@@ -369,7 +369,7 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 		SystemPrompt:     "restore inline wins",
 		SystemPromptFile: filepath.Join(t.TempDir(), "missing.md"),
 		Session: ports.SessionRef{
-			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "thread-123"},
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "20260720_1"},
 		},
 	})
 	if err != nil {
@@ -380,10 +380,13 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	}
 	want := []string{
 		"env", "GOOSE_MODE=auto",
-		"goose", "run", "--system", "restore inline wins", "--resume", "--session-id", "thread-123",
+		"goose", "run", "--system", "restore inline wins", "--resume", "--session-id", "20260720_1",
 	}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
+	}
+	if contains(cmd, "-t") || contains(cmd, "restore original task") {
+		t.Fatalf("restore command %#v unexpectedly replays the original task", cmd)
 	}
 }
 

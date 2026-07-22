@@ -1,9 +1,12 @@
 import { contextBridge, ipcRenderer } from "electron";
+import { KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL } from "./shared/shortcuts";
 import type { BrowserNavState, BrowserRect } from "./main/browser-view-host";
 import type { DaemonStatus } from "./shared/daemon-status";
 import type { TelemetryBootstrap } from "./shared/telemetry";
 import type { MigrationState } from "./main/app-state";
 import type { UpdateSettings, UpdateStatus } from "./main/update-settings";
+import type { UpdateCheckOptions } from "./main/auto-updater";
+import type { FeatureBuild } from "./main/feature-builds";
 import type {
 	BrowserAnnotationCancelPayload,
 	BrowserAnnotationModeInput,
@@ -47,6 +50,22 @@ const api = {
 		openExternal: (url: string) => ipcRenderer.invoke("app:openExternal", url) as Promise<void>,
 		scanImportFolder: (input: { path: string; mode: ImportFolderMode }) =>
 			ipcRenderer.invoke("app:scanImportFolder", input) as Promise<ImportFolderScan>,
+		// Fired by the main process when the app-level new-session shortcut
+		// (⌘N / Ctrl+Shift+N) is pressed in any web contents.
+		onNewSessionShortcut: (listener: () => void) => {
+			const wrapped = () => listener();
+			ipcRenderer.on(NEW_SESSION_SHORTCUT_CHANNEL, wrapped);
+			return () => {
+				ipcRenderer.off(NEW_SESSION_SHORTCUT_CHANNEL, wrapped);
+			};
+		},
+		onKeyboardShortcutsHelp: (listener: () => void) => {
+			const wrapped = () => listener();
+			ipcRenderer.on(KEYBOARD_SHORTCUTS_HELP_CHANNEL, wrapped);
+			return () => {
+				ipcRenderer.off(KEYBOARD_SHORTCUTS_HELP_CHANNEL, wrapped);
+			};
+		},
 	},
 	terminal: {
 		saveDroppedFile: (input: { name: string; bytes: Uint8Array }) =>
@@ -138,8 +157,8 @@ const api = {
 	},
 	updates: {
 		getStatus: () => ipcRenderer.invoke("updates:getStatus") as Promise<UpdateStatus>,
-		check: () => ipcRenderer.invoke("updates:check") as Promise<void>,
-		download: () => ipcRenderer.invoke("updates:download") as Promise<void>,
+		check: (options?: UpdateCheckOptions) => ipcRenderer.invoke("updates:check", options) as Promise<void>,
+		download: (requestId?: string) => ipcRenderer.invoke("updates:download", requestId) as Promise<void>,
 		install: () => ipcRenderer.invoke("updates:install") as Promise<void>,
 		onStatus: (listener: (status: UpdateStatus) => void) => {
 			const wrapped = (_event: Electron.IpcRendererEvent, status: UpdateStatus) => listener(status);
@@ -148,6 +167,10 @@ const api = {
 				ipcRenderer.off("updates:status", wrapped);
 			};
 		},
+	},
+	featureBuilds: {
+		list: () => ipcRenderer.invoke("featureBuilds:list") as Promise<FeatureBuild[]>,
+		getActive: () => ipcRenderer.invoke("featureBuilds:getActive") as Promise<{ pr: number } | null>,
 	},
 };
 

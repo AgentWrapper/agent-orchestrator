@@ -9,6 +9,7 @@ import { ProjectSwitcher } from "../../lib/ProjectSwitcher";
 import { SessionCard } from "../../lib/SessionCard";
 import { useApp, useVisibleSessions } from "../../lib/store";
 import { attentionMeta, theme } from "../../lib/theme";
+import { useTabScrollToTop } from "../../lib/useTabScrollToTop";
 import { Button, ConnectionPill, EmptyState, ScreenHeader, SectionHeader } from "../../lib/ui";
 
 type Section = { key: string; label: string; color: string; order: number; data: DashboardSession[] };
@@ -38,6 +39,8 @@ export default function FleetScreen() {
 	const { configured, loading, error, connection, config, refresh } = useApp();
 	const sessions = useVisibleSessions();
 	const [refreshing, setRefreshing] = useState(false);
+
+	const listRef = useTabScrollToTop<SectionList<DashboardSession>>();
 
 	const sections = useMemo(() => groupByAttention(sessions), [sessions]);
 
@@ -94,6 +97,7 @@ export default function FleetScreen() {
 				</View>
 			) : (
 				<SectionList
+					ref={listRef}
 					sections={sections}
 					keyExtractor={(item) => `${item.projectId}:${item.id}`}
 					contentContainerStyle={{ paddingBottom: 120 }}
