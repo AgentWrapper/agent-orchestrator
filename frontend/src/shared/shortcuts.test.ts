@@ -58,9 +58,22 @@ describe("matchesNewShellTerminalShortcut", () => {
 		expect(matchesNewShellTerminalShortcut(chord({ key: "`", meta: true }), true)).toBe(false);
 	});
 
-	it("requires Ctrl and rejects extra modifiers", () => {
+	// Shift is optional: Ctrl+Shift+` is the advertised "Create New Terminal" chord.
+	it("matches Ctrl+Shift+` on both platforms", () => {
+		expect(matchesNewShellTerminalShortcut(chord({ key: "`", ctrl: true, shift: true }), false)).toBe(true);
+		expect(matchesNewShellTerminalShortcut(chord({ key: "`", ctrl: true, shift: true }), true)).toBe(true);
+	});
+
+	// With Shift held the character shifts (US "~"), but the physical code is
+	// stable — matching on code is what makes Ctrl+Shift+` actually fire.
+	it("matches on the physical Backquote code even when the character is shifted", () => {
+		expect(
+			matchesNewShellTerminalShortcut(chord({ key: "~", code: "Backquote", ctrl: true, shift: true }), false),
+		).toBe(true);
+	});
+
+	it("requires Ctrl and rejects ⌘/Alt", () => {
 		expect(matchesNewShellTerminalShortcut(chord({ key: "`" }), false)).toBe(false);
-		expect(matchesNewShellTerminalShortcut(chord({ key: "`", ctrl: true, shift: true }), false)).toBe(false);
 		expect(matchesNewShellTerminalShortcut(chord({ key: "`", ctrl: true, alt: true }), false)).toBe(false);
 		expect(matchesNewShellTerminalShortcut(chord({ key: "`", ctrl: true, meta: true }), false)).toBe(false);
 	});
