@@ -16,7 +16,7 @@ export const trackerIntakeIdentityQueryOptions = {
 	queryKey: trackerIntakeIdentityQueryKey,
 	queryFn: fetchTrackerIntakeIdentity,
 	retry: 1,
-	staleTime: Number.POSITIVE_INFINITY,
+	staleTime: 5 * 60 * 1000,
 };
 
 export function useTrackerIntakeIdentity(enabled: boolean) {

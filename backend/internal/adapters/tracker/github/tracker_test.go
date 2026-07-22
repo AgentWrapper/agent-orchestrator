@@ -380,6 +380,42 @@ func TestAuthenticatedUser_ReturnsAndCachesLogin(t *testing.T) {
 	}
 }
 
+func TestAuthenticatedUser_RevalidatesAfterCacheExpires(t *testing.T) {
+	f := newFakeGH(t)
+	var calls int
+	f.on("GET", "/user", func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			_, _ = w.Write([]byte(`{"login":"octocat","id":1}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"login":"monalisa","id":2}`))
+	})
+	tr := newTrackerForTest(t, f)
+	first, err := tr.AuthenticatedUser(ctx())
+	if err != nil {
+		t.Fatalf("AuthenticatedUser first: %v", err)
+	}
+	if first.Login != "octocat" {
+		t.Fatalf("first login = %q, want octocat", first.Login)
+	}
+
+	tr.identityMu.Lock()
+	tr.authenticatedUserValidUntil = time.Now().Add(-time.Second)
+	tr.identityMu.Unlock()
+
+	second, err := tr.AuthenticatedUser(ctx())
+	if err != nil {
+		t.Fatalf("AuthenticatedUser second: %v", err)
+	}
+	if second.Login != "monalisa" {
+		t.Fatalf("second login = %q, want monalisa", second.Login)
+	}
+	if got := len(f.calls()); got != 2 {
+		t.Fatalf("HTTP calls = %d, want 2 (expired identity should revalidate)", got)
+	}
+}
+
 func TestAuthenticatedUser_RejectsEmptyLogin(t *testing.T) {
 	f := newFakeGH(t)
 	f.on("GET", "/user", func(w http.ResponseWriter, r *http.Request) {

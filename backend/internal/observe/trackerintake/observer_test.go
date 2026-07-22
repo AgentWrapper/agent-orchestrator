@@ -87,7 +87,7 @@ func TestPollRespawnsIssueAfterTerminatedSession(t *testing.T) {
 		projects: []domain.ProjectRecord{{
 			ID:            "demo",
 			RepoOriginURL: "https://github.com/acme/demo.git",
-			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}},
+			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true}},
 		}},
 		sessions: []domain.SessionRecord{{ID: "demo-1", ProjectID: "demo", IssueID: "github:acme/demo#12", IsTerminated: true}},
 	}

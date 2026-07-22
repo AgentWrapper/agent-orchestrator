@@ -98,7 +98,8 @@ type TrackerIntakeConfig struct {
 	// Repo is the GitHub-native repository key ("owner/repo"). When empty, the
 	// intake loop derives it from the project's repo origin URL. GitHub only.
 	Repo string `json:"repo,omitempty"`
-	// Labels narrows intake to issues carrying every selected repository label.
+	// Labels narrows intake to issues carrying any selected repository label.
+	// Empty means all open issues assigned to the authenticated user.
 	Labels []string `json:"labels,omitempty"`
 }
 

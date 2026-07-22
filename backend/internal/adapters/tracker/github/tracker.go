@@ -38,6 +38,11 @@ const (
 	// Guard against a pathological Link cycle. At GitHub's max page size this
 	// still permits a 5k-issue intake sweep before failing loud.
 	maxListPages = 50
+
+	// Keep identity caching aligned with daemon token refresh cadence: production
+	// token sources can refresh gh auth every five minutes, so the login bound to
+	// issue intake must be revalidated on the same horizon.
+	identityCacheTTL = 5 * time.Minute
 )
 
 // Sentinel errors. Adapter-level callers should match on these via
@@ -88,8 +93,8 @@ type Options struct {
 //
 // Construction performs a fail-fast token presence check (no network call).
 // The first AuthenticatedUser or Preflight call validates the token against
-// GitHub and caches the returned identity. Failures are intentionally not
-// cached so a transient startup glitch remains recoverable.
+// GitHub and caches the returned identity briefly. Failures are intentionally
+// not cached so a transient startup glitch remains recoverable.
 type Tracker struct {
 	http      *http.Client
 	tokens    TokenSource
@@ -103,10 +108,11 @@ type Tracker struct {
 	listCache   map[string]listCacheEntry
 	labelCache  map[string]labelCacheEntry
 
-	// identityMu serializes the one-time GET /user call and protects the cached
-	// identity so the observer and API can share one adapter safely.
-	identityMu        sync.Mutex
-	authenticatedUser *domain.TrackerUser
+	// identityMu serializes GET /user calls and protects the cached identity so
+	// the observer and API can share one adapter safely.
+	identityMu                  sync.Mutex
+	authenticatedUser           *domain.TrackerUser
+	authenticatedUserValidUntil time.Time
 }
 
 type listCacheEntry struct {
@@ -466,12 +472,13 @@ func cloneLabels(in []domain.TrackerLabel) []domain.TrackerLabel {
 // ---------------------------------------------------------------------------
 
 // AuthenticatedUser returns the login accepted by GitHub's GET /user endpoint.
-// Successful checks are cached for the lifetime of the Tracker. Failures are
-// not cached so callers can recover from transient GitHub errors.
+// Successful checks are cached for a bounded TTL. Failures are not cached so
+// callers can recover from transient GitHub errors.
 func (t *Tracker) AuthenticatedUser(ctx context.Context) (domain.TrackerUser, error) {
 	t.identityMu.Lock()
 	defer t.identityMu.Unlock()
-	if t.authenticatedUser != nil {
+	now := time.Now()
+	if t.authenticatedUser != nil && now.Before(t.authenticatedUserValidUntil) {
 		return *t.authenticatedUser, nil
 	}
 	body, err := t.do(ctx, http.MethodGet, "/user", nil)
@@ -487,6 +494,7 @@ func (t *Tracker) AuthenticatedUser(ctx context.Context) (domain.TrackerUser, er
 		return domain.TrackerUser{}, errors.New("github tracker: authenticated user response has no login")
 	}
 	t.authenticatedUser = &user
+	t.authenticatedUserValidUntil = now.Add(identityCacheTTL)
 	return user, nil
 }
 
@@ -498,7 +506,7 @@ func (t *Tracker) AuthenticatedUser(ctx context.Context) (domain.TrackerUser, er
 // "token can do everything the SM will ask of it." Per-repo authorization
 // is detected lazily at the first Get/List against that repo.
 //
-// Successful checks share the cached identity used by AuthenticatedUser.
+// Successful checks share the bounded identity cache used by AuthenticatedUser.
 func (t *Tracker) Preflight(ctx context.Context) error {
 	_, err := t.AuthenticatedUser(ctx)
 	return err
