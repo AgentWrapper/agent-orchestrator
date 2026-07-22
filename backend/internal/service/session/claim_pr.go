@@ -364,15 +364,22 @@ func requireSameRepo(prURL, repoOrigin string) error {
 	if strings.TrimSpace(repoOrigin) == "" {
 		return nil
 	}
-	_, po, pr, _, err := parsePRURL(prURL)
+	prHost, prOwner, prRepo, _, err := parsePRURL(prURL)
 	if err != nil {
 		return ErrInvalidPRRef
 	}
-	_, ro, rr, err := repoFromURL(repoOrigin)
+	originHost, originOwner, originRepo, err := repoFromURL(repoOrigin)
 	if err != nil {
 		return ErrInvalidPRRef
 	}
-	if !strings.EqualFold(po, ro) || !strings.EqualFold(pr, rr) {
+	// Compare provider (derived from host) + host + full namespace. Same
+	// owner/repo name on GitHub and GitLab must not validate, and a
+	// gitlab.com origin must not accept a self-managed GitLab MR (review
+	// finding #6).
+	if !strings.EqualFold(prHost, originHost) {
+		return ErrProjectMismatch
+	}
+	if !strings.EqualFold(prOwner, originOwner) || !strings.EqualFold(prRepo, originRepo) {
 		return ErrProjectMismatch
 	}
 	return nil
@@ -430,12 +437,19 @@ func repoFromURL(raw string) (host, owner, name string, err error) {
 			return "", "", "", ErrInvalidPRRef
 		}
 		host = rest[:colonIdx]
-		path := rest[colonIdx+1:]
-		parts := strings.SplitN(strings.TrimSuffix(path, ".git"), "/", 2)
-		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		path := strings.TrimSuffix(rest[colonIdx+1:], ".git")
+		parts := strings.Split(path, "/")
+		if len(parts) < 2 {
 			return "", "", "", ErrInvalidPRRef
 		}
-		return host, parts[0], parts[1], nil
+		for _, seg := range parts {
+			if seg == "" {
+				return "", "", "", ErrInvalidPRRef
+			}
+		}
+		name = parts[len(parts)-1]
+		owner = strings.Join(parts[:len(parts)-1], "/")
+		return host, owner, name, nil
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -443,10 +457,17 @@ func repoFromURL(raw string) (host, owner, name string, err error) {
 	}
 	host = u.Hostname()
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+	if len(parts) < 2 {
 		return "", "", "", ErrInvalidPRRef
 	}
-	return host, parts[0], strings.TrimSuffix(parts[1], ".git"), nil
+	for _, seg := range parts {
+		if seg == "" {
+			return "", "", "", ErrInvalidPRRef
+		}
+	}
+	name = strings.TrimSuffix(parts[len(parts)-1], ".git")
+	owner = strings.Join(parts[:len(parts)-1], "/")
+	return host, owner, name, nil
 }
 
 func firstNonEmpty(values ...string) string {

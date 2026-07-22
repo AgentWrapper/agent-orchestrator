@@ -77,12 +77,24 @@ func parseGitLabRepo(remote string) (ports.SCMRepo, bool) {
 
 var sshRemoteRe = regexp.MustCompile(`^git@([^:]+):(.+)$`)
 
+// splitOwnerRepo splits a GitLab project path into owner (namespace, possibly
+// nested like "group/subgroup") and name (the final repo segment). A bare
+// "owner/repo" yields owner="owner", name="repo"; a nested
+// "group/subgroup/repo" yields owner="group/subgroup", name="repo". Single
+// segments or empty parts are rejected.
 func splitOwnerRepo(p string) (string, string, bool) {
-	parts := strings.SplitN(p, "/", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+	parts := strings.Split(p, "/")
+	if len(parts) < 2 {
 		return "", "", false
 	}
-	return parts[0], parts[1], true
+	for _, seg := range parts {
+		if seg == "" {
+			return "", "", false
+		}
+	}
+	name := parts[len(parts)-1]
+	owner := strings.Join(parts[:len(parts)-1], "/")
+	return owner, name, true
 }
 
 func makeGitLabRepo(host, owner, name string) ports.SCMRepo {
@@ -123,7 +135,7 @@ func (p *Provider) RepoPRListGuard(ctx context.Context, repo ports.SCMRepo, etag
 		"sort":     {"desc"},
 		"per_page": {"1"},
 	}
-	resp, err := p.client.doRESTWithETag(ctx, path, q, etag)
+	resp, err := p.clientForHost(repo.Host).doRESTWithETag(ctx, path, q, etag)
 	if err != nil {
 		return ports.SCMGuardResult{}, err
 	}
@@ -305,6 +317,12 @@ func (p *Provider) CommitChecksGuard(ctx context.Context, repo ports.SCMRepo, he
 
 // FetchPullRequests fetches detailed observations for a batch of merge requests,
 // including MR metadata, CI status, approvals, and mergeability.
+//
+// A transient failure (timeout, 429, 5xx, malformed payload) on any sub-fetch
+// is propagated as a non-nil error AND a Fetched=false placeholder observation
+// at the same index. The observer rejects Fetched=false observations so the
+// last durable state is preserved and ETags/cursors are not advanced (review
+// finding #1).
 func (p *Provider) FetchPullRequests(ctx context.Context, refs []ports.SCMPRRef) ([]ports.SCMObservation, error) {
 	if len(refs) > 25 {
 		return nil, fmt.Errorf("gitlab scm: batch size %d exceeds limit 25", len(refs))
@@ -434,7 +452,7 @@ func (p *Provider) fetchCI(ctx context.Context, repo ports.SCMRepo, headSHA stri
 		FailedFingerprint: fp,
 		Checks:            checks,
 		FailedChecks:      failedChecks,
-	}
+	}, nil
 }
 
 type restPipeline struct {
@@ -472,7 +490,7 @@ func (p *Provider) fetchPipelineJobs(ctx context.Context, repo ports.SCMRepo, pi
 			failed = append(failed, check)
 		}
 	}
-	return checks, failed
+	return checks, failed, nil
 }
 
 type restJob struct {
@@ -541,17 +559,21 @@ func (p *Provider) FetchFailedCheckLogTail(ctx context.Context, repo ports.SCMRe
 func (p *Provider) FetchReviewThreads(ctx context.Context, ref ports.SCMPRRef) (ports.SCMReviewObservation, error) {
 	repo := ref.Repo
 
-	// Fetch discussions
+	// Fetch discussions, following Link rel=next to fetch ALL pages (review
+	// finding #8: previously only the first 100 discussions were fetched).
 	path := fmt.Sprintf("/projects/%s/merge_requests/%d/discussions", projectPath(repo.Owner, repo.Name), ref.Number)
 	q := url.Values{"per_page": {strconv.Itoa(reviewDiscussionPageSize)}}
-	resp, err := p.client.doGET(ctx, path, q)
+	var discussions []restDiscussion
+	truncated, err := p.clientForHost(repo.Host).doGETPaginated(ctx, path, q, func(body []byte) error {
+		var page []restDiscussion
+		if err := json.Unmarshal(body, &page); err != nil {
+			return fmt.Errorf("gitlab scm: unmarshal discussions: %w", err)
+		}
+		discussions = append(discussions, page...)
+		return nil
+	})
 	if err != nil {
 		return ports.SCMReviewObservation{}, err
-	}
-
-	var discussions []restDiscussion
-	if err := json.Unmarshal(resp.Body, &discussions); err != nil {
-		return ports.SCMReviewObservation{}, fmt.Errorf("gitlab scm: unmarshal discussions: %w", err)
 	}
 
 	var threads []ports.SCMReviewThreadObservation
@@ -609,30 +631,38 @@ func (p *Provider) FetchReviewThreads(ctx context.Context, ref ports.SCMPRRef) (
 		})
 	}
 
-	// Fetch approval state for review summaries
-	decision := p.fetchApprovalDecision(ctx, repo, ref.Number)
-
+	// Fetch approvals ONCE and reuse for both the review decision and the
+	// review summaries. The previous implementation called
+	// fetchApprovalDecision AND re-fetched the approvals endpoint separately.
 	approvalPath := fmt.Sprintf("/projects/%s/merge_requests/%d/approvals", projectPath(repo.Owner, repo.Name), ref.Number)
-	approvalResp, _ := p.client.doGET(ctx, approvalPath, nil)
+	approvalResp, err := p.clientForHost(repo.Host).doGET(ctx, approvalPath, nil)
+	if err != nil {
+		return ports.SCMReviewObservation{}, fmt.Errorf("gitlab scm: fetch approvals: %w", err)
+	}
+	var approvals restApprovals
+	if err := json.Unmarshal(approvalResp.Body, &approvals); err != nil {
+		return ports.SCMReviewObservation{}, fmt.Errorf("gitlab scm: unmarshal approvals: %w", err)
+	}
+	decision := approvalDecision(approvals)
+
+	// Build review summaries with stable, unique IDs so multiple approvers
+	// don't overwrite each other in persistence
 	var reviews []ports.SCMReviewSummaryObservation
-	if approvalResp.Body != nil {
-		var approvals restApprovals
-		if json.Unmarshal(approvalResp.Body, &approvals) == nil {
-			for _, ab := range approvals.ApprovedBy {
-				reviews = append(reviews, ports.SCMReviewSummaryObservation{
-					Author: ab.User.Username,
-					State:  string(domain.ReviewApproved),
-					IsBot:  isBotAuthor(ab.User.Username),
-				})
-			}
-		}
+	for _, ab := range approvals.ApprovedBy {
+		username := ab.User.Username
+		reviews = append(reviews, ports.SCMReviewSummaryObservation{
+			ID:     "approval:" + username,
+			Author: username,
+			State:  string(domain.ReviewApproved),
+			IsBot:  isBotAuthor(username),
+		})
 	}
 
 	return ports.SCMReviewObservation{
 		Decision: string(decision),
 		Reviews:  reviews,
 		Threads:  threads,
-		Partial:  len(discussions) >= reviewDiscussionPageSize,
+		Partial:  truncated,
 	}, nil
 }
 
