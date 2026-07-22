@@ -1643,3 +1643,86 @@ func TestFetchPullRequests_AllowFailureJobNotActionable(t *testing.T) {
 		t.Errorf("FailedChecks[0].Name = %q, want %q (optional allow_failure job must not be actionable)", o.CI.FailedChecks[0].Name, "required-test")
 	}
 }
+
+// TestFetchPullRequests_DiffStatsNotParsed verifies that the undocumented
+// diff_stats object returned by the GitLab MR detail endpoint is NOT parsed
+// into the observation's Additions/Deletions/ChangedFiles fields (review S2).
+// GitLab does not document diff_stats as part of the MR detail response, so
+// relying on it is fragile. The observation's diff-stat fields must be
+// zero-valued unless sourced from a documented endpoint.
+func TestFetchPullRequests_DiffStatsNotParsed(t *testing.T) {
+	tests := []struct {
+		name    string
+		mrBody  map[string]any
+		wantAdd int
+		wantDel int
+		wantChg int
+	}{
+		{
+			name: "diff_stats absent",
+			mrBody: map[string]any{
+				"iid": 1, "title": "Fix bug", "state": "opened", "draft": false,
+				"web_url":       "https://gitlab.com/myorg/myrepo/-/merge_requests/1",
+				"source_branch": "fix-bug", "target_branch": "main", "sha": "abc123",
+				"merge_status": "can_be_merged", "author": map[string]any{"username": "alice"},
+			},
+			wantAdd: 0, wantDel: 0, wantChg: 0,
+		},
+		{
+			name: "diff_stats present but ignored",
+			mrBody: map[string]any{
+				"iid": 1, "title": "Fix bug", "state": "opened", "draft": false,
+				"web_url":       "https://gitlab.com/myorg/myrepo/-/merge_requests/1",
+				"source_branch": "fix-bug", "target_branch": "main", "sha": "abc123",
+				"merge_status": "can_be_merged", "author": map[string]any{"username": "alice"},
+				// GitLab may return this undocumented object; it must be
+				// ignored (not parsed) so the observation does not depend on
+				// undocumented fields.
+				"diff_stats": map[string]any{
+					"additions":  42,
+					"deletions":  7,
+					"changes":    3,
+				},
+			},
+			wantAdd: 0, wantDel: 0, wantChg: 0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1", func(w http.ResponseWriter, r *http.Request) {
+				json.NewEncoder(w).Encode(tt.mrBody)
+			})
+			mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/pipelines", func(w http.ResponseWriter, r *http.Request) {
+				json.NewEncoder(w).Encode([]map[string]any{{"id": 100, "status": "success", "sha": "abc123"}})
+			})
+			mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/pipelines/100/jobs", func(w http.ResponseWriter, r *http.Request) {
+				json.NewEncoder(w).Encode([]map[string]any{{"id": 200, "name": "build", "status": "success", "web_url": "https://gitlab.com/jobs/200"}})
+			})
+			mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1/approvals", func(w http.ResponseWriter, r *http.Request) {
+				json.NewEncoder(w).Encode(map[string]any{"approved": false, "approvals_required": 0, "approved_by": []any{}})
+			})
+			_, p := testServer(t, mux)
+			repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "myorg", Name: "myrepo", Repo: "myorg/myrepo"}
+			ref := ports.SCMPRRef{Repo: repo, Number: 1, URL: "https://gitlab.com/myorg/myrepo/-/merge_requests/1"}
+
+			obs, err := p.FetchPullRequests(context.Background(), []ports.SCMPRRef{ref})
+			if err != nil {
+				t.Fatalf("FetchPullRequests: unexpected error: %v", err)
+			}
+			if len(obs) != 1 || !obs[0].Fetched {
+				t.Fatalf("got %d observations, want 1 Fetched=true", len(obs))
+			}
+			pr := obs[0].PR
+			if pr.Additions != tt.wantAdd {
+				t.Errorf("PR.Additions = %d, want %d (diff_stats must not be parsed)", pr.Additions, tt.wantAdd)
+			}
+			if pr.Deletions != tt.wantDel {
+				t.Errorf("PR.Deletions = %d, want %d (diff_stats must not be parsed)", pr.Deletions, tt.wantDel)
+			}
+			if pr.ChangedFiles != tt.wantChg {
+				t.Errorf("PR.ChangedFiles = %d, want %d (diff_stats must not be parsed)", pr.ChangedFiles, tt.wantChg)
+			}
+		})
+	}
+}
