@@ -169,6 +169,12 @@ type SCMCIObservation struct {
 	FailedChecks []SCMCheckObservation
 	// FailureLogTail is the combined tail of newly fetched failed-check logs.
 	FailureLogTail string
+	// Partial is true when the CI check listing was truncated by the
+	// provider's pagination cap (e.g. more than 1,000 pipeline jobs). When
+	// true, Checks/FailedChecks are a bounded snapshot, not an authoritative
+	// complete CI state — the observer must not overwrite durable checks as
+	// Fetched=true complete (review Item 13). Mirrors SCMReviewObservation.Partial.
+	Partial bool
 }
 
 // SCMCheckObservation is one normalized check/status context. ProviderID is an

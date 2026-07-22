@@ -536,7 +536,7 @@ func (p *Provider) fetchCI(ctx context.Context, repo ports.SCMRepo, headSHA stri
 	ciState := pipelineStatusToCI(latest.Status)
 
 	// Fetch jobs from the latest pipeline
-	checks, failedChecks, err := p.fetchPipelineJobs(ctx, repo, latest.ID)
+	checks, failedChecks, partial, err := p.fetchPipelineJobs(ctx, repo, latest.ID)
 	if err != nil {
 		return ports.SCMCIObservation{}, fmt.Errorf("fetch pipeline jobs: %w", err)
 	}
@@ -549,6 +549,7 @@ func (p *Provider) fetchCI(ctx context.Context, repo ports.SCMRepo, headSHA stri
 		FailedFingerprint: fp,
 		Checks:            checks,
 		FailedChecks:      failedChecks,
+		Partial:           partial,
 	}, nil
 }
 
@@ -558,16 +559,16 @@ type restPipeline struct {
 	SHA    string `json:"sha"`
 }
 
-func (p *Provider) fetchPipelineJobs(ctx context.Context, repo ports.SCMRepo, pipelineID int) ([]ports.SCMCheckObservation, []ports.SCMCheckObservation, error) {
+func (p *Provider) fetchPipelineJobs(ctx context.Context, repo ports.SCMRepo, pipelineID int) ([]ports.SCMCheckObservation, []ports.SCMCheckObservation, bool, error) {
 	path := fmt.Sprintf("/projects/%s/pipelines/%d/jobs", projectPath(repo.Owner, repo.Name), pipelineID)
 	q := url.Values{"per_page": {strconv.Itoa(pipelineJobsPageSize)}}
 	var allJobs []restJob
 	hc, err := p.clientForRepoErr(repo)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 
-	_, err = hc.doGETPaginated(ctx, path, q, func(body []byte) error {
+	truncated, err := hc.doGETPaginated(ctx, path, q, func(body []byte) error {
 		var jobs []restJob
 		if err := json.Unmarshal(body, &jobs); err != nil {
 			return fmt.Errorf("unmarshal pipeline jobs: %w", err)
@@ -576,7 +577,7 @@ func (p *Provider) fetchPipelineJobs(ctx context.Context, repo ports.SCMRepo, pi
 		return nil
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("fetch pipeline jobs: %w", err)
+		return nil, nil, false, fmt.Errorf("fetch pipeline jobs: %w", err)
 	}
 
 	var checks, failed []ports.SCMCheckObservation
@@ -590,18 +591,24 @@ func (p *Provider) fetchPipelineJobs(ctx context.Context, repo ports.SCMRepo, pi
 			ProviderID: strconv.Itoa(j.ID),
 		}
 		checks = append(checks, check)
-		if isFailingCheckStatus(status) {
+		// Optional failed jobs (allow_failure: true) are classified separately
+		// from required failures and must NOT become actionable failed
+		// checks when the pipeline succeeds (review Item 13). They still
+		// appear in Checks (full CI snapshot) but are not promoted to
+		// FailedChecks — their failure is informational, not blocking.
+		if isFailingCheckStatus(status) && !j.AllowFailure {
 			failed = append(failed, check)
 		}
 	}
-	return checks, failed, nil
+	return checks, failed, truncated, nil
 }
 
 type restJob struct {
-	ID     int    `json:"id"`
-	Name   string `json:"name"`
-	Status string `json:"status"`
-	WebURL string `json:"web_url"`
+	ID          int    `json:"id"`
+	Name        string `json:"name"`
+	Status      string `json:"status"`
+	WebURL      string `json:"web_url"`
+	AllowFailure bool  `json:"allow_failure"`
 }
 
 func (p *Provider) fetchApprovalDecision(ctx context.Context, repo ports.SCMRepo, mrIID int) (domain.ReviewDecision, error) {

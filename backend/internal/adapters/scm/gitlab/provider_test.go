@@ -1518,3 +1518,128 @@ func TestFetchPullRequests_ForkMR_SourceProjectFetchFails_FailClosed(t *testing.
 		t.Errorf("PR.HeadRepo = %q, want empty (must not fabricate head repo on fetch failure)", o.PR.HeadRepo)
 	}
 }
+
+// TestFetchPullRequests_PipelineJobsTruncated_Partial verifies that when the
+// pipeline-jobs pagination hits the 10-page cap (more than 1,000 jobs), the
+// observation's CI.Partial flag is set to true so the observer does not
+// authoritatively persist a capped snapshot as Fetched=true complete (review
+// Item 13). The truncation flag comes from doGETPaginated's boolean return
+// value — a separate code path from the rolling-tail byte bound (ticket 12).
+// Durable checks must NOT be overwritten by the capped snapshot; that
+// preservation is the observer's responsibility, gated by CI.Partial.
+func TestFetchPullRequests_PipelineJobsTruncated_Partial(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"iid": 1, "title": "Fix bug", "state": "opened", "draft": false,
+			"web_url":       "https://gitlab.com/myorg/myrepo/-/merge_requests/1",
+			"source_branch": "fix-bug", "target_branch": "main", "sha": "abc123",
+			"merge_status": "mergeable", "detailed_merge_status": "mergeable",
+			"author": map[string]any{"username": "alice"},
+		})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/pipelines", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{{"id": 100, "status": "success", "sha": "abc123"}})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/pipelines/100/jobs", func(w http.ResponseWriter, r *http.Request) {
+		// Always return a full page and always include a next link,
+		// simulating a repo with more than 10 pages of pipeline jobs
+		// (1,000+ jobs). The doGETPaginated loop hits the maxPaginationPages
+		// cap and returns truncated=true.
+		jobs := make([]map[string]any, pipelineJobsPageSize)
+		for i := range jobs {
+			jobs[i] = map[string]any{
+				"id": 200 + i, "name": fmt.Sprintf("job-%s-%d", r.URL.Query().Get("page"), i),
+				"status": "success", "web_url": fmt.Sprintf("https://gitlab.com/jobs/%d", 200+i),
+			}
+		}
+		w.Header().Set("Link", fmt.Sprintf(`<http://%s/api/v4/projects/myorg%%2Fmyrepo/pipelines/100/jobs?per_page=%d&page=next>; rel="next"`, r.Host, pipelineJobsPageSize))
+		json.NewEncoder(w).Encode(jobs)
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1/approvals", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"approved": false, "approvals_required": 0, "approved_by": []any{}})
+	})
+	_, p := testServer(t, mux)
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "myorg", Name: "myrepo", Repo: "myorg/myrepo"}
+	ref := ports.SCMPRRef{Repo: repo, Number: 1, URL: "https://gitlab.com/myorg/myrepo/-/merge_requests/1"}
+
+	obs, err := p.FetchPullRequests(context.Background(), []ports.SCMPRRef{ref})
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := obs[0]
+	// 10 pages × 100 jobs = 1,000 jobs collected before the cap stopped the loop.
+	if len(o.CI.Checks) != maxPaginationPages*pipelineJobsPageSize {
+		t.Errorf("CI.Checks = %d, want %d (10-page cap × page size)", len(o.CI.Checks), maxPaginationPages*pipelineJobsPageSize)
+	}
+	// Partial MUST be true so the observer does not authoritatively persist the
+	// capped snapshot as Fetched=true complete. Without this flag, more than
+	// 1,000 jobs are treated as a complete CI snapshot and later failures can
+	// be omitted while durable checks are overwritten.
+	if !o.CI.Partial {
+		t.Error("CI.Partial = false, want true (pagination cap hit — response is truncated)")
+	}
+}
+
+// TestFetchPullRequests_AllowFailureJobNotActionable verifies that a job with
+// allow_failure: true is classified as an optional failure and does NOT appear
+// in FailedChecks when the pipeline succeeds (review Item 13). Optional failed
+// jobs must not become actionable failed checks — they are informational, not
+// blocking. The job still appears in Checks (full CI snapshot), but its failure
+// is not promoted to an actionable failure.
+func TestFetchPullRequests_AllowFailureJobNotActionable(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"iid": 1, "title": "Fix bug", "state": "opened", "draft": false,
+			"web_url":       "https://gitlab.com/myorg/myrepo/-/merge_requests/1",
+			"source_branch": "fix-bug", "target_branch": "main", "sha": "abc123",
+			"merge_status": "mergeable", "detailed_merge_status": "mergeable",
+			"author": map[string]any{"username": "alice"},
+		})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/pipelines", func(w http.ResponseWriter, r *http.Request) {
+		// Pipeline succeeds overall, even though one optional job failed.
+		json.NewEncoder(w).Encode([]map[string]any{{"id": 100, "status": "success", "sha": "abc123"}})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/pipelines/100/jobs", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{
+			{"id": 200, "name": "build", "status": "success", "web_url": "https://gitlab.com/jobs/200", "allow_failure": false},
+			// Optional failed job — allow_failure: true. It must NOT appear in
+			// FailedChecks because its failure is optional and the pipeline
+			// succeeded.
+			{"id": 201, "name": "flakey-e2e", "status": "failed", "web_url": "https://gitlab.com/jobs/201", "allow_failure": true},
+			// Required failed job — allow_failure: false (or absent). This one
+			// MUST appear in FailedChecks because its failure blocks the pipeline.
+			// (The pipeline status is mocked to success for this test to isolate
+			// the allow_failure classification; the classification logic operates
+			// per-job regardless of the pipeline-level status.)
+			{"id": 202, "name": "required-test", "status": "failed", "web_url": "https://gitlab.com/jobs/202", "allow_failure": false},
+		})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1/approvals", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"approved": false, "approvals_required": 0, "approved_by": []any{}})
+	})
+	_, p := testServer(t, mux)
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "myorg", Name: "myrepo", Repo: "myorg/myrepo"}
+	ref := ports.SCMPRRef{Repo: repo, Number: 1, URL: "https://gitlab.com/myorg/myrepo/-/merge_requests/1"}
+
+	obs, err := p.FetchPullRequests(context.Background(), []ports.SCMPRRef{ref})
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := obs[0]
+	// All three jobs appear in the full Checks snapshot.
+	if len(o.CI.Checks) != 3 {
+		t.Fatalf("CI.Checks = %d, want 3 (all jobs, including optional failures)", len(o.CI.Checks))
+	}
+	// Only the required failure (required-test) appears in FailedChecks.
+	// The optional failure (flakey-e2e) must NOT be promoted to an
+	// actionable failed check.
+	if len(o.CI.FailedChecks) != 1 {
+		t.Fatalf("FailedChecks = %d, want 1 (only the required failure; optional failures excluded)", len(o.CI.FailedChecks))
+	}
+	if o.CI.FailedChecks[0].Name != "required-test" {
+		t.Errorf("FailedChecks[0].Name = %q, want %q (optional allow_failure job must not be actionable)", o.CI.FailedChecks[0].Name, "required-test")
+	}
+}
