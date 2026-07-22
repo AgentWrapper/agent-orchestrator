@@ -12,7 +12,8 @@ export type DaemonFailureCode =
 	| "exited"
 	| "port_unconfirmed"
 	| "not_ready"
-	| "identity_mismatch";
+	| "identity_mismatch"
+	| "datadir_unwritable";
 
 export type DaemonStatus = {
 	state: "starting" | "ready" | "stopped" | "error";

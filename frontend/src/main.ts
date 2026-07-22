@@ -828,7 +828,20 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 
 	setDaemonStatus({ state: "starting" });
 	if (launch.source === "bundled") {
-		await mkdir(launch.cwd, { recursive: true, mode: 0o750 });
+		try {
+			await mkdir(launch.cwd, { recursive: true, mode: 0o750 });
+		} catch (err) {
+			// A failure here (home unwritable, launch.cwd exists as a file) would
+			// otherwise reject out of startDaemonInner; boot calls this via
+			// `void startDaemon()`, so it would surface as an unhandled rejection
+			// and leave the UI stuck on "starting". Report it as a failure instead.
+			setDaemonStatus({
+				state: "error",
+				message: `Could not create the AO data directory at ${launch.cwd}: ${(err as Error).message}`,
+				code: "datadir_unwritable",
+			});
+			return daemonStatus;
+		}
 	}
 
 	// Capture the spawned handle locally so the async lifecycle listeners act only
