@@ -64,6 +64,13 @@ const worker: WorkspaceSession = {
 	prs: [],
 };
 
+const secondWorker: WorkspaceSession = {
+	...worker,
+	id: "sess-2",
+	title: "do the other thing",
+	branch: "ao/sess-2",
+};
+
 const orchestrator: WorkspaceSession = {
 	id: "orch-1",
 	workspaceId: "proj-1",
@@ -86,22 +93,29 @@ function sessionWith(overrides: Partial<WorkspaceSession> = {}): WorkspaceSessio
 }
 
 function renderTopbar(session: WorkspaceSession) {
+	return renderTopbarSessions([session], session.id);
+}
+
+function renderTopbarSessions(sessions: WorkspaceSession[], sessionId: string) {
 	const data: WorkspaceSummary[] = [
 		{
-			id: session.workspaceId,
-			name: session.workspaceName,
+			id: sessions[0].workspaceId,
+			name: sessions[0].workspaceName,
 			path: "/repo/my-app",
-			sessions: [session],
+			sessions,
 		},
 	];
 	useWorkspaceQueryMock.mockReturnValue({ data, isError: false, isLoading: false });
-	paramsMock.projectId = session.workspaceId;
-	paramsMock.sessionId = session.id;
-	return render(
-		<QueryClientProvider client={new QueryClient()}>
+	paramsMock.projectId = sessions[0].workspaceId;
+	paramsMock.sessionId = sessionId;
+	const queryClient = new QueryClient();
+	const topbar = () => (
+		<QueryClientProvider client={queryClient}>
 			<ShellTopbar />
-		</QueryClientProvider>,
+		</QueryClientProvider>
 	);
+	const result = render(topbar());
+	return { ...result, rerenderTopbar: () => result.rerender(topbar()) };
 }
 
 function renderKill(session: WorkspaceSession = worker, orchestratorId?: string) {
@@ -130,7 +144,11 @@ beforeEach(() => {
 	spawnMock.mockResolvedValue("orch-2");
 	useWorkspaceQueryMock.mockReset();
 	useWorkspaceQueryMock.mockReturnValue({ data: [], isError: false, isLoading: false });
-	useUiStore.setState({ orchestratorReplacementErrors: {}, restartingProjectIds: new Set() });
+	useUiStore.setState({
+		inspectorSessions: {},
+		orchestratorReplacementErrors: {},
+		restartingProjectIds: new Set(),
+	});
 });
 
 describe("ShellTopbar status pill", () => {
@@ -214,6 +232,40 @@ describe("ShellTopbar orchestrator actions", () => {
 		renderTopbar(worker);
 
 		expect(screen.queryByRole("button", { name: "Start new orchestrator context" })).not.toBeInTheDocument();
+	});
+});
+
+describe("ShellTopbar inspector state", () => {
+	it("routes aria-pressed to the current worker session", () => {
+		useUiStore.setState({
+			inspectorSessions: {
+				"sess-1": { isOpen: true, view: "summary" },
+				"sess-2": { isOpen: false, view: "summary" },
+			},
+		});
+		const view = renderTopbarSessions([worker, secondWorker], "sess-1");
+
+		expect(screen.getByRole("button", { name: "Close inspector panel" })).toHaveAttribute("aria-pressed", "true");
+
+		paramsMock.sessionId = "sess-2";
+		view.rerenderTopbar();
+
+		expect(screen.getByRole("button", { name: "Open inspector panel" })).toHaveAttribute("aria-pressed", "false");
+	});
+
+	it("toggles only the current worker session", async () => {
+		useUiStore.setState({
+			inspectorSessions: {
+				"sess-1": { isOpen: false, view: "summary" },
+				"sess-2": { isOpen: true, view: "browser" },
+			},
+		});
+		renderTopbarSessions([worker, secondWorker], "sess-1");
+
+		await userEvent.click(screen.getByRole("button", { name: "Open inspector panel" }));
+
+		expect(useUiStore.getState().inspectorSessions["sess-1"]?.isOpen).toBe(true);
+		expect(useUiStore.getState().inspectorSessions["sess-2"]).toEqual({ isOpen: true, view: "browser" });
 	});
 });
 

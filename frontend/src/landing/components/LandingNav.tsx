@@ -1,9 +1,13 @@
 "use client";
 
 import { useState, useRef } from "react";
+import Link from "next/link";
 import gsap from "gsap";
 import ScrollTrigger from "gsap/ScrollTrigger";
 import { useGSAP } from "@gsap/react";
+import { RELEASE_URL } from "../lib/desktop-downloads";
+import { useDownloadTarget } from "../lib/use-download-target";
+import { useGitHubRepoFacts } from "../lib/use-github-repo-facts";
 
 if (typeof window !== "undefined") {
 	gsap.registerPlugin(ScrollTrigger, useGSAP);
@@ -52,12 +56,15 @@ function DiscordIcon({ className = "" }: { className?: string }) {
 	);
 }
 
+function StarIcon({ className = "" }: { className?: string }) {
+	return (
+		<svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+			<path d="M12 2.5l2.95 5.98 6.6.96-4.77 4.65 1.13 6.57L12 17.55l-5.91 3.11 1.13-6.57L2.45 9.44l6.6-.96L12 2.5z" />
+		</svg>
+	);
+}
+
 const socials = [
-	{
-		label: "GitHub",
-		href: "https://github.com/AgentWrapper/agent-orchestrator",
-		icon: GithubIcon,
-	},
 	{
 		label: "Discord",
 		href: "https://discord.com/invite/UZv7JjxbwG",
@@ -73,13 +80,16 @@ const socials = [
 const navLinks = [
 	{ label: "Demo", href: "#see-it" },
 	{ label: "Features", href: "#features" },
-	{ label: "Docs", href: "/docs" },
+	{ label: "Docs", href: "/docs/" },
 ];
 
 export function LandingNav() {
 	const [open, setOpen] = useState(false);
 	const navRef = useRef<HTMLDivElement>(null);
 	const innerRef = useRef<HTMLDivElement>(null);
+	const { stars } = useGitHubRepoFacts();
+	const downloadTarget = useDownloadTarget();
+	const downloadHref = downloadTarget?.href ?? RELEASE_URL;
 
 	useGSAP(() => {
 		// Shrink + hide-on-scroll only on desktop (>=768px). On mobile/tablet the
@@ -129,32 +139,54 @@ export function LandingNav() {
 				ref={innerRef}
 				className="relative mx-auto flex h-14 w-full max-w-4xl items-center justify-between gap-5 rounded-full border border-[color:var(--border)] bg-[color:var(--bg)]/70 px-5 backdrop-blur-xl shadow-lg transition-all duration-500 ease-out [.nav-scrolled_&]:h-12 [.nav-scrolled_&]:max-w-3xl [.nav-scrolled_&]:bg-[color:var(--bg)]/90"
 			>
-				<a href="/" data-testid="nav-logo" className="group inline-flex h-10 shrink-0 items-center gap-3">
+				<Link href="/" data-testid="nav-logo" className="group inline-flex h-10 shrink-0 items-center gap-3">
 					<img
 						src="/ao-logo.svg"
 						alt="Agent Orchestrator"
 						className="block h-7 w-7 shrink-0 object-contain transition-transform duration-300 group-hover:scale-105"
 					/>
-					<span className="hidden text-[15px] font-semibold leading-[1.1] tracking-tight text-[color:var(--fg)] sm:block">
+					<span className="text-[14px] font-semibold leading-[1.1] tracking-tight text-[color:var(--fg)] sm:text-[15px]">
 						Agent Orchestrator
 					</span>
-				</a>
+				</Link>
 
 				<nav className="absolute left-1/2 hidden -translate-x-1/2 items-center gap-7 md:flex" aria-label="Primary">
-					{navLinks.map((item) => (
-						<a
-							key={item.label}
-							href={item.href}
-							className="landing-nav-link px-1.5 py-1.5 text-[13px] font-medium tracking-wide focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[color:var(--accent)]"
-						>
-							{item.label}
-						</a>
-					))}
+					{navLinks.map((item) =>
+						item.href.startsWith("/") ? (
+							<Link
+								key={item.label}
+								href={item.href}
+								className="landing-nav-link px-1.5 py-1.5 text-[13px] font-medium tracking-wide focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[color:var(--accent)]"
+							>
+								{item.label}
+							</Link>
+						) : (
+							<a
+								key={item.label}
+								href={item.href}
+								className="landing-nav-link px-1.5 py-1.5 text-[13px] font-medium tracking-wide focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[color:var(--accent)]"
+							>
+								{item.label}
+							</a>
+						),
+					)}
 				</nav>
 
 				<div className="flex items-center gap-2">
-					<div className="mx-1 hidden h-4 w-px bg-[color:var(--border)] lg:block" />
-					<div className="hidden items-center gap-3 lg:flex">
+					<a
+						href="https://github.com/AgentWrapper/agent-orchestrator"
+						target="_blank"
+						rel="noreferrer"
+						aria-label={`Star Agent Orchestrator on GitHub${stars ? ` — ${stars} stars` : ""}`}
+						title="Star on GitHub"
+						className="group/starchip inline-flex h-8 items-center gap-1.5 rounded-full border border-[color:var(--border)] bg-[color:var(--bg-elevated)] pl-2.5 pr-3 text-[12px] font-semibold text-[color:var(--fg-muted)] transition-[color,border-color,background-color] duration-300 hover:border-[color:var(--accent-glow)] hover:text-[color:var(--fg)]"
+					>
+						<GithubIcon className="h-3.5 w-3.5" />
+						<StarIcon className="h-3 w-3 text-[color:var(--fg-dim)] transition-colors duration-300 group-hover/starchip:text-[#ffd35c]" />
+						{stars ? <span className="font-mono text-[11.5px] leading-none">{stars}</span> : null}
+					</a>
+					<div className="mx-1 hidden h-4 w-px bg-[color:var(--border)] lg:block [.nav-scrolled_&]:hidden" />
+					<div className="hidden items-center gap-3 lg:flex [.nav-scrolled_&]:hidden">
 						{socials.map((item) => {
 							const Icon = item.icon;
 							return (
@@ -172,6 +204,12 @@ export function LandingNav() {
 							);
 						})}
 					</div>
+					<a
+						href={downloadHref}
+						className="hero-pressable btn-primary hidden h-9 items-center gap-1.5 rounded-full px-4 text-[13px] font-semibold md:inline-flex"
+					>
+						Download
+					</a>
 					<button
 						type="button"
 						aria-label={open ? "Close navigation menu" : "Open navigation menu"}
@@ -190,18 +228,40 @@ export function LandingNav() {
 					id="mobile-navigation-menu"
 					className="absolute inset-x-0 top-full mt-4 flex flex-col gap-1 rounded-2xl border border-[color:var(--border)] bg-[color:var(--bg)]/95 p-4 mx-4 backdrop-blur-xl shadow-2xl md:hidden"
 				>
-					{navLinks.map((item) => (
-						<a
-							key={item.label}
-							href={item.href}
-							onClick={() => setOpen(false)}
-							className="flex items-center rounded-lg px-4 py-3 text-[15px] font-medium text-[color:var(--fg)] transition-colors hover:bg-[color:var(--bg-elevated)]"
-						>
-							{item.label}
-						</a>
-					))}
+					{navLinks.map((item) =>
+						item.href.startsWith("/") ? (
+							<Link
+								key={item.label}
+								href={item.href}
+								onClick={() => setOpen(false)}
+								className="flex items-center rounded-lg px-4 py-3 text-[15px] font-medium text-[color:var(--fg)] transition-colors hover:bg-[color:var(--bg-elevated)]"
+							>
+								{item.label}
+							</Link>
+						) : (
+							<a
+								key={item.label}
+								href={item.href}
+								onClick={() => setOpen(false)}
+								className="flex items-center rounded-lg px-4 py-3 text-[15px] font-medium text-[color:var(--fg)] transition-colors hover:bg-[color:var(--bg-elevated)]"
+							>
+								{item.label}
+							</a>
+						),
+					)}
 					<div className="my-2 h-px bg-[color:var(--border)]" />
 					<div className="flex justify-center gap-6 py-2">
+						<a
+							href="https://github.com/AgentWrapper/agent-orchestrator"
+							target="_blank"
+							rel="noreferrer"
+							aria-label="GitHub"
+							title="GitHub"
+							className="inline-flex items-center gap-1.5 text-[color:var(--fg-muted)] hover:text-[color:var(--fg)]"
+						>
+							<GithubIcon className="h-5 w-5" />
+							<span className="font-mono text-[12px]">{stars ?? ""}</span>
+						</a>
 						{socials.map((item) => {
 							const Icon = item.icon;
 							return (

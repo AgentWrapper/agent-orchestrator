@@ -144,7 +144,8 @@ var clineBinarySpec = binaryutil.BinarySpec{
 	Names:         []string{"cline"},
 	WinNames:      []string{"cline.cmd", "cline.exe", "cline"},
 	UnixPaths:     []string{"/usr/local/bin/cline", "/opt/homebrew/bin/cline"},
-	UnixHomePaths: [][]string{{".npm-global", "bin", "cline"}, {".npm", "bin", "cline"}, {".local", "bin", "cline"}},
+	UnixHomePaths: binaryutil.NodeManagedUnixHomePaths("cline"),
+	NodeManaged:   true,
 	WinPaths: []binaryutil.WinPath{
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "cline.cmd"}},
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "cline.exe"}},

@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -303,7 +305,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 
 	branch := cfg.Branch
 	if branch == "" {
-		branch = defaultSpawnBranch(id, cfg.Kind, sessionPrefix(project), project.Kind.WithDefault())
+		branch = DefaultSpawnBranch(id, cfg.Kind, sessionPrefix(project), project.Kind.WithDefault(), m.dataDir)
 	}
 	ws, workspaceProject, err := m.createSessionWorkspace(ctx, project, cfg, id, branch)
 	if err != nil {
@@ -372,6 +374,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
 	}
+	m.augmentRuntimePATHForLaunchBinary(ctx, env, argv)
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     id,
 		WorkspacePath: ws.Path,
@@ -873,6 +876,7 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 		m.cleanupSystemPromptDir(rec.ID)
 		return RestoreResult{}, fmt.Errorf("restore %s: %w", rec.ID, err)
 	}
+	m.augmentRuntimePATHForLaunchBinary(ctx, env, argv)
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     rec.ID,
 		WorkspacePath: ws.Path,
@@ -1827,22 +1831,66 @@ func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
 	}
 }
 
-func defaultSessionBranch(id domain.SessionID, kind domain.SessionKind, prefix string) string {
+func defaultSessionBranch(id domain.SessionID, kind domain.SessionKind, prefix, branchNamespace string) string {
 	if kind == domain.KindOrchestrator {
-		return "ao/" + prefix + "-orchestrator"
+		return aoBranch(branchNamespace, prefix+"-orchestrator")
 	}
 	// A fresh, unique branch per worker session: gitworktree can't add a worktree
 	// on a branch already checked out elsewhere (e.g. main). Put the root work
 	// branch under a session namespace so sibling PR branches such as
 	// ao/<session>/<topic> remain valid Git refs.
-	return "ao/" + string(id) + "/root"
+	return aoBranch(branchNamespace, string(id), "root")
 }
 
-func defaultSpawnBranch(id domain.SessionID, kind domain.SessionKind, prefix string, projectKind domain.ProjectKind) string {
+// DefaultSpawnBranch returns AO's generated work branch for a spawn. Explicit
+// user-provided branches bypass this helper.
+func DefaultSpawnBranch(id domain.SessionID, kind domain.SessionKind, prefix string, projectKind domain.ProjectKind, dataDir string) string {
+	branchNamespace := generatedBranchNamespace(dataDir)
 	if projectKind == domain.ProjectKindWorkspace {
-		return "ao/" + string(id)
+		return aoBranch(branchNamespace, string(id))
 	}
-	return defaultSessionBranch(id, kind, prefix)
+	return defaultSessionBranch(id, kind, prefix, branchNamespace)
+}
+
+// DefaultOrchestratorBranch returns the generated canonical orchestrator branch
+// for a project in the current data-dir namespace.
+func DefaultOrchestratorBranch(prefix, dataDir string) string {
+	return defaultSessionBranch("", domain.KindOrchestrator, prefix, generatedBranchNamespace(dataDir))
+}
+
+func aoBranch(namespace string, parts ...string) string {
+	all := []string{"ao"}
+	if namespace != "" {
+		all = append(all, namespace)
+	}
+	all = append(all, parts...)
+	return strings.Join(all, "/")
+}
+
+func generatedBranchNamespace(dataDir string) string {
+	if isDefaultDevDataDir(dataDir) {
+		return "dev"
+	}
+	return ""
+}
+
+func isDefaultDevDataDir(dataDir string) bool {
+	if strings.TrimSpace(dataDir) == "" {
+		return false
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	want, err := filepath.Abs(filepath.Join(home, ".ao", "dev", "data"))
+	if err != nil {
+		return false
+	}
+	got, err := filepath.Abs(dataDir)
+	if err != nil {
+		return false
+	}
+	return filepath.Clean(got) == filepath.Clean(want)
 }
 
 func buildPrompt(cfg ports.SpawnConfig) string {
@@ -2523,6 +2571,195 @@ func launchBinary(argv []string) (string, bool) {
 		return arg, true
 	}
 	return "", false
+}
+
+func (m *Manager) augmentRuntimePATHForLaunchBinary(ctx context.Context, env map[string]string, argv []string) {
+	bin, ok := launchBinary(argv)
+	if !ok || !filepath.IsAbs(bin) {
+		return
+	}
+	launchDir := filepath.Dir(bin)
+	if launchDir == "." || launchDir == string(filepath.Separator) {
+		return
+	}
+	dirs := []string{launchDir}
+	if isNodeLaunchBinary(bin) {
+		if nodeDir := m.nodeRuntimeDir(ctx); nodeDir != "" && nodeDir != launchDir {
+			dirs = append(dirs, nodeDir)
+		}
+	}
+	var parts []string
+	if path := env["PATH"]; path != "" {
+		parts = strings.Split(path, string(os.PathListSeparator))
+	}
+	for i := len(dirs) - 1; i >= 0; i-- {
+		if !containsPathDir(parts, dirs[i]) {
+			parts = append([]string{dirs[i]}, parts...)
+		}
+	}
+	env["PATH"] = strings.Join(parts, string(os.PathListSeparator))
+}
+
+func isNodeLaunchBinary(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	const maxShebangBytes = 4096
+	buf := make([]byte, maxShebangBytes)
+	n, _ := f.Read(buf)
+	line := string(buf[:n])
+	if newline := strings.IndexByte(line, '\n'); newline >= 0 {
+		line = line[:newline]
+	}
+	if !strings.HasPrefix(line, "#!") {
+		return false
+	}
+	for _, field := range strings.Fields(strings.TrimPrefix(line, "#!")) {
+		if filepath.Base(field) == "node" {
+			return true
+		}
+	}
+	return false
+}
+
+func containsPathDir(parts []string, dir string) bool {
+	for _, part := range parts {
+		if part == dir {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Manager) nodeRuntimeDir(ctx context.Context) string {
+	if err := ctx.Err(); err != nil || runtime.GOOS == "windows" {
+		return ""
+	}
+	if node, err := m.lookPath("node"); err == nil && node != "" {
+		return filepath.Dir(node)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	fnmDir := os.Getenv("FNM_DIR")
+	if fnmDir == "" {
+		if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {
+			fnmDir = filepath.Join(xdg, "fnm")
+		} else if runtime.GOOS == "darwin" {
+			fnmDir = filepath.Join(home, "Library", "Application Support", "fnm")
+		} else {
+			fnmDir = filepath.Join(home, ".local", "share", "fnm")
+		}
+	}
+	voltaHome := os.Getenv("VOLTA_HOME")
+	if voltaHome == "" {
+		voltaHome = filepath.Join(home, ".volta")
+	}
+	nvm := versionedNodeMatches(filepath.Join(home, ".nvm", "versions", "node", "*", "bin", "node"))
+	if data, err := os.ReadFile(filepath.Join(home, ".nvm", "alias", "default")); err == nil {
+		fields := strings.Fields(string(data))
+		if len(fields) > 0 {
+			nvm = preferNodeVersion(nvm, fields[0])
+		}
+	}
+	fnmMatches := versionedNodeMatches(filepath.Join(fnmDir, "node-versions", "*", "installation", "bin", "node"))
+	candidates := make([]string, 0, len(nvm)+len(fnmMatches)+3)
+	candidates = append(candidates, nvm...)
+	candidates = append(candidates, fnmMatches...)
+	// Prefer explicitly selected/versioned runtimes over manager and package-
+	// manager shims. A dormant ~/.volta installation must not override the NVM
+	// default or newest fnm runtime merely because the GUI omitted shell setup.
+	candidates = append(candidates, filepath.Join(voltaHome, "bin", "node"), "/opt/homebrew/bin/node", "/usr/local/bin/node")
+	for _, candidate := range candidates {
+		if err := ctx.Err(); err != nil {
+			return ""
+		}
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+			return filepath.Dir(candidate)
+		}
+	}
+	return ""
+}
+
+func versionedNodeMatches(pattern string) []string {
+	matches, _ := filepath.Glob(pattern)
+	sort.SliceStable(matches, func(i, j int) bool {
+		return compareNodeVersion(nodeVersionFromPath(matches[i]), nodeVersionFromPath(matches[j])) > 0
+	})
+	return matches
+}
+
+func nodeVersionFromPath(path string) string {
+	dir := filepath.Dir(path)
+	if filepath.Base(dir) == "bin" {
+		dir = filepath.Dir(dir)
+	}
+	if filepath.Base(dir) == "installation" {
+		dir = filepath.Dir(dir)
+	}
+	return filepath.Base(dir)
+}
+
+func preferNodeVersion(paths []string, version string) []string {
+	version = normalizeNodeVersion(version)
+	for i, path := range paths {
+		if normalizeNodeVersion(nodeVersionFromPath(path)) != version {
+			continue
+		}
+		out := make([]string, 0, len(paths))
+		out = append(out, path)
+		out = append(out, paths[:i]...)
+		out = append(out, paths[i+1:]...)
+		return out
+	}
+	return paths
+}
+
+func compareNodeVersion(a, b string) int {
+	av, aok := parseNodeVersion(a)
+	bv, bok := parseNodeVersion(b)
+	for i := range av {
+		if av[i] != bv[i] {
+			if av[i] > bv[i] {
+				return 1
+			}
+			return -1
+		}
+	}
+	if aok != bok {
+		if aok {
+			return 1
+		}
+		return -1
+	}
+	return strings.Compare(a, b)
+}
+
+func parseNodeVersion(version string) ([3]int, bool) {
+	var parsed [3]int
+	fields := strings.Split(normalizeNodeVersion(version), ".")
+	if len(fields) == 0 || fields[0] == "" {
+		return parsed, false
+	}
+	for i := 0; i < len(fields) && i < len(parsed); i++ {
+		n, err := strconv.Atoi(fields[i])
+		if err != nil {
+			return [3]int{}, false
+		}
+		parsed[i] = n
+	}
+	return parsed, true
+}
+
+func normalizeNodeVersion(version string) string {
+	return strings.TrimPrefix(strings.TrimSpace(version), "v")
 }
 
 func (m *Manager) validateRuntimePrerequisites() error {
