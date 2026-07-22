@@ -633,9 +633,12 @@ func parseGitHubRepo(remote string, resolveSSHHost func(string) (string, bool)) 
 		if len(parts) != 2 {
 			return ports.SCMRepo{}, false
 		}
-		host := strings.ToLower(parts[0])
+		// Preserve alias casing for ssh -G / Host matching; lowercase only for
+		// GitHub-host comparison and the normalized repo key.
+		hostAlias := strings.TrimSpace(parts[0])
+		host := strings.ToLower(hostAlias)
 		if !isGitHubHost(host) && resolveSSHHost != nil {
-			if resolved, ok := resolveSSHHost(host); ok {
+			if resolved, ok := resolveSSHHost(hostAlias); ok {
 				host = strings.ToLower(resolved)
 			}
 		}
@@ -650,9 +653,10 @@ func parseGitHubRepo(remote string, resolveSSHHost func(string) (string, bool)) 
 	if err != nil {
 		return ports.SCMRepo{}, false
 	}
-	host := strings.ToLower(u.Hostname())
+	hostAlias := strings.TrimSpace(u.Hostname())
+	host := strings.ToLower(hostAlias)
 	if strings.EqualFold(u.Scheme, "ssh") && !isGitHubHost(host) && resolveSSHHost != nil {
-		if resolved, ok := resolveSSHHost(host); ok {
+		if resolved, ok := resolveSSHHost(hostAlias); ok {
 			host = strings.ToLower(resolved)
 		}
 	}
@@ -661,34 +665,49 @@ func parseGitHubRepo(remote string, resolveSSHHost func(string) (string, bool)) 
 }
 
 func (p *Provider) resolveSSHHost(host string) (string, bool) {
-	host = strings.ToLower(strings.TrimSpace(host))
-	if host == "" || p == nil || p.sshHostResolver == nil {
+	// Keep original casing: OpenSSH Host patterns are case-sensitive.
+	host = strings.TrimSpace(host)
+	if host == "" || strings.HasPrefix(host, "-") || p == nil || p.sshHostResolver == nil {
 		return "", false
 	}
 	p.sshHostMu.Lock()
-	if result, ok := p.sshHosts[host]; ok {
+	if resolved, ok := p.sshHosts[host]; ok {
 		p.sshHostMu.Unlock()
-		return result.host, result.ok
+		return resolved, true
 	}
 	p.sshHostMu.Unlock()
 
 	resolved, ok := p.sshHostResolver(host)
 	resolved = strings.ToLower(strings.TrimSpace(resolved))
-	ok = ok && resolved != ""
+	if !ok || resolved == "" {
+		// Do not cache failures: transient ssh/timeout errors should recover on
+		// the next observer poll without a daemon restart.
+		return "", false
+	}
 
 	p.sshHostMu.Lock()
 	if p.sshHosts == nil {
-		p.sshHosts = make(map[string]sshHostResolution)
+		p.sshHosts = make(map[string]string)
 	}
-	p.sshHosts[host] = sshHostResolution{host: resolved, ok: ok}
+	if cached, ok := p.sshHosts[host]; ok {
+		p.sshHostMu.Unlock()
+		return cached, true
+	}
+	p.sshHosts[host] = resolved
 	p.sshHostMu.Unlock()
-	return resolved, ok
+	return resolved, true
 }
 
 func resolveSSHConfigHost(host string) (string, bool) {
+	host = strings.TrimSpace(host)
+	if host == "" || strings.HasPrefix(host, "-") {
+		return "", false
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	out, err := aoprocess.CommandContext(ctx, "ssh", "-G", host).Output()
+	// "--" keeps hosts that start with "-" from being parsed as ssh flags
+	// (those are also rejected above; this is defense in depth).
+	out, err := aoprocess.CommandContext(ctx, "ssh", "-G", "--", host).Output()
 	if err != nil {
 		return "", false
 	}
