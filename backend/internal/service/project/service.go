@@ -739,8 +739,11 @@ func defaultProjectID(path string) domain.ProjectID {
 	id := strings.ToLower(filepath.Base(path))
 	id = strings.TrimSpace(id)
 	id = strings.ReplaceAll(id, " ", "-")
+	id = nonAlphanumeric.ReplaceAllString(id, "-")
 	return domain.ProjectID(id)
 }
+
+var nonAlphanumeric = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
 
 var projectIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
