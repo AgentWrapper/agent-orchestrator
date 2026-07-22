@@ -64,13 +64,20 @@ export function sessionPRDisplaySummaries(
 	session: WorkspaceSession,
 	summaries: SessionPRSummary[] = [],
 ): SessionPRSummary[] {
-	const summariesByNumber = new Map(summaries.map((summary) => [summary.number, summary]));
-	const seen = new Set<number>();
+	// Key by canonical web URL so a GitHub PR #7 and a GitLab MR #7 (or any
+	// same-numbered PRs across providers/repos) both appear instead of one
+	// hiding the other. Summaries with an empty url fall back to a degraded
+	// `number:${number}` key — better than dropping the summary, though two
+	// providers with the same number and no url would still collide. The url is
+	// populated in the normal flow, so this is an edge case.
+	const displayKey = (url: string, number: number): string => url || `number:${number}`;
+	const summariesByUrl = new Map(summaries.map((summary) => [displayKey(summary.url, summary.number), summary]));
+	const seen = new Set<string>();
 	const fromFacts = sortedPRs(session).map((pr) => {
-		seen.add(pr.number);
-		return summariesByNumber.get(pr.number) ?? sessionPRFactToSummary(session, pr);
+		seen.add(displayKey(pr.url, pr.number));
+		return summariesByUrl.get(displayKey(pr.url, pr.number)) ?? sessionPRFactToSummary(session, pr);
 	});
-	const summaryOnly = summaries.filter((summary) => !seen.has(summary.number));
+	const summaryOnly = summaries.filter((summary) => !seen.has(displayKey(summary.url, summary.number)));
 	return [...fromFacts, ...summaryOnly].sort(comparePRDisplaySummaries);
 }
 
