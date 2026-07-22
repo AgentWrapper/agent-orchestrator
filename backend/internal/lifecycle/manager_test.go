@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -147,26 +146,6 @@ func (f *fakeCompletionTerminator) Kill(context.Context, domain.SessionID) (bool
 		return false, f.err
 	}
 	return true, nil
-}
-
-// lockedMessenger is the concurrency-safe counterpart used by tests that drive
-// two dispatchers at once.
-type lockedMessenger struct {
-	mu   sync.Mutex
-	msgs []string
-}
-
-func (l *lockedMessenger) Send(_ context.Context, _ domain.SessionID, msg string) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.msgs = append(l.msgs, msg)
-	return nil
-}
-
-func (l *lockedMessenger) count() int {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return len(l.msgs)
 }
 
 func newManager() (*Manager, *fakeStore, *fakeMessenger) {
