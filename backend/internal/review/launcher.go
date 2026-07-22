@@ -35,6 +35,7 @@ type Launcher interface {
 // LaunchSpec is the engine's request to (re)launch a reviewer for one pass.
 type LaunchSpec struct {
 	RunID         string
+	BatchID       string
 	WorkerID      domain.SessionID
 	Harness       domain.ReviewerHarness
 	WorkspacePath string
@@ -105,18 +106,22 @@ func (l *agentLauncher) prepareInvocation(spec LaunchSpec) (ports.ReviewInvocati
 	if strings.TrimSpace(l.dataDir) == "" {
 		return ports.ReviewInvocation{}, fmt.Errorf("reviewer prompt data directory is required")
 	}
-	promptDir := filepath.Join(l.dataDir, "prompts", string(spec.WorkerID), "reviewer")
-	if err := os.MkdirAll(promptDir, 0o700); err != nil {
+	if strings.TrimSpace(spec.BatchID) == "" || strings.TrimSpace(spec.RunID) == "" {
+		return ports.ReviewInvocation{}, fmt.Errorf("reviewer prompt batch and run ids are required")
+	}
+	promptRoot := filepath.Join(l.dataDir, "prompts", string(spec.WorkerID), "reviewer")
+	requestDir := filepath.Join(promptRoot, "requests", spec.BatchID, spec.RunID)
+	if err := os.MkdirAll(requestDir, 0o700); err != nil {
 		return ports.ReviewInvocation{}, fmt.Errorf("create reviewer prompt directory: %w", err)
 	}
-	taskPath := filepath.Join(promptDir, "task.md")
+	taskPath := filepath.Join(requestDir, "task.md")
 	if err := os.WriteFile(taskPath, []byte(strings.TrimRight(inv.Prompt, "\n")+"\n"), 0o600); err != nil {
 		return ports.ReviewInvocation{}, fmt.Errorf("write reviewer task prompt: %w", err)
 	}
-	systemPath := filepath.Join(promptDir, "system.md")
+	systemPath := filepath.Join(promptRoot, "system.md")
 	systemPrompt := strings.TrimRight(inv.SystemPrompt, "\n") + "\n\n" +
-		"AO stores the current review task in `" + filepath.ToSlash(taskPath) + "`. " +
-		"Whenever AO asks you to start a review task, read that file first and follow it completely.\n"
+		"AO stores each review task in an immutable file. Whenever AO asks you to start a review task, " +
+		"read the exact file path in that request first and follow it completely.\n"
 	if err := os.WriteFile(systemPath, []byte(systemPrompt), 0o600); err != nil {
 		return ports.ReviewInvocation{}, fmt.Errorf("write reviewer system prompt: %w", err)
 	}
@@ -124,6 +129,7 @@ func (l *agentLauncher) prepareInvocation(spec LaunchSpec) (ports.ReviewInvocati
 	inv.SystemPrompt = ""
 	inv.SystemPromptFile = systemPath
 	inv.TaskPromptFile = taskPath
+	inv.TaskPromptRoot = promptRoot
 	return inv, nil
 }
 

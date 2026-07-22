@@ -68,6 +68,7 @@ func (f fakeReviewerResolver) Reviewer(domain.ReviewerHarness) (ports.Reviewer, 
 type fakeRuntime struct {
 	createCfg  ports.RuntimeConfig
 	sentMsg    string
+	sentMsgs   []string
 	sentTo     string
 	alive      bool
 	interrupt  string
@@ -89,12 +90,13 @@ func (f *fakeRuntime) Interrupt(_ context.Context, handle ports.RuntimeHandle) e
 func (f *fakeRuntime) SendMessage(_ context.Context, handle ports.RuntimeHandle, msg string) error {
 	f.sentTo = handle.ID
 	f.sentMsg = msg
+	f.sentMsgs = append(f.sentMsgs, msg)
 	return nil
 }
 
 func launchSpec() LaunchSpec {
 	return LaunchSpec{
-		RunID: "run-1", WorkerID: "mer-1", Harness: domain.ReviewerClaudeCode,
+		RunID: "run-1", BatchID: "batch-1", WorkerID: "mer-1", Harness: domain.ReviewerClaudeCode,
 		WorkspacePath: "/ws/mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1",
 	}
 }
@@ -130,10 +132,12 @@ func TestLauncherSpawnReturnsStableHandle(t *testing.T) {
 	if !strings.HasPrefix(reviewer.gotInv.Prompt, reviewerTaskMessagePrefix) || reviewer.gotInv.SystemPrompt != "" || reviewer.gotInv.SystemPromptFile == "" || reviewer.gotInv.TaskPromptFile == "" {
 		t.Fatalf("hidden prompt invocation = %+v", reviewer.gotInv)
 	}
-	if reviewer.gotInv.TaskPromptFile != filepath.Join(dataDir, "prompts", "mer-1", "reviewer", "task.md") {
+	promptRoot := filepath.Join(dataDir, "prompts", "mer-1", "reviewer")
+	taskPath := filepath.Join(promptRoot, "requests", "batch-1", "run-1", "task.md")
+	if reviewer.gotInv.TaskPromptFile != taskPath || reviewer.gotInv.TaskPromptRoot != promptRoot {
 		t.Fatalf("task prompt file = %q", reviewer.gotInv.TaskPromptFile)
 	}
-	task, err := os.ReadFile(filepath.Join(dataDir, "prompts", "mer-1", "reviewer", "task.md"))
+	task, err := os.ReadFile(taskPath)
 	if err != nil {
 		t.Fatalf("read task prompt: %v", err)
 	}
@@ -144,7 +148,7 @@ func TestLauncherSpawnReturnsStableHandle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read system prompt: %v", err)
 	}
-	if !strings.Contains(string(system), "Code reviewer role") || !strings.Contains(string(system), filepath.ToSlash(filepath.Join(dataDir, "prompts", "mer-1", "reviewer", "task.md"))) {
+	if !strings.Contains(string(system), "Code reviewer role") || !strings.Contains(string(system), "exact file path in that request") || strings.Contains(string(system), filepath.ToSlash(taskPath)) {
 		t.Fatalf("system prompt = %q", system)
 	}
 }
@@ -179,8 +183,49 @@ func TestLauncherNotifySendsMessageToHandle(t *testing.T) {
 	if rt.sentTo != "review-mer-1" || !strings.HasPrefix(rt.sentMsg, reviewerTaskMessagePrefix) {
 		t.Fatalf("sent to %q msg %q", rt.sentTo, rt.sentMsg)
 	}
-	if strings.Contains(reviewer.gotInv.Prompt, "run-1") || reviewer.gotInv.SystemPromptFile == "" || reviewer.gotInv.TaskPromptFile == "" {
+	if strings.Contains(reviewer.gotInv.Prompt, reviewer.gotInv.PRURL) || reviewer.gotInv.SystemPromptFile == "" || reviewer.gotInv.TaskPromptFile == "" {
 		t.Fatalf("visible invocation = %+v", reviewer.gotInv)
+	}
+}
+
+func TestLauncherNotifyKeepsEarlierTaskReferenceImmutable(t *testing.T) {
+	reviewer := &fakeReviewer{}
+	rt := &fakeRuntime{}
+	dataDir := t.TempDir()
+	l := NewLauncher(fakeReviewerResolver{reviewer: reviewer, ok: true}, rt, dataDir)
+
+	first := launchSpec()
+	if err := l.Notify(context.Background(), "review-mer-1", first); err != nil {
+		t.Fatalf("first Notify: %v", err)
+	}
+	second := launchSpec()
+	second.BatchID = "batch-2"
+	second.RunID = "run-2"
+	second.PRURL = "https://github.com/o/r/pull/2"
+	second.TargetSHA = "sha2"
+	if err := l.Notify(context.Background(), "review-mer-1", second); err != nil {
+		t.Fatalf("second Notify: %v", err)
+	}
+
+	promptRoot := filepath.Join(dataDir, "prompts", "mer-1", "reviewer")
+	firstPath := filepath.Join(promptRoot, "requests", "batch-1", "run-1", "task.md")
+	secondPath := filepath.Join(promptRoot, "requests", "batch-2", "run-2", "task.md")
+	if len(rt.sentMsgs) != 2 || !strings.Contains(rt.sentMsgs[0], filepath.ToSlash(firstPath)) || !strings.Contains(rt.sentMsgs[1], filepath.ToSlash(secondPath)) {
+		t.Fatalf("review messages = %#v", rt.sentMsgs)
+	}
+	firstTask, err := os.ReadFile(firstPath)
+	if err != nil {
+		t.Fatalf("read first task: %v", err)
+	}
+	secondTask, err := os.ReadFile(secondPath)
+	if err != nil {
+		t.Fatalf("read second task: %v", err)
+	}
+	if !strings.Contains(string(firstTask), first.PRURL) || strings.Contains(string(firstTask), second.PRURL) {
+		t.Fatalf("first task changed after second notification: %q", firstTask)
+	}
+	if !strings.Contains(string(secondTask), second.PRURL) || strings.Contains(string(secondTask), first.PRURL) {
+		t.Fatalf("second task = %q", secondTask)
 	}
 }
 

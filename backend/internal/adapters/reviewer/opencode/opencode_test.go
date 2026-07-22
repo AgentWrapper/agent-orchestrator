@@ -72,12 +72,14 @@ func TestReviewCommandUsesReadOnlyPermissionPolicy(t *testing.T) {
 func TestReviewCommandKeepsSystemPromptFileOutOfVisiblePrompt(t *testing.T) {
 	agent := &captureAgent{}
 	r := &Reviewer{agent: agent}
-	taskPromptFile := filepath.Join("ao", "prompts", "reviewer", "task.md")
+	taskPromptRoot := filepath.Join("ao", "prompts", "reviewer")
+	taskPromptFile := filepath.Join(taskPromptRoot, "requests", "batch-1", "run-1", "task.md")
 
 	got, err := r.ReviewCommand(context.Background(), ports.ReviewInvocation{
 		Prompt:           "Start the AO review task.",
 		SystemPromptFile: "/ao/prompts/reviewer/system.md",
 		TaskPromptFile:   taskPromptFile,
+		TaskPromptRoot:   taskPromptRoot,
 	})
 	if err != nil {
 		t.Fatalf("ReviewCommand: %v", err)
@@ -93,7 +95,7 @@ func TestReviewCommandKeepsSystemPromptFileOutOfVisiblePrompt(t *testing.T) {
 	if err := json.Unmarshal([]byte(got.Env["OPENCODE_CONFIG_CONTENT"]), &config); err != nil {
 		t.Fatalf("reviewer config: %v", err)
 	}
-	wantPattern := filepath.ToSlash(filepath.Dir(taskPromptFile)) + "/**"
+	wantPattern := filepath.ToSlash(taskPromptRoot) + "/**"
 	if len(config.Permission.ExternalDirectory) != 1 || config.Permission.ExternalDirectory[wantPattern] != "allow" {
 		t.Fatalf("external directory policy = %#v, want only %q allowed", config.Permission.ExternalDirectory, wantPattern)
 	}
@@ -134,7 +136,10 @@ func TestReviewCommandBuildsBothOpenCodeConfigSources(t *testing.T) {
 
 	promptDir := t.TempDir()
 	systemPath := filepath.Join(promptDir, "system.md")
-	taskPath := filepath.Join(promptDir, "task.md")
+	taskPath := filepath.Join(promptDir, "requests", "batch-1", "run-1", "task.md")
+	if err := os.MkdirAll(filepath.Dir(taskPath), 0o700); err != nil {
+		t.Fatalf("create task prompt dir: %v", err)
+	}
 	if err := os.WriteFile(systemPath, []byte("review system prompt\n"), 0o600); err != nil {
 		t.Fatalf("write system prompt: %v", err)
 	}
@@ -148,6 +153,7 @@ func TestReviewCommandBuildsBothOpenCodeConfigSources(t *testing.T) {
 		Prompt:           "Read the AO review task.",
 		SystemPromptFile: systemPath,
 		TaskPromptFile:   taskPath,
+		TaskPromptRoot:   promptDir,
 	})
 	if err != nil {
 		t.Fatalf("ReviewCommand: %v", err)

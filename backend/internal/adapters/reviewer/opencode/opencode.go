@@ -50,7 +50,7 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	if err != nil {
 		return ports.ReviewCommandSpec{}, err
 	}
-	config, err := buildReviewerConfig(inv.TaskPromptFile)
+	config, err := buildReviewerConfig(inv.TaskPromptRoot)
 	if err != nil {
 		return ports.ReviewCommandSpec{}, err
 	}
@@ -61,10 +61,10 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 }
 
 // buildReviewerConfig keeps OpenCode read-only while allowing it to read the
-// AO-owned task prompt outside the worker checkout. The exception is scoped to
-// the one reviewer prompt directory; every other external path remains denied
-// by the catch-all rule.
-func buildReviewerConfig(taskPromptFile string) (string, error) {
+// AO-owned task prompts outside the worker checkout. The exception is scoped
+// to the stable reviewer prompt root so a long-lived process can read future
+// request-scoped tasks; every other external path remains denied.
+func buildReviewerConfig(taskPromptRoot string) (string, error) {
 	permission := map[string]any{
 		"*":    "deny",
 		"read": "allow",
@@ -82,8 +82,8 @@ func buildReviewerConfig(taskPromptFile string) (string, error) {
 			"printf * | ao review submit *": "allow",
 		},
 	}
-	if taskPromptFile != "" {
-		promptPattern := filepath.ToSlash(filepath.Join(filepath.Dir(taskPromptFile), "**"))
+	if taskPromptRoot != "" {
+		promptPattern := filepath.ToSlash(filepath.Join(taskPromptRoot, "**"))
 		permission["external_directory"] = map[string]string{promptPattern: "allow"}
 	}
 	data, err := json.Marshal(map[string]any{"permission": permission})

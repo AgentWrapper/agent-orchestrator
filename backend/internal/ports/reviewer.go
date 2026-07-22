@@ -82,6 +82,10 @@ type ReviewInvocation struct {
 	// Prompt carries only a short reference to this file so the instructions do
 	// not enter the shared terminal stream.
 	TaskPromptFile string
+	// TaskPromptRoot is the stable AO-owned directory containing task prompt
+	// files for this reviewer. Adapters use it when a long-lived reviewer needs
+	// permission to read request-scoped task files created after launch.
+	TaskPromptRoot string
 }
 
 // ReviewTask is one PR/run in a multi-PR review trigger queue.
