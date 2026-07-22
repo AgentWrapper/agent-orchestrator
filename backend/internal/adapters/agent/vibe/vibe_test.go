@@ -9,9 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pelletier/go-toml/v2"
+
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
-	"github.com/pelletier/go-toml/v2"
 )
 
 func TestManifest(t *testing.T) {
