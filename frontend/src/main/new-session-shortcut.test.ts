@@ -131,8 +131,8 @@ describe("attachAppShortcuts", () => {
 
 	it.each([
 		["settings", { key: ",", control: true }, OPEN_SETTINGS_SHORTCUT_CHANNEL],
-		["previous session", { key: "Up", control: true, alt: true }, PREVIOUS_SESSION_SHORTCUT_CHANNEL],
-		["next session", { key: "Down", control: true, alt: true }, NEXT_SESSION_SHORTCUT_CHANNEL],
+		["previous session", { key: "PageUp", control: true }, PREVIOUS_SESSION_SHORTCUT_CHANNEL],
+		["next session", { key: "PageDown", control: true }, NEXT_SESSION_SHORTCUT_CHANNEL],
 		["focus terminal", { key: "T", control: true, shift: true }, FOCUS_TERMINAL_SHORTCUT_CHANNEL],
 	] as const)("forwards the Windows/Linux %s shortcut", (_label, input, channel) => {
 		const source = fakeSource();

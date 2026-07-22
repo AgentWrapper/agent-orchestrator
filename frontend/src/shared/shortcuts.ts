@@ -87,14 +87,14 @@ export const APP_SHORTCUTS: readonly ShortcutDefinition[] = [
 		label: "Previous session",
 		category: "Navigation",
 		mac: ["⌘", "Alt", "↑"],
-		windowsLinux: ["Ctrl", "Alt", "↑"],
+		windowsLinux: ["Ctrl", "PageUp"],
 	},
 	{
 		id: "next-session",
 		label: "Next session",
 		category: "Navigation",
 		mac: ["⌘", "Alt", "↓"],
-		windowsLinux: ["Ctrl", "Alt", "↓"],
+		windowsLinux: ["Ctrl", "PageDown"],
 	},
 	{
 		id: "toggle-inspector",
@@ -178,17 +178,19 @@ export function matchesOpenSettingsShortcut(chord: ShortcutChord, isMac: boolean
 }
 
 export function matchesPreviousSessionShortcut(chord: ShortcutChord, isMac: boolean): boolean {
-	if (chord.key !== "ArrowUp" && chord.key !== "Up") return false;
-	return isMac
-		? chord.meta && chord.alt && !chord.ctrl && !chord.shift
-		: chord.ctrl && chord.alt && !chord.meta && !chord.shift;
+	if (isMac) {
+		return (chord.key === "ArrowUp" || chord.key === "Up") && chord.meta && chord.alt && !chord.ctrl && !chord.shift;
+	}
+	return chord.key === "PageUp" && chord.ctrl && !chord.meta && !chord.alt && !chord.shift;
 }
 
 export function matchesNextSessionShortcut(chord: ShortcutChord, isMac: boolean): boolean {
-	if (chord.key !== "ArrowDown" && chord.key !== "Down") return false;
-	return isMac
-		? chord.meta && chord.alt && !chord.ctrl && !chord.shift
-		: chord.ctrl && chord.alt && !chord.meta && !chord.shift;
+	if (isMac) {
+		return (
+			(chord.key === "ArrowDown" || chord.key === "Down") && chord.meta && chord.alt && !chord.ctrl && !chord.shift
+		);
+	}
+	return chord.key === "PageDown" && chord.ctrl && !chord.meta && !chord.alt && !chord.shift;
 }
 
 export function matchesFocusTerminalShortcut(chord: ShortcutChord, isMac: boolean): boolean {
