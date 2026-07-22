@@ -365,9 +365,7 @@ function ShellLayout() {
 					<Sidebar
 						hideEdgeBorder={isWelcomeBoard}
 						historyLocked={isWelcomeBoard}
-						underTopbar={
-							isWindows || (!framedAppTopbar && !hideShellTopbar && (isLinux ? isSessionRoute : true))
-						}
+						underTopbar={isWindows || (!framedAppTopbar && !hideShellTopbar && (isLinux ? isSessionRoute : true))}
 						topbarOffset={isWindows ? "titlebar" : "toolbar"}
 						onCreateProject={createProject}
 						onInitializeProject={initializeProjectRepository}

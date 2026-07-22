@@ -4,13 +4,15 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 
-const { navigateMock, notificationShowMock, postMock, workspaceQueryMock, boardActionsInPanelMock } = vi.hoisted(() => ({
-	navigateMock: vi.fn(),
-	notificationShowMock: vi.fn(),
-	postMock: vi.fn(),
-	workspaceQueryMock: vi.fn(),
-	boardActionsInPanelMock: vi.fn(() => false),
-}));
+const { navigateMock, notificationShowMock, postMock, workspaceQueryMock, boardActionsInPanelMock } = vi.hoisted(
+	() => ({
+		navigateMock: vi.fn(),
+		notificationShowMock: vi.fn(),
+		postMock: vi.fn(),
+		workspaceQueryMock: vi.fn(),
+		boardActionsInPanelMock: vi.fn(() => false),
+	}),
+);
 
 vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => navigateMock,

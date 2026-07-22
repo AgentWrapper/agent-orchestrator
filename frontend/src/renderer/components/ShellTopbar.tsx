@@ -16,19 +16,9 @@ import { addRendererExceptionStep, captureRendererEvent, captureRendererExceptio
 import { useUiStore } from "../stores/ui-store";
 import { OrchestratorIcon } from "./icons";
 import { getAgentActivityView } from "../lib/session-presentation";
-import {
-	isLinuxPlatform,
-	isMacPlatform,
-	isWindowsPlatform,
-	usesBoardActionsInPanel,
-} from "../lib/platform";
+import { isLinuxPlatform, isMacPlatform, isWindowsPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { StatusPill } from "./StatusPill";
-import {
-	TopbarButton,
-	TopbarKillError,
-	topbarHeaderClass,
-	topbarProjectLabelClass,
-} from "./TopbarButton";
+import { TopbarButton, TopbarKillError, topbarHeaderClass, topbarProjectLabelClass } from "./TopbarButton";
 
 const isMac = isMacPlatform();
 const isLinux = isLinuxPlatform();
