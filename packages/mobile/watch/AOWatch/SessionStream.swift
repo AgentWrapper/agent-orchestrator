@@ -89,6 +89,10 @@ final class SessionStream: NSObject, ObservableObject, URLSessionWebSocketDelega
 
 		let cfg = URLSessionConfiguration.ephemeral
 		cfg.timeoutIntervalForRequest = 30
+		// On the watch the WS path can be briefly "offline" (-1009) while the
+		// relay/Wi-Fi settles; wait for a usable path instead of failing instantly.
+		cfg.waitsForConnectivity = true
+		cfg.timeoutIntervalForResource = 60
 		let s = URLSession(configuration: cfg, delegate: self, delegateQueue: nil)
 		let t = s.webSocketTask(with: req)
 		session = s
