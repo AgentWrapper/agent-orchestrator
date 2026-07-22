@@ -51,8 +51,8 @@ type ArchiveLayout = "rows" | "grid";
 const archiveLayoutStorageKey = "ao.board.archive.layout";
 
 function initialArchiveLayout(): ArchiveLayout {
-	if (typeof window === "undefined") return "rows";
-	return window.localStorage?.getItem(archiveLayoutStorageKey) === "grid" ? "grid" : "rows";
+	if (typeof window === "undefined") return "grid";
+	return window.localStorage?.getItem(archiveLayoutStorageKey) === "rows" ? "rows" : "grid";
 }
 
 function isArchivedSession(session: WorkspaceSession): boolean {
@@ -794,22 +794,23 @@ function ArchiveSessionItem({
 	if (layout === "grid") {
 		return (
 			<div
-				className="relative flex min-h-28 flex-col overflow-hidden rounded-md border border-border bg-surface"
+				className="flex min-h-28 flex-col overflow-hidden rounded-md border border-border bg-surface"
 				role="listitem"
 			>
+				<div className="flex min-w-0 items-center gap-2 px-3 pt-2">
+					<ArchiveStatus badge={badge} />
+					<span className="ml-auto shrink-0 font-mono text-2xs text-passive">
+						{formatTimeCompact(session.updatedAt)}
+					</span>
+					{restoreButton}
+				</div>
 				<button
 					aria-label={`Open ${session.title}`}
-					className="min-h-0 flex-1 p-3 pr-11 text-left transition-colors hover:bg-interactive-hover focus-visible:bg-interactive-hover focus-visible:outline-none"
+					className="min-h-0 flex-1 px-3 pb-3 pt-1.5 text-left transition-colors hover:bg-interactive-hover focus-visible:bg-interactive-hover focus-visible:outline-none"
 					onClick={onOpen}
 					type="button"
 				>
-					<div className="flex min-w-0 items-center gap-2">
-						<ArchiveStatus badge={badge} />
-						<span className="ml-auto shrink-0 font-mono text-2xs text-passive">
-							{formatTimeCompact(session.updatedAt)}
-						</span>
-					</div>
-					<div className="mt-2 line-clamp-2 text-control font-medium leading-snug text-foreground">{session.title}</div>
+					<div className="line-clamp-2 text-control font-medium leading-snug text-foreground">{session.title}</div>
 					<div className="mt-1 flex min-w-0 items-center gap-2">
 						<span className="shrink-0 font-mono text-2xs text-passive">{agentLabel(session.provider)}</span>
 						{issueId && (
@@ -822,7 +823,6 @@ function ArchiveSessionItem({
 						{metadata}
 					</div>
 				</button>
-				<div className="absolute right-1.5 top-1.5">{restoreButton}</div>
 				<ArchiveRestoreError message={restoreError} />
 			</div>
 		);

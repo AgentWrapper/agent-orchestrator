@@ -422,7 +422,9 @@ describe("SessionsBoard", () => {
 
 		const archive = screen.getByRole("list", { name: "Archived sessions" });
 		const terminatedRow = within(archive).getByRole("button", { name: "Open dead worker" });
-		expect(within(terminatedRow).getByText("Terminated")).toBeInTheDocument();
+		const terminatedCard = terminatedRow.closest<HTMLElement>("[role='listitem']");
+		expect(terminatedCard).not.toBeNull();
+		expect(within(terminatedCard!).getByText("Terminated")).toBeInTheDocument();
 		expect(screen.getByText("Claude")).toBeInTheDocument();
 		expect(screen.getByText("ao/dead-worker")).toBeInTheDocument();
 		expect(screen.getByText("github:INT-17")).toBeInTheDocument();
@@ -441,19 +443,21 @@ describe("SessionsBoard", () => {
 
 		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
 		const layout = screen.getByRole("group", { name: "Archive layout" });
-		expect(within(layout).getByRole("button", { name: "Rows" })).toHaveAttribute("aria-pressed", "true");
-		expect(screen.getByRole("list", { name: "Archived sessions" })).not.toHaveClass("grid");
-
-		await userEvent.click(within(layout).getByRole("button", { name: "Columns" }));
 		expect(within(layout).getByRole("button", { name: "Columns" })).toHaveAttribute("aria-pressed", "true");
 		expect(screen.getByRole("list", { name: "Archived sessions" })).toHaveClass("grid");
-		expect(window.localStorage.getItem("ao.board.archive.layout")).toBe("grid");
+		const restore = screen.getByRole("button", { name: "Restore dead worker" });
+		expect(restore.parentElement).toContainElement(screen.getByText("Terminated"));
+
+		await userEvent.click(within(layout).getByRole("button", { name: "Rows" }));
+		expect(within(layout).getByRole("button", { name: "Rows" })).toHaveAttribute("aria-pressed", "true");
+		expect(screen.getByRole("list", { name: "Archived sessions" })).not.toHaveClass("grid");
+		expect(window.localStorage.getItem("ao.board.archive.layout")).toBe("rows");
 
 		view.unmount();
 		renderBoard("p1");
 		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
-		expect(screen.getByRole("button", { name: "Columns" })).toHaveAttribute("aria-pressed", "true");
-		expect(screen.getByRole("list", { name: "Archived sessions" })).toHaveClass("grid");
+		expect(screen.getByRole("button", { name: "Rows" })).toHaveAttribute("aria-pressed", "true");
+		expect(screen.getByRole("list", { name: "Archived sessions" })).not.toHaveClass("grid");
 	});
 
 	it("restores a terminated session, refreshes workspace data, and opens the restored terminal", async () => {
@@ -759,7 +763,9 @@ describe("SessionsBoard", () => {
 		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
 		const archive = screen.getByRole("list", { name: "Archived sessions" });
 		const archivedMergedRow = within(archive).getByRole("button", { name: "Open archived merged worker" });
-		expect(within(archivedMergedRow).getByText("Merged").closest("span")).toHaveClass("text-status-merged");
+		const archivedMergedCard = archivedMergedRow.closest<HTMLElement>("[role='listitem']");
+		expect(archivedMergedCard).not.toBeNull();
+		expect(within(archivedMergedCard!).getByText("Merged").closest("span")).toHaveClass("text-status-merged");
 		expect(within(archive).getByRole("button", { name: "Restore archived merged worker" })).toBeInTheDocument();
 	});
 });
