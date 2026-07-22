@@ -334,6 +334,11 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 			m.rollbackSpawnSeedRow(ctx, id)
 			return domain.SessionRecord{}, fmt.Errorf("spawn %s: attachments: %w", id, err)
 		}
+		// Keep the attachments dir out of git status. Best-effort: the images are
+		// already written and usable, so an exclude failure must not fail the spawn.
+		if err := m.workspace.AddExclude(ctx, ws, "/"+attachmentsDir+"/"); err != nil {
+			m.logger.Warn("spawn: exclude attachments dir", "sessionID", id, "error", err)
+		}
 		prompt = appendAttachmentReferences(prompt, refs)
 	}
 
@@ -1921,45 +1926,7 @@ func writeSpawnAttachments(workspacePath string, attachments []ports.SpawnAttach
 		// Worktree-relative reference, always forward-slashed for the prompt.
 		refs = append(refs, attachmentsDir+"/"+name)
 	}
-	excludeAttachmentsDir(workspacePath)
 	return refs, nil
-}
-
-// excludeAttachmentsDir adds the attachments directory to the worktree's local
-// git excludes so pasted images do not show up as untracked changes. Best
-// effort: a failure here is non-fatal since the attachment is already written.
-func excludeAttachmentsDir(workspacePath string) {
-	// In a linked worktree, .git is a file pointing at the real gitdir; use
-	// `git rev-parse` to resolve the per-worktree git dir rather than assuming
-	// a .git directory.
-	out, err := exec.Command("git", "-C", workspacePath, "rev-parse", "--git-dir").Output()
-	if err != nil {
-		return
-	}
-	gitDir := strings.TrimSpace(string(out))
-	if !filepath.IsAbs(gitDir) {
-		gitDir = filepath.Join(workspacePath, gitDir)
-	}
-	infoDir := filepath.Join(gitDir, "info")
-	if err := os.MkdirAll(infoDir, 0o750); err != nil {
-		return
-	}
-	excludePath := filepath.Join(infoDir, "exclude")
-	existing, _ := os.ReadFile(excludePath)
-	entry := "/" + attachmentsDir + "/"
-	if strings.Contains(string(existing), entry) {
-		return
-	}
-	f, err := os.OpenFile(excludePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-	if err != nil {
-		return
-	}
-	defer func() { _ = f.Close() }()
-	prefix := ""
-	if len(existing) > 0 && !strings.HasSuffix(string(existing), "\n") {
-		prefix = "\n"
-	}
-	_, _ = f.WriteString(prefix + entry + "\n")
 }
 
 // appendAttachmentReferences appends a block listing the attached image paths so

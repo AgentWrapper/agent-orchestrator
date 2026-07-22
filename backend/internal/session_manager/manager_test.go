@@ -390,6 +390,10 @@ type fakeWorkspace struct {
 	forceDestroyErr error
 	// stashCalls counts StashUncommitted invocations.
 	stashCalls int
+	// excludePatterns records patterns passed to AddExclude; addExcludeErr, when
+	// set, is returned so best-effort handling can be exercised.
+	excludePatterns []string
+	addExcludeErr   error
 	// calls records the sequence of workspace method calls for ordering assertions.
 	calls []string
 	// sharedLog, when non-nil, receives entries alongside calls so ordering
@@ -508,6 +512,12 @@ func (w *fakeWorkspace) ApplyPreserved(_ context.Context, info ports.WorkspaceIn
 	}
 	w.calls = append(w.calls, entry)
 	return w.applyErr
+}
+
+func (w *fakeWorkspace) AddExclude(_ context.Context, info ports.WorkspaceInfo, patterns ...string) error {
+	w.calls = append(w.calls, "AddExclude:"+string(info.SessionID))
+	w.excludePatterns = append(w.excludePatterns, patterns...)
+	return w.addExcludeErr
 }
 
 type loggingDestroyWorkspace struct {

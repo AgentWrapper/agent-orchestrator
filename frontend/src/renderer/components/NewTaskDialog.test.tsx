@@ -201,6 +201,22 @@ describe("NewTaskDialog", () => {
 		expect(screen.queryByText("Image 1")).not.toBeInTheDocument();
 	});
 
+	it("caps attachments at 8 and shows an inline error instead of a late submit rejection", async () => {
+		renderDialog();
+		await waitForAgentCatalog();
+
+		const brief = screen.getByLabelText("Brief");
+		const files = Array.from(
+			{ length: 10 },
+			(_, i) => new File([new Uint8Array([i + 1])], `shot-${i}.png`, { type: "image/png" }),
+		);
+		fireEvent.paste(brief, { clipboardData: { files, items: [] } });
+
+		expect(await screen.findByText("Image 8")).toBeInTheDocument();
+		expect(screen.queryByText("Image 9")).not.toBeInTheDocument();
+		expect(screen.getByText(/up to 8 images/i)).toBeInTheDocument();
+	});
+
 	it("requires both title and brief", async () => {
 		renderDialog();
 		const user = userEvent.setup();

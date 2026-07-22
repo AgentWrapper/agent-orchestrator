@@ -38,7 +38,14 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 	const [error, setError] = useState<string | undefined>();
 	const [isDragging, setIsDragging] = useState(false);
 	const fileInputRef = useRef<HTMLInputElement>(null);
-	const { attachments, addFiles, remove: removeAttachment, clear: clearAttachments, toPayload } = useImageAttachments();
+	const {
+		attachments,
+		error: attachmentError,
+		addFiles,
+		remove: removeAttachment,
+		clear: clearAttachments,
+		toPayload,
+	} = useImageAttachments();
 
 	const projectQuery = useQuery({
 		queryKey: ["project", projectId],
@@ -252,6 +259,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 									event.target.value = "";
 								}}
 							/>
+							{attachmentError && <p className="text-caption text-destructive">{attachmentError}</p>}
 						</div>
 
 						<div className="grid gap-3 sm:grid-cols-[1fr_1fr]">

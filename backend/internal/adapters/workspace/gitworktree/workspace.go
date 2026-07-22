@@ -530,6 +530,57 @@ func (w *Workspace) ApplyPreserved(ctx context.Context, info ports.WorkspaceInfo
 	return nil
 }
 
+// AddExclude appends git ignore patterns to the worktree's local info/exclude so
+// daemon-generated files never surface as untracked changes. The git dir is
+// resolved via rev-parse (a linked worktree's .git is a file pointing elsewhere,
+// so info/exclude does not live at <worktree>/.git/info). Idempotent: patterns
+// already present are skipped.
+func (w *Workspace) AddExclude(ctx context.Context, info ports.WorkspaceInfo, patterns ...string) error {
+	if len(patterns) == 0 {
+		return nil
+	}
+	path, err := w.validateManagedPath(info.Path)
+	if err != nil {
+		return err
+	}
+	out, err := w.run(ctx, w.binary, "-C", path, "rev-parse", "--git-dir")
+	if err != nil {
+		return fmt.Errorf("gitworktree: AddExclude resolve git dir: %w", err)
+	}
+	gitDir := strings.TrimSpace(string(out))
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(path, gitDir)
+	}
+	infoDir := filepath.Join(gitDir, "info")
+	if err := os.MkdirAll(infoDir, 0o750); err != nil {
+		return fmt.Errorf("gitworktree: AddExclude create info dir: %w", err)
+	}
+	excludePath := filepath.Join(infoDir, "exclude")
+	existing, _ := os.ReadFile(excludePath)
+	var toAdd []string
+	for _, p := range patterns {
+		if !strings.Contains(string(existing), p) {
+			toAdd = append(toAdd, p)
+		}
+	}
+	if len(toAdd) == 0 {
+		return nil
+	}
+	f, err := os.OpenFile(excludePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("gitworktree: AddExclude open exclude: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	prefix := ""
+	if len(existing) > 0 && !strings.HasSuffix(string(existing), "\n") {
+		prefix = "\n"
+	}
+	if _, err := f.WriteString(prefix + strings.Join(toAdd, "\n") + "\n"); err != nil {
+		return fmt.Errorf("gitworktree: AddExclude write exclude: %w", err)
+	}
+	return nil
+}
+
 // runCherryPickNoCommit runs "git -C <worktree> cherry-pick --no-commit <sha>"
 // and captures combined output so any conflict details are available in the
 // returned commandError. Exit code detection happens in the caller.
