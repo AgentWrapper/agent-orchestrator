@@ -151,6 +151,9 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	return cmd, true, nil
 }
 
+// appendModelFlag treats the configured model as opaque: it trims and forwards
+// non-empty values for Auggie to validate. Invalid models intentionally surface
+// Auggie's error; AO does not silently retry with Auggie's default model.
 func appendModelFlag(cmd *[]string, cfg ports.AgentConfig) {
 	if model := strings.TrimSpace(cfg.Model); model != "" {
 		*cmd = append(*cmd, "--model", model)
