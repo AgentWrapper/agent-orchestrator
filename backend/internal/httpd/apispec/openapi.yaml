@@ -3342,6 +3342,7 @@ components:
         config:
           $ref: '#/components/schemas/ProjectConfig'
         displayName:
+          minLength: 1
           type: string
       required:
       - displayName

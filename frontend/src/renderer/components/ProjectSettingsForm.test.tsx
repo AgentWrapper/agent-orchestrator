@@ -266,6 +266,7 @@ describe("ProjectSettingsForm", () => {
 
 		const projectName = await screen.findByLabelText("Project name");
 		await userEvent.clear(projectName);
+		await userEvent.type(projectName, "   ");
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
 		expect(await screen.findByText("Project name is required.")).toBeInTheDocument();
