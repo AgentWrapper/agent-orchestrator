@@ -57,6 +57,7 @@ beforeEach(() => {
 	notificationShowMock.mockReset().mockResolvedValue(undefined);
 	postMock.mockReset().mockResolvedValue({ data: {} });
 	workspaceQueryMock.mockReset().mockReturnValue({ data: [], isError: false });
+	window.localStorage.removeItem("ao.board.archive.layout");
 });
 
 describe("SessionsBoard", () => {
@@ -427,6 +428,32 @@ describe("SessionsBoard", () => {
 		expect(screen.getByText("github:INT-17")).toBeInTheDocument();
 		expect(screen.getByLabelText("#42 merged")).toHaveTextContent("PR#42merged");
 		expect(screen.getByRole("button", { name: "Restore dead worker" })).toBeInTheDocument();
+	});
+
+	it("switches between rows and columns and remembers the archive layout", async () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([terminatedSession()])],
+			isError: false,
+			isSuccess: true,
+		});
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		const view = renderBoardWithClient(queryClient, "p1");
+
+		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		const layout = screen.getByRole("group", { name: "Archive layout" });
+		expect(within(layout).getByRole("button", { name: "Rows" })).toHaveAttribute("aria-pressed", "true");
+		expect(screen.getByRole("list", { name: "Archived sessions" })).not.toHaveClass("grid");
+
+		await userEvent.click(within(layout).getByRole("button", { name: "Columns" }));
+		expect(within(layout).getByRole("button", { name: "Columns" })).toHaveAttribute("aria-pressed", "true");
+		expect(screen.getByRole("list", { name: "Archived sessions" })).toHaveClass("grid");
+		expect(window.localStorage.getItem("ao.board.archive.layout")).toBe("grid");
+
+		view.unmount();
+		renderBoard("p1");
+		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		expect(screen.getByRole("button", { name: "Columns" })).toHaveAttribute("aria-pressed", "true");
+		expect(screen.getByRole("list", { name: "Archived sessions" })).toHaveClass("grid");
 	});
 
 	it("restores a terminated session, refreshes workspace data, and opens the restored terminal", async () => {
