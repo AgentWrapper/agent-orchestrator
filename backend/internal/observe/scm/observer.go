@@ -334,6 +334,18 @@ func (o *Observer) Poll(ctx context.Context) error {
 			repoRefreshOK[key] = false
 		}
 	}
+	// markRepoRefreshOK un-marks a repo as refresh-incomplete. It is used by
+	// the terminal-reconciliation path: a reconciled PR that turns out to be
+	// a terminal transition (merged/closed) is persisted normally, and the
+	// repo ETag/cursor may advance. A "still open" no-op result does NOT
+	// call this, so the ETag/cursor stay pinned (cross-cutting durable-state
+	// preservation rule).
+	markRepoRefreshOK := func(repo ports.SCMRepo) {
+		key := prKey(repo, 0)
+		if g, ok := repoGuards[key]; ok && g.err == nil && g.result.ETag != "" {
+			repoRefreshOK[key] = true
+		}
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -343,7 +355,20 @@ func (o *Observer) Poll(ctx context.Context) error {
 	}
 
 	selection := o.selectRefreshCandidates(ctx, subjects, repoGuards, listedPRs, markRepoRefreshFailed)
+	// Item 2 — terminal-state reconciliation for GitHub: tracked open PRs
+	// not in the current state=open listing may have transitioned to
+	// merged/closed. Run a reconciliation pass that issues a full detail
+	// fetch per reconciled PR so terminal transitions are not permanently
+	// missed. The pass runs only when the repo-list guard is not a 304,
+	// and only for GitHub (asymmetry — see reconcileTerminalGitHubPRs).
+	// Terminal observations are routed through the normal persistence path;
+	// "still open" results are no-op persists that mark the repo
+	// refresh-incomplete so the ETag/cursor do not advance.
+	reconciledObs := o.reconcileTerminalGitHubPRs(ctx, subjects, repoGuards, listedPRs, &selection, now, markRepoRefreshFailed)
 	observations := map[string]ports.SCMObservation{}
+	for key, obs := range reconciledObs {
+		observations[key] = obs
+	}
 	prRefreshOK := map[string]bool{}
 	for key := range selection.candidateKeys {
 		prRefreshOK[key] = false
@@ -359,6 +384,14 @@ func (o *Observer) Poll(ctx context.Context) error {
 		active := chunk[:0]
 		for _, ref := range chunk {
 			if o.inRateLimitCooldown(now, ref.Repo.Provider) {
+				// Item 3 — cooldown-skip marks refresh-incomplete: when a ref
+				// is skipped under cooldown, its repository is marked as
+				// refresh-incomplete so the repo ETag and LastSyncCursor do
+				// not advance without an observation being fetched. Without
+				// this, a subsequent 304 can make the skipped update
+				// unrecoverable (cross-cutting durable-state preservation
+				// rule, review finding #1).
+				markRepoRefreshFailed(ref.Repo)
 				continue
 			}
 			active = append(active, ref)
@@ -531,6 +564,13 @@ func (o *Observer) Poll(ctx context.Context) error {
 				continue
 			}
 		}
+		// If this observation came from terminal reconciliation, a successful
+		// terminal persistence (merged/closed transition observed and
+		// persisted) un-marks the repo refresh-incomplete so the repo
+		// ETag/cursor may advance. A "still open" no-op result never reaches
+		// this branch (it returns at the unchanged-hashes check above), so
+		// its repo stays refresh-incomplete and the ETag/cursor stay pinned.
+		markRepoRefreshOK(subj.repo)
 		prRefreshOK[key] = true
 	}
 	for key, ok := range prRefreshOK {
@@ -1023,17 +1063,21 @@ func (o *Observer) selectRefreshCandidates(ctx context.Context, subjects map[str
 				if markRepoFailed != nil {
 					markRepoFailed(s.repo)
 				}
-			} else if !res.NotModified {
-				// Only promote to candidate if the PR is in the incremental
-				// updated set (or no cursor / listedPRs is nil = full listing).
-				// The commit guard changing does not mean every tracked MR
-				// changed
-				if !hasCursor || listedPRs == nil || listedPRs[key] {
-					candidate = true
-					if res.ETag != "" {
-						selection.commitETags[key] = pendingCacheString{key: commitKey, value: res.ETag}
-					}
-				}
+			} else if !res.NotModified && res.ETag != "" && res.ETag != prev {
+				// Item 1 — commit-check ETag independent refresh: a changed
+				// commit-check ETag promotes this PR to refresh candidate
+				// regardless of whether the PR appears in the current
+				// repository listing. The previous `listedPRs[key]` gate
+				// meant that once a sync cursor existed and the repo-list
+				// guard returned 304 (leaving listedPRs empty), CI state
+				// changes (pending→passing/failing) were silently dropped.
+				// The decoupling ensures CI transitions observed via the
+				// commit-check ETag are always persisted. The ETag must
+				// actually change (non-empty and different from the cached
+				// value) so an empty guard result does not spuriously
+				// promote every tracked PR on every poll.
+				candidate = true
+				selection.commitETags[key] = pendingCacheString{key: commitKey, value: res.ETag}
 			}
 		}
 		if candidate {
@@ -1042,6 +1086,231 @@ func (o *Observer) selectRefreshCandidates(ctx context.Context, subjects map[str
 		}
 	}
 	return selection
+}
+
+// reconcileTerminalGitHubPRs (Item 2) runs a terminal-state reconciliation
+// pass for tracked open GitHub PRs that are not in the current state=open
+// listing. Such PRs may have transitioned to merged/closed, which GitHub's
+// state=open listing permanently drops before their terminal state can be
+// observed by the normal refresh path. The pass issues a full detail fetch per
+// reconciled PR and routes the result through the normal observation/persistence
+// machinery.
+//
+// The pass runs on every poll where the GitHub repo-list guard is NOT a 304
+// (i.e. the listing changed). A "still open" detail result is a no-op
+// persistence: the observation is returned but the repository is marked
+// refresh-incomplete so the repo ETag and sync cursor do not advance (cross-
+// cutting durable-state preservation rule). A terminal (merged/closed) result
+// is persisted normally so the terminal transition is observed.
+//
+// The pass is unbounded — no per-poll cap on reconciliation fetches. The worst
+// case (one PR updated, 49 others reconciled) is bounded by the tracked-open-
+// PR count, which is small in AO's use case (sessions track the PRs they
+// spawned).
+//
+// ASYMMETRY — this pass is GitHub-only by deliberate design:
+//   - GitHub uses state=open on ListPRsByRepo and RepoPRListGuard, so terminal
+//     PRs disappear from the listing before their detail can be refreshed.
+//     The reviewer asked for tracked-PR terminal reconciliation on GitHub
+//     (review Item 2), which state=open requires.
+//   - GitLab uses state=all on ListPRsByRepo (approved from the first review,
+//     unchanged), so merged/closed MRs remain in the listing and are observed
+//     by the normal refresh path. No reconciliation pass is needed for GitLab.
+//
+// The two providers match what the reviewer requested for each; they are not
+// aligned to a single listing strategy.
+func (o *Observer) reconcileTerminalGitHubPRs(ctx context.Context, subjects map[string]*subject, guards map[string]repoGuardState, listedPRs map[string]bool, selection *refreshSelection, now time.Time, markRepoFailed func(ports.SCMRepo)) map[string]ports.SCMObservation {
+	out := map[string]ports.SCMObservation{}
+	if listedPRs == nil {
+		// First poll (no cursor): listedPRs is nil, meaning the full listing
+		// was fetched. Tracked open PRs not in the listing already had their
+		// chance to be discovered; no reconciliation needed.
+		return out
+	}
+	// Collect refs to reconcile, deduped by repo so we only reconcile per-repo
+	// when the repo-list guard was not a 304.
+	type pendingReconcile struct {
+		ref ports.SCMPRRef
+		s   *subject
+	}
+	var refs []pendingReconcile
+	for _, s := range subjects {
+		if !s.hasPR || s.known.Number <= 0 {
+			continue
+		}
+		// Asymmetry: only GitHub needs terminal reconciliation. GitLab uses
+		// state=all so terminal MRs never disappear from the listing.
+		if s.repo.Provider != "github" {
+			continue
+		}
+		// Only tracked open PRs (non-terminal state in durable storage) are
+		// candidates — terminal PRs are not re-fetched since lifecycle already
+		// saw the transition.
+		if s.known.Merged || s.known.Closed {
+			continue
+		}
+		repoKey := prKey(s.repo, 0)
+		g := guards[repoKey]
+		// Reconciliation runs only when the repo-list guard is not a 304.
+		if g.err != nil || g.result.NotModified {
+			continue
+		}
+		key := prKey(s.repo, s.known.Number)
+		// Only reconcile PRs not in the current listing — listed PRs are
+		// already covered by the normal refresh path.
+		if listedPRs[key] {
+			continue
+		}
+		// Skip refs already selected as refresh candidates by the normal
+		// path (e.g. commit-check ETag changed) — they will be fetched
+		// anyway and we must not double-count.
+		if selection.candidateKeys[key] {
+			continue
+		}
+		refs = append(refs, pendingReconcile{
+			ref: ports.SCMPRRef{Repo: s.repo, Number: s.known.Number, URL: s.known.URL},
+			s:   s,
+		})
+	}
+	if len(refs) == 0 {
+		return out
+	}
+	// Unbounded: issue detail fetches for every reconciled PR. The worst case
+	// is bounded by the tracked-open-PR count, which is small in AO's use case.
+	for _, chunk := range chunks(refs, BatchSize) {
+		if err := ctx.Err(); err != nil {
+			return out
+		}
+		refBatch := make([]ports.SCMPRRef, 0, len(chunk))
+		for _, r := range chunk {
+			refBatch = append(refBatch, r.ref)
+		}
+		// Skip cooled-down providers so a rate-limited GitHub does not
+		// suppress reconciliation of other providers (defensive — only
+		// GitHub PRs are reconciled here, but the guard keeps the invariant).
+		active := refBatch[:0]
+		for _, ref := range refBatch {
+			if o.inRateLimitCooldown(now, ref.Repo.Provider) {
+				markRepoFailed(ref.Repo)
+				continue
+			}
+			active = append(active, ref)
+		}
+		if len(active) == 0 {
+			continue
+		}
+		batch, err := o.provider.FetchPullRequests(ctx, active)
+		if err != nil {
+			if cooldown, ok := rateLimitCooldown(now, err); ok {
+				for _, ref := range active {
+					o.setRateLimitCooldown(now, ref.Repo.Provider, cooldown)
+				}
+				o.logger.Warn("scm observer: reconciliation rate-limited; entering cooldown", "cooldown", cooldown, "err", err)
+			} else {
+				o.logger.Error("scm observer: reconciliation detail fetch failed", "err", err)
+			}
+			for _, ref := range active {
+				markRepoFailed(ref.Repo)
+			}
+			continue
+		}
+		reconcileSeen := map[string]bool{}
+		for _, obs := range batch {
+			obs.ObservedAt = now
+			key := prKeyFromObs(obs)
+			if key == "" {
+				continue
+			}
+			if !obs.Fetched {
+				// Fetched=false placeholders are transient failures; route
+				// per-observation errors via the same path as the normal
+				// fetch loop. Do not persist placeholders.
+				if obs.Error != nil {
+					providerKey := obs.Provider
+					if providerKey == "" {
+						for _, ref := range active {
+							if prKey(ref.Repo, ref.Number) == key {
+								providerKey = ref.Repo.Provider
+								break
+							}
+						}
+					}
+					if cooldown, ok := rateLimitCooldown(now, obs.Error); ok {
+						if providerKey != "" {
+							o.setRateLimitCooldown(now, providerKey, cooldown)
+						}
+						o.logger.Warn("scm observer: reconciliation rate-limited (per-observation); entering cooldown", "provider", providerKey, "cooldown", cooldown, "err", obs.Error)
+					} else {
+						o.logger.Warn("scm observer: reconciliation fetch failed (per-observation); marking refresh-incomplete", "provider", providerKey, "err", obs.Error)
+					}
+				}
+				// Mark the repo refresh-incomplete on any failure so the
+				// repo ETag/cursor do not advance without an observation.
+				for _, ref := range active {
+					if prKey(ref.Repo, ref.Number) == key {
+						markRepoFailed(ref.Repo)
+						break
+					}
+				}
+				continue
+			}
+			out[key] = obs
+			reconcileSeen[key] = true
+			// Register the reconciled PR in selection.subjectsByPR and
+			// candidateKeys so the persistence loop processes it. Marking
+			// candidateKeys also ensures prRefreshOK is initialized for this
+			// key so the commit-ETag cache does not advance unless the
+			// persistence succeeds.
+			for _, r := range chunk {
+				if prKey(r.ref.Repo, r.ref.Number) == key {
+					selection.subjectsByPR[key] = r.s
+					break
+				}
+			}
+			selection.candidateKeys[key] = true
+			// Pre-mark the repo refresh-incomplete for every reconciled
+			// "still open" observation. A "still open" result is a no-op
+			// persistence that must NOT advance the repo ETag or sync
+			// cursor (cross-cutting durable-state preservation rule). If
+			// the observation turns out to be a terminal transition
+			// (hashes changed), the persistence loop clears this mark
+			// after a successful write so the ETag/cursor can advance on
+			// a real terminal transition only.
+			for _, ref := range active {
+				if prKey(ref.Repo, ref.Number) == key {
+					markRepoFailed(ref.Repo)
+					break
+				}
+			}
+		}
+		// Any reconciled PR that did not yield a Fetched=true observation
+		// must mark its repo refresh-incomplete (no-op result: durable state
+		// must not advance).
+		for _, r := range chunk {
+			key := prKey(r.ref.Repo, r.ref.Number)
+			if reconcileSeen[key] {
+				// A "still open" observation: if the semantic hashes are
+				// unchanged (no terminal transition), the persistence loop
+				// treats it as a no-op and sets prRefreshOK[key]=true without
+				// writing. But we must still prevent the repo ETag/cursor
+				// from advancing on a no-op reconciliation result, so mark
+				// the repo refresh-incomplete here. If the result IS a
+				// terminal transition (hashes changed), the persistence
+				// loop sets prRefreshOK[key]=true after a successful write —
+				// we must NOT pre-mark the repo failed in that case. The
+				// persistence loop's prRefreshOK[key]=true overrides the
+				// repo-level mark for the ETag/cursor advancement decision
+				// only if listedRepos[repoKey] is also true. Since the
+				// reconciled PR was NOT in the listing, listedRepos[repoKey]
+				// may still be true (the listing was fetched), so we mark
+				// the repo refresh-incomplete to ensure the cursor does not
+				// advance without a terminal observation being persisted.
+				continue
+			}
+			markRepoFailed(r.ref.Repo)
+		}
+	}
+	return out
 }
 
 func missingLocalState(pr domain.PullRequest) bool {

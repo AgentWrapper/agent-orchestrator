@@ -1525,11 +1525,26 @@ func TestPoll_IncrementalDiscovery_OnlyUpdatedMRsRefreshed(t *testing.T) {
 	cursor := obs.Cache.LastSyncCursor[prKey(testRepo, 0)]
 
 	// Poll 2: ETag changed (repo2), but only PR 2 is in the updated set.
+	// PRs #1 and #3 are tracked open but absent from the listing, so they
+	// trigger terminal-state reconciliation fetches (Item 2). With durable
+	// hashes matching their observations, the reconciled fetches are no-op
+	// persists (no writes, no ETag/cursor advance) — but they still issue
+	// detail fetches.
 	provider.mu.Lock()
 	provider.repoGuards[prKey(testRepo, 0)] = ports.SCMGuardResult{ETag: "repo2"}
 	provider.openPRs[prKey(testRepo, 0)] = []ports.SCMPRObservation{
 		{Number: 2, State: "open", SourceBranch: "feat", HeadRepo: "o/r"},
 	}
+	// Match durable hashes so the reconciliation results for PRs #1 and #3
+	// are no-op persists (still-open, no terminal transition).
+	o1, o3 := testObs(1), testObs(3)
+	pr1.MetadataHash = metadataSemanticHash(o1)
+	pr1.CIHash = ciSemanticHash(o1.CI)
+	pr1.ReviewHash = reviewSemanticHash(o1.Review)
+	pr3.MetadataHash = metadataSemanticHash(o3)
+	pr3.CIHash = ciSemanticHash(o3.CI)
+	pr3.ReviewHash = reviewSemanticHash(o3.Review)
+	store.prs["p-1"] = []domain.PullRequest{pr1, pr2, pr3}
 	provider.fetchBatches = nil
 	provider.mu.Unlock()
 
@@ -1542,13 +1557,26 @@ func TestPoll_IncrementalDiscovery_OnlyUpdatedMRsRefreshed(t *testing.T) {
 	if got := obs.Cache.LastSyncCursor[prKey(testRepo, 0)]; !got.After(cursor) {
 		t.Fatalf("poll 2: cursor did not advance: got %v, want > %v", got, cursor)
 	}
-	// Only PR 2 should be in the fetch batch — not PR 1 or PR 3.
-	if len(provider.fetchBatches) != 1 {
-		t.Fatalf("poll 2: fetchBatches = %d, want 1", len(provider.fetchBatches))
+	// The incremental-discovery filter selects only PR 2 (in the updated
+	// set) for normal refresh. PRs #1 and #3 are fetched via the
+	// reconciliation pass. So we expect 2 fetch batches: one for PR 2
+	// (normal refresh) and one for PRs #1 and #3 (reconciliation).
+	if len(provider.fetchBatches) != 2 {
+		t.Fatalf("poll 2: fetchBatches = %d, want 2 (normal + reconciliation)", len(provider.fetchBatches))
 	}
-	batch := provider.fetchBatches[0]
-	if len(batch) != 1 || batch[0].Number != 2 {
-		t.Fatalf("poll 2: batch = %v, want only [PR 2]", batch)
+	// Collect all fetched PR numbers.
+	fetched := map[int]bool{}
+	for _, batch := range provider.fetchBatches {
+		for _, ref := range batch {
+			fetched[ref.Number] = true
+		}
+	}
+	// All three PRs are fetched: PR 2 via normal refresh, PRs 1 and 3 via
+	// reconciliation. The incremental-discovery filter correctly prevents
+	// PRs 1 and 3 from being in the normal refresh batch — they are only
+	// fetched via reconciliation.
+	if !fetched[1] || !fetched[2] || !fetched[3] {
+		t.Fatalf("poll 2: expected PRs 1, 2, 3 fetched (2 via normal, 1+3 via reconciliation); got %v", fetched)
 	}
 }
 
@@ -1798,5 +1826,259 @@ func TestPoll_PerObservationError_NiledBeforePersistence(t *testing.T) {
 	for _, w := range store.writes {
 		_ = w // store writes carry domain types, not the obs.Error field; the
 		// lifecycle assertion above is the authoritative nil-out check.
+	}
+}
+
+// TestPoll_CommitCheckETagChange_PromotesIndependentOfListing (Item 1)
+// verifies that a changed commit-check ETag independently promotes a PR to a
+// refresh candidate even when the repository listing is a 304 (so listedPRs is
+// empty). CI state changes during a 304 listing must be persisted rather than
+// silently dropped. This is the reviewer's non-zero-cursor regression test.
+func TestPoll_CommitCheckETagChange_PromotesIndependentOfListing(t *testing.T) {
+	store := testStoreWithSession()
+	local := knownPR(1)
+	local.MetadataHash = "durable-meta"
+	local.CIHash = "durable-ci"
+	local.ReviewHash = "durable-review"
+	store.prs["p-1"] = []domain.PullRequest{local}
+
+	// New CI observation (pending → passing) that should be persisted.
+	updated := testObs(1)
+	updated.CI.Summary = string(domain.CIPassing)
+	updated.CI.HeadSHA = "sha1"
+	updated.CI.Checks = []ports.SCMCheckObservation{{Name: "build", Status: string(domain.PRCheckPassed), Conclusion: "success", URL: "ci"}}
+
+	provider := &fakeProvider{
+		// Repo-list guard reports 304 (NotModified) against the cached ETag.
+		repoGuards: map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo1", NotModified: true}},
+		// Commit-check ETag changed.
+		checkGuards:  map[string]ports.SCMGuardResult{commitKey(testRepo, "sha1"): {ETag: "ci2"}},
+		observations: map[string]ports.SCMObservation{prKey(testRepo, 1): updated},
+	}
+	lc := &fakeLifecycle{}
+	now := time.Unix(1100, 0).UTC()
+	obs := newTestObserver(store, provider, lc, now)
+	obs.Cache.RepoPRListETag[prKey(testRepo, 0)] = "repo1"
+	obs.Cache.CommitChecksETag[commitKey(testRepo, "sha1")] = "ci1"
+	// Non-zero cursor: simulates the post-first-poll state where a 304 leaves
+	// listedPRs empty.
+	obs.Cache.LastSyncCursor[prKey(testRepo, 0)] = now.Add(-time.Hour)
+
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// The PR must be fetched despite the 304 listing.
+	if len(provider.fetchBatches) != 1 || len(provider.fetchBatches[0]) != 1 || provider.fetchBatches[0][0].Number != 1 {
+		t.Fatalf("commit-check ETag change with 304 listing must promote PR to refresh candidate; batches=%#v", provider.fetchBatches)
+	}
+	// The new CI state must be persisted despite the 304 listing.
+	if len(store.writes) == 0 {
+		t.Fatalf("expected at least one store write with updated CI state, got 0")
+	}
+	found := false
+	for _, w := range store.writes {
+		if w.pr.Number == 1 && w.pr.CI == domain.CIPassing {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("updated CI state (passing) not persisted; writes=%#v", store.writes)
+	}
+	// The commit-check ETag must advance after successful persistence.
+	if got := obs.Cache.CommitChecksETag[commitKey(testRepo, "sha1")]; got != "ci2" {
+		t.Fatalf("commit ETag not advanced after successful persist: got %q want ci2", got)
+	}
+}
+
+// TestPoll_GitHubTerminalReconciliation_StillOpenNoOp (Item 2) verifies that a
+// tracked open GitHub PR not in the current listing triggers a terminal-
+// reconciliation detail fetch, and that a "still open" result is a no-op
+// persistence that does NOT advance any cursor or ETag.
+func TestPoll_GitHubTerminalReconciliation_StillOpenNoOp(t *testing.T) {
+	store := testStoreWithSession()
+	stillOpen := testObs(1)
+	local := knownPR(1)
+	// Compute durable hashes from the observation so the "still open" result
+	// is semantically a no-op (unchanged hashes → no write, no ETag advance).
+	local.MetadataHash = metadataSemanticHash(stillOpen)
+	local.CIHash = ciSemanticHash(stillOpen.CI)
+	local.ReviewHash = reviewSemanticHash(stillOpen.Review)
+	store.prs["p-1"] = []domain.PullRequest{local}
+
+	provider := &fakeProvider{
+		repoGuards:   map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo2"}},
+		openPRs:      map[string][]ports.SCMPRObservation{}, // PR not in listing
+		observations: map[string]ports.SCMObservation{prKey(testRepo, 1): stillOpen},
+	}
+	lc := &fakeLifecycle{}
+	now := time.Unix(1200, 0).UTC()
+	obs := newTestObserver(store, provider, lc, now)
+	obs.Cache.RepoPRListETag[prKey(testRepo, 0)] = "repo1"
+	obs.Cache.LastSyncCursor[prKey(testRepo, 0)] = now.Add(-time.Hour)
+
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// The reconciliation pass must issue a detail fetch for the missing PR.
+	if len(provider.fetchBatches) != 1 || len(provider.fetchBatches[0]) != 1 || provider.fetchBatches[0][0].Number != 1 {
+		t.Fatalf("reconciliation must fetch the missing PR; batches=%#v", provider.fetchBatches)
+	}
+	// The repo ETag must NOT advance — the "still open" result is a no-op.
+	if got := obs.Cache.RepoPRListETag[prKey(testRepo, 0)]; got == "repo2" {
+		t.Fatalf("repo ETag advanced to %q on still-open reconciliation; durable state must not advance", got)
+	}
+	// The sync cursor must NOT advance.
+	if cursor := obs.Cache.LastSyncCursor[prKey(testRepo, 0)]; cursor.Equal(now) {
+		t.Fatalf("sync cursor advanced to %v on still-open reconciliation; durable state must not advance", cursor)
+	}
+}
+
+// TestPoll_GitHubTerminalReconciliation_TerminalTransition (Item 2) verifies
+// that when the reconciliation detail fetch reports a terminal state
+// (merged/closed), the terminal state is observed and persisted.
+func TestPoll_GitHubTerminalReconciliation_TerminalTransition(t *testing.T) {
+	store := testStoreWithSession()
+	local := knownPR(1)
+	local.MetadataHash = "durable-meta"
+	local.CIHash = "durable-ci"
+	local.ReviewHash = "durable-review"
+	store.prs["p-1"] = []domain.PullRequest{local}
+
+	// The detail fetch returns a merged terminal state.
+	terminalObs := testObs(1)
+	terminalObs.PR.Merged = true
+	terminalObs.PR.State = string(domain.PRStateMerged)
+	provider := &fakeProvider{
+		repoGuards:   map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo2"}},
+		openPRs:      map[string][]ports.SCMPRObservation{}, // PR not in state=open listing
+		observations: map[string]ports.SCMObservation{prKey(testRepo, 1): terminalObs},
+	}
+	lc := &fakeLifecycle{}
+	now := time.Unix(1300, 0).UTC()
+	obs := newTestObserver(store, provider, lc, now)
+	obs.Cache.RepoPRListETag[prKey(testRepo, 0)] = "repo1"
+	obs.Cache.LastSyncCursor[prKey(testRepo, 0)] = now.Add(-time.Hour)
+
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// The reconciliation pass must issue a detail fetch.
+	if len(provider.fetchBatches) != 1 || len(provider.fetchBatches[0]) != 1 {
+		t.Fatalf("reconciliation must fetch the missing PR; batches=%#v", provider.fetchBatches)
+	}
+	// The terminal (merged) state must be persisted.
+	foundMerged := false
+	for _, w := range store.writes {
+		if w.pr.Number == 1 && w.pr.Merged {
+			foundMerged = true
+			break
+		}
+	}
+	if !foundMerged {
+		t.Fatalf("terminal merged state not persisted; writes=%#v", store.writes)
+	}
+	// Lifecycle must see the terminal transition.
+	if len(lc.observed) == 0 {
+		t.Fatalf("lifecycle not notified of terminal transition; observed=%#v", lc.observed)
+	}
+}
+
+// TestPoll_GitHubTerminalReconciliation_SecondPollNoReconcile (Item 2)
+// verifies the reviewer's explicit multi-poll requirement: after a PR is
+// reconciled on poll N (still-open, no-op), poll N+1 does NOT re-reconcile it
+// unnecessarily when the listing is unchanged. Once the terminal
+// reconciliation finds the PR is still open, the repo ETag has not advanced,
+// so a subsequent 304 poll skips reconciliation entirely.
+func TestPoll_GitHubTerminalReconciliation_SecondPollNoReconcile(t *testing.T) {
+	store := testStoreWithSession()
+	local := knownPR(1)
+	local.MetadataHash = "durable-meta"
+	local.CIHash = "durable-ci"
+	local.ReviewHash = "durable-review"
+	store.prs["p-1"] = []domain.PullRequest{local}
+
+	stillOpen := testObs(1)
+	stillOpen.PR.Title = local.Title
+	stillOpen.CI.Summary = string(domain.CIPassing)
+	stillOpen.CI.HeadSHA = local.HeadSHA
+	provider := &fakeProvider{
+		repoGuards:   map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo2"}},
+		openPRs:      map[string][]ports.SCMPRObservation{},
+		observations: map[string]ports.SCMObservation{prKey(testRepo, 1): stillOpen},
+	}
+	now := time.Unix(1400, 0).UTC()
+	obs := newTestObserver(store, provider, &fakeLifecycle{}, now)
+	obs.Cache.RepoPRListETag[prKey(testRepo, 0)] = "repo1"
+	obs.Cache.LastSyncCursor[prKey(testRepo, 0)] = now.Add(-time.Hour)
+
+	// Poll 1: non-304 guard, PR missing from listing → reconciliation fetch.
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(provider.fetchBatches) != 1 {
+		t.Fatalf("poll 1: reconciliation must fetch the missing PR; batches=%#v", provider.fetchBatches)
+	}
+
+	// Poll 2: repo-list guard is now a 304 (NotModified). The PR is still
+	// missing from listing, but reconciliation must NOT run on a 304 poll.
+	provider.mu.Lock()
+	provider.repoGuards[prKey(testRepo, 0)] = ports.SCMGuardResult{ETag: "repo2", NotModified: true}
+	provider.fetchBatches = nil
+	provider.mu.Unlock()
+
+	now2 := now.Add(time.Minute)
+	obs.clock = func() time.Time { return now2 }
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(provider.fetchBatches) != 0 {
+		t.Fatalf("poll 2 (304 guard): reconciliation must not re-fetch; batches=%#v", provider.fetchBatches)
+	}
+}
+
+// TestPoll_CooldownSkip_MarksRepoRefreshIncomplete (Item 3) verifies that when
+// a ref is skipped under cooldown, the repository is marked refresh-incomplete
+// so the repo ETag and sync cursor do NOT advance without an observation being
+// fetched. After cooldown, a 304 must not make the skipped update unrecoverable.
+func TestPoll_CooldownSkip_MarksRepoRefreshIncomplete(t *testing.T) {
+	store := testStoreWithSession()
+	local := knownPR(1)
+	local.MetadataHash = "durable-meta"
+	local.CIHash = "durable-ci"
+	local.ReviewHash = "durable-review"
+	store.prs["p-1"] = []domain.PullRequest{local}
+
+	provider := &fakeProvider{
+		repoGuards:   map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo2"}},
+		openPRs:      map[string][]ports.SCMPRObservation{prKey(testRepo, 0): {{Number: 1, State: "open", SourceBranch: "feat", HeadRepo: "o/r"}}},
+		observations: map[string]ports.SCMObservation{prKey(testRepo, 1): testObs(1)},
+	}
+	now := time.Unix(1500, 0).UTC()
+	obs := newTestObserver(store, provider, &fakeLifecycle{}, now)
+	obs.Cache.RepoPRListETag[prKey(testRepo, 0)] = "repo1"
+	cursorBefore := now.Add(-time.Hour)
+	obs.Cache.LastSyncCursor[prKey(testRepo, 0)] = cursorBefore
+	// Put the github provider under cooldown so the ref is skipped.
+	obs.setRateLimitCooldown(now, "github", 2*time.Minute)
+
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// The ref must not have been fetched (cooldown skipped it).
+	if len(provider.fetchBatches) != 0 {
+		t.Fatalf("cooldown-skip must not fetch refs; batches=%#v", provider.fetchBatches)
+	}
+	// The repo ETag must NOT advance — the refresh was marked incomplete.
+	if got := obs.Cache.RepoPRListETag[prKey(testRepo, 0)]; got == "repo2" {
+		t.Fatalf("repo ETag advanced to %q after cooldown-skip; durable state must not advance", got)
+	}
+	// The sync cursor must NOT advance.
+	if got := obs.Cache.LastSyncCursor[prKey(testRepo, 0)]; got != cursorBefore {
+		t.Fatalf("sync cursor advanced after cooldown-skip: got %v, want %v (unchanged)", got, cursorBefore)
 	}
 }
