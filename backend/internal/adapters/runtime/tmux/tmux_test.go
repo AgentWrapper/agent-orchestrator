@@ -3,7 +3,9 @@ package tmux
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -112,6 +114,10 @@ func TestCommandBuilders(t *testing.T) {
 	if got, want := listPanePIDsArgs("sess-1"), []string{"list-panes", "-s", "-t", "=sess-1", "-F", "#{pane_pid}"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("listPanePIDsArgs = %#v, want %#v", got, want)
 	}
+	// display-message prints the pane cwd for Create's post-spawn verification.
+	if got, want := displayPaneCwdArgs("sess-1"), []string{"display-message", "-p", "-t", "sess-1", "#{pane_current_path}"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("displayPaneCwdArgs = %#v, want %#v", got, want)
+	}
 	if got, want := sendKeysLiteralArgs("sess-1", "hello"), []string{"send-keys", "-t", "sess-1", "-l", "hello"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("sendKeysLiteralArgs = %#v, want %#v", got, want)
 	}
@@ -184,9 +190,9 @@ func TestCreateRejectsInvalidEnvKeys(t *testing.T) {
 
 func TestCreateIssuesNewSessionAndStatusOff(t *testing.T) {
 	// new-session, set-option status, set-option mouse, set-option window-size,
-	// has-session (exit 0 = alive)
+	// has-session (exit 0 = alive), display-message (pane cwd matches workspace)
 	r, fr := newTestRuntime(0)
-	fr.outputs = [][]byte{nil, nil, nil, nil, nil}
+	fr.outputs = [][]byte{nil, nil, nil, nil, nil, []byte("/tmp/ws\n")}
 
 	h, err := r.Create(context.Background(), ports.RuntimeConfig{
 		SessionID:     "sess-1",
@@ -200,10 +206,10 @@ func TestCreateIssuesNewSessionAndStatusOff(t *testing.T) {
 	if h.ID != "sess-1" {
 		t.Fatalf("handle ID = %q, want sess-1", h.ID)
 	}
-	// Expect 5 calls: new-session, set-option status, set-option mouse,
-	// set-option window-size, has-session.
-	if len(fr.calls) != 5 {
-		t.Fatalf("calls = %d, want 5", len(fr.calls))
+	// Expect 6 calls: new-session, set-option status, set-option mouse,
+	// set-option window-size, has-session, display-message.
+	if len(fr.calls) != 6 {
+		t.Fatalf("calls = %d, want 6", len(fr.calls))
 	}
 
 	// Call 0: new-session
@@ -243,11 +249,16 @@ func TestCreateIssuesNewSessionAndStatusOff(t *testing.T) {
 	if got, want := fr.calls[4].args, hasSessionArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("call[4] = %#v, want %#v", got, want)
 	}
+
+	// Call 5: display-message (pane cwd verification, see verifyPaneCwd).
+	if got, want := fr.calls[5].args, displayPaneCwdArgs("sess-1"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("call[5] = %#v, want %#v", got, want)
+	}
 }
 
 func TestCreateLaunchCommandContainsKeepAliveShell(t *testing.T) {
 	r, fr := newTestRuntime(0)
-	fr.outputs = [][]byte{nil, nil, nil}
+	fr.outputs = [][]byte{nil, nil, nil, nil, nil, []byte("/tmp/ws\n")}
 
 	_, err := r.Create(context.Background(), ports.RuntimeConfig{
 		SessionID:     "sess-1",
@@ -279,7 +290,7 @@ func TestCreateLaunchCommandExportsEnvVars(t *testing.T) {
 	defer func() { getenv = oldGetenv }()
 
 	r, fr := newTestRuntime(0)
-	fr.outputs = [][]byte{nil, nil, nil}
+	fr.outputs = [][]byte{nil, nil, nil, nil, nil, []byte("/tmp/ws\n")}
 
 	_, err := r.Create(context.Background(), ports.RuntimeConfig{
 		SessionID:     "sess-1",
@@ -349,6 +360,79 @@ func TestCreateDestroysAndReturnsErrorWhenNotAlive(t *testing.T) {
 	}
 	if !hasKill {
 		t.Fatal("expected kill-session cleanup call when session not alive")
+	}
+}
+
+// TestCreateFailsLoudlyWhenPaneCwdMismatches pins the poisoned-cwd guard:
+// when `new-session -c <dir>` cannot resolve the workspace, tmux silently
+// starts the pane in the SERVER's cwd instead of erroring, and the agent later
+// dies with a context-free ENOENT. Create must catch the mismatch, name both
+// paths in the error, and clean up the session.
+func TestCreateFailsLoudlyWhenPaneCwdMismatches(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	// Setup and liveness succeed; display-message reports a pane cwd that is
+	// not the requested workspace (the tmux server-cwd fallback).
+	fr.outputs = [][]byte{nil, nil, nil, nil, nil, []byte("/somewhere/else\n")}
+
+	_, err := r.Create(context.Background(), ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"myagent"},
+	})
+	if err == nil {
+		t.Fatal("Create: got nil, want error when pane cwd is not the workspace")
+	}
+	// The error must be actionable: it names the pane's actual cwd and the
+	// requested workspace so the operator can see the fallback happened.
+	if !strings.Contains(err.Error(), "/somewhere/else") || !strings.Contains(err.Error(), "/tmp/ws") {
+		t.Fatalf("Create err = %v, want both the pane cwd and the workspace path", err)
+	}
+	// Verify Destroy was called (kill-session) so the misplaced session is not
+	// left running.
+	hasKill := false
+	for _, c := range fr.calls {
+		if len(c.args) > 0 && c.args[0] == "kill-session" {
+			hasKill = true
+		}
+	}
+	if !hasKill {
+		t.Fatal("expected kill-session cleanup call when pane cwd mismatches")
+	}
+}
+
+// samePath must treat symlink aliases of the same directory as equal (macOS
+// reports pane_current_path under /private/var while workspaces are addressed
+// as /var/...), and must fall back to a literal compare for paths that no
+// longer resolve.
+func TestSamePathResolvesSymlinks(t *testing.T) {
+	dir := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	if !samePath(dir, link) {
+		t.Fatalf("samePath(%q, %q) = false, want true via symlink resolution", dir, link)
+	}
+	if !samePath("/does/not/exist/ws", "/does/not/exist/ws/") {
+		t.Fatal("samePath literal fallback should clean and match unresolvable paths")
+	}
+	if samePath("/does/not/exist/a", "/does/not/exist/b") {
+		t.Fatal("samePath = true for distinct unresolvable paths")
+	}
+}
+
+// TestExecRunnerRunsFromStableDir pins the poisoned-cwd fix at the source: the
+// tmux CLI (and therefore the auto-started tmux server, which inherits its
+// cwd) must run from a stable directory that outlives app updates, not from
+// the daemon's own cwd (which can be a deleted ShipIt staging dir, issue
+// #2775).
+func TestExecRunnerRunsFromStableDir(t *testing.T) {
+	out, err := execRunner{}.Run(context.Background(), nil, "pwd")
+	if err != nil {
+		t.Fatalf("execRunner.Run(pwd): %v", err)
+	}
+	if got := strings.TrimSpace(string(out)); !samePath(got, os.TempDir()) {
+		t.Fatalf("execRunner cwd = %q, want os.TempDir() %q", got, os.TempDir())
 	}
 }
 
