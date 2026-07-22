@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
-	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 )
 
 func TestNotificationStore_InsertListAndDedupe(t *testing.T) {
@@ -41,7 +40,7 @@ func TestNotificationStore_InsertListAndDedupe(t *testing.T) {
 	if err != nil || inserted {
 		t.Fatalf("duplicate inserted=%v err=%v, want false nil", inserted, err)
 	}
-	rows, err := s.ListNotifications(ctx, notificationsvc.ListUnread, time.Time{}, 10)
+	rows, err := s.ListNotifications(ctx, domain.NotificationListUnread, time.Time{}, 10)
 	if err != nil {
 		t.Fatalf("ListNotifications: %v", err)
 	}
@@ -78,7 +77,7 @@ func TestNotificationStore_MarkReadReopensUnreadDedupe(t *testing.T) {
 	if read.Status != domain.NotificationRead {
 		t.Fatalf("status = %q, want read", read.Status)
 	}
-	rows, err := s.ListNotifications(ctx, notificationsvc.ListUnread, time.Time{}, 10)
+	rows, err := s.ListNotifications(ctx, domain.NotificationListUnread, time.Time{}, 10)
 	if err != nil {
 		t.Fatalf("ListNotifications: %v", err)
 	}
@@ -130,7 +129,7 @@ func TestNotificationStore_MarkAllRead(t *testing.T) {
 			t.Fatalf("row = %+v, want read", row)
 		}
 	}
-	rows, err := s.ListNotifications(ctx, notificationsvc.ListUnread, time.Time{}, 10)
+	rows, err := s.ListNotifications(ctx, domain.NotificationListUnread, time.Time{}, 10)
 	if err != nil {
 		t.Fatalf("ListNotifications: %v", err)
 	}
@@ -156,7 +155,7 @@ func TestNotificationStore_ListUnreadNewestFirstAcrossProjects(t *testing.T) {
 			t.Fatalf("insert %s inserted=%v err=%v", rec.ID, inserted, err)
 		}
 	}
-	rows, err := s.ListNotifications(ctx, notificationsvc.ListUnread, time.Time{}, 2)
+	rows, err := s.ListNotifications(ctx, domain.NotificationListUnread, time.Time{}, 2)
 	if err != nil {
 		t.Fatalf("ListNotifications: %v", err)
 	}
@@ -186,7 +185,7 @@ func TestNotificationStore_ListRecentAllIncludesReadAndPrunesExpired(t *testing.
 		t.Fatalf("insert expired inserted=%v err=%v", inserted, err)
 	}
 
-	rows, err := s.ListNotifications(ctx, notificationsvc.ListAll, now.Add(-domain.NotificationRetentionWindow), 0)
+	rows, err := s.ListNotifications(ctx, domain.NotificationListAll, now.Add(-domain.NotificationRetentionWindow), 0)
 	if err != nil {
 		t.Fatalf("ListNotifications: %v", err)
 	}

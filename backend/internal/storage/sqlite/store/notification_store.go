@@ -11,11 +11,8 @@ import (
 	sqlite3 "modernc.org/sqlite/lib"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
-	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/gen"
 )
-
-var _ notificationsvc.Store = (*Store)(nil)
 
 // CreateNotification inserts one unread notification. It returns created=false
 // when the unread dedupe index already has a matching row.
@@ -59,7 +56,7 @@ func (s *Store) CreateNotification(ctx context.Context, rec domain.NotificationR
 
 // ListNotifications returns retained notifications newest-first. A zero limit
 // means the full seven-day window; SQLite uses -1 for an unlimited LIMIT.
-func (s *Store) ListNotifications(ctx context.Context, status notificationsvc.ListStatus, since time.Time, limit int) ([]domain.NotificationRecord, error) {
+func (s *Store) ListNotifications(ctx context.Context, status domain.NotificationListStatus, since time.Time, limit int) ([]domain.NotificationRecord, error) {
 	sqlLimit := int64(limit)
 	if sqlLimit <= 0 {
 		sqlLimit = -1
@@ -68,7 +65,7 @@ func (s *Store) ListNotifications(ctx context.Context, status notificationsvc.Li
 		rows []gen.Notification
 		err  error
 	)
-	if status == notificationsvc.ListUnread {
+	if status == domain.NotificationListUnread {
 		rows, err = s.qr.ListRecentUnreadNotifications(ctx, gen.ListRecentUnreadNotificationsParams{CreatedAt: since, Limit: sqlLimit})
 	} else {
 		rows, err = s.qr.ListRecentNotifications(ctx, gen.ListRecentNotificationsParams{CreatedAt: since, Limit: sqlLimit})

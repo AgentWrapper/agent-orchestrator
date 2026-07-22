@@ -27,19 +27,14 @@ type Notification struct {
 }
 
 // ListStatus selects which retained notifications are returned.
-type ListStatus string
+type ListStatus = domain.NotificationListStatus
 
 const (
 	// ListUnread returns only notifications that still need acknowledgement.
-	ListUnread ListStatus = "unread"
+	ListUnread = domain.NotificationListUnread
 	// ListAll returns both read and unread notifications.
-	ListAll ListStatus = "all"
+	ListAll = domain.NotificationListAll
 )
-
-// Valid reports whether s is a supported notification list filter.
-func (s ListStatus) Valid() bool {
-	return s == ListUnread || s == ListAll
-}
 
 // ListFilter controls recent notification listing.
 type ListFilter struct {

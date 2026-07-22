@@ -54,6 +54,21 @@ func (s NotificationStatus) Valid() bool {
 	}
 }
 
+// NotificationListStatus selects which retained notifications are returned.
+type NotificationListStatus string
+
+const (
+	// NotificationListUnread returns only notifications that still need acknowledgement.
+	NotificationListUnread NotificationListStatus = "unread"
+	// NotificationListAll returns both read and unread notifications.
+	NotificationListAll NotificationListStatus = "all"
+)
+
+// Valid reports whether s is a supported notification list filter.
+func (s NotificationListStatus) Valid() bool {
+	return s == NotificationListUnread || s == NotificationListAll
+}
+
 // NotificationRecord is the durable notification persistence shape.
 type NotificationRecord struct {
 	ID        string
