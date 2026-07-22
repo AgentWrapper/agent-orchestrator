@@ -11,7 +11,10 @@ export function BoardWelcome() {
 	const { createProject, initializeProjectRepository } = useShell();
 	return (
 		<WelcomePanel>
-			<div className="flex h-full min-h-0 items-center justify-center overflow-y-auto px-6 py-8">
+			<div
+				className="flex h-full min-h-0 items-center justify-center overflow-y-auto px-6 py-8"
+				data-testid="board-welcome"
+			>
 				<CreateProjectFlow
 					embedded
 					mode="choose"
