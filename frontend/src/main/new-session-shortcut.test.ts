@@ -1,9 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
-import { KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL } from "../shared/shortcuts";
+import {
+	KEYBOARD_SHORTCUTS_HELP_CHANNEL,
+	NEW_SESSION_SHORTCUT_CHANNEL,
+	NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL,
+} from "../shared/shortcuts";
 import { attachAppShortcuts } from "./app-shortcuts";
 
 type InputEvent = {
 	key: string;
+	// Physical key (Electron input.code), needed for chords whose character is
+	// layout-shifted, e.g. Ctrl+Shift+` reports key "~" but code "Backquote".
+	code?: string;
 	control: boolean;
 	meta: boolean;
 	shift: boolean;
@@ -95,6 +102,19 @@ describe("attachAppShortcuts", () => {
 		source.emit({ key: "N", control: true, shift: true, isAutoRepeat: true });
 
 		expect(target.send).toHaveBeenCalledTimes(1);
+	});
+
+	it("forwards the new-shell-terminal chord using the physical code Ctrl+Shift+` reports", () => {
+		const source = fakeSource();
+		const target = fakeTarget();
+		attachAppShortcuts(source, false, target);
+
+		// Real Electron values for Ctrl+Shift+` on a US layout: Shift shifts the
+		// character to "~", so only the physical code "Backquote" identifies the
+		// chord. This pins app-shortcuts forwarding `code` into the matcher.
+		source.emit({ key: "~", code: "Backquote", control: true, shift: true, type: "keyDown" });
+
+		expect(target.send).toHaveBeenCalledWith(NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL);
 	});
 
 	it("forwards keyboard-shortcut help on each platform", () => {
