@@ -16,6 +16,9 @@ final class SessionStream: ObservableObject {
 
 	@Published private(set) var output = ""
 	@Published private(set) var status: Status = .idle
+	// Surfaced on-device so we can diagnose connection failures without a debugger.
+	@Published private(set) var detail: String?
+	@Published private(set) var attempts = 0
 
 	private var config: AOConfig?
 	private var sessionId = ""
@@ -96,6 +99,7 @@ final class SessionStream: ObservableObject {
 		let session = URLSession(configuration: cfg)
 		let t = session.webSocketTask(with: req)
 		task = t
+		attempts += 1
 		if status != .live { status = .connecting }
 		t.resume()
 
@@ -111,6 +115,8 @@ final class SessionStream: ObservableObject {
 				let message = try await t.receive()
 				if handle(message) { sawData = true }
 			} catch {
+				let ns = error as NSError
+				detail = "\(ns.domain) \(ns.code): \(ns.localizedDescription)"
 				break
 			}
 		}
@@ -168,6 +174,7 @@ final class SessionStream: ObservableObject {
 
 	private func append(_ chunk: String) {
 		status = .live
+		detail = nil
 		raw += chunk
 		if raw.count > maxRawChars { raw = String(raw.suffix(maxRawChars)) }
 		let cleaned = Self.sanitize(raw)

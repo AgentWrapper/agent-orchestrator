@@ -14,6 +14,12 @@ struct SessionView: View {
 			ScrollView {
 				VStack(alignment: .leading, spacing: 6) {
 					statusLine
+					if let detail = stream.detail {
+						Text("attempt \(stream.attempts) · \(detail)")
+							.font(.system(size: 11))
+							.foregroundStyle(.orange)
+							.frame(maxWidth: .infinity, alignment: .leading)
+					}
 					Text(stream.output.isEmpty ? "Waiting for output…" : stream.output)
 						.font(.system(size: 13, design: .monospaced))
 						.foregroundStyle(stream.output.isEmpty ? .secondary : .primary)
