@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -258,6 +259,52 @@ func TestMergedPRTeardownFailureTerminatesForReconcileRetry(t *testing.T) {
 	}
 	if st.rt.destroyed != 2 {
 		t.Fatalf("reconcile should retry leaked runtime destroy, got %d destroy calls", st.rt.destroyed)
+	}
+}
+
+func TestMergedPRWorkspaceTeardownFailureTerminatesForCleanupRetry(t *testing.T) {
+	ctx := context.Background()
+	st := newStack(t)
+	sess, err := st.sm.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Branch: "b", Prompt: "do it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := st.store.SetSessionTerminateOnPRMerge(ctx, sess.ID, true, time.Now().UTC()); err != nil || !ok {
+		t.Fatalf("enable terminate-on-pr-merge: ok=%v err=%v", ok, err)
+	}
+
+	st.ws.destroyErr = errors.New("worktree remove failed once")
+	err = st.prm.ApplyObservation(ctx, sess.ID, ports.PRObservation{Fetched: true, URL: "pr1", Number: 1, Merged: true})
+	if err == nil || !strings.Contains(err.Error(), st.ws.destroyErr.Error()) {
+		t.Fatalf("ApplyObservation err = %v, want first workspace destroy failure", err)
+	}
+	if st.rt.destroyed != 1 {
+		t.Fatalf("first merge completion should destroy runtime once, got %d", st.rt.destroyed)
+	}
+	if st.ws.destroyed != 1 {
+		t.Fatalf("first merge completion should attempt workspace destroy once, got %d", st.ws.destroyed)
+	}
+	rec, ok, err := st.store.GetSession(ctx, sess.ID)
+	if err != nil || !ok {
+		t.Fatalf("GetSession: ok=%v err=%v", ok, err)
+	}
+	if !rec.IsTerminated || rec.Activity.State != domain.ActivityExited {
+		t.Fatalf("first failure should still persist terminal fact for cleanup retry, got %+v", rec)
+	}
+
+	st.ws.destroyErr = nil
+	result, err := st.mgr.Cleanup(ctx, "mer")
+	if err != nil {
+		t.Fatalf("Cleanup: %v", err)
+	}
+	if len(result.Skipped) != 0 || len(result.Cleaned) != 1 || result.Cleaned[0] != sess.ID {
+		t.Fatalf("cleanup result = %+v, want cleaned %s with no skips", result, sess.ID)
+	}
+	if st.ws.destroyed != 2 {
+		t.Fatalf("cleanup should retry leaked workspace destroy, got %d destroy calls", st.ws.destroyed)
+	}
+	if st.ws.forceDestroyed != 0 {
+		t.Fatalf("cleanup retry must not force destroy preserved worktree, got %d force destroys", st.ws.forceDestroyed)
 	}
 }
 
