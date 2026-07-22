@@ -27,9 +27,20 @@ function toPullRequestFacts(pr: components["schemas"]["SessionPRFacts"]): PullRe
 export const workspaceQueryKey = ["workspaces"] as const;
 const usePreviewData = import.meta.env.VITE_NO_ELECTRON === "1";
 
+// e2e seam (dev:web only): the Playwright fake-agent harness injects
+// `window.__aoFakeAgent` (see e2e/support/fake-bridge.ts) to drive a
+// deterministic, mutable session timeline off the SSE refetch path. Compiled
+// out of the packaged build — the packaged renderer never sets VITE_NO_ELECTRON
+// and always hits the real daemon.
+type FakeAgentSeam = { snapshot: () => WorkspaceSummary[] };
+
 async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 	if (usePreviewData) {
-		return mockWorkspaces;
+		const fake =
+			typeof window !== "undefined"
+				? (window as unknown as { __aoFakeAgent?: FakeAgentSeam }).__aoFakeAgent
+				: undefined;
+		return fake ? fake.snapshot() : mockWorkspaces;
 	}
 	if (!hasTrustedApiBaseUrl()) {
 		return [];

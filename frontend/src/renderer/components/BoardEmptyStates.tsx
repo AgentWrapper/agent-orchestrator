@@ -5,13 +5,16 @@ import { TopbarButton } from "./TopbarButton";
 import { WelcomePanel } from "./WelcomePanel";
 import { OrchestratorIcon } from "./icons";
 
-// First-launch board state (no projects registered yet): replaces the four
-// empty kanban columns with the import chooser inside an inset panel.
+// Board empty states: first-launch welcome (`BoardWelcome`) and project board
+// with no worker sessions yet (`ProjectBoardEmpty`).
 export function BoardWelcome() {
 	const { createProject, initializeProjectRepository } = useShell();
 	return (
 		<WelcomePanel>
-			<div className="flex h-full min-h-0 items-center justify-center overflow-y-auto px-6 py-8">
+			<div
+				className="flex h-full min-h-0 items-center justify-center overflow-y-auto px-6 py-8"
+				data-testid="board-welcome"
+			>
 				<CreateProjectFlow
 					embedded
 					mode="choose"

@@ -28,14 +28,6 @@ const DEFAULT_AGENT_PRIORITY_RANK = new Map<string, number>(
 	DEFAULT_AGENT_PRIORITY.map((agent, index) => [agent, index]),
 );
 
-const AGENTS_SHEET_FIELD = {
-	labelClassName: "text-xs font-medium text-[var(--color-text-agents-sheet-label)]",
-	triggerClassName:
-		"w-full rounded-lg border-[var(--color-border-agents-sheet)] bg-[var(--color-bg-agents-sheet-control)] text-control shadow-none",
-	contentClassName:
-		"max-h-select-menu-max! rounded-lg border-[var(--color-border-agents-sheet)] bg-[var(--color-bg-agents-sheet)]",
-} as const;
-
 function agentLabelCompare(a: AgentInfo, b: AgentInfo): number {
 	return a.label.localeCompare(b.label) || a.id.localeCompare(b.id);
 }
@@ -157,8 +149,8 @@ export function CreateProjectAgentSheet({
 	return (
 		<Dialog.Root open={open} onOpenChange={(next) => !isBusy && onOpenChange(next)}>
 			<Dialog.Portal>
-				<Dialog.Overlay className="fixed inset-0 z-overlay bg-scrim data-[state=open]:animate-overlay-in" />
-				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-[min(480px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-agents-sheet border border-[var(--color-border-agents-sheet)] bg-[var(--color-bg-agents-sheet)] p-0 text-[var(--color-text-agents-sheet-title)] shadow-xl data-[state=open]:animate-modal-in">
+				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in" />
+				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-[min(480px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-agents-sheet border border-[var(--color-border-agents-sheet)] bg-[var(--color-bg-agents-sheet)] p-0 text-[var(--color-text-agents-sheet-title)] shadow-[var(--shadow-import-modal)] data-[state=open]:animate-modal-in">
 					<div className="flex items-start justify-between gap-4 border-b border-[var(--color-border-agents-sheet)] px-6 py-5">
 						<div className="min-w-0">
 							<Dialog.Title className="text-subtitle font-semibold text-[var(--color-text-agents-sheet-title)]">
@@ -197,9 +189,9 @@ export function CreateProjectAgentSheet({
 								installed={installedAgents}
 								supported={supportedAgents}
 								disabled={isLoadingAgents}
-								labelClassName={AGENTS_SHEET_FIELD.labelClassName}
-								triggerClassName={AGENTS_SHEET_FIELD.triggerClassName}
-								contentClassName={AGENTS_SHEET_FIELD.contentClassName}
+								labelClassName="agents-sheet-label"
+								triggerClassName="agents-sheet-control"
+								contentClassName="agents-sheet-menu"
 								onChange={(value) => {
 									setWorkerAgent(value);
 									setWorkerAgentTouched(true);
@@ -214,9 +206,9 @@ export function CreateProjectAgentSheet({
 								installed={installedAgents}
 								supported={supportedAgents}
 								disabled={isLoadingAgents}
-								labelClassName={AGENTS_SHEET_FIELD.labelClassName}
-								triggerClassName={AGENTS_SHEET_FIELD.triggerClassName}
-								contentClassName={AGENTS_SHEET_FIELD.contentClassName}
+								labelClassName="agents-sheet-label"
+								triggerClassName="agents-sheet-control"
+								contentClassName="agents-sheet-menu"
 								onChange={(value) => {
 									setOrchestratorAgent(value);
 									setOrchestratorAgentTouched(true);
@@ -259,8 +251,8 @@ export function CreateProjectAgentSheet({
 								form={intake}
 								onChange={(patch) => setIntake((f) => ({ ...f, ...patch }))}
 								compact
-								controlClassName="rounded-lg border-[var(--color-border-agents-sheet)] bg-[var(--color-bg-agents-sheet-control)]"
-								labelClassName="text-[var(--color-text-agents-sheet-label)]"
+								controlClassName="agents-sheet-control"
+								labelClassName="agents-sheet-label"
 							/>
 						</div>
 

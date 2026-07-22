@@ -1,16 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, Check, ChevronDown, HardDriveDownload, History, Loader2, RefreshCw } from "lucide-react";
+import { AlertTriangle, Check, GitPullRequest, HardDriveDownload, History, Loader2, RefreshCw } from "lucide-react";
 import { aoBridge } from "../../lib/bridge";
-import type { FeatureBuild } from "../../lib/bridge";
+import { formatTimeCompact } from "../../lib/format-time";
 import { useUpdateStatus } from "../../hooks/useUpdateStatus";
 import type { UpdateChannel, UpdateSettings, UpdateState, UpdateStatus } from "../../../main/update-settings";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../ui/dropdown-menu";
-import { Skeleton } from "../ui/skeleton";
-import { cn } from "../../lib/utils";
 import { SettingsOptionMenu } from "./SettingsOptionMenu";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
@@ -33,16 +30,11 @@ const CHANNEL_OPTIONS: { value: PrimaryValue; label: string }[] = [
 const DEFAULT_SETTINGS: UpdateSettings = { enabled: false, channel: "latest", nightlyAck: false, feature: null };
 
 const STALE_THRESHOLD_MS = 5 * 24 * 60 * 60 * 1000; // 5 days
+let updateRequestSequence = 0;
 
-function relativeAge(iso: string): string {
-	const diffMs = Date.now() - new Date(iso).getTime();
-	const mins = Math.floor(diffMs / 60000);
-	if (mins < 1) return "just now";
-	if (mins < 60) return `${mins}m ago`;
-	const hours = Math.floor(mins / 60);
-	if (hours < 24) return `${hours}h ago`;
-	const days = Math.floor(hours / 24);
-	return `${days}d ago`;
+function nextUpdateRequestId(): string {
+	updateRequestSequence += 1;
+	return `feature-update-${updateRequestSequence}`;
 }
 
 export function UpdatesSection() {
@@ -62,9 +54,9 @@ export function UpdatesSection() {
 	const [pendingPin, setPendingPin] = useState<{ pr: number; title: string } | null>(null);
 
 	const status = useUpdateStatus();
-	// Set only right after the user pins a build or returns to their home channel,
-	// so the check() that follows is allowed to auto-progress through download/install.
-	const autoProgressRef = useRef(false);
+	// Set only for the owned pin/home transition request, so unrelated hourly
+	// updater events cannot auto-progress through download/install.
+	const autoProgressRef = useRef<string | null>(null);
 	const handledStatusRef = useRef<UpdateState | null>(null);
 
 	useEffect(() => {
@@ -72,16 +64,17 @@ export function UpdatesSection() {
 	}, [query.data]);
 
 	useEffect(() => {
-		if (!autoProgressRef.current) return;
+		const requestId = autoProgressRef.current;
+		if (!requestId || status.requestId !== requestId) return;
 		if (handledStatusRef.current === status.state) return;
 		handledStatusRef.current = status.state;
 		if (status.state === "available") {
-			void aoBridge.updates.download();
+			void aoBridge.updates.download(requestId);
 		} else if (status.state === "downloaded") {
 			void aoBridge.updates.install();
-			autoProgressRef.current = false;
+			autoProgressRef.current = null;
 		} else if (status.state === "error" || status.state === "unsupported" || status.state === "not-available") {
-			autoProgressRef.current = false;
+			autoProgressRef.current = null;
 		}
 	}, [status]);
 
@@ -135,22 +128,30 @@ export function UpdatesSection() {
 		setPendingPin(null);
 		const next = { ...formRef.current, feature: { pr } };
 		setForm(next);
-		autoProgressRef.current = true;
+		const requestId = nextUpdateRequestId();
+		autoProgressRef.current = requestId;
 		handledStatusRef.current = null;
-		await aoBridge.updateSettings.set(next);
-		void queryClient.invalidateQueries({ queryKey: updateSettingsQueryKey });
-		void aoBridge.updates.check();
+		try {
+			await aoBridge.updates.check({ settings: next, requestId });
+			void queryClient.invalidateQueries({ queryKey: updateSettingsQueryKey });
+		} catch {
+			if (autoProgressRef.current === requestId) autoProgressRef.current = null;
+		}
 	};
 
 	const handleReturnToHome = async () => {
 		setShowFeature(false);
 		const next = { ...formRef.current, feature: null };
 		setForm(next);
-		autoProgressRef.current = true;
+		const requestId = nextUpdateRequestId();
+		autoProgressRef.current = requestId;
 		handledStatusRef.current = null;
-		await aoBridge.updateSettings.set(next);
-		void queryClient.invalidateQueries({ queryKey: updateSettingsQueryKey });
-		void aoBridge.updates.check();
+		try {
+			await aoBridge.updates.check({ settings: next, requestId });
+			void queryClient.invalidateQueries({ queryKey: updateSettingsQueryKey });
+		} catch {
+			if (autoProgressRef.current === requestId) autoProgressRef.current = null;
+		}
 	};
 
 	const activeQuery = useQuery({
@@ -161,17 +162,19 @@ export function UpdatesSection() {
 
 	return (
 		<>
-			<SettingsSection title="Updates">
+			<SettingsSection title="Updates" sectionId="updates">
 				{activeBuild && (
-					<div className="flex flex-col gap-2 px-1">
-						<div className="flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-xs">
+					<div className="flex flex-col gap-2">
+						<div className="settings-row-bar h-auto min-h-(--size-settings-row) flex-wrap gap-2">
 							<Badge variant="accent">PR #{activeBuild.pr}</Badge>
-							<span className="flex-1 text-foreground">You are on PR #{activeBuild.pr}'s build.</span>
+							<span className="min-w-0 flex-1 text-sm leading-5 text-settings-label">
+								You are on PR #{activeBuild.pr}'s build.
+							</span>
 							<Button type="button" variant="outline" size="sm" onClick={() => void handleReturnToHome()}>
 								Return to {form.channel === "nightly" ? "Nightly" : "Stable"}
 							</Button>
 						</div>
-						<p className="text-xs text-muted-foreground">
+						<p className="px-1 text-xs text-settings-muted">
 							Automatic updates, if enabled, will return you to your home channel on the next check.
 						</p>
 					</div>
@@ -201,7 +204,7 @@ export function UpdatesSection() {
 					<FeatureBuildsSelect currentPr={form.feature?.pr ?? null} onPin={handlePinBuild} />
 				)}
 
-				{form.channel === "nightly" && form.feature === null && form.enabled && (
+				{primaryValue === "nightly" && form.enabled && (
 					<p className="flex items-center gap-2 px-1 text-xs leading-row text-warning">
 						<AlertTriangle className="size-icon-sm shrink-0" aria-hidden="true" />
 						<span>
@@ -248,91 +251,61 @@ function FeatureBuildsSelect({
 		queryFn: () => aoBridge.featureBuilds.list(),
 	});
 
-	if (buildsQuery.isLoading) {
-		return (
-			<SettingsRow label="Feature build">
-				<div className="flex w-48 flex-col gap-1">
-					<Skeleton className="h-control-form w-full" />
-				</div>
-			</SettingsRow>
-		);
-	}
-
 	const builds = buildsQuery.data ?? [];
 
-	if (builds.length === 0) {
+	if (!buildsQuery.isLoading && builds.length === 0) {
 		return (
-			<div className="px-1 text-xs text-muted-foreground">
+			<div className="px-1 text-xs text-settings-muted">
 				<span className="sr-only">Feature build</span>
 				No live feature releases.
 			</div>
 		);
 	}
 
-	const selected = builds.find((b) => b.pr === currentPr);
+	const options = builds.map((build) => ({
+		value: build.pr.toString(),
+		label: `PR #${build.pr}`,
+	}));
 
 	return (
-		<SettingsRow label="Feature build">
-			<DropdownMenu>
-				<DropdownMenuTrigger asChild>
-					<button type="button" className="settings-option-trigger" aria-label="Feature build">
-						<span className="truncate">
-							{selected ? `PR #${selected.pr}: ${selected.title}` : "Select a feature build..."}
-						</span>
-						<ChevronDown className="size-icon-sm shrink-0 opacity-70" aria-hidden="true" />
-					</button>
-				</DropdownMenuTrigger>
-				<DropdownMenuContent
-					align="end"
-					className="settings-menu-surface flex max-w-80 flex-col border border-settings-menu bg-settings-menu p-2 shadow-md"
-				>
-					{builds.map((build) => (
-						<FeatureBuildItem
-							key={build.pr}
-							build={build}
-							selected={build.pr === currentPr}
-							onSelect={() => void onPin(build.pr, build.title)}
-						/>
-					))}
-				</DropdownMenuContent>
-			</DropdownMenu>
+		<SettingsRow icon={GitPullRequest} label="Feature build">
+			<SettingsOptionMenu
+				aria-label="Feature build"
+				value={currentPr === null ? "__none__" : currentPr.toString()}
+				placeholder="Select a feature build..."
+				options={options}
+				disabled={buildsQuery.isLoading}
+				onChange={(nextPr) => {
+					const pr = Number(nextPr);
+					const build = builds.find((b) => b.pr === pr);
+					if (!build) return;
+					void onPin(build.pr, build.title);
+				}}
+				renderMenuItem={(option) => {
+					const pr = Number(option.value);
+					const build = builds.find((b) => b.pr === pr);
+					if (!build) return null;
+
+					const ageMs = Date.now() - new Date(build.publishedAt).getTime();
+					const isStale = ageMs > STALE_THRESHOLD_MS;
+					const ageLabel = formatTimeCompact(build.publishedAt);
+
+					return (
+						<div className="flex w-full min-w-0 flex-col gap-0.5">
+							<span className="line-clamp-2 break-words">
+								PR #{build.pr}: {build.title}
+							</span>
+							<div className="flex min-w-0 items-center gap-1.5">
+								<span className="min-w-0 truncate font-mono text-caption text-passive">{build.buildId}</span>
+								<Badge variant={isStale ? "warning" : "neutral"} className="h-3.5 px-1 text-[9px] leading-none">
+									{ageLabel}
+								</Badge>
+							</div>
+						</div>
+					);
+				}}
+			/>
 		</SettingsRow>
-	);
-}
-
-function FeatureBuildItem({
-	build,
-	selected,
-	onSelect,
-}: {
-	build: FeatureBuild;
-	selected: boolean;
-	onSelect: () => void;
-}) {
-	const ageMs = Date.now() - new Date(build.publishedAt).getTime();
-	const isStale = ageMs > STALE_THRESHOLD_MS;
-	const ageLabel = relativeAge(build.publishedAt);
-
-	return (
-		<DropdownMenuItem
-			onSelect={onSelect}
-			className={cn(
-				"settings-menu-item cursor-default outline-none",
-				"focus:border-settings-menu focus:bg-settings-menu-selected focus:text-settings-label",
-				"data-highlighted:border-settings-menu data-highlighted:bg-settings-menu-selected data-highlighted:text-settings-label",
-				selected && "border-settings-menu bg-settings-menu-selected",
-			)}
-		>
-			<div className="flex min-w-0 flex-col gap-0.5">
-				<span>
-					PR #{build.pr}: {build.title}
-				</span>
-				<div className="flex items-center gap-1.5">
-					<span className="font-mono text-caption text-passive">{build.buildId}</span>
-					<Badge variant={isStale ? "warning" : "neutral"}>{ageLabel}</Badge>
-				</div>
-			</div>
-		</DropdownMenuItem>
 	);
 }
 
@@ -355,7 +328,7 @@ function UpdateActions({ status }: { status: UpdateStatus }) {
 		<>
 			<SettingsRow icon={Check} label="Checks for Updates">
 				<div className="flex items-center gap-2">
-					<span className="text-control text-settings-muted">
+					<span className="text-control text-settings-muted" data-testid="app-version">
 						Current version - {version.data ? `v${version.data}` : "…"}
 					</span>
 					<button
@@ -375,7 +348,7 @@ function UpdateActions({ status }: { status: UpdateStatus }) {
 			</SettingsRow>
 
 			{showStatus && (
-				<div className="flex flex-wrap items-center gap-3 px-1">
+				<div className="settings-row-bar h-auto min-h-0 flex-wrap justify-start gap-3 py-3">
 					{status.state === "available" && (
 						<Button type="button" variant="primary" onClick={() => void aoBridge.updates.download()}>
 							Update to {status.version ? `v${status.version}` : "latest"}
@@ -396,21 +369,21 @@ function UpdateActions({ status }: { status: UpdateStatus }) {
 function UpdateStatusLine({ status }: { status: UpdateStatus }) {
 	switch (status.state) {
 		case "checking":
-			return <span className="text-xs text-muted-foreground">Checking for updates…</span>;
+			return <span className="text-xs text-settings-muted">Checking for updates…</span>;
 		case "available":
 			return (
-				<span className="text-xs text-muted-foreground">
+				<span className="text-xs text-settings-muted">
 					Update available{status.version ? ` (v${status.version})` : ""}.
 				</span>
 			);
 		case "downloading":
-			return <span className="text-xs text-muted-foreground">Downloading… {status.percent ?? 0}%</span>;
+			return <span className="text-xs text-settings-muted">Downloading… {status.percent ?? 0}%</span>;
 		case "downloaded":
 			return <span className="text-xs text-success">Downloaded. Restart to finish updating.</span>;
 		case "not-available":
-			return <span className="text-xs text-muted-foreground">You're on the latest version.</span>;
+			return <span className="text-xs text-settings-muted">You're on the latest version.</span>;
 		case "unsupported":
-			return <span className="text-xs text-passive">{status.message ?? "Updates need the installed app."}</span>;
+			return <span className="text-xs text-settings-muted">{status.message ?? "Updates need the installed app."}</span>;
 		case "error":
 			return <span className="text-xs text-error">{status.message ?? "Update failed."}</span>;
 		default:

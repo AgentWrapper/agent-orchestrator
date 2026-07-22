@@ -22,12 +22,15 @@ import { haptics } from "../../lib/haptics";
 import { getPushStatus, openNotificationSettings, type PushStatus, registerForPush } from "../../lib/push";
 import { useApp } from "../../lib/store";
 import { theme } from "../../lib/theme";
+import { useTabScrollToTop } from "../../lib/useTabScrollToTop";
 import { Button, ConnectionPill, ScreenHeader } from "../../lib/ui";
 
 export default function SettingsScreen() {
 	const insets = useSafeAreaInsets();
 	const router = useRouter();
 	const { reloadConfig, projects, connection, setActiveProject } = useApp();
+
+	const scrollRef = useTabScrollToTop<ScrollView>();
 
 	// Tapping a project scopes the Kanban board to it and jumps to that tab.
 	const openProject = (id: string) => {
@@ -138,6 +141,7 @@ export default function SettingsScreen() {
 			<View style={{ height: insets.top }} />
 			<ScreenHeader title="Settings" right={<ConnectionPill status={connection} />} />
 			<ScrollView
+				ref={scrollRef}
 				style={styles.screen}
 				contentContainerStyle={{ padding: 16, paddingBottom: 120 }}
 				keyboardShouldPersistTaps="handled"

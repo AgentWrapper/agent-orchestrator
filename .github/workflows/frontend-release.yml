@@ -33,6 +33,11 @@ on:
     tags:
       - "desktop-v*"
   workflow_dispatch:
+    inputs:
+      skip_e2e_gate:
+        description: "Skip the advisory pod e2e gate (emergency/override)."
+        type: boolean
+        default: false
 
 jobs:
   release:
@@ -236,6 +241,141 @@ jobs:
   # electron-updater feed (latest*.yml + .blockmap sidecars) from the versioned
   # assets and upload them to the same release. Runs once, on Linux: it only
   # hashes already-built artifacts, so it needs no per-OS runner.
+  # Advisory pod e2e gate. Installs the just-published Linux release build in an
+  # ephemeral Daytona pod and runs the real-app smoke suite, posting an
+  # `ao-stable-gate` commit status. NON-BLOCKING: publish-feed does NOT depend on
+  # it, and the run step is continue-on-error, so it can prove itself on live
+  # releases without ever blocking a good build. Once trusted, add `e2e-gate` to
+  # publish-feed `needs` to make it a required gate. Override: skip_e2e_gate input.
+  e2e-gate:
+    needs: [release, release-intel]
+    runs-on: ubuntu-latest
+    # The Environment name is load-bearing: it is stamped into the GitHub OIDC
+    # token's subject (repo:<owner>/<repo>:environment:e2e-gate), which is exactly
+    # what the Azure federated credential trusts. Rename here => update the FIC.
+    environment: e2e-gate
+    permissions:
+      contents: read # actions/checkout
+      checks: write # publish the ao-stable-gate check-run (supports a neutral conclusion)
+      id-token: write # mint the OIDC token azure/login exchanges for an Azure token
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # The Daytona API key lives ONLY in Azure Key Vault — never a GitHub secret.
+      # Authenticate via OIDC (no stored credential), then pull the key into the job
+      # env. Both steps are continue-on-error and guarded on the AZURE_* variables:
+      # if Azure isn't configured or is unreachable, DAYTONA_API_KEY stays unset,
+      # the gate classifies itself `infra`, and the check below is NEUTRAL (never red).
+      - name: Install pod-runner deps
+        if: ${{ inputs.skip_e2e_gate != true }}
+        # Runs BEFORE the Key Vault fetch so npm lifecycle/install scripts never
+        # execute with DAYTONA_API_KEY in the environment. continue-on-error: a
+        # failed install is infra, not a release failure — the runner then can't
+        # import @daytona/sdk, classifies `infra`, and the check publishes NEUTRAL.
+        continue-on-error: true
+        run: npm --prefix scripts ci
+      - name: Azure login (OIDC, no stored secret)
+        if: ${{ inputs.skip_e2e_gate != true && vars.AZURE_CLIENT_ID != '' }}
+        continue-on-error: true
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          # No subscription-id on purpose: the CI app has data-plane vault access
+          # only (access policy), no subscription RBAC role. Reading a secret is a
+          # data-plane call needing no subscription; passing one would make az try
+          # to select a subscription it can't see. Least privilege = vault-only.
+          allow-no-subscriptions: true
+      - name: Run pod e2e gate (advisory)
+        id: gate
+        if: ${{ inputs.skip_e2e_gate != true }}
+        continue-on-error: true
+        run: |
+          # Fetch the Daytona key and scope it to THIS step ONLY: it is a local
+          # shell variable exported to the node process, never written to
+          # $GITHUB_ENV — so no later step (artifact upload, check publish, the
+          # blocking enforce step, or anything added below) can ever see it.
+          # `az` is already authenticated by the Azure login step above. When Azure
+          # isn't configured the key stays empty and the runner classifies the run
+          # as infra -> NEUTRAL (never red).
+          if [ -n "${{ vars.AZURE_CLIENT_ID }}" ]; then
+            DAYTONA_API_KEY=$(az keyvault secret show --vault-name "${{ vars.AZURE_KEYVAULT_NAME }}" --name daytona-api-key --query value -o tsv 2>/dev/null || true)
+            if [ -n "$DAYTONA_API_KEY" ]; then
+              echo "::add-mask::$DAYTONA_API_KEY"
+              export DAYTONA_API_KEY
+            fi
+          fi
+          tag="v$(node -p "require('./frontend/package.json').version")"
+          node scripts/ao-e2e-pod-gate.mjs --repo "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA" --tag "$tag" --suite T0
+      - name: Azure logout (revoke az auth for the rest of the job)
+        # azure/login leaves `az` authenticated for the WHOLE job, so any later
+        # step (upload, check publish, enforce) could re-run `az keyvault secret
+        # show` and re-fetch DAYTONA_API_KEY even though the env var is
+        # step-local. Clearing the auth here — always(), so it runs even if the
+        # gate step failed — makes the secret genuinely unreachable afterwards.
+        if: ${{ always() && inputs.skip_e2e_gate != true }}
+        continue-on-error: true
+        run: |
+          az logout || true
+          az account clear || true
+      - name: Upload e2e artifacts
+        # The runner saves the pod log + Playwright results tarball to e2e-artifacts/
+        # before tearing the sandbox down. Attaching them to the run is what the
+        # check's "Artifacts:" link points at.
+        if: ${{ always() && inputs.skip_e2e_gate != true }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ao-stable-gate-artifacts
+          path: e2e-artifacts/
+          # The runner always writes e2e-artifacts/pod.log (on green, red, infra,
+          # and exception paths), so a missing artifact is genuinely anomalous —
+          # surface it as a warning rather than swallowing it silently.
+          if-no-files-found: warn
+      - name: Publish ao-stable-gate check
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # RED (failure) is reserved for a real app smoke failure. Everything
+          # else — missing DAYTONA_API_KEY, Daytona unavailable, setup/install
+          # error, a broken gate — is INFRA and publishes a NEUTRAL check, so an
+          # infra hiccup never makes an otherwise-good release look failed. A
+          # deliberate skip publishes `skipped`.
+          if [ "${{ inputs.skip_e2e_gate }}" = "true" ]; then
+            conclusion=skipped; summary="e2e gate skipped via skip_e2e_gate."
+          else
+            # Single source of truth for the conclusion: the runner's own output
+            # (deriveGateOutcome). We do NOT re-derive it from classification here —
+            # the two mappings would drift. classification is used only for the
+            # human summary text.
+            conclusion="${{ steps.gate.outputs.conclusion }}"
+            case "${{ steps.gate.outputs.classification }}" in
+              passed)     summary="T0 pod smoke passed." ;;
+              app_failed) summary="T0 pod smoke FAILED — the app under test failed the suite." ;;
+              *)          summary="Gate could not run (infra/setup: missing DAYTONA_API_KEY, Daytona unavailable, or setup error) — NOT a release-build failure." ;;
+            esac
+            # If the gate never emitted a conclusion (e.g. an earlier step failed and
+            # it never ran), fall back to neutral rather than an empty conclusion.
+            [ -z "$conclusion" ] && conclusion=neutral
+            # Link the check to the run, where the uploaded e2e artifacts live.
+            summary="$summary  Artifacts: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/check-runs" \
+            -f name="ao-stable-gate" -f head_sha="$GITHUB_SHA" \
+            -f status="completed" -f conclusion="$conclusion" \
+            -f "output[title]=AO stable e2e gate" -f "output[summary]=$summary"
+      - name: Enforce gate (blocking mode, opt-in)
+        # Advisory by default. When repo variable AO_GATE_BLOCKING=true, a real app
+        # failure fails this job so that adding `e2e-gate` to `publish-feed.needs`
+        # actually blocks the release. infra/neutral and skips never block — only
+        # `app_failed` (a real smoke failure of the release build) does.
+        if: ${{ always() && vars.AO_GATE_BLOCKING == 'true' && steps.gate.outputs.classification == 'app_failed' }}
+        run: |
+          echo "::error::ao-stable-gate: app smoke failed and AO_GATE_BLOCKING=true — failing the release."
+          exit 1
+
   publish-feed:
     needs: [release, release-intel]
     runs-on: ubuntu-latest

@@ -1,36 +1,33 @@
 import type { ReactNode } from "react";
-import { cn } from "../lib/utils";
 
-/** Visual variants for inset center panels (welcome board, settings, …). */
-export type CenterPanelVariant = "welcome" | "settings";
+/** Visual variants for inset center panels (app routes, welcome board, settings, …). */
+export type CenterPanelVariant = "app" | "welcome" | "settings";
 
-const VARIANTS: Record<
-	CenterPanelVariant,
-	{
-		outer: string;
-		inner: string;
-	}
-> = {
-	welcome: {
-		outer: "pt-(--size-welcome-panel-inset) pr-(--size-welcome-panel-inset) pb-(--size-welcome-panel-inset) pl-0",
-		inner: "rounded-welcome-panel border border-[var(--color-border-welcome-panel)] bg-welcome-panel",
-	},
-	settings: {
-		outer: "pt-(--size-settings-page-inset) pr-(--size-settings-page-inset) pb-(--size-settings-page-inset) pl-0",
-		inner: "rounded-settings-panel border border-[var(--color-border-settings)] bg-settings-panel",
-	},
+const variantClass: Record<CenterPanelVariant, string> = {
+	app: "center-panel-app",
+	welcome: "center-panel-welcome",
+	settings: "center-panel-settings",
 };
 
 /**
  * Shared inset center panel: sidebar-colored outer frame with a bordered inner
- * surface. Used by the welcome board, settings page, and future full-width
- * center routes.
+ * surface. Used by the shell's app routes (kanban board, session views), the
+ * welcome board, and the settings page. Chrome lives in `styles.css`
+ * (`center-panel-*` utilities).
  */
-export function CenterPanelShell({ variant, children }: { variant: CenterPanelVariant; children: ReactNode }) {
-	const styles = VARIANTS[variant];
+export function CenterPanelShell({
+	variant,
+	className,
+	children,
+}: {
+	variant: CenterPanelVariant;
+	/** Extra classes on the outer frame (e.g. the macOS top inset). */
+	className?: string;
+	children: ReactNode;
+}) {
 	return (
-		<div className={cn("flex h-full min-h-0 w-full bg-sidebar", styles.outer)}>
-			<div className={cn("flex min-h-0 flex-1 flex-col overflow-hidden", styles.inner)}>{children}</div>
+		<div className={className ? `center-panel-shell ${className}` : "center-panel-shell"}>
+			<div className={variantClass[variant]}>{children}</div>
 		</div>
 	);
 }

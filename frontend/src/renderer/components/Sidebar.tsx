@@ -17,6 +17,7 @@ import { useSessionTerminationTransitions } from "../hooks/useSessionTermination
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { renameSession } from "../lib/rename-session";
 import { useResizable } from "../hooks/useResizable";
+import { useShellMaybe } from "../lib/shell-context";
 import { useUpdateStatus } from "../hooks/useUpdateStatus";
 import {
 	DropdownMenu,
@@ -44,7 +45,7 @@ import {
 } from "./ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { OrchestratorIcon } from "./icons";
-import aoLogo from "../assets/ao-logo.png";
+import aoLogo from "../../../assets/ao-logo.svg";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -57,6 +58,13 @@ import { SessionTerminationLabel } from "./SessionTerminationLabel";
 // sidebar row); the sidebar itself starts below the 56px header, so its border
 // never crosses the titlebar strip.
 const isMac = typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
+const isWindows =
+	typeof navigator !== "undefined" &&
+	/win/i.test(
+		(navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ??
+			navigator.platform ??
+			"",
+	);
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
 // Shared styling for the per-project hover action buttons (dashboard,
@@ -135,6 +143,9 @@ export function Sidebar({
 	const terminalTransitions = useSessionTerminationTransitions(
 		workspaces.flatMap((workspace) => workerSessions(workspace.sessions)),
 	);
+	// Daemon status for the smoke suite's sr-only mirror in the footer. Null when
+	// rendered outside the shell (unit tests) — the mirror simply doesn't render.
+	const daemonStatus = useShellMaybe()?.daemonStatus ?? null;
 
 	useEffect(() => {
 		if (isCollapsed) {
@@ -242,9 +253,10 @@ export function Sidebar({
 							nightly
 						</span>
 					)}
-					{/* On macOS the toggle lives in the titlebar cluster instead. One trigger
-					    for Win/Linux — SidebarTrigger already toggles open/closed. */}
-					{!isMac && (
+					{/* On macOS the toggle lives in the TitlebarNav cluster, on Windows in
+					    the WindowTitlebar — only Linux keeps the in-header trigger.
+					    SidebarTrigger already toggles open/closed. */}
+					{!isMac && !isWindows && (
 						<Tooltip>
 							<TooltipTrigger asChild>
 								<SidebarTrigger
@@ -272,10 +284,11 @@ export function Sidebar({
 						<SidebarGroupLabel className="h-auto rounded-none p-0 text-2xs font-semibold uppercase tracking-wide-lg text-passive">
 							Projects
 						</SidebarGroupLabel>
-						{/* Hide on the empty start page — import lives in the welcome board. */}
-						{workspaces.length > 0 ? (
-							<CreateProjectButton onCreateProject={onCreateProject} onInitializeProject={onInitializeProject} />
-						) : null}
+						<CreateProjectButton
+							hideTrigger={workspaces.length === 0}
+							onCreateProject={onCreateProject}
+							onInitializeProject={onInitializeProject}
+						/>
 					</div>
 
 					{/* Tree (project-sidebar__tree) */}
@@ -298,9 +311,7 @@ export function Sidebar({
 										onRemoveProject={onRemoveProject}
 									/>
 								))}
-								{isCollapsed && (
-									<CreateProjectListItem onCreateProject={onCreateProject} onInitializeProject={onInitializeProject} />
-								)}
+								{isCollapsed && <CreateProjectListItem />}
 							</SidebarMenu>
 						)}
 					</SidebarGroupContent>
@@ -309,6 +320,13 @@ export function Sidebar({
 
 			{/* Footer — Settings opens the global settings page directly. */}
 			<SidebarFooter className="relative mb-2 mt-auto gap-0 overflow-hidden px-1.75 pb-2.5 pt-1.75 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-[64px] group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pb-1.5 group-data-[collapsible=icon]:pt-1.5">
+				{/* Always-present daemon status mirror for the smoke suite: no visible
+				    daemon-state copy is guaranteed to be mounted elsewhere. */}
+				{daemonStatus && (
+					<span aria-hidden="true" className="sr-only" data-testid="daemon-status" data-state={daemonStatus.state}>
+						daemon {daemonStatus.state}
+					</span>
+				)}
 				<div className="sidebar-expanded-chrome relative flex w-full min-w-[186px] flex-col gap-1 transition-[opacity,transform] duration-150 ease-out group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:-translate-x-2 group-data-[collapsible=icon]:opacity-0">
 					<RestartToUpdateRow status={updateStatus} />
 					<button
@@ -474,9 +492,6 @@ function ProjectItem({
 				<span className="hidden group-data-[collapsible=icon]:block">{workspace.name.charAt(0).toUpperCase()}</span>
 				<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">
 					{workspace.name}
-				</span>
-				<span className="hidden h-4 min-w-4 shrink-0 place-items-center rounded bg-interactive-hover px-1 font-mono text-[10px] leading-none text-passive">
-					{sessions.length}
 				</span>
 			</SidebarMenuButton>
 			{/* Per-project actions: dashboard board, orchestrator, and a kebab
@@ -788,13 +803,14 @@ function RestartToUpdateRailButton({ status }: { status: UpdateStatus }) {
 }
 
 function CreateProjectButton({
+	hideTrigger = false,
 	onCreateProject,
 	onInitializeProject,
-}: Pick<SidebarProps, "onCreateProject" | "onInitializeProject">) {
-	// This "+" is always mounted (the collapsed rail only CSS-hides it), so it
-	// owns the ⌘N "no project in scope" fallback via openSignal — no separate
-	// delegating component needed. The collapsed-only list item does not, to
-	// avoid a double open while both are mounted.
+}: Pick<SidebarProps, "onCreateProject" | "onInitializeProject"> & { hideTrigger?: boolean }) {
+	// Single CreateProjectFlow owner for the sidebar: the header "+" stays mounted
+	// (CSS-hidden when collapsed or on the empty start page) so it can own
+	// openSignal for ⌘N on every shell route. The collapsed rail button below
+	// reuses this flow via requestCreateProject().
 	const createProjectNonce = useUiStore((state) => state.createProjectNonce);
 	return (
 		<CreateProjectFlow
@@ -808,7 +824,10 @@ function CreateProjectButton({
 					<TooltipTrigger asChild>
 						<button
 							aria-label="New project"
-							className="grid size-icon-xl place-items-center rounded-sm text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground"
+							className={cn(
+								"grid size-icon-xl place-items-center rounded-sm text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground",
+								hideTrigger && "hidden",
+							)}
 							disabled={disabled}
 							onClick={choosePath}
 							type="button"
@@ -823,30 +842,23 @@ function CreateProjectButton({
 	);
 }
 
-function CreateProjectListItem({
-	onCreateProject,
-	onInitializeProject,
-}: Pick<SidebarProps, "onCreateProject" | "onInitializeProject">) {
+function CreateProjectListItem() {
+	const requestCreateProject = useUiStore((state) => state.requestCreateProject);
 	return (
-		<CreateProjectFlow mode="choose" onCreateProject={onCreateProject} onInitializeProject={onInitializeProject}>
-			{({ disabled, choosePath, label }) => (
-				<SidebarMenuItem className="mb-px group-data-[collapsible=icon]:mb-0">
-					<Tooltip>
-						<TooltipTrigger asChild>
-							<button
-								aria-label="New project"
-								className="grid h-control-board w-full place-items-center rounded-sm text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground"
-								disabled={disabled}
-								onClick={choosePath}
-								type="button"
-							>
-								<Plus className="size-icon-sm" aria-hidden="true" />
-							</button>
-						</TooltipTrigger>
-						<TooltipContent side="right">{label}</TooltipContent>
-					</Tooltip>
-				</SidebarMenuItem>
-			)}
-		</CreateProjectFlow>
+		<SidebarMenuItem className="mb-px group-data-[collapsible=icon]:mb-0">
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<button
+						aria-label="New project"
+						className="grid h-control-board w-full place-items-center rounded-sm text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground"
+						onClick={() => requestCreateProject()}
+						type="button"
+					>
+						<Plus className="size-icon-sm" aria-hidden="true" />
+					</button>
+				</TooltipTrigger>
+				<TooltipContent side="right">New project</TooltipContent>
+			</Tooltip>
+		</SidebarMenuItem>
 	);
 }

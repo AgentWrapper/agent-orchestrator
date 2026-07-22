@@ -255,6 +255,10 @@ const TERMINAL_ENHANCE_JS = `
   }
 
   document.addEventListener('touchstart', function (e) {
+    // Taps on the scroll-to-top button are handled by the button itself; don't
+    // let this capture-phase listener consume them as a terminal tap/long-press.
+    var _tt = e.target;
+    if (_tt && _tt.closest && _tt.closest('#ao-scrolltop')) return;
     if (e.touches && e.touches.length >= 2) {
       // Second finger down -> pinch. Cancel any pending tap/long-press/scroll.
       clearLP(); mode = 'pinch';
@@ -376,6 +380,82 @@ const TERMINAL_ENHANCE_JS = `
     }
     mode = 'idle';
   }, { capture: true, passive: true });
+
+  // ---- Scroll-to-top button ------------------------------------------------
+  // A floating button that scrolls back to the oldest output. It lives in the
+  // terminal DOM (not RN) because the WebView package exposes no inject hook.
+  // Two regimes, mirroring the drag handler above:
+  //  • normal buffer  -> xterm owns the scrollback; scrollToTop() is a true jump,
+  //    and viewportY tells us whether there's anything above (hide at the top).
+  //  • alt buffer / mouse-tracking (Claude Code, Codex, aider, vim, less, ...) ->
+  //    the APP owns its scrollback, so scrollToTop() can't reach it. Send the same
+  //    wheel notches a drag produces. We can't query the app's scroll position, so
+  //    the button always shows there and the jump is a generous burst.
+  (function scrollTopBtn() {
+    var btn = document.createElement('div');
+    btn.id = 'ao-scrolltop';
+    btn.setAttribute('aria-label', 'Scroll to top');
+    btn.innerHTML = '↑'; // up arrow
+    var s = btn.style;
+    s.position = 'fixed'; s.right = '12px'; s.bottom = '12px';
+    s.width = '36px'; s.height = '36px'; s.lineHeight = '36px';
+    s.textAlign = 'center'; s.borderRadius = '18px';
+    s.background = 'rgba(20,28,40,0.72)'; s.color = '#dbe4f0';
+    s.fontSize = '18px'; s.fontWeight = '600';
+    s.border = '1px solid rgba(120,140,170,0.35)';
+    s.boxShadow = '0 2px 8px rgba(0,0,0,0.4)';
+    s.webkitBackdropFilter = 'blur(6px)'; s.backdropFilter = 'blur(6px)';
+    s.zIndex = '2147483647'; s.display = 'none'; s.cursor = 'pointer';
+    s.pointerEvents = 'auto'; s.userSelect = 'none'; s.webkitUserSelect = 'none';
+    (document.getElementById('terminal') || document.body).appendChild(btn);
+
+    function atTop() {
+      try { var b = term().buffer.active; return !b || b.viewportY <= 0; }
+      catch (_) { return true; }
+    }
+    function update() {
+      // When the app drives scrolling we can't read its position, so always offer
+      // the button; otherwise hide it once xterm's viewport is at the top.
+      var show = appDrivesScroll() ? true : !atTop();
+      btn.style.display = show ? 'block' : 'none';
+    }
+    // Walk the app's scrollback up with the same wheel notches a drag produces,
+    // chunked across frames so a few hundred events don't block the renderer.
+    var TOP_BURST = 400, BURST_CHUNK = 25;
+    function burstUp() {
+      var el = document.querySelector('.xterm');
+      var r = el ? el.getBoundingClientRect() : null;
+      var cx = r ? r.left + r.width / 2 : 0;
+      var cy = r ? r.top + r.height / 2 : 0;
+      var left = TOP_BURST;
+      (function step() {
+        for (var i = 0; i < BURST_CHUNK && left > 0; i++, left--) wheelTick(true, cx, cy);
+        if (left > 0) requestAnimationFrame(step);
+      })();
+    }
+    // Tap -> back to the oldest output. Swallow the event so nothing else reacts.
+    function go(e) {
+      if (e.stopPropagation) e.stopPropagation();
+      if (e.cancelable && e.preventDefault) e.preventDefault();
+      if (appDrivesScroll()) burstUp();
+      else { try { term().scrollToTop(); } catch (_) {} }
+      update();
+    }
+    btn.addEventListener('touchstart', go, { capture: true });
+    btn.addEventListener('click', go, { capture: true });
+
+    // Re-evaluate on xterm scroll and buffer switches; poll as a cheap fallback
+    // for transitions those miss (our drag handler moves the viewport directly).
+    (function wire() {
+      var T = term();
+      if (T && T.onScroll) {
+        T.onScroll(update);
+        try { if (T.buffer && T.buffer.onBufferChange) T.buffer.onBufferChange(update); } catch (_) {}
+        update();
+      } else { setTimeout(wire, 200); }
+    })();
+    setInterval(update, 500);
+  })();
 
   // Disable the WebView's hidden textarea so it can NEVER show a keyboard or
   // steal first-responder from the RN input. RN handles all keyboard I/O.

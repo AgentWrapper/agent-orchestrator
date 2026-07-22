@@ -5,6 +5,7 @@ import {
 	dialog,
 	ipcMain,
 	Menu,
+	nativeTheme,
 	net,
 	nativeImage,
 	Notification as ElectronNotification,
@@ -21,16 +22,13 @@ import {
 	downloadUpdateNow,
 	quitAndInstallUpdate,
 	getUpdateStatus,
-	configureFeed,
+	setUpdateSettings,
+	type UpdateCheckOptions,
 } from "./main/auto-updater";
 import { listFeatureBuilds, getActiveFeatureBuild } from "./main/feature-builds";
-import {
-	readUpdateSettings,
-	writeUpdateSettings,
-	type UpdateSettings,
-	type UpdateStatus,
-} from "./main/update-settings";
+import { readUpdateSettings, type UpdateSettings, type UpdateStatus } from "./main/update-settings";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { closeSync, existsSync, openSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -299,7 +297,7 @@ function createWindow(): void {
 					// Hide the native menu bar. A role-based menu is still installed (for
 					// accelerators) below; the visible menu is painted by WindowTitlebar.
 					autoHideMenuBar: true,
-					titleBarOverlay: { color: "#0f1014", symbolColor: "#c7ccd4", height: TITLEBAR_HEIGHT },
+					titleBarOverlay: { color: "#17181c", symbolColor: "#c7ccd4", height: TITLEBAR_HEIGHT },
 				}
 			: {
 					titleBarStyle: "hiddenInset" as const,
@@ -466,6 +464,11 @@ function ensureShellEnv(): Promise<void> {
 	return shellEnvPromise;
 }
 
+// One id per app launch, minted eagerly so every daemon spawn in this process
+// (including supervisor restarts) reports the same run. An explicit
+// AO_APP_RUN_ID in the environment wins, which lets a test or a wrapper pin it.
+const appRunId = process.env.AO_APP_RUN_ID ?? `apprun-${randomUUID()}`;
+
 function daemonEnv(): NodeJS.ProcessEnv {
 	// AO_OWNER is the daemon's durable spawn-mode record: the daemon writes it
 	// into running.json and the attach path reads it to decide the supervisor
@@ -473,8 +476,14 @@ function daemonEnv(): NodeJS.ProcessEnv {
 	// differs across launches). A keep-alive daemon is "persistent" (never
 	// re-linked, survives app quit); a normal app-owned daemon is "app";
 	// headless `ao start` sets none (stays unlinked, persistent by default).
+	//
+	// AO_APP_RUN_ID identifies THIS app launch. It is constant for the process
+	// lifetime, so a daemon the supervisor restarts inherits the same id and its
+	// standalone shell terminals survive; a later app launch gets a new id, which
+	// is how the daemon recognises the previous run's shells as orphans and
+	// destroys them (see internal/service/shellterm).
 	const AO_OWNER = keepDaemonAlive(process.env) ? "persistent" : "app";
-	const ownerTag = { AO_OWNER };
+	const ownerTag = { AO_OWNER, AO_APP_RUN_ID: appRunId };
 	// In dev mode, inject isolation defaults so the dev daemon never collides with
 	// the installed app. User-set env vars take priority (checked first).
 	const devExtras: Record<string, string> = {};
@@ -1059,6 +1068,16 @@ ipcMain.handle("window:setOverlay", (_event, overlay: { color: string; symbolCol
 	}
 });
 
+// Drive Electron's nativeTheme from the app's theme preference so embedded
+// preview WebContentsViews (which follow prefers-color-scheme) flip in step with
+// the shell. The three preference values map 1:1 onto themeSource; "system" keeps
+// both the preview and the shell's own matchMedia following the OS.
+ipcMain.handle("theme:set", (_event, preference: "light" | "dark" | "system") => {
+	if (preference === "light" || preference === "dark" || preference === "system") {
+		nativeTheme.themeSource = preference;
+	}
+});
+
 // Renderer calls this when focus lands on real shell UI (not the titlebar menu), so menu:action's panel fallback below doesn't go stale.
 ipcMain.on("shell:focus", () => browserViewHost?.forgetLastFocusedPanel());
 
@@ -1329,27 +1348,20 @@ ipcMain.handle("updateSettings:get", async (): Promise<UpdateSettings> => {
 ipcMain.handle("updateSettings:set", async (_event, settings: UpdateSettings) => {
 	const runFile = runFilePath();
 	if (!runFile) return;
-	await writeUpdateSettings(path.dirname(runFile), settings);
-	// Re-apply the feed immediately so pinning/unpinning a feature build takes
-	// effect without an app restart. Only meaningful in packaged builds (where
-	// electron-updater has a real feed), but safe to call in dev.
-	// Pinning flow: renderer calls updateSettings.set({...feature:{pr}}) then
-	// updates.check()->download()->install() to land on the feature build.
-	// Returning home: updateSettings.set({...feature:null}) then same sequence.
-	configureFeed(settings);
+	await setUpdateSettings(path.dirname(runFile), settings);
 });
 
 ipcMain.handle("featureBuilds:list", () => listFeatureBuilds());
 ipcMain.handle("featureBuilds:getActive", () => getActiveFeatureBuild());
 
 ipcMain.handle("updates:getStatus", (): UpdateStatus => getUpdateStatus());
-ipcMain.handle("updates:check", async () => {
+ipcMain.handle("updates:check", async (_event, options?: UpdateCheckOptions) => {
 	const runFile = runFilePath();
 	if (!runFile) return;
-	await checkForUpdatesNow(path.dirname(runFile));
+	await checkForUpdatesNow(path.dirname(runFile), options);
 });
-ipcMain.handle("updates:download", async () => {
-	await downloadUpdateNow();
+ipcMain.handle("updates:download", async (_event, requestId?: string) => {
+	await downloadUpdateNow(requestId);
 });
 ipcMain.handle("updates:install", () => {
 	quitAndInstallUpdate();

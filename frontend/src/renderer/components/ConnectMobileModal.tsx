@@ -4,6 +4,8 @@ import { Check, Copy, Info, Loader2, X } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { cn } from "../lib/utils";
+import { ConnectMobileGetApp } from "./settings/ConnectMobileGetApp";
+import { ConnectMobileSetup } from "./settings/ConnectMobileSetup";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Switch } from "./ui/switch";
 
@@ -135,7 +137,7 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 				className={cn(
 					// Follow the app theme (same tokens as Report a problem) — do not force `dark`.
 					// Do not add `relative` (breaks fixed centering).
-					"flex w-(--size-settings-mobile-dialog) max-w-(--size-settings-mobile-dialog) flex-col gap-0 overflow-hidden rounded-2xl border border-[var(--color-border-settings-dialog)] bg-settings-dialog p-0 sm:rounded-2xl",
+					"flex w-(--size-settings-mobile-dialog) max-w-(--size-settings-mobile-dialog) flex-col gap-0 overflow-hidden rounded-(--radius-settings-dialog-lg) border border-[var(--color-border-settings-dialog)] bg-settings-dialog p-0 sm:rounded-(--radius-settings-dialog-lg)",
 					"shadow-[var(--shadow-settings-dialog)]",
 					"outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0",
 				)}
@@ -143,21 +145,23 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 				<DialogClose asChild>
 					<button
 						type="button"
-						className="absolute top-3 right-3 z-10 grid size-8 place-items-center rounded-md text-settings-muted transition-colors hover:bg-settings-row hover:text-settings-title"
+						className="settings-dialog-close-button settings-close-button"
 						aria-label="Close connect mobile"
 					>
 						<X className="size-5" aria-hidden="true" />
 					</button>
 				</DialogClose>
-				<div className="flex flex-col px-(--size-settings-mobile-dialog-pad-x) pb-6 pt-8">
+				{/* The get-app QR and setup steps can push this past a short window,
+				    so the body scrolls rather than clipping under the screen edges. */}
+				<div className="scrollbar-none flex max-h-[80vh] flex-col overflow-y-auto px-(--size-settings-mobile-dialog-pad-x) pb-6 pt-8">
 					<DialogHeader className="items-center gap-1.5 text-center">
-						<DialogTitle className="text-center text-settings-heading font-bold text-settings-title">
-							Connect Mobile
-						</DialogTitle>
+						<DialogTitle className="settings-dialog-title text-center">Connect Mobile</DialogTitle>
 						<DialogDescription className="max-w-(--size-settings-mobile-desc) text-center text-control font-normal leading-4 text-settings-muted">
 							Pair the Agent Orchestrator mobile app with this desktop over your LAN.
 						</DialogDescription>
 					</DialogHeader>
+
+					<ConnectMobileGetApp />
 
 					{query.isLoading ? (
 						<p className="mt-6 text-center text-xs text-settings-muted">Checking status…</p>
@@ -168,7 +172,7 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 					) : status ? (
 						<div className="mt-6 flex flex-col">
 							{/* Toggle row — always visible. Flipping it starts/stops the bridge. */}
-							<div className="relative flex items-start justify-between gap-3 rounded-2xl border border-[var(--color-border-settings-input)] bg-[var(--color-bg-settings-input)] px-3.5 py-2.5">
+							<div className="relative flex items-start justify-between gap-3 rounded-(--radius-settings-dialog-lg) border border-[var(--color-border-settings-input)] bg-[var(--color-bg-settings-input)] px-3.5 py-2.5">
 								<div className="flex min-w-0 flex-col gap-1 pr-2">
 									<span className="text-subtitle leading-(--leading-settings-mobile-title) text-settings-label">
 										Enable mobile
@@ -213,8 +217,12 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 											enabled ? "opacity-100" : "opacity-0",
 										)}
 									>
-										<div className="flex w-(--size-settings-mobile-qr) flex-col items-center">
-											<div className="rounded-2xl bg-white p-2 shadow-[var(--shadow-settings-qr)]">
+										{/* Steps sit above the QR so the LAN/Tailscale choice is on screen
+										    the moment the bridge turns on, with no scrolling. */}
+										<ConnectMobileSetup port={status.port} enabled={enabled} />
+
+										<div className="mt-6 flex w-(--size-settings-mobile-qr) flex-col items-center">
+											<div className="rounded-(--radius-settings-dialog-lg) bg-white p-2 shadow-[var(--shadow-settings-qr)]">
 												<QRCodeSVG
 													value={pairingPayload(status.host, status.port, status.password)}
 													size={QR_CODE_SIZE}
@@ -267,7 +275,7 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 											}}
 											disabled={busy || !enabled}
 											tabIndex={enabled ? 0 : -1}
-											className="mt-5 inline-flex h-(--size-settings-action-height) w-(--size-settings-mobile-regen-width) items-center justify-center rounded-lg border border-[var(--color-border-settings-input)] bg-[var(--color-bg-settings-input)] text-sm leading-5 text-settings-label transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+											className="settings-footer-button mt-5 w-(--size-settings-mobile-regen-width) border-[var(--color-border-settings-input)] bg-[var(--color-bg-settings-input)] text-settings-label transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
 										>
 											{regenerate.isPending && <Loader2 className="mr-2 size-4 animate-spin" aria-hidden="true" />}
 											Regenerate password

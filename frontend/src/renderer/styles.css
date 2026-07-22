@@ -108,26 +108,12 @@
 	/* Settings page (Figma) */
 	--color-settings-panel: var(--color-bg-settings-panel);
 	--color-settings-row: var(--color-bg-settings-row);
-	--color-settings-menu: var(--color-bg-settings-menu);
 	--color-settings-menu-selected: var(--color-bg-settings-menu-selected);
 	--color-settings-title: var(--color-text-settings-title);
 	--color-settings-muted: var(--color-text-settings-muted);
 	--color-settings-label: var(--color-text-settings-row);
 	--radius-settings-row: var(--radius-settings-row);
 	--radius-settings-panel: var(--radius-settings-panel);
-	--spacing-settings-row: var(--size-settings-row);
-
-	/* Settings page (Figma) */
-	--color-settings-panel: var(--color-bg-settings-panel);
-	--color-settings-row: var(--color-bg-settings-row);
-	--color-settings-menu: var(--color-bg-settings-menu);
-	--color-settings-menu-selected: var(--color-bg-settings-menu-selected);
-	--color-settings-title: var(--color-text-settings-title);
-	--color-settings-muted: var(--color-text-settings-muted);
-	--color-settings-label: var(--color-text-settings-row);
-	--radius-settings-row: var(--radius-settings-row);
-	--radius-settings-panel: var(--radius-settings-panel);
-	--spacing-settings-row: var(--size-settings-row);
 
 	/* Browser static preview (light mock inside dark app) */
 	--color-preview: var(--color-preview-bg);
@@ -194,6 +180,7 @@
 	--spacing-browser-min: var(--size-browser-min);
 	--spacing-dot-sm: var(--size-dot-sm);
 	--spacing-content-max: var(--size-content-max);
+	--spacing-shell-tab-max: var(--size-shell-tab-max);
 	--spacing-board-empty: var(--size-board-empty);
 	--spacing-preview-content: var(--size-preview-content);
 	--spacing-preview-max: var(--size-preview-max);
@@ -305,24 +292,8 @@
 	background-color: color-mix(in srgb, var(--color-bg-primary) 35%, transparent);
 }
 
-@utility bg-settings-panel {
-	background-color: var(--color-bg-settings-panel);
-}
-
-@utility bg-settings-row {
-	background-color: var(--color-bg-settings-row);
-}
-
 @utility bg-settings-dialog {
 	background-color: var(--color-bg-settings-dialog);
-}
-
-@utility bg-settings-menu {
-	background-color: var(--color-bg-settings-menu);
-}
-
-@utility bg-settings-menu-selected {
-	background-color: var(--color-bg-settings-menu-selected);
 }
 
 @utility bg-settings-accent {
@@ -331,18 +302,6 @@
 
 @utility bg-settings-switch-on {
 	background-color: var(--color-settings-switch-on);
-}
-
-@utility text-settings-title {
-	color: var(--color-text-settings-title);
-}
-
-@utility text-settings-muted {
-	color: var(--color-text-settings-muted);
-}
-
-@utility text-settings-label {
-	color: var(--color-text-settings-row);
 }
 
 @utility text-settings-heading {
@@ -359,16 +318,64 @@
 	letter-spacing: var(--tracking-settings-mono);
 }
 
-@utility rounded-settings-panel {
-	border-radius: var(--radius-settings-panel);
-}
-
 @utility border-settings {
 	border-color: var(--color-border-settings);
 }
 
 @utility border-settings-menu {
 	border-color: var(--color-border-settings-menu);
+}
+
+@utility center-panel-shell {
+	display: flex;
+	height: 100%;
+	min-height: 0;
+	width: 100%;
+	background-color: var(--color-bg-sidebar);
+	padding-top: var(--size-center-panel-inset);
+	padding-right: var(--size-center-panel-inset);
+	padding-bottom: var(--size-center-panel-inset);
+	padding-left: 0;
+}
+
+/* macOS: drop the framed panel below the traffic-light/TitlebarNav band
+ * (56px toolbar height) so its top edge lines up with the sidebar brand and
+ * the pinned toggle/history cluster no longer overlaps the panel's topbar. */
+.center-panel-shell--mac {
+	padding-top: var(--size-toolbar);
+}
+
+@utility center-panel-welcome {
+	display: flex;
+	min-height: 0;
+	flex: 1 1 0%;
+	flex-direction: column;
+	overflow: hidden;
+	border-radius: var(--radius-welcome-panel);
+	border: 1px solid var(--color-border-welcome-panel);
+	background-color: var(--color-bg-welcome-panel);
+}
+
+@utility center-panel-settings {
+	display: flex;
+	min-height: 0;
+	flex: 1 1 0%;
+	flex-direction: column;
+	overflow: hidden;
+	border-radius: var(--radius-settings-panel);
+	border: 1px solid var(--color-border-settings);
+	background-color: var(--color-bg-settings-panel);
+}
+
+@utility center-panel-app {
+	display: flex;
+	min-height: 0;
+	flex: 1 1 0%;
+	flex-direction: column;
+	overflow: hidden;
+	border-radius: var(--radius-center-panel);
+	border: 1px solid var(--color-border-strong);
+	background-color: var(--color-bg-primary);
 }
 
 @utility settings-row-bar {
@@ -417,13 +424,162 @@ button.settings-row-bar {
 }
 
 @utility settings-menu-surface {
+	display: flex;
 	min-width: 11rem;
 	width: max-content;
+	max-width: min(18rem, calc(100vw - 2rem));
+	flex-direction: column;
 	border-radius: var(--radius-settings-panel);
 	border: 1px solid var(--color-border-settings-menu);
 	background-color: var(--color-bg-settings-menu);
 	padding: var(--space-2);
 	gap: var(--space-1_5);
+	box-shadow: var(--elevation-md);
+}
+
+@utility settings-field-label {
+	font-size: var(--font-size-base);
+	font-weight: var(--font-weight-medium);
+	line-height: 1rem;
+	color: var(--color-text-settings-row);
+}
+
+@utility settings-field-control {
+	width: 100%;
+	border-radius: var(--radius-settings-action);
+	border: 1px solid var(--color-border-settings-input);
+	background-color: var(--color-bg-settings-input);
+	padding-inline: calc(var(--spacing) * 3.5);
+	font-size: var(--font-size-md);
+	line-height: 1.25rem;
+	color: var(--color-text-settings-input);
+	outline: none;
+	transition-property: border-color, box-shadow;
+	transition-duration: var(--duration-normal);
+
+	&::placeholder {
+		color: var(--color-text-settings-placeholder);
+	}
+
+	&:focus-visible {
+		border-color: var(--bridge-accent);
+		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+	}
+}
+
+@utility settings-footer-button {
+	display: inline-flex;
+	height: var(--size-settings-action-height);
+	flex-shrink: 0;
+	align-items: center;
+	justify-content: center;
+	gap: calc(var(--spacing) * 2);
+	white-space: nowrap;
+	border-radius: var(--radius-settings-action);
+	border-width: 1px;
+	border-style: solid;
+	padding-inline: var(--space-3);
+	font-size: var(--font-size-md);
+	line-height: 1.25rem;
+	outline: none;
+	transition-property: color, background-color, border-color, opacity, box-shadow;
+	transition-duration: var(--duration-normal);
+
+	&:focus-visible {
+		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+	}
+}
+
+@utility settings-dialog-title {
+	font-size: var(--font-size-heading-sm);
+	font-weight: var(--font-weight-semibold);
+	line-height: 1.5rem;
+	color: var(--color-text-settings-title);
+}
+
+@utility settings-close-button {
+	display: grid;
+	width: calc(var(--spacing) * 8);
+	height: calc(var(--spacing) * 8);
+	place-items: center;
+	border-radius: var(--radius-md);
+	color: var(--color-text-settings-muted);
+	transition-property: color, background-color;
+	transition-duration: var(--duration-normal);
+
+	&:hover {
+		background-color: var(--color-bg-settings-row);
+		color: var(--color-text-settings-title);
+	}
+
+	&:focus-visible {
+		outline: none;
+		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+	}
+}
+
+/* Positioning only — compose with `settings-close-button` at the call site. */
+@utility settings-dialog-close-button {
+	position: absolute;
+	top: var(--space-3);
+	right: var(--space-3);
+	z-index: var(--z-chrome);
+}
+
+@utility import-title {
+	font-size: 20px;
+	font-weight: 700;
+	line-height: 1.75rem;
+	color: var(--color-text-import-title);
+}
+
+@utility import-description {
+	font-size: var(--font-size-md);
+	font-weight: 400;
+	line-height: 1.25rem;
+	color: var(--color-text-import-muted);
+}
+
+@utility import-close-button {
+	position: absolute;
+	top: var(--space-3);
+	right: var(--space-3);
+	z-index: calc(var(--z-chrome) + 1);
+	display: grid;
+	width: calc(var(--spacing) * 5);
+	height: calc(var(--spacing) * 5);
+	place-items: center;
+	color: var(--color-text-import-muted);
+	transition-property: color;
+	transition-duration: var(--duration-normal);
+
+	&:hover {
+		color: var(--color-text-import-title);
+	}
+
+	&:disabled {
+		pointer-events: none;
+		opacity: 0.5;
+	}
+}
+
+@utility agents-sheet-label {
+	font-size: var(--font-size-sm);
+	font-weight: var(--font-weight-medium);
+	color: var(--color-text-agents-sheet-label);
+}
+
+@utility agents-sheet-control {
+	border-radius: var(--radius-lg);
+	border-color: var(--color-border-agents-sheet);
+	background-color: var(--color-bg-agents-sheet-control);
+	box-shadow: none;
+}
+
+@utility agents-sheet-menu {
+	border-radius: var(--radius-lg);
+	border-color: var(--color-border-agents-sheet);
+	background-color: var(--color-bg-agents-sheet);
 }
 
 * {
@@ -505,6 +661,17 @@ select {
 }
 
 .xterm .xterm-viewport::-webkit-scrollbar {
+	width: 0;
+	height: 0;
+}
+
+/* Scrollable region that must not show a scrollbar — the wheel/trackpad still
+   scrolls, but no track is painted and none reserves width. */
+.scrollbar-none {
+	scrollbar-width: none;
+}
+
+.scrollbar-none::-webkit-scrollbar {
 	width: 0;
 	height: 0;
 }
@@ -835,11 +1002,12 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	height: 28px;
 }
 
-/* Windows custom title bar (WindowTitlebar): the app paints the logo + menu on
- * one row while Electron overlays the native min/max/close buttons on the right.
- * Height must match TITLEBAR_HEIGHT + the Window Controls Overlay height in
- * main.ts so the native buttons line up. The whole strip is the window-drag
- * region; interactive children opt out with -webkit-app-region: no-drag. */
+/* Windows custom title bar (WindowTitlebar): the app paints the sidebar toggle
+ * + menu on one row while Electron overlays the native min/max/close buttons on
+ * the right. Height must match TITLEBAR_HEIGHT + the Window Controls Overlay
+ * height in main.ts so the native buttons line up. The whole strip is the
+ * window-drag region; interactive children opt out with
+ * -webkit-app-region: no-drag. */
 .window-titlebar {
 	display: flex;
 	height: 36px;
@@ -848,24 +1016,35 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	gap: 8px;
 	padding: 0 10px;
 	border-bottom: 1px solid var(--border);
-	background: var(--bg);
+	/* Matches the shell chrome (bg-sidebar) and the Window Controls Overlay
+	   color pushed in WindowTitlebar/main.ts, so the native min/max/close
+	   strip blends into the bar instead of reading as a separate box. */
+	background: var(--color-bg-sidebar);
 	-webkit-app-region: drag;
 	user-select: none;
 }
 
-.window-titlebar__logo {
-	width: 20px;
-	height: 20px;
-	object-fit: contain;
+.window-titlebar__toggle {
+	display: grid;
+	place-items: center;
+	width: 28px;
+	height: 28px;
+	border-radius: 6px;
+	color: var(--fg-muted);
+	-webkit-app-region: no-drag;
+	transition:
+		background-color 0.12s ease,
+		color 0.12s ease;
 }
 
-.window-titlebar__title {
-	margin-right: 6px;
-	font-size: 12.5px;
-	font-weight: 600;
-	letter-spacing: -0.01em;
+.window-titlebar__toggle:hover {
+	background: color-mix(in srgb, var(--fg) 8%, transparent);
 	color: var(--fg);
-	white-space: nowrap;
+}
+
+.window-titlebar__toggle-icon {
+	width: 16px;
+	height: 16px;
 }
 
 .window-titlebar__menus {

@@ -2,7 +2,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-// import { SETTINGS_SOCIAL_LINKS } from "../lib/social-links";
 import { GlobalSettingsForm } from "./GlobalSettingsForm";
 
 const {
@@ -76,6 +75,11 @@ beforeEach(() => {
 	for (const m of [
 		getUpdate,
 		setUpdate,
+		updGetStatus,
+		updCheck,
+		updDownload,
+		updInstall,
+		updOnStatus,
 		navigateMock,
 		writeText,
 		openExternal,
@@ -109,12 +113,7 @@ describe("GlobalSettingsForm", () => {
 		expect(screen.getByText("General")).toBeInTheDocument();
 		expect(screen.getByText("Updates")).toBeInTheDocument();
 		expect(screen.getByText("Get help")).toBeInTheDocument();
-		// Connect with us — temporarily disabled
-		// expect(screen.getByText("CONNECT WITH US")).toBeInTheDocument();
-		// for (const { label } of SETTINGS_SOCIAL_LINKS) {
-		// 	expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
-		// }
-		expect(screen.queryByText("More settings below...")).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Report a problem" })).toBeInTheDocument();
 	});
 
 	it("shows the nightly warning when the nightly channel is loaded", async () => {
@@ -153,6 +152,15 @@ describe("GlobalSettingsForm", () => {
 		expect(screen.queryByText(/Nightly builds are cut every day/i)).not.toBeInTheDocument();
 	});
 
+	it("hides the nightly warning when Feature Releases is selected", async () => {
+		getUpdate.mockResolvedValue({ enabled: true, channel: "nightly", nightlyAck: true, feature: null });
+		renderForm();
+		expect(await screen.findByText(/Nightly builds are cut every day/i)).toBeInTheDocument();
+		await userEvent.click(screen.getByLabelText("Updates channel"));
+		await userEvent.click(await screen.findByRole("menuitem", { name: "Feature Releases" }));
+		expect(screen.queryByText(/Nightly builds are cut every day/i)).not.toBeInTheDocument();
+	});
+
 	it("shows the current app version", async () => {
 		renderForm();
 		expect(await screen.findByText(/Current version - v1\.4\.0/)).toBeInTheDocument();
@@ -166,7 +174,7 @@ describe("GlobalSettingsForm", () => {
 	});
 
 	it("offers an Update button when an update is available and downloads it", async () => {
-		let emit: (s: { state: string; version?: string }) => void = () => undefined;
+		let emit: (s: { state: string; version?: string; requestId?: string }) => void = () => undefined;
 		updOnStatus.mockImplementation((cb: (s: unknown) => void) => {
 			emit = cb as typeof emit;
 			return () => undefined;
@@ -180,7 +188,7 @@ describe("GlobalSettingsForm", () => {
 	});
 
 	it("offers Restart & install once downloaded and installs it", async () => {
-		let emit: (s: { state: string; version?: string }) => void = () => undefined;
+		let emit: (s: { state: string; version?: string; requestId?: string }) => void = () => undefined;
 		updOnStatus.mockImplementation((cb: (s: unknown) => void) => {
 			emit = cb as typeof emit;
 			return () => undefined;
@@ -203,7 +211,7 @@ describe("GlobalSettingsForm", () => {
 		});
 		renderForm();
 
-		await user.click(await screen.findByRole("button", { name: "Feedback" }));
+		await user.click(await screen.findByRole("button", { name: "Report a problem" }));
 		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
 
 		await user.type(screen.getByLabelText("Title"), "Create project fails in /Users/alice/private-repo");
@@ -248,7 +256,7 @@ describe("GlobalSettingsForm", () => {
 		getDaemonStatus.mockRejectedValue(new Error("daemon unavailable"));
 		renderForm();
 
-		await user.click(await screen.findByRole("button", { name: "Feedback" }));
+		await user.click(await screen.findByRole("button", { name: "Report a problem" }));
 		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
 		await user.type(screen.getByLabelText("Title"), "Need help with setup");
 
@@ -282,7 +290,7 @@ describe("GlobalSettingsForm", () => {
 		const githubToken = `ghp_${"abcdefghijklmnopqrstuvwxyz"}${"1234567890AB"}`;
 		renderForm();
 
-		await user.click(await screen.findByRole("button", { name: "Feedback" }));
+		await user.click(await screen.findByRole("button", { name: "Report a problem" }));
 		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
 		await user.type(screen.getByLabelText("Title"), "Sensitive setup problem");
 		await user.type(screen.getByLabelText("What happened?"), `Token is ${githubToken}`);
@@ -290,7 +298,7 @@ describe("GlobalSettingsForm", () => {
 		await user.click(screen.getByRole("button", { name: "Close report dialog" }));
 		await waitFor(() => expect(screen.queryByRole("dialog", { name: "Report a problem" })).not.toBeInTheDocument());
 
-		await user.click(await screen.findByRole("button", { name: "Feedback" }));
+		await user.click(await screen.findByRole("button", { name: "Report a problem" }));
 		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
 		expect(screen.getByLabelText("Title")).toHaveValue("");
 		expect(screen.getByLabelText("What happened?")).toHaveValue("");
@@ -300,7 +308,7 @@ describe("GlobalSettingsForm", () => {
 		const user = userEvent.setup();
 		renderForm();
 
-		await user.click(await screen.findByRole("button", { name: "Feedback" }));
+		await user.click(await screen.findByRole("button", { name: "Report a problem" }));
 		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
 		expect(screen.getByLabelText("Title")).toHaveAttribute("placeholder", "Brief Title");
 		expect(screen.getByLabelText("What happened?")).toHaveAttribute(
@@ -324,7 +332,7 @@ describe("GlobalSettingsForm", () => {
 		expect(featListBuilds).toHaveBeenCalled();
 	});
 
-	it("pins a feature build after confirming, then auto-progresses check -> download -> install", async () => {
+	it("pins a feature build after confirming and ignores unowned updater events", async () => {
 		featListBuilds.mockResolvedValue([
 			{
 				pr: 2270,
@@ -336,7 +344,7 @@ describe("GlobalSettingsForm", () => {
 				publishedAt: new Date().toISOString(),
 			},
 		]);
-		let emit: (s: { state: string; version?: string }) => void = () => undefined;
+		let emit: (s: { state: string; version?: string; requestId?: string }) => void = () => undefined;
 		updOnStatus.mockImplementation((cb: (s: unknown) => void) => {
 			emit = cb as typeof emit;
 			return () => undefined;
@@ -353,20 +361,30 @@ describe("GlobalSettingsForm", () => {
 		// Confirmation dialog replaces window.confirm.
 		await userEvent.click(await screen.findByRole("button", { name: "Confirm" }));
 
-		await waitFor(() => expect(setUpdate).toHaveBeenCalledWith(expect.objectContaining({ feature: { pr: 2270 } })));
-		expect(updCheck).toHaveBeenCalled();
+		await waitFor(() =>
+			expect(updCheck).toHaveBeenCalledWith({
+				settings: expect.objectContaining({ feature: { pr: 2270 } }),
+				requestId: expect.any(String),
+			}),
+		);
+		const requestId = updCheck.mock.calls[0]?.[0]?.requestId as string;
 
-		// Auto-progression: available -> download(), downloaded -> install().
+		// An older hourly operation can finish while the feature request waits for
+		// updater ownership. Its events must not arm the feature install flow.
 		act(() => emit({ state: "available", version: "1.2.3" }));
-		await waitFor(() => expect(updDownload).toHaveBeenCalled());
-		act(() => emit({ state: "downloaded", version: "1.2.3" }));
+		expect(updDownload).not.toHaveBeenCalled();
+
+		// The owned feature operation auto-progresses available -> download -> install.
+		act(() => emit({ state: "available", version: "1.2.3", requestId }));
+		await waitFor(() => expect(updDownload).toHaveBeenCalledWith(requestId));
+		act(() => emit({ state: "downloaded", version: "1.2.3", requestId }));
 		await waitFor(() => expect(updInstall).toHaveBeenCalled());
 	});
 
 	it("returns to Stable, then auto-progresses check -> download -> install", async () => {
 		getUpdate.mockResolvedValue({ enabled: true, channel: "latest", nightlyAck: false, feature: { pr: 2270 } });
 		featGetActive.mockResolvedValue({ pr: 2270 });
-		let emit: (s: { state: string; version?: string }) => void = () => undefined;
+		let emit: (s: { state: string; version?: string; requestId?: string }) => void = () => undefined;
 		updOnStatus.mockImplementation((cb: (s: unknown) => void) => {
 			emit = cb as typeof emit;
 			return () => undefined;
@@ -376,12 +394,17 @@ describe("GlobalSettingsForm", () => {
 		const returnBtn = await screen.findByRole("button", { name: "Return to Stable" });
 		await userEvent.click(returnBtn);
 
-		await waitFor(() => expect(setUpdate).toHaveBeenCalledWith(expect.objectContaining({ feature: null })));
-		expect(updCheck).toHaveBeenCalled();
+		await waitFor(() =>
+			expect(updCheck).toHaveBeenCalledWith({
+				settings: expect.objectContaining({ feature: null }),
+				requestId: expect.any(String),
+			}),
+		);
+		const requestId = updCheck.mock.calls[0]?.[0]?.requestId as string;
 
-		act(() => emit({ state: "available", version: "1.3.0" }));
-		await waitFor(() => expect(updDownload).toHaveBeenCalled());
-		act(() => emit({ state: "downloaded", version: "1.3.0" }));
+		act(() => emit({ state: "available", version: "1.3.0", requestId }));
+		await waitFor(() => expect(updDownload).toHaveBeenCalledWith(requestId));
+		act(() => emit({ state: "downloaded", version: "1.3.0", requestId }));
 		await waitFor(() => expect(updInstall).toHaveBeenCalled());
 	});
 });

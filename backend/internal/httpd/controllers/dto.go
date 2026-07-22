@@ -155,7 +155,7 @@ type SpawnSessionRequest struct {
 	ProjectID domain.ProjectID    `json:"projectId"`
 	IssueID   domain.IssueID      `json:"issueId,omitempty"`
 	Kind      domain.SessionKind  `json:"kind,omitempty" enum:"worker,orchestrator"`
-	Harness   domain.AgentHarness `json:"harness,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,kiro,kilocode,vibe,pi,autohand"`
+	Harness   domain.AgentHarness `json:"harness,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,kiro,kilocode,vibe,pi,autohand,fake"`
 	Branch    string              `json:"branch,omitempty"`
 	Prompt    string              `json:"prompt,omitempty" maxLength:"4096"`
 	// DisplayName is the sidebar label for the session, capped at 20 characters.
@@ -567,6 +567,39 @@ type MarkNotificationReadRequest struct {
 // NotificationEnvelope is the { notification } response body for notification mutations.
 type NotificationEnvelope struct {
 	Notification NotificationResponse `json:"notification"`
+}
+
+// ShellTerminalHandleIDParam is the {handleId} path parameter for shell
+// terminal routes. It is the runtime handle the terminal mux attaches to, not
+// a session id.
+type ShellTerminalHandleIDParam struct {
+	HandleID string `path:"handleId" description:"Shell terminal runtime handle identifier."`
+}
+
+// OpenShellTerminalRequest is the body of POST /api/v1/shell-terminals.
+type OpenShellTerminalRequest struct {
+	ProjectID string `json:"projectId,omitempty" description:"Project whose root the shell starts in. Omitted opens the shell in the daemon data dir."`
+}
+
+// ShellTerminalResponse is one standalone shell terminal. HandleID is what the
+// client opens on the terminal mux, exactly as it would a session's pane.
+type ShellTerminalResponse struct {
+	HandleID   string    `json:"handleId"`
+	ProjectID  string    `json:"projectId,omitempty"`
+	WorkingDir string    `json:"workingDir"`
+	Title      string    `json:"title"`
+	CreatedAt  time.Time `json:"createdAt"`
+}
+
+// ListShellTerminalsResponse is the body of GET /api/v1/shell-terminals.
+type ListShellTerminalsResponse struct {
+	ShellTerminals []ShellTerminalResponse `json:"shellTerminals"`
+}
+
+// ShellTerminalEnvelope is the { shellTerminal } response body for shell
+// terminal mutations.
+type ShellTerminalEnvelope struct {
+	ShellTerminal ShellTerminalResponse `json:"shellTerminal"`
 }
 
 // MarkAllNotificationsReadResponse is the body of POST /api/v1/notifications/read-all.

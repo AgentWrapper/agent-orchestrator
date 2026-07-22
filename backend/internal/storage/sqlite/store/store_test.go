@@ -46,6 +46,19 @@ func sampleRecord(project string) domain.SessionRecord {
 	}
 }
 
+// Regression: the sessions.harness CHECK must allow the 'fake' harness (added
+// in migration 0024) so fake-driven e2e sessions can be created.
+func TestSessionCreateAllowsFakeHarness(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	rec := sampleRecord("mer")
+	rec.Harness = domain.HarnessFake
+	if _, err := s.CreateSession(ctx, rec); err != nil {
+		t.Fatalf("create fake-harness session: %v", err)
+	}
+}
+
 func TestProjectCRUDAndArchive(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

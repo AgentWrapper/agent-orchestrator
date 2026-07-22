@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,6 +18,8 @@ type fakeStore struct {
 	sessions   map[domain.SessionID]domain.SessionRecord
 	prs        map[domain.SessionID][]domain.PullRequest
 	signatures map[string]string
+	idleEvents []domain.WorkerIdleEvent
+	delivered  map[string]bool
 
 	listPRsErr        error
 	signatureWriteErr error
@@ -24,7 +27,45 @@ type fakeStore struct {
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{sessions: map[domain.SessionID]domain.SessionRecord{}, prs: map[domain.SessionID][]domain.PullRequest{}, signatures: map[string]string{}}
+	return &fakeStore{sessions: map[domain.SessionID]domain.SessionRecord{}, prs: map[domain.SessionID][]domain.PullRequest{}, signatures: map[string]string{}, delivered: map[string]bool{}}
+}
+
+func (f *fakeStore) RecordWorkerIdle(_ context.Context, rec domain.SessionRecord, ev domain.WorkerIdleEvent) error {
+	f.sessions[rec.ID] = rec
+	for i := range f.idleEvents {
+		e := f.idleEvents[i]
+		if e.WorkerID == ev.WorkerID && !f.delivered[e.ID] {
+			f.idleEvents[i].TransitionAt = ev.TransitionAt
+			return nil
+		}
+	}
+	f.idleEvents = append(f.idleEvents, ev)
+	return nil
+}
+
+func (f *fakeStore) ListPendingWorkerIdleEventsByProject(_ context.Context, project domain.ProjectID) ([]domain.WorkerIdleEvent, error) {
+	var out []domain.WorkerIdleEvent
+	for _, e := range f.idleEvents {
+		if e.ProjectID == project && !f.delivered[e.ID] {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) ListPendingWorkerIdleEvents(_ context.Context) ([]domain.WorkerIdleEvent, error) {
+	var out []domain.WorkerIdleEvent
+	for _, e := range f.idleEvents {
+		if !f.delivered[e.ID] {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) MarkWorkerIdleEventDelivered(_ context.Context, id string, _ time.Time) error {
+	f.delivered[id] = true
+	return nil
 }
 
 func (f *fakeStore) GetSession(_ context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
@@ -37,6 +78,16 @@ func (f *fakeStore) ListPRsBySession(_ context.Context, id domain.SessionID) ([]
 		return nil, f.listPRsErr
 	}
 	return f.prs[id], nil
+}
+
+func (f *fakeStore) ListSessions(_ context.Context, project domain.ProjectID) ([]domain.SessionRecord, error) {
+	var out []domain.SessionRecord
+	for _, rec := range f.sessions {
+		if rec.ProjectID == project {
+			out = append(out, rec)
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeStore) UpdateSession(_ context.Context, rec domain.SessionRecord) error {
@@ -62,6 +113,7 @@ func (f *fakeStore) UpdatePRLastNudgeSignature(_ context.Context, prURL, payload
 
 type fakeMessenger struct {
 	msgs []string
+	ids  []domain.SessionID
 	err  error
 }
 
@@ -75,11 +127,12 @@ func (s *telemetrySink) Emit(_ context.Context, ev ports.TelemetryEvent) {
 
 func (*telemetrySink) Close(context.Context) error { return nil }
 
-func (f *fakeMessenger) Send(_ context.Context, _ domain.SessionID, msg string) error {
+func (f *fakeMessenger) Send(_ context.Context, id domain.SessionID, msg string) error {
 	if f.err != nil {
 		return f.err
 	}
 	f.msgs = append(f.msgs, msg)
+	f.ids = append(f.ids, id)
 	return nil
 }
 
@@ -94,6 +147,26 @@ func (f *fakeCompletionTerminator) Kill(context.Context, domain.SessionID) (bool
 		return false, f.err
 	}
 	return true, nil
+}
+
+// lockedMessenger is the concurrency-safe counterpart used by tests that drive
+// two dispatchers at once.
+type lockedMessenger struct {
+	mu   sync.Mutex
+	msgs []string
+}
+
+func (l *lockedMessenger) Send(_ context.Context, _ domain.SessionID, msg string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.msgs = append(l.msgs, msg)
+	return nil
+}
+
+func (l *lockedMessenger) count() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.msgs)
 }
 
 func newManager() (*Manager, *fakeStore, *fakeMessenger) {

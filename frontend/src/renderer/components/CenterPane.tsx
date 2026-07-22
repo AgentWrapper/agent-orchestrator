@@ -1,6 +1,8 @@
-import { ChevronLeft, Maximize2, Minimize2, Shield } from "lucide-react";
+import { ChevronLeft, Maximize2, Minimize2, Shield, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type WheelEvent } from "react";
+import type { ShellTerminal } from "../hooks/useShellTerminals";
 import { TERMINAL_FONT_SIZE_DEFAULT, TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from "../lib/design-tokens";
+import { cn } from "../lib/utils";
 import type { Theme } from "../stores/ui-store";
 import type { TerminalTarget } from "../types/terminal";
 import { isOrchestratorSession, type WorkspaceSession } from "../types/workspace";
@@ -12,6 +14,11 @@ type CenterPaneProps = {
 	daemonReady: boolean;
 	terminalTarget?: TerminalTarget;
 	onSelectWorkerTerminal?: () => void;
+	/** Standalone shells to render as tabs beside the session's own pane. */
+	shellTerminals?: ShellTerminal[];
+	onSelectSessionTerminal?: () => void;
+	onSelectShellTerminal?: (handleId: string) => void;
+	onCloseShellTerminal?: (handleId: string) => void;
 };
 
 const terminalFontSizeStorageKey = "ao.terminal.fontSize";
@@ -30,7 +37,17 @@ function initialTerminalFontSize(): number {
 	return clampTerminalFontSize(parsed);
 }
 
-export function CenterPane({ session, theme, daemonReady, terminalTarget, onSelectWorkerTerminal }: CenterPaneProps) {
+export function CenterPane({
+	session,
+	theme,
+	daemonReady,
+	terminalTarget,
+	onSelectWorkerTerminal,
+	shellTerminals = [],
+	onSelectSessionTerminal,
+	onSelectShellTerminal,
+	onCloseShellTerminal,
+}: CenterPaneProps) {
 	const paneRef = useRef<HTMLDivElement | null>(null);
 	const wheelZoomRemainderRef = useRef(0);
 	const lastWheelZoomAtRef = useRef(0);
@@ -99,9 +116,30 @@ export function CenterPane({ session, theme, daemonReady, terminalTarget, onSele
 					<span className="shrink-0 font-mono text-caption font-semibold uppercase tracking-wide-lg text-muted-foreground">
 						TERMINAL
 					</span>
-					<span className="min-w-0 truncate font-mono text-control font-semibold text-passive">
+					{/* The session's own pane is always the first tab; standalone shells
+					    follow it in the order they were opened. With no shells open this
+					    renders as the plain session label it has always been. */}
+					<button
+						aria-current={target.kind !== "shell"}
+						className={cn(
+							"min-w-0 shrink-0 truncate rounded-sm px-1 font-mono text-control font-semibold transition-colors",
+							target.kind === "shell" ? "text-passive/60 hover:text-passive" : "text-passive hover:text-foreground",
+						)}
+						onClick={onSelectSessionTerminal}
+						title="Session terminal"
+						type="button"
+					>
 						{!session ? "No session" : isOrchestratorSession(session) ? "Orchestrator" : session.title}
-					</span>
+					</button>
+					{shellTerminals.map((shell) => (
+						<ShellTerminalTab
+							key={shell.handleId}
+							isActive={target.kind === "shell" && target.handleId === shell.handleId}
+							onClose={() => onCloseShellTerminal?.(shell.handleId)}
+							onSelect={() => onSelectShellTerminal?.(shell.handleId)}
+							shell={shell}
+						/>
+					))}
 				</div>
 				<div className="ml-auto flex items-center gap-3 font-mono text-passive">
 					<button
@@ -171,5 +209,47 @@ export function CenterPane({ session, theme, daemonReady, terminalTarget, onSele
 				/>
 			</div>
 		</div>
+	);
+}
+
+type ShellTerminalTabProps = {
+	shell: ShellTerminal;
+	isActive: boolean;
+	onSelect: () => void;
+	onClose: () => void;
+};
+
+// The close control is a sibling button, not nested inside the tab button —
+// nesting interactive elements is invalid HTML and breaks keyboard traversal.
+function ShellTerminalTab({ shell, isActive, onSelect, onClose }: ShellTerminalTabProps) {
+	return (
+		<span
+			className={cn(
+				"group inline-flex min-w-0 shrink-0 items-center gap-1 rounded-sm pl-1.5 transition-colors",
+				isActive ? "bg-interactive-hover" : "hover:bg-interactive-hover/60",
+			)}
+		>
+			<button
+				aria-current={isActive}
+				className={cn(
+					"min-w-0 max-w-shell-tab-max truncate font-mono text-control font-semibold transition-colors",
+					isActive ? "text-foreground" : "text-passive hover:text-foreground",
+				)}
+				onClick={onSelect}
+				title={shell.workingDir}
+				type="button"
+			>
+				{shell.title}
+			</button>
+			<button
+				aria-label={`Close terminal ${shell.title}`}
+				className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-passive transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+				onClick={onClose}
+				title="Close terminal"
+				type="button"
+			>
+				<X aria-hidden="true" className="size-icon-sm" />
+			</button>
+		</span>
 	);
 }

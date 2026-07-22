@@ -23,15 +23,34 @@ type TerminalPaneProps = {
 
 export function TerminalPane({ session, theme, daemonReady, terminalTarget, fontSize }: TerminalPaneProps) {
 	const terminalKey =
-		terminalTarget?.kind === "reviewer" ? terminalTarget.handleId : (session?.terminalHandleId ?? "empty");
+		terminalTarget?.kind === "reviewer" || terminalTarget?.kind === "shell"
+			? terminalTarget.handleId
+			: (session?.terminalHandleId ?? "empty");
 
 	if (!window.ao) {
+		// A standalone shell has no agent and no branch, so it previews as a plain
+		// prompt rather than borrowing the session's agent transcript.
+		if (terminalTarget?.kind === "shell") {
+			return (
+				<pre
+					className="h-full overflow-auto bg-terminal p-4 font-mono leading-relaxed text-terminal"
+					style={{ fontSize }}
+				>
+					<span className="text-terminal-dim">{terminalTarget.title}</span> $ {"\n"}
+					<span className="text-terminal-dim">
+						{"(standalone shell — a live PTY here in the desktop app)"}
+						{"\n"}
+					</span>
+				</pre>
+			);
+		}
 		const provider = terminalTarget?.kind === "reviewer" ? terminalTarget.harness : (session?.provider ?? "claude");
 		const lines =
 			terminalTarget?.kind === "reviewer" ? reviewerPreviewLines(session) : workerPreviewLines(session, provider);
 		return (
 			<pre
 				className="h-full overflow-auto bg-terminal p-4 font-mono leading-relaxed text-terminal-foreground"
+				data-testid="session-terminal"
 				style={{ fontSize }}
 			>
 				<span className="text-terminal-dim">~/{session?.workspaceName ?? "reverbcode"}</span>{" "}
@@ -215,11 +234,16 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	const [restoreUnavailable, setRestoreUnavailable] = useState(false);
 	const queryClient = useQueryClient();
 	const restoreSessionById = useRestoreSession();
-	const { attach, state, error } = useTerminalSession(attachSession, { daemonReady });
-	const handleId = attachSession?.terminalHandleId;
+	// A shell pane has no session, so it hands the hook its handle directly
+	// instead of reading one off `attachSession`.
+	const shellTerminalHandleId = terminalTarget?.kind === "shell" ? terminalTarget.handleId : undefined;
+	const { attach, state, error } = useTerminalSession(attachSession, { daemonReady, shellTerminalHandleId });
+	const handleId = shellTerminalHandleId ?? attachSession?.terminalHandleId;
 	const provider = terminalTarget?.kind === "reviewer" ? terminalTarget.harness : session?.provider;
 	const hadAttachmentRef = useRef(false);
-	const canRestoreSession = terminalTarget?.kind !== "reviewer" && session?.status === "terminated";
+	// A standalone shell is never restorable: there is no session row to restore.
+	const canRestoreSession =
+		terminalTarget?.kind !== "reviewer" && terminalTarget?.kind !== "shell" && session?.status === "terminated";
 
 	const handleReady = useCallback((handle: AttachableTerminal) => {
 		setTerminal(handle);
@@ -311,19 +335,21 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 		: "No session selected. Pick a worker to attach its terminal.";
 
 	return (
-		<div className="flex h-full min-h-0 flex-col bg-terminal">
+		<div className="flex h-full min-h-0 flex-col bg-terminal" data-testid="session-terminal">
 			{showEndedState && (
 				<TerminalEndedStrip
 					canRestore={canRestoreSession}
 					error={restoreError}
 					isRestoring={isRestoring}
 					onRestore={restoreSession}
-					variant={terminalTarget?.kind === "reviewer" ? "reviewer" : "session"}
+					variant={
+						terminalTarget?.kind === "reviewer" ? "reviewer" : terminalTarget?.kind === "shell" ? "shell" : "session"
+					}
 				/>
 			)}
 			<div className="relative min-h-0 flex-1">
 				<XtermTerminal
-					ariaLabel="Session terminal"
+					ariaLabel={terminalTarget?.kind === "shell" ? "Shell terminal" : "Session terminal"}
 					fontSize={fontSize}
 					onError={handleInitError}
 					onLinkOpen={handleLinkOpen}
@@ -364,7 +390,7 @@ type TerminalEndedStripProps = {
 	error?: string;
 	isRestoring: boolean;
 	onRestore: () => void;
-	variant: "reviewer" | "session";
+	variant: "reviewer" | "session" | "shell";
 };
 
 function TerminalEndedStrip({ canRestore, error, isRestoring, onRestore, variant }: TerminalEndedStripProps) {
@@ -372,7 +398,9 @@ function TerminalEndedStrip({ canRestore, error, isRestoring, onRestore, variant
 		? "Restore the session to attach a live terminal and continue writing."
 		: variant === "reviewer"
 			? "This reviewer terminal has ended. Re-run review from the summary panel, or switch back to the agent terminal."
-			: "This terminal process ended, but the session is not marked terminated yet.";
+			: variant === "shell"
+				? "This shell exited. Close the tab, or open a new terminal."
+				: "This terminal process ended, but the session is not marked terminated yet.";
 
 	return (
 		<div className="shrink-0 border-b border-border bg-surface/80 px-4 py-2">

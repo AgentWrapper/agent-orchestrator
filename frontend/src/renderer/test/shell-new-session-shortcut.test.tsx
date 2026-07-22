@@ -8,6 +8,7 @@ const shellMocks = vi.hoisted(() => {
 	const state = {
 		newSessionListener: undefined as (() => void) | undefined,
 		keyboardShortcutsListener: undefined as (() => void) | undefined,
+		newShellTerminalListener: undefined as (() => void) | undefined,
 		routeParams: {} as { projectId?: string; sessionId?: string },
 		workspaces: [] as WorkspaceSummary[],
 	};
@@ -21,6 +22,11 @@ const shellMocks = vi.hoisted(() => {
 			state.keyboardShortcutsListener = listener;
 			return vi.fn();
 		}),
+		onNewShellTerminalShortcut: vi.fn((listener: () => void) => {
+			state.newShellTerminalListener = listener;
+			return vi.fn();
+		}),
+		openShellTerminal: vi.fn(),
 		queryClient: {
 			ensureQueryData: vi.fn(),
 			fetchQuery: vi.fn(),
@@ -49,6 +55,7 @@ vi.mock("../lib/bridge", () => ({
 		app: {
 			onNewSessionShortcut: shellMocks.onNewSessionShortcut,
 			onKeyboardShortcutsHelp: shellMocks.onKeyboardShortcutsHelp,
+			onNewShellTerminalShortcut: shellMocks.onNewShellTerminalShortcut,
 		},
 	},
 }));
@@ -61,6 +68,12 @@ vi.mock("../hooks/useWorkspaceQuery", () => ({
 
 vi.mock("../hooks/useDaemonStatus", () => ({
 	useDaemonStatus: () => ({ state: "stopped" }),
+}));
+
+// The shell layout opens standalone terminals; this suite only covers the
+// shortcut subscriptions, so the mutation is stubbed rather than driven.
+vi.mock("../hooks/useShellTerminals", () => ({
+	useOpenShellTerminal: () => ({ mutate: shellMocks.openShellTerminal }),
 }));
 
 vi.mock("../hooks/useAgentsQuery", () => ({
@@ -127,6 +140,7 @@ async function renderShell() {
 	});
 	await waitFor(() => expect(shellMocks.onNewSessionShortcut).toHaveBeenCalledTimes(1));
 	await waitFor(() => expect(shellMocks.onKeyboardShortcutsHelp).toHaveBeenCalledTimes(1));
+	await waitFor(() => expect(shellMocks.onNewShellTerminalShortcut).toHaveBeenCalledTimes(1));
 }
 
 function emitShortcut() {
@@ -139,11 +153,53 @@ beforeEach(() => {
 	shellMocks.navigate.mockReset();
 	shellMocks.onNewSessionShortcut.mockClear();
 	shellMocks.onKeyboardShortcutsHelp.mockClear();
+	shellMocks.onNewShellTerminalShortcut.mockClear();
+	shellMocks.openShellTerminal.mockClear();
 	shellMocks.state.newSessionListener = undefined;
 	shellMocks.state.keyboardShortcutsListener = undefined;
+	shellMocks.state.newShellTerminalListener = undefined;
 	shellMocks.state.routeParams = {};
 	shellMocks.state.workspaces = workspaces;
-	useUiStore.setState({ createProjectNonce: 0, newTaskRequest: null });
+	useUiStore.setState({ createProjectNonce: 0, newTaskRequest: null, newShellTerminalNonce: 0 });
+});
+
+describe("shell new-shell-terminal shortcut subscription", () => {
+	function pressNewShellTerminal() {
+		const listener = shellMocks.state.newShellTerminalListener;
+		if (!listener) throw new Error("new-shell-terminal listener was not registered");
+		act(() => listener());
+	}
+
+	// Regression: the shell LAYOUT must own this, not the session view. When the
+	// session view owned it, the shortcut did nothing outside a session route —
+	// nothing was mounted to hear it.
+	it("opens a terminal even with no session on screen", async () => {
+		await renderShell();
+
+		pressNewShellTerminal();
+
+		expect(useUiStore.getState().newShellTerminalNonce).toBe(1);
+		expect(shellMocks.openShellTerminal).toHaveBeenCalledTimes(1);
+	});
+
+	it("scopes the terminal to the project in scope", async () => {
+		shellMocks.state.routeParams = { projectId: "proj-1" };
+		await renderShell();
+
+		pressNewShellTerminal();
+
+		expect(shellMocks.openShellTerminal).toHaveBeenCalledWith("proj-1", expect.anything());
+	});
+
+	it("re-fires on a repeat press so a second terminal can be opened", async () => {
+		await renderShell();
+
+		pressNewShellTerminal();
+		pressNewShellTerminal();
+
+		expect(useUiStore.getState().newShellTerminalNonce).toBe(2);
+		expect(shellMocks.openShellTerminal).toHaveBeenCalledTimes(2);
+	});
 });
 
 describe("shell keyboard-shortcuts help subscription", () => {

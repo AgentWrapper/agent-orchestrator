@@ -2,6 +2,7 @@ import { createFileRoute, Outlet, useMatchRoute, useNavigate, useParams } from "
 import { useQueryClient } from "@tanstack/react-query";
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 import { CommandPalette } from "../components/CommandPalette";
+import { CenterPanelShell } from "../components/CenterPanelShell";
 import { NotificationRuntime } from "../components/NotificationCenter";
 import { GlobalNewTaskDialog } from "../components/GlobalNewTaskDialog";
 import { KeyboardShortcutsDialog } from "../components/KeyboardShortcutsDialog";
@@ -13,6 +14,7 @@ import { TitlebarNav } from "../components/TitlebarNav";
 import { WindowTitlebar } from "../components/WindowTitlebar";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
+import { useOpenShellTerminal } from "../hooks/useShellTerminals";
 import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
 import { refreshDaemonStatus } from "../lib/daemon-status";
@@ -22,6 +24,7 @@ import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { captureOrchestratorReplacementFailure } from "../lib/orchestrator-replacement-telemetry";
 import { applyDocumentTheme } from "../lib/theme";
 import { aoBridge } from "../lib/bridge";
+import { isLinuxPlatform, isMacPlatform, isWindowsPlatform, usesFramedAppTopbar } from "../lib/platform";
 import { useUiStore } from "../stores/ui-store";
 import type { WorkspaceSummary } from "../types/workspace";
 import type { components } from "../../api/schema";
@@ -55,19 +58,10 @@ export function createProjectConfig(input: CreateProjectConfigInput): components
 	};
 }
 
-const isMac = typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
-const isWindows =
-	typeof navigator !== "undefined" &&
-	/win/i.test(
-		(navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ??
-			navigator.platform ??
-			"",
-	);
-const isLinux =
-	typeof navigator !== "undefined" &&
-	((navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform)
-		.toLowerCase()
-		.includes("linux");
+const isMac = isMacPlatform();
+const isWindows = isWindowsPlatform();
+const isLinux = isLinuxPlatform();
+const framedAppTopbar = usesFramedAppTopbar();
 
 // Persistent app shell: the Sidebar + shared state survive route changes; only
 // the <Outlet> content (board / session / settings / …) swaps. Lifted out of
@@ -85,6 +79,12 @@ function ShellLayout() {
 	const syncSystemTheme = useUiStore((state) => state.syncSystemTheme);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
 	const requestCreateProject = useUiStore((state) => state.requestCreateProject);
+	const requestNewShellTerminal = useUiStore((state) => state.requestNewShellTerminal);
+	const newShellTerminalNonce = useUiStore((state) => state.newShellTerminalNonce);
+	const setActiveShellTerminal = useUiStore((state) => state.setActiveShellTerminal);
+	const openShellTerminal = useOpenShellTerminal();
+	// Seeded to the current value so a mount never opens a terminal unasked.
+	const handledShellNonceRef = useRef(newShellTerminalNonce);
 	const [isKeyboardShortcutsOpen, setIsKeyboardShortcutsOpen] = useState(false);
 	const routeParams = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
 	// Project in scope for a new-session shortcut: the route's project, or the
@@ -98,7 +98,7 @@ function ShellLayout() {
 	const isSessionRoute =
 		Boolean(matchRoute({ to: "/projects/$projectId/sessions/$sessionId", fuzzy: true })) ||
 		Boolean(matchRoute({ to: "/sessions/$sessionId", fuzzy: true }));
-	// First-launch root board only — not /prs or other shell routes with zero projects.
+	// First-launch root board only (no projects in scope).
 	const isWelcomeBoard = Boolean(matchRoute({ to: "/" })) && workspaces.length === 0;
 	const isSettingsRoute =
 		Boolean(matchRoute({ to: "/settings", fuzzy: true })) ||
@@ -272,6 +272,14 @@ function ShellLayout() {
 		applyDocumentTheme(resolvedTheme);
 	}, [resolvedTheme]);
 
+	// Keep Electron's nativeTheme in step with the shell so the embedded preview
+	// WebContentsView (which follows prefers-color-scheme) flips at the same time.
+	// Send the preference, not the resolved theme, so "system" keeps both surfaces
+	// following the OS instead of freezing matchMedia to a forced value.
+	useEffect(() => {
+		void aoBridge.theme?.set(themePreference);
+	}, [themePreference]);
+
 	useEffect(() => {
 		if (daemonStatus.state !== "ready" || !daemonStatus.port) return;
 		if (agentCatalogPortRef.current === daemonStatus.port) return;
@@ -327,6 +335,41 @@ function ShellLayout() {
 
 	useEffect(() => aoBridge.app.onKeyboardShortcutsHelp(() => setIsKeyboardShortcutsOpen(true)), []);
 
+	// New standalone terminal (Ctrl+`), also detected in the main process so it
+	// fires from inside a terminal pane. It raises the same store signal as the
+	// topbar button so the two cannot drift apart.
+	useEffect(() => aoBridge.app.onNewShellTerminalShortcut(() => requestNewShellTerminal()), [requestNewShellTerminal]);
+
+	// The shell layout is the single consumer of that signal, because it is the
+	// only component mounted on EVERY route. Owning it here is what lets the
+	// button and Ctrl+` work from the board, a project page, or a session alike
+	// — when the session view owned it, both silently did nothing outside a
+	// session, since nothing was listening.
+	//
+	// Where the new shell becomes visible depends on where the user is: inside a
+	// session it joins that pane's tab strip, anywhere else it gets the
+	// standalone /terminals view. Either way the store records it as active, and
+	// whichever view is on screen selects it.
+	useEffect(() => {
+		if (handledShellNonceRef.current === newShellTerminalNonce) return;
+		handledShellNonceRef.current = newShellTerminalNonce;
+		openShellTerminal.mutate(scopedProjectId, {
+			onSuccess: (shell) => {
+				setActiveShellTerminal(shell.handleId);
+				if (!routeParams.sessionId) {
+					void navigate({ to: "/terminals" });
+				}
+			},
+		});
+	}, [
+		newShellTerminalNonce,
+		openShellTerminal,
+		scopedProjectId,
+		routeParams.sessionId,
+		navigate,
+		setActiveShellTerminal,
+	]);
+
 	return (
 		<ShellProvider value={{ daemonStatus, createProject, initializeProjectRepository }}>
 			<NotificationRuntime />
@@ -339,10 +382,12 @@ function ShellLayout() {
           in the layout, not the screens, so the crumb and actions never shift
           when the outlet content swaps. */}
 			<div className="flex h-screen min-h-0 flex-col bg-sidebar text-foreground">
-				{/* Windows-only custom title bar (logo + File/Edit/View/… menu); paints
-            the chrome the frameless window drops. Renders null on macOS/Linux. */}
+				{/* Windows-only custom title bar (sidebar toggle + File/Edit/View/…
+            menu); paints the chrome the frameless window drops. Renders null on
+            macOS/Linux. */}
 				<WindowTitlebar />
-				{!hideShellTopbar ? <ShellTopbar /> : null}
+				{/* App routes render their topbar inside the framed panel, matching the board chrome across platforms while leaving OS titlebars native. */}
+				{!framedAppTopbar && !hideShellTopbar ? <ShellTopbar /> : null}
 				{/* Controlled by the ui-store so TitlebarNav / Topbar toggles (which
             call the store directly) stay in sync. --sidebar-width chains to
             the drag-resizable --ao-sidebar-w set on :root by useResizable. */}
@@ -357,15 +402,13 @@ function ShellLayout() {
 						} as CSSProperties
 					}
 				>
-					{/* Hang the fixed sidebar below shell chrome: macOS TitlebarNav and the
-            Windows WindowTitlebar stay in the top band on every route; when the
-            shell topbar is hidden (welcome board or settings), Windows clears
-            only the 36px titlebar. Linux offsets under the topbar on session
-            routes when the shell topbar is visible. */}
+					{/* Hang the fixed sidebar below shell chrome. macOS keeps room for the traffic-light/titlebar controls; Windows clears only its custom titlebar because the app topbar is inside the framed panel. When the topbar lives inside the framed panel (framedAppTopbar), Linux reserves no offset — otherwise the sidebar would clear a full-width topbar that isn't there. */}
 					<Sidebar
 						hideEdgeBorder={isWelcomeBoard}
-						underTopbar={isMac || isWindows || (!hideShellTopbar && (isLinux ? isSessionRoute : true))}
-						topbarOffset={isWindows && hideShellTopbar ? "titlebar" : "toolbar"}
+						underTopbar={
+							isMac || isWindows || (!framedAppTopbar && !hideShellTopbar && (isLinux ? isSessionRoute : true))
+						}
+						topbarOffset={isWindows ? "titlebar" : "toolbar"}
 						onCreateProject={createProject}
 						onInitializeProject={initializeProjectRepository}
 						onRemoveProject={removeProject}
@@ -374,7 +417,21 @@ function ShellLayout() {
 					/>
 					<main className="flex min-w-0 flex-1 flex-col overflow-x-hidden">
 						<div className="min-h-0 flex-1 overflow-x-hidden">
-							<Outlet />
+							{/* Board/session routes render inside the same inset box the welcome board and settings paint for themselves, so every screen sits within the app's outer boundary. */}
+							{hideShellTopbar ? (
+								<Outlet />
+							) : framedAppTopbar ? (
+								<CenterPanelShell className={isMac ? "center-panel-shell--mac" : undefined} variant="app">
+									<ShellTopbar />
+									<div className="flex min-h-0 flex-1 flex-col">
+										<Outlet />
+									</div>
+								</CenterPanelShell>
+							) : (
+								<CenterPanelShell variant="app">
+									<Outlet />
+								</CenterPanelShell>
+							)}
 						</div>
 					</main>
 					{/* When ShellTopbar is hidden on the welcome board, keep a macOS

@@ -8,15 +8,12 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/tmux"
 )
 
 // maxDisplayNameLen caps the sidebar label set by `--name`. Mirrored by the
@@ -134,19 +131,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 			if claimed != "" {
 				claimLabel = fmt.Sprintf(" (claimed %s)", claimed)
 			}
-			if _, err := fmt.Fprintf(out, "spawned session %s (%s)%s\n", res.Session.ID, res.Session.Status, claimLabel); err != nil {
-				return err
-			}
-			// Print a copy-pasteable attach hint for the selected runtime.
-			// On Darwin/Linux: tmux attach-session using the sanitised session name.
-			// On Windows: ConPTY has no user-facing attach CLI; use the AO dashboard.
-			var attach string
-			if runtime.GOOS != "windows" {
-				attach = fmt.Sprintf("tmux attach -t %s", tmux.SessionName(res.Session.ID))
-			} else {
-				attach = "Attach from the AO dashboard (ConPTY sessions have no CLI attach command)"
-			}
-			_, err = fmt.Fprintf(out, "attach with: %s\n", attach)
+			_, err = fmt.Fprintf(out, "spawned session %s (%s)%s\n", res.Session.ID, res.Session.Status, claimLabel)
 			return err
 		},
 	}
@@ -160,7 +145,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 		return pflag.NormalizedName(name)
 	})
 	f.StringVar(&opts.project, "project", "", "Project id to spawn the session in (default: AO_PROJECT_ID or current registered repo)")
-	f.StringVar(&opts.harness, "harness", "", "Agent harness / --agent: claude-code, codex, aider, opencode, grok, droid, amp, agy, crush, cursor, qwen, copilot, goose, auggie, continue, devin, cline, kimi, kiro, kilocode, vibe, pi, autohand (default: project worker.agent; required if the project has none)")
+	f.StringVar(&opts.harness, "harness", "", "Agent harness / --agent: claude-code, codex, aider, opencode, grok, droid, amp, agy, crush, cursor, qwen, copilot, goose, auggie, continue, devin, cline, kimi, kiro, kilocode, vibe, pi, autohand, fake (default: project worker.agent; required if the project has none)")
 	f.StringVar(&opts.branch, "branch", "", "Branch for the session worktree (default: ao/<session-id>/root)")
 	f.StringVar(&opts.prompt, "prompt", "", "Initial prompt for the agent")
 	f.StringVar(&opts.issue, "issue", "", "Issue id to associate with the session")

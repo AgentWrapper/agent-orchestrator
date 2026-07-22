@@ -1215,12 +1215,16 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 
 		// Step 3: relaunch the agent in the restored workspace.
 		if _, err := m.relaunchRestoredSession(ctx, rec, project, ws); err != nil {
-			// A promptless, unresumable worker is intentionally left terminated
-			// (ErrNotResumable): expected, not an operational failure, so log it
-			// quietly rather than as an error.
-			if errors.Is(err, ErrNotResumable) {
+			switch {
+			case errors.Is(err, ErrNotResumable):
+				// A promptless, unresumable worker is intentionally left terminated:
+				// expected, not an operational failure, so log it quietly.
 				m.logger.Warn("restore-all: session left terminated (nothing to resume)", "sessionID", rec.ID)
-			} else {
+			case errors.Is(err, ErrNotFound):
+				// The row was reaped between listing and relaunch (a stale id during
+				// reconciliation): skip it and keep restoring the rest.
+				m.logger.Warn("restore-all: session vanished before relaunch, skipping", "sessionID", rec.ID)
+			default:
 				m.logger.Error("restore-all: relaunch failed", "sessionID", rec.ID, "error", err)
 			}
 			continue
