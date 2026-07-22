@@ -256,7 +256,7 @@ export function workerSessions(sessions: WorkspaceSession[]): WorkspaceSession[]
 }
 
 export function sessionIsActive(session: WorkspaceSession): boolean {
-	return session.status !== "merged" && session.status !== "terminated";
+	return session.isTerminated !== true && session.status !== "terminated";
 }
 
 export function sessionNeedsAttention(session: WorkspaceSession): boolean {

@@ -95,8 +95,12 @@ describe("toSessionActivity", () => {
 });
 
 describe("sessionIsActive", () => {
-	it("is false for merged and terminated", () => {
-		expect(sessionIsActive(sessionWith({ status: "merged" }))).toBe(false);
+	it("keeps a merged session active until its runtime is terminated", () => {
+		expect(sessionIsActive(sessionWith({ status: "merged", isTerminated: false }))).toBe(true);
+		expect(sessionIsActive(sessionWith({ status: "merged", isTerminated: true }))).toBe(false);
+	});
+
+	it("is false for a terminated session", () => {
 		expect(sessionIsActive(sessionWith({ status: "terminated" }))).toBe(false);
 	});
 

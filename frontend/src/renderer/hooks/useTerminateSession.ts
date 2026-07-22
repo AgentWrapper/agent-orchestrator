@@ -16,7 +16,12 @@ export function useTerminateSession(options: TerminateSessionOptions = {}) {
 			const { error, response } = await apiClient.POST("/api/v1/sessions/{sessionId}/kill", {
 				params: { path: { sessionId: session.id } },
 			});
-			if (error) throw new Error(apiErrorMessage(error, `Failed to terminate session (${response.status})`));
+			if (error) {
+				const fallback = response
+					? `Failed to terminate session (${response.status})`
+					: "Failed to terminate session";
+				throw new Error(apiErrorMessage(error, fallback));
+			}
 		},
 		onSuccess: async (_data, session) => {
 			void captureRendererEvent("ao.renderer.session_kill_succeeded", { project_id: session.workspaceId });

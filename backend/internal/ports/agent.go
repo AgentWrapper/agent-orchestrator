@@ -76,9 +76,6 @@ type AgentBinaryResolver interface {
 type AgentExitDetectionMode string
 
 const (
-	// AgentExitDetectionNativeHook means the adapter's own hook pipeline emits
-	// an authoritative session-end signal.
-	AgentExitDetectionNativeHook AgentExitDetectionMode = "native_hook"
 	// AgentExitDetectionSupervisor means AO must wrap the CLI in its generic
 	// process supervisor because the adapter has no reliable exit hook.
 	AgentExitDetectionSupervisor AgentExitDetectionMode = "supervisor"
