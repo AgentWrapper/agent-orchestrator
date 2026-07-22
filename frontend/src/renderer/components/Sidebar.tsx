@@ -272,20 +272,21 @@ export function Sidebar({
 				</div>
 			</SidebarHeader>
 
-			<SidebarContent className="gap-0 pl-2.5 pr-1.75 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
-				<SidebarGroup className="p-0">
-					{/* Section label (project-sidebar__nav-label) */}
-					<div className="sidebar-expanded-chrome flex shrink-0 items-center justify-between px-2 pb-2 group-data-[collapsible=icon]:hidden">
-						<SidebarGroupLabel className="h-auto rounded-none p-0 text-2xs font-semibold uppercase tracking-wide-lg text-passive">
-							Projects
-						</SidebarGroupLabel>
-						<CreateProjectButton
-							hideTrigger={workspaces.length === 0}
-							onCreateProject={onCreateProject}
-							onInitializeProject={onInitializeProject}
-						/>
-					</div>
+			{/* Section label (project-sidebar__nav-label) — static; only the
+			    projects/sessions list below scrolls. */}
+			<div className="sidebar-expanded-chrome flex shrink-0 items-center justify-between pb-2 pl-4.5 pr-3.75 group-data-[collapsible=icon]:hidden">
+				<SidebarGroupLabel className="h-auto rounded-none p-0 text-2xs font-semibold uppercase tracking-wide-lg text-passive">
+					Projects
+				</SidebarGroupLabel>
+				<CreateProjectButton
+					hideTrigger={workspaces.length === 0}
+					onCreateProject={onCreateProject}
+					onInitializeProject={onInitializeProject}
+				/>
+			</div>
 
+			<SidebarContent className="scrollbar-none gap-0 pl-2.5 pr-1.75 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
+				<SidebarGroup className="p-0">
 					{/* Tree (project-sidebar__tree) */}
 					<SidebarGroupContent>
 						{workspaceError ? (

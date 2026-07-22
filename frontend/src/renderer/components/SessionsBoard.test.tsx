@@ -377,6 +377,39 @@ describe("SessionsBoard", () => {
 		expect(screen.getByRole("button", { name: /idle sessions/i })).toHaveAttribute("aria-expanded", "false");
 	});
 
+	it("uses the shared minimal scrollbar styling for board scroll regions", () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					terminatedSession({
+						id: "s-active",
+						title: "active worker",
+						status: "working",
+						prs: [],
+					}),
+					terminatedSession({
+						id: "s-idle",
+						title: "idle worker",
+						status: "idle",
+						prs: [],
+					}),
+					terminatedSession(),
+				]),
+			],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		fireEvent.click(screen.getByRole("button", { name: /idle sessions/i }));
+		fireEvent.click(screen.getByRole("button", { name: /done \/ terminated/i }));
+
+		const board = screen.getByTestId("board");
+		const scrollRegions = board.querySelectorAll(".board-scrollbar");
+		expect(scrollRegions).toHaveLength(6);
+		scrollRegions.forEach((region) => expect(region).toHaveClass("overflow-y-auto"));
+	});
 	it("shows a restore action for terminated sessions in expanded Done / Terminated", async () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [workspaceWithSessions([terminatedSession()])],

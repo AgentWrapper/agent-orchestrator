@@ -306,7 +306,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						<span className="ml-auto shrink-0 font-mono text-micro text-passive">{done.length}</span>
 					</button>
 					{doneExpanded && (
-						<div className="grid max-h-[45vh] grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-2.5 overflow-y-auto pb-3 pt-1">
+						<div className="board-scrollbar grid max-h-[45vh] grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-2.5 overflow-y-auto pb-3 pt-1">
 							{done.map((s) => (
 								<SessionCard
 									key={s.id}
@@ -373,7 +373,7 @@ function ZoneColumn({
 				</span>
 				<span className="ml-auto font-mono text-caption leading-none text-passive">{sessions.length}</span>
 			</div>
-			<div className="min-h-0 flex-1 overflow-y-auto px-2.75 pb-3">
+			<div className="board-scrollbar min-h-0 flex-1 overflow-y-auto px-2.75 pb-3">
 				<div className="flex min-h-full flex-col gap-2.5">
 					{activeSessions.map((session) => (
 						<SessionCard key={session.id} session={session} onOpen={() => onOpen(session)} />
@@ -432,7 +432,7 @@ function IdleSessionsStack({
 				<span className="ml-auto shrink-0 font-mono text-caption leading-none text-passive">{sessions.length}</span>
 			</button>
 			{expanded ? (
-				<div className="flex max-h-[min(45vh,28rem)] flex-col gap-2.5 overflow-y-auto border-t border-border p-2.5 animate-in fade-in-0 slide-in-from-top-1 duration-200 motion-reduce:animate-none">
+				<div className="board-scrollbar flex max-h-[min(45vh,28rem)] flex-col gap-2.5 overflow-y-auto border-t border-border p-2.5 animate-in fade-in-0 slide-in-from-top-1 duration-200 motion-reduce:animate-none">
 					{sessions.map((session) => (
 						<SessionCard key={session.id} session={session} onOpen={() => onOpen(session)} />
 					))}

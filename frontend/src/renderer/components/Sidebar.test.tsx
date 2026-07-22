@@ -203,6 +203,14 @@ afterEach(() => {
 });
 
 describe("Sidebar", () => {
+	it("keeps sidebar scrolling functional while hiding the visible scrollbar", () => {
+		renderSidebar();
+
+		const content = document.querySelector('[data-sidebar="content"]');
+		expect(content).toHaveClass("overflow-y-auto");
+		expect(content).toHaveClass("scrollbar-none");
+	});
+
 	it("shows a ConfirmDialog and calls onRemoveProject when confirmed", async () => {
 		const user = userEvent.setup();
 		const onRemoveProject = renderSidebar();
