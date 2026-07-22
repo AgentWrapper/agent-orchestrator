@@ -205,8 +205,7 @@ func (c *commandContext) stopReview(cmd *cobra.Command, args []string, opts revi
 		return usageError{errors.New("usage: worker session id is required (positional or --session)")}
 	}
 	path := "sessions/" + url.PathEscape(session) + "/reviews/cancel"
-	var res reviewRunResponse
-	if err := c.postJSON(cmd.Context(), path, struct{}{}, &res); err != nil {
+	if err := c.postJSON(cmd.Context(), path, struct{}{}, nil); err != nil {
 		return err
 	}
 	_, err := fmt.Fprintf(cmd.OutOrStdout(), "cancelled review for %s\n", session)
@@ -222,8 +221,7 @@ func (c *commandContext) restartReview(cmd *cobra.Command, args []string, opts r
 		return usageError{errors.New("usage: worker session id is required (positional or --session)")}
 	}
 	path := "sessions/" + url.PathEscape(session) + "/reviews/trigger"
-	var res reviewRunResponse
-	if err := c.postJSON(cmd.Context(), path, struct{}{}, &res); err != nil {
+	if err := c.postJSON(cmd.Context(), path, struct{}{}, nil); err != nil {
 		return err
 	}
 	_, err := fmt.Fprintf(cmd.OutOrStdout(), "triggered review for %s\n", session)

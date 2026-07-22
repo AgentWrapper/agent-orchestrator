@@ -221,6 +221,14 @@ func TestReviewStopTooManyArgsIsUsageError(t *testing.T) {
 	}
 }
 
+func TestReviewRestartTooManyArgsIsUsageError(t *testing.T) {
+	setConfigEnv(t)
+	_, _, err := executeCLI(t, aliveDeps(), "review", "restart", "mer-1", "mer-2")
+	if got := ExitCode(err); got != 2 {
+		t.Fatalf("exit code = %d, want 2 (usage); err=%v", got, err)
+	}
+}
+
 func TestReviewRestartPostsTrigger(t *testing.T) {
 	cfg := setConfigEnv(t)
 	srv, capture := reviewServer(t, http.StatusOK, `{}`)
