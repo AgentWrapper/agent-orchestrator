@@ -123,9 +123,7 @@ export function CenterPane({
 						aria-current={target.kind !== "shell"}
 						className={cn(
 							"min-w-0 shrink-0 truncate rounded-sm px-1 font-mono text-control font-semibold transition-colors",
-							target.kind === "shell"
-								? "text-passive/60 hover:text-passive"
-								: "text-passive hover:text-foreground",
+							target.kind === "shell" ? "text-passive/60 hover:text-passive" : "text-passive hover:text-foreground",
 						)}
 						onClick={onSelectSessionTerminal}
 						title="Session terminal"

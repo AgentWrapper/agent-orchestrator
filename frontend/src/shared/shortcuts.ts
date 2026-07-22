@@ -11,12 +11,7 @@ export type ShortcutChord = {
 };
 
 export type AppShortcutId =
-	| "new-session"
-	| "new-shell-terminal"
-	| "keyboard-shortcuts"
-	| "toggle-sidebar"
-	| "open-project"
-	| "toggle-inspector";
+	"new-session" | "new-shell-terminal" | "keyboard-shortcuts" | "toggle-sidebar" | "open-project" | "toggle-inspector";
 
 export type ShortcutCategory = "General" | "Navigation" | "Session";
 

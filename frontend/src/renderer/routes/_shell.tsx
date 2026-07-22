@@ -353,7 +353,14 @@ function ShellLayout() {
 				}
 			},
 		});
-	}, [newShellTerminalNonce, openShellTerminal, scopedProjectId, routeParams.sessionId, navigate, setActiveShellTerminal]);
+	}, [
+		newShellTerminalNonce,
+		openShellTerminal,
+		scopedProjectId,
+		routeParams.sessionId,
+		navigate,
+		setActiveShellTerminal,
+	]);
 
 	return (
 		<ShellProvider value={{ daemonStatus, createProject, initializeProjectRepository }}>
