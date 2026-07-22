@@ -761,7 +761,9 @@ func mergeabilityFromMR(mr *restMR, ciState, reviewDecision string) ports.SCMMer
 	var blockers []string
 
 	switch ms {
-	case "can_be_merged":
+	// Mergeable (current + legacy aliases). GitLab reports these when the
+	// branch can merge cleanly; AO still layers CI/review/draft blockers on top.
+	case "mergeable", "can_be_merged":
 		mergeable := true
 		if ciState == string(domain.CIFailing) {
 			blockers = append(blockers, "ci_failing")
@@ -827,10 +829,21 @@ func mergeabilityFromMR(mr *restMR, ciState, reviewDecision string) ports.SCMMer
 			Blockers: []string{"draft"},
 		}
 
-	case "not_approved":
+	// Approval blockers (current + legacy).
+	case "not_approved", "requested_changes":
 		return ports.SCMMergeabilityObservation{
 			State:    string(domain.MergeBlocked),
 			Blockers: []string{"review_required"},
+		}
+
+	// Provider-blocked / non-mergeable states without a more specific cause.
+	case "not_open", "merge_request_blocked", "merge_time", "commits_status",
+		"jira_association_missing", "status_checks_must_pass",
+		"security_policy_pipeline_check", "security_policy_violations",
+		"locked_paths", "locked_lfs_files", "title_regex":
+		return ports.SCMMergeabilityObservation{
+			State:    string(domain.MergeBlocked),
+			Blockers: []string{"blocked_by_provider"},
 		}
 
 	default:

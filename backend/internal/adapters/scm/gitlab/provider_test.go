@@ -680,5 +680,470 @@ func TestClassifyError(t *testing.T) {
 	}
 }
 
-// Silence the unused import warnings from url.
-var _ = url.Values{}
+// TestClassifyError_RateLimitRetryAfter verifies that a 429 with a Retry-After
+// header is parsed into a RateLimitError exposing RetryAfter, so the observer
+// can apply a provider-level cooldown instead of hammering every 30s (review
+// finding #4).
+func TestClassifyError_RateLimitRetryAfter(t *testing.T) {
+	resp := &http.Response{
+		StatusCode: http.StatusTooManyRequests,
+		Status:     http.StatusText(http.StatusTooManyRequests),
+		Header: http.Header{
+			"Retry-After": []string{"120"},
+		},
+	}
+	err := classifyError(resp, nil)
+	var rle *RateLimitError
+	if !errors.As(err, &rle) {
+		t.Fatalf("classifyError(429+Retry-After) = %T, want *RateLimitError", err)
+	}
+	if !errors.Is(err, ErrRateLimited) {
+		t.Errorf("errors.Is(err, ErrRateLimited) = false, want true")
+	}
+	if rle.RetryAfter != 120*time.Second {
+		t.Errorf("RetryAfter = %v, want 2m0s", rle.RetryAfter)
+	}
+}
+
+// TestClassifyError_RateLimitResetHeader verifies that a 429 with a
+// RateLimit-Reset header (Unix epoch seconds) is parsed into a RateLimitError
+// exposing ResetAt
+func TestClassifyError_RateLimitResetHeader(t *testing.T) {
+	resetEpoch := time.Now().Add(5 * time.Minute).Unix()
+	resp := &http.Response{
+		StatusCode: http.StatusTooManyRequests,
+		Status:     http.StatusText(http.StatusTooManyRequests),
+		Header:     http.Header{},
+	}
+	// Header.Set canonicalizes the key on store, matching how Go's HTTP
+	// transport populates headers from the wire (a raw map-literal key would
+	// NOT be canonicalized and Get() would miss it).
+	resp.Header.Set("RateLimit-Reset", strconv.FormatInt(resetEpoch, 10))
+	err := classifyError(resp, nil)
+	var rle *RateLimitError
+	if !errors.As(err, &rle) {
+		t.Fatalf("classifyError(429+RateLimit-Reset) = %T, want *RateLimitError", err)
+	}
+	if rle.ResetAt.IsZero() {
+		t.Error("ResetAt = zero, want parsed from RateLimit-Reset header")
+	}
+	// Allow a small clock-skew window.
+	if diff := time.Until(rle.ResetAt); diff < 4*time.Minute || diff > 6*time.Minute {
+		t.Errorf("ResetAt is %v from now, want ~5m", diff)
+	}
+}
+
+// TestNewClient_DefaultHTTPTimeout verifies the client uses a finite HTTP
+// timeout by default so a hung GitLab API call does not block the observer
+// indefinitely
+func TestNewClient_DefaultHTTPTimeout(t *testing.T) {
+	c := NewClient(ClientOptions{Token: StaticTokenSource("tok")})
+	if c.http == nil {
+		t.Fatal("http client = nil")
+	}
+	if c.http.Timeout <= 0 {
+		t.Errorf("http client Timeout = %v, want finite (>0)", c.http.Timeout)
+	}
+}
+
+// TestFetchPullRequests_SelfManagedRESTBase verifies that a self-managed GitLab
+// host derives its REST base as https://<host>/api/v4 rather than hitting
+// gitlab.com
+func TestFetchPullRequests_SelfManagedRESTBase(t *testing.T) {
+	var seenHost string
+	var seenPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenHost = r.Host
+		seenPath = r.URL.Path
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/merge_requests/1"):
+			json.NewEncoder(w).Encode(map[string]any{
+				"iid": 1, "title": "Fix bug", "state": "opened", "draft": false,
+				"web_url":       "https://gitlab.mycompany.com/eng/team/-/merge_requests/1",
+				"source_branch": "fix-bug", "target_branch": "main", "sha": "abc123",
+				"merge_status": "mergeable", "detailed_merge_status": "mergeable",
+				"author": map[string]any{"username": "alice"},
+			})
+		case strings.HasSuffix(r.URL.Path, "/pipelines"):
+			json.NewEncoder(w).Encode([]map[string]any{})
+		case strings.HasSuffix(r.URL.Path, "/approvals"):
+			json.NewEncoder(w).Encode(map[string]any{"approved": false, "approvals_required": 0, "approved_by": []any{}})
+		default:
+			json.NewEncoder(w).Encode([]any{})
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	// Build a provider with no default client (so clientForHost always builds
+	// per-host clients) and a hostClientCfg whose HTTPClient is a test-server
+	// redirecting transport so the derived https://<host>/api/v4 URL is
+	// rewritten to the test server. This proves the REST base is derived from
+	// the host, not hardcoded to gitlab.com.
+	p, err := NewProvider(ProviderOptions{
+		Token:              StaticTokenSource("test-token"),
+		SkipTokenPreflight: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.hostClientCfg = ClientOptions{
+		Token: StaticTokenSource("test-token"),
+		HTTPClient: &http.Client{
+			Transport: &rewriteTransport{target: srv.URL},
+		},
+	}
+	// Default client also points at the test server for the empty-host fallback.
+	p.client = NewClient(ClientOptions{
+		Token:      StaticTokenSource("test-token"),
+		RESTBase:   srv.URL + "/api/v4",
+		HTTPClient: &http.Client{Transport: &rewriteTransport{target: srv.URL}},
+	})
+
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.mycompany.com", Owner: "eng/team", Name: "widget", Repo: "eng/team/widget"}
+	ref := ports.SCMPRRef{Repo: repo, Number: 1, URL: "https://gitlab.mycompany.com/eng/team/-/merge_requests/1"}
+
+	if _, err := p.FetchPullRequests(context.Background(), []ports.SCMPRRef{ref}); err != nil {
+		t.Fatalf("FetchPullRequests: %v", err)
+	}
+	if seenHost == "" {
+		t.Fatal("no request was made to the self-managed host")
+	}
+	// The request must have gone to the test server (derived REST base),
+	// NOT to gitlab.com. If it had used the hardcoded default, seenHost would
+	// be "gitlab.com" and the request would have failed with a DNS error.
+	if seenHost == "gitlab.com" {
+		t.Errorf("request went to gitlab.com (host=%q), want self-managed test server — REST base not derived from host", seenHost)
+	}
+	if !strings.Contains(seenPath, "/projects/") {
+		t.Errorf("unexpected path: %q", seenPath)
+	}
+}
+
+// rewriteTransport rewrites every request's URL scheme+host to target, so a
+// client whose REST base is https://gitlab.mycompany.com/api/v4 is transparently
+// routed to a test server. This lets self-managed host tests prove the REST
+// base is derived from the host without real DNS.
+type rewriteTransport struct {
+	target string
+}
+
+func (t *rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req2 := req.Clone(req.Context())
+	u, err := url.Parse(t.target + req2.URL.Path)
+	if err != nil {
+		return nil, err
+	}
+	u.RawQuery = req2.URL.RawQuery
+	req2.URL = u
+	return http.DefaultTransport.RoundTrip(req2)
+}
+
+// TestFetchPullRequests_PipelineJobsPagination verifies that when a pipeline
+// has more than one page of jobs, all pages are fetched by following the
+// Link: <...>; rel="next" header
+func TestFetchPullRequests_PipelineJobsPagination(t *testing.T) {
+	page := 1
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"iid": 1, "title": "Fix bug", "state": "opened", "draft": false,
+			"web_url":       "https://gitlab.com/myorg/myrepo/-/merge_requests/1",
+			"source_branch": "fix-bug", "target_branch": "main", "sha": "abc123",
+			"merge_status": "mergeable", "detailed_merge_status": "mergeable",
+			"author": map[string]any{"username": "alice"},
+		})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/pipelines", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{{"id": 100, "status": "failed", "sha": "abc123"}})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/pipelines/100/jobs", func(w http.ResponseWriter, r *http.Request) {
+		if page == 1 {
+			// Page 1: full page of pipelineJobsPageSize jobs + a Link header
+			// pointing to page 2.
+			jobs := make([]map[string]any, pipelineJobsPageSize)
+			for i := range jobs {
+				jobs[i] = map[string]any{
+					"id": 200 + i, "name": fmt.Sprintf("job-%d", i), "status": "success",
+					"web_url": fmt.Sprintf("https://gitlab.com/jobs/%d", 200+i),
+				}
+			}
+			w.Header().Set("Link", fmt.Sprintf(`<http://%s/api/v4/projects/myorg%%2Fmyrepo/pipelines/100/jobs?per_page=%d&page=2>; rel="next"`, r.Host, pipelineJobsPageSize))
+			json.NewEncoder(w).Encode(jobs)
+			page = 2
+			return
+		}
+		// Page 2: 50 more jobs (no next link → stop).
+		jobs := make([]map[string]any, 50)
+		for i := range jobs {
+			jobs[i] = map[string]any{
+				"id": 300 + i, "name": fmt.Sprintf("job-extra-%d", i), "status": "failed",
+				"web_url": fmt.Sprintf("https://gitlab.com/jobs/%d", 300+i),
+			}
+		}
+		json.NewEncoder(w).Encode(jobs)
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1/approvals", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"approved": false, "approvals_required": 0, "approved_by": []any{}})
+	})
+	_, p := testServer(t, mux)
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "myorg", Name: "myrepo", Repo: "myorg/myrepo"}
+	ref := ports.SCMPRRef{Repo: repo, Number: 1, URL: "https://gitlab.com/myorg/myrepo/-/merge_requests/1"}
+
+	obs, err := p.FetchPullRequests(context.Background(), []ports.SCMPRRef{ref})
+	if err != nil {
+		t.Fatal(err)
+	}
+	totalWant := pipelineJobsPageSize + 50
+	if len(obs[0].CI.Checks) != totalWant {
+		t.Errorf("CI.Checks = %d, want %d (pagination must follow Link rel=next)", len(obs[0].CI.Checks), totalWant)
+	}
+	if len(obs[0].CI.FailedChecks) != 50 {
+		t.Errorf("CI.FailedChecks = %d, want 50 (all from page 2)", len(obs[0].CI.FailedChecks))
+	}
+}
+
+// TestFetchReviewThreads_DiscussionsPagination verifies that when an MR has
+// more than one page of discussions, all pages are fetched by following the
+// Link header
+func TestFetchReviewThreads_DiscussionsPagination(t *testing.T) {
+	page := 1
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1/discussions", func(w http.ResponseWriter, r *http.Request) {
+		if page == 1 {
+			discs := make([]map[string]any, reviewDiscussionPageSize)
+			for i := range discs {
+				discs[i] = map[string]any{
+					"id":              fmt.Sprintf("disc-%d", i),
+					"individual_note": false,
+					"notes": []map[string]any{{
+						"id": 100 + i, "body": "comment", "system": false,
+						"resolvable": true, "resolved": true,
+						"author": map[string]any{"username": "reviewer1"},
+					}},
+				}
+			}
+			w.Header().Set("Link", fmt.Sprintf(`<http://%s/api/v4/projects/myorg%%2Fmyrepo/merge_requests/1/discussions?per_page=%d&page=2>; rel="next"`, r.Host, reviewDiscussionPageSize))
+			json.NewEncoder(w).Encode(discs)
+			page = 2
+			return
+		}
+		// Page 2: 30 more discussions, no next link.
+		discs := make([]map[string]any, 30)
+		for i := range discs {
+			discs[i] = map[string]any{
+				"id":              fmt.Sprintf("disc-extra-%d", i),
+				"individual_note": false,
+				"notes": []map[string]any{{
+					"id": 200 + i, "body": "extra comment", "system": false,
+					"resolvable": true, "resolved": false,
+					"author": map[string]any{"username": "reviewer2"},
+				}},
+			}
+		}
+		json.NewEncoder(w).Encode(discs)
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1/approvals", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"approved": false, "approvals_required": 0, "approved_by": []any{}})
+	})
+	_, p := testServer(t, mux)
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "myorg", Name: "myrepo", Repo: "myorg/myrepo"}
+	ref := ports.SCMPRRef{Repo: repo, Number: 1, URL: "https://gitlab.com/myorg/myrepo/-/merge_requests/1"}
+
+	review, err := p.FetchReviewThreads(context.Background(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	totalWant := reviewDiscussionPageSize + 30
+	if len(review.Threads) != totalWant {
+		t.Errorf("Threads = %d, want %d (pagination must follow Link rel=next)", len(review.Threads), totalWant)
+	}
+	// Pagination completed naturally (no next link on page 2) — Partial must be false.
+	if review.Partial {
+		t.Error("Partial = true, want false (all discussions fetched, no truncation)")
+	}
+}
+
+// TestFetchReviewThreads_DiscussionsTruncated verifies that Partial is set to
+// true only when the 10-page pagination cap is hit (actual truncation), not
+// whenever a full page is returned. Previously Partial was set based on
+// len(discussions) >= pageSize, which was true even for a single full page.
+func TestFetchReviewThreads_DiscussionsTruncated(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1/discussions", func(w http.ResponseWriter, r *http.Request) {
+		// Always return a full page and always include a next link, simulating
+		// a repo with more than 10 pages of discussions (1000+).
+		discs := make([]map[string]any, reviewDiscussionPageSize)
+		for i := range discs {
+			discs[i] = map[string]any{
+				"id":              fmt.Sprintf("disc-%s-%d", r.URL.Query().Get("page"), i),
+				"individual_note": false,
+				"notes": []map[string]any{{
+					"id": 100 + i, "body": "comment", "system": false,
+					"resolvable": true, "resolved": true,
+					"author": map[string]any{"username": "reviewer1"},
+				}},
+			}
+		}
+		w.Header().Set("Link", fmt.Sprintf(`<http://%s/api/v4/projects/myorg%%2Fmyrepo/merge_requests/1/discussions?per_page=%d&page=next>; rel="next"`, r.Host, reviewDiscussionPageSize))
+		json.NewEncoder(w).Encode(discs)
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1/approvals", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"approved": false, "approvals_required": 0, "approved_by": []any{}})
+	})
+	_, p := testServer(t, mux)
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "myorg", Name: "myrepo", Repo: "myorg/myrepo"}
+	ref := ports.SCMPRRef{Repo: repo, Number: 1, URL: "https://gitlab.com/myorg/myrepo/-/merge_requests/1"}
+
+	review, err := p.FetchReviewThreads(context.Background(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 10 pages × 100 = 1000 threads, and the cap was hit so Partial must be true.
+	if len(review.Threads) != maxPaginationPages*reviewDiscussionPageSize {
+		t.Errorf("Threads = %d, want %d (10-page cap × page size)", len(review.Threads), maxPaginationPages*reviewDiscussionPageSize)
+	}
+	if !review.Partial {
+		t.Error("Partial = false, want true (pagination cap hit — response is truncated)")
+	}
+}
+
+// TestFetchPullRequests_TransientFailureReturnsError verifies that a transient
+// failure on the MR detail endpoint is propagated as an error rather than being
+// swallowed into a Fetched=false placeholder observation. The observer must
+// reject failed observations to preserve last durable state
+func TestFetchPullRequests_TransientFailureReturnsError(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, `{"message":"500 Internal Server Error"}`)
+	})
+	_, p := testServer(t, mux)
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "myorg", Name: "myrepo", Repo: "myorg/myrepo"}
+	ref := ports.SCMPRRef{Repo: repo, Number: 1, URL: "https://gitlab.com/myorg/myrepo/-/merge_requests/1"}
+
+	obs, err := p.FetchPullRequests(context.Background(), []ports.SCMPRRef{ref})
+	if err == nil {
+		t.Fatal("FetchPullRequests: error = nil, want non-nil error for transient MR detail failure")
+	}
+	if len(obs) != 1 {
+		t.Fatalf("got %d observations, want 1", len(obs))
+	}
+	if obs[0].Fetched {
+		t.Error("expected Fetched=false on failed observation so observer can reject it")
+	}
+}
+
+// TestFetchPullRequests_PipelineFailureReturnsError verifies that a transient
+// failure on the pipelines endpoint is propagated as an error rather than
+// silently degrading CI to "unknown" while Fetched stays true
+func TestFetchPullRequests_PipelineFailureReturnsError(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"iid": 1, "title": "Fix bug", "state": "opened", "draft": false,
+			"web_url":       "https://gitlab.com/myorg/myrepo/-/merge_requests/1",
+			"source_branch": "fix-bug", "target_branch": "main", "sha": "abc123",
+			"merge_status": "can_be_merged", "author": map[string]any{"username": "alice"},
+		})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/pipelines", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		fmt.Fprint(w, `{"message":"502 Bad Gateway"}`)
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1/approvals", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"approved": false, "approvals_required": 0, "approved_by": []any{}})
+	})
+	_, p := testServer(t, mux)
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "myorg", Name: "myrepo", Repo: "myorg/myrepo"}
+	ref := ports.SCMPRRef{Repo: repo, Number: 1, URL: "https://gitlab.com/myorg/myrepo/-/merge_requests/1"}
+
+	if _, err := p.FetchPullRequests(context.Background(), []ports.SCMPRRef{ref}); err == nil {
+		t.Fatal("FetchPullRequests: error = nil, want non-nil error for transient pipeline failure")
+	}
+}
+
+// TestFetchPullRequests_ApprovalFailureReturnsError verifies that a transient
+// failure on the approvals endpoint is propagated as an error rather than
+// silently degrading review to "none" while Fetched stays true
+func TestFetchPullRequests_ApprovalFailureReturnsError(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"iid": 1, "title": "Fix bug", "state": "opened", "draft": false,
+			"web_url":       "https://gitlab.com/myorg/myrepo/-/merge_requests/1",
+			"source_branch": "fix-bug", "target_branch": "main", "sha": "abc123",
+			"merge_status": "can_be_merged", "author": map[string]any{"username": "alice"},
+		})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/pipelines", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{{"id": 100, "status": "success", "sha": "abc123"}})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/pipelines/100/jobs", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{{"id": 200, "name": "build", "status": "success", "web_url": "https://gitlab.com/jobs/200"}})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1/approvals", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		fmt.Fprint(w, `{"message":"503 Service Unavailable"}`)
+	})
+	_, p := testServer(t, mux)
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "myorg", Name: "myrepo", Repo: "myorg/myrepo"}
+	ref := ports.SCMPRRef{Repo: repo, Number: 1, URL: "https://gitlab.com/myorg/myrepo/-/merge_requests/1"}
+
+	if _, err := p.FetchPullRequests(context.Background(), []ports.SCMPRRef{ref}); err == nil {
+		t.Fatal("FetchPullRequests: error = nil, want non-nil error for transient approvals failure")
+	}
+}
+
+// TestListPRsByRepo_UpdatedAfterAndStateAll verifies that ListPRsByRepo
+// sends the updated_after (RFC3339) and state=all query parameters when an
+// updatedAfter cursor is supplied
+func TestListPRsByRepo_UpdatedAfterAndStateAll(t *testing.T) {
+	var seenState, seenUpdatedAfter string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests", func(w http.ResponseWriter, r *http.Request) {
+		seenState = r.URL.Query().Get("state")
+		seenUpdatedAfter = r.URL.Query().Get("updated_after")
+		json.NewEncoder(w).Encode([]map[string]any{})
+	})
+	_, p := testServer(t, mux)
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "myorg", Name: "myrepo", Repo: "myorg/myrepo"}
+
+	cursor := time.Date(2026, 1, 15, 10, 30, 0, 0, time.UTC)
+	if _, err := p.ListPRsByRepo(context.Background(), repo, cursor); err != nil {
+		t.Fatal(err)
+	}
+	if seenState != "all" {
+		t.Errorf("state query param = %q, want %q (state=all for closed/merged MR discovery)", seenState, "all")
+	}
+	if seenUpdatedAfter == "" {
+		t.Error("updated_after query param is empty, want RFC3339 timestamp")
+	}
+	// Verify it parses as a valid RFC3339 timestamp.
+	parsed, err := time.Parse(time.RFC3339, seenUpdatedAfter)
+	if err != nil {
+		t.Fatalf("updated_after %q is not valid RFC3339: %v", seenUpdatedAfter, err)
+	}
+	if !parsed.Equal(cursor) {
+		t.Errorf("updated_after = %v, want %v", parsed, cursor)
+	}
+}
+
+// TestListPRsByRepo_FirstPollFullListing verifies that a zero updatedAfter
+// (first poll) omits the updated_after param, requesting a full listing
+func TestListPRsByRepo_FirstPollFullListing(t *testing.T) {
+	var seenUpdatedAfter string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests", func(w http.ResponseWriter, r *http.Request) {
+		seenUpdatedAfter = r.URL.Query().Get("updated_after")
+		json.NewEncoder(w).Encode([]map[string]any{})
+	})
+	_, p := testServer(t, mux)
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "myorg", Name: "myrepo", Repo: "myorg/myrepo"}
+
+	if _, err := p.ListPRsByRepo(context.Background(), repo, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	if seenUpdatedAfter != "" {
+		t.Errorf("updated_after = %q, want empty (first poll = full listing)", seenUpdatedAfter)
+	}
+}
