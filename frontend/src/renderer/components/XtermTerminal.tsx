@@ -52,6 +52,13 @@ export type XtermTerminalProps = {
 	 * on every platform (see the wheel handler), fixing it under a mux too.
 	 */
 	paneScrollsByKeyboard?: boolean;
+	/**
+	 * Shift+Enter emits the meta-return (ESC+CR) that readline/Ink agent TUIs read
+	 * as "insert a newline". Only meaningful for agent panes; a plain login shell
+	 * has no such affordance, so standalone shell terminals leave this off and
+	 * Shift+Enter falls through to xterm's default CR (runs the command).
+	 */
+	shiftEnterInsertsNewline?: boolean;
 	/** Terminal construction failed; the owner decides how to surface it. */
 	onError?: (error: unknown) => void;
 	/** Called after a terminal hyperlink is opened in the OS browser. */
@@ -433,20 +440,22 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			// xterm's own default handling for that event type.
 			if (event.type === "keyup" || event.type === "keypress") return true;
 			// Shift+Enter → newline without submitting, matching Claude Code / Codex.
-			// A terminal normally sends the same CR for Enter and Shift+Enter, so the
-			// agent can't distinguish them; emit the meta-return (ESC+CR) that
-			// readline/Ink-based TUIs interpret as "insert a newline" rather than
-			// "submit". Plain Enter still falls through to xterm's default CR.
+			// A terminal sends the same CR for Enter and Shift+Enter, so an agent TUI
+			// can't tell them apart; emit the meta-return (ESC+CR) that readline/Ink
+			// TUIs read as "insert a newline" rather than "submit".
 			//
-			// SCOPE: this meta-return is applied to every pane intentionally for now.
-			// It is correct for agent TUIs but untested and unintended for plain login
-			// shells, where ESC+CR is not a "newline" affordance. The correct fix is to
-			// scope it by pane kind — TerminalPane already branches on
-			// `terminalTarget?.kind === "shell"` at the XtermTerminal call site — once
-			// this branch is rebased onto main, which brings that discriminator (and
-			// ShellTerminalsView) that does not yet exist here. Until then the behavior
-			// is left unchanged and the emitted bytes are identical for all panes.
-			if (event.key === "Enter" && event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
+			// Scoped to agent panes via shiftEnterInsertsNewline: a plain login shell
+			// (the standalone shell terminals) has no meta-return affordance — ESC+CR
+			// is not a newline there — so shells leave this off and Shift+Enter falls
+			// through to xterm's default CR (runs the command), as users expect.
+			if (
+				callbacksRef.current.shiftEnterInsertsNewline &&
+				event.key === "Enter" &&
+				event.shiftKey &&
+				!event.ctrlKey &&
+				!event.altKey &&
+				!event.metaKey
+			) {
 				consumeTerminalShortcut(event);
 				emitUserInput("\x1b\r", "keyboard");
 				return false;

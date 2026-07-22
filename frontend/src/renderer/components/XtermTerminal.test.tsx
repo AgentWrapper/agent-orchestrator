@@ -555,9 +555,11 @@ describe("XtermTerminal", () => {
 		expect(onInput).toHaveBeenCalledTimes(1);
 	});
 
-	it("sends the meta-return escape sequence for Shift+Enter and consumes the event", () => {
+	it("sends the meta-return escape sequence for Shift+Enter on an agent pane and consumes the event", () => {
 		const onInput = vi.fn();
-		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+		render(
+			<XtermTerminal theme="dark" shiftEnterInsertsNewline onReady={(terminal) => terminal.onUserInput(onInput)} />,
+		);
 
 		const event = {
 			type: "keydown",
@@ -578,9 +580,34 @@ describe("XtermTerminal", () => {
 		expect(onInput).toHaveBeenCalledWith("\x1b\r", "keyboard");
 	});
 
+	it("leaves Shift+Enter as normal terminal input on a standalone shell (no meta-return)", () => {
+		const onInput = vi.fn();
+		// No shiftEnterInsertsNewline: a plain login shell has no meta-return
+		// affordance, so Shift+Enter must fall through to xterm's default CR.
+		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+
+		const event = {
+			type: "keydown",
+			key: "Enter",
+			metaKey: false,
+			ctrlKey: false,
+			shiftKey: true,
+			altKey: false,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as KeyboardEvent;
+		const allowed = state.lastTerminal!.keyHandler!(event);
+
+		expect(allowed).toBe(true);
+		expect(event.preventDefault).not.toHaveBeenCalled();
+		expect(onInput).not.toHaveBeenCalled();
+	});
+
 	it("does not re-send the meta-return sequence on the keyup that follows Shift+Enter", () => {
 		const onInput = vi.fn();
-		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+		render(
+			<XtermTerminal theme="dark" shiftEnterInsertsNewline onReady={(terminal) => terminal.onUserInput(onInput)} />,
+		);
 
 		const keyDown = {
 			type: "keydown",

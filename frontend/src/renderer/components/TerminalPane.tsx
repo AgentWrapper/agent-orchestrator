@@ -355,6 +355,9 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 					onLinkOpen={handleLinkOpen}
 					onReady={handleReady}
 					paneScrollsByKeyboard={providerScrollsByKeyboard(provider)}
+					// Agent/reviewer panes run TUIs that read ESC+CR as a newline; a
+					// standalone shell is a plain login shell with no such affordance.
+					shiftEnterInsertsNewline={terminalTarget?.kind !== "shell"}
 					theme={theme}
 				/>
 				{showEmptyState && (
