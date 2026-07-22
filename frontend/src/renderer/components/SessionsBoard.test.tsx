@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
@@ -91,7 +91,6 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		fireEvent.click(screen.getByRole("button", { name: /idle sessions/i }));
 		const idleCard = screen.getByText("brand-font-pipeline").closest('[role="button"]') as HTMLElement;
 		expect(within(idleCard).getByText("Idle")).toBeInTheDocument();
 	});
@@ -147,8 +146,6 @@ describe("SessionsBoard", () => {
 		});
 
 		renderBoard("p1");
-		fireEvent.click(screen.getByRole("button", { name: /idle sessions/i }));
-
 		const idleCard = screen.getByText("idle-card-task").closest('[role="button"]') as HTMLElement;
 		const noSignalCard = screen.getByText("no-signal-card-task").closest('[role="button"]') as HTMLElement;
 		const draftCard = screen.getByText("draft-card-task").closest('[role="button"]') as HTMLElement;
@@ -187,141 +184,137 @@ describe("SessionsBoard", () => {
 		expect(within(needsYouColumn).getByText("Exited").closest("span")).toHaveClass("text-status-exited");
 	});
 
-	it("collapses only backend-derived idle sessions into the Working-column stack", () => {
+	it("renders an idle-first work lane with a separate lower working section", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
-				{
-					id: "p1",
-					name: "radic",
-					path: "/tmp/radic",
-					sessions: [
-						{
-							id: "s0",
-							workspaceId: "p1",
-							workspaceName: "radic",
-							title: "active-task",
-							provider: "claude-code",
-							branch: "ao/radic-4",
-							status: "working",
-							activity: { state: "active", lastActivityAt: "2026-01-01T00:00:00Z" },
-							updatedAt: "2026-01-01T00:00:00Z",
-							prs: [],
-						},
-						{
-							id: "s1",
-							workspaceId: "p1",
-							workspaceName: "radic",
-							title: "idle-no-pr-task",
-							provider: "claude-code",
-							branch: "ao/radic-5",
-							status: "idle",
-							activity: { state: "idle", lastActivityAt: "2026-01-01T00:00:00Z" },
-							updatedAt: "2026-01-01T00:00:00Z",
-							prs: [],
-						},
-						{
-							id: "s2",
-							workspaceId: "p1",
-							workspaceName: "radic",
-							title: "idle-with-pr-task",
-							provider: "claude-code",
-							branch: "ao/radic-6",
-							status: "pr_open",
-							activity: { state: "idle", lastActivityAt: "2026-01-01T00:00:00Z" },
-							updatedAt: "2026-01-01T00:00:00Z",
-							prs: [{ number: 7, url: "https://github.com/acme/radic/pull/7", state: "open" }],
-						},
-					],
-				},
+				workspaceWithSessions([
+					boardSession({
+						id: "s-active",
+						title: "active-task",
+						status: "working",
+						activity: { state: "active", lastActivityAt: "2026-01-01T00:00:00Z" },
+					}),
+					boardSession({
+						id: "s-idle-1",
+						title: "idle-no-pr-task",
+						status: "idle",
+						activity: { state: "idle", lastActivityAt: "2026-01-01T00:00:00Z" },
+					}),
+					boardSession({
+						id: "s-idle-2",
+						title: "second-idle-task",
+						status: "idle",
+						activity: { state: "idle", lastActivityAt: "2026-01-01T00:00:00Z" },
+					}),
+					boardSession({
+						id: "s-review",
+						title: "idle-with-pr-task",
+						status: "pr_open",
+						activity: { state: "idle", lastActivityAt: "2026-01-01T00:00:00Z" },
+						prs: [
+							{
+								number: 7,
+								url: "https://github.com/acme/radic/pull/7",
+								state: "open",
+								ci: "unknown",
+								review: "none",
+								mergeability: "unknown",
+								reviewComments: false,
+								updatedAt: "2026-01-01T00:00:00Z",
+							},
+						],
+					}),
+				]),
 			],
 			isError: false,
 		});
 
 		renderBoard("p1");
 
-		expect(screen.getByText("active-task")).toBeInTheDocument();
-		expect(screen.queryByText("idle-no-pr-task")).not.toBeInTheDocument();
-		expect(screen.getByText("idle-with-pr-task")).toBeInTheDocument();
+		const workLane = screen.getByRole("region", { name: "Idle / Working sessions" });
+		const idleRegion = within(workLane).getByRole("region", { name: "Idle sessions" });
+		const workingRegion = within(workLane).getByRole("region", { name: "Working sessions" });
+		const reviewRegion = screen.getByRole("region", { name: "In review sessions" });
 
-		const idleStackToggle = screen.getByRole("button", { name: /idle sessions/i });
-		expect(idleStackToggle).toHaveAttribute("aria-expanded", "false");
-		expect(within(idleStackToggle).getByText("1")).toBeInTheDocument();
+		expect(within(workLane).getByText("Idle / Working")).toBeInTheDocument();
+		expect(within(workLane).getByLabelText("2 idle sessions")).toHaveTextContent("2");
+		expect(within(workLane).getByLabelText("1 working session")).toHaveTextContent("1");
+		expect(screen.queryByRole("button", { name: /idle sessions/i })).not.toBeInTheDocument();
+		expect(idleRegion).toHaveClass("flex-[3]");
+		expect(workingRegion).toHaveClass("flex-[2]", "rounded-t-(--radius-panel)", "border-t");
+		expect(within(idleRegion).getByText("idle-no-pr-task")).toBeInTheDocument();
+		expect(within(idleRegion).getByText("second-idle-task")).toBeInTheDocument();
+		expect(within(workingRegion).getByText("active-task")).toBeInTheDocument();
+		expect(within(reviewRegion).getByText("idle-with-pr-task")).toBeInTheDocument();
+		expect(within(workLane).queryByText("idle-with-pr-task")).not.toBeInTheDocument();
 
-		fireEvent.click(idleStackToggle);
-
-		expect(screen.getByRole("button", { name: /idle sessions/i })).toHaveAttribute("aria-expanded", "true");
-		expect(screen.getByText("active-task")).toBeInTheDocument();
 		const idleCard = screen.getByText("idle-no-pr-task").closest('[role="button"]') as HTMLElement;
-		expect(screen.getByText("idle-with-pr-task")).toBeInTheDocument();
 		const badge = within(idleCard).getByText("Idle").closest("span");
 		expect(badge).toHaveClass("text-status-idle");
 		expect(badge).not.toHaveClass("text-status-working");
 	});
 
-	it("toggles idle contents without hiding active cards or remounting the toggle", () => {
+	it("lets idle sessions fill the lane when no working sessions exist", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
-				{
-					id: "p1",
-					name: "radic",
-					path: "/tmp/radic",
-					sessions: [
-						{
-							id: "s0",
-							workspaceId: "p1",
-							workspaceName: "radic",
-							title: "active-task",
-							provider: "claude-code",
-							branch: "ao/radic-4",
-							status: "working",
-							activity: { state: "active", lastActivityAt: "2026-01-01T00:00:00Z" },
-							updatedAt: "2026-01-01T00:00:00Z",
-							prs: [],
-						},
-						{
-							id: "s1",
-							workspaceId: "p1",
-							workspaceName: "radic",
-							title: "idle-task",
-							provider: "claude-code",
-							branch: "ao/radic-5",
-							status: "idle",
-							activity: { state: "idle", lastActivityAt: "2026-01-01T00:00:00Z" },
-							updatedAt: "2026-01-01T00:00:00Z",
-							prs: [],
-						},
-					],
-				},
+				workspaceWithSessions([
+					boardSession({
+						id: "s-idle",
+						title: "idle-task",
+						status: "idle",
+						activity: { state: "idle", lastActivityAt: "2026-01-01T00:00:00Z" },
+					}),
+				]),
 			],
 			isError: false,
 		});
 
 		renderBoard("p1");
 
-		expect(screen.getByText("active-task")).toBeInTheDocument();
-		expect(screen.queryByText("idle-task")).not.toBeInTheDocument();
-
-		const idleToggle = screen.getByRole("button", { name: /idle sessions/i });
-		expect(idleToggle).toHaveAttribute("aria-expanded", "false");
-		expect(idleToggle.parentElement).toHaveClass("transition-[opacity,transform]");
-		expect(idleToggle.parentElement).not.toHaveClass("transition-[flex-grow,opacity,transform]");
-		expect(idleToggle.parentElement).toHaveClass("motion-reduce:transition-none");
-		expect(idleToggle.querySelector("svg")).toHaveClass("motion-reduce:transition-none");
-		fireEvent.click(idleToggle);
-
-		expect(screen.getByRole("button", { name: /idle sessions/i })).toBe(idleToggle);
-		expect(idleToggle).toHaveAttribute("aria-expanded", "true");
-		expect(screen.getByText("active-task")).toBeInTheDocument();
-		expect(screen.getByText("idle-task")).toBeInTheDocument();
-
-		fireEvent.click(idleToggle);
-
-		expect(screen.getByText("active-task")).toBeInTheDocument();
-		expect(screen.queryByText("idle-task")).not.toBeInTheDocument();
-		expect(idleToggle).toHaveAttribute("aria-expanded", "false");
+		const workLane = screen.getByRole("region", { name: "Idle / Working sessions" });
+		const idleRegion = within(workLane).getByRole("region", { name: "Idle sessions" });
+		expect(within(workLane).getByLabelText("1 idle session")).toHaveTextContent("1");
+		expect(within(workLane).getByLabelText("0 working sessions")).toHaveTextContent("0");
+		expect(idleRegion).toHaveClass("flex-1");
+		expect(within(idleRegion).getByText("idle-task")).toBeInTheDocument();
+		expect(within(workLane).queryByRole("region", { name: "Working sessions" })).not.toBeInTheDocument();
 	});
 
-	it("resets the idle stack when navigating between project boards", () => {
+	it("lets working sessions fill the lane when no idle sessions exist", () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					boardSession({
+						id: "s-working-1",
+						title: "first-working-task",
+						status: "working",
+						activity: { state: "active", lastActivityAt: "2026-01-01T00:00:00Z" },
+					}),
+					boardSession({
+						id: "s-working-2",
+						title: "second-working-task",
+						status: "working",
+						activity: { state: "active", lastActivityAt: "2026-01-01T00:00:00Z" },
+					}),
+				]),
+			],
+			isError: false,
+		});
+
+		renderBoard("p1");
+
+		const workLane = screen.getByRole("region", { name: "Idle / Working sessions" });
+		const workingRegion = within(workLane).getByRole("region", { name: "Working sessions" });
+		expect(within(workLane).getByLabelText("0 idle sessions")).toHaveTextContent("0");
+		expect(within(workLane).getByLabelText("2 working sessions")).toHaveTextContent("2");
+		expect(within(workLane).queryByRole("region", { name: "Idle sessions" })).not.toBeInTheDocument();
+		expect(workingRegion).toHaveClass("flex-1");
+		expect(workingRegion).not.toHaveClass("flex-[2]", "border-t");
+		expect(within(workingRegion).getByText("first-working-task")).toBeInTheDocument();
+		expect(within(workingRegion).getByText("second-working-task")).toBeInTheDocument();
+	});
+
+	it("keeps idle and working sections visible when navigating between project boards", () => {
 		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 		workspaceQueryMock.mockReturnValue({
 			data: [
@@ -392,8 +385,9 @@ describe("SessionsBoard", () => {
 		});
 		const view = renderBoardWithClient(queryClient, "p1");
 
-		fireEvent.click(screen.getByRole("button", { name: /idle sessions/i }));
-		expect(screen.getByText("p1 idle")).toBeInTheDocument();
+		const p1Lane = screen.getByRole("region", { name: "Idle / Working sessions" });
+		expect(within(p1Lane).getByRole("region", { name: "Idle sessions" })).toHaveTextContent("p1 idle");
+		expect(within(p1Lane).getByRole("region", { name: "Working sessions" })).toHaveTextContent("p1 active");
 
 		view.rerender(
 			<QueryClientProvider client={queryClient}>
@@ -401,9 +395,10 @@ describe("SessionsBoard", () => {
 			</QueryClientProvider>,
 		);
 
-		expect(screen.getByText("p2 active")).toBeInTheDocument();
-		expect(screen.queryByText("p2 idle")).not.toBeInTheDocument();
-		expect(screen.getByRole("button", { name: /idle sessions/i })).toHaveAttribute("aria-expanded", "false");
+		const p2Lane = screen.getByRole("region", { name: "Idle / Working sessions" });
+		expect(screen.queryByText("p1 idle")).not.toBeInTheDocument();
+		expect(within(p2Lane).getByRole("region", { name: "Idle sessions" })).toHaveTextContent("p2 idle");
+		expect(within(p2Lane).getByRole("region", { name: "Working sessions" })).toHaveTextContent("p2 active");
 	});
 
 	it("shows a restore action for terminated sessions in expanded Done / Terminated", async () => {
@@ -699,6 +694,20 @@ function workspaceWithSessions(sessions: WorkspaceSession[]): WorkspaceSummary {
 		name: "radic",
 		path: "/tmp/radic",
 		sessions,
+	};
+}
+
+function boardSession(
+	overrides: Pick<WorkspaceSession, "id" | "title" | "status"> & Partial<WorkspaceSession>,
+): WorkspaceSession {
+	return {
+		workspaceId: "p1",
+		workspaceName: "radic",
+		provider: "claude-code",
+		branch: `ao/${overrides.id}`,
+		updatedAt: "2026-01-01T00:00:00Z",
+		prs: [],
+		...overrides,
 	};
 }
 

@@ -223,6 +223,6 @@ export function getSessionTimelinePillView(status: SessionTimelinePillStatus): S
 	return sessionTimelinePillViews[status];
 }
 
-export function isSessionInIdleStack(session: Pick<WorkspaceSession, "status">): boolean {
+export function isSessionIdle(session: Pick<WorkspaceSession, "status">): boolean {
 	return session.status === "idle";
 }

@@ -7,7 +7,7 @@ import {
 	getSessionStatusView,
 	getSessionTimelinePillView,
 	isAgentActivityWorking,
-	isSessionInIdleStack,
+	isSessionIdle,
 } from "./session-presentation";
 import type { WorkspaceSession } from "../types/workspace";
 
@@ -127,10 +127,10 @@ describe("session presentation", () => {
 		});
 	});
 
-	it("separates idle sessions inside the Working board column", () => {
-		expect(isSessionInIdleStack(sessionWith({ status: "idle" }))).toBe(true);
+	it("classifies only backend-derived idle sessions for the work lane", () => {
+		expect(isSessionIdle(sessionWith({ status: "idle" }))).toBe(true);
 		expect(
-			isSessionInIdleStack(
+			isSessionIdle(
 				sessionWith({
 					status: "idle",
 					activity: { state: "active", lastActivityAt: "" },
@@ -139,7 +139,7 @@ describe("session presentation", () => {
 			),
 		).toBe(true);
 		expect(
-			isSessionInIdleStack(
+			isSessionIdle(
 				sessionWith({
 					status: "working",
 					activity: { state: "idle", lastActivityAt: "" },
@@ -148,14 +148,14 @@ describe("session presentation", () => {
 			),
 		).toBe(false);
 		expect(
-			isSessionInIdleStack(
+			isSessionIdle(
 				sessionWith({
 					status: "working",
 					activity: { state: "active", lastActivityAt: "" },
 				}),
 			),
 		).toBe(false);
-		expect(isSessionInIdleStack(sessionWith({ status: "working" }))).toBe(false);
+		expect(isSessionIdle(sessionWith({ status: "working" }))).toBe(false);
 	});
 
 	it.each([
