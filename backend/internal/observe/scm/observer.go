@@ -860,6 +860,13 @@ func (o *Observer) selectRefreshCandidates(ctx context.Context, subjects map[str
 			}
 		}
 		if !candidate {
+			// Force an unconditional fetch once the snapshot is older than
+			// DefaultPRMaxAge. Trade-off: GitHub does not bill 304 responses, so
+			// this forgoes the conditional-request savings the ETag path bought.
+			// At the current 30s tick / 5m max-age that is ~12 unconditional
+			// fetches/hour per tracked open PR, and it scales linearly with the
+			// number of tracked PRs. It also fires for every stale PR in the same
+			// tick, so watch secondary-rate-limit burstiness as fleets grow.
 			last := o.Cache.LastPRFetchAt[key]
 			if last.IsZero() || now.Sub(last) > DefaultPRMaxAge {
 				candidate = true

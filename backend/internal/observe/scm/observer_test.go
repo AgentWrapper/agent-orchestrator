@@ -1449,6 +1449,23 @@ func TestPoll_StaleOpenPRForcedRefreshAfterMaxAge(t *testing.T) {
 	if len(provider.fetchBatches) != 0 {
 		t.Fatalf("expected no fetch batch within max-age window, got %d: %#v", len(provider.fetchBatches), provider.fetchBatches)
 	}
+
+	// Backdate the last fetch beyond DefaultPRMaxAge. This is the behavior the PR
+	// actually adds: the max-age guard (not the never-fetched branch) forces a
+	// refetch. The clock is pinned, so parts 1 and 2 only cover last.IsZero() and
+	// a zero elapsed time; without this, deleting the `> DefaultPRMaxAge` compare
+	// would still pass.
+	store.writes = nil
+	provider.fetchBatches = nil
+	store.prs["p-1"] = []domain.PullRequest{local} // restore open PR
+	obs.Cache.LastPRFetchAt[prKey(testRepo, 1)] = now.Add(-(DefaultPRMaxAge + time.Minute))
+
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(provider.fetchBatches) != 1 {
+		t.Fatalf("expected forced refresh once older than DefaultPRMaxAge, got %d: %#v", len(provider.fetchBatches), provider.fetchBatches)
+	}
 }
 
 // TestDiscoverSubjects_NonGitPathDoesNotBackfill confirms the backfill is
