@@ -3,8 +3,9 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getMock, putMock, postMock } = vi.hoisted(() => ({
+const { getMock, patchMock, putMock, postMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
+	patchMock: vi.fn(),
 	putMock: vi.fn(),
 	postMock: vi.fn(),
 }));
@@ -12,6 +13,7 @@ const { getMock, putMock, postMock } = vi.hoisted(() => ({
 vi.mock("../lib/api-client", () => ({
 	apiClient: {
 		GET: getMock,
+		PATCH: patchMock,
 		PUT: putMock,
 		POST: postMock,
 	},
@@ -92,8 +94,10 @@ function mockProject(project: Record<string, unknown>) {
 
 beforeEach(() => {
 	getMock.mockReset();
+	patchMock.mockReset();
 	putMock.mockReset();
 	postMock.mockReset();
+	patchMock.mockResolvedValue({ data: { project: {} }, error: undefined });
 	putMock.mockResolvedValue({ data: { project: {} }, error: undefined });
 	postMock.mockResolvedValue({
 		data: { orchestrator: { id: "proj-1-orch-2" } },
@@ -103,6 +107,35 @@ beforeEach(() => {
 });
 
 describe("ProjectSettingsForm", () => {
+	it("renames the project display name without changing its stable ID", async () => {
+		mockProject({
+			id: "tg_content_factory_5863f66be3",
+			name: "tg_content_factory_5863f66be3",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings("tg_content_factory_5863f66be3");
+
+		const projectName = await screen.findByLabelText("Project name");
+		await userEvent.clear(projectName);
+		await userEvent.type(projectName, "TG Content Factory");
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(patchMock).toHaveBeenCalledTimes(1));
+		expect(patchMock).toHaveBeenCalledWith("/api/v1/projects/{id}", {
+			params: { path: { id: "tg_content_factory_5863f66be3" } },
+			body: { displayName: "TG Content Factory" },
+		});
+		expect(screen.getByText("tg_content_factory_5863f66be3")).toBeInTheDocument();
+	});
+
 	it("loads the current project settings and saves the exposed fields without dropping hidden config", async () => {
 		mockProject({
 			id: "proj-1",

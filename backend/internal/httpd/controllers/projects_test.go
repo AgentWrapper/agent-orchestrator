@@ -197,6 +197,37 @@ func TestProjectsAPI_ListAddGet(t *testing.T) {
 
 }
 
+func TestProjectsAPI_Rename(t *testing.T) {
+	srv := newTestServer(t)
+	repo := gitRepo(t, "legacy-project")
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/projects", `{"path":`+quote(repo)+`,"projectId":"legacy-project"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("seed create = %d, want 201; body=%s", status, body)
+	}
+
+	body, status, _ = doRequest(t, srv, "PATCH", "/api/v1/projects/legacy-project", `{"displayName":"Human-friendly project"}`)
+	if status != http.StatusOK {
+		t.Fatalf("PATCH rename = %d, want 200; body=%s", status, body)
+	}
+	var renamed struct {
+		Project projectBody `json:"project"`
+	}
+	mustJSON(t, body, &renamed)
+	if renamed.Project.ID != "legacy-project" || renamed.Project.Name != "Human-friendly project" {
+		t.Fatalf("rename response = %#v", renamed.Project)
+	}
+
+	body, status, _ = doRequest(t, srv, "PATCH", "/api/v1/projects/legacy-project", `{"displayName":"  "}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "DISPLAY_NAME_REQUIRED")
+
+	body, status, _ = doRequest(t, srv, "PATCH", "/api/v1/projects/missing", `{"displayName":"Missing"}`)
+	assertErrorCode(t, body, status, http.StatusNotFound, "PROJECT_NOT_FOUND")
+
+	body, status, _ = doRequest(t, srv, "PATCH", "/api/v1/projects/legacy-project", `{`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
+}
+
 func TestProjectsAPI_AddValidationAndConflicts(t *testing.T) {
 
 	srv := newTestServer(t)

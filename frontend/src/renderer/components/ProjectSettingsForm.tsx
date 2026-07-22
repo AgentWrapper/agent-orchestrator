@@ -77,6 +77,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 	const activeOrchestrator = newestActiveOrchestrator(workspace?.sessions ?? []);
 	const intake: TrackerIntakeConfig = config.trackerIntake ?? {};
 	const [form, setForm] = useState({
+		displayName: project.name,
 		defaultBranch: config.defaultBranch ?? project.defaultBranch ?? "",
 		sessionPrefix: config.sessionPrefix ?? "",
 		workerAgent: config.worker?.agent ?? "",
@@ -122,6 +123,14 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 	const mutation = useMutation({
 		mutationFn: async () => {
 			void captureRendererEvent("ao.renderer.settings_save_requested", { project_id: projectId });
+			const displayName = form.displayName.trim();
+			if (displayName !== project.name) {
+				const { error } = await apiClient.PATCH("/api/v1/projects/{id}", {
+					params: { path: { id: projectId } },
+					body: { displayName },
+				});
+				if (error) throw new Error(apiErrorMessage(error));
+			}
 			// PUT replaces the whole config; merge the edited fields over what loaded
 			// so we don't drop env/symlinks/postCreate the form doesn't expose.
 			const next: ProjectConfig = {
@@ -193,7 +202,15 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				<CardHeader>
 					<CardTitle className="text-control">Identity</CardTitle>
 				</CardHeader>
-				<CardContent className="flex flex-col gap-2 font-mono text-xs text-muted-foreground">
+				<CardContent className="flex flex-col gap-4 font-mono text-xs text-muted-foreground">
+					<Field label="Project name" htmlFor="projectName">
+						<input
+							id="projectName"
+							className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 font-sans text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
+							value={form.displayName}
+							onChange={(e) => setForm((f) => ({ ...f, displayName: e.target.value }))}
+						/>
+					</Field>
 					<ReadonlyRow label="id" value={project.id} />
 					<ReadonlyRow label="kind" value={project.kind === "workspace" ? "workspace" : "single repo"} />
 					<ReadonlyRow label="path" value={project.path} />

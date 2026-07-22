@@ -449,6 +449,38 @@ func TestManager_SetConfig(t *testing.T) {
 	wantCode(t, err, "PROJECT_NOT_FOUND")
 }
 
+func TestManager_Rename(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+	repo := gitRepo(t)
+
+	if _, err := m.Add(ctx, project.AddInput{Path: repo, ProjectID: ptr("legacy-project")}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	renamed, err := m.Rename(ctx, "legacy-project", "  Human-friendly project  ")
+	if err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+	if renamed.ID != "legacy-project" || renamed.Name != "Human-friendly project" {
+		t.Fatalf("renamed project = %#v", renamed)
+	}
+
+	got, err := m.Get(ctx, "legacy-project")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Project == nil || got.Project.ID != "legacy-project" || got.Project.Name != "Human-friendly project" {
+		t.Fatalf("persisted project = %#v", got.Project)
+	}
+
+	_, err = m.Rename(ctx, "legacy-project", "  ")
+	wantCode(t, err, "DISPLAY_NAME_REQUIRED")
+
+	_, err = m.Rename(ctx, "missing", "Missing")
+	wantCode(t, err, "PROJECT_NOT_FOUND")
+}
+
 func TestManager_ListIncludesOnlySummarySafeProjectConfig(t *testing.T) {
 	ctx := context.Background()
 	m := newManager(t)

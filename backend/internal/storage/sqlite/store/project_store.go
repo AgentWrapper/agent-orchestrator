@@ -195,6 +195,21 @@ func (s *Store) ListProjects(ctx context.Context) ([]domain.ProjectRecord, error
 	return out, nil
 }
 
+// RenameProject updates only the user-facing display name for an active
+// project. It returns ok=false when the project is missing or archived.
+func (s *Store) RenameProject(ctx context.Context, id string, displayName string) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.RenameProject(ctx, gen.RenameProjectParams{
+		ID:          domain.ProjectID(id),
+		DisplayName: displayName,
+	})
+	if err != nil {
+		return false, fmt.Errorf("rename project %s: %w", id, err)
+	}
+	return rows > 0, nil
+}
+
 // ArchiveProject soft-deletes a project and reports whether a row was affected.
 func (s *Store) ArchiveProject(ctx context.Context, id string, at time.Time) (bool, error) {
 	s.writeMu.Lock()

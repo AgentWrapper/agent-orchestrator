@@ -7,6 +7,7 @@ package controllers
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -28,6 +29,7 @@ func (c *ProjectsController) Register(r chi.Router) {
 	r.Post("/projects", c.add)
 	r.Post("/projects/initialize", c.initialize)
 	r.Get("/projects/{id}", c.get)
+	r.Patch("/projects/{id}", c.rename)
 	r.Put("/projects/{id}/config", c.setConfig)
 	r.Delete("/projects/{id}", c.remove)
 }
@@ -99,6 +101,29 @@ func (c *ProjectsController) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, resp)
+}
+
+func (c *ProjectsController) rename(w http.ResponseWriter, r *http.Request) {
+	if c.Mgr == nil {
+		apispec.NotImplemented(w, r, "PATCH", "/api/v1/projects/{id}")
+		return
+	}
+	var in RenameProjectRequest
+	if err := decodeJSONStrict(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	displayName := strings.TrimSpace(in.DisplayName)
+	if displayName == "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "DISPLAY_NAME_REQUIRED", "displayName is required", nil)
+		return
+	}
+	p, err := c.Mgr.Rename(r.Context(), projectID(r), displayName)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, RenameProjectResponse{Project: p})
 }
 
 func (c *ProjectsController) setConfig(w http.ResponseWriter, r *http.Request) {

@@ -177,6 +177,10 @@ func (f *fakeProjectManager) SetConfig(_ context.Context, id domain.ProjectID, i
 	return projectsvc.Project{ID: id, Config: &cfg}, nil
 }
 
+func (f *fakeProjectManager) Rename(_ context.Context, id domain.ProjectID, displayName string) (projectsvc.Project, error) {
+	return projectsvc.Project{ID: id, Name: displayName}, nil
+}
+
 func (f *fakeProjectManager) Remove(context.Context, domain.ProjectID) (projectsvc.RemoveResult, error) {
 	return projectsvc.RemoveResult{}, nil
 }

@@ -143,6 +143,8 @@ var schemaNames = map[string]string{
 	// httpd/controllers (wire envelopes)
 	"ControllersListProjectsResponse":             "ListProjectsResponse",
 	"ControllersProjectResponse":                  "ProjectResponse",
+	"ControllersRenameProjectRequest":             "RenameProjectRequest",
+	"ControllersRenameProjectResponse":            "RenameProjectResponse",
 	"ControllersAgentIDParam":                     "AgentIDParam",
 	"ControllersGetProjectResponse":               "ProjectGetResponse",
 	"ControllersProjectOrDegraded":                "ProjectOrDegraded",
@@ -599,7 +601,7 @@ func eventOperations() []operation {
 	}
 }
 
-// projectOperations declares the 4 canonical /projects operations. The set must
+// projectOperations declares the canonical /projects operations. The set must
 // stay 1:1 with the routes ProjectsController.Register mounts —
 // TestRouteSpecParity fails the build otherwise.
 func projectOperations() []operation {
@@ -639,6 +641,18 @@ func projectOperations() []operation {
 			pathParams: []any{controllers.ProjectIDParam{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.GetProjectResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPatch, path: "/api/v1/projects/{id}", id: "renameProject", tag: "projects",
+			summary:    "Rename a project's user-facing display name",
+			pathParams: []any{controllers.ProjectIDParam{}},
+			reqBody:    controllers.RenameProjectRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.RenameProjectResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 			},

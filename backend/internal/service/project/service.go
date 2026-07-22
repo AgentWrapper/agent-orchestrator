@@ -38,6 +38,10 @@ type Manager interface {
 	// read-model.
 	SetConfig(ctx context.Context, id domain.ProjectID, in SetConfigInput) (Project, error)
 
+	// Rename updates a project's user-facing display name without changing its
+	// stable project ID.
+	Rename(ctx context.Context, id domain.ProjectID, displayName string) (Project, error)
+
 	// Remove unregisters a project, stopping its sessions and reclaiming
 	// managed workspaces.
 	Remove(ctx context.Context, id domain.ProjectID) (RemoveResult, error)
@@ -529,6 +533,33 @@ func (m *Service) SetConfig(ctx context.Context, id domain.ProjectID, in SetConf
 	row.Config = in.Config
 	if err := m.store.UpsertProject(ctx, row); err != nil {
 		return Project{}, apierr.Internal("PROJECT_CONFIG_UPDATE_FAILED", "Failed to update project config")
+	}
+	return m.projectFromRow(row), nil
+}
+
+// Rename updates a project's user-facing display name without changing its
+// stable project ID, storage paths, or branch naming.
+func (m *Service) Rename(ctx context.Context, id domain.ProjectID, displayName string) (Project, error) {
+	if err := validateProjectID(id); err != nil {
+		return Project{}, err
+	}
+	displayName = strings.TrimSpace(displayName)
+	if displayName == "" {
+		return Project{}, apierr.Invalid("DISPLAY_NAME_REQUIRED", "Display name is required", nil)
+	}
+	renamed, err := m.store.RenameProject(ctx, string(id), displayName)
+	if err != nil {
+		return Project{}, apierr.Internal("PROJECT_RENAME_FAILED", "Failed to rename project")
+	}
+	if !renamed {
+		return Project{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
+	}
+	row, ok, err := m.store.GetProject(ctx, string(id))
+	if err != nil {
+		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
+	}
+	if !ok || !row.ArchivedAt.IsZero() {
+		return Project{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
 	}
 	return m.projectFromRow(row), nil
 }

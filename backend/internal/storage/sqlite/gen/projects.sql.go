@@ -109,6 +109,23 @@ func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
 	return items, nil
 }
 
+const renameProject = `-- name: RenameProject :execrows
+UPDATE projects SET display_name = ? WHERE id = ? AND archived_at IS NULL
+`
+
+type RenameProjectParams struct {
+	DisplayName string
+	ID          domain.ProjectID
+}
+
+func (q *Queries) RenameProject(ctx context.Context, arg RenameProjectParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, renameProject, arg.DisplayName, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const upsertImportedProject = `-- name: UpsertImportedProject :exec
 INSERT INTO projects (id, path, repo_origin_url, display_name, registered_at, archived_at, config, kind)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)

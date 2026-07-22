@@ -311,7 +311,8 @@ export interface paths {
         delete: operations["removeProject"];
         options?: never;
         head?: never;
-        patch?: never;
+        /** Rename a project's user-facing display name */
+        patch: operations["renameProject"];
         trace?: never;
     };
     "/api/v1/projects/{id}/config": {
@@ -1034,6 +1035,12 @@ export interface components {
         RemoveProjectResult: {
             projectId: string;
             removedStorageDir: boolean;
+        };
+        RenameProjectRequest: {
+            displayName: string;
+        };
+        RenameProjectResponse: {
+            project: components["schemas"]["Project"];
         };
         RenameSessionRequest: {
             displayName: string;
@@ -2237,6 +2244,60 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RemoveProjectResult"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    renameProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project identifier (registry key). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RenameProjectRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RenameProjectResponse"];
                 };
             };
             /** @description Bad Request */
