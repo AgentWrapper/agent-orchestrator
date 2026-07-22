@@ -3,6 +3,7 @@ package gitworktree
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,49 +11,67 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-func TestAddExcludeWritesAndIsIdempotent(t *testing.T) {
-	root := t.TempDir()
-	repo := t.TempDir()
-	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+// TestAddExcludeTakesEffectInLinkedWorktree exercises AddExclude against a REAL
+// linked worktree (the only kind this adapter creates). git reads info/exclude
+// from $GIT_COMMON_DIR, not $GIT_DIR, and in a linked worktree those differ, so a
+// resolution via `--git-dir` writes the exclude where git never looks and the
+// pattern is a silent no-op. This test asserts the exclude actually takes effect:
+// after AddExclude, a file matching the pattern must NOT surface as an untracked
+// change. It fails against a `--git-dir` resolution and passes with
+// `--git-common-dir`.
+func TestAddExcludeTakesEffectInLinkedWorktree(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := setupOriginClone(t, git, tmp)
+	root := filepath.Join(tmp, "managed")
+	ws, err := New(Options{Binary: git, ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
 	if err != nil {
 		t.Fatalf("new: %v", err)
 	}
+	ctx := context.Background()
 
-	// A managed worktree path must exist and resolve inside the managed root.
-	wtPath := filepath.Join(ws.managedRoot, "proj", "worker", "proj-1")
-	if err := os.MkdirAll(wtPath, 0o750); err != nil {
-		t.Fatalf("mkdir worktree: %v", err)
-	}
-	// The per-worktree git dir is resolved via `git rev-parse --git-dir`; stub it.
-	gitDir := filepath.Join(root, "gitdir")
-	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
-		if strings.Contains(strings.Join(args, " "), "rev-parse --git-dir") {
-			return []byte(gitDir + "\n"), nil
-		}
-		t.Fatalf("unexpected git invocation: %v", args)
-		return nil, nil
+	// Create a real linked worktree under the managed root.
+	info, err := ws.Create(ctx, ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/exclude"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
 	}
 
-	info := ports.WorkspaceInfo{Path: wtPath, SessionID: "proj-1", ProjectID: "proj"}
 	pattern := "/.ao/attachments/"
-	if err := ws.AddExclude(context.Background(), info, pattern); err != nil {
+	if err := ws.AddExclude(ctx, info, pattern); err != nil {
 		t.Fatalf("AddExclude: %v", err)
 	}
 
-	excludePath := filepath.Join(gitDir, "info", "exclude")
-	data, err := os.ReadFile(excludePath)
-	if err != nil {
-		t.Fatalf("read exclude: %v", err)
+	// Drop a file that matches the excluded pattern into the worktree.
+	attachDir := filepath.Join(info.Path, ".ao", "attachments")
+	if err := os.MkdirAll(attachDir, 0o750); err != nil {
+		t.Fatalf("mkdir attachments: %v", err)
 	}
-	if !strings.Contains(string(data), pattern) {
-		t.Errorf("exclude missing pattern: %q", data)
+	if err := os.WriteFile(filepath.Join(attachDir, "pasted.png"), []byte("not really a png"), 0o644); err != nil {
+		t.Fatalf("write attachment: %v", err)
 	}
 
-	// Calling again must not duplicate the entry.
-	if err := ws.AddExclude(context.Background(), info, pattern); err != nil {
+	// If the exclude took effect, git sees no untracked changes in the worktree.
+	out, err := exec.Command(git, "-C", info.Path, "status", "--porcelain").CombinedOutput()
+	if err != nil {
+		t.Fatalf("git status: %v\n%s", err, out)
+	}
+	if strings.TrimSpace(string(out)) != "" {
+		t.Fatalf("exclude did not take effect; git status --porcelain not empty:\n%s", out)
+	}
+
+	// Idempotent: a second call must not duplicate the entry in the exclude file.
+	if err := ws.AddExclude(ctx, info, pattern); err != nil {
 		t.Fatalf("AddExclude (repeat): %v", err)
 	}
-	data, err = os.ReadFile(excludePath)
+	commonDir, err := exec.Command(git, "-C", info.Path, "rev-parse", "--git-common-dir").Output()
+	if err != nil {
+		t.Fatalf("git rev-parse --git-common-dir: %v", err)
+	}
+	excludePath := filepath.Join(strings.TrimSpace(string(commonDir)), "info", "exclude")
+	if !filepath.IsAbs(excludePath) {
+		excludePath = filepath.Join(info.Path, excludePath)
+	}
+	data, err := os.ReadFile(excludePath)
 	if err != nil {
 		t.Fatalf("read exclude: %v", err)
 	}

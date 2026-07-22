@@ -531,10 +531,13 @@ func (w *Workspace) ApplyPreserved(ctx context.Context, info ports.WorkspaceInfo
 }
 
 // AddExclude appends git ignore patterns to the worktree's local info/exclude so
-// daemon-generated files never surface as untracked changes. The git dir is
-// resolved via rev-parse (a linked worktree's .git is a file pointing elsewhere,
-// so info/exclude does not live at <worktree>/.git/info). Idempotent: patterns
-// already present are skipped.
+// daemon-generated files never surface as untracked changes. The exclude file is
+// resolved via `git rev-parse --git-common-dir`, not `--git-dir`: git reads
+// info/exclude from $GIT_COMMON_DIR, and this adapter only ever creates linked
+// worktrees, where --git-dir points into .git/worktrees/<name> (per-worktree)
+// while --git-common-dir points at the shared main .git. Writing under --git-dir
+// would land info/exclude in a directory git never consults, making the exclude a
+// no-op. Idempotent: patterns already present are skipped.
 func (w *Workspace) AddExclude(ctx context.Context, info ports.WorkspaceInfo, patterns ...string) error {
 	if len(patterns) == 0 {
 		return nil
@@ -543,9 +546,9 @@ func (w *Workspace) AddExclude(ctx context.Context, info ports.WorkspaceInfo, pa
 	if err != nil {
 		return err
 	}
-	out, err := w.run(ctx, w.binary, "-C", path, "rev-parse", "--git-dir")
+	out, err := w.run(ctx, w.binary, "-C", path, "rev-parse", "--git-common-dir")
 	if err != nil {
-		return fmt.Errorf("gitworktree: AddExclude resolve git dir: %w", err)
+		return fmt.Errorf("gitworktree: AddExclude resolve git common dir: %w", err)
 	}
 	gitDir := strings.TrimSpace(string(out))
 	if !filepath.IsAbs(gitDir) {
