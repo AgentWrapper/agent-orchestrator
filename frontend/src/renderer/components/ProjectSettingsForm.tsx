@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { TriangleAlert } from "lucide-react";
 import type { components } from "../../api/schema";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
@@ -394,10 +395,20 @@ function PermissionModeSelect({
 	);
 }
 
+const REVIEWER_AGENT_PRIORITY = ["claude-code", "codex", "cursor", "opencode", "aider"] as const;
+const REVIEWER_AGENT_PRIORITY_RANK = new Map<string, number>(
+	REVIEWER_AGENT_PRIORITY.map((agent, index) => [agent, index]),
+);
+
+function agentLabelCompare(a: components["schemas"]["AgentInfo"], b: components["schemas"]["AgentInfo"]): number {
+	return a.label.localeCompare(b.label) || a.id.localeCompare(b.id);
+}
+
 function ReviewerSelect({
 	id,
 	value,
 	onChange,
+	disabled = false,
 	authorized,
 	installed,
 	supported,
@@ -405,42 +416,60 @@ function ReviewerSelect({
 	id: string;
 	value: string;
 	onChange: (value: string) => void;
+	disabled?: boolean;
 	authorized?: components["schemas"]["AgentInfo"][];
 	installed?: components["schemas"]["AgentInfo"][];
 	supported?: components["schemas"]["AgentInfo"][];
 }) {
-	const fallbackReviewers: components["schemas"]["AgentInfo"][] = [...KNOWN_REVIEWER_HARNESS_IDS].map((id) => ({
+	const fallbackAgents: components["schemas"]["AgentInfo"][] = [...KNOWN_REVIEWER_HARNESS_IDS].map((id) => ({
 		id,
 		label: id,
 	}));
-	const supportedReviewers = (supported ?? []).filter((a) => KNOWN_REVIEWER_HARNESS_IDS.has(a.id));
-	const displayReviewers = supportedReviewers.length > 0 ? supportedReviewers : fallbackReviewers;
-	const installedById = new Map((installed ?? []).map((a) => [a.id, a]));
-	const authorizedIds = new Set((authorized ?? []).map((a) => a.id));
-	const options = displayReviewers.map((agent) => {
-		const installedAgent = installedById.get(agent.id);
-		const isAuthorized = authorizedIds.has(agent.id) || installedAgent?.authStatus === "authorized";
-		const isSelectable = isAuthorized || !installedAgent;
-		return {
-			...agent,
-			disabled: !isSelectable,
-			reason: !installedAgent ? "Needs install" : !isAuthorized ? "Needs auth" : "",
-		};
-	});
+	const filteredSupported = (supported ?? fallbackAgents).filter((a) => KNOWN_REVIEWER_HARNESS_IDS.has(a.id));
+	const supportedAgents = filteredSupported.length > 0 ? filteredSupported : fallbackAgents;
+	const installedAgents = installed ?? supportedAgents;
+	const authorizedAgents = authorized ?? supportedAgents;
+	const authorizedIds = new Set(authorizedAgents.map((agent) => agent.id));
+	const installedById = new Map(installedAgents.map((agent) => [agent.id, agent]));
+	const options = supportedAgents
+		.map((agent) => {
+			const installedAgent = installedById.get(agent.id);
+			const authStatus = installedAgent?.authStatus;
+			const isAuthorized = authorizedIds.has(agent.id) || authStatus === "authorized";
+			const isAuthUnknown = Boolean(installedAgent) && !isAuthorized && authStatus !== "unauthorized";
+			const isSelectable = isAuthorized || isAuthUnknown;
+			const rank = isAuthorized ? 0 : isAuthUnknown ? 1 : installedAgent ? 2 : 3;
+			return {
+				...agent,
+				disabled: !isSelectable,
+				priorityRank: REVIEWER_AGENT_PRIORITY_RANK.get(agent.id) ?? Number.MAX_SAFE_INTEGER,
+				rank,
+				reason: !installedAgent ? "Needs install" : isAuthUnknown ? "Auth unknown" : !isAuthorized ? "Needs auth" : "",
+				warning: isAuthUnknown,
+			};
+		})
+		.sort((a, b) => a.rank - b.rank || a.priorityRank - b.priorityRank || agentLabelCompare(a, b));
+
 	return (
-		<Select value={value || "__default__"} onValueChange={(v) => onChange(v === "__default__" ? "" : v)}>
-			<SelectTrigger id={id} className="h-control-form w-full text-control">
+		<Select value={value || "__default__"} onValueChange={(v) => onChange(v === "__default__" ? "" : v)} disabled={disabled}>
+			<SelectTrigger id={id} size="sm" className="w-full text-control">
 				<SelectValue />
 			</SelectTrigger>
-			<SelectContent>
+			<SelectContent position="popper" side="bottom" align="start" sideOffset={4} className="max-h-select-menu-max!">
 				<SelectItem value="__default__">Project default</SelectItem>
-				{options.map((reviewer) => (
-					<SelectItem key={reviewer.id} value={reviewer.id} disabled={reviewer.disabled}>
+				{options.map((agent) => (
+					<SelectItem
+						key={agent.id}
+						value={agent.id}
+						disabled={agent.disabled}
+						className="[&>span:last-child]:w-full"
+					>
 						<span className="flex min-w-0 w-full items-center justify-between gap-4">
-							<span className="truncate">{reviewer.label}</span>
-							{reviewer.reason && (
+							<span className="truncate">{agent.label}</span>
+							{agent.reason && (
 								<span className="inline-flex shrink-0 items-center gap-1 text-caption text-muted-foreground">
-									{reviewer.reason}
+									{agent.warning && <TriangleAlert className="size-3 text-warning" aria-hidden="true" />}
+									{agent.reason}
 								</span>
 							)}
 						</span>
