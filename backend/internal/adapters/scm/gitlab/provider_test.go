@@ -507,6 +507,147 @@ func TestFetchReviewThreads_SingleApprovalsCall(t *testing.T) {
 	}
 }
 
+// TestApprovalsDedup_BetweenFetchPullRequestsAndFetchReviewThreads verifies
+// ticket 04's core behavior: when FetchPullRequests and FetchReviewThreads run
+// for the same MR in the same observer cycle, the /merge_requests/:iid/approvals
+// endpoint is hit exactly ONCE — not twice. The first call (fetchApprovalDecision
+// inside FetchPullRequests) fetches and caches the approvals; the second call
+// (FetchReviewThreads) serves the cached copy from memory with zero network I/O.
+//
+// This is the single highest-impact deduplication: one eliminated HTTP
+// round-trip per active MR per review-refresh cycle. The 304 from the ETag
+// cache (which still counts against rate limits) is avoided entirely.
+func TestApprovalsDedup_BetweenFetchPullRequestsAndFetchReviewThreads(t *testing.T) {
+	var approvalsHits atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(mrDetailFixture(1, "base123"))
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/pipelines", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{
+			{"id": 100, "status": "success", "sha": "abc123"},
+		})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/pipelines/100/jobs", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{
+			{"id": 200, "name": "build", "status": "success", "web_url": "https://gitlab.com/jobs/200"},
+		})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1/discussions", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]any{})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1/approvals", func(w http.ResponseWriter, r *http.Request) {
+		approvalsHits.Add(1)
+		json.NewEncoder(w).Encode(map[string]any{
+			"approved":           true,
+			"approvals_required": 1,
+			"approved_by": []map[string]any{
+				{"user": map[string]any{"username": "reviewer1"}},
+			},
+		})
+	})
+	_, p := testServer(t, mux)
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "myorg", Name: "myrepo", Repo: "myorg/myrepo"}
+	ref := ports.SCMPRRef{Repo: repo, Number: 1, URL: "https://gitlab.com/myorg/myrepo/-/merge_requests/1"}
+
+	// 1. FetchPullRequests runs first (the observer's PR-facts refresh). This
+	//    fetches approvals via fetchApprovalDecision, which populates the
+	//    approvals cache.
+	obs, err := p.FetchPullRequests(context.Background(), []ports.SCMPRRef{ref})
+	if err != nil {
+		t.Fatalf("FetchPullRequests: %v", err)
+	}
+	if len(obs) != 1 || !obs[0].Fetched {
+		t.Fatalf("expected one fetched observation, got %+v", obs)
+	}
+	if obs[0].Review.Decision != "approved" {
+		t.Errorf("FetchPullRequests Review.Decision = %q, want %q", obs[0].Review.Decision, "approved")
+	}
+	hitsAfterFetchPR := approvalsHits.Load()
+	if hitsAfterFetchPR != 1 {
+		t.Fatalf("approvals endpoint hit %d times after FetchPullRequests, want 1", hitsAfterFetchPR)
+	}
+
+	// 2. FetchReviewThreads runs second (the observer's review-thread refresh).
+	//    It must serve the cached approvals from memory — zero additional HTTP
+	//    round-trips to the approvals endpoint.
+	review, err := p.FetchReviewThreads(context.Background(), ref)
+	if err != nil {
+		t.Fatalf("FetchReviewThreads: %v", err)
+	}
+	if got := approvalsHits.Load(); got != 1 {
+		t.Errorf("approvals endpoint hit %d times after FetchReviewThreads, want 1 (served from cache)", got)
+	}
+	// The cached approvals must still produce the correct review decision and
+	// approval summaries — serving from cache must not lose data.
+	if review.Decision != "approved" {
+		t.Errorf("FetchReviewThreads Decision = %q, want %q (cached approvals must preserve decision)", review.Decision, "approved")
+	}
+	if len(review.Reviews) != 1 {
+		t.Fatalf("FetchReviewThreads Reviews = %d, want 1 (cached approvals must preserve summaries)", len(review.Reviews))
+	}
+	if review.Reviews[0].Author != "reviewer1" {
+		t.Errorf("FetchReviewThreads Reviews[0].Author = %q, want %q", review.Reviews[0].Author, "reviewer1")
+	}
+}
+
+// TestApprovalsDedup_TTLExpiry verifies that after the approvals TTL (60s)
+// elapses, a second FetchReviewThreads call hits the approvals endpoint again
+// (the cache entry has expired and a fresh fetch is required). This guards the
+// staleness bound (~60s, one poll interval) so cached approvals do not persist
+// beyond their freshness window.
+func TestApprovalsDedup_TTLExpiry(t *testing.T) {
+	var approvalsHits atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1/discussions", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]any{})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1/approvals", func(w http.ResponseWriter, r *http.Request) {
+		approvalsHits.Add(1)
+		json.NewEncoder(w).Encode(map[string]any{
+			"approved":           true,
+			"approvals_required": 1,
+			"approved_by": []map[string]any{
+				{"user": map[string]any{"username": "reviewer1"}},
+			},
+		})
+	})
+	_, p := testServer(t, mux)
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "myorg", Name: "myrepo", Repo: "myorg/myrepo"}
+	ref := ports.SCMPRRef{Repo: repo, Number: 1, URL: "https://gitlab.com/myorg/myrepo/-/merge_requests/1"}
+
+	// Inject a controllable clock so TTL expiry is fast and deterministic
+	// (no real sleeping). syntheticClock is defined in cache_test.go.
+	clock := &syntheticClock{t: time.Now()}
+	p.cache.now = clock.now
+
+	// First FetchReviewThreads — cache miss, fetches via HTTP.
+	if _, err := p.FetchReviewThreads(context.Background(), ref); err != nil {
+		t.Fatalf("first FetchReviewThreads: %v", err)
+	}
+	if got := approvalsHits.Load(); got != 1 {
+		t.Fatalf("approvals endpoint hit %d times after first call, want 1", got)
+	}
+
+	// Second FetchReviewThreads within TTL — cache hit, no HTTP round-trip.
+	if _, err := p.FetchReviewThreads(context.Background(), ref); err != nil {
+		t.Fatalf("second FetchReviewThreads (within TTL): %v", err)
+	}
+	if got := approvalsHits.Load(); got != 1 {
+		t.Errorf("approvals endpoint hit %d times after second call (within TTL), want 1 (cache hit)", got)
+	}
+
+	// Advance past the approvals TTL (60s). The cached entry must now be
+	// treated as a miss, so the next FetchReviewThreads fetches again.
+	clock.advance(approvalsCacheTTL + time.Second)
+	if _, err := p.FetchReviewThreads(context.Background(), ref); err != nil {
+		t.Fatalf("third FetchReviewThreads (after TTL): %v", err)
+	}
+	if got := approvalsHits.Load(); got != 2 {
+		t.Errorf("approvals endpoint hit %d times after TTL expiry, want 2 (cache expired, must refetch)", got)
+	}
+}
+
 // TestFetchReviewThreads_StableReviewIDs verifies that review summaries have
 // stable, unique IDs so multiple approvers don't overwrite each other in
 // persistence
