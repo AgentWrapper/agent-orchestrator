@@ -301,7 +301,7 @@ type SessionPRSummary struct {
 	Number           int                          `json:"number"`
 	Title            string                       `json:"title"`
 	State            domain.PRState               `json:"state" enum:"draft,open,merged,closed"`
-	Provider         string                       `json:"provider" enum:"github"`
+	Provider         string                       `json:"provider" enum:"github,gitlab"`
 	Repo             string                       `json:"repo"`
 	Author           string                       `json:"author"`
 	SourceBranch     string                       `json:"sourceBranch"`

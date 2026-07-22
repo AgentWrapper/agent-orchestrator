@@ -134,7 +134,7 @@ func Run() error {
 	}
 
 	lcStack := startLifecycle(ctx, store, runtimeAdapter, messenger, notificationWriter, telemetrySink, agents, log)
-	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
+	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, cfg.GitLab, log)
 
 	// Wire the controller-facing session service over the same store + LCM, the
 	// selected runtime, a gitworktree workspace, the per-session agent resolver

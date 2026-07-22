@@ -59,12 +59,10 @@ func (p *Provider) RepoPRListGuard(ctx context.Context, repo ports.SCMRepo, etag
 	return ports.SCMGuardResult{ETag: firstNonEmptyHeader(resp.ETag, etag), NotModified: resp.NotModified}, nil
 }
 
-// ListOpenPRsByRepo lists every open pull request in the repository so the
-// observer can attribute each to a session by head-branch prefix. It paginates
-// the REST pulls endpoint; AO repos are not expected to carry thousands of
-// concurrent open PRs, and the observer only calls this when the repo PR-list
-// ETag guard reports a change.
-func (p *Provider) ListOpenPRsByRepo(ctx context.Context, repo ports.SCMRepo) ([]ports.SCMPRObservation, error) {
+// ListPRsByRepo lists pull requests in the repository, optionally filtered to
+// those updated after updatedAfter (zero = full listing). It paginates the REST
+// pulls endpoint using state=open and sort=updated
+func (p *Provider) ListPRsByRepo(ctx context.Context, repo ports.SCMRepo, updatedAfter time.Time) ([]ports.SCMPRObservation, error) {
 	const perPage = 100
 	out := []ports.SCMPRObservation{}
 	for page := 1; ; page++ {
@@ -74,6 +72,9 @@ func (p *Provider) ListOpenPRsByRepo(ctx context.Context, repo ports.SCMRepo) ([
 		q.Set("direction", "desc")
 		q.Set("per_page", strconv.Itoa(perPage))
 		q.Set("page", strconv.Itoa(page))
+		if !updatedAfter.IsZero() {
+			q.Set("since", updatedAfter.UTC().Format(time.RFC3339Nano))
+		}
 		resp, err := p.client.doREST(ctx, http.MethodGet, repoPath(repo.Owner, repo.Name, "pulls"), q, nil)
 		if err != nil {
 			return nil, err

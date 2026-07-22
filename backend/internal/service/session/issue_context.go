@@ -55,11 +55,21 @@ func (s *Service) trackerIDForIssue(project domain.ProjectRecord, issueID domain
 
 func (s *Service) githubRepoForTracker(project domain.ProjectRecord) (string, bool) {
 	if s.scm != nil {
-		if repo, ok := s.scm.ParseRepository(project.RepoOriginURL); ok && repo.Provider == "github" && repo.Repo != "" {
+		repo, ok := s.scm.ParseRepository(project.RepoOriginURL)
+		if ok && repo.Provider != "github" {
+			// The origin belongs to a non-GitHub provider (e.g. GitLab). The
+			// GitHub issue-tracker fallback must not apply: returning a
+			// GitHub-style "owner/repo#N" tracker ID would fetch an unrelated
+			// GitHub issue and inject its content into the worker's prompt.
+			return "", false
+		} else if ok && repo.Repo != "" {
 			return repo.Repo, true
 		}
+		// SCM could not classify the origin (ok == false), or classified it
+		// as GitHub but with an empty repo; fall through to the URL-based
+		// GitHub heuristic below.
 	}
-	owner, repo, err := githubRepoFromURL(project.RepoOriginURL)
+	_, owner, repo, err := repoFromURL(project.RepoOriginURL)
 	if err != nil {
 		return "", false
 	}

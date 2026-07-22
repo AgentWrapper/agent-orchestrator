@@ -1158,7 +1158,7 @@ export interface components {
             /** Format: date-time */
             observedAt?: string;
             /** @enum {string} */
-            provider: "github";
+            provider: "github" | "gitlab";
             repo: string;
             review: components["schemas"]["SessionPRReviewSummary"];
             /** Format: date-time */

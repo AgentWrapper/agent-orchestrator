@@ -502,6 +502,64 @@ func TestSessionClaimPR_JSONAndNoTakeoverError(t *testing.T) {
 	}
 }
 
+func TestSessionClaimPR_GitLabMR(t *testing.T) {
+	cfg := setConfigEnv(t)
+	var capturedReq claimPRRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1":
+			_, _ = io.WriteString(w, `{"session":`+sessionJSON("demo-1", "demo", "worker", "working", false)+`}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
+			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":"/repo/demo","repo":"https://gitlab.com/castai/ctxd","defaultBranch":"main"}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/demo-1/pr/claim":
+			_ = json.NewDecoder(r.Body).Decode(&capturedReq)
+			_, _ = io.WriteString(w, `{"ok":true,"sessionId":"demo-1","prs":[{"url":"`+capturedReq.PR+`","number":9,"state":"open","ci":"passing","review":"review_required","mergeability":"mergeable","reviewComments":false,"updatedAt":"2026-06-04T12:00:00Z"}],"branchChanged":false,"takenOverFrom":[]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "session", "claim-pr", "demo-1", "https://gitlab.com/castai/ctxd/-/merge_requests/9")
+	if err != nil {
+		t.Fatalf("claim-pr gitlab failed: %v", err)
+	}
+	if capturedReq.PR != "https://gitlab.com/castai/ctxd/-/merge_requests/9" {
+		t.Fatalf("claim request PR = %q, want gitlab MR URL", capturedReq.PR)
+	}
+}
+
+func TestSessionClaimPR_GitLabNumericRef(t *testing.T) {
+	cfg := setConfigEnv(t)
+	var capturedReq claimPRRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1":
+			_, _ = io.WriteString(w, `{"session":`+sessionJSON("demo-1", "demo", "worker", "working", false)+`}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
+			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":"/repo/demo","repo":"https://gitlab.com/castai/ctxd","defaultBranch":"main"}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/demo-1/pr/claim":
+			_ = json.NewDecoder(r.Body).Decode(&capturedReq)
+			_, _ = io.WriteString(w, `{"ok":true,"sessionId":"demo-1","prs":[{"url":"`+capturedReq.PR+`","number":9,"state":"open","ci":"passing","review":"review_required","mergeability":"mergeable","reviewComments":false,"updatedAt":"2026-06-04T12:00:00Z"}],"branchChanged":false,"takenOverFrom":[]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "session", "claim-pr", "demo-1", "9")
+	if err != nil {
+		t.Fatalf("claim-pr gitlab numeric failed: %v", err)
+	}
+	if capturedReq.PR != "https://gitlab.com/castai/ctxd/-/merge_requests/9" {
+		t.Fatalf("claim request PR = %q, want expanded gitlab MR URL", capturedReq.PR)
+	}
+}
+
 func TestSessionClaimPR_GHFallbackWhenProjectRepoMissing(t *testing.T) {
 	cfg := setConfigEnv(t)
 	log := &sessionRequestLog{}

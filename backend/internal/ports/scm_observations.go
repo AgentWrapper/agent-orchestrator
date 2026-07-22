@@ -74,6 +74,15 @@ type SCMObservation struct {
 	// Mergeability contains AO's mergeability verdict and blockers.
 	Mergeability SCMMergeabilityObservation
 
+	// Error carries a transient per-observation failure from the multi-provider
+	// dispatcher (or any composite provider) when one provider in a batch fails
+	// while others succeed. It is NOT durable state: the observer must inspect
+	// it before persistence to route rate-limit errors to per-provider cooldown
+	// and non-rate-limit errors to refresh-incomplete, then nil it out so the
+	// storage layer never sees provider-error classification. A non-nil Error
+	// always implies Fetched=false.
+	Error error
+
 	// Changed marks which semantic buckets changed compared with the DB snapshot.
 	Changed SCMChanged
 }
@@ -160,6 +169,12 @@ type SCMCIObservation struct {
 	FailedChecks []SCMCheckObservation
 	// FailureLogTail is the combined tail of newly fetched failed-check logs.
 	FailureLogTail string
+	// Partial is true when the CI check listing was truncated by the
+	// provider's pagination cap (e.g. more than 1,000 pipeline jobs). When
+	// true, Checks/FailedChecks are a bounded snapshot, not an authoritative
+	// complete CI state — the observer must not overwrite durable checks as
+	// Fetched=true complete (review Item 13). Mirrors SCMReviewObservation.Partial.
+	Partial bool
 }
 
 // SCMCheckObservation is one normalized check/status context. ProviderID is an

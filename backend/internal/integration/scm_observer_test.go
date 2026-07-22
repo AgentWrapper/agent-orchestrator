@@ -101,7 +101,7 @@ func (p *cannedSCMProvider) RepoPRListGuard(_ context.Context, _ ports.SCMRepo, 
 	return ports.SCMGuardResult{ETag: "repo-etag"}, nil
 }
 
-func (p *cannedSCMProvider) ListOpenPRsByRepo(_ context.Context, _ ports.SCMRepo) ([]ports.SCMPRObservation, error) {
+func (p *cannedSCMProvider) ListPRsByRepo(_ context.Context, _ ports.SCMRepo, _ time.Time) ([]ports.SCMPRObservation, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	out := make([]ports.SCMPRObservation, 0, len(p.detected))

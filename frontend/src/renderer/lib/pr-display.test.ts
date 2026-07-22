@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
-import { prBrowserUrl, prDiffSummary, prStatusRows, prSummaryParts } from "./pr-display";
+import type { PullRequestFacts, WorkspaceSession } from "../types/workspace";
+import { prBrowserUrl, prDiffSummary, sessionPRDisplaySummaries, prStatusRows, prSummaryParts } from "./pr-display";
 
 const summary = (overrides: Partial<SessionPRSummary> = {}): SessionPRSummary => ({
 	url: "https://github.com/acme/repo/pull/7",
@@ -25,6 +26,132 @@ const summary = (overrides: Partial<SessionPRSummary> = {}): SessionPRSummary =>
 	ciObservedAt: "2026-06-15T00:00:00Z",
 	reviewObservedAt: "2026-06-15T00:00:00Z",
 	...overrides,
+});
+
+function sessionWith(overrides: Partial<WorkspaceSession> = {}): WorkspaceSession {
+	return {
+		id: "sess-1",
+		workspaceId: "ws-1",
+		workspaceName: "my-app",
+		title: "fix-bug",
+		provider: "claude-code",
+		branch: "feat/x",
+		status: "working",
+		updatedAt: "2026-01-01T00:00:00Z",
+		prs: [],
+		...overrides,
+	};
+}
+
+describe("sessionPRDisplaySummaries", () => {
+	it("keeps GitHub PR #7 and GitLab MR #7 distinct in the same session", () => {
+		// Both providers have a PR/MR numbered 7. Keying by number alone collapses
+		// them into one summary (the second wins), hiding the other. Keying by the
+		// canonical web URL keeps both visible.
+		const githubPR: PullRequestFacts = {
+			url: "https://github.com/acme/repo/pull/7",
+			number: 7,
+			state: "open",
+			ci: "passing",
+			review: "approved",
+			mergeability: "mergeable",
+			reviewComments: false,
+			updatedAt: "2026-06-15T00:00:00Z",
+		};
+		const gitlabMR: PullRequestFacts = {
+			url: "https://gitlab.com/acme/repo/-/merge_requests/7",
+			number: 7,
+			state: "open",
+			ci: "passing",
+			review: "approved",
+			mergeability: "mergeable",
+			reviewComments: false,
+			updatedAt: "2026-06-15T00:00:00Z",
+		};
+		const session = sessionWith({ prs: [githubPR, gitlabMR] });
+		const githubSummary = summary({
+			url: "https://github.com/acme/repo/pull/7",
+			htmlUrl: "https://github.com/acme/repo/pull/7",
+			number: 7,
+			provider: "github",
+			repo: "acme/repo",
+			mergeability: {
+				state: "mergeable",
+				reasons: [],
+				prUrl: "https://github.com/acme/repo/pull/7",
+			},
+		});
+		const gitlabSummary = summary({
+			url: "https://gitlab.com/acme/repo/-/merge_requests/7",
+			htmlUrl: "https://gitlab.com/acme/repo/-/merge_requests/7",
+			number: 7,
+			provider: "gitlab",
+			repo: "acme/repo",
+			mergeability: {
+				state: "mergeable",
+				reasons: [],
+				prUrl: "https://gitlab.com/acme/repo/-/merge_requests/7",
+			},
+		});
+
+		const result = sessionPRDisplaySummaries(session, [githubSummary, gitlabSummary]);
+
+		// Both summaries appear — not deduped to one.
+		expect(result).toHaveLength(2);
+		const urls = result.map((r) => r.url).sort();
+		expect(urls).toEqual(["https://github.com/acme/repo/pull/7", "https://gitlab.com/acme/repo/-/merge_requests/7"]);
+		// Each retains its own provider/repo, no summary is hidden.
+		const github = result.find((r) => r.url === "https://github.com/acme/repo/pull/7");
+		const gitlab = result.find((r) => r.url === "https://gitlab.com/acme/repo/-/merge_requests/7");
+		expect(github?.provider).toBe("github");
+		expect(gitlab?.provider).toBe("gitlab");
+	});
+
+	it("does not drop summaries whose url is empty, falling back to number:${number}", () => {
+		// Two facts with empty urls and distinct numbers must both surface. The
+		// fallback key `number:${number}` keeps them distinct within one provider
+		// even when the canonical URL is not yet populated.
+		const session = sessionWith({
+			prs: [
+				{
+					url: "",
+					number: 7,
+					state: "open",
+					ci: "passing",
+					review: "approved",
+					mergeability: "mergeable",
+					reviewComments: false,
+					updatedAt: "2026-06-15T00:00:00Z",
+				},
+				{
+					url: "",
+					number: 8,
+					state: "open",
+					ci: "passing",
+					review: "approved",
+					mergeability: "mergeable",
+					reviewComments: false,
+					updatedAt: "2026-06-15T00:00:00Z",
+				},
+			],
+		});
+		const summaries: SessionPRSummary[] = [
+			summary({
+				url: "",
+				htmlUrl: undefined,
+				number: 7,
+			}),
+			summary({
+				url: "",
+				htmlUrl: undefined,
+				number: 8,
+			}),
+		];
+
+		const result = sessionPRDisplaySummaries(session, summaries);
+
+		expect(result.map((r) => r.number).sort((a, b) => a - b)).toEqual([7, 8]);
+	});
 });
 
 describe("prStatusRows", () => {
@@ -66,6 +193,40 @@ describe("prBrowserUrl", () => {
 				}),
 			),
 		).toBe("https://github.com/acme/repo/pull/7");
+	});
+
+	it("normalizes GitLab merge request URLs", () => {
+		expect(
+			prBrowserUrl(
+				summary({
+					provider: "gitlab",
+					url: "https://gitlab.com/acme/repo/-/merge_requests/7",
+					htmlUrl: "https://gitlab.com/acme/repo/-/merge_requests/7",
+					mergeability: {
+						state: "mergeable",
+						reasons: [],
+						prUrl: "https://gitlab.com/acme/repo/-/merge_requests/7",
+					},
+				}),
+			),
+		).toBe("https://gitlab.com/acme/repo/-/merge_requests/7");
+	});
+
+	it("strips query params and fragments from GitLab MR URLs", () => {
+		expect(
+			prBrowserUrl(
+				summary({
+					provider: "gitlab",
+					url: "https://gitlab.com/acme/repo/-/merge_requests/7/diffs?view=inline#note_123",
+					htmlUrl: "https://gitlab.com/acme/repo/-/merge_requests/7/diffs?view=inline#note_123",
+					mergeability: {
+						state: "mergeable",
+						reasons: [],
+						prUrl: "https://gitlab.com/acme/repo/-/merge_requests/7",
+					},
+				}),
+			),
+		).toBe("https://gitlab.com/acme/repo/-/merge_requests/7");
 	});
 });
 
