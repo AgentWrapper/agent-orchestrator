@@ -13,6 +13,7 @@ type fakeProvider struct {
 	key            string
 	parseOK        bool
 	credsAvailable bool
+	credsErr       error
 	fetchCallCount int
 	fetchErr       error
 }
@@ -57,7 +58,7 @@ func (f *fakeProvider) FetchReviewThreads(_ context.Context, _ ports.SCMPRRef) (
 }
 
 func (f *fakeProvider) SCMCredentialsAvailable(_ context.Context) (bool, error) {
-	return f.credsAvailable, nil
+	return f.credsAvailable, f.credsErr
 }
 
 func TestParseRepository_RoutesToFirstMatch(t *testing.T) {
@@ -219,11 +220,91 @@ func TestFetchPullRequests_OneProviderFailsOthersSucceed(t *testing.T) {
 	if obs[1].Fetched {
 		t.Errorf("obs[1].Fetched = true, want false for failed gitlab fetch")
 	}
+	// Item 7: the failed-provider observation must carry the error as transient
+	// per-observation metadata so the observer can route it to cooldown or
+	// refresh-incomplete handling.
+	if obs[1].Error == nil {
+		t.Errorf("obs[1].Error = nil, want the gitlab failure error for observer routing")
+	}
 	if gh.fetchCallCount != 1 {
 		t.Errorf("github.FetchPullRequests called %d times, want 1", gh.fetchCallCount)
 	}
 	if gl.fetchCallCount != 1 {
 		t.Errorf("gitlab.FetchPullRequests called %d times, want 1", gl.fetchCallCount)
+	}
+}
+
+// TestFetchPullRequests_FailedProviderErrorCarriedAsMetadata verifies that a
+// failed provider's error is attached to every failed-provider observation's
+// Error field (Item 7). The observer relies on this field to route rate-limit
+// errors to per-provider cooldown.
+func TestFetchPullRequests_FailedProviderErrorCarriedAsMetadata(t *testing.T) {
+	fetchErr := errors.New("gitlab 503")
+	gh := &fakeProvider{key: "github", parseOK: true}
+	gl := &fakeProvider{key: "gitlab", parseOK: true, fetchErr: fetchErr}
+	m := New(NamedProvider{Key: "github", Provider: gh}, NamedProvider{Key: "gitlab", Provider: gl})
+
+	refs := []ports.SCMPRRef{
+		{Repo: ports.SCMRepo{Provider: "github"}, Number: 10},
+		{Repo: ports.SCMRepo{Provider: "gitlab"}, Number: 20},
+		{Repo: ports.SCMRepo{Provider: "gitlab"}, Number: 21},
+	}
+	obs, err := m.FetchPullRequests(context.Background(), refs)
+	if err != nil {
+		t.Fatalf("error = %v, want nil (one healthy provider)", err)
+	}
+	// GitHub obs: healthy, no error metadata.
+	if obs[0].Error != nil {
+		t.Errorf("obs[0].Error = %v, want nil for healthy github observation", obs[0].Error)
+	}
+	// Both GitLab obs must carry the same failure error.
+	if !errors.Is(obs[1].Error, fetchErr) {
+		t.Errorf("obs[1].Error = %v, want gitlab failure %v", obs[1].Error, fetchErr)
+	}
+	if !errors.Is(obs[2].Error, fetchErr) {
+		t.Errorf("obs[2].Error = %v, want gitlab failure %v", obs[2].Error, fetchErr)
+	}
+	if obs[1].Fetched || obs[2].Fetched {
+		t.Errorf("failed-provider observations must be Fetched=false")
+	}
+	if obs[1].Provider != "gitlab" || obs[2].Provider != "gitlab" {
+		t.Errorf("failed-provider observations must keep their provider key for cooldown routing")
+	}
+}
+
+// TestSCMCredentialsAvailable_SurfacesFirstRealError (Item 8) verifies that when
+// no provider reports usable credentials, the first real error is returned
+// (not nil) so CheckCredentialsOnce retries on the next poll rather than
+// definitively disabling SCM observation.
+func TestSCMCredentialsAvailable_SurfacesFirstRealError(t *testing.T) {
+	credErr := errors.New("github probe 503")
+	gh := &fakeProvider{key: "github", credsAvailable: false, credsErr: credErr}
+	gl := &fakeProvider{key: "gitlab", credsAvailable: false, credsErr: nil}
+	m := New(NamedProvider{Key: "github", Provider: gh}, NamedProvider{Key: "gitlab", Provider: gl})
+
+	avail, err := m.SCMCredentialsAvailable(context.Background())
+	if avail {
+		t.Errorf("want available=false when no provider has credentials")
+	}
+	if err == nil {
+		t.Fatal("want the first real credential error, got nil (must not be discarded)")
+	}
+	if !errors.Is(err, credErr) {
+		t.Errorf("err = %v, want the first provider's real error %v", err, credErr)
+	}
+}
+
+// TestSCMCredentialsAvailable_HealthyProviderSuppressesError verifies that a
+// healthy provider's success still wins even when another provider returned a
+// transient credential error (the composite must report available=true, nil).
+func TestSCMCredentialsAvailable_HealthyProviderSuppressesError(t *testing.T) {
+	gh := &fakeProvider{key: "github", credsAvailable: false, credsErr: errors.New("github probe 503")}
+	gl := &fakeProvider{key: "gitlab", credsAvailable: true, credsErr: nil}
+	m := New(NamedProvider{Key: "github", Provider: gh}, NamedProvider{Key: "gitlab", Provider: gl})
+
+	avail, err := m.SCMCredentialsAvailable(context.Background())
+	if err != nil || !avail {
+		t.Errorf("want (true, nil) when one provider is healthy, got (%v, %v)", avail, err)
 	}
 }
 

@@ -399,7 +399,37 @@ func (o *Observer) Poll(ctx context.Context) error {
 			// provider returns Fetched=false + a non-nil error; the
 			// placeholder must not advance ETags or be persisted (review
 			// finding #1).
+			//
+			// Per-observation Error routing (review Item 7): when the
+			// multi dispatcher attaches a failure as transient metadata on
+			// a Fetched=false observation (one provider failed while
+			// another succeeded), route it here so the failed provider is
+			// not retried every tick:
+			//   - rate-limit error → per-provider cooldown (reuses existing
+			//     rateLimitCooldown/setRateLimitCooldown machinery);
+			//   - non-rate-limit error → mark the repo refresh-incomplete.
 			if !obs.Fetched {
+				if obs.Error != nil {
+					providerKey := obs.Provider
+					if providerKey == "" {
+						// Fall back to the ref's provider when the placeholder
+						// did not carry one (defensive — multi always sets it).
+						for _, ref := range active {
+							if prKey(ref.Repo, ref.Number) == key {
+								providerKey = ref.Repo.Provider
+								break
+							}
+						}
+					}
+					if cooldown, ok := rateLimitCooldown(now, obs.Error); ok {
+						if providerKey != "" {
+							o.setRateLimitCooldown(now, providerKey, cooldown)
+						}
+						o.logger.Warn("scm observer: provider rate-limited (per-observation); entering cooldown", "provider", providerKey, "cooldown", cooldown, "err", obs.Error)
+					} else {
+						o.logger.Warn("scm observer: provider fetch failed (per-observation); marking refresh-incomplete", "provider", providerKey, "err", obs.Error)
+					}
+				}
 				continue
 			}
 			observations[key] = obs
@@ -439,6 +469,13 @@ func (o *Observer) Poll(ctx context.Context) error {
 			return err
 		}
 		obs := observations[key]
+		// Nil out transient per-observation failure metadata before persistence.
+		// obs.Error is routing-only metadata (review Item 7): it carries a
+		// provider failure for cooldown/refresh-incomplete routing above, and
+		// must never reach the storage layer or lifecycle so durable state is
+		// not corrupted by transient failures (cross-cutting rule, finding 1).
+		obs.Error = nil
+		observations[key] = obs
 		subj, ok := selection.subjectsByPR[key]
 		if !ok {
 			continue

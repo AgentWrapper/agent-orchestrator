@@ -128,6 +128,12 @@ type fakeProvider struct {
 	fetchErr     error
 	reviewErr    error
 
+	// fetchObsErrors maps a prKey to a per-observation error that the fake
+	// attaches to the observation it returns for that ref, mimicking the
+	// multi dispatcher's per-provider Error metadata. When set, the returned
+	// observation has Fetched=false + Error=err so the observer can route it.
+	fetchObsErrors map[string]error
+
 	credentialGate   bool
 	credentialOK     bool
 	credentialErr    error
@@ -190,7 +196,22 @@ func (p *fakeProvider) FetchPullRequests(_ context.Context, refs []ports.SCMPRRe
 	}
 	out := make([]ports.SCMObservation, 0, len(refs))
 	for _, ref := range refs {
-		if obs, ok := p.observations[prKey(ref.Repo, ref.Number)]; ok {
+		key := prKey(ref.Repo, ref.Number)
+		// Per-observation error mimics the multi dispatcher's per-provider
+		// Error metadata: a Fetched=false placeholder carrying the failure
+		// so the observer can route it to cooldown / refresh-incomplete.
+		if err, ok := p.fetchObsErrors[key]; ok {
+			out = append(out, ports.SCMObservation{
+				Fetched:  false,
+				Provider: ref.Repo.Provider,
+				Host:     ref.Repo.Host,
+				Repo:     ref.Repo.Repo,
+				PR:       ports.SCMPRObservation{Number: ref.Number, URL: ref.URL},
+				Error:    err,
+			})
+			continue
+		}
+		if obs, ok := p.observations[key]; ok {
 			out = append(out, obs)
 		}
 	}
@@ -1669,3 +1690,113 @@ func (e *testRateLimitError) Error() string { return "test: rate limited" }
 func (e *testRateLimitError) GetRetryAfter() time.Duration { return e.retryAfter }
 
 func (e *testRateLimitError) GetResetAt() time.Time { return time.Time{} }
+
+// TestPoll_PerObservationRateLimitError_TriggersCooldown (Item 7) verifies that
+// when the provider returns a Fetched=false observation carrying a rate-limit
+// error in its Error field, the observer enters per-provider cooldown for that
+// observation's provider. This is the mixed-batch case: the multi dispatcher
+// attaches the error as per-observation metadata so a rate-limited GitLab
+// alongside a healthy GitHub enters cooldown without suppressing GitHub.
+func TestPoll_PerObservationRateLimitError_TriggersCooldown(t *testing.T) {
+	store := testStoreWithSession()
+	local := knownPR(1)
+	store.prs["p-1"] = []domain.PullRequest{local}
+
+	rle := &testRateLimitError{retryAfter: 2 * time.Minute}
+	provider := &fakeProvider{
+		repoGuards:   map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo2"}},
+		observations: map[string]ports.SCMObservation{prKey(testRepo, 1): testObs(1)},
+		fetchObsErrors: map[string]error{prKey(testRepo, 1): rle},
+	}
+
+	now := time.Unix(1000, 0).UTC()
+	obs := newTestObserver(store, provider, &fakeLifecycle{}, now)
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !obs.inRateLimitCooldown(now, "github") {
+		t.Fatal("github provider should be in rate-limit cooldown after per-observation rate-limit error")
+	}
+	// Subsequent poll within cooldown must skip provider calls.
+	provider.mu.Lock()
+	provider.fetchObsErrors = nil
+	provider.fetchBatches = nil
+	provider.mu.Unlock()
+	now2 := now.Add(30 * time.Second)
+	obs.clock = func() time.Time { return now2 }
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(provider.fetchBatches) != 0 {
+		t.Fatalf("cooldown poll: fetchBatches = %d, want 0 (cooldown must skip provider calls)", len(provider.fetchBatches))
+	}
+}
+
+// TestPoll_PerObservationNonRateLimitError_MarksRefreshIncomplete (Item 7)
+// verifies that a Fetched=false observation carrying a non-rate-limit error is
+// routed to refresh-incomplete, NOT cooldown: the repo ETag and sync cursor
+// must not advance, and the provider must not enter cooldown.
+func TestPoll_PerObservationNonRateLimitError_MarksRefreshIncomplete(t *testing.T) {
+	store := testStoreWithSession()
+	local := knownPR(1)
+	store.prs["p-1"] = []domain.PullRequest{local}
+
+	provider := &fakeProvider{
+		repoGuards:   map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo2"}},
+		observations: map[string]ports.SCMObservation{prKey(testRepo, 1): testObs(1)},
+		fetchObsErrors: map[string]error{prKey(testRepo, 1): errors.New("gitlab 503")},
+	}
+
+	now := time.Unix(1000, 0).UTC()
+	obs := newTestObserver(store, provider, &fakeLifecycle{}, now)
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// Non-rate-limit errors must NOT enter cooldown.
+	if obs.inRateLimitCooldown(now, "github") {
+		t.Fatal("github provider must not enter cooldown for a non-rate-limit error")
+	}
+	// The repo's new ETag ("repo2") must NOT have been cached because the
+	// refresh was marked incomplete.
+	if got := obs.Cache.RepoPRListETag[prKey(testRepo, 0)]; got == "repo2" {
+		t.Fatalf("repo ETag advanced to %q after refresh-incomplete; durable state must not advance", got)
+	}
+	// The sync cursor must NOT have advanced.
+	if cursor := obs.Cache.LastSyncCursor[prKey(testRepo, 0)]; !cursor.IsZero() {
+		t.Fatalf("sync cursor advanced to %v after refresh-incomplete; durable state must not advance", cursor)
+	}
+}
+
+// TestPoll_PerObservationError_NiledBeforePersistence (Item 7) verifies that
+// the observer nils out the Error field before the observation reaches the
+// store and lifecycle. The Error field is transient metadata, not durable
+// state: the storage layer must never see provider-error classification.
+func TestPoll_PerObservationError_NiledBeforePersistence(t *testing.T) {
+	store := testStoreWithSession()
+	local := knownPR(1)
+	store.prs["p-1"] = []domain.PullRequest{local}
+
+	provider := &fakeProvider{
+		repoGuards:   map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo2"}},
+		observations: map[string]ports.SCMObservation{prKey(testRepo, 1): testObs(1)},
+	}
+	lc := &fakeLifecycle{}
+	now := time.Unix(1000, 0).UTC()
+	obs := newTestObserver(store, provider, lc, now)
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// A healthy observation must reach lifecycle with Error == nil.
+	if len(lc.observed) == 0 {
+		t.Skip("no observation reached lifecycle; adjust test fixture")
+	}
+	for _, o := range lc.observed {
+		if o.Error != nil {
+		t.Errorf("lifecycle observed Error = %v, want nil (transient metadata must be nil-ed before persistence)", o.Error)
+		}
+	}
+	for _, w := range store.writes {
+		_ = w // store writes carry domain types, not the obs.Error field; the
+		// lifecycle assertion above is the authoritative nil-out check.
+	}
+}

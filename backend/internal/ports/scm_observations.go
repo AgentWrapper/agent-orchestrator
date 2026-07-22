@@ -74,6 +74,15 @@ type SCMObservation struct {
 	// Mergeability contains AO's mergeability verdict and blockers.
 	Mergeability SCMMergeabilityObservation
 
+	// Error carries a transient per-observation failure from the multi-provider
+	// dispatcher (or any composite provider) when one provider in a batch fails
+	// while others succeed. It is NOT durable state: the observer must inspect
+	// it before persistence to route rate-limit errors to per-provider cooldown
+	// and non-rate-limit errors to refresh-incomplete, then nil it out so the
+	// storage layer never sees provider-error classification. A non-nil Error
+	// always implies Fetched=false.
+	Error error
+
 	// Changed marks which semantic buckets changed compared with the DB snapshot.
 	Changed SCMChanged
 }
