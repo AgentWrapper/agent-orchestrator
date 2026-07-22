@@ -206,7 +206,7 @@ func TestProjectsAPI_UpdateSettings(t *testing.T) {
 		t.Fatalf("seed create = %d, want 201; body=%s", status, body)
 	}
 
-	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/legacy-project", `{"displayName":"Human-friendly project","config":{"defaultBranch":"develop"}}`)
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/legacy-project", `{"displayName":"Friendly project","config":{"defaultBranch":"develop"}}`)
 	if status != http.StatusOK {
 		t.Fatalf("PUT settings = %d, want 200; body=%s", status, body)
 	}
@@ -214,12 +214,15 @@ func TestProjectsAPI_UpdateSettings(t *testing.T) {
 		Project projectBody `json:"project"`
 	}
 	mustJSON(t, body, &updated)
-	if updated.Project.ID != "legacy-project" || updated.Project.Name != "Human-friendly project" || updated.Project.DefaultBranch != "develop" {
+	if updated.Project.ID != "legacy-project" || updated.Project.Name != "Friendly project" || updated.Project.DefaultBranch != "develop" {
 		t.Fatalf("update response = %#v", updated.Project)
 	}
 
 	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/legacy-project", `{"displayName":"  ","config":{}}`)
 	assertErrorCode(t, body, status, http.StatusBadRequest, "DISPLAY_NAME_REQUIRED")
+
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/legacy-project", `{"displayName":"`+strings.Repeat("x", 21)+`","config":{}}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "DISPLAY_NAME_TOO_LONG")
 
 	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/missing", `{"displayName":"Missing","config":{}}`)
 	assertErrorCode(t, body, status, http.StatusNotFound, "PROJECT_NOT_FOUND")

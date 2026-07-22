@@ -455,6 +455,12 @@ func TestManager_UpdateSettings(t *testing.T) {
 	_, err = m.UpdateSettings(ctx, "ao", project.UpdateSettingsInput{DisplayName: "  ", Config: cfg})
 	wantCode(t, err, "DISPLAY_NAME_REQUIRED")
 
+	_, err = m.UpdateSettings(ctx, "ao", project.UpdateSettingsInput{
+		DisplayName: strings.Repeat("x", 21),
+		Config:      cfg,
+	})
+	wantCode(t, err, "DISPLAY_NAME_TOO_LONG")
+
 	_, err = m.UpdateSettings(ctx, "missing", project.UpdateSettingsInput{DisplayName: "Missing", Config: cfg})
 	wantCode(t, err, "PROJECT_NOT_FOUND")
 }
