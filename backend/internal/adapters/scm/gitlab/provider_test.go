@@ -1748,6 +1748,165 @@ func TestFetchPullRequests_ForkMR_SourceProjectFetchFails_FailClosed(t *testing.
 	}
 }
 
+// TestFetchPullRequests_ForkMR_SourceProjectCachedWithinTTL verifies that the
+// fork source-project path_with_namespace is cached across poll cycles within
+// the 5-min TTL (ticket 05). Two FetchPullRequests calls for the same fork MR
+// within the TTL window must hit the source-project endpoint exactly once —
+// the second call is served from the cache without an HTTP round-trip. The
+// cached path must still produce the correct HeadRepo on the second call.
+func TestFetchPullRequests_ForkMR_SourceProjectCachedWithinTTL(t *testing.T) {
+	var sourceProjectHits atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"iid":               1,
+			"title":             "Fork contribution",
+			"state":             "opened",
+			"draft":             false,
+			"web_url":           "https://gitlab.com/myorg/myrepo/-/merge_requests/1",
+			"source_branch":     "fix-bug",
+			"target_branch":     "main",
+			"sha":               "abc123",
+			"merge_status":      "can_be_merged",
+			"author":            map[string]any{"username": "alice"},
+			"source_project_id": 99,
+			"target_project_id": 10,
+			"diff_refs":         map[string]any{"base_sha": "base123"},
+		})
+	})
+	mux.HandleFunc("/api/v4/projects/99", func(w http.ResponseWriter, r *http.Request) {
+		sourceProjectHits.Add(1)
+		json.NewEncoder(w).Encode(map[string]any{
+			"id":                  99,
+			"path_with_namespace": "contributor/myrepo-fork",
+		})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/pipelines", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{
+			{"id": 100, "status": "success", "sha": "abc123"},
+		})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/pipelines/100/jobs", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{
+			{"id": 200, "name": "build", "status": "success", "web_url": "https://gitlab.com/jobs/200"},
+		})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1/approvals", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"approved": false, "approvals_required": 0, "approved_by": []any{}})
+	})
+	_, p := testServer(t, mux)
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "myorg", Name: "myrepo", Repo: "myorg/myrepo"}
+	ref := ports.SCMPRRef{Repo: repo, Number: 1, URL: "https://gitlab.com/myorg/myrepo/-/merge_requests/1"}
+
+	// Inject a controllable clock so TTL behaviour is deterministic (no real
+	// sleeping). syntheticClock is defined in cache_test.go.
+	clock := &syntheticClock{t: time.Now()}
+	p.cache.now = clock.now
+
+	// First FetchPullRequests — fork-project cache miss, fetches via HTTP.
+	obs, err := p.FetchPullRequests(context.Background(), []ports.SCMPRRef{ref})
+	if err != nil {
+		t.Fatalf("first FetchPullRequests: unexpected error: %v", err)
+	}
+	if len(obs) != 1 || !obs[0].Fetched {
+		t.Fatalf("first call: expected one fetched observation, got %+v", obs)
+	}
+	if got, want := obs[0].PR.HeadRepo, "contributor/myrepo-fork"; got != want {
+		t.Fatalf("first call: PR.HeadRepo = %q, want %q", got, want)
+	}
+	if got := sourceProjectHits.Load(); got != 1 {
+		t.Fatalf("source-project endpoint hits after first call = %d, want 1", got)
+	}
+
+	// Second FetchPullRequests within the 5-min TTL — cache hit, no HTTP
+	// round-trip to the source-project endpoint.
+	obs2, err := p.FetchPullRequests(context.Background(), []ports.SCMPRRef{ref})
+	if err != nil {
+		t.Fatalf("second FetchPullRequests (within TTL): unexpected error: %v", err)
+	}
+	if len(obs2) != 1 || !obs2[0].Fetched {
+		t.Fatalf("second call: expected one fetched observation, got %+v", obs2)
+	}
+	// HeadRepo must still be the cached source-project path on a cache hit.
+	if got, want := obs2[0].PR.HeadRepo, "contributor/myrepo-fork"; got != want {
+		t.Errorf("second call: PR.HeadRepo = %q, want %q (cached path on cache hit)", got, want)
+	}
+	if got := sourceProjectHits.Load(); got != 1 {
+		t.Errorf("source-project endpoint hits after second call (within TTL) = %d, want 1 (cache hit)", got)
+	}
+}
+
+// TestFetchPullRequests_ForkMR_SourceProjectCacheExpiresAfterTTL verifies that
+// after the 5-min fork-project TTL elapses, the cached entry is treated as a
+// miss and the source-project endpoint is fetched again (ticket 05). This is
+// the staleness-recovery path: if a project is renamed/transferred mid-session,
+// the cache refreshes within the TTL window.
+func TestFetchPullRequests_ForkMR_SourceProjectCacheExpiresAfterTTL(t *testing.T) {
+	var sourceProjectHits atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"iid":               1,
+			"title":             "Fork contribution",
+			"state":             "opened",
+			"draft":             false,
+			"web_url":           "https://gitlab.com/myorg/myrepo/-/merge_requests/1",
+			"source_branch":     "fix-bug",
+			"target_branch":     "main",
+			"sha":               "abc123",
+			"merge_status":      "can_be_merged",
+			"author":            map[string]any{"username": "alice"},
+			"source_project_id": 99,
+			"target_project_id": 10,
+			"diff_refs":         map[string]any{"base_sha": "base123"},
+		})
+	})
+	mux.HandleFunc("/api/v4/projects/99", func(w http.ResponseWriter, r *http.Request) {
+		sourceProjectHits.Add(1)
+		json.NewEncoder(w).Encode(map[string]any{
+			"id":                  99,
+			"path_with_namespace": "contributor/myrepo-fork",
+		})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/pipelines", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{
+			{"id": 100, "status": "success", "sha": "abc123"},
+		})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/pipelines/100/jobs", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{
+			{"id": 200, "name": "build", "status": "success", "web_url": "https://gitlab.com/jobs/200"},
+		})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1/approvals", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"approved": false, "approvals_required": 0, "approved_by": []any{}})
+	})
+	_, p := testServer(t, mux)
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "myorg", Name: "myrepo", Repo: "myorg/myrepo"}
+	ref := ports.SCMPRRef{Repo: repo, Number: 1, URL: "https://gitlab.com/myorg/myrepo/-/merge_requests/1"}
+
+	clock := &syntheticClock{t: time.Now()}
+	p.cache.now = clock.now
+
+	// First call — populates the fork-project cache.
+	if _, err := p.FetchPullRequests(context.Background(), []ports.SCMPRRef{ref}); err != nil {
+		t.Fatalf("first FetchPullRequests: %v", err)
+	}
+	if got := sourceProjectHits.Load(); got != 1 {
+		t.Fatalf("source-project endpoint hits after first call = %d, want 1", got)
+	}
+
+	// Advance past the fork-project TTL (5 min). The cached entry must now be
+	// treated as a miss, so the next FetchPullRequests fetches again.
+	clock.advance(forkProjectCacheTTL + time.Second)
+	if _, err := p.FetchPullRequests(context.Background(), []ports.SCMPRRef{ref}); err != nil {
+		t.Fatalf("second FetchPullRequests (after TTL): %v", err)
+	}
+	if got := sourceProjectHits.Load(); got != 2 {
+		t.Errorf("source-project endpoint hits after TTL expiry = %d, want 2 (cache expired, must refetch)", got)
+	}
+}
+
 // TestFetchPullRequests_PipelineJobsTruncated_Partial verifies that when the
 // pipeline-jobs pagination hits the 10-page cap (more than 1,000 jobs), the
 // observation's CI.Partial flag is set to true so the observer does not
