@@ -26,7 +26,9 @@ function meetsMinimumVersion(actual, minimum) {
 
 const versionResult = spawnSync("go", ["version"], { encoding: "utf8" });
 if (versionResult.error) {
-	console.error(`Go ${minimumGoVersion.join(".")}+ is required, but Go could not be started: ${versionResult.error.message}`);
+	console.error(
+		`Go ${minimumGoVersion.join(".")}+ is required, but Go could not be started: ${versionResult.error.message}`,
+	);
 	process.exit(1);
 }
 const actualGoVersion = parseGoVersion(versionResult.stdout);

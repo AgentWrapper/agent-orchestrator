@@ -984,7 +984,12 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		if (daemonProcess !== child) return;
 		daemonProcess = null;
 		if (daemonStoppingProcess === child) daemonStoppingProcess = null;
-		setDaemonStatus({ state: "error", message: error.message, details: daemonOutput.trim() || undefined, code: "spawn_failed" });
+		setDaemonStatus({
+			state: "error",
+			message: error.message,
+			details: daemonOutput.trim() || undefined,
+			code: "spawn_failed",
+		});
 	});
 
 	child.once("exit", (code, signal) => {
