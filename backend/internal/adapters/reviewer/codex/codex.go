@@ -35,11 +35,12 @@ var _ ports.ReviewerCanceller = (*Reviewer)(nil)
 // network access for posting the review and reporting its result.
 func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
 	argv, err := r.agent.GetLaunchCommand(ctx, ports.LaunchConfig{
-		SessionID:     inv.ReviewerID,
-		WorkspacePath: inv.WorkspacePath,
-		Prompt:        inv.Prompt,
-		SystemPrompt:  inv.SystemPrompt,
-		Permissions:   ports.PermissionModeAuto,
+		SessionID:        inv.ReviewerID,
+		WorkspacePath:    inv.WorkspacePath,
+		Prompt:           inv.Prompt,
+		SystemPrompt:     inv.SystemPrompt,
+		SystemPromptFile: inv.SystemPromptFile,
+		Permissions:      ports.PermissionModeAuto,
 	})
 	if err != nil {
 		return ports.ReviewCommandSpec{}, err

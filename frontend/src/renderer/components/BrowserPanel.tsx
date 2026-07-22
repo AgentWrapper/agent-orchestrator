@@ -4,6 +4,7 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { useBrowserView, type BrowserViewModel } from "../hooks/useBrowserView";
 import { formatBrowserAnnotationMessage, type BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
 import type { WorkspaceSession } from "../types/workspace";
+import { isAgentActivityWorking } from "../lib/session-presentation";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { cn } from "../lib/utils";
@@ -204,7 +205,7 @@ export function BrowserPanelView({
 	const { beginPicking, cancelPicking, enqueue, error, failPicking, queuedCount, retryQueued, status } =
 		annotationQueue;
 	const showStaticPreview = !window.ao?.browser && navState.url !== "";
-	const sessionBusy = session.status === "working";
+	const sessionBusy = isAgentActivityWorking(session.activity);
 	const canAnnotate = Boolean(window.ao?.browser && viewId && navState.url);
 	const canRetryAnnotation = status === "error" && queuedCount > 0;
 
@@ -270,6 +271,7 @@ export function BrowserPanelView({
 	return (
 		<div
 			className="flex h-full min-h-browser-min flex-col overflow-hidden rounded-lg border border-border bg-background"
+			data-testid="browser-panel"
 			role="tabpanel"
 		>
 			<form
@@ -387,6 +389,7 @@ export function BrowserPanelView({
 							"absolute inset-x-2.5 bottom-2.5 m-0 border border-error/35 bg-error/8 px-2.5 py-2",
 							"rounded-md text-xs text-destructive",
 						)}
+						data-testid="browser-preview-error"
 					>
 						{navState.error}
 					</p>

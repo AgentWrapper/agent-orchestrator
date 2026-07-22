@@ -1,4 +1,4 @@
-import { render } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { XtermTerminal } from "./XtermTerminal";
 
@@ -12,6 +12,9 @@ const state = vi.hoisted(() => ({
 		modes: { bracketedPasteMode: boolean; mouseTrackingMode: string };
 		buffer: { active: { type: string } };
 		scrollLines: ReturnType<typeof vi.fn>;
+		clear: ReturnType<typeof vi.fn>;
+		focus: ReturnType<typeof vi.fn>;
+		selectAll: ReturnType<typeof vi.fn>;
 		dataListeners: Set<(data: string) => void>;
 		keyListeners: Set<(event: { key: string }) => void>;
 		selectionListeners: Set<() => void>;
@@ -36,6 +39,9 @@ vi.mock("@xterm/xterm", () => ({
 		modes = { bracketedPasteMode: false, mouseTrackingMode: "vt200" };
 		buffer = { active: { type: "normal" } };
 		scrollLines = vi.fn();
+		clear = vi.fn();
+		focus = vi.fn();
+		selectAll = vi.fn();
 		dataListeners = new Set<(data: string) => void>();
 		keyListeners = new Set<(event: { key: string }) => void>();
 		selectionListeners = new Set<() => void>();
@@ -196,6 +202,62 @@ describe("XtermTerminal", () => {
 
 		expect(event.defaultPrevented).toBe(true);
 		expect(window.ao!.clipboard.writeText).toHaveBeenCalledWith("focused copied selection");
+	});
+
+	it("opens a themed context menu on right-click and disables Copy without a selection", async () => {
+		const { container } = render(<XtermTerminal theme="dark" />);
+		const host = container.firstElementChild!;
+
+		expect(fireEvent.contextMenu(host, { clientX: 120, clientY: 88 })).toBe(false);
+
+		expect(await screen.findByText("Paste")).toBeInTheDocument();
+		expect(screen.getByText("Copy")).toHaveAttribute("data-disabled");
+		const trigger = container.querySelector("button[aria-hidden='true']") as HTMLButtonElement;
+		expect(trigger.style.left).toBe("120px");
+		expect(trigger.style.top).toBe("88px");
+	});
+
+	it("runs context menu copy, select all, and clear against the xterm instance", async () => {
+		const { container } = render(<XtermTerminal theme="dark" />);
+		const host = container.firstElementChild!;
+		state.lastTerminal!.selection = "menu copy";
+
+		fireEvent.contextMenu(host);
+		fireEvent.click(await screen.findByText("Copy"));
+		await waitFor(() => expect(window.ao!.clipboard.writeText).toHaveBeenCalledWith("menu copy"));
+		expect(state.lastTerminal!.focus).toHaveBeenCalled();
+
+		fireEvent.contextMenu(host);
+		fireEvent.click(await screen.findByText("Select All"));
+		expect(state.lastTerminal!.selectAll).toHaveBeenCalled();
+
+		fireEvent.contextMenu(host);
+		fireEvent.click(await screen.findByText("Clear"));
+		expect(state.lastTerminal!.clear).toHaveBeenCalled();
+	});
+
+	it("pastes from the context menu through the terminal paste path", async () => {
+		const onInput = vi.fn();
+		window.ao!.clipboard.readText = vi.fn().mockResolvedValue("menu\npaste");
+		const { container } = render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+
+		fireEvent.contextMenu(container.firstElementChild!);
+		fireEvent.click(await screen.findByText("Paste"));
+
+		await waitFor(() => expect(onInput).toHaveBeenCalledWith("menu\rpaste", "paste"));
+		expect(window.ao!.clipboard.readText).toHaveBeenCalledTimes(1);
+	});
+
+	it("honors bracketed paste mode from the context menu", async () => {
+		const onInput = vi.fn();
+		window.ao!.clipboard.readText = vi.fn().mockResolvedValue("bracketed\npaste");
+		const { container } = render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+		state.lastTerminal!.modes.bracketedPasteMode = true;
+
+		fireEvent.contextMenu(container.firstElementChild!);
+		fireEvent.click(await screen.findByText("Paste"));
+
+		await waitFor(() => expect(onInput).toHaveBeenCalledWith("\x1b[200~bracketed\rpaste\x1b[201~", "paste"));
 	});
 
 	it("auto-copies new selections and retries explicit copy if the auto-copy failed", async () => {

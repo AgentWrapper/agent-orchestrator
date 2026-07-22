@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BrowserNavState, BrowserRect } from "../../main/browser-view-host";
 import type { BrowserAnnotationCancelPayload, BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
+import { OPEN_DIALOG_OR_MENU_SELECTOR } from "../lib/dom-selectors";
 
 export type { BrowserNavState };
 
@@ -55,9 +56,6 @@ const EMPTY_NAV_STATE: BrowserNavState = {
 
 const HIDDEN_RECT: BrowserRect = { x: 0, y: 0, width: 0, height: 0 };
 
-const OPEN_MODAL_SELECTOR =
-	'[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"], [role="menu"][data-state="open"]';
-
 // The native WebContentsView is a window-level overlay, so DOM `overflow:
 // hidden` never clips it — it paints wherever the slot's bounding box lands.
 // Inside the collapsible inspector the slot sits in a `min-w-[280px]` wrapper,
@@ -76,6 +74,21 @@ function visibleSlotRect(node: HTMLElement): BrowserRect {
 		bottom = Math.min(bottom, bounds.bottom);
 	}
 	return { x: left, y: top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
+}
+
+// `requestFullscreen` (the terminal pane's fullscreen button) promotes an element
+// into the DOM top layer, which covers every other DOM node — but not the native
+// view, which Chromium composites above the page regardless. The transition also
+// leaves the slot's own box untouched, since the top layer does not reflow
+// normal-flow siblings, so neither the ResizeObserver nor `resize` fires and the
+// view would keep painting at its pre-fullscreen bounds, over the fullscreen
+// element and without its own (now hidden) toolbar. Nothing outside the
+// fullscreen subtree is visible, so hide the view unless the slot is inside it.
+function hiddenByFullscreen(node: HTMLElement): boolean {
+	// Truthy, not `!== null`: the spec says null, but jsdom (and older engines)
+	// leave `fullscreenElement` undefined when nothing is fullscreen.
+	const fullscreen = document.fullscreenElement;
+	return Boolean(fullscreen) && !fullscreen!.contains(node);
 }
 
 export function useBrowserView({
@@ -128,7 +141,7 @@ export function useBrowserView({
 		const id = viewIdRef.current;
 		const node = slotNodeRef.current;
 		if (!id) return;
-		if (!activeRef.current || !node || !node.isConnected || !hasUrlRef.current) {
+		if (!activeRef.current || !node || !node.isConnected || !hasUrlRef.current || hiddenByFullscreen(node)) {
 			sendHiddenBounds(id);
 			return;
 		}
@@ -309,7 +322,7 @@ export function useBrowserView({
 			mirrorTimerRef.current = null;
 		};
 		const update = () => {
-			const open = document.querySelector(OPEN_MODAL_SELECTOR) !== null;
+			const open = document.querySelector(OPEN_DIALOG_OR_MENU_SELECTOR) !== null;
 			if (open === modalOpenRef.current) return;
 			modalOpenRef.current = open;
 			if (open) {
@@ -345,16 +358,21 @@ export function useBrowserView({
 
 	useEffect(() => {
 		const handle = () => scheduleMeasure();
+		// Fullscreen animates on macOS, so settle-measure: hiding lands on the
+		// leading edge, and the restore on exit waits for the final geometry.
+		const handleFullscreenChange = () => scheduleSettleMeasure();
 		window.addEventListener("resize", handle);
 		window.addEventListener("scroll", handle, true);
+		document.addEventListener("fullscreenchange", handleFullscreenChange);
 		return () => {
 			window.removeEventListener("resize", handle);
 			window.removeEventListener("scroll", handle, true);
+			document.removeEventListener("fullscreenchange", handleFullscreenChange);
 			observerRef.current?.disconnect();
 			cancelScheduledMeasure();
 			if (settleTimerRef.current !== null) window.clearTimeout(settleTimerRef.current);
 		};
-	}, [cancelScheduledMeasure, scheduleMeasure]);
+	}, [cancelScheduledMeasure, scheduleMeasure, scheduleSettleMeasure]);
 
 	const withView = useCallback(async (fn: (id: string) => Promise<BrowserNavState | void>) => {
 		const id = viewIdRef.current;

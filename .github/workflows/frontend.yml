@@ -39,3 +39,38 @@ jobs:
 
       - name: Run vitest suite
         run: npx vitest run
+
+  renderer-smoke:
+    # RENDERER smoke (issue #2483, renderer slice) — the Playwright specs that run
+    # the renderer under `dev:web` with an injected window.ao + fake CDC/snapshot.
+    # This is fast renderer-regression coverage; it is NOT the canonical T0/P0
+    # end-to-end gate. Real daemon/storage/API/preload/PTY/FS boundaries are
+    # exercised by the packaged-app pod gate (#2697), not here.
+    # playwright.config starts `dev:web` itself (webServer); we only need the
+    # browser installed.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+
+      - name: Typecheck e2e suite
+        # Playwright transpiles specs without typechecking, so the
+        # `satisfies AoBridge` guard in e2e/support/fake-bridge.ts (the
+        # preload-drift tripwire) is only enforced by this step.
+        run: npm run typecheck:e2e
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Run renderer smoke suite
+        run: CI=true npm run test:e2e:renderer

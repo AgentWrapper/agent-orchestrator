@@ -179,3 +179,100 @@ configured; releases since v0.10.1 ship signed and notarized, and the in-app
 auto-updater (`update-electron-app` in `src/main.ts`, active only when
 `app.isPackaged`) updates installed apps from the Releases feed. Windows
 code-signing is still a follow-up (issue #401).
+
+---
+
+## Feature releases
+
+A **feature release** is a signed, installable build of a single **unmerged** PR, cut
+manually so the PR can be dogfooded or demoed in isolation. It is not for merged PRs
+(nightly already covers those). The build ships as a GitHub prerelease on an isolated
+`pr<N>` update channel and is exposed in-app as a third channel alongside Stable and
+Nightly.
+
+### What it is and when to cut one
+
+|                       |                                                                                                                                                                                                                                    |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Use when**          | You want to share or test a specific PR before it merges, without pulling in the rest of nightly.                                                                                                                                  |
+| **Do not use when**   | The PR is already merged (nightly covers it), or you want an automated regular build.                                                                                                                                              |
+| **Channel isolation** | Builds publish to the `pr<N>` electron-updater channel only. `latest*.yml` and `nightly*.yml` manifests are never written (enforced by a channel-assertion guard in the workflow). Stable and nightly auto-updates are unaffected. |
+
+### Cutting a build
+
+1. Go to **Actions > Desktop feature release** and click **Run workflow**.
+2. Fill in the inputs:
+
+   | Input        | Required | Description                                                                        |
+   | ------------ | -------- | ---------------------------------------------------------------------------------- |
+   | `pr`         | Yes      | PR number to build. Must be open at dispatch time.                                 |
+   | `slug`       | No       | Short display label (e.g. `fix-crash`). Display-only; never in the version or tag. |
+   | `platforms`  | No       | Comma-separated: `mac,win,linux` (default: all three).                             |
+   | `allow_fork` | No       | Set to `true` to build a cross-repository (fork) PR. Off by default.               |
+
+3. Dispatch the workflow. A `guard` job runs first (no secrets, inspectable) and:
+   - Fails fast if 5 feature releases are already active ("retire one first").
+   - Confirms the PR is open; rejects fork PRs unless `allow_fork=true`.
+   - Computes the version: `<base>-pr<N>.<UTCts>+<sha>` (tag: `v<base>-pr<N>.<ts>`).
+
+4. The `release` and `release-intel` build jobs then pause for **environment approval**
+   (the same `release` environment required-reviewer gate as the stable release). An
+   approver must click **Approve and deploy** in the GitHub UI.
+
+   **Security rule: the approver must inspect the PR's head SHA before approving.**
+   These jobs check out and build unmerged code with access to the signing secrets
+   (`CSC_LINK`, `CSC_KEY_PASSWORD`, Apple notarization keys). Every dispatch is a
+   fresh approval. Fork PRs carry extra risk and require `allow_fork=true` to even
+   reach this gate.
+
+5. After approval the build runs: sign + notarize (macOS, with a 3x retry for
+   transient Apple notary flakes), publish prerelease, write the `pr<N>` feed files
+   (`pr<N>.yml`, `pr<N>-mac.yml`, `pr<N>-linux.yml`), and annotate the release with
+   the machine-readable marker:
+   ```
+   <!-- ao-feature-build: {"pr":<N>,"base":"<base>","sha":"<sha>","slug":"<slug>"} -->
+   ```
+   The release name is set to `[feature] PR #<N>: <title>`.
+
+### One live build per PR and the version/identity scheme
+
+- **One live build per PR:** before publishing, the workflow deletes any existing
+  `v*-pr<N>.*` prerelease for the same PR number. A rebuild of the same PR replaces
+  the old build and resets the 7-day expiry timer. The approver re-vets the new head
+  SHA on every rebuild.
+- **Version format:** `v<base>-pr<N>.<UTCts>` (build metadata `+<sha>` is stripped for
+  the tag). Example: `v0.2.0-pr2270.202507061200`. The semver prerelease identifier
+  `pr<N>` is the electron-updater channel key; it must match exactly, which is why the
+  `slug` is display-only and never appears in the version or tag.
+
+### Lifecycle and limits
+
+| Scenario                        | Behavior                                                                              |
+| ------------------------------- | ------------------------------------------------------------------------------------- |
+| New build cut for same PR       | Prior build deleted first; 7-day timer resets; approver re-vets new SHA.              |
+| 5 feature releases already live | Workflow fails at `guard`; retire one before cutting a new build.                     |
+| PR closed or merged             | Immediate cleanup via `feature-release-cleanup.yml` (`pull_request: closed` trigger). |
+| Build reaches 7 days old        | Daily cron sweep (`feature-release-cleanup.yml` `schedule` trigger) deletes it.       |
+
+The cleanup workflow (`feature-release-cleanup.yml`) runs with `contents: write` only,
+no environment gate (no secrets needed for deletion).
+
+### How users consume feature releases
+
+Users install and track a feature build from **Settings > Updates**:
+
+1. Change the primary channel to **Feature Releases**. A second dropdown appears
+   showing currently live feature builds, each labeled `PR #N: <title>` with its
+   build version and freshness.
+2. Pick a PR from the dropdown. The app pins that PR's `pr<N>` channel, downloads and
+   installs the build (requires a restart), and tracks the newest build of that PR as
+   subsequent builds are cut.
+3. The user's Stable or Nightly choice is preserved as **home** in `update-settings.json`
+   (`channel: "latest" | "nightly"`). Picking a feature build never overwrites this.
+4. **Return home** by clicking "Return to Stable" (or "Return to Nightly") in the
+   settings banner, or set the channel back to Stable/Nightly manually. On the next
+   update check the app resolves the home channel and reinstalls accordingly.
+5. **Automatic fall-home:** if the pinned PR's build is retired (PR closed, merged, or
+   7-day expiry), the app detects the retirement on its next update poll, clears the
+   pin, and falls back to the preserved home channel automatically. No force-quit; the
+   user is moved home on the next scheduled check.

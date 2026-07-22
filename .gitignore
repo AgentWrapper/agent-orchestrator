@@ -31,6 +31,10 @@ session-events.jsonl.*
 # Agent Orchestrator local session state
 .ao/
 
+# Local scratch workspace (icon generation, throwaway scripts)
+.cache/
+frontend/.tanstack/
+
 # AO reviewer scratch output. The reviewer agent runs inside the worker's
 # worktree; its review writeup must never be committed onto the worker branch.
 /review.md
@@ -73,6 +77,9 @@ frontend/daemon/
 # Locally-added agent skills (not for the team)
 .agents/
 skills-lock.json
+
+# e2e pod gate: downloaded pod logs/traces (uploaded as CI artifacts, not committed)
+e2e-artifacts/
 
 # Local pnpm artifacts
 pnpm-lock.yaml

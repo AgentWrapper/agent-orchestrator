@@ -244,7 +244,7 @@ func containsFold(values []string, needle string) bool {
 func seenIssueIDs(sessions []domain.SessionRecord) map[domain.IssueID]bool {
 	seen := make(map[domain.IssueID]bool, len(sessions))
 	for _, sess := range sessions {
-		if sess.IssueID != "" {
+		if sess.IssueID != "" && !sess.IsTerminated {
 			seen[sess.IssueID] = true
 		}
 	}

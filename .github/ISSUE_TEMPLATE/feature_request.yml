@@ -1,0 +1,45 @@
+name: Feature request
+description: Propose a new capability or improvement.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Lead with the **problem**, not only the solution.
+        For larger ideas, confirm scope on [Discord](https://discord.com/invite/UZv7JjxbwG) or the daily sync (10:00 PM IST) before building.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What pain are you hitting? Who does this affect?
+      placeholder: As a … I need … because …
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed direction
+      description: Rough idea of what good looks like. Design sketches welcome; keep it optional.
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds or other approaches you already tried.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues / discussions for something similar
+          required: true
+        - label: I am willing to help implement this if maintainers agree on scope
+          required: false

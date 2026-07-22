@@ -26,3 +26,9 @@ export function useShell(): ShellContextValue {
 	if (!ctx) throw new Error("useShell must be used within the _shell layout route");
 	return ctx;
 }
+
+// Non-throwing variant for components that also render outside the shell
+// (e.g. Sidebar in unit tests): returns null instead of throwing.
+export function useShellMaybe(): ShellContextValue | null {
+	return useContext(ShellContext);
+}

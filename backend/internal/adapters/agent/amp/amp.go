@@ -131,7 +131,8 @@ var ampBinarySpec = binaryutil.BinarySpec{
 	Names:         []string{"amp"},
 	WinNames:      []string{"amp.cmd", "amp.exe", "amp"},
 	UnixPaths:     []string{"/usr/local/bin/amp", "/opt/homebrew/bin/amp"},
-	UnixHomePaths: [][]string{{".local", "bin", "amp"}, {".npm", "bin", "amp"}},
+	UnixHomePaths: binaryutil.NodeManagedUnixHomePaths("amp"),
+	NodeManaged:   true,
 	WinPaths: []binaryutil.WinPath{
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "amp.cmd"}},
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "amp.exe"}},
