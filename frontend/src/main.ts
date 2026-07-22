@@ -96,6 +96,7 @@ let daemonStoppingProcess: ChildProcess | null = null;
 let daemonStartPromise: Promise<DaemonStatus> | null = null;
 let daemonStartEpoch = 0;
 let daemonStatus: DaemonStatus = { state: "stopped" };
+let daemonOutput = "";
 let browserViewHost: BrowserViewHost | null = null;
 // Held for the app lifetime. Dropping it (on any exit) triggers daemon self-stop.
 let supervisorLink: SupervisorLinkHandle | null = null;
@@ -233,6 +234,12 @@ function applyRuntimeAppIcon(): void {
 function setDaemonStatus(nextStatus: DaemonStatus): void {
 	daemonStatus = nextStatus;
 	mainWindow?.webContents.send("daemon:status", daemonStatus);
+}
+
+const MAX_DAEMON_OUTPUT_CHARS = 12_000;
+
+function appendDaemonOutput(text: string): void {
+	daemonOutput = (daemonOutput + text).slice(-MAX_DAEMON_OUTPUT_CHARS);
 }
 
 // Role-based menu installed on Windows where the native menu bar is hidden. The
@@ -807,6 +814,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		return daemonStatus;
 	}
 
+	daemonOutput = "";
 	setDaemonStatus({ state: "starting" });
 
 	// Capture the spawned handle locally so the async lifecycle listeners act only
@@ -929,12 +937,14 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 
 		child.stdout?.on("data", (chunk: Buffer) => {
 			const text = chunk.toString("utf8");
+			appendDaemonOutput(text);
 			console.log(text.trimEnd());
 			scanStdout(text);
 		});
 
 		child.stderr?.on("data", (chunk: Buffer) => {
 			const text = chunk.toString("utf8");
+			appendDaemonOutput(text);
 			console.error(text.trimEnd());
 			scanStderr(text);
 		});
@@ -974,7 +984,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		if (daemonProcess !== child) return;
 		daemonProcess = null;
 		if (daemonStoppingProcess === child) daemonStoppingProcess = null;
-		setDaemonStatus({ state: "error", message: error.message, code: "spawn_failed" });
+		setDaemonStatus({ state: "error", message: error.message, details: daemonOutput.trim() || undefined, code: "spawn_failed" });
 	});
 
 	child.once("exit", (code, signal) => {
@@ -994,6 +1004,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		setDaemonStatus({
 			state: "stopped",
 			message: signal ? `Daemon exited with ${signal}` : `Daemon exited with code ${code ?? "unknown"}`,
+			details: daemonOutput.trim() || undefined,
 			code: "exited",
 			exitCode: code,
 			signal,

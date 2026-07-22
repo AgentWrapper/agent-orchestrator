@@ -21,6 +21,9 @@ export type DaemonStatus = {
 	executablePath?: string;
 	workingDirectory?: string;
 	message?: string;
+	// Recent daemon stdout/stderr retained by the Electron supervisor for local
+	// troubleshooting. It is never sent to telemetry.
+	details?: string;
 	code?: DaemonFailureCode;
 	exitCode?: number | null;
 	signal?: string | null;

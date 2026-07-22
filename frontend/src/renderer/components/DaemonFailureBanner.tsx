@@ -1,10 +1,29 @@
 import { AlertTriangle } from "lucide-react";
+import { useState } from "react";
 import type { DaemonStatus } from "../../shared/daemon-status";
 import { daemonFailureHint, daemonFailureMessage } from "../lib/daemon-failure";
+import { aoBridge } from "../lib/bridge";
 
 export function DaemonFailureBanner({ status }: { status: DaemonStatus }) {
-	if (status.state !== "error") return null;
+	if (!status.code || status.state === "ready") return null;
+	return <DaemonFailureContent status={status} />;
+}
 
+function DaemonFailureContent({ status }: { status: DaemonStatus }) {
+	const [detailsOpen, setDetailsOpen] = useState(false);
+	const [copied, setCopied] = useState(false);
+	const details = status.details?.trim();
+	const hint = daemonFailureHint(status);
+	const copyDetails = async () => {
+		const lines = [
+			"AO daemon startup failure",
+			`Code: ${status.code ?? "unknown"}`,
+			`Message: ${daemonFailureMessage(status)}`,
+			details ? `\nDetails:\n${details}` : "",
+		];
+		await aoBridge.clipboard.writeText(lines.filter(Boolean).join("\n"));
+		setCopied(true);
+	};
 	return (
 		<section
 			aria-live="assertive"
@@ -15,7 +34,32 @@ export function DaemonFailureBanner({ status }: { status: DaemonStatus }) {
 			<div className="min-w-0 flex-1">
 				<p className="font-medium text-foreground">AO daemon failed to start</p>
 				<p className="mt-0.5 break-words text-muted-foreground">{daemonFailureMessage(status)}</p>
-				<p className="mt-1 text-muted-foreground">{daemonFailureHint(status)}</p>
+				{hint ? <p className="mt-1 text-muted-foreground">{hint}</p> : null}
+				{details ? (
+					<div className="mt-2">
+						<div className="flex items-center gap-3">
+							<button
+								type="button"
+								className="text-xs text-foreground underline-offset-2 hover:underline"
+								onClick={() => setDetailsOpen((open) => !open)}
+							>
+								{detailsOpen ? "Hide details" : "Show details"}
+							</button>
+							<button
+								type="button"
+								className="text-xs text-foreground underline-offset-2 hover:underline"
+								onClick={() => void copyDetails()}
+							>
+								{copied ? "Copied" : "Copy details"}
+							</button>
+						</div>
+						{detailsOpen ? (
+							<pre className="mt-2 max-h-40 overflow-auto rounded border border-border bg-background/60 p-2 font-mono text-[11px] leading-relaxed text-muted-foreground">
+								{details}
+							</pre>
+						) : null}
+					</div>
+				) : null}
 			</div>
 			{status.code ? (
 				<code className="shrink-0 rounded bg-background/60 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
