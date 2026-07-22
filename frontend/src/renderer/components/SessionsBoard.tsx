@@ -309,7 +309,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 					    37px (not the 35.5px its text-control implies) because the
 					    unlayered `button { font: inherit }` in styles.css outranks
 					    Tailwind's layered text utilities, leaving it at 14px/21px. */}
-					<div className="flex min-h-row-md items-center gap-2">
+					<div className={cn("flex items-center gap-2", archiveExpanded ? "min-h-11" : "min-h-row-md")}>
 						<button
 							aria-expanded={archiveExpanded}
 							aria-label={`Archive, ${archived.length} ${archived.length === 1 ? "session" : "sessions"}`}
@@ -359,7 +359,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 							aria-label="Archived sessions"
 							className={cn(
 								"max-h-[45vh] overflow-y-auto pb-3",
-								archiveLayout === "grid" && "grid grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-2.5 pt-1",
+								archiveLayout === "grid" && "grid grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-2.5",
 							)}
 							role="list"
 						>
