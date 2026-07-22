@@ -9,8 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pelletier/go-toml/v2"
-
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -234,44 +232,63 @@ func TestGetLaunchCommandBuildsCustomAgentForModelOnly(t *testing.T) {
 	}
 }
 
-func TestGetLaunchCommandWritesParseableModelTOML(t *testing.T) {
+func TestVibeTOMLBasicStringEscapesExactTOMLBasicStrings(t *testing.T) {
 	tests := []struct {
 		name  string
-		model string
+		value string
+		want  string
 	}{
-		{name: "quotes and backslashes", model: `mistral "medium" \ latest`},
-		{name: "newline", model: "mistral\nmedium"},
-		{name: "control characters", model: "mistral\a\v\x1f\x7fmedium"},
+		{name: "quotes and backslashes", value: `mistral "medium" \ latest`, want: `"mistral \"medium\" \\ latest"`},
+		{name: "standard control escapes", value: "\b\t\n\f\r", want: `"\b\t\n\f\r"`},
+		{name: "other C0 controls and DEL", value: "\x00\a\v\x1f\x7f", want: `"\u0000\u0007\u000B\u001F\u007F"`},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p := &Plugin{resolvedBinary: "vibe"}
-			dataDir := t.TempDir()
-			_, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
-				Config:    ports.AgentConfig{Model: tt.model},
-				DataDir:   dataDir,
-				SessionID: "mer-1",
-			})
+			got, err := vibeTOMLBasicString(tt.value)
 			if err != nil {
 				t.Fatal(err)
 			}
-
-			path := filepath.Join(dataDir, "prompts", "mer-1", "vibe", ".vibe", "agents", "ao-system-prompt.toml")
-			data, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var config struct {
-				ActiveModel string `toml:"active_model"`
-			}
-			if err := toml.Unmarshal(data, &config); err != nil {
-				t.Fatalf("parse generated agent TOML: %v\n%s", err, data)
-			}
-			if config.ActiveModel != tt.model {
-				t.Fatalf("active_model = %q, want %q", config.ActiveModel, tt.model)
+			if got != tt.want {
+				t.Fatalf("vibeTOMLBasicString(%q) = %q, want %q", tt.value, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestVibeTOMLBasicStringRejectsInvalidUTF8(t *testing.T) {
+	got, err := vibeTOMLBasicString(string([]byte{'m', 0xff}))
+	if err == nil || !strings.Contains(err.Error(), "invalid UTF-8") {
+		t.Fatalf("vibeTOMLBasicString invalid UTF-8 = (%q, %v), want invalid UTF-8 error", got, err)
+	}
+	if got != "" {
+		t.Fatalf("vibeTOMLBasicString invalid UTF-8 output = %q, want empty string", got)
+	}
+}
+
+func TestGetLaunchCommandWritesExactModelTOML(t *testing.T) {
+	p := &Plugin{resolvedBinary: "vibe"}
+	dataDir := t.TempDir()
+	_, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config:    ports.AgentConfig{Model: "mistral\n\a\x7f"},
+		DataDir:   dataDir,
+		SessionID: "mer-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := readVibeAgentConfig(t, filepath.Join(dataDir, "prompts", "mer-1", "vibe"))
+	want := strings.Join([]string{
+		`agent_type = "agent"`,
+		`display_name = "AO Session"`,
+		`description = "AO session standing instructions."`,
+		`safety = "neutral"`,
+		`active_model = "mistral\n\u0007\u007F"`,
+		"",
+	}, "\n")
+	if got != want {
+		t.Fatalf("agent config\nwant:\n%s\n got:\n%s", want, got)
 	}
 }
 
@@ -300,19 +317,71 @@ func TestGetLaunchCommandBuildsCustomAgentForSystemPromptAndModel(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	var config struct {
-		SystemPromptID string `toml:"system_prompt_id"`
-		ActiveModel    string `toml:"active_model"`
+	wantConfig := strings.Join([]string{
+		`agent_type = "agent"`,
+		`display_name = "AO Session"`,
+		`description = "AO session standing instructions."`,
+		`safety = "neutral"`,
+		`system_prompt_id = "ao-system-prompt"`,
+		`active_model = "mistral \"medium\" \\ latest"`,
+		"",
+	}, "\n")
+	if string(agentData) != wantConfig {
+		t.Fatalf("agent config\nwant:\n%s\n got:\n%s", wantConfig, agentData)
 	}
-	if err := toml.Unmarshal(agentData, &config); err != nil {
-		t.Fatalf("parse generated agent TOML: %v\n%s", err, agentData)
+}
+
+func TestVibeAgentRootManagerOwnedPromptAndModelOnlyResolveSameRoot(t *testing.T) {
+	dataDir := t.TempDir()
+	sessionID := "mer-1"
+	promptFile := filepath.Join(dataDir, "prompts", sessionID, "system.md")
+	want := filepath.Join(dataDir, "prompts", sessionID, "vibe")
+
+	promptBackedRoot, err := vibeAgentRoot(promptFile, dataDir, sessionID)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if config.SystemPromptID != "ao-system-prompt" {
-		t.Fatalf("system_prompt_id = %q, want ao-system-prompt", config.SystemPromptID)
+	modelOnlyRoot, err := vibeAgentRoot("", dataDir, sessionID)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if config.ActiveModel != `mistral "medium" \ latest` {
-		t.Fatalf("active_model = %q, want quoted model to round-trip", config.ActiveModel)
+	managerOwnedRoot := vibeManagerOwnedAgentRoot(dataDir, sessionID)
+
+	if promptBackedRoot != want || modelOnlyRoot != want || managerOwnedRoot != want {
+		t.Fatalf("manager-owned roots = (%q, %q, %q), want all %q", promptBackedRoot, modelOnlyRoot, managerOwnedRoot, want)
 	}
+}
+
+func TestVibeAgentRootRequiresDataDirAndSessionIDForModelOnly(t *testing.T) {
+	tests := []struct {
+		name      string
+		dataDir   string
+		sessionID string
+	}{
+		{name: "missing data dir", dataDir: "", sessionID: "mer-1"},
+		{name: "missing session id", dataDir: t.TempDir(), sessionID: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := vibeAgentRoot("", tt.dataDir, tt.sessionID)
+			if err == nil || !strings.Contains(err.Error(), "data dir and session id required") {
+				t.Fatalf("vibeAgentRoot = (%q, %v), want data dir/session id error", got, err)
+			}
+			if got != "" {
+				t.Fatalf("vibeAgentRoot output = %q, want empty root", got)
+			}
+		})
+	}
+}
+
+func readVibeAgentConfig(t *testing.T, addDir string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(addDir, ".vibe", "agents", "ao-system-prompt.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }
 
 func TestGetLaunchCommandOmitsBlankModelWithoutCustomAgent(t *testing.T) {

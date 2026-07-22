@@ -255,7 +255,14 @@ func vibeAgentRoot(promptFile, dataDir, sessionID string) (string, error) {
 	if strings.TrimSpace(dataDir) == "" || strings.TrimSpace(sessionID) == "" {
 		return "", fmt.Errorf("vibe: data dir and session id required to build agent config")
 	}
-	return filepath.Join(dataDir, "prompts", sessionID, "vibe"), nil
+	return vibeManagerOwnedAgentRoot(dataDir, sessionID), nil
+}
+
+// vibeManagerOwnedAgentRoot is the load-bearing AO-managed custom-agent root:
+// prompt-backed sessions using dataDir/prompts/<sessionID>/system.md and
+// model-only sessions must both resolve to dataDir/prompts/<sessionID>/vibe.
+func vibeManagerOwnedAgentRoot(dataDir, sessionID string) string {
+	return filepath.Join(dataDir, "prompts", sessionID, "vibe")
 }
 
 func vibeAgentTOML(agentName string, mode ports.PermissionMode, model string, hasPrompt bool) (string, error) {
@@ -304,6 +311,16 @@ func vibeTOMLBasicString(s string) (string, error) {
 			b.WriteString(`\\`)
 		case r == '"':
 			b.WriteString(`\"`)
+		case r == '\b':
+			b.WriteString(`\b`)
+		case r == '\t':
+			b.WriteString(`\t`)
+		case r == '\n':
+			b.WriteString(`\n`)
+		case r == '\f':
+			b.WriteString(`\f`)
+		case r == '\r':
+			b.WriteString(`\r`)
 		case r < 0x20 || r == 0x7f:
 			fmt.Fprintf(&b, `\u%04X`, r)
 		default:
