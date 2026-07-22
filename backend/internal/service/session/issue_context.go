@@ -59,7 +59,7 @@ func (s *Service) githubRepoForTracker(project domain.ProjectRecord) (string, bo
 			return repo.Repo, true
 		}
 	}
-	owner, repo, err := githubRepoFromURL(project.RepoOriginURL)
+	_, owner, repo, err := repoFromURL(project.RepoOriginURL)
 	if err != nil {
 		return "", false
 	}

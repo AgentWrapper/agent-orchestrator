@@ -1,6 +1,11 @@
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { sortedPRs, type PRState, type PullRequestFacts, type WorkspaceSession } from "../types/workspace";
 
+function detectProviderFromUrl(url: string): "github" | "gitlab" {
+	if (url.includes("/-/merge_requests/")) return "gitlab";
+	return "github";
+}
+
 const prStateRank: Record<PRState, number> = { open: 0, draft: 1, merged: 2, closed: 3 };
 const ciStates = new Set<SessionPRSummary["ci"]["state"]>(["unknown", "pending", "passing", "failing"]);
 const reviewDecisions = new Set<SessionPRSummary["review"]["decision"]>([
@@ -76,7 +81,7 @@ function sessionPRFactToSummary(session: WorkspaceSession, pr: PullRequestFacts)
 		number: pr.number,
 		title: session.title,
 		state: pr.state,
-		provider: "github",
+		provider: detectProviderFromUrl(pr.url),
 		repo: session.workspaceName,
 		author: "",
 		sourceBranch: session.branch,
@@ -450,14 +455,23 @@ function prURL(pr: SessionPRSummary): string | undefined {
 	}
 	try {
 		const url = new URL(raw);
-		const match = url.pathname.match(/^(\/[^/]+\/[^/]+)\/(?:pull|issues)\/(\d+)(?:\/.*)?$/);
-		if (!match) {
-			return undefined;
+		// GitHub: /owner/repo/pull/N or /issues/N
+		const ghMatch = url.pathname.match(/^(\/[^/]+\/[^/]+)\/(?:pull|issues)\/(\d+)(?:\/.*)?$/);
+		if (ghMatch) {
+			url.pathname = `${ghMatch[1]}/pull/${ghMatch[2]}`;
+			url.search = "";
+			url.hash = "";
+			return url.toString();
 		}
-		url.pathname = `${match[1]}/pull/${match[2]}`;
-		url.search = "";
-		url.hash = "";
-		return url.toString();
+		// GitLab: /owner/repo/-/merge_requests/N
+		const glMatch = url.pathname.match(/^(\/[^/]+\/[^/]+)\/-\/merge_requests\/(\d+)(?:\/.*)?$/);
+		if (glMatch) {
+			url.pathname = `${glMatch[1]}/-/merge_requests/${glMatch[2]}`;
+			url.search = "";
+			url.hash = "";
+			return url.toString();
+		}
+		return undefined;
 	} catch {
 		return undefined;
 	}

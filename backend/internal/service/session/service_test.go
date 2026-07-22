@@ -1005,12 +1005,24 @@ type fakeSCM struct {
 	reviewErr error
 }
 
+// noopSCMProvider implements scmProvider but always fails ParseRepository
+// to exercise the scmRepoForClaim fallback path.
+type noopSCMProvider struct{}
+
+func (noopSCMProvider) ParseRepository(string) (ports.SCMRepo, bool) { return ports.SCMRepo{}, false }
+func (noopSCMProvider) FetchPullRequests(context.Context, []ports.SCMPRRef) ([]ports.SCMObservation, error) {
+	return nil, nil
+}
+func (noopSCMProvider) FetchReviewThreads(context.Context, ports.SCMPRRef) (ports.SCMReviewObservation, error) {
+	return ports.SCMReviewObservation{}, nil
+}
+
 func (f fakeSCM) ParseRepository(remote string) (ports.SCMRepo, bool) {
-	owner, repo, err := githubRepoFromURL(remote)
+	host, owner, repo, err := repoFromURL(remote)
 	if err != nil {
 		return ports.SCMRepo{}, false
 	}
-	return ports.SCMRepo{Provider: "github", Host: "github.com", Owner: owner, Name: repo, Repo: owner + "/" + repo}, true
+	return ports.SCMRepo{Provider: providerKey(host), Host: host, Owner: owner, Name: repo, Repo: owner + "/" + repo}, true
 }
 
 func (f fakeSCM) FetchPullRequests(context.Context, []ports.SCMPRRef) ([]ports.SCMObservation, error) {
@@ -1060,6 +1072,147 @@ func TestClaimPRMapsObserverAndStoreErrors(t *testing.T) {
 	}
 	if len(res.TakenOverFrom) != 1 || res.TakenOverFrom[0] != "mer-2" || len(res.PRs) != 1 || res.PRs[0].URL == "" {
 		t.Fatalf("claim result = %+v", res)
+	}
+}
+
+func TestClaimPRGitLabMR(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["gl-1"] = domain.SessionRecord{ID: "gl-1", ProjectID: "gl", Kind: domain.KindWorker, Metadata: domain.SessionMetadata{WorkspacePath: "/ws"}}
+	st.projects["gl"] = domain.ProjectRecord{ID: "gl", RepoOriginURL: "https://gitlab.com/castai/ctxd"}
+	st.pr["gl-1"] = domain.PRFacts{URL: "https://gitlab.com/castai/ctxd/-/merge_requests/9", Number: 9, CI: domain.CIPassing, UpdatedAt: time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)}
+
+	obs := ports.SCMObservation{
+		Fetched:  true,
+		Provider: "gitlab",
+		Host:     "gitlab.com",
+		Repo:     "castai/ctxd",
+		PR:       ports.SCMPRObservation{URL: "https://gitlab.com/castai/ctxd/-/merge_requests/9", Number: 9},
+	}
+	svc := NewWithDeps(Deps{Store: st, PRClaimer: fakePRClaimer{out: errorFreeClaimOutcome{ports.ClaimOutcome{}}}, SCM: fakeSCM{obs: obs}})
+	res, err := svc.ClaimPR(context.Background(), "gl-1", "https://gitlab.com/castai/ctxd/-/merge_requests/9", ClaimPROptions{AllowTakeover: true})
+	if err != nil {
+		t.Fatalf("claim gitlab MR: %v", err)
+	}
+	if len(res.PRs) != 1 || res.PRs[0].URL != "https://gitlab.com/castai/ctxd/-/merge_requests/9" {
+		t.Fatalf("claim result = %+v", res)
+	}
+}
+
+func TestNormalizePRRefGitLab(t *testing.T) {
+	cases := []struct {
+		name       string
+		ref        string
+		repoOrigin string
+		wantURL    string
+		wantNum    int
+		wantErr    bool
+	}{
+		{
+			name:       "gitlab MR URL",
+			ref:        "https://gitlab.com/castai/ctxd/-/merge_requests/9",
+			repoOrigin: "https://gitlab.com/castai/ctxd",
+			wantURL:    "https://gitlab.com/castai/ctxd/-/merge_requests/9",
+			wantNum:    9,
+		},
+		{
+			name:       "gitlab MR URL with nested groups",
+			ref:        "https://gitlab.com/group/subgroup/repo/-/merge_requests/42",
+			repoOrigin: "https://gitlab.com/group/subgroup/repo",
+			wantURL:    "https://gitlab.com/group/subgroup/repo/-/merge_requests/42",
+			wantNum:    42,
+		},
+		{
+			name:       "numeric ref with gitlab repo",
+			ref:        "9",
+			repoOrigin: "https://gitlab.com/castai/ctxd",
+			wantURL:    "https://gitlab.com/castai/ctxd/-/merge_requests/9",
+			wantNum:    9,
+		},
+		{
+			name:       "github PR URL unchanged",
+			ref:        "https://github.com/owner/repo/pull/42",
+			repoOrigin: "https://github.com/owner/repo",
+			wantURL:    "https://github.com/owner/repo/pull/42",
+			wantNum:    42,
+		},
+		{
+			name:       "numeric ref with github repo unchanged",
+			ref:        "7",
+			repoOrigin: "https://github.com/acme/repo",
+			wantURL:    "https://github.com/acme/repo/pull/7",
+			wantNum:    7,
+		},
+		{
+			name:       "invalid URL",
+			ref:        "https://example.com/foo",
+			repoOrigin: "",
+			wantErr:    true,
+		},
+		{
+			name:       "empty ref",
+			ref:        "",
+			repoOrigin: "",
+			wantErr:    true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			url, n, err := normalizePRRef(tc.ref, tc.repoOrigin)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got url=%s n=%d", url, n)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if url != tc.wantURL || n != tc.wantNum {
+				t.Fatalf("got url=%s n=%d, want url=%s n=%d", url, n, tc.wantURL, tc.wantNum)
+			}
+		})
+	}
+}
+
+func TestRequireSameRepoGitLab(t *testing.T) {
+	cases := []struct {
+		name       string
+		prURL      string
+		repoOrigin string
+		wantErr    error
+	}{
+		{"matching gitlab", "https://gitlab.com/castai/ctxd/-/merge_requests/9", "https://gitlab.com/castai/ctxd", nil},
+		{"matching github", "https://github.com/owner/repo/pull/42", "https://github.com/owner/repo", nil},
+		{"empty origin allows any", "https://gitlab.com/castai/ctxd/-/merge_requests/9", "", nil},
+		{"mismatch", "https://gitlab.com/castai/ctxd/-/merge_requests/9", "https://github.com/other/repo", ErrProjectMismatch},
+		{"gitlab mismatch repo", "https://gitlab.com/castai/ctxd/-/merge_requests/9", "https://gitlab.com/other/repo", ErrProjectMismatch},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := requireSameRepo(tc.prURL, tc.repoOrigin)
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err=%v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestScmRepoForClaimGitLab(t *testing.T) {
+	// When the provider cannot parse the origin, the fallback should detect
+	// GitLab from the PR URL and set Provider="gitlab".
+	var noopProvider noopSCMProvider
+	repo, err := scmRepoForClaim(noopProvider, "", "https://gitlab.com/castai/ctxd/-/merge_requests/9")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if repo.Provider != "gitlab" || repo.Host != "gitlab.com" || repo.Owner != "castai" || repo.Name != "ctxd" {
+		t.Fatalf("repo = %+v", repo)
 	}
 }
 

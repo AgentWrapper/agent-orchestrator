@@ -16,7 +16,7 @@ import (
 )
 
 var (
-	// ErrInvalidPRRef is returned when a claim request does not name a GitHub PR URL or positive PR number.
+	// ErrInvalidPRRef is returned when a claim request does not name a PR/MR URL or positive PR number.
 	ErrInvalidPRRef = errors.New("session: invalid pr ref")
 	// ErrPRNotFound is returned when the SCM provider has no matching pull request.
 	ErrPRNotFound = errors.New("session: pr not found")
@@ -57,7 +57,7 @@ func (s *Service) ListPRs(ctx context.Context, id domain.SessionID) ([]domain.PR
 	return s.listPRFacts(ctx, id)
 }
 
-// ClaimPR attaches a live GitHub PR to a worker session and persists the current SCM facts atomically.
+// ClaimPR attaches a live pull request (GitHub PR or GitLab MR) to a worker session and persists the current SCM facts atomically.
 func (s *Service) ClaimPR(ctx context.Context, id domain.SessionID, ref string, opts ClaimPROptions) (ClaimPRResult, error) {
 	rec, ok, err := s.store.GetSession(ctx, id)
 	if err != nil {
@@ -86,7 +86,7 @@ func (s *Service) ClaimPR(ctx context.Context, id domain.SessionID, ref string, 
 	if err != nil {
 		return ClaimPRResult{}, err
 	}
-	if err := requireSameGitHubRepo(prURL, project.RepoOriginURL); err != nil {
+	if err := requireSameRepo(prURL, project.RepoOriginURL); err != nil {
 		return ClaimPRResult{}, err
 	}
 	if s.scm == nil || s.prClaimer == nil {
@@ -177,11 +177,23 @@ func scmRepoForClaim(provider scmProvider, projectOrigin, prURL string) (ports.S
 	if repo, ok := provider.ParseRepository(projectOrigin); ok {
 		return repo, nil
 	}
-	owner, name, _, err := parseGitHubPRURL(prURL)
+	host, owner, name, _, err := parsePRURL(prURL)
 	if err != nil {
 		return ports.SCMRepo{}, ErrInvalidPRRef
 	}
-	return ports.SCMRepo{Provider: "github", Host: "github.com", Owner: owner, Name: name, Repo: owner + "/" + name}, nil
+	return ports.SCMRepo{Provider: providerKey(host), Host: host, Owner: owner, Name: name, Repo: owner + "/" + name}, nil
+}
+
+// providerKey maps a hostname to the normalized provider key used by the
+// multi-provider dispatcher. GitHub hosts return "github"; everything else is
+// treated as GitLab to match the multi-provider's registration order.
+func providerKey(host string) string {
+	host = strings.ToLower(host)
+	if host == "github.com" || host == "www.github.com" || host == "api.github.com" ||
+		strings.HasSuffix(host, ".github.com") || strings.HasSuffix(host, ".ghe.io") {
+		return "github"
+	}
+	return "gitlab"
 }
 
 func claimRowsFromSCM(sessionID domain.SessionID, obs ports.SCMObservation, now time.Time) (domain.PullRequest, []domain.PullRequestCheck, []domain.PullRequestReview, []domain.PullRequestReviewThread, []domain.PullRequestComment) {
@@ -326,28 +338,37 @@ func normalizePRRef(ref, repoOrigin string) (string, int, error) {
 		return "", 0, ErrInvalidPRRef
 	}
 	if n, err := strconv.Atoi(ref); err == nil && n > 0 {
-		owner, repo, err := githubRepoFromURL(repoOrigin)
+		host, owner, repo, err := repoFromURL(repoOrigin)
 		if err != nil {
 			return "", 0, ErrInvalidPRRef
 		}
-		return fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, n), n, nil
+		return prURLFromParts(host, owner, repo, n), n, nil
 	}
-	owner, repo, n, err := parseGitHubPRURL(ref)
-	if err != nil || owner == "" || repo == "" || n <= 0 {
+	host, owner, repo, n, err := parsePRURL(ref)
+	if err != nil || host == "" || owner == "" || repo == "" || n <= 0 {
 		return "", 0, ErrInvalidPRRef
 	}
-	return fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, n), n, nil
+	return prURLFromParts(host, owner, repo, n), n, nil
 }
 
-func requireSameGitHubRepo(prURL, repoOrigin string) error {
+// prURLFromParts constructs the canonical PR/MR URL for a provider.
+// GitHub uses /pull/N; GitLab uses /-/merge_requests/N.
+func prURLFromParts(host, owner, repo string, number int) string {
+	if providerKey(host) == "github" {
+		return fmt.Sprintf("https://%s/%s/%s/pull/%d", host, owner, repo, number)
+	}
+	return fmt.Sprintf("https://%s/%s/%s/-/merge_requests/%d", host, owner, repo, number)
+}
+
+func requireSameRepo(prURL, repoOrigin string) error {
 	if strings.TrimSpace(repoOrigin) == "" {
 		return nil
 	}
-	po, pr, _, err := parseGitHubPRURL(prURL)
+	_, po, pr, _, err := parsePRURL(prURL)
 	if err != nil {
 		return ErrInvalidPRRef
 	}
-	ro, rr, err := githubRepoFromURL(repoOrigin)
+	_, ro, rr, err := repoFromURL(repoOrigin)
 	if err != nil {
 		return ErrInvalidPRRef
 	}
@@ -357,50 +378,75 @@ func requireSameGitHubRepo(prURL, repoOrigin string) error {
 	return nil
 }
 
-func parseGitHubPRURL(raw string) (string, string, int, error) {
+func parsePRURL(raw string) (host, owner, name string, number int, err error) {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return "", "", 0, err
+		return "", "", "", 0, err
 	}
-	if !strings.EqualFold(u.Scheme, "https") || !strings.EqualFold(u.Hostname(), "github.com") {
-		return "", "", 0, ErrInvalidPRRef
+	if !strings.EqualFold(u.Scheme, "https") {
+		return "", "", "", 0, ErrInvalidPRRef
 	}
+	host = u.Hostname()
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-	if len(parts) != 4 || parts[2] != "pull" {
-		return "", "", 0, ErrInvalidPRRef
+
+	// GitHub: /owner/repo/pull/N → 4 parts, parts[2] == "pull"
+	if len(parts) == 4 && parts[2] == "pull" {
+		n, parseErr := strconv.Atoi(parts[3])
+		if parseErr != nil || n <= 0 {
+			return "", "", "", 0, ErrInvalidPRRef
+		}
+		return host, parts[0], strings.TrimSuffix(parts[1], ".git"), n, nil
 	}
-	n, err := strconv.Atoi(parts[3])
-	if err != nil || n <= 0 {
-		return "", "", 0, ErrInvalidPRRef
+
+	// GitLab: /owner/repo/-/merge_requests/N → parts[2] == "-", parts[3] == "merge_requests"
+	// Supports nested groups: /group/subgroup/repo/-/merge_requests/N
+	if len(parts) >= 5 && parts[len(parts)-2] == "merge_requests" && parts[len(parts)-3] == "-" {
+		n, parseErr := strconv.Atoi(parts[len(parts)-1])
+		if parseErr != nil || n <= 0 {
+			return "", "", "", 0, ErrInvalidPRRef
+		}
+		// owner = everything before "-"; name = the last segment before "-"
+		repoParts := parts[:len(parts)-3]
+		if len(repoParts) < 2 {
+			return "", "", "", 0, ErrInvalidPRRef
+		}
+		owner = strings.Join(repoParts[:len(repoParts)-1], "/")
+		name = strings.TrimSuffix(repoParts[len(repoParts)-1], ".git")
+		return host, owner, name, n, nil
 	}
-	return parts[0], strings.TrimSuffix(parts[1], ".git"), n, nil
+
+	return "", "", "", 0, ErrInvalidPRRef
 }
 
-func githubRepoFromURL(raw string) (string, string, error) {
+func repoFromURL(raw string) (host, owner, name string, err error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return "", "", ErrInvalidPRRef
+		return "", "", "", ErrInvalidPRRef
 	}
-	if strings.HasPrefix(raw, "git@github.com:") {
-		path := strings.TrimPrefix(raw, "git@github.com:")
-		parts := strings.Split(strings.TrimSuffix(path, ".git"), "/")
-		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
-			return parts[0], parts[1], nil
+	if strings.HasPrefix(raw, "git@") {
+		rest := strings.TrimPrefix(raw, "git@")
+		colonIdx := strings.Index(rest, ":")
+		if colonIdx < 0 {
+			return "", "", "", ErrInvalidPRRef
 		}
-		return "", "", ErrInvalidPRRef
+		host = rest[:colonIdx]
+		path := rest[colonIdx+1:]
+		parts := strings.SplitN(strings.TrimSuffix(path, ".git"), "/", 2)
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			return "", "", "", ErrInvalidPRRef
+		}
+		return host, parts[0], parts[1], nil
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
-	if !strings.EqualFold(u.Hostname(), "github.com") {
-		return "", "", ErrInvalidPRRef
-	}
+	host = u.Hostname()
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
-		return "", "", ErrInvalidPRRef
+		return "", "", "", ErrInvalidPRRef
 	}
-	return parts[0], strings.TrimSuffix(parts[1], ".git"), nil
+	return host, parts[0], strings.TrimSuffix(parts[1], ".git"), nil
 }
 
 func firstNonEmpty(values ...string) string {

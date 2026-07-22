@@ -67,6 +67,40 @@ describe("prBrowserUrl", () => {
 			),
 		).toBe("https://github.com/acme/repo/pull/7");
 	});
+
+	it("normalizes GitLab merge request URLs", () => {
+		expect(
+			prBrowserUrl(
+				summary({
+					provider: "gitlab",
+					url: "https://gitlab.com/acme/repo/-/merge_requests/7",
+					htmlUrl: "https://gitlab.com/acme/repo/-/merge_requests/7",
+					mergeability: {
+						state: "mergeable",
+						reasons: [],
+						prUrl: "https://gitlab.com/acme/repo/-/merge_requests/7",
+					},
+				}),
+			),
+		).toBe("https://gitlab.com/acme/repo/-/merge_requests/7");
+	});
+
+	it("strips query params and fragments from GitLab MR URLs", () => {
+		expect(
+			prBrowserUrl(
+				summary({
+					provider: "gitlab",
+					url: "https://gitlab.com/acme/repo/-/merge_requests/7/diffs?view=inline#note_123",
+					htmlUrl: "https://gitlab.com/acme/repo/-/merge_requests/7/diffs?view=inline#note_123",
+					mergeability: {
+						state: "mergeable",
+						reasons: [],
+						prUrl: "https://gitlab.com/acme/repo/-/merge_requests/7",
+					},
+				}),
+			),
+		).toBe("https://gitlab.com/acme/repo/-/merge_requests/7");
+	});
 });
 
 describe("prSummaryParts", () => {
