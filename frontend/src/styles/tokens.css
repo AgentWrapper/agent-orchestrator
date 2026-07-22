@@ -55,7 +55,6 @@
 	--color-status-in-review: #5b8def;
 	--color-status-ready: #75c98d;
 	--color-status-merged: #4bae72;
-	--color-status-merged-surface: #173624;
 	--color-status-idle: #8e96a3;
 	--color-status-exited: #ee6a6a;
 	--color-status-terminated: #6f7680;
@@ -407,7 +406,6 @@
 	--bridge-status-in-review: var(--color-status-in-review);
 	--bridge-status-ready: var(--color-status-ready);
 	--bridge-status-merged: var(--color-status-merged);
-	--bridge-status-merged-surface: var(--color-status-merged-surface);
 	--bridge-status-idle: var(--color-status-idle);
 	--bridge-status-exited: var(--color-status-exited);
 	--bridge-status-terminated: var(--color-status-terminated);
@@ -463,7 +461,6 @@
 	--color-status-in-review: #255fc4;
 	--color-status-ready: #237a3d;
 	--color-status-merged: #176b37;
-	--color-status-merged-surface: #d9f2e1;
 	--color-status-idle: #69717d;
 	--color-status-exited: #b83232;
 	--color-status-terminated: #626975;

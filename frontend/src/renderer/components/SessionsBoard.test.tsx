@@ -687,7 +687,8 @@ describe("SessionsBoard", () => {
 		const terminatedCard = screen.getByText("dead worker").closest('[role="button"]')?.parentElement;
 		const mergedCard = screen.getByText("merged worker").closest('[role="button"]')?.parentElement;
 		expect(terminatedCard).toHaveClass("session-card-terminated");
-		expect(mergedCard).toHaveClass("session-card-merged");
+		expect(mergedCard).toHaveClass("border-status-merged/40", "bg-surface");
+		expect(mergedCard).not.toHaveClass("session-card-merged");
 	});
 });
 

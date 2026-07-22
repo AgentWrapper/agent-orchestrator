@@ -81,7 +81,7 @@ const sessionStatusViews: Record<SessionStatus, SessionStatusView> = {
 	pr_open: { label: "PR open", className: "text-status-in-review" },
 	approved: { label: "Approved", className: "text-status-ready" },
 	mergeable: { label: "Ready", className: "text-status-ready" },
-	merged: { label: "Merged", className: "text-status-merged", cardClassName: "session-card-merged" },
+	merged: { label: "Merged", className: "text-status-merged", cardClassName: "border-status-merged/40 bg-surface" },
 	terminated: {
 		label: "Terminated",
 		className: "text-status-terminated-foreground",
