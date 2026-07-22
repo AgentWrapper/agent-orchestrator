@@ -1266,7 +1266,8 @@ ipcMain.handle(
 		// Only signal when the window isn't already focused (the user is looking).
 		if (mainWindow.isFocused()) return;
 		const type = notification.type;
-		if (type !== "needs_input" && type !== "ready_to_merge") return;
+		if (type !== "needs_input" && type !== "ready_to_merge" && type !== "pr_merged" && type !== "pr_closed_unmerged")
+			return;
 
 		// OS toast: a native banner the user can click to jump straight back to the
 		// session. Works hand-in-hand with the dock/taskbar attention signal below.
@@ -1339,7 +1340,7 @@ ipcMain.handle("notifications:setBadge", (_event, count: number) => {
 		if (n > 0) {
 			// Pre-built red dot PNG overlay — indicates unread without needing Canvas.
 			const badgeDataUrl =
-				"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAAdgAAAHYBTnsmCAAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAABnSURBVDiNY/j///9/BioDE0MfGGBgYGBgY/j//z8DAwMjAwMDA8P////+/v7+/n5+fn5AQEBASEhISkpKSkpKSkpKSkpKSkpKSoqKiouLi4uLi4uLi4uLi4uLi4uLi4uLi4uLi4uLi4tLSwAAAABJRU5ErkJggg==";
+				"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAN0lEQVR42mNgoAW4o6b2HxumSDNRhhDSjNcQYjVjNYRUzRiGjBpABQMojkaqJCSqJGWqZCZSAQASKE/UCaPI8AAAAABJRU5ErkJggg==";
 			const icon = nativeImage.createFromDataURL(badgeDataUrl);
 			mainWindow.setOverlayIcon(icon, `${n} unread`);
 		} else {
