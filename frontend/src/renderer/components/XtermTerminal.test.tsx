@@ -12,7 +12,7 @@ const state = vi.hoisted(() => ({
 		modes: { bracketedPasteMode: boolean; mouseTrackingMode: string };
 		buffer: { active: { type: string } };
 		scrollLines: ReturnType<typeof vi.fn>;
-		clear: ReturnType<typeof vi.fn>;
+		write: ReturnType<typeof vi.fn>;
 		focus: ReturnType<typeof vi.fn>;
 		selectAll: ReturnType<typeof vi.fn>;
 		dataListeners: Set<(data: string) => void>;
@@ -39,7 +39,7 @@ vi.mock("@xterm/xterm", () => ({
 		modes = { bracketedPasteMode: false, mouseTrackingMode: "vt200" };
 		buffer = { active: { type: "normal" } };
 		scrollLines = vi.fn();
-		clear = vi.fn();
+		write = vi.fn();
 		focus = vi.fn();
 		selectAll = vi.fn();
 		dataListeners = new Set<(data: string) => void>();
@@ -62,7 +62,6 @@ vi.mock("@xterm/xterm", () => ({
 		open(host: HTMLElement) {
 			host.appendChild(document.createElement("textarea"));
 		}
-		write() {}
 		writeln() {}
 		dispose() {}
 		onData(listener: (data: string) => void) {
@@ -217,6 +216,29 @@ describe("XtermTerminal", () => {
 		expect(trigger.style.top).toBe("88px");
 	});
 
+	it("enables Copy on the context menu when the terminal has a selection", async () => {
+		const { container } = render(<XtermTerminal theme="dark" />);
+		state.lastTerminal!.selection = "selected text";
+
+		fireEvent.contextMenu(container.firstElementChild!);
+
+		expect(await screen.findByText("Copy")).not.toHaveAttribute("data-disabled");
+	});
+
+	it("restores terminal focus when the context menu is dismissed with Escape", async () => {
+		const { container } = render(<XtermTerminal theme="dark" />);
+		const host = container.firstElementChild!;
+
+		fireEvent.contextMenu(host);
+		expect(await screen.findByText("Paste")).toBeInTheDocument();
+		state.lastTerminal!.focus.mockClear();
+
+		fireEvent.keyDown(document, { key: "Escape" });
+
+		await waitFor(() => expect(screen.queryByText("Paste")).not.toBeInTheDocument());
+		expect(state.lastTerminal!.focus).toHaveBeenCalled();
+	});
+
 	it("runs context menu copy, select all, and clear against the xterm instance", async () => {
 		const { container } = render(<XtermTerminal theme="dark" />);
 		const host = container.firstElementChild!;
@@ -233,7 +255,8 @@ describe("XtermTerminal", () => {
 
 		fireEvent.contextMenu(host);
 		fireEvent.click(await screen.findByText("Clear"));
-		expect(state.lastTerminal!.clear).toHaveBeenCalled();
+		// Same local wipe as AttachableTerminal.clear — not term.clear().
+		expect(state.lastTerminal!.write).toHaveBeenCalledWith("\x1b[3J\x1b[2J\x1b[H");
 	});
 
 	it("pastes from the context menu through the terminal paste path", async () => {
