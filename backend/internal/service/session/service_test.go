@@ -678,6 +678,39 @@ func TestSpawnIssueContextSkipsUnresolvableIssueRef(t *testing.T) {
 	}
 }
 
+// TestSpawnIssueContextSkipsGitHubFallbackForGitLabProvider covers review Item 9:
+// when the project's SCM origin resolves to a non-GitHub provider (GitLab),
+// the GitHub issue-tracker fallback must not be applied. No GitHub API call is
+// made and no unrelated GitHub issue content is injected into the worker's
+// prompt. fakeSCM.ParseRepository routes gitlab.com to provider "gitlab" via
+// providerKey, so wiring SCM: fakeSCM{} exercises the non-GitHub path.
+func TestSpawnIssueContextSkipsGitHubFallbackForGitLabProvider(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", RepoOriginURL: "https://gitlab.com/acme/repo.git"}
+	fc := &fakeCommander{}
+	// tracker is configured to return issue content; if the GitHub fallback
+	// fires, tracker.ids will be non-empty and IssueContext populated.
+	tracker := &fakeTracker{issue: domain.Issue{
+		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/repo#42"},
+		Title: "Unrelated GitHub issue",
+		Body:  "This should not appear in a GitLab project's prompt.",
+		URL:   "https://github.com/acme/repo/issues/42",
+	}}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st, Tracker: tracker, SCM: fakeSCM{}})
+
+	if _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "42"}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	// No GitHub API call: the tracker must never be queried.
+	if len(tracker.ids) != 0 {
+		t.Fatalf("tracker calls = %d, want 0 (GitLab project must not use GitHub fallback)", len(tracker.ids))
+	}
+	// No unrelated GitHub issue content injected into the prompt.
+	if fc.spawnedCfg.IssueContext != "" {
+		t.Fatalf("IssueContext = %q, want empty (no GitHub fallback for GitLab provider)", fc.spawnedCfg.IssueContext)
+	}
+}
+
 func TestSpawnFailedEmitsDuration(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
