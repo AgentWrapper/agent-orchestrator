@@ -320,7 +320,16 @@ func TestCreateLaunchCommandExportsEnvVars(t *testing.T) {
 
 func TestCreateDestroysAndReturnsErrorWhenPaneCWDDoesNotMatch(t *testing.T) {
 	r, fr := newTestRuntime(0)
-	fr.outputs = [][]byte{nil, []byte("/deleted/shipit\n")}
+	// new-session succeeds, then five pane-cwd probes all report the wrong path
+	// (verifyPaneWorkingDirectory retries briefly before failing).
+	fr.outputs = [][]byte{
+		nil,
+		[]byte("/deleted/shipit\n"),
+		[]byte("/deleted/shipit\n"),
+		[]byte("/deleted/shipit\n"),
+		[]byte("/deleted/shipit\n"),
+		[]byte("/deleted/shipit\n"),
+	}
 
 	_, err := r.Create(context.Background(), ports.RuntimeConfig{
 		SessionID:     "sess-1",
