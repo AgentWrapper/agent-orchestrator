@@ -209,6 +209,30 @@ describe("findProjectOrchestrator", () => {
 		expect(newestActiveOrchestrator([oldUpdate, newUpdate])).toBe(newUpdate);
 		expect(newestActiveOrchestrator([newUpdate, sameTimesHigherID])).toBe(sameTimesHigherID);
 	});
+
+	it("prefers the most recently active orchestrator over a newer empty spawn", () => {
+		// Regression: when two live orchestrators overlap, ranking by createdAt
+		// alone sent Open Orchestrator to the brand-new empty session while the
+		// conversation history still lived on the older, actively used one.
+		const withHistory = sessionWith({
+			id: "skills-3",
+			kind: "orchestrator",
+			status: "working",
+			createdAt: "2026-01-01T00:00:00Z",
+			updatedAt: "2026-01-01T12:00:00Z",
+			activity: { state: "active", lastActivityAt: "2026-01-03T12:00:00Z" },
+		});
+		const emptyNewer = sessionWith({
+			id: "skills-4",
+			kind: "orchestrator",
+			status: "idle",
+			createdAt: "2026-01-03T00:00:00Z",
+			updatedAt: "2026-01-03T00:00:00Z",
+			activity: { state: "idle", lastActivityAt: "2026-01-03T00:00:00Z" },
+		});
+		expect(newestActiveOrchestrator([emptyNewer, withHistory])).toBe(withHistory);
+		expect(findProjectOrchestrator([workspaceWith([emptyNewer, withHistory])], "skills")).toBe(withHistory);
+	});
 });
 
 describe("sessionNeedsAttention", () => {
@@ -260,7 +284,7 @@ describe("orchestratorHealth", () => {
 		).toEqual({
 			state: "duplicates",
 			message:
-				"Multiple orchestrators are active. The newest one is used; stale ones will be cleaned up on daemon reconcile.",
+				"Multiple orchestrators are active. The most recently active one is used; stale ones will be cleaned up on daemon reconcile.",
 		});
 
 		expect(
