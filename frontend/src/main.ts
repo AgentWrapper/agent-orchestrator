@@ -936,6 +936,12 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 	// One scanner per stream: each keeps its own partial-line buffer.
 	// Skipped under AO_KEEP_DAEMON: stdio is redirected to a log file (no pipes
 	// to scan), so port discovery falls back to the running.json handshake below.
+	//
+	// lastStderrLine feeds the exit-status message below: an exit code alone
+	// ("Daemon exited with code 1") tells the user nothing actionable, but the
+	// daemon's last stderr line usually names the actual cause (bind error,
+	// panic, etc).
+	let lastStderrLine: string | undefined;
 	if (!keep) {
 		const scanStdout = createListenPortScanner(reportBoundPort);
 		const scanStderr = createListenPortScanner(reportBoundPort);
@@ -950,6 +956,8 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 			const text = chunk.toString("utf8");
 			console.error(text.trimEnd());
 			scanStderr(text);
+			const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+			if (lines.length > 0) lastStderrLine = lines[lines.length - 1];
 		});
 	}
 
@@ -990,7 +998,11 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		setDaemonStatus({ state: "error", message: error.message, code: "spawn_failed" });
 	});
 
-	child.once("exit", (code, signal) => {
+	// "close", not "exit": "exit" only means the process terminated — the
+	// stdio pipes can still have unread data in flight, so lastStderrLine may
+	// not be set yet. "close" is guaranteed to fire after the stdio streams
+	// have ended, so the daemon's last stderr line is available below.
+	child.once("close", (code, signal) => {
 		stopDiscovery();
 		if (daemonProcess !== child) return;
 		daemonProcess = null;
@@ -1004,9 +1016,15 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 			setDaemonStatus({ state: "stopped" });
 			return;
 		}
+		// Prefer the daemon's own stderr line: it names the actual cause (bind
+		// error, panic, etc). The exit code/signal are already captured as
+		// structured fields below, so fall back to spelling them out in the
+		// message only when we have nothing more specific to say.
+		const message =
+			lastStderrLine ?? (signal ? `Daemon exited with ${signal}` : `Daemon exited with code ${code ?? "unknown"}`);
 		setDaemonStatus({
 			state: "stopped",
-			message: signal ? `Daemon exited with ${signal}` : `Daemon exited with code ${code ?? "unknown"}`,
+			message,
 			code: "exited",
 			exitCode: code,
 			signal,
