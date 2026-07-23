@@ -174,6 +174,36 @@ type fakeRuntime struct {
 	destroyedIDs  []string
 }
 
+type fakeRestartRuntime struct {
+	*fakeRuntime
+	restarted     int
+	restartHandle ports.RuntimeHandle
+	restartErr    error
+}
+
+func (r *fakeRestartRuntime) Restart(_ context.Context, handle ports.RuntimeHandle, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
+	r.restarted++
+	r.restartHandle = handle
+	r.lastCfg = cfg
+	if r.restartErr != nil {
+		return ports.RuntimeHandle{}, r.restartErr
+	}
+	return handle, nil
+}
+
+type blockingRestartRuntime struct {
+	*fakeRuntime
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (r *blockingRestartRuntime) Restart(_ context.Context, handle ports.RuntimeHandle, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
+	r.lastCfg = cfg
+	close(r.entered)
+	<-r.release
+	return handle, nil
+}
+
 func (r *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
 	if r.createErr != nil {
 		return ports.RuntimeHandle{}, r.createErr
@@ -746,6 +776,154 @@ func TestRestore_RotatesSupervisedAgentGeneration(t *testing.T) {
 	wantArgv := []string{"/opt/ao", "agent-process", "supervise", "--session", "mer-1", "--launch", "launch-new", "--", "codex", "resume", "agent-x"}
 	if !reflect.DeepEqual(rt.lastCfg.Argv, wantArgv) {
 		t.Fatalf("restored runtime argv = %#v, want %#v", rt.lastCfg.Argv, wantArgv)
+	}
+}
+
+func newExitedResumeManager(t *testing.T, runtime runtimeController, agent ports.Agent) (*Manager, *fakeStore, *fakeWorkspace) {
+	t.Helper()
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessCodex,
+		Activity:  domain.Activity{State: domain.ActivityExited},
+		Metadata: domain.SessionMetadata{
+			WorkspacePath:   "/ws/mer-1",
+			Branch:          "ao/mer-1",
+			RuntimeHandleID: "tmux-mer-1",
+			RuntimeLaunchID: "launch-old",
+			AgentSessionID:  "agent-x",
+			Prompt:          "continue the task",
+		},
+	}
+	ws := &fakeWorkspace{}
+	m := New(Deps{
+		Runtime: runtime, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		DataDir:     t.TempDir(),
+		LookPath:    func(string) (string, error) { return "/bin/true", nil },
+		Executable:  func() (string, error) { return "/opt/ao", nil },
+		NewLaunchID: func() string { return "launch-new" },
+	})
+	return m, st, ws
+}
+
+func TestResumeAgent_RestartsRuntimeWithManagedGeneration(t *testing.T) {
+	baseRuntime := &fakeRuntime{aliveByHandle: map[string]bool{"tmux-mer-1": true}}
+	runtime := &fakeRestartRuntime{fakeRuntime: baseRuntime}
+	agent := supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "resume", "agent-x"}}}
+	m, st, ws := newExitedResumeManager(t, runtime, agent)
+
+	result, err := m.ResumeAgentWithMode(ctx, "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.restarted != 1 || runtime.restartHandle.ID != "tmux-mer-1" {
+		t.Fatalf("restart = %d handle=%+v", runtime.restarted, runtime.restartHandle)
+	}
+	if baseRuntime.created != 0 || baseRuntime.destroyed != 0 {
+		t.Fatalf("tmux restart should not recreate runtime: created=%d destroyed=%d", baseRuntime.created, baseRuntime.destroyed)
+	}
+	if ws.lastCfg.SessionID != "" || len(ws.calls) != 0 {
+		t.Fatalf("resume should not restore or recreate workspace: cfg=%+v calls=%v", ws.lastCfg, ws.calls)
+	}
+	wantArgv := []string{"/opt/ao", "agent-process", "supervise", "--session", "mer-1", "--launch", "launch-new", "--", "codex", "resume", "agent-x"}
+	if !reflect.DeepEqual(baseRuntime.lastCfg.Argv, wantArgv) {
+		t.Fatalf("resumed runtime argv = %#v, want %#v", baseRuntime.lastCfg.Argv, wantArgv)
+	}
+	if got := baseRuntime.lastCfg.Env[EnvRuntimeLaunchID]; got != "launch-new" {
+		t.Fatalf("runtime launch env = %q, want launch-new", got)
+	}
+	got := st.sessions["mer-1"]
+	if got.IsTerminated || got.Activity.State != domain.ActivityIdle {
+		t.Fatalf("resumed session = %+v, want live idle", got)
+	}
+	if got.Metadata.RuntimeHandleID != "tmux-mer-1" || got.Metadata.RuntimeLaunchID != "launch-new" {
+		t.Fatalf("resumed metadata = %+v", got.Metadata)
+	}
+	if result.Mode != RestoreModeNative {
+		t.Fatalf("resume mode = %q, want native", result.Mode)
+	}
+}
+
+func TestResumeAgent_FallsBackToRuntimeRecreateWithoutRestartCapability(t *testing.T) {
+	runtime := &fakeRuntime{aliveByHandle: map[string]bool{"tmux-mer-1": true}}
+	agent := supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "resume", "agent-x"}}}
+	m, st, _ := newExitedResumeManager(t, runtime, agent)
+
+	if _, err := m.ResumeAgentWithMode(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.destroyed != 1 || runtime.created != 1 || !reflect.DeepEqual(runtime.destroyedIDs, []string{"tmux-mer-1"}) {
+		t.Fatalf("fallback runtime lifecycle: created=%d destroyed=%d ids=%v", runtime.created, runtime.destroyed, runtime.destroyedIDs)
+	}
+	if got := st.sessions["mer-1"].Metadata.RuntimeHandleID; got != "h1" {
+		t.Fatalf("fallback runtime handle = %q, want h1", got)
+	}
+}
+
+func TestResumeAgent_RequiresLiveExitedSession(t *testing.T) {
+	runtime := &fakeRuntime{aliveByHandle: map[string]bool{"tmux-mer-1": true}}
+	agent := supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "resume", "agent-x"}}}
+	m, st, _ := newExitedResumeManager(t, runtime, agent)
+
+	rec := st.sessions["mer-1"]
+	rec.Activity.State = domain.ActivityIdle
+	st.sessions["mer-1"] = rec
+	if _, err := m.ResumeAgentWithMode(ctx, "mer-1"); !errors.Is(err, ErrAgentNotExited) {
+		t.Fatalf("idle resume error = %v, want ErrAgentNotExited", err)
+	}
+
+	rec.Activity.State = domain.ActivityExited
+	rec.IsTerminated = true
+	st.sessions["mer-1"] = rec
+	if _, err := m.ResumeAgentWithMode(ctx, "mer-1"); !errors.Is(err, ErrTerminated) {
+		t.Fatalf("terminated resume error = %v, want ErrTerminated", err)
+	}
+	if runtime.created != 0 || runtime.destroyed != 0 {
+		t.Fatalf("invalid resume touched runtime: created=%d destroyed=%d", runtime.created, runtime.destroyed)
+	}
+}
+
+func TestResumeAgent_RestartFailureLeavesSessionExited(t *testing.T) {
+	baseRuntime := &fakeRuntime{aliveByHandle: map[string]bool{"tmux-mer-1": true}}
+	runtime := &fakeRestartRuntime{fakeRuntime: baseRuntime, restartErr: errors.New("respawn failed")}
+	agent := supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "resume", "agent-x"}}}
+	m, st, _ := newExitedResumeManager(t, runtime, agent)
+
+	if _, err := m.ResumeAgentWithMode(ctx, "mer-1"); err == nil || !strings.Contains(err.Error(), "respawn failed") {
+		t.Fatalf("resume error = %v", err)
+	}
+	got := st.sessions["mer-1"]
+	if got.IsTerminated || got.Activity.State != domain.ActivityExited || got.Metadata.RuntimeLaunchID != "launch-old" {
+		t.Fatalf("failed resume changed session: %+v", got)
+	}
+}
+
+func TestResumeAgent_RejectsConcurrentRequest(t *testing.T) {
+	baseRuntime := &fakeRuntime{aliveByHandle: map[string]bool{"tmux-mer-1": true}}
+	runtime := &blockingRestartRuntime{
+		fakeRuntime: baseRuntime,
+		entered:     make(chan struct{}),
+		release:     make(chan struct{}),
+	}
+	agent := supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "resume", "agent-x"}}}
+	m, _, _ := newExitedResumeManager(t, runtime, agent)
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := m.ResumeAgentWithMode(ctx, "mer-1")
+		firstDone <- err
+	}()
+	<-runtime.entered
+
+	if _, err := m.ResumeAgentWithMode(ctx, "mer-1"); !errors.Is(err, ErrResumeInProgress) {
+		t.Fatalf("concurrent resume error = %v, want ErrResumeInProgress", err)
+	}
+	close(runtime.release)
+	if err := <-firstDone; err != nil {
+		t.Fatalf("first resume: %v", err)
 	}
 }
 

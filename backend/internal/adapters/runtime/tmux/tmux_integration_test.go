@@ -134,6 +134,7 @@ func TestRuntimeIntegrationSupervisedExitKeepsInteractiveShell(t *testing.T) {
 	const launchID = "launch-1"
 	r := New(Options{Timeout: 5 * time.Second})
 	tmuxID := SessionName(id)
+	workspace := t.TempDir()
 	_ = r.Destroy(ctx, ports.RuntimeHandle{ID: tmuxID})
 	t.Cleanup(func() { _ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: tmuxID}) })
 
@@ -142,7 +143,7 @@ func TestRuntimeIntegrationSupervisedExitKeepsInteractiveShell(t *testing.T) {
 	// that the real supervisor waits for and reports its child.
 	h, err := r.Create(ctx, ports.RuntimeConfig{
 		SessionID:     domain.SessionID(id),
-		WorkspacePath: t.TempDir(),
+		WorkspacePath: workspace,
 		Argv:          []string{os.Args[0], "-test.run=TestSupervisorProcessHelper", "--", "agent-process", "supervise", "--session", id, "--launch", launchID, "--"},
 		Env:           map[string]string{"AO_TMUX_SUPERVISOR_HELPER": "1"},
 	})
@@ -190,6 +191,29 @@ func TestRuntimeIntegrationSupervisedExitKeepsInteractiveShell(t *testing.T) {
 	out := waitForOutput(t, r, h, "shell-after-agent-exit", 5*time.Second)
 	if !strings.Contains(out, "shell-after-agent-exit") {
 		t.Fatalf("post-exit shell output = %q", out)
+	}
+
+	restarted, err := r.Restart(ctx, h, ports.RuntimeConfig{
+		SessionID:     domain.SessionID(id),
+		WorkspacePath: workspace,
+		Argv:          []string{"sh", "-c", "echo managed-agent-resumed"},
+	})
+	if err != nil {
+		t.Fatalf("Restart: %v", err)
+	}
+	if restarted != h {
+		t.Fatalf("restart handle = %+v, want existing handle %+v", restarted, h)
+	}
+	out = waitForOutput(t, r, restarted, "managed-agent-resumed", 5*time.Second)
+	if !strings.Contains(out, "managed-agent-resumed") {
+		t.Fatalf("restart output = %q, want managed-agent-resumed", out)
+	}
+	if err := r.SendMessage(ctx, restarted, "echo shell-after-managed-resume"); err != nil {
+		t.Fatal(err)
+	}
+	out = waitForOutput(t, r, restarted, "shell-after-managed-resume", 5*time.Second)
+	if !strings.Contains(out, "shell-after-managed-resume") {
+		t.Fatalf("post-resume shell output = %q", out)
 	}
 }
 

@@ -75,6 +75,10 @@ func (f *fakeSessionService) Restore(context.Context, domain.SessionID) (session
 	return sessionsvc.RestoreOutcome{}, nil
 }
 
+func (f *fakeSessionService) ResumeAgent(context.Context, domain.SessionID) (sessionsvc.ResumeAgentOutcome, error) {
+	return sessionsvc.ResumeAgentOutcome{}, nil
+}
+
 func (f *fakeSessionService) Kill(context.Context, domain.SessionID) (bool, error) {
 	return false, nil
 }

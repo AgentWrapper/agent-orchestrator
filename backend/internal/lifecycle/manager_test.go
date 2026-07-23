@@ -216,6 +216,26 @@ func TestRuntimeObservation_ExitedWorkloadKeepsSessionLive(t *testing.T) {
 	}
 }
 
+func TestRuntimeObservation_AliveWorkloadCannotResurrectExitedSession(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Activity.State = domain.ActivityExited
+	rec.Metadata.RuntimeLaunchID = "launch-1"
+	st.sessions["mer-1"] = rec
+	before := st.sessions["mer-1"]
+
+	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{
+		Runtime:  ports.ProbeAlive,
+		Workload: ports.ProbeAlive,
+		LaunchID: "launch-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if st.sessions["mer-1"] != before {
+		t.Fatalf("original supervisor observation resurrected exited session: %+v", st.sessions["mer-1"])
+	}
+}
+
 func TestRuntimeObservation_StaleLaunchIsIgnored(t *testing.T) {
 	m, st, _ := newManager()
 	rec := working("mer-1")

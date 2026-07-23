@@ -16,6 +16,17 @@ func newSessionArgs(id, cwd, shellPath, launchCmd string) []string {
 	}
 }
 
+// respawnPaneArgs replaces the process in the session's only pane while keeping
+// the tmux session and terminal handle intact.
+func respawnPaneArgs(id, cwd, shellPath, launchCmd string) []string {
+	return []string{
+		"respawn-pane", "-k",
+		"-t", id + ":0.0",
+		"-c", cwd,
+		shellPath, "-c", launchCmd,
+	}
+}
+
 // setStatusOffArgs hides the tmux status bar for the given session.
 // set-option uses pane-targeting syntax which does not accept the `=` prefix,
 // so we pass the session name directly.

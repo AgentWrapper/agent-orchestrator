@@ -377,7 +377,6 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 									key={s.id}
 									layout={archiveLayout}
 									session={s}
-									onOpen={() => openSession(s)}
 									restoreAction={(event) => void restoreArchivedSession(event, s)}
 									restoreError={restoreErrors[s.id]}
 									isRestoring={restoringSessionId === s.id}
@@ -447,7 +446,7 @@ function ZoneColumn({
 				background: `linear-gradient(180deg, ${col.glow}, transparent var(--size-kanban-glow)), var(--color-overlay-subtle)`,
 			}}
 		>
-			<div className="flex shrink-0 items-center gap-2 px-3 pb-2 pt-2.5">
+			<div className="flex shrink-0 items-center gap-2 px-3 pb-2.5 pt-2.5">
 				<span
 					className="size-dot-sm rounded-full"
 					style={{
@@ -590,7 +589,7 @@ function SplitLaneColumn({
 				background: `linear-gradient(180deg, color-mix(in srgb, ${primaryTone.color} 7%, transparent), transparent var(--size-kanban-glow)), var(--color-overlay-subtle)`,
 			}}
 		>
-			<div className="flex shrink-0 items-center gap-2 px-3 pb-2 pt-2.5">
+			<div className="flex shrink-0 items-center gap-2 px-3 pb-2.5 pt-2.5">
 				<div
 					aria-label={`${primaryTone.label} / ${secondaryTone.label} lane summary`}
 					className="flex min-w-0 items-center gap-1.5 text-caption font-semibold uppercase tracking-wide-md"
@@ -677,7 +676,7 @@ function SecondaryLaneSection({
 			)}
 			role="region"
 		>
-			<div className="flex shrink-0 items-center gap-2 px-3 pb-2 pt-2.5">
+			<div className="flex shrink-0 items-center gap-2 px-3 pb-2.5 pt-2.5">
 				<div className="text-caption font-semibold uppercase tracking-wide-md">
 					<LaneStatusLabel tone={tone} />
 				</div>
@@ -805,7 +804,6 @@ function SessionCard({
 function ArchiveSessionItem({
 	session,
 	layout,
-	onOpen,
 	restoreAction,
 	restoreError,
 	isRestoring,
@@ -813,7 +811,6 @@ function ArchiveSessionItem({
 }: {
 	session: WorkspaceSession;
 	layout: ArchiveLayout;
-	onOpen: () => void;
 	restoreAction: (event: MouseEvent<HTMLButtonElement>) => void;
 	restoreError?: string;
 	isRestoring: boolean;
@@ -823,20 +820,14 @@ function ArchiveSessionItem({
 	const issueId = canonicalTrackerIssueId(session.issueId);
 	const prSummaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
 	const branch = session.branch || "";
-	const metadata = (
-		<>
-			{branch && <span className="max-w-branch-chip shrink-0 truncate">{branch}</span>}
-			{branch && prSummaries.length > 0 && <span aria-hidden="true">·</span>}
-			{prSummaries.length > 0 ? (
-				<div className="flex min-w-0 items-center gap-2 overflow-hidden">
-					{groupPRsByLifecycle(prSummaries).map((group) => (
-						<BoardPRGroup group={group} key={group.status.label} linksInteractive={false} />
-					))}
-				</div>
-			) : (
-				<span>no PR yet</span>
-			)}
-		</>
+	const prMetadata = prSummaries.length > 0 ? (
+		<div className="flex flex-col gap-1">
+			{groupPRsByLifecycle(prSummaries).map((group) => (
+				<BoardPRGroup group={group} key={group.status.label} linksInteractive={false} />
+			))}
+		</div>
+	) : (
+		<span>no PR yet</span>
 	);
 	const restoreButton = (
 		<ArchiveRestoreButton
@@ -860,12 +851,7 @@ function ArchiveSessionItem({
 					</span>
 					{restoreButton}
 				</div>
-				<button
-					aria-label={`Open ${session.title}`}
-					className="min-h-0 flex-1 px-3 pb-3 pt-1.5 text-left transition-colors hover:bg-interactive-hover focus-visible:bg-interactive-hover focus-visible:outline-none"
-					onClick={onOpen}
-					type="button"
-				>
+				<div className="min-h-0 flex-1 px-3 pb-2 pt-1.5 text-left">
 					<div className="line-clamp-2 text-control font-medium leading-snug text-foreground">{session.title}</div>
 					<div className="mt-1 flex min-w-0 items-center gap-2">
 						<span className="shrink-0 font-mono text-2xs text-passive">{agentLabel(session.provider)}</span>
@@ -873,12 +859,14 @@ function ArchiveSessionItem({
 							<span className="max-w-branch-chip truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent">
 								{issueId}
 							</span>
-						)}
+							)}
 					</div>
-					<div className="mt-2 flex min-w-0 items-center gap-2 overflow-hidden font-mono text-2xs text-passive">
-						{metadata}
-					</div>
-				</button>
+					{branch && <div className="mt-2 truncate font-mono text-2xs text-passive">{branch}</div>}
+				</div>
+				<div aria-hidden="true" className="mx-3 my-px h-px bg-border" />
+				<div className="px-3 py-1.5 font-mono text-2xs text-passive">
+					{prMetadata}
+				</div>
 				<ArchiveRestoreError message={restoreError} />
 			</div>
 		);
@@ -887,12 +875,7 @@ function ArchiveSessionItem({
 	return (
 		<div className="border-t border-border first:border-t-0" role="listitem">
 			<div className="flex min-h-row-lg items-center">
-				<button
-					aria-label={`Open ${session.title}`}
-					className="min-w-0 flex-1 px-2 py-2 text-left transition-colors hover:bg-interactive-hover focus-visible:bg-interactive-hover focus-visible:outline-none"
-					onClick={onOpen}
-					type="button"
-				>
+				<div className="min-w-0 flex-1 px-2 py-2 text-left">
 					<div className="flex min-w-0 items-center gap-2">
 						<ArchiveStatus badge={badge} />
 						<span className="min-w-0 truncate text-control font-medium text-foreground">{session.title}</span>
@@ -908,10 +891,10 @@ function ArchiveSessionItem({
 							{formatTimeCompact(session.updatedAt)}
 						</span>
 					</div>
-					<div className="mt-1 flex min-w-0 items-center gap-2 overflow-hidden font-mono text-2xs text-passive">
-						{metadata}
-					</div>
-				</button>
+					{branch && <div className="mt-1 truncate font-mono text-2xs text-passive">{branch}</div>}
+					<div aria-hidden="true" className="my-1 h-px bg-border" />
+					<div className="font-mono text-2xs text-passive">{prMetadata}</div>
+				</div>
 				<div className="mx-1.5">{restoreButton}</div>
 			</div>
 			<ArchiveRestoreError message={restoreError} />

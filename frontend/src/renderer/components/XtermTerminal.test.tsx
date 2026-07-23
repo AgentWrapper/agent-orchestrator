@@ -146,6 +146,13 @@ describe("XtermTerminal", () => {
 		window.ao!.clipboard.readText = vi.fn().mockResolvedValue("");
 	});
 
+	it("preserves the agent TUI palette without contrast remapping", () => {
+		render(<XtermTerminal theme="dark" />);
+
+		expect(state.lastTerminal!.options.drawBoldTextInBrightColors).toBe(true);
+		expect(state.lastTerminal!.options.minimumContrastRatio).toBe(1);
+	});
+
 	it("copies selected terminal text on the terminal copy shortcut", () => {
 		render(<XtermTerminal theme="dark" />);
 		state.lastTerminal!.selection = "copied selection";

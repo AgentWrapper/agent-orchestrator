@@ -1570,6 +1570,51 @@ paths:
       summary: Restore a terminated session
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/resume-agent:
+    post:
+      operationId: resumeAgent
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResumeAgentResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Resume an exited agent in its existing session
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/reviews:
     get:
       operationId: listReviews
@@ -2793,6 +2838,26 @@ components:
       - ok
       - sessionId
       - restoreMode
+      - session
+      type: object
+    ResumeAgentResponse:
+      properties:
+        ok:
+          type: boolean
+        resumeMode:
+          enum:
+          - native
+          - saved_prompt
+          - fresh
+          type: string
+        session:
+          $ref: '#/components/schemas/ControllersSessionView'
+        sessionId:
+          type: string
+      required:
+      - ok
+      - sessionId
+      - resumeMode
       - session
       type: object
     ReviewRun:

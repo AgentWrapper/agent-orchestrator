@@ -184,6 +184,7 @@ describe("SessionsBoard", () => {
 		renderBoard("p1");
 
 		const needsYouColumn = screen.getByText("Needs you").closest("section") as HTMLElement;
+		expect(needsYouColumn.firstElementChild).toHaveClass("pb-2.5");
 		expect(within(needsYouColumn).getByText("agent-exited-task")).toBeInTheDocument();
 		expect(within(needsYouColumn).getByText("Exited").closest("span")).toHaveClass("text-status-exited");
 	});
@@ -243,6 +244,8 @@ describe("SessionsBoard", () => {
 
 		expect(within(workSummary).getByText("Idle").querySelector("span")).toHaveClass("bg-status-idle");
 		expect(within(workSummary).getByText("Working").querySelector("span")).toHaveClass("bg-status-working");
+		expect(workSummary.parentElement).toHaveClass("pb-2.5");
+		expect(workingRegion.firstElementChild).toHaveClass("pb-2.5");
 		expect(within(workLane).getByLabelText("2 idle sessions")).toHaveTextContent("2");
 		expect(within(workLane).getByLabelText("1 working session")).toHaveTextContent("1");
 		expect(screen.queryByRole("button", { name: /idle sessions/i })).not.toBeInTheDocument();
@@ -409,7 +412,7 @@ describe("SessionsBoard", () => {
 		expect(within(p2Lane).getByRole("region", { name: "Working sessions" })).toHaveTextContent("p2 active");
 	});
 
-	it("shows a compact archive row with a persistent restore action", async () => {
+	it("shows a static archive card with a persistent restore action", async () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [workspaceWithSessions([terminatedSession()])],
 			isError: false,
@@ -421,16 +424,23 @@ describe("SessionsBoard", () => {
 		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
 
 		const archive = screen.getByRole("list", { name: "Archived sessions" });
-		const terminatedRow = within(archive).getByRole("button", { name: "Open dead worker" });
-		const terminatedCard = terminatedRow.closest<HTMLElement>("[role='listitem']");
+		const terminatedCard = within(archive).getByText("dead worker").closest<HTMLElement>("[role='listitem']");
 		expect(terminatedCard).not.toBeNull();
+		expect(within(terminatedCard!).queryByRole("button", { name: "Open dead worker" })).not.toBeInTheDocument();
 		expect(within(terminatedCard!).getByText("Terminated")).toBeInTheDocument();
 		expect(screen.getByText("Claude")).toBeInTheDocument();
-		expect(screen.getByText("ao/dead-worker")).toBeInTheDocument();
-		expect(screen.getByText("github:INT-17")).toBeInTheDocument();
-		expect(screen.getByLabelText("#42 merged")).toHaveTextContent("PR#42merged");
-		expect(screen.getByRole("button", { name: "Restore dead worker" })).toBeInTheDocument();
-	});
+			expect(screen.getByText("ao/dead-worker")).toBeInTheDocument();
+			expect(screen.getByText("github:INT-17")).toBeInTheDocument();
+			const prStatus = screen.getByLabelText("#42 merged");
+			expect(prStatus).toHaveTextContent("PR#42merged");
+			const divider = terminatedCard!.querySelector(".mx-3.my-px.h-px.bg-border");
+			expect(divider).not.toBeNull();
+			expect(divider!.compareDocumentPosition(prStatus) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+			expect(screen.getByText("ao/dead-worker").compareDocumentPosition(divider!) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(
+				0,
+			);
+			expect(screen.getByRole("button", { name: "Restore dead worker" })).toBeInTheDocument();
+		});
 
 	it("switches between rows and columns and remembers the archive layout", async () => {
 		workspaceQueryMock.mockReturnValue({
@@ -451,6 +461,7 @@ describe("SessionsBoard", () => {
 		await userEvent.click(within(layout).getByRole("button", { name: "Rows" }));
 		expect(within(layout).getByRole("button", { name: "Rows" })).toHaveAttribute("aria-pressed", "true");
 		expect(screen.getByRole("list", { name: "Archived sessions" })).not.toHaveClass("grid");
+		expect(screen.queryByRole("button", { name: "Open dead worker" })).not.toBeInTheDocument();
 		expect(window.localStorage.getItem("ao.board.archive.layout")).toBe("rows");
 
 		view.unmount();
@@ -584,7 +595,7 @@ describe("SessionsBoard", () => {
 		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
-	it("opens a terminated session from its archive row without restoring it", async () => {
+	it("does not navigate when the static archive card is clicked", async () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [workspaceWithSessions([terminatedSession()])],
 			isError: false,
@@ -594,13 +605,10 @@ describe("SessionsBoard", () => {
 		renderBoard("p1");
 
 		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
-		await userEvent.click(screen.getByRole("button", { name: "Open dead worker" }));
+		await userEvent.click(screen.getByText("dead worker"));
 
 		expect(postMock).not.toHaveBeenCalled();
-		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId: "p1", sessionId: "s-dead" },
-		});
+		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
 	it("ignores restore completion after navigating to another project board", async () => {
@@ -762,9 +770,13 @@ describe("SessionsBoard", () => {
 
 		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
 		const archive = screen.getByRole("list", { name: "Archived sessions" });
-		const archivedMergedRow = within(archive).getByRole("button", { name: "Open archived merged worker" });
-		const archivedMergedCard = archivedMergedRow.closest<HTMLElement>("[role='listitem']");
+		const archivedMergedCard = within(archive)
+			.getByText("archived merged worker")
+			.closest<HTMLElement>("[role='listitem']");
 		expect(archivedMergedCard).not.toBeNull();
+		expect(
+			within(archivedMergedCard!).queryByRole("button", { name: "Open archived merged worker" }),
+		).not.toBeInTheDocument();
 		expect(within(archivedMergedCard!).getByText("Merged").closest("span")).toHaveClass("text-status-merged");
 		expect(within(archive).getByRole("button", { name: "Restore archived merged worker" })).toBeInTheDocument();
 	});

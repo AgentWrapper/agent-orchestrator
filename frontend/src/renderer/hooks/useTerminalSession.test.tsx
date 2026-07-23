@@ -300,6 +300,47 @@ describe("useTerminalSession", () => {
 		expect(muxes[1].inputs).toEqual([["handle-1", "echo ok\r"]]);
 	});
 
+	it("reconnects when an exited agent is resumed with the same terminal handle", () => {
+		const muxes: FakeMux[] = [];
+		const createMux = () => {
+			const fake = createFakeMux();
+			muxes.push(fake);
+			return fake.mux;
+		};
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		const wrapper = ({ children }: { children: ReactNode }) => (
+			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+		);
+		const exitedSession: WorkspaceSession = {
+			...session,
+			status: "exited",
+			activity: { state: "exited", lastActivityAt: "exited" },
+		};
+		const resumedSession: WorkspaceSession = {
+			...exitedSession,
+			status: "review_pending",
+			activity: { state: "idle", lastActivityAt: "resumed" },
+		};
+		const view = renderHook(
+			({ attachedSession }) => useTerminalSession(attachedSession, { daemonReady: true, createMux }),
+			{ initialProps: { attachedSession: exitedSession }, wrapper },
+		);
+		const terminal = createFakeTerminal();
+		act(() => {
+			view.result.current.attach(terminal);
+		});
+		act(() => muxes[0].emitOpened("handle-1"));
+		act(() => muxes[0].emitExit("handle-1"));
+		expect(view.result.current.state).toBe("exited");
+
+		view.rerender({ attachedSession: resumedSession });
+
+		expect(view.result.current.state).toBe("connecting");
+		expect(muxes).toHaveLength(2);
+		expect(muxes[0].disposed).toBe(true);
+		expect(muxes[1].opens).toEqual([["handle-1", 80, 24]]);
+	});
+
 	it("does not reconnect a broken live pane on ordinary session updates", () => {
 		const muxes: FakeMux[] = [];
 		const createMux = () => {

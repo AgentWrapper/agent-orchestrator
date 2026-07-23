@@ -169,6 +169,45 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 	return handle, nil
 }
 
+// Restart replaces the command in an existing pane while preserving the tmux
+// session. This is used to resume an exited agent without discarding terminal
+// history or forcing attached clients onto a new handle.
+func (r *Runtime) Restart(ctx context.Context, handle ports.RuntimeHandle, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
+	id, err := handleID(handle)
+	if err != nil {
+		return ports.RuntimeHandle{}, err
+	}
+	expectedID, err := tmuxSessionName(cfg.SessionID)
+	if err != nil {
+		return ports.RuntimeHandle{}, err
+	}
+	if expectedID != id {
+		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: restart handle %s does not match session %s", id, cfg.SessionID)
+	}
+	if cfg.WorkspacePath == "" {
+		return ports.RuntimeHandle{}, errors.New("tmux runtime: workspace path is required")
+	}
+	if len(cfg.Argv) == 0 {
+		return ports.RuntimeHandle{}, errors.New("tmux runtime: launch command is required")
+	}
+	if err := validateEnvKeys(cfg.Env); err != nil {
+		return ports.RuntimeHandle{}, err
+	}
+
+	launchCmd := buildLaunchCommand(cfg)
+	if _, err := r.run(ctx, respawnPaneArgs(id, cfg.WorkspacePath, r.shell, launchCmd)...); err != nil {
+		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: restart session %s: %w", id, err)
+	}
+	alive, err := r.IsAlive(ctx, handle)
+	if err != nil {
+		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: verify restarted session %s: %w", id, err)
+	}
+	if !alive {
+		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: session %s exited during restart", id)
+	}
+	return handle, nil
+}
+
 // Destroy kills the handle's tmux session. An already-gone session is treated
 // as success (idempotent).
 func (r *Runtime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error {
@@ -347,18 +386,33 @@ func (r *Runtime) attachCommand(handle ports.RuntimeHandle) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return []string{r.binary, "-u", "attach-session", "-t", id}, nil
+	// The embedded xterm renderer supports 24-bit SGR colors. Tell this tmux
+	// client explicitly so tmux forwards RGB instead of quantizing it to the
+	// xterm-256color palette. -T is available in AO's minimum tmux version (3.2).
+	return []string{r.binary, "-u", "-T", "RGB", "attach-session", "-t", id}, nil
 }
 
 func attachEnv(base []string) []string {
 	env := append([]string(nil), base...)
+	hasTerm := false
+	hasColorTerm := false
 	for i, kv := range env {
-		if strings.HasPrefix(kv, "TERM=") {
+		switch {
+		case strings.HasPrefix(kv, "TERM="):
 			env[i] = "TERM=xterm-256color"
-			return env
+			hasTerm = true
+		case strings.HasPrefix(kv, "COLORTERM="):
+			env[i] = "COLORTERM=truecolor"
+			hasColorTerm = true
 		}
 	}
-	return append(env, "TERM=xterm-256color")
+	if !hasTerm {
+		env = append(env, "TERM=xterm-256color")
+	}
+	if !hasColorTerm {
+		env = append(env, "COLORTERM=truecolor")
+	}
+	return env
 }
 
 // run wraps runner.Run with a per-call timeout context.
@@ -624,8 +678,15 @@ func buildLaunchCommand(cfg ports.RuntimeConfig) string {
 	}
 
 	var b strings.Builder
+	if _, configured := cfg.Env["NO_COLOR"]; !configured {
+		// The daemon may be launched from another agent or CI environment that
+		// sets NO_COLOR for its own captured output. Do not leak that ambient
+		// preference into an interactive terminal session. A project can still
+		// opt out of color explicitly through its configured environment.
+		b.WriteString("unset NO_COLOR; ")
+	}
 	for _, key := range sortedKeys(cfg.Env) {
-		if key == "PATH" {
+		if key == "PATH" || key == "COLORTERM" {
 			continue
 		}
 		b.WriteString("export ")
@@ -634,6 +695,10 @@ func buildLaunchCommand(cfg ports.RuntimeConfig) string {
 		b.WriteString(shellQuote(cfg.Env[key]))
 		b.WriteString("; ")
 	}
+	// The AO web terminal and tmux attach client both support 24-bit SGR color.
+	// Export this after caller env so agent color detection cannot accidentally
+	// downgrade rich syntax/diff colors to ANSI-256.
+	b.WriteString("export COLORTERM='truecolor'; ")
 	if path != "" {
 		b.WriteString("export PATH=")
 		b.WriteString(shellQuote(path))

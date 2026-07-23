@@ -82,6 +82,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 	const sessionRef = useRef(session);
 	sessionRef.current = session;
 	const previousSessionStatusRef = useRef(session?.status);
+	const previousActivityStateRef = useRef(session?.activity?.state);
 	const optionsRef = useRef(options);
 	optionsRef.current = options;
 	const stateRef = useRef<TerminalSessionState>(state);
@@ -335,8 +336,12 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		const r = runtime.current;
 		const handle = session?.terminalHandleId ?? null;
 		const previousStatus = previousSessionStatusRef.current;
+		const previousActivityState = previousActivityStateRef.current;
 		previousSessionStatusRef.current = session?.status;
-		if (!handle || previousStatus !== "terminated" || session?.status === "terminated" || r.detached || !r.terminal) {
+		previousActivityStateRef.current = session?.activity?.state;
+		const restoredSession = previousStatus === "terminated" && session?.status !== "terminated";
+		const resumedAgent = previousActivityState === "exited" && session?.activity?.state !== "exited";
+		if (!handle || (!restoredSession && !resumedAgent) || r.detached || !r.terminal) {
 			return;
 		}
 		if (r.handle !== handle) return;
@@ -347,7 +352,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		} else {
 			transition("reattaching");
 		}
-	}, [connect, session?.status, session?.terminalHandleId, transition]);
+	}, [connect, session?.activity?.state, session?.status, session?.terminalHandleId, transition]);
 
 	// Belt-and-braces: never leak a socket past unmount, even if the owner
 	// forgot to call detach.

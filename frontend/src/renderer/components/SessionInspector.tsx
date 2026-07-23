@@ -12,6 +12,7 @@ import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { canonicalTrackerIssueId, sortedPRs } from "../types/workspace";
 import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session-presentation";
+import { aoBridge } from "../lib/bridge";
 import { BrowserPanelView, type BrowserAnnotationQueueModel } from "./BrowserPanel";
 import type { BrowserViewModel } from "../hooks/useBrowserView";
 import { Badge } from "./ui/badge";
@@ -261,6 +262,7 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 
 			<Section title="Activity">
 				<ActivityTimeline prs={prSummaries} session={session} />
+				<ResumeAgentControl session={session} />
 			</Section>
 
 			<Section className="border-t border-border pt-4" title="Overview">
@@ -272,6 +274,58 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 					<Row k="Session" v={session.id} mono />
 				</dl>
 			</Section>
+		</div>
+	);
+}
+
+function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
+	const queryClient = useQueryClient();
+	const resume = useMutation({
+		mutationFn: async () => {
+			if (usePreviewData) return;
+			const { data, error, response } = await apiClient.POST("/api/v1/sessions/{sessionId}/resume-agent", {
+				params: { path: { sessionId: session.id } },
+			});
+			if (error) throw new Error(apiErrorMessage(error, `Failed to resume agent (${response.status})`));
+			return data;
+		},
+		onSuccess: async (data) => {
+			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			if (data?.resumeMode === "saved_prompt") {
+				void aoBridge.notifications
+					.show({
+						id: `resume-agent-fallback:${session.id}:${Date.now()}`,
+						title: "Started from saved prompt",
+						body: "AO could not resume the native agent session, so it started a new conversation from the saved prompt.",
+					})
+					.catch((err) => {
+						console.warn("Unable to show resume fallback notification", err);
+					});
+			}
+		},
+	});
+
+	if (session.isTerminated === true || session.activity?.state !== "exited") return null;
+
+	const error = resume.error instanceof Error ? resume.error.message : null;
+	return (
+		<div className="mt-3 border-t border-border pt-3">
+			<Button
+				className="w-full"
+				disabled={resume.isPending}
+				onClick={() => resume.mutate()}
+				size="sm"
+				type="button"
+				variant="outline"
+			>
+				<Play className="size-icon-sm" aria-hidden="true" />
+				{resume.isPending ? "Resuming agent…" : "Resume agent"}
+			</Button>
+			{error ? (
+				<p className="mt-2 text-2xs leading-normal text-error" role="status">
+					{error}
+				</p>
+			) : null}
 		</div>
 	);
 }

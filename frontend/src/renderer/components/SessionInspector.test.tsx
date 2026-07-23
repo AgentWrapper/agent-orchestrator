@@ -289,6 +289,66 @@ describe("SessionInspector Activity section", () => {
 	const activitySection = () =>
 		within(screen.getByText("Activity").closest("[data-testid='inspector-section']") as HTMLElement);
 
+	it("offers a managed resume only for an exited, nonterminated agent", async () => {
+		renderWithQuery(
+			<SessionInspector
+				session={session([], {
+					status: "exited",
+					activity: { state: "exited", lastActivityAt: "2026-06-15T10:00:00Z" },
+				})}
+			/>,
+		);
+
+		await userEvent.click(activitySection().getByRole("button", { name: "Resume agent" }));
+
+		await waitFor(() =>
+			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/resume-agent", {
+				params: { path: { sessionId: "sess-1" } },
+			}),
+		);
+	});
+
+	it("does not offer agent resume for a live or terminated session", () => {
+		const live = renderWithQuery(
+			<SessionInspector
+				session={session([], {
+					status: "idle",
+					activity: { state: "idle", lastActivityAt: "2026-06-15T10:00:00Z" },
+				})}
+			/>,
+		);
+
+		expect(screen.queryByRole("button", { name: "Resume agent" })).not.toBeInTheDocument();
+
+		live.unmount();
+		renderWithQuery(
+			<SessionInspector
+				session={session([], {
+					status: "terminated",
+					isTerminated: true,
+					activity: { state: "exited", lastActivityAt: "2026-06-15T10:00:00Z" },
+				})}
+			/>,
+		);
+		expect(screen.queryByRole("button", { name: "Resume agent" })).not.toBeInTheDocument();
+	});
+
+	it("keeps resume failures visible beside the action", async () => {
+		postMock.mockResolvedValueOnce({ error: new Error("agent restart failed"), response: { status: 500 } });
+		renderWithQuery(
+			<SessionInspector
+				session={session([], {
+					status: "exited",
+					activity: { state: "exited", lastActivityAt: "2026-06-15T10:00:00Z" },
+				})}
+			/>,
+		);
+
+		await userEvent.click(activitySection().getByRole("button", { name: "Resume agent" }));
+
+		expect(await activitySection().findByText("agent restart failed")).toBeInTheDocument();
+	});
+
 	it.each([
 		["idle", "Idle"],
 		["active", "Working"],

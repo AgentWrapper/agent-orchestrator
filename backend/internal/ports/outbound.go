@@ -86,6 +86,13 @@ type Runtime interface {
 	IsAlive(ctx context.Context, handle RuntimeHandle) (bool, error)
 }
 
+// RuntimeRestarter is an optional runtime capability for replacing the process
+// inside an existing terminal session. Implementations should preserve the
+// handle when possible so attached clients do not need a new terminal identity.
+type RuntimeRestarter interface {
+	Restart(ctx context.Context, handle RuntimeHandle, cfg RuntimeConfig) (RuntimeHandle, error)
+}
+
 // RuntimeConfig is the spec for launching a session's process in a Runtime.
 // Argv is the agent's launch command as discrete arguments; each Runtime
 // shell-quotes it for its own shell, so the command survives args with spaces

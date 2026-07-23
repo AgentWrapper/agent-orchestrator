@@ -249,6 +249,14 @@ type RestoreSessionResponse struct {
 	Session     SessionView                `json:"session"`
 }
 
+// ResumeAgentResponse is the body of POST /api/v1/sessions/{sessionId}/resume-agent.
+type ResumeAgentResponse struct {
+	OK         bool                       `json:"ok"`
+	SessionID  domain.SessionID           `json:"sessionId"`
+	ResumeMode sessionsvc.RestoreModeView `json:"resumeMode" enum:"native,saved_prompt,fresh"`
+	Session    SessionView                `json:"session"`
+}
+
 // KillSessionResponse is the body of POST /api/v1/sessions/{sessionId}/kill.
 type KillSessionResponse struct {
 	OK        bool             `json:"ok"`
