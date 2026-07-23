@@ -315,6 +315,40 @@ func TestSessionCleanup_YesSkipsPrompt(t *testing.T) {
 	}
 }
 
+// TestSessionCleanup_DryRunListsWithoutPromptingOrDeleting: --dry-run must
+// preview the candidate sessions and stop there — no confirmation prompt and,
+// critically, no POST to the cleanup endpoint, so nothing is removed.
+func TestSessionCleanup_DryRunListsWithoutPromptingOrDeleting(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, log := sessionCommandServer(t)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{
+		// A prompt would block on empty input and fail; --dry-run must not read it.
+		In:           strings.NewReader(""),
+		ProcessAlive: func(int) bool { return true },
+	}, "session", "cleanup", "--project", "demo", "--dry-run")
+	if err != nil {
+		t.Fatalf("session cleanup --dry-run failed: %v\nstderr=%s", err, errOut)
+	}
+	if strings.Contains(out, "Type yes to confirm") {
+		t.Fatalf("--dry-run must not prompt for confirmation:\n%s", out)
+	}
+	for _, want := range []string{"Would clean demo-old", "Would clean demo-orch", "(dry-run: no sessions were removed)"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("dry-run output missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Cleaned:") || strings.Contains(out, "sessions cleaned") {
+		t.Fatalf("--dry-run must not report removals:\n%s", out)
+	}
+	// Only the candidate listing GET is allowed; no cleanup POST may be sent.
+	want := []string{"GET /api/v1/sessions?active=false&project=demo"}
+	if got := log.all(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("requests = %#v, want %#v", got, want)
+	}
+}
+
 // TestSessionCleanup_ReportsSkippedWorkspaces: a session whose workspace was
 // preserved must be listed with its reason and counted in the summary —
 // previously the CLI printed "Would clean N" then "0 sessions cleaned" with no

@@ -13,12 +13,16 @@ export const aoBridge: AoBridge =
 			scanImportFolder: async ({ path }) => ({ path, repos: [] }),
 			onNewSessionShortcut: () => () => undefined,
 			onKeyboardShortcutsHelp: () => () => undefined,
+			onNewShellTerminalShortcut: () => () => undefined,
 		},
 		terminal: {
 			saveDroppedFile: async () => "",
 		},
 		window: {
 			setOverlay: async () => undefined,
+		},
+		theme: {
+			set: async () => undefined,
 		},
 		menu: {
 			action: async () => undefined,

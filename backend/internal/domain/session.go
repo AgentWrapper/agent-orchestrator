@@ -25,11 +25,12 @@ const (
 // SessionMetadata is the typed, off-status metadata for a session: operational
 // handles and seed inputs used by Session Manager and reaper.
 type SessionMetadata struct {
-	Branch          string `json:"branch,omitempty"`
-	WorkspacePath   string `json:"workspacePath,omitempty"`
-	RuntimeHandleID string `json:"runtimeHandleId,omitempty"`
-	AgentSessionID  string `json:"agentSessionId,omitempty"`
-	Prompt          string `json:"prompt,omitempty"`
+	Branch            string `json:"branch,omitempty"`
+	WorkspacePath     string `json:"workspacePath,omitempty"`
+	WorkspaceRepoPath string `json:"workspaceRepoPath,omitempty"`
+	RuntimeHandleID   string `json:"runtimeHandleId,omitempty"`
+	AgentSessionID    string `json:"agentSessionId,omitempty"`
+	Prompt            string `json:"prompt,omitempty"`
 	// PreviewURL is the browser preview target the desktop app opens for this
 	// session. Set via `ao preview` (POST /sessions/{id}/preview); persisted so
 	// it survives a daemon restart. Empty means no preview has been requested.

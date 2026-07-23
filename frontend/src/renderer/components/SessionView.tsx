@@ -9,6 +9,7 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resiz
 import { useResolvedTheme, useUiStore, type InspectorView } from "../stores/ui-store";
 import { useShell } from "../lib/shell-context";
 import { useBrowserView } from "../hooks/useBrowserView";
+import { useCloseShellTerminal, useShellTerminals } from "../hooks/useShellTerminals";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { isOrchestratorSession } from "../types/workspace";
 import type { TerminalTarget } from "../types/terminal";
@@ -63,6 +64,59 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const [filesPoppedOut, setFilesPoppedOut] = useState(false);
 
 	const session = workspaces.flatMap((workspace) => workspace.sessions).find((s) => s.id === sessionId);
+
+	// Standalone shell terminals live beside the session's pane as extra tabs.
+	// They belong to the app, not this session, so they persist across session
+	// navigation; only which one is *selected* is local state.
+	const shellTerminals = useShellTerminals().data ?? [];
+	const closeShellTerminal = useCloseShellTerminal();
+	const activeShellTerminalHandleId = useUiStore((state) => state.activeShellTerminalHandleId);
+	const setActiveShellTerminal = useUiStore((state) => state.setActiveShellTerminal);
+
+	const selectShellTerminal = useCallback(
+		(handleId: string) => {
+			const shell = shellTerminals.find((s) => s.handleId === handleId);
+			if (!shell) return;
+			setActiveShellTerminal(shell.handleId);
+			setTerminalTarget({ kind: "shell", handleId: shell.handleId, title: shell.title });
+		},
+		[shellTerminals, setActiveShellTerminal],
+	);
+
+	const closeShellTerminalByHandle = useCallback(
+		(handleId: string) => {
+			// Fall back to the session pane first: leaving the target pointed at a
+			// handle that is being destroyed would attach to a dead PTY.
+			setTerminalTarget((current) =>
+				current.kind === "shell" && current.handleId === handleId ? { kind: "worker" } : current,
+			);
+			if (activeShellTerminalHandleId === handleId) setActiveShellTerminal(null);
+			closeShellTerminal.mutate(handleId);
+		},
+		[closeShellTerminal, activeShellTerminalHandleId, setActiveShellTerminal],
+	);
+
+	// Selecting the session's own pane also drops the active shell, so the effect
+	// above does not immediately pull the view back to that shell.
+	const selectSessionTerminal = useCallback(() => {
+		setActiveShellTerminal(null);
+		setTerminalTarget({ kind: "worker" });
+	}, [setActiveShellTerminal]);
+
+	// The shell layout owns opening (it is mounted on every route, so the button
+	// and Ctrl+` work everywhere); this view only follows the result. When a new
+	// shell becomes active while a session is on screen, switch the pane to it —
+	// that is what makes the shortcut feel like it opened a terminal *here*.
+	useEffect(() => {
+		if (!activeShellTerminalHandleId) return;
+		const shell = shellTerminals.find((s) => s.handleId === activeShellTerminalHandleId);
+		if (!shell) return;
+		setTerminalTarget((current) =>
+			current.kind === "shell" && current.handleId === shell.handleId
+				? current
+				: { kind: "shell", handleId: shell.handleId, title: shell.title },
+		);
+	}, [activeShellTerminalHandleId, shellTerminals]);
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
 	// Orchestrator sessions are terminal-only; only worker sessions have the rail.
 	const hasInspector = Boolean(session && !isOrchestrator);
@@ -240,15 +294,19 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	}
 
 	return (
-		<div className="relative flex h-full min-h-0 flex-col bg-background text-foreground">
+		<div className="relative flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="session-detail">
 			<ResizablePanelGroup className="session-split min-h-0 flex-1" id="session-workspace" orientation="horizontal">
 				{/* react-resizable-panels v4: bare numbers are PIXELS; percentages must
             be strings. Numeric sizes here once clamped the inspector to 45px. */}
 				<ResizablePanel defaultSize="72%" id="terminal" minSize="45%">
 					<CenterPane
 						daemonReady={daemonStatus.state === "ready"}
-						onSelectWorkerTerminal={() => setTerminalTarget({ kind: "worker" })}
+						onCloseShellTerminal={closeShellTerminalByHandle}
+						onSelectSessionTerminal={selectSessionTerminal}
+						onSelectShellTerminal={selectShellTerminal}
+						onSelectWorkerTerminal={selectSessionTerminal}
 						session={session}
+						shellTerminals={shellTerminals}
 						terminalTarget={terminalTarget}
 						theme={theme}
 					/>

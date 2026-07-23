@@ -377,9 +377,17 @@ type missingAgents struct{}
 func (missingAgents) Agent(domain.AgentHarness) (ports.Agent, bool) { return nil, false }
 
 type fakeWorkspace struct {
-	createErr         error
-	destroyErr        error
-	destroyed         int
+	createErr  error
+	destroyErr error
+	destroyed  int
+	// createRepoPath, when set, is returned as the RepoPath of a single-repo
+	// Create so tests can assert it survives the spawn->teardown metadata round
+	// trip (production Create resolves this path; the zero default keeps every
+	// other test's behavior unchanged).
+	createRepoPath string
+	// lastDestroyInfo records the WorkspaceInfo passed to the most recent Destroy
+	// so tests can assert teardown fed it the persisted repo path.
+	lastDestroyInfo   ports.WorkspaceInfo
 	lastCfg           ports.WorkspaceConfig
 	projectErr        error
 	projectDestroyed  int
@@ -395,6 +403,10 @@ type fakeWorkspace struct {
 	forceDestroyErr error
 	// stashCalls counts StashUncommitted invocations.
 	stashCalls int
+	// excludePatterns records patterns passed to AddExclude; addExcludeErr, when
+	// set, is returned so best-effort handling can be exercised.
+	excludePatterns []string
+	addExcludeErr   error
 	// calls records the sequence of workspace method calls for ordering assertions.
 	calls []string
 	// sharedLog, when non-nil, receives entries alongside calls so ordering
@@ -411,7 +423,7 @@ func (w *fakeWorkspace) Create(_ context.Context, cfg ports.WorkspaceConfig) (po
 	if path == "" {
 		path = "/ws/" + string(cfg.SessionID)
 	}
-	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, nil
+	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID, RepoPath: w.createRepoPath}, nil
 }
 func (w *fakeWorkspace) CreateWorkspaceProject(_ context.Context, cfg ports.WorkspaceProjectConfig) (ports.WorkspaceProjectInfo, error) {
 	if w.projectErr != nil {
@@ -454,6 +466,7 @@ func (w *fakeWorkspace) CreateWorkspaceProject(_ context.Context, cfg ports.Work
 	return out, nil
 }
 func (w *fakeWorkspace) Destroy(_ context.Context, info ports.WorkspaceInfo) error {
+	w.lastDestroyInfo = info
 	if info.RepoPath != "" {
 		entry := "Destroy:" + fakeWorkspaceRepoName(info)
 		w.calls = append(w.calls, entry)
@@ -513,6 +526,12 @@ func (w *fakeWorkspace) ApplyPreserved(_ context.Context, info ports.WorkspaceIn
 	}
 	w.calls = append(w.calls, entry)
 	return w.applyErr
+}
+
+func (w *fakeWorkspace) AddExclude(_ context.Context, info ports.WorkspaceInfo, patterns ...string) error {
+	w.calls = append(w.calls, "AddExclude:"+string(info.SessionID))
+	w.excludePatterns = append(w.excludePatterns, patterns...)
+	return w.addExcludeErr
 }
 
 type loggingDestroyWorkspace struct {
@@ -1664,6 +1683,77 @@ func TestCleanup_ReportsSkippedWorkspaces(t *testing.T) {
 	}
 	if strings.Contains(res.Skipped[0].Reason, "disk on fire") {
 		t.Fatalf("raw internal error leaked into public reason: %q", res.Skipped[0].Reason)
+	}
+
+	// A teardown that fails because the session's project is archived or
+	// unregistered (its repo can no longer be resolved) is reported with a
+	// distinct reason telling the user the worktree must be removed by hand.
+	ws.destroyErr = fmt.Errorf("resolve project repo: %w", ErrProjectNotResolvable)
+	res, err = m.Cleanup(ctx, "mer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Skipped) != 1 || res.Skipped[0].SessionID != "mer-1" {
+		t.Fatalf("skipped = %v, want mer-1", res.Skipped)
+	}
+	if res.Skipped[0].Reason != "project is archived or unregistered — remove worktree manually" {
+		t.Fatalf("reason = %q, want archived-project reason", res.Skipped[0].Reason)
+	}
+}
+
+// TestSpawnTeardown_WorkspaceRepoPathRoundTrip pins the WorkspaceRepoPath round
+// trip that lets teardown reclaim a worktree without re-resolving the project
+// repo. The workspace layer needs the repo path (the canonical repo a worktree
+// hangs off of) to tear a worktree down; persisting it on spawn means teardown
+// reads it straight from metadata instead of re-deriving it from the project,
+// which fails for archived/unregistered projects (#2608).
+//
+// Two independent assertions bite the two halves of the plumbing:
+//   - WRITE side (manager.go Spawn metadata literal): the spawned session's
+//     stored metadata must carry the workspace's RepoPath. Dropping
+//     `WorkspaceRepoPath: ws.RepoPath` there leaves it empty and fails here.
+//   - READ side (manager.go workspaceInfo): teardown must feed that persisted
+//     path back into workspace.Destroy. Dropping `RepoPath:
+//     rec.Metadata.WorkspaceRepoPath` there makes teardown pass an empty repo
+//     path (a real destroyer would then have to re-resolve the project) and
+//     fails here.
+//
+// The prior suite injected teardown failures by stubbing ws.destroyErr directly,
+// so it never exercised this path and left both mutations green.
+func TestSpawnTeardown_WorkspaceRepoPathRoundTrip(t *testing.T) {
+	m, st, _, ws := newManager()
+	const repoPath = "/repos/mer/canonical"
+	// Production Create resolves and returns the canonical repo path; mirror that
+	// so the value is available to be persisted and later reused.
+	ws.createRepoPath = repoPath
+
+	rec, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// WRITE side: spawn must persist the workspace repo path into stored metadata.
+	stored, ok, err := st.GetSession(ctx, rec.ID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if !ok {
+		t.Fatalf("session %s not found after spawn", rec.ID)
+	}
+	if stored.Metadata.WorkspaceRepoPath != repoPath {
+		t.Fatalf("persisted WorkspaceRepoPath = %q, want %q (write side: manager.go Spawn must set WorkspaceRepoPath: ws.RepoPath)", stored.Metadata.WorkspaceRepoPath, repoPath)
+	}
+
+	// READ side: teardown must feed the persisted repo path into the destroyer
+	// rather than leaving it empty for a project re-resolution.
+	if _, err := m.Kill(ctx, rec.ID); err != nil {
+		t.Fatal(err)
+	}
+	if ws.destroyed == 0 {
+		t.Fatal("expected workspace teardown to destroy the worktree")
+	}
+	if ws.lastDestroyInfo.RepoPath != repoPath {
+		t.Fatalf("teardown RepoPath = %q, want persisted %q (read side: manager.go workspaceInfo must set RepoPath from metadata); empty means teardown fell back to re-resolving the project repo", ws.lastDestroyInfo.RepoPath, repoPath)
 	}
 }
 

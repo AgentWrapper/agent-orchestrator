@@ -4,6 +4,10 @@
 
 export type ShortcutChord = {
 	key: string;
+	// Physical key (KeyboardEvent.code / Electron input.code), independent of
+	// layout and modifiers. Needed for chords whose character shifts — e.g.
+	// Ctrl+Shift+` reports key "~" on a US layout but code "Backquote".
+	code?: string;
 	ctrl: boolean;
 	meta: boolean;
 	shift: boolean;
@@ -11,7 +15,7 @@ export type ShortcutChord = {
 };
 
 export type AppShortcutId =
-	"new-session" | "keyboard-shortcuts" | "toggle-sidebar" | "open-project" | "toggle-inspector";
+	"new-session" | "new-shell-terminal" | "keyboard-shortcuts" | "toggle-sidebar" | "open-project" | "toggle-inspector";
 
 export type ShortcutCategory = "General" | "Navigation" | "Session";
 
@@ -35,6 +39,13 @@ export const APP_SHORTCUTS: readonly ShortcutDefinition[] = [
 		category: "General",
 		mac: ["⌘", "N"],
 		windowsLinux: ["Ctrl", "Shift", "N"],
+	},
+	{
+		id: "new-shell-terminal",
+		label: "New terminal",
+		category: "General",
+		mac: ["Ctrl", "Shift", "`"],
+		windowsLinux: ["Ctrl", "Shift", "`"],
 	},
 	{
 		id: "keyboard-shortcuts",
@@ -77,6 +88,7 @@ export function shortcutKeys(shortcut: ShortcutDefinition, isMac: boolean): read
 // renderer can all reference one constant without crossing bundle boundaries.
 export const NEW_SESSION_SHORTCUT_CHANNEL = "app:new-session";
 export const KEYBOARD_SHORTCUTS_HELP_CHANNEL = "app:keyboard-shortcuts-help";
+export const NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL = "app:new-shell-terminal";
 
 // New session: ⌘N on macOS, Ctrl+Shift+N on Windows/Linux. Plain Ctrl+N is a
 // live terminal keystroke (readline/vim "next line"), so the non-mac binding
@@ -88,6 +100,27 @@ export function matchesNewSessionShortcut(chord: ShortcutChord, isMac: boolean):
 	return isMac
 		? chord.meta && !chord.ctrl && !chord.alt && !chord.shift
 		: chord.ctrl && chord.shift && !chord.alt && !chord.meta;
+}
+
+// New standalone terminal, bound to the backtick chords VS Code / Cursor /
+// Codex use for the integrated terminal — Ctrl (never ⌘) on every platform, so
+// there is nothing platform-specific to learn (⌘` is taken by the OS on macOS):
+//
+//   • Ctrl+Shift+` — "Create New Terminal" (the primary, advertised binding).
+//   • Ctrl+`       — VS Code's toggle/focus chord; also opens one here.
+//
+// Handled in the main process so it fires even while focus is inside xterm; the
+// tradeoff (no pane shell can receive these chords while AO owns them) matches
+// VS Code.
+export function matchesNewShellTerminalShortcut(chord: ShortcutChord, _isMac: boolean): boolean {
+	// Match on the physical `code` (Backquote), not the character: with Shift
+	// held the character is layout-shifted — US Ctrl+Shift+` reports key "~", not
+	// "`" — so keying off `key` would miss the advertised Ctrl+Shift+` chord. Fall
+	// back to the `key` spelling for chords supplied without a code. Shift is
+	// optional (Ctrl+` and Ctrl+Shift+` both open a terminal); ⌘/Alt must not hold.
+	const isBackquote = chord.code === "Backquote" || chord.key === "`" || chord.key === "Backquote";
+	if (!isBackquote) return false;
+	return chord.ctrl && !chord.meta && !chord.alt;
 }
 
 // Keyboard shortcut help: ⌘/ on macOS, Ctrl+/ on Windows/Linux. This is also

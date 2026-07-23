@@ -223,6 +223,9 @@
 	--size-pr-col-number: 64px;
 	--size-pr-col-state: 96px;
 	--size-content-max: 320px;
+	/* Caps a standalone shell terminal's tab label so several open shells stay
+	   readable side by side instead of one long path crowding out the rest. */
+	--size-shell-tab-max: 140px;
 	--size-dialog-md: 420px;
 	--size-dialog-lg: 440px;
 	--size-dialog-orchestrator: 460px;
@@ -303,12 +306,12 @@
 	--color-text-agents-sheet-label: #d1d5db;
 	--radius-agents-sheet: var(--radius-center-panel);
 	/* Settings layout sizes (Figma) */
-	--size-settings-mobile-dialog: 336px;
-	--size-settings-mobile-dialog-pad-x: 17px;
-	--size-settings-mobile-desc: 306px;
+	--size-settings-mobile-dialog: 550px;
+	--size-settings-mobile-dialog-pad-x: 24px;
+	--size-settings-mobile-desc: 420px;
 	--size-settings-mobile-qr: 220px;
 	--size-settings-mobile-qr-code: 204px;
-	--size-settings-mobile-warning: 290px;
+	--size-settings-mobile-warning: 400px;
 	--size-settings-mobile-label: 55px;
 	--size-settings-mobile-regen-width: 179px;
 	--size-settings-mobile-switch-w: 42px;

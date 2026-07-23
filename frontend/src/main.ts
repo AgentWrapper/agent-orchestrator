@@ -5,6 +5,7 @@ import {
 	dialog,
 	ipcMain,
 	Menu,
+	nativeTheme,
 	net,
 	nativeImage,
 	Notification as ElectronNotification,
@@ -27,6 +28,7 @@ import {
 import { listFeatureBuilds, getActiveFeatureBuild } from "./main/feature-builds";
 import { readUpdateSettings, type UpdateSettings, type UpdateStatus } from "./main/update-settings";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { closeSync, existsSync, openSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -462,6 +464,11 @@ function ensureShellEnv(): Promise<void> {
 	return shellEnvPromise;
 }
 
+// One id per app launch, minted eagerly so every daemon spawn in this process
+// (including supervisor restarts) reports the same run. An explicit
+// AO_APP_RUN_ID in the environment wins, which lets a test or a wrapper pin it.
+const appRunId = process.env.AO_APP_RUN_ID ?? `apprun-${randomUUID()}`;
+
 function daemonEnv(): NodeJS.ProcessEnv {
 	// AO_OWNER is the daemon's durable spawn-mode record: the daemon writes it
 	// into running.json and the attach path reads it to decide the supervisor
@@ -469,8 +476,14 @@ function daemonEnv(): NodeJS.ProcessEnv {
 	// differs across launches). A keep-alive daemon is "persistent" (never
 	// re-linked, survives app quit); a normal app-owned daemon is "app";
 	// headless `ao start` sets none (stays unlinked, persistent by default).
+	//
+	// AO_APP_RUN_ID identifies THIS app launch. It is constant for the process
+	// lifetime, so a daemon the supervisor restarts inherits the same id and its
+	// standalone shell terminals survive; a later app launch gets a new id, which
+	// is how the daemon recognises the previous run's shells as orphans and
+	// destroys them (see internal/service/shellterm).
 	const AO_OWNER = keepDaemonAlive(process.env) ? "persistent" : "app";
-	const ownerTag = { AO_OWNER };
+	const ownerTag = { AO_OWNER, AO_APP_RUN_ID: appRunId };
 	// In dev mode, inject isolation defaults so the dev daemon never collides with
 	// the installed app. User-set env vars take priority (checked first).
 	const devExtras: Record<string, string> = {};
@@ -1052,6 +1065,16 @@ ipcMain.handle("window:setOverlay", (_event, overlay: { color: string; symbolCol
 		mainWindow.setTitleBarOverlay({ ...overlay, height: TITLEBAR_HEIGHT });
 	} catch {
 		// Window has no overlay on this platform; ignore.
+	}
+});
+
+// Drive Electron's nativeTheme from the app's theme preference so embedded
+// preview WebContentsViews (which follow prefers-color-scheme) flip in step with
+// the shell. The three preference values map 1:1 onto themeSource; "system" keeps
+// both the preview and the shell's own matchMedia following the OS.
+ipcMain.handle("theme:set", (_event, preference: "light" | "dark" | "system") => {
+	if (preference === "light" || preference === "dark" || preference === "system") {
+		nativeTheme.themeSource = preference;
 	}
 });
 

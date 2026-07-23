@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NewTaskDialog } from "./NewTaskDialog";
@@ -150,6 +150,73 @@ describe("NewTaskDialog", () => {
 		expect(spawnBody().harness).toBe("kiro");
 	});
 
+	it("attaches a pasted image as a numbered chip and sends it in the spawn body", async () => {
+		renderDialog();
+		const user = userEvent.setup();
+		await waitForAgentCatalog();
+
+		const brief = screen.getByLabelText("Brief");
+		const png = new File([new Uint8Array([137, 80, 78, 71])], "shot.png", { type: "image/png" });
+		fireEvent.paste(brief, { clipboardData: { files: [png], items: [] } });
+
+		expect(await screen.findByText("Image 1")).toBeInTheDocument();
+
+		await user.type(screen.getByLabelText("Title"), "T");
+		await user.type(brief, "B");
+		await user.click(screen.getByRole("button", { name: "Start task" }));
+
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		const attachments = spawnBody().attachments as Array<{ mimeType: string; data: string }>;
+		expect(attachments).toHaveLength(1);
+		expect(attachments[0].mimeType).toBe("image/png");
+		expect(attachments[0].data.length).toBeGreaterThan(0);
+	});
+
+	it("removes an attached image and renumbers the remaining chips", async () => {
+		renderDialog();
+		const user = userEvent.setup();
+		await waitForAgentCatalog();
+
+		const brief = screen.getByLabelText("Brief");
+		const a = new File([new Uint8Array([1, 2, 3])], "a.png", { type: "image/png" });
+		const b = new File([new Uint8Array([4, 5, 6])], "b.png", { type: "image/png" });
+		fireEvent.paste(brief, { clipboardData: { files: [a, b], items: [] } });
+
+		expect(await screen.findByText("Image 1")).toBeInTheDocument();
+		expect(screen.getByText("Image 2")).toBeInTheDocument();
+
+		await user.click(screen.getByRole("button", { name: "Remove image 1" }));
+
+		await waitFor(() => expect(screen.queryByText("Image 2")).not.toBeInTheDocument());
+		expect(screen.getByText("Image 1")).toBeInTheDocument();
+	});
+
+	it("ignores a paste that carries no image", async () => {
+		renderDialog();
+		await waitForAgentCatalog();
+
+		const brief = screen.getByLabelText("Brief");
+		fireEvent.paste(brief, { clipboardData: { files: [], items: [] } });
+
+		expect(screen.queryByText("Image 1")).not.toBeInTheDocument();
+	});
+
+	it("caps attachments at 8 and shows an inline error instead of a late submit rejection", async () => {
+		renderDialog();
+		await waitForAgentCatalog();
+
+		const brief = screen.getByLabelText("Brief");
+		const files = Array.from(
+			{ length: 10 },
+			(_, i) => new File([new Uint8Array([i + 1])], `shot-${i}.png`, { type: "image/png" }),
+		);
+		fireEvent.paste(brief, { clipboardData: { files, items: [] } });
+
+		expect(await screen.findByText("Image 8")).toBeInTheDocument();
+		expect(screen.queryByText("Image 9")).not.toBeInTheDocument();
+		expect(screen.getByText(/up to 8 images/i)).toBeInTheDocument();
+	});
+
 	it("requires both title and brief", async () => {
 		renderDialog();
 		const user = userEvent.setup();
@@ -158,6 +225,47 @@ describe("NewTaskDialog", () => {
 
 		expect(await screen.findByText("Title and brief are required.")).toBeInTheDocument();
 		expect(postMock).not.toHaveBeenCalled();
+	});
+
+	it("submits on Enter and inserts a newline on Shift+Enter in the brief", async () => {
+		renderDialog();
+		const user = userEvent.setup();
+		await waitForAgentCatalog();
+
+		await user.type(screen.getByLabelText("Title"), "Fix fallback renderer");
+		const brief = screen.getByLabelText("Brief");
+		await user.type(brief, "First line");
+		// Shift+Enter must NOT submit — it adds a newline.
+		await user.keyboard("{Shift>}{Enter}{/Shift}");
+		await user.type(brief, "Second line");
+		expect(postMock).not.toHaveBeenCalled();
+
+		// Plain Enter submits the task.
+		await user.keyboard("{Enter}");
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		expect(spawnBody().prompt).toContain("\n");
+	});
+
+	it("does not submit on Alt+Enter or Shift+Enter but does on plain Enter in the brief", async () => {
+		renderDialog();
+		const user = userEvent.setup();
+		await waitForAgentCatalog();
+
+		await user.type(screen.getByLabelText("Title"), "Fix fallback renderer");
+		const brief = screen.getByLabelText("Brief");
+		await user.type(brief, "Line");
+
+		// Alt+Enter must NOT submit — Alt is excluded so it can't submit by accident.
+		await user.keyboard("{Alt>}{Enter}{/Alt}");
+		expect(postMock).not.toHaveBeenCalled();
+
+		// Shift+Enter must NOT submit — it inserts a newline.
+		await user.keyboard("{Shift>}{Enter}{/Shift}");
+		expect(postMock).not.toHaveBeenCalled();
+
+		// Plain Enter submits the task.
+		await user.keyboard("{Enter}");
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
 	});
 
 	it.each([

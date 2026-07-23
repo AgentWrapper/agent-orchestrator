@@ -142,6 +142,12 @@ type Workspace interface {
 	// tree, and ErrPreservedConflict (wrapped) is returned. The ref must never
 	// be deleted on a failed or conflicted apply.
 	ApplyPreserved(ctx context.Context, info WorkspaceInfo, ref string) error
+	// AddExclude appends the given git ignore patterns to the worktree's local
+	// info/exclude so daemon-generated files (e.g. pasted task attachments) never
+	// surface as untracked changes or get committed. Idempotent: patterns already
+	// present are skipped. Owning this here keeps git/process execution inside the
+	// workspace adapter rather than leaking into callers.
+	AddExclude(ctx context.Context, info WorkspaceInfo, patterns ...string) error
 }
 
 // WorkspaceProject is an optional extension for projects composed from a

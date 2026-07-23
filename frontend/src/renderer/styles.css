@@ -180,6 +180,7 @@
 	--spacing-browser-min: var(--size-browser-min);
 	--spacing-dot-sm: var(--size-dot-sm);
 	--spacing-content-max: var(--size-content-max);
+	--spacing-shell-tab-max: var(--size-shell-tab-max);
 	--spacing-board-empty: var(--size-board-empty);
 	--spacing-preview-content: var(--size-preview-content);
 	--spacing-preview-max: var(--size-preview-max);
@@ -660,6 +661,17 @@ select {
 }
 
 .xterm .xterm-viewport::-webkit-scrollbar {
+	width: 0;
+	height: 0;
+}
+
+/* Scrollable region that must not show a scrollbar — the wheel/trackpad still
+   scrolls, but no track is painted and none reserves width. */
+.scrollbar-none {
+	scrollbar-width: none;
+}
+
+.scrollbar-none::-webkit-scrollbar {
 	width: 0;
 	height: 0;
 }
