@@ -24,17 +24,15 @@ import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery
 import { NotificationCenter } from "./NotificationCenter";
 import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyStates";
 import { OrchestratorIcon } from "./icons";
-import { TopbarButton, TopbarKillError } from "./TopbarButton";
+import { TopbarButton, TopbarKillError, topbarProjectLabelClass } from "./TopbarButton";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { cn } from "../lib/utils";
-import { isLinuxPlatform, usesBoardActionsInFramedTopbar } from "../lib/platform";
+import { isLinuxPlatform, isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { useUiStore } from "../stores/ui-store";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
 
-const isLinux = isLinuxPlatform();
-const boardActionsInFramedTopbar = usesBoardActionsInFramedTopbar();
 type SessionsBoardProps = {
 	/** When set, the board shows only this project's sessions. */
 	projectId?: string;
@@ -44,14 +42,24 @@ type SessionsBoardProps = {
 type Column = AttentionZoneView;
 const COLUMNS: Column[] = boardAttentionZoneOrder.map((zone) => getAttentionZoneViewForZone(zone));
 
+const isMac = isMacPlatform();
+const dragStyle = isMac ? ({ WebkitAppRegion: "drag" } as React.CSSProperties) : undefined;
+const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
+
 export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const restoreSessionById = useRestoreSession();
 	const workspaceQuery = useWorkspaceQuery();
+	// Evaluated at render so platform mocks in tests can flip the in-panel chrome.
+	const boardActionsInPanel = usesBoardActionsInPanel();
+	/** Bell lives in the board action row when the shell topbar does not host it. */
+	const boardOwnsNotificationCenter = isLinuxPlatform() || boardActionsInPanel;
 	const all = workspaceQuery.data ?? [];
 	const workspaces = projectId ? all.filter((w) => w.id === projectId) : all;
 	const workspace = projectId ? workspaces[0] : undefined;
+	// Same crumb as ShellTopbar: project name in scope, else root-board "Board".
+	const boardLabel = workspace?.name ?? (projectId ? "" : "Board");
 	const sessions = workspaces.flatMap((w) => workerSessions(w.sessions));
 	const orchestrator = projectId ? newestActiveOrchestrator(workspaces[0]?.sessions ?? []) : undefined;
 	const [isSpawning, setIsSpawning] = useState(false);
@@ -193,7 +201,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 	const actions = projectId ? (
 		<>
-			{isLinux ? <NotificationCenter /> : null}
+			{boardOwnsNotificationCenter ? <NotificationCenter /> : null}
 			{visibleSpawnError && !showProjectEmpty && (
 				<TopbarKillError className="max-w-content-max truncate" title={visibleSpawnError}>
 					{visibleSpawnError}
@@ -224,19 +232,27 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 							: "Spawn Orchestrator"}
 			</TopbarButton>
 		</>
-	) : isLinux ? (
+	) : boardOwnsNotificationCenter ? (
 		<NotificationCenter />
 	) : undefined;
 
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="board">
-			{/* The first-launch welcome carries its own orientation; a "Board"
-			    header above it would describe a board that isn't rendered
-			    (review feedback on #2432). The shell topbar crumb already
-			    names the board/project, so only the actions row stays here —
-			    and on inset-topbar platforms even that moves into the framed topbar. */}
-			{!showWelcome && actions && !boardActionsInFramedTopbar ? (
-				<div className="flex items-center justify-end gap-2 px-4.5 pt-4">{actions}</div>
+			{/* macOS: shell topbar is hidden on board routes, so the project/"Board"
+			    crumb + New task / Orchestrator / bell live in this in-panel row.
+			    Win/Linux keep the crumb and actions in the framed ShellTopbar.
+			    Welcome skips the row — a dangling "Board" above the import
+			    chooser was review feedback on #2432. */}
+			{!showWelcome && boardActionsInPanel && (boardLabel || actions) ? (
+				<div className="flex h-toolbar shrink-0 items-center gap-2 px-4.5" style={dragStyle}>
+					{boardLabel ? <span className={topbarProjectLabelClass}>{boardLabel}</span> : null}
+					<div className="min-w-0 flex-1" />
+					{actions ? (
+						<div className="flex shrink-0 items-center gap-2" style={noDragStyle}>
+							{actions}
+						</div>
+					) : null}
+				</div>
 			) : null}
 
 			<div className={cn("min-h-0 flex-1 overflow-hidden", showWelcome ? "p-0" : "p-4.5")}>
@@ -368,10 +384,10 @@ function ZoneColumn({
 						boxShadow: col.dotGlow ? `0 0 7px color-mix(in srgb, ${col.dot} 60%, transparent)` : undefined,
 					}}
 				/>
-				<span className={cn("text-caption font-semibold uppercase tracking-wide-md", col.titleClassName)}>
+				<span className={cn("text-control font-semibold uppercase tracking-wide-md", col.titleClassName)}>
 					{col.label}
 				</span>
-				<span className="ml-auto font-mono text-caption leading-none text-passive">{sessions.length}</span>
+				<span className="ml-auto font-mono text-sm leading-none text-passive">{sessions.length}</span>
 			</div>
 			<div className="min-h-0 flex-1 overflow-y-auto px-2.75 pb-3">
 				<div className="flex min-h-full flex-col gap-2.5">
