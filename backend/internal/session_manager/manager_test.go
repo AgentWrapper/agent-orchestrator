@@ -5282,10 +5282,9 @@ func (l *cancelAwareLCM) MarkTerminated(ctx context.Context, id domain.SessionID
 }
 
 type ctxCancellingRuntime struct {
-	cancel      context.CancelFunc
-	err         error
-	destroyed   int
-	destroyCall int
+	cancel    context.CancelFunc
+	err       error
+	destroyed int
 }
 
 func (r *ctxCancellingRuntime) Create(_ context.Context, _ ports.RuntimeConfig) (ports.RuntimeHandle, error) {
