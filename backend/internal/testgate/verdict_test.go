@@ -156,6 +156,9 @@ func TestSynthesizeRuntimeConfirmationUpgradesBehavioralFinding(t *testing.T) {
 	if len(got.Findings) != 1 || got.Findings[0].Source != EvidenceSourceTestInfra || got.Findings[0].RuntimeOutcome != EvidenceOutcomeConfirmed {
 		t.Fatalf("findings = %+v, want confirmed test-infra finding", got.Findings)
 	}
+	if got.Findings[0].File != "handlers/diff.go" || got.Findings[0].Line != 73 {
+		t.Fatalf("finding location = %q:%d, want handlers/diff.go:73", got.Findings[0].File, got.Findings[0].Line)
+	}
 }
 
 func TestSynthesizeRuntimeRefutationDowngradesBehavioralFinding(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -50,11 +51,20 @@ type ManagerDeps struct {
 // Manager coordinates baseline pod runs, targeted finding verification, and
 // synthesized fused verdict persistence.
 type Manager struct {
-	store  Store
-	runner Runner
-	logger *slog.Logger
-	clock  func() time.Time
-	newID  func() string
+	store           Store
+	runner          Runner
+	logger          *slog.Logger
+	clock           func() time.Time
+	newID           func() string
+	mu              sync.Mutex
+	baselineFlights map[string]*baselineFlight
+}
+
+type baselineFlight struct {
+	done chan struct{}
+	run  TestRun
+	ran  bool
+	err  error
 }
 
 func NewManager(deps ManagerDeps) *Manager {
@@ -96,6 +106,40 @@ func (m *Manager) RunBaseline(ctx context.Context, reviewRun domain.ReviewRun) (
 	if m == nil || m.runner == nil || m.store == nil {
 		return TestRun{}, false, nil
 	}
+	return m.runBaselineSingleflight(ctx, reviewRun)
+}
+
+func (m *Manager) runBaselineSingleflight(ctx context.Context, reviewRun domain.ReviewRun) (TestRun, bool, error) {
+	key := baselineKey(reviewRun)
+	m.mu.Lock()
+	if m.baselineFlights == nil {
+		m.baselineFlights = make(map[string]*baselineFlight)
+	}
+	if flight, ok := m.baselineFlights[key]; ok {
+		m.mu.Unlock()
+		select {
+		case <-flight.done:
+			return flight.run, flight.ran, flight.err
+		case <-ctx.Done():
+			return TestRun{}, false, ctx.Err()
+		}
+	}
+	flight := &baselineFlight{done: make(chan struct{})}
+	m.baselineFlights[key] = flight
+	m.mu.Unlock()
+
+	flight.run, flight.ran, flight.err = m.runBaselineOnce(ctx, reviewRun)
+	close(flight.done)
+
+	m.mu.Lock()
+	if m.baselineFlights[key] == flight {
+		delete(m.baselineFlights, key)
+	}
+	m.mu.Unlock()
+	return flight.run, flight.ran, flight.err
+}
+
+func (m *Manager) runBaselineOnce(ctx context.Context, reviewRun domain.ReviewRun) (TestRun, bool, error) {
 	req, err := m.runRequest(ctx, RunKindBaseline, reviewRun, TestRun{}, nil)
 	if err != nil {
 		return TestRun{}, false, err
@@ -123,6 +167,11 @@ func (m *Manager) RunAfterReviewSubmit(ctx context.Context, reviewRun domain.Rev
 	if m == nil || m.store == nil {
 		return FusedVerdict{}, false, nil
 	}
+	if baseline, ok, err := m.activeBaseline(ctx, reviewRun); err != nil {
+		return FusedVerdict{}, false, err
+	} else if ok {
+		return m.runAfterReviewSubmitWithBaseline(ctx, reviewRun, baseline)
+	}
 	baseline, ok, err := m.store.GetLatestTestGateRun(ctx, reviewRun.SessionID, reviewRun.PRURL, reviewRun.TargetSHA, RunKindBaseline)
 	if err != nil {
 		return FusedVerdict{}, false, err
@@ -147,7 +196,26 @@ func (m *Manager) RunAfterReviewSubmit(ctx context.Context, reviewRun domain.Rev
 			CreatedAt:      m.clock(),
 		}
 	}
+	return m.runAfterReviewSubmitWithBaseline(ctx, reviewRun, baseline)
+}
 
+func (m *Manager) activeBaseline(ctx context.Context, reviewRun domain.ReviewRun) (TestRun, bool, error) {
+	key := baselineKey(reviewRun)
+	m.mu.Lock()
+	flight := m.baselineFlights[key]
+	m.mu.Unlock()
+	if flight == nil {
+		return TestRun{}, false, nil
+	}
+	select {
+	case <-flight.done:
+		return flight.run, flight.ran, flight.err
+	case <-ctx.Done():
+		return TestRun{}, false, ctx.Err()
+	}
+}
+
+func (m *Manager) runAfterReviewSubmitWithBaseline(ctx context.Context, reviewRun domain.ReviewRun, baseline TestRun) (FusedVerdict, bool, error) {
 	findings, err := m.store.ListReviewFindingsByRun(ctx, reviewRun.ID)
 	if err != nil {
 		return FusedVerdict{}, false, err
@@ -195,6 +263,10 @@ func (m *Manager) RunAfterReviewSubmit(ctx context.Context, reviewRun domain.Rev
 		return FusedVerdict{}, false, err
 	}
 	return fused, true, nil
+}
+
+func baselineKey(reviewRun domain.ReviewRun) string {
+	return string(reviewRun.SessionID) + "\x00" + reviewRun.PRURL + "\x00" + reviewRun.TargetSHA
 }
 
 // NotConfiguredRunner is a safe default until a project has a concrete pod runner.

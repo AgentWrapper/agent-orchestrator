@@ -121,11 +121,15 @@ type fakeReducer struct {
 	got        lifecycle.ReviewResult
 	gotBatchID string
 	gotBatch   []lifecycle.ReviewResult
+	called     chan struct{}
 }
 
 func (f *fakeReducer) ApplyReviewResult(_ context.Context, _ domain.SessionID, result lifecycle.ReviewResult) (lifecycle.ReviewDeliveryOutcome, error) {
 	f.calls++
 	f.got = result
+	if f.called != nil {
+		f.called <- struct{}{}
+	}
 	return f.outcome, f.err
 }
 
@@ -133,6 +137,9 @@ func (f *fakeReducer) ApplyReviewBatch(_ context.Context, _ domain.SessionID, ba
 	f.batchCalls++
 	f.gotBatchID = batchID
 	f.gotBatch = append([]lifecycle.ReviewResult(nil), results...)
+	if f.called != nil {
+		f.called <- struct{}{}
+	}
 	return f.outcome, f.err
 }
 
@@ -141,14 +148,24 @@ type fakeTestGate struct {
 	fused     map[string]testgate.FusedVerdict
 	err       error
 	calls     []domain.ReviewRun
+	started   chan struct{}
+	release   chan struct{}
+	ctxErr    error
 }
 
 func (f *fakeTestGate) StartBaseline(_ context.Context, run domain.ReviewRun) {
 	f.baselines = append(f.baselines, run)
 }
 
-func (f *fakeTestGate) RunAfterReviewSubmit(_ context.Context, run domain.ReviewRun) (testgate.FusedVerdict, bool, error) {
+func (f *fakeTestGate) RunAfterReviewSubmit(ctx context.Context, run domain.ReviewRun) (testgate.FusedVerdict, bool, error) {
 	f.calls = append(f.calls, run)
+	if f.started != nil {
+		f.started <- struct{}{}
+	}
+	if f.release != nil {
+		<-f.release
+	}
+	f.ctxErr = ctx.Err()
 	if f.err != nil {
 		return testgate.FusedVerdict{}, false, f.err
 	}
@@ -157,6 +174,54 @@ func (f *fakeTestGate) RunAfterReviewSubmit(_ context.Context, run domain.Review
 	}
 	verdict, ok := f.fused[run.ID]
 	return verdict, ok, nil
+}
+
+func TestSubmitAsyncTestGateReturnsBeforeRuntimeVerification(t *testing.T) {
+	st := &fakeStore{ok: true, run: domain.ReviewRun{ID: "run-1", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning}}
+	reducer := &fakeReducer{outcome: lifecycle.ReviewDeliverySent, called: make(chan struct{}, 1)}
+	gate := &fakeTestGate{
+		started: make(chan struct{}, 1),
+		release: make(chan struct{}),
+		fused: map[string]testgate.FusedVerdict{
+			"run-1": {
+				Outcome:  testgate.FusedOutcomeChangesRequested,
+				Blocking: true,
+				Findings: []testgate.FusedFinding{{Title: "runtime failure", Blocking: true}},
+			},
+		},
+	}
+	svc := New(nil, st, WithLifecycleReducer(reducer), WithTestGate(gate), WithAsyncTestGate(), WithBackgroundContext(context.Background()))
+	ctx, cancel := context.WithCancel(context.Background())
+
+	runs, err := svc.SubmitMany(ctx, "mer-1", []SubmittedReview{{RunID: "run-1", Verdict: domain.VerdictChangesRequested, Body: "fix it"}})
+	if err != nil {
+		t.Fatalf("SubmitMany: %v", err)
+	}
+	cancel()
+	if len(runs) != 1 || runs[0].Status != domain.ReviewRunComplete {
+		t.Fatalf("runs = %+v, want completed submit response", runs)
+	}
+	select {
+	case <-gate.started:
+	case <-time.After(time.Second):
+		t.Fatal("test gate did not start")
+	}
+	if reducer.calls != 0 || st.markCalls != 0 {
+		t.Fatalf("async submit should return before delivery: calls=%d mark=%d", reducer.calls, st.markCalls)
+	}
+
+	close(gate.release)
+	select {
+	case <-reducer.called:
+	case <-time.After(time.Second):
+		t.Fatal("async test gate did not deliver fused review")
+	}
+	if gate.ctxErr != nil {
+		t.Fatalf("test gate context was canceled by request context: %v", gate.ctxErr)
+	}
+	if reducer.got.Verdict != domain.VerdictChangesRequested || !strings.Contains(reducer.got.Body, "runtime failure") {
+		t.Fatalf("reducer result = %+v, want fused runtime delivery", reducer.got)
+	}
 }
 
 func TestSubmitPersistsThenAppliesThenStampsDelivered(t *testing.T) {
@@ -277,7 +342,7 @@ func TestSubmitFusedMixedFindingsDeliversOnlyBlockingFindings(t *testing.T) {
 			Outcome: testgate.FusedOutcomeChangesRequested,
 			Findings: []testgate.FusedFinding{
 				{Title: "false alarm", Summary: "targeted repro returned 200", Source: testgate.EvidenceSourceTestInfra, RuntimeOutcome: testgate.EvidenceOutcomeRefuted, Blocking: false},
-				{Title: "real failure", Summary: "targeted repro returned 500", Source: testgate.EvidenceSourceTestInfra, RuntimeOutcome: testgate.EvidenceOutcomeConfirmed, Blocking: true},
+				{File: "src/server.go", Line: 42, Title: "real failure", Summary: "targeted repro returned 500", Source: testgate.EvidenceSourceTestInfra, RuntimeOutcome: testgate.EvidenceOutcomeConfirmed, Blocking: true},
 			},
 		},
 	}}
@@ -306,6 +371,31 @@ func TestSubmitFusedMixedFindingsDeliversOnlyBlockingFindings(t *testing.T) {
 	}
 	if !strings.Contains(reducer.got.Body, "real failure") || !strings.Contains(reducer.got.Body, "AO test gate") {
 		t.Fatalf("delivery body = %q, want blocking fused finding", reducer.got.Body)
+	}
+	if !strings.Contains(reducer.got.Body, "src/server.go:42") {
+		t.Fatalf("delivery body = %q, want blocking finding location", reducer.got.Body)
+	}
+}
+
+func TestSubmitRejectsInvalidFindingSeverityBeforePersistence(t *testing.T) {
+	st := &fakeStore{ok: true, run: domain.ReviewRun{ID: "run-1", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning}}
+	svc := New(nil, st)
+
+	_, err := svc.SubmitMany(context.Background(), "mer-1", []SubmittedReview{{
+		RunID:   "run-1",
+		Verdict: domain.VerdictChangesRequested,
+		Body:    "fix it",
+		Findings: []testgate.ReviewFinding{{
+			Severity:   testgate.Severity("urgent"),
+			Title:      "bad severity",
+			Behavioral: true,
+		}},
+	}})
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("err = %v, want ErrInvalid", err)
+	}
+	if st.updateCalls != 0 || len(st.findings) != 0 {
+		t.Fatalf("invalid finding should not persist review result or findings: updates=%d findings=%+v", st.updateCalls, st.findings)
 	}
 }
 
