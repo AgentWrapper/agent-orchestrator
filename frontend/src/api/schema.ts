@@ -1354,6 +1354,11 @@ export interface components {
             projectId: string;
             prompt?: string;
         };
+        SpawnSessionResponse: {
+            promptBytes: number;
+            session: components["schemas"]["ControllersSessionView"];
+            systemPromptBytes: number;
+        };
         SubmitReviewInput: {
             /** @description Review body recorded by AO. Required for changes_requested. */
             body?: string;
@@ -2822,7 +2827,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SessionResponse"];
+                    "application/json": components["schemas"]["SpawnSessionResponse"];
                 };
             };
             /** @description Bad Request */

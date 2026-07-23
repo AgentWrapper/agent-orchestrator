@@ -67,7 +67,7 @@ const api = {
 				ipcRenderer.off(KEYBOARD_SHORTCUTS_HELP_CHANNEL, wrapped);
 			};
 		},
-		// Fired by the main process when Ctrl+` is pressed in any web contents,
+		// Fired by the main process when Ctrl+Shift+` is pressed in any web contents,
 		// including while focus is inside a terminal pane.
 		onNewShellTerminalShortcut: (listener: () => void) => {
 			const wrapped = () => listener();

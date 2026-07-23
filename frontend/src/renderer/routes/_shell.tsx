@@ -434,14 +434,14 @@ function ShellLayout() {
 
 	useEffect(() => aoBridge.app.onKeyboardShortcutsHelp(() => setIsKeyboardShortcutsOpen(true)), []);
 
-	// New standalone terminal (Ctrl+`), also detected in the main process so it
+	// New standalone terminal (Ctrl+Shift+`), also detected in the main process so it
 	// fires from inside a terminal pane. It raises the same store signal as the
-	// topbar button so the two cannot drift apart.
+	// tab-strip + button so the two cannot drift apart.
 	useEffect(() => aoBridge.app.onNewShellTerminalShortcut(() => requestNewShellTerminal()), [requestNewShellTerminal]);
 
 	// The shell layout is the single consumer of that signal, because it is the
 	// only component mounted on EVERY route. Owning it here is what lets the
-	// button and Ctrl+` work from the board, a project page, or a session alike
+	// button and Ctrl+Shift+` work from the board, a project page, or a session alike
 	// — when the session view owned it, both silently did nothing outside a
 	// session, since nothing was listening.
 	//

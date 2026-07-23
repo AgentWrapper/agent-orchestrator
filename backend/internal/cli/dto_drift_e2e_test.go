@@ -55,16 +55,17 @@ func (f *fakeSessionService) List(context.Context, sessionsvc.ListFilter) ([]dom
 	return nil, nil
 }
 
-func (f *fakeSessionService) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.Session, error) {
+func (f *fakeSessionService) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.Session, int, int, error) {
 	f.spawned = cfg
 	return domain.Session{
 		SessionRecord: domain.SessionRecord{ID: domain.SessionID(string(cfg.ProjectID) + "-1")},
 		Status:        domain.StatusIdle,
-	}, nil
+	}, len(cfg.Prompt), 0, nil
 }
 
 func (f *fakeSessionService) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, _ bool) (domain.Session, error) {
-	return f.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
+	s, _, _, err := f.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
+	return s, err
 }
 
 func (f *fakeSessionService) Get(context.Context, domain.SessionID) (domain.Session, error) {

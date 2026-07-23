@@ -1060,7 +1060,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SessionResponse'
+                $ref: '#/components/schemas/SpawnSessionResponse'
           description: Created
         "400":
           content:
@@ -3607,6 +3607,19 @@ components:
           type: string
       required:
       - projectId
+      type: object
+    SpawnSessionResponse:
+      properties:
+        promptBytes:
+          type: integer
+        session:
+          $ref: '#/components/schemas/ControllersSessionView'
+        systemPromptBytes:
+          type: integer
+      required:
+      - session
+      - promptBytes
+      - systemPromptBytes
       type: object
     SubmitReviewInput:
       properties:

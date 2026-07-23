@@ -541,17 +541,17 @@ type fakeCommander struct {
 	restoreResult   sessionmanager.RestoreResult
 }
 
-func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, error) {
+func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, int, int, error) {
 	if f.spawnErr != nil {
-		return domain.SessionRecord{}, f.spawnErr
+		return domain.SessionRecord{}, 0, 0, f.spawnErr
 	}
 	f.spawned = true
 	f.spawnedCfg = cfg
 	f.killsAtSpawn = len(f.retired)
 	if f.spawnRecord.ID != "" {
-		return f.spawnRecord, nil
+		return f.spawnRecord, len(cfg.Prompt), 0, nil
 	}
-	return domain.SessionRecord{ID: "mer-9", ProjectID: cfg.ProjectID, Kind: cfg.Kind, Harness: cfg.Harness}, nil
+	return domain.SessionRecord{ID: "mer-9", ProjectID: cfg.ProjectID, Kind: cfg.Kind, Harness: cfg.Harness}, len(cfg.Prompt), 0, nil
 }
 func (f *fakeCommander) RestoreWithMode(context.Context, domain.SessionID) (sessionmanager.RestoreResult, error) {
 	if f.restoreErr != nil {
@@ -728,7 +728,7 @@ func TestSpawnUnknownProjectReturns404(t *testing.T) {
 	fc := &fakeCommander{}
 	svc := &Service{manager: fc, store: st}
 
-	_, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "ghost", Kind: domain.KindWorker})
+	_, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "ghost", Kind: domain.KindWorker})
 	var e *apierr.Error
 	if !errors.As(err, &e) || e.Kind != apierr.KindNotFound || e.Code != "PROJECT_NOT_FOUND" {
 		t.Fatalf("err = %v, want apierr.NotFound PROJECT_NOT_FOUND", err)
@@ -750,7 +750,7 @@ func TestSpawnEmitsFirstSessionOnboardingAndDuration(t *testing.T) {
 		Clock:     func() time.Time { return time.Unix(102, 0).UTC() },
 	})
 
-	if _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer"}); err != nil {
+	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer"}); err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
 	if len(sink.events) != 2 {
@@ -802,7 +802,7 @@ func TestSpawnEnrichesIssueContextFromTracker(t *testing.T) {
 	}}
 	svc := NewWithDeps(Deps{Manager: fc, Store: st, Tracker: tracker})
 
-	if _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "42"}); err != nil {
+	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "42"}); err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
 	if len(tracker.ids) != 1 || tracker.ids[0].Provider != domain.TrackerProviderGitHub || tracker.ids[0].Native != "acme/repo#42" {
@@ -831,7 +831,7 @@ func TestSpawnIssueContextFetchFailureFallsBack(t *testing.T) {
 	tracker := &fakeTracker{err: errors.New("tracker unavailable")}
 	svc := NewWithDeps(Deps{Manager: fc, Store: st, Tracker: tracker})
 
-	if _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "42"}); err != nil {
+	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "42"}); err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
 	if len(tracker.ids) != 1 {
@@ -853,7 +853,7 @@ func TestSpawnPreservesIssueIDWhenTrackerIsNil(t *testing.T) {
 	fc := &fakeCommander{}
 	svc := NewWithDeps(Deps{Manager: fc, Store: st, Tracker: nil})
 
-	if _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "107"}); err != nil {
+	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "107"}); err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
 	if fc.spawnedCfg.IssueID != "107" {
@@ -871,7 +871,7 @@ func TestSpawnIssueContextSkipsUnresolvableIssueRef(t *testing.T) {
 	tracker := &fakeTracker{}
 	svc := NewWithDeps(Deps{Manager: fc, Store: st, Tracker: tracker})
 
-	if _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "not-an-issue"}); err != nil {
+	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "not-an-issue"}); err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
 	if len(tracker.ids) != 0 {
@@ -899,7 +899,7 @@ func TestSpawnFailedEmitsDuration(t *testing.T) {
 		},
 	})
 
-	if _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer"}); err == nil {
+	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer"}); err == nil {
 		t.Fatal("Spawn should fail")
 	}
 	if len(sink.events) != 1 || sink.events[0].Name != "ao.session.spawn_failed" {
@@ -930,7 +930,7 @@ func TestSpawnEmitsTelemetryOnSuccess(t *testing.T) {
 	ts := &fakeTelemetrySink{}
 	svc := NewWithDeps(Deps{Manager: fc, Store: st, Telemetry: ts, Clock: func() time.Time { return time.Unix(1700000000, 0).UTC() }})
 
-	_, err := svc.Spawn(context.Background(), ports.SpawnConfig{
+	_, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{
 		ProjectID: "mer",
 		Kind:      domain.KindWorker,
 		Harness:   domain.HarnessCodex,
@@ -957,7 +957,7 @@ func TestSpawnEmitsTelemetryOnFailure(t *testing.T) {
 	ts := &fakeTelemetrySink{}
 	svc := NewWithDeps(Deps{Manager: fc, Store: st, Telemetry: ts, Clock: func() time.Time { return time.Unix(1700000000, 0).UTC() }})
 
-	_, err := svc.Spawn(context.Background(), ports.SpawnConfig{
+	_, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{
 		ProjectID: "mer",
 		Kind:      domain.KindWorker,
 		Harness:   domain.HarnessCodex,
@@ -999,7 +999,7 @@ func TestSpawnEmitsTypedErrorCodeOnFailure(t *testing.T) {
 	ts := &fakeTelemetrySink{}
 	svc := NewWithDeps(Deps{Manager: fc, Store: st, Telemetry: ts, Clock: func() time.Time { return time.Unix(1700000000, 0).UTC() }})
 
-	_, err := svc.Spawn(context.Background(), ports.SpawnConfig{
+	_, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{
 		ProjectID: "mer",
 		Kind:      domain.KindWorker,
 		Harness:   domain.HarnessCodex,

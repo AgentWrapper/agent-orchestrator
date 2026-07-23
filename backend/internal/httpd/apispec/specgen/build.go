@@ -150,6 +150,7 @@ var schemaNames = map[string]string{
 	"ControllersCleanupSessionsQuery":             "CleanupSessionsQuery",
 	"ControllersListSessionsResponse":             "ListSessionsResponse",
 	"ControllersSpawnSessionRequest":              "SpawnSessionRequest",
+	"ControllersSpawnSessionResponse":             "SpawnSessionResponse",
 	"ControllersSessionResponse":                  "SessionResponse",
 	"ControllersSessionPreviewResponse":           "SessionPreviewResponse",
 	"ControllersSetSessionPreviewRequest":         "SetSessionPreviewRequest",
@@ -749,7 +750,7 @@ func sessionOperations() []operation {
 			summary: "Spawn a new agent session",
 			reqBody: controllers.SpawnSessionRequest{},
 			resps: []respUnit{
-				{http.StatusCreated, controllers.SessionResponse{}},
+				{http.StatusCreated, controllers.SpawnSessionResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},

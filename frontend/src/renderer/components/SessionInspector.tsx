@@ -81,7 +81,7 @@ const prStateTone: Record<SessionPRSummary["state"], string> = {
 	closed: "border-error/40 bg-error/10 text-error",
 };
 
-const inspectorShellClass = "@container/inspector flex h-full min-h-0 flex-col overflow-hidden bg-background";
+const inspectorShellClass = "@container/inspector flex h-full min-h-0 flex-col overflow-hidden";
 
 const inspectorBodyClass = "min-h-0 flex-1 overflow-y-auto p-4 pb-6 @max-[300px]/inspector:px-3";
 

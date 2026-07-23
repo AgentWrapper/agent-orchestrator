@@ -178,9 +178,18 @@ type SpawnAttachmentInput struct {
 	Data string `json:"data"`
 }
 
-// SessionResponse is the { session } body shared by session create/get.
+// SessionResponse is the { session } body shared by session reads and updates.
 type SessionResponse struct {
 	Session SessionView `json:"session"`
+}
+
+// SpawnSessionResponse includes ephemeral measurements of the final assembled
+// prompt texts. The fields are required so a measured zero remains distinct
+// from a response that never measured prompt sizes.
+type SpawnSessionResponse struct {
+	Session           SessionView `json:"session"`
+	PromptBytes       int         `json:"promptBytes"`
+	SystemPromptBytes int         `json:"systemPromptBytes"`
 }
 
 // ListWorkspaceFilesResponse is the body of GET /api/v1/sessions/{sessionId}/workspace/files.

@@ -77,6 +77,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const closeShellTerminal = useCloseShellTerminal();
 	const activeShellTerminalHandleId = useUiStore((state) => state.activeShellTerminalHandleId);
 	const setActiveShellTerminal = useUiStore((state) => state.setActiveShellTerminal);
+	const requestNewShellTerminal = useUiStore((state) => state.requestNewShellTerminal);
 
 	const selectShellTerminal = useCallback(
 		(handleId: string) => {
@@ -109,7 +110,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	}, [setActiveShellTerminal]);
 
 	// The shell layout owns opening (it is mounted on every route, so the button
-	// and Ctrl+` work everywhere); this view only follows the result. When a new
+	// and Ctrl+Shift+` work everywhere); this view only follows the result. When a new
 	// shell becomes active while a session is on screen, switch the pane to it —
 	// that is what makes the shortcut feel like it opened a terminal *here*.
 	useEffect(() => {
@@ -292,7 +293,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	if (!session && !workspaceQuery.isLoading) {
 		return (
-			<div className="grid h-full place-items-center bg-background p-6 text-center font-mono text-xs text-passive">
+			<div className="grid h-full place-items-center p-6 text-center font-mono text-xs text-passive">
 				Session not found. It may have been cleaned up — pick another from the sidebar.
 			</div>
 		);
@@ -308,6 +309,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 					<CenterPane
 						daemonReady={daemonStatus.state === "ready"}
 						onCloseShellTerminal={closeShellTerminalByHandle}
+						onNewShellTerminal={requestNewShellTerminal}
 						onSelectSessionTerminal={selectSessionTerminal}
 						onSelectShellTerminal={selectShellTerminal}
 						onSelectWorkerTerminal={selectSessionTerminal}

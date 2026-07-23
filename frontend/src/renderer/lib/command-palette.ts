@@ -141,14 +141,15 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 		});
 	}
 
-	if (currentSession?.branch && currentSession.kind !== "orchestrator" && !isSyntheticBranch(currentSession)) {
+	const currentBranch = currentSession?.branch;
+	if (currentSession && currentBranch && currentSession.kind !== "orchestrator" && !isSyntheticBranch(currentSession)) {
 		items.push({
 			id: "current-copy-branch",
 			group: "current",
 			title: "Copy branch name",
-			subtitle: currentSession.branch,
-			keywords: ["branch", "git", currentSession.branch, currentSession.title],
-			action: { kind: "copy-branch", branch: currentSession.branch },
+			subtitle: currentBranch,
+			keywords: ["branch", "git", currentBranch, currentSession.title],
+			action: { kind: "copy-branch", branch: currentBranch },
 		});
 	}
 
