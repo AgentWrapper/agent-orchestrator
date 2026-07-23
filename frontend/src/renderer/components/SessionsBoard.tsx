@@ -229,7 +229,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	) : undefined;
 
 	return (
-		<div className="flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="board">
+		<div className="flex h-full min-h-0 flex-col text-foreground" data-testid="board">
 			{/* The first-launch welcome carries its own orientation; a "Board"
 			    header above it would describe a board that isn't rendered
 			    (review feedback on #2432). The shell topbar crumb already

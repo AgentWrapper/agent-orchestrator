@@ -72,6 +72,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const closeShellTerminal = useCloseShellTerminal();
 	const activeShellTerminalHandleId = useUiStore((state) => state.activeShellTerminalHandleId);
 	const setActiveShellTerminal = useUiStore((state) => state.setActiveShellTerminal);
+	const requestNewShellTerminal = useUiStore((state) => state.requestNewShellTerminal);
 
 	const selectShellTerminal = useCallback(
 		(handleId: string) => {
@@ -287,14 +288,14 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	if (!session && !workspaceQuery.isLoading) {
 		return (
-			<div className="grid h-full place-items-center bg-background p-6 text-center font-mono text-xs text-passive">
+			<div className="grid h-full place-items-center p-6 text-center font-mono text-xs text-passive">
 				Session not found. It may have been cleaned up — pick another from the sidebar.
 			</div>
 		);
 	}
 
 	return (
-		<div className="relative flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="session-detail">
+		<div className="relative flex h-full min-h-0 flex-col text-foreground" data-testid="session-detail">
 			<ResizablePanelGroup className="session-split min-h-0 flex-1" id="session-workspace" orientation="horizontal">
 				{/* react-resizable-panels v4: bare numbers are PIXELS; percentages must
             be strings. Numeric sizes here once clamped the inspector to 45px. */}
@@ -302,6 +303,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 					<CenterPane
 						daemonReady={daemonStatus.state === "ready"}
 						onCloseShellTerminal={closeShellTerminalByHandle}
+						onNewShellTerminal={requestNewShellTerminal}
 						onSelectSessionTerminal={selectSessionTerminal}
 						onSelectShellTerminal={selectShellTerminal}
 						onSelectWorkerTerminal={selectSessionTerminal}
@@ -361,7 +363,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				) : null}
 			</ResizablePanelGroup>
 			{filesPoppedOut && session ? (
-				<div className="absolute inset-0 z-30 bg-background">
+				<div className="absolute inset-0 z-30 bg-settings-panel">
 					<SessionFilesView
 						isMaximized
 						onClose={() => {

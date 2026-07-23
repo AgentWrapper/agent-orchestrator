@@ -353,7 +353,7 @@
 	overflow: hidden;
 	border-radius: var(--radius-welcome-panel);
 	border: 1px solid var(--color-border-welcome-panel);
-	background-color: var(--color-bg-welcome-panel);
+	background-color: var(--color-bg-settings-panel);
 }
 
 @utility center-panel-settings {
@@ -375,7 +375,7 @@
 	overflow: hidden;
 	border-radius: var(--radius-center-panel);
 	border: 1px solid var(--color-border-strong);
-	background-color: var(--color-bg-primary);
+	background-color: var(--color-bg-settings-panel);
 }
 
 @utility settings-row-bar {

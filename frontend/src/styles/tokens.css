@@ -30,14 +30,14 @@
 	--color-bg-tertiary: #1b1d22;
 	--color-bg-elevated: #212329;
 	--color-bg-sidebar: #17181c;
-	--color-bg-terminal: #15171b;
+	--color-bg-terminal: #101216;
 
 	/* Text */
 	--color-text-primary: #f4f5f7;
 	--color-text-muted: #9ba1aa;
 	--color-text-passive: #646a73;
-	--color-text-terminal: #d7d7d2;
-	--color-text-terminal-dim: #7c7c7c;
+	--color-text-terminal: #d8dae1;
+	--color-text-terminal-dim: #7e8390;
 
 	/* Borders (hairline white-alpha on dark) */
 	--color-border: rgb(255 255 255 / 0.06);
@@ -196,8 +196,8 @@
 	--size-control-board-sm: 30px;
 	--size-control-board: 36px;
 	--size-table-head: var(--space-10);
-	--size-toolbar: 56px;
-	--size-inspector-tabs: 47px;
+	--size-toolbar: 44px;
+	--size-inspector-tabs: 36px;
 	--size-row-md: 52px;
 	--size-browser-url: 29px;
 	--size-browser-min: 320px;
@@ -349,7 +349,7 @@
 	--color-project-accent-sky: #93c5fd;
 
 	/* xterm extended palette (ANSI bright + selection) */
-	--color-term-cyan: #6fb3c9;
+	--color-term-cyan: #6ec1da;
 	--color-term-selection-dark: rgb(77 141 255 / 0.3);
 	--color-term-selection-light: rgb(37 99 235 / 0.25);
 	--color-term-selection-inactive: rgb(128 128 128 / 0.2);
@@ -359,7 +359,7 @@
 	--color-term-bright-yellow: #f0d06b;
 	--color-term-bright-blue: #7eaaff;
 	--color-term-bright-magenta: #c4b0fc;
-	--color-term-bright-cyan: #8fcfe0;
+	--color-term-bright-cyan: #8fd3e8;
 	--color-term-red-light: #b42318;
 	--color-term-magenta-light: #8e24aa;
 	--color-term-cyan-light: #0b7285;

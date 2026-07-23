@@ -337,7 +337,7 @@ function ShellLayout() {
 
 	// New standalone terminal (Ctrl+`), also detected in the main process so it
 	// fires from inside a terminal pane. It raises the same store signal as the
-	// topbar button so the two cannot drift apart.
+	// tab-strip + button so the two cannot drift apart.
 	useEffect(() => aoBridge.app.onNewShellTerminalShortcut(() => requestNewShellTerminal()), [requestNewShellTerminal]);
 
 	// The shell layout is the single consumer of that signal, because it is the
