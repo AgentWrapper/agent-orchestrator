@@ -65,8 +65,28 @@ type Manager struct {
 
 type baselineFlight struct {
 	done chan struct{}
+	mu   sync.Mutex
 	run  TestRun
 	err  error
+}
+
+func (f *baselineFlight) complete(run TestRun, err error) {
+	f.mu.Lock()
+	f.run = run
+	f.err = err
+	f.mu.Unlock()
+	close(f.done)
+}
+
+func (f *baselineFlight) wait(ctx context.Context) (TestRun, bool, error) {
+	select {
+	case <-f.done:
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return f.run, f.err == nil, f.err
+	case <-ctx.Done():
+		return TestRun{}, false, ctx.Err()
+	}
 }
 
 // NewManager creates a test-gate manager from its dependencies.
@@ -120,26 +140,21 @@ func (m *Manager) runBaselineSingleflight(ctx context.Context, reviewRun domain.
 	}
 	if flight, ok := m.baselineFlights[key]; ok {
 		m.mu.Unlock()
-		select {
-		case <-flight.done:
-			return flight.run, flight.err == nil, flight.err
-		case <-ctx.Done():
-			return TestRun{}, false, ctx.Err()
-		}
+		return flight.wait(ctx)
 	}
 	flight := &baselineFlight{done: make(chan struct{})}
 	m.baselineFlights[key] = flight
 	m.mu.Unlock()
 
-	flight.run, flight.err = m.runBaselineOnce(ctx, reviewRun)
-	close(flight.done)
+	run, err := m.runBaselineOnce(ctx, reviewRun)
+	flight.complete(run, err)
 
 	m.mu.Lock()
 	if m.baselineFlights[key] == flight {
 		delete(m.baselineFlights, key)
 	}
 	m.mu.Unlock()
-	return flight.run, flight.err == nil, flight.err
+	return run, err == nil, err
 }
 
 func (m *Manager) runBaselineOnce(ctx context.Context, reviewRun domain.ReviewRun) (TestRun, error) {
@@ -212,12 +227,7 @@ func (m *Manager) activeBaseline(ctx context.Context, reviewRun domain.ReviewRun
 	if flight == nil {
 		return TestRun{}, false, nil
 	}
-	select {
-	case <-flight.done:
-		return flight.run, flight.err == nil, flight.err
-	case <-ctx.Done():
-		return TestRun{}, false, ctx.Err()
-	}
+	return flight.wait(ctx)
 }
 
 func (m *Manager) runAfterReviewSubmitWithBaseline(ctx context.Context, reviewRun domain.ReviewRun, baseline TestRun) (FusedVerdict, error) {

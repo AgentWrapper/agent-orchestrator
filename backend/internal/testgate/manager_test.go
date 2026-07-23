@@ -159,8 +159,7 @@ func TestManagerRunAfterReviewSubmitWaitsForActiveBaselineInsteadOfUsingStaleSto
 	case <-time.After(10 * time.Millisecond):
 	}
 
-	flight.run = TestRun{ID: "fresh-baseline", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Kind: RunKindBaseline, Classification: ClassificationPassed, Summary: "fresh baseline passed"}
-	close(flight.done)
+	flight.complete(TestRun{ID: "fresh-baseline", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Kind: RunKindBaseline, Classification: ClassificationPassed, Summary: "fresh baseline passed"}, nil)
 	select {
 	case err := <-errCh:
 		t.Fatalf("RunAfterReviewSubmit: %v", err)
