@@ -359,20 +359,11 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 		host: string | undefined,
 	): { previewNamespace: false } | { previewNamespace: true; mapping?: PreviewMapping } => {
 		if (!host) return { previewNamespace: false };
-		let local: URL;
-		try {
-			local = new URL(`http://${host}`);
-		} catch {
-			return { previewNamespace: host.toLowerCase().includes("ao-preview.localhost") };
-		}
-		const hostname = local.hostname.toLowerCase();
-		const inNamespace = hostname === previewHostSuffix.slice(1) || hostname.endsWith(previewHostSuffix);
-		if (!inNamespace) return { previewNamespace: false };
-		if (local.port !== String(forwarderPort) || !hostname.endsWith(previewHostSuffix)) {
-			return { previewNamespace: true };
-		}
-		const token = hostname.slice(0, -previewHostSuffix.length);
-		return { previewNamespace: true, mapping: previewsByToken.get(token) };
+		const normalized = host.toLowerCase();
+		if (!normalized.includes("ao-preview.localhost")) return { previewNamespace: false };
+		const match = /^([0-9a-f]{32})\.ao-preview\.localhost:([0-9]+)$/.exec(normalized);
+		if (!match || match[2] !== String(forwarderPort)) return { previewNamespace: true };
+		return { previewNamespace: true, mapping: previewsByToken.get(match[1]) };
 	};
 	const previewUpstreamPath = (mapping: PreviewMapping, requestURL: string | undefined): string => {
 		const suffix = requestURL?.startsWith("/") ? requestURL : `/${requestURL ?? ""}`;
@@ -389,6 +380,14 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 			requestURL ?? "/",
 			`http://${mapping.token}${previewHostSuffix}:${forwarderPort}`,
 		);
+		let targetLocation: URL | undefined;
+		if (mapping.kind === "http") {
+			try {
+				targetLocation = new URL(location, new URL(requestURL ?? "/", mapping.targetHeader));
+			} catch {
+				targetLocation = undefined;
+			}
+		}
 		const redirectTargetValue = upstreamResponse.headers["x-ao-preview-redirect-target"];
 		const redirectTarget = Array.isArray(redirectTargetValue) ? redirectTargetValue[0] : redirectTargetValue;
 		if (
@@ -398,7 +397,7 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 			previewsByToken.get(mapping.token) === mapping
 		) {
 			const indicated = previewTarget(redirectTarget);
-			const destination = previewTarget(location);
+			const destination = targetLocation ? previewTarget(targetLocation.toString()) : undefined;
 			if (
 				indicated?.kind === "http" &&
 				indicated.pathname === "/" &&
@@ -427,18 +426,12 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 			}
 			return { preview: true, location };
 		}
-		try {
-			const targetRequest = new URL(requestURL ?? "/", mapping.targetHeader);
-			const targetLocation = new URL(location, targetRequest);
-			if (targetLocation.origin !== mapping.targetHeader) return { preview: true, location };
-			const rewritten = new URL(localRequest.origin);
-			rewritten.pathname = targetLocation.pathname;
-			rewritten.search = targetLocation.search;
-			rewritten.hash = targetLocation.hash;
-			return { preview: true, location: rewritten.toString() };
-		} catch {
-			return { preview: true, location };
-		}
+		if (!targetLocation || targetLocation.origin !== mapping.targetHeader) return { preview: true, location };
+		const rewritten = new URL(localRequest.origin);
+		rewritten.pathname = targetLocation.pathname;
+		rewritten.search = targetLocation.search;
+		rewritten.hash = targetLocation.hash;
+		return { preview: true, location: rewritten.toString() };
 	};
 	const destroyOutboundRequest = (request: http.ClientRequest, message: string) => {
 		outboundRequests.delete(request);

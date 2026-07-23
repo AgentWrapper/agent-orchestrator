@@ -316,6 +316,45 @@ describe("remote-forwarder", () => {
 		expect(daemonRequests).toBe(0);
 	});
 
+	it("accepts only the exact preview Host grammar and fails namespace variants closed", async () => {
+		let daemonRequests = 0;
+		const daemon = http.createServer((_req, res) => {
+			daemonRequests++;
+			res.end("daemon");
+		});
+		servers.push(daemon);
+		const daemonPort = await listen(daemon);
+		const forwarder = await startRemoteForwarder({ host: "127.0.0.1", port: daemonPort, password: "secret" });
+		forwarders.push(forwarder);
+		const known = new URL(forwarder.resolvePreviewURL("owner", "session", "http://localhost:5173/app"));
+		const token = known.hostname.slice(0, known.hostname.indexOf("."));
+		const unknownToken = `${token[0] === "0" ? "1" : "0"}${token.slice(1)}`;
+		const requestHost = (host: string) =>
+			forwarderRequest(forwarder, `http://127.0.0.1:${forwarder.port}/app`, { headers: { host } });
+		const invalidHosts = [
+			`${token}.ao-preview.localhost:${forwarder.port + 1}`,
+			`${token}.ao-preview.localhost`,
+			`${token}.ao-preview.localhost:0${forwarder.port}`,
+			`${token}.ao-preview.localhost.:${forwarder.port}`,
+			`user@${known.host}`,
+			`${known.host}/path`,
+			`${known.host}?query=1`,
+			`${known.host}#fragment`,
+			`not-hex.ao-preview.localhost:${forwarder.port}`,
+			`${unknownToken}.ao-preview.localhost:${forwarder.port}`,
+			`${unknownToken.toUpperCase()}.AO-PREVIEW.LOCALHOST:${forwarder.port}`,
+			`${known.host}.example.com`,
+		];
+
+		for (const host of invalidHosts) {
+			expect((await requestHost(host)).status, host).toBe(404);
+		}
+		expect(daemonRequests).toBe(0);
+
+		expect((await requestHost(known.host.toUpperCase())).status).toBe(200);
+		expect(daemonRequests).toBe(1);
+	});
+
 	it("rewrites preview redirects without mutating the active mapping", async () => {
 		const receivedTargets: string[] = [];
 		const daemon = http.createServer((req, res) => {
@@ -330,6 +369,12 @@ describe("remote-forwarder", () => {
 				case "/_ao/preview/session/start/cross":
 					res.writeHead(302, {
 						location: "http://127.0.0.1:43210/next?q=3#cross",
+						"x-ao-preview-redirect-target": "http://127.0.0.1:43210",
+					});
+					break;
+				case "/_ao/preview/session/start/protocol-relative":
+					res.writeHead(302, {
+						location: "//127.0.0.1:43210/next?q=4#protocol-relative",
 						"x-ao-preview-redirect-target": "http://127.0.0.1:43210",
 					});
 					break;
@@ -355,6 +400,7 @@ describe("remote-forwarder", () => {
 		const relative = await forwarderRequest(forwarder, localFor("relative"));
 		const absolute = await forwarderRequest(forwarder, localFor("absolute"));
 		const cross = await forwarderRequest(forwarder, localFor("cross"));
+		const protocolRelative = await forwarderRequest(forwarder, localFor("protocol-relative"));
 		const directPublic = await forwarderRequest(forwarder, localFor("public"));
 		const directLAN = await forwarderRequest(forwarder, localFor("lan"));
 
@@ -367,6 +413,12 @@ describe("remote-forwarder", () => {
 		const crossLocal = cross.headers.location!;
 		expect(new URL(crossLocal).origin).not.toBe(opaqueOrigin);
 		expect(forwarder.originalPreviewURL(crossLocal)).toBe("http://127.0.0.1:43210/next?q=3#cross");
+		expect(protocolRelative.headers["x-ao-preview-redirect-target"]).toBeUndefined();
+		const protocolRelativeLocal = protocolRelative.headers.location!;
+		expect(new URL(protocolRelativeLocal).origin).not.toBe(opaqueOrigin);
+		expect(forwarder.originalPreviewURL(protocolRelativeLocal)).toBe(
+			"http://127.0.0.1:43210/next?q=4#protocol-relative",
+		);
 
 		await forwarderRequest(forwarder, crossLocal);
 		await forwarderRequest(forwarder, localFor("still-current"));
@@ -423,7 +475,14 @@ describe("remote-forwarder", () => {
 				forged: req.headers["x-ao-preview-forged"] as string | undefined,
 			};
 			socket.once("end", () => socket.end());
-			socket.write("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n");
+			socket.write(
+				"HTTP/1.1 101 Switching Protocols\r\n" +
+					"Connection: Upgrade\r\n" +
+					"Upgrade: websocket\r\n" +
+					"X-AO-Preview-Debug: internal\r\n" +
+					"Set-Cookie: theme=dark; Domain=localhost; Path=/\r\n" +
+					"Set-Cookie: ao_conn=remote-secret; HttpOnly\r\n\r\n",
+			);
 			socket.write("server-frame");
 			socket.on("data", (chunk) => socket.write(`echo:${chunk.toString("utf8")}`));
 		});
@@ -472,6 +531,9 @@ describe("remote-forwarder", () => {
 			forged: undefined,
 		});
 		expect(data).toContain("101 Switching Protocols");
+		expect(data).not.toContain("X-AO-Preview-");
+		expect(data).toContain("Set-Cookie: theme=dark; Path=/");
+		expect(data).not.toContain("ao_conn=");
 	});
 
 	it("fails closed for unknown and released preview WebSocket hosts", async () => {
@@ -510,6 +572,7 @@ describe("remote-forwarder", () => {
 		};
 
 		expect(await requestHost(`unknown.ao-preview.localhost:${forwarder.port}`)).toContain("404 Not Found");
+		expect(await requestHost(`${known.hostname}.:${forwarder.port}`)).toContain("404 Not Found");
 		forwarder.releasePreview("owner");
 		expect(await requestHost(known.host)).toContain("404 Not Found");
 		expect(daemonUpgrades).toBe(0);
