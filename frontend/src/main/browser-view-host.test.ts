@@ -23,7 +23,9 @@ function setupHost(previewHooks: PreviewHooks = {}) {
 	let currentURL = "";
 	let webContentsClosed = false;
 	let displayHandler: DisplayHandler | null = null;
+	let windowOpenHandler: ((details: { url: string }) => { action: string }) | null = null;
 	const webContentsListeners = new Map<string, Array<(...args: unknown[]) => void>>();
+	const openExternal = vi.fn(async () => undefined);
 	const webContents = {
 		id: 99,
 		mainFrame: { frameToken: "preview-frame" },
@@ -52,7 +54,9 @@ function setupHost(previewHooks: PreviewHooks = {}) {
 		},
 		reload: () => undefined,
 		send: vi.fn(),
-		setWindowOpenHandler: () => undefined,
+		setWindowOpenHandler: (handler: (details: { url: string }) => { action: string }) => {
+			windowOpenHandler = handler;
+		},
 		stop: () => undefined,
 		close: () => {
 			webContentsClosed = true;
@@ -86,7 +90,7 @@ function setupHost(previewHooks: PreviewHooks = {}) {
 			removeHandler: () => undefined,
 			off: () => undefined,
 		} as never,
-		shell: { openExternal: async () => undefined },
+		shell: { openExternal },
 		WebContentsView: function () {
 			return view;
 		} as never,
@@ -119,6 +123,8 @@ function setupHost(previewHooks: PreviewHooks = {}) {
 		setCurrentURL: (url: string) => {
 			currentURL = url;
 		},
+		openExternal,
+		openWindow: (url: string) => windowOpenHandler!({ url }),
 		getDisplayHandler: () => displayHandler,
 	};
 }
@@ -644,6 +650,153 @@ describe("BrowserView events after destroy", () => {
 
 		expect(webContents.loadURL).toHaveBeenCalledTimes(2);
 		expect(sent.every(({ payload }) => (payload as BrowserNavState).url !== "https://example.com/old")).toBe(true);
+	});
+});
+
+describe("Remote in-page preview navigation", () => {
+	it.each([
+		["will-navigate", "http://localhost:3000/next", "http://opaque.ao-preview.localhost:4100/next"],
+		["will-navigate", "http://127.0.0.1:4173/next", "http://opaque.ao-preview.localhost:4100/next"],
+		["will-navigate", "file:///workspace/next.html", "http://opaque.ao-preview.localhost:4100/next.html"],
+		["will-redirect", "http://localhost:3000/redirect", "http://opaque.ao-preview.localhost:4100/redirect"],
+		["will-redirect", "http://127.0.0.1:4173/redirect", "http://opaque.ao-preview.localhost:4100/redirect"],
+		["will-redirect", "file:///workspace/redirect.html", "http://opaque.ao-preview.localhost:4100/redirect.html"],
+	] as const)("routes %s for %s through the renderer-scoped preview owner", async (eventName, source, opaque) => {
+		const resolvePreviewURL = vi.fn((_ownerId: string, _sessionId: string, url: string) =>
+			url === source ? opaque : url,
+		);
+		const { emitWebContents, invoke, webContents } = setupHost({ resolvePreviewURL });
+		const ensured = await invoke("browser:ensure", "session:real:id");
+		const event = { preventDefault: vi.fn() };
+
+		emitWebContents(eventName, event, source);
+		await vi.waitFor(() => expect(webContents.loadURL).toHaveBeenCalledWith(opaque));
+
+		expect(event.preventDefault).toHaveBeenCalledOnce();
+		expect(resolvePreviewURL).toHaveBeenCalledWith(ensured.viewId, "session:real:id", source);
+	});
+
+	it.each(["https://example.com/page", "http://192.168.2.20:5173/page"])(
+		"allows direct in-page navigation to %s",
+		async (source) => {
+			const resolvePreviewURL = vi.fn((_ownerId: string, _sessionId: string, url: string) => url);
+			const { emitWebContents, invoke, webContents } = setupHost({ resolvePreviewURL });
+			await invoke("browser:ensure", "session-one");
+			const event = { preventDefault: vi.fn() };
+
+			emitWebContents("will-navigate", event, source);
+
+			expect(event.preventDefault).not.toHaveBeenCalled();
+			expect(webContents.loadURL).not.toHaveBeenCalled();
+		},
+	);
+
+	it("does not rewrite an existing opaque preview URL", async () => {
+		const opaque = "http://token.ao-preview.localhost:4100/page";
+		const resolvePreviewURL = vi.fn((_ownerId: string, _sessionId: string, url: string) => url);
+		const { emitWebContents, invoke, webContents } = setupHost({ resolvePreviewURL });
+		await invoke("browser:ensure", "session-one");
+		const event = { preventDefault: vi.fn() };
+
+		emitWebContents("will-navigate", event, opaque);
+
+		expect(event.preventDefault).not.toHaveBeenCalled();
+		expect(resolvePreviewURL).toHaveBeenCalledOnce();
+		expect(webContents.loadURL).not.toHaveBeenCalled();
+	});
+
+	it("revalidates the resolved in-page URL before loading it", async () => {
+		const { emitWebContents, invoke, webContents } = setupHost({
+			resolvePreviewURL: () => "javascript:alert(document.cookie)",
+		});
+		await invoke("browser:ensure", "session-one");
+		const event = { preventDefault: vi.fn() };
+
+		emitWebContents("will-navigate", event, "http://localhost:3000/page");
+		await Promise.resolve();
+
+		expect(event.preventDefault).toHaveBeenCalledOnce();
+		expect(webContents.loadURL).not.toHaveBeenCalled();
+	});
+
+	it("uses a one-shot bypass for async resolved navigation and does not recurse", async () => {
+		const opaque = "http://token.ao-preview.localhost:4100/page";
+		const resolvePreviewURL = vi.fn(async () => opaque);
+		const { emitWebContents, invoke, setCurrentURL, webContents } = setupHost({ resolvePreviewURL });
+		await invoke("browser:ensure", "session-one");
+		const recursiveEvent = { preventDefault: vi.fn() };
+		vi.mocked(webContents.loadURL).mockImplementationOnce(async (url: string) => {
+			setCurrentURL(url);
+			emitWebContents("will-navigate", recursiveEvent, url);
+		});
+		const sourceEvent = { preventDefault: vi.fn() };
+
+		emitWebContents("will-navigate", sourceEvent, "http://localhost:3000/page");
+		await vi.waitFor(() => expect(webContents.loadURL).toHaveBeenCalledWith(opaque));
+
+		expect(sourceEvent.preventDefault).toHaveBeenCalledOnce();
+		expect(recursiveEvent.preventDefault).not.toHaveBeenCalled();
+		expect(resolvePreviewURL).toHaveBeenCalledOnce();
+		expect(webContents.loadURL).toHaveBeenCalledOnce();
+	});
+
+	it("drops an async resolved in-page navigation after destroy", async () => {
+		const pending = deferred<string>();
+		const { emitWebContents, host, invoke, webContents } = setupHost({ resolvePreviewURL: () => pending.promise });
+		const ensured = await invoke("browser:ensure", "session-one");
+		const event = { preventDefault: vi.fn() };
+
+		emitWebContents("will-navigate", event, "http://localhost:3000/page");
+		host.destroy(ensured.viewId);
+		pending.resolve("http://token.ao-preview.localhost:4100/page");
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(event.preventDefault).toHaveBeenCalledOnce();
+		expect(webContents.loadURL).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		["http://localhost:3000/popup", "http://opaque.ao-preview.localhost:4100/popup"],
+		["file:///workspace/popup.html", "http://opaque.ao-preview.localhost:4100/popup.html"],
+	] as const)("loads a proxied window.open target in the current BrowserView", async (source, opaque) => {
+		const resolvePreviewURL = vi.fn((_ownerId: string, _sessionId: string, url: string) =>
+			url === source ? opaque : url,
+		);
+		const { invoke, openExternal, openWindow, webContents } = setupHost({ resolvePreviewURL });
+		await invoke("browser:ensure", "session-one");
+
+		expect(openWindow(source)).toEqual({ action: "deny" });
+		await vi.waitFor(() => expect(webContents.loadURL).toHaveBeenCalledWith(opaque));
+
+		expect(openExternal).not.toHaveBeenCalled();
+	});
+
+	it.each(["https://example.com/popup", "http://192.168.2.20:5173/popup"])(
+		"keeps direct window.open targets external for %s",
+		async (source) => {
+			const resolvePreviewURL = vi.fn((_ownerId: string, _sessionId: string, url: string) => url);
+			const { invoke, openExternal, openWindow, webContents } = setupHost({ resolvePreviewURL });
+			await invoke("browser:ensure", "session-one");
+
+			expect(openWindow(source)).toEqual({ action: "deny" });
+			await vi.waitFor(() => expect(openExternal).toHaveBeenCalledWith(source));
+			expect(webContents.loadURL).not.toHaveBeenCalled();
+		},
+	);
+
+	it("preserves direct Desktop navigation and window.open behavior when hooks are omitted", async () => {
+		const { emitWebContents, invoke, openExternal, openWindow, webContents } = setupHost();
+		await invoke("browser:ensure", "session-one");
+		const event = { preventDefault: vi.fn() };
+		const source = "http://localhost:3000/page";
+
+		emitWebContents("will-navigate", event, source);
+		expect(openWindow(source)).toEqual({ action: "deny" });
+		await vi.waitFor(() => expect(openExternal).toHaveBeenCalledWith(source));
+
+		expect(event.preventDefault).not.toHaveBeenCalled();
+		expect(webContents.loadURL).not.toHaveBeenCalled();
 	});
 });
 

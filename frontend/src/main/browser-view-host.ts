@@ -118,6 +118,7 @@ type BrowserEntry = {
 	sourceURL: string;
 	navigationEpoch: number;
 	programmaticNavigationEpoch: number | null;
+	programmaticNavigationBypass: { epoch: number; url: string } | null;
 	destroyed: boolean;
 	annotationEnabled: boolean;
 };
@@ -252,12 +253,15 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			sourceURL: "",
 			navigationEpoch: 0,
 			programmaticNavigationEpoch: null,
+			programmaticNavigationBypass: null,
 			destroyed: false,
 			annotationEnabled: false,
 		};
 		entries.set(viewId, entry);
 		viewIdsByWebContentsId.set(view.webContents.id, viewId);
-		hardenWebContents(view.webContents, options, entry);
+		hardenWebContents(view.webContents, options, entry, (sourceURL, resolvedURL) =>
+			navigate({ viewId, url: sourceURL }, resolvedURL),
+		);
 		wireNavEvents(view.webContents, options, entry);
 		view.webContents.on("focus", () => {
 			if (entry.destroyed) return;
@@ -291,7 +295,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		entry.view.setVisible?.(bounds.width > 0 && bounds.height > 0);
 	};
 
-	const navigate = async ({ viewId, url }: BrowserNavigateInput): Promise<BrowserNavState> => {
+	async function navigate(
+		{ viewId, url }: BrowserNavigateInput,
+		preResolvedURL?: string | Promise<string>,
+	): Promise<BrowserNavState> {
 		const entry = entries.get(viewId);
 		if (!entry) return emptyNavState(viewId);
 		cancelAnnotation(options, entry, "navigation");
@@ -303,7 +310,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		entry.programmaticNavigationEpoch = navigationEpoch;
 		entry.sourceURL = normalized.href;
 		try {
-			const resolved = await (options.resolvePreviewURL?.(viewId, entry.sessionId, normalized.href) ?? normalized.href);
+			const resolved = await (
+				preResolvedURL ?? options.resolvePreviewURL?.(viewId, entry.sessionId, normalized.href) ?? normalized.href
+			);
 			if (entries.get(viewId) !== entry) return emptyNavState(viewId);
 			if (entry.navigationEpoch !== navigationEpoch) return entry.state;
 			const resolvedURL = normalizeBrowserURL(resolved);
@@ -311,6 +320,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				throw new Error(BROWSER_ERROR.urlUnsupported);
 			}
 			try {
+				entry.programmaticNavigationBypass = { epoch: navigationEpoch, url: resolvedURL.href };
 				await entry.view.webContents.loadURL(resolvedURL.href);
 			} catch (err) {
 				if (entries.get(viewId) !== entry) return emptyNavState(viewId);
@@ -331,8 +341,11 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			return pushNavState(options, entry);
 		} finally {
 			if (entry.programmaticNavigationEpoch === navigationEpoch) entry.programmaticNavigationEpoch = null;
+			if (entry.programmaticNavigationBypass?.epoch === navigationEpoch) {
+				entry.programmaticNavigationBypass = null;
+			}
 		}
-	};
+	}
 
 	// clear resets the view to a blank page (`ao preview clear`). about:blank is
 	// loaded directly, bypassing the URL allowlist — it carries no content and
@@ -349,6 +362,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		entry.view.setBounds(OFFSCREEN_BOUNDS);
 		forgetIfFocused(viewId);
 		try {
+			entry.programmaticNavigationBypass = { epoch: navigationEpoch, url: "about:blank" };
 			await entry.view.webContents.loadURL("about:blank");
 			if (entries.get(viewId) !== entry) return emptyNavState(viewId);
 			if (entry.navigationEpoch !== navigationEpoch) return entry.state;
@@ -357,6 +371,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			return pushNavState(options, entry);
 		} finally {
 			if (entry.programmaticNavigationEpoch === navigationEpoch) entry.programmaticNavigationEpoch = null;
+			if (entry.programmaticNavigationBypass?.epoch === navigationEpoch) {
+				entry.programmaticNavigationBypass = null;
+			}
 		}
 	};
 
@@ -378,6 +395,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		entry.destroyed = true;
 		entry.navigationEpoch += 1;
 		entry.programmaticNavigationEpoch = null;
+		entry.programmaticNavigationBypass = null;
 		entries.delete(viewId);
 		viewIdsByWebContentsId.delete(entry.view.webContents.id);
 		forgetIfFocused(viewId);
@@ -585,27 +603,114 @@ function isRendererOwnedViewId(event: IpcMainInvokeEvent, viewId: string): boole
 	return viewId.startsWith(`${event.sender.id}:`);
 }
 
-function hardenWebContents(contents: BrowserWebContents, options: BrowserViewHostOptions, entry: BrowserEntry): void {
+function hardenWebContents(
+	contents: BrowserWebContents,
+	options: BrowserViewHostOptions,
+	entry: BrowserEntry,
+	navigateInView: (sourceURL: string, resolvedURL: string | Promise<string>) => Promise<BrowserNavState>,
+): void {
+	const normalizedAllowedURL = (url: string): string | null => {
+		if (!isAllowedBrowserURL(url, options.rendererOrigin)) return null;
+		return normalizeBrowserURL(url).href;
+	};
+	const reportUnsupported = (): void => {
+		if (entry.destroyed) return;
+		entry.state = { ...entry.state, error: BROWSER_ERROR.urlUnsupported };
+		options.mainWindow.webContents.send("browser:navState", entry.state);
+	};
+	const loadInView = (sourceURL: string, resolvedURL: string | Promise<string>): void => {
+		void navigateInView(sourceURL, resolvedURL).catch(reportUnsupported);
+	};
+	const resolvedPreviewURL = (sourceURL: string): string | Promise<string> =>
+		options.resolvePreviewURL?.(entry.state.viewId, entry.sessionId, sourceURL) ?? sourceURL;
+
 	contents.setWindowOpenHandler(({ url }) => {
 		if (entry.destroyed) return { action: "deny" };
-		if (isAllowedBrowserURL(url, options.rendererOrigin)) {
+		const sourceURL = normalizedAllowedURL(url);
+		if (!sourceURL) return { action: "deny" };
+		if (!options.resolvePreviewURL) {
 			void options.shell.openExternal(url);
+			return { action: "deny" };
 		}
+
+		let resolution: string | Promise<string>;
+		try {
+			resolution = resolvedPreviewURL(sourceURL);
+		} catch {
+			reportUnsupported();
+			return { action: "deny" };
+		}
+		if (typeof resolution === "string") {
+			const resolvedURL = normalizedAllowedURL(resolution);
+			if (!resolvedURL) {
+				reportUnsupported();
+			} else if (resolvedURL === sourceURL) {
+				void options.shell.openExternal(url);
+			} else {
+				loadInView(sourceURL, resolvedURL);
+			}
+			return { action: "deny" };
+		}
+
+		const sourceEpoch = entry.navigationEpoch;
+		void resolution
+			.then((resolved) => {
+				if (entry.destroyed || entry.navigationEpoch !== sourceEpoch) return;
+				const resolvedURL = normalizedAllowedURL(resolved);
+				if (!resolvedURL) {
+					reportUnsupported();
+				} else if (resolvedURL === sourceURL) {
+					void options.shell.openExternal(url);
+				} else {
+					loadInView(sourceURL, resolvedURL);
+				}
+			})
+			.catch(reportUnsupported);
 		return { action: "deny" };
 	});
-	const blockUnsafeNavigation = (event: Electron.Event, url: string) => {
+
+	const routeNavigation = (event: Electron.Event, url: string) => {
 		if (entry.destroyed) {
 			event.preventDefault();
 			return;
 		}
-		if (!isAllowedBrowserURL(url, options.rendererOrigin)) {
-			event.preventDefault();
-			entry.state = { ...entry.state, error: BROWSER_ERROR.urlUnsupported };
-			options.mainWindow.webContents.send("browser:navState", entry.state);
+		if (entry.programmaticNavigationBypass?.url === url) {
+			entry.programmaticNavigationBypass = null;
+			return;
 		}
+		const sourceURL = normalizedAllowedURL(url);
+		if (!sourceURL) {
+			event.preventDefault();
+			reportUnsupported();
+			return;
+		}
+		if (!options.resolvePreviewURL) return;
+
+		let resolution: string | Promise<string>;
+		try {
+			resolution = resolvedPreviewURL(sourceURL);
+		} catch {
+			event.preventDefault();
+			reportUnsupported();
+			return;
+		}
+		if (typeof resolution !== "string") {
+			event.preventDefault();
+			loadInView(sourceURL, resolution);
+			return;
+		}
+		const resolvedURL = normalizedAllowedURL(resolution);
+		if (!resolvedURL) {
+			event.preventDefault();
+			reportUnsupported();
+			return;
+		}
+		if (resolvedURL === sourceURL) return;
+		event.preventDefault();
+		loadInView(sourceURL, resolvedURL);
 	};
-	contents.on("will-navigate", blockUnsafeNavigation);
-	contents.on("will-redirect", blockUnsafeNavigation);
+	contents.on("will-navigate", routeNavigation);
+	contents.on("will-redirect", routeNavigation);
 }
 
 function wireNavEvents(contents: BrowserWebContents, options: BrowserViewHostOptions, entry: BrowserEntry): void {
