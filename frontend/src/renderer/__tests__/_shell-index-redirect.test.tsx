@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { act, render, waitFor } from "@testing-library/react";
 import { type ComponentType } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -22,10 +25,11 @@ vi.mock("../hooks/useWorkspaceQuery", () => ({
 	}),
 }));
 
-vi.mock("../components/MigrationPopup", () => ({ MigrationPopup: () => null }));
 vi.mock("../components/SessionsBoard", () => ({ SessionsBoard: () => <div data-testid="sessions-board" /> }));
 
 import { Route } from "../routes/_shell.index";
+
+const routesDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "../routes");
 
 async function renderIndex() {
 	const Component = Route.options.component as ComponentType;
@@ -72,5 +76,16 @@ describe("shell index route", () => {
 		await renderIndex();
 
 		expect(routeMocks.navigate).not.toHaveBeenCalled();
+	});
+
+	it("keeps MigrationPopup on the shell layout so first-run redirect cannot unmount it", () => {
+		// The index replace-navigates sole-scratch users to /projects/scratch.
+		// MigrationPopup must live on the parent shell, not this child route.
+		const indexSource = readFileSync(path.join(routesDir, "_shell.index.tsx"), "utf8");
+		const shellSource = readFileSync(path.join(routesDir, "_shell.tsx"), "utf8");
+		expect(indexSource).not.toMatch(/from ["'][^"']*MigrationPopup["']/);
+		expect(indexSource).not.toMatch(/<MigrationPopup\b/);
+		expect(shellSource).toMatch(/from ["'][^"']*MigrationPopup["']/);
+		expect(shellSource).toMatch(/<MigrationPopup\s*\/>/);
 	});
 });

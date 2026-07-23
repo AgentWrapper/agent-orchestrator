@@ -73,7 +73,7 @@ function sessionCommand(
 		group,
 		title: session.title,
 		subtitle: workspace.name,
-		keywords: [workspace.name, session.branch, session.issueId ?? ""],
+		keywords: [workspace.name, session.branch ?? "", session.issueId ?? ""],
 		action: {
 			kind: "navigate",
 			target: {
@@ -141,7 +141,12 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 		});
 	}
 
-	if (currentSession && currentSession.kind !== "orchestrator" && !isSyntheticBranch(currentSession)) {
+	if (
+		currentSession &&
+		currentSession.kind !== "orchestrator" &&
+		currentSession.branch &&
+		!isSyntheticBranch(currentSession)
+	) {
 		items.push({
 			id: "current-copy-branch",
 			group: "current",
@@ -200,7 +205,7 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 						String(pr.number),
 						pr.url,
 						session.title,
-						session.branch,
+						session.branch ?? "",
 						workspace.name,
 						pr.state,
 					],

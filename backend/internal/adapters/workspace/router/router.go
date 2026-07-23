@@ -141,7 +141,12 @@ func (w *Workspace) adapterForProject(ctx context.Context, projectID domain.Proj
 		if err != nil {
 			return nil, fmt.Errorf("workspace router: project %q: %w", projectID, err)
 		}
-		if ok && project.Kind.WithDefault() == domain.ProjectKindScratch {
+		if !ok {
+			// Fail closed: a missing project must not fall through to the git
+			// adapter (that could mis-handle a scratch session path).
+			return nil, fmt.Errorf("workspace router: project %q not found", projectID)
+		}
+		if project.Kind.WithDefault() == domain.ProjectKindScratch {
 			if w.scratch == nil {
 				return nil, errors.New("workspace router: scratch workspace is not configured")
 			}
