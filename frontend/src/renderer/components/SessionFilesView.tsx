@@ -1,6 +1,17 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, FileText, Maximize2, Minimize2, RefreshCw, Search, WrapText, X } from "lucide-react";
+import {
+	ChevronDown,
+	ChevronRight,
+	ChevronsDownUp,
+	ChevronsUpDown,
+	Maximize2,
+	Minimize2,
+	RefreshCw,
+	Search,
+	WrapText,
+	X,
+} from "lucide-react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { cn } from "../lib/utils";
@@ -44,6 +55,7 @@ export function SessionFilesView({
 }: SessionFilesViewProps) {
 	const queryClient = useQueryClient();
 	const [filter, setFilter] = useState("");
+	const [searchOpen, setSearchOpen] = useState(false);
 	const [wrap, setWrap] = useState(false);
 	const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
 	const initializedExpansionFor = useRef<string | null>(null);
@@ -84,8 +96,6 @@ export function SessionFilesView({
 		[changedFiles, normalizedFilter],
 	);
 	const changedCount = changedFiles.length;
-	const totalAdditions = useMemo(() => changedFiles.reduce((sum, file) => sum + file.additions, 0), [changedFiles]);
-	const totalDeletions = useMemo(() => changedFiles.reduce((sum, file) => sum + file.deletions, 0), [changedFiles]);
 	const expandedVisibleCount = visibleFiles.filter((file) => expandedPaths.has(file.path)).length;
 
 	const refresh = () => {
@@ -119,43 +129,58 @@ export function SessionFilesView({
 
 	return (
 		<section className="flex h-full min-h-0 flex-col bg-background text-foreground" aria-label="Session files">
-			<header className="flex h-13 shrink-0 items-center gap-3 border-b border-border bg-surface px-4">
-				<div className="flex min-w-0 items-center gap-2">
-					<FileText className="size-icon-md shrink-0 text-passive" aria-hidden="true" />
-					<h2 className="truncate text-md-sm font-semibold text-foreground">Files</h2>
-					<span className="shrink-0 font-mono text-caption text-passive">
-						{changedCount === 1 ? "1 file changed" : `${changedCount} files changed`}
+			<header className="flex h-13 shrink-0 items-center gap-0.5 border-b border-border bg-surface px-2">
+				{searchOpen ? (
+					<label className="relative mr-auto min-w-0 flex-1 max-w-[280px]">
+						<Search className="pointer-events-none absolute left-2.5 top-1/2 size-icon-sm -translate-y-1/2 text-passive" />
+						<Input
+							autoFocus
+							className="h-8 pl-8 font-mono text-xs"
+							onChange={(event) => setFilter(event.target.value)}
+							placeholder="Search changed files"
+							value={filter}
+						/>
+					</label>
+				) : (
+					<span className="mr-auto min-w-0 truncate pl-1.5 font-mono text-caption text-passive">
+						{changedCount === 1 ? "1 file" : `${changedCount} files`}
 					</span>
-					{totalAdditions > 0 || totalDeletions > 0 ? (
-						<span className="flex shrink-0 items-center gap-1.5 font-mono text-caption font-semibold">
-							{totalAdditions > 0 ? <span className="text-success">+{totalAdditions}</span> : null}
-							{totalDeletions > 0 ? <span className="text-error">-{totalDeletions}</span> : null}
-						</span>
-					) : null}
-				</div>
-				<label className="relative ml-auto min-w-0 flex-1 max-w-[280px]">
-					<Search className="pointer-events-none absolute left-2.5 top-1/2 size-icon-sm -translate-y-1/2 text-passive" />
-					<Input
-						className="h-8 pl-8 font-mono text-xs"
-						onChange={(event) => setFilter(event.target.value)}
-						placeholder="Search changed files"
-						value={filter}
-					/>
-				</label>
+				)}
 				<Button
+					aria-label={searchOpen ? "Close search" : "Search files"}
+					aria-pressed={searchOpen}
+					className={cn("shrink-0", searchOpen && "text-accent")}
+					onClick={() => {
+						setSearchOpen((open) => {
+							if (open) setFilter("");
+							return !open;
+						});
+					}}
+					size="icon-sm"
+					type="button"
+					variant="ghost"
+				>
+					<Search className="size-icon-sm" aria-hidden="true" />
+				</Button>
+				<Button
+					aria-label={expandedVisibleCount > 0 ? "Collapse all files" : "Expand all files"}
 					className="shrink-0"
 					disabled={visibleFiles.length === 0}
 					onClick={toggleVisibleFiles}
-					size="sm"
+					size="icon-sm"
 					type="button"
-					variant="outline"
+					variant="ghost"
 				>
-					{expandedVisibleCount > 0 ? "Collapse all" : "Expand all"}
+					{expandedVisibleCount > 0 ? (
+						<ChevronsDownUp className="size-icon-sm" aria-hidden="true" />
+					) : (
+						<ChevronsUpDown className="size-icon-sm" aria-hidden="true" />
+					)}
 				</Button>
 				<Button
 					aria-label={wrap ? "Disable line wrapping" : "Wrap long lines"}
 					aria-pressed={wrap}
-					className={cn(wrap && "text-accent")}
+					className={cn("shrink-0", wrap && "text-accent")}
 					onClick={() => setWrap((current) => !current)}
 					size="icon-sm"
 					type="button"
@@ -165,6 +190,7 @@ export function SessionFilesView({
 				</Button>
 				<Button
 					aria-label="Refresh files"
+					className="shrink-0"
 					disabled={filesQuery.isFetching}
 					onClick={refresh}
 					size="icon-sm"
@@ -176,6 +202,7 @@ export function SessionFilesView({
 				{onToggleMaximized ? (
 					<Button
 						aria-label={isMaximized ? "Minimize files" : "Maximize files"}
+						className="shrink-0"
 						onClick={() => onToggleMaximized(!isMaximized)}
 						size="icon-sm"
 						type="button"
@@ -188,7 +215,7 @@ export function SessionFilesView({
 						)}
 					</Button>
 				) : null}
-				<Button aria-label="Close files" onClick={onClose} size="icon-sm" type="button" variant="ghost">
+				<Button aria-label="Close files" className="shrink-0" onClick={onClose} size="icon-sm" type="button" variant="ghost">
 					<X className="size-icon-sm" aria-hidden="true" />
 				</Button>
 			</header>
@@ -440,10 +467,10 @@ function DiffView({ rows, truncated, wrap }: { rows: DiffRow[]; truncated?: bool
 							</div>
 						) : (
 							<div className={cn("flex", diffRowTone[row.kind])} key={`r${index}`}>
-								<span className="w-9 shrink-0 select-none border-r border-border/50 px-1.5 text-right text-passive/60 tabular-nums">
+								<span className="w-9 shrink-0 select-none border-r border-border/50 bg-terminal px-1.5 text-right text-passive/70 tabular-nums">
 									{row.oldNo ?? ""}
 								</span>
-								<span className="w-9 shrink-0 select-none border-r border-border/50 px-1.5 text-right text-passive/60 tabular-nums">
+								<span className="w-9 shrink-0 select-none border-r border-border/50 bg-terminal px-1.5 text-right text-passive/70 tabular-nums">
 									{row.newNo ?? ""}
 								</span>
 								<span
