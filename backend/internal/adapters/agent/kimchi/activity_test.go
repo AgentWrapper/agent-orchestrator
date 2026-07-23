@@ -32,6 +32,9 @@ func TestDeriveActivityState(t *testing.T) {
 		{"session-end new -> no signal", "session-end", `{"reason":"new"}`, "", false},
 		{"session-end resume -> no signal", "session-end", `{"reason":"resume"}`, "", false},
 		{"session-end fork -> no signal", "session-end", `{"reason":"fork"}`, "", false},
+		{"pre-tool-use -> active", "pre-tool-use", `{}`, domain.ActivityActive, true},
+		{"post-tool-use -> active", "post-tool-use", `{}`, domain.ActivityActive, true},
+		{"post-tool-use-fail -> active", "post-tool-use-fail", `{}`, domain.ActivityActive, true},
 		{"session-start -> no signal", "session-start", `{}`, "", false},
 		{"unknown event -> no signal", "frobnicate", `{}`, "", false},
 	}

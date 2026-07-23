@@ -46,6 +46,11 @@ var managedHooks = []hookSpec{
 	{Event: "Stop", Command: hookCommandPrefix + "stop"},
 	{Event: "Notification", Command: hookCommandPrefix + "notification"},
 	{Event: "SessionEnd", Command: hookCommandPrefix + "session-end"},
+	{Event: "PreToolUse", Command: hookCommandPrefix + "pre-tool-use"},
+	{Event: "PostToolUse", Command: hookCommandPrefix + "post-tool-use"},
+	// PostToolUseFail is Kimchi's native event name, not Claude Code's
+	// PostToolUseFailure — the wrong name silently fails to fire.
+	{Event: "PostToolUseFail", Command: hookCommandPrefix + "post-tool-use-fail"},
 }
 
 // GetAgentHooks installs AO's hooks into the worktree-local
