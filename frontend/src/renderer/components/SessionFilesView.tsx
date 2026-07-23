@@ -83,6 +83,8 @@ export function SessionFilesView({
 		[changedFiles, normalizedFilter],
 	);
 	const changedCount = changedFiles.length;
+	const totalAdditions = useMemo(() => changedFiles.reduce((sum, file) => sum + file.additions, 0), [changedFiles]);
+	const totalDeletions = useMemo(() => changedFiles.reduce((sum, file) => sum + file.deletions, 0), [changedFiles]);
 	const expandedVisibleCount = visibleFiles.filter((file) => expandedPaths.has(file.path)).length;
 
 	const refresh = () => {
@@ -123,8 +125,14 @@ export function SessionFilesView({
 					<span className="shrink-0 font-mono text-caption text-passive">
 						{changedCount === 1 ? "1 file changed" : `${changedCount} files changed`}
 					</span>
+					{totalAdditions > 0 || totalDeletions > 0 ? (
+						<span className="flex shrink-0 items-center gap-1.5 font-mono text-caption font-semibold">
+							{totalAdditions > 0 ? <span className="text-success">+{totalAdditions}</span> : null}
+							{totalDeletions > 0 ? <span className="text-error">-{totalDeletions}</span> : null}
+						</span>
+					) : null}
 				</div>
-				<label className="relative ml-auto min-w-0 flex-1 max-w-[360px]">
+				<label className="relative ml-auto min-w-0 flex-1 max-w-[280px]">
 					<Search className="pointer-events-none absolute left-2.5 top-1/2 size-icon-sm -translate-y-1/2 text-passive" />
 					<Input
 						className="h-8 pl-8 font-mono text-xs"
@@ -133,6 +141,16 @@ export function SessionFilesView({
 						value={filter}
 					/>
 				</label>
+				<Button
+					className="shrink-0"
+					disabled={visibleFiles.length === 0}
+					onClick={toggleVisibleFiles}
+					size="sm"
+					type="button"
+					variant="outline"
+				>
+					{expandedVisibleCount > 0 ? "Collapse all" : "Expand all"}
+				</Button>
 				<Button
 					aria-label="Refresh files"
 					disabled={filesQuery.isFetching}
@@ -164,21 +182,7 @@ export function SessionFilesView({
 			</header>
 
 			<div className="min-h-0 flex-1 overflow-auto bg-background">
-				<div className="mx-auto flex min-h-full w-full max-w-[1200px] flex-col px-6 py-5">
-					<div className="mb-4 flex shrink-0 items-center gap-3">
-						<h3 className="text-md-sm font-medium text-foreground">Review</h3>
-						<div className="ml-auto flex items-center gap-2">
-							<Button
-								disabled={visibleFiles.length === 0}
-								onClick={toggleVisibleFiles}
-								size="sm"
-								type="button"
-								variant="outline"
-							>
-								{expandedVisibleCount > 0 ? "Collapse all" : "Expand all"}
-							</Button>
-						</div>
-					</div>
+				<div className="mx-auto flex w-full max-w-[1200px] flex-col px-4 py-4">
 					<ReviewFileList
 						error={filesQuery.error}
 						expandedPaths={expandedPaths}

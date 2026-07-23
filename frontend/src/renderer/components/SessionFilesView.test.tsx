@@ -92,7 +92,6 @@ describe("SessionFilesView", () => {
 		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
 
 		await screen.findByRole("button", { name: "Collapse src/App.tsx" });
-		expect(screen.getByRole("heading", { name: "Review" })).toBeInTheDocument();
 		expect(screen.getByText("2 files changed")).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: /README\.md/ })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Download src/App.tsx" })).not.toBeInTheDocument();
