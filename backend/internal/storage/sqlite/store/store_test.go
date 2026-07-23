@@ -59,6 +59,21 @@ func TestSessionCreateAllowsFakeHarness(t *testing.T) {
 	}
 }
 
+// Regression: the sessions.harness CHECK must allow the 'kimchi' harness (added
+// in migration 0027) so Kimchi sessions can be created. This test runs against
+// the full migration chain, confirming that migration 0027 correctly handles
+// the 'fake' entry added by migration 0026.
+func TestSessionCreateAllowsKimchiHarness(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	rec := sampleRecord("mer")
+	rec.Harness = domain.HarnessKimchi
+	if _, err := s.CreateSession(ctx, rec); err != nil {
+		t.Fatalf("create kimchi-harness session: %v", err)
+	}
+}
+
 func TestProjectCRUDAndArchive(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
