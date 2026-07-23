@@ -65,9 +65,11 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
 					onNewSessionShortcut: unsubscribe,
 					onKeyboardShortcutsHelp: unsubscribe,
+					onNewShellTerminalShortcut: unsubscribe,
 				},
 				terminal: { saveDroppedFile: async () => "" },
 				window: { setOverlay: async () => undefined },
+				theme: { set: async () => undefined },
 				menu: { action: async () => undefined, notifyShellFocus: () => undefined },
 				clipboard: {
 					writeText: async () => undefined,
@@ -413,9 +415,11 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
 					onNewSessionShortcut: unsubscribe,
 					onKeyboardShortcutsHelp: unsubscribe,
+					onNewShellTerminalShortcut: unsubscribe,
 				},
 				terminal: { saveDroppedFile: async () => "" },
 				window: { setOverlay: async () => undefined },
+				theme: { set: async () => undefined },
 				menu: { action: async () => undefined, notifyShellFocus: () => undefined },
 				clipboard: { writeText: async () => undefined, readText: async () => "" },
 				daemon: {

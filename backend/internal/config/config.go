@@ -5,6 +5,8 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"os"
@@ -89,11 +91,24 @@ type Config struct {
 	// Agent is the compatibility agent adapter id selected by AO_AGENT;
 	// startSession fails fast if no adapter with this id is registered.
 	Agent string
+	// AppRunID identifies one desktop-app launch. The Electron supervisor mints
+	// it and passes it down (AO_APP_RUN_ID), holding it constant across daemon
+	// restarts it performs, so standalone shell terminals can survive a daemon
+	// restart while still being reaped when the APP itself goes away.
+	//
+	// Empty means no supervising app (a bare `ao daemon`): the daemon mints a
+	// fresh id per boot, which correctly makes any surviving shell terminals
+	// from an earlier run look like orphans and get cleaned up.
+	AppRunID string
 	// AllowedOrigins are the browser origins granted CORS read access (see
 	// DefaultAllowedOrigins). Overridden by AO_ALLOWED_ORIGINS.
 	AllowedOrigins []string
 	// Telemetry controls local/remote telemetry sinks.
 	Telemetry TelemetryConfig
+	// StartupWorkingDirectory is the daemon process cwd before startup
+	// normalizes it. The desktop uses this to identify dev daemons after the
+	// process cwd is moved to the stable data dir.
+	StartupWorkingDirectory string
 }
 
 // Addr returns the host:port the HTTP server binds. It uses net.JoinHostPort so
@@ -114,6 +129,8 @@ func (c Config) Addr() string {
 //	AO_RUN_FILE          running.json path   (default ~/.ao/running.json)
 //	AO_DATA_DIR          durable state dir   (default ~/.ao/data)
 //	AO_AGENT             compatibility agent id (default claude-code)
+//	AO_APP_RUN_ID        desktop-app launch id, set by the Electron supervisor
+//	                     (default: a fresh id minted per daemon boot)
 //	AO_ALLOWED_ORIGINS   CORS origins, comma-separated (default DefaultAllowedOrigins)
 //	AO_TELEMETRY_EVENTS  local event capture off|on (default off)
 //	AO_TELEMETRY_METRICS local metric capture off|on (default off)
@@ -165,6 +182,15 @@ func Load() (Config, error) {
 
 	if raw := os.Getenv("AO_AGENT"); raw != "" {
 		cfg.Agent = raw
+	}
+
+	// A missing AO_APP_RUN_ID means nothing is supervising this daemon, so this
+	// boot IS the run: mint an id rather than leaving it empty, which would make
+	// every boot share one run id and defeat orphan detection entirely.
+	if raw := os.Getenv("AO_APP_RUN_ID"); raw != "" {
+		cfg.AppRunID = raw
+	} else {
+		cfg.AppRunID = newAppRunID()
 	}
 
 	if raw, ok := os.LookupEnv("AO_ALLOWED_ORIGINS"); ok && raw != "" {
@@ -265,12 +291,25 @@ func parsePositiveDuration(name, raw string) (time.Duration, error) {
 	return d, nil
 }
 
+// newAppRunID mints the fallback launch id used when no supervising app
+// supplied one. Randomness (not a timestamp or PID) is what guarantees two
+// boots never collide, which is what orphan detection relies on. A failure to
+// read entropy falls back to the boot time — worse, but still monotonic enough
+// to distinguish runs, and never worth refusing to start the daemon over.
+func newAppRunID() string {
+	buf := make([]byte, 8)
+	if _, err := rand.Read(buf); err != nil {
+		return "apprun-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	}
+	return "apprun-" + hex.EncodeToString(buf)
+}
+
 // resolveRunFilePath picks where running.json lives. An explicit AO_RUN_FILE
 // wins; otherwise it sits under the canonical AO home directory so the CLI and
 // Electron supervisor share one handshake location.
 func resolveRunFilePath() (string, error) {
 	if p, ok := os.LookupEnv("AO_RUN_FILE"); ok && p != "" {
-		return p, nil
+		return absOverride("AO_RUN_FILE", p)
 	}
 	stateDir, err := defaultStateDir()
 	if err != nil {
@@ -284,7 +323,7 @@ func resolveRunFilePath() (string, error) {
 // directory as the run-file.
 func resolveDataDir() (string, error) {
 	if p, ok := os.LookupEnv("AO_DATA_DIR"); ok && p != "" {
-		return p, nil
+		return absOverride("AO_DATA_DIR", p)
 	}
 	stateDir, err := defaultStateDir()
 	if err != nil {
@@ -299,4 +338,18 @@ func defaultStateDir() (string, error) {
 		return "", fmt.Errorf("resolve state dir: %w", err)
 	}
 	return filepath.Join(homeDir, ".ao"), nil
+}
+
+// absOverride resolves an explicit AO_DATA_DIR/AO_RUN_FILE override to an
+// absolute path against the process's launch cwd. The daemon chdir's into its
+// data dir at startup (see stabilizeWorkingDirectory), so a relative override
+// left as-is would be re-resolved against the new cwd and double-nest state
+// (e.g. AO_DATA_DIR=data -> <cwd>/data/data). Absolutizing here keeps the path
+// stable regardless of the later chdir.
+func absOverride(name, p string) (string, error) {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s %q: %w", name, p, err)
+	}
+	return abs, nil
 }

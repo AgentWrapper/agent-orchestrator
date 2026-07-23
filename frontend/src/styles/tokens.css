@@ -87,7 +87,7 @@
 	--font-size-sm: 12px; /* secondary chrome / Tailwind text-xs */
 	--font-size-md-sm: 12.5px; /* kv rows, PR summaries */
 	--font-size-base: 13px; /* dense controls (board buttons) */
-	--font-size-brand: 14.5px; /* titlebar project name */
+	--font-size-brand: 16px; /* titlebar / board project name */
 	--font-size-md: 14px; /* body / Tailwind text-sm */
 	--font-size-subtitle: 15px; /* dialog titles, stat values */
 	--font-size-heading-sm: 17px; /* empty-state headings */
@@ -204,8 +204,9 @@
 	--size-sidebar-icon: 48px;
 	--size-sidebar-default: 240px;
 	--size-sidebar-mobile: 288px;
-	--size-titlebar-cluster-left: 79px;
-	--size-titlebar-content-offset: 180px;
+	/* Clears macOS traffic lights (y:20 discs) before in-sidebar TitlebarNav;
+	   keep Sidebar header padding and the shell drag strip on this same token. */
+	--size-traffic-light-clearance: 36px;
 	--size-resize-handle: 7px;
 	--size-resize-handle-offset: 3px;
 	--size-kanban-glow: 130px;
@@ -223,6 +224,9 @@
 	--size-pr-col-number: 64px;
 	--size-pr-col-state: 96px;
 	--size-content-max: 320px;
+	/* Caps a standalone shell terminal's tab label so several open shells stay
+	   readable side by side instead of one long path crowding out the rest. */
+	--size-shell-tab-max: 140px;
 	--size-dialog-md: 420px;
 	--size-dialog-lg: 440px;
 	--size-dialog-orchestrator: 460px;
@@ -232,12 +236,11 @@
 	--size-textarea-min: 112px;
 	--size-sidebar-project-actions: 84px;
 
-	/* Shared inset-panel geometry (welcome board + settings page) */
+	/* Shared inset-panel geometry */
 	--size-center-panel-inset: 14px;
 	--radius-center-panel: 17px;
 
-	/* Welcome board inset panel */
-	--color-bg-welcome-panel: rgb(18 18 19);
+	/* Welcome / import radius alias (CreateProjectFlow rounded-welcome-panel) */
 	--color-border-welcome-panel: #212121;
 	--radius-welcome-panel: var(--radius-center-panel);
 
@@ -257,7 +260,6 @@
 	--size-import-mode-card-min-sm: 292px;
 
 	/* Settings page (Figma) */
-	--color-bg-settings-panel: #101013;
 	--color-bg-settings-row: #18181c;
 	--color-bg-settings-menu: #212121;
 	--color-bg-settings-menu-selected: rgb(66 66 66 / 0.78);
@@ -453,8 +455,7 @@
 	--elevation-lg: 0 16px 48px rgb(20 30 50 / 0.16);
 	--elevation-xl: 0 1px 0 rgb(0 0 0 / 0.03), 0 20px 50px rgb(20 30 50 / 0.14);
 
-	/* Welcome board inset panel */
-	--color-bg-welcome-panel: #ffffff;
+	/* Welcome / import radius alias */
 	--color-border-welcome-panel: #d4d4d6;
 
 	/* Import mode picker — light surfaces */
@@ -474,7 +475,6 @@
 	--color-text-agents-sheet-description: #666666;
 	--color-text-agents-sheet-label: #374151;
 
-	--color-bg-settings-panel: #ffffff;
 	--color-bg-settings-row: #f3f3f4;
 	--color-bg-settings-menu: #f3f3f4;
 	--color-bg-settings-menu-selected: rgb(0 0 0 / 0.08);

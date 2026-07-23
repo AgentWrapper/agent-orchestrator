@@ -236,8 +236,8 @@ func TestTriggerSpawnsNewReviewerAndRecordsRunAfterLaunch(t *testing.T) {
 	if res.Run.TargetSHA != "sha1" || res.Run.Status != domain.ReviewRunRunning || res.Run.Harness != domain.ReviewerClaudeCode {
 		t.Fatalf("run = %+v", res.Run)
 	}
-	if launcher.gotSpec.RunID != res.Run.ID {
-		t.Fatalf("launch spec run id %q != run id %q", launcher.gotSpec.RunID, res.Run.ID)
+	if launcher.gotSpec.RunID != res.Run.ID || launcher.gotSpec.BatchID != res.Run.BatchID {
+		t.Fatalf("launch spec ids = batch %q run %q, want batch %q run %q", launcher.gotSpec.BatchID, launcher.gotSpec.RunID, res.Run.BatchID, res.Run.ID)
 	}
 	if len(store.runs) != 1 || store.review == nil || store.review.ReviewerHandleID != "review-mer-1" {
 		t.Fatalf("persisted review=%+v runs=%+v", store.review, store.runs)
@@ -708,6 +708,9 @@ func TestTriggerCreatesRunsForMultipleEligiblePRsWithOneReviewer(t *testing.T) {
 		t.Fatalf("launch specs = %d, want 1: %+v", len(launcher.specs), launcher.specs)
 	}
 	spec := launcher.specs[0]
+	if spec.BatchID != res.CreatedRuns[0].BatchID {
+		t.Fatalf("launch spec batch id %q != created batch %q", spec.BatchID, res.CreatedRuns[0].BatchID)
+	}
 	if spec.ReviewIndex != 0 || len(spec.ReviewQueue) != 2 {
 		t.Fatalf("spec queue context = index %d queue %+v", spec.ReviewIndex, spec.ReviewQueue)
 	}

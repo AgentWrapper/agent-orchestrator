@@ -287,7 +287,13 @@ func TestProjectsAPI_AddValidationAndConflicts(t *testing.T) {
 func TestProjectsAPI_InitializeRepository(t *testing.T) {
 	srv := newTestServer(t)
 
-	plain := t.TempDir()
+	base := t.TempDir()
+	t.Setenv("GIT_CEILING_DIRECTORIES", base)
+
+	plain := filepath.Join(base, "plain")
+	if err := os.Mkdir(plain, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	body, status, _ := doRequest(t, srv, "POST", "/api/v1/projects/initialize", `{"path":`+quote(plain)+`}`)
 	if status != http.StatusOK {
 		t.Fatalf("POST initialize plain = %d, want 200; body=%s", status, body)
@@ -296,7 +302,7 @@ func TestProjectsAPI_InitializeRepository(t *testing.T) {
 		t.Fatalf("plain folder was not committed: %v\\n%s", err, out)
 	}
 
-	unborn := filepath.Join(t.TempDir(), "unborn")
+	unborn := filepath.Join(base, "unborn")
 	if out, err := exec.Command("git", "init", "-b", "main", unborn).CombinedOutput(); err != nil {
 		t.Fatalf("git init unborn fixture: %v\\n%s", err, out)
 	}

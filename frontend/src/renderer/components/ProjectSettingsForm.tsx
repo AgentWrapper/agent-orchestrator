@@ -73,6 +73,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 	const queryClient = useQueryClient();
 	const workspaceQuery = useWorkspaceQuery();
 	const config = project.config ?? {};
+	const isScratchProject = project.kind === "scratch";
 	const workspace = workspaceQuery.data?.find((item) => item.id === projectId);
 	const activeOrchestrator = newestActiveOrchestrator(workspace?.sessions ?? []);
 	const intake: TrackerIntakeConfig = config.trackerIntake ?? {};
@@ -101,10 +102,9 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		onSuccess: (next) => queryClient.setQueryData(agentsQueryKey, next),
 	});
 
-	// The Electron app only registers git projects today, so the daemon always has a usable
-	// git origin to derive owner/repo from (trackerRepo() in observer.go) when
-	// trackerIntake.repo is unset — there's no manual override input here. This mirrors that
-	// same derivation client-side purely for display (a link to the repo being polled).
+	// Git projects can derive owner/repo from origin when trackerIntake.repo is unset.
+	// Scratch hides tracker intake entirely, so this display-only preview is only
+	// rendered for git-backed projects.
 	const intakeForm: IntakeForm = {
 		enabled: form.intakeEnabled,
 		repo: form.intakeRepo,
@@ -118,7 +118,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 			intakeAssignee: patch.assignee ?? f.intakeAssignee,
 		}));
 	const effectiveIntakeRepo = form.intakeRepo.trim() || deriveGitHubRepo(project.repo);
-	const intakeIncomplete = intakeNeedsRule(intakeForm);
+	const intakeIncomplete = !isScratchProject && intakeNeedsRule(intakeForm);
 
 	const mutation = useMutation({
 		mutationFn: async () => {
@@ -126,20 +126,31 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 			const displayName = form.displayName.trim();
 			// PUT replaces the whole config; merge the edited fields over what loaded
 			// so we don't drop env/symlinks/postCreate the form doesn't expose.
-			const next: ProjectConfig = {
-				...config,
-				defaultBranch: form.defaultBranch || undefined,
-				sessionPrefix: form.sessionPrefix || undefined,
-				worker: { ...config.worker, agent: form.workerAgent },
-				orchestrator: { ...config.orchestrator, agent: form.orchestratorAgent },
-				agentConfig: blankToUndefined({
-					...config.agentConfig,
-					model: form.model || undefined,
-					permissions: form.permissions || undefined,
-				}),
-				reviewers: form.reviewerHarness ? [{ harness: form.reviewerHarness }] : undefined,
-				trackerIntake: buildIntake(intakeForm),
-			};
+			const next: ProjectConfig = isScratchProject
+				? {
+						...scratchSupportedConfig(config),
+						worker: { ...config.worker, agent: form.workerAgent },
+						orchestrator: { ...config.orchestrator, agent: form.orchestratorAgent },
+						agentConfig: blankToUndefined({
+							...config.agentConfig,
+							model: form.model || undefined,
+							permissions: form.permissions || undefined,
+						}),
+					}
+				: {
+						...config,
+						defaultBranch: form.defaultBranch || undefined,
+						sessionPrefix: form.sessionPrefix || undefined,
+						worker: { ...config.worker, agent: form.workerAgent },
+						orchestrator: { ...config.orchestrator, agent: form.orchestratorAgent },
+						agentConfig: blankToUndefined({
+							...config.agentConfig,
+							model: form.model || undefined,
+							permissions: form.permissions || undefined,
+						}),
+						reviewers: form.reviewerHarness ? [{ harness: form.reviewerHarness }] : undefined,
+						trackerIntake: buildIntake(intakeForm),
+					};
 			const { error } = await apiClient.PUT("/api/v1/projects/{id}", {
 				params: { path: { id: projectId } },
 				body: { displayName, config: next },
@@ -209,7 +220,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						/>
 					</Field>
 					<ReadonlyRow label="id" value={project.id} />
-					<ReadonlyRow label="kind" value={project.kind === "workspace" ? "workspace" : "single repo"} />
+					<ReadonlyRow label="kind" value={projectKindLabel(project.kind)} />
 					<ReadonlyRow label="path" value={project.path} />
 					<ReadonlyRow label="repo" value={project.repo || "—"} />
 				</CardContent>
@@ -241,31 +252,33 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				</Card>
 			)}
 
-			<Card>
-				<CardHeader>
-					<CardTitle className="text-control">Worktrees</CardTitle>
-				</CardHeader>
-				<CardContent className="flex flex-col gap-4">
-					<Field label="Default branch" htmlFor="defaultBranch">
-						<input
-							id="defaultBranch"
-							className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
-							value={form.defaultBranch}
-							onChange={(e) => setForm((f) => ({ ...f, defaultBranch: e.target.value }))}
-							placeholder="main"
-						/>
-					</Field>
-					<Field label="Session prefix" htmlFor="sessionPrefix">
-						<input
-							id="sessionPrefix"
-							className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
-							value={form.sessionPrefix}
-							onChange={(e) => setForm((f) => ({ ...f, sessionPrefix: e.target.value }))}
-							placeholder="ao"
-						/>
-					</Field>
-				</CardContent>
-			</Card>
+			{!isScratchProject && (
+				<Card>
+					<CardHeader>
+						<CardTitle className="text-control">Worktrees</CardTitle>
+					</CardHeader>
+					<CardContent className="flex flex-col gap-4">
+						<Field label="Default branch" htmlFor="defaultBranch">
+							<input
+								id="defaultBranch"
+								className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
+								value={form.defaultBranch}
+								onChange={(e) => setForm((f) => ({ ...f, defaultBranch: e.target.value }))}
+								placeholder="main"
+							/>
+						</Field>
+						<Field label="Session prefix" htmlFor="sessionPrefix">
+							<input
+								id="sessionPrefix"
+								className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
+								value={form.sessionPrefix}
+								onChange={(e) => setForm((f) => ({ ...f, sessionPrefix: e.target.value }))}
+								placeholder="ao"
+							/>
+						</Field>
+					</CardContent>
+				</Card>
+			)}
 
 			<Card>
 				<CardHeader>
@@ -336,29 +349,33 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				</CardContent>
 			</Card>
 
-			<Card>
-				<CardHeader>
-					<CardTitle className="text-control">Reviewers</CardTitle>
-				</CardHeader>
-				<CardContent className="flex flex-col gap-4">
-					<Field label="Default reviewer agent" htmlFor="reviewerHarness">
-						<ReviewerSelect
-							id="reviewerHarness"
-							value={form.reviewerHarness}
-							onChange={(v) => setForm((f) => ({ ...f, reviewerHarness: v }))}
-						/>
-					</Field>
-				</CardContent>
-			</Card>
+			{!isScratchProject && (
+				<Card>
+					<CardHeader>
+						<CardTitle className="text-control">Reviewers</CardTitle>
+					</CardHeader>
+					<CardContent className="flex flex-col gap-4">
+						<Field label="Default reviewer agent" htmlFor="reviewerHarness">
+							<ReviewerSelect
+								id="reviewerHarness"
+								value={form.reviewerHarness}
+								onChange={(v) => setForm((f) => ({ ...f, reviewerHarness: v }))}
+							/>
+						</Field>
+					</CardContent>
+				</Card>
+			)}
 
-			<Card>
-				<CardHeader>
-					<CardTitle className="text-control">Tracker intake</CardTitle>
-				</CardHeader>
-				<CardContent>
-					<IntakeFields form={intakeForm} onChange={patchIntake} repoPreview={{ value: effectiveIntakeRepo }} />
-				</CardContent>
-			</Card>
+			{!isScratchProject && (
+				<Card>
+					<CardHeader>
+						<CardTitle className="text-control">Tracker intake</CardTitle>
+					</CardHeader>
+					<CardContent>
+						<IntakeFields form={intakeForm} onChange={patchIntake} repoPreview={{ value: effectiveIntakeRepo }} />
+					</CardContent>
+				</Card>
+			)}
 
 			<div className="flex items-center gap-3">
 				<Button type="submit" variant="primary" disabled={mutation.isPending}>
@@ -447,6 +464,24 @@ function CenteredNote({ children }: { children: React.ReactNode }) {
 	return (
 		<div className="grid h-full place-items-center bg-background p-6 text-center text-xs text-passive">{children}</div>
 	);
+}
+
+function projectKindLabel(kind: string): string {
+	switch (kind) {
+		case "single_repo":
+			return "single repo";
+		case "workspace":
+			return "workspace";
+		case "scratch":
+			return "scratch";
+		default:
+			return kind || "unknown";
+	}
+}
+
+function scratchSupportedConfig(config: ProjectConfig): ProjectConfig {
+	const { defaultBranch: _defaultBranch, reviewers: _reviewers, trackerIntake: _trackerIntake, ...supported } = config;
+	return supported;
 }
 
 // Drop an object whose every value is undefined so we send `undefined` (omit)

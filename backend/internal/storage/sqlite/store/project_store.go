@@ -216,6 +216,17 @@ func (s *Store) UpdateProjectSettings(ctx context.Context, id, displayName strin
 	return rows > 0, nil
 }
 
+// CountProjectsIncludingArchived returns all registry rows, including projects
+// the user archived. It is intentionally separate from ListProjects so first-run
+// seeding does not recreate Scratch after any project has existed.
+func (s *Store) CountProjectsIncludingArchived(ctx context.Context) (int, error) {
+	count, err := s.qr.CountProjectsIncludingArchived(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("count projects including archived: %w", err)
+	}
+	return int(count), nil
+}
+
 // ArchiveProject soft-deletes a project and reports whether a row was affected.
 func (s *Store) ArchiveProject(ctx context.Context, id string, at time.Time) (bool, error) {
 	s.writeMu.Lock()

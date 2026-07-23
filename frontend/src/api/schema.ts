@@ -727,6 +727,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/shell-terminals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the standalone shell terminals owned by the current app run */
+        get: operations["listShellTerminals"];
+        put?: never;
+        /** Open a standalone shell terminal */
+        post: operations["openShellTerminal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/shell-terminals/{handleId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Close a standalone shell terminal and destroy its PTY */
+        delete: operations["closeShellTerminal"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -806,9 +841,14 @@ export interface components {
             /** Format: date-time */
             updatedAt: string;
         };
+        ControllersSpawnAttachmentInput: {
+            data: string;
+            mimeType?: string;
+        };
         DegradedProject: {
             id: string;
-            kind: string;
+            /** @enum {string} */
+            kind: "single_repo" | "workspace" | "scratch";
             name: string;
             path: string;
             resolveError: string;
@@ -893,6 +933,9 @@ export interface components {
         ListSessionsResponse: {
             sessions: components["schemas"]["ControllersSessionView"][];
         };
+        ListShellTerminalsResponse: {
+            shellTerminals: components["schemas"]["ShellTerminalResponse"][];
+        };
         ListWorkspaceFilesResponse: {
             files: components["schemas"]["WorkspaceFileSummary"][];
             sessionId: string;
@@ -944,6 +987,10 @@ export interface components {
             prUrl?: string;
             sessionId: string;
         };
+        OpenShellTerminalRequest: {
+            /** @description Project whose root the shell starts in. Omitted opens the shell in the daemon data dir. */
+            projectId?: string;
+        };
         OrchestratorResponse: {
             id: string;
             projectId: string;
@@ -953,6 +1000,7 @@ export interface components {
             latestRun?: components["schemas"]["ReviewRun"];
             prNumber: number;
             prUrl: string;
+            previousRun?: components["schemas"]["ReviewRun"];
             /** @enum {string} */
             status: "needs_review" | "running" | "up_to_date" | "changes_requested" | "ineligible";
             targetSha: string;
@@ -968,7 +1016,8 @@ export interface components {
             config?: components["schemas"]["ProjectConfig"];
             defaultBranch: string;
             id: string;
-            kind: string;
+            /** @enum {string} */
+            kind: "single_repo" | "workspace" | "scratch";
             name: string;
             path: string;
             repo: string;
@@ -1002,7 +1051,8 @@ export interface components {
         };
         ProjectSummary: {
             id: string;
-            kind: string;
+            /** @enum {string} */
+            kind: "single_repo" | "workspace" | "scratch";
             name: string;
             orchestratorAgent?: string;
             path: string;
@@ -1215,6 +1265,17 @@ export interface components {
             /** @description Preview target URL. When empty, the daemon autodetects a static entry point in the session workspace. */
             url?: string;
         };
+        ShellTerminalEnvelope: {
+            shellTerminal: components["schemas"]["ShellTerminalResponse"];
+        };
+        ShellTerminalResponse: {
+            /** Format: date-time */
+            createdAt: string;
+            handleId: string;
+            projectId?: string;
+            title: string;
+            workingDir: string;
+        };
         SpawnOrchestratorRequest: {
             clean?: boolean;
             projectId: string;
@@ -1223,6 +1284,7 @@ export interface components {
             orchestrator: components["schemas"]["OrchestratorResponse"];
         };
         SpawnSessionRequest: {
+            attachments?: components["schemas"]["ControllersSpawnAttachmentInput"][];
             branch?: string;
             displayName?: string;
             /** @enum {string} */
@@ -1263,6 +1325,8 @@ export interface components {
             repo?: string;
         };
         TriggerReviewResponse: {
+            /** @description True when a new review pass was started; false when an existing run for the same commit was reused. */
+            created: boolean;
             reviewerHandleId: string;
             reviews: components["schemas"]["PRReviewState"][];
         };
@@ -3799,6 +3863,161 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CleanupSessionsResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    listShellTerminals: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListShellTerminalsResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    openShellTerminal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OpenShellTerminalRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShellTerminalEnvelope"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    closeShellTerminal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Shell terminal runtime handle identifier. */
+                handleId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Internal Server Error */

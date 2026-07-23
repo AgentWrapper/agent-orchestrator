@@ -319,6 +319,7 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 func reviewLaunchSpec(worker domain.SessionRecord, harness domain.ReviewerHarness, run domain.ReviewRun, queue []ports.ReviewTask, index int) LaunchSpec {
 	return LaunchSpec{
 		RunID:         run.ID,
+		BatchID:       run.BatchID,
 		WorkerID:      worker.ID,
 		Harness:       harness,
 		WorkspacePath: worker.Metadata.WorkspacePath,

@@ -54,7 +54,9 @@ const { workspaces, workspaceQueryState, panels } = vi.hoisted(() => {
 });
 
 // The terminal and inspector body pull in xterm/SSE machinery irrelevant to
-// the split under test. (The topbar is shell-owned — see ShellTopbar.)
+// the split under test. (ShellTopbar is shell-owned on Win/Linux; when the
+// platform hides the shell topbar, SessionView mounts it in-panel.)
+vi.mock("./ShellTopbar", () => ({ ShellTopbar: () => null }));
 vi.mock("./CenterPane", () => ({ CenterPane: () => <div>terminal center</div> }));
 vi.mock("./BrowserPanel", () => ({
 	BrowserPanelView: ({
@@ -144,6 +146,13 @@ vi.mock("../hooks/useWorkspaceQuery", () => ({
 		data: workspaceQueryState.data,
 		isLoading: workspaceQueryState.isLoading,
 	}),
+}));
+// Standalone shell terminals are orthogonal to the split under test, and their
+// real hooks would need a QueryClientProvider this suite deliberately omits.
+vi.mock("../hooks/useShellTerminals", () => ({
+	useShellTerminals: () => ({ data: [], isLoading: false }),
+	useOpenShellTerminal: () => ({ mutate: vi.fn() }),
+	useCloseShellTerminal: () => ({ mutate: vi.fn() }),
 }));
 
 // jsdom has no layout engine, so the real react-resizable-panels would never

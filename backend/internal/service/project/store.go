@@ -10,6 +10,7 @@ import (
 // Store is the durable project persistence surface required by Service.
 type Store interface {
 	ListProjects(ctx context.Context) ([]domain.ProjectRecord, error)
+	CountProjectsIncludingArchived(ctx context.Context) (int, error)
 	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
 	FindProjectByPath(ctx context.Context, path string) (domain.ProjectRecord, bool, error)
 	UpsertProject(ctx context.Context, row domain.ProjectRecord) error

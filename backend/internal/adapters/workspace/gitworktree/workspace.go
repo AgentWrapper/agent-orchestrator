@@ -530,6 +530,60 @@ func (w *Workspace) ApplyPreserved(ctx context.Context, info ports.WorkspaceInfo
 	return nil
 }
 
+// AddExclude appends git ignore patterns to the worktree's local info/exclude so
+// daemon-generated files never surface as untracked changes. The exclude file is
+// resolved via `git rev-parse --git-common-dir`, not `--git-dir`: git reads
+// info/exclude from $GIT_COMMON_DIR, and this adapter only ever creates linked
+// worktrees, where --git-dir points into .git/worktrees/<name> (per-worktree)
+// while --git-common-dir points at the shared main .git. Writing under --git-dir
+// would land info/exclude in a directory git never consults, making the exclude a
+// no-op. Idempotent: patterns already present are skipped.
+func (w *Workspace) AddExclude(ctx context.Context, info ports.WorkspaceInfo, patterns ...string) error {
+	if len(patterns) == 0 {
+		return nil
+	}
+	path, err := w.validateManagedPath(info.Path)
+	if err != nil {
+		return err
+	}
+	out, err := w.run(ctx, w.binary, "-C", path, "rev-parse", "--git-common-dir")
+	if err != nil {
+		return fmt.Errorf("gitworktree: AddExclude resolve git common dir: %w", err)
+	}
+	gitDir := strings.TrimSpace(string(out))
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(path, gitDir)
+	}
+	infoDir := filepath.Join(gitDir, "info")
+	if err := os.MkdirAll(infoDir, 0o750); err != nil {
+		return fmt.Errorf("gitworktree: AddExclude create info dir: %w", err)
+	}
+	excludePath := filepath.Join(infoDir, "exclude")
+	existing, _ := os.ReadFile(excludePath)
+	var toAdd []string
+	for _, p := range patterns {
+		if !strings.Contains(string(existing), p) {
+			toAdd = append(toAdd, p)
+		}
+	}
+	if len(toAdd) == 0 {
+		return nil
+	}
+	f, err := os.OpenFile(excludePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("gitworktree: AddExclude open exclude: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	prefix := ""
+	if len(existing) > 0 && !strings.HasSuffix(string(existing), "\n") {
+		prefix = "\n"
+	}
+	if _, err := f.WriteString(prefix + strings.Join(toAdd, "\n") + "\n"); err != nil {
+		return fmt.Errorf("gitworktree: AddExclude write exclude: %w", err)
+	}
+	return nil
+}
+
 // runCherryPickNoCommit runs "git -C <worktree> cherry-pick --no-commit <sha>"
 // and captures combined output so any conflict details are available in the
 // returned commandError. Exit code detection happens in the caller.

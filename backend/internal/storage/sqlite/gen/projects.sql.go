@@ -30,6 +30,17 @@ func (q *Queries) ArchiveProject(ctx context.Context, arg ArchiveProjectParams) 
 	return result.RowsAffected()
 }
 
+const countProjectsIncludingArchived = `-- name: CountProjectsIncludingArchived :one
+SELECT COUNT(*) FROM projects
+`
+
+func (q *Queries) CountProjectsIncludingArchived(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countProjectsIncludingArchived)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const findProjectByPath = `-- name: FindProjectByPath :one
 SELECT id, path, repo_origin_url, display_name, registered_at, archived_at, config, kind
 FROM projects WHERE path = ? AND archived_at IS NULL

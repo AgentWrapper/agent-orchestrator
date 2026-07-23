@@ -328,6 +328,64 @@ describe("ProjectSettingsForm", () => {
 		expect(options[4]).not.toHaveAttribute("aria-disabled", "true");
 	});
 
+	it("shows scratch identity and saves only scratch-supported settings", async () => {
+		mockProject({
+			id: "scratch",
+			name: "Scratch",
+			kind: "scratch",
+			path: "/home/me/.ao/scratch/default",
+			repo: "",
+			defaultBranch: "",
+			config: {
+				defaultBranch: "main",
+				sessionPrefix: "ao",
+				env: { FOO: "bar" },
+				symlinks: [".env"],
+				postCreate: ["npm install"],
+				agentRules: "keep work small",
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+				agentConfig: {
+					model: "gpt-5-codex",
+					permissions: "auto",
+				},
+				reviewers: [{ harness: "codex" }],
+				trackerIntake: { enabled: true, provider: "github", assignee: "octocat" },
+			},
+		});
+
+		renderSettings("scratch");
+
+		expect((await screen.findByText("kind")).closest("div")).toHaveTextContent("scratch");
+		expect(screen.queryByLabelText("Default branch")).not.toBeInTheDocument();
+		expect(screen.queryByLabelText("Session prefix")).not.toBeInTheDocument();
+		expect(screen.queryByText("Reviewers")).not.toBeInTheDocument();
+		expect(screen.queryByText("Tracker intake")).not.toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}/config", {
+			params: { path: { id: "scratch" } },
+			body: {
+				config: {
+					env: { FOO: "bar" },
+					sessionPrefix: "ao",
+					symlinks: [".env"],
+					postCreate: ["npm install"],
+					agentRules: "keep work small",
+					worker: { agent: "codex" },
+					orchestrator: { agent: "claude-code" },
+					agentConfig: {
+						model: "gpt-5-codex",
+						permissions: "auto",
+					},
+				},
+			},
+		});
+		expect(postMock).not.toHaveBeenCalled();
+	});
+
 	it("saves GitHub tracker intake settings, deriving the repo from the project's git origin", async () => {
 		getMock.mockResolvedValue({
 			data: {
