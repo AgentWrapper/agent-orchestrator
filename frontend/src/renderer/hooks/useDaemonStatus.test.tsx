@@ -24,6 +24,7 @@ vi.mock("../lib/event-transport", () => ({
 
 vi.mock("../lib/api-client", () => ({
 	setApiBaseUrl: setApiBaseUrlMock,
+	setDaemonUnavailableMessage: vi.fn(),
 }));
 
 import { useDaemonStatus } from "./useDaemonStatus";
