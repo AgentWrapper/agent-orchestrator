@@ -163,6 +163,12 @@ describe("RemoteClientRuntime", () => {
 		current = saved({ host: "first", port: 3011, password: "first-secret" });
 		const runtime = new RemoteClientRuntime(deps);
 		await runtime.start();
+		vi.mocked(deps.onForwarderChanged).mockImplementationOnce(async () => {
+			expect(runtime.resolvePreviewURL("owner", "session", "source")).toBe("forwarded:4101:source");
+		}).mockImplementationOnce(async () => {
+			expect(runtime.resolvePreviewURL("owner", "session", "source")).toBe("forwarded:4100:source");
+			expect(created[1].close).not.toHaveBeenCalled();
+		});
 		vi.mocked(deps.writeConfig).mockRejectedValueOnce(new Error("secure storage unavailable"));
 
 		const result = await runtime.saveConfig({ host: "second", port: 3012, password: "second-secret" });
@@ -175,6 +181,38 @@ describe("RemoteClientRuntime", () => {
 		expect(created[0].close).not.toHaveBeenCalled();
 		expect(created[1].close).toHaveBeenCalledOnce();
 		expect(runtime.getStatus()).toEqual({ state: "ready", port: 4100 });
+		expect(current).toEqual(saved({ host: "first", port: 3011, password: "first-secret" }));
+		expect(deps.onForwarderChanged).toHaveBeenCalledTimes(3);
+	});
+
+	it("rolls BrowserView and runtime back before closing a candidate whose refresh fails", async () => {
+		current = saved({ host: "first", port: 3011, password: "first-secret" });
+		const runtime = new RemoteClientRuntime(deps);
+		await runtime.start();
+		vi.mocked(deps.onForwarderChanged)
+			.mockImplementationOnce(async () => {
+				expect(runtime.resolvePreviewURL("owner", "session", "source")).toBe("forwarded:4101:source");
+				throw new Error("preview refresh failed");
+			})
+			.mockImplementationOnce(async () => {
+				expect(runtime.resolvePreviewURL("owner", "session", "source")).toBe("forwarded:4100:source");
+				expect(created[1].close).not.toHaveBeenCalled();
+			});
+
+		const result = await runtime.saveConfig({ host: "second", port: 3012, password: "second-secret" });
+
+		expect(result).toEqual({
+			state: "error",
+			code: "daemon_unreachable",
+			message: "preview refresh failed",
+		});
+		expect(deps.writeConfig).not.toHaveBeenCalled();
+		expect(current).toEqual(saved({ host: "first", port: 3011, password: "first-secret" }));
+		expect(runtime.getConfig()).toEqual({ host: "first", port: 3011 });
+		expect(runtime.resolvePreviewURL("owner", "session", "source")).toBe("forwarded:4100:source");
+		expect(created[0].close).not.toHaveBeenCalled();
+		expect(created[1].close).toHaveBeenCalledOnce();
+		expect(deps.onForwarderChanged).toHaveBeenCalledTimes(3);
 	});
 
 	it("returns semantic validation failures without replacing the working proxy", async () => {

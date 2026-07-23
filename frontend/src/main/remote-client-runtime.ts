@@ -117,25 +117,38 @@ export class RemoteClientRuntime {
 				password: input.password ?? this.config?.password ?? "",
 			});
 			candidate = await this.startValidatedForwarder(normalized);
+			const previous = this.forwarder;
+			const previousConfig = this.config;
+			const rollbackCandidate = async (): Promise<void> => {
+				this.forwarder = previous;
+				this.config = previousConfig;
+				try {
+					if (previous) await this.deps.onForwarderChanged();
+				} catch {
+					// Preserve the original refresh or persistence failure.
+				} finally {
+					await candidate?.close();
+					candidate = null;
+				}
+			};
+
+			this.forwarder = candidate;
+			try {
+				await this.deps.onForwarderChanged();
+			} catch (error) {
+				await rollbackCandidate();
+				return remoteFailureStatus(error, "daemon_unreachable");
+			}
+
 			let saved: RemoteServerConfig;
 			try {
 				saved = await this.deps.writeConfig(normalized);
 			} catch (error) {
-				await candidate.close();
+				await rollbackCandidate();
 				return remoteFailureStatus(error, "remote_config_save_failed");
 			}
 
-			const previous = this.forwarder;
-			const previousConfig = this.config;
-			this.forwarder = candidate;
 			this.config = saved;
-			try {
-				await this.deps.onForwarderChanged();
-			} catch (error) {
-				this.forwarder = previous;
-				this.config = previousConfig;
-				throw error;
-			}
 			candidate = null;
 			await previous?.close();
 			return this.setStatus({ state: "ready", port: this.forwarder.port });

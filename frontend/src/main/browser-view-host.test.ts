@@ -23,6 +23,7 @@ function setupHost(previewHooks: PreviewHooks = {}) {
 	let currentURL = "";
 	let webContentsClosed = false;
 	let displayHandler: DisplayHandler | null = null;
+	const webContentsListeners = new Map<string, Array<(...args: unknown[]) => void>>();
 	const webContents = {
 		id: 99,
 		mainFrame: { frameToken: "preview-frame" },
@@ -44,7 +45,11 @@ function setupHost(previewHooks: PreviewHooks = {}) {
 		loadURL: vi.fn(async (url: string) => {
 			currentURL = url;
 		}),
-		on: () => undefined,
+		on: (event: string, listener: (...args: unknown[]) => void) => {
+			const listeners = webContentsListeners.get(event) ?? [];
+			listeners.push(listener);
+			webContentsListeners.set(event, listeners);
+		},
 		reload: () => undefined,
 		send: vi.fn(),
 		setWindowOpenHandler: () => undefined,
@@ -97,8 +102,12 @@ function setupHost(previewHooks: PreviewHooks = {}) {
 		eventHandlers.get(channel)!({ sender: { id: 1, getZoomFactor: () => zoomFactor } }, ...args);
 	const send = (channel: string, senderId: number, ...args: unknown[]) =>
 		eventHandlers.get(channel)!({ sender: { id: senderId } }, ...args);
+	const emitWebContents = (event: string, ...args: unknown[]) => {
+		for (const listener of webContentsListeners.get(event) ?? []) listener(...args);
+	};
 	return {
 		emit,
+		emitWebContents,
 		host,
 		invoke,
 		invokeAs,
@@ -107,6 +116,9 @@ function setupHost(previewHooks: PreviewHooks = {}) {
 		sent,
 		view,
 		webContents,
+		setCurrentURL: (url: string) => {
+			currentURL = url;
+		},
 		getDisplayHandler: () => displayHandler,
 	};
 }
@@ -325,7 +337,10 @@ describe("Remote preview URL resolution", () => {
 		const resolvePreviewURL = vi.fn(async (_ownerId: string, _sessionId: string, url: string) =>
 			url.replace("localhost:3000", `opaque.ao-preview.localhost:${port}`),
 		);
-		const { host, invoke, webContents } = setupHost({ resolvePreviewURL });
+		const { host, invoke, webContents } = setupHost({
+			resolvePreviewURL,
+			originalPreviewURL: (url) => url.replace(/opaque\.ao-preview\.localhost:\d+/, "localhost:3000"),
+		});
 		const ensured = await invoke("browser:ensure", "session-one");
 		await invoke("browser:navigate", { viewId: ensured.viewId, url: "http://localhost:3000/app" });
 
@@ -576,6 +591,59 @@ describe("dispose after the window is destroyed", () => {
 		expect(() => host.dispose()).not.toThrow();
 		expect(removeChildView).not.toHaveBeenCalled();
 		expect(view.webContents.close).not.toHaveBeenCalled();
+	});
+});
+
+describe("BrowserView events after destroy", () => {
+	it("ignores late navigation events without reading destroyed webContents", async () => {
+		const { emitWebContents, host, invoke, sent } = setupHost();
+		const ensured = await invoke("browser:ensure", "session-one");
+		host.destroy(ensured.viewId);
+		sent.length = 0;
+
+		expect(() => {
+			emitWebContents("did-navigate");
+			emitWebContents("did-navigate-in-page");
+			emitWebContents("page-title-updated");
+			emitWebContents("did-start-loading");
+			emitWebContents("did-stop-loading");
+			emitWebContents("did-fail-load", {}, -2, "failed");
+		}).not.toThrow();
+		expect(sent).toEqual([]);
+	});
+
+	it("ignores an old navigation event while clear is in flight", async () => {
+		const oldLoad = deferred<void>();
+		const clearLoad = deferred<void>();
+		const { emitWebContents, host, invoke, sent, setCurrentURL, webContents } = setupHost();
+		const ensured = await invoke("browser:ensure", "session-one");
+		vi.mocked(webContents.loadURL)
+			.mockImplementationOnce(async () => oldLoad.promise)
+			.mockImplementationOnce(async () => clearLoad.promise);
+
+		const navigating = invoke("browser:navigate", { viewId: ensured.viewId, url: "https://example.com/old" });
+		await vi.waitFor(() => expect(webContents.loadURL).toHaveBeenCalledTimes(1));
+		const clearing = invoke("browser:clear", ensured.viewId);
+		await vi.waitFor(() => expect(webContents.loadURL).toHaveBeenCalledTimes(2));
+		sent.length = 0;
+
+		setCurrentURL("https://example.com/old");
+		emitWebContents("did-navigate");
+		expect(sent).toEqual([]);
+
+		setCurrentURL("about:blank");
+		clearLoad.resolve(undefined);
+		expect((await clearing).url).toBe("");
+		const sentAfterClear = sent.length;
+		setCurrentURL("https://example.com/old");
+		emitWebContents("did-navigate");
+		expect(sent).toHaveLength(sentAfterClear);
+		oldLoad.resolve(undefined);
+		expect((await navigating).url).toBe("");
+		await host.refreshPreviews();
+
+		expect(webContents.loadURL).toHaveBeenCalledTimes(2);
+		expect(sent.every(({ payload }) => (payload as BrowserNavState).url !== "https://example.com/old")).toBe(true);
 	});
 });
 

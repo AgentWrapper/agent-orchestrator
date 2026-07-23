@@ -117,6 +117,8 @@ type BrowserEntry = {
 	sessionId: string;
 	sourceURL: string;
 	navigationEpoch: number;
+	programmaticNavigationEpoch: number | null;
+	destroyed: boolean;
 	annotationEnabled: boolean;
 };
 
@@ -243,12 +245,22 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		options.mainWindow.contentView.addChildView(view);
 
 		const state: BrowserNavState = emptyNavState(viewId);
-		const entry = { view, state, sessionId, sourceURL: "", navigationEpoch: 0, annotationEnabled: false };
+		const entry = {
+			view,
+			state,
+			sessionId,
+			sourceURL: "",
+			navigationEpoch: 0,
+			programmaticNavigationEpoch: null,
+			destroyed: false,
+			annotationEnabled: false,
+		};
 		entries.set(viewId, entry);
 		viewIdsByWebContentsId.set(view.webContents.id, viewId);
 		hardenWebContents(view.webContents, options, entry);
 		wireNavEvents(view.webContents, options, entry);
 		view.webContents.on("focus", () => {
+			if (entry.destroyed) return;
 			lastFocusedViewId = viewId;
 		});
 		return entry;
@@ -288,32 +300,38 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			throw new Error(BROWSER_ERROR.urlUnsupported);
 		}
 		const navigationEpoch = ++entry.navigationEpoch;
+		entry.programmaticNavigationEpoch = navigationEpoch;
 		entry.sourceURL = normalized.href;
-		const resolved = await (options.resolvePreviewURL?.(viewId, entry.sessionId, normalized.href) ?? normalized.href);
-		if (entries.get(viewId) !== entry) return emptyNavState(viewId);
-		if (entry.navigationEpoch !== navigationEpoch) return readNavState(options, entry);
-		const resolvedURL = normalizeBrowserURL(resolved);
-		if (!isAllowedBrowserURL(resolvedURL.href, options.rendererOrigin)) {
-			throw new Error(BROWSER_ERROR.urlUnsupported);
-		}
 		try {
-			await entry.view.webContents.loadURL(resolvedURL.href);
-		} catch (err) {
+			const resolved = await (options.resolvePreviewURL?.(viewId, entry.sessionId, normalized.href) ?? normalized.href);
 			if (entries.get(viewId) !== entry) return emptyNavState(viewId);
-			if (entry.navigationEpoch !== navigationEpoch) return readNavState(options, entry);
-			if ((err as { errorCode?: number })?.errorCode === -3) return pushNavState(options, entry);
-			entry.view.setVisible?.(false);
-			entry.state = {
-				...readNavState(options, entry),
-				error: err instanceof Error && err.message ? err.message : BROWSER_ERROR.loadFailed,
-			};
-			options.mainWindow.webContents.send("browser:navState", entry.state);
-			return entry.state;
+			if (entry.navigationEpoch !== navigationEpoch) return entry.state;
+			const resolvedURL = normalizeBrowserURL(resolved);
+			if (!isAllowedBrowserURL(resolvedURL.href, options.rendererOrigin)) {
+				throw new Error(BROWSER_ERROR.urlUnsupported);
+			}
+			try {
+				await entry.view.webContents.loadURL(resolvedURL.href);
+			} catch (err) {
+				if (entries.get(viewId) !== entry) return emptyNavState(viewId);
+				if (entry.navigationEpoch !== navigationEpoch) return entry.state;
+				if ((err as { errorCode?: number })?.errorCode === -3) return pushNavState(options, entry);
+				entry.view.setVisible?.(false);
+				entry.state = {
+					...readNavState(options, entry),
+					error: err instanceof Error && err.message ? err.message : BROWSER_ERROR.loadFailed,
+				};
+				options.mainWindow.webContents.send("browser:navState", entry.state);
+				return entry.state;
+			}
+			if (entries.get(viewId) !== entry) return emptyNavState(viewId);
+			if (entry.navigationEpoch !== navigationEpoch) return entry.state;
+			entry.sourceURL = originalBrowserURL(options, entry.view.webContents.getURL());
+			entry.view.setVisible?.(true);
+			return pushNavState(options, entry);
+		} finally {
+			if (entry.programmaticNavigationEpoch === navigationEpoch) entry.programmaticNavigationEpoch = null;
 		}
-		if (entries.get(viewId) !== entry) return emptyNavState(viewId);
-		if (entry.navigationEpoch !== navigationEpoch) return readNavState(options, entry);
-		entry.view.setVisible?.(true);
-		return pushNavState(options, entry);
 	};
 
 	// clear resets the view to a blank page (`ao preview clear`). about:blank is
@@ -323,15 +341,23 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	const clear = async (viewId: string): Promise<BrowserNavState> => {
 		const entry = entries.get(viewId);
 		if (!entry) return emptyNavState(viewId);
-		entry.navigationEpoch += 1;
+		const navigationEpoch = ++entry.navigationEpoch;
+		entry.programmaticNavigationEpoch = navigationEpoch;
 		entry.sourceURL = "";
 		cancelAnnotation(options, entry, "navigation");
 		entry.view.setVisible?.(false);
 		entry.view.setBounds(OFFSCREEN_BOUNDS);
 		forgetIfFocused(viewId);
-		await entry.view.webContents.loadURL("about:blank");
-		entry.view.webContents.clearHistory();
-		return pushNavState(options, entry);
+		try {
+			await entry.view.webContents.loadURL("about:blank");
+			if (entries.get(viewId) !== entry) return emptyNavState(viewId);
+			if (entry.navigationEpoch !== navigationEpoch) return entry.state;
+			entry.sourceURL = "";
+			entry.view.webContents.clearHistory();
+			return pushNavState(options, entry);
+		} finally {
+			if (entry.programmaticNavigationEpoch === navigationEpoch) entry.programmaticNavigationEpoch = null;
+		}
 	};
 
 	const capture = async (viewId: string): Promise<string> => {
@@ -349,7 +375,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	const destroy = (viewId: string): void => {
 		const entry = entries.get(viewId);
 		if (!entry) return;
+		entry.destroyed = true;
 		entry.navigationEpoch += 1;
+		entry.programmaticNavigationEpoch = null;
 		entries.delete(viewId);
 		viewIdsByWebContentsId.delete(entry.view.webContents.id);
 		forgetIfFocused(viewId);
@@ -559,12 +587,17 @@ function isRendererOwnedViewId(event: IpcMainInvokeEvent, viewId: string): boole
 
 function hardenWebContents(contents: BrowserWebContents, options: BrowserViewHostOptions, entry: BrowserEntry): void {
 	contents.setWindowOpenHandler(({ url }) => {
+		if (entry.destroyed) return { action: "deny" };
 		if (isAllowedBrowserURL(url, options.rendererOrigin)) {
 			void options.shell.openExternal(url);
 		}
 		return { action: "deny" };
 	});
 	const blockUnsafeNavigation = (event: Electron.Event, url: string) => {
+		if (entry.destroyed) {
+			event.preventDefault();
+			return;
+		}
 		if (!isAllowedBrowserURL(url, options.rendererOrigin)) {
 			event.preventDefault();
 			entry.state = { ...entry.state, error: BROWSER_ERROR.urlUnsupported };
@@ -576,25 +609,31 @@ function hardenWebContents(contents: BrowserWebContents, options: BrowserViewHos
 }
 
 function wireNavEvents(contents: BrowserWebContents, options: BrowserViewHostOptions, entry: BrowserEntry): void {
+	const ignoreEvent = () => entry.destroyed || entry.programmaticNavigationEpoch !== null || entry.sourceURL === "";
 	const update = () => {
+		if (ignoreEvent()) return;
 		pushNavState(options, entry);
 	};
 	contents.on("did-navigate", () => {
+		if (ignoreEvent()) return;
 		entry.view.setVisible?.(true);
 		entry.sourceURL = originalBrowserURL(options, contents.getURL());
 		update();
 	});
 	contents.on("did-navigate-in-page", () => {
+		if (ignoreEvent()) return;
 		entry.sourceURL = originalBrowserURL(options, contents.getURL());
 		update();
 	});
 	contents.on("page-title-updated", update);
 	contents.on("did-start-loading", () => {
+		if (ignoreEvent()) return;
 		cancelAnnotation(options, entry, "navigation");
 		update();
 	});
 	contents.on("did-stop-loading", update);
 	contents.on("did-fail-load", (_event, errorCode, errorDescription) => {
+		if (ignoreEvent()) return;
 		if (errorCode === -3) return;
 		entry.view.setVisible?.(false);
 		entry.state = { ...readNavState(options, entry), error: errorDescription || BROWSER_ERROR.loadFailed };
