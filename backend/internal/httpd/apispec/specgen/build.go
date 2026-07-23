@@ -163,6 +163,8 @@ var schemaNames = map[string]string{
 	"ControllersWorkspaceFileSummary":             "WorkspaceFileSummary",
 	"ControllersWorkspaceFileResponse":            "WorkspaceFileResponse",
 	"ControllersKillSessionResponse":              "KillSessionResponse",
+	"ControllersCleanupSessionResponse":           "CleanupSessionResponse",
+	"ControllersSessionCleanupView":               "SessionCleanupView",
 	"ControllersRollbackSessionResponse":          "RollbackSessionResponse",
 	"ControllersSendSessionMessageRequest":        "SendSessionMessageRequest",
 	"ControllersSendSessionMessageResponse":       "SendSessionMessageResponse",
@@ -898,6 +900,17 @@ func sessionOperations() []operation {
 			pathParams: []any{controllers.SessionIDParam{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.KillSessionResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/cleanup", id: "cleanupSession", tag: "sessions",
+			summary:    "Reclaim a single terminated session's runtime + workspace resources",
+			pathParams: []any{controllers.SessionIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.CleanupSessionResponse{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},

@@ -371,6 +371,62 @@ func TestKill_SerializedWithFinalize(t *testing.T) {
 	}
 }
 
+// --- CleanupSession (per-session cleanup API primitive, PR 3) ---
+
+func TestCleanupSession_UnknownSessionIsNotFound(t *testing.T) {
+	m, _, _, _ := finalizeManager(nil)
+	if _, err := m.CleanupSession(ctx, "nope"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestCleanupSession_LiveSessionIsNotTerminal(t *testing.T) {
+	m, st, rt, ws := finalizeManager(nil)
+	st.sessions["mer-1"] = mkLive("mer-1")
+	_, err := m.CleanupSession(ctx, "mer-1")
+	if !errors.Is(err, ErrNotTerminal) {
+		t.Fatalf("err = %v, want ErrNotTerminal", err)
+	}
+	if rt.destroyed != 0 || ws.destroyed != 0 {
+		t.Fatal("a live session must not be torn down by cleanup")
+	}
+}
+
+func TestCleanupSession_TerminalReleasesAndReturnsFacts(t *testing.T) {
+	m, st, _, ws := finalizeManager(nil)
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", RuntimeHandleID: "h1"})
+	facts, err := m.CleanupSession(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+	if ws.destroyed != 1 {
+		t.Fatalf("workspace destroyed = %d, want 1", ws.destroyed)
+	}
+	if facts.WorkspaceDisposition != domain.DispositionRemoved {
+		t.Fatalf("disposition = %q, want removed", facts.WorkspaceDisposition)
+	}
+}
+
+// TestCleanupSession_RetriesTerminalDisposition pins the user-retry contract: a
+// session already recorded failed (or preserved_dirty) is re-attempted, NOT
+// idempotent-skipped like the bulk/reconciler path. Here the retry now succeeds
+// (workspace clean) so the disposition flips to removed.
+func TestCleanupSession_RetriesTerminalDisposition(t *testing.T) {
+	m, st, _, _ := finalizeManager(nil)
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", RuntimeHandleID: "h1"})
+	st.cleanup["mer-1"] = domain.SessionCleanupRecord{
+		SessionID: "mer-1", SessionGeneration: 0,
+		WorkspaceDisposition: domain.DispositionFailed, AttemptCount: maxCleanupAttempts, FailureCode: failWorkspaceDestroy,
+	}
+	facts, err := m.CleanupSession(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+	if facts.WorkspaceDisposition != domain.DispositionRemoved {
+		t.Fatalf("disposition = %q, want removed (retry must not idempotent-skip a failed session)", facts.WorkspaceDisposition)
+	}
+}
+
 // TestKill_WritesCleanupFacts pins critique #18: every terminal path (here Kill)
 // persists a facts row so the sessions-driven boot scan doesn't re-enqueue it
 // forever.

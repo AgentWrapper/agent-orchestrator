@@ -24,17 +24,20 @@ import (
 )
 
 type fakeSessionService struct {
-	sessions        map[domain.SessionID]domain.Session
-	sent            string
-	cleanupProjects []domain.ProjectID
-	cleanupResult   []domain.SessionID
-	cleanupSkipped  []sessionsvc.CleanupSkipped
-	workspaceFiles  sessionsvc.WorkspaceFiles
-	workspaceFile   sessionsvc.WorkspaceFileDetail
-	spawnErr        error
-	claimErr        error
-	listPRErr       error
-	workspaceErr    error
+	sessions          map[domain.SessionID]domain.Session
+	sent              string
+	cleanupProjects   []domain.ProjectID
+	cleanupResult     []domain.SessionID
+	cleanupSkipped    []sessionsvc.CleanupSkipped
+	cleanedSessions   []domain.SessionID
+	cleanupSessionRec domain.SessionCleanupRecord
+	cleanupSessionErr error
+	workspaceFiles    sessionsvc.WorkspaceFiles
+	workspaceFile     sessionsvc.WorkspaceFileDetail
+	spawnErr          error
+	claimErr          error
+	listPRErr         error
+	workspaceErr      error
 }
 
 func newFakeSessionService() *fakeSessionService {
@@ -138,6 +141,14 @@ func (f *fakeSessionService) Cleanup(_ context.Context, project domain.ProjectID
 		cleaned = []domain.SessionID{"ao-1"}
 	}
 	return sessionsvc.CleanupOutcome{Cleaned: cleaned, Skipped: f.cleanupSkipped}, nil
+}
+
+func (f *fakeSessionService) CleanupSession(_ context.Context, id domain.SessionID) (domain.SessionCleanupRecord, error) {
+	if f.cleanupSessionErr != nil {
+		return domain.SessionCleanupRecord{}, f.cleanupSessionErr
+	}
+	f.cleanedSessions = append(f.cleanedSessions, id)
+	return f.cleanupSessionRec, nil
 }
 
 func (f *fakeSessionService) Rename(_ context.Context, id domain.SessionID, displayName string) error {
@@ -280,6 +291,50 @@ func doPreviewOriginMethod(t *testing.T, srv *httptest.Server, method, previewUR
 		t.Fatalf("read preview response: %v", err)
 	}
 	return body, resp.StatusCode, resp.Header
+}
+
+func TestCleanupSessionEndpoint(t *testing.T) {
+	// Happy path: 200 with the resulting cleanup facts.
+	svc := newFakeSessionService()
+	svc.cleanupSessionRec = domain.SessionCleanupRecord{SessionID: "ao-1", WorkspaceDisposition: domain.DispositionPreservedDirty, AttemptCount: 1}
+	srv := newSessionTestServer(t, svc)
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/cleanup", "")
+	if status != http.StatusOK {
+		t.Fatalf("cleanup = %d, want 200; body=%s", status, body)
+	}
+	var resp struct {
+		OK           bool             `json:"ok"`
+		SessionID    domain.SessionID `json:"sessionId"`
+		IsTerminated bool             `json:"isTerminated"`
+		Cleanup      *struct {
+			WorkspaceDisposition string `json:"workspaceDisposition"`
+			AttemptCount         int64  `json:"attemptCount"`
+		} `json:"cleanup"`
+	}
+	mustJSON(t, body, &resp)
+	if !resp.OK || resp.SessionID != "ao-1" || !resp.IsTerminated {
+		t.Fatalf("resp = %+v", resp)
+	}
+	if resp.Cleanup == nil || resp.Cleanup.WorkspaceDisposition != "preserved_dirty" || resp.Cleanup.AttemptCount != 1 {
+		t.Fatalf("cleanup = %+v, want preserved_dirty/attempt 1", resp.Cleanup)
+	}
+	if len(svc.cleanedSessions) != 1 || svc.cleanedSessions[0] != "ao-1" {
+		t.Fatalf("cleaned = %v, want [ao-1]", svc.cleanedSessions)
+	}
+
+	// Daemon-error envelope: a still-live session surfaces the service's 409.
+	svc2 := newFakeSessionService()
+	svc2.cleanupSessionErr = apierr.Conflict("SESSION_NOT_TERMINAL", "Session is still live", nil)
+	srv2 := newSessionTestServer(t, svc2)
+	body, status, _ = doRequest(t, srv2, "POST", "/api/v1/sessions/ao-1/cleanup", "")
+	assertErrorCode(t, body, status, http.StatusConflict, "SESSION_NOT_TERMINAL")
+
+	// Nil service: the route stays registered and returns a 501.
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv3 := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{}, httpd.ControlDeps{}))
+	t.Cleanup(srv3.Close)
+	body, status, _ = doRequest(t, srv3, "POST", "/api/v1/sessions/ao-1/cleanup", "")
+	assertErrorCode(t, body, status, http.StatusNotImplemented, "NOT_IMPLEMENTED")
 }
 
 func TestSessionsRoutes_DefaultToStubsWithoutService(t *testing.T) {

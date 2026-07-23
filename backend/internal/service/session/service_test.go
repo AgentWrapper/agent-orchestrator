@@ -33,6 +33,7 @@ type fakeStore struct {
 	reviews  map[string][]domain.PullRequestReview
 	threads  map[string][]domain.PullRequestReviewThread
 	comments map[string][]domain.PullRequestComment
+	cleanup  map[domain.SessionID]domain.SessionCleanupRecord
 	num      int
 }
 
@@ -45,7 +46,13 @@ func newFakeStore() *fakeStore {
 		reviews:  map[string][]domain.PullRequestReview{},
 		threads:  map[string][]domain.PullRequestReviewThread{},
 		comments: map[string][]domain.PullRequestComment{},
+		cleanup:  map[domain.SessionID]domain.SessionCleanupRecord{},
 	}
+}
+
+func (f *fakeStore) GetSessionCleanupFacts(_ context.Context, id domain.SessionID) (domain.SessionCleanupRecord, bool, error) {
+	rec, ok := f.cleanup[id]
+	return rec, ok, nil
 }
 
 func newWorkspaceRepo(t *testing.T) string {
@@ -482,22 +489,25 @@ func TestSessionRenameMissingSessionReturnsNotFound(t *testing.T) {
 // fakeCommander records Kill/Spawn calls so a test can assert the
 // clean-orchestrator ordering without wiring a real session engine.
 type fakeCommander struct {
-	killed          []domain.SessionID
-	retired         []domain.SessionID
-	sent            []domain.SessionID
-	sentMessages    []string
-	cleanupProjects []domain.ProjectID
-	killErr         error
-	retireErr       error
-	sendErr         error
-	cleanupErr      error
-	spawnErr        error
-	spawnRecord     domain.SessionRecord
-	spawned         bool
-	spawnedCfg      ports.SpawnConfig
-	killsAtSpawn    int
-	restoreErr      error
-	restoreResult   sessionmanager.RestoreResult
+	killed            []domain.SessionID
+	retired           []domain.SessionID
+	sent              []domain.SessionID
+	sentMessages      []string
+	cleanupProjects   []domain.ProjectID
+	cleanedSessions   []domain.SessionID
+	cleanupSessionRec domain.SessionCleanupRecord
+	cleanupSessionErr error
+	killErr           error
+	retireErr         error
+	sendErr           error
+	cleanupErr        error
+	spawnErr          error
+	spawnRecord       domain.SessionRecord
+	spawned           bool
+	spawnedCfg        ports.SpawnConfig
+	killsAtSpawn      int
+	restoreErr        error
+	restoreResult     sessionmanager.RestoreResult
 }
 
 func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, error) {
@@ -550,6 +560,13 @@ func (f *fakeCommander) Cleanup(_ context.Context, project domain.ProjectID) (se
 		Skipped: []sessionmanager.CleanupSkip{{SessionID: "mer-2", Reason: "workspace has uncommitted changes"}},
 	}, nil
 }
+func (f *fakeCommander) CleanupSession(_ context.Context, id domain.SessionID) (domain.SessionCleanupRecord, error) {
+	if f.cleanupSessionErr != nil {
+		return domain.SessionCleanupRecord{}, f.cleanupSessionErr
+	}
+	f.cleanedSessions = append(f.cleanedSessions, id)
+	return f.cleanupSessionRec, nil
+}
 func (f *fakeCommander) RollbackSpawn(context.Context, domain.SessionID) (bool, bool, error) {
 	return false, false, nil
 }
@@ -567,6 +584,54 @@ func TestCleanupMapsManagerResult(t *testing.T) {
 	}
 	if len(out.Skipped) != 1 || out.Skipped[0].SessionID != "mer-2" || out.Skipped[0].Reason != "workspace has uncommitted changes" {
 		t.Fatalf("skipped = %#v", out.Skipped)
+	}
+}
+
+// TestCleanupSessionMapsNotTerminalToConflict: the per-session cleanup API maps
+// the manager's ErrNotTerminal sentinel to a 409 apierr (a live session cannot
+// be cleaned up).
+func TestCleanupSessionMapsNotTerminalToConflict(t *testing.T) {
+	svc := &Service{manager: &fakeCommander{cleanupSessionErr: sessionmanager.ErrNotTerminal}}
+	_, err := svc.CleanupSession(context.Background(), "mer-1")
+	var e *apierr.Error
+	if !errors.As(err, &e) || e.Kind != apierr.KindConflict || e.Code != "SESSION_NOT_TERMINAL" {
+		t.Fatalf("err = %v, want SESSION_NOT_TERMINAL conflict", err)
+	}
+}
+
+func TestCleanupSessionReturnsFacts(t *testing.T) {
+	svc := &Service{manager: &fakeCommander{cleanupSessionRec: domain.SessionCleanupRecord{SessionID: "mer-1", WorkspaceDisposition: domain.DispositionPreservedDirty}}}
+	facts, err := svc.CleanupSession(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("CleanupSession: %v", err)
+	}
+	if facts.WorkspaceDisposition != domain.DispositionPreservedDirty {
+		t.Fatalf("disposition = %q, want preserved_dirty", facts.WorkspaceDisposition)
+	}
+}
+
+// TestReadModelSurfacesCleanupFacts: the session read model joins cleanup facts
+// for a terminated session and omits them for one with no facts row.
+func TestReadModelSurfacesCleanupFacts(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", IsTerminated: true}
+	st.sessions["mer-2"] = domain.SessionRecord{ID: "mer-2", ProjectID: "mer", IsTerminated: true}
+	st.cleanup["mer-1"] = domain.SessionCleanupRecord{SessionID: "mer-1", WorkspaceDisposition: domain.DispositionPreservedDirty, AttemptCount: 1}
+	svc := NewWithDeps(Deps{Store: st})
+
+	withFacts, err := svc.Get(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("Get mer-1: %v", err)
+	}
+	if withFacts.Cleanup == nil || withFacts.Cleanup.WorkspaceDisposition != domain.DispositionPreservedDirty {
+		t.Fatalf("mer-1 cleanup facts = %+v, want preserved_dirty", withFacts.Cleanup)
+	}
+	noFacts, err := svc.Get(context.Background(), "mer-2")
+	if err != nil {
+		t.Fatalf("Get mer-2: %v", err)
+	}
+	if noFacts.Cleanup != nil {
+		t.Fatalf("mer-2 cleanup = %+v, want nil (no facts row)", noFacts.Cleanup)
 	}
 }
 

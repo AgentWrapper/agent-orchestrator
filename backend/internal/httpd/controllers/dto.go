@@ -143,6 +143,31 @@ type SessionView struct {
 	// Metadata.
 	PreviewRevision int64            `json:"previewRevision,omitempty"`
 	PRs             []SessionPRFacts `json:"prs"`
+	// Cleanup is the terminal-resource cleanup state for a terminated session
+	// (runtime + workspace release progress). Omitted for a live session or one
+	// with no facts row yet. Derived at read time — no display status is stored.
+	Cleanup *SessionCleanupView `json:"cleanup,omitempty"`
+}
+
+// SessionCleanupView is the read-model view of a terminated session's
+// terminal-resource cleanup facts. Every field is a durable fact, never a
+// derived display status: the client renders cleanup state (cleaning up /
+// worktree kept — uncommitted changes / cleanup failed / done) from
+// workspaceDisposition.
+type SessionCleanupView struct {
+	// WorkspaceDisposition is the rollup: pending, removed, preserved_dirty,
+	// failed, or not_applicable.
+	WorkspaceDisposition string `json:"workspaceDisposition"`
+	// RuntimeReleasedAt is when the runtime handle was genuinely released; omitted
+	// when the runtime has not been confirmed released.
+	RuntimeReleasedAt *time.Time `json:"runtimeReleasedAt,omitempty"`
+	// AttemptCount is how many teardown attempts have run so far.
+	AttemptCount int64 `json:"attemptCount,omitempty"`
+	// NextAttemptAt is when the next capped-backoff retry is due; omitted when
+	// none is scheduled (a terminal disposition, or preserved-dirty pause).
+	NextAttemptAt *time.Time `json:"nextAttemptAt,omitempty"`
+	// FailureCode is a machine code for the last teardown failure; omitted when none.
+	FailureCode string `json:"failureCode,omitempty"`
 }
 
 // ListSessionsResponse is the body of GET /api/v1/sessions.
@@ -255,6 +280,17 @@ type KillSessionResponse struct {
 	OK        bool             `json:"ok"`
 	SessionID domain.SessionID `json:"sessionId"`
 	Freed     bool             `json:"freed,omitempty"`
+}
+
+// CleanupSessionResponse is the body of POST /api/v1/sessions/{sessionId}/cleanup:
+// the resulting cleanup facts after reclaiming one terminated session's runtime +
+// workspace. isTerminated is always true here (the endpoint 409s for a live
+// session); it is surfaced for parity with the session read model.
+type CleanupSessionResponse struct {
+	OK           bool                `json:"ok"`
+	SessionID    domain.SessionID    `json:"sessionId"`
+	IsTerminated bool                `json:"isTerminated"`
+	Cleanup      *SessionCleanupView `json:"cleanup,omitempty"`
 }
 
 // RollbackSessionResponse is the body of POST /api/v1/sessions/{sessionId}/rollback.

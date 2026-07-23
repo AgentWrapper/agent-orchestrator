@@ -69,6 +69,7 @@ type SessionService interface {
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 	RollbackSpawn(ctx context.Context, id domain.SessionID) (sessionsvc.RollbackOutcome, error)
 	Cleanup(ctx context.Context, project domain.ProjectID) (sessionsvc.CleanupOutcome, error)
+	CleanupSession(ctx context.Context, id domain.SessionID) (domain.SessionCleanupRecord, error)
 	Rename(ctx context.Context, id domain.SessionID, displayName string) error
 	SetPreview(ctx context.Context, id domain.SessionID, previewURL string) (domain.Session, error)
 	Send(ctx context.Context, id domain.SessionID, message string) error
@@ -111,6 +112,7 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Patch("/sessions/{sessionId}", c.rename)
 	r.Post("/sessions/{sessionId}/restore", c.restore)
 	r.Post("/sessions/{sessionId}/kill", c.kill)
+	r.Post("/sessions/{sessionId}/cleanup", c.cleanupSession)
 	r.Post("/sessions/{sessionId}/rollback", c.rollback)
 	r.Post("/sessions/{sessionId}/send", c.send)
 	r.Post("/sessions/{sessionId}/activity", c.activity)
@@ -592,6 +594,28 @@ func (c *SessionsController) rollback(w http.ResponseWriter, r *http.Request) {
 	envelope.WriteJSON(w, http.StatusOK, RollbackSessionResponse{OK: true, SessionID: sessionID(r), Deleted: out.Deleted, Killed: out.Killed})
 }
 
+// cleanupSession reclaims a single terminated session's runtime + workspace
+// (the per-session counterpart to the bulk /sessions/cleanup). It returns 409
+// for a still-live session and, for a preserved-dirty or failed one, re-attempts
+// the release — the user-triggered retry the UI offers.
+func (c *SessionsController) cleanupSession(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/cleanup")
+		return
+	}
+	facts, err := c.Svc.CleanupSession(r.Context(), sessionID(r))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, CleanupSessionResponse{
+		OK:           true,
+		SessionID:    sessionID(r),
+		IsTerminated: true, // CleanupSession 409s a live session, so we only reach here for a terminal one.
+		Cleanup:      cleanupFactsView(&facts),
+	})
+}
+
 func (c *SessionsController) cleanup(w http.ResponseWriter, r *http.Request) {
 	if c.Svc == nil {
 		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/cleanup")
@@ -903,7 +927,29 @@ func previewFileURL(r *http.Request, id domain.SessionID, entry string) (string,
 }
 
 func sessionView(s domain.Session) SessionView {
-	return SessionView{Session: s, Branch: s.Metadata.Branch, PreviewURL: s.Metadata.PreviewURL, PreviewRevision: s.Metadata.PreviewRevision, PRs: sessionPRFacts(s.PRs)}
+	return SessionView{Session: s, Branch: s.Metadata.Branch, PreviewURL: s.Metadata.PreviewURL, PreviewRevision: s.Metadata.PreviewRevision, PRs: sessionPRFacts(s.PRs), Cleanup: cleanupFactsView(s.Cleanup)}
+}
+
+// cleanupFactsView maps the domain cleanup record to its wire view, dropping the
+// internal generation counter and rendering zero timestamps as omitted.
+func cleanupFactsView(rec *domain.SessionCleanupRecord) *SessionCleanupView {
+	if rec == nil {
+		return nil
+	}
+	v := &SessionCleanupView{
+		WorkspaceDisposition: string(rec.WorkspaceDisposition),
+		AttemptCount:         rec.AttemptCount,
+		FailureCode:          rec.FailureCode,
+	}
+	if !rec.RuntimeReleasedAt.IsZero() {
+		t := rec.RuntimeReleasedAt
+		v.RuntimeReleasedAt = &t
+	}
+	if !rec.NextAttemptAt.IsZero() {
+		t := rec.NextAttemptAt
+		v.NextAttemptAt = &t
+	}
+	return v
 }
 
 func sessionViews(sessions []domain.Session) []SessionView {

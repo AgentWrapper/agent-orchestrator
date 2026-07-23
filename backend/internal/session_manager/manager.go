@@ -30,6 +30,10 @@ var (
 	ErrNotRestorable    = errors.New("session: not restorable (not terminal)")
 	ErrTerminated       = errors.New("session: terminated")
 	ErrIncompleteHandle = errors.New("session: incomplete teardown handle")
+	// ErrNotTerminal means a per-session cleanup was requested for a session that
+	// is still live. Only a terminated session's resources may be reclaimed; the
+	// API maps this to a 409.
+	ErrNotTerminal = errors.New("session: not terminal")
 	// ErrProjectNotResolvable means the spawn's project has no usable repo
 	// (unregistered, archived, or missing a path). The API maps it to a 400.
 	ErrProjectNotResolvable = errors.New("session: project repo not resolvable")
@@ -1790,12 +1794,42 @@ func (m *Manager) finalizeOne(ctx context.Context, rec domain.SessionRecord) dom
 	unlock := m.sessionLocks.lock(rec.ID)
 	defer unlock()
 
-	generation := rec.CleanupGeneration
 	if facts, ok, err := m.store.GetSessionCleanupFacts(ctx, rec.ID); err == nil && ok &&
-		facts.SessionGeneration == generation && isTerminalDisposition(facts.WorkspaceDisposition) {
+		facts.SessionGeneration == rec.CleanupGeneration && isTerminalDisposition(facts.WorkspaceDisposition) {
 		return facts
 	}
+	return m.releaseAndPersistLocked(ctx, rec)
+}
 
+// CleanupSession is the per-session cleanup API primitive (PR 3). Unlike the
+// reconciler's FinalizeTerminalSession it surfaces typed errors to the caller
+// (ErrNotFound / ErrNotTerminal) and, unlike finalizeOne, it does NOT
+// idempotent-skip a session already in a terminal disposition — a user
+// triggering cleanup on a preserved_dirty or failed session is explicitly asking
+// to re-attempt the release. It never marks a session terminated.
+func (m *Manager) CleanupSession(ctx context.Context, id domain.SessionID) (domain.SessionCleanupRecord, error) {
+	unlock := m.sessionLocks.lock(id)
+	defer unlock()
+
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return domain.SessionCleanupRecord{}, fmt.Errorf("cleanup %s: %w", id, err)
+	}
+	if !ok {
+		return domain.SessionCleanupRecord{}, ErrNotFound
+	}
+	if !rec.IsTerminated {
+		return domain.SessionCleanupRecord{}, ErrNotTerminal
+	}
+	return m.releaseAndPersistLocked(ctx, rec), nil
+}
+
+// releaseAndPersistLocked runs the shared release core for a terminal session
+// and persists the resulting facts, returning the stored record. The caller must
+// hold the per-session lock. A transient failure is recorded as a pending retry
+// (or exhausted `failed`) rather than surfaced.
+func (m *Manager) releaseAndPersistLocked(ctx context.Context, rec domain.SessionRecord) domain.SessionCleanupRecord {
+	generation := rec.CleanupGeneration
 	res, releaseErr := m.releaseTerminalResources(ctx, rec)
 	if releaseErr != nil {
 		res.disposition = domain.DispositionPending
