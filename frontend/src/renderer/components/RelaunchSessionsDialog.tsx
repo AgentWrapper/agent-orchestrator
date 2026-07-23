@@ -85,14 +85,13 @@ export function RelaunchSessionsDialog({ open, projectId, onOpenChange, onDone }
 					{affectedQuery.data && count > 0 && !result && (
 						<>
 							<Dialog.Description className="mt-2 text-[13px] text-muted-foreground">
-								This restarts each agent in place. Your branch and uncommitted work are kept and the conversation resumes.
-								Any in-progress agent turn is interrupted. The orchestrator is not affected.
+								This restarts each agent in place. Your branch and uncommitted work are kept and the conversation
+								resumes. Any in-progress agent turn is interrupted. The orchestrator is not affected.
 							</Dialog.Description>
 							<ul className="mt-3 flex flex-col gap-1">
 								{affected.map((item) => (
 									<li key={item.sessionId} className="text-[12px] text-muted-foreground">
-										<span className="font-medium text-foreground">{item.title}</span>
-										{" "}
+										<span className="font-medium text-foreground">{item.title}</span>{" "}
 										<span className="text-passive">
 											{item.fromMode || "default"} {"->"} {item.toMode || "default"}
 										</span>
@@ -107,9 +106,7 @@ export function RelaunchSessionsDialog({ open, projectId, onOpenChange, onDone }
 								Relaunched {result.relaunched}, failed {result.failed}.
 							</p>
 							{result.failed > 0 && result.failedIds.length > 0 && (
-								<p className="text-[12px] text-destructive">
-									Failed sessions: {result.failedIds.join(", ")}
-								</p>
+								<p className="text-[12px] text-destructive">Failed sessions: {result.failedIds.join(", ")}</p>
 							)}
 						</div>
 					)}

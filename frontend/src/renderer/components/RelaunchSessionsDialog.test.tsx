@@ -35,12 +35,7 @@ function renderDialog(open = true) {
 	const onDone = vi.fn();
 	render(
 		<QueryClientProvider client={queryClient}>
-			<RelaunchSessionsDialog
-				open={open}
-				projectId="proj-1"
-				onOpenChange={onOpenChange}
-				onDone={onDone}
-			/>
+			<RelaunchSessionsDialog open={open} projectId="proj-1" onOpenChange={onOpenChange} onDone={onDone} />
 		</QueryClientProvider>,
 	);
 	return { queryClient, onOpenChange, onDone };
