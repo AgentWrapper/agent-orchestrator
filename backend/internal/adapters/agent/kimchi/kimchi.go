@@ -176,21 +176,27 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 	return info, true, nil
 }
 
-// appendToolFlags emits repeated --allow-tool / --deny-tool flags for a
-// tool-scoped launch. Each entry in allowed becomes its own --allow-tool <rule>
-// pair, and each entry in disallowed becomes its own --deny-tool <rule> pair.
-// Empty lists emit nothing, so an unrestricted launch is unchanged. Kimchi's
-// --allow-tool/--deny-tool flags accept the same rule syntax as Claude Code
-// (bash(git diff:*), edit, mcp__server__tool), and the rule parser is
-// case-insensitive on tool names, so lowercase tool names are used to match
-// Kimchi's internal names. These rules are honored under --auto and --plan;
-// only --dangerously-skip-permissions (not mapped by AO) would skip the denylist.
+// appendToolFlags emits at most one --allow-tool and at most one --deny-tool
+// flag for a tool-scoped launch. All allowed rules are comma-joined into a
+// single --allow-tool value, and all disallowed rules into a single --deny-tool
+// value. Empty lists emit nothing, so an unrestricted launch is unchanged.
+//
+// Kimchi's permission loader splits the flag value by comma (splitFlag), and
+// repeated flags overwrite (last-wins), so emitting one pair per rule would
+// collapse the deny list to a single entry — silently breaking the reviewer's
+// read-only guarantee. Comma-joining into a single value ensures every rule
+// survives the split. Kimchi's --allow-tool/--deny-tool flags accept the same
+// rule syntax as Claude Code (bash(git diff:*), edit, mcp__server__tool), and
+// the rule parser is case-insensitive on tool names, so lowercase tool names
+// are used to match Kimchi's internal names. These rules are honored under
+// --auto and --plan; only --dangerously-skip-permissions (not mapped by AO)
+// would skip the denylist.
 func appendToolFlags(cmd *[]string, allowed, disallowed []string) {
-	for _, rule := range allowed {
-		*cmd = append(*cmd, "--allow-tool", rule)
+	if len(allowed) > 0 {
+		*cmd = append(*cmd, "--allow-tool", strings.Join(allowed, ","))
 	}
-	for _, rule := range disallowed {
-		*cmd = append(*cmd, "--deny-tool", rule)
+	if len(disallowed) > 0 {
+		*cmd = append(*cmd, "--deny-tool", strings.Join(disallowed, ","))
 	}
 }
 
