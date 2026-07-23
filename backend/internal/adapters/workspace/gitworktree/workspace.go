@@ -647,6 +647,22 @@ func (w *Workspace) existingWorktree(ctx context.Context, repo, path string, cfg
 		return ports.WorkspaceInfo{}, false, err
 	}
 	if rec, ok := findWorktree(records, path); ok {
+		info, err := os.Stat(path)
+		if err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				return ports.WorkspaceInfo{}, false, fmt.Errorf("gitworktree: stat registered worktree %q: %w", path, err)
+			}
+			// A worktree registration can outlive its directory when an earlier
+			// daemon or a user removes the path. Do not hand that dead cwd to the
+			// runtime: prune it so Create proceeds to materialize a fresh checkout.
+			if err := w.pruneWorktrees(ctx, repo); err != nil {
+				return ports.WorkspaceInfo{}, false, fmt.Errorf("gitworktree: prune stale worktree %q: %w", path, err)
+			}
+			return ports.WorkspaceInfo{}, false, nil
+		}
+		if !info.IsDir() {
+			return ports.WorkspaceInfo{}, false, fmt.Errorf("gitworktree: registered worktree %q is not a directory", path)
+		}
 		branch := rec.Branch
 		if branch == "" {
 			branch = cfg.Branch
