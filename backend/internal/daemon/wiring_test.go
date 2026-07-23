@@ -221,6 +221,10 @@ func TestWiring_StartSessionSpawnsScratchWithoutGitRepo(t *testing.T) {
 	t.Setenv("USERPROFILE", homeDir)
 
 	dataDir := t.TempDir()
+	wantDataDir := dataDir
+	if resolved, err := filepath.EvalSymlinks(dataDir); err == nil {
+		wantDataDir = resolved
+	}
 	scratchPath := filepath.Join(dataDir, "scratch", "default")
 	if err := os.MkdirAll(scratchPath, 0o750); err != nil {
 		t.Fatal(err)
@@ -259,7 +263,7 @@ func TestWiring_StartSessionSpawnsScratchWithoutGitRepo(t *testing.T) {
 	if session.Metadata.Branch != "" {
 		t.Fatalf("scratch branch = %q, want empty", session.Metadata.Branch)
 	}
-	wantWorkspace := filepath.Join(dataDir, "worktrees", "scratch", "workers", string(session.ID))
+	wantWorkspace := filepath.Join(wantDataDir, "worktrees", "scratch", "workers", string(session.ID))
 	if runtime.lastCfg.WorkspacePath != wantWorkspace {
 		t.Fatalf("runtime workspace = %q, want %q", runtime.lastCfg.WorkspacePath, wantWorkspace)
 	}

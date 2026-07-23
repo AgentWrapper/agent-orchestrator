@@ -6,22 +6,6 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-// mkWorkerRec builds a minimal live worker session record for permission tests.
-func mkWorkerRec(id domain.SessionID, projectID domain.ProjectID, perm domain.PermissionMode) domain.SessionRecord {
-	return domain.SessionRecord{
-		ID:        id,
-		ProjectID: projectID,
-		Kind:      domain.KindWorker,
-		Harness:   domain.HarnessClaudeCode,
-		Metadata: domain.SessionMetadata{
-			WorkspacePath: "/ws/" + string(id),
-			Branch:        "ao/" + string(id) + "/root",
-			Permissions:   perm,
-		},
-		Activity: domain.Activity{State: domain.ActivityIdle},
-	}
-}
-
 func TestAffectedByPermissionChange(t *testing.T) {
 	type sessionSetup struct {
 		id          domain.SessionID
