@@ -18,8 +18,8 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/testgate"
 )
 
-// ErrInvalid and ErrNotFound re-export the engine sentinels so the HTTP
-// controller maps service failures to 422/404 without importing the core.
+// ErrInvalid, ErrNotFound, and ErrAgentBinaryNotFound re-export sentinels so
+// the HTTP controller maps service failures without importing the core.
 var (
 	ErrInvalid             = reviewcore.ErrInvalid
 	ErrNotFound            = reviewcore.ErrNotFound
@@ -407,14 +407,6 @@ func (s *Service) deliverableRuns(ctx context.Context, workerID domain.SessionID
 		deliverable = append(deliverable, deliveryCandidate{run: run, result: reviewResult(workerID, resultRun)})
 	}
 	return deliverable, nil
-}
-
-func reviewResults(workerID domain.SessionID, runs []domain.ReviewRun) []lifecycle.ReviewResult {
-	results := make([]lifecycle.ReviewResult, 0, len(runs))
-	for _, run := range runs {
-		results = append(results, reviewResult(workerID, run))
-	}
-	return results
 }
 
 func reviewResult(workerID domain.SessionID, run domain.ReviewRun) lifecycle.ReviewResult {
