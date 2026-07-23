@@ -56,9 +56,14 @@ the same 5-per-minute / 200-per-day shape to its own event and exception
 capture path, without the aggregation step.
 
 All events are sent as PostHog anonymous events (`$process_person_profile:
-false`; the renderer never calls `identify()`). The install ID still
-deduplicates unique-user counts, but no person profiles are created — person
-properties and person-property cohorts are intentionally unavailable.
+false`; the renderer never calls `identify()`). The renderer keeps PostHog SDK
+persistence in memory, disables person profiles, and explicitly bootstraps the
+AO install ID as anonymous. This prevents legacy PostHog state from restoring
+an identified user or replacing the stable AO device ID after an upgrade. The
+install ID still deduplicates unique-user counts, but no person profiles are
+created — person properties and person-property cohorts are intentionally
+unavailable. AO's heartbeat and route reservations continue to use their own
+sanitized `localStorage` keys independently of PostHog SDK persistence.
 
 `ao.cli.invoked` is capped at once per actor type and command path per UTC day
 per install, so script- or agent-driven polling (`ao status`, `ao session ls`,
@@ -103,7 +108,9 @@ The minimum signals for accurate usage analytics are:
 - `ao.app.active`: up to one event per six-hour UTC slot per install/account
   when a human uses the desktop app or runs a user-context CLI command. This
   powers DAU, WAU, MAU, retention, and churn while keeping arbitrary rolling
-  windows from undercounting long-running usage.
+  windows from undercounting long-running usage. Renderer active events are
+  sent immediately; a slot is released for retry when the SDK rejects or
+  throws while capturing the event.
 - `ao.projects.created` and `ao.onboarding.first_project_added`: activation
   funnel from install to first project.
 - `ao.session.spawned`, `ao.session.spawn_failed`, and
@@ -194,7 +201,8 @@ On first run, a random install identifier is generated and stored at
 `~/.ao/data/telemetry_install_id` (or `$AO_DATA_DIR/telemetry_install_id`). The
 renderer and daemon both use this ID as the PostHog distinct ID so activity is
 deduplicated across app launches and CLI invocations. It is not linked to any
-personal account.
+personal account. In the renderer it is also the PostHog device ID, and the SDK
+is explicitly kept in anonymous mode.
 
 ## Configuration
 
