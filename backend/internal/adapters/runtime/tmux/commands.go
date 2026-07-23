@@ -75,6 +75,15 @@ func listPanePIDsArgs(id string) []string {
 	return []string{"list-panes", "-s", "-t", exactSessionTarget(id), "-F", "#{pane_pid}"}
 }
 
+// displayPaneCwdArgs builds args for `tmux display-message -p -t <id>
+// #{pane_current_path}`, printing the pane's current working directory so
+// Create can verify the pane really started in the workspace and not in the
+// server-cwd fallback tmux uses when `new-session -c` cannot be resolved.
+// Pane-targeting, so no `=` prefix (see setStatusOffArgs).
+func displayPaneCwdArgs(id string) []string {
+	return []string{"display-message", "-p", "-t", id, "#{pane_current_path}"}
+}
+
 // sendKeysLiteralArgs builds args for `tmux send-keys -t <id> -l <chunk>`.
 // The -l flag stops tmux interpreting words like "Enter" as key names so the
 // text is sent verbatim.

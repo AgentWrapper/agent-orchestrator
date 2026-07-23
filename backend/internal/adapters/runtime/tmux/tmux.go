@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -128,8 +129,17 @@ func sessionsHaveProcesses(ctx context.Context, pids []int) bool {
 
 type execRunner struct{}
 
+// Run executes the tmux CLI from a stable directory rather than the daemon's
+// own cwd. The first tmux CLI call after boot auto-starts the persistent tmux
+// server, which inherits this process's cwd and keeps it for its lifetime.
+// The daemon can be started from inside the packaged app bundle (or a
+// Squirrel/ShipIt staging dir) that the next auto-update swaps or deletes;
+// tmux then silently falls back to that doomed server cwd whenever
+// `new-session -c <dir>` cannot be resolved at spawn time, stranding panes in
+// a deleted directory (issue #2775). os.TempDir() outlives app updates.
 func (execRunner) Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = os.TempDir()
 	cmd.Env = append(append([]string(nil), os.Environ()...), env...)
 	return cmd.CombinedOutput()
 }
@@ -182,7 +192,8 @@ func New(opts Options) *Runtime {
 }
 
 // Create starts a new tmux session in the workspace, running the agent's
-// launch command with a keep-alive shell, and returns a handle to it.
+// launch command with a keep-alive shell, verifies the pane really started in
+// the workspace (see verifyPaneCwd), and returns a handle to it.
 func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
 	id, err := tmuxSessionName(cfg.SessionID)
 	if err != nil {
@@ -236,7 +247,43 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 		_ = r.Destroy(context.Background(), handle)
 		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: session %s exited before ready", id)
 	}
+	if err := r.verifyPaneCwd(ctx, id, cfg.WorkspacePath); err != nil {
+		_ = r.Destroy(context.Background(), handle)
+		return ports.RuntimeHandle{}, err
+	}
 	return handle, nil
+}
+
+// verifyPaneCwd checks that the new pane actually started in the requested
+// workspace. When `new-session -c <dir>` cannot resolve dir at spawn time,
+// tmux does not error: it silently falls back to the SERVER's cwd, and the
+// agent later dies with a context-free ENOENT (plus shell-init getcwd errors)
+// far from the real cause. Catch it here with an error naming both paths.
+func (r *Runtime) verifyPaneCwd(ctx context.Context, id, workspace string) error {
+	out, err := r.run(ctx, displayPaneCwdArgs(id)...)
+	if err != nil {
+		return fmt.Errorf("tmux runtime: verify pane cwd %s: %w", id, err)
+	}
+	paneCwd := strings.TrimSpace(string(out))
+	if samePath(paneCwd, workspace) {
+		return nil
+	}
+	return fmt.Errorf("tmux runtime: session %s pane started in %q instead of the workspace %q; tmux silently falls back to its server's cwd when the requested directory cannot be resolved, so the workspace is likely missing or the tmux server is pinned to a deleted directory (kill the tmux server and retry)", id, paneCwd, workspace)
+}
+
+// samePath reports whether two paths refer to the same directory, resolving
+// symlinks so macOS's /var vs /private/var aliasing does not read as a
+// mismatch. A path that cannot be resolved (e.g. already deleted) falls back
+// to its cleaned literal form.
+func samePath(a, b string) bool {
+	return resolvePath(a) == resolvePath(b)
+}
+
+func resolvePath(p string) string {
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return resolved
+	}
+	return filepath.Clean(p)
 }
 
 // Destroy kills the handle's tmux session and reaps the pane processes it
