@@ -135,10 +135,19 @@ func (f *fakeStore) DeleteSessionWorktrees(_ context.Context, id domain.SessionI
 type fakeLCM struct {
 	store     *fakeStore
 	completed int
+	prepared  []string
+	cancelled []string
 	// terminated counts MarkTerminated calls per session id.
 	terminated map[domain.SessionID]int
 }
 
+func (l *fakeLCM) PrepareLaunch(id domain.SessionID, launchID string) error {
+	l.prepared = append(l.prepared, string(id)+":"+launchID)
+	return nil
+}
+func (l *fakeLCM) CancelLaunch(id domain.SessionID, launchID string) {
+	l.cancelled = append(l.cancelled, string(id)+":"+launchID)
+}
 func (l *fakeLCM) MarkSpawned(_ context.Context, id domain.SessionID, metadata domain.SessionMetadata) error {
 	l.completed++
 	rec := l.store.sessions[id]
@@ -179,9 +188,13 @@ type fakeRestartRuntime struct {
 	restarted     int
 	restartHandle ports.RuntimeHandle
 	restartErr    error
+	onRestart     func()
 }
 
 func (r *fakeRestartRuntime) Restart(_ context.Context, handle ports.RuntimeHandle, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
+	if r.onRestart != nil {
+		r.onRestart()
+	}
 	r.restarted++
 	r.restartHandle = handle
 	r.lastCfg = cfg
@@ -834,6 +847,12 @@ func TestResumeAgent_RestartsRuntimeWithManagedGeneration(t *testing.T) {
 	runtime := &fakeRestartRuntime{fakeRuntime: baseRuntime}
 	agent := supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "resume", "agent-x"}}}
 	m, st, ws := newExitedResumeManager(t, runtime, agent)
+	lcm := m.lcm.(*fakeLCM)
+	runtime.onRestart = func() {
+		if !reflect.DeepEqual(lcm.prepared, []string{"mer-1:launch-new"}) {
+			t.Fatalf("runtime restarted before lifecycle prepared generation: %v", lcm.prepared)
+		}
+	}
 
 	result, err := m.ResumeAgentWithMode(ctx, "mer-1")
 	if err != nil {
@@ -864,6 +883,9 @@ func TestResumeAgent_RestartsRuntimeWithManagedGeneration(t *testing.T) {
 	}
 	if result.Mode != RestoreModeNative {
 		t.Fatalf("resume mode = %q, want native", result.Mode)
+	}
+	if !reflect.DeepEqual(lcm.cancelled, []string{"mer-1:launch-new"}) {
+		t.Fatalf("launch cleanup = %v, want new generation released", lcm.cancelled)
 	}
 }
 
@@ -911,6 +933,7 @@ func TestResumeAgent_RestartFailureLeavesSessionExited(t *testing.T) {
 	runtime := &fakeRestartRuntime{fakeRuntime: baseRuntime, restartErr: errors.New("respawn failed")}
 	agent := supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "resume", "agent-x"}}}
 	m, st, _ := newExitedResumeManager(t, runtime, agent)
+	lcm := m.lcm.(*fakeLCM)
 
 	if _, err := m.ResumeAgentWithMode(ctx, "mer-1"); err == nil || !strings.Contains(err.Error(), "respawn failed") {
 		t.Fatalf("resume error = %v", err)
@@ -918,6 +941,9 @@ func TestResumeAgent_RestartFailureLeavesSessionExited(t *testing.T) {
 	got := st.sessions["mer-1"]
 	if got.IsTerminated || got.Activity.State != domain.ActivityExited || got.Metadata.RuntimeLaunchID != "launch-old" {
 		t.Fatalf("failed resume changed session: %+v", got)
+	}
+	if !reflect.DeepEqual(lcm.cancelled, []string{"mer-1:launch-new"}) {
+		t.Fatalf("failed launch cleanup = %v, want waiting hooks released", lcm.cancelled)
 	}
 }
 

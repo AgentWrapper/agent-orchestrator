@@ -87,6 +87,8 @@ const (
 const hookBinaryName = "ao"
 
 type lifecycleRecorder interface {
+	PrepareLaunch(id domain.SessionID, launchID string) error
+	CancelLaunch(id domain.SessionID, launchID string)
 	MarkSpawned(ctx context.Context, id domain.SessionID, metadata domain.SessionMetadata) error
 	MarkTerminated(ctx context.Context, id domain.SessionID) error
 }
@@ -428,6 +430,12 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: supervisor: %w", id, err)
 	}
+	if err := m.lcm.PrepareLaunch(id, launchID); err != nil {
+		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
+		m.rollbackSpawnSeedRow(ctx, id)
+		return domain.SessionRecord{}, fmt.Errorf("spawn %s: prepare launch: %w", id, err)
+	}
+	defer m.lcm.CancelLaunch(id, launchID)
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     id,
 		WorkspacePath: ws.Path,
@@ -1013,6 +1021,11 @@ func (m *Manager) relaunchSession(ctx context.Context, operation string, rec dom
 		m.cleanupSystemPromptDir(rec.ID)
 		return RestoreResult{}, fmt.Errorf("%s %s: supervisor: %w", operation, rec.ID, err)
 	}
+	if err := m.lcm.PrepareLaunch(rec.ID, launchID); err != nil {
+		m.cleanupSystemPromptDir(rec.ID)
+		return RestoreResult{}, fmt.Errorf("%s %s: prepare launch: %w", operation, rec.ID, err)
+	}
+	defer m.lcm.CancelLaunch(rec.ID, launchID)
 	runtimeCfg := ports.RuntimeConfig{
 		SessionID:     rec.ID,
 		WorkspacePath: ws.Path,

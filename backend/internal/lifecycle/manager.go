@@ -52,6 +52,11 @@ type sessionTerminator interface {
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 }
 
+type pendingLaunch struct {
+	launchID string
+	ready    chan struct{}
+}
+
 // Option customizes a Manager.
 type Option func(*Manager)
 
@@ -97,6 +102,12 @@ type Manager struct {
 	// flights tracks, per session, the in-flight tool executions and the
 	// pending permission dialog's identity (see toolFlight). Guarded by mu.
 	flights map[domain.SessionID]*toolFlight
+	// pendingLaunches closes the small ordering gap between starting a supervised
+	// process and durably recording its generation in MarkSpawned. A hook from
+	// that exact generation waits on ready instead of being discarded as stale.
+	// This coordination is intentionally memory-only: a daemon crash leaves the
+	// durable session exited, so the user can safely retry the resume.
+	pendingLaunches map[domain.SessionID]pendingLaunch
 	// steerActive reports whether a harness can safely receive a write during an
 	// active turn (input steers the run) rather than only while idle. Supplied by
 	// the agent adapter via WithActiveSteering; the default answers false, so an
@@ -115,7 +126,15 @@ func New(store sessionStore, messenger ports.AgentMessenger, opts ...Option) *Ma
 	// `ao session get` showing created in UTC but updated in local time. A
 	// WithClock option may still override this in tests.
 	clock := func() time.Time { return time.Now().UTC() }
-	m := &Manager{store: store, window: defaultRecentActivityWindow, clock: clock, react: newReactionState(), flights: map[domain.SessionID]*toolFlight{}, steerActive: func(domain.AgentHarness) bool { return false }}
+	m := &Manager{
+		store:           store,
+		window:          defaultRecentActivityWindow,
+		clock:           clock,
+		react:           newReactionState(),
+		flights:         map[domain.SessionID]*toolFlight{},
+		pendingLaunches: map[domain.SessionID]pendingLaunch{},
+		steerActive:     func(domain.AgentHarness) bool { return false },
+	}
 	if messenger != nil {
 		m.guard = sessionguard.New(store, messenger, nil)
 	}
@@ -131,6 +150,46 @@ func (m *Manager) SetCompletionTerminator(terminator sessionTerminator) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.completionTerminator = terminator
+}
+
+// PrepareLaunch registers a supervised generation before the runtime starts.
+// Hooks from that exact generation wait until MarkSpawned commits the generation
+// instead of racing the old durable generation and being discarded as stale.
+func (m *Manager) PrepareLaunch(id domain.SessionID, launchID string) error {
+	launchID = strings.TrimSpace(launchID)
+	if launchID == "" {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if pending, ok := m.pendingLaunches[id]; ok {
+		if pending.launchID == launchID {
+			return nil
+		}
+		return fmt.Errorf("lifecycle: session %q already has launch %q in progress", id, pending.launchID)
+	}
+	m.pendingLaunches[id] = pendingLaunch{launchID: launchID, ready: make(chan struct{})}
+	return nil
+}
+
+// CancelLaunch releases hooks waiting on a generation whose runtime failed to
+// start. Once released, normal generation fencing discards those signals.
+func (m *Manager) CancelLaunch(id domain.SessionID, launchID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.finishLaunchLocked(id, strings.TrimSpace(launchID))
+}
+
+func (m *Manager) finishLaunchLocked(id domain.SessionID, launchID string) {
+	if launchID == "" {
+		return
+	}
+	pending, ok := m.pendingLaunches[id]
+	if !ok || pending.launchID != launchID {
+		return
+	}
+	delete(m.pendingLaunches, id)
+	close(pending.ready)
 }
 
 func (m *Manager) mutate(ctx context.Context, id domain.SessionID, fn func(domain.SessionRecord, time.Time) (domain.SessionRecord, bool)) error {
@@ -202,6 +261,20 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	}
 	var intent *ports.NotificationIntent
 	m.mu.Lock()
+	for {
+		pending, ok := m.pendingLaunches[id]
+		if !ok || s.LaunchID == "" || pending.launchID != s.LaunchID {
+			break
+		}
+		ready := pending.ready
+		m.mu.Unlock()
+		select {
+		case <-ready:
+			m.mu.Lock()
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
 		m.mu.Unlock()
@@ -716,6 +789,7 @@ func (m *Manager) emitNotification(ctx context.Context, intent *ports.Notificati
 func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, metadata domain.SessionMetadata) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.finishLaunchLocked(id, strings.TrimSpace(metadata.RuntimeLaunchID))
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
 		return err

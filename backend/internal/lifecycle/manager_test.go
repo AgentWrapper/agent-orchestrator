@@ -372,6 +372,97 @@ func TestActivity_StaleLaunchSignalIsIgnored(t *testing.T) {
 	}
 }
 
+func TestActivity_NewLaunchSignalWaitsForMarkSpawned(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Activity.State = domain.ActivityExited
+	rec.Metadata.RuntimeLaunchID = "launch-old"
+	st.sessions["mer-1"] = rec
+
+	if err := m.PrepareLaunch("mer-1", "launch-new"); err != nil {
+		t.Fatal(err)
+	}
+	signalAt := time.Unix(123, 0).UTC()
+	signalDone := make(chan error, 1)
+	go func() {
+		signalDone <- m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+			Valid:     true,
+			State:     domain.ActivityActive,
+			Timestamp: signalAt,
+			LaunchID:  "launch-new",
+		})
+	}()
+
+	select {
+	case err := <-signalDone:
+		t.Fatalf("new-generation signal completed before MarkSpawned: %v", err)
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	if err := m.MarkSpawned(ctx, "mer-1", domain.SessionMetadata{
+		RuntimeHandleID: "tmux-mer-1",
+		RuntimeLaunchID: "launch-new",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-signalDone; err != nil {
+		t.Fatal(err)
+	}
+
+	got := st.sessions["mer-1"]
+	if got.IsTerminated || got.Activity.State != domain.ActivityActive {
+		t.Fatalf("early signal was not applied after spawn commit: %+v", got)
+	}
+	if got.Metadata.RuntimeLaunchID != "launch-new" {
+		t.Fatalf("runtime launch id = %q, want launch-new", got.Metadata.RuntimeLaunchID)
+	}
+	if !got.FirstSignalAt.Equal(signalAt) {
+		t.Fatalf("first signal at = %v, want %v", got.FirstSignalAt, signalAt)
+	}
+}
+
+func TestActivity_CancelledLaunchReleasesAndRejectsEarlySignal(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Activity.State = domain.ActivityExited
+	rec.Metadata.RuntimeLaunchID = "launch-old"
+	st.sessions["mer-1"] = rec
+
+	if err := m.PrepareLaunch("mer-1", "launch-new"); err != nil {
+		t.Fatal(err)
+	}
+	signalDone := make(chan error, 1)
+	go func() {
+		signalDone <- m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+			Valid:    true,
+			State:    domain.ActivityActive,
+			LaunchID: "launch-new",
+		})
+	}()
+
+	m.CancelLaunch("mer-1", "launch-new")
+	if err := <-signalDone; err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; got != rec {
+		t.Fatalf("cancelled launch signal mutated durable state: %+v", got)
+	}
+}
+
+func TestPrepareLaunchRejectsOverlappingGeneration(t *testing.T) {
+	m, _, _ := newManager()
+	if err := m.PrepareLaunch("mer-1", "launch-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.PrepareLaunch("mer-1", "launch-1"); err != nil {
+		t.Fatalf("same generation should be idempotent: %v", err)
+	}
+	if err := m.PrepareLaunch("mer-1", "launch-2"); err == nil {
+		t.Fatal("overlapping generation was accepted")
+	}
+	m.CancelLaunch("mer-1", "launch-1")
+}
+
 func TestMarkTerminated(t *testing.T) {
 	m, st, _ := newManager()
 	st.sessions["mer-1"] = working("mer-1")
