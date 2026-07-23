@@ -91,6 +91,46 @@ func TestBrowserClickAndWaitArguments(t *testing.T) {
 	}
 }
 
+func TestBrowserCoreInteractionArguments(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-1")
+	cfg := setConfigEnv(t)
+	capture := &browserRequestCapture{}
+	srv := browserCLIServer(t, capture)
+	writeRunFileFor(t, cfg, srv)
+	deps := Deps{ProcessAlive: func(int) bool { return true }}
+
+	tests := []struct {
+		name   string
+		args   []string
+		action string
+		want   map[string]any
+	}{
+		{name: "type", args: []string{"type", "e1", "hello"}, action: "type", want: map[string]any{"ref": "e1", "text": "hello"}},
+		{name: "press", args: []string{"press", "Control+A"}, action: "press", want: map[string]any{"key": "Control+A"}},
+		{name: "hover", args: []string{"hover", "e2"}, action: "hover", want: map[string]any{"ref": "e2"}},
+		{name: "scroll", args: []string{"scroll", "down", "--amount", "450"}, action: "scroll", want: map[string]any{"direction": "down", "amount": float64(450)}},
+		{name: "select", args: []string{"select", "e3", "large"}, action: "select", want: map[string]any{"ref": "e3", "value": "large"}},
+		{name: "check", args: []string{"check", "e4"}, action: "check", want: map[string]any{"ref": "e4"}},
+		{name: "uncheck", args: []string{"uncheck", "e4"}, action: "uncheck", want: map[string]any{"ref": "e4"}},
+		{name: "get", args: []string{"get", "value", "e5"}, action: "get", want: map[string]any{"property": "value", "ref": "e5"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, _, err := executeCLI(t, deps, append([]string{"browser"}, tt.args...)...); err != nil {
+				t.Fatal(err)
+			}
+			if capture.body.Action != tt.action {
+				t.Fatalf("action = %q, want %q", capture.body.Action, tt.action)
+			}
+			for key, want := range tt.want {
+				if got := capture.body.Args[key]; got != want {
+					t.Fatalf("%s arg %q = %#v, want %#v", tt.name, key, got, want)
+				}
+			}
+		})
+	}
+}
+
 func TestBrowserScreenshotWritesWithoutOverwrite(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "ao-1")
 	cfg := setConfigEnv(t)
@@ -121,5 +161,8 @@ func TestBrowserRequiresSessionAndValidWait(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "ao-1")
 	if _, _, err := executeCLI(t, Deps{}, "browser", "wait", "--text", "x", "--url", "y"); ExitCode(err) != 2 {
 		t.Fatalf("wait error = %v code=%d", err, ExitCode(err))
+	}
+	if _, _, err := executeCLI(t, Deps{}, "browser", "get"); ExitCode(err) != 2 {
+		t.Fatalf("get error = %v code=%d", err, ExitCode(err))
 	}
 }

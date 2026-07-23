@@ -526,6 +526,46 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 						stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"),
 						stringArg(args, "text", "INVALID_ARGUMENT", "text is required", true),
 					);
+				case "type":
+					return typeEntry(
+						entry,
+						stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"),
+						stringArg(args, "text", "INVALID_ARGUMENT", "text is required", true),
+					);
+				case "press":
+					return pressEntry(entry, stringArg(args, "key", "INVALID_ARGUMENT", "key is required"));
+				case "hover":
+					return hoverEntry(entry, stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"));
+				case "scroll":
+					return scrollEntry(
+						entry,
+						stringArg(args, "direction", "INVALID_ARGUMENT", "direction is required"),
+						numberArg(args.amount, 1, 5_000) || 600,
+					);
+				case "select":
+					return selectEntry(
+						entry,
+						stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"),
+						stringArg(args, "value", "INVALID_ARGUMENT", "value is required", true),
+					);
+				case "check":
+					return checkEntry(
+						entry,
+						stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"),
+						true,
+					);
+				case "uncheck":
+					return checkEntry(
+						entry,
+						stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"),
+						false,
+					);
+				case "get":
+					return getEntry(
+						entry,
+						stringArg(args, "property", "INVALID_ARGUMENT", "property is required"),
+						typeof args.ref === "string" && args.ref.trim() ? args.ref : undefined,
+					);
 				case "wait":
 					return waitForEntry(entry, args);
 				case "screenshot":
@@ -867,6 +907,258 @@ async function fillEntry(entry: BrowserEntry, refName: string, text: string): Pr
 		awaitPromise: true,
 	});
 	return { ref: refName, value: text, url: entry.view.webContents.getURL() };
+}
+
+async function typeEntry(entry: BrowserEntry, refName: string, text: string): Promise<unknown> {
+	const objectId = await resolveRef(entry, refName);
+	await entry.view.webContents.debugger.sendCommand("Runtime.callFunctionOn", {
+		objectId,
+		functionDeclaration:
+			"function(){ this.scrollIntoView({block:'center',inline:'center'}); this.focus(); }",
+	});
+	await entry.view.webContents.debugger.sendCommand("Input.insertText", { text });
+	return { ref: refName, text, url: entry.view.webContents.getURL() };
+}
+
+type BrowserKey = {
+	key: string;
+	code: string;
+	keyCode: number;
+	text?: string;
+	modifiers: number;
+};
+
+const NAMED_KEYS: Record<string, Omit<BrowserKey, "modifiers">> = {
+	enter: { key: "Enter", code: "Enter", keyCode: 13, text: "\r" },
+	tab: { key: "Tab", code: "Tab", keyCode: 9, text: "\t" },
+	escape: { key: "Escape", code: "Escape", keyCode: 27 },
+	esc: { key: "Escape", code: "Escape", keyCode: 27 },
+	backspace: { key: "Backspace", code: "Backspace", keyCode: 8 },
+	delete: { key: "Delete", code: "Delete", keyCode: 46 },
+	home: { key: "Home", code: "Home", keyCode: 36 },
+	end: { key: "End", code: "End", keyCode: 35 },
+	pageup: { key: "PageUp", code: "PageUp", keyCode: 33 },
+	pagedown: { key: "PageDown", code: "PageDown", keyCode: 34 },
+	arrowup: { key: "ArrowUp", code: "ArrowUp", keyCode: 38 },
+	arrowdown: { key: "ArrowDown", code: "ArrowDown", keyCode: 40 },
+	arrowleft: { key: "ArrowLeft", code: "ArrowLeft", keyCode: 37 },
+	arrowright: { key: "ArrowRight", code: "ArrowRight", keyCode: 39 },
+	space: { key: " ", code: "Space", keyCode: 32, text: " " },
+};
+
+function parseBrowserKey(input: string): BrowserKey {
+	const parts = input
+		.split("+")
+		.map((part) => part.trim())
+		.filter(Boolean);
+	if (parts.length === 0) throw browserError("INVALID_ARGUMENT", "key is required");
+	let modifiers = 0;
+	for (const modifier of parts.slice(0, -1)) {
+		switch (modifier.toLowerCase()) {
+			case "alt":
+				modifiers |= 1;
+				break;
+			case "control":
+			case "ctrl":
+				modifiers |= 2;
+				break;
+			case "meta":
+			case "command":
+			case "cmd":
+				modifiers |= 4;
+				break;
+			case "shift":
+				modifiers |= 8;
+				break;
+			default:
+				throw browserError("INVALID_ARGUMENT", `Unsupported key modifier: ${modifier}`);
+		}
+	}
+	const rawKey = parts.at(-1)!;
+	const named = NAMED_KEYS[rawKey.toLowerCase()];
+	if (named) {
+		return {
+			...named,
+			text: modifiers & (1 | 2 | 4) ? undefined : named.text,
+			modifiers,
+		};
+	}
+	if ([...rawKey].length !== 1) {
+		throw browserError("INVALID_ARGUMENT", `Unsupported key: ${rawKey}`);
+	}
+	const rawIsLetter = /^[a-zA-Z]$/.test(rawKey);
+	const key = rawIsLetter ? (modifiers & 8 ? rawKey.toUpperCase() : rawKey.toLowerCase()) : rawKey;
+	const upper = key.toUpperCase();
+	const isLetter = /^[A-Z]$/.test(upper);
+	const isDigit = /^\d$/.test(key);
+	return {
+		key,
+		code: isLetter ? `Key${upper}` : isDigit ? `Digit${key}` : "",
+		keyCode: upper.charCodeAt(0),
+		text: modifiers & (1 | 2 | 4) ? undefined : key,
+		modifiers,
+	};
+}
+
+async function pressEntry(entry: BrowserEntry, input: string): Promise<unknown> {
+	await ensureDebugger(entry);
+	const key = parseBrowserKey(input);
+	const params = {
+		key: key.key,
+		code: key.code,
+		windowsVirtualKeyCode: key.keyCode,
+		nativeVirtualKeyCode: key.keyCode,
+		modifiers: key.modifiers,
+		...(key.text === undefined ? {} : { text: key.text, unmodifiedText: key.text }),
+	};
+	await entry.view.webContents.debugger.sendCommand("Input.dispatchKeyEvent", {
+		type: key.text === undefined ? "rawKeyDown" : "keyDown",
+		...params,
+	});
+	await entry.view.webContents.debugger.sendCommand("Input.dispatchKeyEvent", {
+		type: "keyUp",
+		...params,
+		text: undefined,
+		unmodifiedText: undefined,
+	});
+	return { key: input, url: entry.view.webContents.getURL() };
+}
+
+async function hoverEntry(entry: BrowserEntry, refName: string): Promise<unknown> {
+	const objectId = await resolveRef(entry, refName);
+	const response = (await entry.view.webContents.debugger.sendCommand("DOM.getBoxModel", { objectId })) as {
+		model?: { border?: number[]; content?: number[] };
+	};
+	const point = quadCenter(response.model?.border ?? response.model?.content);
+	if (!point) {
+		throw browserError("ELEMENT_NOT_VISIBLE", `Element ${refName} has no visible box`);
+	}
+	await entry.view.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
+		type: "mouseMoved",
+		x: point.x,
+		y: point.y,
+	});
+	return { ref: refName, x: point.x, y: point.y, url: entry.view.webContents.getURL() };
+}
+
+function quadCenter(quad: number[] | undefined): { x: number; y: number } | undefined {
+	if (!quad || quad.length < 8) return undefined;
+	const xs = [quad[0], quad[2], quad[4], quad[6]];
+	const ys = [quad[1], quad[3], quad[5], quad[7]];
+	return {
+		x: xs.reduce((sum, value) => sum + value, 0) / xs.length,
+		y: ys.reduce((sum, value) => sum + value, 0) / ys.length,
+	};
+}
+
+async function scrollEntry(entry: BrowserEntry, rawDirection: string, amount: number): Promise<unknown> {
+	await ensureDebugger(entry);
+	const direction = rawDirection.toLowerCase();
+	const deltas: Record<string, { deltaX: number; deltaY: number }> = {
+		up: { deltaX: 0, deltaY: -amount },
+		down: { deltaX: 0, deltaY: amount },
+		left: { deltaX: -amount, deltaY: 0 },
+		right: { deltaX: amount, deltaY: 0 },
+	};
+	const delta = deltas[direction];
+	if (!delta) {
+		throw browserError("INVALID_ARGUMENT", "direction must be up, down, left, or right");
+	}
+	const viewport = (await entry.view.webContents.debugger.sendCommand("Runtime.evaluate", {
+		expression: "({x: Math.max(0, innerWidth / 2), y: Math.max(0, innerHeight / 2)})",
+		returnByValue: true,
+	})) as { result?: { value?: { x?: number; y?: number } } };
+	await entry.view.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
+		type: "mouseWheel",
+		x: viewport.result?.value?.x ?? 0,
+		y: viewport.result?.value?.y ?? 0,
+		...delta,
+	});
+	return { direction, amount, url: entry.view.webContents.getURL() };
+}
+
+async function selectEntry(entry: BrowserEntry, refName: string, value: string): Promise<unknown> {
+	const objectId = await resolveRef(entry, refName);
+	const response = (await entry.view.webContents.debugger.sendCommand("Runtime.callFunctionOn", {
+		objectId,
+		functionDeclaration: `function(next){
+			if (!(this instanceof HTMLSelectElement)) return {supported:false};
+			const values = Array.isArray(next) ? next : [next];
+			const matched = Array.from(this.options).some((option) => values.includes(option.value));
+			if (!matched) return {supported:true, matched:false, value:this.value};
+			for (const option of this.options) option.selected = values.includes(option.value);
+			this.dispatchEvent(new Event('input', {bubbles:true, composed:true}));
+			this.dispatchEvent(new Event('change', {bubbles:true, composed:true}));
+			return {supported:true, matched:true, value:this.value};
+		}`,
+		arguments: [{ value }],
+		returnByValue: true,
+	})) as { result?: { value?: { supported?: boolean; matched?: boolean; value?: string } } };
+	if (!response.result?.value?.supported) {
+		throw browserError("INVALID_ELEMENT_STATE", `Element ${refName} is not a select control`);
+	}
+	if (!response.result.value.matched) {
+		throw browserError("INVALID_ARGUMENT", `Select option ${JSON.stringify(value)} does not exist`);
+	}
+	return { ref: refName, value: response.result.value.value, url: entry.view.webContents.getURL() };
+}
+
+async function checkEntry(entry: BrowserEntry, refName: string, checked: boolean): Promise<unknown> {
+	const objectId = await resolveRef(entry, refName);
+	const response = (await entry.view.webContents.debugger.sendCommand("Runtime.callFunctionOn", {
+		objectId,
+		functionDeclaration: `function(next){
+			if (!('checked' in this)) return {supported:false};
+			if (Boolean(this.checked) !== Boolean(next)) this.click();
+			return {supported:true, checked:Boolean(this.checked)};
+		}`,
+		arguments: [{ value: checked }],
+		returnByValue: true,
+	})) as { result?: { value?: { supported?: boolean; checked?: boolean } } };
+	if (!response.result?.value?.supported) {
+		throw browserError("INVALID_ELEMENT_STATE", `Element ${refName} is not checkable`);
+	}
+	if (response.result.value.checked !== checked) {
+		throw browserError("ELEMENT_NOT_INTERACTABLE", `Element ${refName} did not change checked state`);
+	}
+	return { ref: refName, checked: response.result.value.checked, url: entry.view.webContents.getURL() };
+}
+
+async function getEntry(entry: BrowserEntry, property: string, refName?: string): Promise<unknown> {
+	const normalized = property.toLowerCase();
+	if (!refName) {
+		if (normalized === "url") return { property: normalized, value: entry.view.webContents.getURL() };
+		if (normalized === "title") return { property: normalized, value: entry.view.webContents.getTitle() };
+		if (normalized !== "text") {
+			throw browserError("INVALID_ARGUMENT", "page property must be url, title, or text");
+		}
+		await ensureDebugger(entry);
+		const response = (await entry.view.webContents.debugger.sendCommand("Runtime.evaluate", {
+			expression: "document.body ? document.body.innerText : ''",
+			returnByValue: true,
+		})) as { result?: { value?: unknown } };
+		return { property: normalized, value: response.result?.value ?? "" };
+	}
+	if (!["text", "value", "checked"].includes(normalized)) {
+		throw browserError("INVALID_ARGUMENT", "element property must be text, value, or checked");
+	}
+	const objectId = await resolveRef(entry, refName);
+	const response = (await entry.view.webContents.debugger.sendCommand("Runtime.callFunctionOn", {
+		objectId,
+		functionDeclaration: `function(property){
+			if (property === 'text') return this.innerText ?? this.textContent ?? '';
+			if (property === 'value') return this.value ?? '';
+			if (property === 'checked') return Boolean(this.checked);
+		}`,
+		arguments: [{ value: normalized }],
+		returnByValue: true,
+	})) as { result?: { value?: unknown } };
+	return {
+		ref: refName,
+		property: normalized,
+		value: response.result?.value,
+		url: entry.view.webContents.getURL(),
+	};
 }
 
 async function resolveRef(entry: BrowserEntry, refName: string): Promise<string> {

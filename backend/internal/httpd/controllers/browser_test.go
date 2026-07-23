@@ -67,6 +67,30 @@ func TestBrowserStatusAndSnapshot(t *testing.T) {
 	}
 }
 
+func TestBrowserCoreInteractionActionsReachRuntime(t *testing.T) {
+	runtime := &fakeBrowserRuntime{}
+	srv := browserServer(t, runtime)
+	actions := []string{"type", "press", "hover", "scroll", "select", "check", "uncheck", "get"}
+
+	for _, action := range actions {
+		t.Run(action, func(t *testing.T) {
+			body, status, _ := doRequest(
+				t,
+				srv,
+				http.MethodPost,
+				"/api/v1/browser/commands",
+				`{"sessionId":"ao-1","action":"`+action+`","args":{"probe":true}}`,
+			)
+			if status != http.StatusOK {
+				t.Fatalf("%s = %d body=%s", action, status, body)
+			}
+			if runtime.action != action || runtime.args["probe"] != true {
+				t.Fatalf("runtime command = %q %#v", runtime.action, runtime.args)
+			}
+		})
+	}
+}
+
 func TestBrowserCommandValidationAndErrors(t *testing.T) {
 	runtime := &fakeBrowserRuntime{}
 	srv := browserServer(t, runtime)

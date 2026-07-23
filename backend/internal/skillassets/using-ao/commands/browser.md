@@ -14,6 +14,8 @@ ao browser open http://localhost:5173
 ao browser snapshot
 ao browser click e1
 ao browser fill e2 "hello"
+ao browser press Enter
+ao browser hover e3
 ao browser wait --text "Saved"
 ao browser snapshot
 ao browser errors
@@ -29,11 +31,24 @@ ao browser open <url> [--json]
 ao browser snapshot [--interactive] [--json]
 ao browser click <ref> [--json]
 ao browser fill <ref> <text> [--json]
+ao browser type <ref> <text> [--json]
+ao browser press <key> [--json]
+ao browser hover <ref> [--json]
+ao browser scroll <up|down|left|right> [--amount <pixels>] [--json]
+ao browser select <ref> <value> [--json]
+ao browser check <ref> [--json]
+ao browser uncheck <ref> [--json]
+ao browser get <property> [ref] [--json]
 ao browser wait (--text <text> | --selector <css> | --url <substring> | --ms <milliseconds>) [--timeout <milliseconds>] [--json]
 ao browser screenshot [path] [--json]
 ao browser console [--json]
 ao browser errors [--json]
 ```
+
+`fill` replaces the current value, while `type` inserts text at the current
+cursor position. `press` accepts named keys and chords such as `Enter`,
+`ArrowDown`, and `Control+A`. Page-level `get` supports `url`, `title`, and
+`text`; with an element ref it supports `text`, `value`, and `checked`.
 
 Without `--json`, `screenshot` writes a PNG and refuses to overwrite an existing file. With `--json`, it returns the structured response including base64 image data.
 

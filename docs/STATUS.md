@@ -64,8 +64,10 @@ surface (`npm run sqlc`, `npm run api`).
 - Target-isolated per-session browser-control spike: a dedicated local
   daemon↔Electron bridge drives only the selected session's `WebContentsView`
   through Electron's bound debugger transport. `ao browser` supports open,
-  compact accessibility snapshots and refs, click/fill, waits, screenshots,
-  console messages, and page errors while the Browser panel is hidden.
+  compact accessibility snapshots and refs, click/fill/type, keyboard input,
+  hover, scrolling, selection and checked state, property reads, waits,
+  screenshots, console messages, and page errors while the Browser panel is
+  hidden.
 - Real daemon wiring via the generated `openapi-fetch` typed client
   (`src/api/schema.ts`); mock data only in `VITE_NO_ELECTRON` web-preview mode.
 - Electron main handles daemon discovery, launch, and status reporting.

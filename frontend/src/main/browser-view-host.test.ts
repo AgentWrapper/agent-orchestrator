@@ -336,6 +336,93 @@ describe("agent browser runtime", () => {
 		);
 	});
 
+	it("supports keyboard, pointer, form, scroll, and property actions on the session target", async () => {
+		const { debuggerSendCommand, host } = setupHost();
+		debuggerSendCommand.mockImplementation(async (method: string, params?: Record<string, unknown>) => {
+			if (method === "Accessibility.getFullAXTree") {
+				return {
+					nodes: [
+						{
+							nodeId: "1",
+							backendDOMNodeId: 88,
+							role: { value: "textbox" },
+							name: { value: "Search" },
+						},
+					],
+				};
+			}
+			if (method === "DOM.resolveNode") return { object: { objectId: "target-element" } };
+			if (method === "DOM.getBoxModel") {
+				return { model: { border: [10, 20, 30, 20, 30, 40, 10, 40] } };
+			}
+			if (method === "Runtime.evaluate") return { result: { value: { x: 400, y: 300 } } };
+			if (method === "Runtime.callFunctionOn") {
+				const declaration = String(params?.functionDeclaration ?? "");
+				if (declaration.includes("HTMLSelectElement")) {
+					return { result: { value: { supported: true, matched: true, value: "large" } } };
+				}
+				if (declaration.includes("'checked' in this")) {
+					const desired = (params?.arguments as Array<{ value?: boolean }> | undefined)?.[0]?.value;
+					return { result: { value: { supported: true, checked: desired } } };
+				}
+				if (declaration.includes("function(property)")) {
+					return { result: { value: "current value" } };
+				}
+			}
+			return {};
+		});
+
+		await host.execute("sess-1", "snapshot", { interactive: true });
+		await host.execute("sess-1", "type", { ref: "e1", text: "hello" });
+		await host.execute("sess-1", "press", { key: "Control+A" });
+		await host.execute("sess-1", "hover", { ref: "e1" });
+		await host.execute("sess-1", "scroll", { direction: "down", amount: 450 });
+		await host.execute("sess-1", "select", { ref: "e1", value: "large" });
+		await host.execute("sess-1", "check", { ref: "e1" });
+		await host.execute("sess-1", "uncheck", { ref: "e1" });
+		const property = (await host.execute("sess-1", "get", {
+			property: "value",
+			ref: "e1",
+		})) as { value: string };
+
+		expect(property.value).toBe("current value");
+		expect(debuggerSendCommand).toHaveBeenCalledWith("Input.insertText", { text: "hello" });
+		expect(debuggerSendCommand).toHaveBeenCalledWith(
+			"Input.dispatchKeyEvent",
+			expect.objectContaining({ type: "rawKeyDown", key: "a", modifiers: 2 }),
+		);
+		expect(debuggerSendCommand).toHaveBeenCalledWith("Input.dispatchMouseEvent", {
+			type: "mouseMoved",
+			x: 20,
+			y: 30,
+		});
+		expect(debuggerSendCommand).toHaveBeenCalledWith(
+			"Input.dispatchMouseEvent",
+			expect.objectContaining({ type: "mouseWheel", deltaY: 450, x: 400, y: 300 }),
+		);
+		expect(debuggerSendCommand).toHaveBeenCalledWith(
+			"Runtime.callFunctionOn",
+			expect.objectContaining({
+				arguments: [{ value: false }],
+				functionDeclaration: expect.stringContaining("this.click()"),
+			}),
+		);
+	});
+
+	it("rejects unsupported keys, scroll directions, and property names", async () => {
+		const { host } = setupHost();
+
+		await expect(host.execute("sess-1", "press", { key: "Hyper+K" })).rejects.toMatchObject({
+			code: "INVALID_ARGUMENT",
+		});
+		await expect(host.execute("sess-1", "scroll", { direction: "diagonal" })).rejects.toMatchObject({
+			code: "INVALID_ARGUMENT",
+		});
+		await expect(host.execute("sess-1", "get", { property: "html" })).rejects.toMatchObject({
+			code: "INVALID_ARGUMENT",
+		});
+	});
+
 	it("invalidates refs after navigation", async () => {
 		const { debuggerSendCommand, host, webContentsListeners } = setupHost();
 		debuggerSendCommand.mockImplementation(async (method: string) => {

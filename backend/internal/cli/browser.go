@@ -107,6 +107,91 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 		},
 	})
 
+	cmd.AddCommand(&cobra.Command{
+		Use:   "type <ref> <text>",
+		Short: "Type text at the current cursor position in a form control",
+		Args:  exactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return ctx.runBrowserAction(cmd, "type", map[string]any{"ref": args[0], "text": args[1]}, jsonOutput)
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "press <key>",
+		Short: "Press a key or modifier chord such as Enter or Control+A",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return ctx.runBrowserAction(cmd, "press", map[string]any{"key": args[0]}, jsonOutput)
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "hover <ref>",
+		Short: "Move the pointer over an element",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return ctx.runBrowserAction(cmd, "hover", map[string]any{"ref": args[0]}, jsonOutput)
+		},
+	})
+
+	var scrollAmount int
+	scroll := &cobra.Command{
+		Use:   "scroll <up|down|left|right>",
+		Short: "Scroll the page in one direction",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return ctx.runBrowserAction(
+				cmd,
+				"scroll",
+				map[string]any{"direction": args[0], "amount": scrollAmount},
+				jsonOutput,
+			)
+		},
+	}
+	scroll.Flags().IntVar(&scrollAmount, "amount", 600, "scroll distance in CSS pixels")
+	cmd.AddCommand(scroll)
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "select <ref> <value>",
+		Short: "Select an option value",
+		Args:  exactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return ctx.runBrowserAction(cmd, "select", map[string]any{"ref": args[0], "value": args[1]}, jsonOutput)
+		},
+	})
+
+	for _, checked := range []bool{true, false} {
+		checked := checked
+		action := "check"
+		short := "Check a checkbox or switch"
+		if !checked {
+			action = "uncheck"
+			short = "Uncheck a checkbox or switch"
+		}
+		cmd.AddCommand(&cobra.Command{
+			Use:   action + " <ref>",
+			Short: short,
+			Args:  exactArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				return ctx.runBrowserAction(cmd, action, map[string]any{"ref": args[0]}, jsonOutput)
+			},
+		})
+	}
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "get <property> [ref]",
+		Short: "Read a page or element property",
+		Long:  "Read url, title, or text from the page, or text, value, or checked from an element reference.",
+		Args:  rangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			actionArgs := map[string]any{"property": args[0]}
+			if len(args) == 2 {
+				actionArgs["ref"] = args[1]
+			}
+			return ctx.runBrowserAction(cmd, "get", actionArgs, jsonOutput)
+		},
+	})
+
 	var waitText, waitSelector, waitURL string
 	var waitMS, timeoutMS int
 	waitCmd := &cobra.Command{
@@ -189,6 +274,15 @@ func exactArgs(n int) cobra.PositionalArgs {
 	}
 }
 
+func rangeArgs(min, max int) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if err := cobra.RangeArgs(min, max)(cmd, args); err != nil {
+			return usageError{err}
+		}
+		return nil
+	}
+}
+
 func currentBrowserSessionID() (string, error) {
 	sessionID := strings.TrimSpace(os.Getenv("AO_SESSION_ID"))
 	if sessionID == "" {
@@ -251,6 +345,12 @@ func writeBrowserResult(cmd *cobra.Command, action string, result map[string]any
 			}
 		}
 		return nil
+	}
+	if action == "get" {
+		if value, ok := result["value"]; ok {
+			_, err := fmt.Fprintln(cmd.OutOrStdout(), value)
+			return err
+		}
 	}
 	if currentURL, ok := result["url"].(string); ok && currentURL != "" {
 		_, err := fmt.Fprintln(cmd.OutOrStdout(), currentURL)
