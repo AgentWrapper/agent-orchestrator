@@ -576,7 +576,7 @@ flowchart TD
 
 ```
 
-**Key principle:** Failed probes are NOT proof of death. A session is only terminated when the runtime and process are **both** clearly dead and recent activity doesn't contradict that.
+**Key principle:** Failed probes are NOT proof of death. A session is only terminated when the runtime and process are **both** clearly dead and recent activity doesn't contradict that. A confirmed `ProbeDead` overrides sticky `blocked` / `waiting_input` activity states: the agent process is gone and cannot emit the signal that would clear the sticky state, so the session is terminated. `ProbeFailed` and `ProbeAlive` never prove death and never override sticky states. Runtime observations carry the `RuntimeHandleID` of the runtime generation that was probed; if the session is killed and restored under the same ID while a probe is in flight, the late result for the old runtime is rejected by handle-ID comparison.
 
 ---
 

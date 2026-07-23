@@ -1570,63 +1570,47 @@ func TestSCMObservation_ReadyToMergeSuppressedWhileWaitingInput(t *testing.T) {
 	}
 }
 
-func TestRuntimeObservation_DeadProbeTerminatesBlockedSession(t *testing.T) {
-	m, st, _ := newManager()
-	rec := working("mer-1")
-	rec.Activity.State = domain.ActivityBlocked
-	rec.Activity.LastActivityAt = time.Now()
-	st.sessions["mer-1"] = rec
-	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{Probe: ports.ProbeDead}); err != nil {
-		t.Fatal(err)
+func TestRuntimeObservation_StickyStateProbeMatrix(t *testing.T) {
+	tests := []struct {
+		name     string
+		state    domain.ActivityState
+		probe    ports.ProbeResult
+		handleID string
+		term     bool
+		mutate   bool
+	}{
+		{name: "dead probe terminates blocked", state: domain.ActivityBlocked, probe: ports.ProbeDead, term: true},
+		{name: "dead probe terminates waiting_input", state: domain.ActivityWaitingInput, probe: ports.ProbeDead, term: true},
+		{name: "failed probe does not terminate blocked", state: domain.ActivityBlocked, probe: ports.ProbeFailed, term: false, mutate: false},
+		{name: "alive probe does not terminate waiting_input", state: domain.ActivityWaitingInput, probe: ports.ProbeAlive, term: false, mutate: false},
+		{name: "stale handle dead probe does not terminate blocked", state: domain.ActivityBlocked, probe: ports.ProbeDead, handleID: "old-handle", term: false, mutate: false},
+		{name: "stale handle dead probe does not terminate waiting_input", state: domain.ActivityWaitingInput, probe: ports.ProbeDead, handleID: "old-handle", term: false, mutate: false},
 	}
-	got := st.sessions["mer-1"]
-	if !got.IsTerminated || got.Activity.State != domain.ActivityExited {
-		t.Fatalf("want terminated/exited, got isTerminated=%v state=%q", got.IsTerminated, got.Activity.State)
-	}
-}
-
-func TestRuntimeObservation_DeadProbeTerminatesWaitingInputSession(t *testing.T) {
-	m, st, _ := newManager()
-	rec := working("mer-1")
-	rec.Activity.State = domain.ActivityWaitingInput
-	rec.Activity.LastActivityAt = time.Now()
-	st.sessions["mer-1"] = rec
-	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{Probe: ports.ProbeDead}); err != nil {
-		t.Fatal(err)
-	}
-	got := st.sessions["mer-1"]
-	if !got.IsTerminated || got.Activity.State != domain.ActivityExited {
-		t.Fatalf("want terminated/exited, got isTerminated=%v state=%q", got.IsTerminated, got.Activity.State)
-	}
-}
-
-func TestRuntimeObservation_FailedProbeDoesNotTerminateBlockedSession(t *testing.T) {
-	m, st, _ := newManager()
-	rec := working("mer-1")
-	rec.Activity.State = domain.ActivityBlocked
-	rec.Activity.LastActivityAt = time.Now()
-	st.sessions["mer-1"] = rec
-	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{Probe: ports.ProbeFailed}); err != nil {
-		t.Fatal(err)
-	}
-	got := st.sessions["mer-1"]
-	if got.IsTerminated {
-		t.Fatalf("failed probe must not terminate blocked session, got isTerminated=%v", got.IsTerminated)
-	}
-}
-
-func TestRuntimeObservation_AliveProbeDoesNotTerminateWaitingInputSession(t *testing.T) {
-	m, st, _ := newManager()
-	rec := working("mer-1")
-	rec.Activity.State = domain.ActivityWaitingInput
-	rec.Activity.LastActivityAt = time.Now()
-	st.sessions["mer-1"] = rec
-	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{Probe: ports.ProbeAlive}); err != nil {
-		t.Fatal(err)
-	}
-	got := st.sessions["mer-1"]
-	if got.IsTerminated {
-		t.Fatalf("alive probe must not terminate waiting_input session, got isTerminated=%v", got.IsTerminated)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, st, _ := newManager()
+			rec := working("mer-1")
+			rec.Activity.State = tt.state
+			rec.Activity.LastActivityAt = time.Now()
+			rec.Metadata.RuntimeHandleID = "h1"
+			st.sessions["mer-1"] = rec
+			facts := ports.RuntimeFacts{Probe: tt.probe}
+			if tt.handleID != "" {
+				facts.RuntimeHandleID = tt.handleID
+			}
+			before := st.sessions["mer-1"]
+			if err := m.ApplyRuntimeObservation(ctx, "mer-1", facts); err != nil {
+				t.Fatal(err)
+			}
+			got := st.sessions["mer-1"]
+			if tt.term {
+				if !got.IsTerminated || got.Activity.State != domain.ActivityExited {
+					t.Fatalf("want terminated/exited, got isTerminated=%v state=%q", got.IsTerminated, got.Activity.State)
+				}
+			} else if tt.mutate == false && got != before {
+				t.Fatalf("non-dead probe must not mutate session record, got %+v", got)
+			}
+		})
 	}
 }
 

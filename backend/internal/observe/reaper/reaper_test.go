@@ -60,8 +60,12 @@ func TestTick_ReportsAliveProbe(t *testing.T) {
 	if err := newReaper(lcm, sessions, fakeRuntime{alive: true}).Tick(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if lcm.observed["mer-1"].Probe != ports.ProbeAlive {
-		t.Fatalf("want alive probe, got %q", lcm.observed["mer-1"].Probe)
+	got := lcm.observed["mer-1"]
+	if got.Probe != ports.ProbeAlive {
+		t.Fatalf("want alive probe, got %q", got.Probe)
+	}
+	if got.RuntimeHandleID != "h1" {
+		t.Fatalf("want RuntimeHandleID h1, got %q", got.RuntimeHandleID)
 	}
 }
 

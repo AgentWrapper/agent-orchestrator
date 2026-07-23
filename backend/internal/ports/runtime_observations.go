@@ -19,9 +19,14 @@ const (
 )
 
 // RuntimeFacts is what the reaper reports each probe of a session runtime.
+// RuntimeHandleID ties the observation to the specific runtime generation that
+// was probed. If the session is killed and restored under the same ID while a
+// probe is in flight, the late result for the old runtime carries a stale
+// handle ID and the lifecycle manager rejects it.
 type RuntimeFacts struct {
-	ObservedAt time.Time
-	Probe      ProbeResult
+	ObservedAt      time.Time
+	Probe           ProbeResult
+	RuntimeHandleID string
 }
 
 // ActivitySignal is pushed by the agent hooks. Only a Valid activity state is

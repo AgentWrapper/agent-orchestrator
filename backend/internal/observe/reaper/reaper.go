@@ -148,7 +148,7 @@ func (r *Reaper) probeOne(ctx context.Context, sess domain.SessionRecord, now ti
 		return
 	}
 	alive, probeErr := r.runtime.IsAlive(ctx, handle)
-	facts := ports.RuntimeFacts{ObservedAt: now}
+	facts := ports.RuntimeFacts{ObservedAt: now, RuntimeHandleID: handle.ID}
 	switch {
 	case probeErr != nil:
 		// Failed probe must NOT be collapsed to alive — that would let a
