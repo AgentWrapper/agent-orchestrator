@@ -567,6 +567,22 @@ func (s *Service) Get(ctx context.Context, id domain.SessionID) (domain.Session,
 	return s.toSession(ctx, rec)
 }
 
+// GetPreviewWorkspace returns the durable workspace path for preview transport
+// requests without assembling the enriched session read model.
+func (s *Service) GetPreviewWorkspace(ctx context.Context, id domain.SessionID) (string, error) {
+	rec, ok, err := s.store.GetSession(ctx, id)
+	if err != nil {
+		return "", fmt.Errorf("get %s: %w", id, err)
+	}
+	if !ok {
+		return "", apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	if rec.Metadata.WorkspacePath == "" {
+		return "", ErrSessionNoWorkspace
+	}
+	return rec.Metadata.WorkspacePath, nil
+}
+
 // toAPIError maps the session engine's sentinel errors to their REST API
 // equivalents; an unrecognized error passes through and surfaces as a 500.
 func toAPIError(err error) error {

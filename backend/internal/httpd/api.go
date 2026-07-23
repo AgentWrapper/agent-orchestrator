@@ -23,6 +23,7 @@ type APIDeps struct {
 	Agents             controllers.AgentCatalog
 	Projects           projectsvc.Manager
 	Sessions           controllers.SessionService
+	PreviewSessions    PreviewSessionService
 	Activity           controllers.ActivityRecorder
 	PRs                prsvc.ActionManager
 	Reviews            reviewsvc.Manager

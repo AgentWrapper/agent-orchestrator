@@ -22,14 +22,15 @@ func (f *fakeTelemetrySink) Emit(_ context.Context, ev ports.TelemetryEvent) {
 func (f *fakeTelemetrySink) Close(context.Context) error { return nil }
 
 type fakeStore struct {
-	sessions map[domain.SessionID]domain.SessionRecord
-	pr       map[domain.SessionID]domain.PRFacts
-	projects map[string]domain.ProjectRecord
-	checks   map[string][]domain.PullRequestCheck
-	reviews  map[string][]domain.PullRequestReview
-	threads  map[string][]domain.PullRequestReviewThread
-	comments map[string][]domain.PullRequestComment
-	num      int
+	sessions               map[domain.SessionID]domain.SessionRecord
+	pr                     map[domain.SessionID]domain.PRFacts
+	projects               map[string]domain.ProjectRecord
+	checks                 map[string][]domain.PullRequestCheck
+	reviews                map[string][]domain.PullRequestReview
+	threads                map[string][]domain.PullRequestReviewThread
+	comments               map[string][]domain.PullRequestComment
+	num                    int
+	getDisplayPRFactsCalls int
 }
 
 func newFakeStore() *fakeStore {
@@ -97,6 +98,7 @@ func (f *fakeStore) SetSessionPreviewURL(_ context.Context, id domain.SessionID,
 }
 
 func (f *fakeStore) GetDisplayPRFactsForSession(_ context.Context, id domain.SessionID) (domain.PRFacts, bool, error) {
+	f.getDisplayPRFactsCalls++
 	pr, ok := f.pr[id]
 	return pr, ok, nil
 }
@@ -178,6 +180,26 @@ func TestSessionSetPreviewPersistsURL(t *testing.T) {
 	}
 	if got := st.sessions["mer-1"].Metadata.PreviewURL; got != "file:///tmp/index.html" {
 		t.Fatalf("persisted preview url = %q, want set value", got)
+	}
+}
+
+func TestGetPreviewWorkspaceLoadsOnlyDurableSessionRecord(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:        "ao-1",
+		ProjectID: "ao",
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/tmp/ao-1"},
+	}
+
+	workspace, err := (&Service{store: st}).GetPreviewWorkspace(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workspace != "/tmp/ao-1" {
+		t.Fatalf("workspace = %q, want durable workspace path", workspace)
+	}
+	if st.getDisplayPRFactsCalls != 0 {
+		t.Fatalf("GetDisplayPRFactsForSession calls = %d, want 0", st.getDisplayPRFactsCalls)
 	}
 }
 
