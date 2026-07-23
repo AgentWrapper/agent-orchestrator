@@ -134,6 +134,72 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 		},
 	})
 
+	cmd.AddCommand(&cobra.Command{
+		Use:   "highlight <ref>",
+		Short: "Visually highlight an element without changing page state",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return ctx.runBrowserAction(cmd, "highlight", map[string]any{"ref": args[0]}, jsonOutput)
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "unhighlight",
+		Short: "Remove the current element highlight",
+		Args:  noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return ctx.runBrowserAction(cmd, "unhighlight", nil, jsonOutput)
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "tabs",
+		Short: "List this session's browser tabs",
+		Args:  noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return ctx.runBrowserAction(cmd, "tabs", nil, jsonOutput)
+		},
+	})
+
+	tabCmd := &cobra.Command{
+		Use:   "tab",
+		Short: "Create, select, or close a browser tab",
+		Args:  noArgs,
+	}
+	tabCmd.AddCommand(&cobra.Command{
+		Use:   "new [url]",
+		Short: "Open a new tab, optionally navigating to a URL",
+		Args:  atMostOneArg,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			actionArgs := map[string]any{}
+			if len(args) == 1 {
+				actionArgs["url"] = args[0]
+			}
+			return ctx.runBrowserAction(cmd, "tab-new", actionArgs, jsonOutput)
+		},
+	})
+	tabCmd.AddCommand(&cobra.Command{
+		Use:   "select <tab-id>",
+		Short: "Make a browser tab active",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return ctx.runBrowserAction(cmd, "tab-select", map[string]any{"tabId": args[0]}, jsonOutput)
+		},
+	})
+	tabCmd.AddCommand(&cobra.Command{
+		Use:   "close [tab-id]",
+		Short: "Close a browser tab, defaulting to the active tab",
+		Args:  atMostOneArg,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			actionArgs := map[string]any{}
+			if len(args) == 1 {
+				actionArgs["tabId"] = args[0]
+			}
+			return ctx.runBrowserAction(cmd, "tab-close", actionArgs, jsonOutput)
+		},
+	})
+	cmd.AddCommand(tabCmd)
+
 	var scrollAmount int
 	scroll := &cobra.Command{
 		Use:   "scroll <up|down|left|right>",
@@ -351,6 +417,27 @@ func writeBrowserResult(cmd *cobra.Command, action string, result map[string]any
 			_, err := fmt.Fprintln(cmd.OutOrStdout(), value)
 			return err
 		}
+	}
+	if action == "tabs" {
+		tabs, _ := result["tabs"].([]any)
+		if len(tabs) == 0 {
+			_, err := fmt.Fprintln(cmd.OutOrStdout(), "No browser tabs.")
+			return err
+		}
+		for _, raw := range tabs {
+			tab, _ := raw.(map[string]any)
+			id, _ := tab["id"].(string)
+			title, _ := tab["title"].(string)
+			currentURL, _ := tab["url"].(string)
+			marker := " "
+			if active, _ := tab["active"].(bool); active {
+				marker = "*"
+			}
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s %s\t%s\t%s\n", marker, id, title, currentURL); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 	if currentURL, ok := result["url"].(string); ok && currentURL != "" {
 		_, err := fmt.Fprintln(cmd.OutOrStdout(), currentURL)

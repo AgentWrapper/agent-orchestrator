@@ -15,22 +15,28 @@ import (
 )
 
 var browserActions = map[string]struct{}{
-	"open":       {},
-	"snapshot":   {},
-	"click":      {},
-	"fill":       {},
-	"type":       {},
-	"press":      {},
-	"hover":      {},
-	"scroll":     {},
-	"select":     {},
-	"check":      {},
-	"uncheck":    {},
-	"get":        {},
-	"wait":       {},
-	"screenshot": {},
-	"console":    {},
-	"errors":     {},
+	"open":        {},
+	"snapshot":    {},
+	"click":       {},
+	"fill":        {},
+	"type":        {},
+	"press":       {},
+	"hover":       {},
+	"highlight":   {},
+	"unhighlight": {},
+	"tabs":        {},
+	"tab-new":     {},
+	"tab-select":  {},
+	"tab-close":   {},
+	"scroll":      {},
+	"select":      {},
+	"check":       {},
+	"uncheck":     {},
+	"get":         {},
+	"wait":        {},
+	"screenshot":  {},
+	"console":     {},
+	"errors":      {},
 }
 
 type BrowserRuntime interface {
@@ -121,10 +127,10 @@ func writeBrowserError(w http.ResponseWriter, r *http.Request, err error) {
 		status := http.StatusUnprocessableEntity
 		typeName := "unprocessable"
 		switch commandErr.Code {
-		case "INVALID_ARGUMENT", "URL_REQUIRED", "REFERENCE_REQUIRED":
+		case "INVALID_ARGUMENT", "URL_REQUIRED", "REFERENCE_REQUIRED", "TAB_ID_REQUIRED":
 			status = http.StatusBadRequest
 			typeName = "bad_request"
-		case "STALE_REFERENCE":
+		case "STALE_REFERENCE", "TAB_NOT_FOUND":
 			status = http.StatusConflict
 			typeName = "conflict"
 		case "BROWSER_TARGET_UNAVAILABLE":

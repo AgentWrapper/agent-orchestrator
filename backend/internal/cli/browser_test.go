@@ -38,6 +38,8 @@ func browserCLIServer(t *testing.T, capture *browserRequestCapture) *httptest.Se
 			result = `{"text":"button Save [ref=e1]"}`
 		case "screenshot":
 			result = `{"data":"cG5n","width":10,"height":20}`
+		case "tabs":
+			result = `{"activeTabId":"t2","tabs":[{"id":"t1","title":"First","url":"http://localhost:3000/","active":false},{"id":"t2","title":"Second","url":"http://localhost:4173/","active":true}]}`
 		}
 		_, _ = io.WriteString(w, `{"requestId":"r1","sessionId":"ao-1","action":"`+capture.body.Action+`","result":`+result+`}`)
 	}))
@@ -108,6 +110,12 @@ func TestBrowserCoreInteractionArguments(t *testing.T) {
 		{name: "type", args: []string{"type", "e1", "hello"}, action: "type", want: map[string]any{"ref": "e1", "text": "hello"}},
 		{name: "press", args: []string{"press", "Control+A"}, action: "press", want: map[string]any{"key": "Control+A"}},
 		{name: "hover", args: []string{"hover", "e2"}, action: "hover", want: map[string]any{"ref": "e2"}},
+		{name: "highlight", args: []string{"highlight", "e2"}, action: "highlight", want: map[string]any{"ref": "e2"}},
+		{name: "unhighlight", args: []string{"unhighlight"}, action: "unhighlight", want: map[string]any{}},
+		{name: "tabs", args: []string{"tabs"}, action: "tabs", want: map[string]any{}},
+		{name: "tab new", args: []string{"tab", "new", "localhost:4173"}, action: "tab-new", want: map[string]any{"url": "localhost:4173"}},
+		{name: "tab select", args: []string{"tab", "select", "t2"}, action: "tab-select", want: map[string]any{"tabId": "t2"}},
+		{name: "tab close", args: []string{"tab", "close", "t1"}, action: "tab-close", want: map[string]any{"tabId": "t1"}},
 		{name: "scroll", args: []string{"scroll", "down", "--amount", "450"}, action: "scroll", want: map[string]any{"direction": "down", "amount": float64(450)}},
 		{name: "select", args: []string{"select", "e3", "large"}, action: "select", want: map[string]any{"ref": "e3", "value": "large"}},
 		{name: "check", args: []string{"check", "e4"}, action: "check", want: map[string]any{"ref": "e4"}},
@@ -128,6 +136,22 @@ func TestBrowserCoreInteractionArguments(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestBrowserTabsPrintStableIDsAndActiveTab(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-1")
+	cfg := setConfigEnv(t)
+	capture := &browserRequestCapture{}
+	srv := browserCLIServer(t, capture)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "browser", "tabs")
+	if err != nil {
+		t.Fatalf("tabs err=%v stderr=%s", err, errOut)
+	}
+	if !strings.Contains(out, "  t1") || !strings.Contains(out, "* t2") {
+		t.Fatalf("tabs output = %q", out)
 	}
 }
 

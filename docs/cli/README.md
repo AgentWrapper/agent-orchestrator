@@ -85,9 +85,13 @@ opens that URL verbatim (`file://`, `http`, `https`).
 session-owned live Electron browser rather than only setting its preview URL.
 The target-isolated command set includes `status`, `open`, `snapshot`, `click`,
 `fill`, `type`, `press`, `hover`, `scroll`, `select`, `check`, `uncheck`, `get`,
-`wait`, `screenshot`, `console`, and `errors`. The AO desktop app must be open
-because Electron owns the `WebContentsView`. References from a snapshot are
-invalidated after navigation or DOM replacement; take another snapshot when a
+`highlight`, `unhighlight`, `tabs`, `tab new`, `tab select`, `tab close`,
+`wait`, `screenshot`, `console`, and `errors`. Logical tab IDs remain stable
+for the session, and allowed popups become AO browser tabs rather than separate
+OS-browser windows. The AO desktop app must be open because Electron owns the
+`WebContentsView`.
+References from a snapshot are invalidated after navigation or DOM replacement;
+they are also invalidated when changing tabs. Take another snapshot when a
 command reports `STALE_REFERENCE`.
 
 `go run .` in `backend/` remains a compatibility wrapper around the daemon.

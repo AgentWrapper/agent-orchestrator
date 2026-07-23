@@ -65,7 +65,8 @@ surface (`npm run sqlc`, `npm run api`).
   daemon↔Electron bridge drives only the selected session's `WebContentsView`
   through Electron's bound debugger transport. `ao browser` supports open,
   compact accessibility snapshots and refs, click/fill/type, keyboard input,
-  hover, scrolling, selection and checked state, property reads, waits,
+  hover and non-mutating element highlighting, scrolling, selection and checked
+  state, property reads, stable logical tabs and captured popups, waits,
   screenshots, console messages, and page errors while the Browser panel is
   hidden.
 - Real daemon wiring via the generated `openapi-fetch` typed client

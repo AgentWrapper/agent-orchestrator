@@ -153,6 +153,109 @@ function setupHost() {
 	};
 }
 
+function setupTabHost() {
+	const views: Array<{
+		webContents: {
+			id: number;
+			getURL: () => string;
+			loadURL: ReturnType<typeof vi.fn>;
+			openWindow: (url: string) => void;
+			close: ReturnType<typeof vi.fn>;
+		};
+		setBounds: ReturnType<typeof vi.fn>;
+		setVisible: ReturnType<typeof vi.fn>;
+	}> = [];
+	let nextID = 100;
+	const makeView = () => {
+		let currentURL = "";
+		let windowOpenHandler: ((details: { url: string }) => { action: string }) | undefined;
+		const listeners = new Map<string, (...args: never[]) => void>();
+		let debuggerAttached = false;
+		const webContents = {
+			id: nextID++,
+			mainFrame: {},
+			canGoBack: () => false,
+			canGoForward: () => false,
+			capturePage: vi.fn(async () => ({
+				isEmpty: () => false,
+				toJPEG: () => Buffer.from("snapshot"),
+				toPNG: () => Buffer.from("snapshot"),
+				getSize: () => ({ width: 640, height: 480 }),
+			})),
+			clearHistory: () => undefined,
+			debugger: {
+				attach: () => {
+					debuggerAttached = true;
+				},
+				detach: () => {
+					debuggerAttached = false;
+				},
+				isAttached: () => debuggerAttached,
+				on: () => undefined,
+				sendCommand: async (method: string) => {
+					if (method === "Runtime.evaluate") return { result: { value: true } };
+					if (method === "Accessibility.getFullAXTree") {
+						return {
+							nodes: [
+								{
+									nodeId: "1",
+									backendDOMNodeId: 42,
+									role: { value: "button" },
+									name: { value: "Open" },
+								},
+							],
+						};
+					}
+					if (method === "DOM.resolveNode") return { object: { objectId: "button" } };
+					return {};
+				},
+			},
+			getTitle: () => (currentURL ? `Title ${currentURL}` : ""),
+			getURL: () => currentURL,
+			goBack: () => undefined,
+			goForward: () => undefined,
+			isLoading: () => false,
+			loadURL: vi.fn(async (url: string) => {
+				currentURL = url;
+			}),
+			on: (event: string, listener: (...args: never[]) => void) => listeners.set(event, listener),
+			reload: () => undefined,
+			send: () => undefined,
+			setWindowOpenHandler: (handler: (details: { url: string }) => { action: string }) => {
+				windowOpenHandler = handler;
+			},
+			stop: () => undefined,
+			close: vi.fn(),
+			openWindow: (url: string) => {
+				windowOpenHandler?.({ url });
+			},
+		};
+		const view = { webContents, setBounds: vi.fn(), setVisible: vi.fn() };
+		views.push(view);
+		return view;
+	};
+	const host = createBrowserViewHost({
+		mainWindow: {
+			contentView: { addChildView: () => undefined, removeChildView: () => undefined },
+			getContentBounds: () => ({ x: 0, y: 0, width: 800, height: 600 }),
+			webContents: { id: 1, focus: () => undefined, send: () => undefined },
+		} as never,
+		ipcMain: {
+			handle: () => undefined,
+			on: () => undefined,
+			removeHandler: () => undefined,
+			off: () => undefined,
+		} as never,
+		shell: { openExternal: async () => undefined },
+		WebContentsView: function () {
+			return makeView();
+		} as never,
+		annotatePreloadPath: "/preload.js",
+		rendererOrigin: "http://localhost:5173",
+	});
+	return { host, views };
+}
+
 describe("new-session shortcut forwarding", () => {
 	it("focuses the shell before forwarding a matching preview chord", async () => {
 		const { emitBeforeInput, invoke, shellFocus, shellSend } = setupHost();
@@ -376,6 +479,8 @@ describe("agent browser runtime", () => {
 		await host.execute("sess-1", "type", { ref: "e1", text: "hello" });
 		await host.execute("sess-1", "press", { key: "Control+A" });
 		await host.execute("sess-1", "hover", { ref: "e1" });
+		await host.execute("sess-1", "highlight", { ref: "e1" });
+		await host.execute("sess-1", "unhighlight");
 		await host.execute("sess-1", "scroll", { direction: "down", amount: 450 });
 		await host.execute("sess-1", "select", { ref: "e1", value: "large" });
 		await host.execute("sess-1", "check", { ref: "e1" });
@@ -396,6 +501,16 @@ describe("agent browser runtime", () => {
 			x: 20,
 			y: 30,
 		});
+		expect(debuggerSendCommand).toHaveBeenCalledWith(
+			"Overlay.highlightNode",
+			expect.objectContaining({
+				objectId: "target-element",
+				highlightConfig: expect.objectContaining({
+					borderColor: { r: 37, g: 99, b: 235, a: 1 },
+				}),
+			}),
+		);
+		expect(debuggerSendCommand).toHaveBeenCalledWith("Overlay.hideHighlight");
 		expect(debuggerSendCommand).toHaveBeenCalledWith(
 			"Input.dispatchMouseEvent",
 			expect.objectContaining({ type: "mouseWheel", deltaY: 450, x: 400, y: 300 }),
@@ -452,6 +567,60 @@ describe("agent browser runtime", () => {
 		expect(screenshot.data).toBe(Buffer.from("png-snapshot").toString("base64"));
 		expect(screenshot.width).toBe(640);
 		expect(errors.messages.map((entry) => entry.message)).toEqual(["boom"]);
+	});
+
+	it("keeps stable logical tab IDs, separate targets, and the selected tab active", async () => {
+		const { host, views } = setupTabHost();
+		await host.execute("sess-1", "open", { url: "http://localhost:3000" });
+		await host.execute("sess-1", "snapshot");
+		const created = (await host.execute("sess-1", "tab-new", {
+			url: "http://localhost:4173",
+		})) as { id: string };
+
+		const listed = (await host.execute("sess-1", "tabs")) as {
+			activeTabId: string;
+			tabs: Array<{ id: string; url: string; active: boolean }>;
+		};
+		expect(created.id).toBe("t2");
+		expect(listed.activeTabId).toBe("t2");
+		expect(listed.tabs).toEqual([
+			expect.objectContaining({ id: "t1", url: "http://localhost:3000/", active: false }),
+			expect.objectContaining({ id: "t2", url: "http://localhost:4173/", active: true }),
+		]);
+		expect(views).toHaveLength(2);
+
+		await host.execute("sess-1", "tab-select", { tabId: "t1" });
+		const current = (await host.execute("sess-1", "get", { property: "url" })) as { value: string };
+		expect(current.value).toBe("http://localhost:3000/");
+		expect(views[1].setVisible).toHaveBeenLastCalledWith(false);
+		await expect(host.execute("sess-1", "click", { ref: "e1" })).rejects.toMatchObject({
+			code: "STALE_REFERENCE",
+		});
+		await host.execute("sess-1", "tab-close", { tabId: "t2" });
+		const replacement = (await host.execute("sess-1", "tab-new")) as { id: string };
+		expect(replacement.id).toBe("t3");
+	});
+
+	it("captures allowed popups as new tabs and protects the final tab", async () => {
+		const { host, views } = setupTabHost();
+		await host.execute("sess-1", "open", { url: "http://localhost:3000" });
+
+		views[0].webContents.openWindow("http://localhost:3000/popup");
+		await Promise.resolve();
+
+		const listed = (await host.execute("sess-1", "tabs")) as {
+			activeTabId: string;
+			tabs: Array<{ id: string; url: string }>;
+		};
+		expect(listed.activeTabId).toBe("t2");
+		expect(listed.tabs[1]).toEqual(
+			expect.objectContaining({ id: "t2", url: "http://localhost:3000/popup" }),
+		);
+
+		await host.execute("sess-1", "tab-close");
+		await expect(host.execute("sess-1", "tab-close")).rejects.toMatchObject({
+			code: "CANNOT_CLOSE_LAST_TAB",
+		});
 	});
 });
 

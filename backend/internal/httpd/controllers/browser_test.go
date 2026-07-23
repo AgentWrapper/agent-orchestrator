@@ -70,7 +70,11 @@ func TestBrowserStatusAndSnapshot(t *testing.T) {
 func TestBrowserCoreInteractionActionsReachRuntime(t *testing.T) {
 	runtime := &fakeBrowserRuntime{}
 	srv := browserServer(t, runtime)
-	actions := []string{"type", "press", "hover", "scroll", "select", "check", "uncheck", "get"}
+	actions := []string{
+		"type", "press", "hover", "highlight", "unhighlight",
+		"tabs", "tab-new", "tab-select", "tab-close",
+		"scroll", "select", "check", "uncheck", "get",
+	}
 
 	for _, action := range actions {
 		t.Run(action, func(t *testing.T) {

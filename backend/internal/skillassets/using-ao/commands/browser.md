@@ -34,6 +34,12 @@ ao browser fill <ref> <text> [--json]
 ao browser type <ref> <text> [--json]
 ao browser press <key> [--json]
 ao browser hover <ref> [--json]
+ao browser highlight <ref> [--json]
+ao browser unhighlight [--json]
+ao browser tabs [--json]
+ao browser tab new [url] [--json]
+ao browser tab select <tab-id> [--json]
+ao browser tab close [tab-id] [--json]
 ao browser scroll <up|down|left|right> [--amount <pixels>] [--json]
 ao browser select <ref> <value> [--json]
 ao browser check <ref> [--json]
@@ -49,6 +55,14 @@ ao browser errors [--json]
 cursor position. `press` accepts named keys and chords such as `Enter`,
 `ArrowDown`, and `Control+A`. Page-level `get` supports `url`, `title`, and
 `text`; with an element ref it supports `text`, `value`, and `checked`.
+`highlight` draws a non-mutating overlay around a snapshot ref until
+`unhighlight`, navigation, or target replacement.
+`tabs` reports stable logical IDs such as `t1` and marks the active tab.
+`tab new` creates and selects a tab, `tab select` changes the target of all
+following browser commands, and `tab close` defaults to the active tab.
+Allowed page popups are captured as new AO tabs instead of opening a separate
+OS browser. Take a new snapshot after switching tabs because element refs are
+invalidated at the tab boundary.
 
 Without `--json`, `screenshot` writes a PNG and refuses to overwrite an existing file. With `--json`, it returns the structured response including base64 image data.
 

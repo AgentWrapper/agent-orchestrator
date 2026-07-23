@@ -114,6 +114,7 @@ export type BrowserViewHost = {
 
 type BrowserEntry = {
 	sessionId: string;
+	tabId: string;
 	view: BrowserViewLike;
 	state: BrowserNavState;
 	annotationEnabled: boolean;
@@ -121,6 +122,17 @@ type BrowserEntry = {
 	refs: Map<string, { backendNodeId: number; generation: number }>;
 	consoleMessages: BrowserLogEntry[];
 	errors: BrowserLogEntry[];
+};
+
+type BrowserSessionEntry = {
+	sessionId: string;
+	viewId: string;
+	tabs: Map<string, BrowserEntry>;
+	activeTabId: string;
+	nextTabNumber: number;
+	bounds: BrowserRect;
+	visible: boolean;
+	parked: boolean;
 };
 
 type BrowserLogEntry = {
@@ -191,10 +203,10 @@ export function scaleBoundsForZoom(rect: BrowserRect, zoomFactor: number): Brows
 }
 
 export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserViewHost {
-	const entries = new Map<string, BrowserEntry>();
+	const entries = new Map<string, BrowserSessionEntry>();
 	const viewIdsBySessionId = new Map<string, string>();
 	const rendererOwnersByViewId = new Map<string, Set<number>>();
-	const viewIdsByWebContentsId = new Map<number, string>();
+	const tabsByWebContentsId = new Map<number, BrowserEntry>();
 	const ipcDisposers: Array<() => void> = [];
 	// viewId of the panel that most recently held focus; cleared when it is hidden or destroyed.
 	let lastFocusedViewId: string | null = null;
@@ -212,13 +224,13 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		displayMediaSession!.setDisplayMediaRequestHandler((request, callback) => {
 			const pending = pendingMirror;
 			pendingMirror = null;
-			const entry =
+			const session =
 				pending && pending.expires > Date.now() && sameFrame(pending.frame, request.frame)
 					? entries.get(pending.viewId)
 					: undefined;
 			try {
-				if (entry) {
-					callback({ video: entry.view.webContents.mainFrame });
+				if (session) {
+					callback({ video: activeEntry(session).view.webContents.mainFrame });
 				} else {
 					callback({});
 				}
@@ -235,10 +247,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		});
 	}
 
-	const ensure = (viewId: string, sessionId: string): BrowserEntry => {
-		const existing = entries.get(viewId);
-		if (existing) return existing;
-
+	const createTab = (session: BrowserSessionEntry, activate: boolean): BrowserEntry => {
 		const view = new options.WebContentsView({
 			webPreferences: {
 				contextIsolation: true,
@@ -251,9 +260,11 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		view.setVisible?.(false);
 		options.mainWindow.contentView.addChildView(view);
 
-		const state: BrowserNavState = emptyNavState(viewId);
+		const tabId = `t${session.nextTabNumber++}`;
+		const state: BrowserNavState = emptyNavState(session.viewId);
 		const entry: BrowserEntry = {
-			sessionId,
+			sessionId: session.sessionId,
+			tabId,
 			view,
 			state,
 			annotationEnabled: false,
@@ -262,65 +273,150 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			consoleMessages: [],
 			errors: [],
 		};
-		entries.set(viewId, entry);
-		viewIdsBySessionId.set(sessionId, viewId);
-		viewIdsByWebContentsId.set(view.webContents.id, viewId);
-		hardenWebContents(view.webContents, options, entry);
-		wireNavEvents(view.webContents, options, entry);
+		session.tabs.set(tabId, entry);
+		tabsByWebContentsId.set(view.webContents.id, entry);
+		hardenWebContents(view.webContents, options, entry, (url) => {
+			void openTab(session, url, true).catch((error) => {
+				pushBrowserLog(entry.errors, {
+					level: "error",
+					message: error instanceof Error ? error.message : "Unable to open browser popup",
+					timestamp: new Date().toISOString(),
+				});
+			});
+		});
+		wireNavEvents(
+			view.webContents,
+			options,
+			entry,
+			() => entries.get(session.viewId)?.activeTabId === entry.tabId,
+			() => applySessionBounds(session, entry),
+		);
 		wireAutomationEvents(view.webContents, entry);
 		// The preview is a separate WebContentsView, so renderer-window keydown
 		// listeners never see keys typed here. Forward application shortcuts to the
 		// shell renderer so they still work with the panel focused.
 		attachAppShortcuts(view.webContents, Boolean(options.isMac), options.mainWindow.webContents, true);
 		view.webContents.on("focus", () => {
-			lastFocusedViewId = viewId;
+			lastFocusedViewId = session.viewId;
 		});
+		if (activate) activateTab(session, tabId);
 		return entry;
 	};
 
-	const ensureSession = (sessionId: string, rendererId?: number): BrowserEntry => {
+	const ensureSession = (sessionId: string, rendererId?: number): BrowserSessionEntry => {
 		const existingViewId = viewIdsBySessionId.get(sessionId);
 		const viewId = existingViewId ?? `${rendererId ?? 0}:${sessionId}`;
-		const entry = ensure(viewId, sessionId);
+		let session = entries.get(viewId);
+		if (!session) {
+			session = {
+				sessionId,
+				viewId,
+				tabs: new Map(),
+				activeTabId: "",
+				nextTabNumber: 1,
+				bounds: OFFSCREEN_BOUNDS,
+				visible: false,
+				parked: false,
+			};
+			entries.set(viewId, session);
+			viewIdsBySessionId.set(sessionId, viewId);
+			createTab(session, true);
+		}
 		if (rendererId !== undefined) {
 			const owners = rendererOwnersByViewId.get(viewId) ?? new Set<number>();
 			owners.add(rendererId);
 			rendererOwnersByViewId.set(viewId, owners);
 		}
+		return session;
+	};
+
+	const openTab = async (session: BrowserSessionEntry, url: string | undefined, activate: boolean): Promise<BrowserEntry> => {
+		let normalizedURL: string | undefined;
+		if (url) {
+			const normalized = normalizeBrowserURL(url);
+			if (!isAllowedBrowserURL(normalized.href, options.rendererOrigin)) {
+				throw browserError("NAVIGATION_FAILED", "Unsupported browser URL");
+			}
+			normalizedURL = normalized.href;
+		}
+		const entry = createTab(session, activate);
+		if (normalizedURL) {
+			const state = await navigateEntry(entry, normalizedURL);
+			if (state.error) throw browserError("NAVIGATION_FAILED", state.error);
+		}
 		return entry;
 	};
+
+	function activateTab(session: BrowserSessionEntry, tabId: string): BrowserEntry {
+		const next = session.tabs.get(tabId);
+		if (!next) throw browserError("TAB_NOT_FOUND", `Browser tab ${tabId} does not exist`);
+		const previous = session.tabs.get(session.activeTabId);
+		if (previous && previous !== next) {
+			invalidateRefs(previous);
+			previous.view.setVisible?.(false);
+			previous.view.setBounds(OFFSCREEN_BOUNDS);
+		}
+		session.activeTabId = tabId;
+		invalidateRefs(next);
+		applySessionBounds(session, next);
+		pushNavState(options, next);
+		return next;
+	}
+
+	function applySessionBounds(session: BrowserSessionEntry, entry: BrowserEntry): void {
+		if (!session.visible) {
+			entry.view.setVisible?.(false);
+			entry.view.setBounds(OFFSCREEN_BOUNDS);
+			return;
+		}
+		entry.view.setBounds(session.bounds);
+		entry.view.setVisible?.(session.parked || (session.bounds.width > 0 && session.bounds.height > 0));
+	}
 
 	const isRendererOwned = (event: IpcMainInvokeEvent | IpcMainEvent, viewId: string): boolean =>
 		rendererOwnersByViewId.get(viewId)?.has(event.sender.id) ?? false;
 
 	const setBounds = ({ viewId, rect, visible, parked }: BrowserBoundsInput, zoomFactor = 1): void => {
-		const entry = entries.get(viewId);
-		if (!entry) return;
+		const session = entries.get(viewId);
+		if (!session) return;
+		const entry = activeEntry(session);
 		if (parked) {
 			const scaled = scaleBoundsForZoom(rect, zoomFactor);
 			const width = Math.max(1, Math.round(scaled.width));
 			const height = Math.max(1, Math.round(scaled.height));
-			entry.view.setBounds({ x: OFFSCREEN_BOUNDS.x, y: 0, width, height });
-			entry.view.setVisible?.(true);
+			session.bounds = { x: OFFSCREEN_BOUNDS.x, y: 0, width, height };
+			session.visible = true;
+			session.parked = true;
+			applySessionBounds(session, entry);
 			return;
 		}
 		if (!visible) {
-			entry.view.setVisible?.(false);
-			entry.view.setBounds(OFFSCREEN_BOUNDS);
+			session.bounds = OFFSCREEN_BOUNDS;
+			session.visible = false;
+			session.parked = false;
+			applySessionBounds(session, entry);
 			forgetIfFocused(viewId);
 			return;
 		}
 		// The renderer measures the slot in page-zoomed CSS pixels, while
 		// WebContentsView bounds are window coordinates. Convert before clamping so
 		// Cmd+/Cmd- page zoom does not detach the native view from its React slot.
-		const bounds = clampBoundsToWindow(scaleBoundsForZoom(rect, zoomFactor), options.mainWindow.getContentBounds());
-		entry.view.setBounds(bounds);
-		entry.view.setVisible?.(bounds.width > 0 && bounds.height > 0);
+		session.bounds = clampBoundsToWindow(
+			scaleBoundsForZoom(rect, zoomFactor),
+			options.mainWindow.getContentBounds(),
+		);
+		session.visible = true;
+		session.parked = false;
+		applySessionBounds(session, entry);
 	};
 
 	const navigate = async ({ viewId, url }: BrowserNavigateInput): Promise<BrowserNavState> => {
-		const entry = entries.get(viewId);
-		if (!entry) throw browserError("BROWSER_TARGET_UNAVAILABLE", "Browser target is unavailable");
+		const session = entries.get(viewId);
+		if (!session) throw browserError("BROWSER_TARGET_UNAVAILABLE", "Browser target is unavailable");
+		return navigateEntry(activeEntry(session), url);
+	};
+
+	const navigateEntry = async (entry: BrowserEntry, url: string): Promise<BrowserNavState> => {
 		cancelAnnotation(options, entry, "navigation");
 		const normalized = normalizeBrowserURL(url);
 		if (!isAllowedBrowserURL(normalized.href, options.rendererOrigin)) {
@@ -335,7 +431,8 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			options.mainWindow.webContents.send("browser:navState", entry.state);
 			return entry.state;
 		}
-		entry.view.setVisible?.(true);
+		const session = entries.get(entry.state.viewId);
+		if (session?.activeTabId === entry.tabId) applySessionBounds(session, entry);
 		return pushNavState(options, entry);
 	};
 
@@ -344,11 +441,14 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	// readNavState normalizes it back to an empty url so the panel shows its
 	// empty state.
 	const clear = async (viewId: string): Promise<BrowserNavState> => {
-		const entry = entries.get(viewId);
-		if (!entry) throw browserError("BROWSER_TARGET_UNAVAILABLE", "Browser target is unavailable");
+		const session = entries.get(viewId);
+		if (!session) throw browserError("BROWSER_TARGET_UNAVAILABLE", "Browser target is unavailable");
+		const entry = activeEntry(session);
 		cancelAnnotation(options, entry, "navigation");
-		entry.view.setVisible?.(false);
-		entry.view.setBounds(OFFSCREEN_BOUNDS);
+		session.visible = false;
+		session.parked = false;
+		session.bounds = OFFSCREEN_BOUNDS;
+		applySessionBounds(session, entry);
 		forgetIfFocused(viewId);
 		await entry.view.webContents.loadURL("about:blank");
 		entry.view.webContents.clearHistory();
@@ -356,8 +456,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	};
 
 	const capture = async (viewId: string): Promise<string> => {
-		const entry = entries.get(viewId);
-		if (!entry) return "";
+		const session = entries.get(viewId);
+		if (!session) return "";
+		const entry = activeEntry(session);
 		try {
 			const image = await entry.view.webContents.capturePage();
 			if (image.isEmpty()) return "";
@@ -368,17 +469,26 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	};
 
 	const destroy = (viewId: string): void => {
-		const entry = entries.get(viewId);
-		if (!entry) return;
+		const session = entries.get(viewId);
+		if (!session) return;
 		entries.delete(viewId);
-		viewIdsBySessionId.delete(entry.sessionId);
+		viewIdsBySessionId.delete(session.sessionId);
 		rendererOwnersByViewId.delete(viewId);
-		viewIdsByWebContentsId.delete(entry.view.webContents.id);
 		forgetIfFocused(viewId);
 		// When the window is already gone (dispose fired from mainWindow "closed"),
 		// Electron has torn down contentView and the child WebContentsViews. Touching
 		// them throws "Object has been destroyed", so just drop our reference.
-		if (options.mainWindow.isDestroyed?.()) return;
+		if (options.mainWindow.isDestroyed?.()) {
+			for (const entry of session.tabs.values()) tabsByWebContentsId.delete(entry.view.webContents.id);
+			return;
+		}
+		for (const entry of session.tabs.values()) {
+			tabsByWebContentsId.delete(entry.view.webContents.id);
+			destroyTabView(entry);
+		}
+	};
+
+	const destroyTabView = (entry: BrowserEntry): void => {
 		entry.view.setVisible?.(false);
 		entry.view.setBounds(OFFSCREEN_BOUNDS);
 		options.mainWindow.contentView.removeChildView?.(entry.view);
@@ -393,8 +503,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		action: (contents: BrowserWebContents) => void,
 		cancelForNavigation = false,
 	): BrowserNavState => {
-		const entry = entries.get(viewId);
-		if (!entry) return emptyNavState(viewId);
+		const session = entries.get(viewId);
+		if (!session) return emptyNavState(viewId);
+		const entry = activeEntry(session);
 		if (cancelForNavigation) cancelAnnotation(options, entry, "navigation");
 		action(entry.view.webContents);
 		return pushNavState(options, entry);
@@ -402,8 +513,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 
 	const setAnnotationMode = (event: IpcMainInvokeEvent, input: BrowserAnnotationModeInput): void => {
 		if (!isRendererOwned(event, input.viewId)) return;
-		const entry = entries.get(input.viewId);
-		if (!entry) return;
+		const session = entries.get(input.viewId);
+		if (!session) return;
+		const entry = activeEntry(session);
 		entry.annotationEnabled = input.enabled;
 		entry.view.webContents.send("browser:annotation:setMode", { enabled: input.enabled });
 	};
@@ -412,8 +524,8 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		event: IpcMainEvent,
 		payload: BrowserAnnotationPageSubmitPayload | undefined,
 	): void => {
-		const viewId = viewIdsByWebContentsId.get(event.sender.id);
-		const entry = viewId ? entries.get(viewId) : undefined;
+		const entry = tabsByWebContentsId.get(event.sender.id);
+		const viewId = entry?.state.viewId;
 		if (
 			!viewId ||
 			!entry ||
@@ -437,8 +549,8 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		event: IpcMainEvent,
 		payload: BrowserAnnotationPageCancelPayload | undefined,
 	): void => {
-		const viewId = viewIdsByWebContentsId.get(event.sender.id);
-		const entry = viewId ? entries.get(viewId) : undefined;
+		const entry = tabsByWebContentsId.get(event.sender.id);
+		const viewId = entry?.state.viewId;
 		if (!viewId || !entry) return;
 		entry.annotationEnabled = false;
 		const forwarded: BrowserAnnotationCancelPayload = {
@@ -461,7 +573,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	};
 
 	handle("browser:ensure", (event, sessionId: string) =>
-		pushNavState(options, ensureSession(sessionId, event.sender.id)),
+		pushNavState(options, activeEntry(ensureSession(sessionId, event.sender.id))),
 	);
 	on("browser:setBounds", (event, input: BrowserBoundsInput) => {
 		if (isRendererOwned(event, input.viewId)) setBounds(input, event.sender.getZoomFactor());
@@ -508,7 +620,8 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	return {
 		execute: async (sessionId, action, args = {}) => {
 			if (!sessionId.trim()) throw browserError("INVALID_ARGUMENT", "sessionId is required");
-			const entry = ensureSession(sessionId);
+			const session = ensureSession(sessionId);
+			const entry = activeEntry(session);
 			switch (action) {
 				case "open": {
 					const url = stringArg(args, "url", "URL_REQUIRED", "url is required");
@@ -536,6 +649,42 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 					return pressEntry(entry, stringArg(args, "key", "INVALID_ARGUMENT", "key is required"));
 				case "hover":
 					return hoverEntry(entry, stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"));
+				case "highlight":
+					return highlightEntry(entry, stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"));
+				case "unhighlight":
+					return unhighlightEntry(entry);
+				case "tabs":
+					return listTabs(session);
+				case "tab-new": {
+					const url = typeof args.url === "string" && args.url.trim() ? args.url : undefined;
+					const tab = await openTab(session, url, true);
+					return tabResult(tab, true);
+				}
+				case "tab-select": {
+					const tab = activateTab(
+						session,
+						stringArg(args, "tabId", "TAB_ID_REQUIRED", "tabId is required"),
+					);
+					return tabResult(tab, true);
+				}
+				case "tab-close": {
+					if (session.tabs.size === 1) {
+						throw browserError("CANNOT_CLOSE_LAST_TAB", "The only browser tab cannot be closed");
+					}
+					const tabId =
+						typeof args.tabId === "string" && args.tabId.trim() ? args.tabId.trim() : session.activeTabId;
+					const tab = session.tabs.get(tabId);
+					if (!tab) throw browserError("TAB_NOT_FOUND", `Browser tab ${tabId} does not exist`);
+					const wasActive = tabId === session.activeTabId;
+					session.tabs.delete(tabId);
+					tabsByWebContentsId.delete(tab.view.webContents.id);
+					destroyTabView(tab);
+					if (wasActive) {
+						const nextTabId = [...session.tabs.keys()].at(-1)!;
+						activateTab(session, nextTabId);
+					}
+					return { closedTabId: tabId, ...listTabs(session) };
+				}
 				case "scroll":
 					return scrollEntry(
 						entry,
@@ -592,8 +741,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		},
 		getLastFocusedPanelContents: () => {
 			if (lastFocusedViewId === null) return null;
-			const entry = entries.get(lastFocusedViewId);
-			if (!entry) return null;
+			const session = entries.get(lastFocusedViewId);
+			if (!session) return null;
+			const entry = activeEntry(session);
 			// Stored narrowed as BrowserWebContents but is a full WebContents at runtime.
 			const contents = entry.view.webContents as unknown as WebContents;
 			return contents.isDestroyed() ? null : contents;
@@ -647,10 +797,45 @@ function emptyNavState(viewId: string): BrowserNavState {
 	};
 }
 
-function hardenWebContents(contents: BrowserWebContents, options: BrowserViewHostOptions, entry: BrowserEntry): void {
+function activeEntry(session: BrowserSessionEntry): BrowserEntry {
+	const entry = session.tabs.get(session.activeTabId);
+	if (!entry) throw browserError("BROWSER_TARGET_UNAVAILABLE", "Active browser tab is unavailable");
+	return entry;
+}
+
+function tabResult(entry: BrowserEntry, active: boolean): {
+	id: string;
+	url: string;
+	title: string;
+	active: boolean;
+} {
+	return {
+		id: entry.tabId,
+		url: entry.view.webContents.getURL(),
+		title: entry.view.webContents.getTitle(),
+		active,
+	};
+}
+
+function listTabs(session: BrowserSessionEntry): {
+	activeTabId: string;
+	tabs: Array<{ id: string; url: string; title: string; active: boolean }>;
+} {
+	return {
+		activeTabId: session.activeTabId,
+		tabs: [...session.tabs.values()].map((entry) => tabResult(entry, entry.tabId === session.activeTabId)),
+	};
+}
+
+function hardenWebContents(
+	contents: BrowserWebContents,
+	options: BrowserViewHostOptions,
+	entry: BrowserEntry,
+	onPopup: (url: string) => void,
+): void {
 	contents.setWindowOpenHandler(({ url }) => {
 		if (isAllowedBrowserURL(url, options.rendererOrigin)) {
-			void options.shell.openExternal(url);
+			onPopup(url);
 		}
 		return { action: "deny" };
 	});
@@ -665,12 +850,18 @@ function hardenWebContents(contents: BrowserWebContents, options: BrowserViewHos
 	contents.on("will-redirect", blockUnsafeNavigation);
 }
 
-function wireNavEvents(contents: BrowserWebContents, options: BrowserViewHostOptions, entry: BrowserEntry): void {
+function wireNavEvents(
+	contents: BrowserWebContents,
+	options: BrowserViewHostOptions,
+	entry: BrowserEntry,
+	isActive: () => boolean,
+	syncActiveBounds: () => void,
+): void {
 	const update = () => {
-		pushNavState(options, entry);
+		if (isActive()) pushNavState(options, entry);
 	};
 	contents.on("did-navigate", () => {
-		entry.view.setVisible?.(true);
+		if (isActive()) syncActiveBounds();
 		update();
 	});
 	contents.on("did-navigate-in-page", update);
@@ -688,9 +879,9 @@ function wireNavEvents(contents: BrowserWebContents, options: BrowserViewHostOpt
 			message: String(errorDescription || `Navigation failed (${errorCode})`),
 			timestamp: new Date().toISOString(),
 		});
-		entry.view.setVisible?.(false);
+		if (isActive()) entry.view.setVisible?.(false);
 		entry.state = { ...readNavState(entry), error: String(errorDescription || "Unable to load page") };
-		options.mainWindow.webContents.send("browser:navState", entry.state);
+		if (isActive()) options.mainWindow.webContents.send("browser:navState", entry.state);
 	});
 }
 
@@ -1039,6 +1230,31 @@ async function hoverEntry(entry: BrowserEntry, refName: string): Promise<unknown
 		y: point.y,
 	});
 	return { ref: refName, x: point.x, y: point.y, url: entry.view.webContents.getURL() };
+}
+
+async function highlightEntry(entry: BrowserEntry, refName: string): Promise<unknown> {
+	const objectId = await resolveRef(entry, refName);
+	await entry.view.webContents.debugger.sendCommand("Overlay.enable");
+	await entry.view.webContents.debugger.sendCommand("Overlay.highlightNode", {
+		objectId,
+		highlightConfig: {
+			showInfo: false,
+			showStyles: false,
+			showRulers: false,
+			contentColor: { r: 59, g: 130, b: 246, a: 0.18 },
+			borderColor: { r: 37, g: 99, b: 235, a: 1 },
+			paddingColor: { r: 96, g: 165, b: 250, a: 0.12 },
+			marginColor: { r: 147, g: 197, b: 253, a: 0.08 },
+		},
+	});
+	return { ref: refName, url: entry.view.webContents.getURL() };
+}
+
+async function unhighlightEntry(entry: BrowserEntry): Promise<unknown> {
+	await ensureDebugger(entry);
+	await entry.view.webContents.debugger.sendCommand("Overlay.enable");
+	await entry.view.webContents.debugger.sendCommand("Overlay.hideHighlight");
+	return { url: entry.view.webContents.getURL() };
 }
 
 function quadCenter(quad: number[] | undefined): { x: number; y: number } | undefined {
