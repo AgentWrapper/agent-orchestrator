@@ -27,6 +27,7 @@ type Runner interface {
 	Run(ctx context.Context, req RunRequest) (RunResult, error)
 }
 
+// RunRequest is the payload passed to a test-gate Runner.
 type RunRequest struct {
 	Kind          RunKind          `json:"kind"`
 	ReviewRun     domain.ReviewRun `json:"reviewRun"`
@@ -35,11 +36,13 @@ type RunRequest struct {
 	Findings      []ReviewFinding  `json:"findings,omitempty"`
 }
 
+// RunResult is the structured outcome of a Runner execution.
 type RunResult struct {
 	Run      TestRun
 	Evidence []TestEvidence
 }
 
+// ManagerDeps wires storage, runner, and optional clock/ID helpers into Manager.
 type ManagerDeps struct {
 	Store  Store
 	Runner Runner
@@ -66,6 +69,7 @@ type baselineFlight struct {
 	err  error
 }
 
+// NewManager constructs a Manager from deps, applying defaults for clock, IDs, and logger.
 func NewManager(deps ManagerDeps) *Manager {
 	clock := deps.Clock
 	if clock == nil {
@@ -275,6 +279,7 @@ type NotConfiguredRunner struct {
 	Summary string
 }
 
+// Run returns a not-configured classification without executing any command.
 func (r NotConfiguredRunner) Run(context.Context, RunRequest) (RunResult, error) {
 	return RunResult{Run: TestRun{
 		Classification: ClassificationNotConfigured,

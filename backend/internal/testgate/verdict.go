@@ -11,39 +11,57 @@ import (
 
 const verdictPrefix = "AO_VERDICT "
 
+// Classification is the high-level result of a runtime verification run.
 type Classification string
 
 const (
-	ClassificationPassed        Classification = "passed"
-	ClassificationAppFailed     Classification = "app_failed"
-	ClassificationInfra         Classification = "infra"
+	// ClassificationPassed means the pod run completed successfully.
+	ClassificationPassed Classification = "passed"
+	// ClassificationAppFailed means the app under test failed verification.
+	ClassificationAppFailed Classification = "app_failed"
+	// ClassificationInfra means the run failed for infrastructure reasons.
+	ClassificationInfra Classification = "infra"
+	// ClassificationNotConfigured means no pod runner is configured.
 	ClassificationNotConfigured Classification = "not_configured"
 )
 
+// EvidenceSource identifies where finding evidence originated.
 type EvidenceSource string
 
 const (
-	EvidenceSourceStatic    EvidenceSource = "static"
+	// EvidenceSourceStatic is reviewer-provided static evidence.
+	EvidenceSourceStatic EvidenceSource = "static"
+	// EvidenceSourceTestInfra is evidence produced by the runtime test gate.
 	EvidenceSourceTestInfra EvidenceSource = "test-infra"
 )
 
+// EvidenceOutcome is how runtime verification treated a finding.
 type EvidenceOutcome string
 
 const (
-	EvidenceOutcomeUntested  EvidenceOutcome = "not_tested"
+	// EvidenceOutcomeUntested means the finding was not exercised.
+	EvidenceOutcomeUntested EvidenceOutcome = "not_tested"
+	// EvidenceOutcomeConfirmed means the finding was reproduced.
 	EvidenceOutcomeConfirmed EvidenceOutcome = "confirmed"
-	EvidenceOutcomeRefuted   EvidenceOutcome = "refuted"
+	// EvidenceOutcomeRefuted means the finding was not reproduced.
+	EvidenceOutcomeRefuted EvidenceOutcome = "refuted"
 )
 
+// Severity is the reviewer-reported impact of a finding.
 type Severity string
 
 const (
-	SeverityLow      Severity = "low"
-	SeverityMedium   Severity = "medium"
-	SeverityHigh     Severity = "high"
+	// SeverityLow is a low-impact finding.
+	SeverityLow Severity = "low"
+	// SeverityMedium is a medium-impact finding.
+	SeverityMedium Severity = "medium"
+	// SeverityHigh is a high-impact finding.
+	SeverityHigh Severity = "high"
+	// SeverityCritical is a critical-impact finding.
 	SeverityCritical Severity = "critical"
 )
 
+// Valid reports whether s is an empty or known severity value.
 func (s Severity) Valid() bool {
 	switch s {
 	case "", SeverityLow, SeverityMedium, SeverityHigh, SeverityCritical:
@@ -53,22 +71,31 @@ func (s Severity) Valid() bool {
 	}
 }
 
+// ReviewVerdict is the reviewer's overall decision for a PR head.
 type ReviewVerdict string
 
 const (
-	ReviewVerdictApproved         ReviewVerdict = "approved"
+	// ReviewVerdictApproved means the reviewer approved the head.
+	ReviewVerdictApproved ReviewVerdict = "approved"
+	// ReviewVerdictChangesRequested means the reviewer requested changes.
 	ReviewVerdictChangesRequested ReviewVerdict = "changes_requested"
 )
 
+// FusedOutcome is the combined reviewer + runtime-verification decision.
 type FusedOutcome string
 
 const (
-	FusedOutcomeApproved         FusedOutcome = "approved"
+	// FusedOutcomeApproved means no blocking issues remain after fusion.
+	FusedOutcomeApproved FusedOutcome = "approved"
+	// FusedOutcomeChangesRequested means blocking findings remain.
 	FusedOutcomeChangesRequested FusedOutcome = "changes_requested"
-	FusedOutcomeAppFailed        FusedOutcome = "app_failed"
-	FusedOutcomeNeutral          FusedOutcome = "neutral"
+	// FusedOutcomeAppFailed means baseline runtime verification failed.
+	FusedOutcomeAppFailed FusedOutcome = "app_failed"
+	// FusedOutcomeNeutral means evidence was inconclusive or unavailable.
+	FusedOutcomeNeutral FusedOutcome = "neutral"
 )
 
+// TestRun is one baseline or targeted runtime-verification execution.
 type TestRun struct {
 	ID             string         `json:"id,omitempty"`
 	SessionID      string         `json:"sessionId,omitempty"`
@@ -91,13 +118,17 @@ type verdictPayload struct {
 	ArtifactsURL string         `json:"artifactsUrl,omitempty"`
 }
 
+// RunKind distinguishes baseline pod runs from targeted finding verification.
 type RunKind string
 
 const (
+	// RunKindBaseline is a full baseline verification for a PR head.
 	RunKindBaseline RunKind = "baseline"
+	// RunKindTargeted verifies specific reviewer findings.
 	RunKindTargeted RunKind = "targeted"
 )
 
+// ReviewFinding is one durable reviewer finding eligible for runtime checks.
 type ReviewFinding struct {
 	ID              string    `json:"id"`
 	RunID           string    `json:"runId,omitempty"`
@@ -111,6 +142,7 @@ type ReviewFinding struct {
 	CreatedAt       time.Time `json:"createdAt,omitempty"`
 }
 
+// TestEvidence links a runtime outcome to a specific finding.
 type TestEvidence struct {
 	ID        string          `json:"id,omitempty"`
 	TestRunID string          `json:"testRunId,omitempty"`
@@ -122,6 +154,7 @@ type TestEvidence struct {
 	CreatedAt time.Time       `json:"createdAt,omitempty"`
 }
 
+// SynthesisInput is the reviewer + runtime inputs used to fuse a final verdict.
 type SynthesisInput struct {
 	Baseline      TestRun
 	ReviewVerdict ReviewVerdict
@@ -129,6 +162,7 @@ type SynthesisInput struct {
 	Evidence      []TestEvidence
 }
 
+// FusedFinding is one finding after reviewer and runtime evidence are combined.
 type FusedFinding struct {
 	FindingID      string          `json:"findingId,omitempty"`
 	File           string          `json:"file,omitempty"`
@@ -142,6 +176,7 @@ type FusedFinding struct {
 	Blocking       bool            `json:"blocking"`
 }
 
+// FusedVerdict is the durable fused decision shown in API/UI surfaces.
 type FusedVerdict struct {
 	ID          string         `json:"id,omitempty"`
 	SessionID   string         `json:"sessionId,omitempty"`
@@ -156,6 +191,7 @@ type FusedVerdict struct {
 	CreatedAt   time.Time      `json:"createdAt,omitempty"`
 }
 
+// ParseVerdictLine extracts a TestRun from a single AO_VERDICT line.
 func ParseVerdictLine(line string) (TestRun, bool, error) {
 	result, ok, err := ParseRunResultLine(line)
 	if err != nil || !ok {
@@ -164,6 +200,7 @@ func ParseVerdictLine(line string) (TestRun, bool, error) {
 	return result.Run, true, nil
 }
 
+// ParseRunResultLine extracts a RunResult from a single AO_VERDICT line.
 func ParseRunResultLine(line string) (RunResult, bool, error) {
 	idx := strings.Index(line, verdictPrefix)
 	if idx < 0 {
@@ -208,6 +245,7 @@ func ParseRunResultLine(line string) (RunResult, bool, error) {
 	return RunResult{Run: run, Evidence: payload.Evidence}, true, nil
 }
 
+// ParseRunResultOutput finds the last AO_VERDICT line in multi-line command output.
 func ParseRunResultOutput(output string) (RunResult, bool, error) {
 	var last string
 	for _, line := range strings.Split(output, "\n") {
@@ -221,6 +259,7 @@ func ParseRunResultOutput(output string) (RunResult, bool, error) {
 	return ParseRunResultLine(last)
 }
 
+// Valid reports whether c is a known classification value.
 func (c Classification) Valid() bool {
 	switch c {
 	case ClassificationPassed, ClassificationAppFailed, ClassificationInfra, ClassificationNotConfigured:
@@ -230,6 +269,7 @@ func (c Classification) Valid() bool {
 	}
 }
 
+// Valid reports whether s is a known evidence source.
 func (s EvidenceSource) Valid() bool {
 	switch s {
 	case EvidenceSourceStatic, EvidenceSourceTestInfra:
@@ -239,6 +279,7 @@ func (s EvidenceSource) Valid() bool {
 	}
 }
 
+// Valid reports whether o is a known evidence outcome.
 func (o EvidenceOutcome) Valid() bool {
 	switch o {
 	case EvidenceOutcomeUntested, EvidenceOutcomeConfirmed, EvidenceOutcomeRefuted:
@@ -248,6 +289,8 @@ func (o EvidenceOutcome) Valid() bool {
 	}
 }
 
+// Synthesize fuses baseline classification, reviewer verdict, findings, and
+// runtime evidence into a single FusedVerdict.
 func Synthesize(in SynthesisInput) FusedVerdict {
 	switch in.Baseline.Classification {
 	case ClassificationAppFailed:

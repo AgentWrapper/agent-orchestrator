@@ -22,6 +22,7 @@ type CommandRunner struct {
 	timeout time.Duration
 }
 
+// CommandRunnerOptions configures an external test-gate command runner.
 type CommandRunnerOptions struct {
 	Command string
 	Args    []string
@@ -30,6 +31,7 @@ type CommandRunnerOptions struct {
 	Timeout time.Duration
 }
 
+// NewCommandRunner constructs a CommandRunner from opts, applying defaults.
 func NewCommandRunner(opts CommandRunnerOptions) *CommandRunner {
 	timeout := opts.Timeout
 	if timeout <= 0 {
@@ -48,6 +50,7 @@ func NewCommandRunner(opts CommandRunnerOptions) *CommandRunner {
 	}
 }
 
+// Run executes the configured command for req and parses the final AO_VERDICT line.
 func (r *CommandRunner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	if r == nil || r.command == "" {
 		return NotConfiguredRunner{}.Run(ctx, req)

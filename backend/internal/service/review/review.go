@@ -409,14 +409,6 @@ func (s *Service) deliverableRuns(ctx context.Context, workerID domain.SessionID
 	return deliverable, nil
 }
 
-func reviewResults(workerID domain.SessionID, runs []domain.ReviewRun) []lifecycle.ReviewResult {
-	results := make([]lifecycle.ReviewResult, 0, len(runs))
-	for _, run := range runs {
-		results = append(results, reviewResult(workerID, run))
-	}
-	return results
-}
-
 func reviewResult(workerID domain.SessionID, run domain.ReviewRun) lifecycle.ReviewResult {
 	return lifecycle.ReviewResult{
 		RunID:          run.ID,
