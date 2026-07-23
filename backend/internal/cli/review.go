@@ -45,19 +45,32 @@ type reviewRunResponse struct {
 
 // submitReviewItem mirrors controllers.SubmitReviewItem.
 type submitReviewItem struct {
-	RunID          string `json:"runId"`
-	Verdict        string `json:"verdict"`
-	Body           string `json:"body,omitempty"`
-	GithubReviewID string `json:"githubReviewId,omitempty"`
+	RunID          string                `json:"runId"`
+	Verdict        string                `json:"verdict"`
+	Body           string                `json:"body,omitempty"`
+	GithubReviewID string                `json:"githubReviewId,omitempty"`
+	Findings       []submitReviewFinding `json:"findings,omitempty"`
+}
+
+type submitReviewFinding struct {
+	ID              string `json:"id,omitempty"`
+	File            string `json:"file,omitempty"`
+	Line            int    `json:"line,omitempty"`
+	Severity        string `json:"severity,omitempty"`
+	Title           string `json:"title,omitempty"`
+	Claim           string `json:"claim,omitempty"`
+	FailureScenario string `json:"failureScenario,omitempty"`
+	Behavioral      bool   `json:"behavioral"`
 }
 
 // submitReviewRequest mirrors controllers.SubmitReviewInput.
 type submitReviewRequest struct {
-	RunID          string             `json:"runId,omitempty"`
-	Verdict        string             `json:"verdict,omitempty"`
-	Body           string             `json:"body,omitempty"`
-	GithubReviewID string             `json:"githubReviewId,omitempty"`
-	Reviews        []submitReviewItem `json:"reviews,omitempty"`
+	RunID          string                `json:"runId,omitempty"`
+	Verdict        string                `json:"verdict,omitempty"`
+	Body           string                `json:"body,omitempty"`
+	GithubReviewID string                `json:"githubReviewId,omitempty"`
+	Findings       []submitReviewFinding `json:"findings,omitempty"`
+	Reviews        []submitReviewItem    `json:"reviews,omitempty"`
 }
 
 type reviewSubmitOptions struct {

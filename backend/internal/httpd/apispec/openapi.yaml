@@ -2367,6 +2367,82 @@ components:
       required:
       - harness
       type: object
+    FusedFinding:
+      properties:
+        blocking:
+          type: boolean
+        claim:
+          type: string
+        file:
+          type: string
+        findingId:
+          type: string
+        line:
+          type: integer
+        runtimeOutcome:
+          enum:
+          - not_tested
+          - confirmed
+          - refuted
+          type: string
+        severity:
+          enum:
+          - low
+          - medium
+          - high
+          - critical
+          type: string
+        source:
+          enum:
+          - static
+          - test-infra
+          type: string
+        summary:
+          type: string
+        title:
+          type: string
+      required:
+      - source
+      - title
+      - blocking
+      type: object
+    FusedVerdict:
+      properties:
+        blocking:
+          type: boolean
+        createdAt:
+          format: date-time
+          type: string
+        findings:
+          items:
+            $ref: '#/components/schemas/FusedFinding'
+          type: array
+        id:
+          type: string
+        outcome:
+          enum:
+          - approved
+          - changes_requested
+          - app_failed
+          - neutral
+          type: string
+        prUrl:
+          type: string
+        reviewRunId:
+          type: string
+        sessionId:
+          type: string
+        summary:
+          type: string
+        targetSha:
+          type: string
+        testRunId:
+          type: string
+      required:
+      - outcome
+      - blocking
+      - findings
+      type: object
     ImportReport:
       properties:
         dryRun:
@@ -2664,6 +2740,8 @@ components:
       type: object
     PRReviewState:
       properties:
+        fusedVerdict:
+          $ref: '#/components/schemas/FusedVerdict'
         latestRun:
           $ref: '#/components/schemas/ReviewRun'
         prNumber:
@@ -3441,11 +3519,50 @@ components:
       required:
       - projectId
       type: object
+    SubmitReviewFinding:
+      properties:
+        behavioral:
+          description: True when a runtime test can confirm or refute the finding.
+          type: boolean
+        claim:
+          description: Precise claim the reviewer believes is true.
+          type: string
+        failureScenario:
+          description: Runtime scenario that should fail if the claim is real.
+          type: string
+        file:
+          description: Repository-relative file path, when the finding is line-scoped.
+          type: string
+        id:
+          description: Stable finding id. AO assigns one when omitted.
+          type: string
+        line:
+          description: Line number for inline findings.
+          type: integer
+        severity:
+          description: Finding severity.
+          enum:
+          - low
+          - medium
+          - high
+          - critical
+          type: string
+        title:
+          description: Short finding title.
+          type: string
+      required:
+      - behavioral
+      type: object
     SubmitReviewInput:
       properties:
         body:
           description: Review body recorded by AO. Required for changes_requested.
           type: string
+        findings:
+          description: Structured findings for runtime verification.
+          items:
+            $ref: '#/components/schemas/SubmitReviewFinding'
+          type: array
         githubReviewId:
           description: Id of the GitHub PR review the reviewer posted, if any.
           type: string
@@ -3466,6 +3583,11 @@ components:
         body:
           description: Review body recorded by AO. Required for changes_requested.
           type: string
+        findings:
+          description: Structured findings for runtime verification.
+          items:
+            $ref: '#/components/schemas/SubmitReviewFinding'
+          type: array
         githubReviewId:
           description: Id of the GitHub PR review the reviewer posted, if any.
           type: string

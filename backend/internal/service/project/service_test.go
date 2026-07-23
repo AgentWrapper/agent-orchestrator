@@ -673,6 +673,7 @@ func TestManager_ReaddAfterRemove(t *testing.T) {
 func TestManager_InitializeRepositoryRecovery(t *testing.T) {
 	ctx := context.Background()
 	m := newManager(t)
+	t.Setenv("GIT_CEILING_DIRECTORIES", filepath.Clean(os.TempDir()))
 
 	t.Run("plain folder", func(t *testing.T) {
 		dir := isolatedPlainFolder(t)

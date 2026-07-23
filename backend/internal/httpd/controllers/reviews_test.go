@@ -159,13 +159,16 @@ func TestReviewsSubmitAcceptsBatchedReviews(t *testing.T) {
 	svc := &fakeReviewService{}
 	srv := newReviewTestServer(t, svc)
 
-	body, status, headers := doRequest(t, srv, "POST", "/api/v1/sessions/mer-1/reviews/submit", `{"reviews":[{"runId":"run-1","verdict":"changes_requested","body":"fix auth","githubReviewId":"101"},{"runId":"run-2","verdict":"approved"}]}`)
+	body, status, headers := doRequest(t, srv, "POST", "/api/v1/sessions/mer-1/reviews/submit", `{"reviews":[{"runId":"run-1","verdict":"changes_requested","body":"fix auth","githubReviewId":"101","findings":[{"id":"finding-1","file":"auth.go","line":42,"severity":"high","title":"auth bypass","claim":"token checks are skipped","failureScenario":"unauthenticated request succeeds","behavioral":true}]},{"runId":"run-2","verdict":"approved"}]}`)
 	assertJSON(t, headers)
 	if status != http.StatusOK {
 		t.Fatalf("status = %d body=%s", status, body)
 	}
 	if len(svc.submitted) != 2 || svc.submitted[0].RunID != "run-1" || svc.submitted[1].Verdict != domain.VerdictApproved {
 		t.Fatalf("submitted = %+v", svc.submitted)
+	}
+	if len(svc.submitted[0].Findings) != 1 || svc.submitted[0].Findings[0].File != "auth.go" || !svc.submitted[0].Findings[0].Behavioral {
+		t.Fatalf("submitted findings = %+v", svc.submitted[0].Findings)
 	}
 	for _, want := range []string{`"reviews"`, `"run-1"`, `"run-2"`} {
 		if !strings.Contains(string(body), want) {
