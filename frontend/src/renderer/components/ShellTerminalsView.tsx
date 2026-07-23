@@ -58,7 +58,10 @@ export function ShellTerminalsView() {
 				</button>
 				{/* Tabs shrink and truncate down to a minimum width; beyond that the
 				    strip scrolls and edge chevrons reveal the overflow. */}
-				<div ref={tabsOverflow.ref} className="scrollbar-none flex min-w-flex-min flex-1 items-center gap-3 overflow-x-auto">
+				<div
+					ref={tabsOverflow.ref}
+					className="scrollbar-none flex min-w-flex-min flex-1 items-center gap-3 overflow-x-auto"
+				>
 					{shellTerminals.map((shell) => {
 						const isActive = shell.handleId === active?.handleId;
 						return (

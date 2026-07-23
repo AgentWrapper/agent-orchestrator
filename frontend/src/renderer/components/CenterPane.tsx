@@ -141,7 +141,10 @@ export function CenterPane({
 					    renders as the plain session label it has always been. Tabs shrink
 					    and truncate like browser tabs down to a minimum width; beyond
 					    that the strip scrolls and edge chevrons reveal the overflow. */}
-					<div ref={tabsOverflow.ref} className="scrollbar-none flex min-w-flex-min flex-1 items-center gap-3 overflow-x-auto">
+					<div
+						ref={tabsOverflow.ref}
+						className="scrollbar-none flex min-w-flex-min flex-1 items-center gap-3 overflow-x-auto"
+					>
 						<SessionPaneTab
 							isActive={target.kind !== "shell"}
 							label={!session ? "No session" : isOrchestratorSession(session) ? "Orchestrator" : session.title}
