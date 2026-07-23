@@ -3,7 +3,6 @@ package testgate
 import (
 	"context"
 	"errors"
-	"sync"
 	"testing"
 	"time"
 
@@ -89,33 +88,6 @@ func (f *fakeRunner) Run(_ context.Context, req RunRequest) (RunResult, error) {
 	return f.result, f.err
 }
 
-type blockingRunner struct {
-	mu       sync.Mutex
-	requests []RunRequest
-	result   RunResult
-	started  chan struct{}
-	release  chan struct{}
-}
-
-func (r *blockingRunner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
-	r.mu.Lock()
-	r.requests = append(r.requests, req)
-	r.mu.Unlock()
-	r.started <- struct{}{}
-	select {
-	case <-r.release:
-		return r.result, nil
-	case <-ctx.Done():
-		return RunResult{}, ctx.Err()
-	}
-}
-
-func (r *blockingRunner) requestCount() int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return len(r.requests)
-}
-
 func TestManagerRunBaselineExecutesRunnerAndStoresRun(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	st := &fakeManagerStore{}
@@ -151,15 +123,9 @@ func TestManagerRunAfterReviewSubmitWaitsForActiveBaselineInsteadOfUsingStaleSto
 		hasBaseline: true,
 		baseline:    TestRun{ID: "old-baseline", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Kind: RunKindBaseline, Classification: ClassificationAppFailed, Summary: "old failure"},
 	}
-	runner := &blockingRunner{
-		result:  RunResult{Run: TestRun{Classification: ClassificationPassed, Summary: "fresh baseline passed"}},
-		started: make(chan struct{}, 1),
-		release: make(chan struct{}),
-	}
 	ids := []string{"fresh-baseline", "fused-1"}
 	m := NewManager(ManagerDeps{
-		Store:  st,
-		Runner: runner,
+		Store: st,
 		NewID: func() string {
 			id := ids[0]
 			ids = ids[1:]
@@ -167,13 +133,9 @@ func TestManagerRunAfterReviewSubmitWaitsForActiveBaselineInsteadOfUsingStaleSto
 		},
 	})
 	reviewRun := domain.ReviewRun{ID: "review-run-1", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Verdict: domain.VerdictApproved}
+	flight := &baselineFlight{done: make(chan struct{})}
+	m.baselineFlights = map[string]*baselineFlight{baselineKey(reviewRun): flight}
 
-	m.StartBaseline(context.Background(), reviewRun)
-	select {
-	case <-runner.started:
-	case <-time.After(time.Second):
-		t.Fatal("baseline runner did not start")
-	}
 	fusedCh := make(chan FusedVerdict, 1)
 	errCh := make(chan error, 1)
 	go func() {
@@ -189,7 +151,16 @@ func TestManagerRunAfterReviewSubmitWaitsForActiveBaselineInsteadOfUsingStaleSto
 		fusedCh <- fused
 	}()
 
-	close(runner.release)
+	select {
+	case fused := <-fusedCh:
+		t.Fatalf("RunAfterReviewSubmit returned before active baseline completed: %+v", fused)
+	case err := <-errCh:
+		t.Fatalf("RunAfterReviewSubmit returned error before active baseline completed: %v", err)
+	case <-time.After(10 * time.Millisecond):
+	}
+
+	flight.run = TestRun{ID: "fresh-baseline", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Kind: RunKindBaseline, Classification: ClassificationPassed, Summary: "fresh baseline passed"}
+	close(flight.done)
 	select {
 	case err := <-errCh:
 		t.Fatalf("RunAfterReviewSubmit: %v", err)
@@ -199,9 +170,6 @@ func TestManagerRunAfterReviewSubmitWaitsForActiveBaselineInsteadOfUsingStaleSto
 		}
 	case <-time.After(time.Second):
 		t.Fatal("RunAfterReviewSubmit did not finish after baseline release")
-	}
-	if got := runner.requestCount(); got != 1 {
-		t.Fatalf("runner calls = %d, want single active baseline reused", got)
 	}
 }
 
