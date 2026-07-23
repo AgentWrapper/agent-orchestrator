@@ -324,8 +324,10 @@ export function Sidebar({
 				</SidebarGroup>
 			</SidebarContent>
 
-			{/* Footer — Settings opens the global settings page directly. */}
-			<SidebarFooter className="relative mb-2 mt-auto gap-0 overflow-hidden px-1.75 pb-2.5 pt-1.75 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-[64px] group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pb-1.5 group-data-[collapsible=icon]:pt-1.5">
+			{/* Footer — Settings opens the global settings page directly.
+			    Bottom margin matches the framed center-panel inset so the
+			    button and panel share a bottom edge (no top divider). */}
+			<SidebarFooter className="relative mt-auto mb-5 gap-0 overflow-hidden px-2.5 pb-0 pt-1.5 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-16 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pb-0 group-data-[collapsible=icon]:pt-1.5">
 				{/* Always-present daemon status mirror for the smoke suite: no visible
 				    daemon-state copy is guaranteed to be mounted elsewhere. */}
 				{daemonStatus && (
@@ -333,11 +335,11 @@ export function Sidebar({
 						daemon {daemonStatus.state}
 					</span>
 				)}
-				<div className="sidebar-expanded-chrome relative flex w-full min-w-[186px] flex-col gap-1 transition-[opacity,transform] duration-150 ease-out group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:-translate-x-2 group-data-[collapsible=icon]:opacity-0">
+				<div className="sidebar-expanded-chrome relative flex w-full min-w-46.5 flex-col gap-1 transition-[opacity,transform] duration-150 ease-out group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:-translate-x-2 group-data-[collapsible=icon]:opacity-0">
 					<RestartToUpdateRow status={updateStatus} />
 					<button
 						aria-label="Settings"
-						className="flex w-full items-center justify-center gap-2.5 rounded-md border border-border p-2 text-control font-medium text-passive transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-lg [&_svg]:text-passive"
+						className="flex w-full items-center justify-center gap-2.5 rounded-settings-row bg-interactive-hover px-2.5 py-2.5 text-control font-medium text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-lg [&_svg]:shrink-0 [&_svg]:text-muted-foreground"
 						onClick={() => selection.goGlobalSettings()}
 						type="button"
 					>
@@ -345,13 +347,13 @@ export function Sidebar({
 						<span className="tracking-tight">Settings</span>
 					</button>
 				</div>
-				<div className="pointer-events-none absolute inset-x-1.5 top-[7px] flex min-h-[52px] flex-col items-center justify-center gap-1 opacity-0 transition-opacity duration-150 ease-out group-data-[collapsible=icon]:pointer-events-auto group-data-[collapsible=icon]:opacity-100">
+				<div className="pointer-events-none absolute inset-x-1.5 bottom-0 top-auto flex min-h-row-md flex-col items-center justify-end gap-1 opacity-0 transition-opacity duration-150 ease-out group-data-[collapsible=icon]:pointer-events-auto group-data-[collapsible=icon]:opacity-100">
 					<RestartToUpdateRailButton status={updateStatus} />
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<button
 								aria-label="Settings"
-								className="grid size-control-board place-items-center rounded-lg border border-border text-passive transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-base"
+								className="grid size-control-board place-items-center rounded-settings-row bg-interactive-hover text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-base"
 								onClick={() => selection.goGlobalSettings()}
 								type="button"
 							>
@@ -723,7 +725,7 @@ function RestartToUpdateRow({ status }: { status: UpdateStatus }) {
 		<button
 			aria-label={`Restart to install update${status.version ? ` v${status.version}` : ""}`}
 			className={cn(
-				"flex w-full items-center gap-2.5 rounded-md p-2 text-left text-control font-medium transition-colors",
+				"flex w-full items-center gap-2.5 rounded-settings-row p-2.5 text-left text-control font-medium transition-colors",
 				escalated
 					? "border border-working/35 bg-working/12 text-working hover:bg-working/18 [&_svg]:text-working"
 					: "text-passive hover:bg-interactive-hover hover:text-foreground [&_svg]:text-passive",
