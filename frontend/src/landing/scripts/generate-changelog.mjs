@@ -325,7 +325,6 @@ function extractBodySummary(body) {
 		/^#{1,3}\s*(summary|overview|description|what changed|changes)\s*:?\s*$/i.test(line.trim()),
 	);
 	const candidates = [];
-	const collecting = true;
 
 	for (let index = summaryHeadingIndex === -1 ? 0 : summaryHeadingIndex + 1; index < lines.length; index += 1) {
 		const line = lines[index].trim();
@@ -336,10 +335,10 @@ function extractBodySummary(body) {
 		)
 			break;
 		if (/^#{1,3}\s+/.test(line)) {
-			if (collecting && candidates.length > 0) break;
+			if (candidates.length > 0) break;
 			continue;
 		}
-		if (!collecting || !line || /^https?:\/\/\S+$/.test(line) || /^[-*+]\s*\[[ xX]\]/.test(line)) continue;
+		if (!line || /^https?:\/\/\S+$/.test(line) || /^[-*+]\s*\[[ xX]\]/.test(line)) continue;
 
 		const text = plainText(line);
 		if (
@@ -580,9 +579,10 @@ const stableReleases = runGh([
 const stories = buildStories(pullRequests);
 auditStories(pullRequests, stories);
 const firstCommit = readFirstCommit();
+const generatedAt = pullRequests[0]?.mergedAt ?? firstCommit.authoredAt;
 
 const payload = {
-	generatedAt: new Date().toISOString(),
+	generatedAt,
 	repository,
 	sourceBranch: "main",
 	methodology: {

@@ -4,7 +4,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 type PaginationItem = number | "ellipsis-left" | "ellipsis-right";
 
 function pageHref(page: number) {
-	return page === 1 ? "/changelog" : `/changelog?page=${page}`;
+	return page === 1 ? "/changelog" : `/changelog/page/${page}`;
 }
 
 function paginationItems(currentPage: number, totalPages: number): PaginationItem[] {
