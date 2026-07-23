@@ -267,7 +267,7 @@ export function SessionFilesView({
 			</header>
 
 			<div className="min-h-0 flex-1 overflow-auto bg-background">
-				<div className="mx-auto flex w-full max-w-[1200px] flex-col px-4 py-4">
+				<div className="mx-auto flex w-full max-w-[1200px] flex-col px-0 py-2">
 					<ReviewFileList
 						error={filesQuery.error}
 						expandedPaths={expandedPaths}
@@ -361,7 +361,7 @@ function ReviewFileCard({
 		<article className="session-files-review-row overflow-hidden bg-transparent">
 			<div
 				className={cn(
-					"group/row flex min-h-14 items-center transition-colors",
+					"group/row flex min-h-11 items-center transition-colors",
 					expanded ? "bg-interactive-active/45" : "hover:bg-interactive-hover/50",
 				)}
 			>
@@ -369,7 +369,7 @@ function ReviewFileCard({
 					aria-controls={`workspace-diff-${file.path}`}
 					aria-expanded={expanded}
 					aria-label={`${expanded ? "Collapse" : "Expand"} ${file.path}`}
-					className="flex min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left"
+					className="flex min-w-0 flex-1 items-center gap-3 px-4 py-2 text-left"
 					data-file-toggle=""
 					onClick={onToggle}
 					type="button"
