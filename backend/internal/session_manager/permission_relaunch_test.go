@@ -24,13 +24,13 @@ func mkWorkerRec(id domain.SessionID, projectID domain.ProjectID, perm domain.Pe
 
 func TestAffectedByPermissionChange(t *testing.T) {
 	type sessionSetup struct {
-		id           domain.SessionID
-		kind         domain.SessionKind
-		terminated   bool
-		workspace    string
-		branch       string
-		storedPerm   domain.PermissionMode
-		displayName  string
+		id          domain.SessionID
+		kind        domain.SessionKind
+		terminated  bool
+		workspace   string
+		branch      string
+		storedPerm  domain.PermissionMode
+		displayName string
 	}
 	cases := []struct {
 		name        string
@@ -117,12 +117,12 @@ func TestAffectedByPermissionChange(t *testing.T) {
 			}
 			for _, s := range tc.sessions {
 				rec := domain.SessionRecord{
-					ID:        s.id,
-					ProjectID: "proj",
-					Kind:      s.kind,
-					Harness:   domain.HarnessClaudeCode,
+					ID:           s.id,
+					ProjectID:    "proj",
+					Kind:         s.kind,
+					Harness:      domain.HarnessClaudeCode,
 					IsTerminated: s.terminated,
-					DisplayName: s.displayName,
+					DisplayName:  s.displayName,
 					Metadata: domain.SessionMetadata{
 						WorkspacePath: s.workspace,
 						Branch:        s.branch,

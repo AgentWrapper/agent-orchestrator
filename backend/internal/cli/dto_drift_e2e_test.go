@@ -39,8 +39,8 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
-	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
+	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 )
 
 // fakeSessionService captures the ports.SpawnConfig the controller decodes from
