@@ -31,6 +31,7 @@ const columns = [
 			{ label: "Discord", href: "https://discord.com/invite/UZv7JjxbwG" },
 			{ label: "X", href: "https://x.com/aoagents" },
 			{ label: "Releases", href: "https://github.com/AgentWrapper/agent-orchestrator/releases" },
+			{ label: "Privacy", href: "/privacy/" },
 		],
 	},
 ];
@@ -114,7 +115,12 @@ export function LandingFooter() {
 					>
 						AgentWrapper/agent-orchestrator
 					</a>
-					<span>Runs locally on your laptop.</span>
+					<div className="flex gap-5">
+						<Link href="/privacy/" className="transition-colors duration-200 hover:text-[color:var(--fg)]">
+							Privacy
+						</Link>
+						<span>Runs locally on your laptop.</span>
+					</div>
 				</div>
 			</div>
 		</footer>

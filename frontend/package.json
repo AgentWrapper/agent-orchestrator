@@ -14,6 +14,7 @@
 	},
 	"scripts": {
 		"build:daemon": "node ./scripts/build-daemon.mjs",
+		"predev": "npm run build:daemon",
 		"dev": "electron-forge start",
 		"dev:web": "VITE_NO_ELECTRON=1 vite --config vite.renderer.config.ts",
 		"prepackage": "npm run build:daemon",

@@ -709,6 +709,50 @@ paths:
       summary: Fetch one project; discriminates ok vs degraded
       tags:
       - projects
+    put:
+      operationId: updateProjectSettings
+      parameters:
+      - description: Project identifier (registry key).
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Project identifier (registry key).
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProjectSettingsInput'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Atomically replace a project's display name and config
+      tags:
+      - projects
   /api/v1/projects/{id}/config:
     put:
       operationId: setProjectConfig
@@ -2212,11 +2256,24 @@ components:
       - status
       - prs
       type: object
+    ControllersSpawnAttachmentInput:
+      properties:
+        data:
+          type: string
+        mimeType:
+          type: string
+      required:
+      - data
+      type: object
     DegradedProject:
       properties:
         id:
           type: string
         kind:
+          enum:
+          - single_repo
+          - workspace
+          - scratch
           type: string
         name:
           type: string
@@ -2613,6 +2670,8 @@ components:
           type: integer
         prUrl:
           type: string
+        previousRun:
+          $ref: '#/components/schemas/ReviewRun'
         status:
           enum:
           - needs_review
@@ -2656,6 +2715,10 @@ components:
         id:
           type: string
         kind:
+          enum:
+          - single_repo
+          - workspace
+          - scratch
           type: string
         name:
           type: string
@@ -2742,6 +2805,10 @@ components:
         id:
           type: string
         kind:
+          enum:
+          - single_repo
+          - workspace
+          - scratch
           type: string
         name:
           type: string
@@ -3323,6 +3390,10 @@ components:
       type: object
     SpawnSessionRequest:
       properties:
+        attachments:
+          items:
+            $ref: '#/components/schemas/ControllersSpawnAttachmentInput'
+          type: array
         branch:
           type: string
         displayName:
@@ -3423,6 +3494,10 @@ components:
       type: object
     TriggerReviewResponse:
       properties:
+        created:
+          description: True when a new review pass was started; false when an existing
+            run for the same commit was reused.
+          type: boolean
         reviewerHandleId:
           type: string
         reviews:
@@ -3432,6 +3507,7 @@ components:
       required:
       - reviewerHandleId
       - reviews
+      - created
       type: object
     UnregisterPushDeviceResponse:
       properties:
@@ -3442,6 +3518,18 @@ components:
       required:
       - token
       - deleted
+      type: object
+    UpdateProjectSettingsInput:
+      properties:
+        config:
+          $ref: '#/components/schemas/ProjectConfig'
+        displayName:
+          maxLength: 20
+          minLength: 1
+          type: string
+      required:
+      - displayName
+      - config
       type: object
     WorkspaceFileResponse:
       properties:

@@ -38,7 +38,5 @@ export function TopbarKillError({ className, ...props }: React.HTMLAttributes<HT
 export const topbarHeaderClass =
 	"flex h-toolbar shrink-0 items-center gap-3 border-b border-border bg-background px-4 z-chrome";
 
-export const topbarHeaderMacClass = "pl-titlebar-content-offset";
-
 export const topbarProjectLabelClass =
 	"text-brand font-semibold tracking-tight leading-none text-foreground whitespace-nowrap";

@@ -1,4 +1,5 @@
 import { APP_SHORTCUTS, SHORTCUT_CATEGORIES, shortcutKeys } from "../../shared/shortcuts";
+import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
 
 type KeyboardShortcutsDialogProps = {
@@ -15,6 +16,11 @@ function isMacPlatform(): boolean {
 }
 
 export function KeyboardShortcutsDialog({ open, onOpenChange, isMac = isMacPlatform() }: KeyboardShortcutsDialogProps) {
+	const isCommandPaletteEnabled = useCommandPaletteEnabled();
+	const availableShortcuts = APP_SHORTCUTS.filter(
+		(shortcut) => shortcut.id !== "command-palette" || isCommandPaletteEnabled,
+	);
+
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent className="max-h-[min(680px,calc(100svh-32px))] max-w-xl gap-0 overflow-hidden border-border bg-popover p-0 text-popover-foreground">
@@ -27,7 +33,7 @@ export function KeyboardShortcutsDialog({ open, onOpenChange, isMac = isMacPlatf
 
 				<div className="overflow-y-auto px-5 py-2">
 					{SHORTCUT_CATEGORIES.map((category) => {
-						const shortcuts = APP_SHORTCUTS.filter((shortcut) => shortcut.category === category);
+						const shortcuts = availableShortcuts.filter((shortcut) => shortcut.category === category);
 						if (shortcuts.length === 0) return null;
 						return (
 							<section className="border-b border-border py-4 last:border-b-0" key={category}>
@@ -37,12 +43,7 @@ export function KeyboardShortcutsDialog({ open, onOpenChange, isMac = isMacPlatf
 								<div className="flex flex-col">
 									{shortcuts.map((shortcut) => (
 										<div className="flex min-h-11 items-center justify-between gap-5 py-1.5" key={shortcut.id}>
-											<div className="min-w-0">
-												<p className="text-control font-medium text-foreground">{shortcut.label}</p>
-												{shortcut.context ? (
-													<p className="mt-0.5 text-caption text-passive">{shortcut.context}</p>
-												) : null}
-											</div>
+											<p className="min-w-0 text-control font-medium text-foreground">{shortcut.label}</p>
 											<div
 												className="flex shrink-0 items-center gap-1"
 												aria-label={shortcutKeys(shortcut, isMac).join("+")}

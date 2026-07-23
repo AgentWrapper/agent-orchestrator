@@ -1,11 +1,22 @@
 import { X } from "lucide-react";
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
+import { isDialogOrMenuOpen } from "../../lib/dom-selectors";
 
 /**
  * Figma "Settings Container": centered column, max-width 768px,
  * padding 64px 32px 80px, gap 32px between header and sections.
  */
 export function SettingsPanel({ children, onClose }: { children: ReactNode; onClose: () => void }) {
+	useEffect(() => {
+		const handleKeyDown = (event: KeyboardEvent) => {
+			if (event.key !== "Escape" || event.defaultPrevented || isDialogOrMenuOpen()) return;
+			event.preventDefault();
+			onClose();
+		};
+		window.addEventListener("keydown", handleKeyDown);
+		return () => window.removeEventListener("keydown", handleKeyDown);
+	}, [onClose]);
+
 	return (
 		<div
 			className="flex h-full min-h-0 w-full justify-center overflow-y-auto"

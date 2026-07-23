@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -40,6 +41,12 @@ import (
 func Run() error {
 	cfg, err := config.Load()
 	if err != nil {
+		return err
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		cfg.StartupWorkingDirectory = cwd
+	}
+	if err := stabilizeWorkingDirectory(cfg.DataDir); err != nil {
 		return err
 	}
 
@@ -137,9 +144,9 @@ func Run() error {
 	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
 
 	// Wire the controller-facing session service over the same store + LCM, the
-	// selected runtime, a gitworktree workspace, the per-session agent resolver
-	// (AO_AGENT validated here for compatibility), and the agent messenger, then mount it
-	// on the API.
+	// selected runtime, routed git/scratch workspaces, the per-session agent
+	// resolver (AO_AGENT validated here for compatibility), and the agent
+	// messenger, then mount it on the API.
 	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, log)
 	if err != nil {
 		stop()
@@ -148,6 +155,15 @@ func Run() error {
 			log.Error("cdc pipeline shutdown", "err", cdcErr)
 		}
 		return fmt.Errorf("wire session service: %w", err)
+	}
+	projectSvc := projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink})
+	if err := seedScratchProjectOnBoot(ctx, cfg, projectSvc); err != nil {
+		stop()
+		lcStack.Stop()
+		if cdcErr := cdcPipe.Stop(); cdcErr != nil {
+			log.Error("cdc pipeline shutdown", "err", cdcErr)
+		}
+		return err
 	}
 	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, log)
 	agentSvc := agentsvc.New()
@@ -168,8 +184,6 @@ func Run() error {
 		DefaultPort: mobilebridge.DefaultPort,
 	}
 	mc := &controllers.MobileController{Bridge: bs}
-
-	projectSvc := projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink})
 
 	// Standalone shell terminals: user-opened shells with no agent session
 	// behind them. They reuse the same runtime adapter (and therefore the same
@@ -305,8 +319,31 @@ func Run() error {
 	return runErr
 }
 
+func seedScratchProjectOnBoot(ctx context.Context, cfg config.Config, projects *projectsvc.Service) error {
+	if projects == nil {
+		return nil
+	}
+	if _, err := projects.EnsureDefaultScratchProject(ctx, filepath.Join(cfg.DataDir, "scratch", "default")); err != nil {
+		return fmt.Errorf("seed scratch project: %w", err)
+	}
+	return nil
+}
+
 // newLogger returns the daemon's slog logger. It writes to stderr so supervisors
 // can capture it separately from any structured stdout protocol added later.
 func newLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
+}
+
+func stabilizeWorkingDirectory(dataDir string) error {
+	if dataDir == "" {
+		return fmt.Errorf("daemon working directory: data dir is required")
+	}
+	if err := os.MkdirAll(dataDir, 0o750); err != nil {
+		return fmt.Errorf("daemon working directory: create %s: %w", dataDir, err)
+	}
+	if err := os.Chdir(dataDir); err != nil {
+		return fmt.Errorf("daemon working directory: chdir %s: %w", dataDir, err)
+	}
+	return nil
 }

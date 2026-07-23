@@ -79,7 +79,7 @@ function sessionPRFactToSummary(session: WorkspaceSession, pr: PullRequestFacts)
 		provider: "github",
 		repo: session.workspaceName,
 		author: "",
-		sourceBranch: session.branch,
+		sourceBranch: session.branch ?? "",
 		targetBranch: "",
 		headSha: "",
 		additions: 0,

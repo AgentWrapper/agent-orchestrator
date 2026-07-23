@@ -329,7 +329,7 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 	return sess, nil
 }
 
-const orchestratorRetireNotice = "AO is replacing this project orchestrator. Stop coordinating new work now; a fresh orchestrator will take over on the canonical branch."
+const orchestratorRetireNotice = "AO is replacing this project orchestrator. Stop coordinating new work now; a fresh orchestrator will take over in a new workspace."
 
 func (s *Service) sendRetireNotice(ctx context.Context, id domain.SessionID) error {
 	if err := s.manager.Send(ctx, id, orchestratorRetireNotice); err != nil {
@@ -608,6 +608,8 @@ func toAPIError(err error) error {
 		return apierr.Invalid("UNKNOWN_HARNESS", err.Error(), nil)
 	case errors.Is(err, sessionmanager.ErrMissingHarness):
 		return apierr.Invalid("AGENT_REQUIRED", err.Error(), nil)
+	case errors.Is(err, sessionmanager.ErrScratchBranchUnsupported):
+		return apierr.Invalid("SCRATCH_BRANCH_UNSUPPORTED", err.Error(), nil)
 	case errors.Is(err, ports.ErrWorkspaceBranchCheckedOutElsewhere):
 		return apierr.Conflict("BRANCH_CHECKED_OUT_ELSEWHERE", err.Error(), nil)
 	case errors.Is(err, ports.ErrWorkspaceBranchNotFetched):

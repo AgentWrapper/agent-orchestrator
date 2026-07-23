@@ -53,6 +53,35 @@ func TestLoadDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadAbsolutizesRelativeOverrides(t *testing.T) {
+	// A relative override must be resolved to absolute at Load time. The daemon
+	// chdir's into its data dir at startup, so a relative path left as-is would
+	// be re-resolved against the new cwd and double-nest state.
+	t.Setenv("AO_RUN_FILE", "rel-running.json")
+	t.Setenv("AO_DATA_DIR", "rel-data")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !filepath.IsAbs(cfg.RunFilePath) {
+		t.Errorf("RunFilePath = %q, want absolute", cfg.RunFilePath)
+	}
+	if !filepath.IsAbs(cfg.DataDir) {
+		t.Errorf("DataDir = %q, want absolute", cfg.DataDir)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(cwd, "rel-data"); cfg.DataDir != want {
+		t.Errorf("DataDir = %q, want %q", cfg.DataDir, want)
+	}
+	if want := filepath.Join(cwd, "rel-running.json"); cfg.RunFilePath != want {
+		t.Errorf("RunFilePath = %q, want %q", cfg.RunFilePath, want)
+	}
+}
+
 func TestLoadOverrides(t *testing.T) {
 	t.Setenv("AO_PORT", "4002")
 	t.Setenv("AO_REQUEST_TIMEOUT", "5s")

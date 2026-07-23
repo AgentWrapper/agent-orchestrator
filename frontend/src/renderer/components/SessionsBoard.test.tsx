@@ -4,12 +4,15 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 
-const { navigateMock, notificationShowMock, postMock, workspaceQueryMock } = vi.hoisted(() => ({
-	navigateMock: vi.fn(),
-	notificationShowMock: vi.fn(),
-	postMock: vi.fn(),
-	workspaceQueryMock: vi.fn(),
-}));
+const { navigateMock, notificationShowMock, postMock, workspaceQueryMock, boardActionsInPanelMock } = vi.hoisted(
+	() => ({
+		navigateMock: vi.fn(),
+		notificationShowMock: vi.fn(),
+		postMock: vi.fn(),
+		workspaceQueryMock: vi.fn(),
+		boardActionsInPanelMock: vi.fn(() => false),
+	}),
+);
 
 vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => navigateMock,
@@ -33,6 +36,15 @@ vi.mock("../lib/bridge", () => ({
 	},
 }));
 
+vi.mock("../lib/platform", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../lib/platform")>();
+	return {
+		...actual,
+		usesBoardActionsInPanel: () => boardActionsInPanelMock(),
+		isLinuxPlatform: () => false,
+	};
+});
+
 import { SessionsBoard } from "./SessionsBoard";
 
 function renderBoard(projectId?: string) {
@@ -54,6 +66,7 @@ beforeEach(() => {
 	notificationShowMock.mockReset().mockResolvedValue(undefined);
 	postMock.mockReset().mockResolvedValue({ data: {} });
 	workspaceQueryMock.mockReset().mockReturnValue({ data: [], isError: false });
+	boardActionsInPanelMock.mockReset().mockReturnValue(false);
 });
 
 describe("SessionsBoard", () => {
@@ -61,6 +74,60 @@ describe("SessionsBoard", () => {
 		renderBoard();
 
 		expect(screen.queryByText(/reload agents/i)).not.toBeInTheDocument();
+	});
+
+	it("shows the project name in the in-panel board chrome when actions live in the panel", () => {
+		boardActionsInPanelMock.mockReturnValue(true);
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				{
+					id: "p1",
+					name: "solkit-ui",
+					path: "/tmp/solkit-ui",
+					sessions: [
+						{
+							id: "s1",
+							workspaceId: "p1",
+							workspaceName: "solkit-ui",
+							title: "test",
+							provider: "codex",
+							branch: "ao/dev/solkit-ui-5/root",
+							status: "running",
+							activity: { state: "working", lastActivityAt: "2026-01-01T00:00:00Z" },
+							updatedAt: "2026-01-01T00:00:00Z",
+							prs: [],
+						},
+					],
+				},
+			],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		expect(screen.getByText("solkit-ui")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "New task" })).toBeInTheDocument();
+	});
+
+	it("shows the Board crumb on the root board when actions live in the panel", () => {
+		boardActionsInPanelMock.mockReturnValue(true);
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				{
+					id: "p1",
+					name: "solkit-ui",
+					path: "/tmp/solkit-ui",
+					sessions: [],
+				},
+			],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard();
+
+		expect(screen.getByText("Board")).toBeInTheDocument();
 	});
 
 	it("labels an idle session as Idle, not Working", () => {

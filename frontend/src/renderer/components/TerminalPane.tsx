@@ -54,7 +54,8 @@ export function TerminalPane({ session, theme, daemonReady, terminalTarget, font
 				style={{ fontSize }}
 			>
 				<span className="text-terminal-dim">~/{session?.workspaceName ?? "reverbcode"}</span>{" "}
-				<span className="text-accent">{session?.branch || "main"}</span> $ {provider}
+				{session?.branch ? <span className="text-accent">{session.branch}</span> : null}
+				{session?.branch ? " " : ""}$ {provider}
 				{"\n"}
 				{lines.map((line, index) => (
 					<span
@@ -330,8 +331,8 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	const emptyStateTitle = session ? "Starting session" : "Agent Orchestrator";
 	const emptyStateMessage = session
 		? session.kind === "orchestrator"
-			? "Preparing the orchestrator terminal. This can take a moment while AO creates the worktree and starts the agent."
-			: "Preparing the worker terminal. This can take a moment while AO creates the worktree and starts the agent."
+			? "Preparing the orchestrator terminal. This can take a moment while AO creates the workspace and starts the agent."
+			: "Preparing the worker terminal. This can take a moment while AO creates the workspace and starts the agent."
 		: "No session selected. Pick a worker to attach its terminal.";
 
 	return (

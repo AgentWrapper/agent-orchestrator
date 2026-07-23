@@ -305,7 +305,8 @@ export interface paths {
         };
         /** Fetch one project; discriminates ok vs degraded */
         get: operations["getProject"];
-        put?: never;
+        /** Atomically replace a project's display name and config */
+        put: operations["updateProjectSettings"];
         post?: never;
         /** Remove a project; stops sessions, cleans workspaces, unregisters */
         delete: operations["removeProject"];
@@ -840,9 +841,14 @@ export interface components {
             /** Format: date-time */
             updatedAt: string;
         };
+        ControllersSpawnAttachmentInput: {
+            data: string;
+            mimeType?: string;
+        };
         DegradedProject: {
             id: string;
-            kind: string;
+            /** @enum {string} */
+            kind: "single_repo" | "workspace" | "scratch";
             name: string;
             path: string;
             resolveError: string;
@@ -994,6 +1000,7 @@ export interface components {
             latestRun?: components["schemas"]["ReviewRun"];
             prNumber: number;
             prUrl: string;
+            previousRun?: components["schemas"]["ReviewRun"];
             /** @enum {string} */
             status: "needs_review" | "running" | "up_to_date" | "changes_requested" | "ineligible";
             targetSha: string;
@@ -1009,7 +1016,8 @@ export interface components {
             config?: components["schemas"]["ProjectConfig"];
             defaultBranch: string;
             id: string;
-            kind: string;
+            /** @enum {string} */
+            kind: "single_repo" | "workspace" | "scratch";
             name: string;
             path: string;
             repo: string;
@@ -1043,7 +1051,8 @@ export interface components {
         };
         ProjectSummary: {
             id: string;
-            kind: string;
+            /** @enum {string} */
+            kind: "single_repo" | "workspace" | "scratch";
             name: string;
             orchestratorAgent?: string;
             path: string;
@@ -1275,6 +1284,7 @@ export interface components {
             orchestrator: components["schemas"]["OrchestratorResponse"];
         };
         SpawnSessionRequest: {
+            attachments?: components["schemas"]["ControllersSpawnAttachmentInput"][];
             branch?: string;
             displayName?: string;
             /** @enum {string} */
@@ -1315,12 +1325,18 @@ export interface components {
             repo?: string;
         };
         TriggerReviewResponse: {
+            /** @description True when a new review pass was started; false when an existing run for the same commit was reused. */
+            created: boolean;
             reviewerHandleId: string;
             reviews: components["schemas"]["PRReviewState"][];
         };
         UnregisterPushDeviceResponse: {
             deleted: boolean;
             token: string;
+        };
+        UpdateProjectSettingsInput: {
+            config: components["schemas"]["ProjectConfig"];
+            displayName: string;
         };
         WorkspaceFileResponse: {
             additions: number;
@@ -2249,6 +2265,60 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProjectGetResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    updateProjectSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project identifier (registry key). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateProjectSettingsInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Not Found */
