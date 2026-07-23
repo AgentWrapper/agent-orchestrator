@@ -638,10 +638,7 @@ function DiffView({
 							) : (
 								<div className={cn("flex", diffRowTone[row.kind])} key={`r${index}`}>
 									<span className="w-9 shrink-0 select-none border-r border-border/50 bg-terminal px-1.5 text-right text-passive/70 tabular-nums">
-										{row.oldNo ?? ""}
-									</span>
-									<span className="w-9 shrink-0 select-none border-r border-border/50 bg-terminal px-1.5 text-right text-passive/70 tabular-nums">
-										{row.newNo ?? ""}
+										{row.newNo ?? row.oldNo ?? ""}
 									</span>
 									<span
 										className={cn(
