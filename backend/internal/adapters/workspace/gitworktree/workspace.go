@@ -647,6 +647,19 @@ func (w *Workspace) existingWorktree(ctx context.Context, repo, path string, cfg
 		return ports.WorkspaceInfo{}, false, err
 	}
 	if rec, ok := findWorktree(records, path); ok {
+		// Git can still list a worktree after the directory was deleted (stale
+		// registration). Reusing that path leaves tmux new-session -c falling
+		// back to the server cwd and agents stranded in the wrong directory.
+		nonEmpty, existsErr := pathExistsNonEmpty(path)
+		if existsErr != nil {
+			return ports.WorkspaceInfo{}, false, existsErr
+		}
+		if !nonEmpty {
+			if pruneErr := w.pruneWorktrees(ctx, repo); pruneErr != nil {
+				return ports.WorkspaceInfo{}, false, fmt.Errorf("gitworktree: prune stale worktree %q: %w", path, pruneErr)
+			}
+			return ports.WorkspaceInfo{}, false, nil
+		}
 		branch := rec.Branch
 		if branch == "" {
 			branch = cfg.Branch
