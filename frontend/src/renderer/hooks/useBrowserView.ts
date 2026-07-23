@@ -137,6 +137,16 @@ export function useBrowserView({
 	}, []);
 
 	const measureAndSend = useCallback(() => {
+		// measureAndSend runs both from the scheduleMeasure() rAF callback and as a
+		// direct synchronous call (parking on overlay open, the settle timer). A
+		// direct call may land while a scheduled frame is still queued, so cancel
+		// that live handle rather than blindly nulling it — otherwise the
+		// scheduleMeasure() dedupe guard and cancelScheduledMeasure() cleanup would
+		// both trust a frameRef that no longer reflects the pending frame.
+		if (frameRef.current !== null) {
+			if (window.cancelAnimationFrame) window.cancelAnimationFrame(frameRef.current);
+			window.clearTimeout(frameRef.current);
+		}
 		frameRef.current = null;
 		const id = viewIdRef.current;
 		const node = slotNodeRef.current;
@@ -357,8 +367,10 @@ export function useBrowserView({
 		// adding/removing a body child, so a `childList`-only observer misses the
 		// open/close transition under rapid toggling and `modalOpenRef` desyncs.
 		// Watch subtree attribute flips on `data-state` too so the transition is
-		// always observed. `update()` early-returns when the open state is unchanged,
-		// so the extra callbacks are cheap.
+		// always observed. This widens the firing rate a lot — `data-state` is used
+		// across Radix (tooltips, accordions, selects, switches, …), so `update()`
+		// now runs a document-wide querySelector on activity anywhere in the app
+		// before it can bail. Cheap enough in practice, but not free.
 		observer.observe(document.body, {
 			childList: true,
 			subtree: true,
