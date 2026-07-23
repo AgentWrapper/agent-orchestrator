@@ -740,6 +740,58 @@ describe("Remote in-page preview navigation", () => {
 		expect(webContents.loadURL).toHaveBeenCalledOnce();
 	});
 
+	it("does not let an older async in-page resolution overwrite a newer direct navigation", async () => {
+		const pending = deferred<string>();
+		const oldSource = "http://localhost:3000/old";
+		const directSource = "https://example.com/new";
+		const oldOpaque = "http://token.ao-preview.localhost:4100/old";
+		const resolvePreviewURL = vi.fn((_ownerId: string, _sessionId: string, url: string) =>
+			url === oldSource ? pending.promise : url,
+		);
+		const { emitWebContents, invoke, webContents } = setupHost({ resolvePreviewURL });
+		await invoke("browser:ensure", "session-one");
+		const oldEvent = { preventDefault: vi.fn() };
+		const directEvent = { preventDefault: vi.fn() };
+
+		emitWebContents("will-navigate", oldEvent, oldSource);
+		emitWebContents("will-navigate", directEvent, directSource);
+		pending.resolve(oldOpaque);
+		await Promise.resolve();
+
+		expect(oldEvent.preventDefault).toHaveBeenCalledOnce();
+		expect(directEvent.preventDefault).not.toHaveBeenCalled();
+		expect(webContents.loadURL).not.toHaveBeenCalled();
+	});
+
+	it("blocks a stale programmatic bypass after a newer navigation starts", async () => {
+		const oldLoad = deferred<void>();
+		const newResolution = deferred<string>();
+		const oldSource = "http://localhost:3000/old";
+		const newSource = "http://localhost:3000/new";
+		const oldOpaque = "http://old.ao-preview.localhost:4100/old";
+		const newOpaque = "http://new.ao-preview.localhost:4100/new";
+		const resolvePreviewURL = vi.fn((_ownerId: string, _sessionId: string, url: string) => {
+			if (url === oldSource) return oldOpaque;
+			if (url === newSource) return newResolution.promise;
+			return url;
+		});
+		const { emitWebContents, invoke, webContents } = setupHost({ resolvePreviewURL });
+		const ensured = await invoke("browser:ensure", "session-one");
+		vi.mocked(webContents.loadURL).mockImplementationOnce(async () => oldLoad.promise);
+		const oldNavigation = invoke("browser:navigate", { viewId: ensured.viewId, url: oldSource });
+		await vi.waitFor(() => expect(webContents.loadURL).toHaveBeenCalledWith(oldOpaque));
+		const newNavigation = invoke("browser:navigate", { viewId: ensured.viewId, url: newSource });
+		await vi.waitFor(() => expect(resolvePreviewURL).toHaveBeenCalledWith(ensured.viewId, "session-one", newSource));
+		const staleEvent = { preventDefault: vi.fn() };
+
+		emitWebContents("will-navigate", staleEvent, oldOpaque);
+		newResolution.resolve(newOpaque);
+		oldLoad.resolve(undefined);
+		await Promise.all([oldNavigation, newNavigation]);
+
+		expect(staleEvent.preventDefault).toHaveBeenCalledOnce();
+	});
+
 	it("drops an async resolved in-page navigation after destroy", async () => {
 		const pending = deferred<string>();
 		const { emitWebContents, host, invoke, webContents } = setupHost({ resolvePreviewURL: () => pending.promise });

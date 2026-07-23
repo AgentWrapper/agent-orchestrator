@@ -674,8 +674,10 @@ function hardenWebContents(
 			event.preventDefault();
 			return;
 		}
-		if (entry.programmaticNavigationBypass?.url === url) {
+		const bypass = entry.programmaticNavigationBypass;
+		if (bypass?.url === url) {
 			entry.programmaticNavigationBypass = null;
+			if (bypass.epoch !== entry.navigationEpoch) event.preventDefault();
 			return;
 		}
 		const sourceURL = normalizedAllowedURL(url);
@@ -705,7 +707,13 @@ function hardenWebContents(
 			reportUnsupported();
 			return;
 		}
-		if (resolvedURL === sourceURL) return;
+		if (resolvedURL === sourceURL) {
+			entry.navigationEpoch += 1;
+			entry.programmaticNavigationEpoch = null;
+			entry.programmaticNavigationBypass = null;
+			entry.sourceURL = sourceURL;
+			return;
+		}
 		event.preventDefault();
 		loadInView(sourceURL, resolvedURL);
 	};
