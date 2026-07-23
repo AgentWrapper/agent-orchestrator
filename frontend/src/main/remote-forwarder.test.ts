@@ -25,6 +25,39 @@ function socketEnded(socket: net.Socket): Promise<true> {
 	});
 }
 
+async function forwarderRequest(
+	forwarder: RemoteForwarder,
+	localURL: string,
+	options: { method?: string; headers?: http.OutgoingHttpHeaders; body?: string | string[] } = {},
+): Promise<{ status: number; headers: http.IncomingHttpHeaders; body: string }> {
+	const local = new URL(localURL);
+	return new Promise((resolve, reject) => {
+		const request = http.request(
+			{
+				host: "127.0.0.1",
+				port: forwarder.port,
+				method: options.method,
+				path: `${local.pathname}${local.search}`,
+				headers: { host: local.host, ...options.headers },
+			},
+			(response) => {
+				const chunks: Buffer[] = [];
+				response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+				response.once("end", () => {
+					resolve({
+						status: response.statusCode ?? 0,
+						headers: response.headers,
+						body: Buffer.concat(chunks).toString("utf8"),
+					});
+				});
+			},
+		);
+		request.once("error", reject);
+		for (const chunk of Array.isArray(options.body) ? options.body : [options.body ?? ""]) request.write(chunk);
+		request.end();
+	});
+}
+
 describe("remote-forwarder", () => {
 	const servers: net.Server[] = [];
 	const forwarders: RemoteForwarder[] = [];
@@ -32,6 +65,504 @@ describe("remote-forwarder", () => {
 	afterEach(async () => {
 		await Promise.all(forwarders.splice(0).map((forwarder) => forwarder.close()));
 		await Promise.all(servers.splice(0).map(closeServer));
+	});
+
+	it("maps only local HTTP and absolute file previews to opaque origins", async () => {
+		const upstream = http.createServer((_req, res) => res.end("ok"));
+		servers.push(upstream);
+		const upstreamPort = await listen(upstream);
+		const forwarder = await startRemoteForwarder({
+			host: "127.0.0.1",
+			port: upstreamPort,
+			password: "do-not-expose-this-password",
+		});
+		forwarders.push(forwarder);
+
+		const targets = [
+			"http://localhost:5173/app/page?mode=preview#selected",
+			"https://127.0.0.1:8443/secure",
+			"http://[::1]:3000/ipv6",
+			"http://0.0.0.0:4173/unspecified-v4",
+			"http://[::]:4174/unspecified-v6",
+			"file:///home/remote/workspace/private/index.html?theme=dark#hero",
+		];
+
+		for (const [index, target] of targets.entries()) {
+			const local = forwarder.resolvePreviewURL(`owner-${index}`, "session/one", target);
+			const parsed = new URL(local);
+			expect(parsed.protocol).toBe("http:");
+			expect(parsed.hostname).toMatch(/^[a-f0-9]+\.ao-preview\.localhost$/);
+			expect(parsed.port).toBe(String(forwarder.port));
+			expect(local).not.toContain("localhost:5173");
+			expect(local).not.toContain("/home/remote/workspace/private/");
+			expect(local).not.toContain("do-not-expose-this-password");
+		}
+
+		const fileLocal = new URL(forwarder.resolvePreviewURL("file-owner", "session-one", targets.at(-1)!));
+		expect(fileLocal.pathname).toBe("/index.html");
+		expect(fileLocal.search).toBe("?theme=dark");
+		expect(fileLocal.hash).toBe("#hero");
+	});
+
+	it.each([
+		"https://example.com/app",
+		"http://10.1.2.3:3000/app",
+		"http://172.16.4.5/app",
+		"http://192.168.1.30/app",
+		"http://169.254.169.254/latest/meta-data",
+	])("leaves non-loopback HTTP target direct: %s", async (target) => {
+		const upstream = http.createServer((_req, res) => res.end("ok"));
+		servers.push(upstream);
+		const upstreamPort = await listen(upstream);
+		const forwarder = await startRemoteForwarder({ host: "127.0.0.1", port: upstreamPort, password: "secret" });
+		forwarders.push(forwarder);
+
+		expect(forwarder.resolvePreviewURL("owner", "session", target)).toBe(target);
+	});
+
+	it("reuses an owner mapping for the same session and target origin", async () => {
+		const upstream = http.createServer((_req, res) => res.end("ok"));
+		servers.push(upstream);
+		const upstreamPort = await listen(upstream);
+		const forwarder = await startRemoteForwarder({ host: "127.0.0.1", port: upstreamPort, password: "secret" });
+		forwarders.push(forwarder);
+
+		const first = new URL(
+			forwarder.resolvePreviewURL("renderer:7/view:one", "session-one", "http://localhost:5173/first?q=1#one"),
+		);
+		const second = new URL(
+			forwarder.resolvePreviewURL("renderer:7/view:one", "session-one", "http://localhost:5173/second?q=2#two"),
+		);
+
+		expect(second.origin).toBe(first.origin);
+		expect(second.pathname).toBe("/second");
+		expect(second.search).toBe("?q=2");
+		expect(second.hash).toBe("#two");
+		expect(forwarder.originalPreviewURL(second.toString())).toBe("http://localhost:5173/second?q=2#two");
+		const otherOwner = new URL(
+			forwarder.resolvePreviewURL("renderer:8/view:one", "session-one", "http://localhost:5173/second"),
+		);
+		expect(otherOwner.origin).not.toBe(first.origin);
+	});
+
+	it("translates file aliases and invalidates all mappings owned by a released view", async () => {
+		const upstream = http.createServer((_req, res) => res.end("ok"));
+		servers.push(upstream);
+		const upstreamPort = await listen(upstream);
+		const forwarder = await startRemoteForwarder({ host: "127.0.0.1", port: upstreamPort, password: "secret" });
+		forwarders.push(forwarder);
+		const target = "file:///home/remote/workspace/docs/guide.html?lang=en#intro";
+		const local = forwarder.resolvePreviewURL("renderer:7/view:one", "session-one", target);
+		forwarder.resolvePreviewURL("renderer:7/view:one", "session-one", "http://127.0.0.1:4173/app");
+
+		expect(forwarder.originalPreviewURL(local)).toBe(target);
+		forwarder.releasePreview("renderer:7/view:one");
+		expect(forwarder.originalPreviewURL(local)).toBe(local);
+
+		const closeTarget = "http://localhost:5173/after-close";
+		const closeLocal = forwarder.resolvePreviewURL("renderer:8/view:two", "session-two", closeTarget);
+		await forwarder.close();
+		expect(forwarder.originalPreviewURL(closeLocal)).toBe(closeLocal);
+	});
+
+	it("routes preview HTTP through the daemon with owned headers and streamed bodies", async () => {
+		let received:
+			| {
+				method?: string;
+				url?: string;
+				target?: string;
+				authorization?: string;
+				host?: string;
+				origin?: string;
+				forged?: string;
+				body: string;
+			  }
+			| undefined;
+		const daemon = http.createServer((req, res) => {
+			const chunks: Buffer[] = [];
+			req.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+			req.on("end", () => {
+				received = {
+					method: req.method,
+					url: req.url,
+					target: req.headers["x-ao-preview-target"] as string | undefined,
+					authorization: req.headers.authorization,
+					host: req.headers.host,
+					origin: req.headers.origin,
+					forged: req.headers["x-ao-preview-forged"] as string | undefined,
+					body: Buffer.concat(chunks).toString("utf8"),
+				};
+				res.writeHead(201, { "content-type": "text/plain", "x-ao-preview-upstream-secret": "remove-me" });
+				res.write("response-");
+				res.end("body");
+			});
+		});
+		servers.push(daemon);
+		const daemonPort = await listen(daemon);
+		const forwarder = await startRemoteForwarder({ host: "127.0.0.1", port: daemonPort, password: "remote-secret" });
+		forwarders.push(forwarder);
+		const local = forwarder.resolvePreviewURL(
+			"renderer:7/view:one",
+			"session/with spaces",
+			"http://0.0.0.0:5173/api/a%2Fb?color=deep%20blue#ignored",
+		);
+
+		const response = await forwarderRequest(forwarder, local, {
+			method: "PATCH",
+			headers: {
+				authorization: "Bearer caller-secret",
+				origin: new URL(local).origin,
+				"x-ao-preview-target": "http://127.0.0.1:1",
+				"x-ao-preview-forged": "caller-controlled",
+				"content-type": "text/plain",
+			},
+			body: ["request-", "body"],
+		});
+
+		expect(response.status).toBe(201);
+		expect(response.body).toBe("response-body");
+		expect(response.headers["x-ao-preview-upstream-secret"]).toBeUndefined();
+		expect(received).toEqual({
+			method: "PATCH",
+			url: "/_ao/preview/session%2Fwith%20spaces/api/a%2Fb?color=deep%20blue",
+			target: "http://127.0.0.1:5173",
+			authorization: "Bearer remote-secret",
+			host: `127.0.0.1:${daemonPort}`,
+			origin: undefined,
+			forged: undefined,
+			body: "request-body",
+		});
+	});
+
+	it("streams preview response data before the daemon response ends", async () => {
+		let finishResponse: (() => void) | undefined;
+		const daemon = http.createServer((_req, res) => {
+			res.writeHead(200, { "content-type": "text/event-stream" });
+			res.write("event: ready\ndata: first\n\n");
+			finishResponse = () => res.end("event: done\ndata: last\n\n");
+		});
+		servers.push(daemon);
+		const daemonPort = await listen(daemon);
+		const forwarder = await startRemoteForwarder({ host: "127.0.0.1", port: daemonPort, password: "secret" });
+		forwarders.push(forwarder);
+		const local = new URL(
+			forwarder.resolvePreviewURL("owner", "session", "http://localhost:5173/events"),
+		);
+
+		const response = await new Promise<http.IncomingMessage>((resolve, reject) => {
+			const request = http.get(
+				{
+					host: "127.0.0.1",
+					port: forwarder.port,
+					path: local.pathname,
+					headers: { host: local.host },
+				},
+				resolve,
+			);
+			request.once("error", reject);
+		});
+		const first = await Promise.race([
+			once(response, "data").then(([chunk]) => Buffer.from(chunk).toString("utf8")),
+			new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("preview response was buffered")), 250)),
+		]);
+
+		expect(first).toContain("event: ready");
+		finishResponse?.();
+		response.resume();
+		await once(response, "end");
+	});
+
+	it("sends the complete absolute file target while exposing only its basename", async () => {
+		let receivedURL: string | undefined;
+		let receivedTarget: string | undefined;
+		const daemon = http.createServer((req, res) => {
+			receivedURL = req.url;
+			receivedTarget = req.headers["x-ao-preview-target"] as string | undefined;
+			res.end("file");
+		});
+		servers.push(daemon);
+		const daemonPort = await listen(daemon);
+		const forwarder = await startRemoteForwarder({ host: "127.0.0.1", port: daemonPort, password: "secret" });
+		forwarders.push(forwarder);
+		const local = forwarder.resolvePreviewURL(
+			"owner",
+			"session",
+			"file:///home/remote/private%20workspace/docs/index.html?theme=dark#intro",
+		);
+
+		const response = await forwarderRequest(forwarder, local);
+
+		expect(response.status).toBe(200);
+		expect(receivedURL).toBe("/_ao/preview/session/index.html?theme=dark");
+		expect(receivedTarget).toBe("file:///home/remote/private%20workspace/docs/index.html");
+	});
+
+	it("fails closed for unknown and released preview hosts", async () => {
+		let daemonRequests = 0;
+		const daemon = http.createServer((_req, res) => {
+			daemonRequests++;
+			res.end("daemon");
+		});
+		servers.push(daemon);
+		const daemonPort = await listen(daemon);
+		const forwarder = await startRemoteForwarder({ host: "127.0.0.1", port: daemonPort, password: "secret" });
+		forwarders.push(forwarder);
+		const known = forwarder.resolvePreviewURL("owner", "session", "http://localhost:5173/app");
+		const unknown = `http://unknown.ao-preview.localhost:${forwarder.port}/app`;
+
+		expect((await forwarderRequest(forwarder, unknown)).status).toBe(404);
+		forwarder.releasePreview("owner");
+		expect((await forwarderRequest(forwarder, known)).status).toBe(404);
+		expect(daemonRequests).toBe(0);
+	});
+
+	it("rewrites preview redirects without mutating the active mapping", async () => {
+		const receivedTargets: string[] = [];
+		const daemon = http.createServer((req, res) => {
+			receivedTargets.push(req.headers["x-ao-preview-target"] as string);
+			switch (req.url) {
+				case "/_ao/preview/session/start/relative":
+					res.writeHead(302, { location: "../next?q=1#relative" });
+					break;
+				case "/_ao/preview/session/start/absolute":
+					res.writeHead(302, { location: "http://localhost:5173/next?q=2#absolute" });
+					break;
+				case "/_ao/preview/session/start/cross":
+					res.writeHead(302, {
+						location: "http://127.0.0.1:43210/next?q=3#cross",
+						"x-ao-preview-redirect-target": "http://127.0.0.1:43210",
+					});
+					break;
+				case "/_ao/preview/session/start/public":
+					res.writeHead(302, { location: "https://example.com/next" });
+					break;
+				case "/_ao/preview/session/start/lan":
+					res.writeHead(302, { location: "http://192.168.1.20/next" });
+					break;
+				default:
+					res.writeHead(204);
+			}
+			res.end();
+		});
+		servers.push(daemon);
+		const daemonPort = await listen(daemon);
+		const forwarder = await startRemoteForwarder({ host: "127.0.0.1", port: daemonPort, password: "secret" });
+		forwarders.push(forwarder);
+		const owner = "renderer:7/view:one";
+		const localFor = (path: string) =>
+			forwarder.resolvePreviewURL(owner, "session", `http://localhost:5173/start/${path}`);
+
+		const relative = await forwarderRequest(forwarder, localFor("relative"));
+		const absolute = await forwarderRequest(forwarder, localFor("absolute"));
+		const cross = await forwarderRequest(forwarder, localFor("cross"));
+		const directPublic = await forwarderRequest(forwarder, localFor("public"));
+		const directLAN = await forwarderRequest(forwarder, localFor("lan"));
+
+		const opaqueOrigin = new URL(localFor("relative")).origin;
+		expect(relative.headers.location).toBe(`${opaqueOrigin}/next?q=1#relative`);
+		expect(absolute.headers.location).toBe(`${opaqueOrigin}/next?q=2#absolute`);
+		expect(directPublic.headers.location).toBe("https://example.com/next");
+		expect(directLAN.headers.location).toBe("http://192.168.1.20/next");
+		expect(cross.headers["x-ao-preview-redirect-target"]).toBeUndefined();
+		const crossLocal = cross.headers.location!;
+		expect(new URL(crossLocal).origin).not.toBe(opaqueOrigin);
+		expect(forwarder.originalPreviewURL(crossLocal)).toBe("http://127.0.0.1:43210/next?q=3#cross");
+
+		await forwarderRequest(forwarder, crossLocal);
+		await forwarderRequest(forwarder, localFor("still-current"));
+		expect(receivedTargets.at(-2)).toBe("http://127.0.0.1:43210");
+		expect(receivedTargets.at(-1)).toBe("http://localhost:5173");
+	});
+
+	it("strips preview cookie domains, LAN credentials, and internal response headers", async () => {
+		const daemon = http.createServer((_req, res) => {
+			res.writeHead(200, {
+				"x-ao-preview-debug": "internal",
+				"set-cookie": [
+					"theme=dark; Domain=localhost; Path=/; HttpOnly",
+					"ao_conn=remote-secret; Domain=remote.example; HttpOnly",
+					"session=business; domain=.localhost; Secure; SameSite=None",
+				],
+			});
+			res.end("ok");
+		});
+		servers.push(daemon);
+		const daemonPort = await listen(daemon);
+		const forwarder = await startRemoteForwarder({ host: "127.0.0.1", port: daemonPort, password: "secret" });
+		forwarders.push(forwarder);
+		const local = forwarder.resolvePreviewURL("owner", "session", "http://localhost:5173/cookies");
+
+		const response = await forwarderRequest(forwarder, local);
+
+		expect(response.headers["x-ao-preview-debug"]).toBeUndefined();
+		expect(response.headers["set-cookie"]).toEqual([
+			"theme=dark; Path=/; HttpOnly",
+			"session=business; Secure; SameSite=None",
+		]);
+	});
+
+	it("routes preview WebSocket upgrades through the selected mapping", async () => {
+		let received:
+			| {
+				url?: string;
+				target?: string;
+				authorization?: string;
+				host?: string;
+				origin?: string;
+				forged?: string;
+			  }
+			| undefined;
+		const daemon = http.createServer();
+		daemon.on("upgrade", (req, socket) => {
+			received = {
+				url: req.url,
+				target: req.headers["x-ao-preview-target"] as string | undefined,
+				authorization: req.headers.authorization,
+				host: req.headers.host,
+				origin: req.headers.origin,
+				forged: req.headers["x-ao-preview-forged"] as string | undefined,
+			};
+			socket.once("end", () => socket.end());
+			socket.write("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n");
+			socket.write("server-frame");
+			socket.on("data", (chunk) => socket.write(`echo:${chunk.toString("utf8")}`));
+		});
+		servers.push(daemon);
+		const daemonPort = await listen(daemon);
+		const forwarder = await startRemoteForwarder({ host: "127.0.0.1", port: daemonPort, password: "remote-secret" });
+		forwarders.push(forwarder);
+		const local = new URL(
+			forwarder.resolvePreviewURL("renderer:7/view:one", "session/one", "http://localhost:5173/socket?room=blue"),
+		);
+		const client = net.connect(forwarder.port, "127.0.0.1");
+		await once(client, "connect");
+		client.write(
+			`GET ${local.pathname}${local.search} HTTP/1.1\r\n` +
+				`Host: ${local.host}\r\n` +
+				"Connection: Upgrade\r\n" +
+				"Upgrade: websocket\r\n" +
+				"Sec-WebSocket-Version: 13\r\n" +
+				"Sec-WebSocket-Key: dGVzdC1rZXk=\r\n" +
+				`Origin: ${local.origin}\r\n` +
+				"Authorization: Bearer caller-secret\r\n" +
+				"X-AO-Preview-Target: http://127.0.0.1:1\r\n" +
+				"X-AO-Preview-Forged: caller-controlled\r\n\r\n",
+		);
+		let data = "";
+		client.on("data", (chunk) => {
+			data += chunk.toString("utf8");
+		});
+		await new Promise<void>((resolve) => {
+			const check = () => (data.includes("server-frame") ? resolve() : setTimeout(check, 5));
+			check();
+		});
+		client.write("client-frame");
+		await new Promise<void>((resolve) => {
+			const check = () => (data.includes("echo:client-frame") ? resolve() : setTimeout(check, 5));
+			check();
+		});
+		client.destroy();
+
+		expect(received).toEqual({
+			url: "/_ao/preview/session%2Fone/socket?room=blue",
+			target: "http://localhost:5173",
+			authorization: "Bearer remote-secret",
+			host: `127.0.0.1:${daemonPort}`,
+			origin: undefined,
+			forged: undefined,
+		});
+		expect(data).toContain("101 Switching Protocols");
+	});
+
+	it("fails closed for unknown and released preview WebSocket hosts", async () => {
+		let daemonUpgrades = 0;
+		const daemon = http.createServer();
+		daemon.on("upgrade", (_req, socket) => {
+			daemonUpgrades++;
+			socket.end("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n");
+		});
+		servers.push(daemon);
+		const daemonPort = await listen(daemon);
+		const forwarder = await startRemoteForwarder({ host: "127.0.0.1", port: daemonPort, password: "secret" });
+		forwarders.push(forwarder);
+		const known = new URL(forwarder.resolvePreviewURL("owner", "session", "http://localhost:5173/socket"));
+		const requestHost = async (host: string): Promise<string> => {
+			const client = net.connect(forwarder.port, "127.0.0.1");
+			await once(client, "connect");
+			client.write(
+				"GET /socket HTTP/1.1\r\n" +
+					`Host: ${host}\r\n` +
+					"Connection: Upgrade\r\n" +
+					"Upgrade: websocket\r\n" +
+					"Sec-WebSocket-Version: 13\r\n" +
+					"Sec-WebSocket-Key: dGVzdC1rZXk=\r\n\r\n",
+			);
+			let response = "";
+			client.on("data", (chunk) => {
+				response += chunk.toString("utf8");
+			});
+			await new Promise<void>((resolve) => {
+				const check = () => (response.includes("\r\n\r\n") ? resolve() : setTimeout(check, 5));
+				check();
+			});
+			client.destroy();
+			return response;
+		};
+
+		expect(await requestHost(`unknown.ao-preview.localhost:${forwarder.port}`)).toContain("404 Not Found");
+		forwarder.releasePreview("owner");
+		expect(await requestHost(known.host)).toContain("404 Not Found");
+		expect(daemonUpgrades).toBe(0);
+	});
+
+	it("applies preview redirect and cookie rules to non-101 WebSocket responses", async () => {
+		const daemon = http.createServer();
+		daemon.on("upgrade", (_req, socket) => {
+			socket.end(
+				"HTTP/1.1 302 Found\r\n" +
+					"Location: http://127.0.0.1:43210/next?q=1#cross\r\n" +
+					"X-AO-Preview-Redirect-Target: http://127.0.0.1:43210\r\n" +
+					"X-AO-Preview-Debug: internal\r\n" +
+					"Set-Cookie: theme=dark; Domain=localhost; Path=/\r\n" +
+					"Set-Cookie: ao_conn=remote-secret; HttpOnly\r\n" +
+					"Content-Length: 0\r\n" +
+					"Connection: close\r\n\r\n",
+			);
+		});
+		servers.push(daemon);
+		const daemonPort = await listen(daemon);
+		const forwarder = await startRemoteForwarder({ host: "127.0.0.1", port: daemonPort, password: "secret" });
+		forwarders.push(forwarder);
+		const local = new URL(
+			forwarder.resolvePreviewURL("renderer:7/view:one", "session", "http://localhost:5173/socket"),
+		);
+		const client = net.connect(forwarder.port, "127.0.0.1");
+		await once(client, "connect");
+		client.write(
+			`GET ${local.pathname} HTTP/1.1\r\n` +
+				`Host: ${local.host}\r\n` +
+				"Connection: Upgrade\r\n" +
+				"Upgrade: websocket\r\n" +
+				"Sec-WebSocket-Version: 13\r\n" +
+				"Sec-WebSocket-Key: dGVzdC1rZXk=\r\n\r\n",
+		);
+		let responseHead = "";
+		client.on("data", (chunk) => {
+			responseHead += chunk.toString("utf8");
+		});
+		await new Promise<void>((resolve) => {
+			const check = () => (responseHead.includes("\r\n\r\n") ? resolve() : setTimeout(check, 5));
+			check();
+		});
+		client.destroy();
+		const location = /^Location: (.+)$/im.exec(responseHead)?.[1].trim();
+
+		expect(responseHead).not.toContain("X-AO-Preview-");
+		expect(responseHead).toContain("Set-Cookie: theme=dark; Path=/");
+		expect(responseHead).not.toContain("ao_conn=");
+		expect(location).toBeDefined();
+		expect(new URL(location!).origin).not.toBe(local.origin);
+		expect(forwarder.originalPreviewURL(location!)).toBe("http://127.0.0.1:43210/next?q=1#cross");
 	});
 
 	it("forwards HTTP requests and injects the existing bearer password", async () => {
@@ -87,6 +618,7 @@ describe("remote-forwarder", () => {
 					"theme=light; Path=/",
 					"ao_conn=rotated-secret; HttpOnly; SameSite=Strict",
 					"session=business-session; Secure",
+					"domain-cookie=preserved; Domain=remote.example; Path=/",
 				],
 			});
 			res.end("ok");
@@ -112,7 +644,11 @@ describe("remote-forwarder", () => {
 		await once(response, "end");
 
 		expect(receivedCookie).toBe("theme=dark; session=business-session");
-		expect(response.headers["set-cookie"]).toEqual(["theme=light; Path=/", "session=business-session; Secure"]);
+		expect(response.headers["set-cookie"]).toEqual([
+			"theme=light; Path=/",
+			"session=business-session; Secure",
+			"domain-cookie=preserved; Domain=remote.example; Path=/",
+		]);
 	});
 
 	it("strips hop-by-hop request headers named directly and by Connection", async () => {

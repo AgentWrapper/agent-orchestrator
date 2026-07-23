@@ -1,10 +1,15 @@
 import http from "node:http";
 import type net from "node:net";
+import { BlockList, isIP } from "node:net";
 import { once } from "node:events";
+import { randomBytes } from "node:crypto";
 import type { RemoteServerConfigInput } from "./remote-server-config";
 
 export type RemoteForwarder = {
 	port: number;
+	resolvePreviewURL(ownerId: string, sessionId: string, rawURL: string): string;
+	releasePreview(ownerId: string): void;
+	originalPreviewURL(localURL: string): string;
 	close(): Promise<void>;
 };
 
@@ -21,6 +26,11 @@ const unavailableCode = "REMOTE_DAEMON_UNAVAILABLE";
 const unavailableBody = JSON.stringify({ error: "unavailable", code: unavailableCode, message: unavailableCode });
 const connectTimeoutMs = 5_000;
 const lanConnectionCookie = "ao_conn";
+const previewHostSuffix = ".ao-preview.localhost";
+const previewTokenBytes = 16;
+const previewLoopbackIPs = new BlockList();
+previewLoopbackIPs.addSubnet("127.0.0.0", 8, "ipv4");
+previewLoopbackIPs.addAddress("::1", "ipv6");
 const hopByHopHeaders = new Set([
 	"connection",
 	"keep-alive",
@@ -31,6 +41,92 @@ const hopByHopHeaders = new Set([
 	"transfer-encoding",
 	"upgrade",
 ]);
+
+type PreviewMapping = {
+	token: string;
+	ownerId: string;
+	sessionId: string;
+	kind: "http" | "file";
+	targetHeader: string;
+	sourceOrigin?: string;
+	fileURL?: string;
+};
+
+type PreviewTarget = Omit<PreviewMapping, "token" | "ownerId" | "sessionId"> & {
+	key: string;
+	pathname: string;
+	search: string;
+	hash: string;
+};
+
+function unbracketedHostname(hostname: string): string {
+	return hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
+}
+
+function normalizedLoopbackOrigin(url: URL): string | undefined {
+	if (url.username || url.password || (url.protocol !== "http:" && url.protocol !== "https:")) return undefined;
+	if (url.port === "0") return undefined;
+	const hostname = unbracketedHostname(url.hostname);
+	if (hostname === "localhost") return url.origin;
+	const family = isIP(hostname);
+	if (!family) return undefined;
+	if (hostname === "0.0.0.0") {
+		url.hostname = "127.0.0.1";
+		return url.origin;
+	}
+	if (hostname === "::") {
+		url.hostname = "[::1]";
+		return url.origin;
+	}
+	if (!previewLoopbackIPs.check(hostname, family === 4 ? "ipv4" : "ipv6")) return undefined;
+	return url.origin;
+}
+
+function previewTarget(rawURL: string): PreviewTarget | undefined {
+	let source: URL;
+	try {
+		source = new URL(rawURL);
+	} catch {
+		return undefined;
+	}
+	if (source.protocol === "http:" || source.protocol === "https:") {
+		const target = new URL(source);
+		const targetHeader = normalizedLoopbackOrigin(target);
+		if (!targetHeader) return undefined;
+		return {
+			kind: "http",
+			key: targetHeader,
+			targetHeader,
+			sourceOrigin: source.origin,
+			pathname: source.pathname,
+			search: source.search,
+			hash: source.hash,
+		};
+	}
+	if (
+		source.protocol !== "file:" ||
+		source.hostname !== "" ||
+		source.username !== "" ||
+		source.password !== "" ||
+		!source.pathname.startsWith("/")
+	) {
+		return undefined;
+	}
+	const fileTarget = new URL(source);
+	fileTarget.search = "";
+	fileTarget.hash = "";
+	const basename = fileTarget.pathname.slice(fileTarget.pathname.lastIndexOf("/") + 1);
+	if (!basename) return undefined;
+	return {
+		kind: "file",
+		key: fileTarget.toString(),
+		targetHeader: fileTarget.toString(),
+		fileURL: fileTarget.toString(),
+		pathname: `/${basename}`,
+		search: source.search,
+		hash: source.hash,
+	};
+}
 
 function cookieName(value: string): string {
 	const separator = value.indexOf("=");
@@ -56,10 +152,26 @@ function responseSetCookieHeader(value: string | string[]): string | string[] | 
 	return Array.isArray(value) ? cookies : cookies[0];
 }
 
+function previewSetCookieHeader(value: string | string[]): string | string[] | undefined {
+	const filtered = responseSetCookieHeader(value);
+	if (filtered === undefined) return undefined;
+	const withoutDomain = (cookie: string) =>
+		cookie
+			.split(";")
+			.filter((part, index) => index === 0 || !/^\s*domain\s*=/i.test(part))
+			.join(";");
+	return Array.isArray(filtered) ? filtered.map(withoutDomain) : withoutDomain(filtered);
+}
+
+type UpstreamHeaderOptions = {
+	preserveUpgrade?: boolean;
+	preview?: PreviewMapping;
+};
+
 function upstreamHeaders(
 	headers: http.IncomingHttpHeaders,
 	config: RemoteServerConfigInput,
-	preserveUpgrade = false,
+	options: UpstreamHeaderOptions = {},
 ): http.OutgoingHttpHeaders {
 	const connectionTokens = new Set(
 		(Array.isArray(headers.connection) ? headers.connection.join(",") : (headers.connection ?? ""))
@@ -71,6 +183,7 @@ function upstreamHeaders(
 	for (const [name, value] of Object.entries(headers)) {
 		const lower = name.toLowerCase();
 		if (value === undefined || hopByHopHeaders.has(lower) || connectionTokens.has(lower)) continue;
+		if (options.preview && (lower === "origin" || lower.startsWith("x-ao-preview-"))) continue;
 		if (lower === "cookie") {
 			const cookie = requestCookieHeader(value);
 			if (cookie) forwarded[lower] = cookie;
@@ -78,16 +191,25 @@ function upstreamHeaders(
 		}
 		forwarded[lower] = value;
 	}
-	if (preserveUpgrade && headers.upgrade) {
+	if (options.preserveUpgrade && headers.upgrade) {
 		forwarded.connection = "Upgrade";
 		forwarded.upgrade = headers.upgrade;
 	}
 	forwarded.host = `${config.host}:${config.port}`;
 	forwarded.authorization = `Bearer ${config.password}`;
+	if (options.preview) forwarded["x-ao-preview-target"] = options.preview.targetHeader;
 	return forwarded;
 }
 
-function responseHeaders(headers: http.IncomingHttpHeaders): http.OutgoingHttpHeaders {
+type ResponseHeaderOptions = {
+	preview?: boolean;
+	location?: string;
+};
+
+function responseHeaders(
+	headers: http.IncomingHttpHeaders,
+	options: ResponseHeaderOptions = {},
+): http.OutgoingHttpHeaders {
 	const connectionTokens = new Set(
 		(Array.isArray(headers.connection) ? headers.connection.join(",") : (headers.connection ?? ""))
 			.split(",")
@@ -98,9 +220,14 @@ function responseHeaders(headers: http.IncomingHttpHeaders): http.OutgoingHttpHe
 	for (const [name, value] of Object.entries(headers)) {
 		const lower = name.toLowerCase();
 		if (value === undefined || hopByHopHeaders.has(lower) || connectionTokens.has(lower)) continue;
+		if (options.preview && lower.startsWith("x-ao-preview-")) continue;
 		if (lower === "set-cookie") {
-			const setCookie = responseSetCookieHeader(value);
+			const setCookie = options.preview ? previewSetCookieHeader(value) : responseSetCookieHeader(value);
 			if (setCookie) forwarded[lower] = setCookie;
+			continue;
+		}
+		if (options.preview && lower === "location" && options.location !== undefined) {
+			forwarded[lower] = options.location;
 			continue;
 		}
 		forwarded[lower] = value;
@@ -121,17 +248,24 @@ function writeUnavailable(response: http.ServerResponse): void {
 	response.end(unavailableBody);
 }
 
-function rawResponseHead(response: http.IncomingMessage): string {
+function rawResponseHead(response: http.IncomingMessage, options: ResponseHeaderOptions = {}): string {
 	const status = `HTTP/${response.httpVersion} ${response.statusCode ?? 101} ${response.statusMessage ?? "Switching Protocols"}`;
 	const headers: string[] = [];
 	for (let i = 0; i < response.rawHeaders.length; i += 2) {
-		if (
-			response.rawHeaders[i].toLowerCase() === "set-cookie" &&
-			cookieName(response.rawHeaders[i + 1]) === lanConnectionCookie
-		) {
+		const name = response.rawHeaders[i];
+		const lower = name.toLowerCase();
+		const value = response.rawHeaders[i + 1];
+		if (options.preview && lower.startsWith("x-ao-preview-")) continue;
+		if (lower === "set-cookie") {
+			const setCookie = options.preview ? previewSetCookieHeader(value) : responseSetCookieHeader(value);
+			if (typeof setCookie === "string") headers.push(`${name}: ${setCookie}`);
 			continue;
 		}
-		headers.push(`${response.rawHeaders[i]}: ${response.rawHeaders[i + 1]}`);
+		if (options.preview && lower === "location" && options.location !== undefined) {
+			headers.push(`${name}: ${options.location}`);
+			continue;
+		}
+		headers.push(`${name}: ${value}`);
 	}
 	return `${status}\r\n${headers.join("\r\n")}\r\n\r\n`;
 }
@@ -139,6 +273,173 @@ function rawResponseHead(response: http.IncomingMessage): string {
 export async function startRemoteForwarder(config: RemoteServerConfigInput): Promise<RemoteForwarder> {
 	const sockets = new Set<net.Socket>();
 	const outboundRequests = new Set<http.ClientRequest>();
+	const previewsByToken = new Map<string, PreviewMapping>();
+	const previewsByOwner = new Map<string, Map<string, PreviewMapping>>();
+	let closed = false;
+	let forwarderPort = 0;
+	const clearPreviews = () => {
+		previewsByToken.clear();
+		previewsByOwner.clear();
+	};
+	const releasePreview = (ownerId: string) => {
+		const owned = previewsByOwner.get(ownerId);
+		if (!owned) return;
+		for (const mapping of owned.values()) previewsByToken.delete(mapping.token);
+		previewsByOwner.delete(ownerId);
+	};
+	const localPreviewURL = (mapping: PreviewMapping, pathname: string, search: string, hash: string) => {
+		const local = new URL(`http://${mapping.token}${previewHostSuffix}:${forwarderPort}`);
+		local.pathname = pathname;
+		local.search = search;
+		local.hash = hash;
+		return local.toString();
+	};
+	const registerPreview = (ownerId: string, sessionId: string, target: PreviewTarget): PreviewMapping => {
+		let owned = previewsByOwner.get(ownerId);
+		if (!owned) {
+			owned = new Map();
+			previewsByOwner.set(ownerId, owned);
+		}
+		const key = `${sessionId}\0${target.kind}\0${target.key}`;
+		const existing = owned.get(key);
+		if (existing) return existing;
+		let token: string;
+		do {
+			token = randomBytes(previewTokenBytes).toString("hex");
+		} while (previewsByToken.has(token));
+		const mapping: PreviewMapping = {
+			token,
+			ownerId,
+			sessionId,
+			kind: target.kind,
+			targetHeader: target.targetHeader,
+			sourceOrigin: target.sourceOrigin,
+			fileURL: target.fileURL,
+		};
+		owned.set(key, mapping);
+		previewsByToken.set(token, mapping);
+		return mapping;
+	};
+	const resolvePreviewURL = (ownerId: string, sessionId: string, rawURL: string): string => {
+		if (closed) return rawURL;
+		const target = previewTarget(rawURL);
+		if (!target) return rawURL;
+		return localPreviewURL(registerPreview(ownerId, sessionId, target), target.pathname, target.search, target.hash);
+	};
+	const originalPreviewURL = (localURL: string): string => {
+		let local: URL;
+		try {
+			local = new URL(localURL);
+		} catch {
+			return localURL;
+		}
+		if (
+			local.protocol !== "http:" ||
+			local.port !== String(forwarderPort) ||
+			!local.hostname.endsWith(previewHostSuffix)
+		) {
+			return localURL;
+		}
+		const token = local.hostname.slice(0, -previewHostSuffix.length);
+		const mapping = previewsByToken.get(token);
+		if (!mapping) return localURL;
+		if (mapping.kind === "http") {
+			const original = new URL(mapping.sourceOrigin!);
+			original.pathname = local.pathname;
+			original.search = local.search;
+			original.hash = local.hash;
+			return original.toString();
+		}
+		const original = new URL(local.pathname.slice(1), new URL(".", mapping.fileURL!));
+		original.search = local.search;
+		original.hash = local.hash;
+		return original.toString();
+	};
+	const previewMappingForHost = (
+		host: string | undefined,
+	): { previewNamespace: false } | { previewNamespace: true; mapping?: PreviewMapping } => {
+		if (!host) return { previewNamespace: false };
+		let local: URL;
+		try {
+			local = new URL(`http://${host}`);
+		} catch {
+			return { previewNamespace: host.toLowerCase().includes("ao-preview.localhost") };
+		}
+		const hostname = local.hostname.toLowerCase();
+		const inNamespace = hostname === previewHostSuffix.slice(1) || hostname.endsWith(previewHostSuffix);
+		if (!inNamespace) return { previewNamespace: false };
+		if (local.port !== String(forwarderPort) || !hostname.endsWith(previewHostSuffix)) {
+			return { previewNamespace: true };
+		}
+		const token = hostname.slice(0, -previewHostSuffix.length);
+		return { previewNamespace: true, mapping: previewsByToken.get(token) };
+	};
+	const previewUpstreamPath = (mapping: PreviewMapping, requestURL: string | undefined): string => {
+		const suffix = requestURL?.startsWith("/") ? requestURL : `/${requestURL ?? ""}`;
+		return `/_ao/preview/${encodeURIComponent(mapping.sessionId)}${suffix}`;
+	};
+	const previewResponseOptions = (
+		mapping: PreviewMapping,
+		requestURL: string | undefined,
+		upstreamResponse: http.IncomingMessage,
+	): ResponseHeaderOptions => {
+		const location = upstreamResponse.headers.location;
+		if (!location) return { preview: true };
+		const localRequest = new URL(
+			requestURL ?? "/",
+			`http://${mapping.token}${previewHostSuffix}:${forwarderPort}`,
+		);
+		const redirectTargetValue = upstreamResponse.headers["x-ao-preview-redirect-target"];
+		const redirectTarget = Array.isArray(redirectTargetValue) ? redirectTargetValue[0] : redirectTargetValue;
+		if (
+			redirectTarget &&
+			(upstreamResponse.statusCode ?? 0) >= 300 &&
+			(upstreamResponse.statusCode ?? 0) < 400 &&
+			previewsByToken.get(mapping.token) === mapping
+		) {
+			const indicated = previewTarget(redirectTarget);
+			const destination = previewTarget(location);
+			if (
+				indicated?.kind === "http" &&
+				indicated.pathname === "/" &&
+				indicated.search === "" &&
+				indicated.hash === "" &&
+				destination?.kind === "http" &&
+				destination.targetHeader === indicated.targetHeader
+			) {
+				return {
+					preview: true,
+					location: localPreviewURL(
+						registerPreview(mapping.ownerId, mapping.sessionId, destination),
+						destination.pathname,
+						destination.search,
+						destination.hash,
+					),
+				};
+			}
+		}
+		if (mapping.kind === "file") {
+			try {
+				const absolute = new URL(location);
+				if (absolute.protocol) return { preview: true, location };
+			} catch {
+				return { preview: true, location: new URL(location, localRequest).toString() };
+			}
+			return { preview: true, location };
+		}
+		try {
+			const targetRequest = new URL(requestURL ?? "/", mapping.targetHeader);
+			const targetLocation = new URL(location, targetRequest);
+			if (targetLocation.origin !== mapping.targetHeader) return { preview: true, location };
+			const rewritten = new URL(localRequest.origin);
+			rewritten.pathname = targetLocation.pathname;
+			rewritten.search = targetLocation.search;
+			rewritten.hash = targetLocation.hash;
+			return { preview: true, location: rewritten.toString() };
+		} catch {
+			return { preview: true, location };
+		}
+	};
 	const destroyOutboundRequest = (request: http.ClientRequest, message: string) => {
 		outboundRequests.delete(request);
 		const error = new Error(message);
@@ -175,13 +476,20 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 		return request;
 	};
 	const server = http.createServer((request, response) => {
+		const previewRoute = previewMappingForHost(request.headers.host);
+		if (previewRoute.previewNamespace && !previewRoute.mapping) {
+			response.writeHead(404, { "content-length": "0" });
+			response.end();
+			return;
+		}
+		const preview = previewRoute.previewNamespace ? previewRoute.mapping : undefined;
 		const upstream = trackOutboundRequest(
 			http.request({
 				hostname: config.host,
 				port: config.port,
 				method: request.method,
-				path: request.url,
-				headers: upstreamHeaders(request.headers, config),
+				path: preview ? previewUpstreamPath(preview, request.url) : request.url,
+				headers: upstreamHeaders(request.headers, config, { preview }),
 			}),
 		);
 		const cancelUpstream = () => {
@@ -199,7 +507,11 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 			};
 			upstreamResponse.once("aborted", () => destroyDownstream());
 			upstreamResponse.once("error", destroyDownstream);
-			response.writeHead(upstreamResponse.statusCode ?? 502, responseHeaders(upstreamResponse.headers));
+			const headerOptions = preview ? previewResponseOptions(preview, request.url, upstreamResponse) : undefined;
+			response.writeHead(
+				upstreamResponse.statusCode ?? 502,
+				responseHeaders(upstreamResponse.headers, headerOptions),
+			);
 			if (upstreamResponse.headers["content-type"]?.startsWith("text/event-stream")) {
 				response.flushHeaders();
 			}
@@ -215,13 +527,19 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 	});
 
 	server.on("upgrade", (request, clientSocket, clientHead) => {
+		const previewRoute = previewMappingForHost(request.headers.host);
+		if (previewRoute.previewNamespace && !previewRoute.mapping) {
+			clientSocket.end("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+			return;
+		}
+		const preview = previewRoute.previewNamespace ? previewRoute.mapping : undefined;
 		const upstream = trackOutboundRequest(
 			http.request({
 				hostname: config.host,
 				port: config.port,
 				method: request.method,
-				path: request.url,
-				headers: upstreamHeaders(request.headers, config, true),
+				path: preview ? previewUpstreamPath(preview, request.url) : request.url,
+				headers: upstreamHeaders(request.headers, config, { preserveUpgrade: true, preview }),
 			}),
 		);
 		const cancelPendingUpgrade = () => {
@@ -239,7 +557,8 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 			upstreamSocket.once("close", () => clientSocket.destroy());
 			clientSocket.once("error", () => upstreamSocket.destroy());
 			upstreamSocket.once("error", () => clientSocket.destroy());
-			clientSocket.write(rawResponseHead(response));
+			const headerOptions = preview ? previewResponseOptions(preview, request.url, response) : undefined;
+			clientSocket.write(rawResponseHead(response, headerOptions));
 			if (upstreamHead.length) clientSocket.write(upstreamHead);
 			if (clientHead.length) upstreamSocket.write(clientHead);
 			clientSocket.pipe(upstreamSocket).pipe(clientSocket);
@@ -247,7 +566,8 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 		upstream.once("response", (response) => {
 			response.once("aborted", () => clientSocket.destroy());
 			response.once("error", () => clientSocket.destroy());
-			clientSocket.write(rawResponseHead(response));
+			const headerOptions = preview ? previewResponseOptions(preview, request.url, response) : undefined;
+			clientSocket.write(rawResponseHead(response, headerOptions));
 			response.pipe(clientSocket);
 		});
 		upstream.once("error", () => {
@@ -267,10 +587,16 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 		await new Promise<void>((resolve) => server.close(() => resolve()));
 		throw new RemoteForwarderStartError();
 	}
+	forwarderPort = address.port;
 
 	return {
 		port: address.port,
+		resolvePreviewURL,
+		releasePreview,
+		originalPreviewURL,
 		close: async () => {
+			closed = true;
+			clearPreviews();
 			for (const request of outboundRequests) destroyOutboundRequest(request, "Remote forwarder closed.");
 			outboundRequests.clear();
 			for (const socket of sockets) socket.destroy();
