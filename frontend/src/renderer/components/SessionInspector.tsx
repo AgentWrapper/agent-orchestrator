@@ -21,7 +21,9 @@ import { StatusPill } from "./StatusPill";
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
 type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
+type FusedVerdict = components["schemas"]["FusedVerdict"];
 type OpenReviewerTerminal = (target: { handleId: string; harness: string }) => void;
+type ReviewTone = "neutral" | "running" | "success" | "danger";
 
 export type InspectorView = "summary" | "reviews" | "browser" | "files";
 
@@ -91,21 +93,21 @@ const kvValueClass = "min-w-0 truncate text-foreground @max-[300px]/inspector:w-
 
 const kvValueMonoClass = "font-mono text-sm-md";
 
-const reviewerStatusTone: Record<"neutral" | "running" | "success" | "danger", string> = {
+const reviewerStatusTone: Record<ReviewTone, string> = {
 	neutral: "bg-raised text-muted-foreground",
 	running: "bg-working/12 text-working",
 	success: "bg-success/14 text-success",
 	danger: "bg-error/14 text-error",
 };
 
-const reviewerDotTone: Record<"neutral" | "running" | "success" | "danger", string> = {
+const reviewerDotTone: Record<ReviewTone, string> = {
 	neutral: "bg-passive",
 	running: "bg-working",
 	success: "bg-success",
 	danger: "bg-error",
 };
 
-const reviewerVerdictTone: Record<"neutral" | "running" | "success" | "danger", string> = {
+const reviewerVerdictTone: Record<ReviewTone, string> = {
 	neutral: "text-muted-foreground",
 	running: "text-working",
 	success: "text-success",
@@ -740,6 +742,7 @@ function ReviewPanel({
 function ReviewStateRow({ reviewState }: { reviewState: PRReviewState }) {
 	const verdict = reviewVerdict(reviewState);
 	const previousVerdict = previousReviewVerdict(reviewState);
+	const gate = testGateVerdict(reviewState.fusedVerdict);
 	const title = reviewState.title?.trim() || `PR #${reviewState.prNumber}`;
 	return (
 		<div
@@ -748,20 +751,27 @@ function ReviewStateRow({ reviewState }: { reviewState: PRReviewState }) {
 				reviewState.status === "ineligible" && "opacity-70",
 			)}
 		>
-			<div className="inline-flex min-w-0 items-center gap-2">
-				<span className={cn("size-dot-sm shrink-0 rounded-full", reviewerDotTone[verdict.tone])} />
-				<div className="grid min-w-0 grid-cols-[auto_auto] items-baseline gap-x-1.5 gap-y-1 text-xs font-semibold text-foreground [&_svg]:hidden">
-					<GitPullRequest aria-hidden="true" />
-					<a
-						className="col-span-full min-w-0 truncate no-underline hover:underline"
-						href={reviewState.prUrl}
-						target="_blank"
-						rel="noopener noreferrer"
-					>
-						{title}
-					</a>
-					<span className="col-start-1 font-mono text-caption text-passive">#{reviewState.prNumber}</span>
+			<div className="min-w-0">
+				<div className="inline-flex min-w-0 items-center gap-2">
+					<span className={cn("size-dot-sm shrink-0 rounded-full", reviewerDotTone[verdict.tone])} />
+					<div className="grid min-w-0 grid-cols-[auto_auto] items-baseline gap-x-1.5 gap-y-1 text-xs font-semibold text-foreground [&_svg]:hidden">
+						<GitPullRequest aria-hidden="true" />
+						<a
+							className="col-span-full min-w-0 truncate no-underline hover:underline"
+							href={reviewState.prUrl}
+							target="_blank"
+							rel="noopener noreferrer"
+						>
+							{title}
+						</a>
+						<span className="col-start-1 font-mono text-caption text-passive">#{reviewState.prNumber}</span>
+					</div>
 				</div>
+				{gate ? (
+					<div className={cn("mt-1 truncate pl-4.5 text-caption font-medium", reviewerVerdictTone[gate.tone])}>
+						Test gate: {gate.label}
+					</div>
+				) : null}
 			</div>
 			<div className="flex flex-col items-end gap-1 whitespace-nowrap">
 				<span className={cn("text-caption font-semibold", reviewerVerdictTone[verdict.tone])}>{verdict.label}</span>
@@ -777,10 +787,13 @@ function ReviewStateRow({ reviewState }: { reviewState: PRReviewState }) {
 
 function sessionReviewVerdict(reviewStates: PRReviewState[]): {
 	label: string;
-	tone: "neutral" | "running" | "success" | "danger";
+	tone: ReviewTone;
 } {
 	if (reviewStates.some((reviewState) => reviewState.status === "running")) {
 		return { label: "Reviewing...", tone: "running" };
+	}
+	if (reviewStates.some((reviewState) => reviewState.fusedVerdict?.outcome === "app_failed")) {
+		return { label: "Test failed", tone: "danger" };
 	}
 	if (reviewStates.some((reviewState) => reviewState.latestRun?.status === "failed")) {
 		return { label: "Failed", tone: "danger" };
@@ -788,11 +801,11 @@ function sessionReviewVerdict(reviewStates: PRReviewState[]): {
 	if (reviewStates.some((reviewState) => reviewState.latestRun?.status === "cancelled")) {
 		return { label: "Cancelled", tone: "neutral" };
 	}
-	if (reviewStates.some((reviewState) => reviewState.status === "changes_requested")) {
+	if (reviewStates.some((reviewState) => reviewVerdict(reviewState).label === "Changes requested")) {
 		return { label: "Changes requested", tone: "danger" };
 	}
 	const eligibleReviews = reviewStates.filter((reviewState) => reviewState.status !== "ineligible");
-	if (eligibleReviews.length > 0 && eligibleReviews.every((reviewState) => reviewState.status === "up_to_date")) {
+	if (eligibleReviews.length > 0 && eligibleReviews.every((reviewState) => reviewVerdict(reviewState).label === "Approved")) {
 		return { label: "Approved", tone: "success" };
 	}
 	return { label: "Not run", tone: "neutral" };
@@ -800,13 +813,22 @@ function sessionReviewVerdict(reviewStates: PRReviewState[]): {
 
 function reviewVerdict(reviewState: PRReviewState): {
 	label: string;
-	tone: "neutral" | "running" | "success" | "danger";
+	tone: ReviewTone;
 } {
 	if (reviewState.latestRun?.status === "failed") {
 		return { label: "Failed", tone: "danger" };
 	}
 	if (reviewState.latestRun?.status === "cancelled") {
 		return { label: "Cancelled", tone: "neutral" };
+	}
+	if (reviewState.fusedVerdict?.outcome === "app_failed") {
+		return { label: "App failed", tone: "danger" };
+	}
+	if (reviewState.fusedVerdict?.outcome === "approved") {
+		return { label: "Approved", tone: "success" };
+	}
+	if (reviewState.fusedVerdict?.outcome === "changes_requested") {
+		return { label: "Changes requested", tone: "danger" };
 	}
 	switch (reviewState.status) {
 		case "running":
@@ -832,6 +854,22 @@ function previousReviewVerdict(reviewState: PRReviewState): {
 			return { label: "Approved", tone: "success" };
 		case "changes_requested":
 			return { label: "Changes requested", tone: "danger" };
+		default:
+			return null;
+	}
+}
+
+function testGateVerdict(fused: FusedVerdict | undefined): { label: string; tone: ReviewTone } | null {
+	if (!fused) return null;
+	switch (fused.outcome) {
+		case "approved":
+			return { label: "Approved", tone: "success" };
+		case "changes_requested":
+			return { label: "Changes requested", tone: "danger" };
+		case "app_failed":
+			return { label: "App failed", tone: "danger" };
+		case "neutral":
+			return { label: "Neutral", tone: "neutral" };
 		default:
 			return null;
 	}

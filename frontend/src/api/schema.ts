@@ -883,6 +883,34 @@ export interface components {
         DomainReviewerConfig: {
             harness: string;
         };
+        FusedFinding: {
+            blocking: boolean;
+            claim?: string;
+            findingId?: string;
+            /** @enum {string} */
+            runtimeOutcome?: "not_tested" | "confirmed" | "refuted";
+            /** @enum {string} */
+            severity?: "low" | "medium" | "high" | "critical";
+            /** @enum {string} */
+            source: "static" | "test-infra";
+            summary?: string;
+            title: string;
+        };
+        FusedVerdict: {
+            blocking: boolean;
+            /** Format: date-time */
+            createdAt?: string;
+            findings: components["schemas"]["FusedFinding"][];
+            id?: string;
+            /** @enum {string} */
+            outcome: "approved" | "changes_requested" | "app_failed" | "neutral";
+            prUrl?: string;
+            reviewRunId?: string;
+            sessionId?: string;
+            summary?: string;
+            targetSha?: string;
+            testRunId?: string;
+        };
         ImportReport: {
             dryRun: boolean;
             notes?: string[];
@@ -996,6 +1024,7 @@ export interface components {
             projectName?: string;
         };
         PRReviewState: {
+            fusedVerdict?: components["schemas"]["FusedVerdict"];
             latestRun?: components["schemas"]["ReviewRun"];
             prNumber: number;
             prUrl: string;
@@ -1294,9 +1323,32 @@ export interface components {
             projectId: string;
             prompt?: string;
         };
+        SubmitReviewFinding: {
+            /** @description True when a runtime test can confirm or refute the finding. */
+            behavioral: boolean;
+            /** @description Precise claim the reviewer believes is true. */
+            claim?: string;
+            /** @description Runtime scenario that should fail if the claim is real. */
+            failureScenario?: string;
+            /** @description Repository-relative file path, when the finding is line-scoped. */
+            file?: string;
+            /** @description Stable finding id. AO assigns one when omitted. */
+            id?: string;
+            /** @description Line number for inline findings. */
+            line?: number;
+            /**
+             * @description Finding severity.
+             * @enum {string}
+             */
+            severity?: "low" | "medium" | "high" | "critical";
+            /** @description Short finding title. */
+            title?: string;
+        };
         SubmitReviewInput: {
             /** @description Review body recorded by AO. Required for changes_requested. */
             body?: string;
+            /** @description Structured findings for runtime verification. */
+            findings?: components["schemas"]["SubmitReviewFinding"][];
             /** @description Id of the GitHub PR review the reviewer posted, if any. */
             githubReviewId?: string;
             /** @description Batched review results recorded by one reviewer CLI command. */
@@ -1309,6 +1361,8 @@ export interface components {
         SubmitReviewItem: {
             /** @description Review body recorded by AO. Required for changes_requested. */
             body?: string;
+            /** @description Structured findings for runtime verification. */
+            findings?: components["schemas"]["SubmitReviewFinding"][];
             /** @description Id of the GitHub PR review the reviewer posted, if any. */
             githubReviewId?: string;
             /** @description Review run id being completed. */

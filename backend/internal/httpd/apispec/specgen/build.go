@@ -211,10 +211,18 @@ var schemaNames = map[string]string{
 	"ControllersTriggerReviewResponse": "TriggerReviewResponse",
 	"ControllersCancelReviewResponse":  "CancelReviewResponse",
 	"ControllersSubmitReviewItem":      "SubmitReviewItem",
+	"ControllersSubmitReviewFinding":   "SubmitReviewFinding",
 	"ControllersSubmitReviewInput":     "SubmitReviewInput",
 	// domain review entities
 	"DomainReviewRun":     "ReviewRun",
 	"ReviewPRReviewState": "PRReviewState",
+	// testgate review verdict entities
+	"TestgateFusedVerdict":    "FusedVerdict",
+	"TestgateFusedFinding":    "FusedFinding",
+	"TestgateFusedOutcome":    "FusedOutcome",
+	"TestgateEvidenceSource":  "TestGateEvidenceSource",
+	"TestgateEvidenceOutcome": "TestGateEvidenceOutcome",
+	"TestgateSeverity":        "ReviewFindingSeverity",
 	// httpd/controllers: import wire envelopes
 	"ControllersImportStatusResponse": "ImportStatusResponse",
 	"ControllersImportRunResponse":    "ImportRunResponse",
