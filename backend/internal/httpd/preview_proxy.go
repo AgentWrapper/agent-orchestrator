@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -23,8 +24,10 @@ import (
 )
 
 const (
-	previewTargetHeader         = "X-AO-Preview-Target"
-	previewRedirectTargetHeader = "X-AO-Preview-Redirect-Target"
+	previewTargetHeader                = "X-AO-Preview-Target"
+	previewRedirectTargetHeader        = "X-AO-Preview-Redirect-Target"
+	previewUpstreamAuthorizationHeader = "X-AO-Preview-Upstream-Authorization"
+	previewResponseHeaderTimeout       = 30 * time.Second
 )
 
 // PreviewSessionService supplies only the durable workspace required to serve a
@@ -253,6 +256,7 @@ func previewLoopbackTransport(target *url.URL) *http.Transport {
 	}
 	transport := baseTransport.Clone()
 	transport.Proxy = nil
+	transport.ResponseHeaderTimeout = previewResponseHeaderTimeout
 	transport.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, network, dialAddress)
 	}
@@ -266,14 +270,16 @@ func previewLoopbackTransport(target *url.URL) *http.Transport {
 }
 
 func stripPreviewProxyRequestHeaders(r *http.Request) {
-	if fields := strings.Fields(r.Header.Get("Authorization")); len(fields) > 0 && strings.EqualFold(fields[0], "Bearer") {
-		r.Header.Del("Authorization")
-	}
+	upstreamAuthorization := r.Header.Get(previewUpstreamAuthorizationHeader)
+	r.Header.Del("Authorization")
 	for name := range r.Header {
 		lower := strings.ToLower(name)
 		if strings.HasPrefix(lower, "x-ao-preview-") || strings.HasPrefix(lower, "x-forwarded-") || lower == "forwarded" || lower == "x-real-ip" {
 			r.Header.Del(name)
 		}
+	}
+	if upstreamAuthorization != "" {
+		r.Header.Set("Authorization", upstreamAuthorization)
 	}
 	cookies := r.Cookies()
 	r.Header.Del("Cookie")

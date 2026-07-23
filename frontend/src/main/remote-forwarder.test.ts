@@ -172,6 +172,7 @@ describe("remote-forwarder", () => {
 				url?: string;
 				target?: string;
 				authorization?: string;
+				upstreamAuthorization?: string;
 				host?: string;
 				origin?: string;
 				forged?: string;
@@ -187,12 +188,16 @@ describe("remote-forwarder", () => {
 					url: req.url,
 					target: req.headers["x-ao-preview-target"] as string | undefined,
 					authorization: req.headers.authorization,
+					upstreamAuthorization: req.headers["x-ao-preview-upstream-authorization"] as string | undefined,
 					host: req.headers.host,
 					origin: req.headers.origin,
 					forged: req.headers["x-ao-preview-forged"] as string | undefined,
 					body: Buffer.concat(chunks).toString("utf8"),
 				};
-				res.writeHead(201, { "content-type": "text/plain", "x-ao-preview-upstream-secret": "remove-me" });
+				res.writeHead(201, {
+					"content-type": "text/plain",
+					"x-ao-preview-upstream-authorization": "remove-me",
+				});
 				res.write("response-");
 				res.end("body");
 			});
@@ -210,9 +215,10 @@ describe("remote-forwarder", () => {
 		const response = await forwarderRequest(forwarder, local, {
 			method: "PATCH",
 			headers: {
-				authorization: "Bearer caller-secret",
+				authorization: "Basic dXNlcjpwYXNz",
 				origin: new URL(local).origin,
 				"x-ao-preview-target": "http://127.0.0.1:1",
+				"x-ao-preview-upstream-authorization": "Bearer forged-secret",
 				"x-ao-preview-forged": "caller-controlled",
 				"content-type": "text/plain",
 			},
@@ -221,16 +227,49 @@ describe("remote-forwarder", () => {
 
 		expect(response.status).toBe(201);
 		expect(response.body).toBe("response-body");
-		expect(response.headers["x-ao-preview-upstream-secret"]).toBeUndefined();
+		expect(response.headers["x-ao-preview-upstream-authorization"]).toBeUndefined();
 		expect(received).toEqual({
 			method: "PATCH",
 			url: "/_ao/preview/session%2Fwith%20spaces/api/a%2Fb?color=deep%20blue",
 			target: "http://127.0.0.1:5173",
 			authorization: "Bearer remote-secret",
+			upstreamAuthorization: "Basic dXNlcjpwYXNz",
 			host: `127.0.0.1:${daemonPort}`,
 			origin: undefined,
 			forged: undefined,
 			body: "request-body",
+		});
+	});
+
+	it("drops forged preview authorization metadata when the browser has no authorization", async () => {
+		let received:
+			| { authorization?: string; upstreamAuthorization?: string; forgedUpstreamAuth?: string }
+			| undefined;
+		const daemon = http.createServer((req, res) => {
+			received = {
+				authorization: req.headers.authorization,
+				upstreamAuthorization: req.headers["x-ao-preview-upstream-authorization"] as string | undefined,
+				forgedUpstreamAuth: req.headers["x-ao-preview-upstream-auth"] as string | undefined,
+			};
+			res.end("ok");
+		});
+		servers.push(daemon);
+		const daemonPort = await listen(daemon);
+		const forwarder = await startRemoteForwarder({ host: "127.0.0.1", port: daemonPort, password: "remote-secret" });
+		forwarders.push(forwarder);
+		const local = forwarder.resolvePreviewURL("owner", "session", "http://localhost:5173/private");
+
+		await forwarderRequest(forwarder, local, {
+			headers: {
+				"x-ao-preview-upstream-authorization": "Basic forged-secret",
+				"x-ao-preview-upstream-auth": "Bearer forged-secret",
+			},
+		});
+
+		expect(received).toEqual({
+			authorization: "Bearer remote-secret",
+			upstreamAuthorization: undefined,
+			forgedUpstreamAuth: undefined,
 		});
 	});
 
@@ -459,6 +498,7 @@ describe("remote-forwarder", () => {
 				url?: string;
 				target?: string;
 				authorization?: string;
+				upstreamAuthorization?: string;
 				host?: string;
 				origin?: string;
 				forged?: string;
@@ -470,6 +510,7 @@ describe("remote-forwarder", () => {
 				url: req.url,
 				target: req.headers["x-ao-preview-target"] as string | undefined,
 				authorization: req.headers.authorization,
+				upstreamAuthorization: req.headers["x-ao-preview-upstream-authorization"] as string | undefined,
 				host: req.headers.host,
 				origin: req.headers.origin,
 				forged: req.headers["x-ao-preview-forged"] as string | undefined,
@@ -505,6 +546,7 @@ describe("remote-forwarder", () => {
 				`Origin: ${local.origin}\r\n` +
 				"Authorization: Bearer caller-secret\r\n" +
 				"X-AO-Preview-Target: http://127.0.0.1:1\r\n" +
+				"X-AO-Preview-Upstream-Authorization: Basic forged-secret\r\n" +
 				"X-AO-Preview-Forged: caller-controlled\r\n\r\n",
 		);
 		let data = "";
@@ -526,6 +568,7 @@ describe("remote-forwarder", () => {
 			url: "/_ao/preview/session%2Fone/socket?room=blue",
 			target: "http://localhost:5173",
 			authorization: "Bearer remote-secret",
+			upstreamAuthorization: "Bearer caller-secret",
 			host: `127.0.0.1:${daemonPort}`,
 			origin: undefined,
 			forged: undefined,

@@ -27,6 +27,7 @@ const unavailableBody = JSON.stringify({ error: "unavailable", code: unavailable
 const connectTimeoutMs = 5_000;
 const lanConnectionCookie = "ao_conn";
 const previewHostSuffix = ".ao-preview.localhost";
+const previewUpstreamAuthorizationHeader = "x-ao-preview-upstream-authorization";
 const previewTokenBytes = 16;
 const previewLoopbackIPs = new BlockList();
 previewLoopbackIPs.addSubnet("127.0.0.0", 8, "ipv4");
@@ -173,6 +174,7 @@ function upstreamHeaders(
 	config: RemoteServerConfigInput,
 	options: UpstreamHeaderOptions = {},
 ): http.OutgoingHttpHeaders {
+	const previewAuthorization = options.preview ? headers.authorization : undefined;
 	const connectionTokens = new Set(
 		(Array.isArray(headers.connection) ? headers.connection.join(",") : (headers.connection ?? ""))
 			.split(",")
@@ -197,7 +199,10 @@ function upstreamHeaders(
 	}
 	forwarded.host = `${config.host}:${config.port}`;
 	forwarded.authorization = `Bearer ${config.password}`;
-	if (options.preview) forwarded["x-ao-preview-target"] = options.preview.targetHeader;
+	if (options.preview) {
+		forwarded["x-ao-preview-target"] = options.preview.targetHeader;
+		if (previewAuthorization) forwarded[previewUpstreamAuthorizationHeader] = previewAuthorization;
+	}
 	return forwarded;
 }
 

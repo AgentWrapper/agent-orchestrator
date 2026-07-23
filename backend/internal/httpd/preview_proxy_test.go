@@ -348,6 +348,65 @@ func TestPreviewProxy_HTTP(t *testing.T) {
 	}
 }
 
+func TestPreviewProxy_HTTPAuthorization(t *testing.T) {
+	type observedAuthorization struct {
+		authorization         string
+		internalAuthorization string
+	}
+	observed := make(chan observedAuthorization, 2)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		observed <- observedAuthorization{
+			authorization:         r.Header.Get("Authorization"),
+			internalAuthorization: r.Header.Get("X-AO-Preview-Upstream-Authorization"),
+		}
+		w.Header().Set("X-AO-Preview-Upstream-Authorization", "must-not-leak")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+	daemon := newPreviewProxyTestServer(t)
+	defer daemon.Close()
+
+	for _, tc := range []struct {
+		name                 string
+		browserAuthorization string
+		wantAuthorization    string
+	}{
+		{name: "Basic browser authorization", browserAuthorization: "Basic dXNlcjpwYXNz", wantAuthorization: "Basic dXNlcjpwYXNz"},
+		{name: "Bearer browser authorization", browserAuthorization: "Bearer browser-token", wantAuthorization: "Bearer browser-token"},
+		{name: "no browser authorization"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodGet, daemon.URL+"/_ao/preview/ao-1/private", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set(previewTargetHeader, upstream.URL)
+			req.Header.Set("Authorization", "Bearer daemon-connection-password")
+			if tc.browserAuthorization != "" {
+				req.Header.Set("X-AO-Preview-Upstream-Authorization", tc.browserAuthorization)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusNoContent {
+				t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusNoContent)
+			}
+			if got := resp.Header.Get("X-AO-Preview-Upstream-Authorization"); got != "" {
+				t.Fatalf("internal response header leaked: %q", got)
+			}
+			got := <-observed
+			if got.authorization != tc.wantAuthorization {
+				t.Fatalf("upstream Authorization = %q, want %q", got.authorization, tc.wantAuthorization)
+			}
+			if got.internalAuthorization != "" {
+				t.Fatalf("internal authorization header reached upstream: %q", got.internalAuthorization)
+			}
+		})
+	}
+}
+
 func TestPreviewProxy_SetsUpstreamOriginWithoutIncomingOrigin(t *testing.T) {
 	upstreamOrigin := make(chan string, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -670,6 +729,39 @@ func TestPreviewProxy_HTTPS(t *testing.T) {
 	}
 }
 
+func TestPreviewLoopbackTransport_ResponseHeaderTimeout(t *testing.T) {
+	release := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		<-release
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+	defer close(release)
+	target, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := previewLoopbackTransport(target)
+	defer transport.CloseIdleConnections()
+	if got := transport.ResponseHeaderTimeout; got != 30*time.Second {
+		t.Fatalf("ResponseHeaderTimeout = %s, want 30s", got)
+	}
+
+	transport.ResponseHeaderTimeout = 25 * time.Millisecond
+	client := &http.Client{Transport: transport}
+	started := time.Now()
+	resp, err := client.Get(upstream.URL)
+	if resp != nil {
+		defer resp.Body.Close()
+	}
+	if err == nil {
+		t.Fatal("request unexpectedly received response headers")
+	}
+	if elapsed := time.Since(started); elapsed >= 250*time.Millisecond {
+		t.Fatalf("response header timeout took %s, want less than 250ms", elapsed)
+	}
+}
+
 func TestPreviewProxy_WebSocket(t *testing.T) {
 	upstreamResult := make(chan error, 1)
 	var targetOrigin string
@@ -680,6 +772,14 @@ func TestPreviewProxy_WebSocket(t *testing.T) {
 		}
 		if got := r.Header.Get("Origin"); got != targetOrigin {
 			upstreamResult <- fmt.Errorf("upstream Origin = %q, want %q", got, targetOrigin)
+			return
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer browser-token" {
+			upstreamResult <- fmt.Errorf("upstream Authorization = %q, want browser token", got)
+			return
+		}
+		if got := r.Header.Get("X-AO-Preview-Upstream-Authorization"); got != "" {
+			upstreamResult <- fmt.Errorf("internal authorization header reached upstream: %q", got)
 			return
 		}
 		conn, err := websocket.Accept(w, r, nil)
@@ -703,7 +803,9 @@ func TestPreviewProxy_WebSocket(t *testing.T) {
 	defer cancel()
 	wsURL := "ws" + strings.TrimPrefix(daemon.URL, "http") + "/_ao/preview/ao-1/socket?room=one"
 	conn, resp, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{HTTPHeader: http.Header{
-		previewTargetHeader: []string{upstream.URL},
+		previewTargetHeader:                   []string{upstream.URL},
+		"Authorization":                       []string{"Bearer daemon-connection-password"},
+		"X-AO-Preview-Upstream-Authorization": []string{"Bearer browser-token"},
 	}})
 	if err != nil {
 		if resp != nil {
