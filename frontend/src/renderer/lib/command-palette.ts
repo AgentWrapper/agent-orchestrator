@@ -74,14 +74,14 @@ function sessionCommand(
 ): CommandItem {
 	return {
 		id: `${SESSION_ID_PREFIX[group]}:${session.id}`,
-			group,
-			title: session.title,
-			subtitle: workspace.name,
-			keywords: keywords(workspace.name, session.branch, session.issueId),
-			action: {
-				kind: "navigate",
-				target: {
-					to: "/projects/$projectId/sessions/$sessionId",
+		group,
+		title: session.title,
+		subtitle: workspace.name,
+		keywords: keywords(workspace.name, session.branch, session.issueId),
+		action: {
+			kind: "navigate",
+			target: {
+				to: "/projects/$projectId/sessions/$sessionId",
 				params: { projectId: workspace.id, sessionId: session.id },
 			},
 		},
