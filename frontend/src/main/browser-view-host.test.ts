@@ -538,6 +538,50 @@ describe("agent browser runtime", () => {
 		});
 	});
 
+	it("waits for load completion, disappearance, and DOM stability", async () => {
+		const { debuggerSendCommand, host } = setupHost();
+		const expressions: string[] = [];
+		debuggerSendCommand.mockImplementation(async (method: string, params?: Record<string, unknown>) => {
+			if (method !== "Runtime.evaluate") return {};
+			const expression = String(params?.expression ?? "");
+			expressions.push(expression);
+			if (expression.includes("__ao_browser_dom_stability__")) {
+				return { result: { value: 500 } };
+			}
+			return { result: { value: true } };
+		});
+
+		await host.execute("sess-1", "wait", { load: true, timeoutMs: 500 });
+		await host.execute("sess-1", "wait", { textGone: "Saving...", timeoutMs: 500 });
+		await host.execute("sess-1", "wait", { selectorGone: ".spinner", timeoutMs: 500 });
+		await host.execute("sess-1", "wait", { stableMs: 250, timeoutMs: 500 });
+
+		expect(expressions).toEqual(
+			expect.arrayContaining([
+				"document.readyState === 'complete'",
+				expect.stringContaining("!document.body.innerText.includes"),
+				expect.stringContaining("!document.querySelector"),
+				expect.stringContaining("__ao_browser_dom_stability__"),
+			]),
+		);
+	});
+
+	it("retries a wait when navigation briefly replaces the execution context", async () => {
+		const { debuggerSendCommand, host } = setupHost();
+		let attempts = 0;
+		debuggerSendCommand.mockImplementation(async (method: string) => {
+			if (method !== "Runtime.evaluate") return {};
+			attempts++;
+			if (attempts === 1) throw new Error("Execution context was destroyed");
+			return { result: { value: true } };
+		});
+
+		await expect(host.execute("sess-1", "wait", { text: "Ready", timeoutMs: 500 })).resolves.toMatchObject({
+			condition: 'text "Ready"',
+		});
+		expect(attempts).toBe(2);
+	});
+
 	it("invalidates refs after navigation", async () => {
 		const { debuggerSendCommand, host, webContentsListeners } = setupHost();
 		debuggerSendCommand.mockImplementation(async (method: string) => {

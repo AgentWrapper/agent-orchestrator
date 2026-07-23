@@ -258,30 +258,53 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 		},
 	})
 
-	var waitText, waitSelector, waitURL string
-	var waitMS, timeoutMS int
+	var waitText, waitTextGone, waitSelector, waitSelectorGone, waitURL string
+	var waitMS, waitStableMS, timeoutMS int
+	var waitLoad bool
 	waitCmd := &cobra.Command{
 		Use:   "wait",
-		Short: "Wait for time, text, selector, or URL state",
+		Short: "Wait for page load, DOM stability, time, text, selector, or URL state",
 		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			selected := 0
-			for _, active := range []bool{waitText != "", waitSelector != "", waitURL != "", waitMS > 0} {
+			for _, active := range []bool{
+				waitText != "",
+				waitTextGone != "",
+				waitSelector != "",
+				waitSelectorGone != "",
+				waitURL != "",
+				waitLoad,
+				waitStableMS > 0,
+				waitMS > 0,
+			} {
 				if active {
 					selected++
 				}
 			}
 			if selected != 1 {
-				return usageError{errors.New("choose exactly one of --text, --selector, --url, or --ms")}
+				return usageError{errors.New(
+					"choose exactly one of --text, --text-gone, --selector, --selector-gone, --url, --load, --dom-stable, or --ms",
+				)}
+			}
+			if waitStableMS > timeoutMS {
+				return usageError{errors.New("--timeout must be at least as long as --dom-stable")}
 			}
 			args := map[string]any{"timeoutMs": timeoutMS}
 			switch {
 			case waitText != "":
 				args["text"] = waitText
+			case waitTextGone != "":
+				args["textGone"] = waitTextGone
 			case waitSelector != "":
 				args["selector"] = waitSelector
+			case waitSelectorGone != "":
+				args["selectorGone"] = waitSelectorGone
 			case waitURL != "":
 				args["url"] = waitURL
+			case waitLoad:
+				args["load"] = true
+			case waitStableMS > 0:
+				args["stableMs"] = waitStableMS
 			default:
 				args["ms"] = waitMS
 			}
@@ -289,8 +312,12 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 		},
 	}
 	waitCmd.Flags().StringVar(&waitText, "text", "", "wait until visible page text contains this value")
+	waitCmd.Flags().StringVar(&waitTextGone, "text-gone", "", "wait until visible page text no longer contains this value")
 	waitCmd.Flags().StringVar(&waitSelector, "selector", "", "wait until this CSS selector exists")
+	waitCmd.Flags().StringVar(&waitSelectorGone, "selector-gone", "", "wait until this CSS selector no longer exists")
 	waitCmd.Flags().StringVar(&waitURL, "url", "", "wait until the current URL contains this value")
+	waitCmd.Flags().BoolVar(&waitLoad, "load", false, "wait until the current page finishes loading")
+	waitCmd.Flags().IntVar(&waitStableMS, "dom-stable", 0, "wait until the DOM has not mutated for this many milliseconds")
 	waitCmd.Flags().IntVar(&waitMS, "ms", 0, "wait for a fixed number of milliseconds")
 	waitCmd.Flags().IntVar(&timeoutMS, "timeout", 10_000, "condition timeout in milliseconds")
 	cmd.AddCommand(waitCmd)

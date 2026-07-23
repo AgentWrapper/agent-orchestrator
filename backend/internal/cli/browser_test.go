@@ -93,6 +93,37 @@ func TestBrowserClickAndWaitArguments(t *testing.T) {
 	}
 }
 
+func TestBrowserExpandedWaitArguments(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-1")
+	cfg := setConfigEnv(t)
+	capture := &browserRequestCapture{}
+	srv := browserCLIServer(t, capture)
+	writeRunFileFor(t, cfg, srv)
+	deps := Deps{ProcessAlive: func(int) bool { return true }}
+
+	tests := []struct {
+		name string
+		args []string
+		key  string
+		want any
+	}{
+		{name: "text disappears", args: []string{"--text-gone", "Saving..."}, key: "textGone", want: "Saving..."},
+		{name: "selector disappears", args: []string{"--selector-gone", ".spinner"}, key: "selectorGone", want: ".spinner"},
+		{name: "page load", args: []string{"--load"}, key: "load", want: true},
+		{name: "DOM stability", args: []string{"--dom-stable", "750"}, key: "stableMs", want: float64(750)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, _, err := executeCLI(t, deps, append([]string{"browser", "wait"}, tt.args...)...); err != nil {
+				t.Fatal(err)
+			}
+			if capture.body.Action != "wait" || capture.body.Args[tt.key] != tt.want {
+				t.Fatalf("wait command = %#v", capture.body)
+			}
+		})
+	}
+}
+
 func TestBrowserCoreInteractionArguments(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "ao-1")
 	cfg := setConfigEnv(t)
@@ -185,6 +216,9 @@ func TestBrowserRequiresSessionAndValidWait(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "ao-1")
 	if _, _, err := executeCLI(t, Deps{}, "browser", "wait", "--text", "x", "--url", "y"); ExitCode(err) != 2 {
 		t.Fatalf("wait error = %v code=%d", err, ExitCode(err))
+	}
+	if _, _, err := executeCLI(t, Deps{}, "browser", "wait", "--dom-stable", "5000", "--timeout", "1000"); ExitCode(err) != 2 {
+		t.Fatalf("dom-stable timeout error = %v code=%d", err, ExitCode(err))
 	}
 	if _, _, err := executeCLI(t, Deps{}, "browser", "get"); ExitCode(err) != 2 {
 		t.Fatalf("get error = %v code=%d", err, ExitCode(err))

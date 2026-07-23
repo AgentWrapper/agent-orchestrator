@@ -67,8 +67,8 @@ surface (`npm run sqlc`, `npm run api`).
   compact accessibility snapshots and refs, click/fill/type, keyboard input,
   hover and non-mutating element highlighting, scrolling, selection and checked
   state, property reads, stable logical tabs and captured popups, waits,
-  screenshots, console messages, and page errors while the Browser panel is
-  hidden.
+  including load/disappearance/DOM-stability conditions, screenshots, console
+  messages, and page errors while the Browser panel is hidden.
 - Real daemon wiring via the generated `openapi-fetch` typed client
   (`src/api/schema.ts`); mock data only in `VITE_NO_ELECTRON` web-preview mode.
 - Electron main handles daemon discovery, launch, and status reporting.

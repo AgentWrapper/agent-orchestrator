@@ -1402,28 +1402,82 @@ async function waitForEntry(entry: BrowserEntry, args: Record<string, unknown>):
 		return { waitedMs: fixedMS, url: entry.view.webContents.getURL() };
 	}
 	const timeoutMS = numberArg(args.timeoutMs, 1, 60_000) || 10_000;
+	const stableMS = numberArg(args.stableMs, 1, 10_000);
 	let expression = "";
 	let condition = "";
+	let valueSatisfies = (value: unknown): boolean => value === true;
 	if (typeof args.text === "string" && args.text) {
 		expression = `Boolean(document.body && document.body.innerText.includes(${JSON.stringify(args.text)}))`;
 		condition = `text ${JSON.stringify(args.text)}`;
+	} else if (typeof args.textGone === "string" && args.textGone) {
+		expression = `Boolean(!document.body || !document.body.innerText.includes(${JSON.stringify(args.textGone)}))`;
+		condition = `text ${JSON.stringify(args.textGone)} to disappear`;
 	} else if (typeof args.selector === "string" && args.selector) {
 		expression = `Boolean(document.querySelector(${JSON.stringify(args.selector)}))`;
 		condition = `selector ${JSON.stringify(args.selector)}`;
+	} else if (typeof args.selectorGone === "string" && args.selectorGone) {
+		expression = `Boolean(!document.querySelector(${JSON.stringify(args.selectorGone)}))`;
+		condition = `selector ${JSON.stringify(args.selectorGone)} to disappear`;
 	} else if (typeof args.url === "string" && args.url) {
 		expression = `location.href.includes(${JSON.stringify(args.url)})`;
 		condition = `URL ${JSON.stringify(args.url)}`;
+	} else if (args.load === true) {
+		expression = "document.readyState === 'complete'";
+		condition = "page load completion";
+	} else if (stableMS > 0) {
+		expression = `(() => {
+			const key = "__ao_browser_dom_stability__";
+			let state = globalThis[key];
+			if (!state || state.document !== document) {
+				state = {document, lastMutation: performance.now()};
+				state.observer = new MutationObserver(() => { state.lastMutation = performance.now(); });
+				state.observer.observe(document, {
+					subtree: true,
+					childList: true,
+					attributes: true,
+					characterData: true,
+				});
+				globalThis[key] = state;
+			}
+			return performance.now() - state.lastMutation;
+		})()`;
+		condition = `DOM stability for ${stableMS}ms`;
+		valueSatisfies = (value) => typeof value === "number" && value >= stableMS;
 	} else {
-		throw browserError("INVALID_ARGUMENT", "wait requires text, selector, url, or ms");
+		throw browserError(
+			"INVALID_ARGUMENT",
+			"wait requires text, textGone, selector, selectorGone, url, load, stableMs, or ms",
+		);
 	}
 	await ensureDebugger(entry);
 	const deadline = Date.now() + timeoutMS;
 	while (Date.now() <= deadline) {
-		const evaluated = (await entry.view.webContents.debugger.sendCommand("Runtime.evaluate", {
-			expression,
-			returnByValue: true,
-		})) as { result?: { value?: unknown } };
-		if (evaluated.result?.value === true) {
+		if (args.load === true && entry.view.webContents.isLoading()) {
+			await delay(100);
+			continue;
+		}
+		let evaluated: {
+			result?: { value?: unknown };
+			exceptionDetails?: { text?: string };
+		};
+		try {
+			evaluated = (await entry.view.webContents.debugger.sendCommand("Runtime.evaluate", {
+				expression,
+				returnByValue: true,
+			})) as typeof evaluated;
+		} catch {
+			// Navigations and HMR can briefly replace the execution context. Retry
+			// until the requested condition or timeout rather than failing early.
+			await delay(100);
+			continue;
+		}
+		if (evaluated.exceptionDetails) {
+			throw browserError(
+				"INVALID_ARGUMENT",
+				evaluated.exceptionDetails.text ?? `Unable to evaluate wait condition ${condition}`,
+			);
+		}
+		if (valueSatisfies(evaluated.result?.value)) {
 			return { condition, url: entry.view.webContents.getURL() };
 		}
 		await delay(100);

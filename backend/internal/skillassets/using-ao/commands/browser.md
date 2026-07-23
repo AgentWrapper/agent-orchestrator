@@ -45,7 +45,7 @@ ao browser select <ref> <value> [--json]
 ao browser check <ref> [--json]
 ao browser uncheck <ref> [--json]
 ao browser get <property> [ref] [--json]
-ao browser wait (--text <text> | --selector <css> | --url <substring> | --ms <milliseconds>) [--timeout <milliseconds>] [--json]
+ao browser wait (--text <text> | --text-gone <text> | --selector <css> | --selector-gone <css> | --url <substring> | --load | --dom-stable <milliseconds> | --ms <milliseconds>) [--timeout <milliseconds>] [--json]
 ao browser screenshot [path] [--json]
 ao browser console [--json]
 ao browser errors [--json]
@@ -63,6 +63,10 @@ following browser commands, and `tab close` defaults to the active tab.
 Allowed page popups are captured as new AO tabs instead of opening a separate
 OS browser. Take a new snapshot after switching tabs because element refs are
 invalidated at the tab boundary.
+Use `wait --load` after navigation, `--text-gone` or `--selector-gone` for
+transient UI, and `--dom-stable <ms>` after HMR or a dynamic render. Conditional
+waits retry through brief execution-context replacement during navigation and
+fail with `WAIT_TIMEOUT` when `--timeout` expires.
 
 Without `--json`, `screenshot` writes a PNG and refuses to overwrite an existing file. With `--json`, it returns the structured response including base64 image data.
 

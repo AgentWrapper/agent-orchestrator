@@ -93,6 +93,9 @@ OS-browser windows. The AO desktop app must be open because Electron owns the
 References from a snapshot are invalidated after navigation or DOM replacement;
 they are also invalidated when changing tabs. Take another snapshot when a
 command reports `STALE_REFERENCE`.
+Browser waits cover load completion, text or selector appearance and
+disappearance, URL matching, fixed delays, and a configurable DOM-stability
+window for HMR-driven verification.
 
 `go run .` in `backend/` remains a compatibility wrapper around the daemon.
 
