@@ -401,6 +401,24 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	}
 }
 
+func TestSessionsAPI_SpawnRejectsOversizedBody(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	// A body past the ~35 MiB maxSpawnBodyBytes cap is rejected while decoding
+	// (MaxBytesReader), before the attachment size caps and without materializing
+	// the whole body. The oversized bytes live in an *attachment* payload (not the
+	// prompt, which has its own much smaller PROMPT_TOO_LONG cap), so this pins the
+	// body cap specifically: MaxBytesReader makes the read/decode fail with
+	// INVALID_JSON. If that line were removed the body would decode fully and be
+	// rejected later with an attachment-specific code (ATTACHMENT_TOO_LARGE),
+	// failing this test. 40 MiB of base64 comfortably exceeds the ~35 MiB cap.
+	oversized := `{"projectId":"ao","attachments":[{"mimeType":"image/png","data":"` +
+		strings.Repeat("A", 40<<20) + `"}]}`
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions", oversized)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
+}
+
 func TestSessionsAPI_PreviewDiscoversAndServesStaticIndex(t *testing.T) {
 	svc := newFakeSessionService()
 	workspace := t.TempDir()

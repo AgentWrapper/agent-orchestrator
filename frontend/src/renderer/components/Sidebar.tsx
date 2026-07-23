@@ -50,19 +50,14 @@ import { useUiStore } from "../stores/ui-store";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CreateProjectInput } from "./CreateProjectFlow";
 import { ResizeHandle } from "./ResizeHandle";
+import { TitlebarNav } from "./TitlebarNav";
+import { isMacPlatform, isWindowsPlatform } from "../lib/platform";
 
-// The macOS hiddenInset traffic lights and the fixed TitlebarNav overlay live
-// in the full-width topbar's left inset (_shell renders the bar above the
-// sidebar row); the sidebar itself starts below the 56px header, so its border
-// never crosses the titlebar strip.
-const isMac = typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
-const isWindows =
-	typeof navigator !== "undefined" &&
-	/win/i.test(
-		(navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ??
-			navigator.platform ??
-			"",
-	);
+// On macOS the sidebar is full-height: traffic lights sit over its top chrome,
+// and TitlebarNav (toggle + history) stacks in this header directly below them.
+// Win/Linux still hang the sidebar under their shell titlebar/toolbar.
+const isMac = isMacPlatform();
+const isWindows = isWindowsPlatform();
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
 // Shared styling for the per-project hover action buttons (dashboard,
@@ -85,6 +80,8 @@ type SidebarProps = {
 	underTopbar?: boolean;
 	/** Chrome height to clear when underTopbar is set. Defaults to the 56px shell toolbar. */
 	topbarOffset?: "toolbar" | "titlebar";
+	/** Lock back/forward in TitlebarNav (empty welcome board). */
+	historyLocked?: boolean;
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];
 	onCreateProject: (input: CreateProjectInput) => Promise<void>;
@@ -126,6 +123,7 @@ export function Sidebar({
 	hideEdgeBorder = false,
 	underTopbar = true,
 	topbarOffset = "toolbar",
+	historyLocked = false,
 	workspaceError,
 	workspaces,
 	onCreateProject,
@@ -215,31 +213,48 @@ export function Sidebar({
 					: "top-0 h-svh!",
 			)}
 		>
-			<SidebarHeader className="gap-0 p-0 pl-2.5 pr-1.75 pt-2.5 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pt-2">
-				{/* Brand (project-sidebar__brand); in the icon rail it becomes the old
-            36px board button wrapping the 22px accent mark. */}
-				<div className="flex shrink-0 items-center gap-2.5 px-2 pb-4.5 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:pb-2">
-					<Tooltip>
-						<TooltipTrigger asChild>
-							<button
-								aria-label="Orchestrator board"
-								className={cn(
-									"grid h-5.5 w-5.5 shrink-0 place-items-center",
-									"group-data-[collapsible=icon]:size-control-board group-data-[collapsible=icon]:rounded-lg",
-									selection.isHome
-										? "group-data-[collapsible=icon]:bg-interactive-active"
-										: "group-data-[collapsible=icon]:hover:bg-interactive-hover",
-								)}
-								onClick={selection.goHome}
-								type="button"
-							>
-								<img src={aoLogo} alt="" aria-hidden="true" className="h-5.5 w-5.5 rounded-md object-cover" />
-							</button>
-						</TooltipTrigger>
-						<TooltipContent side="right" hidden={state !== "collapsed"}>
-							Orchestrator board
-						</TooltipContent>
-					</Tooltip>
+			{/* macOS: pt clears the traffic lights + drag strip (shared
+			    --size-traffic-light-clearance); header padding stays constant
+			    across expand/collapse so the pinned toggle/logo column does
+			    not shift. */}
+			<SidebarHeader
+				className={cn(
+					"gap-0 p-0",
+					isMac ? "pt-traffic-light-clearance" : "pt-2.5 pl-2.5 pr-1.75",
+					!isMac && "group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pt-2",
+				)}
+			>
+				{isMac ? <TitlebarNav historyLocked={historyLocked} /> : null}
+				{/* Brand: logo stays in the --size-sidebar-icon column at a fixed
+				    size so it does not resize or reflow during the width animation.
+				    Wordmark fades in beside it when expanded. */}
+				<div
+					className={cn(
+						"flex shrink-0 items-center pb-4.5 group-data-[collapsible=icon]:pb-2",
+						!isMac &&
+							"group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:gap-1",
+					)}
+				>
+					<div className="flex w-(--size-sidebar-icon) shrink-0 items-center justify-center">
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<button
+									aria-label="Orchestrator board"
+									className={cn(
+										"grid size-control-board shrink-0 place-items-center rounded-lg",
+										selection.isHome ? "bg-interactive-active" : "hover:bg-interactive-hover",
+									)}
+									onClick={selection.goHome}
+									type="button"
+								>
+									<img src={aoLogo} alt="" aria-hidden="true" className="h-5.5 w-5.5 rounded-md object-cover" />
+								</button>
+							</TooltipTrigger>
+							<TooltipContent side="right" hidden={state !== "collapsed"}>
+								Orchestrator board
+							</TooltipContent>
+						</Tooltip>
+					</div>
 					<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate text-sm font-bold tracking-tight-lg text-foreground group-data-[collapsible=icon]:hidden">
 						Agent Orchestrator
 					</span>
@@ -248,9 +263,6 @@ export function Sidebar({
 							nightly
 						</span>
 					)}
-					{/* On macOS the toggle lives in the TitlebarNav cluster, on Windows in
-					    the WindowTitlebar — only Linux keeps the in-header trigger.
-					    SidebarTrigger already toggles open/closed. */}
 					{!isMac && !isWindows && (
 						<Tooltip>
 							<TooltipTrigger asChild>

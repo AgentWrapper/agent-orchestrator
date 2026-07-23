@@ -140,7 +140,7 @@ export default function SpawnModal() {
 		<KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === "ios" ? "padding" : undefined}>
 			<ScrollView contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled">
 				<Text style={styles.lead}>
-					Spawn a worker agent. It gets its own git worktree and branch, then starts on the task you give it.
+					Spawn a worker agent. It gets its own isolated workspace, then starts on the task you give it.
 				</Text>
 
 				<Text style={styles.label}>PROJECT</Text>

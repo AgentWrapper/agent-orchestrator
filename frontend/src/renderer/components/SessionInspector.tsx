@@ -236,7 +236,6 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 	const query = useSessionScmSummary(session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, query.data);
 	const prSectionTitle = prSummaries.length > 1 ? `Pull requests (${prSummaries.length})` : "Pull request";
-	const branchLabel = session.branch || `session/${session.id}`;
 	const issueId = canonicalTrackerIssueId(session.issueId);
 
 	return (
@@ -261,7 +260,7 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 				<dl className="flex flex-col gap-1">
 					<Row k="Agent" v={session.provider} mono />
 					{issueId && <Row k="Issue" v={issueId} mono />}
-					<Row k="Branch" v={branchLabel} mono />
+					{session.branch && <Row k="Branch" v={session.branch} mono />}
 					<Row k="Started" v={formatTimeCompact(session.createdAt ?? session.updatedAt)} mono />
 					<Row k="Session" v={session.id} mono />
 				</dl>
@@ -310,7 +309,7 @@ function ActivityTimeline({ session }: { session: WorkspaceSession }) {
 
 	events.push({
 		tone: "neutral",
-		node: <>Created worktree &amp; branch</>,
+		node: <>Created workspace</>,
 		ts: formatTimeCompact(session.createdAt ?? session.updatedAt),
 	});
 
@@ -740,6 +739,7 @@ function ReviewPanel({
 
 function ReviewStateRow({ reviewState }: { reviewState: PRReviewState }) {
 	const verdict = reviewVerdict(reviewState);
+	const previousVerdict = previousReviewVerdict(reviewState);
 	const title = reviewState.title?.trim() || `PR #${reviewState.prNumber}`;
 	return (
 		<div
@@ -763,9 +763,14 @@ function ReviewStateRow({ reviewState }: { reviewState: PRReviewState }) {
 					<span className="col-start-1 font-mono text-caption text-passive">#{reviewState.prNumber}</span>
 				</div>
 			</div>
-			<span className={cn("whitespace-nowrap text-caption font-semibold", reviewerVerdictTone[verdict.tone])}>
-				{verdict.label}
-			</span>
+			<div className="flex flex-col items-end gap-1 whitespace-nowrap">
+				<span className={cn("text-caption font-semibold", reviewerVerdictTone[verdict.tone])}>{verdict.label}</span>
+				{previousVerdict ? (
+					<span className={cn("text-2xs font-medium", reviewerVerdictTone[previousVerdict.tone])}>
+						Previous: {previousVerdict.label}
+					</span>
+				) : null}
+			</div>
 		</div>
 	);
 }
@@ -815,6 +820,21 @@ function reviewVerdict(reviewState: PRReviewState): {
 			return { label: "Not run", tone: "neutral" };
 	}
 	return { label: "Not run", tone: "neutral" };
+}
+
+function previousReviewVerdict(reviewState: PRReviewState): {
+	label: string;
+	tone: "success" | "danger";
+} | null {
+	if (reviewState.status !== "needs_review" && reviewState.status !== "running") return null;
+	switch (reviewState.previousRun?.verdict) {
+		case "approved":
+			return { label: "Approved", tone: "success" };
+		case "changes_requested":
+			return { label: "Changes requested", tone: "danger" };
+		default:
+			return null;
+	}
 }
 
 function reviewSessionRunAction(reviewStates: PRReviewState[], isTriggering: boolean): string {

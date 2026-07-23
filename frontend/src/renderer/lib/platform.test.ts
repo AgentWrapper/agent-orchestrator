@@ -3,8 +3,9 @@ import {
 	isLinuxPlatform,
 	isMacPlatform,
 	isWindowsPlatform,
-	usesBoardActionsInFramedTopbar,
 	usesFramedAppTopbar,
+	hidesShellTopbar,
+	usesBoardActionsInPanel,
 } from "./platform";
 
 const originalPlatform = Object.getOwnPropertyDescriptor(window.navigator, "platform");
@@ -41,22 +42,24 @@ afterEach(() => {
 });
 
 describe("renderer platform behavior", () => {
-	it("uses the framed app topbar on macOS while leaving OS chrome native", () => {
+	it("hides the shell topbar on macOS and keeps board actions in the panel", () => {
 		spoofPlatform("MacIntel", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)");
 
 		expect(isMacPlatform()).toBe(true);
 		expect(isWindowsPlatform()).toBe(false);
 		expect(usesFramedAppTopbar()).toBe(true);
-		expect(usesBoardActionsInFramedTopbar()).toBe(true);
+		expect(hidesShellTopbar()).toBe(true);
+		expect(usesBoardActionsInPanel()).toBe(true);
 	});
 
-	it("keeps Windows-specific board controls in the inset panel topbar", () => {
+	it("keeps Windows board controls in the inset panel topbar", () => {
 		spoofPlatform("Win32");
 
 		expect(isWindowsPlatform()).toBe(true);
 		expect(isMacPlatform()).toBe(false);
 		expect(usesFramedAppTopbar()).toBe(true);
-		expect(usesBoardActionsInFramedTopbar()).toBe(true);
+		expect(hidesShellTopbar()).toBe(false);
+		expect(usesBoardActionsInPanel()).toBe(false);
 	});
 
 	it("uses the framed app topbar on Linux", () => {
@@ -65,6 +68,7 @@ describe("renderer platform behavior", () => {
 		expect(isLinuxPlatform()).toBe(true);
 		expect(isWindowsPlatform()).toBe(false);
 		expect(usesFramedAppTopbar()).toBe(true);
-		expect(usesBoardActionsInFramedTopbar()).toBe(true);
+		expect(hidesShellTopbar()).toBe(false);
+		expect(usesBoardActionsInPanel()).toBe(false);
 	});
 });

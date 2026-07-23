@@ -165,14 +165,14 @@ export function CenterPane({
 							<ChevronRight aria-hidden="true" className="size-icon-md" />
 						</button>
 					)}
-					{/* New shell tab at the end of the strip — the same action Ctrl+`
+					{/* New shell tab at the end of the strip — the same action Ctrl+Shift+`
 					    fires, routed through the store so the two cannot drift. */}
 					{onNewShellTerminal && (
 						<button
 							aria-label="New terminal"
 							className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
 							onClick={onNewShellTerminal}
-							title="New terminal (Ctrl+`)"
+							title="New terminal (Ctrl+Shift+`)"
 							type="button"
 						>
 							<Plus aria-hidden="true" className="size-icon-md" />

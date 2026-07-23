@@ -118,6 +118,52 @@ func TestImportWorkspaceProjectConflictsWithArchivedSameID(t *testing.T) {
 	}
 }
 
+func TestProjectScratchKindAndArchivedCount(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	count, err := s.CountProjectsIncludingArchived(ctx)
+	if err != nil {
+		t.Fatalf("count initial: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("initial project count = %d, want 0", count)
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := s.UpsertProject(ctx, domain.ProjectRecord{
+		ID:           "scratch",
+		DisplayName:  "Scratch",
+		Path:         "/ao/scratch/default",
+		Kind:         domain.ProjectKindScratch,
+		RegisteredAt: now,
+	}); err != nil {
+		t.Fatalf("upsert scratch: %v", err)
+	}
+
+	got, ok, err := s.GetProject(ctx, "scratch")
+	if err != nil || !ok {
+		t.Fatalf("get scratch: ok=%v err=%v", ok, err)
+	}
+	if got.Kind != domain.ProjectKindScratch {
+		t.Fatalf("kind = %q, want scratch", got.Kind)
+	}
+
+	if ok, err := s.ArchiveProject(ctx, "scratch", now.Add(time.Minute)); err != nil || !ok {
+		t.Fatalf("archive scratch: ok=%v err=%v", ok, err)
+	}
+	if list, err := s.ListProjects(ctx); err != nil || len(list) != 0 {
+		t.Fatalf("active projects = %#v, %v; want empty", list, err)
+	}
+	count, err = s.CountProjectsIncludingArchived(ctx)
+	if err != nil {
+		t.Fatalf("count after archive: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("project count including archived = %d, want 1", count)
+	}
+}
+
 func TestProjectConfigRoundTrips(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

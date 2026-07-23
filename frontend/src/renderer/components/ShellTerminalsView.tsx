@@ -9,7 +9,7 @@ import { useResolvedTheme, useUiStore } from "../stores/ui-store";
 import { TerminalPane } from "./TerminalPane";
 
 // The standalone terminals screen: shells with no agent session behind them,
-// reachable from anywhere via the + at the end of a tab strip or Ctrl+`.
+// reachable from anywhere via the + at the end of a tab strip or Ctrl+Shift+`.
 //
 // This exists because the session view cannot be the only home for shells - it
 // is unreachable in a project with no sessions, which is exactly when a user
@@ -85,7 +85,7 @@ export function ShellTerminalsView() {
 					aria-label="New terminal"
 					className="ml-auto inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
 					onClick={requestNewShellTerminal}
-					title="New terminal (Ctrl+`)"
+					title="New terminal (Ctrl+Shift+`)"
 					type="button"
 				>
 					<Plus aria-hidden="true" className="size-icon-md" />
@@ -104,7 +104,7 @@ export function ShellTerminalsView() {
 						<div className="text-center">
 							<div className="text-terminal">No terminals open</div>
 							<div className="mt-2 text-terminal-dim">
-								Press <span className="text-terminal">Ctrl+`</span> or use the + button to open one.
+								Press <span className="text-terminal">Ctrl+Shift+`</span> or use the + button to open one.
 							</div>
 						</div>
 					</div>

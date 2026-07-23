@@ -432,6 +432,25 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			// paste, double word-delete, etc). keyup/keypress fall through to
 			// xterm's own default handling for that event type.
 			if (event.type === "keyup" || event.type === "keypress") return true;
+			// Shift+Enter → newline without submitting, matching Claude Code / Codex.
+			// A terminal normally sends the same CR for Enter and Shift+Enter, so the
+			// agent can't distinguish them; emit the meta-return (ESC+CR) that
+			// readline/Ink-based TUIs interpret as "insert a newline" rather than
+			// "submit". Plain Enter still falls through to xterm's default CR.
+			//
+			// SCOPE: this meta-return is applied to every pane intentionally for now.
+			// It is correct for agent TUIs but untested and unintended for plain login
+			// shells, where ESC+CR is not a "newline" affordance. The correct fix is to
+			// scope it by pane kind — TerminalPane already branches on
+			// `terminalTarget?.kind === "shell"` at the XtermTerminal call site — once
+			// this branch is rebased onto main, which brings that discriminator (and
+			// ShellTerminalsView) that does not yet exist here. Until then the behavior
+			// is left unchanged and the emitted bytes are identical for all panes.
+			if (event.key === "Enter" && event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
+				consumeTerminalShortcut(event);
+				emitUserInput("\x1b\r", "keyboard");
+				return false;
+			}
 			if (isTerminalCopyShortcut(event)) {
 				if (copySelection()) {
 					consumeTerminalShortcut(event);
