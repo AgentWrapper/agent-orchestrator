@@ -7,9 +7,9 @@ import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import * as SecureStore from "expo-secure-store";
 import { Linking, Platform } from "react-native";
-import { registerPushDevice, unregisterPushDevice } from "./api";
+import { ApiError, registerPushDevice, unregisterPushDevice } from "./api";
 import type { ServerConfig } from "./config";
-import type { PushRegisterResult, PushStatus } from "./pushStatus";
+import { classifyServerFailure, hasServer, type PushRegisterResult, type PushStatus } from "./pushStatus";
 
 export type { PushRegisterResult, PushStatus } from "./pushStatus";
 
@@ -144,6 +144,12 @@ function easProjectId(): string | undefined {
 // Idempotent: the daemon upserts by token, so this is also the foreground-refresh
 // path (D7).
 export async function registerForPush(cfg: ServerConfig): Promise<PushRegisterResult> {
+	// Nothing to register with until the app is paired. Checked first, and here
+	// rather than only in the UI, so no call site can spend the user's one-shot
+	// permission prompt on a request that could only fail (an unpaired app still
+	// holds a config object — it just has an empty host).
+	if (!hasServer(cfg)) return { ok: false, reason: "not-configured" };
+
 	// Remote push tokens are only issued on physical devices.
 	if (!Device.isDevice) return { ok: false, reason: "unsupported" };
 
@@ -195,8 +201,10 @@ export async function registerForPush(cfg: ServerConfig): Promise<PushRegisterRe
 		return { ok: false, reason: "token-failed" };
 	}
 
-	// Step 2 — hand the token to the daemon. A failure here means the server was
-	// unreachable (not paired, offline, wrong host) — the build is fine.
+	// Step 2 — hand the token to the daemon. The build is fine at this point, so
+	// any failure here is about the server: either we never reached it (offline,
+	// wrong host) or it answered and rejected us (bad password, lockout, 5xx).
+	// An ApiError carries a status, which is exactly that distinction.
 	try {
 		await registerPushDevice(cfg, {
 			token,
@@ -204,8 +212,9 @@ export async function registerForPush(cfg: ServerConfig): Promise<PushRegisterRe
 			deviceName: Device.deviceName ?? undefined,
 		});
 	} catch (e) {
-		console.warn("[push] could not register the token with the daemon (server unreachable?)", e);
-		return { ok: false, reason: "server-unreachable" };
+		const httpStatus = e instanceof ApiError ? e.status : undefined;
+		console.warn(`[push] could not register the token with the daemon (status: ${httpStatus ?? "no response"})`, e);
+		return { ok: false, reason: classifyServerFailure(httpStatus), status: httpStatus };
 	}
 
 	await saveRegistration({

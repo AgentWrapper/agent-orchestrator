@@ -77,12 +77,22 @@ export function describePush(status: PushStatus | null, server: ServerTarget): P
 				};
 	}
 	if (!status.granted && status.canAskAgain) {
-		return {
-			label: "Off",
-			hint: "Turn on alerts for agents that need input and PR updates.",
-			action: "enable",
-			actionLabel: "Enable",
-		};
+		// Same rule as Register above: without a server there is nothing to
+		// register with, so Enable could only burn the one-shot OS permission
+		// prompt and then fail. Pairing triggers registration on its own.
+		return configured
+			? {
+					label: "Off",
+					hint: "Turn on alerts for agents that need input and PR updates.",
+					action: "enable",
+					actionLabel: "Enable",
+				}
+			: {
+					label: "Off",
+					hint: "Connect to your AO server first — notifications turn on once connected.",
+					action: null,
+					actionLabel: null,
+				};
 	}
 	// Permanently denied — only system settings can flip it back on.
 	return {
@@ -96,12 +106,36 @@ export function describePush(status: PushStatus | null, server: ServerTarget): P
 /** Why a registration attempt did not produce a usable token. */
 export type PushRegisterFailure =
 	| "unsupported" // simulator / not a physical device
+	| "not-configured" // no AO server paired yet, so there's nothing to register with
 	| "denied" // permission not granted
 	| "no-project-id" // EAS projectId missing from app config
 	| "token-failed" // the OS/Expo refused to mint a token (e.g. no APNs entitlement)
-	| "server-unreachable"; // token fine, but the daemon couldn't be reached
+	| "server-unreachable" // token fine, but the daemon was never reached
+	| "server-auth" // daemon answered 401/403 — wrong or missing password
+	| "server-rate-limited" // daemon answered 429 — too many attempts / lockout
+	| "server-error"; // daemon answered with some other error status
 
-export type PushRegisterResult = { ok: true; token: string } | { ok: false; reason: PushRegisterFailure };
+export type PushRegisterResult =
+	| { ok: true; token: string }
+	// `status` is the HTTP status when the daemon answered with an error, so the
+	// message can name it; absent for every other kind of failure.
+	| { ok: false; reason: PushRegisterFailure; status?: number };
+
+/**
+ * Maps a failed register call to a reason. `status` is the HTTP status the
+ * daemon answered with, or undefined when the request never got an answer
+ * (DNS failure, connection refused, timeout).
+ *
+ * Reaching the server and being rejected by it is not the same as not reaching
+ * it: telling someone with a wrong password to "check that AO is running" sends
+ * them to debug the wrong thing.
+ */
+export function classifyServerFailure(status: number | undefined): PushRegisterFailure {
+	if (status === undefined) return "server-unreachable";
+	if (status === 401 || status === 403) return "server-auth";
+	if (status === 429) return "server-rate-limited";
+	return "server-error";
+}
 
 /**
  * Human-facing title/message for a failed registration. Kept separate from the
@@ -112,6 +146,7 @@ export type PushRegisterResult = { ok: true; token: string } | { ok: false; reas
 export function describeRegisterFailure(
 	reason: PushRegisterFailure,
 	platform: "ios" | "android" | string,
+	status?: number,
 ): { title: string; message: string } {
 	switch (reason) {
 		case "server-unreachable":
@@ -120,6 +155,32 @@ export function describeRegisterFailure(
 				message:
 					"Your device is set up for notifications, but we couldn't reach your server to register it. " +
 					"Check that AO is running and your phone is on the same network, then try again.",
+			};
+		case "server-auth":
+			return {
+				title: "Your AO server rejected the request",
+				message:
+					"We reached your server, but it wouldn't accept the connection password. " +
+					"Re-enter it under Settings → Server, then try again.",
+			};
+		case "server-rate-limited":
+			return {
+				title: "Too many attempts",
+				message: "Your AO server is temporarily refusing new attempts. Wait a minute, then try again.",
+			};
+		case "server-error":
+			return {
+				title: "Your AO server couldn't register this device",
+				message:
+					`We reached your server, but it returned an error${status ? ` (HTTP ${status})` : ""}. ` +
+					"Check the AO logs on your computer, then try again.",
+			};
+		case "not-configured":
+			return {
+				title: "Connect to your AO server first",
+				message:
+					"This app isn't paired with a server yet, so there's nothing to register with. " +
+					"Add your server under Settings → Server (or scan its QR code) — notifications turn on once connected.",
 			};
 		case "token-failed":
 			return {

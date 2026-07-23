@@ -316,7 +316,7 @@ function NotificationsSection() {
 					haptics.success();
 				} else {
 					haptics.error();
-					const { title, message } = describeRegisterFailure(result.reason, Platform.OS);
+					const { title, message } = describeRegisterFailure(result.reason, Platform.OS, result.status);
 					Alert.alert(title, message);
 				}
 			}
