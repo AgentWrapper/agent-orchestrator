@@ -166,6 +166,7 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		Messenger: messenger,
 		Lifecycle: lcm,
 		DataDir:   cfg.DataDir,
+		RunFile:   cfg.RunFilePath,
 		Logger:    log,
 	})
 	scmProvider, err := newGitHubSCMProvider(log)
