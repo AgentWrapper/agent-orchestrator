@@ -279,6 +279,11 @@ type SendSessionMessageResponse struct {
 	Message   string           `json:"message"`
 }
 
+// SessionOutputResponse is the body of GET /api/v1/sessions/{sessionId}/output.
+type SessionOutputResponse struct {
+	Output string `json:"output"`
+}
+
 // SessionPRFacts is the pull-request read shape returned under session PR routes.
 type SessionPRFacts struct {
 	URL            string                `json:"url"`

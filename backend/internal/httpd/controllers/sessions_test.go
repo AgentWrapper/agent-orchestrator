@@ -155,6 +155,10 @@ func (f *fakeSessionService) Send(_ context.Context, _ domain.SessionID, message
 	return nil
 }
 
+func (f *fakeSessionService) Output(_ context.Context, _ domain.SessionID, _ int) (string, error) {
+	return "", nil
+}
+
 func (f *fakeSessionService) ListPRs(_ context.Context, id domain.SessionID) ([]domain.PRFacts, error) {
 	if f.listPRErr != nil {
 		return nil, f.listPRErr

@@ -2535,6 +2535,28 @@ func (m *Manager) validateRuntimePrerequisites() error {
 	return nil
 }
 
+// Output returns the last `lines` lines of a session's terminal as a plain-text
+// snapshot (the runtime resolves ANSI/screen state; see Runtime.GetOutput).
+// Read-only: no lifecycle or workspace mutation. Used by clients that cannot
+// hold the /mux WebSocket open (e.g. the watch) and poll this instead.
+func (m *Manager) Output(ctx context.Context, id domain.SessionID, lines int) (string, error) {
+	if lines <= 0 {
+		lines = 200
+	}
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return "", fmt.Errorf("output %s: %w", id, err)
+	}
+	if !ok {
+		return "", fmt.Errorf("output %s: %w", id, ErrNotFound)
+	}
+	out, err := m.runtime.GetOutput(ctx, runtimeHandle(rec.Metadata), lines)
+	if err != nil {
+		return "", fmt.Errorf("output %s: %w", id, err)
+	}
+	return out, nil
+}
+
 func runtimeHandle(meta domain.SessionMetadata) ports.RuntimeHandle {
 	return ports.RuntimeHandle{ID: meta.RuntimeHandleID}
 }

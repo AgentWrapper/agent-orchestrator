@@ -394,6 +394,10 @@ func (f *fakeCommander) RetireForReplacement(_ context.Context, id domain.Sessio
 	f.retired = append(f.retired, id)
 	return nil
 }
+func (f *fakeCommander) Output(_ context.Context, _ domain.SessionID, _ int) (string, error) {
+	return "", nil
+}
+
 func (f *fakeCommander) Send(_ context.Context, id domain.SessionID, _ string) error {
 	if f.sendErr != nil {
 		return f.sendErr

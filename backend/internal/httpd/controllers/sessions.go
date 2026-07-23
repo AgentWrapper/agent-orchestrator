@@ -44,6 +44,7 @@ type SessionService interface {
 	Rename(ctx context.Context, id domain.SessionID, displayName string) error
 	SetPreview(ctx context.Context, id domain.SessionID, previewURL string) (domain.Session, error)
 	Send(ctx context.Context, id domain.SessionID, message string) error
+	Output(ctx context.Context, id domain.SessionID, lines int) (string, error)
 	ListPRSummaries(ctx context.Context, id domain.SessionID) ([]sessionsvc.PRSummary, error)
 	ClaimPR(ctx context.Context, id domain.SessionID, ref string, opts sessionsvc.ClaimPROptions) (sessionsvc.ClaimPRResult, error)
 	ListWorkspaceFiles(ctx context.Context, id domain.SessionID) (sessionsvc.WorkspaceFiles, error)
@@ -85,6 +86,7 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Post("/sessions/{sessionId}/kill", c.kill)
 	r.Post("/sessions/{sessionId}/rollback", c.rollback)
 	r.Post("/sessions/{sessionId}/send", c.send)
+	r.Get("/sessions/{sessionId}/output", c.output)
 	r.Post("/sessions/{sessionId}/activity", c.activity)
 	r.Get("/orchestrators", c.listOrchestrators)
 	r.Post("/orchestrators", c.spawnOrchestrator)
@@ -403,6 +405,28 @@ func (c *SessionsController) clearPreview(w http.ResponseWriter, r *http.Request
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, SessionResponse{Session: sessionView(updated)})
+}
+
+// output returns a plain-text snapshot of a session's recent terminal output.
+// Read-only. Clients that cannot hold the /mux WebSocket open (e.g. the watch)
+// poll this instead of streaming.
+func (c *SessionsController) output(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "GET", "/api/v1/sessions/{sessionId}/output")
+		return
+	}
+	lines := 200
+	if q := strings.TrimSpace(r.URL.Query().Get("lines")); q != "" {
+		if n, err := strconv.Atoi(q); err == nil && n > 0 && n <= 1000 {
+			lines = n
+		}
+	}
+	out, err := c.Svc.Output(r.Context(), sessionID(r), lines)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, SessionOutputResponse{Output: out})
 }
 
 func (c *SessionsController) listPRs(w http.ResponseWriter, r *http.Request) {
