@@ -818,16 +818,6 @@ export interface components {
             reason: string;
             sessionId: string;
         };
-        ControllersSessionPRReviewEntry: {
-            body?: string;
-            isBot?: boolean;
-            reviewUrl?: string;
-            reviewerId: string;
-            /** Format: date-time */
-            submittedAt: string;
-            /** @enum {string} */
-            verdict: "none" | "approved" | "changes_requested" | "review_required";
-        };
         ControllersSessionView: {
             activity: components["schemas"]["DomainActivity"];
             branch?: string;
@@ -1196,11 +1186,21 @@ export interface components {
             line?: number;
             url?: string;
         };
+        SessionPRReviewEntry: {
+            body?: string;
+            isBot?: boolean;
+            reviewUrl?: string;
+            reviewerId: string;
+            /** Format: date-time */
+            submittedAt: string;
+            /** @enum {string} */
+            verdict: "none" | "approved" | "changes_requested" | "review_required";
+        };
         SessionPRReviewSummary: {
             /** @enum {string} */
             decision: "none" | "approved" | "changes_requested" | "review_required";
             hasUnresolvedHumanComments: boolean;
-            reviews?: components["schemas"]["ControllersSessionPRReviewEntry"][];
+            reviews?: components["schemas"]["SessionPRReviewEntry"][];
             unresolvedBy: components["schemas"]["SessionPRUnresolvedReviewer"][];
         };
         SessionPRSummary: {
