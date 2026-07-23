@@ -2,6 +2,7 @@ import createClient from "openapi-fetch";
 import type { paths } from "../../api/schema";
 import { captureRendererEvent } from "./telemetry";
 import { getLastDaemonMessage } from "../lib/daemon-status";
+import { getLastDaemonMessage } from "../lib/daemon-status";
 
 function devApiBaseUrl(): string {
 	return typeof window === "undefined" ? "http://127.0.0.1:3001" : window.location.origin;
@@ -162,10 +163,10 @@ function reportApiError(operation: string, category: ApiErrorCategory, status?: 
 async function runtimeFetch(input: Request): Promise<Response> {
 	const operation = normalizeApiOperation(input.method, new URL(input.url).pathname);
 	const baseUrl = runtimeApiBaseUrl;
-	const msg = getLastDaemonMessage() ?? "AO Daemon is not ready."
+	const msg = getLastDaemonMessage() ?? "unknown error"
 	if (baseUrl === null) {
 		reportApiError(operation, "daemon_unavailable", 503);
-		return new Response(JSON.stringify({ message: `AO daemon is not ready: ${msg}.` }), {
+		return new Response(JSON.stringify({ message: `AO daemon is not ready: ${msg}` }), {
 			status: 503,
 			headers: { "Content-Type": "application/json" },
 		});
