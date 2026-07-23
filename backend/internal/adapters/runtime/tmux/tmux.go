@@ -727,7 +727,12 @@ func buildLaunchCommand(cfg ports.RuntimeConfig) string {
 	// keep-alive shell takes over. has-session alone cannot tell the agent
 	// process died from the pane merely surviving on this fallback shell, so
 	// IsAlive queries this option too (see agentExited). "2>/dev/null" keeps a
-	// set-option failure from surfacing in the interactive shell that follows.
+	// set-option failure from surfacing in the interactive shell that follows,
+	// but also means a transient set-option failure here is silent and
+	// unretried: if the single write fails while tmux itself stays healthy,
+	// the marker is never set and IsAlive reports the dead agent as alive
+	// indefinitely. has-session still catches the common failure mode
+	// (server/session gone entirely); this is the narrow remaining gap.
 	b.WriteString(`; tmux set-option -p -t "$TMUX_PANE" ` + agentExitedOption + ` 1 2>/dev/null`)
 	// Keep the tmux session alive after the agent exits so the operator can
 	// inspect the terminal. The shell variable expansion picks up $SHELL from

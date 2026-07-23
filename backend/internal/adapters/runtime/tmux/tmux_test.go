@@ -127,7 +127,7 @@ func TestCommandBuilders(t *testing.T) {
 	if got, want := capturePaneArgs("sess-1", 10), []string{"capture-pane", "-t", "sess-1", "-p", "-S", "-10"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("capturePaneArgs = %#v, want %#v", got, want)
 	}
-	if got, want := exitedOptionArgs("sess-1"), []string{"show-options", "-q", "-v", "-p", "-t", "sess-1", "@ao_agent_exited"}; !reflect.DeepEqual(got, want) {
+	if got, want := exitedOptionArgs("sess-1"), []string{"show-options", "-q", "-v", "-p", "-t", "sess-1.0", "@ao_agent_exited"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("exitedOptionArgs = %#v, want %#v", got, want)
 	}
 }

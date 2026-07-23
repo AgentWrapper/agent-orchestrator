@@ -87,18 +87,15 @@ func listPanePIDsArgs(id string) []string {
 // exited even though the pane (and therefore `has-session`) survives.
 const agentExitedOption = "@ao_agent_exited"
 
-// exitedOptionArgs builds args for `tmux show-options -q -v -p -t <id>
-// @ao_agent_exited`. After the agent command exits, buildLaunchCommand sets
-// @ao_agent_exited=1 on the pane before entering the keep-alive shell.
-// IsAlive queries this option to distinguish a live agent from a surviving
-// shell. -q (quiet) makes an unset option exit 0 with empty output instead of
-// a non-zero "invalid option" error, so IsAlive can tell "agent still
-// running" apart from "show-options itself failed" — the latter must remain a
-// genuine probe error, never collapsed into alive or dead. Uses plain
-// session-name targeting (no `=` prefix) because pane-level commands do not
-// accept the exact-match prefix — see setStatusOffArgs.
+// exitedOptionArgs builds args for `tmux show-options -q -v -p -t <id>.0
+// @ao_agent_exited`. Targets pane index 0 explicitly — the pane new-session
+// creates and the one the launch command's marker-set targets via
+// $TMUX_PANE — rather than the session's plain target, which tmux resolves
+// to whichever pane is currently *active*. Without this, an operator
+// splitting the window after launch could make show-options read a
+// different (unmarked) pane, misreporting a dead agent as alive.
 func exitedOptionArgs(id string) []string {
-	return []string{"show-options", "-q", "-v", "-p", "-t", id, agentExitedOption}
+	return []string{"show-options", "-q", "-v", "-p", "-t", id + ".0", agentExitedOption}
 }
 
 // sendKeysLiteralArgs builds args for `tmux send-keys -t <id> -l <chunk>`.
