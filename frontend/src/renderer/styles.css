@@ -163,6 +163,7 @@
 	/* Layout — toolbar offset for fixed sidebar below topbar */
 	--spacing-toolbar: var(--size-toolbar);
 	--spacing-traffic-light-clearance: var(--size-traffic-light-clearance);
+	--spacing-traffic-light-clearance-fullscreen: var(--size-traffic-light-clearance-fullscreen);
 	--spacing-control-xs: var(--size-control-xs);
 	--spacing-control-sm: var(--size-control-sm);
 	--spacing-control-form: var(--size-control-form);
@@ -1010,10 +1011,11 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 }
 
 /* ── macOS titlebar cluster (TitlebarNav) ─────────────────────────────────
- * In-flow inside the Sidebar header, below the traffic lights. The toggle is
- * pinned in a --size-sidebar-icon column so its screen position never changes
- * during the width animation; history arrows are absolute to the right and
- * fade with .sidebar-expanded-chrome. */
+ * In-flow inside the Sidebar header, below the traffic lights while windowed.
+ * In native fullscreen the header drops the clearance pad so this cluster
+ * moves up. The toggle is pinned in a --size-sidebar-icon column so its screen
+ * position never changes during the width animation; history arrows are
+ * absolute to the right and fade with .sidebar-expanded-chrome. */
 .titlebar-nav {
 	position: relative;
 	display: flex;

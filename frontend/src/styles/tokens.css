@@ -205,8 +205,10 @@
 	--size-sidebar-default: 240px;
 	--size-sidebar-mobile: 288px;
 	/* Clears macOS traffic lights (y:20 discs) before in-sidebar TitlebarNav;
-	   keep Sidebar header padding and the shell drag strip on this same token. */
+	   keep Sidebar header padding and the shell drag strip on this same token.
+	   Fullscreen drops the lights, so TitlebarNav uses the tighter inset. */
 	--size-traffic-light-clearance: 36px;
+	--size-traffic-light-clearance-fullscreen: var(--space-2);
 	--size-resize-handle: 7px;
 	--size-resize-handle-offset: 3px;
 	--size-kanban-glow: 130px;

@@ -55,6 +55,8 @@ import { isMacPlatform, isWindowsPlatform } from "../lib/platform";
 
 // On macOS the sidebar is full-height: traffic lights sit over its top chrome,
 // and TitlebarNav (toggle + history) stacks in this header directly below them.
+// In native fullscreen the lights are gone, so the clearance pad drops and
+// TitlebarNav sits near the top edge instead.
 // Win/Linux still hang the sidebar under their shell titlebar/toolbar.
 const isMac = isMacPlatform();
 const isWindows = isWindowsPlatform();
@@ -82,6 +84,8 @@ type SidebarProps = {
 	topbarOffset?: "toolbar" | "titlebar";
 	/** Lock back/forward in TitlebarNav (empty welcome board). */
 	historyLocked?: boolean;
+	/** macOS: drop traffic-light clearance when the BrowserWindow is fullscreen. */
+	isFullScreen?: boolean;
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];
 	onCreateProject: (input: CreateProjectInput) => Promise<void>;
@@ -124,6 +128,7 @@ export function Sidebar({
 	underTopbar = true,
 	topbarOffset = "toolbar",
 	historyLocked = false,
+	isFullScreen = false,
 	workspaceError,
 	workspaces,
 	onCreateProject,
@@ -214,13 +219,20 @@ export function Sidebar({
 			)}
 		>
 			{/* macOS: pt clears the traffic lights + drag strip (shared
-			    --size-traffic-light-clearance); header padding stays constant
-			    across expand/collapse so the pinned toggle/logo column does
-			    not shift. */}
+			    --size-traffic-light-clearance) while windowed; in fullscreen the
+			    lights are gone so TitlebarNav moves up. Padding eases so the
+			    cluster slides under the lights on leave-fullscreen. Otherwise
+			    stays constant across expand/collapse so the pinned toggle/logo
+			    column does not shift. */}
 			<SidebarHeader
 				className={cn(
 					"gap-0 p-0",
-					isMac ? "pt-traffic-light-clearance" : "pt-2.5 pl-2.5 pr-1.75",
+					isMac
+						? cn(
+								"transition-[padding-top] duration-200 ease-out motion-reduce:transition-none",
+								isFullScreen ? "pt-traffic-light-clearance-fullscreen" : "pt-traffic-light-clearance",
+							)
+						: "pt-2.5 pl-2.5 pr-1.75",
 					!isMac && "group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pt-2",
 				)}
 			>

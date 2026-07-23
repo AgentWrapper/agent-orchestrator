@@ -8,9 +8,11 @@ const isMac = isMacPlatform();
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
 // macOS-only sidebar chrome cluster (sidebar toggle + history arrows). Lives
-// in the Sidebar header below the traffic lights. The toggle is pinned in the
-// icon-rail column so it never moves during expand/collapse; history arrows
-// sit absolutely to its right and only fade in when expanded.
+// in the Sidebar header below the traffic lights while windowed; in native
+// fullscreen the clearance pad drops so this cluster sits near the top edge.
+// The toggle is pinned in the icon-rail column so it never moves during
+// expand/collapse; history arrows sit absolutely to its right and only fade
+// in when expanded.
 // The installed router has no useCanGoForward, and deriving one as
 // `__TSR_index < history.length - 1` (the upstream hook's approach) is wrong
 // here: window.history.length also counts entries the router never created —
