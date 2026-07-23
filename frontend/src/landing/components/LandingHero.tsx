@@ -1146,7 +1146,7 @@ export function LandingHero() {
 						data-testid="hero-subhead"
 						className="gsap-reveal mx-auto mt-6 max-w-[640px] text-balance text-[16px] leading-[1.65] text-[color:var(--fg-muted)] sm:text-[17.5px]"
 					>
-						Mission control for a fleet of coding agents — <span className="text-[color:var(--fg)]">23 harnesses</span>{" "}
+						Mission control for a fleet of coding agents — <span className="text-[color:var(--fg)]">24 harnesses</span>{" "}
 						in isolated worktrees, with CI and review feedback routed back to the agent that owns the branch.
 					</p>
 					<div className="gsap-reveal mt-8 flex w-full flex-col items-stretch justify-center gap-3 sm:w-auto sm:flex-row sm:items-center">

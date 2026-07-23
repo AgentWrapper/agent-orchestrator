@@ -26,7 +26,7 @@ const PERMISSION_MODE_OPTIONS = [
 	{ value: "bypass-permissions", label: "Bypass permissions" },
 ] as const;
 
-const REVIEWER_OPTIONS = ["claude-code", "codex", "opencode"] as const;
+const REVIEWER_OPTIONS = ["claude-code", "codex", "kimchi", "opencode"] as const;
 
 const projectQueryKey = (id: string) => ["project", id] as const;
 
