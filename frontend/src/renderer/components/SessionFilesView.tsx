@@ -310,30 +310,138 @@ function ReviewDiffBody({ detail }: { detail: WorkspaceFileDetail }) {
 	if (detail.binary) {
 		return <PanelMessage>Binary file preview is not available.</PanelMessage>;
 	}
-	return (
-		<CodePanel
-			notice={detail.diffTruncated ? "Diff preview truncated." : undefined}
-			text={detail.diff || "No diff against HEAD."}
-			variant="diff"
-		/>
-	);
+	const rows = parseUnifiedDiff(detail.diff);
+	if (rows.length === 0) {
+		return <PanelMessage>No changes against HEAD.</PanelMessage>;
+	}
+	return <DiffView rows={rows} truncated={detail.diffTruncated} />;
 }
 
-function CodePanel({ notice, text, variant }: { notice?: string; text: string; variant: "diff" | "file" }) {
-	const lines = text === "" ? [""] : text.replace(/\r\n/g, "\n").split("\n");
+type DiffRowKind = "context" | "add" | "del" | "hunk";
+
+type DiffRow = {
+	kind: DiffRowKind;
+	oldNo: number | null;
+	newNo: number | null;
+	text: string;
+};
+
+// Git file-header lines carry no reviewable content, so they are hidden — the
+// panel reads like a diff instead of a raw `git diff` dump. Matched by prefix
+// after line endings are normalized, so it behaves the same on every OS.
+const gitHeaderPrefixes = [
+	"diff --git ",
+	"index ",
+	"old mode ",
+	"new mode ",
+	"new file mode ",
+	"deleted file mode ",
+	"similarity index ",
+	"dissimilarity index ",
+	"rename from ",
+	"rename to ",
+	"copy from ",
+	"copy to ",
+	"--- ",
+	"+++ ",
+];
+
+const hunkHeaderPattern = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+
+// parseUnifiedDiff turns a raw `git diff` string into typed rows with real
+// per-side line numbers. Line endings are normalized first (Windows \r\n and
+// classic-Mac \r as well as Unix \n) so numbering and marker detection are
+// identical across operating systems.
+function parseUnifiedDiff(raw: string): DiffRow[] {
+	if (!raw) return [];
+	const lines = raw.replace(/\r\n?/g, "\n").split("\n");
+	if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+	const rows: DiffRow[] = [];
+	let oldNo = 0;
+	let newNo = 0;
+	let inHunk = false;
+	for (const line of lines) {
+		if (gitHeaderPrefixes.some((prefix) => line.startsWith(prefix))) continue;
+		if (line.startsWith("@@")) {
+			const hunk = hunkHeaderPattern.exec(line);
+			oldNo = hunk ? Number(hunk[1]) : 1;
+			newNo = hunk ? Number(hunk[2]) : 1;
+			inHunk = true;
+			rows.push({ kind: "hunk", oldNo: null, newNo: null, text: line });
+			continue;
+		}
+		if (!inHunk) continue;
+		if (line.startsWith("\\")) continue; // "\ No newline at end of file"
+		const marker = line[0];
+		const text = line.slice(1);
+		if (marker === "+") {
+			rows.push({ kind: "add", oldNo: null, newNo, text });
+			newNo += 1;
+		} else if (marker === "-") {
+			rows.push({ kind: "del", oldNo, newNo: null, text });
+			oldNo += 1;
+		} else {
+			rows.push({ kind: "context", oldNo, newNo, text });
+			oldNo += 1;
+			newNo += 1;
+		}
+	}
+	return rows;
+}
+
+const diffRowTone: Record<Exclude<DiffRowKind, "hunk">, string> = {
+	add: "bg-success/10",
+	del: "bg-error/10",
+	context: "",
+};
+
+const diffMarkerGlyph: Record<Exclude<DiffRowKind, "hunk">, string> = {
+	add: "+",
+	del: "-",
+	context: " ",
+};
+
+function DiffView({ rows, truncated }: { rows: DiffRow[]; truncated?: boolean }) {
 	return (
 		<div className="flex min-h-[220px] max-h-[min(620px,calc(100vh-18rem))] flex-col">
-			{notice ? (
-				<div className="shrink-0 border-b border-border bg-warning/10 px-4 py-2 text-xs text-warning">{notice}</div>
+			{truncated ? (
+				<div className="shrink-0 border-b border-border bg-warning/10 px-4 py-2 text-xs text-warning">
+					Diff preview truncated.
+				</div>
 			) : null}
-			<pre className="session-files-diff-scrollbar min-h-0 flex-1 overflow-auto bg-terminal py-3 font-mono text-xs leading-row text-terminal-foreground">
-				{lines.map((line, index) => (
-					<div className={cn("min-w-max px-4", variant === "diff" && diffLineClass(line))} key={`${index}-${line}`}>
-						<span className="mr-4 inline-block w-8 select-none text-right text-passive">{index + 1}</span>
-						<span>{line || " "}</span>
-					</div>
-				))}
-			</pre>
+			<div className="session-files-diff-scrollbar min-h-0 flex-1 overflow-auto bg-terminal font-mono text-xs leading-row text-terminal-foreground">
+				<div className="min-w-max">
+					{rows.map((row, index) =>
+						row.kind === "hunk" ? (
+							<div
+								className="select-none bg-surface-faint px-3 py-1 text-passive"
+								key={`h${index}`}
+							>
+								{row.text}
+							</div>
+						) : (
+							<div className={cn("flex", diffRowTone[row.kind])} key={`r${index}`}>
+								<span className="w-9 shrink-0 select-none px-1.5 text-right text-passive/60 tabular-nums">
+									{row.oldNo ?? ""}
+								</span>
+								<span className="w-9 shrink-0 select-none px-1.5 text-right text-passive/60 tabular-nums">
+									{row.newNo ?? ""}
+								</span>
+								<span
+									className={cn(
+										"w-4 shrink-0 select-none text-center",
+										row.kind === "add" && "text-success",
+										row.kind === "del" && "text-error",
+									)}
+								>
+									{diffMarkerGlyph[row.kind]}
+								</span>
+								<span className="whitespace-pre pr-4">{row.text || " "}</span>
+							</div>
+						),
+					)}
+				</div>
+			</div>
 		</div>
 	);
 }
@@ -383,11 +491,4 @@ function StatusMark({ status }: { status: WorkspaceFileStatus }) {
 
 function isChanged(file: WorkspaceFileSummary) {
 	return file.status !== "unmodified";
-}
-
-function diffLineClass(line: string) {
-	if (line.startsWith("+") && !line.startsWith("+++")) return "bg-success/10 text-success";
-	if (line.startsWith("-") && !line.startsWith("---")) return "bg-error/10 text-error";
-	if (line.startsWith("@@")) return "text-accent";
-	return "";
 }

@@ -105,7 +105,7 @@ describe("SessionFilesView", () => {
 				params: { path: { sessionId: "sess-1" }, query: { path: "src/App.tsx" } },
 			}),
 		);
-		expect(await screen.findByText("+const value = 1;")).toBeInTheDocument();
+		expect(await screen.findByText("const value = 1;")).toBeInTheDocument();
 	});
 
 	it("filters and expands a changed file from the review list", async () => {
@@ -128,10 +128,56 @@ describe("SessionFilesView", () => {
 
 		await screen.findByRole("button", { name: "Collapse src/App.tsx" });
 
-		const codePane = (await screen.findByText("+const value = 1;")).closest("pre");
+		const codePane = (await screen.findByText("const value = 1;")).closest(".session-files-diff-scrollbar");
 		expect(codePane).toHaveClass("text-terminal-foreground");
 		expect(codePane).toHaveClass("session-files-diff-scrollbar");
 		expect(codePane).not.toHaveClass("text-terminal");
+	});
+
+	it("renders a real diff without git-header noise and with markers in the gutter", async () => {
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/sessions/{sessionId}/workspace/files") {
+				return {
+					data: {
+						sessionId: "sess-1",
+						truncated: false,
+						files: [{ path: "src/App.tsx", status: "modified", additions: 1, deletions: 1, size: 120, binary: false }],
+					},
+				};
+			}
+			return {
+				data: {
+					sessionId: "sess-1",
+					path: "src/App.tsx",
+					status: "modified",
+					additions: 1,
+					deletions: 1,
+					size: 120,
+					binary: false,
+					deleted: false,
+					content: "",
+					contentTruncated: false,
+					// CRLF endings on purpose: the parser must normalize them on every OS.
+					diff: "diff --git a/src/App.tsx b/src/App.tsx\r\nindex 111..222 100644\r\n--- a/src/App.tsx\r\n+++ b/src/App.tsx\r\n@@ -1,2 +1,2 @@\r\n context line\r\n-old line\r\n+new line\r\n",
+					diffTruncated: false,
+				},
+			};
+		});
+
+		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+		await screen.findByRole("button", { name: "Collapse src/App.tsx" });
+
+		// Content renders without the leading +/- marker (it lives in the gutter).
+		expect(await screen.findByText("new line")).toBeInTheDocument();
+		expect(screen.getByText("old line")).toBeInTheDocument();
+		expect(screen.getByText("context line")).toBeInTheDocument();
+		// Hunk header stays; git file-header lines are hidden.
+		expect(screen.getByText("@@ -1,2 +1,2 @@")).toBeInTheDocument();
+		expect(screen.queryByText("diff --git a/src/App.tsx b/src/App.tsx")).not.toBeInTheDocument();
+		expect(screen.queryByText("index 111..222 100644")).not.toBeInTheDocument();
+		expect(screen.queryByText("+++ b/src/App.tsx")).not.toBeInTheDocument();
+		expect(screen.queryByText("+new line")).not.toBeInTheDocument();
+		expect(screen.queryByText("-old line")).not.toBeInTheDocument();
 	});
 
 	it("renders changed files as one integrated review list instead of boxed cards", async () => {
