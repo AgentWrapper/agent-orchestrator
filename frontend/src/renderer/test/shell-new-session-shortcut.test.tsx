@@ -8,6 +8,11 @@ const shellMocks = vi.hoisted(() => {
 	const state = {
 		newSessionListener: undefined as (() => void) | undefined,
 		keyboardShortcutsListener: undefined as (() => void) | undefined,
+		newShellTerminalListener: undefined as (() => void) | undefined,
+		openSettingsListener: undefined as (() => void) | undefined,
+		previousSessionListener: undefined as (() => void) | undefined,
+		nextSessionListener: undefined as (() => void) | undefined,
+		focusTerminalListener: undefined as (() => void) | undefined,
 		routeParams: {} as { projectId?: string; sessionId?: string },
 		workspaces: [] as WorkspaceSummary[],
 	};
@@ -20,6 +25,27 @@ const shellMocks = vi.hoisted(() => {
 		}),
 		onKeyboardShortcutsHelp: vi.fn((listener: () => void) => {
 			state.keyboardShortcutsListener = listener;
+			return vi.fn();
+		}),
+		onNewShellTerminalShortcut: vi.fn((listener: () => void) => {
+			state.newShellTerminalListener = listener;
+			return vi.fn();
+		}),
+		openShellTerminal: vi.fn(),
+		onOpenSettingsShortcut: vi.fn((listener: () => void) => {
+			state.openSettingsListener = listener;
+			return vi.fn();
+		}),
+		onPreviousSessionShortcut: vi.fn((listener: () => void) => {
+			state.previousSessionListener = listener;
+			return vi.fn();
+		}),
+		onNextSessionShortcut: vi.fn((listener: () => void) => {
+			state.nextSessionListener = listener;
+			return vi.fn();
+		}),
+		onFocusTerminalShortcut: vi.fn((listener: () => void) => {
+			state.focusTerminalListener = listener;
 			return vi.fn();
 		}),
 		queryClient: {
@@ -50,6 +76,11 @@ vi.mock("../lib/bridge", () => ({
 		app: {
 			onNewSessionShortcut: shellMocks.onNewSessionShortcut,
 			onKeyboardShortcutsHelp: shellMocks.onKeyboardShortcutsHelp,
+			onNewShellTerminalShortcut: shellMocks.onNewShellTerminalShortcut,
+			onOpenSettingsShortcut: shellMocks.onOpenSettingsShortcut,
+			onPreviousSessionShortcut: shellMocks.onPreviousSessionShortcut,
+			onNextSessionShortcut: shellMocks.onNextSessionShortcut,
+			onFocusTerminalShortcut: shellMocks.onFocusTerminalShortcut,
 		},
 		window: {
 			setTrafficLightsInset: shellMocks.setTrafficLightsInset,
@@ -65,6 +96,12 @@ vi.mock("../hooks/useWorkspaceQuery", () => ({
 
 vi.mock("../hooks/useDaemonStatus", () => ({
 	useDaemonStatus: () => ({ state: "stopped" }),
+}));
+
+// The shell layout opens standalone terminals; this suite only covers the
+// shortcut subscriptions, so the mutation is stubbed rather than driven.
+vi.mock("../hooks/useShellTerminals", () => ({
+	useOpenShellTerminal: () => ({ mutate: shellMocks.openShellTerminal }),
 }));
 
 vi.mock("../hooks/useAgentsQuery", () => ({
@@ -140,7 +177,11 @@ const workspaces = [
 		id: "proj-1",
 		name: "Project One",
 		path: "/one",
-		sessions: [{ id: "sess-1" }],
+		sessions: [
+			{ id: "sess-1", status: "working" },
+			{ id: "sess-2", status: "terminated" },
+			{ id: "sess-3", status: "idle" },
+		],
 	},
 ] as unknown as WorkspaceSummary[];
 
@@ -155,6 +196,11 @@ async function renderShell() {
 	});
 	await waitFor(() => expect(shellMocks.onNewSessionShortcut).toHaveBeenCalledTimes(1));
 	await waitFor(() => expect(shellMocks.onKeyboardShortcutsHelp).toHaveBeenCalledTimes(1));
+	await waitFor(() => expect(shellMocks.onNewShellTerminalShortcut).toHaveBeenCalledTimes(1));
+	await waitFor(() => expect(shellMocks.onOpenSettingsShortcut).toHaveBeenCalledTimes(1));
+	await waitFor(() => expect(shellMocks.onPreviousSessionShortcut).toHaveBeenCalledTimes(1));
+	await waitFor(() => expect(shellMocks.onNextSessionShortcut).toHaveBeenCalledTimes(1));
+	await waitFor(() => expect(shellMocks.onFocusTerminalShortcut).toHaveBeenCalledTimes(1));
 }
 
 function emitShortcut() {
@@ -168,11 +214,27 @@ beforeEach(() => {
 	shellMocks.onNewSessionShortcut.mockClear();
 	shellMocks.onKeyboardShortcutsHelp.mockClear();
 	shellMocks.setTrafficLightsInset.mockClear();
+	shellMocks.onNewShellTerminalShortcut.mockClear();
+	shellMocks.openShellTerminal.mockClear();
+	shellMocks.state.newShellTerminalListener = undefined;
+	shellMocks.onOpenSettingsShortcut.mockClear();
+	shellMocks.onPreviousSessionShortcut.mockClear();
+	shellMocks.onNextSessionShortcut.mockClear();
+	shellMocks.onFocusTerminalShortcut.mockClear();
 	shellMocks.state.newSessionListener = undefined;
 	shellMocks.state.keyboardShortcutsListener = undefined;
+	shellMocks.state.openSettingsListener = undefined;
+	shellMocks.state.previousSessionListener = undefined;
+	shellMocks.state.nextSessionListener = undefined;
+	shellMocks.state.focusTerminalListener = undefined;
 	shellMocks.state.routeParams = {};
 	shellMocks.state.workspaces = workspaces;
-	useUiStore.setState({ createProjectNonce: 0, isSidebarOpen: true, newTaskRequest: null });
+	useUiStore.setState({
+		createProjectNonce: 0,
+		isSidebarOpen: true,
+		newTaskRequest: null,
+		newShellTerminalNonce: 0,
+	});
 });
 
 describe("shell sidebar hover preview", () => {
@@ -225,6 +287,45 @@ describe("shell sidebar hover preview", () => {
 	});
 });
 
+describe("shell new-shell-terminal shortcut subscription", () => {
+	function pressNewShellTerminal() {
+		const listener = shellMocks.state.newShellTerminalListener;
+		if (!listener) throw new Error("new-shell-terminal listener was not registered");
+		act(() => listener());
+	}
+
+	// Regression: the shell LAYOUT must own this, not the session view. When the
+	// session view owned it, the shortcut did nothing outside a session route —
+	// nothing was mounted to hear it.
+	it("opens a terminal even with no session on screen", async () => {
+		await renderShell();
+
+		pressNewShellTerminal();
+
+		expect(useUiStore.getState().newShellTerminalNonce).toBe(1);
+		expect(shellMocks.openShellTerminal).toHaveBeenCalledTimes(1);
+	});
+
+	it("scopes the terminal to the project in scope", async () => {
+		shellMocks.state.routeParams = { projectId: "proj-1" };
+		await renderShell();
+
+		pressNewShellTerminal();
+
+		expect(shellMocks.openShellTerminal).toHaveBeenCalledWith("proj-1", expect.anything());
+	});
+
+	it("re-fires on a repeat press so a second terminal can be opened", async () => {
+		await renderShell();
+
+		pressNewShellTerminal();
+		pressNewShellTerminal();
+
+		expect(useUiStore.getState().newShellTerminalNonce).toBe(2);
+		expect(shellMocks.openShellTerminal).toHaveBeenCalledTimes(2);
+	});
+});
+
 describe("shell keyboard-shortcuts help subscription", () => {
 	it("opens the keyboard-shortcuts dialog", async () => {
 		await renderShell();
@@ -264,5 +365,51 @@ describe("shell new-session shortcut subscription", () => {
 
 		expect(screen.getByTestId("create-project-flow")).toBeInTheDocument();
 		expect(screen.queryByTestId("new-task-flow")).not.toBeInTheDocument();
+	});
+});
+
+describe("shell application shortcut subscriptions", () => {
+	it("opens settings", async () => {
+		await renderShell();
+
+		act(() => shellMocks.state.openSettingsListener?.());
+
+		expect(shellMocks.navigate).toHaveBeenCalledWith({ to: "/settings" });
+	});
+
+	it("moves to the next non-terminated session in the current project", async () => {
+		shellMocks.state.routeParams = { sessionId: "sess-1" };
+		await renderShell();
+
+		act(() => shellMocks.state.nextSessionListener?.());
+
+		expect(shellMocks.navigate).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "proj-1", sessionId: "sess-3" },
+		});
+	});
+
+	it("wraps to the last session when moving previous from the first", async () => {
+		shellMocks.state.routeParams = { sessionId: "sess-1" };
+		await renderShell();
+
+		act(() => shellMocks.state.previousSessionListener?.());
+
+		expect(shellMocks.navigate).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "proj-1", sessionId: "sess-3" },
+		});
+	});
+
+	it("focuses the mounted terminal", async () => {
+		const terminalInput = document.createElement("textarea");
+		terminalInput.className = "xterm-helper-textarea";
+		document.body.appendChild(terminalInput);
+		await renderShell();
+
+		act(() => shellMocks.state.focusTerminalListener?.());
+
+		expect(document.activeElement).toBe(terminalInput);
+		terminalInput.remove();
 	});
 });

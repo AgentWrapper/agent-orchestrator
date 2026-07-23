@@ -5,6 +5,7 @@ import {
 	dialog,
 	ipcMain,
 	Menu,
+	nativeTheme,
 	net,
 	nativeImage,
 	Notification as ElectronNotification,
@@ -27,6 +28,7 @@ import {
 import { listFeatureBuilds, getActiveFeatureBuild } from "./main/feature-builds";
 import { readUpdateSettings, type UpdateSettings, type UpdateStatus } from "./main/update-settings";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { closeSync, existsSync, openSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -96,6 +98,7 @@ let daemonStoppingProcess: ChildProcess | null = null;
 let daemonStartPromise: Promise<DaemonStatus> | null = null;
 let daemonStartEpoch = 0;
 let daemonStatus: DaemonStatus = { state: "stopped" };
+let daemonOutput = "";
 let browserViewHost: BrowserViewHost | null = null;
 // Held for the app lifetime. Dropping it (on any exit) triggers daemon self-stop.
 let supervisorLink: SupervisorLinkHandle | null = null;
@@ -274,6 +277,12 @@ function applyRuntimeAppIcon(): void {
 function setDaemonStatus(nextStatus: DaemonStatus): void {
 	daemonStatus = nextStatus;
 	mainWindow?.webContents.send("daemon:status", daemonStatus);
+}
+
+const MAX_DAEMON_OUTPUT_CHARS = 12_000;
+
+function appendDaemonOutput(text: string): void {
+	daemonOutput = (daemonOutput + text).slice(-MAX_DAEMON_OUTPUT_CHARS);
 }
 
 // Role-based menu installed on Windows where the native menu bar is hidden. The
@@ -504,6 +513,11 @@ function ensureShellEnv(): Promise<void> {
 	return shellEnvPromise;
 }
 
+// One id per app launch, minted eagerly so every daemon spawn in this process
+// (including supervisor restarts) reports the same run. An explicit
+// AO_APP_RUN_ID in the environment wins, which lets a test or a wrapper pin it.
+const appRunId = process.env.AO_APP_RUN_ID ?? `apprun-${randomUUID()}`;
+
 function daemonEnv(): NodeJS.ProcessEnv {
 	// AO_OWNER is the daemon's durable spawn-mode record: the daemon writes it
 	// into running.json and the attach path reads it to decide the supervisor
@@ -511,8 +525,14 @@ function daemonEnv(): NodeJS.ProcessEnv {
 	// differs across launches). A keep-alive daemon is "persistent" (never
 	// re-linked, survives app quit); a normal app-owned daemon is "app";
 	// headless `ao start` sets none (stays unlinked, persistent by default).
+	//
+	// AO_APP_RUN_ID identifies THIS app launch. It is constant for the process
+	// lifetime, so a daemon the supervisor restarts inherits the same id and its
+	// standalone shell terminals survive; a later app launch gets a new id, which
+	// is how the daemon recognises the previous run's shells as orphans and
+	// destroys them (see internal/service/shellterm).
 	const AO_OWNER = keepDaemonAlive(process.env) ? "persistent" : "app";
-	const ownerTag = { AO_OWNER };
+	const ownerTag = { AO_OWNER, AO_APP_RUN_ID: appRunId };
 	// In dev mode, inject isolation defaults so the dev daemon never collides with
 	// the installed app. User-set env vars take priority (checked first).
 	const devExtras: Record<string, string> = {};
@@ -570,12 +590,16 @@ async function readDaemonProbe(port: number, endpoint: "healthz" | "readyz"): Pr
 function daemonIdentityError(launch: DaemonLaunchSpec, probe: DaemonProbe): string | null {
 	if (launch.source === "dev") {
 		const cwdMatches = probe.workingDirectory ? samePath(probe.workingDirectory, launch.cwd) : false;
+		const startupCwdMatches = probe.startupWorkingDirectory
+			? samePath(probe.startupWorkingDirectory, launch.cwd)
+			: false;
 		const executableMatches = probe.executablePath ? pathInside(probe.executablePath, launch.cwd) : false;
-		if (!probe.workingDirectory && !probe.executablePath) {
+		if (!probe.workingDirectory && !probe.startupWorkingDirectory && !probe.executablePath) {
 			return "An older AO daemon is already running, but it does not report its checkout identity. Stop it and restart this app.";
 		}
-		if (!cwdMatches && !executableMatches) {
-			const actual = probe.workingDirectory ?? probe.executablePath ?? "an unknown location";
+		if (!cwdMatches && !startupCwdMatches && !executableMatches) {
+			const actual =
+				probe.startupWorkingDirectory ?? probe.workingDirectory ?? probe.executablePath ?? "an unknown location";
 			return `Another AO daemon is already running from ${actual}; expected this checkout at ${launch.cwd}. Stop the other daemon before using this checkout.`;
 		}
 		return null;
@@ -660,6 +684,7 @@ async function refreshDaemonStatus(): Promise<DaemonStatus> {
 		app.isPackaged,
 		process.resourcesPath,
 		app.getAppPath(),
+		os.homedir(),
 		process.platform,
 	);
 	if (!launch) return daemonStatus;
@@ -715,6 +740,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		app.isPackaged,
 		process.resourcesPath,
 		app.getAppPath(),
+		os.homedir(),
 		process.platform,
 	);
 	if (!launch) {
@@ -849,7 +875,24 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		return daemonStatus;
 	}
 
+	daemonOutput = "";
 	setDaemonStatus({ state: "starting" });
+	if (launch.source === "bundled") {
+		try {
+			await mkdir(launch.cwd, { recursive: true, mode: 0o750 });
+		} catch (err) {
+			// A failure here (home unwritable, launch.cwd exists as a file) would
+			// otherwise reject out of startDaemonInner; boot calls this via
+			// `void startDaemon()`, so it would surface as an unhandled rejection
+			// and leave the UI stuck on "starting". Report it as a failure instead.
+			setDaemonStatus({
+				state: "error",
+				message: `Could not create the AO data directory at ${launch.cwd}: ${(err as Error).message}`,
+				code: "datadir_unwritable",
+			});
+			return daemonStatus;
+		}
+	}
 
 	// Capture the spawned handle locally so the async lifecycle listeners act only
 	// on THIS process. Without this, a stale exit from an already-stopped daemon
@@ -971,12 +1014,14 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 
 		child.stdout?.on("data", (chunk: Buffer) => {
 			const text = chunk.toString("utf8");
+			appendDaemonOutput(text);
 			console.log(text.trimEnd());
 			scanStdout(text);
 		});
 
 		child.stderr?.on("data", (chunk: Buffer) => {
 			const text = chunk.toString("utf8");
+			appendDaemonOutput(text);
 			console.error(text.trimEnd());
 			scanStderr(text);
 		});
@@ -1016,7 +1061,12 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		if (daemonProcess !== child) return;
 		daemonProcess = null;
 		if (daemonStoppingProcess === child) daemonStoppingProcess = null;
-		setDaemonStatus({ state: "error", message: error.message, code: "spawn_failed" });
+		setDaemonStatus({
+			state: "error",
+			message: error.message,
+			details: daemonOutput.trim() || undefined,
+			code: "spawn_failed",
+		});
 	});
 
 	child.once("exit", (code, signal) => {
@@ -1036,6 +1086,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		setDaemonStatus({
 			state: "stopped",
 			message: signal ? `Daemon exited with ${signal}` : `Daemon exited with code ${code ?? "unknown"}`,
+			details: daemonOutput.trim() || undefined,
 			code: "exited",
 			exitCode: code,
 			signal,
@@ -1099,6 +1150,16 @@ ipcMain.handle("window:setOverlay", (_event, overlay: { color: string; symbolCol
 
 ipcMain.handle("window:setTrafficLightsInset", (_event, inset: boolean) => {
 	animateMacWindowButtons(inset);
+});
+
+// Drive Electron's nativeTheme from the app's theme preference so embedded
+// preview WebContentsViews (which follow prefers-color-scheme) flip in step with
+// the shell. The three preference values map 1:1 onto themeSource; "system" keeps
+// both the preview and the shell's own matchMedia following the OS.
+ipcMain.handle("theme:set", (_event, preference: "light" | "dark" | "system") => {
+	if (preference === "light" || preference === "dark" || preference === "system") {
+		nativeTheme.themeSource = preference;
+	}
 });
 
 // Renderer calls this when focus lands on real shell UI (not the titlebar menu), so menu:action's panel fallback below doesn't go stale.

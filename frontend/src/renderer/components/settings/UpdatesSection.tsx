@@ -162,7 +162,7 @@ export function UpdatesSection() {
 
 	return (
 		<>
-			<SettingsSection title="Updates">
+			<SettingsSection title="Updates" sectionId="updates">
 				{activeBuild && (
 					<div className="flex flex-col gap-2">
 						<div className="settings-row-bar h-auto min-h-(--size-settings-row) flex-wrap gap-2">
@@ -328,7 +328,7 @@ function UpdateActions({ status }: { status: UpdateStatus }) {
 		<>
 			<SettingsRow icon={Check} label="Checks for Updates">
 				<div className="flex items-center gap-2">
-					<span className="text-control text-settings-muted">
+					<span className="text-control text-settings-muted" data-testid="app-version">
 						Current version - {version.data ? `v${version.data}` : "…"}
 					</span>
 					<button

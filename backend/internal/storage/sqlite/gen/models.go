@@ -182,8 +182,21 @@ type Session struct {
 	FirstSignalAt      sql.NullTime
 	PreviewURL         string
 	PreviewRevision    int64
+	CleanupGeneration  int64
 	TerminateOnPRMerge bool
 	RuntimeLaunchID    string
+	WorkspaceRepoPath  string
+}
+
+type SessionCleanupFact struct {
+	SessionID            domain.SessionID
+	SessionGeneration    int64
+	RuntimeReleasedAt    sql.NullTime
+	WorkspaceDisposition string
+	AttemptCount         int64
+	LastAttemptAt        sql.NullTime
+	NextAttemptAt        sql.NullTime
+	FailureCode          string
 }
 
 type SessionWorktree struct {
@@ -194,6 +207,15 @@ type SessionWorktree struct {
 	WorktreePath string
 	PreservedRef string
 	State        string
+}
+
+type ShellTerminal struct {
+	HandleID   string
+	ProjectID  *domain.ProjectID
+	WorkingDir string
+	Title      string
+	AppRunID   string
+	CreatedAt  time.Time
 }
 
 type TelemetryEvent struct {

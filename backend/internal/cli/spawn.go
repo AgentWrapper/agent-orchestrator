@@ -8,15 +8,12 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/tmux"
 )
 
 // maxDisplayNameLen caps the sidebar label set by `--name`. Mirrored by the
@@ -26,6 +23,7 @@ const maxDisplayNameLen = 20
 type spawnOptions struct {
 	project        string
 	harness        string
+	kind           string
 	branch         string
 	prompt         string
 	issue          string
@@ -40,6 +38,7 @@ type spawnOptions struct {
 type spawnRequest struct {
 	ProjectID   string `json:"projectId"`
 	IssueID     string `json:"issueId,omitempty"`
+	Kind        string `json:"kind,omitempty"`
 	Harness     string `json:"harness,omitempty"`
 	Branch      string `json:"branch,omitempty"`
 	Prompt      string `json:"prompt,omitempty"`
@@ -63,10 +62,10 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 	var opts spawnOptions
 	cmd := &cobra.Command{
 		Use:   "spawn",
-		Short: "Spawn a worker agent session in a registered project",
-		Long: "Spawn a worker agent session in a registered project.\n\n" +
+		Short: "Spawn an agent session in a registered project",
+		Long: "Spawn an agent session (worker or orchestrator) in a registered project.\n\n" +
 			"The session runs the chosen agent in a\n" +
-			"fresh git worktree. Register the project first with `ao project add`.",
+			"fresh isolated workspace. Git projects use worktrees; Scratch uses an AO-managed directory.",
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if opts.noTakeover && opts.claimPR == "" {
@@ -80,17 +79,30 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 				return usageError{fmt.Errorf("--name must be %d characters or fewer", maxDisplayNameLen)}
 			}
 
+			if opts.kind != "" && opts.kind != "worker" && opts.kind != "orchestrator" {
+				return usageError{fmt.Errorf(`--kind must be "worker" or "orchestrator"`)}
+			}
+
 			project, err := ctx.resolveSpawnProject(cmd.Context(), opts.project)
 			if err != nil {
 				return err
 			}
 			opts.project = project.ID
 
-			harness, err := resolveSpawnHarness(opts.harness, project)
+			harness, err := resolveSpawnHarness(opts.harness, opts.kind, project)
 			if err != nil {
 				return err
 			}
 			opts.harness = harness
+
+			if isScratchProject(project) {
+				if strings.TrimSpace(opts.branch) != "" {
+					return usageError{fmt.Errorf("scratch projects do not support --branch")}
+				}
+				if strings.TrimSpace(opts.claimPR) != "" {
+					return usageError{fmt.Errorf("scratch projects do not support --claim-pr")}
+				}
+			}
 
 			if !opts.skipAgentCheck {
 				if err := ctx.preflightSpawnAgentAuth(cmd.Context(), cmd, opts.harness); err != nil {
@@ -107,6 +119,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 			req := spawnRequest{
 				ProjectID:   opts.project,
 				IssueID:     opts.issue,
+				Kind:        opts.kind,
 				Harness:     opts.harness,
 				Branch:      opts.branch,
 				Prompt:      opts.prompt,
@@ -134,19 +147,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 			if claimed != "" {
 				claimLabel = fmt.Sprintf(" (claimed %s)", claimed)
 			}
-			if _, err := fmt.Fprintf(out, "spawned session %s (%s)%s\n", res.Session.ID, res.Session.Status, claimLabel); err != nil {
-				return err
-			}
-			// Print a copy-pasteable attach hint for the selected runtime.
-			// On Darwin/Linux: tmux attach-session using the sanitised session name.
-			// On Windows: ConPTY has no user-facing attach CLI; use the AO dashboard.
-			var attach string
-			if runtime.GOOS != "windows" {
-				attach = fmt.Sprintf("tmux attach -t %s", tmux.SessionName(res.Session.ID))
-			} else {
-				attach = "Attach from the AO dashboard (ConPTY sessions have no CLI attach command)"
-			}
-			_, err = fmt.Fprintf(out, "attach with: %s\n", attach)
+			_, err = fmt.Fprintf(out, "spawned session %s (%s)%s\n", res.Session.ID, res.Session.Status, claimLabel)
 			return err
 		},
 	}
@@ -159,9 +160,10 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 		}
 		return pflag.NormalizedName(name)
 	})
-	f.StringVar(&opts.project, "project", "", "Project id to spawn the session in (default: AO_PROJECT_ID or current registered repo)")
-	f.StringVar(&opts.harness, "harness", "", "Agent harness / --agent: claude-code, codex, aider, opencode, grok, droid, amp, agy, crush, cursor, qwen, copilot, goose, auggie, continue, devin, cline, kimi, kiro, kilocode, vibe, pi, autohand (default: project worker.agent; required if the project has none)")
-	f.StringVar(&opts.branch, "branch", "", "Branch for the session worktree (default: ao/<session-id>/root)")
+	f.StringVar(&opts.project, "project", "", "Project id to spawn the session in (default: AO_PROJECT_ID, current registered repo, or Scratch when it is the only project)")
+	f.StringVar(&opts.harness, "harness", "", "Agent harness / --agent: claude-code, codex, aider, opencode, grok, droid, amp, agy, crush, cursor, qwen, copilot, goose, auggie, continue, devin, cline, kimi, kiro, kilocode, vibe, pi, autohand, fake (default: project worker.agent; orchestrator spawns default to project orchestrator.agent; required if the project has none)")
+	f.StringVar(&opts.kind, "kind", "", "Session role: worker or orchestrator (default: worker)")
+	f.StringVar(&opts.branch, "branch", "", "Branch for git project sessions (default: ao/<session-id>/root; unsupported for Scratch)")
 	f.StringVar(&opts.prompt, "prompt", "", "Initial prompt for the agent")
 	f.StringVar(&opts.issue, "issue", "", "Issue id to associate with the session")
 	f.StringVar(&opts.name, "name", "", "Display name shown in the sidebar (required, max 20 characters)")
@@ -239,6 +241,7 @@ func (c *commandContext) resolveProjectFromCWD(ctx context.Context) (projectDeta
 	})
 
 	var best projectDetails
+	details := make(map[string]projectDetails, len(list.Projects))
 	bestLen := -1
 	ambiguous := false
 	for _, summary := range list.Projects {
@@ -246,6 +249,7 @@ func (c *commandContext) resolveProjectFromCWD(ctx context.Context) (projectDeta
 		if err != nil {
 			return projectDetails{}, false, err
 		}
+		details[summary.ID] = project
 		if project.Path == "" {
 			continue
 		}
@@ -267,12 +271,30 @@ func (c *commandContext) resolveProjectFromCWD(ctx context.Context) (projectDeta
 		}
 	}
 	if bestLen == -1 {
+		if scratch, ok := onlyScratchProject(list.Projects, details); ok {
+			return scratch, true, nil
+		}
 		return projectDetails{}, false, nil
 	}
 	if ambiguous {
 		return projectDetails{}, false, usageError{fmt.Errorf("current directory matches multiple registered projects; pass --project")}
 	}
 	return best, true, nil
+}
+
+func onlyScratchProject(summaries []projectSummary, details map[string]projectDetails) (projectDetails, bool) {
+	if len(summaries) != 1 {
+		return projectDetails{}, false
+	}
+	project := details[summaries[0].ID]
+	if isScratchProject(project) {
+		return project, true
+	}
+	return projectDetails{}, false
+}
+
+func isScratchProject(project projectDetails) bool {
+	return project.ID == "scratch" && project.Kind == "scratch"
 }
 
 func normalizeProjectMatchPath(path string) (string, error) {
@@ -297,14 +319,23 @@ func pathContains(root, child string) bool {
 	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-func resolveSpawnHarness(explicit string, project projectDetails) (string, error) {
+func resolveSpawnHarness(explicit, kind string, project projectDetails) (string, error) {
 	if harness := strings.TrimSpace(explicit); harness != "" {
 		return harness, nil
 	}
 	if project.Config != nil {
-		if harness := strings.TrimSpace(project.Config.Worker.Agent); harness != "" {
-			return harness, nil
+		if kind == "orchestrator" {
+			if harness := strings.TrimSpace(project.Config.Orchestrator.Agent); harness != "" {
+				return harness, nil
+			}
+		} else {
+			if harness := strings.TrimSpace(project.Config.Worker.Agent); harness != "" {
+				return harness, nil
+			}
 		}
+	}
+	if kind == "orchestrator" {
+		return "", usageError{fmt.Errorf("agent could not be resolved; pass --agent or configure `ao project set-config %s --orchestrator-agent <agent>`", project.ID)}
 	}
 	return "", usageError{fmt.Errorf("agent could not be resolved; pass --agent or configure `ao project set-config %s --worker-agent <agent>`", project.ID)}
 }

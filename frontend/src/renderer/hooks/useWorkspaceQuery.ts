@@ -7,6 +7,7 @@ import {
 	type PRState,
 	type PullRequestFacts,
 	toAgentProvider,
+	toProjectKind,
 	toSessionActivity,
 	toSessionStatus,
 	type WorkspaceSummary,
@@ -37,9 +38,20 @@ function reportUnknownSessionField(field: "status" | "activity", value?: string)
 	void captureRendererEvent("ao.renderer.session_state_unknown", { field, reason });
 }
 
+// e2e seam (dev:web only): the Playwright fake-agent harness injects
+// `window.__aoFakeAgent` (see e2e/support/fake-bridge.ts) to drive a
+// deterministic, mutable session timeline off the SSE refetch path. Compiled
+// out of the packaged build — the packaged renderer never sets VITE_NO_ELECTRON
+// and always hits the real daemon.
+type FakeAgentSeam = { snapshot: () => WorkspaceSummary[] };
+
 async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 	if (usePreviewData) {
-		return mockWorkspaces;
+		const fake =
+			typeof window !== "undefined"
+				? (window as unknown as { __aoFakeAgent?: FakeAgentSeam }).__aoFakeAgent
+				: undefined;
+		return fake ? fake.snapshot() : mockWorkspaces;
 	}
 	if (!hasTrustedApiBaseUrl()) {
 		return [];
@@ -50,22 +62,24 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 
 	if (projectsError || sessionsError) throw projectsError ?? sessionsError;
 
-	return (projectsData?.projects ?? []).map((project) => ({
-		id: project.id,
-		name: project.name,
-		kind: project.kind === "workspace" ? "workspace" : "single_repo",
-		path: project.path,
-		orchestratorAgent: project.orchestratorAgent ? toAgentProvider(project.orchestratorAgent) : undefined,
-		sessions: (sessionsData?.sessions ?? [])
-			.filter((session) => session.projectId === project.id)
-			.map((session) => {
-				const status = toSessionStatus(session.status, session.isTerminated);
-				const activity = toSessionActivity(session.activity);
-				if (status === "unknown") reportUnknownSessionField("status", session.status);
-				if (!activity || activity.state === "unknown") {
-					reportUnknownSessionField("activity", session.activity?.state);
-				}
-				return {
+	return (projectsData?.projects ?? []).map((project) => {
+		const kind = toProjectKind(project.kind);
+		return {
+			id: project.id,
+			name: project.name,
+			kind,
+			path: project.path,
+			orchestratorAgent: project.orchestratorAgent ? toAgentProvider(project.orchestratorAgent) : undefined,
+			sessions: (sessionsData?.sessions ?? [])
+				.filter((session) => session.projectId === project.id)
+				.map((session) => {
+					const status = toSessionStatus(session.status, session.isTerminated);
+					const activity = toSessionActivity(session.activity);
+					if (status === "unknown") reportUnknownSessionField("status", session.status);
+					if (!activity || activity.state === "unknown") {
+						reportUnknownSessionField("activity", session.activity?.state);
+					}
+					return {
 					id: session.id,
 					terminalHandleId: session.terminalHandleId,
 					workspaceId: project.id,
@@ -74,7 +88,7 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 					issueId: session.issueId,
 					provider: toAgentProvider(session.harness),
 					kind: session.kind === "orchestrator" ? "orchestrator" : session.kind === "worker" ? "worker" : undefined,
-					branch: session.branch ?? `session/${session.id}`,
+					branch: session.branch || undefined,
 					status,
 					isTerminated: session.isTerminated,
 					terminateOnPrMerge: session.terminateOnPrMerge ?? false,
@@ -84,9 +98,10 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 					previewUrl: session.previewUrl,
 					previewRevision: session.previewRevision,
 					prs: (session.prs ?? []).map(toPullRequestFacts),
-				};
-			}),
-	}));
+					};
+				}),
+		};
+	});
 }
 
 // Shared so route loaders can prefetch via queryClient.ensureQueryData (paired

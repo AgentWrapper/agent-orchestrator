@@ -4,6 +4,8 @@ import { Check, Copy, Info, Loader2, X } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { cn } from "../lib/utils";
+import { ConnectMobileGetApp } from "./settings/ConnectMobileGetApp";
+import { ConnectMobileSetup } from "./settings/ConnectMobileSetup";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Switch } from "./ui/switch";
 
@@ -149,13 +151,17 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 						<X className="size-5" aria-hidden="true" />
 					</button>
 				</DialogClose>
-				<div className="flex flex-col px-(--size-settings-mobile-dialog-pad-x) pb-6 pt-8">
+				{/* The get-app QR and setup steps can push this past a short window,
+				    so the body scrolls rather than clipping under the screen edges. */}
+				<div className="scrollbar-none flex max-h-[80vh] flex-col overflow-y-auto px-(--size-settings-mobile-dialog-pad-x) pb-6 pt-8">
 					<DialogHeader className="items-center gap-1.5 text-center">
 						<DialogTitle className="settings-dialog-title text-center">Connect Mobile</DialogTitle>
 						<DialogDescription className="max-w-(--size-settings-mobile-desc) text-center text-control font-normal leading-4 text-settings-muted">
 							Pair the Agent Orchestrator mobile app with this desktop over your LAN.
 						</DialogDescription>
 					</DialogHeader>
+
+					<ConnectMobileGetApp />
 
 					{query.isLoading ? (
 						<p className="mt-6 text-center text-xs text-settings-muted">Checking status…</p>
@@ -211,7 +217,11 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 											enabled ? "opacity-100" : "opacity-0",
 										)}
 									>
-										<div className="flex w-(--size-settings-mobile-qr) flex-col items-center">
+										{/* Steps sit above the QR so the LAN/Tailscale choice is on screen
+										    the moment the bridge turns on, with no scrolling. */}
+										<ConnectMobileSetup port={status.port} enabled={enabled} />
+
+										<div className="mt-6 flex w-(--size-settings-mobile-qr) flex-col items-center">
 											<div className="rounded-(--radius-settings-dialog-lg) bg-white p-2 shadow-[var(--shadow-settings-qr)]">
 												<QRCodeSVG
 													value={pairingPayload(status.host, status.port, status.password)}

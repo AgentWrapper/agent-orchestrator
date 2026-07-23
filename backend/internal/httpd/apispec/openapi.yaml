@@ -709,6 +709,50 @@ paths:
       summary: Fetch one project; discriminates ok vs degraded
       tags:
       - projects
+    put:
+      operationId: updateProjectSettings
+      parameters:
+      - description: Project identifier (registry key).
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Project identifier (registry key).
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProjectSettingsInput'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Atomically replace a project's display name and config
+      tags:
+      - projects
   /api/v1/projects/{id}/config:
     put:
       operationId: setProjectConfig
@@ -1998,6 +2042,114 @@ paths:
       summary: Clean up terminated session workspaces
       tags:
       - sessions
+  /api/v1/shell-terminals:
+    get:
+      operationId: listShellTerminals
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListShellTerminalsResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List the standalone shell terminals owned by the current app run
+      tags:
+      - shellTerminals
+    post:
+      operationId: openShellTerminal
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenShellTerminalRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShellTerminalEnvelope'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Open a standalone shell terminal
+      tags:
+      - shellTerminals
+  /api/v1/shell-terminals/{handleId}:
+    delete:
+      operationId: closeShellTerminal
+      parameters:
+      - description: Shell terminal runtime handle identifier.
+        in: path
+        name: handleId
+        required: true
+        schema:
+          description: Shell terminal runtime handle identifier.
+          type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Close a standalone shell terminal and destroy its PTY
+      tags:
+      - shellTerminals
 components:
   schemas:
     APIError:
@@ -2204,11 +2356,24 @@ components:
       - status
       - prs
       type: object
+    ControllersSpawnAttachmentInput:
+      properties:
+        data:
+          type: string
+        mimeType:
+          type: string
+      required:
+      - data
+      type: object
     DegradedProject:
       properties:
         id:
           type: string
         kind:
+          enum:
+          - single_repo
+          - workspace
+          - scratch
           type: string
         name:
           type: string
@@ -2438,6 +2603,15 @@ components:
       required:
       - sessions
       type: object
+    ListShellTerminalsResponse:
+      properties:
+        shellTerminals:
+          items:
+            $ref: '#/components/schemas/ShellTerminalResponse'
+          type: array
+      required:
+      - shellTerminals
+      type: object
     ListWorkspaceFilesResponse:
       properties:
         files:
@@ -2569,6 +2743,13 @@ components:
       - kind
       - sessionId
       type: object
+    OpenShellTerminalRequest:
+      properties:
+        projectId:
+          description: Project whose root the shell starts in. Omitted opens the shell
+            in the daemon data dir.
+          type: string
+      type: object
     OrchestratorResponse:
       properties:
         id:
@@ -2589,6 +2770,8 @@ components:
           type: integer
         prUrl:
           type: string
+        previousRun:
+          $ref: '#/components/schemas/ReviewRun'
         status:
           enum:
           - needs_review
@@ -2632,6 +2815,10 @@ components:
         id:
           type: string
         kind:
+          enum:
+          - single_repo
+          - workspace
+          - scratch
           type: string
         name:
           type: string
@@ -2718,6 +2905,10 @@ components:
         id:
           type: string
         kind:
+          enum:
+          - single_repo
+          - workspace
+          - scratch
           type: string
         name:
           type: string
@@ -3311,6 +3502,32 @@ components:
             entry point in the session workspace.
           type: string
       type: object
+    ShellTerminalEnvelope:
+      properties:
+        shellTerminal:
+          $ref: '#/components/schemas/ShellTerminalResponse'
+      required:
+      - shellTerminal
+      type: object
+    ShellTerminalResponse:
+      properties:
+        createdAt:
+          format: date-time
+          type: string
+        handleId:
+          type: string
+        projectId:
+          type: string
+        title:
+          type: string
+        workingDir:
+          type: string
+      required:
+      - handleId
+      - workingDir
+      - title
+      - createdAt
+      type: object
     SpawnOrchestratorRequest:
       properties:
         clean:
@@ -3329,6 +3546,10 @@ components:
       type: object
     SpawnSessionRequest:
       properties:
+        attachments:
+          items:
+            $ref: '#/components/schemas/ControllersSpawnAttachmentInput'
+          type: array
         branch:
           type: string
         displayName:
@@ -3359,6 +3580,7 @@ components:
           - vibe
           - pi
           - autohand
+          - fake
           type: string
         issueId:
           type: string
@@ -3428,6 +3650,10 @@ components:
       type: object
     TriggerReviewResponse:
       properties:
+        created:
+          description: True when a new review pass was started; false when an existing
+            run for the same commit was reused.
+          type: boolean
         reviewerHandleId:
           type: string
         reviews:
@@ -3437,6 +3663,7 @@ components:
       required:
       - reviewerHandleId
       - reviews
+      - created
       type: object
     UnregisterPushDeviceResponse:
       properties:
@@ -3447,6 +3674,18 @@ components:
       required:
       - token
       - deleted
+      type: object
+    UpdateProjectSettingsInput:
+      properties:
+        config:
+          $ref: '#/components/schemas/ProjectConfig'
+        displayName:
+          maxLength: 20
+          minLength: 1
+          type: string
+      required:
+      - displayName
+      - config
       type: object
     WorkspaceFileResponse:
       properties:

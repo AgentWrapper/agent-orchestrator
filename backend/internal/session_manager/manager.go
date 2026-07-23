@@ -45,6 +45,9 @@ var (
 	// ErrMissingHarness means neither the spawn request nor the project's role
 	// config selected an agent. Worker/orchestrator spawns must be explicit.
 	ErrMissingHarness = errors.New("session: agent harness required")
+	// ErrScratchBranchUnsupported means a caller tried to force git branch
+	// semantics onto a scratch project.
+	ErrScratchBranchUnsupported = errors.New("session: scratch projects do not support branches")
 	// ErrNotResumable means a terminated session cannot be relaunched: its adapter
 	// cannot natively resume it AND it has no prompt to fresh-launch from, and it is
 	// not an orchestrator (orchestrators are promptless by design and relaunch fresh
@@ -289,6 +292,10 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("spawn: %w", err)
 	}
+	projectKind := project.Kind.WithDefault()
+	if projectKind == domain.ProjectKindScratch && strings.TrimSpace(cfg.Branch) != "" {
+		return domain.SessionRecord{}, fmt.Errorf("spawn: %w", ErrScratchBranchUnsupported)
+	}
 	// A per-project role override picks the harness when the spawn names none,
 	// so a project can default workers to one agent and orchestrators to another.
 	cfg.Harness = effectiveHarness(cfg.Harness, cfg.Kind, project.Config)
@@ -325,7 +332,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 
 	branch := cfg.Branch
 	if branch == "" {
-		branch = DefaultSpawnBranch(id, cfg.Kind, sessionPrefix(project), project.Kind.WithDefault(), m.dataDir)
+		branch = DefaultSpawnBranch(id, cfg.Kind, sessionPrefix(project), projectKind, m.dataDir)
 	}
 	ws, workspaceProject, err := m.createSessionWorkspace(ctx, project, cfg, id, branch)
 	if err != nil {
@@ -342,6 +349,26 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.destroySpawnWorkspace(ctx, ws, workspaceProject)
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: provision: %w", id, err)
+	}
+
+	// CLI agents receive the prompt as text and cannot consume inline binary
+	// data, so any pasted/dropped images are written into the worktree and
+	// referenced by path in the prompt. Done after provisioning (so the worktree
+	// exists) and before the launch command is built (so the references reach
+	// the agent).
+	if len(cfg.Attachments) > 0 {
+		refs, err := writeSpawnAttachments(ws.Path, cfg.Attachments)
+		if err != nil {
+			_ = m.workspace.Destroy(ctx, ws)
+			m.rollbackSpawnSeedRow(ctx, id)
+			return domain.SessionRecord{}, fmt.Errorf("spawn %s: attachments: %w", id, err)
+		}
+		// Keep the attachments dir out of git status. Best-effort: the images are
+		// already written and usable, so an exclude failure must not fail the spawn.
+		if err := m.workspace.AddExclude(ctx, ws, "/"+attachmentsDir+"/"); err != nil {
+			m.logger.Warn("spawn: exclude attachments dir", "sessionID", id, "error", err)
+		}
+		prompt = appendAttachmentReferences(prompt, refs)
 	}
 
 	agent, ok := m.agents.Agent(cfg.Harness)
@@ -413,7 +440,14 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: runtime: %w", id, err)
 	}
 
-	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, RuntimeLaunchID: launchID, Prompt: prompt}
+	metadata := domain.SessionMetadata{
+		Branch:            ws.Branch,
+		WorkspacePath:     ws.Path,
+		WorkspaceRepoPath: ws.RepoPath,
+		RuntimeHandleID:   handle.ID,
+		RuntimeLaunchID:   launchID,
+		Prompt:            prompt,
+	}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
@@ -448,14 +482,19 @@ func (m *Manager) loadProject(ctx context.Context, projectID domain.ProjectID) (
 }
 
 func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.ProjectRecord, cfg ports.SpawnConfig, id domain.SessionID, branch string) (ports.WorkspaceInfo, *ports.WorkspaceProjectInfo, error) {
-	if project.Kind.WithDefault() != domain.ProjectKindWorkspace {
+	projectKind := project.Kind.WithDefault()
+	if projectKind != domain.ProjectKindWorkspace {
+		baseBranch := project.Config.WithDefaults().DefaultBranch
+		if projectKind == domain.ProjectKindScratch {
+			baseBranch = ""
+		}
 		ws, err := m.workspace.Create(ctx, ports.WorkspaceConfig{
 			ProjectID:     cfg.ProjectID,
 			SessionID:     id,
 			Kind:          cfg.Kind,
 			SessionPrefix: sessionPrefix(project),
 			Branch:        branch,
-			BaseBranch:    project.Config.WithDefaults().DefaultBranch,
+			BaseBranch:    baseBranch,
 		})
 		return ws, nil, err
 	}
@@ -848,11 +887,15 @@ func (m *Manager) RestoreWithMode(ctx context.Context, id domain.SessionID) (Res
 		return RestoreResult{}, fmt.Errorf("restore %s: %w", id, ErrNotRestorable)
 	}
 	meta := rec.Metadata
+	project, err := m.loadProject(ctx, rec.ProjectID)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("restore %s: %w", id, err)
+	}
 	// Mirror Kill's incomplete-handle guard: a session whose spawn failed before
 	// the workspace landed has neither WorkspacePath nor Branch, and there is
 	// nothing meaningful to restore from. Surface this as a typed 409 instead of
 	// letting workspace.Restore fail with an opaque wrapped error.
-	if meta.WorkspacePath == "" || meta.Branch == "" {
+	if meta.WorkspacePath == "" || (meta.Branch == "" && project.Kind.WithDefault() != domain.ProjectKindScratch) {
 		return RestoreResult{}, fmt.Errorf("restore %s: %w", id, ErrIncompleteHandle)
 	}
 	// Resumability is decided inside restoreArgv, not here. A promptless session
@@ -861,10 +904,6 @@ func (m *Manager) RestoreWithMode(ctx context.Context, id domain.SessionID) (Res
 	// unresumable non-orchestrator (a worker with no task and no native id to resume).
 	// Orchestrators always relaunch fresh with the system prompt only.
 
-	project, err := m.loadProject(ctx, rec.ProjectID)
-	if err != nil {
-		return RestoreResult{}, fmt.Errorf("restore %s: %w", id, err)
-	}
 	ws, err := m.restoreSessionWorkspace(ctx, project, rec)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("restore %s: workspace: %w", id, err)
@@ -990,7 +1029,15 @@ func (m *Manager) relaunchSession(ctx context.Context, operation string, rec dom
 		m.cleanupSystemPromptDir(rec.ID)
 		return RestoreResult{}, fmt.Errorf("%s %s: runtime: %w", operation, rec.ID, err)
 	}
-	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, RuntimeLaunchID: launchID, AgentSessionID: rec.Metadata.AgentSessionID, Prompt: rec.Metadata.Prompt}
+	metadata := domain.SessionMetadata{
+		Branch:            ws.Branch,
+		WorkspacePath:     ws.Path,
+		WorkspaceRepoPath: ws.RepoPath,
+		RuntimeHandleID:   handle.ID,
+		RuntimeLaunchID:   launchID,
+		AgentSessionID:    rec.Metadata.AgentSessionID,
+		Prompt:            rec.Metadata.Prompt,
+	}
 	if err := m.lcm.MarkSpawned(ctx, rec.ID, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		m.cleanupSystemPromptDir(rec.ID)
@@ -1148,7 +1195,12 @@ func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionReco
 // worktree intact: better to skip the relaunch than to tear down un-preserved
 // work or relaunch onto an inconsistent worktree.
 func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) error {
-	if rec.Metadata.WorkspacePath == "" || rec.Metadata.Branch == "" {
+	project, err := m.loadProject(ctx, rec.ProjectID)
+	if err != nil {
+		return err
+	}
+	projectKind := project.Kind.WithDefault()
+	if rec.Metadata.WorkspacePath == "" || (rec.Metadata.Branch == "" && projectKind != domain.ProjectKindScratch) {
 		return nil
 	}
 	handle := runtimeHandle(rec.Metadata)
@@ -1161,6 +1213,9 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 		if alive {
 			return nil // adopt: the session survived the crash.
 		}
+	}
+	if projectKind == domain.ProjectKindScratch {
+		return m.lcm.MarkTerminated(ctx, rec.ID)
 	}
 	if err := m.saveAndTeardownOne(ctx, rec, false); err != nil {
 		m.logger.Warn("reconcile: save-and-teardown failed; terminating without restore marker", "sessionID", rec.ID, "error", err)
@@ -1297,6 +1352,7 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 				Kind:          rec.Kind,
 				SessionPrefix: sessionPrefix(project),
 				Branch:        rec.Metadata.Branch,
+				Path:          rec.Metadata.WorkspacePath,
 			})
 			if restoreErr != nil {
 				m.logger.Error("restore-all: workspace restore failed", "sessionID", rec.ID, "error", restoreErr)
@@ -1402,6 +1458,7 @@ func (m *Manager) restoreSessionWorkspace(ctx context.Context, project domain.Pr
 			Kind:          rec.Kind,
 			SessionPrefix: sessionPrefix(project),
 			Branch:        rec.Metadata.Branch,
+			Path:          rec.Metadata.WorkspacePath,
 		})
 	}
 	rows, err := m.workspaceProjectRestoreRows(ctx, project, rec)
@@ -1931,6 +1988,9 @@ func cleanupSkipReason(err error) string {
 	if errors.Is(err, ports.ErrWorkspaceDirty) {
 		return "workspace has uncommitted changes"
 	}
+	if errors.Is(err, ErrProjectNotResolvable) {
+		return "project is archived or unregistered — remove worktree manually"
+	}
 	return "workspace teardown failed"
 }
 
@@ -1970,6 +2030,9 @@ func defaultSessionBranch(id domain.SessionID, kind domain.SessionKind, prefix, 
 // DefaultSpawnBranch returns AO's generated work branch for a spawn. Explicit
 // user-provided branches bypass this helper.
 func DefaultSpawnBranch(id domain.SessionID, kind domain.SessionKind, prefix string, projectKind domain.ProjectKind, dataDir string) string {
+	if projectKind == domain.ProjectKindScratch {
+		return ""
+	}
 	branchNamespace := generatedBranchNamespace(dataDir)
 	if projectKind == domain.ProjectKindWorkspace {
 		return aoBranch(branchNamespace, string(id))
@@ -2040,6 +2103,9 @@ func promptRoleForKind(kind domain.SessionKind) sessionPromptRole {
 
 func promptProjectContext(projectID domain.ProjectID, project domain.ProjectRecord) promptProject {
 	cfg := project.Config.WithDefaults()
+	if project.Kind.WithDefault() == domain.ProjectKindScratch {
+		cfg.DefaultBranch = ""
+	}
 	id := project.ID
 	if strings.TrimSpace(id) == "" {
 		id = string(projectID)
@@ -2051,6 +2117,54 @@ func promptProjectContext(projectID domain.ProjectID, project domain.ProjectReco
 		DefaultBranch: cfg.DefaultBranch,
 		Path:          project.Path,
 	}
+}
+
+// attachmentsDir is the worktree-relative directory where spawn image
+// attachments are written.
+const attachmentsDir = ".ao/attachments"
+
+// writeSpawnAttachments writes each attachment into the worktree under
+// attachmentsDir as image-1<ext>, image-2<ext>, ... and returns the
+// worktree-relative paths in order. The files are excluded from git via the
+// worktree's info/exclude so they do not dirty the working tree.
+func writeSpawnAttachments(workspacePath string, attachments []ports.SpawnAttachment) ([]string, error) {
+	dir := filepath.Join(workspacePath, filepath.FromSlash(attachmentsDir))
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return nil, fmt.Errorf("create attachments dir: %w", err)
+	}
+	refs := make([]string, 0, len(attachments))
+	for i, a := range attachments {
+		ext := a.Ext
+		if ext == "" {
+			ext = ".bin"
+		}
+		name := fmt.Sprintf("image-%d%s", i+1, ext)
+		if err := os.WriteFile(filepath.Join(dir, name), a.Data, 0o600); err != nil {
+			return nil, fmt.Errorf("write attachment %d: %w", i+1, err)
+		}
+		// Worktree-relative reference, always forward-slashed for the prompt.
+		refs = append(refs, attachmentsDir+"/"+name)
+	}
+	return refs, nil
+}
+
+// appendAttachmentReferences appends a block listing the attached image paths so
+// the agent knows to read them. Placed after the human's brief.
+func appendAttachmentReferences(prompt string, refs []string) string {
+	if len(refs) == 0 {
+		return prompt
+	}
+	var b strings.Builder
+	b.WriteString(prompt)
+	if strings.TrimSpace(prompt) != "" {
+		b.WriteString("\n\n")
+	}
+	b.WriteString("Attached images (read these files in the workspace for visual context):")
+	for _, ref := range refs {
+		b.WriteString("\n- ")
+		b.WriteString(ref)
+	}
+	return b.String()
 }
 
 // buildSpawnTexts returns the user-facing prompt and the system prompt to
@@ -2127,8 +2241,8 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 // so the standing prompt stays a short pointer rather than a command dump.
 func (m *Manager) aoSkillPointer() string {
 	dir := skillassets.Dir(m.dataDir)
-	skillFile := filepath.Join(dir, "SKILL.md")
-	commandsGlob := filepath.Join(dir, "commands", "*.md")
+	skillFile := filepath.ToSlash(filepath.Join(dir, "SKILL.md"))
+	commandsGlob := filepath.ToSlash(filepath.Join(dir, "commands", "*.md"))
 	return "\n\n" + "## Using the ao CLI\n\n" +
 		"When you need to use the `ao` CLI, read `" + skillFile + "` first (and the relevant `" + commandsGlob + "`) for the full command catalog, flags, and examples."
 }
@@ -2618,7 +2732,7 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 		WorkspacePath: workspacePath,
 		Metadata:      map[string]string{ports.MetadataKeyAgentSessionID: meta.AgentSessionID},
 	}
-	cmd, ok, err := agent.GetRestoreCommand(ctx, ports.RestoreConfig{Session: ref, Kind: kind, SystemPrompt: systemPrompt, SystemPromptFile: systemPromptFile, Config: agentConfig, Permissions: agentConfig.Permissions})
+	cmd, ok, err := agent.GetRestoreCommand(ctx, ports.RestoreConfig{Session: ref, Kind: kind, DataDir: dataDir, SystemPrompt: systemPrompt, SystemPromptFile: systemPromptFile, Config: agentConfig, Permissions: agentConfig.Permissions})
 	if err != nil {
 		return nil, "", "", fmt.Errorf("restore command: %w", err)
 	}
@@ -2930,6 +3044,7 @@ func workspaceInfo(rec domain.SessionRecord) ports.WorkspaceInfo {
 		Branch:    rec.Metadata.Branch,
 		SessionID: rec.ID,
 		ProjectID: rec.ProjectID,
+		RepoPath:  rec.Metadata.WorkspaceRepoPath,
 	}
 }
 

@@ -44,6 +44,16 @@ type UiState = {
 	// Bumps to ask the sidebar's create-project flow to open (the ⌘N fallback
 	// when no project is in scope).
 	createProjectNonce: number;
+	// Bumps to ask for a new standalone shell terminal. Like newTaskRequest this
+	// is a one-shot signal, not state: the topbar button and Ctrl+` both raise it
+	// so they cannot drift apart, and a repeat press re-fires because the nonce
+	// always changes. The shell layout is its single consumer — it is mounted on
+	// every route, so the request is honoured from anywhere in the app.
+	newShellTerminalNonce: number;
+	// The shell terminal the user most recently opened or selected. Both the
+	// session view (tabs beside the session's pane) and the standalone terminals
+	// view read it, so whichever one is on screen shows the same shell.
+	activeShellTerminalHandleId: string | null;
 	setWorkbenchTab: (tab: WorkbenchTab) => void;
 	setThemePreference: (theme: ThemePreference) => void;
 	/** Refresh resolvedTheme from OS without writing light/dark to storage. */
@@ -59,6 +69,8 @@ type UiState = {
 	setOrchestratorStartupError: (projectId: string, message: string | null) => void;
 	requestNewTask: (projectId: string) => void;
 	requestCreateProject: () => void;
+	requestNewShellTerminal: () => void;
+	setActiveShellTerminal: (handleId: string | null) => void;
 };
 
 const sidebarStorageKey = "ao.sidebar.open";
@@ -90,6 +102,8 @@ export const useUiStore = create<UiState>((set) => ({
 	orchestratorStartupErrors: {},
 	newTaskRequest: null,
 	createProjectNonce: 0,
+	newShellTerminalNonce: 0,
+	activeShellTerminalHandleId: null,
 	setWorkbenchTab: (workbenchTab) => set({ workbenchTab }),
 	setThemePreference: (themePreference) => {
 		getLocalStorage()?.setItem(themeStorageKey, themePreference);
@@ -181,6 +195,8 @@ export const useUiStore = create<UiState>((set) => ({
 	requestNewTask: (projectId) =>
 		set((state) => ({ newTaskRequest: { projectId, nonce: (state.newTaskRequest?.nonce ?? 0) + 1 } })),
 	requestCreateProject: () => set((state) => ({ createProjectNonce: state.createProjectNonce + 1 })),
+	requestNewShellTerminal: () => set((state) => ({ newShellTerminalNonce: state.newShellTerminalNonce + 1 })),
+	setActiveShellTerminal: (activeShellTerminalHandleId) => set({ activeShellTerminalHandleId }),
 }));
 
 export function useResolvedTheme(): Theme {

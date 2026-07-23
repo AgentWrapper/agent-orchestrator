@@ -1,5 +1,6 @@
 import type { PRState, PullRequestFacts, WorkspaceSummary } from "../types/workspace";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
+import type { ShellTerminal } from "../hooks/useShellTerminals";
 
 const now = new Date().toISOString();
 const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60 * 1000).toISOString();
@@ -21,6 +22,19 @@ const demoPr = (
 	reviewComments: review === "changes_requested",
 	updatedAt: now,
 });
+
+// Standalone shell terminals for the browser-preview build. The real ones need
+// a daemon to spawn a PTY, so the preview shows representative tabs instead —
+// enough to exercise the tab strip's layout, selection, and close control.
+export const mockShellTerminals: ShellTerminal[] = [
+	{
+		handleId: "shellterm-demo-1",
+		projectId: "ao-demo",
+		workingDir: "/Users/demo/Projects/ao-demo",
+		title: "ao-demo",
+		createdAt: now,
+	},
+];
 
 export const mockWorkspaces: WorkspaceSummary[] = [
 	{

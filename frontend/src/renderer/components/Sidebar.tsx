@@ -15,6 +15,7 @@ import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { renameSession } from "../lib/rename-session";
 import { useResizable } from "../hooks/useResizable";
+import { useShellMaybe } from "../lib/shell-context";
 import { useUpdateStatus } from "../hooks/useUpdateStatus";
 import {
 	DropdownMenu,
@@ -48,19 +49,12 @@ import { useUiStore } from "../stores/ui-store";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CreateProjectInput } from "./CreateProjectFlow";
 import { ResizeHandle } from "./ResizeHandle";
+import { isMacPlatform, isWindowsPlatform } from "../lib/platform";
 
-// The macOS hiddenInset traffic lights and the fixed TitlebarNav overlay live
-// in the full-width topbar's left inset (_shell renders the bar above the
-// sidebar row); the sidebar itself starts below the 56px header, so its border
-// never crosses the titlebar strip.
-const isMac = typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
-const isWindows =
-	typeof navigator !== "undefined" &&
-	/win/i.test(
-		(navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ??
-			navigator.platform ??
-			"",
-	);
+// On macOS the native traffic lights and fixed TitlebarNav occupy the titlebar
+// above this surface. Win/Linux hang the sidebar under their shell chrome.
+const isMac = isMacPlatform();
+const isWindows = isWindowsPlatform();
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
 // Shared styling for the per-project hover action buttons (dashboard,
@@ -140,6 +134,9 @@ export function Sidebar({
 	const [expandedChromeVisible, setExpandedChromeVisible] = useState(!isCollapsed);
 	// One IPC subscription for both footer variants of the restart-to-update prompt.
 	const updateStatus = useUpdateStatus();
+	// Daemon status for the smoke suite's sr-only mirror in the footer. Null when
+	// rendered outside the shell (unit tests) — the mirror simply doesn't render.
+	const daemonStatus = useShellMaybe()?.daemonStatus ?? null;
 
 	useEffect(() => {
 		if (isCollapsed) {
@@ -255,9 +252,6 @@ export function Sidebar({
 							nightly
 						</span>
 					)}
-					{/* On macOS the toggle lives in the TitlebarNav cluster, on Windows in
-					    the WindowTitlebar — only Linux keeps the in-header trigger.
-					    SidebarTrigger already toggles open/closed. */}
 					{!isMac && !isWindows && (
 						<Tooltip>
 							<TooltipTrigger asChild>
@@ -321,6 +315,13 @@ export function Sidebar({
 
 			{/* Footer — Settings opens the global settings page directly. */}
 			<SidebarFooter className="relative mb-2 mt-auto gap-0 overflow-hidden px-1.75 pb-2.5 pt-1.75 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-[64px] group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pb-1.5 group-data-[collapsible=icon]:pt-1.5">
+				{/* Always-present daemon status mirror for the smoke suite: no visible
+				    daemon-state copy is guaranteed to be mounted elsewhere. */}
+				{daemonStatus && (
+					<span aria-hidden="true" className="sr-only" data-testid="daemon-status" data-state={daemonStatus.state}>
+						daemon {daemonStatus.state}
+					</span>
+				)}
 				<div className="sidebar-expanded-chrome relative flex w-full min-w-[186px] flex-col gap-1 transition-[opacity,transform] duration-150 ease-out group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:-translate-x-2 group-data-[collapsible=icon]:opacity-0">
 					<RestartToUpdateRow status={updateStatus} />
 					<button

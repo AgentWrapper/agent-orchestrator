@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -12,6 +14,8 @@ import (
 )
 
 const cancelInterruptDelay = 150 * time.Millisecond
+
+const reviewerTaskMessagePrefix = "Read and follow the AO review task in `"
 
 // Launcher spawns, re-notifies, and probes a reviewer over a worker's worktree.
 // It is the side of the engine that talks to the reviewer registry and runtime;
@@ -31,6 +35,7 @@ type Launcher interface {
 // LaunchSpec is the engine's request to (re)launch a reviewer for one pass.
 type LaunchSpec struct {
 	RunID         string
+	BatchID       string
 	WorkerID      domain.SessionID
 	Harness       domain.ReviewerHarness
 	WorkspacePath string
@@ -45,6 +50,7 @@ type LaunchSpec struct {
 // satisfies it.
 type reviewerRuntime interface {
 	Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error)
+	Destroy(ctx context.Context, handle ports.RuntimeHandle) error
 	Interrupt(ctx context.Context, handle ports.RuntimeHandle) error
 	IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error)
 	SendMessage(ctx context.Context, handle ports.RuntimeHandle, message string) error
@@ -56,6 +62,7 @@ type reviewerRuntime interface {
 type agentLauncher struct {
 	reviewers ports.ReviewerResolver
 	runtime   reviewerRuntime
+	dataDir   string
 }
 
 type preLaunchReviewer interface {
@@ -63,8 +70,8 @@ type preLaunchReviewer interface {
 }
 
 // NewLauncher builds the production reviewer launcher.
-func NewLauncher(reviewers ports.ReviewerResolver, runtime reviewerRuntime) Launcher {
-	return &agentLauncher{reviewers: reviewers, runtime: runtime}
+func NewLauncher(reviewers ports.ReviewerResolver, runtime reviewerRuntime, dataDir string) Launcher {
+	return &agentLauncher{reviewers: reviewers, runtime: runtime, dataDir: dataDir}
 }
 
 // reviewerHandleID is the stable runtime handle for a worker's reviewer pane, so
@@ -89,13 +96,54 @@ func (l *agentLauncher) invocation(spec LaunchSpec) ports.ReviewInvocation {
 	}
 }
 
+// prepareInvocation stores the full reviewer instructions outside the
+// worktree, then replaces the terminal-visible prompt with a short file
+// reference.
+// Reviewer panes are shared by desktop, mobile, and direct runtime attaches,
+// so keeping the full text out of the PTY is the only device-independent way
+// to hide it.
+func (l *agentLauncher) prepareInvocation(spec LaunchSpec) (ports.ReviewInvocation, error) {
+	inv := l.invocation(spec)
+	if strings.TrimSpace(l.dataDir) == "" {
+		return ports.ReviewInvocation{}, fmt.Errorf("reviewer prompt data directory is required")
+	}
+	if strings.TrimSpace(spec.BatchID) == "" || strings.TrimSpace(spec.RunID) == "" {
+		return ports.ReviewInvocation{}, fmt.Errorf("reviewer prompt batch and run ids are required")
+	}
+	promptRoot := filepath.Join(l.dataDir, "prompts", string(spec.WorkerID), "reviewer")
+	requestDir := filepath.Join(promptRoot, "requests", spec.BatchID, spec.RunID)
+	if err := os.MkdirAll(requestDir, 0o700); err != nil {
+		return ports.ReviewInvocation{}, fmt.Errorf("create reviewer prompt directory: %w", err)
+	}
+	taskPath := filepath.Join(requestDir, "task.md")
+	if err := os.WriteFile(taskPath, []byte(strings.TrimRight(inv.Prompt, "\n")+"\n"), 0o600); err != nil {
+		return ports.ReviewInvocation{}, fmt.Errorf("write reviewer task prompt: %w", err)
+	}
+	systemPath := filepath.Join(promptRoot, "system.md")
+	systemPrompt := strings.TrimRight(inv.SystemPrompt, "\n") + "\n\n" +
+		"AO stores each review task in an immutable file. Whenever AO asks you to start a review task, " +
+		"read the exact file path in that request first and follow it completely.\n"
+	if err := os.WriteFile(systemPath, []byte(systemPrompt), 0o600); err != nil {
+		return ports.ReviewInvocation{}, fmt.Errorf("write reviewer system prompt: %w", err)
+	}
+	inv.Prompt = reviewerTaskMessagePrefix + filepath.ToSlash(taskPath) + "`."
+	inv.SystemPrompt = ""
+	inv.SystemPromptFile = systemPath
+	inv.TaskPromptFile = taskPath
+	inv.TaskPromptRoot = promptRoot
+	return inv, nil
+}
+
 func (l *agentLauncher) Spawn(ctx context.Context, spec LaunchSpec) (string, error) {
 	reviewer, ok := l.reviewers.Reviewer(spec.Harness)
 	if !ok {
 		return "", fmt.Errorf("no reviewer adapter for harness %q", spec.Harness)
 	}
 	handleID := reviewerHandleID(spec.WorkerID)
-	inv := l.invocation(spec)
+	inv, err := l.prepareInvocation(spec)
+	if err != nil {
+		return "", err
+	}
 	if pl, ok := reviewer.(preLaunchReviewer); ok {
 		if err := pl.PreLaunch(ctx, inv); err != nil {
 			return "", fmt.Errorf("reviewer pre-launch: %w", err)
@@ -104,6 +152,15 @@ func (l *agentLauncher) Spawn(ctx context.Context, spec LaunchSpec) (string, err
 	cmd, err := reviewer.ReviewCommand(ctx, inv)
 	if err != nil {
 		return "", fmt.Errorf("reviewer command: %w", err)
+	}
+	// The reviewer handle is stable per worker, so a still-live pane from a
+	// previous pass would otherwise block `tmux new-session` (duplicate name) or,
+	// worse, keep serving under its old harness. Destroy any stale pane on this
+	// handle first so the reviewer always (re)launches under spec.Harness's
+	// sandbox/permissions/env — which are applied only here at Create, never by
+	// Notify. Destroy is idempotent when no pane exists (first spawn / dead pane).
+	if err := l.runtime.Destroy(ctx, ports.RuntimeHandle{ID: handleID}); err != nil {
+		return "", fmt.Errorf("reviewer replace stale pane: %w", err)
 	}
 	handle, err := l.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     domain.SessionID(handleID),
@@ -140,7 +197,11 @@ func (l *agentLauncher) Notify(ctx context.Context, handleID string, spec Launch
 	if !ok {
 		return fmt.Errorf("no reviewer adapter for harness %q", spec.Harness)
 	}
-	msg, err := reviewer.ReviewMessage(ctx, l.invocation(spec))
+	inv, err := l.prepareInvocation(spec)
+	if err != nil {
+		return err
+	}
+	msg, err := reviewer.ReviewMessage(ctx, inv)
 	if err != nil {
 		return fmt.Errorf("reviewer message: %w", err)
 	}

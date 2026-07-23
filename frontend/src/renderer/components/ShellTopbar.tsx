@@ -1,6 +1,15 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { GitBranch, LayoutDashboard, PanelRightClose, PanelRightOpen, Plus, Square, Trash2 } from "lucide-react";
+import {
+	GitBranch,
+	LayoutDashboard,
+	PanelRightClose,
+	PanelRightOpen,
+	Plus,
+	Square,
+	SquareTerminal,
+	Trash2,
+} from "lucide-react";
 import { useState } from "react";
 import { NotificationCenter } from "./NotificationCenter";
 import {
@@ -15,48 +24,41 @@ import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { useUiStore } from "../stores/ui-store";
 import { OrchestratorIcon } from "./icons";
-import { cn } from "../lib/utils";
 import { getAgentActivityView } from "../lib/session-presentation";
-import { isLinuxPlatform, isMacPlatform, isWindowsPlatform, usesBoardActionsInFramedTopbar } from "../lib/platform";
+import { isLinuxPlatform, isMacPlatform, isWindowsPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { StatusPill } from "./StatusPill";
-import {
-	TopbarButton,
-	TopbarKillError,
-	topbarHeaderClass,
-	topbarHeaderMacClass,
-	topbarProjectLabelClass,
-} from "./TopbarButton";
+import { TopbarButton, TopbarKillError, topbarHeaderClass, topbarProjectLabelClass } from "./TopbarButton";
 
 const isMac = isMacPlatform();
 const isLinux = isLinuxPlatform();
 const isWindows = isWindowsPlatform();
-const boardActionsInFramedTopbar = usesBoardActionsInFramedTopbar();
-const topbarNeedsTitlebarOffset = isMac;
+const boardActionsInPanel = usesBoardActionsInPanel();
 const dragStyle = isMac ? ({ WebkitAppRegion: "drag" } as React.CSSProperties) : undefined;
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
-// The one app topbar (.dashboard-app-header), rendered by the shell layout so
-// the crumb and actions sit at identical offsets on every screen. On macOS,
-// its left inset clears the traffic lights + TitlebarNav cluster. The
-// variant is derived from the route, not props: a sessionId in the URL swaps
-// the lead to the session identity (orchestrator crumb + mode badge, or worker
-// branch + status pill) and the actions to board/orchestrator + inspector
-// controls (orchestrators open the Kanban board; workers open their orchestrator);
-// otherwise it's the dashboard crumb plus the Orchestrator launcher when a
-// project is in scope. Merges the old DashboardTopbar/Topbar pair —
-// agent-orchestrator keeps those as two components aligned only by CSS.
+// The one app topbar (.dashboard-app-header). On Win/Linux the shell mounts it
+// inside the framed center panel; when the platform hides the shell topbar
+// (macOS), SessionView mounts the same component in-panel so Kill / Orchestrator
+// / inspector stay available. The variant is derived from the route, not props:
+// a sessionId in the URL swaps the lead to the session identity (orchestrator
+// crumb + mode badge, or worker branch + status pill) and the actions to
+// board/orchestrator + inspector controls (orchestrators open the Kanban board;
+// workers open their orchestrator); otherwise it's the dashboard crumb plus the
+// Orchestrator launcher when a project is in scope. Merges the old
+// DashboardTopbar/Topbar pair — agent-orchestrator keeps those as two components
+// aligned only by CSS.
 export function ShellTopbar() {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const params = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
 	const currentSessionId = params.sessionId;
-	const isSidebarOpen = useUiStore((state) => state.isSidebarOpen);
 	const isInspectorOpen = useUiStore((state) =>
 		currentSessionId ? (state.inspectorSessions[currentSessionId]?.isOpen ?? true) : false,
 	);
 	const toggleInspector = useUiStore((state) => state.toggleInspector);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
+	const requestNewShellTerminal = useUiStore((state) => state.requestNewShellTerminal);
 	const [isSpawning, setIsSpawning] = useState(false);
 	// Board-scope spawn failures surface where the board actions render.
 	const [boardSpawnError, setBoardSpawnError] = useState<string | null>(null);
@@ -133,10 +135,7 @@ export function ShellTopbar() {
 	};
 
 	return (
-		<header
-			className={cn(topbarHeaderClass, topbarNeedsTitlebarOffset && !isSidebarOpen && topbarHeaderMacClass)}
-			style={dragStyle}
-		>
+		<header className={topbarHeaderClass} style={dragStyle}>
 			<div className="flex min-w-0 items-center gap-3">
 				{isSessionRoute && isOrchestrator ? (
 					<div className="inline-flex min-w-0 items-center gap-2">
@@ -153,14 +152,16 @@ export function ShellTopbar() {
 					</div>
 				) : isSessionRoute ? (
 					<div className="flex min-w-0 items-center gap-3">
-						<div className="inline-flex min-w-0 items-center gap-1 font-mono text-2xs leading-none text-passive">
-							<GitBranch className="size-icon-2xs shrink-0" aria-hidden="true" />
-							<span className="truncate">{session?.branch || `session/${session?.id ?? ""}`}</span>
-						</div>
+						{session?.branch ? (
+							<div className="inline-flex min-w-0 items-center gap-1 font-mono text-2xs leading-none text-passive">
+								<GitBranch className="size-icon-2xs shrink-0" aria-hidden="true" />
+								<span className="truncate">{session.branch}</span>
+							</div>
+						) : null}
 						{session ? <SessionStatusPill session={session} /> : null}
 					</div>
-				) : (isProjectBoardRoute && !boardActionsInFramedTopbar) ||
-				  (isMac && isRootBoardRoute && !boardActionsInFramedTopbar) ? null : (
+				) : (isProjectBoardRoute && boardActionsInPanel) ||
+				  (isMac && isRootBoardRoute && boardActionsInPanel) ? null : (
 					<div className="inline-flex min-w-0 items-center gap-1.5">
 						<span className={topbarProjectLabelClass}>{projectLabel}</span>
 					</div>
@@ -170,9 +171,21 @@ export function ShellTopbar() {
 			<div className="min-w-0 flex-1" />
 
 			<div className="flex shrink-0 items-center gap-1.5">
+				{/* Standalone shell, independent of any agent session — the same action
+				    Ctrl+Shift+` fires, routed through the store so the two cannot drift.
+				    Leads the actions row so it stays visible on every route. */}
+				<TopbarButton
+					aria-label="New terminal"
+					onClick={requestNewShellTerminal}
+					style={noDragStyle}
+					title="New terminal (Ctrl+Shift+`)"
+					variant="icon"
+				>
+					<SquareTerminal className="size-icon-md" aria-hidden="true" />
+				</TopbarButton>
 				{/* Native-titlebar platforms keep the bell leading the actions row; the custom titlebar pins it to the far edge. */}
-				{!boardActionsInFramedTopbar && !isLinux && !isWindows ? <NotificationCenter style={noDragStyle} /> : null}
-				{boardActionsInFramedTopbar && isProjectBoardRoute ? (
+				{boardActionsInPanel && !isLinux && !isWindows ? <NotificationCenter style={noDragStyle} /> : null}
+				{!boardActionsInPanel && isProjectBoardRoute ? (
 					<>
 						{boardSpawnError ? (
 							<TopbarKillError className="max-w-content-max truncate" title={boardSpawnError}>
@@ -277,7 +290,7 @@ export function ShellTopbar() {
 					</>
 				) : null}
 				{/* Custom-titlebar platforms pin the bell to the far right. */}
-				{boardActionsInFramedTopbar ? <NotificationCenter style={noDragStyle} /> : null}
+				{!boardActionsInPanel ? <NotificationCenter style={noDragStyle} /> : null}
 			</div>
 		</header>
 	);

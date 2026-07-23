@@ -62,6 +62,11 @@ if (typeof window !== "undefined") {
 			scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
 			onNewSessionShortcut: () => () => undefined,
 			onKeyboardShortcutsHelp: () => () => undefined,
+			onNewShellTerminalShortcut: () => () => undefined,
+			onOpenSettingsShortcut: () => () => undefined,
+			onPreviousSessionShortcut: () => () => undefined,
+			onNextSessionShortcut: () => () => undefined,
+			onFocusTerminalShortcut: () => () => undefined,
 		},
 		terminal: {
 			saveDroppedFile: async () => "",
@@ -69,6 +74,9 @@ if (typeof window !== "undefined") {
 		window: {
 			setOverlay: async () => undefined,
 			setTrafficLightsInset: async () => undefined,
+		},
+		theme: {
+			set: async () => undefined,
 		},
 		menu: {
 			action: async () => undefined,

@@ -2,6 +2,8 @@ package review
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -19,7 +21,7 @@ func (f *fakeReviewer) ReviewCommand(_ context.Context, inv ports.ReviewInvocati
 }
 func (f *fakeReviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) (string, error) {
 	f.gotInv = inv
-	return "review run " + inv.RunID, nil
+	return inv.Prompt, nil
 }
 
 type fakePreLaunchReviewer struct {
@@ -64,17 +66,29 @@ func (f fakeReviewerResolver) Reviewer(domain.ReviewerHarness) (ports.Reviewer, 
 }
 
 type fakeRuntime struct {
-	createCfg  ports.RuntimeConfig
-	sentMsg    string
-	sentTo     string
-	alive      bool
-	interrupt  string
-	interrupts int
+	createCfg     ports.RuntimeConfig
+	sentMsg       string
+	sentMsgs      []string
+	sentTo        string
+	alive         bool
+	interrupt     string
+	interrupts    int
+	destroyed     string
+	destroyBefore bool
+	created       bool
 }
 
 func (f *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
 	f.createCfg = cfg
+	f.created = true
 	return ports.RuntimeHandle{ID: string(cfg.SessionID)}, nil
+}
+func (f *fakeRuntime) Destroy(_ context.Context, handle ports.RuntimeHandle) error {
+	f.destroyed = handle.ID
+	if !f.created {
+		f.destroyBefore = true
+	}
+	return nil
 }
 func (f *fakeRuntime) IsAlive(_ context.Context, _ ports.RuntimeHandle) (bool, error) {
 	return f.alive, nil
@@ -87,20 +101,27 @@ func (f *fakeRuntime) Interrupt(_ context.Context, handle ports.RuntimeHandle) e
 func (f *fakeRuntime) SendMessage(_ context.Context, handle ports.RuntimeHandle, msg string) error {
 	f.sentTo = handle.ID
 	f.sentMsg = msg
+	f.sentMsgs = append(f.sentMsgs, msg)
 	return nil
 }
 
 func launchSpec() LaunchSpec {
 	return LaunchSpec{
-		RunID: "run-1", WorkerID: "mer-1", Harness: domain.ReviewerClaudeCode,
+		RunID: "run-1", BatchID: "batch-1", WorkerID: "mer-1", Harness: domain.ReviewerClaudeCode,
 		WorkspacePath: "/ws/mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1",
 	}
+}
+
+func newTestLauncher(t *testing.T, reviewer ports.Reviewer, rt reviewerRuntime) Launcher {
+	t.Helper()
+	return NewLauncher(fakeReviewerResolver{reviewer: reviewer, ok: true}, rt, t.TempDir())
 }
 
 func TestLauncherSpawnReturnsStableHandle(t *testing.T) {
 	reviewer := &fakeReviewer{}
 	rt := &fakeRuntime{}
-	l := NewLauncher(fakeReviewerResolver{reviewer: reviewer, ok: true}, rt)
+	dataDir := t.TempDir()
+	l := NewLauncher(fakeReviewerResolver{reviewer: reviewer, ok: true}, rt, dataDir)
 
 	handle, err := l.Spawn(context.Background(), launchSpec())
 	if err != nil {
@@ -119,12 +140,54 @@ func TestLauncherSpawnReturnsStableHandle(t *testing.T) {
 	if reviewer.gotInv.RunID != "run-1" || reviewer.gotInv.TargetSHA != "sha1" || reviewer.gotInv.ReviewerID != "review-mer-1" {
 		t.Fatalf("invocation = %+v", reviewer.gotInv)
 	}
+	if !strings.HasPrefix(reviewer.gotInv.Prompt, reviewerTaskMessagePrefix) || reviewer.gotInv.SystemPrompt != "" || reviewer.gotInv.SystemPromptFile == "" || reviewer.gotInv.TaskPromptFile == "" {
+		t.Fatalf("hidden prompt invocation = %+v", reviewer.gotInv)
+	}
+	promptRoot := filepath.Join(dataDir, "prompts", "mer-1", "reviewer")
+	taskPath := filepath.Join(promptRoot, "requests", "batch-1", "run-1", "task.md")
+	if reviewer.gotInv.TaskPromptFile != taskPath || reviewer.gotInv.TaskPromptRoot != promptRoot {
+		t.Fatalf("task prompt file = %q", reviewer.gotInv.TaskPromptFile)
+	}
+	task, err := os.ReadFile(taskPath)
+	if err != nil {
+		t.Fatalf("read task prompt: %v", err)
+	}
+	if !strings.Contains(string(task), "https://github.com/o/r/pull/1") || strings.Contains(reviewer.gotInv.Prompt, "https://github.com/o/r/pull/1") {
+		t.Fatalf("task file = %q, visible prompt = %q", task, reviewer.gotInv.Prompt)
+	}
+	system, err := os.ReadFile(reviewer.gotInv.SystemPromptFile)
+	if err != nil {
+		t.Fatalf("read system prompt: %v", err)
+	}
+	if !strings.Contains(string(system), "Code reviewer role") || !strings.Contains(string(system), "exact file path in that request") || strings.Contains(string(system), filepath.ToSlash(taskPath)) {
+		t.Fatalf("system prompt = %q", system)
+	}
+}
+
+// Spawn must replace any stale pane on the stable per-worker handle before
+// creating the new one — otherwise a reviewer-harness switch either collides
+// with the old pane's tmux session name or leaves it serving under the old
+// harness's sandbox/permissions/env (which are applied only at Create).
+func TestLauncherSpawnReplacesStalePane(t *testing.T) {
+	reviewer := &fakeReviewer{}
+	rt := &fakeRuntime{}
+	l := newTestLauncher(t, reviewer, rt)
+
+	if _, err := l.Spawn(context.Background(), launchSpec()); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if rt.destroyed != "review-mer-1" {
+		t.Fatalf("stale pane not destroyed: destroyed=%q, want review-mer-1", rt.destroyed)
+	}
+	if !rt.destroyBefore {
+		t.Fatal("stale pane must be destroyed before the fresh pane is created")
+	}
 }
 
 func TestLauncherSpawnRunsReviewerPreLaunch(t *testing.T) {
 	reviewer := &fakePreLaunchReviewer{}
 	rt := &fakeRuntime{}
-	l := NewLauncher(fakeReviewerResolver{reviewer: reviewer, ok: true}, rt)
+	l := newTestLauncher(t, reviewer, rt)
 
 	if _, err := l.Spawn(context.Background(), launchSpec()); err != nil {
 		t.Fatalf("Spawn: %v", err)
@@ -143,18 +206,62 @@ func TestLauncherSpawnRunsReviewerPreLaunch(t *testing.T) {
 func TestLauncherNotifySendsMessageToHandle(t *testing.T) {
 	reviewer := &fakeReviewer{}
 	rt := &fakeRuntime{}
-	l := NewLauncher(fakeReviewerResolver{reviewer: reviewer, ok: true}, rt)
+	l := newTestLauncher(t, reviewer, rt)
 
 	if err := l.Notify(context.Background(), "review-mer-1", launchSpec()); err != nil {
 		t.Fatalf("Notify: %v", err)
 	}
-	if rt.sentTo != "review-mer-1" || !strings.Contains(rt.sentMsg, "run-1") {
+	if rt.sentTo != "review-mer-1" || !strings.HasPrefix(rt.sentMsg, reviewerTaskMessagePrefix) {
 		t.Fatalf("sent to %q msg %q", rt.sentTo, rt.sentMsg)
+	}
+	if strings.Contains(reviewer.gotInv.Prompt, reviewer.gotInv.PRURL) || reviewer.gotInv.SystemPromptFile == "" || reviewer.gotInv.TaskPromptFile == "" {
+		t.Fatalf("visible invocation = %+v", reviewer.gotInv)
+	}
+}
+
+func TestLauncherNotifyKeepsEarlierTaskReferenceImmutable(t *testing.T) {
+	reviewer := &fakeReviewer{}
+	rt := &fakeRuntime{}
+	dataDir := t.TempDir()
+	l := NewLauncher(fakeReviewerResolver{reviewer: reviewer, ok: true}, rt, dataDir)
+
+	first := launchSpec()
+	if err := l.Notify(context.Background(), "review-mer-1", first); err != nil {
+		t.Fatalf("first Notify: %v", err)
+	}
+	second := launchSpec()
+	second.BatchID = "batch-2"
+	second.RunID = "run-2"
+	second.PRURL = "https://github.com/o/r/pull/2"
+	second.TargetSHA = "sha2"
+	if err := l.Notify(context.Background(), "review-mer-1", second); err != nil {
+		t.Fatalf("second Notify: %v", err)
+	}
+
+	promptRoot := filepath.Join(dataDir, "prompts", "mer-1", "reviewer")
+	firstPath := filepath.Join(promptRoot, "requests", "batch-1", "run-1", "task.md")
+	secondPath := filepath.Join(promptRoot, "requests", "batch-2", "run-2", "task.md")
+	if len(rt.sentMsgs) != 2 || !strings.Contains(rt.sentMsgs[0], filepath.ToSlash(firstPath)) || !strings.Contains(rt.sentMsgs[1], filepath.ToSlash(secondPath)) {
+		t.Fatalf("review messages = %#v", rt.sentMsgs)
+	}
+	firstTask, err := os.ReadFile(firstPath)
+	if err != nil {
+		t.Fatalf("read first task: %v", err)
+	}
+	secondTask, err := os.ReadFile(secondPath)
+	if err != nil {
+		t.Fatalf("read second task: %v", err)
+	}
+	if !strings.Contains(string(firstTask), first.PRURL) || strings.Contains(string(firstTask), second.PRURL) {
+		t.Fatalf("first task changed after second notification: %q", firstTask)
+	}
+	if !strings.Contains(string(secondTask), second.PRURL) || strings.Contains(string(secondTask), first.PRURL) {
+		t.Fatalf("second task = %q", secondTask)
 	}
 }
 
 func TestLauncherAlive(t *testing.T) {
-	l := NewLauncher(fakeReviewerResolver{ok: true}, &fakeRuntime{alive: true})
+	l := NewLauncher(fakeReviewerResolver{ok: true}, &fakeRuntime{alive: true}, t.TempDir())
 	if ok, _ := l.Alive(context.Background(), "review-mer-1"); !ok {
 		t.Fatal("want alive true")
 	}
@@ -166,7 +273,7 @@ func TestLauncherAlive(t *testing.T) {
 func TestLauncherCancelUsesReviewerCancelMode(t *testing.T) {
 	reviewer := &fakeCancellableReviewer{interrupts: 2}
 	rt := &fakeRuntime{}
-	l := NewLauncher(fakeReviewerResolver{reviewer: reviewer, ok: true}, rt)
+	l := newTestLauncher(t, reviewer, rt)
 
 	if err := l.Cancel(context.Background(), "review-mer-1", domain.ReviewerClaudeCode); err != nil {
 		t.Fatalf("Cancel: %v", err)
@@ -183,7 +290,7 @@ func TestLauncherCancelUsesReviewerCancelMode(t *testing.T) {
 }
 
 func TestLauncherCancelRequiresReviewerSupport(t *testing.T) {
-	l := NewLauncher(fakeReviewerResolver{reviewer: &fakeReviewer{}, ok: true}, &fakeRuntime{})
+	l := newTestLauncher(t, &fakeReviewer{}, &fakeRuntime{})
 
 	if err := l.Cancel(context.Background(), "review-mer-1", domain.ReviewerClaudeCode); err == nil || !strings.Contains(err.Error(), "does not support cancellation") {
 		t.Fatalf("err = %v, want unsupported cancellation", err)
@@ -191,7 +298,7 @@ func TestLauncherCancelRequiresReviewerSupport(t *testing.T) {
 }
 
 func TestLauncherSpawnNoAdapter(t *testing.T) {
-	l := NewLauncher(fakeReviewerResolver{ok: false}, &fakeRuntime{})
+	l := NewLauncher(fakeReviewerResolver{ok: false}, &fakeRuntime{}, t.TempDir())
 	if _, err := l.Spawn(context.Background(), launchSpec()); err == nil || !strings.Contains(err.Error(), "no reviewer adapter") {
 		t.Fatalf("err = %v, want no-adapter", err)
 	}

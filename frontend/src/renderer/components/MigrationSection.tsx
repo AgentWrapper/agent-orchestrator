@@ -107,7 +107,7 @@ export function MigrationSection() {
 				: "Run migration";
 
 	return (
-		<Card>
+		<Card data-testid="settings-section" data-section="migration">
 			<CardHeader>
 				<CardTitle className="text-control">Migration</CardTitle>
 			</CardHeader>

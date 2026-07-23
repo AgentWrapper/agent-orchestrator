@@ -104,10 +104,8 @@
 	--color-terminal: var(--color-bg-terminal);
 	--color-terminal-dim: var(--color-text-terminal-dim);
 	--color-scrim: var(--bridge-scrim);
-	--color-welcome-panel: var(--color-bg-welcome-panel);
 
 	/* Settings page (Figma) */
-	--color-settings-panel: var(--color-bg-settings-panel);
 	--color-settings-row: var(--color-bg-settings-row);
 	--color-settings-menu-selected: var(--color-bg-settings-menu-selected);
 	--color-settings-title: var(--color-text-settings-title);
@@ -167,6 +165,7 @@
 	--spacing-toolbar: var(--size-toolbar);
 	--spacing-titlebar-content-offset: var(--size-titlebar-content-offset);
 	--spacing-titlebar-cluster-left: var(--size-titlebar-cluster-left);
+	--spacing-traffic-light-clearance: var(--size-traffic-light-clearance);
 	--spacing-control-xs: var(--size-control-xs);
 	--spacing-control-sm: var(--size-control-sm);
 	--spacing-control-form: var(--size-control-form);
@@ -181,6 +180,7 @@
 	--spacing-browser-min: var(--size-browser-min);
 	--spacing-dot-sm: var(--size-dot-sm);
 	--spacing-content-max: var(--size-content-max);
+	--spacing-shell-tab-max: var(--size-shell-tab-max);
 	--spacing-board-empty: var(--size-board-empty);
 	--spacing-preview-content: var(--size-preview-content);
 	--spacing-preview-max: var(--size-preview-max);
@@ -353,29 +353,7 @@
 	padding-left: 0;
 }
 
-@utility center-panel-welcome {
-	display: flex;
-	min-height: 0;
-	flex: 1 1 0%;
-	flex-direction: column;
-	overflow: hidden;
-	border-radius: var(--radius-welcome-panel);
-	border: 1px solid var(--color-border-welcome-panel);
-	background-color: var(--color-bg-welcome-panel);
-}
-
-@utility center-panel-settings {
-	display: flex;
-	min-height: 0;
-	flex: 1 1 0%;
-	flex-direction: column;
-	overflow: hidden;
-	border-radius: var(--radius-settings-panel);
-	border: 1px solid var(--color-border-settings);
-	background-color: var(--color-bg-settings-panel);
-}
-
-@utility center-panel-app {
+@utility center-panel-surface {
 	display: flex;
 	min-height: 0;
 	flex: 1 1 0%;
@@ -675,6 +653,17 @@ select {
 }
 
 .xterm .xterm-viewport::-webkit-scrollbar {
+	width: 0;
+	height: 0;
+}
+
+/* Scrollable region that must not show a scrollbar — the wheel/trackpad still
+   scrolls, but no track is painted and none reserves width. */
+.scrollbar-none {
+	scrollbar-width: none;
+}
+
+.scrollbar-none::-webkit-scrollbar {
 	width: 0;
 	height: 0;
 }
@@ -981,30 +970,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	gap: 13px;
 }
 
-/* ── macOS titlebar cluster (TitlebarNav) ─────────────────────────────────
- * Fixed beside the traffic lights so the toggle/history buttons occupy the
- * matching native row in each sidebar state. When collapsed, the 56px strip
- * starts after the framed panel's 12px top inset and 1px border, sharing the
- * project/session center line at y=41; main.ts moves the native lights through
- * window:setTrafficLightsInset. Lights span x=14–66; the cluster
- * starts a 13px group gap after them (the .dashboard-app-header gap), so
- * the toggle reads as its own group rather than a fourth light. */
-.titlebar-nav {
-	position: fixed;
-	top: 0;
-	left: 79px;
-	z-index: 20;
-	display: flex;
-	height: 56px;
-	align-items: center;
-	gap: 2px;
-}
-
-.titlebar-nav__btn {
-	width: 28px;
-	height: 28px;
-}
-
 /* Windows custom title bar (WindowTitlebar): the app paints the sidebar toggle
  * + menu on one row while Electron overlays the native min/max/close buttons on
  * the right. Height must match TITLEBAR_HEIGHT + the Window Controls Overlay
@@ -1077,13 +1042,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 
 .window-titlebar__menu {
 	min-width: 200px;
-}
-
-/* macOS: the full-width header starts its content past the lights + fixed
- * cluster: cluster right edge 79 + 3×28 + 2×2 = 167px, + the header's 13px
- * group gap = 180px. */
-.dashboard-app-header.is-under-titlebar-nav {
-	padding-left: 180px;
 }
 
 .topbar-project-pills-group {

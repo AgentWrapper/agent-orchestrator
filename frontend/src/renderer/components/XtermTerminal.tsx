@@ -19,7 +19,7 @@
 //    itself only fires onResize when the grid actually changed, so repeated
 //    fits don't spam the PTY.
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { CanvasAddon } from "@xterm/addon-canvas";
 import { FitAddon } from "@xterm/addon-fit";
@@ -32,6 +32,13 @@ import { aoBridge } from "../lib/bridge";
 import { TERMINAL_FONT_SIZE_DEFAULT } from "../lib/design-tokens";
 import { buildTerminalThemes } from "../lib/terminal-themes";
 import type { Theme } from "../stores/ui-store";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuSeparator,
+	DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
 
 export type XtermTerminalProps = {
 	ariaLabel?: string;
@@ -170,6 +177,17 @@ type XtermInternal = Terminal & {
 	};
 };
 
+type TerminalContextMenuState = {
+	canCopy: boolean;
+	open: boolean;
+	x: number;
+	y: number;
+};
+
+type TerminalContextMenuAction = "copy" | "paste" | "selectAll" | "clear";
+
+type TerminalContextMenuActions = Record<TerminalContextMenuAction, () => void>;
+
 // For mouse-tracking panes we synthesize SGR mouse-wheel reports and write them
 // to the pane; tmux (with `mouse on`, set by the runtime adapter) acts on them
 // and scrolls its scrollback via copy-mode. Left to itself xterm would convert
@@ -207,10 +225,29 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	const hostRef = useRef<HTMLDivElement | null>(null);
 	const termRef = useRef<Terminal | null>(null);
 	const fitRef = useRef<(() => void) | null>(null);
+	const contextMenuActionsRef = useRef<TerminalContextMenuActions | null>(null);
+	const [contextMenu, setContextMenu] = useState<TerminalContextMenuState>({
+		canCopy: false,
+		open: false,
+		x: 0,
+		y: 0,
+	});
 	// Latest callbacks in a ref so the mount effect stays dependency-free — we
 	// never tear down and recreate the terminal because a handler identity
 	// changed between renders.
 	const callbacksRef = useRef(props);
+
+	const setContextMenuOpen = useCallback((open: boolean) => {
+		setContextMenu((current) => ({ ...current, open }));
+	}, []);
+
+	const runContextMenuAction = useCallback(
+		(action: TerminalContextMenuAction) => {
+			contextMenuActionsRef.current?.[action]();
+			setContextMenuOpen(false);
+		},
+		[setContextMenuOpen],
+	);
 
 	useEffect(() => {
 		callbacksRef.current = props;
@@ -351,6 +388,42 @@ export function XtermTerminal(props: XtermTerminalProps) {
 					console.warn("Unable to paste terminal clipboard text", error);
 				});
 		};
+		const focusTerminal = () => {
+			try {
+				term.focus();
+			} catch {
+				// Terminal is being torn down or its hidden textarea is unavailable.
+			}
+		};
+		contextMenuActionsRef.current = {
+			clear: () => {
+				term.clear();
+				focusTerminal();
+			},
+			copy: () => {
+				copySelection();
+				focusTerminal();
+			},
+			paste: () => {
+				pasteFromClipboard();
+				focusTerminal();
+			},
+			selectAll: () => {
+				term.selectAll();
+				focusTerminal();
+			},
+		};
+		const openContextMenu = (event: MouseEvent) => {
+			event.preventDefault();
+			event.stopPropagation();
+			setContextMenu({
+				canCopy: term.hasSelection(),
+				open: true,
+				x: event.clientX,
+				y: event.clientY,
+			});
+		};
+		host.addEventListener("contextmenu", openContextMenu);
 		term.attachCustomKeyEventHandler((event) => {
 			// xterm invokes this same handler on keydown, keyup, AND keypress (see
 			// Terminal.ts _keyDown/_keyUp/_keyPress). Only keydown should trigger our
@@ -359,6 +432,25 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			// paste, double word-delete, etc). keyup/keypress fall through to
 			// xterm's own default handling for that event type.
 			if (event.type === "keyup" || event.type === "keypress") return true;
+			// Shift+Enter → newline without submitting, matching Claude Code / Codex.
+			// A terminal normally sends the same CR for Enter and Shift+Enter, so the
+			// agent can't distinguish them; emit the meta-return (ESC+CR) that
+			// readline/Ink-based TUIs interpret as "insert a newline" rather than
+			// "submit". Plain Enter still falls through to xterm's default CR.
+			//
+			// SCOPE: this meta-return is applied to every pane intentionally for now.
+			// It is correct for agent TUIs but untested and unintended for plain login
+			// shells, where ESC+CR is not a "newline" affordance. The correct fix is to
+			// scope it by pane kind — TerminalPane already branches on
+			// `terminalTarget?.kind === "shell"` at the XtermTerminal call site — once
+			// this branch is rebased onto main, which brings that discriminator (and
+			// ShellTerminalsView) that does not yet exist here. Until then the behavior
+			// is left unchanged and the emitted bytes are identical for all panes.
+			if (event.key === "Enter" && event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
+				consumeTerminalShortcut(event);
+				emitUserInput("\x1b\r", "keyboard");
+				return false;
+			}
 			if (isTerminalCopyShortcut(event)) {
 				if (copySelection()) {
 					consumeTerminalShortcut(event);
@@ -623,10 +715,12 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			host.removeEventListener("copy", copyInput);
 			window.removeEventListener("keydown", copyShortcut, true);
 			selectionChange.dispose();
+			host.removeEventListener("contextmenu", openContextMenu);
 			host.removeEventListener("paste", pasteInput, true);
 			host.removeEventListener("compositionend", compositionInput, true);
 			host.removeEventListener("dragover", dragOverInput);
 			host.removeEventListener("drop", dropInput);
+			contextMenuActionsRef.current = null;
 			clearSuppressNativePaste();
 			keyInput.dispose();
 			userInputListeners.clear();
@@ -640,11 +734,48 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	}, []);
 
 	return (
-		<div
-			ref={hostRef}
-			aria-label={props.ariaLabel}
-			className={props.className}
-			style={{ height: "100%", overflow: "hidden", width: "100%" }}
-		/>
+		<>
+			<div
+				ref={hostRef}
+				aria-label={props.ariaLabel}
+				className={props.className}
+				style={{ height: "100%", overflow: "hidden", width: "100%" }}
+			/>
+			<DropdownMenu modal={false} open={contextMenu.open} onOpenChange={setContextMenuOpen}>
+				<DropdownMenuTrigger asChild>
+					<button
+						type="button"
+						aria-hidden="true"
+						tabIndex={-1}
+						style={{
+							border: 0,
+							height: 0,
+							left: contextMenu.x,
+							opacity: 0,
+							padding: 0,
+							pointerEvents: "none",
+							position: "fixed",
+							top: contextMenu.y,
+							width: 0,
+						}}
+					/>
+				</DropdownMenuTrigger>
+				<DropdownMenuContent
+					align="start"
+					className="min-w-36"
+					onCloseAutoFocus={(event) => event.preventDefault()}
+					side="right"
+					sideOffset={2}
+				>
+					<DropdownMenuItem disabled={!contextMenu.canCopy} onSelect={() => runContextMenuAction("copy")}>
+						Copy
+					</DropdownMenuItem>
+					<DropdownMenuItem onSelect={() => runContextMenuAction("paste")}>Paste</DropdownMenuItem>
+					<DropdownMenuItem onSelect={() => runContextMenuAction("selectAll")}>Select All</DropdownMenuItem>
+					<DropdownMenuSeparator />
+					<DropdownMenuItem onSelect={() => runContextMenuAction("clear")}>Clear</DropdownMenuItem>
+				</DropdownMenuContent>
+			</DropdownMenu>
+		</>
 	);
 }

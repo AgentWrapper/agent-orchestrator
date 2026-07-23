@@ -42,7 +42,7 @@ func TestHealthProbes(t *testing.T) {
 }
 
 func TestHealthProbesIncludeDaemonIdentity(t *testing.T) {
-	router := newTestRouter(config.Config{}, discardLogger(), nil)
+	router := newTestRouter(config.Config{StartupWorkingDirectory: "/startup"}, discardLogger(), nil)
 	srv := httptest.NewServer(router)
 	defer srv.Close()
 
@@ -63,8 +63,9 @@ func TestHealthProbesIncludeDaemonIdentity(t *testing.T) {
 		}
 		defer resp.Body.Close()
 		var body struct {
-			ExecutablePath   string `json:"executablePath"`
-			WorkingDirectory string `json:"workingDirectory"`
+			ExecutablePath          string `json:"executablePath"`
+			WorkingDirectory        string `json:"workingDirectory"`
+			StartupWorkingDirectory string `json:"startupWorkingDirectory"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 			t.Fatalf("decode %s: %v", path, err)
@@ -74,6 +75,9 @@ func TestHealthProbesIncludeDaemonIdentity(t *testing.T) {
 		}
 		if body.WorkingDirectory != wantCWD {
 			t.Errorf("GET %s workingDirectory = %q, want %q", path, body.WorkingDirectory, wantCWD)
+		}
+		if body.StartupWorkingDirectory != "/startup" {
+			t.Errorf("GET %s startupWorkingDirectory = %q, want /startup", path, body.StartupWorkingDirectory)
 		}
 	}
 }

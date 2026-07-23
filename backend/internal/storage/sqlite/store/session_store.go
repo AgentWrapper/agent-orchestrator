@@ -220,17 +220,19 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 		IsTerminated:       row.IsTerminated,
 		TerminateOnPRMerge: row.TerminateOnPRMerge,
 		Metadata: domain.SessionMetadata{
-			Branch:          row.Branch,
-			WorkspacePath:   row.WorkspacePath,
-			RuntimeHandleID: row.RuntimeHandleID,
-			RuntimeLaunchID: row.RuntimeLaunchID,
-			AgentSessionID:  row.AgentSessionID,
-			Prompt:          row.Prompt,
-			PreviewURL:      row.PreviewURL,
-			PreviewRevision: row.PreviewRevision,
+			Branch:            row.Branch,
+			WorkspacePath:     row.WorkspacePath,
+			WorkspaceRepoPath: row.WorkspaceRepoPath,
+			RuntimeHandleID:   row.RuntimeHandleID,
+			RuntimeLaunchID:   row.RuntimeLaunchID,
+			AgentSessionID:    row.AgentSessionID,
+			Prompt:            row.Prompt,
+			PreviewURL:        row.PreviewURL,
+			PreviewRevision:   row.PreviewRevision,
 		},
-		CreatedAt: row.CreatedAt,
-		UpdatedAt: row.UpdatedAt,
+		CleanupGeneration: row.CleanupGeneration,
+		CreatedAt:         row.CreatedAt,
+		UpdatedAt:         row.UpdatedAt,
 	}
 }
 
@@ -250,6 +252,7 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		IsTerminated:       rec.IsTerminated,
 		Branch:             rec.Metadata.Branch,
 		WorkspacePath:      rec.Metadata.WorkspacePath,
+		WorkspaceRepoPath:  rec.Metadata.WorkspaceRepoPath,
 		RuntimeHandleID:    rec.Metadata.RuntimeHandleID,
 		RuntimeLaunchID:    rec.Metadata.RuntimeLaunchID,
 		AgentSessionID:     rec.Metadata.AgentSessionID,
@@ -257,6 +260,7 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		PreviewURL:         rec.Metadata.PreviewURL,
 		PreviewRevision:    rec.Metadata.PreviewRevision,
 		TerminateOnPRMerge: rec.TerminateOnPRMerge,
+		CleanupGeneration:  rec.CleanupGeneration,
 		CreatedAt:          rec.CreatedAt,
 		UpdatedAt:          rec.UpdatedAt,
 	}
@@ -276,6 +280,7 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		IsTerminated:       rec.IsTerminated,
 		Branch:             rec.Metadata.Branch,
 		WorkspacePath:      rec.Metadata.WorkspacePath,
+		WorkspaceRepoPath:  rec.Metadata.WorkspaceRepoPath,
 		RuntimeHandleID:    rec.Metadata.RuntimeHandleID,
 		RuntimeLaunchID:    rec.Metadata.RuntimeLaunchID,
 		AgentSessionID:     rec.Metadata.AgentSessionID,
@@ -283,6 +288,7 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		PreviewURL:         rec.Metadata.PreviewURL,
 		PreviewRevision:    rec.Metadata.PreviewRevision,
 		TerminateOnPRMerge: rec.TerminateOnPRMerge,
+		CleanupGeneration:  rec.CleanupGeneration,
 		UpdatedAt:          rec.UpdatedAt,
 	}
 }

@@ -58,16 +58,25 @@ describe("parseDaemonProbe", () => {
 			pid: 4242,
 			executablePath: undefined,
 			workingDirectory: undefined,
+			startupWorkingDirectory: undefined,
 		});
 	});
 
 	it("accepts a well-formed readyz body and carries identity fields", () => {
-		expect(parseDaemonProbe("readyz", { ...readyBody, executablePath: "/bin/ao", workingDirectory: "/work" })).toEqual({
+		expect(
+			parseDaemonProbe("readyz", {
+				...readyBody,
+				executablePath: "/bin/ao",
+				workingDirectory: "/work/data",
+				startupWorkingDirectory: "/work",
+			}),
+		).toEqual({
 			status: "ready",
 			service: DAEMON_SERVICE_NAME,
 			pid: 4242,
 			executablePath: "/bin/ao",
-			workingDirectory: "/work",
+			workingDirectory: "/work/data",
+			startupWorkingDirectory: "/work",
 		});
 	});
 
@@ -97,6 +106,7 @@ describe("parseDaemonProbe", () => {
 		const probe = parseDaemonProbe("healthz", { ...healthBody, executablePath: 5, workingDirectory: {} });
 		expect(probe?.executablePath).toBeUndefined();
 		expect(probe?.workingDirectory).toBeUndefined();
+		expect(probe?.startupWorkingDirectory).toBeUndefined();
 	});
 });
 

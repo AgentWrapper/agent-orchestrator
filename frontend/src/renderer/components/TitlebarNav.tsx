@@ -1,18 +1,16 @@
 import { useCanGoBack, useRouter } from "@tanstack/react-router";
 import { ArrowLeft, ArrowRight, PanelLeft } from "lucide-react";
 import { useEffect, useState } from "react";
+import { isMacPlatform } from "../lib/platform";
 import { useUiStore } from "../stores/ui-store";
 
-const isMac = typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
+const isMac = isMacPlatform();
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
-// macOS-only titlebar cluster (sidebar toggle + history arrows) pinned beside
-// the traffic lights, VS Code-style. Approved divergence from the web
-// reference, which has no window chrome (DESIGN.md banner, 2026-06-10).
-// Rendered once by the shell as a fixed overlay (.titlebar-nav in styles.css)
-// over the full-width topbar's left inset, so the buttons occupy the exact
-// same spot whether the sidebar is expanded or collapsed; the topbar starts
-// its content past the cluster (.is-under-titlebar-nav).
+// macOS-only sidebar chrome cluster (sidebar toggle + history arrows). Lives
+// in the Sidebar header below the traffic lights. The toggle is pinned in the
+// icon-rail column so it never moves during expand/collapse; history arrows
+// sit absolutely to its right and only fade in when expanded.
 // The installed router has no useCanGoForward, and deriving one as
 // `__TSR_index < history.length - 1` (the upstream hook's approach) is wrong
 // here: window.history.length also counts entries the router never created —
@@ -87,6 +85,7 @@ function TitlebarButton({
 	label,
 	title,
 	disabled,
+	tabIndex,
 	onClick,
 	onPointerEnter,
 	children,
@@ -94,6 +93,7 @@ function TitlebarButton({
 	label: string;
 	title: string;
 	disabled?: boolean;
+	tabIndex?: number;
 	onClick: () => void;
 	onPointerEnter?: React.PointerEventHandler<HTMLButtonElement>;
 	children: React.ReactNode;
@@ -107,6 +107,7 @@ function TitlebarButton({
 			onClick={onClick}
 			onPointerEnter={onPointerEnter}
 			style={noDragStyle}
+			tabIndex={tabIndex}
 			title={title}
 			type="button"
 		>

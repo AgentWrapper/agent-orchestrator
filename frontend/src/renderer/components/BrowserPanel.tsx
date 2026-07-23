@@ -271,6 +271,7 @@ export function BrowserPanelView({
 	return (
 		<div
 			className="flex h-full min-h-browser-min flex-col overflow-hidden rounded-lg border border-border bg-background"
+			data-testid="browser-panel"
 			role="tabpanel"
 		>
 			<form
@@ -388,6 +389,7 @@ export function BrowserPanelView({
 							"absolute inset-x-2.5 bottom-2.5 m-0 border border-error/35 bg-error/8 px-2.5 py-2",
 							"rounded-md text-xs text-destructive",
 						)}
+						data-testid="browser-preview-error"
 					>
 						{navState.error}
 					</p>
