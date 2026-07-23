@@ -27,6 +27,7 @@ type Runner interface {
 	Run(ctx context.Context, req RunRequest) (RunResult, error)
 }
 
+// RunRequest is the payload sent to the runtime-verification runner.
 type RunRequest struct {
 	Kind          RunKind          `json:"kind"`
 	ReviewRun     domain.ReviewRun `json:"reviewRun"`
@@ -35,11 +36,13 @@ type RunRequest struct {
 	Findings      []ReviewFinding  `json:"findings,omitempty"`
 }
 
+// RunResult is the parsed runtime-verification command result.
 type RunResult struct {
 	Run      TestRun
 	Evidence []TestEvidence
 }
 
+// ManagerDeps configures a Manager.
 type ManagerDeps struct {
 	Store  Store
 	Runner Runner
@@ -66,6 +69,7 @@ type baselineFlight struct {
 	err  error
 }
 
+// NewManager creates a test-gate manager from its dependencies.
 func NewManager(deps ManagerDeps) *Manager {
 	clock := deps.Clock
 	if clock == nil {
@@ -275,6 +279,7 @@ type NotConfiguredRunner struct {
 	Summary string
 }
 
+// Run returns a neutral not-configured runtime-verification result.
 func (r NotConfiguredRunner) Run(context.Context, RunRequest) (RunResult, error) {
 	return RunResult{Run: TestRun{
 		Classification: ClassificationNotConfigured,

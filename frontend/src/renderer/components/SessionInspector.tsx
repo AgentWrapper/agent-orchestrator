@@ -805,7 +805,10 @@ function sessionReviewVerdict(reviewStates: PRReviewState[]): {
 		return { label: "Changes requested", tone: "danger" };
 	}
 	const eligibleReviews = reviewStates.filter((reviewState) => reviewState.status !== "ineligible");
-	if (eligibleReviews.length > 0 && eligibleReviews.every((reviewState) => reviewVerdict(reviewState).label === "Approved")) {
+	if (
+		eligibleReviews.length > 0 &&
+		eligibleReviews.every((reviewState) => reviewVerdict(reviewState).label === "Approved")
+	) {
 		return { label: "Approved", tone: "success" };
 	}
 	return { label: "Not run", tone: "neutral" };
