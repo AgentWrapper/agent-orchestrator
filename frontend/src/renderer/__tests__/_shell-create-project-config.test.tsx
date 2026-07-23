@@ -19,12 +19,12 @@ describe("createProjectConfig", () => {
 			createProjectConfig({
 				workerAgent: "cursor",
 				orchestratorAgent: "opencode",
-				trackerIntake: { enabled: true, provider: "github", assignee: "octocat" },
+				trackerIntake: { enabled: true, provider: "github", labels: ["bug"] },
 			}),
 		).toEqual({
 			worker: { agent: "cursor" },
 			orchestrator: { agent: "opencode" },
-			trackerIntake: { enabled: true, provider: "github", assignee: "octocat" },
+			trackerIntake: { enabled: true, provider: "github", labels: ["bug"] },
 		});
 	});
 });

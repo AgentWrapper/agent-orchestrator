@@ -754,6 +754,110 @@ paths:
       summary: Replace a project's per-project config
       tags:
       - projects
+  /api/v1/projects/{id}/tracker-intake/github/labels:
+    get:
+      operationId: listTrackerIntakeLabels
+      parameters:
+      - description: Project identifier (registry key).
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Project identifier (registry key).
+          type: string
+      - description: When true, revalidate the repository label catalog immediately.
+        in: query
+        name: refresh
+        schema:
+          description: When true, revalidate the repository label catalog immediately.
+          type:
+          - "null"
+          - boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackerIntakeLabelsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List labels from the project's GitHub repository
+      tags:
+      - tracker-intake
+  /api/v1/projects/{id}/tracker-intake/github/preview:
+    post:
+      operationId: previewTrackerIntakeIssues
+      parameters:
+      - description: Project identifier (registry key).
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Project identifier (registry key).
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TrackerIntakePreviewRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackerIntakePreviewResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Count open GitHub issues matching proposed intake filters
+      tags:
+      - tracker-intake
   /api/v1/projects/initialize:
     post:
       operationId: initializeProjectRepository
@@ -2010,6 +2114,31 @@ paths:
       summary: Close a standalone shell terminal and destroy its PTY
       tags:
       - shellTerminals
+  /api/v1/tracker-intake/github/user:
+    get:
+      operationId: getTrackerIntakeIdentity
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackerIntakeIdentityResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Return the authenticated GitHub account bound to issue intake
+      tags:
+      - tracker-intake
 components:
   schemas:
     APIError:
@@ -3423,16 +3552,60 @@ components:
       type: object
     TrackerIntakeConfig:
       properties:
-        assignee:
-          type: string
         enabled:
           type: boolean
+        labels:
+          items:
+            type: string
+          type: array
         provider:
           enum:
           - github
           type: string
         repo:
           type: string
+      type: object
+    TrackerIntakeIdentityResponse:
+      properties:
+        login:
+          type: string
+      required:
+      - login
+      type: object
+    TrackerIntakeLabelsResponse:
+      properties:
+        labels:
+          items:
+            $ref: '#/components/schemas/TrackerLabel'
+          type: array
+      required:
+      - labels
+      type: object
+    TrackerIntakePreviewRequest:
+      properties:
+        labels:
+          items:
+            type: string
+          type: array
+      type: object
+    TrackerIntakePreviewResponse:
+      properties:
+        count:
+          type: integer
+      required:
+      - count
+      type: object
+    TrackerLabel:
+      properties:
+        color:
+          type: string
+        description:
+          type: string
+        name:
+          type: string
+      required:
+      - name
+      - color
       type: object
     TriggerReviewResponse:
       properties:

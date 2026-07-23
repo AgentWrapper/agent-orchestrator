@@ -24,10 +24,10 @@ import (
 // stays lazy so daemon readiness is not blocked by credential probing or a gh
 // CLI call, and no token is resolved until some enabled project is actually
 // polled.
-func startTrackerIntake(ctx context.Context, store *sqlite.Store, sessions *sessionsvc.Service, logger *slog.Logger) <-chan struct{} {
+func startTrackerIntake(ctx context.Context, store *sqlite.Store, sessions *sessionsvc.Service, tracker ports.Tracker, logger *slog.Logger) <-chan struct{} {
 	resolver := trackerintake.SingleTrackerResolver{
 		Provider: domain.TrackerProviderGitHub,
-		Adapter:  newLazyGitHubTracker(logger),
+		Adapter:  tracker,
 	}
 	observer := trackerintake.New(resolver, store, sessions, trackerintake.Config{Logger: logger})
 	return observer.Start(ctx)
@@ -62,6 +62,22 @@ func (t *lazyGitHubTracker) List(ctx context.Context, repo domain.TrackerRepo, f
 		return nil, err
 	}
 	return tracker.List(ctx, repo, filter)
+}
+
+func (t *lazyGitHubTracker) AuthenticatedUser(ctx context.Context) (domain.TrackerUser, error) {
+	tracker, err := t.resolve()
+	if err != nil {
+		return domain.TrackerUser{}, err
+	}
+	return tracker.AuthenticatedUser(ctx)
+}
+
+func (t *lazyGitHubTracker) ListLabels(ctx context.Context, repo domain.TrackerRepo) ([]domain.TrackerLabel, error) {
+	tracker, err := t.resolve()
+	if err != nil {
+		return nil, err
+	}
+	return tracker.ListLabels(ctx, repo)
 }
 
 func (t *lazyGitHubTracker) Preflight(ctx context.Context) error {

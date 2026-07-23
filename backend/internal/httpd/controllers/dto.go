@@ -33,6 +33,31 @@ type AgentIDParam struct {
 	Agent string `path:"agent" description:"Agent adapter identifier."`
 }
 
+// TrackerIntakeIdentityResponse is the GitHub account bound to issue intake.
+type TrackerIntakeIdentityResponse struct {
+	Login string `json:"login"`
+}
+
+// TrackerIntakeLabelsQuery controls repository label cache refresh.
+type TrackerIntakeLabelsQuery struct {
+	Refresh *bool `query:"refresh,omitempty" description:"When true, revalidate the repository label catalog immediately."`
+}
+
+// TrackerIntakeLabelsResponse is the complete repository label catalog.
+type TrackerIntakeLabelsResponse struct {
+	Labels []domain.TrackerLabel `json:"labels"`
+}
+
+// TrackerIntakePreviewRequest contains unsaved label filters to preview.
+type TrackerIntakePreviewRequest struct {
+	Labels []string `json:"labels,omitempty"`
+}
+
+// TrackerIntakePreviewResponse is the count of matching open issues.
+type TrackerIntakePreviewResponse struct {
+	Count int `json:"count"`
+}
+
 // ListProjectsResponse is the body of GET /api/v1/projects.
 type ListProjectsResponse struct {
 	Projects []projectsvc.Summary `json:"projects"`

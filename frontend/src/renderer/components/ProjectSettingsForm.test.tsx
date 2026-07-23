@@ -25,6 +25,7 @@ vi.mock("../lib/api-client", () => ({
 }));
 
 import { ProjectSettingsForm } from "./ProjectSettingsForm";
+import { buildIntake, deriveGitHubRepo } from "./IntakeFields";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import type { WorkspaceSummary } from "../types/workspace";
 
@@ -80,6 +81,20 @@ const agentCatalogResponse = {
 function mockProject(project: Record<string, unknown>) {
 	getMock.mockImplementation(async (path: string) => {
 		if (path === "/api/v1/agents") return agentCatalogResponse;
+		if (path === "/api/v1/tracker-intake/github/user") {
+			return { data: { login: "octocat" }, error: undefined };
+		}
+		if (path === "/api/v1/projects/{id}/tracker-intake/github/labels") {
+			return {
+				data: {
+					labels: [
+						{ name: "bug", color: "d73a4a", description: "Something is broken" },
+						{ name: "ready", color: "4d8dff", description: "Ready for an agent" },
+					],
+				},
+				error: undefined,
+			};
+		}
 		return {
 			data: {
 				status: "ok",
@@ -95,14 +110,32 @@ beforeEach(() => {
 	putMock.mockReset();
 	postMock.mockReset();
 	putMock.mockResolvedValue({ data: { project: {} }, error: undefined });
-	postMock.mockResolvedValue({
-		data: { orchestrator: { id: "proj-1-orch-2" } },
-		error: undefined,
-		response: { status: 200 },
+	postMock.mockImplementation(async (path: string) => {
+		if (path === "/api/v1/projects/{id}/tracker-intake/github/preview") {
+			return { data: { count: 3 }, error: undefined, response: { status: 200 } };
+		}
+		return {
+			data: { orchestrator: { id: "proj-1-orch-2" } },
+			error: undefined,
+			response: { status: 200 },
+		};
 	});
 });
 
 describe("ProjectSettingsForm", () => {
+	it("derives intake repos only from GitHub origins", () => {
+		expect(deriveGitHubRepo("https://github.com/acme/project-one.git")).toBe("acme/project-one");
+		expect(deriveGitHubRepo("alice@github.com:acme/project-one.git")).toBe("acme/project-one");
+		expect(deriveGitHubRepo("github.com:acme/project-one.git")).toBe("acme/project-one");
+		expect(deriveGitHubRepo("alice@gitlab.com:acme/project-one.git")).toBeUndefined();
+		expect(deriveGitHubRepo("gitlab.com:acme/project-one.git")).toBeUndefined();
+		expect(deriveGitHubRepo("acme/project-one")).toBeUndefined();
+	});
+
+	it("clears tracker intake config when disabled", () => {
+		expect(buildIntake({ enabled: false, repo: "acme/demo", labels: ["bug"] })).toBeUndefined();
+	});
+
 	it("loads the current project settings and saves the exposed fields without dropping hidden config", async () => {
 		mockProject({
 			id: "proj-1",
@@ -271,36 +304,39 @@ describe("ProjectSettingsForm", () => {
 	});
 
 	it("saves GitHub tracker intake settings, deriving the repo from the project's git origin", async () => {
-		getMock.mockResolvedValue({
-			data: {
-				status: "ok",
-				project: {
-					id: "proj-1",
-					name: "Project One",
-					kind: "single_repo",
-					path: "/repo/project-one",
-					repo: "git@github.com:acme/project-one.git",
-					defaultBranch: "main",
-					config: {
-						worker: { agent: "codex" },
-						orchestrator: { agent: "claude-code" },
-					},
-				},
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
 			},
-			error: undefined,
 		});
 
 		renderSettings();
 
 		await userEvent.click(await screen.findByLabelText("Enable issue intake"));
 
-		// Repository is display-only, derived from the project's own git origin — no input to
-		// fill. Assignee is the only eligibility rule in v1.
-		expect(screen.getByRole("link", { name: "acme/project-one" })).toHaveAttribute(
-			"href",
-			"https://github.com/acme/project-one",
-		);
-		await userEvent.type(screen.getByLabelText("Assignee"), "octocat");
+		// Repository and assignee are both display-only links in one compact row.
+		const repositoryLink = screen.getByRole("link", { name: "acme/project-one" });
+		expect(repositoryLink).toHaveAttribute("href", "https://github.com/acme/project-one");
+		const assigneeLink = await screen.findByRole("link", { name: "octocat" });
+		expect(assigneeLink).toHaveAttribute("href", "https://github.com/octocat");
+		expect(repositoryLink.parentElement?.parentElement).toHaveClass("grid-cols-2");
+		await userEvent.click(screen.getByRole("button", { name: "Labels" }));
+		await userEvent.click(await screen.findByRole("option", { name: /bug/i }));
+		await userEvent.click(screen.getByRole("option", { name: /ready/i }));
+		await userEvent.keyboard("{Escape}");
+		await waitFor(() => expect(screen.getByText("Matching open issues").parentElement).toHaveTextContent("3"));
+		expect(screen.getByText("3")).toHaveClass("rounded-full");
+		expect(postMock).toHaveBeenCalledWith("/api/v1/projects/{id}/tracker-intake/github/preview", {
+			params: { path: { id: "proj-1" } },
+			body: { labels: ["bug", "ready"] },
+		});
 
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
@@ -309,37 +345,59 @@ describe("ProjectSettingsForm", () => {
 		expect(body.config.trackerIntake).toEqual({
 			enabled: true,
 			provider: "github",
-			assignee: "octocat",
+			labels: ["bug", "ready"],
 		});
 	});
 
-	it("blocks save when intake is enabled with no assignee", async () => {
-		getMock.mockResolvedValue({
-			data: {
-				status: "ok",
-				project: {
-					id: "proj-1",
-					name: "Project One",
-					kind: "single_repo",
-					path: "/repo/project-one",
-					repo: "git@github.com:acme/project-one.git",
-					defaultBranch: "main",
-					config: {
-						worker: { agent: "codex" },
-						orchestrator: { agent: "claude-code" },
-					},
-				},
+	it("does not persist stale labels after selecting labels and disabling intake", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
 			},
-			error: undefined,
+		});
+
+		renderSettings();
+
+		const intakeToggle = await screen.findByLabelText("Enable issue intake");
+		await userEvent.click(intakeToggle);
+		await userEvent.click(screen.getByRole("button", { name: "Labels" }));
+		await userEvent.click(await screen.findByRole("option", { name: /bug/i }));
+		await userEvent.keyboard("{Escape}");
+		await userEvent.click(intakeToggle);
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		const body = putMock.mock.calls[0]?.[1]?.body;
+		expect(body.config.trackerIntake).toBeUndefined();
+	});
+
+	it("does not render a GitHub repository link for non-GitHub remotes", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "alice@gitlab.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
 		});
 
 		renderSettings();
 
 		await userEvent.click(await screen.findByLabelText("Enable issue intake"));
-		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
-		expect(await screen.findAllByText("Enabling intake requires an assignee.")).toHaveLength(2);
-		expect(putMock).not.toHaveBeenCalled();
+		expect(screen.queryByRole("link", { name: "acme/project-one" })).not.toBeInTheDocument();
+		expect(screen.getByText("Could not detect a GitHub repo from this project's git origin.")).toBeInTheDocument();
 	});
 
 	it("restarts when the saved orchestrator agent already differs from the running orchestrator", async () => {

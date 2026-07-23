@@ -15,6 +15,7 @@ import (
 	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pr"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
+	trackerintakesvc "github.com/aoagents/agent-orchestrator/backend/internal/service/trackerintake"
 )
 
 // APIDeps bundles every service the API layer's controllers depend on.
@@ -35,6 +36,7 @@ type APIDeps struct {
 	Events             cdcSubscriber
 	Telemetry          ports.EventSink
 	Mobile             *controllers.MobileController
+	TrackerIntake      trackerintakesvc.Manager
 }
 
 // API owns one controller per resource and is the single Register call the
@@ -51,6 +53,7 @@ type API struct {
 	imports       *controllers.ImportController
 	shellTerms    *controllers.ShellTerminalsController
 	dev           *controllers.DevController
+	trackerIntake *controllers.TrackerIntakeController
 	events        *EventsController
 }
 
@@ -77,6 +80,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		imports:       &controllers.ImportController{Svc: deps.Import},
 		shellTerms:    &controllers.ShellTerminalsController{Svc: deps.ShellTerminals},
 		dev:           &controllers.DevController{Import: deps.DevImport},
+		trackerIntake: &controllers.TrackerIntakeController{Svc: deps.TrackerIntake},
 		events:        &EventsController{Source: deps.CDC, Live: deps.Events},
 	}
 }
@@ -105,6 +109,7 @@ func (a *API) Register(root chi.Router) {
 			a.imports.Register(r)
 			a.shellTerms.Register(r)
 			a.dev.Register(r)
+			a.trackerIntake.Register(r)
 			// Sibling REST controllers plug in here.
 		})
 		// Long-lived streams intentionally bypass the REST timeout middleware.

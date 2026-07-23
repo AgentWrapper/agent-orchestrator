@@ -97,24 +97,21 @@ describe("CreateProjectAgentSheet", () => {
 		});
 	});
 
-	it("blocks submit when intake is enabled with no assignee, then passes the intake payload once one is set", async () => {
+	it("creates with intake enabled without expanding GitHub identity details", async () => {
 		const onSubmit = renderSheet();
 		await chooseOption(screen.getByLabelText("Worker agent"), "claude-code");
 		await chooseOption(screen.getByLabelText("Orchestrator agent"), "codex");
 
 		await userEvent.click(screen.getByLabelText("Enable issue intake"));
-		// Enabled with no eligibility rule → submit stays disabled (compact sheet
-		// carries no inline guard prose; gating is the disabled button).
-		expect(screen.getByRole("button", { name: "Create and start" })).toBeDisabled();
-
-		await userEvent.type(screen.getByLabelText("Assignee"), "octocat");
+		expect(screen.queryByText("Assignee")).not.toBeInTheDocument();
+		expect(screen.queryByRole("link", { name: "octocat" })).not.toBeInTheDocument();
 		await userEvent.click(screen.getByRole("button", { name: "Create and start" }));
 
 		await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
 		expect(onSubmit).toHaveBeenCalledWith({
 			workerAgent: "claude-code",
 			orchestratorAgent: "codex",
-			trackerIntake: { enabled: true, provider: "github", assignee: "octocat" },
+			trackerIntake: { enabled: true, provider: "github" },
 		});
 	});
 
@@ -126,6 +123,7 @@ describe("CreateProjectAgentSheet", () => {
 
 		await userEvent.click(screen.getByLabelText("Enable issue intake"));
 		expect(screen.queryByText("Repository")).not.toBeInTheDocument();
+		expect(screen.queryByText("Assignee")).not.toBeInTheDocument();
 		expect(screen.queryByText(/Reads credentials from/)).not.toBeInTheDocument();
 	});
 });

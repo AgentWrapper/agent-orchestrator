@@ -581,6 +581,14 @@ func (f *fakeTracker) List(context.Context, domain.TrackerRepo, domain.ListFilte
 	return nil, nil
 }
 
+func (f *fakeTracker) AuthenticatedUser(context.Context) (domain.TrackerUser, error) {
+	return domain.TrackerUser{}, nil
+}
+
+func (f *fakeTracker) ListLabels(context.Context, domain.TrackerRepo) ([]domain.TrackerLabel, error) {
+	return nil, nil
+}
+
 func (f *fakeTracker) Preflight(context.Context) error { return nil }
 
 func TestSpawnEnrichesIssueContextFromTracker(t *testing.T) {
