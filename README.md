@@ -132,6 +132,34 @@ Reviewer agents are configured separately. The current reviewer harnesses are:
 
 **If it runs in a terminal, it runs on Agent Orchestrator.**
 
+### Per-role Codex model and reasoning
+
+Project defaults can be overridden independently for workers and orchestrators:
+
+```yaml
+orchestrator:
+  agent: codex
+  agentConfig:
+    model: gpt-5.6-sol
+    reasoningEffort: high
+
+worker:
+  agent: codex
+  agentConfig:
+    model: gpt-5.6-terra
+    reasoningEffort: medium
+```
+
+Role values override project-wide defaults. Valid reasoning efforts: `low`,
+`medium`, `high`, `xhigh`. AO forwards resolved values to both launch and
+native resume; no change to `~/.codex/config.toml` is required. Store config
+through `ao project set-config <id> --config-json '<JSON object>'`.
+
+The desktop model picker offers `gpt-5.6-sol`, `gpt-5.6-terra`,
+`gpt-5.6-luna`, and `gpt-5.5`. Custom model IDs remain supported. The “Sol
+orchestrates, Terra works” preset configures a Sol/high orchestrator and
+Terra/medium workers in one action.
+
 ## Install
 
 Download the latest desktop build for your platform:
