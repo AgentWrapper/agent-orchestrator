@@ -277,6 +277,9 @@ function createRemoteClientRuntime(): RemoteClientRuntime {
 		startForwarder: startRemoteForwarder,
 		probe: probeRemoteForwarder,
 		onStatus: setDaemonStatus,
+		onForwarderChanged: async () => {
+			await browserViewHost?.refreshPreviews();
+		},
 	});
 }
 
@@ -352,6 +355,14 @@ function createWindow(): void {
 		WebContentsView,
 		annotatePreloadPath: annotatePreloadPath(),
 		rendererOrigin: RENDERER_ORIGIN,
+		...(isRemoteClientBuild
+			? {
+					resolvePreviewURL: (ownerId: string, sessionId: string, url: string) =>
+						remoteClientRuntime?.resolvePreviewURL(ownerId, sessionId, url) ?? url,
+					releasePreview: (ownerId: string) => remoteClientRuntime?.releasePreview(ownerId),
+					originalPreviewURL: (url: string) => remoteClientRuntime?.originalPreviewURL(url) ?? url,
+				}
+			: {}),
 	});
 
 	void mainWindow.loadURL(rendererUrl());

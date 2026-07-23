@@ -8,9 +8,17 @@ function saved(input: RemoteServerConfigInput): RemoteServerConfig {
 	return { ...input, updatedAt: "2026-07-15T00:00:00.000Z" };
 }
 
-function forwarder(port: number): RemoteForwarder & { close: ReturnType<typeof vi.fn> } {
-	return { port, close: vi.fn(async () => undefined) };
+function forwarder(port: number) {
+	return {
+		port,
+		resolvePreviewURL: vi.fn((_ownerId: string, _sessionId: string, url: string) => `forwarded:${port}:${url}`),
+		releasePreview: vi.fn((_ownerId: string) => undefined),
+		originalPreviewURL: vi.fn((url: string) => `original:${port}:${url}`),
+		close: vi.fn(async () => undefined),
+	} satisfies RemoteForwarder;
 }
+
+type ForwarderMock = ReturnType<typeof forwarder>;
 
 function deferred(): { promise: Promise<void>; resolve(): void } {
 	let resolve: () => void = () => undefined;
@@ -22,7 +30,7 @@ function deferred(): { promise: Promise<void>; resolve(): void } {
 
 describe("RemoteClientRuntime", () => {
 	let current: RemoteServerConfig | null;
-	let created: Array<RemoteForwarder & { close: ReturnType<typeof vi.fn> }>;
+	let created: ForwarderMock[];
 	let statuses: unknown[];
 	let deps: RemoteClientRuntimeDeps;
 
@@ -43,6 +51,7 @@ describe("RemoteClientRuntime", () => {
 			}),
 			probe: vi.fn(async () => undefined),
 			onStatus: (status) => statuses.push(status),
+			onForwarderChanged: vi.fn(async () => undefined),
 		};
 	});
 
@@ -65,6 +74,49 @@ describe("RemoteClientRuntime", () => {
 		expect(runtime.getEditableConfig()).toEqual({ host: "server", port: 3011, passwordConfigured: true });
 		expect(runtime.getEditableConfig()).not.toHaveProperty("password");
 		expect(runtime.revealPassword()).toBe("secret");
+		expect(deps.onForwarderChanged).toHaveBeenCalledOnce();
+	});
+
+	it("delegates preview URL operations only while a forwarder is active", async () => {
+		current = saved({ host: "server", port: 3011, password: "secret" });
+		const runtime = new RemoteClientRuntime(deps);
+
+		expect(runtime.resolvePreviewURL("owner", "session", "http://localhost:5173/app")).toBe(
+			"http://localhost:5173/app",
+		);
+		expect(runtime.originalPreviewURL("http://opaque.local/app")).toBe("http://opaque.local/app");
+		expect(() => runtime.releasePreview("owner")).not.toThrow();
+
+		await runtime.start();
+
+		expect(runtime.resolvePreviewURL("owner", "session", "http://localhost:5173/app")).toBe(
+			"forwarded:4100:http://localhost:5173/app",
+		);
+		expect(runtime.originalPreviewURL("http://opaque.local/app")).toBe(
+			"original:4100:http://opaque.local/app",
+		);
+		runtime.releasePreview("owner");
+		expect(created[0].releasePreview).toHaveBeenCalledWith("owner");
+	});
+
+	it("awaits BrowserView refresh after startup activates the forwarder", async () => {
+		current = saved({ host: "server", port: 3011, password: "secret" });
+		const refreshed = deferred();
+		vi.mocked(deps.onForwarderChanged).mockImplementationOnce(() => refreshed.promise);
+		const runtime = new RemoteClientRuntime(deps);
+
+		const starting = runtime.start();
+		await vi.waitFor(() => expect(deps.onForwarderChanged).toHaveBeenCalledOnce());
+		expect(runtime.resolvePreviewURL("owner", "session", "source")).toBe("forwarded:4100:source");
+		let settled = false;
+		void starting.then(() => {
+			settled = true;
+		});
+		await Promise.resolve();
+		expect(settled).toBe(false);
+
+		refreshed.resolve();
+		expect(await starting).toEqual({ state: "ready", port: 4100 });
 	});
 
 	it("retains persisted settings for recovery when the startup probe fails", async () => {
@@ -171,6 +223,26 @@ describe("RemoteClientRuntime", () => {
 		expect(statuses.at(-1)).toEqual({ state: "ready", port: 4101 });
 	});
 
+	it("refreshes previews on the candidate port before closing the old forwarder", async () => {
+		current = saved({ host: "first", port: 3011, password: "first-secret" });
+		const runtime = new RemoteClientRuntime(deps);
+		await runtime.start();
+		const refreshed = deferred();
+		vi.mocked(deps.onForwarderChanged).mockImplementationOnce(() => {
+			expect(runtime.resolvePreviewURL("owner", "session", "source")).toBe("forwarded:4101:source");
+			expect(created[0].close).not.toHaveBeenCalled();
+			return refreshed.promise;
+		});
+
+		const saving = runtime.saveConfig({ host: "second", port: 3012, password: "second-secret" });
+		await vi.waitFor(() => expect(deps.onForwarderChanged).toHaveBeenCalledTimes(2));
+		expect(created[0].close).not.toHaveBeenCalled();
+
+		refreshed.resolve();
+		expect(await saving).toEqual({ state: "ready", port: 4101 });
+		expect(created[0].close).toHaveBeenCalledOnce();
+	});
+
 	it("serializes a settings save behind a slow startup probe", async () => {
 		current = saved({ host: "startup", port: 3011, password: "startup-secret" });
 		const startupProbe = deferred();
@@ -205,6 +277,7 @@ describe("RemoteClientRuntime", () => {
 		expect(await runtime.stop()).toEqual({ state: "stopped" });
 		expect(created[0].close).toHaveBeenCalledOnce();
 		expect(runtime.getStatus()).toEqual({ state: "stopped" });
+		expect(deps.onForwarderChanged).toHaveBeenCalledOnce();
 	});
 });
 
@@ -249,6 +322,7 @@ describe("probeRemoteForwarder", () => {
 			startForwarder: async () => forwarder(4100),
 			probe: probeRemoteForwarder,
 			onStatus: () => undefined,
+			onForwarderChanged: async () => undefined,
 		});
 
 		expect(await runtime.start()).toEqual({ state: "error", code: "remote_bad_password" });

@@ -32,6 +32,7 @@ export type RemoteClientRuntimeDeps = {
 	startForwarder(input: RemoteServerConfigInput): Promise<RemoteForwarder>;
 	probe(port: number): Promise<void>;
 	onStatus(status: DaemonStatus): void;
+	onForwarderChanged(): Promise<void>;
 };
 
 export class RemoteClientRuntime {
@@ -60,6 +61,18 @@ export class RemoteClientRuntime {
 		return this.config?.password ?? null;
 	}
 
+	resolvePreviewURL(ownerId: string, sessionId: string, rawURL: string): string {
+		return this.forwarder?.resolvePreviewURL(ownerId, sessionId, rawURL) ?? rawURL;
+	}
+
+	releasePreview(ownerId: string): void {
+		this.forwarder?.releasePreview(ownerId);
+	}
+
+	originalPreviewURL(localURL: string): string {
+		return this.forwarder?.originalPreviewURL(localURL) ?? localURL;
+	}
+
 	start(): Promise<DaemonStatus> {
 		return this.enqueueLifecycle(() => this.startNow());
 	}
@@ -75,11 +88,18 @@ export class RemoteClientRuntime {
 		}
 		this.config = config;
 
+		let next: RemoteForwarder | null = null;
 		try {
-			const next = await this.startValidatedForwarder(config);
+			next = await this.startValidatedForwarder(config);
 			this.forwarder = next;
-			return this.setStatus({ state: "ready", port: next.port });
+			await this.deps.onForwarderChanged();
+			next = null;
+			return this.setStatus({ state: "ready", port: this.forwarder.port });
 		} catch (error) {
+			if (next) {
+				this.forwarder = null;
+				await next.close();
+			}
 			return this.setStatus(remoteFailureStatus(error, "daemon_unreachable"));
 		}
 	}
@@ -106,8 +126,16 @@ export class RemoteClientRuntime {
 			}
 
 			const previous = this.forwarder;
+			const previousConfig = this.config;
 			this.forwarder = candidate;
 			this.config = saved;
+			try {
+				await this.deps.onForwarderChanged();
+			} catch (error) {
+				this.forwarder = previous;
+				this.config = previousConfig;
+				throw error;
+			}
 			candidate = null;
 			await previous?.close();
 			return this.setStatus({ state: "ready", port: this.forwarder.port });

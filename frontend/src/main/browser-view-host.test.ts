@@ -13,8 +13,15 @@ type EventHandler = (event: { sender: { id: number; getZoomFactor?: () => number
 
 type DisplayHandler = (request: unknown, callback: (streams: { video?: unknown }) => void) => void;
 
-function setupHost() {
+type PreviewHooks = {
+	resolvePreviewURL?: (ownerId: string, sessionId: string, url: string) => string | Promise<string>;
+	releasePreview?: (ownerId: string) => void;
+	originalPreviewURL?: (url: string) => string;
+};
+
+function setupHost(previewHooks: PreviewHooks = {}) {
 	let currentURL = "";
+	let webContentsClosed = false;
 	let displayHandler: DisplayHandler | null = null;
 	const webContents = {
 		id: 99,
@@ -27,7 +34,10 @@ function setupHost() {
 		})),
 		clearHistory: () => undefined,
 		getTitle: () => "",
-		getURL: () => currentURL,
+		getURL: () => {
+			if (webContentsClosed) throw new Error("Object has been destroyed");
+			return currentURL;
+		},
 		goBack: () => undefined,
 		goForward: () => undefined,
 		isLoading: () => false,
@@ -39,7 +49,9 @@ function setupHost() {
 		send: vi.fn(),
 		setWindowOpenHandler: () => undefined,
 		stop: () => undefined,
-		close: () => undefined,
+		close: () => {
+			webContentsClosed = true;
+		},
 	};
 	const view = {
 		webContents,
@@ -75,15 +87,36 @@ function setupHost() {
 		} as never,
 		annotatePreloadPath: "/preload.js",
 		rendererOrigin: "http://localhost:5173",
+		...previewHooks,
 	});
 	const rendererFrame = { processId: 5, routingId: 7 };
-	const invoke = (channel: string, ...args: unknown[]) =>
-		handlers.get(channel)!({ sender: { id: 1 }, senderFrame: rendererFrame }, ...args) as Promise<BrowserNavState>;
+	const invokeAs = async (senderId: number, channel: string, ...args: unknown[]) =>
+		handlers.get(channel)!({ sender: { id: senderId }, senderFrame: rendererFrame }, ...args) as BrowserNavState;
+	const invoke = (channel: string, ...args: unknown[]) => invokeAs(1, channel, ...args);
 	const emit = (channel: string, zoomFactor: number, ...args: unknown[]) =>
 		eventHandlers.get(channel)!({ sender: { id: 1, getZoomFactor: () => zoomFactor } }, ...args);
 	const send = (channel: string, senderId: number, ...args: unknown[]) =>
 		eventHandlers.get(channel)!({ sender: { id: senderId } }, ...args);
-	return { emit, host, invoke, rendererFrame, send, sent, view, webContents, getDisplayHandler: () => displayHandler };
+	return {
+		emit,
+		host,
+		invoke,
+		invokeAs,
+		rendererFrame,
+		send,
+		sent,
+		view,
+		webContents,
+		getDisplayHandler: () => displayHandler,
+	};
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+	let resolve = (_value: T): void => undefined;
+	const promise = new Promise<T>((done) => {
+		resolve = done;
+	});
+	return { promise, resolve };
 }
 
 describe("normalizeBrowserURL", () => {
@@ -136,6 +169,175 @@ describe("browser:clear", () => {
 
 		expect(webContents.loadURL).toHaveBeenLastCalledWith("about:blank");
 		expect(state.url).toBe("");
+	});
+});
+
+describe("Remote preview URL resolution", () => {
+	it("resolves navigation with the renderer-scoped owner and real session ID", async () => {
+		const resolvePreviewURL = vi.fn(async () => "http://opaque.ao-preview.localhost:4100/app?q=1");
+		const { invoke, webContents } = setupHost({ resolvePreviewURL });
+		const ensured = await invoke("browser:ensure", "session:with:colons");
+
+		await invoke("browser:navigate", {
+			viewId: ensured.viewId,
+			url: "http://localhost:3000/app?q=1",
+		});
+
+		expect(resolvePreviewURL).toHaveBeenCalledWith(
+			"1:session:with:colons",
+			"session:with:colons",
+			"http://localhost:3000/app?q=1",
+		);
+		expect(webContents.loadURL).toHaveBeenCalledWith("http://opaque.ao-preview.localhost:4100/app?q=1");
+	});
+
+	it("keeps normal desktop navigation unchanged when preview hooks are omitted", async () => {
+		const { invoke, webContents } = setupHost();
+		const ensured = await invoke("browser:ensure", "session-one");
+
+		await invoke("browser:navigate", { viewId: ensured.viewId, url: "localhost:3000/app" });
+
+		expect(webContents.loadURL).toHaveBeenCalledWith("http://localhost:3000/app");
+	});
+
+	it("loads a direct URL returned by the preview resolver unchanged", async () => {
+		const resolvePreviewURL = vi.fn(async (_ownerId: string, _sessionId: string, url: string) => url);
+		const { invoke, webContents } = setupHost({ resolvePreviewURL });
+		const ensured = await invoke("browser:ensure", "session-one");
+
+		await invoke("browser:navigate", { viewId: ensured.viewId, url: "https://example.com/public" });
+
+		expect(resolvePreviewURL).toHaveBeenCalledWith(ensured.viewId, "session-one", "https://example.com/public");
+		expect(webContents.loadURL).toHaveBeenCalledWith("https://example.com/public");
+	});
+
+	it("revalidates a resolved URL before loading it", async () => {
+		const { invoke, webContents } = setupHost({
+			resolvePreviewURL: async () => "javascript:alert(document.cookie)",
+		});
+		const ensured = await invoke("browser:ensure", "session-one");
+
+		await expect(
+			invoke("browser:navigate", { viewId: ensured.viewId, url: "http://localhost:3000/app" }),
+		).rejects.toThrow(/unsupported/i);
+		expect(webContents.loadURL).not.toHaveBeenCalled();
+	});
+
+	it("rejects navigation for a view owned by another renderer", async () => {
+		const { invoke, invokeAs, webContents } = setupHost();
+		const ensured = await invoke("browser:ensure", "session-one");
+
+		await expect(
+			invokeAs(2, "browser:navigate", { viewId: ensured.viewId, url: "https://example.com/" }),
+		).rejects.toThrow();
+		expect(webContents.loadURL).not.toHaveBeenCalled();
+	});
+
+	it("does not let an older async resolution overwrite a newer navigation", async () => {
+		const first = deferred<string>();
+		const resolvePreviewURL = vi
+			.fn<(ownerId: string, sessionId: string, url: string) => Promise<string>>()
+			.mockReturnValueOnce(first.promise)
+			.mockResolvedValueOnce("https://example.com/new");
+		const { invoke, webContents } = setupHost({ resolvePreviewURL });
+		const ensured = await invoke("browser:ensure", "session-one");
+
+		const oldNavigation = invoke("browser:navigate", {
+			viewId: ensured.viewId,
+			url: "http://localhost:3000/old",
+		});
+		await vi.waitFor(() => expect(resolvePreviewURL).toHaveBeenCalledTimes(1));
+		await invoke("browser:navigate", { viewId: ensured.viewId, url: "https://example.com/new" });
+		first.resolve("http://opaque.ao-preview.localhost:4100/old");
+		await oldNavigation;
+
+		expect(webContents.loadURL).toHaveBeenCalledTimes(1);
+		expect(webContents.loadURL).toHaveBeenCalledWith("https://example.com/new");
+	});
+
+	it.each(["clear", "destroy"] as const)("invalidates pending resolution on %s", async (action) => {
+		const pending = deferred<string>();
+		const resolvePreviewURL = vi.fn(() => pending.promise);
+		const { host, invoke, webContents } = setupHost({ resolvePreviewURL });
+		const ensured = await invoke("browser:ensure", "session-one");
+		const navigating = invoke("browser:navigate", {
+			viewId: ensured.viewId,
+			url: "http://localhost:3000/old",
+		});
+		await vi.waitFor(() => expect(resolvePreviewURL).toHaveBeenCalledOnce());
+
+		if (action === "clear") await invoke("browser:clear", ensured.viewId);
+		else host.destroy(ensured.viewId);
+		pending.resolve("http://opaque.ao-preview.localhost:4100/old");
+		await navigating;
+
+		expect(webContents.loadURL).not.toHaveBeenCalledWith("http://opaque.ao-preview.localhost:4100/old");
+	});
+
+	it("restores opaque URLs in the address bar and annotation context", async () => {
+		const opaque = "http://opaque.ao-preview.localhost:4100/app";
+		const source = "http://localhost:3000/app";
+		const originalPreviewURL = vi.fn((url: string) => (url === opaque ? source : url));
+		const { invoke, send, sent } = setupHost({
+			resolvePreviewURL: async () => opaque,
+			originalPreviewURL,
+		});
+		const ensured = await invoke("browser:ensure", "session-one");
+
+		const state = await invoke("browser:navigate", { viewId: ensured.viewId, url: source });
+		send("browser:annotation:submit", 99, {
+			instruction: "Change it.",
+			context: {
+				url: opaque,
+				tag: "button",
+				classes: [],
+				selector: "button",
+				rect: { x: 0, y: 0, width: 80, height: 30 },
+				nearbyText: [],
+				computedStyle: {},
+			},
+		});
+
+		expect(state.url).toBe(source);
+		expect(originalPreviewURL).toHaveBeenCalledWith(opaque);
+		expect(sent).toContainEqual({
+			channel: "browser:annotation:submitted",
+			payload: expect.objectContaining({ context: expect.objectContaining({ url: source }) }),
+		});
+	});
+
+	it("releases renderer-scoped owners on destroy and dispose", async () => {
+		const releasePreview = vi.fn();
+		const first = setupHost({ releasePreview });
+		const firstView = await first.invoke("browser:ensure", "session-one");
+		first.host.destroy(firstView.viewId);
+
+		const second = setupHost({ releasePreview });
+		const secondView = await second.invoke("browser:ensure", "session-two");
+		second.host.dispose();
+
+		expect(releasePreview).toHaveBeenCalledWith(firstView.viewId);
+		expect(releasePreview).toHaveBeenCalledWith(secondView.viewId);
+	});
+
+	it("re-registers and reloads active source URLs on refresh", async () => {
+		let port = 4100;
+		const resolvePreviewURL = vi.fn(async (_ownerId: string, _sessionId: string, url: string) =>
+			url.replace("localhost:3000", `opaque.ao-preview.localhost:${port}`),
+		);
+		const { host, invoke, webContents } = setupHost({ resolvePreviewURL });
+		const ensured = await invoke("browser:ensure", "session-one");
+		await invoke("browser:navigate", { viewId: ensured.viewId, url: "http://localhost:3000/app" });
+
+		port = 4101;
+		await host.refreshPreviews();
+
+		expect(resolvePreviewURL).toHaveBeenLastCalledWith(
+			ensured.viewId,
+			"session-one",
+			"http://localhost:3000/app",
+		);
+		expect(webContents.loadURL).toHaveBeenLastCalledWith("http://opaque.ao-preview.localhost:4101/app");
 	});
 });
 

@@ -95,12 +95,16 @@ export type BrowserViewHostOptions = {
 	WebContentsView: WebContentsViewConstructor;
 	annotatePreloadPath: string;
 	rendererOrigin: string;
+	resolvePreviewURL?: (ownerId: string, sessionId: string, url: string) => string | Promise<string>;
+	releasePreview?: (ownerId: string) => void;
+	originalPreviewURL?: (url: string) => string;
 };
 
 export type BrowserViewHost = {
 	dispose: () => void;
 	destroy: (viewId: string) => void;
 	destroyAll: () => void;
+	refreshPreviews: () => Promise<void>;
 	// webContents of the most recently focused browser panel (or null); the titlebar menu targets it for Edit/Reload/Zoom/DevTools.
 	getLastFocusedPanelContents: () => WebContents | null;
 	// Drop the remembered panel; call when the shell gains focus for a real reason so a stale panel stops absorbing menu actions.
@@ -110,12 +114,16 @@ export type BrowserViewHost = {
 type BrowserEntry = {
 	view: BrowserViewLike;
 	state: BrowserNavState;
+	sessionId: string;
+	sourceURL: string;
+	navigationEpoch: number;
 	annotationEnabled: boolean;
 };
 
 const OFFSCREEN_BOUNDS: BrowserRect = { x: -10_000, y: -10_000, width: 0, height: 0 };
 // ponytail: file:// allowed unsanitized; preview targets are agent-trusted for now
 const ALLOWED_PROTOCOLS = new Set(["http:", "https:", "file:"]);
+const BROWSER_VIEW_NOT_OWNED = "BROWSER_VIEW_NOT_OWNED";
 
 export function normalizeBrowserURL(input: string): URL {
 	const raw = input.trim();
@@ -215,9 +223,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		});
 	}
 
-	const ensure = (viewId: string): BrowserEntry => {
+	const ensure = (viewId: string, sessionId: string): BrowserEntry => {
 		const existing = entries.get(viewId);
-		if (existing) return existing;
+		if (existing) {
+			existing.sessionId = sessionId;
+			return existing;
+		}
 
 		const view = new options.WebContentsView({
 			webPreferences: {
@@ -232,7 +243,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		options.mainWindow.contentView.addChildView(view);
 
 		const state: BrowserNavState = emptyNavState(viewId);
-		const entry = { view, state, annotationEnabled: false };
+		const entry = { view, state, sessionId, sourceURL: "", navigationEpoch: 0, annotationEnabled: false };
 		entries.set(viewId, entry);
 		viewIdsByWebContentsId.set(view.webContents.id, viewId);
 		hardenWebContents(view.webContents, options, entry);
@@ -269,24 +280,38 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	};
 
 	const navigate = async ({ viewId, url }: BrowserNavigateInput): Promise<BrowserNavState> => {
-		const entry = ensure(viewId);
+		const entry = entries.get(viewId);
+		if (!entry) return emptyNavState(viewId);
 		cancelAnnotation(options, entry, "navigation");
 		const normalized = normalizeBrowserURL(url);
 		if (!isAllowedBrowserURL(normalized.href, options.rendererOrigin)) {
 			throw new Error(BROWSER_ERROR.urlUnsupported);
 		}
+		const navigationEpoch = ++entry.navigationEpoch;
+		entry.sourceURL = normalized.href;
+		const resolved = await (options.resolvePreviewURL?.(viewId, entry.sessionId, normalized.href) ?? normalized.href);
+		if (entries.get(viewId) !== entry) return emptyNavState(viewId);
+		if (entry.navigationEpoch !== navigationEpoch) return readNavState(options, entry);
+		const resolvedURL = normalizeBrowserURL(resolved);
+		if (!isAllowedBrowserURL(resolvedURL.href, options.rendererOrigin)) {
+			throw new Error(BROWSER_ERROR.urlUnsupported);
+		}
 		try {
-			await entry.view.webContents.loadURL(normalized.href);
+			await entry.view.webContents.loadURL(resolvedURL.href);
 		} catch (err) {
+			if (entries.get(viewId) !== entry) return emptyNavState(viewId);
+			if (entry.navigationEpoch !== navigationEpoch) return readNavState(options, entry);
 			if ((err as { errorCode?: number })?.errorCode === -3) return pushNavState(options, entry);
 			entry.view.setVisible?.(false);
 			entry.state = {
-				...readNavState(entry),
+				...readNavState(options, entry),
 				error: err instanceof Error && err.message ? err.message : BROWSER_ERROR.loadFailed,
 			};
 			options.mainWindow.webContents.send("browser:navState", entry.state);
 			return entry.state;
 		}
+		if (entries.get(viewId) !== entry) return emptyNavState(viewId);
+		if (entry.navigationEpoch !== navigationEpoch) return readNavState(options, entry);
 		entry.view.setVisible?.(true);
 		return pushNavState(options, entry);
 	};
@@ -296,7 +321,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	// readNavState normalizes it back to an empty url so the panel shows its
 	// empty state.
 	const clear = async (viewId: string): Promise<BrowserNavState> => {
-		const entry = ensure(viewId);
+		const entry = entries.get(viewId);
+		if (!entry) return emptyNavState(viewId);
+		entry.navigationEpoch += 1;
+		entry.sourceURL = "";
 		cancelAnnotation(options, entry, "navigation");
 		entry.view.setVisible?.(false);
 		entry.view.setBounds(OFFSCREEN_BOUNDS);
@@ -321,9 +349,11 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	const destroy = (viewId: string): void => {
 		const entry = entries.get(viewId);
 		if (!entry) return;
+		entry.navigationEpoch += 1;
 		entries.delete(viewId);
 		viewIdsByWebContentsId.delete(entry.view.webContents.id);
 		forgetIfFocused(viewId);
+		options.releasePreview?.(viewId);
 		// When the window is already gone (dispose fired from mainWindow "closed"),
 		// Electron has torn down contentView and the child WebContentsViews. Touching
 		// them throws "Object has been destroyed", so just drop our reference.
@@ -377,7 +407,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		const forwarded: BrowserAnnotationSubmitPayload = {
 			viewId,
 			instruction: payload.instruction,
-			context: payload.context,
+			context: {
+				...payload.context,
+				url: options.originalPreviewURL?.(payload.context.url) ?? payload.context.url,
+			},
 		};
 		options.mainWindow.webContents.send("browser:annotation:submitted", forwarded);
 	};
@@ -409,9 +442,14 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		ipcDisposers.push(() => options.ipcMain.off(channel, fn));
 	};
 
-	handle("browser:ensure", (event, sessionId: string) => pushNavState(options, ensure(scopedViewId(event, sessionId))));
+	handle("browser:ensure", (event, sessionId: string) =>
+		pushNavState(options, ensure(scopedViewId(event, sessionId), sessionId)),
+	);
 	on("browser:setBounds", (event, input: BrowserBoundsInput) => setBounds(input, event.sender.getZoomFactor()));
-	handle("browser:navigate", (_event, input: BrowserNavigateInput) => navigate(input));
+	handle("browser:navigate", (event, input: BrowserNavigateInput) => {
+		if (!isRendererOwnedViewId(event, input.viewId)) throw new Error(BROWSER_VIEW_NOT_OWNED);
+		return navigate(input);
+	});
 	handle("browser:clear", (_event, viewId: string) => clear(viewId));
 	handle("browser:capture", (event, viewId: string) => (isRendererOwnedViewId(event, viewId) ? capture(viewId) : ""));
 	handle("browser:requestMirror", (event, viewId: string) => {
@@ -446,6 +484,13 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			for (const viewId of [...entries.keys()]) {
 				destroy(viewId);
 			}
+		},
+		refreshPreviews: async () => {
+			await Promise.all(
+				[...entries.values()].map((entry) =>
+					entry.sourceURL ? navigate({ viewId: entry.state.viewId, url: entry.sourceURL }) : undefined,
+				),
+			);
 		},
 		getLastFocusedPanelContents: () => {
 			if (lastFocusedViewId === null) return null;
@@ -536,9 +581,13 @@ function wireNavEvents(contents: BrowserWebContents, options: BrowserViewHostOpt
 	};
 	contents.on("did-navigate", () => {
 		entry.view.setVisible?.(true);
+		entry.sourceURL = originalBrowserURL(options, contents.getURL());
 		update();
 	});
-	contents.on("did-navigate-in-page", update);
+	contents.on("did-navigate-in-page", () => {
+		entry.sourceURL = originalBrowserURL(options, contents.getURL());
+		update();
+	});
 	contents.on("page-title-updated", update);
 	contents.on("did-start-loading", () => {
 		cancelAnnotation(options, entry, "navigation");
@@ -548,7 +597,7 @@ function wireNavEvents(contents: BrowserWebContents, options: BrowserViewHostOpt
 	contents.on("did-fail-load", (_event, errorCode, errorDescription) => {
 		if (errorCode === -3) return;
 		entry.view.setVisible?.(false);
-		entry.state = { ...readNavState(entry), error: errorDescription || BROWSER_ERROR.loadFailed };
+		entry.state = { ...readNavState(options, entry), error: errorDescription || BROWSER_ERROR.loadFailed };
 		options.mainWindow.webContents.send("browser:navState", entry.state);
 	});
 }
@@ -565,12 +614,12 @@ function cancelAnnotation(
 }
 
 function pushNavState(options: BrowserViewHostOptions, entry: BrowserEntry): BrowserNavState {
-	entry.state = readNavState(entry);
+	entry.state = readNavState(options, entry);
 	options.mainWindow.webContents.send("browser:navState", entry.state);
 	return entry.state;
 }
 
-function readNavState(entry: BrowserEntry): BrowserNavState {
+function readNavState(options: BrowserViewHostOptions, entry: BrowserEntry): BrowserNavState {
 	const { webContents } = entry.view;
 	const currentURL = webContents.getURL();
 	return {
@@ -578,10 +627,14 @@ function readNavState(entry: BrowserEntry): BrowserNavState {
 		// about:blank is the cleared/blank state — surface it as an empty url so
 		// the panel renders its "enter a URL" empty state and the address bar is
 		// blank rather than showing "about:blank".
-		url: currentURL === "about:blank" ? "" : currentURL,
+		url: currentURL === "about:blank" ? "" : originalBrowserURL(options, currentURL),
 		title: webContents.getTitle(),
 		canGoBack: webContents.canGoBack(),
 		canGoForward: webContents.canGoForward(),
 		isLoading: webContents.isLoading(),
 	};
+}
+
+function originalBrowserURL(options: BrowserViewHostOptions, url: string): string {
+	return options.originalPreviewURL?.(url) ?? url;
 }
