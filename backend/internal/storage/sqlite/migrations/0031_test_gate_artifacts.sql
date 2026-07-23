@@ -1,4 +1,4 @@
--- Persist runtime test-gate artifacts that connect AO review findings to
+-- Persist review/test-gate runtime artifacts that connect AO review findings to
 -- pod execution evidence and the fused PR verdict.
 
 -- +goose Up

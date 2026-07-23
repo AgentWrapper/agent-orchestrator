@@ -32,18 +32,11 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: backend/go.mod
+          go-version: "1.25"
           cache: false
 
       - name: CLI E2E (native)
-        shell: pwsh
-        run: |
-          go test -tags e2e -json ./internal/cli/... *>&1 | Tee-Object -FilePath cli-e2e.jsonl
-          $status = $LASTEXITCODE
-          if ($status -ne 0) {
-            pwsh -NoProfile -ExecutionPolicy Bypass -File ../.github/scripts/annotate-go-test-json.ps1 cli-e2e.jsonl backend/internal/cli
-          }
-          exit $status
+        run: go test -tags e2e -v ./internal/cli/...
 
   # Secondary hardening tier: prove that a freshly installed binary works on a
   # clean machine with no Go toolchain and no developer state. The Dockerfile
