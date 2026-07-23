@@ -30,6 +30,12 @@ type reviewRun struct {
 	DeliveredAt    *time.Time `json:"deliveredAt,omitempty"`
 }
 
+// triggerReviewResponse mirrors controllers.TriggerReviewResponse. Only the
+// Created flag is needed here, to report whether a new pass was started.
+type triggerReviewResponse struct {
+	Created bool `json:"created"`
+}
+
 // reviewRunResponse mirrors controllers.ReviewRunResponse.
 type reviewRunResponse struct {
 	Review           reviewRun   `json:"review"`
@@ -63,12 +69,18 @@ type reviewSubmitOptions struct {
 	reviews  string
 }
 
+type reviewSessionOptions struct {
+	session string
+}
+
 func newReviewCommand(ctx *commandContext) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "review",
 		Short: "Manage AO code reviews of a worker's PR",
 	}
 	cmd.AddCommand(newReviewSubmitCommand(ctx))
+	cmd.AddCommand(newReviewStopCommand(ctx))
+	cmd.AddCommand(newReviewRestartCommand(ctx))
 	return cmd
 }
 
@@ -159,6 +171,73 @@ func (c *commandContext) submitReviewBatch(cmd *cobra.Command, session string, o
 		count = len(reviews)
 	}
 	_, err = fmt.Fprintf(cmd.OutOrStdout(), "recorded %d review(s) for %s\n", count, session)
+	return err
+}
+
+func newReviewStopCommand(ctx *commandContext) *cobra.Command {
+	var opts reviewSessionOptions
+	cmd := &cobra.Command{
+		Use:   "stop [worker-session-id]",
+		Short: "Cancel any running review for a worker's PR",
+		Args:  atMostOneArg,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return ctx.stopReview(cmd, args, opts)
+		},
+	}
+	cmd.Flags().StringVar(&opts.session, "session", "", "Worker session id (or pass it as the positional argument)")
+	return cmd
+}
+
+func newReviewRestartCommand(ctx *commandContext) *cobra.Command {
+	var opts reviewSessionOptions
+	cmd := &cobra.Command{
+		Use:   "restart [worker-session-id]",
+		Short: "Trigger a new review pass for a worker's PR",
+		Args:  atMostOneArg,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return ctx.restartReview(cmd, args, opts)
+		},
+	}
+	cmd.Flags().StringVar(&opts.session, "session", "", "Worker session id (or pass it as the positional argument)")
+	return cmd
+}
+
+func (c *commandContext) stopReview(cmd *cobra.Command, args []string, opts reviewSessionOptions) error {
+	session := strings.TrimSpace(opts.session)
+	if len(args) == 1 {
+		session = strings.TrimSpace(args[0])
+	}
+	if session == "" {
+		return usageError{errors.New("usage: worker session id is required (positional or --session)")}
+	}
+	path := "sessions/" + url.PathEscape(session) + "/reviews/cancel"
+	if err := c.postJSON(cmd.Context(), path, struct{}{}, nil); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintf(cmd.OutOrStdout(), "cancelled review for %s\n", session)
+	return err
+}
+
+func (c *commandContext) restartReview(cmd *cobra.Command, args []string, opts reviewSessionOptions) error {
+	session := strings.TrimSpace(opts.session)
+	if len(args) == 1 {
+		session = strings.TrimSpace(args[0])
+	}
+	if session == "" {
+		return usageError{errors.New("usage: worker session id is required (positional or --session)")}
+	}
+	path := "sessions/" + url.PathEscape(session) + "/reviews/trigger"
+	// Decode the response so we can tell whether a new pass was started or an
+	// existing run for the same commit was reused, and report it accurately.
+	var res triggerReviewResponse
+	if err := c.postJSON(cmd.Context(), path, struct{}{}, &res); err != nil {
+		return err
+	}
+	msg := "reused the existing review for %s\n"
+	if res.Created {
+		msg = "started a new review for %s\n"
+	}
+	_, err := fmt.Fprintf(cmd.OutOrStdout(), msg, session)
 	return err
 }
 

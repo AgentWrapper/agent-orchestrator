@@ -12,6 +12,7 @@ import {
 	type TextStyle,
 	type ViewStyle,
 } from "react-native";
+import { haptics } from "./haptics";
 import { statusVisual, theme } from "./theme";
 // AO mascot glyph (transparent) shown beside each screen heading.
 import MASCOT from "../assets/mascot.png";
@@ -70,7 +71,13 @@ export function Pill({
 	textStyle?: StyleProp<TextStyle>;
 }) {
 	return (
-		<Pressable onPress={onPress} style={[s.pill, active && s.pillActive, style]}>
+		<Pressable
+			onPress={() => {
+				haptics.select();
+				onPress();
+			}}
+			style={[s.pill, active && s.pillActive, style]}
+		>
 			<Text numberOfLines={1} style={[s.pillText, active && s.pillTextActive, textStyle]}>
 				{label}
 			</Text>
@@ -122,7 +129,13 @@ export function Card({
 }) {
 	if (!onPress) return <View style={[s.card, style]}>{children}</View>;
 	return (
-		<Pressable onPress={onPress} style={({ pressed }) => [s.card, pressed && s.cardPressed, style]}>
+		<Pressable
+			onPress={() => {
+				haptics.tap();
+				onPress();
+			}}
+			style={({ pressed }) => [s.card, pressed && s.cardPressed, style]}
+		>
 			{children}
 		</Pressable>
 	);
@@ -179,7 +192,12 @@ export function Button({
 	const fg = isPrimary ? "#06101f" : isDanger ? theme.red : theme.blue;
 	return (
 		<Pressable
-			onPress={onPress}
+			onPress={() => {
+				// Danger actions get a cautionary buzz; everything else a light tap.
+				if (isDanger) haptics.warning();
+				else haptics.tap();
+				onPress();
+			}}
 			disabled={disabled || loading}
 			style={({ pressed }) => [
 				s.btn,

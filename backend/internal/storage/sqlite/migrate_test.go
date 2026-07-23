@@ -1,10 +1,13 @@
 package sqlite
 
 import (
+	"context"
 	"database/sql"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
@@ -64,5 +67,67 @@ func TestMigrateAllowsEveryShippedHarness(t *testing.T) {
 		if !strings.Contains(schema, "'"+string(h)+"'") {
 			t.Errorf("sessions.harness CHECK is missing harness %q — the migration that widens it silently no-opped; schema:\n%s", h, schema)
 		}
+	}
+}
+
+func TestOpenReadOnlyDoesNotCreateDatabase(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "missing")
+	if _, err := OpenReadOnly(context.Background(), dataDir); err == nil {
+		t.Fatal("OpenReadOnly succeeded for missing database")
+	}
+	if _, err := os.Stat(dataDir); !os.IsNotExist(err) {
+		t.Fatalf("data dir stat err = %v, want not exist", err)
+	}
+}
+
+func TestOpenReadOnlyDoesNotMigrate(t *testing.T) {
+	dataDir := t.TempDir()
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(dataDir, "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if _, err := db.Exec(`
+CREATE TABLE projects (
+    id TEXT PRIMARY KEY,
+    path TEXT NOT NULL,
+    repo_origin_url TEXT NOT NULL DEFAULT '',
+    display_name TEXT NOT NULL DEFAULT '',
+    registered_at TIMESTAMP NOT NULL,
+    archived_at TIMESTAMP
+);
+INSERT INTO projects (id, path, registered_at) VALUES ('alpha', '/repos/alpha', ?);
+`, time.Unix(100, 0).UTC()); err != nil {
+		_ = db.Close()
+		t.Fatalf("seed old schema: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close seed db: %v", err)
+	}
+
+	store, err := OpenReadOnly(context.Background(), dataDir)
+	if err != nil {
+		t.Fatalf("OpenReadOnly: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	_, err = store.ListProjects(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "no such column") {
+		t.Fatalf("ListProjects err = %v, want old-schema column failure", err)
+	}
+
+	checkDB, err := sql.Open("sqlite", "file:"+filepath.Join(dataDir, "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open check db: %v", err)
+	}
+	defer func() { _ = checkDB.Close() }()
+
+	var schema string
+	if err := checkDB.QueryRow(
+		"SELECT sql FROM sqlite_master WHERE type='table' AND name='projects'",
+	).Scan(&schema); err != nil {
+		t.Fatalf("read projects schema: %v", err)
+	}
+	if strings.Contains(schema, "config") || strings.Contains(schema, "kind") {
+		t.Fatalf("OpenReadOnly migrated projects schema:\n%s", schema)
 	}
 }

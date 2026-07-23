@@ -60,6 +60,26 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
+// GetConfigSpec reports the per-project agent config keys Kiro understands:
+// a model override. Kiro already forwards agentConfig.Model into its
+// workspace-local custom agent config (see setKiroAgentDefaults in
+// hooks.go); this declares that support so it is discoverable/validated
+// through the config-spec surface, matching claude-code and codex.
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.ConfigSpec{}, err
+	}
+	return ports.ConfigSpec{
+		Fields: []ports.ConfigField{
+			{
+				Key:         "model",
+				Type:        ports.ConfigFieldString,
+				Description: "Model override written into Kiro's workspace-local agent config.",
+			},
+		},
+	}, nil
+}
+
 // GetLaunchCommand builds the argv to start a new Kiro session:
 // `kiro-cli chat [--agent ao] --agent ao [trust flags] [-- <prompt>]`.
 //
@@ -162,7 +182,8 @@ var kiroBinarySpec = binaryutil.BinarySpec{
 	Names:         []string{"kiro-cli"},
 	WinNames:      []string{"kiro-cli.cmd", "kiro-cli.exe", "kiro-cli"},
 	UnixPaths:     []string{"/usr/local/bin/kiro-cli", "/opt/homebrew/bin/kiro-cli"},
-	UnixHomePaths: [][]string{{".kiro", "bin", "kiro-cli"}, {".local", "bin", "kiro-cli"}},
+	UnixHomePaths: binaryutil.NodeManagedUnixHomePaths("kiro-cli", []string{".kiro", "bin", "kiro-cli"}),
+	NodeManaged:   true,
 	// The native Kiro installer location is probed before the npm shim, matching
 	// the pre-refactor order so a native install still wins when both are present.
 	WinPaths: []binaryutil.WinPath{

@@ -347,23 +347,58 @@ func TestGetAgentHooksInstallsQwenHooks(t *testing.T) {
 	if countQwenHookCommand(config.Hooks["Stop"], "custom stop hook") != 1 {
 		t.Fatalf("existing Stop hook was not preserved: %#v", config.Hooks["Stop"])
 	}
-	// SessionStart lands under the "startup" matcher.
-	assertStartupMatcher(t, config.Hooks["SessionStart"])
+	// SessionStart lands under the startup/resume matcher.
+	assertSessionStartMatcher(t, config.Hooks["SessionStart"])
 }
 
-func assertStartupMatcher(t *testing.T, groups []hooksjson.MatcherGroup) {
+func assertSessionStartMatcher(t *testing.T, groups []hooksjson.MatcherGroup) {
 	t.Helper()
 	for _, group := range groups {
 		for _, hook := range group.Hooks {
 			if hook.Command == qwenHookCommandPrefix+"session-start" {
-				if group.Matcher == nil || *group.Matcher != "startup" {
-					t.Fatalf("session-start hook not under 'startup' matcher: %#v", group)
+				if group.Matcher == nil || *group.Matcher != "startup|resume" {
+					t.Fatalf("session-start hook not under startup/resume matcher: %#v", group)
 				}
 				return
 			}
 		}
 	}
 	t.Fatalf("session-start hook not found: %#v", groups)
+}
+
+func TestGetAgentHooksMigratesSessionStartMatcher(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "qwen"}
+	workspace := t.TempDir()
+	settingsDir := filepath.Join(workspace, ".qwen")
+	if err := os.MkdirAll(settingsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	settingsPath := filepath.Join(settingsDir, "settings.json")
+	existing := `{"hooks":{"SessionStart":[{"matcher":"startup","hooks":[{"type":"command","command":"ao hooks qwen session-start","timeout":30000},{"type":"command","command":"custom startup hook","timeout":3}]}]}}`
+	if err := os.WriteFile(settingsPath, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := plugin.GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{WorkspacePath: workspace}); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config qwenHookFile
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	groups := config.Hooks["SessionStart"]
+	assertSessionStartMatcher(t, groups)
+	if count := countQwenHookCommand(groups, qwenHookCommandPrefix+"session-start"); count != 1 {
+		t.Fatalf("session-start command count = %d, want 1 in %#v", count, groups)
+	}
+	if count := countQwenHookCommand(groups, "custom startup hook"); count != 1 {
+		t.Fatalf("custom startup hook count = %d, want 1 in %#v", count, groups)
+	}
 }
 
 func TestUninstallHooksRemovesQwenHooks(t *testing.T) {
@@ -435,7 +470,7 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 		"qwen",
 		"--approval-mode", "auto",
 		"--append-system-prompt", "restore instructions",
-		"-r", "sess-123",
+		"--resume", "sess-123",
 	}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
@@ -465,7 +500,7 @@ func TestGetRestoreCommandReadsSystemPromptFile(t *testing.T) {
 	want := []string{
 		"qwen",
 		"--append-system-prompt", "restore file instructions",
-		"-r", "sess-123",
+		"--resume", "sess-123",
 	}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
@@ -489,7 +524,7 @@ func TestGetRestoreCommandDefaultModeOmitsApprovalFlags(t *testing.T) {
 	}
 	want := []string{
 		"qwen",
-		"-r", "sess-123",
+		"--resume", "sess-123",
 	}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)

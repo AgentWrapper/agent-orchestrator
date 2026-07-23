@@ -71,8 +71,8 @@ func (f *fakeSessionService) Get(context.Context, domain.SessionID) (domain.Sess
 	return domain.Session{}, nil
 }
 
-func (f *fakeSessionService) Restore(context.Context, domain.SessionID) (domain.Session, error) {
-	return domain.Session{}, nil
+func (f *fakeSessionService) Restore(context.Context, domain.SessionID) (sessionsvc.RestoreOutcome, error) {
+	return sessionsvc.RestoreOutcome{}, nil
 }
 
 func (f *fakeSessionService) Kill(context.Context, domain.SessionID) (bool, error) {
@@ -105,6 +105,14 @@ func (f *fakeSessionService) ListPRSummaries(context.Context, domain.SessionID) 
 
 func (f *fakeSessionService) ClaimPR(context.Context, domain.SessionID, string, sessionsvc.ClaimPROptions) (sessionsvc.ClaimPRResult, error) {
 	return sessionsvc.ClaimPRResult{}, nil
+}
+
+func (f *fakeSessionService) ListWorkspaceFiles(context.Context, domain.SessionID) (sessionsvc.WorkspaceFiles, error) {
+	return sessionsvc.WorkspaceFiles{}, nil
+}
+
+func (f *fakeSessionService) GetWorkspaceFile(context.Context, domain.SessionID, string) (sessionsvc.WorkspaceFileDetail, error) {
+	return sessionsvc.WorkspaceFileDetail{}, nil
 }
 
 type fakeAgentCatalog struct{}
@@ -162,6 +170,11 @@ func (f *fakeProjectManager) Add(_ context.Context, in projectsvc.AddInput) (pro
 
 func (f *fakeProjectManager) InitializeRepository(_ context.Context, in projectsvc.InitializeRepositoryInput) (projectsvc.InitializeRepositoryResult, error) {
 	return projectsvc.InitializeRepositoryResult(in), nil
+}
+
+func (f *fakeProjectManager) UpdateSettings(_ context.Context, id domain.ProjectID, in projectsvc.UpdateSettingsInput) (projectsvc.Project, error) {
+	cfg := in.Config
+	return projectsvc.Project{ID: id, Name: in.DisplayName, Config: &cfg}, nil
 }
 
 func (f *fakeProjectManager) SetConfig(_ context.Context, id domain.ProjectID, in projectsvc.SetConfigInput) (projectsvc.Project, error) {

@@ -1,7 +1,12 @@
 // Terminal Attachment (see CONTEXT.md): the live binding between a terminal
-// pane and a session's PTY over the mux. The hook owns the whole attachment
-// lifecycle — open ordering, auto-reattach with backoff, error surfacing, and
-// exit handling — so the pane component only renders.
+// pane and a PTY over the mux. The hook owns the whole attachment lifecycle —
+// open ordering, auto-reattach with backoff, error surfacing, and exit
+// handling — so the pane component only renders.
+//
+// The PTY is either an agent session's pane (the default) or a standalone
+// shell terminal the user opened by hand (options.shellTerminalHandleId). The
+// mux draws no distinction between them, so only the handle's source and the
+// session-specific side effects branch below.
 //
 // Status rule: the frontend never writes a session's display status. On mux
 // `exited`/`error` it invalidates the workspaces query and lets the daemon's
@@ -50,6 +55,17 @@ export type UseTerminalSessionOptions = {
 	daemonReady: boolean;
 	/** Test seam: build the mux client. Defaults to a fresh socket against the current API base. */
 	createMux?: () => TerminalMux;
+	/**
+	 * Attach to a standalone shell terminal (POST /api/v1/shell-terminals)
+	 * instead of a session's pane. When set it wins over `session`, which
+	 * callers pass as undefined for shell panes.
+	 *
+	 * The mux needs no distinction between the two: it treats the id it is
+	 * given as an opaque runtime handle either way. Everything downstream of
+	 * `handle` in this hook is therefore shared verbatim; only the handle's
+	 * source and the session-specific side effects differ.
+	 */
+	shellTerminalHandleId?: string;
 };
 
 const RETRY_BASE_MS = 500;
@@ -108,6 +124,10 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 	}, []);
 
 	const invalidateWorkspaces = useCallback(() => {
+		// A standalone shell has no session row behind it, so its exit carries no
+		// news for the session board. Refetching every workspace on `exit` would
+		// be pure churn — the shell terminal list owns that pane's fate instead.
+		if (optionsRef.current.shellTerminalHandleId) return;
 		void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 	}, [queryClient]);
 
@@ -289,7 +309,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 	const attach = useCallback(
 		(terminal: AttachableTerminal) => {
 			const r = runtime.current;
-			const handle = sessionRef.current?.terminalHandleId ?? null;
+			const handle = optionsRef.current.shellTerminalHandleId ?? sessionRef.current?.terminalHandleId ?? null;
 			r.terminal = terminal;
 			r.handle = handle;
 			r.detached = false;

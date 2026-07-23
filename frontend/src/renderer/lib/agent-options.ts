@@ -22,4 +22,5 @@ export const AGENT_OPTIONS = [
 	"vibe",
 	"pi",
 	"autohand",
+	"fake",
 ] as const;

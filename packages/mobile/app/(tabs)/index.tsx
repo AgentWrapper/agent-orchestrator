@@ -4,10 +4,12 @@ import { useCallback, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, RefreshControl, SectionList, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { attentionOf, type DashboardSession } from "../../lib/api";
+import { haptics } from "../../lib/haptics";
 import { ProjectSwitcher } from "../../lib/ProjectSwitcher";
 import { SessionCard } from "../../lib/SessionCard";
 import { useApp, useVisibleSessions } from "../../lib/store";
 import { attentionMeta, theme } from "../../lib/theme";
+import { useTabScrollToTop } from "../../lib/useTabScrollToTop";
 import { Button, ConnectionPill, EmptyState, ScreenHeader, SectionHeader } from "../../lib/ui";
 
 type Section = { key: string; label: string; color: string; order: number; data: DashboardSession[] };
@@ -38,6 +40,8 @@ export default function FleetScreen() {
 	const sessions = useVisibleSessions();
 	const [refreshing, setRefreshing] = useState(false);
 
+	const listRef = useTabScrollToTop<SectionList<DashboardSession>>();
+
 	const sections = useMemo(() => groupByAttention(sessions), [sessions]);
 
 	const counts = useMemo(() => {
@@ -54,6 +58,7 @@ export default function FleetScreen() {
 	}, [sessions]);
 
 	const onRefresh = useCallback(async () => {
+		haptics.tap();
 		setRefreshing(true);
 		await refresh();
 		setRefreshing(false);
@@ -92,6 +97,7 @@ export default function FleetScreen() {
 				</View>
 			) : (
 				<SectionList
+					ref={listRef}
 					sections={sections}
 					keyExtractor={(item) => `${item.projectId}:${item.id}`}
 					contentContainerStyle={{ paddingBottom: 120 }}
@@ -127,7 +133,10 @@ export default function FleetScreen() {
 
 			{/* Spawn FAB */}
 			<Pressable
-				onPress={() => router.push("/spawn")}
+				onPress={() => {
+					haptics.tap();
+					router.push("/spawn");
+				}}
 				style={({ pressed }) => [styles.fab, pressed && { opacity: 0.85 }]}
 			>
 				<Feather name="plus" size={24} color="#06101f" />

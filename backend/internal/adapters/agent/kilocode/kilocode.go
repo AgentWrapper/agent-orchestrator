@@ -268,7 +268,8 @@ var kilocodeBinarySpec = binaryutil.BinarySpec{
 	Names:         []string{"kilocode"},
 	WinNames:      []string{"kilocode.cmd", "kilocode.exe", "kilocode"},
 	UnixPaths:     []string{"/usr/local/bin/kilocode", "/opt/homebrew/bin/kilocode"},
-	UnixHomePaths: [][]string{{".npm-global", "bin", "kilocode"}, {".npm", "bin", "kilocode"}, {".local", "bin", "kilocode"}},
+	UnixHomePaths: binaryutil.NodeManagedUnixHomePaths("kilocode"),
+	NodeManaged:   true,
 	WinPaths: []binaryutil.WinPath{
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "kilocode.cmd"}},
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "kilocode.exe"}},

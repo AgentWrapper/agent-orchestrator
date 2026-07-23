@@ -1,5 +1,7 @@
 import createClient from "openapi-fetch";
 import type { paths } from "../../api/schema";
+import type { DaemonStatus } from "../../shared/daemon-status";
+import { daemonFailureMessage } from "./daemon-failure";
 import { captureRendererEvent } from "./telemetry";
 
 function devApiBaseUrl(): string {
@@ -10,6 +12,7 @@ const explicitApiBaseUrl = import.meta.env.VITE_AO_API_BASE_URL;
 const initialApiBaseUrl = explicitApiBaseUrl ?? (import.meta.env.DEV ? devApiBaseUrl() : "http://127.0.0.1:3001");
 
 let runtimeApiBaseUrl: string | null = explicitApiBaseUrl ?? null;
+let daemonStatus: DaemonStatus = { state: "stopped" };
 
 const baseUrlListeners = new Set<() => void>();
 
@@ -38,6 +41,13 @@ export function setApiBaseUrl(nextBaseUrl: string | null): void {
 	if (normalized === runtimeApiBaseUrl) return;
 	runtimeApiBaseUrl = normalized;
 	baseUrlListeners.forEach((listener) => listener());
+}
+
+// The renderer records every supervisor status here so API requests made while
+// no daemon URL is trusted can return the actual startup failure, not a generic
+// availability message.
+export function setApiDaemonStatus(nextStatus: DaemonStatus): void {
+	daemonStatus = nextStatus;
 }
 
 // Route templates from the generated OpenAPI schema (frontend/src/api/schema.ts).
@@ -77,6 +87,8 @@ const ROUTE_TEMPLATES = [
 	"/api/v1/sessions/{sessionId}/reviews/trigger",
 	"/api/v1/sessions/{sessionId}/rollback",
 	"/api/v1/sessions/{sessionId}/send",
+	"/api/v1/sessions/{sessionId}/workspace/file",
+	"/api/v1/sessions/{sessionId}/workspace/files",
 	"/api/v1/sessions/cleanup",
 ] as const;
 
@@ -162,7 +174,7 @@ async function runtimeFetch(input: Request): Promise<Response> {
 	const baseUrl = runtimeApiBaseUrl;
 	if (baseUrl === null) {
 		reportApiError(operation, "daemon_unavailable", 503);
-		return new Response(JSON.stringify({ message: "AO daemon is not ready." }), {
+		return new Response(JSON.stringify({ message: daemonFailureMessage(daemonStatus), code: daemonStatus.code }), {
 			status: 503,
 			headers: { "Content-Type": "application/json" },
 		});

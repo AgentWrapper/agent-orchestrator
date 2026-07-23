@@ -103,6 +103,10 @@ func (s *stubWorkspace) ApplyPreserved(_ context.Context, _ ports.WorkspaceInfo,
 	return nil
 }
 
+func (s *stubWorkspace) AddExclude(_ context.Context, _ ports.WorkspaceInfo, _ ...string) error {
+	return nil
+}
+
 type captureMessenger struct{ msgs []string }
 
 func (c *captureMessenger) Send(_ context.Context, _ domain.SessionID, msg string) error {
@@ -203,7 +207,7 @@ func TestRestoreRoundTripPreservesMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if restored.IsTerminated || restored.Metadata.AgentSessionID != "agent-x" {
+	if restored.Session.IsTerminated || restored.Session.Metadata.AgentSessionID != "agent-x" {
 		t.Fatalf("restored wrong: %+v", restored)
 	}
 }

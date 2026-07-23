@@ -1,3 +1,5 @@
+import { attentionZone as presentationAttentionZone } from "../lib/session-presentation";
+
 export type SessionStatus =
 	| "working"
 	| "pr_open"
@@ -80,9 +82,10 @@ export type AgentProvider =
 	| "kilocode"
 	| "vibe"
 	| "pi"
-	| "autohand";
+	| "autohand"
+	| "fake";
 
-/** A file in a worker's worktree diff (drives the Git review rail). */
+/** A file changed in a worker workspace (drives the review rail). */
 export type ChangedFile = {
 	path: string;
 	additions: number;
@@ -122,7 +125,7 @@ export type WorkspaceSession = {
 	issueId?: string;
 	provider: AgentProvider;
 	kind?: SessionKind;
-	branch: string;
+	branch?: string;
 	status: SessionStatus;
 	/** ISO timestamp from the daemon — used for relative time in the inspector. */
 	createdAt?: string;
@@ -174,7 +177,13 @@ export function canonicalTrackerIssueId(issueId?: string): string | undefined {
 	return TRACKER_PROVIDER_PREFIXES.some((prefix) => issueId.startsWith(prefix)) ? issueId : undefined;
 }
 
-export type ProjectKind = "single_repo" | "workspace";
+export type ProjectKind = "single_repo" | "workspace" | "scratch";
+
+const projectKinds = new Set<ProjectKind>(["single_repo", "workspace", "scratch"]);
+
+export function toProjectKind(kind?: string): ProjectKind | undefined {
+	return projectKinds.has(kind as ProjectKind) ? (kind as ProjectKind) : undefined;
+}
 
 export type WorkspaceRepoSummary = {
 	name: string;
@@ -285,13 +294,7 @@ export function sessionIsActive(session: WorkspaceSession): boolean {
 }
 
 export function sessionNeedsAttention(session: WorkspaceSession): boolean {
-	return (
-		session.status === "needs_input" ||
-		session.status === "no_signal" ||
-		session.status === "changes_requested" ||
-		session.status === "review_pending" ||
-		session.status === "ci_failed"
-	);
+	return presentationAttentionZone(session) === "action";
 }
 
 export const workerStatusLabel: Record<WorkerDisplayStatus, string> = {
@@ -309,56 +312,8 @@ export function workerStatusPulses(status: WorkerDisplayStatus): boolean {
 	return status === "working" || status === "needs_you";
 }
 
-/**
- * Kanban attention zone, ordered by human-action urgency — ported from
- * agent-orchestrator's getAttentionLevel (packages/web/src/lib/types.ts),
- * collapsed to its default "simple" set and rebound to reverbcode's
- * {@link SessionStatus}. The board groups sessions into these columns so the
- * highest-ROrI work (a one-click merge) sits leftmost.
- */
-export type AttentionZone = "merge" | "action" | "pending" | "working" | "done";
-
-/** Columns left→right, most-urgent first. "done" is the archive column. */
-export const attentionZoneOrder: AttentionZone[] = ["merge", "action", "pending", "working", "done"];
-
-export const attentionZoneLabel: Record<AttentionZone, string> = {
-	merge: "Ready to merge",
-	action: "Needs you",
-	pending: "Pending",
-	working: "Working",
-	done: "Done",
-};
-
-export function attentionZone(session: WorkspaceSession): AttentionZone {
-	switch (session.status) {
-		// Terminal — archive.
-		case "merged":
-		case "terminated":
-			return "done";
-		// One click to clear — highest ROI, checked first.
-		case "approved":
-		case "mergeable":
-			return "merge";
-		// Agent waiting on a human (respond) or a problem to investigate (review);
-		// agent-orchestrator collapses these into one "action" zone by default.
-		case "needs_input":
-		case "no_signal":
-		case "ci_failed":
-		case "changes_requested":
-			return "action";
-		// Waiting on an external reviewer / CI — nothing to do right now.
-		case "review_pending":
-		case "pr_open":
-		case "draft":
-		case "unknown":
-			return "pending";
-		// Agents doing their thing — don't interrupt.
-		case "working":
-		case "idle":
-		default:
-			return "working";
-	}
-}
+export { attentionZone, attentionZoneLabel, attentionZoneOrder } from "../lib/session-presentation";
+export type { AttentionZone } from "../lib/session-presentation";
 
 export type WorkspaceSummary = {
 	id: string;
@@ -390,7 +345,10 @@ export type OrchestratorHealth =
 
 export function orchestratorHealth(workspace: WorkspaceSummary, restarting = false): OrchestratorHealth {
 	if (restarting) {
-		return { state: "restarting", message: "Restarting orchestrator. New tasks wait until the replacement is ready." };
+		return {
+			state: "restarting",
+			message: "Restarting orchestrator. New tasks wait until the replacement is ready.",
+		};
 	}
 	const active = workspace.sessions.filter((session) => isOrchestratorSession(session) && sessionIsActive(session));
 	if (active.length > 1) {
@@ -437,6 +395,7 @@ export function toAgentProvider(provider?: string): AgentProvider {
 		case "vibe":
 		case "pi":
 		case "autohand":
+		case "fake":
 			return provider;
 		default:
 			return "codex";

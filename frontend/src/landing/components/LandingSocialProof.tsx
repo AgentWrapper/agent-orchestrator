@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useRef, useState } from "react";
 import gsap from "gsap";
 import ScrollTrigger from "gsap/ScrollTrigger";
@@ -12,10 +13,8 @@ if (typeof window !== "undefined") {
 type Post = {
 	handle: string;
 	statusIdParts: string[];
-	label: string;
 	author: string;
 	verified?: boolean;
-	note: string;
 	text: string;
 	date: string;
 	likes?: number;
@@ -25,10 +24,8 @@ const posts: Post[] = [
 	{
 		handle: "Teknium",
 		statusIdParts: ["204231", "894145", "7170790"],
-		label: "Signal",
 		author: "Teknium",
 		verified: true,
-		note: "Most important outside validation.",
 		text: "It can orchestrate agents but this looks a bit more advanced.",
 		date: "Apr 10, 2026",
 		likes: 4,
@@ -36,19 +33,15 @@ const posts: Post[] = [
 	{
 		handle: "facito0",
 		statusIdParts: ["203638", "079647", "5547760"],
-		label: "Mood",
 		author: "FacitoO",
-		note: "A lightweight social proof hit from daily AO usage.",
 		text: "Me with @aoagents lately!",
 		date: "May 2, 2026",
 	},
 	{
 		handle: "buchireddy",
 		statusIdParts: ["206410", "814460", "7760628"],
-		label: "Builder",
 		author: "Buchi Reddy B",
 		verified: true,
-		note: "Went all-in early on the AO building blocks.",
 		text: "I really loved the building blocks present in @aoagents, hence we went all-in on that pretty early. Happy to share more details if it helps others.",
 		date: "Jun 9, 2026",
 		likes: 3,
@@ -56,32 +49,18 @@ const posts: Post[] = [
 	{
 		handle: "oxwizzdom",
 		statusIdParts: ["204349", "124837", "6336484"],
-		label: "Code read",
 		author: "oxwizzdom",
 		verified: true,
-		note: "Weekend codebase teardown and minimal rebuild.",
 		text: "1/ @agent_wrapper & @composio shipped @aoagents a while back. runs 50 coding agents in parallel on the same repo. i spent a weekend reading the codebase. found 5 techniques that make it work.",
 		date: "Apr 14, 2026",
 	},
 	{
 		handle: "addddiiie",
 		statusIdParts: ["203717", "443270", "0211408"],
-		label: "Use case",
 		author: "Adi",
-		note: "Parallel dev agents framed in one clean line.",
 		text: "I just hired a few software devs to work for free cc - @aoagents",
 		date: "Mar 26, 2026",
 		likes: 9,
-	},
-	{
-		handle: "aoagents",
-		statusIdParts: ["205420", "723754", "8302804"],
-		label: "Official",
-		author: "Agent Orchestrator",
-		verified: true,
-		note: "A short official signal from the AO account.",
-		text: "Best as it gets.",
-		date: "May 18, 2026",
 	},
 ];
 
@@ -94,14 +73,6 @@ function ArrowUpRightIcon({ className = "" }: { className?: string }) {
 		<svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
 			<path d="M7 7h10v10" />
 			<path d="M7 17 17 7" />
-		</svg>
-	);
-}
-
-function MessageCircleIcon({ className = "" }: { className?: string }) {
-	return (
-		<svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-			<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5Z" />
 		</svg>
 	);
 }
@@ -128,6 +99,12 @@ export function LandingSocialProof() {
 	useGSAP(
 		() => {
 			const cards = gsap.utils.toArray<HTMLElement>(".gsap-tweet-card");
+
+			// Reduced motion: show everything immediately, no entrance animation.
+			if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+				gsap.set(cards, { opacity: 1, y: 0 });
+				return;
+			}
 
 			gsap.set(cards, { opacity: 0, y: 30 });
 
@@ -161,7 +138,7 @@ export function LandingSocialProof() {
 			ref={containerRef}
 			id="testimonials"
 			data-testid="social-proof"
-			className="relative overflow-hidden border-t border-[color:var(--border)] pt-16 pb-8 sm:pt-[clamp(100px,12vw,180px)] sm:pb-[clamp(100px,12vw,180px)]"
+			className="relative overflow-hidden border-t border-[color:var(--border)] pt-16 pb-8 sm:pt-[clamp(80px,9vw,120px)] sm:pb-[clamp(80px,9vw,120px)]"
 		>
 			<div className="container-page">
 				<div className="mx-auto max-w-[1320px]">
@@ -181,7 +158,7 @@ export function LandingSocialProof() {
 
 					<div className="tweet-masonry">
 						{posts.map((post, index) => (
-							<TweetCard key={`${post.handle}-${index}`} post={post} index={index} />
+							<TweetCard key={post.handle} post={post} index={index} />
 						))}
 					</div>
 				</div>
@@ -202,10 +179,12 @@ function Avatar({ post }: { post: Post }) {
 	}
 
 	return (
-		<img
+		<Image
 			src={`https://unavatar.io/x/${post.handle}`}
 			alt={`${post.author} avatar`}
-			loading="lazy"
+			width={40}
+			height={40}
+			unoptimized
 			referrerPolicy="no-referrer"
 			onError={() => setFailed(true)}
 			className="h-10 w-10 shrink-0 rounded-full border border-[color:var(--border)] object-cover"
@@ -223,62 +202,42 @@ function TweetCard({ post, index }: { post: Post; index: number }) {
 			rel="noreferrer"
 			data-testid={`tweet-card-${index}`}
 			aria-label={`Read ${post.author}'s post on X`}
-			className="gsap-tweet-card lift surface group mb-8 inline-block w-full break-inside-avoid overflow-hidden"
+			className="gsap-tweet-card lift surface group mb-8 inline-block w-full break-inside-avoid overflow-hidden p-5"
 		>
-			<div className="landing-card-header flex items-center justify-between gap-3 px-4 py-3">
-				<div className="flex min-w-0 items-center gap-2">
-					<MessageCircleIcon className="h-4 w-4 shrink-0 text-[color:var(--accent)]" />
+			<div className="flex items-start justify-between gap-3">
+				<div className="flex min-w-0 items-center gap-3">
+					<Avatar post={post} />
 					<div className="min-w-0">
-						<div className="font-mono text-[10px] uppercase tracking-[0.2em] text-[color:var(--fg-muted)]">
-							{post.label}
+						<div className="flex items-center gap-1">
+							<span className="truncate text-[14px] font-semibold leading-tight text-[color:var(--fg)]">
+								{post.author}
+							</span>
+							{post.verified ? <VerifiedIcon className="h-3.5 w-3.5 shrink-0 text-[color:var(--accent)]" /> : null}
 						</div>
-						<div className="truncate text-[13px] font-semibold text-[color:var(--fg)]">{post.author}</div>
+						<span className="truncate text-[12px] leading-tight text-[color:var(--fg-dim)]">@{post.handle}</span>
 					</div>
 				</div>
-				<span className="inline-flex h-8 w-8 shrink-0 items-center justify-center text-[color:var(--fg-muted)] transition-colors group-hover:text-[color:var(--accent)]">
-					<ArrowUpRightIcon className="h-4 w-4" />
-				</span>
+				<XSocialIcon className="h-4 w-4 shrink-0 text-[color:var(--fg-muted)]" />
 			</div>
 
-			<div className="px-5 pb-5 pt-4">
-				<p className="mb-5 text-[13px] leading-relaxed text-[color:var(--fg-muted)]">{post.note}</p>
+			<p className="mt-4 whitespace-pre-line text-[15px] leading-relaxed text-[color:var(--fg)]">{post.text}</p>
 
-				<div className="rounded-[10px] border border-[color:var(--border)] bg-[color:var(--bg-deep)] p-4">
-					<div className="flex items-start justify-between gap-3">
-						<div className="flex min-w-0 items-center gap-3">
-							<Avatar post={post} />
-							<div className="min-w-0">
-								<div className="flex items-center gap-1">
-									<span className="truncate text-[14px] font-semibold leading-tight text-[color:var(--fg)]">
-										{post.author}
-									</span>
-									{post.verified ? <VerifiedIcon className="h-3.5 w-3.5 shrink-0 text-[color:var(--accent)]" /> : null}
-								</div>
-								<span className="truncate text-[12px] leading-tight text-[color:var(--fg-dim)]">@{post.handle}</span>
-							</div>
-						</div>
-						<XSocialIcon className="h-4 w-4 shrink-0 text-[color:var(--fg-muted)]" />
-					</div>
-
-					<p className="mt-4 whitespace-pre-line text-[15px] leading-relaxed text-[color:var(--fg)]">{post.text}</p>
-
-					<div className="mt-4 flex items-center justify-between border-t border-[color:var(--border)] pt-3">
-						<span className="text-[12px] text-[color:var(--fg-dim)]">{post.date}</span>
-						<span className="inline-flex items-center gap-3 text-[12px] text-[color:var(--fg-dim)]">
-							{typeof post.likes === "number" ? (
-								<span className="inline-flex items-center gap-1">
-									<svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-										<path d="M12 21s-7.5-4.6-10-9.3C.4 8.4 2 5 5.2 5c1.9 0 3.2 1 3.8 2.2H11C11.6 6 12.9 5 14.8 5 18 5 19.6 8.4 22 11.7 19.5 16.4 12 21 12 21Z" />
-									</svg>
-									{post.likes}
-								</span>
-							) : null}
-							<span className="font-medium text-[color:var(--fg-muted)] transition-colors group-hover:text-[color:var(--accent)]">
-								View on X
-							</span>
+			<div className="mt-4 flex items-center justify-between border-t border-[color:var(--border)] pt-3">
+				<span className="text-[12px] text-[color:var(--fg-dim)]">{post.date}</span>
+				<span className="inline-flex items-center gap-3 text-[12px] text-[color:var(--fg-dim)]">
+					{typeof post.likes === "number" ? (
+						<span className="inline-flex items-center gap-1">
+							<svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+								<path d="M12 21s-7.5-4.6-10-9.3C.4 8.4 2 5 5.2 5c1.9 0 3.2 1 3.8 2.2H11C11.6 6 12.9 5 14.8 5 18 5 19.6 8.4 22 11.7 19.5 16.4 12 21 12 21Z" />
+							</svg>
+							{post.likes}
 						</span>
-					</div>
-				</div>
+					) : null}
+					<span className="inline-flex items-center gap-1 font-medium text-[color:var(--fg-muted)] transition-colors group-hover:text-[color:var(--accent)]">
+						View on X
+						<ArrowUpRightIcon className="h-3 w-3" />
+					</span>
+				</span>
 			</div>
 		</a>
 	);

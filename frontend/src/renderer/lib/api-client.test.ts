@@ -5,6 +5,7 @@ import {
 	getApiBaseUrl,
 	hasTrustedApiBaseUrl,
 	normalizeApiOperation,
+	setApiDaemonStatus,
 	setApiBaseUrl,
 	subscribeApiBaseUrl,
 } from "./api-client";
@@ -20,6 +21,7 @@ describe("apiClient runtime base URL", () => {
 	afterEach(() => {
 		vi.restoreAllMocks();
 		setApiBaseUrl("http://127.0.0.1:3001");
+		setApiDaemonStatus({ state: "stopped" });
 	});
 
 	it("rewrites requests to the current runtime daemon port", async () => {
@@ -128,6 +130,19 @@ describe("apiClient runtime base URL", () => {
 		expect(hasTrustedApiBaseUrl()).toBe(false);
 		expect(fetchSpy).not.toHaveBeenCalled();
 	});
+
+	it("returns the current daemon startup failure when the base URL is untrusted", async () => {
+		setApiBaseUrl(null);
+		setApiDaemonStatus({
+			state: "error",
+			code: "exited",
+			message: "AO daemon exited with code 1",
+		});
+
+		const { error } = await apiClient.GET("/api/v1/projects");
+
+		expect(error).toEqual({ code: "exited", message: "AO daemon exited with code 1" });
+	});
 });
 
 describe("subscribeApiBaseUrl", () => {
@@ -189,6 +204,15 @@ describe("normalizeApiOperation", () => {
 		expect(normalizeApiOperation("POST", "/api/v1/sessions/cleanup")).toBe("POST /api/v1/sessions/cleanup");
 	});
 
+	it("keeps workspace file routes aligned with the generated API schema", () => {
+		expect(normalizeApiOperation("GET", "/api/v1/sessions/ao-42/workspace/files")).toBe(
+			"GET /api/v1/sessions/:id/workspace/files",
+		);
+		expect(normalizeApiOperation("GET", "/api/v1/sessions/ao-42/workspace/file")).toBe(
+			"GET /api/v1/sessions/:id/workspace/file",
+		);
+	});
+
 	it("normalizes ids for resources a collection heuristic would miss", () => {
 		expect(normalizeApiOperation("GET", "/api/v1/orchestrators/orch-abc")).toBe("GET /api/v1/orchestrators/:id");
 		expect(normalizeApiOperation("POST", "/api/v1/prs/pr-1/merge")).toBe("POST /api/v1/prs/:id/merge");
@@ -209,6 +233,7 @@ describe("api error telemetry", () => {
 		vi.useRealTimers();
 		vi.restoreAllMocks();
 		setApiBaseUrl("http://127.0.0.1:3001");
+		setApiDaemonStatus({ state: "stopped" });
 	});
 
 	it("reports http_5xx with a normalized operation", async () => {
