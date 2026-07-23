@@ -2622,6 +2622,8 @@ components:
           type: integer
         prUrl:
           type: string
+        previousRun:
+          $ref: '#/components/schemas/ReviewRun'
         status:
           enum:
           - needs_review

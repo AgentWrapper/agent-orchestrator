@@ -740,6 +740,7 @@ function ReviewPanel({
 
 function ReviewStateRow({ reviewState }: { reviewState: PRReviewState }) {
 	const verdict = reviewVerdict(reviewState);
+	const previousVerdict = previousReviewVerdict(reviewState);
 	const title = reviewState.title?.trim() || `PR #${reviewState.prNumber}`;
 	return (
 		<div
@@ -763,9 +764,14 @@ function ReviewStateRow({ reviewState }: { reviewState: PRReviewState }) {
 					<span className="col-start-1 font-mono text-caption text-passive">#{reviewState.prNumber}</span>
 				</div>
 			</div>
-			<span className={cn("whitespace-nowrap text-caption font-semibold", reviewerVerdictTone[verdict.tone])}>
-				{verdict.label}
-			</span>
+			<div className="flex flex-col items-end gap-1 whitespace-nowrap">
+				<span className={cn("text-caption font-semibold", reviewerVerdictTone[verdict.tone])}>{verdict.label}</span>
+				{previousVerdict ? (
+					<span className={cn("text-2xs font-medium", reviewerVerdictTone[previousVerdict.tone])}>
+						Previous: {previousVerdict.label}
+					</span>
+				) : null}
+			</div>
 		</div>
 	);
 }
@@ -815,6 +821,21 @@ function reviewVerdict(reviewState: PRReviewState): {
 			return { label: "Not run", tone: "neutral" };
 	}
 	return { label: "Not run", tone: "neutral" };
+}
+
+function previousReviewVerdict(reviewState: PRReviewState): {
+	label: string;
+	tone: "success" | "danger";
+} | null {
+	if (reviewState.status !== "needs_review" && reviewState.status !== "running") return null;
+	switch (reviewState.previousRun?.verdict) {
+		case "approved":
+			return { label: "Approved", tone: "success" };
+		case "changes_requested":
+			return { label: "Changes requested", tone: "danger" };
+		default:
+			return null;
+	}
 }
 
 function reviewSessionRunAction(reviewStates: PRReviewState[], isTriggering: boolean): string {
