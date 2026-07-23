@@ -887,7 +887,9 @@ export interface components {
         FusedFinding: {
             blocking: boolean;
             claim?: string;
+            file?: string;
             findingId?: string;
+            line?: number;
             /** @enum {string} */
             runtimeOutcome?: "not_tested" | "confirmed" | "refuted";
             /** @enum {string} */

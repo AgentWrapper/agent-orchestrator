@@ -8,7 +8,7 @@ CREATE TABLE review_finding (
     review_run_id    TEXT NOT NULL REFERENCES review_run (id) ON DELETE CASCADE,
     file             TEXT NOT NULL DEFAULT '',
     line             INTEGER NOT NULL DEFAULT 0,
-    severity         TEXT NOT NULL DEFAULT '',
+    severity         TEXT NOT NULL DEFAULT '' CHECK (severity IN ('', 'low', 'medium', 'high', 'critical')),
     title            TEXT NOT NULL DEFAULT '',
     claim            TEXT NOT NULL DEFAULT '',
     failure_scenario TEXT NOT NULL DEFAULT '',

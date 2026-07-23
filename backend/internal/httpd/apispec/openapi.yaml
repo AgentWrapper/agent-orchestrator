@@ -2373,8 +2373,12 @@ components:
           type: boolean
         claim:
           type: string
+        file:
+          type: string
         findingId:
           type: string
+        line:
+          type: integer
         runtimeOutcome:
           enum:
           - not_tested
