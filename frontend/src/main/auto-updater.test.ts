@@ -467,7 +467,7 @@ describe("startAutoUpdates", () => {
 		automaticCheck.resolve();
 		await Promise.all([startPromise, downloadPromise]);
 
-		expect(module.getUpdateStatus()).toEqual({ state: "idle" });
+		expect(module.getUpdateStatus()).toEqual({ state: "error", message: "manual download failed" });
 	});
 
 	it("keeps manual updater error events visible to the renderer", async () => {
@@ -478,7 +478,7 @@ describe("startAutoUpdates", () => {
 		updaterEvents.get("error")?.(err);
 
 		expect(BrowserWindow.getAllWindows).toHaveBeenCalled();
-		expect(module.getUpdateStatus()).toEqual({ state: "checking" });
+		expect(module.getUpdateStatus()).toEqual({ state: "error", message: "manual feed failed" });
 	});
 
 	it("logs settings failures during automatic checks and retries on later ticks", async () => {

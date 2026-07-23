@@ -296,6 +296,14 @@ async function runRetirementPoll(stateDir: string): Promise<void> {
 	}
 }
 
+// isManifest404Error checks whether the error is a 404 on a release
+// manifest YAML file — a routine condition that should not be surfaced
+// to users as an error dialog.
+function isManifest404Error(err: unknown): boolean {
+	const msg = (err as Error)?.message ?? "";
+	return msg.includes("HttpError: 404");
+}
+
 // wireUpdaterEvents registers electron-updater listeners once and forwards each
 // to the renderer as an UpdateStatus. Idempotent: safe to call on every entry
 // point (launch auto-check and manual check).
@@ -357,10 +365,15 @@ function wireUpdaterEvents(): void {
 			restoreAutomaticCheckPreviousStatus();
 			return;
 		}
-		// Manual check failures (e.g. 404 on latest-mac.yml) are logged, not
-		// shown to users — the error message is misleading and not actionable.
-		console.error("update check failed:", err);
-		restoreAutomaticCheckPreviousStatus();
+		// Manifest 404 (missing latest-mac.yml etc.) is a routine condition,
+		// not an actionable error — log and restore prior status silently.
+		if (isManifest404Error(err)) {
+			console.error("update check failed (404, manifest not found):", err);
+			restoreAutomaticCheckPreviousStatus();
+			return;
+		}
+		// All other errors: broadcast so the user knows something went wrong.
+		broadcast(withActiveRequest({ state: "error", message: err?.message ?? String(err) }));
 	});
 }
 
@@ -482,7 +495,15 @@ export async function checkForUpdatesNow(stateDir: string, options: UpdateCheckO
 			options.requestId,
 		);
 	} catch (err) {
-		console.error("manual update check failed:", err);
+		if (isManifest404Error(err)) {
+			console.error("manual update check failed:", err);
+		} else {
+			broadcast({
+				state: "error",
+				message: (err as Error)?.message ?? "Update check failed",
+				requestId: options.requestId,
+			});
+		}
 	}
 }
 
@@ -502,7 +523,12 @@ export async function downloadUpdateNow(requestId?: string): Promise<void> {
 			requestId,
 		);
 	} catch (err) {
-		console.error("update download failed:", err);
+		if (isManifest404Error(err)) {
+			console.error("update download failed:", err);
+			broadcast({ state: "not-available", requestId });
+		} else {
+			broadcast({ state: "error", message: (err as Error)?.message ?? "Download failed", requestId });
+		}
 	}
 }
 
