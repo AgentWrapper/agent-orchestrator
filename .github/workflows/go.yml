@@ -45,14 +45,7 @@ jobs:
         run: go vet ./...
 
       - name: Test
-        shell: pwsh
-        run: |
-          go test -race -json ./... *>&1 | Tee-Object -FilePath go-test.jsonl
-          $status = $LASTEXITCODE
-          if ($status -ne 0) {
-            pwsh -NoProfile -ExecutionPolicy Bypass -File ../.github/scripts/annotate-go-test-json.ps1 go-test.jsonl backend
-          }
-          exit $status
+        run: go test -race ./...
 
   lint:
     runs-on: ubuntu-latest
