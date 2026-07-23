@@ -51,12 +51,10 @@ export function ConnectMobileSetup({ port, enabled }: ConnectMobileSetupProps) {
 					<ol className="settings-mobile-steps">
 						<li>Install Tailscale here and on your phone, signed into the same account.</li>
 						<li>
-							Run <span className="tracking-settings-mono text-settings-label">tailscale ip -4</span> here to get
-							your 100.x address.
+							Run <span className="tracking-settings-mono text-settings-label">tailscale ip -4</span> here to get your
+							100.x address.
 						</li>
-						<li>
-							In the app's Settings, enter that address, port {port}, and the password below. Leave Use TLS off.
-						</li>
+						<li>In the app's Settings, enter that address, port {port}, and the password below. Leave Use TLS off.</li>
 					</ol>
 				</div>
 			)}
