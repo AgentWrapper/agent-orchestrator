@@ -1,6 +1,7 @@
 import { createFileRoute, Outlet, useMatchRoute, useNavigate, useParams } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
+import { AlertTriangle } from "lucide-react";
 import { CommandPalette } from "../components/CommandPalette";
 import { CenterPanelShell } from "../components/CenterPanelShell";
 import { NotificationRuntime } from "../components/NotificationCenter";
@@ -382,6 +383,13 @@ function ShellLayout() {
           in the layout, not the screens, so the crumb and actions never shift
           when the outlet content swaps. */}
 			<div className="flex h-screen min-h-0 flex-col bg-sidebar text-foreground">
+				{daemonStatus.state === "error" ? (
+					<div className="flex items-center gap-2 border-b border-error/20 bg-error/8 px-4 py-2 text-xs text-error">
+						<AlertTriangle className="size-3.5 shrink-0" aria-hidden="true" />
+						<span>{daemonStatus.message ?? "AO daemon encountered an error."}</span>
+						<span className="ml-auto text-muted-foreground">Check the terminal where you ran <code className="rounded bg-muted px-1 font-mono">npm run dev</code></span>
+					</div>
+				) : null}
 				{/* Windows-only custom title bar (sidebar toggle + File/Edit/View/…
             menu); paints the chrome the frameless window drops. Renders null on
             macOS/Linux. */}
