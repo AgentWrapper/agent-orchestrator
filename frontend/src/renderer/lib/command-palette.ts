@@ -77,7 +77,7 @@ function sessionCommand(
 		group,
 		title: session.title,
 		subtitle: workspace.name,
-		keywords: [workspace.name, session.branch ?? "", session.issueId ?? ""],
+			keywords: [workspace.name, session.branch ?? "", session.issueId ?? ""],
 		action: {
 			kind: "navigate",
 			target: {

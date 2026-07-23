@@ -63,7 +63,6 @@ type Manager struct {
 type baselineFlight struct {
 	done chan struct{}
 	run  TestRun
-	ran  bool
 	err  error
 }
 
@@ -119,7 +118,7 @@ func (m *Manager) runBaselineSingleflight(ctx context.Context, reviewRun domain.
 		m.mu.Unlock()
 		select {
 		case <-flight.done:
-			return flight.run, flight.ran, flight.err
+			return flight.run, flight.err == nil, flight.err
 		case <-ctx.Done():
 			return TestRun{}, false, ctx.Err()
 		}
@@ -128,7 +127,7 @@ func (m *Manager) runBaselineSingleflight(ctx context.Context, reviewRun domain.
 	m.baselineFlights[key] = flight
 	m.mu.Unlock()
 
-	flight.run, flight.ran, flight.err = m.runBaselineOnce(ctx, reviewRun)
+	flight.run, flight.err = m.runBaselineOnce(ctx, reviewRun)
 	close(flight.done)
 
 	m.mu.Lock()
@@ -136,29 +135,29 @@ func (m *Manager) runBaselineSingleflight(ctx context.Context, reviewRun domain.
 		delete(m.baselineFlights, key)
 	}
 	m.mu.Unlock()
-	return flight.run, flight.ran, flight.err
+	return flight.run, flight.err == nil, flight.err
 }
 
-func (m *Manager) runBaselineOnce(ctx context.Context, reviewRun domain.ReviewRun) (TestRun, bool, error) {
+func (m *Manager) runBaselineOnce(ctx context.Context, reviewRun domain.ReviewRun) (TestRun, error) {
 	req, err := m.runRequest(ctx, RunKindBaseline, reviewRun, TestRun{}, nil)
 	if err != nil {
-		return TestRun{}, false, err
+		return TestRun{}, err
 	}
 	res, err := m.runner.Run(ctx, req)
 	if err != nil {
 		if ctx.Err() != nil {
-			return TestRun{}, false, ctx.Err()
+			return TestRun{}, ctx.Err()
 		}
 		res = RunResult{Run: infraRun(fmt.Sprintf("runtime verification could not run: %v", err))}
 	}
 	run, err := m.normalizeRun(res.Run, reviewRun, RunKindBaseline)
 	if err != nil {
-		return TestRun{}, false, err
+		return TestRun{}, err
 	}
 	if err := m.store.InsertTestGateRun(ctx, run); err != nil {
-		return TestRun{}, false, err
+		return TestRun{}, err
 	}
-	return run, true, nil
+	return run, nil
 }
 
 // RunAfterReviewSubmit verifies behavioral findings, synthesizes the fused
@@ -170,7 +169,8 @@ func (m *Manager) RunAfterReviewSubmit(ctx context.Context, reviewRun domain.Rev
 	if baseline, ok, err := m.activeBaseline(ctx, reviewRun); err != nil {
 		return FusedVerdict{}, false, err
 	} else if ok {
-		return m.runAfterReviewSubmitWithBaseline(ctx, reviewRun, baseline)
+		fused, err := m.runAfterReviewSubmitWithBaseline(ctx, reviewRun, baseline)
+		return fused, err == nil, err
 	}
 	baseline, ok, err := m.store.GetLatestTestGateRun(ctx, reviewRun.SessionID, reviewRun.PRURL, reviewRun.TargetSHA, RunKindBaseline)
 	if err != nil {
@@ -196,7 +196,8 @@ func (m *Manager) RunAfterReviewSubmit(ctx context.Context, reviewRun domain.Rev
 			CreatedAt:      m.clock(),
 		}
 	}
-	return m.runAfterReviewSubmitWithBaseline(ctx, reviewRun, baseline)
+	fused, err := m.runAfterReviewSubmitWithBaseline(ctx, reviewRun, baseline)
+	return fused, err == nil, err
 }
 
 func (m *Manager) activeBaseline(ctx context.Context, reviewRun domain.ReviewRun) (TestRun, bool, error) {
@@ -209,16 +210,16 @@ func (m *Manager) activeBaseline(ctx context.Context, reviewRun domain.ReviewRun
 	}
 	select {
 	case <-flight.done:
-		return flight.run, flight.ran, flight.err
+		return flight.run, flight.err == nil, flight.err
 	case <-ctx.Done():
 		return TestRun{}, false, ctx.Err()
 	}
 }
 
-func (m *Manager) runAfterReviewSubmitWithBaseline(ctx context.Context, reviewRun domain.ReviewRun, baseline TestRun) (FusedVerdict, bool, error) {
+func (m *Manager) runAfterReviewSubmitWithBaseline(ctx context.Context, reviewRun domain.ReviewRun, baseline TestRun) (FusedVerdict, error) {
 	findings, err := m.store.ListReviewFindingsByRun(ctx, reviewRun.ID)
 	if err != nil {
-		return FusedVerdict{}, false, err
+		return FusedVerdict{}, err
 	}
 
 	evidence := []TestEvidence{}
@@ -227,26 +228,26 @@ func (m *Manager) runAfterReviewSubmitWithBaseline(ctx context.Context, reviewRu
 	if baseline.Classification == ClassificationPassed && m.runner != nil && len(behavioral) > 0 {
 		req, err := m.runRequest(ctx, RunKindTargeted, reviewRun, baseline, behavioral)
 		if err != nil {
-			return FusedVerdict{}, false, err
+			return FusedVerdict{}, err
 		}
 		res, err := m.runner.Run(ctx, req)
 		if err != nil {
 			if ctx.Err() != nil {
-				return FusedVerdict{}, false, ctx.Err()
+				return FusedVerdict{}, ctx.Err()
 			}
 			res = RunResult{Run: infraRun(fmt.Sprintf("targeted runtime verification could not run: %v", err))}
 		}
 		targetedRun, err := m.normalizeRun(res.Run, reviewRun, RunKindTargeted)
 		if err != nil {
-			return FusedVerdict{}, false, err
+			return FusedVerdict{}, err
 		}
 		if err := m.store.InsertTestGateRun(ctx, targetedRun); err != nil {
-			return FusedVerdict{}, false, err
+			return FusedVerdict{}, err
 		}
 		testRunID = targetedRun.ID
 		for _, normalized := range m.validEvidence(res.Evidence, targetedRun.ID, behavioral) {
 			if err := m.store.InsertTestEvidence(ctx, normalized); err != nil {
-				return FusedVerdict{}, false, err
+				return FusedVerdict{}, err
 			}
 			evidence = append(evidence, normalized)
 		}
@@ -260,9 +261,9 @@ func (m *Manager) runAfterReviewSubmitWithBaseline(ctx context.Context, reviewRu
 	})
 	fused = m.normalizeFused(fused, reviewRun, testRunID)
 	if err := m.store.UpsertFusedVerdict(ctx, fused); err != nil {
-		return FusedVerdict{}, false, err
+		return FusedVerdict{}, err
 	}
-	return fused, true, nil
+	return fused, nil
 }
 
 func baselineKey(reviewRun domain.ReviewRun) string {
