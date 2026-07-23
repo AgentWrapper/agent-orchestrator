@@ -55,14 +55,21 @@ func TestReviewCommandLaunchesReadOnlyOffBypass(t *testing.T) {
 	if !contains(agent.got.AllowedTools, "read") || !contains(agent.got.AllowedTools, "bash(ao review submit:*)") {
 		t.Fatalf("allowlist missing read-only review tools: %#v", agent.got.AllowedTools)
 	}
-	for _, denied := range []string{"edit", "write", "bash(git push:*)", "bash(git commit:*)"} {
+	for _, denied := range []string{
+		"edit",
+		"write",
+		"bash(git push:*)",
+		"bash(git commit:*)",
+		"bash(git show:*)",
+		"bash(gh:*)",
+	} {
 		if !contains(agent.got.DisallowedTools, denied) {
 			t.Fatalf("disallow list missing %q: %#v", denied, agent.got.DisallowedTools)
 		}
 	}
 }
 
-func TestAllowlistCoversPromptRequiredPipedCommands(t *testing.T) {
+func TestAllowlistExcludesWriteAndExfilTools(t *testing.T) {
 	agent := &captureAgent{}
 	r := &Reviewer{agent: agent}
 
@@ -75,22 +82,37 @@ func TestAllowlistCoversPromptRequiredPipedCommands(t *testing.T) {
 		t.Fatalf("ReviewCommand: %v", err)
 	}
 
-	if !contains(agent.got.AllowedTools, "bash(printf:*)") {
-		t.Fatalf("allowlist missing printf for piped review commands: %#v", agent.got.AllowedTools)
-	}
-
-	for _, cmd := range []string{
-		"printf '%s' '{ \"event\": \"COMMENT\", \"body\": \"x\" }' | gh api --method POST repos/o/r/pulls/1/reviews --input - --jq '.id'",
-		"printf '%s' '{ \"reviews\": [] }' | ao review submit --session sess-1 --reviews -",
-	} {
-		if !compoundCommandCovered(agent.got.AllowedTools, cmd) {
-			t.Fatalf("allowlist does not cover prompt-required command %q with tools %#v", cmd, agent.got.AllowedTools)
+	// printf, gh, and git show must NOT be in the allow list — printf is a
+	// write primitive, gh exposes the full mutation surface, and git show can
+	// read arbitrary tracked content.
+	for _, tool := range []string{"bash(printf:*)", "bash(gh:*)", "bash(git show:*)"} {
+		if contains(agent.got.AllowedTools, tool) {
+			t.Fatalf("allowlist unexpectedly contains %q: %#v", tool, agent.got.AllowedTools)
 		}
 	}
 
-	disallowed := "printf x | rm -rf /"
+	// gh and git show must be in the deny list as defense in depth.
+	for _, denied := range []string{"bash(gh:*)", "bash(git show:*)"} {
+		if !contains(agent.got.DisallowedTools, denied) {
+			t.Fatalf("disallow list missing %q: %#v", denied, agent.got.DisallowedTools)
+		}
+	}
+
+	// The reviewer can still submit verdicts via ao review submit.
+	if !contains(agent.got.AllowedTools, "bash(ao review submit:*)") {
+		t.Fatalf("allowlist missing ao review submit: %#v", agent.got.AllowedTools)
+	}
+
+	// printf-based commands must NOT be covered since printf was removed.
+	disallowed := "printf '%s' '{ \"reviews\": [] }' | ao review submit --session sess-1 --reviews -"
 	if compoundCommandCovered(agent.got.AllowedTools, disallowed) {
-		t.Fatalf("allowlist unexpectedly covers disallowed command %q with tools %#v", disallowed, agent.got.AllowedTools)
+		t.Fatalf("allowlist unexpectedly covers printf-based command %q with tools %#v", disallowed, agent.got.AllowedTools)
+	}
+
+	// gh-based commands must NOT be covered since gh was removed.
+	disallowedGh := "gh api --method POST repos/o/r/pulls/1/reviews --input - --jq '.id'"
+	if bashSegmentCovered(agent.got.AllowedTools, disallowedGh) {
+		t.Fatalf("allowlist unexpectedly covers gh-based command %q with tools %#v", disallowedGh, agent.got.AllowedTools)
 	}
 }
 

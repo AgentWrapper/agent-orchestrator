@@ -15,26 +15,26 @@ import (
 // system entirely and ignores allow/deny rules — it launches in --auto mode
 // where these rules are honored: allow rules auto-approve without prompting,
 // so the reviewer can read the checkout and run the few commands it needs (git
-// diff/log/show to inspect the PR, printf to pipe review JSON into the
-// downstream commands without writing a worktree file, gh to post the review,
-// and `ao review submit` to record the verdict) without stalling. Kimchi's
+// diff/log/status to inspect the PR and `ao review submit` to record the
+// verdict) without stalling. printf, gh, and git show are intentionally
+// excluded — printf is a write primitive (printf 'x' > file), gh exposes the
+// full mutation surface (self-merge, gh api --method DELETE/PUT), and git
+// show can read arbitrary tracked content like .env.production. Kimchi's
 // rule parser is case-insensitive on tool names, so lowercase tool names are
 // used to match Kimchi's internal names.
 var reviewerAllowedTools = []string{
 	"read",
 	"grep",
 	"glob",
-	"bash(printf:*)",
-	"bash(gh:*)",
 	"bash(git diff:*)",
 	"bash(git log:*)",
-	"bash(git show:*)",
 	"bash(git status:*)",
 	"bash(ao review submit:*)",
 }
 
-// reviewerDisallowedTools hard-denies the write paths as defense in depth, so
-// a misbehaving model cannot edit files or move the branch even if a future
+// reviewerDisallowedTools hard-denies the write and exfiltration paths as
+// defense in depth, so a misbehaving model cannot edit files, move the branch,
+// read arbitrary tracked content, or post mutations via gh even if a future
 // allowlist entry would otherwise admit it. Kimchi has no NotebookEdit tool, so
 // it is omitted from the deny list.
 var reviewerDisallowedTools = []string{
@@ -42,6 +42,8 @@ var reviewerDisallowedTools = []string{
 	"write",
 	"bash(git push:*)",
 	"bash(git commit:*)",
+	"bash(git show:*)",
+	"bash(gh:*)",
 }
 
 // Reviewer is the Kimchi code-review adapter.
@@ -66,9 +68,9 @@ var _ ports.ReviewerCanceller = (*Reviewer)(nil)
 // worker's checkout. --auto lets the headless session run without prompting
 // while still honoring the allow/deny tool lists, which enforce read-only
 // operation: allow rules auto-approve the read-only review tools (git
-// diff/log/show to inspect the PR, printf to pipe review JSON, gh to post the
-// review, `ao review submit` to record the verdict) without stalling, and
-// the deny list hard-blocks the write paths as defense in depth.
+// diff/log/status to inspect the PR, `ao review submit` to record the verdict)
+// without stalling, and the deny list hard-blocks the write and exfiltration
+// paths (including gh and git show) as defense in depth.
 func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
 	argv, err := r.agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 		SessionID:       inv.ReviewerID,
