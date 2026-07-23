@@ -1570,7 +1570,6 @@ func TestSCMObservation_ReadyToMergeSuppressedWhileWaitingInput(t *testing.T) {
 	}
 }
 
-
 func TestRuntimeObservation_DeadProbeTerminatesBlockedSession(t *testing.T) {
 	m, st, _ := newManager()
 	rec := working("mer-1")
