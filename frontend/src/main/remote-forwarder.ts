@@ -29,6 +29,7 @@ const lanConnectionCookie = "ao_conn";
 const previewHostSuffix = ".ao-preview.localhost";
 const previewUpstreamAuthorizationHeader = "x-ao-preview-upstream-authorization";
 const previewTokenBytes = 16;
+const previewSourceAliasLimit = 64;
 const previewLoopbackIPs = new BlockList();
 previewLoopbackIPs.addSubnet("127.0.0.0", 8, "ipv4");
 previewLoopbackIPs.addAddress("::1", "ipv6");
@@ -50,11 +51,11 @@ type PreviewMapping = {
 	kind: "http" | "file";
 	targetHeader: string;
 	sourceOrigin?: string;
-	sourceOriginsByLocalURL: Map<string, string>;
+	sourceOriginsByPath: Map<string, string>;
 	fileURL?: string;
 };
 
-type PreviewTarget = Omit<PreviewMapping, "token" | "ownerId" | "sessionId" | "sourceOriginsByLocalURL"> & {
+type PreviewTarget = Omit<PreviewMapping, "token" | "ownerId" | "sessionId" | "sourceOriginsByPath"> & {
 	key: string;
 	pathname: string;
 	search: string;
@@ -293,6 +294,22 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 		for (const mapping of owned.values()) previewsByToken.delete(mapping.token);
 		previewsByOwner.delete(ownerId);
 	};
+	const rememberPreviewSourceOrigin = (mapping: PreviewMapping, local: URL, sourceOrigin: string) => {
+		const key = `${local.pathname}${local.search}`;
+		mapping.sourceOrigin = sourceOrigin;
+		mapping.sourceOriginsByPath.delete(key);
+		mapping.sourceOriginsByPath.set(key, sourceOrigin);
+		if (mapping.sourceOriginsByPath.size > previewSourceAliasLimit) {
+			const oldest = mapping.sourceOriginsByPath.keys().next().value;
+			if (oldest !== undefined) mapping.sourceOriginsByPath.delete(oldest);
+		}
+	};
+	const previewSourceOrigin = (mapping: PreviewMapping, local: URL): string | undefined => {
+		const sourceOrigin = mapping.sourceOriginsByPath.get(`${local.pathname}${local.search}`);
+		if (!sourceOrigin) return mapping.sourceOrigin;
+		rememberPreviewSourceOrigin(mapping, local, sourceOrigin);
+		return sourceOrigin;
+	};
 	const localPreviewURL = (
 		mapping: PreviewMapping,
 		pathname: string,
@@ -305,10 +322,7 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 		local.search = search;
 		local.hash = hash;
 		const localURL = local.toString();
-		if (sourceOrigin) {
-			mapping.sourceOrigin = sourceOrigin;
-			mapping.sourceOriginsByLocalURL.set(localURL, sourceOrigin);
-		}
+		if (sourceOrigin) rememberPreviewSourceOrigin(mapping, local, sourceOrigin);
 		return localURL;
 	};
 	const registerPreview = (ownerId: string, sessionId: string, target: PreviewTarget): PreviewMapping => {
@@ -331,7 +345,7 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 			kind: target.kind,
 			targetHeader: target.targetHeader,
 			sourceOrigin: target.sourceOrigin,
-			sourceOriginsByLocalURL: new Map(),
+			sourceOriginsByPath: new Map(),
 			fileURL: target.fileURL,
 		};
 		owned.set(key, mapping);
@@ -368,7 +382,7 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 		const mapping = previewsByToken.get(token);
 		if (!mapping) return localURL;
 		if (mapping.kind === "http") {
-			const original = new URL(mapping.sourceOriginsByLocalURL.get(local.toString()) ?? mapping.sourceOrigin!);
+			const original = new URL(previewSourceOrigin(mapping, local)!);
 			original.pathname = local.pathname;
 			original.search = local.search;
 			original.hash = local.hash;
@@ -398,20 +412,22 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 		requestURL: string | undefined,
 		upstreamResponse: http.IncomingMessage,
 	): ResponseHeaderOptions => {
-		const location = upstreamResponse.headers.location;
-		if (!location) return { preview: true };
 		const localRequest = new URL(
 			requestURL ?? "/",
 			`http://${mapping.token}${previewHostSuffix}:${forwarderPort}`,
 		);
+		const sourceOrigin = mapping.kind === "http" ? previewSourceOrigin(mapping, localRequest) : undefined;
+		const location = upstreamResponse.headers.location;
+		if (!location) return { preview: true };
 		let targetLocation: URL | undefined;
 		if (mapping.kind === "http") {
 			try {
-				targetLocation = new URL(location, new URL(requestURL ?? "/", mapping.targetHeader));
+				targetLocation = new URL(location, new URL(requestURL ?? "/", sourceOrigin ?? mapping.targetHeader));
 			} catch {
 				targetLocation = undefined;
 			}
 		}
+		const destination = targetLocation ? previewTarget(targetLocation.toString()) : undefined;
 		const redirectTargetValue = upstreamResponse.headers["x-ao-preview-redirect-target"];
 		const redirectTarget = Array.isArray(redirectTargetValue) ? redirectTargetValue[0] : redirectTargetValue;
 		if (
@@ -421,7 +437,6 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 			previewsByToken.get(mapping.token) === mapping
 		) {
 			const indicated = previewTarget(redirectTarget);
-			const destination = targetLocation ? previewTarget(targetLocation.toString()) : undefined;
 			if (
 				indicated?.kind === "http" &&
 				indicated.pathname === "/" &&
@@ -451,12 +466,19 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 			}
 			return { preview: true, location };
 		}
-		if (!targetLocation || targetLocation.origin !== mapping.targetHeader) return { preview: true, location };
-		const rewritten = new URL(localRequest.origin);
-		rewritten.pathname = targetLocation.pathname;
-		rewritten.search = targetLocation.search;
-		rewritten.hash = targetLocation.hash;
-		return { preview: true, location: rewritten.toString() };
+		if (destination?.kind !== "http" || destination.targetHeader !== mapping.targetHeader) {
+			return { preview: true, location };
+		}
+		return {
+			preview: true,
+			location: localPreviewURL(
+				mapping,
+				destination.pathname,
+				destination.search,
+				destination.hash,
+				destination.sourceOrigin,
+			),
+		};
 	};
 	const destroyOutboundRequest = (request: http.ClientRequest, message: string) => {
 		outboundRequests.delete(request);

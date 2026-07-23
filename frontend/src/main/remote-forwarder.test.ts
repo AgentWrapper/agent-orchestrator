@@ -180,6 +180,71 @@ describe("remote-forwarder", () => {
 		expect(forwarder.originalPreviewURL(firstLocal.toString())).toBe(first);
 	});
 
+	it("uses the latest explicit source alias when opaque preview URLs collide", async () => {
+		const upstream = http.createServer((_req, res) => res.end("ok"));
+		servers.push(upstream);
+		const upstreamPort = await listen(upstream);
+		const forwarder = await startRemoteForwarder({ host: "127.0.0.1", port: upstreamPort, password: "secret" });
+		forwarders.push(forwarder);
+
+		const first = "http://0.0.0.0:5173/same?q=1#same";
+		const second = "http://127.0.0.1:5173/same?q=1#same";
+		const firstLocal = forwarder.resolvePreviewURL("owner", "session", first);
+		const secondLocal = forwarder.resolvePreviewURL("owner", "session", second);
+
+		expect(secondLocal).toBe(firstLocal);
+		expect(forwarder.originalPreviewURL(firstLocal)).toBe(second);
+
+		const firstHash = forwarder.resolvePreviewURL(
+			"owner",
+			"session",
+			"http://0.0.0.0:5173/hash?q=2#first",
+		);
+		forwarder.resolvePreviewURL("owner", "session", "http://127.0.0.1:5173/hash?q=2#second");
+		expect(forwarder.originalPreviewURL(firstHash)).toBe("http://127.0.0.1:5173/hash?q=2#first");
+	});
+
+	it("restores a history alias before deriving unregistered preview paths", async () => {
+		const upstream = http.createServer((_req, res) => res.end("ok"));
+		servers.push(upstream);
+		const upstreamPort = await listen(upstream);
+		const forwarder = await startRemoteForwarder({ host: "127.0.0.1", port: upstreamPort, password: "secret" });
+		forwarders.push(forwarder);
+
+		const first = forwarder.resolvePreviewURL("owner", "session", "http://0.0.0.0:5173/a");
+		const second = forwarder.resolvePreviewURL("owner", "session", "http://127.0.0.1:5173/b");
+		const derived = new URL(first);
+
+		expect(forwarder.originalPreviewURL(first)).toBe("http://0.0.0.0:5173/a");
+		derived.pathname = "/c";
+		expect(forwarder.originalPreviewURL(derived.toString())).toBe("http://0.0.0.0:5173/c");
+
+		expect(forwarder.originalPreviewURL(second)).toBe("http://127.0.0.1:5173/b");
+		derived.pathname = "/d";
+		expect(forwarder.originalPreviewURL(derived.toString())).toBe("http://127.0.0.1:5173/d");
+	});
+
+	it("bounds source alias provenance and falls back to the active alias after eviction", async () => {
+		const upstream = http.createServer((_req, res) => res.end("ok"));
+		servers.push(upstream);
+		const upstreamPort = await listen(upstream);
+		const forwarder = await startRemoteForwarder({ host: "127.0.0.1", port: upstreamPort, password: "secret" });
+		forwarders.push(forwarder);
+
+		const oldest = forwarder.resolvePreviewURL("owner", "session", "http://0.0.0.0:5173/oldest");
+		let newest = "";
+		for (let index = 0; index < 64; index++) {
+			newest = forwarder.resolvePreviewURL(
+				"owner",
+				"session",
+				`http://127.0.0.1:5173/recent-${index}`,
+			);
+		}
+
+		expect(forwarder.originalPreviewURL(oldest)).toBe("http://127.0.0.1:5173/oldest");
+		expect(forwarder.originalPreviewURL(newest)).toBe("http://127.0.0.1:5173/recent-63");
+	});
+
 	it("translates file aliases and invalidates all mappings owned by a released view", async () => {
 		const upstream = http.createServer((_req, res) => res.end("ok"));
 		servers.push(upstream);
@@ -498,6 +563,56 @@ describe("remote-forwarder", () => {
 		await forwarderRequest(forwarder, localFor("still-current"));
 		expect(receivedTargets.at(-2)).toBe("http://127.0.0.1:43210");
 		expect(receivedTargets.at(-1)).toBe("http://localhost:5173");
+	});
+
+	it("restores and records source aliases for same-normalized-origin redirects", async () => {
+		const daemon = http.createServer((req, res) => {
+			switch (req.url) {
+				case "/_ao/preview/session/start/history":
+					res.writeHead(302, { location: "../next-history?q=1#history" });
+					break;
+				case "/_ao/preview/session/start/absolute":
+					res.writeHead(302, { location: "http://0.0.0.0:5173/next-absolute?q=2#absolute" });
+					break;
+				default:
+					res.writeHead(204);
+			}
+			res.end();
+		});
+		servers.push(daemon);
+		const daemonPort = await listen(daemon);
+		const forwarder = await startRemoteForwarder({ host: "127.0.0.1", port: daemonPort, password: "secret" });
+		forwarders.push(forwarder);
+
+		const history = forwarder.resolvePreviewURL(
+			"owner",
+			"session",
+			"http://0.0.0.0:5173/start/history",
+		);
+		const latest = forwarder.resolvePreviewURL("owner", "session", "http://127.0.0.1:5173/latest");
+		const historyResponse = await forwarderRequest(forwarder, history);
+		const historyRedirect = historyResponse.headers.location!;
+
+		expect(new URL(historyRedirect).origin).toBe(new URL(history).origin);
+		expect(forwarder.originalPreviewURL(historyRedirect)).toBe(
+			"http://0.0.0.0:5173/next-history?q=1#history",
+		);
+		expect(forwarder.originalPreviewURL(latest)).toBe("http://127.0.0.1:5173/latest");
+		expect(forwarder.originalPreviewURL(historyRedirect)).toBe(
+			"http://0.0.0.0:5173/next-history?q=1#history",
+		);
+
+		const absolute = forwarder.resolvePreviewURL(
+			"owner",
+			"session",
+			"http://127.0.0.1:5173/start/absolute",
+		);
+		const absoluteResponse = await forwarderRequest(forwarder, absolute);
+		const absoluteRedirect = absoluteResponse.headers.location!;
+		expect(new URL(absoluteRedirect).origin).toBe(new URL(absolute).origin);
+		expect(forwarder.originalPreviewURL(absoluteRedirect)).toBe(
+			"http://0.0.0.0:5173/next-absolute?q=2#absolute",
+		);
 	});
 
 	it("strips preview cookie domains, LAN credentials, and internal response headers", async () => {
