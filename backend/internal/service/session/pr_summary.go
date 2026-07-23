@@ -225,7 +225,11 @@ func summarizeReview(pr domain.PullRequest, comments []domain.PullRequestComment
 		reviewURLByAuthor[reviewer] = review.URL
 		isBot[reviewer] = review.IsBot
 	}
-	for reviewer, review := range latestReviews {
+	// Reviews carries every reviewer's latest decisive verdict (approved and
+	// changes_requested alike), not just the changes-requested subset used for
+	// the unresolved-comment grouping above, so an approved review's summary
+	// body is surfaced too.
+	for reviewer, review := range latestDecisiveReviews(reviews) {
 		out.Reviews = append(out.Reviews, PRReviewEntry{
 			Reviewer:    reviewer,
 			Verdict:     reviewOrNone(review.State),
@@ -255,7 +259,9 @@ func summarizeReview(pr domain.PullRequest, comments []domain.PullRequestComment
 	return out
 }
 
-func latestChangesRequestedReviews(reviews []domain.PullRequestReview) map[string]domain.PullRequestReview {
+// latestDecisiveReviews returns each reviewer's most recent decisive review —
+// the latest one whose verdict is approved or changes_requested.
+func latestDecisiveReviews(reviews []domain.PullRequestReview) map[string]domain.PullRequestReview {
 	latestByReviewer := map[string]domain.PullRequestReview{}
 	for _, review := range reviews {
 		if review.State != domain.ReviewChangesRequest && review.State != domain.ReviewApproved {
@@ -270,8 +276,15 @@ func latestChangesRequestedReviews(reviews []domain.PullRequestReview) map[strin
 			latestByReviewer[reviewer] = review
 		}
 	}
+	return latestByReviewer
+}
+
+// latestChangesRequestedReviews narrows latestDecisiveReviews to reviewers whose
+// latest decisive verdict is changes_requested — used to attach a review link to
+// the unresolved-comment grouping.
+func latestChangesRequestedReviews(reviews []domain.PullRequestReview) map[string]domain.PullRequestReview {
 	out := map[string]domain.PullRequestReview{}
-	for reviewer, review := range latestByReviewer {
+	for reviewer, review := range latestDecisiveReviews(reviews) {
 		if review.State == domain.ReviewChangesRequest {
 			out[reviewer] = review
 		}
