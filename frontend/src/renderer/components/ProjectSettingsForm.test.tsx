@@ -365,9 +365,10 @@ describe("ProjectSettingsForm", () => {
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
-		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}/config", {
+		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}", {
 			params: { path: { id: "scratch" } },
 			body: {
+				displayName: "Scratch",
 				config: {
 					env: { FOO: "bar" },
 					sessionPrefix: "ao",
