@@ -539,7 +539,6 @@ function ShellLayout() {
 						workspaces={workspaces}
 					/>
 					<main className={cn("flex min-w-0 flex-1 flex-col overflow-x-hidden", !isSidebarOpen && "sidebar-hidden")}>
-						<DaemonFailureBanner status={daemonStatus} />
 						<div className="min-h-0 flex-1 overflow-x-hidden">
 							{/* Board/session routes render inside the same inset box the welcome board and settings paint for themselves, so every screen sits within the app's outer boundary. */}
 							{hideShellTopbar ? (
@@ -565,6 +564,7 @@ function ShellLayout() {
 							)}
 						</div>
 					</main>
+					<DaemonFailureBanner status={daemonStatus} />
 					{/* When ShellTopbar is hidden, keep a macOS window-drag strip over
               the traffic-light band only (same --size-traffic-light-clearance
               as the Sidebar header pad). TitlebarNav sits in the sidebar below
