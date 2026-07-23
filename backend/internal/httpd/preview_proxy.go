@@ -27,6 +27,7 @@ const (
 	previewTargetHeader                = "X-AO-Preview-Target"
 	previewRedirectTargetHeader        = "X-AO-Preview-Redirect-Target"
 	previewUpstreamAuthorizationHeader = "X-AO-Preview-Upstream-Authorization"
+	previewConnectionTimeout           = 30 * time.Second
 	previewResponseHeaderTimeout       = 30 * time.Second
 )
 
@@ -257,8 +258,9 @@ func previewLoopbackTransport(target *url.URL) *http.Transport {
 	transport := baseTransport.Clone()
 	transport.Proxy = nil
 	transport.ResponseHeaderTimeout = previewResponseHeaderTimeout
+	dialer := previewLoopbackDialer()
 	transport.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, network, dialAddress)
+		return dialer.DialContext(ctx, network, dialAddress)
 	}
 	if target.Scheme == "https" {
 		transport.TLSClientConfig = &tls.Config{
@@ -267,6 +269,10 @@ func previewLoopbackTransport(target *url.URL) *http.Transport {
 		}
 	}
 	return transport
+}
+
+func previewLoopbackDialer() *net.Dialer {
+	return &net.Dialer{Timeout: previewConnectionTimeout}
 }
 
 func stripPreviewProxyRequestHeaders(r *http.Request) {

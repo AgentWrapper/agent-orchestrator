@@ -21,6 +21,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
+	"github.com/aoagents/agent-orchestrator/backend/internal/mobilebridge"
 )
 
 type fakePreviewSessions struct {
@@ -105,6 +106,63 @@ func TestPreviewProxy_ValidationRejectsWindowsFileURLOutsideWindows(t *testing.T
 	}
 	if _, err := parsePreviewTarget("file:///C:/workspace/index.html"); err == nil {
 		t.Fatal("Windows file URL was accepted on a non-Windows platform")
+	}
+}
+
+func TestPreviewProxy_LANRequiresBearerAuthentication(t *testing.T) {
+	const password = "secret12"
+	workspace := t.TempDir()
+	entry := filepath.Join(workspace, "index.html")
+	writePreviewFile(t, entry, "LAN preview reached")
+	router := NewRouterWithControl(config.Config{}, discardLogger(), nil, APIDeps{
+		PreviewSessions: fakePreviewSessions{workspaces: map[domain.SessionID]string{"ao-1": workspace}},
+	}, ControlDeps{})
+	lan := NewMobileLAN(router, 0, discardLogger())
+	lan.SetPasswordHash(mobilebridge.HashPassword(password))
+	port, err := lan.Start(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := lan.Stop(ctx); err != nil {
+			t.Errorf("stop LAN listener: %v", err)
+		}
+	})
+
+	endpoint := fmt.Sprintf("http://127.0.0.1:%d/_ao/preview/ao-1/", port)
+	unauthenticated, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unauthenticated.Header.Set(previewTargetHeader, previewFileTarget(entry))
+	resp, err := http.DefaultClient.Do(unauthenticated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status = %d, want %d", resp.StatusCode, http.StatusUnauthorized)
+	}
+
+	authenticated, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authenticated.Header.Set(previewTargetHeader, previewFileTarget(entry))
+	authenticated.Header.Set("Authorization", "Bearer "+password)
+	resp, err = http.DefaultClient.Do(authenticated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK || string(body) != "LAN preview reached" {
+		t.Fatalf("authenticated status/body = %d / %q, want %d / %q", resp.StatusCode, body, http.StatusOK, "LAN preview reached")
 	}
 }
 
@@ -759,6 +817,13 @@ func TestPreviewLoopbackTransport_ResponseHeaderTimeout(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed >= 250*time.Millisecond {
 		t.Fatalf("response header timeout took %s, want less than 250ms", elapsed)
+	}
+}
+
+func TestPreviewLoopbackDialer_ConnectionTimeout(t *testing.T) {
+	dialer := previewLoopbackDialer()
+	if got := dialer.Timeout; got != 30*time.Second {
+		t.Fatalf("Timeout = %s, want 30s", got)
 	}
 }
 
