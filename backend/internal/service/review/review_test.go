@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,6 +14,8 @@ import (
 )
 
 type fakeStore struct {
+	mu sync.Mutex
+
 	run       domain.ReviewRun
 	ok        bool
 	batchRuns []domain.ReviewRun
@@ -27,6 +30,8 @@ type fakeStore struct {
 }
 
 func (f *fakeStore) GetReviewRun(_ context.Context, id string) (domain.ReviewRun, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	for _, run := range f.batchRuns {
 		if run.ID == id {
 			return run, true, nil
@@ -39,6 +44,8 @@ func (f *fakeStore) GetReviewRun(_ context.Context, id string) (domain.ReviewRun
 }
 
 func (f *fakeStore) UpdateReviewRunResult(_ context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	for i := range f.batchRuns {
 		if f.batchRuns[i].ID == id {
 			if f.batchRuns[i].Status != domain.ReviewRunRunning {
@@ -67,6 +74,8 @@ func (f *fakeStore) UpdateReviewRunResult(_ context.Context, id string, status d
 }
 
 func (f *fakeStore) MarkReviewRunDelivered(_ context.Context, id string, deliveredAt time.Time) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.markCalls++
 	f.markedIDs = append(f.markedIDs, id)
 	if f.run.ID == id && f.run.Status == domain.ReviewRunComplete && f.run.DeliveredAt == nil {
@@ -87,16 +96,22 @@ func (f *fakeStore) MarkReviewRunDelivered(_ context.Context, id string, deliver
 }
 
 func (f *fakeStore) ListReviewRunsByBatch(context.Context, domain.SessionID, string) ([]domain.ReviewRun, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	out := append([]domain.ReviewRun(nil), f.batchRuns...)
 	return out, nil
 }
 
 func (f *fakeStore) ListPRsBySession(context.Context, domain.SessionID) ([]domain.PullRequest, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	out := append([]domain.PullRequest(nil), f.prs...)
 	return out, nil
 }
 
 func (f *fakeStore) ReplaceReviewFindings(_ context.Context, runID string, findings []testgate.ReviewFinding, _ time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.findings = append([]testgate.ReviewFinding(nil), findings...)
 	if f.findingsByRun == nil {
 		f.findingsByRun = make(map[string][]testgate.ReviewFinding)
@@ -106,6 +121,8 @@ func (f *fakeStore) ReplaceReviewFindings(_ context.Context, runID string, findi
 }
 
 func (f *fakeStore) GetFusedVerdict(_ context.Context, _ domain.SessionID, prURL, targetSHA string) (testgate.FusedVerdict, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.fused == nil {
 		return testgate.FusedVerdict{}, false, nil
 	}
@@ -113,7 +130,15 @@ func (f *fakeStore) GetFusedVerdict(_ context.Context, _ domain.SessionID, prURL
 	return verdict, ok, nil
 }
 
+func (f *fakeStore) markCallCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.markCalls
+}
+
 type fakeReducer struct {
+	mu sync.Mutex
+
 	outcome    lifecycle.ReviewDeliveryOutcome
 	err        error
 	calls      int
@@ -125,25 +150,49 @@ type fakeReducer struct {
 }
 
 func (f *fakeReducer) ApplyReviewResult(_ context.Context, _ domain.SessionID, result lifecycle.ReviewResult) (lifecycle.ReviewDeliveryOutcome, error) {
+	f.mu.Lock()
 	f.calls++
 	f.got = result
-	if f.called != nil {
-		f.called <- struct{}{}
+	called := f.called
+	outcome := f.outcome
+	err := f.err
+	f.mu.Unlock()
+	if called != nil {
+		called <- struct{}{}
 	}
-	return f.outcome, f.err
+	return outcome, err
 }
 
 func (f *fakeReducer) ApplyReviewBatch(_ context.Context, _ domain.SessionID, batchID string, results []lifecycle.ReviewResult) (lifecycle.ReviewDeliveryOutcome, error) {
+	f.mu.Lock()
 	f.batchCalls++
 	f.gotBatchID = batchID
 	f.gotBatch = append([]lifecycle.ReviewResult(nil), results...)
-	if f.called != nil {
-		f.called <- struct{}{}
+	called := f.called
+	outcome := f.outcome
+	err := f.err
+	f.mu.Unlock()
+	if called != nil {
+		called <- struct{}{}
 	}
-	return f.outcome, f.err
+	return outcome, err
+}
+
+func (f *fakeReducer) callCounts() (int, int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls, f.batchCalls
+}
+
+func (f *fakeReducer) lastResult() lifecycle.ReviewResult {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.got
 }
 
 type fakeTestGate struct {
+	mu sync.Mutex
+
 	baselines []domain.ReviewRun
 	fused     map[string]testgate.FusedVerdict
 	err       error
@@ -154,26 +203,43 @@ type fakeTestGate struct {
 }
 
 func (f *fakeTestGate) StartBaseline(_ context.Context, run domain.ReviewRun) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.baselines = append(f.baselines, run)
 }
 
 func (f *fakeTestGate) RunAfterReviewSubmit(ctx context.Context, run domain.ReviewRun) (testgate.FusedVerdict, bool, error) {
+	f.mu.Lock()
 	f.calls = append(f.calls, run)
-	if f.started != nil {
-		f.started <- struct{}{}
+	started := f.started
+	release := f.release
+	f.mu.Unlock()
+	if started != nil {
+		started <- struct{}{}
 	}
-	if f.release != nil {
-		<-f.release
+	if release != nil {
+		<-release
 	}
+	f.mu.Lock()
 	f.ctxErr = ctx.Err()
 	if f.err != nil {
-		return testgate.FusedVerdict{}, false, f.err
+		err := f.err
+		f.mu.Unlock()
+		return testgate.FusedVerdict{}, false, err
 	}
 	if f.fused == nil {
+		f.mu.Unlock()
 		return testgate.FusedVerdict{}, false, nil
 	}
 	verdict, ok := f.fused[run.ID]
+	f.mu.Unlock()
 	return verdict, ok, nil
+}
+
+func (f *fakeTestGate) contextErr() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.ctxErr
 }
 
 func TestSubmitAsyncTestGateReturnsBeforeRuntimeVerification(t *testing.T) {
@@ -206,8 +272,9 @@ func TestSubmitAsyncTestGateReturnsBeforeRuntimeVerification(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("test gate did not start")
 	}
-	if reducer.calls != 0 || st.markCalls != 0 {
-		t.Fatalf("async submit should return before delivery: calls=%d mark=%d", reducer.calls, st.markCalls)
+	reducerCalls, _ := reducer.callCounts()
+	if markCalls := st.markCallCount(); reducerCalls != 0 || markCalls != 0 {
+		t.Fatalf("async submit should return before delivery: calls=%d mark=%d", reducerCalls, markCalls)
 	}
 
 	close(gate.release)
@@ -216,11 +283,12 @@ func TestSubmitAsyncTestGateReturnsBeforeRuntimeVerification(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("async test gate did not deliver fused review")
 	}
-	if gate.ctxErr != nil {
-		t.Fatalf("test gate context was canceled by request context: %v", gate.ctxErr)
+	if err := gate.contextErr(); err != nil {
+		t.Fatalf("test gate context was canceled by request context: %v", err)
 	}
-	if reducer.got.Verdict != domain.VerdictChangesRequested || !strings.Contains(reducer.got.Body, "runtime failure") {
-		t.Fatalf("reducer result = %+v, want fused runtime delivery", reducer.got)
+	got := reducer.lastResult()
+	if got.Verdict != domain.VerdictChangesRequested || !strings.Contains(got.Body, "runtime failure") {
+		t.Fatalf("reducer result = %+v, want fused runtime delivery", got)
 	}
 }
 
