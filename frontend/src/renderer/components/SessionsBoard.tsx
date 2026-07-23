@@ -545,6 +545,7 @@ function WorkLaneColumn({ sessions, onOpen }: { sessions: WorkspaceSession[]; on
 	return (
 		<SplitLaneColumn
 			ariaLabel="Idle / Working sessions"
+			zone="working"
 			primarySessions={idleSessions}
 			primaryTone={idleLaneTone}
 			secondarySessions={workingSessions}
@@ -569,6 +570,7 @@ function MergeLaneColumn({
 	return (
 		<SplitLaneColumn
 			ariaLabel="Ready to merge / Merged sessions"
+			zone="merge"
 			primarySessions={readySessions}
 			primaryTone={readyLaneTone}
 			secondarySessions={mergedSessions}
@@ -581,6 +583,7 @@ function MergeLaneColumn({
 
 function SplitLaneColumn({
 	ariaLabel,
+	zone,
 	primarySessions,
 	primaryTone,
 	secondarySessions,
@@ -589,6 +592,7 @@ function SplitLaneColumn({
 	onTerminateSecondary,
 }: {
 	ariaLabel: string;
+	zone: Extract<AttentionZone, "working" | "merge">;
 	primarySessions: WorkspaceSession[];
 	primaryTone: SplitLaneTone;
 	secondarySessions: WorkspaceSession[];
@@ -603,6 +607,8 @@ function SplitLaneColumn({
 		<section
 			aria-label={ariaLabel}
 			className="flex min-w-0 flex-col overflow-hidden rounded-panel"
+			data-column={zone}
+			data-testid="board-column"
 			style={{
 				background: `linear-gradient(180deg, color-mix(in srgb, ${primaryTone.color} 7%, transparent), transparent var(--size-kanban-glow)), var(--color-overlay-subtle)`,
 			}}
@@ -790,7 +796,9 @@ function SessionCard({
 							{issueId}
 						</span>
 					)}
-					<span className={cn("ml-auto shrink-0 font-mono text-2xs tracking-wide-xs text-passive", showTerminate && "mr-7")}>
+					<span
+						className={cn("ml-auto shrink-0 font-mono text-2xs tracking-wide-xs text-passive", showTerminate && "mr-7")}
+					>
 						{agentLabel(session.provider)}
 					</span>
 				</div>
@@ -840,15 +848,16 @@ function ArchiveSessionItem({
 	const issueId = canonicalTrackerIssueId(session.issueId);
 	const prSummaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
 	const branch = session.branch || "";
-	const prMetadata = prSummaries.length > 0 ? (
-		<div className="flex flex-col gap-1">
-			{groupPRsByLifecycle(prSummaries).map((group) => (
-				<BoardPRGroup group={group} key={group.status.label} linksInteractive={false} />
-			))}
-		</div>
-	) : (
-		<span>no PR yet</span>
-	);
+	const prMetadata =
+		prSummaries.length > 0 ? (
+			<div className="flex flex-col gap-1">
+				{groupPRsByLifecycle(prSummaries).map((group) => (
+					<BoardPRGroup group={group} key={group.status.label} linksInteractive={false} />
+				))}
+			</div>
+		) : (
+			<span>no PR yet</span>
+		);
 	const restoreButton = (
 		<ArchiveRestoreButton
 			isDisabled={isRestoreDisabled}
@@ -879,14 +888,12 @@ function ArchiveSessionItem({
 							<span className="max-w-branch-chip truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent">
 								{issueId}
 							</span>
-							)}
+						)}
 					</div>
 					{branch && <div className="mt-2 truncate font-mono text-2xs text-passive">{branch}</div>}
 				</div>
 				<div aria-hidden="true" className="mx-3 my-px h-px bg-border" />
-				<div className="px-3 py-1.5 font-mono text-2xs text-passive">
-					{prMetadata}
-				</div>
+				<div className="px-3 py-1.5 font-mono text-2xs text-passive">{prMetadata}</div>
 				<ArchiveRestoreError message={restoreError} />
 			</div>
 		);

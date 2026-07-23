@@ -17,9 +17,7 @@ export function useTerminateSession(options: TerminateSessionOptions = {}) {
 				params: { path: { sessionId: session.id } },
 			});
 			if (error) {
-				const fallback = response
-					? `Failed to terminate session (${response.status})`
-					: "Failed to terminate session";
+				const fallback = response ? `Failed to terminate session (${response.status})` : "Failed to terminate session";
 				throw new Error(apiErrorMessage(error, fallback));
 			}
 		},

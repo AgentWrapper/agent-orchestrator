@@ -161,20 +161,17 @@ describe("ShellTopbar status pill", () => {
 		["mergeable", "active", "Working", "Ready"],
 		["merged", "exited", "Exited", "Done"],
 		["changes_requested", "waiting_input", "Input Needed", "Needs input"],
-	] as const)(
-		"ignores derived %s topbar status in favor of activity",
-		(status, state, label, hidden) => {
-			renderTopbar(
-				sessionWith({
-					status,
-					activity: { state, lastActivityAt: "2026-06-10T00:00:00Z" },
-				}),
-			);
+	] as const)("ignores derived %s topbar status in favor of activity", (status, state, label, hidden) => {
+		renderTopbar(
+			sessionWith({
+				status,
+				activity: { state, lastActivityAt: "2026-06-10T00:00:00Z" },
+			}),
+		);
 
-			expect(screen.getByText(label)).toBeInTheDocument();
-			expect(screen.queryByText(hidden)).not.toBeInTheDocument();
-		},
-	);
+		expect(screen.getByText(label)).toBeInTheDocument();
+		expect(screen.queryByText(hidden)).not.toBeInTheDocument();
+	});
 
 	it("uses a compact unknown state when activity is missing or unknown", () => {
 		const first = renderTopbar(sessionWith({ activity: undefined }));

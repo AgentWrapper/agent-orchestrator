@@ -434,7 +434,10 @@ function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 			<div className="flex items-center gap-2">
 				<GitPullRequest className="size-icon-md shrink-0 text-passive" aria-hidden="true" />
 				<span className="text-md-sm font-medium text-foreground">PR #{pr.number}</span>
-				<Badge variant="outline" className={cn("h-5 px-1.5 text-[9px] leading-none font-medium", prStateTone[pr.state])}>
+				<Badge
+					variant="outline"
+					className={cn("h-5 px-1.5 text-[9px] leading-none font-medium", prStateTone[pr.state])}
+				>
 					{pr.state}
 				</Badge>
 				<a

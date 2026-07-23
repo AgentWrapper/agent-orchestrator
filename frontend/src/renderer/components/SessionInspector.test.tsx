@@ -558,16 +558,24 @@ describe("SessionInspector Activity section", () => {
 			);
 		});
 		const draftLink = screen.getByRole("link", { name: "Draft PR #8" });
-		expect(within(draftLink.closest("[data-testid='inspector-timeline-event']") as HTMLElement).getByText("2h ago")).toBeInTheDocument();
+		expect(
+			within(draftLink.closest("[data-testid='inspector-timeline-event']") as HTMLElement).getByText("2h ago"),
+		).toBeInTheDocument();
 
 		const openLink = screen.getByRole("link", { name: "Opened PR #7" });
-		expect(within(openLink.closest("[data-testid='inspector-timeline-event']") as HTMLElement).getByText("1h ago")).toBeInTheDocument();
+		expect(
+			within(openLink.closest("[data-testid='inspector-timeline-event']") as HTMLElement).getByText("1h ago"),
+		).toBeInTheDocument();
 
 		const mergedOpenedLink = screen.getByRole("link", { name: "Opened PR #6" });
-		expect(within(mergedOpenedLink.closest("[data-testid='inspector-timeline-event']") as HTMLElement).getByText("3h ago")).toBeInTheDocument();
+		expect(
+			within(mergedOpenedLink.closest("[data-testid='inspector-timeline-event']") as HTMLElement).getByText("3h ago"),
+		).toBeInTheDocument();
 
 		const mergedLink = screen.getByRole("link", { name: "Merged PR #6" });
-		expect(within(mergedLink.closest("[data-testid='inspector-timeline-event']") as HTMLElement).getByText("30m ago")).toBeInTheDocument();
+		expect(
+			within(mergedLink.closest("[data-testid='inspector-timeline-event']") as HTMLElement).getByText("30m ago"),
+		).toBeInTheDocument();
 	});
 
 	it("orders timeline milestones around the combined current state row", () => {

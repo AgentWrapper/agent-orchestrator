@@ -496,18 +496,18 @@ describe("SessionsBoard", () => {
 		expect(within(terminatedCard!).queryByRole("button", { name: "Open dead worker" })).not.toBeInTheDocument();
 		expect(within(terminatedCard!).getByText("Terminated")).toBeInTheDocument();
 		expect(screen.getByText("Claude")).toBeInTheDocument();
-			expect(screen.getByText("ao/dead-worker")).toBeInTheDocument();
-			expect(screen.getByText("github:INT-17")).toBeInTheDocument();
-			const prStatus = screen.getByLabelText("#42 merged");
-			expect(prStatus).toHaveTextContent("PR#42merged");
-			const divider = terminatedCard!.querySelector(".mx-3.my-px.h-px.bg-border");
-			expect(divider).not.toBeNull();
-			expect(divider!.compareDocumentPosition(prStatus) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
-			expect(screen.getByText("ao/dead-worker").compareDocumentPosition(divider!) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(
-				0,
-			);
-			expect(screen.getByRole("button", { name: "Restore dead worker" })).toBeInTheDocument();
-		});
+		expect(screen.getByText("ao/dead-worker")).toBeInTheDocument();
+		expect(screen.getByText("github:INT-17")).toBeInTheDocument();
+		const prStatus = screen.getByLabelText("#42 merged");
+		expect(prStatus).toHaveTextContent("PR#42merged");
+		const divider = terminatedCard!.querySelector(".mx-3.my-px.h-px.bg-border");
+		expect(divider).not.toBeNull();
+		expect(divider!.compareDocumentPosition(prStatus) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+		expect(
+			screen.getByText("ao/dead-worker").compareDocumentPosition(divider!) & Node.DOCUMENT_POSITION_FOLLOWING,
+		).not.toBe(0);
+		expect(screen.getByRole("button", { name: "Restore dead worker" })).toBeInTheDocument();
+	});
 
 	it("switches between rows and columns and remembers the archive layout", async () => {
 		workspaceQueryMock.mockReturnValue({
