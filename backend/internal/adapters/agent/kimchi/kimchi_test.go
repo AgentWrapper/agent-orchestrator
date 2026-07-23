@@ -1,6 +1,7 @@
 package kimchi
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -413,7 +414,9 @@ func TestGetRestoreCommandWithPermissions(t *testing.T) {
 func TestGetRestoreCommandWithSystemPromptFile(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "system.md")
-	if err := os.WriteFile(file, []byte("file contents win"), 0o600); err != nil {
+	// Write content WITH a trailing newline to verify the raw file contents
+	// are passed through without TrimRight trimming.
+	if err := os.WriteFile(file, []byte("file contents win\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -432,12 +435,50 @@ func TestGetRestoreCommandWithSystemPromptFile(t *testing.T) {
 		t.Fatal("ok=false, want true")
 	}
 
-	// The file's contents are inlined as --append-system-prompt before
-	// --session (which is appended last). Inline cfg.SystemPrompt is ignored
-	// because the file takes precedence, mirroring the launch-side behavior.
-	want := []string{"kimchi", "--append-system-prompt", "file contents win", "--session", "019e950e-52e0-7411-961b-d380ca7e610f"}
+	// The file's raw contents (including the trailing newline) are inlined
+	// as --append-system-prompt before --session (which is appended last).
+	// Inline cfg.SystemPrompt is ignored because the file takes precedence,
+	// mirroring the launch-side behavior.
+	want := []string{"kimchi", "--append-system-prompt", "file contents win\n", "--session", "019e950e-52e0-7411-961b-d380ca7e610f"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+}
+
+func TestGetLaunchCommandRejectsOversizedSystemPromptFile(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "system.md")
+	// 128 KiB + 1 byte — one byte over the limit.
+	if err := os.WriteFile(file, bytes.Repeat([]byte("a"), 128*1024+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &Plugin{resolvedBinary: "kimchi"}
+	_, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		SystemPromptFile: file,
+	})
+	if err == nil {
+		t.Fatal("expected error for oversized system-prompt file, got nil")
+	}
+}
+
+func TestGetRestoreCommandRejectsOversizedSystemPromptFile(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "system.md")
+	// 128 KiB + 1 byte — one byte over the limit.
+	if err := os.WriteFile(file, bytes.Repeat([]byte("a"), 128*1024+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &Plugin{resolvedBinary: "kimchi"}
+	_, _, err := p.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Session: ports.SessionRef{
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "sess-1"},
+		},
+		SystemPromptFile: file,
+	})
+	if err == nil {
+		t.Fatal("expected error for oversized system-prompt file, got nil")
 	}
 }
 
