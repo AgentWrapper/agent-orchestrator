@@ -37,6 +37,9 @@ type Store interface {
 	ListPRReviewThreads(ctx context.Context, prURL string) ([]domain.PullRequestReviewThread, error)
 	ListPRComments(ctx context.Context, prURL string) ([]domain.PullRequestComment, error)
 	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
+	// GetSessionCleanupFacts joins the terminal-resource cleanup facts onto the
+	// session read model; ok=false when the session has no facts row yet.
+	GetSessionCleanupFacts(ctx context.Context, id domain.SessionID) (domain.SessionCleanupRecord, bool, error)
 }
 
 // ListFilter captures API-facing session list query filters.
@@ -58,6 +61,7 @@ type commander interface {
 	WaitForMessageDeliveryReady(ctx context.Context, id domain.SessionID) error
 	Send(ctx context.Context, id domain.SessionID, message string) error
 	Cleanup(ctx context.Context, project domain.ProjectID) (sessionmanager.CleanupResult, error)
+	CleanupSession(ctx context.Context, id domain.SessionID) (domain.SessionCleanupRecord, error)
 	RollbackSpawn(ctx context.Context, id domain.SessionID) (deleted, killed bool, err error)
 	StageAttachments(ctx context.Context, id domain.SessionID, attachments []ports.SpawnAttachment) ([]string, error)
 }
@@ -598,6 +602,18 @@ func (s *Service) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	return freed, toAPIError(err)
 }
 
+// CleanupSession reclaims a single terminated session's runtime + workspace and
+// returns its resulting cleanup facts. It is the per-session counterpart to bulk
+// Cleanup: a 404 for an unknown session, a 409 for a still-live one, and (for a
+// preserved_dirty/failed session) a user-triggered retry of the release.
+func (s *Service) CleanupSession(ctx context.Context, id domain.SessionID) (domain.SessionCleanupRecord, error) {
+	facts, err := s.manager.CleanupSession(ctx, id)
+	if err != nil {
+		return domain.SessionCleanupRecord{}, toAPIError(err)
+	}
+	return facts, nil
+}
+
 // RollbackSpawn deletes a seed-state session row, or falls back to a Kill if
 // the session has spawn output. Used by the CLI to undo a `spawn --claim-pr`
 // when the claim step fails, avoiding the orphan terminated row that a plain
@@ -838,6 +854,8 @@ func toAPIError(err error) error {
 			"The session is already using the requested interface", nil)
 	case errors.Is(err, sessionmanager.ErrInterfaceTransitionNotFound):
 		return apierr.NotFound("INTERFACE_TRANSITION_NOT_FOUND", "No active interface switch exists")
+	case errors.Is(err, sessionmanager.ErrNotTerminal):
+		return apierr.Conflict("SESSION_NOT_TERMINAL", "Session is still live; only a terminated session can be cleaned up", nil)
 	case errors.Is(err, sessionmanager.ErrAwaitingDecision):
 		return apierr.Conflict("SESSION_AWAITING_DECISION",
 			"Session is paused on a permission decision; answer it in the session terminal first", nil)
@@ -887,13 +905,23 @@ func (s *Service) toSession(ctx context.Context, rec domain.SessionRecord) (doma
 		return domain.Session{}, fmt.Errorf("pr facts %s: %w", rec.ID, err)
 	}
 	prs = deduplicatePRFacts(prs)
-	return domain.Session{
+	sess := domain.Session{
 		SessionRecord:    rec,
 		Status:           deriveStatus(rec, prs, s.now(), s.harnessSignals(rec.Harness)),
 		SCMStatus:        deriveSCMStatus(prs),
 		TerminalHandleID: rec.Metadata.RuntimeHandleID,
 		PRs:              prs,
-	}, nil
+	}
+	// Join terminal-resource cleanup facts so the UI can render a terminated
+	// session's release progress (pending / preserved_dirty / failed / removed).
+	// Derived at read time — no display status is stored.
+	if facts, ok, err := s.store.GetSessionCleanupFacts(ctx, rec.ID); err != nil {
+		return domain.Session{}, fmt.Errorf("cleanup facts %s: %w", rec.ID, err)
+	} else if ok {
+		f := facts
+		sess.Cleanup = &f
+	}
+	return sess, nil
 }
 
 // now tolerates a zero-value Service (tests construct the struct literally
