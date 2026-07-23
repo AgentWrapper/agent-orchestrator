@@ -58,7 +58,8 @@ export function CenterPane({
 	const lastWheelZoomAtRef = useRef(0);
 	const [fontSize, setFontSize] = useState(initialTerminalFontSize);
 	const [isFullscreen, setIsFullscreen] = useState(false);
-	const tabsOverflow = useOverflowScroll<HTMLDivElement>(shellTerminals.length);
+	const tabOverflowWatch = `session|${shellTerminals.map((t) => t.handleId).join("|")}`;
+	const tabsOverflow = useOverflowScroll<HTMLDivElement>(tabOverflowWatch);
 	const target = terminalTarget ?? { kind: "worker" };
 
 	useEffect(() => {
@@ -122,17 +123,19 @@ export function CenterPane({
 					<span className="shrink-0 font-mono text-caption font-semibold uppercase tracking-wide-lg text-muted-foreground">
 						TERMINAL
 					</span>
-					{tabsOverflow.canScrollLeft && (
-						<button
-							aria-label="Scroll tabs left"
-							className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
-							onClick={() => tabsOverflow.scrollByDirection(-1)}
-							title="Scroll tabs left"
-							type="button"
-						>
-							<ChevronLeft aria-hidden="true" className="size-icon-md" />
-						</button>
-					)}
+					<button
+						aria-label="Scroll tabs left"
+						className={cn(
+							"inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-0",
+							!tabsOverflow.canScrollLeft && "invisible",
+						)}
+						disabled={!tabsOverflow.canScrollLeft}
+						onClick={() => tabsOverflow.scrollByDirection(-1)}
+						title="Scroll tabs left"
+						type="button"
+					>
+						<ChevronLeft aria-hidden="true" className="size-icon-md" />
+					</button>
 					{/* The session's own pane is always the first tab; standalone shells
 					    follow it in the order they were opened. With no shells open this
 					    renders as the plain session label it has always been. Tabs shrink
@@ -154,17 +157,19 @@ export function CenterPane({
 							/>
 						))}
 					</div>
-					{tabsOverflow.canScrollRight && (
-						<button
-							aria-label="Scroll tabs right"
-							className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
-							onClick={() => tabsOverflow.scrollByDirection(1)}
-							title="Scroll tabs right"
-							type="button"
-						>
-							<ChevronRight aria-hidden="true" className="size-icon-md" />
-						</button>
-					)}
+					<button
+						aria-label="Scroll tabs right"
+						className={cn(
+							"inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-0",
+							!tabsOverflow.canScrollRight && "invisible",
+						)}
+						disabled={!tabsOverflow.canScrollRight}
+						onClick={() => tabsOverflow.scrollByDirection(1)}
+						title="Scroll tabs right"
+						type="button"
+					>
+						<ChevronRight aria-hidden="true" className="size-icon-md" />
+					</button>
 					{/* New shell tab at the end of the strip — the same action Ctrl+Shift+`
 					    fires, routed through the store so the two cannot drift. */}
 					{onNewShellTerminal && (

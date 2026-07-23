@@ -3,8 +3,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 // Tracks horizontal overflow of a scrollable strip (e.g. a tab bar) so the UI
 // can reveal scroll indicators only when content actually overflows, and
 // scrolls the strip when an indicator is activated. `watch` should change
-// whenever the strip's children change (e.g. tab count) so measurements and
-// child observation stay current.
+// whenever the strip's children change (e.g. tab IDs/order) so measurements
+// and child observation stay current.
 export function useOverflowScroll<T extends HTMLElement>(watch: unknown) {
 	const ref = useRef<T | null>(null);
 	const [canScrollLeft, setCanScrollLeft] = useState(false);

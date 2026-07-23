@@ -61,8 +61,8 @@ describe("CenterPane toolbar session label", () => {
 			expect(tab.parentElement).toHaveClass("min-w-16");
 			expect(tab.parentElement).not.toHaveClass("shrink-0");
 		}
-		// jsdom reports no overflow, so no indicator is expected here.
-		expect(screen.queryByRole("button", { name: "Scroll tabs right" })).not.toBeInTheDocument();
+		// jsdom reports no overflow, so the indicator stays mounted but disabled to preserve focus.
+		expect(screen.getByRole("button", { name: "Scroll tabs right" })).toBeDisabled();
 
 		// The display controls float over the terminal body, not the tab bar,
 		// so tabs and controls can never overlap.
@@ -80,13 +80,13 @@ describe("CenterPane toolbar session label", () => {
 		Object.defineProperty(scrollRegion, "scrollWidth", { value: 500, configurable: true });
 		fireEvent.scroll(scrollRegion);
 
-		expect(screen.getByRole("button", { name: "Scroll tabs right" })).toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: "Scroll tabs left" })).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Scroll tabs right" })).toBeEnabled();
+		expect(screen.getByRole("button", { name: "Scroll tabs left" })).toBeDisabled();
 
 		Object.defineProperty(scrollRegion, "scrollLeft", { value: 400, configurable: true });
 		fireEvent.scroll(scrollRegion);
-		expect(screen.getByRole("button", { name: "Scroll tabs left" })).toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: "Scroll tabs right" })).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Scroll tabs left" })).toBeEnabled();
+		expect(screen.getByRole("button", { name: "Scroll tabs right" })).toBeDisabled();
 	});
 
 	it("scrolls the tab strip horizontally with the mouse wheel", () => {

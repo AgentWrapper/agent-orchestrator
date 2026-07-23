@@ -319,12 +319,6 @@ function createWindow(): void {
 			contextIsolation: true,
 			nodeIntegration: false,
 			sandbox: true,
-			// Terminal panes keep consuming the mux socket even when the window is
-			// occluded/minimized. Default background throttling stalls rAF/timers,
-			// xterm drains slowly, the daemon's outbound buffer (manager.go's
-			// enqueue) overflows and it kills the socket — the pane then reattaches
-			// and repaints over and over.
-			backgroundThrottling: false,
 		},
 	});
 
