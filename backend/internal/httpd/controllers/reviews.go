@@ -12,6 +12,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	reviewcore "github.com/aoagents/agent-orchestrator/backend/internal/review"
 	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
+	"github.com/aoagents/agent-orchestrator/backend/internal/testgate"
 )
 
 // ListReviewsResponse is the body of GET /api/v1/sessions/{sessionId}/reviews.
@@ -49,19 +50,33 @@ type CancelReviewResponse struct {
 
 // SubmitReviewItem is one review result in a batched submit request.
 type SubmitReviewItem struct {
-	RunID          string `json:"runId" description:"Review run id being completed."`
-	Verdict        string `json:"verdict" description:"Review verdict: approved or changes_requested."`
-	Body           string `json:"body,omitempty" description:"Review body recorded by AO. Required for changes_requested."`
-	GithubReviewID string `json:"githubReviewId,omitempty" description:"Id of the GitHub PR review the reviewer posted, if any."`
+	RunID          string                `json:"runId" description:"Review run id being completed."`
+	Verdict        string                `json:"verdict" description:"Review verdict: approved or changes_requested."`
+	Body           string                `json:"body,omitempty" description:"Review body recorded by AO. Required for changes_requested."`
+	GithubReviewID string                `json:"githubReviewId,omitempty" description:"Id of the GitHub PR review the reviewer posted, if any."`
+	Findings       []SubmitReviewFinding `json:"findings,omitempty" description:"Structured findings for runtime verification."`
+}
+
+// SubmitReviewFinding is one structured reviewer finding submitted for test-gate synthesis.
+type SubmitReviewFinding struct {
+	ID              string `json:"id,omitempty" description:"Stable finding id. AO assigns one when omitted."`
+	File            string `json:"file,omitempty" description:"Repository-relative file path, when the finding is line-scoped."`
+	Line            int    `json:"line,omitempty" description:"Line number for inline findings."`
+	Severity        string `json:"severity,omitempty" enum:"low,medium,high,critical" description:"Finding severity."`
+	Title           string `json:"title,omitempty" description:"Short finding title."`
+	Claim           string `json:"claim,omitempty" description:"Precise claim the reviewer believes is true."`
+	FailureScenario string `json:"failureScenario,omitempty" description:"Runtime scenario that should fail if the claim is real."`
+	Behavioral      bool   `json:"behavioral" description:"True when a runtime test can confirm or refute the finding."`
 }
 
 // SubmitReviewInput is the body of POST /api/v1/sessions/{sessionId}/reviews/submit.
 type SubmitReviewInput struct {
-	RunID          string             `json:"runId,omitempty" description:"Review run id being completed."`
-	Verdict        string             `json:"verdict,omitempty" description:"Review verdict: approved or changes_requested."`
-	Body           string             `json:"body,omitempty" description:"Review body recorded by AO. Required for changes_requested."`
-	GithubReviewID string             `json:"githubReviewId,omitempty" description:"Id of the GitHub PR review the reviewer posted, if any."`
-	Reviews        []SubmitReviewItem `json:"reviews,omitempty" description:"Batched review results recorded by one reviewer CLI command."`
+	RunID          string                `json:"runId,omitempty" description:"Review run id being completed."`
+	Verdict        string                `json:"verdict,omitempty" description:"Review verdict: approved or changes_requested."`
+	Body           string                `json:"body,omitempty" description:"Review body recorded by AO. Required for changes_requested."`
+	GithubReviewID string                `json:"githubReviewId,omitempty" description:"Id of the GitHub PR review the reviewer posted, if any."`
+	Findings       []SubmitReviewFinding `json:"findings,omitempty" description:"Structured findings for runtime verification."`
+	Reviews        []SubmitReviewItem    `json:"reviews,omitempty" description:"Batched review results recorded by one reviewer CLI command."`
 }
 
 // ReviewsController owns the session-scoped /reviews routes. A nil Svc returns 501.
@@ -159,6 +174,7 @@ func (c *ReviewsController) submit(w http.ResponseWriter, r *http.Request) {
 				Verdict:        domain.ReviewVerdict(item.Verdict),
 				Body:           item.Body,
 				GithubReviewID: item.GithubReviewID,
+				Findings:       submittedFindings(item.Findings),
 			})
 		}
 	} else {
@@ -167,6 +183,7 @@ func (c *ReviewsController) submit(w http.ResponseWriter, r *http.Request) {
 			Verdict:        domain.ReviewVerdict(in.Verdict),
 			Body:           in.Body,
 			GithubReviewID: in.GithubReviewID,
+			Findings:       submittedFindings(in.Findings),
 		})
 	}
 	runs, err := c.Svc.SubmitMany(r.Context(), sessionID(r), reviews)
@@ -179,6 +196,26 @@ func (c *ReviewsController) submit(w http.ResponseWriter, r *http.Request) {
 		first = runs[0]
 	}
 	envelope.WriteJSON(w, http.StatusOK, ReviewRunResponse{Review: first, Reviews: runs})
+}
+
+func submittedFindings(in []SubmitReviewFinding) []testgate.ReviewFinding {
+	if in == nil {
+		return nil
+	}
+	out := make([]testgate.ReviewFinding, 0, len(in))
+	for _, finding := range in {
+		out = append(out, testgate.ReviewFinding{
+			ID:              finding.ID,
+			File:            finding.File,
+			Line:            finding.Line,
+			Severity:        testgate.Severity(finding.Severity),
+			Title:           finding.Title,
+			Claim:           finding.Claim,
+			FailureScenario: finding.FailureScenario,
+			Behavioral:      finding.Behavioral,
+		})
+	}
+	return out
 }
 
 func writeReviewError(w http.ResponseWriter, r *http.Request, err error) {

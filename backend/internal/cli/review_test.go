@@ -110,7 +110,7 @@ func TestReviewSubmitBatchReadsReviewsFromStdin(t *testing.T) {
 	writeRunFileFor(t, cfg, srv)
 
 	deps := aliveDeps()
-	deps.In = strings.NewReader(`{"reviews":[{"runId":"run-1","verdict":"changes_requested","body":"fix auth","githubReviewId":"101"},{"runId":"run-2","verdict":"approved","body":"looks good"}]}`)
+	deps.In = strings.NewReader(`{"reviews":[{"runId":"run-1","verdict":"changes_requested","body":"fix auth","githubReviewId":"101","findings":[{"id":"finding-1","file":"auth.go","line":42,"severity":"high","title":"auth bypass","claim":"token checks are skipped","failureScenario":"unauthenticated request succeeds","behavioral":true}]},{"runId":"run-2","verdict":"approved","body":"looks good"}]}`)
 	out, errOut, err := executeCLI(t, deps, "review", "submit", "mer-1", "--reviews", "-")
 	if err != nil {
 		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
@@ -124,6 +124,9 @@ func TestReviewSubmitBatchReadsReviewsFromStdin(t *testing.T) {
 	}
 	if len(req.Reviews) != 2 || req.Reviews[0].RunID != "run-1" || req.Reviews[0].GithubReviewID != "101" || req.Reviews[1].Verdict != "approved" {
 		t.Fatalf("request = %+v", req)
+	}
+	if len(req.Reviews[0].Findings) != 1 || req.Reviews[0].Findings[0].File != "auth.go" || !req.Reviews[0].Findings[0].Behavioral {
+		t.Fatalf("findings = %+v", req.Reviews[0].Findings)
 	}
 	if req.RunID != "" || req.Verdict != "" {
 		t.Fatalf("batch request should not also set legacy fields: %+v", req)

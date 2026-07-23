@@ -11,13 +11,13 @@ func TestStabilizeWorkingDirectoryChdirsToDataDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	dataDir := filepath.Join(t.TempDir(), "ao-data")
 	t.Cleanup(func() {
 		if err := os.Chdir(oldCWD); err != nil {
 			t.Fatalf("restore cwd: %v", err)
 		}
 	})
 
-	dataDir := filepath.Join(t.TempDir(), "ao-data")
 	if err := stabilizeWorkingDirectory(dataDir); err != nil {
 		t.Fatalf("stabilizeWorkingDirectory: %v", err)
 	}
@@ -39,8 +39,12 @@ func TestStabilizeWorkingDirectoryRequiresDataDir(t *testing.T) {
 func cleanSymlinkedPath(t *testing.T, p string) string {
 	t.Helper()
 	resolved, err := filepath.EvalSymlinks(p)
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		return resolved
 	}
-	return resolved
+	if _, statErr := os.Stat(p); statErr == nil {
+		return filepath.Clean(p)
+	}
+	t.Fatal(err)
+	return ""
 }

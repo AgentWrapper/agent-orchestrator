@@ -3,11 +3,13 @@ package review
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
+	"github.com/aoagents/agent-orchestrator/backend/internal/testgate"
 )
 
 type fakeStore struct {
@@ -16,9 +18,12 @@ type fakeStore struct {
 	batchRuns []domain.ReviewRun
 	prs       []domain.PullRequest
 
-	updateCalls int
-	markCalls   int
-	markedIDs   []string
+	updateCalls   int
+	markCalls     int
+	markedIDs     []string
+	findings      []testgate.ReviewFinding
+	findingsByRun map[string][]testgate.ReviewFinding
+	fused         map[string]testgate.FusedVerdict
 }
 
 func (f *fakeStore) GetReviewRun(_ context.Context, id string) (domain.ReviewRun, bool, error) {
@@ -91,6 +96,23 @@ func (f *fakeStore) ListPRsBySession(context.Context, domain.SessionID) ([]domai
 	return out, nil
 }
 
+func (f *fakeStore) ReplaceReviewFindings(_ context.Context, runID string, findings []testgate.ReviewFinding, _ time.Time) error {
+	f.findings = append([]testgate.ReviewFinding(nil), findings...)
+	if f.findingsByRun == nil {
+		f.findingsByRun = make(map[string][]testgate.ReviewFinding)
+	}
+	f.findingsByRun[runID] = append([]testgate.ReviewFinding(nil), findings...)
+	return nil
+}
+
+func (f *fakeStore) GetFusedVerdict(_ context.Context, _ domain.SessionID, prURL, targetSHA string) (testgate.FusedVerdict, bool, error) {
+	if f.fused == nil {
+		return testgate.FusedVerdict{}, false, nil
+	}
+	verdict, ok := f.fused[prURL+"\x00"+targetSHA]
+	return verdict, ok, nil
+}
+
 type fakeReducer struct {
 	outcome    lifecycle.ReviewDeliveryOutcome
 	err        error
@@ -114,6 +136,29 @@ func (f *fakeReducer) ApplyReviewBatch(_ context.Context, _ domain.SessionID, ba
 	return f.outcome, f.err
 }
 
+type fakeTestGate struct {
+	baselines []domain.ReviewRun
+	fused     map[string]testgate.FusedVerdict
+	err       error
+	calls     []domain.ReviewRun
+}
+
+func (f *fakeTestGate) StartBaseline(_ context.Context, run domain.ReviewRun) {
+	f.baselines = append(f.baselines, run)
+}
+
+func (f *fakeTestGate) RunAfterReviewSubmit(_ context.Context, run domain.ReviewRun) (testgate.FusedVerdict, bool, error) {
+	f.calls = append(f.calls, run)
+	if f.err != nil {
+		return testgate.FusedVerdict{}, false, f.err
+	}
+	if f.fused == nil {
+		return testgate.FusedVerdict{}, false, nil
+	}
+	verdict, ok := f.fused[run.ID]
+	return verdict, ok, nil
+}
+
 func TestSubmitPersistsThenAppliesThenStampsDelivered(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	st := &fakeStore{ok: true, run: domain.ReviewRun{ID: "run-1", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning}}
@@ -132,6 +177,177 @@ func TestSubmitPersistsThenAppliesThenStampsDelivered(t *testing.T) {
 	}
 	if run.Status != domain.ReviewRunDelivered || run.DeliveredAt == nil || !run.DeliveredAt.Equal(now) {
 		t.Fatalf("run not stamped delivered: %+v", run)
+	}
+}
+
+func TestSubmitPersistsStructuredFindingsAndSuppressesRuntimeApprovedDelivery(t *testing.T) {
+	st := &fakeStore{ok: true, run: domain.ReviewRun{ID: "run-1", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning}}
+	reducer := &fakeReducer{outcome: lifecycle.ReviewDeliverySent}
+	gate := &fakeTestGate{fused: map[string]testgate.FusedVerdict{
+		"run-1": {
+			Outcome: testgate.FusedOutcomeApproved,
+			Summary: "runtime refuted the finding",
+			Findings: []testgate.FusedFinding{{
+				Source:         testgate.EvidenceSourceTestInfra,
+				RuntimeOutcome: testgate.EvidenceOutcomeRefuted,
+				Blocking:       false,
+			}},
+		},
+	}}
+	svc := New(nil, st, WithLifecycleReducer(reducer), WithTestGate(gate))
+
+	runs, err := svc.SubmitMany(context.Background(), "mer-1", []SubmittedReview{{
+		RunID:   "run-1",
+		Verdict: domain.VerdictChangesRequested,
+		Body:    "fix it",
+		Findings: []testgate.ReviewFinding{{
+			Claim:      "route returns 500",
+			Behavioral: true,
+		}},
+	}})
+	if err != nil {
+		t.Fatalf("SubmitMany: %v", err)
+	}
+	if len(runs) != 1 || runs[0].Status != domain.ReviewRunComplete {
+		t.Fatalf("runs = %+v, want completed but undelivered", runs)
+	}
+	if reducer.calls != 0 || reducer.batchCalls != 0 || st.markCalls != 0 {
+		t.Fatalf("runtime-approved review should not deliver: calls=%d batch=%d mark=%d", reducer.calls, reducer.batchCalls, st.markCalls)
+	}
+	if len(st.findings) != 1 || st.findings[0].ID == "" || st.findings[0].Title == "" || st.findings[0].RunID != "run-1" {
+		t.Fatalf("findings = %+v", st.findings)
+	}
+}
+
+func TestSubmitApprovedButFusedAppFailureDeliversRuntimeFeedback(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	st := &fakeStore{ok: true, run: domain.ReviewRun{ID: "run-1", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning}}
+	reducer := &fakeReducer{outcome: lifecycle.ReviewDeliverySent}
+	gate := &fakeTestGate{fused: map[string]testgate.FusedVerdict{
+		"run-1": {
+			Outcome:  testgate.FusedOutcomeAppFailed,
+			Blocking: true,
+			Summary:  "baseline smoke failed",
+			Findings: []testgate.FusedFinding{{Title: "app does not boot", Summary: "Electron exited 1", Blocking: true}},
+		},
+	}}
+	svc := New(nil, st, WithLifecycleReducer(reducer), WithTestGate(gate), WithClock(func() time.Time { return now }))
+
+	runs, err := svc.SubmitMany(context.Background(), "mer-1", []SubmittedReview{{RunID: "run-1", Verdict: domain.VerdictApproved}})
+	if err != nil {
+		t.Fatalf("SubmitMany: %v", err)
+	}
+	if reducer.calls != 1 || reducer.got.Verdict != domain.VerdictChangesRequested || !strings.Contains(reducer.got.Body, "AO test gate") {
+		t.Fatalf("reducer result = %+v calls=%d", reducer.got, reducer.calls)
+	}
+	if len(runs) != 1 || runs[0].Status != domain.ReviewRunDelivered || runs[0].DeliveredAt == nil || !runs[0].DeliveredAt.Equal(now) {
+		t.Fatalf("runs = %+v, want delivered", runs)
+	}
+}
+
+func TestSubmitChangesRequestedWithoutRuntimeRefutationStillDelivers(t *testing.T) {
+	st := &fakeStore{ok: true, run: domain.ReviewRun{ID: "run-1", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning}}
+	reducer := &fakeReducer{outcome: lifecycle.ReviewDeliverySent}
+	gate := &fakeTestGate{fused: map[string]testgate.FusedVerdict{
+		"run-1": {Outcome: testgate.FusedOutcomeApproved, Summary: "baseline passed"},
+	}}
+	svc := New(nil, st, WithLifecycleReducer(reducer), WithTestGate(gate))
+
+	runs, err := svc.SubmitMany(context.Background(), "mer-1", []SubmittedReview{{
+		RunID:   "run-1",
+		Verdict: domain.VerdictChangesRequested,
+		Body:    "legacy reviewer body",
+	}})
+	if err != nil {
+		t.Fatalf("SubmitMany: %v", err)
+	}
+	if reducer.calls != 1 || reducer.got.Body != "legacy reviewer body" || reducer.got.Verdict != domain.VerdictChangesRequested {
+		t.Fatalf("reducer result = %+v calls=%d, want original changes_requested delivery", reducer.got, reducer.calls)
+	}
+	if len(runs) != 1 || runs[0].Status != domain.ReviewRunDelivered {
+		t.Fatalf("runs = %+v, want delivered", runs)
+	}
+}
+
+func TestSubmitFusedMixedFindingsDeliversOnlyBlockingFindings(t *testing.T) {
+	st := &fakeStore{ok: true, run: domain.ReviewRun{ID: "run-1", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning}}
+	reducer := &fakeReducer{outcome: lifecycle.ReviewDeliverySent}
+	gate := &fakeTestGate{fused: map[string]testgate.FusedVerdict{
+		"run-1": {
+			Outcome: testgate.FusedOutcomeChangesRequested,
+			Findings: []testgate.FusedFinding{
+				{Title: "false alarm", Summary: "targeted repro returned 200", Source: testgate.EvidenceSourceTestInfra, RuntimeOutcome: testgate.EvidenceOutcomeRefuted, Blocking: false},
+				{Title: "real failure", Summary: "targeted repro returned 500", Source: testgate.EvidenceSourceTestInfra, RuntimeOutcome: testgate.EvidenceOutcomeConfirmed, Blocking: true},
+			},
+		},
+	}}
+	svc := New(nil, st, WithLifecycleReducer(reducer), WithTestGate(gate))
+
+	if _, err := svc.SubmitMany(context.Background(), "mer-1", []SubmittedReview{{
+		RunID:          "run-1",
+		Verdict:        domain.VerdictChangesRequested,
+		Body:           "false alarm\nreal failure",
+		GithubReviewID: "987",
+		Findings: []testgate.ReviewFinding{
+			{ID: "finding-1", Title: "false alarm", Behavioral: true},
+			{ID: "finding-2", Title: "real failure", Behavioral: true},
+		},
+	}}); err != nil {
+		t.Fatalf("SubmitMany: %v", err)
+	}
+	if reducer.calls != 1 {
+		t.Fatalf("reducer calls = %d, want 1", reducer.calls)
+	}
+	if strings.Contains(reducer.got.Body, "false alarm") {
+		t.Fatalf("delivery body leaked refuted finding: %q", reducer.got.Body)
+	}
+	if reducer.got.GithubReviewID != "" {
+		t.Fatalf("fused delivery should not forward review id for refuted comments, got %q", reducer.got.GithubReviewID)
+	}
+	if !strings.Contains(reducer.got.Body, "real failure") || !strings.Contains(reducer.got.Body, "AO test gate") {
+		t.Fatalf("delivery body = %q, want blocking fused finding", reducer.got.Body)
+	}
+}
+
+func TestSubmitManyNamespacesReviewerFindingIDsByRun(t *testing.T) {
+	st := &fakeStore{
+		ok: true,
+		batchRuns: []domain.ReviewRun{
+			{ID: "run-1", SessionID: "mer-1", BatchID: "batch-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning},
+			{ID: "run-2", SessionID: "mer-1", BatchID: "batch-1", PRURL: "pr2", TargetSHA: "sha2", Status: domain.ReviewRunRunning},
+		},
+	}
+	svc := New(nil, st)
+
+	if _, err := svc.SubmitMany(context.Background(), "mer-1", []SubmittedReview{
+		{
+			RunID:   "run-1",
+			Verdict: domain.VerdictChangesRequested,
+			Body:    "fix pr1",
+			Findings: []testgate.ReviewFinding{{
+				ID:         "finding-1",
+				Title:      "shared local id",
+				Behavioral: true,
+			}},
+		},
+		{
+			RunID:   "run-2",
+			Verdict: domain.VerdictChangesRequested,
+			Body:    "fix pr2",
+			Findings: []testgate.ReviewFinding{{
+				ID:         "finding-1",
+				Title:      "shared local id",
+				Behavioral: true,
+			}},
+		},
+	}); err != nil {
+		t.Fatalf("SubmitMany: %v", err)
+	}
+	if got := st.findingsByRun["run-1"][0].ID; got != "run-1:finding-1" {
+		t.Fatalf("run-1 finding id = %q, want scoped id", got)
+	}
+	if got := st.findingsByRun["run-2"][0].ID; got != "run-2:finding-1" {
+		t.Fatalf("run-2 finding id = %q, want scoped id", got)
 	}
 }
 

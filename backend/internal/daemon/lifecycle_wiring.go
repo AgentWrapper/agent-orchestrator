@@ -2,9 +2,12 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
@@ -25,6 +28,7 @@ import (
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
+	"github.com/aoagents/agent-orchestrator/backend/internal/testgate"
 )
 
 type notificationSink interface {
@@ -211,8 +215,42 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		Projects: store,
 		Launcher: reviewcore.NewLauncher(reviewers, runtime, cfg.DataDir),
 	})
-	reviewSvc := reviewsvc.New(reviewEngine, store, reviewsvc.WithLifecycleReducer(lcm))
+	testGate := testgate.NewManager(testgate.ManagerDeps{
+		Store:  store,
+		Runner: testGateRunnerFromEnv(log),
+		Logger: log,
+	})
+	reviewSvc := reviewsvc.New(reviewEngine, store, reviewsvc.WithLifecycleReducer(lcm), reviewsvc.WithTestGate(testGate))
 	return sessionSvc, reviewSvc, mgr, nil
+}
+
+func testGateRunnerFromEnv(log *slog.Logger) testgate.Runner {
+	command := strings.TrimSpace(os.Getenv("AO_TEST_GATE_COMMAND"))
+	if command == "" {
+		return testgate.NotConfiguredRunner{}
+	}
+	args := []string{}
+	if raw := strings.TrimSpace(os.Getenv("AO_TEST_GATE_ARGS")); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &args); err != nil {
+			if log != nil {
+				log.Warn("testgate command disabled: AO_TEST_GATE_ARGS must be a JSON string array", "err", err)
+			}
+			return testgate.NotConfiguredRunner{Summary: "runtime verification command is misconfigured"}
+		}
+	}
+	timeout := 20 * time.Minute
+	if raw := strings.TrimSpace(os.Getenv("AO_TEST_GATE_TIMEOUT")); raw != "" {
+		if parsed, err := time.ParseDuration(raw); err == nil && parsed > 0 {
+			timeout = parsed
+		} else if log != nil {
+			log.Warn("testgate command timeout ignored: AO_TEST_GATE_TIMEOUT must be a positive duration", "value", raw)
+		}
+	}
+	return testgate.NewCommandRunner(testgate.CommandRunnerOptions{
+		Command: command,
+		Args:    args,
+		Timeout: timeout,
+	})
 }
 
 // runtimeMessageSender is the narrow part of the concrete runtime needed by

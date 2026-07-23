@@ -7,12 +7,14 @@ package review
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	reviewcore "github.com/aoagents/agent-orchestrator/backend/internal/review"
+	"github.com/aoagents/agent-orchestrator/backend/internal/testgate"
 )
 
 // ErrInvalid and ErrNotFound re-export the engine sentinels so the HTTP
@@ -37,6 +39,7 @@ type Service struct {
 	engine    *reviewcore.Engine
 	store     Store
 	lifecycle Reducer
+	testGate  TestGate
 	clock     func() time.Time
 }
 
@@ -48,6 +51,8 @@ type Store interface {
 	UpdateReviewRunResult(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string) (bool, error)
 	MarkReviewRunDelivered(ctx context.Context, id string, deliveredAt time.Time) (bool, error)
 	ListPRsBySession(ctx context.Context, id domain.SessionID) ([]domain.PullRequest, error)
+	ReplaceReviewFindings(ctx context.Context, reviewRunID string, findings []testgate.ReviewFinding, createdAt time.Time) error
+	GetFusedVerdict(ctx context.Context, sessionID domain.SessionID, prURL, targetSHA string) (testgate.FusedVerdict, bool, error)
 }
 
 // Reducer is the lifecycle reaction boundary used after a review result has
@@ -57,12 +62,24 @@ type Reducer interface {
 	ApplyReviewBatch(ctx context.Context, workerID domain.SessionID, batchID string, results []lifecycle.ReviewResult) (lifecycle.ReviewDeliveryOutcome, error)
 }
 
+// TestGate is the runtime verification boundary that fuses reviewer findings
+// with pod evidence.
+type TestGate interface {
+	StartBaseline(ctx context.Context, run domain.ReviewRun)
+	RunAfterReviewSubmit(ctx context.Context, run domain.ReviewRun) (testgate.FusedVerdict, bool, error)
+}
+
 // Option customizes the review service.
 type Option func(*Service)
 
 // WithLifecycleReducer wires post-submit review delivery through lifecycle.
 func WithLifecycleReducer(r Reducer) Option {
 	return func(s *Service) { s.lifecycle = r }
+}
+
+// WithTestGate wires review results through runtime verification.
+func WithTestGate(g TestGate) Option {
+	return func(s *Service) { s.testGate = g }
 }
 
 // WithClock overrides the service clock for tests.
@@ -85,7 +102,16 @@ func New(engine *reviewcore.Engine, store Store, opts ...Option) *Service {
 
 // Trigger starts (or reuses) a review pass for a worker's PR.
 func (s *Service) Trigger(ctx context.Context, workerID domain.SessionID) (reviewcore.TriggerResult, error) {
-	return s.engine.Trigger(ctx, workerID)
+	res, err := s.engine.Trigger(ctx, workerID)
+	if err != nil {
+		return reviewcore.TriggerResult{}, err
+	}
+	if s.testGate != nil {
+		for _, run := range res.CreatedRuns {
+			s.testGate.StartBaseline(ctx, run)
+		}
+	}
+	return res, nil
 }
 
 // Cancel stops the live reviewer pane and marks running review passes as failed.
@@ -99,6 +125,7 @@ type SubmittedReview struct {
 	Verdict        domain.ReviewVerdict
 	Body           string
 	GithubReviewID string
+	Findings       []testgate.ReviewFinding
 }
 
 // Submit records a reviewer's result for a specific worker review pass.
@@ -132,17 +159,27 @@ func (s *Service) SubmitMany(ctx context.Context, workerID domain.SessionID, rev
 		return nil, fmt.Errorf("review service store is not configured")
 	}
 	runs := make([]domain.ReviewRun, 0, len(reviews))
+	fusedByRun := make(map[string]testgate.FusedVerdict, len(reviews))
 	for _, review := range reviews {
 		run, err := s.submitOne(ctx, workerID, review)
 		if err != nil {
 			return nil, err
 		}
 		runs = append(runs, run)
+		if s.testGate != nil {
+			fused, ok, err := s.testGate.RunAfterReviewSubmit(ctx, run)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				fusedByRun[run.ID] = fused
+			}
+		}
 	}
 	if s.lifecycle == nil {
 		return runs, nil
 	}
-	delivered, err := s.deliverSubmitted(ctx, workerID, runs)
+	delivered, err := s.deliverSubmitted(ctx, workerID, runs, fusedByRun)
 	if err != nil {
 		return nil, err
 	}
@@ -211,18 +248,31 @@ func (s *Service) submitOne(ctx context.Context, workerID domain.SessionID, revi
 	default:
 		return domain.ReviewRun{}, fmt.Errorf("%w: review run %q is not running", ErrInvalid, runID)
 	}
+	if review.Findings != nil {
+		if err := s.store.ReplaceReviewFindings(ctx, run.ID, normalizeFindings(run.ID, review.Findings), s.clock()); err != nil {
+			return domain.ReviewRun{}, err
+		}
+	}
 	return run, nil
 }
 
-func (s *Service) deliverSubmitted(ctx context.Context, workerID domain.SessionID, runs []domain.ReviewRun) ([]domain.ReviewRun, error) {
-	deliverable, err := s.deliverableRuns(ctx, workerID, runs)
+type deliveryCandidate struct {
+	run    domain.ReviewRun
+	result lifecycle.ReviewResult
+}
+
+func (s *Service) deliverSubmitted(ctx context.Context, workerID domain.SessionID, runs []domain.ReviewRun, fusedByRun map[string]testgate.FusedVerdict) ([]domain.ReviewRun, error) {
+	deliverable, err := s.deliverableRuns(ctx, workerID, runs, fusedByRun)
 	if err != nil {
 		return nil, err
 	}
 	if len(deliverable) == 0 {
 		return nil, nil
 	}
-	results := reviewResults(workerID, deliverable)
+	results := make([]lifecycle.ReviewResult, 0, len(deliverable))
+	for _, candidate := range deliverable {
+		results = append(results, candidate.result)
+	}
 	var outcome lifecycle.ReviewDeliveryOutcome
 	if len(results) == 1 && results[0].BatchID == "" {
 		outcome, err = s.lifecycle.ApplyReviewResult(ctx, workerID, results[0])
@@ -237,7 +287,8 @@ func (s *Service) deliverSubmitted(ctx context.Context, workerID domain.SessionI
 	}
 	deliveredAt := s.clock()
 	delivered := make([]domain.ReviewRun, 0, len(deliverable))
-	for _, run := range deliverable {
+	for _, candidate := range deliverable {
+		run := candidate.run
 		updated, err := s.store.MarkReviewRunDelivered(ctx, run.ID, deliveredAt)
 		if err != nil {
 			return nil, err
@@ -251,20 +302,38 @@ func (s *Service) deliverSubmitted(ctx context.Context, workerID domain.SessionI
 	return delivered, nil
 }
 
-func (s *Service) deliverableRuns(ctx context.Context, workerID domain.SessionID, runs []domain.ReviewRun) ([]domain.ReviewRun, error) {
+func (s *Service) deliverableRuns(ctx context.Context, workerID domain.SessionID, runs []domain.ReviewRun, fusedByRun map[string]testgate.FusedVerdict) ([]deliveryCandidate, error) {
 	currentHeads, err := s.currentHeadsByPR(ctx, workerID)
 	if err != nil {
 		return nil, err
 	}
-	deliverable := make([]domain.ReviewRun, 0, len(runs))
+	deliverable := make([]deliveryCandidate, 0, len(runs))
 	for _, run := range runs {
-		if run.Status != domain.ReviewRunComplete || run.Verdict != domain.VerdictChangesRequested || run.DeliveredAt != nil {
+		resultRun := run
+		if fused, ok := fusedByRun[run.ID]; ok {
+			switch fused.Outcome {
+			case testgate.FusedOutcomeApproved:
+				if run.Verdict != domain.VerdictChangesRequested || hasRuntimeRefutation(fused) {
+					continue
+				}
+			case testgate.FusedOutcomeChangesRequested:
+				resultRun.Body = fusedDeliveryBody(run.Body, fused)
+				if suppressGithubReviewID(fused) {
+					resultRun.GithubReviewID = ""
+				}
+			case testgate.FusedOutcomeAppFailed:
+				resultRun.Verdict = domain.VerdictChangesRequested
+				resultRun.Body = fusedDeliveryBody(run.Body, fused)
+				resultRun.GithubReviewID = ""
+			}
+		}
+		if run.Status != domain.ReviewRunComplete || resultRun.Verdict != domain.VerdictChangesRequested || run.DeliveredAt != nil {
 			continue
 		}
 		if run.BatchID != "" && currentHeads[run.PRURL] != run.TargetSHA {
 			continue
 		}
-		deliverable = append(deliverable, run)
+		deliverable = append(deliverable, deliveryCandidate{run: run, result: reviewResult(workerID, resultRun)})
 	}
 	return deliverable, nil
 }
@@ -272,19 +341,23 @@ func (s *Service) deliverableRuns(ctx context.Context, workerID domain.SessionID
 func reviewResults(workerID domain.SessionID, runs []domain.ReviewRun) []lifecycle.ReviewResult {
 	results := make([]lifecycle.ReviewResult, 0, len(runs))
 	for _, run := range runs {
-		results = append(results, lifecycle.ReviewResult{
-			RunID:          run.ID,
-			BatchID:        run.BatchID,
-			WorkerID:       workerID,
-			PRURL:          run.PRURL,
-			TargetSHA:      run.TargetSHA,
-			Verdict:        run.Verdict,
-			Body:           run.Body,
-			GithubReviewID: run.GithubReviewID,
-			DeliveredAt:    run.DeliveredAt,
-		})
+		results = append(results, reviewResult(workerID, run))
 	}
 	return results
+}
+
+func reviewResult(workerID domain.SessionID, run domain.ReviewRun) lifecycle.ReviewResult {
+	return lifecycle.ReviewResult{
+		RunID:          run.ID,
+		BatchID:        run.BatchID,
+		WorkerID:       workerID,
+		PRURL:          run.PRURL,
+		TargetSHA:      run.TargetSHA,
+		Verdict:        run.Verdict,
+		Body:           run.Body,
+		GithubReviewID: run.GithubReviewID,
+		DeliveredAt:    run.DeliveredAt,
+	}
 }
 
 func (s *Service) currentHeadsByPR(ctx context.Context, workerID domain.SessionID) (map[string]string, error) {
@@ -301,5 +374,94 @@ func (s *Service) currentHeadsByPR(ctx context.Context, workerID domain.SessionI
 
 // List returns a worker's review state.
 func (s *Service) List(ctx context.Context, workerID domain.SessionID) (reviewcore.SessionReviews, error) {
-	return s.engine.List(ctx, workerID)
+	res, err := s.engine.List(ctx, workerID)
+	if err != nil {
+		return reviewcore.SessionReviews{}, err
+	}
+	if s.store == nil {
+		return res, nil
+	}
+	for i := range res.Reviews {
+		verdict, ok, err := s.store.GetFusedVerdict(ctx, workerID, res.Reviews[i].PRURL, res.Reviews[i].TargetSHA)
+		if err != nil {
+			return reviewcore.SessionReviews{}, err
+		}
+		if ok {
+			res.Reviews[i].FusedVerdict = &verdict
+		}
+	}
+	return res, nil
+}
+
+func normalizeFindings(runID string, findings []testgate.ReviewFinding) []testgate.ReviewFinding {
+	out := make([]testgate.ReviewFinding, 0, len(findings))
+	for i, finding := range findings {
+		finding.ID = normalizeFindingID(runID, finding.ID, i)
+		finding.RunID = runID
+		if strings.TrimSpace(finding.Title) == "" {
+			finding.Title = firstNonEmpty(finding.Claim, finding.FailureScenario, fmt.Sprintf("Finding %d", i+1))
+		}
+		out = append(out, finding)
+	}
+	return out
+}
+
+func normalizeFindingID(runID, id string, index int) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return fmt.Sprintf("%s:finding:%d", runID, index+1)
+	}
+	prefix := runID + ":"
+	if strings.HasPrefix(id, prefix) {
+		return id
+	}
+	return prefix + id
+}
+
+func fusedDeliveryBody(reviewBody string, fused testgate.FusedVerdict) string {
+	var b strings.Builder
+	if fused.Outcome == testgate.FusedOutcomeNeutral && strings.TrimSpace(reviewBody) != "" {
+		b.WriteString(reviewBody)
+		b.WriteString("\n\n")
+	}
+	b.WriteString("AO test gate:")
+	if fused.Summary != "" {
+		b.WriteString("\n")
+		b.WriteString(fused.Summary)
+	}
+	for _, finding := range fused.Findings {
+		if !finding.Blocking {
+			continue
+		}
+		title := firstNonEmpty(finding.Title, finding.Claim, "Runtime finding")
+		b.WriteString("\n- ")
+		b.WriteString(title)
+		if finding.Summary != "" {
+			b.WriteString(": ")
+			b.WriteString(finding.Summary)
+		}
+	}
+	return b.String()
+}
+
+func hasRuntimeRefutation(fused testgate.FusedVerdict) bool {
+	for _, finding := range fused.Findings {
+		if finding.Source == testgate.EvidenceSourceTestInfra && finding.RuntimeOutcome == testgate.EvidenceOutcomeRefuted && !finding.Blocking {
+			return true
+		}
+	}
+	return false
+}
+
+func suppressGithubReviewID(fused testgate.FusedVerdict) bool {
+	return fused.Outcome == testgate.FusedOutcomeAppFailed || hasRuntimeRefutation(fused)
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }

@@ -21,6 +21,20 @@ type ChangeLog struct {
 	CreatedAt time.Time
 }
 
+type FusedVerdict struct {
+	ID           string
+	SessionID    string
+	ReviewRunID  string
+	TestRunID    string
+	PRURL        string
+	TargetSha    string
+	Outcome      string
+	Blocking     int64
+	Summary      string
+	FindingsJson string
+	CreatedAt    time.Time
+}
+
 type Notification struct {
 	ID        string
 	SessionID domain.SessionID
@@ -144,6 +158,19 @@ type Review struct {
 	UpdatedAt        time.Time
 }
 
+type ReviewFinding struct {
+	ID              string
+	ReviewRunID     string
+	File            string
+	Line            int64
+	Severity        string
+	Title           string
+	Claim           string
+	FailureScenario string
+	Behavioral      int64
+	CreatedAt       time.Time
+}
+
 type ReviewRun struct {
 	ID             string
 	ReviewID       string
@@ -224,6 +251,31 @@ type TelemetryEvent struct {
 	SessionID   sql.NullString
 	RequestID   string
 	PayloadJson string
+}
+
+type TestGateEvidence struct {
+	ID            string
+	TestRunID     string
+	FindingID     string
+	Source        string
+	Outcome       string
+	Summary       string
+	ArtifactsJson string
+	CreatedAt     time.Time
+}
+
+type TestGateRun struct {
+	ID             string
+	SessionID      string
+	ReviewRunID    string
+	PRURL          string
+	TargetSha      string
+	Kind           string
+	Classification string
+	Summary        string
+	ArtifactsJson  string
+	PodHandleID    string
+	CreatedAt      time.Time
 }
 
 type WorkerIdleEvent struct {
