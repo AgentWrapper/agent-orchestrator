@@ -118,7 +118,6 @@ type BrowserEntry = {
 	sourceURL: string;
 	navigationEpoch: number;
 	programmaticNavigationEpoch: number | null;
-	programmaticNavigationBypass: { epoch: number; url: string } | null;
 	destroyed: boolean;
 	annotationEnabled: boolean;
 };
@@ -253,7 +252,6 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			sourceURL: "",
 			navigationEpoch: 0,
 			programmaticNavigationEpoch: null,
-			programmaticNavigationBypass: null,
 			destroyed: false,
 			annotationEnabled: false,
 		};
@@ -320,7 +318,6 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				throw new Error(BROWSER_ERROR.urlUnsupported);
 			}
 			try {
-				entry.programmaticNavigationBypass = { epoch: navigationEpoch, url: resolvedURL.href };
 				await entry.view.webContents.loadURL(resolvedURL.href);
 			} catch (err) {
 				if (entries.get(viewId) !== entry) return emptyNavState(viewId);
@@ -341,9 +338,6 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			return pushNavState(options, entry);
 		} finally {
 			if (entry.programmaticNavigationEpoch === navigationEpoch) entry.programmaticNavigationEpoch = null;
-			if (entry.programmaticNavigationBypass?.epoch === navigationEpoch) {
-				entry.programmaticNavigationBypass = null;
-			}
 		}
 	}
 
@@ -362,7 +356,6 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		entry.view.setBounds(OFFSCREEN_BOUNDS);
 		forgetIfFocused(viewId);
 		try {
-			entry.programmaticNavigationBypass = { epoch: navigationEpoch, url: "about:blank" };
 			await entry.view.webContents.loadURL("about:blank");
 			if (entries.get(viewId) !== entry) return emptyNavState(viewId);
 			if (entry.navigationEpoch !== navigationEpoch) return entry.state;
@@ -371,9 +364,6 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			return pushNavState(options, entry);
 		} finally {
 			if (entry.programmaticNavigationEpoch === navigationEpoch) entry.programmaticNavigationEpoch = null;
-			if (entry.programmaticNavigationBypass?.epoch === navigationEpoch) {
-				entry.programmaticNavigationBypass = null;
-			}
 		}
 	};
 
@@ -395,7 +385,6 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		entry.destroyed = true;
 		entry.navigationEpoch += 1;
 		entry.programmaticNavigationEpoch = null;
-		entry.programmaticNavigationBypass = null;
 		entries.delete(viewId);
 		viewIdsByWebContentsId.delete(entry.view.webContents.id);
 		forgetIfFocused(viewId);
@@ -669,15 +658,9 @@ function hardenWebContents(
 		return { action: "deny" };
 	});
 
-	const routeNavigation = (event: Electron.Event, url: string) => {
+	const routeNavigation = (eventName: "will-navigate" | "will-redirect", event: Electron.Event, url: string) => {
 		if (entry.destroyed) {
 			event.preventDefault();
-			return;
-		}
-		const bypass = entry.programmaticNavigationBypass;
-		if (bypass?.url === url) {
-			entry.programmaticNavigationBypass = null;
-			if (bypass.epoch !== entry.navigationEpoch) event.preventDefault();
 			return;
 		}
 		const sourceURL = normalizedAllowedURL(url);
@@ -708,17 +691,18 @@ function hardenWebContents(
 			return;
 		}
 		if (resolvedURL === sourceURL) {
-			entry.navigationEpoch += 1;
-			entry.programmaticNavigationEpoch = null;
-			entry.programmaticNavigationBypass = null;
-			entry.sourceURL = sourceURL;
+			if (eventName === "will-navigate") {
+				entry.navigationEpoch += 1;
+				entry.programmaticNavigationEpoch = null;
+				entry.sourceURL = sourceURL;
+			}
 			return;
 		}
 		event.preventDefault();
 		loadInView(sourceURL, resolvedURL);
 	};
-	contents.on("will-navigate", routeNavigation);
-	contents.on("will-redirect", routeNavigation);
+	contents.on("will-navigate", (event, url) => routeNavigation("will-navigate", event, url));
+	contents.on("will-redirect", (event, url) => routeNavigation("will-redirect", event, url));
 }
 
 function wireNavEvents(contents: BrowserWebContents, options: BrowserViewHostOptions, entry: BrowserEntry): void {

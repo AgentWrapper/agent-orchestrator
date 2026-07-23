@@ -719,27 +719,6 @@ describe("Remote in-page preview navigation", () => {
 		expect(webContents.loadURL).not.toHaveBeenCalled();
 	});
 
-	it("uses a one-shot bypass for async resolved navigation and does not recurse", async () => {
-		const opaque = "http://token.ao-preview.localhost:4100/page";
-		const resolvePreviewURL = vi.fn(async () => opaque);
-		const { emitWebContents, invoke, setCurrentURL, webContents } = setupHost({ resolvePreviewURL });
-		await invoke("browser:ensure", "session-one");
-		const recursiveEvent = { preventDefault: vi.fn() };
-		vi.mocked(webContents.loadURL).mockImplementationOnce(async (url: string) => {
-			setCurrentURL(url);
-			emitWebContents("will-navigate", recursiveEvent, url);
-		});
-		const sourceEvent = { preventDefault: vi.fn() };
-
-		emitWebContents("will-navigate", sourceEvent, "http://localhost:3000/page");
-		await vi.waitFor(() => expect(webContents.loadURL).toHaveBeenCalledWith(opaque));
-
-		expect(sourceEvent.preventDefault).toHaveBeenCalledOnce();
-		expect(recursiveEvent.preventDefault).not.toHaveBeenCalled();
-		expect(resolvePreviewURL).toHaveBeenCalledOnce();
-		expect(webContents.loadURL).toHaveBeenCalledOnce();
-	});
-
 	it("does not let an older async in-page resolution overwrite a newer direct navigation", async () => {
 		const pending = deferred<string>();
 		const oldSource = "http://localhost:3000/old";
@@ -763,33 +742,37 @@ describe("Remote in-page preview navigation", () => {
 		expect(webContents.loadURL).not.toHaveBeenCalled();
 	});
 
-	it("blocks a stale programmatic bypass after a newer navigation starts", async () => {
-		const oldLoad = deferred<void>();
-		const newResolution = deferred<string>();
-		const oldSource = "http://localhost:3000/old";
-		const newSource = "http://localhost:3000/new";
-		const oldOpaque = "http://old.ao-preview.localhost:4100/old";
-		const newOpaque = "http://new.ao-preview.localhost:4100/new";
-		const resolvePreviewURL = vi.fn((_ownerId: string, _sessionId: string, url: string) => {
-			if (url === oldSource) return oldOpaque;
-			if (url === newSource) return newResolution.promise;
-			return url;
+	it("keeps a pending programmatic navigation current across an identity redirect", async () => {
+		const load = deferred<void>();
+		const source = "http://localhost:3000/start";
+		const initialOpaque = "http://token.ao-preview.localhost:4100/start";
+		const redirectOpaque = "http://token.ao-preview.localhost:4100/redirected";
+		const redirectSource = "http://localhost:3000/redirected";
+		const resolvePreviewURL = vi.fn((_ownerId: string, _sessionId: string, url: string) =>
+			url === source ? initialOpaque : url,
+		);
+		const originalPreviewURL = vi.fn((url: string) => (url === redirectOpaque ? redirectSource : url));
+		const { emitWebContents, invoke, setCurrentURL, webContents } = setupHost({
+			resolvePreviewURL,
+			originalPreviewURL,
 		});
-		const { emitWebContents, invoke, webContents } = setupHost({ resolvePreviewURL });
 		const ensured = await invoke("browser:ensure", "session-one");
-		vi.mocked(webContents.loadURL).mockImplementationOnce(async () => oldLoad.promise);
-		const oldNavigation = invoke("browser:navigate", { viewId: ensured.viewId, url: oldSource });
-		await vi.waitFor(() => expect(webContents.loadURL).toHaveBeenCalledWith(oldOpaque));
-		const newNavigation = invoke("browser:navigate", { viewId: ensured.viewId, url: newSource });
-		await vi.waitFor(() => expect(resolvePreviewURL).toHaveBeenCalledWith(ensured.viewId, "session-one", newSource));
-		const staleEvent = { preventDefault: vi.fn() };
+		vi.mocked(webContents.loadURL).mockImplementationOnce(async (url: string) => {
+			setCurrentURL(url);
+			await load.promise;
+		});
+		const navigation = invoke("browser:navigate", { viewId: ensured.viewId, url: source });
+		await vi.waitFor(() => expect(webContents.loadURL).toHaveBeenCalledWith(initialOpaque));
+		const redirectEvent = { preventDefault: vi.fn() };
 
-		emitWebContents("will-navigate", staleEvent, oldOpaque);
-		newResolution.resolve(newOpaque);
-		oldLoad.resolve(undefined);
-		await Promise.all([oldNavigation, newNavigation]);
+		emitWebContents("will-redirect", redirectEvent, redirectOpaque);
+		setCurrentURL(redirectOpaque);
+		load.resolve(undefined);
+		const state = await navigation;
 
-		expect(staleEvent.preventDefault).toHaveBeenCalledOnce();
+		expect(redirectEvent.preventDefault).not.toHaveBeenCalled();
+		expect(webContents.loadURL).toHaveBeenCalledOnce();
+		expect(state.url).toBe(redirectSource);
 	});
 
 	it("drops an async resolved in-page navigation after destroy", async () => {
