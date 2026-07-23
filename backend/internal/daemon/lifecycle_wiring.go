@@ -42,6 +42,11 @@ type lifecycleStack struct {
 	scmDone     <-chan struct{}
 	trackerDone <-chan struct{}
 	sweepDone   <-chan struct{}
+	// reconcilerDone is the terminal-resource reconciler's drain channel. Assigned
+	// after boot Reconcile completes (daemon.go); nil until then, so Stop must
+	// nil-guard it. It is drained BEFORE the CDC pipe stops so the reconciler
+	// unsubscribes before a late Publish could send on its closed queue.
+	reconcilerDone <-chan struct{}
 }
 
 // workerIdleSweepInterval is the low-frequency recovery cadence that redelivers
@@ -114,6 +119,11 @@ func (l *lifecycleStack) Stop() {
 	if l.trackerDone != nil {
 		<-l.trackerDone
 	}
+	// Drained before the CDC pipe stops (daemon shutdown order) so the reconciler
+	// unsubscribes before a late Publish could send on its closed queue.
+	if l.reconcilerDone != nil {
+		<-l.reconcilerDone
+	}
 }
 
 // sessionLifecycle is the narrow surface of sessionmanager.Manager used for
@@ -127,6 +137,10 @@ func (l *lifecycleStack) Stop() {
 type sessionLifecycle interface {
 	Reconcile(ctx context.Context) error
 	RestoreAll(ctx context.Context) error
+	// FinalizeTerminalSession is the terminal-resource reconciler's per-session
+	// unit of work (release a terminated session's runtime + workspace). Exposed
+	// here so the daemon can hand the manager to the reconciler runner.
+	FinalizeTerminalSession(ctx context.Context, id domain.SessionID) error
 }
 
 // startSession builds the controller-facing session service: a session manager
@@ -158,6 +172,21 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		Scratch:  scratchWS,
 		Projects: store,
 	})
+	// Build the review engine before the session manager so the manager can gate
+	// worktree reclaim on a worker's reviewer pane (destroy it + confirm it's gone
+	// before removing the worktree). The engine depends only on the store/launcher,
+	// not on the manager, so there is no construction cycle.
+	reviewers, err := reviewer.NewResolver()
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("reviewer resolver: %w", err)
+	}
+	reviewEngine := reviewcore.New(reviewcore.Deps{
+		Store:    store,
+		Sessions: store,
+		PRs:      store,
+		Projects: store,
+		Launcher: reviewcore.NewLauncher(reviewers, runtime, cfg.DataDir),
+	})
 	mgr := sessionmanager.New(sessionmanager.Deps{
 		Runtime:   runtime,
 		Agents:    agents,
@@ -165,6 +194,7 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		Store:     store,
 		Messenger: messenger,
 		Lifecycle: lcm,
+		Reviewer:  reviewEngine,
 		DataDir:   cfg.DataDir,
 		Logger:    log,
 	})
@@ -199,18 +229,8 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 	// Triggering a review spawns a reviewer over the worker's worktree, resolved
 	// from the reviewer registry (distinct from the worker agent set). The
 	// reviewer posts its review to the PR itself, so the service needs no SCM
-	// writer.
-	reviewers, err := reviewer.NewResolver()
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("reviewer resolver: %w", err)
-	}
-	reviewEngine := reviewcore.New(reviewcore.Deps{
-		Store:    store,
-		Sessions: store,
-		PRs:      store,
-		Projects: store,
-		Launcher: reviewcore.NewLauncher(reviewers, runtime, cfg.DataDir),
-	})
+	// writer. The engine itself was built above (the manager reuses it for the
+	// reviewer-pane teardown gate).
 	reviewSvc := reviewsvc.New(reviewEngine, store, reviewsvc.WithLifecycleReducer(lcm))
 	return sessionSvc, reviewSvc, mgr, nil
 }

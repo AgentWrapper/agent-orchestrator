@@ -88,6 +88,10 @@ func (f *fakeSessionService) Cleanup(context.Context, domain.ProjectID) (session
 	return sessionsvc.CleanupOutcome{}, nil
 }
 
+func (f *fakeSessionService) CleanupSession(context.Context, domain.SessionID) (domain.SessionCleanupRecord, error) {
+	return domain.SessionCleanupRecord{}, nil
+}
+
 func (f *fakeSessionService) Rename(context.Context, domain.SessionID, string) error {
 	return nil
 }

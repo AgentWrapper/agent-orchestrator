@@ -158,6 +158,9 @@ type fakeLauncher struct {
 	cancelled        bool
 	cancelErr        error
 	aliveErr         error
+	tornDown         bool
+	tornDownHandle   string
+	teardownErr      error
 	gotSpec          LaunchSpec
 	gotHandle        string
 	cancelledHandle  string
@@ -192,6 +195,11 @@ func (f *fakeLauncher) Cancel(_ context.Context, handleID string, harness domain
 	f.cancelledHandle = handleID
 	f.cancelledHarness = harness
 	return f.cancelErr
+}
+func (f *fakeLauncher) Teardown(_ context.Context, handleID string) error {
+	f.tornDown = true
+	f.tornDownHandle = handleID
+	return f.teardownErr
 }
 
 func liveWorker() domain.SessionRecord {
@@ -269,6 +277,11 @@ func TestCancelInterruptsReviewerAndCancelsRunningRuns(t *testing.T) {
 	if launcher.cancelledHarness != domain.ReviewerCodex {
 		t.Fatalf("cancel harness = %q, want codex", launcher.cancelledHarness)
 	}
+	// The pane is torn down, not merely interrupted — a cancelled reviewer must
+	// not leak a live pane.
+	if !launcher.tornDown || launcher.tornDownHandle != "review-mer-1" {
+		t.Fatalf("reviewer pane not torn down: tornDown=%v handle=%q", launcher.tornDown, launcher.tornDownHandle)
+	}
 	if len(res.CancelledRuns) != 1 || res.CancelledRuns[0].ID != "run-1" {
 		t.Fatalf("cancelled runs = %+v", res.CancelledRuns)
 	}
@@ -328,6 +341,33 @@ func TestCancelKeepsRunsRunningWhenReviewerCancelFailsAndHandleIsAlive(t *testin
 	}
 	if got := store.runs[0]; got.Status != domain.ReviewRunRunning {
 		t.Fatalf("run should remain running when reviewer is still alive: %+v", got)
+	}
+}
+
+func TestTeardownReviewerDestroysPaneIdempotently(t *testing.T) {
+	launcher := &fakeLauncher{}
+	eng := newEngineForTest(&fakeStore{}, fakeSessions{}, fakePRs{}, fakeProjects{}, launcher)
+
+	// Tears down the deterministic "review-"+workerID pane.
+	if err := eng.TeardownReviewer(context.Background(), "mer-1"); err != nil {
+		t.Fatalf("TeardownReviewer: %v", err)
+	}
+	if !launcher.tornDown || launcher.tornDownHandle != "review-mer-1" {
+		t.Fatalf("pane not torn down: tornDown=%v handle=%q", launcher.tornDown, launcher.tornDownHandle)
+	}
+
+	// Idempotent: a second teardown of an already-gone pane still succeeds.
+	launcher.tornDown = false
+	if err := eng.TeardownReviewer(context.Background(), "mer-1"); err != nil {
+		t.Fatalf("second TeardownReviewer: %v", err)
+	}
+	if !launcher.tornDown {
+		t.Fatal("second teardown should still reach the launcher")
+	}
+
+	// A missing worker id is rejected as invalid input.
+	if err := eng.TeardownReviewer(context.Background(), ""); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("empty worker id err = %v, want ErrInvalid", err)
 	}
 }
 
