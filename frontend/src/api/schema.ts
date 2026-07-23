@@ -818,6 +818,16 @@ export interface components {
             reason: string;
             sessionId: string;
         };
+        ControllersSessionPRReviewEntry: {
+            body?: string;
+            isBot?: boolean;
+            reviewUrl?: string;
+            reviewerId: string;
+            /** Format: date-time */
+            submittedAt: string;
+            /** @enum {string} */
+            verdict: "none" | "approved" | "changes_requested" | "review_required";
+        };
         ControllersSessionView: {
             activity: components["schemas"]["DomainActivity"];
             branch?: string;
@@ -1190,6 +1200,7 @@ export interface components {
             /** @enum {string} */
             decision: "none" | "approved" | "changes_requested" | "review_required";
             hasUnresolvedHumanComments: boolean;
+            reviews?: components["schemas"]["ControllersSessionPRReviewEntry"][];
             unresolvedBy: components["schemas"]["SessionPRUnresolvedReviewer"][];
         };
         SessionPRSummary: {

@@ -55,6 +55,22 @@ type PRReviewSummary struct {
 	Decision                   domain.ReviewDecision
 	HasUnresolvedHumanComments bool
 	UnresolvedBy               []PRUnresolvedReviewer
+	// Reviews is the latest decisive submitted review per reviewer, carrying
+	// the reviewer's summary body so the UI can show a verdict with context.
+	// Inline review comment bodies are deliberately not included here; they
+	// stay folded into UnresolvedBy counts and links.
+	Reviews []PRReviewEntry
+}
+
+// PRReviewEntry is one submitted provider review summary: a reviewer's decisive
+// verdict and the body they submitted with it.
+type PRReviewEntry struct {
+	Reviewer    string
+	Verdict     domain.ReviewDecision
+	Body        string
+	URL         string
+	SubmittedAt time.Time
+	IsBot       bool
 }
 
 // PRUnresolvedReviewer groups unresolved human comments by reviewer.
@@ -200,14 +216,26 @@ func summarizeReview(pr domain.PullRequest, comments []domain.PullRequestComment
 			Line: c.Line,
 		})
 	}
+	latestReviews := latestChangesRequestedReviews(reviews)
 	reviewURLByAuthor := map[string]string{}
-	for reviewer, review := range latestChangesRequestedReviews(reviews) {
+	for reviewer, review := range latestReviews {
 		if _, ok := byReviewer[reviewer]; !ok {
 			order = append(order, reviewer)
 		}
 		reviewURLByAuthor[reviewer] = review.URL
 		isBot[reviewer] = review.IsBot
 	}
+	for reviewer, review := range latestReviews {
+		out.Reviews = append(out.Reviews, PRReviewEntry{
+			Reviewer:    reviewer,
+			Verdict:     reviewOrNone(review.State),
+			Body:        review.Body,
+			URL:         review.URL,
+			SubmittedAt: review.SubmittedAt,
+			IsBot:       review.IsBot,
+		})
+	}
+	sort.Slice(out.Reviews, func(i, j int) bool { return out.Reviews[i].Reviewer < out.Reviews[j].Reviewer })
 	sort.Strings(order)
 	for _, reviewer := range order {
 		out.UnresolvedBy = append(out.UnresolvedBy, PRUnresolvedReviewer{
