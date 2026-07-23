@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, FileText, Maximize2, Minimize2, RefreshCw, Search, X } from "lucide-react";
+import { ChevronDown, ChevronRight, FileText, Maximize2, Minimize2, RefreshCw, Search, WrapText, X } from "lucide-react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { cn } from "../lib/utils";
@@ -44,6 +44,7 @@ export function SessionFilesView({
 }: SessionFilesViewProps) {
 	const queryClient = useQueryClient();
 	const [filter, setFilter] = useState("");
+	const [wrap, setWrap] = useState(false);
 	const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
 	const initializedExpansionFor = useRef<string | null>(null);
 
@@ -152,6 +153,17 @@ export function SessionFilesView({
 					{expandedVisibleCount > 0 ? "Collapse all" : "Expand all"}
 				</Button>
 				<Button
+					aria-label={wrap ? "Disable line wrapping" : "Wrap long lines"}
+					aria-pressed={wrap}
+					className={cn(wrap && "text-accent")}
+					onClick={() => setWrap((current) => !current)}
+					size="icon-sm"
+					type="button"
+					variant="ghost"
+				>
+					<WrapText className="size-icon-sm" aria-hidden="true" />
+				</Button>
+				<Button
 					aria-label="Refresh files"
 					disabled={filesQuery.isFetching}
 					onClick={refresh}
@@ -191,6 +203,7 @@ export function SessionFilesView({
 						onRetry={() => void filesQuery.refetch()}
 						onToggle={toggleFile}
 						sessionId={sessionId}
+						wrap={wrap}
 					/>
 				</div>
 			</div>
@@ -206,6 +219,7 @@ function ReviewFileList({
 	onRetry,
 	onToggle,
 	sessionId,
+	wrap,
 }: {
 	error: Error | null;
 	expandedPaths: Set<string>;
@@ -214,6 +228,7 @@ function ReviewFileList({
 	onRetry: () => void;
 	onToggle: (path: string) => void;
 	sessionId: string;
+	wrap: boolean;
 }) {
 	if (isLoading) {
 		return <PanelMessage>Loading files...</PanelMessage>;
@@ -235,6 +250,7 @@ function ReviewFileList({
 						file={file}
 						onToggle={() => onToggle(file.path)}
 						sessionId={sessionId}
+						wrap={wrap}
 					/>
 				</li>
 			))}
@@ -247,11 +263,13 @@ function ReviewFileCard({
 	file,
 	onToggle,
 	sessionId,
+	wrap,
 }: {
 	expanded: boolean;
 	file: WorkspaceFileSummary;
 	onToggle: () => void;
 	sessionId: string;
+	wrap: boolean;
 }) {
 	const detailQuery = useQuery({
 		queryKey: ["session-workspace-file", sessionId, file.path],
@@ -293,7 +311,7 @@ function ReviewFileCard({
 						</PanelMessage>
 					) : null}
 					{!detailQuery.isPending && !detailQuery.error && detailQuery.data ? (
-						<ReviewDiffBody detail={detailQuery.data} />
+						<ReviewDiffBody detail={detailQuery.data} wrap={wrap} />
 					) : null}
 				</div>
 			) : null}
@@ -310,7 +328,7 @@ async function loadWorkspaceFile(sessionId: string, path: string) {
 	return data;
 }
 
-function ReviewDiffBody({ detail }: { detail: WorkspaceFileDetail }) {
+function ReviewDiffBody({ detail, wrap }: { detail: WorkspaceFileDetail; wrap: boolean }) {
 	if (detail.binary) {
 		return <PanelMessage>Binary file preview is not available.</PanelMessage>;
 	}
@@ -318,7 +336,7 @@ function ReviewDiffBody({ detail }: { detail: WorkspaceFileDetail }) {
 	if (rows.length === 0) {
 		return <PanelMessage>No changes against HEAD.</PanelMessage>;
 	}
-	return <DiffView rows={rows} truncated={detail.diffTruncated} />;
+	return <DiffView rows={rows} truncated={detail.diffTruncated} wrap={wrap} />;
 }
 
 type DiffRowKind = "context" | "add" | "del" | "hunk";
@@ -405,7 +423,7 @@ const diffMarkerGlyph: Record<Exclude<DiffRowKind, "hunk">, string> = {
 	context: " ",
 };
 
-function DiffView({ rows, truncated }: { rows: DiffRow[]; truncated?: boolean }) {
+function DiffView({ rows, truncated, wrap }: { rows: DiffRow[]; truncated?: boolean; wrap: boolean }) {
 	return (
 		<div className="flex min-h-[220px] max-h-[min(620px,calc(100vh-18rem))] flex-col">
 			{truncated ? (
@@ -414,21 +432,18 @@ function DiffView({ rows, truncated }: { rows: DiffRow[]; truncated?: boolean })
 				</div>
 			) : null}
 			<div className="session-files-diff-scrollbar min-h-0 flex-1 overflow-auto bg-terminal font-mono text-xs leading-row text-terminal-foreground">
-				<div className="min-w-max">
+				<div className={cn(!wrap && "min-w-max")}>
 					{rows.map((row, index) =>
 						row.kind === "hunk" ? (
-							<div
-								className="select-none bg-surface-faint px-3 py-1 text-passive"
-								key={`h${index}`}
-							>
+							<div className="select-none bg-surface-faint px-3 py-1 text-passive" key={`h${index}`}>
 								{row.text}
 							</div>
 						) : (
 							<div className={cn("flex", diffRowTone[row.kind])} key={`r${index}`}>
-								<span className="w-9 shrink-0 select-none px-1.5 text-right text-passive/60 tabular-nums">
+								<span className="w-9 shrink-0 select-none border-r border-border/50 px-1.5 text-right text-passive/60 tabular-nums">
 									{row.oldNo ?? ""}
 								</span>
-								<span className="w-9 shrink-0 select-none px-1.5 text-right text-passive/60 tabular-nums">
+								<span className="w-9 shrink-0 select-none border-r border-border/50 px-1.5 text-right text-passive/60 tabular-nums">
 									{row.newNo ?? ""}
 								</span>
 								<span
@@ -440,7 +455,9 @@ function DiffView({ rows, truncated }: { rows: DiffRow[]; truncated?: boolean })
 								>
 									{diffMarkerGlyph[row.kind]}
 								</span>
-								<span className="whitespace-pre pr-4">{row.text || " "}</span>
+								<span className={cn("pr-4", wrap ? "whitespace-pre-wrap break-all" : "whitespace-pre")}>
+									{row.text || " "}
+								</span>
 							</div>
 						),
 					)}

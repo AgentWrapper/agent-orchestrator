@@ -179,6 +179,18 @@ describe("SessionFilesView", () => {
 		expect(screen.queryByText("-old line")).not.toBeInTheDocument();
 	});
 
+	it("toggles line wrapping for the diff body", async () => {
+		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+
+		expect(await screen.findByText("const value = 1;")).toHaveClass("whitespace-pre");
+
+		await userEvent.click(screen.getByRole("button", { name: "Wrap long lines" }));
+		expect(screen.getByText("const value = 1;")).toHaveClass("whitespace-pre-wrap");
+
+		await userEvent.click(screen.getByRole("button", { name: "Disable line wrapping" }));
+		expect(screen.getByText("const value = 1;")).toHaveClass("whitespace-pre");
+	});
+
 	it("renders changed files as one integrated review list instead of boxed cards", async () => {
 		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
 
