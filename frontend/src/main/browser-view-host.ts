@@ -8,6 +8,7 @@ import type {
 	WebContents,
 	WebFrameMain,
 } from "electron";
+import { randomUUID } from "node:crypto";
 import type {
 	BrowserAnnotationCancelPayload,
 	BrowserAnnotationModeInput,
@@ -127,6 +128,7 @@ type BrowserEntry = {
 type BrowserSessionEntry = {
 	sessionId: string;
 	viewId: string;
+	profilePartition: string;
 	tabs: Map<string, BrowserEntry>;
 	activeTabId: string;
 	nextTabNumber: number;
@@ -252,6 +254,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			webPreferences: {
 				contextIsolation: true,
 				nodeIntegration: false,
+				partition: session.profilePartition,
 				preload: options.annotatePreloadPath,
 				sandbox: true,
 			},
@@ -311,6 +314,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			session = {
 				sessionId,
 				viewId,
+				// A non-persist: Electron partition is memory-only. Every tab in
+				// this worker shares it, while a fresh worker runtime receives a
+				// different partition even if a session ID is ever reused.
+				profilePartition: `ao-browser-${randomUUID()}`,
 				tabs: new Map(),
 				activeTabId: "",
 				nextTabNumber: 1,

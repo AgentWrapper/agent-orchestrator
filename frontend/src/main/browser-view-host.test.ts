@@ -154,6 +154,7 @@ function setupHost() {
 }
 
 function setupTabHost() {
+	const constructorOptions: Array<{ webPreferences: { partition?: string } }> = [];
 	const views: Array<{
 		webContents: {
 			id: number;
@@ -247,13 +248,14 @@ function setupTabHost() {
 			off: () => undefined,
 		} as never,
 		shell: { openExternal: async () => undefined },
-		WebContentsView: function () {
+		WebContentsView: function (options: { webPreferences: { partition?: string } }) {
+			constructorOptions.push(options);
 			return makeView();
 		} as never,
 		annotatePreloadPath: "/preload.js",
 		rendererOrigin: "http://localhost:5173",
 	});
-	return { host, views };
+	return { constructorOptions, host, views };
 }
 
 describe("new-session shortcut forwarding", () => {
@@ -643,6 +645,23 @@ describe("agent browser runtime", () => {
 		await host.execute("sess-1", "tab-close", { tabId: "t2" });
 		const replacement = (await host.execute("sess-1", "tab-new")) as { id: string };
 		expect(replacement.id).toBe("t3");
+	});
+
+	it("shares one ephemeral profile across a worker's tabs and isolates other workers", async () => {
+		const { constructorOptions, host } = setupTabHost();
+		await host.execute("sess-1", "tabs");
+		await host.execute("sess-1", "tab-new");
+		await host.execute("sess-2", "tabs");
+
+		const firstPartition = constructorOptions[0].webPreferences.partition;
+		expect(firstPartition).toMatch(/^ao-browser-/);
+		expect(firstPartition).not.toMatch(/^persist:/);
+		expect(constructorOptions[1].webPreferences.partition).toBe(firstPartition);
+		expect(constructorOptions[2].webPreferences.partition).not.toBe(firstPartition);
+
+		host.destroy("0:sess-1");
+		await host.execute("sess-1", "tabs");
+		expect(constructorOptions[3].webPreferences.partition).not.toBe(firstPartition);
 	});
 
 	it("captures allowed popups as new tabs and protects the final tab", async () => {

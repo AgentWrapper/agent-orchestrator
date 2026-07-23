@@ -96,6 +96,9 @@ command reports `STALE_REFERENCE`.
 Browser waits cover load completion, text or selector appearance and
 disappearance, URL matching, fixed delays, and a configurable DOM-stability
 window for HMR-driven verification.
+Browser tabs in the same worker share a memory-only Electron profile. Different
+workers receive distinct partitions, so cookies, authentication, local storage,
+and session storage do not leak between their browser runtimes.
 
 `go run .` in `backend/` remains a compatibility wrapper around the daemon.
 
