@@ -8,6 +8,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/claudecode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/codex"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/kimchi"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/opencode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -25,6 +26,7 @@ func Constructors() []Adapter {
 	return []Adapter{
 		claudecode.New(),
 		codex.New(),
+		kimchi.New(),
 		opencode.New(),
 	}
 }
