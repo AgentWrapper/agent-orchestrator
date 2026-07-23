@@ -119,7 +119,9 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 		permissions = cfg.Config.Permissions
 	}
 	appendPermissionFlags(&cmd, permissions)
-	appendToolFlags(&cmd, cfg.AllowedTools, cfg.DisallowedTools)
+	if err := appendToolFlags(&cmd, cfg.AllowedTools, cfg.DisallowedTools); err != nil {
+		return nil, err
+	}
 
 	if cfg.SystemPromptFile != "" {
 		data, err := readBoundedSystemPrompt(cfg.SystemPromptFile)
@@ -217,13 +219,24 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 // are used to match Kimchi's internal names. These rules are honored under
 // --auto and --plan; only --dangerously-skip-permissions (not mapped by AO)
 // would skip the denylist.
-func appendToolFlags(cmd *[]string, allowed, disallowed []string) {
+func appendToolFlags(cmd *[]string, allowed, disallowed []string) error {
+	for _, rule := range allowed {
+		if strings.Contains(rule, ",") {
+			return fmt.Errorf("kimchi: allowed tool rule %q contains a comma; tool rules are comma-joined into a single flag value so a literal comma would silently split the rule", rule)
+		}
+	}
+	for _, rule := range disallowed {
+		if strings.Contains(rule, ",") {
+			return fmt.Errorf("kimchi: disallowed tool rule %q contains a comma; tool rules are comma-joined into a single flag value so a literal comma would silently split the rule", rule)
+		}
+	}
 	if len(allowed) > 0 {
 		*cmd = append(*cmd, "--allow-tool", strings.Join(allowed, ","))
 	}
 	if len(disallowed) > 0 {
 		*cmd = append(*cmd, "--deny-tool", strings.Join(disallowed, ","))
 	}
+	return nil
 }
 
 func appendPermissionFlags(cmd *[]string, permissions ports.PermissionMode) {

@@ -292,6 +292,49 @@ func TestGetLaunchCommandEmitsToolAllowlist(t *testing.T) {
 	}
 }
 
+func TestAppendToolFlagsRejectsCommaInRule(t *testing.T) {
+	t.Run("allowed", func(t *testing.T) {
+		var cmd []string
+		err := appendToolFlags(&cmd, []string{"bash(git diff:*, --force)"}, nil)
+		if err == nil {
+			t.Fatal("expected error for comma in allowed rule, got nil")
+		}
+		if !contains(err.Error(), "bash(git diff:*, --force)") {
+			t.Fatalf("error should name the offending rule; got %q", err.Error())
+		}
+		if len(cmd) != 0 {
+			t.Fatalf("cmd should be empty on error; got %#v", cmd)
+		}
+	})
+
+	t.Run("disallowed", func(t *testing.T) {
+		var cmd []string
+		err := appendToolFlags(&cmd, nil, []string{"edit,write"})
+		if err == nil {
+			t.Fatal("expected error for comma in disallowed rule, got nil")
+		}
+		if !contains(err.Error(), "edit,write") {
+			t.Fatalf("error should name the offending rule; got %q", err.Error())
+		}
+		if len(cmd) != 0 {
+			t.Fatalf("cmd should be empty on error; got %#v", cmd)
+		}
+	})
+}
+
+func TestGetLaunchCommandRejectsCommaInAllowedTool(t *testing.T) {
+	p := &Plugin{resolvedBinary: "kimchi"}
+	_, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		AllowedTools: []string{"read,write"},
+	})
+	if err == nil {
+		t.Fatal("expected error for comma in allowed tool rule, got nil")
+	}
+	if !contains(err.Error(), "read,write") {
+		t.Fatalf("error should name the offending rule; got %q", err.Error())
+	}
+}
+
 func TestGetLaunchCommandOmitsToolFlagsWhenUnset(t *testing.T) {
 	p := &Plugin{resolvedBinary: "kimchi"}
 
