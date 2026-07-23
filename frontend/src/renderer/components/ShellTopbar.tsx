@@ -18,9 +18,9 @@ import {
 	sessionIsActive,
 	type WorkspaceSession,
 } from "../types/workspace";
-import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
-import { spawnOrchestrator } from "../lib/spawn-orchestrator";
+import { openOrEnsureOrchestrator } from "../lib/open-orchestrator";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { useUiStore } from "../stores/ui-store";
 import { OrchestratorIcon } from "./icons";
@@ -105,17 +105,15 @@ export function ShellTopbar() {
 			project_id: projectId,
 		});
 		void captureRendererEvent("ao.renderer.orchestrator_open_requested", { project_id: projectId });
-		if (orchestrator) {
-			void navigate({
-				to: "/projects/$projectId/sessions/$sessionId",
-				params: { projectId, sessionId: orchestrator.id },
-			});
-			return;
-		}
 		setIsSpawning(true);
 		try {
-			const sessionId = await spawnOrchestrator(projectId, "topbar");
-			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			const { sessionId, didSpawn } = await openOrEnsureOrchestrator(projectId, "topbar", {
+				workspaces: all,
+				refetchWorkspaces: () => queryClient.fetchQuery(workspaceQueryOptions),
+			});
+			if (didSpawn) {
+				await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			}
 			void navigate({
 				to: "/projects/$projectId/sessions/$sessionId",
 				params: { projectId, sessionId },
