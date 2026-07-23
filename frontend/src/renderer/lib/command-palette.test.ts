@@ -98,6 +98,19 @@ describe("buildCommands grouping", () => {
 		const orch = buildCommands({ workspaces: workspaces(), currentSessionId: "orch" });
 		expect(byId(orch).has("current-copy-branch")).toBe(false);
 	});
+
+	it("omits Copy branch for a branchless current session", () => {
+		const branchless = buildCommands({
+			workspaces: [
+				{
+					...workspaces()[0]!,
+					sessions: [session({ id: "scratch-worker", branch: undefined })],
+				},
+			],
+			currentSessionId: "scratch-worker",
+		});
+		expect(byId(branchless).has("current-copy-branch")).toBe(false);
+	});
 });
 
 describe("buildCommands attention", () => {
