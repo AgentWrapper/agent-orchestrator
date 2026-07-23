@@ -798,6 +798,74 @@ paths:
       summary: Replace a project's per-project config
       tags:
       - projects
+  /api/v1/projects/{id}/permission-relaunch:
+    post:
+      operationId: relaunchForPermissionChange
+      parameters:
+      - description: Project identifier (registry key).
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Project identifier (registry key).
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RelaunchForPermissionChangeResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Kill and restore running worker sessions whose permission mode diverges
+        from the project default
+      tags:
+      - sessions
+  /api/v1/projects/{id}/permission-relaunch/affected:
+    get:
+      operationId: affectedByPermissionChange
+      parameters:
+      - description: Project identifier (registry key).
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Project identifier (registry key).
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AffectedByPermissionChangeResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: List running worker sessions affected by a project permission mode
+        change
+      tags:
+      - sessions
   /api/v1/projects/initialize:
     post:
       operationId: initializeProjectRepository
@@ -2093,6 +2161,37 @@ components:
       required:
       - path
       type: object
+    AffectedByPermissionChangeResponse:
+      properties:
+        affected:
+          items:
+            $ref: '#/components/schemas/AffectedSessionItem'
+          type: array
+        count:
+          type: integer
+      required:
+      - affected
+      - count
+      type: object
+    AffectedSessionItem:
+      properties:
+        fromMode:
+          type: string
+        kind:
+          type: string
+        sessionId:
+          type: string
+        title:
+          type: string
+        toMode:
+          type: string
+      required:
+      - sessionId
+      - title
+      - kind
+      - fromMode
+      - toMode
+      type: object
     AgentConfig:
       properties:
         model:
@@ -2869,6 +2968,33 @@ components:
           type: string
       required:
       - token
+      type: object
+    RelaunchForPermissionChangeResponse:
+      properties:
+        failed:
+          type: integer
+        relaunched:
+          type: integer
+        results:
+          items:
+            $ref: '#/components/schemas/RelaunchOutcomeItem'
+          type: array
+      required:
+      - results
+      - relaunched
+      - failed
+      type: object
+    RelaunchOutcomeItem:
+      properties:
+        error:
+          type: string
+        ok:
+          type: boolean
+        sessionId:
+          type: string
+      required:
+      - sessionId
+      - ok
       type: object
     RemoveProjectResult:
       properties:

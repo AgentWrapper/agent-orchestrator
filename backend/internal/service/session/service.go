@@ -50,6 +50,8 @@ type commander interface {
 	Send(ctx context.Context, id domain.SessionID, message string) error
 	Cleanup(ctx context.Context, project domain.ProjectID) (sessionmanager.CleanupResult, error)
 	RollbackSpawn(ctx context.Context, id domain.SessionID) (deleted, killed bool, err error)
+	AffectedByPermissionChange(ctx context.Context, projectID domain.ProjectID) ([]sessionmanager.AffectedSession, error)
+	RelaunchForPermissionChange(ctx context.Context, projectID domain.ProjectID) ([]sessionmanager.RelaunchOutcome, error)
 }
 
 // RollbackOutcome reports what happened in a rollback: either the seed row was
@@ -432,6 +434,20 @@ func restoreModeView(mode sessionmanager.RestoreMode) RestoreModeView {
 func (s *Service) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	freed, err := s.manager.Kill(ctx, id)
 	return freed, toAPIError(err)
+}
+
+// AffectedByPermissionChange returns the running worker sessions whose
+// launched permission mode differs from the project's current effective mode.
+func (s *Service) AffectedByPermissionChange(ctx context.Context, projectID domain.ProjectID) ([]sessionmanager.AffectedSession, error) {
+	affected, err := s.manager.AffectedByPermissionChange(ctx, projectID)
+	return affected, toAPIError(err)
+}
+
+// RelaunchForPermissionChange kills then restores each running worker session
+// whose permission mode diverges from the project's current effective mode.
+func (s *Service) RelaunchForPermissionChange(ctx context.Context, projectID domain.ProjectID) ([]sessionmanager.RelaunchOutcome, error) {
+	outcomes, err := s.manager.RelaunchForPermissionChange(ctx, projectID)
+	return outcomes, toAPIError(err)
 }
 
 // RollbackSpawn deletes a seed-state session row, or falls back to a Kill if

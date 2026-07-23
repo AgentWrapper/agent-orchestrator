@@ -21,6 +21,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	previewutil "github.com/aoagents/agent-orchestrator/backend/internal/preview"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
+	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 )
 
 type fakeSessionService struct {
@@ -35,6 +36,8 @@ type fakeSessionService struct {
 	claimErr        error
 	listPRErr       error
 	workspaceErr    error
+	affectedResult  []sessionmanager.AffectedSession
+	relaunchResult  []sessionmanager.RelaunchOutcome
 }
 
 func newFakeSessionService() *fakeSessionService {
@@ -244,6 +247,14 @@ func (f *fakeSessionService) GetWorkspaceFile(_ context.Context, id domain.Sessi
 		return f.workspaceFile, nil
 	}
 	return sessionsvc.WorkspaceFileDetail{SessionID: id, Path: path}, nil
+}
+
+func (f *fakeSessionService) AffectedByPermissionChange(_ context.Context, _ domain.ProjectID) ([]sessionmanager.AffectedSession, error) {
+	return f.affectedResult, nil
+}
+
+func (f *fakeSessionService) RelaunchForPermissionChange(_ context.Context, _ domain.ProjectID) ([]sessionmanager.RelaunchOutcome, error) {
+	return f.relaunchResult, nil
 }
 
 func newSessionTestServer(t *testing.T, svc *fakeSessionService) *httptest.Server {
@@ -1325,5 +1336,55 @@ func TestSessionsAPI_ClaimPRErrors(t *testing.T) {
 			body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/pr/claim", tc.body)
 			assertErrorCode(t, body, status, tc.code, tc.want)
 		})
+	}
+}
+
+func TestSessionsAPI_PermissionRelaunch(t *testing.T) {
+	svc := newFakeSessionService()
+	svc.affectedResult = []sessionmanager.AffectedSession{
+		{SessionID: "ao-1", Title: "my worker", Kind: domain.KindWorker, FromMode: domain.PermissionModeDefault, ToMode: domain.PermissionModeAuto},
+	}
+	svc.relaunchResult = []sessionmanager.RelaunchOutcome{
+		{SessionID: "ao-1", OK: true},
+	}
+	srv := newSessionTestServer(t, svc)
+
+	// GET affected
+	body, status, _ := doRequest(t, srv, "GET", "/api/v1/projects/proj-1/permission-relaunch/affected", "")
+	if status != http.StatusOK {
+		t.Fatalf("GET affected = %d, want 200; body=%s", status, body)
+	}
+	var affected struct {
+		Affected []struct {
+			SessionID string `json:"sessionId"`
+			FromMode  string `json:"fromMode"`
+			ToMode    string `json:"toMode"`
+		} `json:"affected"`
+		Count int `json:"count"`
+	}
+	mustJSON(t, body, &affected)
+	if affected.Count != 1 || affected.Affected[0].SessionID != "ao-1" {
+		t.Fatalf("affected response = %#v", affected)
+	}
+	if affected.Affected[0].FromMode != "default" || affected.Affected[0].ToMode != "auto" {
+		t.Fatalf("modes = from=%q to=%q", affected.Affected[0].FromMode, affected.Affected[0].ToMode)
+	}
+
+	// POST relaunch
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/projects/proj-1/permission-relaunch", "")
+	if status != http.StatusOK {
+		t.Fatalf("POST relaunch = %d, want 200; body=%s", status, body)
+	}
+	var relaunched struct {
+		Results []struct {
+			SessionID string `json:"sessionId"`
+			OK        bool   `json:"ok"`
+		} `json:"results"`
+		Relaunched int `json:"relaunched"`
+		Failed     int `json:"failed"`
+	}
+	mustJSON(t, body, &relaunched)
+	if relaunched.Relaunched != 1 || relaunched.Failed != 0 {
+		t.Fatalf("relaunch response = %#v", relaunched)
 	}
 }

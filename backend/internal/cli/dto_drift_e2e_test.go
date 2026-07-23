@@ -40,6 +40,7 @@ import (
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
+	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 )
 
 // fakeSessionService captures the ports.SpawnConfig the controller decodes from
@@ -81,6 +82,14 @@ func (f *fakeSessionService) Kill(context.Context, domain.SessionID) (bool, erro
 
 func (f *fakeSessionService) RollbackSpawn(context.Context, domain.SessionID) (sessionsvc.RollbackOutcome, error) {
 	return sessionsvc.RollbackOutcome{}, nil
+}
+
+func (f *fakeSessionService) AffectedByPermissionChange(context.Context, domain.ProjectID) ([]sessionmanager.AffectedSession, error) {
+	return nil, nil
+}
+
+func (f *fakeSessionService) RelaunchForPermissionChange(context.Context, domain.ProjectID) ([]sessionmanager.RelaunchOutcome, error) {
+	return nil, nil
 }
 
 func (f *fakeSessionService) Cleanup(context.Context, domain.ProjectID) (sessionsvc.CleanupOutcome, error) {

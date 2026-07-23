@@ -657,7 +657,7 @@ type ResolveCommentsResponse struct {
 
 // MobileStatusResponse is the body of the Connect Mobile status/enable/disable/
 // regenerate endpoints. Password is populated only transiently, on enable and
-// regenerate responses (empty otherwise) — it is never persisted in plaintext.
+// regenerate responses (empty otherwise), it is never persisted in plaintext.
 type MobileStatusResponse struct {
 	Enabled  bool   `json:"enabled"`
 	Host     string `json:"host"`
@@ -698,4 +698,33 @@ type PushDeviceEnvelope struct {
 type UnregisterPushDeviceResponse struct {
 	Token   string `json:"token"`
 	Deleted bool   `json:"deleted"`
+}
+
+// AffectedSessionItem is one session entry in AffectedByPermissionChangeResponse.
+type AffectedSessionItem struct {
+	SessionID string `json:"sessionId"`
+	Title     string `json:"title"`
+	Kind      string `json:"kind"`
+	FromMode  string `json:"fromMode"`
+	ToMode    string `json:"toMode"`
+}
+
+// AffectedByPermissionChangeResponse is the body of GET /api/v1/projects/{id}/permission-relaunch/affected.
+type AffectedByPermissionChangeResponse struct {
+	Affected []AffectedSessionItem `json:"affected"`
+	Count    int                   `json:"count"`
+}
+
+// RelaunchOutcomeItem is one session result in RelaunchForPermissionChangeResponse.
+type RelaunchOutcomeItem struct {
+	SessionID string `json:"sessionId"`
+	OK        bool   `json:"ok"`
+	Error     string `json:"error,omitempty"`
+}
+
+// RelaunchForPermissionChangeResponse is the body of POST /api/v1/projects/{id}/permission-relaunch.
+type RelaunchForPermissionChangeResponse struct {
+	Results    []RelaunchOutcomeItem `json:"results"`
+	Relaunched int                   `json:"relaunched"`
+	Failed     int                   `json:"failed"`
 }

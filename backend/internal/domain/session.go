@@ -39,6 +39,10 @@ type SessionMetadata struct {
 	// even when PreviewURL is unchanged. The desktop browser panel keys
 	// navigation on it so a repeated `ao preview <same-url>` still refreshes.
 	PreviewRevision int64 `json:"previewRevision,omitempty"`
+	// Permissions records the permission mode this session's agent was actually
+	// launched with, so a project-default change can tell which running sessions
+	// diverge and offer to relaunch them.
+	Permissions PermissionMode `json:"permissions,omitempty"`
 }
 
 // SessionRecord is the persistence shape. It intentionally stores only durable
