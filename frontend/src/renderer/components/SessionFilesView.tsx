@@ -12,7 +12,6 @@ import {
 	Minimize2,
 	RefreshCw,
 	Search,
-	WrapText,
 	X,
 } from "lucide-react";
 import type { components } from "../../api/schema";
@@ -59,7 +58,6 @@ export function SessionFilesView({
 	const queryClient = useQueryClient();
 	const [filter, setFilter] = useState("");
 	const [searchOpen, setSearchOpen] = useState(false);
-	const [wrap, setWrap] = useState(false);
 	const [split, setSplit] = useState(false);
 	const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
 	const initializedExpansionFor = useRef<string | null>(null);
@@ -217,17 +215,6 @@ export function SessionFilesView({
 					<Columns2 className="size-icon-sm" aria-hidden="true" />
 				</Button>
 				<Button
-					aria-label={wrap ? "Disable line wrapping" : "Wrap long lines"}
-					aria-pressed={wrap}
-					className={cn("shrink-0", wrap && "text-accent")}
-					onClick={() => setWrap((current) => !current)}
-					size="icon-sm"
-					type="button"
-					variant="ghost"
-				>
-					<WrapText className="size-icon-sm" aria-hidden="true" />
-				</Button>
-				<Button
 					aria-label="Refresh files"
 					className="shrink-0"
 					disabled={filesQuery.isFetching}
@@ -277,7 +264,7 @@ export function SessionFilesView({
 						onToggle={toggleFile}
 						sessionId={sessionId}
 						split={split}
-						wrap={wrap}
+						wrap={true}
 					/>
 				</div>
 			</div>

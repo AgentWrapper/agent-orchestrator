@@ -188,16 +188,12 @@ describe("SessionFilesView", () => {
 		expect(screen.queryByText("-old line")).not.toBeInTheDocument();
 	});
 
-	it("toggles line wrapping for the diff body", async () => {
+	it("wraps long diff lines by default without a toggle", async () => {
 		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
 
-		expect(await screen.findByText(diffLine("const value = 1;"))).toHaveClass("whitespace-pre");
-
-		await userEvent.click(screen.getByRole("button", { name: "Wrap long lines" }));
-		expect(screen.getByText(diffLine("const value = 1;"))).toHaveClass("whitespace-pre-wrap");
-
-		await userEvent.click(screen.getByRole("button", { name: "Disable line wrapping" }));
-		expect(screen.getByText(diffLine("const value = 1;"))).toHaveClass("whitespace-pre");
+		expect(await screen.findByText(diffLine("const value = 1;"))).toHaveClass("whitespace-pre-wrap");
+		expect(screen.queryByRole("button", { name: "Wrap long lines" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Disable line wrapping" })).not.toBeInTheDocument();
 	});
 
 	it("highlights only the changed tokens within a replaced line", async () => {
