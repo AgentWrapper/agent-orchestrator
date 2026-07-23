@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	settingsDirName  = ".claude"
-	settingsFileName = "settings.local.json"
+	settingsDirName  = ".kimchi"
+	settingsFileName = "hooks.local.json"
 
 	hookCommandPrefix = "ao hooks kimchi "
 	hookTimeout       = 30
@@ -49,9 +49,9 @@ var managedHooks = []hookSpec{
 }
 
 // GetAgentHooks installs AO's hooks into the worktree-local
-// .claude/settings.local.json file. Kimchi reads this file via its Claude Code
-// hook compatibility extension. Existing hooks and unrelated settings are
-// preserved; duplicate AO commands are not appended.
+// .kimchi/hooks.local.json file. Kimchi reads this file via its always-on
+// native hook adapter. Existing hooks and unrelated settings are preserved;
+// duplicate AO commands are not appended. AO hooks previously installed in
 func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfig) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -92,7 +92,7 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 }
 
 // UninstallHooks removes AO's hooks from the workspace-local
-// .claude/settings.local.json file, leaving user-defined hooks untouched.
+// .kimchi/hooks.local.json file, leaving user-defined hooks untouched.
 func (p *Plugin) UninstallHooks(ctx context.Context, workspacePath string) error {
 	if err := ctx.Err(); err != nil {
 		return err

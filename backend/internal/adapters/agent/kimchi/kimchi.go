@@ -17,10 +17,9 @@
 // The native session id is captured from hook metadata and stored in AO's
 // session metadata; GetRestoreCommand reads it back.
 //
-// Hooks: Kimchi has a Claude Code hook compatibility extension that reads
-// .claude/settings.local.json. AO installs hooks in that file using `ao hooks
-// kimchi <event>` commands. The extension is disabled by default in Kimchi;
-// hooks are inert until the user enables it.
+// Hooks: Kimchi has a native hook adapter that reads .kimchi/hooks.local.json.
+// AO installs hooks in that file using `ao hooks kimchi <event>` commands.
+// The adapter is always-on; no user configuration is needed for hooks to fire.
 package kimchi
 
 import (
@@ -39,11 +38,13 @@ import (
 
 const adapterID = "kimchi"
 
+// Plugin implements the Kimchi agent adapter.
 type Plugin struct {
 	binaryMu       sync.Mutex
 	resolvedBinary string
 }
 
+// New creates a new Kimchi adapter plugin.
 func New() *Plugin {
 	return &Plugin{}
 }
@@ -51,6 +52,7 @@ func New() *Plugin {
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
 
+// Manifest returns the adapter's static metadata.
 func (p *Plugin) Manifest() adapters.Manifest {
 	return adapters.Manifest{
 		ID:          adapterID,
@@ -63,6 +65,7 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
+// GetConfigSpec returns the adapter's configuration spec (currently empty).
 func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 	if err := ctx.Err(); err != nil {
 		return ports.ConfigSpec{}, err
@@ -106,6 +109,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	return cmd, nil
 }
 
+// GetPromptDeliveryStrategy reports how the initial prompt is delivered to Kimchi.
 func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
@@ -162,6 +166,7 @@ func appendPermissionFlags(cmd *[]string, permissions ports.PermissionMode) {
 	}
 }
 
+// ResolveKimchiBinary locates the kimchi executable on the system.
 func ResolveKimchiBinary(ctx context.Context) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
