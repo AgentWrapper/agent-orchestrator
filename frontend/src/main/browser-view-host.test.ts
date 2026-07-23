@@ -35,14 +35,14 @@ function setupHost(previewHooks: PreviewHooks = {}) {
 			isEmpty: () => false,
 			toJPEG: () => Buffer.from("snapshot"),
 		})),
-		clearHistory: () => undefined,
+		clearHistory: vi.fn(),
 		getTitle: () => "",
 		getURL: () => {
 			if (webContentsClosed) throw new Error("Object has been destroyed");
 			return currentURL;
 		},
-		goBack: () => undefined,
-		goForward: () => undefined,
+		goBack: vi.fn(),
+		goForward: vi.fn(),
 		isLoading: () => false,
 		loadURL: vi.fn(async (url: string) => {
 			currentURL = url;
@@ -52,15 +52,15 @@ function setupHost(previewHooks: PreviewHooks = {}) {
 			listeners.push(listener);
 			webContentsListeners.set(event, listeners);
 		},
-		reload: () => undefined,
+		reload: vi.fn(),
 		send: vi.fn(),
 		setWindowOpenHandler: (handler: (details: { url: string }) => { action: string }) => {
 			windowOpenHandler = handler;
 		},
-		stop: () => undefined,
-		close: () => {
+		stop: vi.fn(),
+		close: vi.fn(() => {
 			webContentsClosed = true;
-		},
+		}),
 	};
 	const view = {
 		webContents,
@@ -102,8 +102,9 @@ function setupHost(previewHooks: PreviewHooks = {}) {
 	const invokeAs = async (senderId: number, channel: string, ...args: unknown[]) =>
 		handlers.get(channel)!({ sender: { id: senderId }, senderFrame: rendererFrame }, ...args) as BrowserNavState;
 	const invoke = (channel: string, ...args: unknown[]) => invokeAs(1, channel, ...args);
-	const emit = (channel: string, zoomFactor: number, ...args: unknown[]) =>
-		eventHandlers.get(channel)!({ sender: { id: 1, getZoomFactor: () => zoomFactor } }, ...args);
+	const emitAs = (senderId: number, channel: string, zoomFactor: number, ...args: unknown[]) =>
+		eventHandlers.get(channel)!({ sender: { id: senderId, getZoomFactor: () => zoomFactor } }, ...args);
+	const emit = (channel: string, zoomFactor: number, ...args: unknown[]) => emitAs(1, channel, zoomFactor, ...args);
 	const send = (channel: string, senderId: number, ...args: unknown[]) =>
 		eventHandlers.get(channel)!({ sender: { id: senderId } }, ...args);
 	const emitWebContents = (event: string, ...args: unknown[]) => {
@@ -111,6 +112,7 @@ function setupHost(previewHooks: PreviewHooks = {}) {
 	};
 	return {
 		emit,
+		emitAs,
 		emitWebContents,
 		host,
 		invoke,
@@ -187,6 +189,67 @@ describe("browser:clear", () => {
 
 		expect(webContents.loadURL).toHaveBeenLastCalledWith("about:blank");
 		expect(state.url).toBe("");
+	});
+});
+
+describe("BrowserView IPC ownership", () => {
+	it("ignores view control commands from another renderer", async () => {
+		const releasePreview = vi.fn();
+		const { emitAs, invoke, invokeAs, send, view, webContents } = setupHost({ releasePreview });
+		const ensured = await invoke("browser:ensure", "session-one");
+		view.setBounds.mockClear();
+
+		emitAs(2, "browser:setBounds", 1, {
+			viewId: ensured.viewId,
+			rect: { x: 10, y: 20, width: 300, height: 200 },
+			visible: true,
+		});
+		const states = await Promise.all([
+			invokeAs(2, "browser:clear", ensured.viewId),
+			invokeAs(2, "browser:goBack", ensured.viewId),
+			invokeAs(2, "browser:goForward", ensured.viewId),
+			invokeAs(2, "browser:reload", ensured.viewId),
+			invokeAs(2, "browser:stop", ensured.viewId),
+		]);
+		send("browser:destroy", 2, ensured.viewId);
+
+		expect(states).toEqual(states.map(() => expect.objectContaining({ viewId: ensured.viewId, url: "" })));
+		expect(view.setBounds).not.toHaveBeenCalled();
+		expect(webContents.loadURL).not.toHaveBeenCalled();
+		expect(webContents.goBack).not.toHaveBeenCalled();
+		expect(webContents.goForward).not.toHaveBeenCalled();
+		expect(webContents.reload).not.toHaveBeenCalled();
+		expect(webContents.stop).not.toHaveBeenCalled();
+		expect(webContents.close).not.toHaveBeenCalled();
+		expect(releasePreview).not.toHaveBeenCalled();
+	});
+
+	it("keeps view control commands available to the owning renderer", async () => {
+		const releasePreview = vi.fn();
+		const { emit, invoke, send, view, webContents } = setupHost({ releasePreview });
+		const ensured = await invoke("browser:ensure", "session-one");
+		view.setBounds.mockClear();
+
+		emit("browser:setBounds", 1, {
+			viewId: ensured.viewId,
+			rect: { x: 10, y: 20, width: 300, height: 200 },
+			visible: true,
+		});
+		await invoke("browser:clear", ensured.viewId);
+		await invoke("browser:goBack", ensured.viewId);
+		await invoke("browser:goForward", ensured.viewId);
+		await invoke("browser:reload", ensured.viewId);
+		await invoke("browser:stop", ensured.viewId);
+		send("browser:destroy", 1, ensured.viewId);
+
+		expect(view.setBounds).toHaveBeenCalledWith({ x: 10, y: 20, width: 300, height: 200 });
+		expect(webContents.loadURL).toHaveBeenCalledWith("about:blank");
+		expect(webContents.goBack).toHaveBeenCalledOnce();
+		expect(webContents.goForward).toHaveBeenCalledOnce();
+		expect(webContents.reload).toHaveBeenCalledOnce();
+		expect(webContents.stop).toHaveBeenCalledOnce();
+		expect(webContents.close).toHaveBeenCalledOnce();
+		expect(releasePreview).toHaveBeenCalledWith(ensured.viewId);
 	});
 });
 

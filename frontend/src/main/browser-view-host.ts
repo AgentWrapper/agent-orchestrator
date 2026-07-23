@@ -400,10 +400,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	};
 
 	const invokeNav = (
+		event: IpcMainInvokeEvent,
 		viewId: string,
 		action: (contents: BrowserWebContents) => void,
 		cancelForNavigation = false,
 	): BrowserNavState => {
+		if (!isRendererOwnedViewId(event, viewId)) return emptyNavState(viewId);
 		const entry = entries.get(viewId);
 		if (!entry) return emptyNavState(viewId);
 		if (cancelForNavigation) cancelAnnotation(options, entry, "navigation");
@@ -480,12 +482,17 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	handle("browser:ensure", (event, sessionId: string) =>
 		pushNavState(options, ensure(scopedViewId(event, sessionId), sessionId)),
 	);
-	on("browser:setBounds", (event, input: BrowserBoundsInput) => setBounds(input, event.sender.getZoomFactor()));
+	on("browser:setBounds", (event, input: BrowserBoundsInput) => {
+		if (!isRendererOwnedViewId(event, input.viewId)) return;
+		setBounds(input, event.sender.getZoomFactor());
+	});
 	handle("browser:navigate", (event, input: BrowserNavigateInput) => {
 		if (!isRendererOwnedViewId(event, input.viewId)) throw new Error(BROWSER_VIEW_NOT_OWNED);
 		return navigate(input);
 	});
-	handle("browser:clear", (_event, viewId: string) => clear(viewId));
+	handle("browser:clear", (event, viewId: string) =>
+		isRendererOwnedViewId(event, viewId) ? clear(viewId) : emptyNavState(viewId),
+	);
 	handle("browser:capture", (event, viewId: string) => (isRendererOwnedViewId(event, viewId) ? capture(viewId) : ""));
 	handle("browser:requestMirror", (event, viewId: string) => {
 		if (!mirrorSupported || !isRendererOwnedViewId(event, viewId) || !entries.has(viewId)) return false;
@@ -494,12 +501,14 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		pendingMirror = { viewId, expires: Date.now() + 5000, frame };
 		return true;
 	});
-	handle("browser:goBack", (_event, viewId: string) => invokeNav(viewId, (contents) => contents.goBack(), true));
-	handle("browser:goForward", (_event, viewId: string) => invokeNav(viewId, (contents) => contents.goForward(), true));
-	handle("browser:reload", (_event, viewId: string) => invokeNav(viewId, (contents) => contents.reload(), true));
-	handle("browser:stop", (_event, viewId: string) => invokeNav(viewId, (contents) => contents.stop()));
+	handle("browser:goBack", (event, viewId: string) => invokeNav(event, viewId, (contents) => contents.goBack(), true));
+	handle("browser:goForward", (event, viewId: string) => invokeNav(event, viewId, (contents) => contents.goForward(), true));
+	handle("browser:reload", (event, viewId: string) => invokeNav(event, viewId, (contents) => contents.reload(), true));
+	handle("browser:stop", (event, viewId: string) => invokeNav(event, viewId, (contents) => contents.stop()));
 	handle("browser:annotation:setMode", (event, input: BrowserAnnotationModeInput) => setAnnotationMode(event, input));
-	on("browser:destroy", (_event, viewId: string) => destroy(viewId));
+	on("browser:destroy", (event, viewId: string) => {
+		if (isRendererOwnedViewId(event, viewId)) destroy(viewId);
+	});
 	on("browser:annotation:submit", (event, payload: BrowserAnnotationPageSubmitPayload) =>
 		forwardAnnotationSubmit(event, payload),
 	);
@@ -588,7 +597,7 @@ function scopedViewId(event: IpcMainInvokeEvent, sessionId: string): string {
 	return `${event.sender.id}:${sessionId}`;
 }
 
-function isRendererOwnedViewId(event: IpcMainInvokeEvent, viewId: string): boolean {
+function isRendererOwnedViewId(event: IpcMainEvent | IpcMainInvokeEvent, viewId: string): boolean {
 	return viewId.startsWith(`${event.sender.id}:`);
 }
 
