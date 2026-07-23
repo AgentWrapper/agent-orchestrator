@@ -4,7 +4,6 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { useBrowserView, type BrowserViewModel } from "../hooks/useBrowserView";
 import { formatBrowserAnnotationMessage, type BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
 import type { WorkspaceSession } from "../types/workspace";
-import { isAgentActivityWorking } from "../lib/session-presentation";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { cn } from "../lib/utils";
@@ -181,7 +180,6 @@ export function BrowserPanel({ session, active, poppedOut, onTogglePopOut }: Bro
 }
 
 export function BrowserPanelView({
-	session,
 	poppedOut,
 	onTogglePopOut,
 	browserView,
@@ -205,7 +203,6 @@ export function BrowserPanelView({
 	const { beginPicking, cancelPicking, enqueue, error, failPicking, queuedCount, retryQueued, status } =
 		annotationQueue;
 	const showStaticPreview = !window.ao?.browser && navState.url !== "";
-	const sessionBusy = isAgentActivityWorking(session.activity);
 	const canAnnotate = Boolean(window.ao?.browser && viewId && navState.url);
 	const canRetryAnnotation = status === "error" && queuedCount > 0;
 
@@ -340,8 +337,6 @@ export function BrowserPanelView({
 					>
 						{annotationStatusLabel}
 					</span>
-				) : sessionBusy ? (
-					<span className="browser-panel__annotation-status">Agent working</span>
 				) : null}
 				<div className="relative min-w-0 flex-1">
 					<Globe2
