@@ -143,10 +143,26 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 	if !o.Fetched {
 		return nil
 	}
-	// PR completion is a display fact here. Runtime/worktree teardown is owned
-	// by the explicit session lifecycle path and must not be triggered by SCM
-	// observation.
+	// A PR reaching a terminal state (merged or closed) no longer ends the
+	// session on its own: a session may own several PRs. Terminate only when no
+	// open PR remains and at least one of them merged. The observer persists the
+	// PR row before calling lifecycle, so the store already reflects this
+	// transition when sessionComplete reads it.
 	if o.Merged || o.Closed {
+		rec, ok, err := m.store.GetSession(ctx, id)
+		if err != nil || !ok {
+			return err
+		}
+		if rec.IsTerminated || !rec.TerminateOnPRMerge {
+			return nil
+		}
+		done, err := m.sessionComplete(ctx, id)
+		if err != nil {
+			return err
+		}
+		if done {
+			return m.terminateCompletedSession(ctx, id)
+		}
 		return nil
 	}
 	rec, ok, err := m.store.GetSession(ctx, id)
@@ -231,6 +247,19 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 	return blockedCheckErr
 }
 
+func (m *Manager) terminateCompletedSession(ctx context.Context, id domain.SessionID) error {
+	m.mu.Lock()
+	terminator := m.completionTerminator
+	m.mu.Unlock()
+	if terminator == nil {
+		return fmt.Errorf("terminate completed session %s: session terminator is not configured", id)
+	}
+	if _, err := terminator.Kill(ctx, id); err != nil {
+		return fmt.Errorf("terminate completed session %s: %w", id, err)
+	}
+	return nil
+}
+
 // ApplyReviewResult reacts to a completed AO-internal review pass after the
 // review service has persisted the run result. It mirrors ApplyPRObservation:
 // no change_log reads, no review_run writes, only lifecycle side effects.
@@ -270,6 +299,26 @@ func (m *Manager) ApplyReviewResult(ctx context.Context, workerID domain.Session
 		return ReviewDeliveryNoop, nil
 	}
 	return ReviewDeliverySent, nil
+}
+
+// sessionComplete reports whether the session has reached the multi-PR
+// completion bar: at least one PR merged and no PR still open. A session with no
+// PRs, or with any open PR, is not complete.
+func (m *Manager) sessionComplete(ctx context.Context, id domain.SessionID) (bool, error) {
+	prs, err := m.store.ListPRsBySession(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	merged := false
+	for _, pr := range prs {
+		if !pr.Merged && !pr.Closed {
+			return false, nil
+		}
+		if pr.Merged {
+			merged = true
+		}
+	}
+	return merged, nil
 }
 
 // prBlockedByOpenParent reports whether the PR at prURL is stacked on top of

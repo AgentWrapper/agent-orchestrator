@@ -117,6 +117,16 @@ type fakeMessenger struct {
 	err  error
 }
 
+type fakeCompletionTerminator struct {
+	calls int
+	err   error
+}
+
+func (f *fakeCompletionTerminator) Kill(_ context.Context, _ domain.SessionID) (bool, error) {
+	f.calls++
+	return true, f.err
+}
+
 type telemetrySink struct {
 	events []ports.TelemetryEvent
 }
@@ -921,7 +931,7 @@ func TestPRObservation_NudgeIncludesPRIdentity(t *testing.T) {
 	}
 }
 
-func TestPRObservation_MergedStaysLive(t *testing.T) {
+func TestPRObservation_MergedStaysLiveWhenAutoTerminateDisabled(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")
 	st.prs["mer-1"] = []domain.PullRequest{{URL: "pr1", Merged: true}}
@@ -930,10 +940,127 @@ func TestPRObservation_MergedStaysLive(t *testing.T) {
 	}
 	got := st.sessions["mer-1"]
 	if got.IsTerminated || got.Activity.State == domain.ActivityExited {
-		t.Fatalf("SCM observation must not terminate a session, got %+v", got)
+		t.Fatalf("merged PR should stay live when auto-terminate is disabled, got %+v", got)
 	}
 	if len(msg.msgs) != 0 {
 		t.Fatalf("merged PR should not send nudge, got %v", msg.msgs)
+	}
+}
+
+func TestPRObservation_MergedUsesConfiguredTerminator(t *testing.T) {
+	m, st, _ := newManager()
+	terminator := &fakeCompletionTerminator{}
+	m.SetCompletionTerminator(terminator)
+	rec := working("mer-1")
+	rec.TerminateOnPRMerge = true
+	st.sessions["mer-1"] = rec
+	st.prs["mer-1"] = []domain.PullRequest{{URL: "pr1", Merged: true}}
+
+	if err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1", Merged: true}); err != nil {
+		t.Fatal(err)
+	}
+	if terminator.calls != 1 {
+		t.Fatalf("terminator calls = %d, want 1", terminator.calls)
+	}
+}
+
+func TestPRObservation_MergedTeardownFailureStaysLiveForRetry(t *testing.T) {
+	m, st, _ := newManager()
+	terminator := &fakeCompletionTerminator{err: errors.New("transient teardown failure")}
+	m.SetCompletionTerminator(terminator)
+	rec := working("mer-1")
+	rec.TerminateOnPRMerge = true
+	st.sessions["mer-1"] = rec
+	st.prs["mer-1"] = []domain.PullRequest{{URL: "pr1", Merged: true}}
+
+	err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1", Merged: true})
+	if err == nil || !strings.Contains(err.Error(), "transient teardown failure") {
+		t.Fatalf("ApplyPRObservation err = %v, want teardown failure", err)
+	}
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatalf("failed teardown must not hide a live session: %+v", st.sessions["mer-1"])
+	}
+}
+
+func TestPRObservation_MergedRequiresConfiguredTerminator(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.TerminateOnPRMerge = true
+	st.sessions["mer-1"] = rec
+	st.prs["mer-1"] = []domain.PullRequest{{URL: "pr1", Merged: true}}
+
+	err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1", Merged: true})
+	if err == nil || !strings.Contains(err.Error(), "not configured") {
+		t.Fatalf("ApplyPRObservation err = %v, want configuration error", err)
+	}
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatalf("missing terminator must not mark the session terminated: %+v", st.sessions["mer-1"])
+	}
+}
+
+// A session with one merged PR and one still-open PR must NOT terminate: the
+// completion bar is "no open PR remains AND at least one merged".
+func TestPRObservation_MergedWithOpenSiblingDoesNotTerminate(t *testing.T) {
+	m, st, _ := newManager()
+	terminator := &fakeCompletionTerminator{}
+	m.SetCompletionTerminator(terminator)
+	rec := working("mer-1")
+	rec.TerminateOnPRMerge = true
+	st.sessions["mer-1"] = rec
+	st.prs["mer-1"] = []domain.PullRequest{
+		{URL: "pr1", Merged: true},
+		{URL: "pr2"},
+	}
+	if err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1", Merged: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; got.IsTerminated {
+		t.Fatalf("session with an open sibling PR must stay alive, got %+v", got)
+	}
+	if terminator.calls != 0 {
+		t.Fatalf("terminator calls = %d, want 0", terminator.calls)
+	}
+}
+
+// Once the last open PR merges (all PRs now merged), the session terminates.
+func TestPRObservation_LastMergeTerminatesSession(t *testing.T) {
+	m, st, _ := newManager()
+	terminator := &fakeCompletionTerminator{}
+	m.SetCompletionTerminator(terminator)
+	rec := working("mer-1")
+	rec.TerminateOnPRMerge = true
+	st.sessions["mer-1"] = rec
+	st.prs["mer-1"] = []domain.PullRequest{
+		{URL: "pr1", Merged: true},
+		{URL: "pr2", Merged: true},
+	}
+	if err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr2", Merged: true}); err != nil {
+		t.Fatal(err)
+	}
+	if terminator.calls != 1 {
+		t.Fatalf("terminator calls = %d, want 1", terminator.calls)
+	}
+}
+
+// A closed PR that leaves the session with an open sibling and no merge does not
+// terminate; closing the last PR with no merge also does not terminate (nothing
+// shipped).
+func TestPRObservation_ClosedWithoutMergeDoesNotTerminate(t *testing.T) {
+	m, st, _ := newManager()
+	terminator := &fakeCompletionTerminator{}
+	m.SetCompletionTerminator(terminator)
+	rec := working("mer-1")
+	rec.TerminateOnPRMerge = true
+	st.sessions["mer-1"] = rec
+	st.prs["mer-1"] = []domain.PullRequest{{URL: "pr1", Closed: true}}
+	if err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1", Closed: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; got.IsTerminated {
+		t.Fatalf("a closed-without-merge PR must not terminate the session, got %+v", got)
+	}
+	if terminator.calls != 0 {
+		t.Fatalf("terminator calls = %d, want 0", terminator.calls)
 	}
 }
 

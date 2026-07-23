@@ -7,9 +7,10 @@ import { SessionInspector } from "./SessionInspector";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
 import type { PRState, PullRequestFacts, WorkspaceSession } from "../types/workspace";
 
-const { getMock, navigateMock, postMock } = vi.hoisted(() => ({
+const { getMock, navigateMock, patchMock, postMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
 	navigateMock: vi.fn(),
+	patchMock: vi.fn(),
 	postMock: vi.fn(),
 }));
 
@@ -20,6 +21,7 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("../lib/api-client", () => ({
 	apiClient: {
 		GET: getMock,
+		PATCH: patchMock,
 		POST: postMock,
 	},
 	apiErrorMessage: (error: unknown, fallback = "Request failed") => {
@@ -157,8 +159,10 @@ const reviewState = (n: number, status: string, targetSha = `sha-${n}`) => ({
 beforeEach(() => {
 	getMock.mockReset();
 	navigateMock.mockReset();
+	patchMock.mockReset();
 	postMock.mockReset();
 	getMock.mockResolvedValue({ data: { reviewerHandleId: "", reviews: [] }, error: undefined });
+	patchMock.mockResolvedValue({ data: { ok: true }, error: undefined, response: { status: 200 } });
 	postMock.mockResolvedValue({ data: { ok: true, sessionId: "sess-1" }, error: undefined });
 });
 
@@ -231,6 +235,19 @@ describe("SessionInspector PR section", () => {
 });
 
 describe("SessionInspector completion controls", () => {
+	it("persists the terminate-on-merge preference", async () => {
+		renderWithQuery(<SessionInspector session={session([])} />);
+
+		await userEvent.click(screen.getByRole("switch", { name: "Terminate session when pull requests merge" }));
+
+		await waitFor(() =>
+			expect(patchMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/merge-policy", {
+				params: { path: { sessionId: "sess-1" } },
+				body: { terminateOnPrMerge: true },
+			}),
+		);
+	});
+
 	it("terminates a live merged session and returns to its project after success", async () => {
 		renderWithQuery(<SessionInspector session={session([pr(7, "merged")], { status: "merged" })} />);
 
@@ -264,7 +281,7 @@ describe("SessionInspector completion controls", () => {
 		renderWithQuery(<SessionInspector session={session([], { kind: "orchestrator" })} />);
 
 		expect(screen.queryByText("Completion")).not.toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: "Terminate session" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("switch")).not.toBeInTheDocument();
 	});
 });
 

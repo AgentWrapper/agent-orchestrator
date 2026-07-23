@@ -149,6 +149,17 @@ func (f *fakeStore) SetSessionPreviewURL(_ context.Context, id domain.SessionID,
 	return true, nil
 }
 
+func (f *fakeStore) SetSessionTerminateOnPRMerge(_ context.Context, id domain.SessionID, terminate bool, updatedAt time.Time) (bool, error) {
+	r, ok := f.sessions[id]
+	if !ok {
+		return false, nil
+	}
+	r.TerminateOnPRMerge = terminate
+	r.UpdatedAt = updatedAt
+	f.sessions[id] = r
+	return true, nil
+}
+
 func (f *fakeStore) GetDisplayPRFactsForSession(_ context.Context, id domain.SessionID) (domain.PRFacts, bool, error) {
 	pr, ok := f.pr[id]
 	return pr, ok, nil
@@ -249,6 +260,25 @@ func TestSessionSetPreviewUnknownSession(t *testing.T) {
 	st := newFakeStore()
 	if _, err := (&Service{store: st}).SetPreview(context.Background(), "ghost-1", "http://x"); err == nil {
 		t.Fatal("want error for unknown session")
+	}
+}
+
+func TestSessionSetTerminateOnPRMergePersistsPolicy(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+
+	sess, err := (&Service{store: st}).SetTerminateOnPRMerge(context.Background(), "mer-1", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sess.TerminateOnPRMerge || !st.sessions["mer-1"].TerminateOnPRMerge {
+		t.Fatalf("terminate-on-merge policy was not persisted: session=%+v stored=%+v", sess, st.sessions["mer-1"])
+	}
+}
+
+func TestSessionSetTerminateOnPRMergeUnknownSession(t *testing.T) {
+	if _, err := (&Service{store: newFakeStore()}).SetTerminateOnPRMerge(context.Background(), "ghost-1", true); err == nil {
+		t.Fatal("expected missing session error")
 	}
 }
 

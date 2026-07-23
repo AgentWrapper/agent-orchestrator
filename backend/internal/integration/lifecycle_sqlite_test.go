@@ -150,11 +150,12 @@ func newStack(t *testing.T) *stack {
 	rt := &stubRuntime{}
 	ws := &stubWorkspace{}
 	mgr := sessionmanager.New(sessionmanager.Deps{Runtime: rt, Agents: stubAgents{}, Workspace: ws, Store: store, Messenger: msg, Lifecycle: lcm, LookPath: func(string) (string, error) { return "/usr/bin/true", nil }})
+	lcm.SetCompletionTerminator(mgr)
 	sm := sessionsvc.New(mgr, store)
 	return &stack{store: store, sm: sm, mgr: mgr, lcm: lcm, prm: prm, rt: rt, ws: ws, msg: msg}
 }
 
-func TestMergedPRDoesNotTerminateSession(t *testing.T) {
+func TestMergedPRUsesSessionManagerOnlyWhenOptedIn(t *testing.T) {
 	ctx := context.Background()
 	st := newStack(t)
 	sess, err := st.sm.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Branch: "b", Prompt: "do it"})
@@ -166,11 +167,29 @@ func TestMergedPRDoesNotTerminateSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	if st.rt.destroyed != 0 || st.ws.destroyed != 0 {
-		t.Fatalf("SCM observation tore down resources: runtime=%d workspace=%d", st.rt.destroyed, st.ws.destroyed)
+		t.Fatalf("default policy tore down resources: runtime=%d workspace=%d", st.rt.destroyed, st.ws.destroyed)
 	}
 	rec, _, _ := st.store.GetSession(ctx, sess.ID)
 	if rec.IsTerminated {
-		t.Fatalf("SCM observation terminated merged session: %+v", rec)
+		t.Fatalf("default policy terminated merged session: %+v", rec)
+	}
+
+	sess2, err := st.sm.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Branch: "c", Prompt: "do more"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := st.store.SetSessionTerminateOnPRMerge(ctx, sess2.ID, true, time.Now().UTC()); err != nil || !ok {
+		t.Fatalf("enable terminate-on-merge: ok=%v err=%v", ok, err)
+	}
+	if err := st.prm.ApplyObservation(ctx, sess2.ID, ports.PRObservation{Fetched: true, URL: "pr2", Number: 2, Merged: true}); err != nil {
+		t.Fatal(err)
+	}
+	if st.rt.destroyed != 1 || st.ws.destroyed != 1 {
+		t.Fatalf("opted-in merge teardown: runtime=%d workspace=%d, want 1/1", st.rt.destroyed, st.ws.destroyed)
+	}
+	rec, _, _ = st.store.GetSession(ctx, sess2.ID)
+	if !rec.IsTerminated {
+		t.Fatalf("opted-in merged session remained live: %+v", rec)
 	}
 }
 
