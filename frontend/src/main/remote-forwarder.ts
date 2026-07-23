@@ -294,9 +294,8 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 		for (const mapping of owned.values()) previewsByToken.delete(mapping.token);
 		previewsByOwner.delete(ownerId);
 	};
-	const rememberPreviewSourceOrigin = (mapping: PreviewMapping, local: URL, sourceOrigin: string) => {
+	const recordPreviewSourceOrigin = (mapping: PreviewMapping, local: URL, sourceOrigin: string) => {
 		const key = `${local.pathname}${local.search}`;
-		mapping.sourceOrigin = sourceOrigin;
 		mapping.sourceOriginsByPath.delete(key);
 		mapping.sourceOriginsByPath.set(key, sourceOrigin);
 		if (mapping.sourceOriginsByPath.size > previewSourceAliasLimit) {
@@ -304,11 +303,24 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 			if (oldest !== undefined) mapping.sourceOriginsByPath.delete(oldest);
 		}
 	};
-	const previewSourceOrigin = (mapping: PreviewMapping, local: URL): string | undefined => {
+	const lookupPreviewSourceOrigin = (
+		mapping: PreviewMapping,
+		local: URL,
+	): { sourceOrigin: string | undefined; exact: boolean } => {
 		const sourceOrigin = mapping.sourceOriginsByPath.get(`${local.pathname}${local.search}`);
-		if (!sourceOrigin) return mapping.sourceOrigin;
-		rememberPreviewSourceOrigin(mapping, local, sourceOrigin);
-		return sourceOrigin;
+		if (!sourceOrigin) {
+			return {
+				sourceOrigin: mapping.sourceOrigin ?? (mapping.kind === "http" ? mapping.targetHeader : undefined),
+				exact: false,
+			};
+		}
+		recordPreviewSourceOrigin(mapping, local, sourceOrigin);
+		return { sourceOrigin, exact: true };
+	};
+	const activatePreviewSourceOrigin = (mapping: PreviewMapping, local: URL): string | undefined => {
+		const source = lookupPreviewSourceOrigin(mapping, local);
+		if (source.exact) mapping.sourceOrigin = source.sourceOrigin;
+		return source.sourceOrigin;
 	};
 	const localPreviewURL = (
 		mapping: PreviewMapping,
@@ -322,7 +334,7 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 		local.search = search;
 		local.hash = hash;
 		const localURL = local.toString();
-		if (sourceOrigin) rememberPreviewSourceOrigin(mapping, local, sourceOrigin);
+		if (sourceOrigin) recordPreviewSourceOrigin(mapping, local, sourceOrigin);
 		return localURL;
 	};
 	const registerPreview = (ownerId: string, sessionId: string, target: PreviewTarget): PreviewMapping => {
@@ -344,7 +356,6 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 			sessionId,
 			kind: target.kind,
 			targetHeader: target.targetHeader,
-			sourceOrigin: target.sourceOrigin,
 			sourceOriginsByPath: new Map(),
 			fileURL: target.fileURL,
 		};
@@ -356,13 +367,16 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 		if (closed) return rawURL;
 		const target = previewTarget(rawURL);
 		if (!target) return rawURL;
-		return localPreviewURL(
-			registerPreview(ownerId, sessionId, target),
+		const mapping = registerPreview(ownerId, sessionId, target);
+		const localURL = localPreviewURL(
+			mapping,
 			target.pathname,
 			target.search,
 			target.hash,
 			target.sourceOrigin,
 		);
+		if (target.sourceOrigin) mapping.sourceOrigin = target.sourceOrigin;
+		return localURL;
 	};
 	const originalPreviewURL = (localURL: string): string => {
 		let local: URL;
@@ -382,7 +396,7 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 		const mapping = previewsByToken.get(token);
 		if (!mapping) return localURL;
 		if (mapping.kind === "http") {
-			const original = new URL(previewSourceOrigin(mapping, local)!);
+			const original = new URL(activatePreviewSourceOrigin(mapping, local)!);
 			original.pathname = local.pathname;
 			original.search = local.search;
 			original.hash = local.hash;
@@ -416,7 +430,8 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 			requestURL ?? "/",
 			`http://${mapping.token}${previewHostSuffix}:${forwarderPort}`,
 		);
-		const sourceOrigin = mapping.kind === "http" ? previewSourceOrigin(mapping, localRequest) : undefined;
+		const sourceOrigin =
+			mapping.kind === "http" ? lookupPreviewSourceOrigin(mapping, localRequest).sourceOrigin : undefined;
 		const location = upstreamResponse.headers.location;
 		if (!location) return { preview: true };
 		let targetLocation: URL | undefined;

@@ -224,6 +224,23 @@ describe("remote-forwarder", () => {
 		expect(forwarder.originalPreviewURL(derived.toString())).toBe("http://127.0.0.1:5173/d");
 	});
 
+	it("does not activate an old source alias from an HTTP subresource response", async () => {
+		const daemon = http.createServer((_req, res) => res.end("ok"));
+		servers.push(daemon);
+		const daemonPort = await listen(daemon);
+		const forwarder = await startRemoteForwarder({ host: "127.0.0.1", port: daemonPort, password: "secret" });
+		forwarders.push(forwarder);
+
+		const old = forwarder.resolvePreviewURL("owner", "session", "http://0.0.0.0:5173/old");
+		const active = forwarder.resolvePreviewURL("owner", "session", "http://127.0.0.1:5173/active");
+		expect(forwarder.originalPreviewURL(active)).toBe("http://127.0.0.1:5173/active");
+
+		await forwarderRequest(forwarder, old);
+		const derived = new URL(active);
+		derived.pathname = "/derived";
+		expect(forwarder.originalPreviewURL(derived.toString())).toBe("http://127.0.0.1:5173/derived");
+	});
+
 	it("bounds source alias provenance and falls back to the active alias after eviction", async () => {
 		const upstream = http.createServer((_req, res) => res.end("ok"));
 		servers.push(upstream);
@@ -615,6 +632,56 @@ describe("remote-forwarder", () => {
 		);
 	});
 
+	it("records cross-target aliases without activating existing or new mappings", async () => {
+		const daemon = http.createServer((req, res) => {
+			const destinationPort = req.url?.endsWith("/existing") ? 43210 : 43211;
+			res.writeHead(302, {
+				location: `http://0.0.0.0:${destinationPort}/destination`,
+				"x-ao-preview-redirect-target": `http://0.0.0.0:${destinationPort}`,
+			});
+			res.end();
+		});
+		servers.push(daemon);
+		const daemonPort = await listen(daemon);
+		const forwarder = await startRemoteForwarder({ host: "127.0.0.1", port: daemonPort, password: "secret" });
+		forwarders.push(forwarder);
+
+		forwarder.resolvePreviewURL("owner", "session", "http://0.0.0.0:43210/old");
+		const existingActive = forwarder.resolvePreviewURL(
+			"owner",
+			"session",
+			"http://127.0.0.1:43210/active",
+		);
+		expect(forwarder.originalPreviewURL(existingActive)).toBe("http://127.0.0.1:43210/active");
+
+		const existingSource = forwarder.resolvePreviewURL(
+			"owner",
+			"session",
+			"http://127.0.0.1:5173/existing",
+		);
+		const existingRedirect = (await forwarderRequest(forwarder, existingSource)).headers.location!;
+		expect(new URL(existingRedirect).origin).toBe(new URL(existingActive).origin);
+		const existingDerived = new URL(existingActive);
+		existingDerived.pathname = "/derived";
+		expect(forwarder.originalPreviewURL(existingDerived.toString())).toBe(
+			"http://127.0.0.1:43210/derived",
+		);
+		expect(forwarder.originalPreviewURL(existingRedirect)).toBe("http://0.0.0.0:43210/destination");
+
+		const newSource = forwarder.resolvePreviewURL(
+			"owner",
+			"session",
+			"http://127.0.0.1:5173/new",
+		);
+		const newRedirect = (await forwarderRequest(forwarder, newSource)).headers.location!;
+		const newDerived = new URL(newRedirect);
+		newDerived.pathname = "/derived";
+		expect(forwarder.originalPreviewURL(newDerived.toString())).toBe("http://127.0.0.1:43211/derived");
+		expect(forwarder.originalPreviewURL(newRedirect)).toBe("http://0.0.0.0:43211/destination");
+		newDerived.pathname = "/after-follow";
+		expect(forwarder.originalPreviewURL(newDerived.toString())).toBe("http://0.0.0.0:43211/after-follow");
+	});
+
 	it("strips preview cookie domains, LAN credentials, and internal response headers", async () => {
 		const daemon = http.createServer((_req, res) => {
 			res.writeHead(200, {
@@ -727,6 +794,54 @@ describe("remote-forwarder", () => {
 		expect(data).not.toContain("X-AO-Preview-");
 		expect(data).toContain("Set-Cookie: theme=dark; Path=/");
 		expect(data).not.toContain("ao_conn=");
+	});
+
+	it("does not activate an old source alias from a WebSocket response", async () => {
+		let daemonSocket: { destroy(): void } | undefined;
+		const daemon = http.createServer();
+		daemon.on("upgrade", (_req, socket) => {
+			daemonSocket = socket;
+			socket.write(
+				"HTTP/1.1 101 Switching Protocols\r\n" +
+					"Connection: Upgrade\r\n" +
+					"Upgrade: websocket\r\n\r\n",
+			);
+		});
+		servers.push(daemon);
+		const daemonPort = await listen(daemon);
+		const forwarder = await startRemoteForwarder({ host: "127.0.0.1", port: daemonPort, password: "secret" });
+		forwarders.push(forwarder);
+
+		const old = new URL(
+			forwarder.resolvePreviewURL("owner", "session", "http://0.0.0.0:5173/old"),
+		);
+		const active = forwarder.resolvePreviewURL("owner", "session", "http://127.0.0.1:5173/active");
+		expect(forwarder.originalPreviewURL(active)).toBe("http://127.0.0.1:5173/active");
+
+		const client = net.connect(forwarder.port, "127.0.0.1");
+		await once(client, "connect");
+		client.write(
+			`GET ${old.pathname} HTTP/1.1\r\n` +
+				`Host: ${old.host}\r\n` +
+				"Connection: Upgrade\r\n" +
+				"Upgrade: websocket\r\n" +
+				"Sec-WebSocket-Version: 13\r\n" +
+				"Sec-WebSocket-Key: dGVzdC1rZXk=\r\n\r\n",
+		);
+		let responseHead = "";
+		client.on("data", (chunk) => {
+			responseHead += chunk.toString("utf8");
+		});
+		await new Promise<void>((resolve) => {
+			const check = () => (responseHead.includes("\r\n\r\n") ? resolve() : setTimeout(check, 5));
+			check();
+		});
+		client.destroy();
+		daemonSocket?.destroy();
+
+		const derived = new URL(active);
+		derived.pathname = "/derived";
+		expect(forwarder.originalPreviewURL(derived.toString())).toBe("http://127.0.0.1:5173/derived");
 	});
 
 	it("fails closed for unknown and released preview WebSocket hosts", async () => {
