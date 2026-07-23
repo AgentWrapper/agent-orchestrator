@@ -1,9 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
-import {
-	KEYBOARD_SHORTCUTS_HELP_CHANNEL,
-	NEW_SESSION_SHORTCUT_CHANNEL,
-	NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL,
-} from "./shared/shortcuts";
+// prettier-ignore
+import { FOCUS_TERMINAL_SHORTCUT_CHANNEL, KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEXT_SESSION_SHORTCUT_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL, NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL, OPEN_SETTINGS_SHORTCUT_CHANNEL, PREVIOUS_SESSION_SHORTCUT_CHANNEL } from "./shared/shortcuts";
 import type { BrowserNavState, BrowserRect } from "./main/browser-view-host";
 import type { DaemonStatus } from "./shared/daemon-status";
 import type { TelemetryBootstrap } from "./shared/telemetry";
@@ -79,6 +76,34 @@ const api = {
 				ipcRenderer.off(NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL, wrapped);
 			};
 		},
+		onOpenSettingsShortcut: (listener: () => void) => {
+			const wrapped = () => listener();
+			ipcRenderer.on(OPEN_SETTINGS_SHORTCUT_CHANNEL, wrapped);
+			return () => {
+				ipcRenderer.off(OPEN_SETTINGS_SHORTCUT_CHANNEL, wrapped);
+			};
+		},
+		onPreviousSessionShortcut: (listener: () => void) => {
+			const wrapped = () => listener();
+			ipcRenderer.on(PREVIOUS_SESSION_SHORTCUT_CHANNEL, wrapped);
+			return () => {
+				ipcRenderer.off(PREVIOUS_SESSION_SHORTCUT_CHANNEL, wrapped);
+			};
+		},
+		onNextSessionShortcut: (listener: () => void) => {
+			const wrapped = () => listener();
+			ipcRenderer.on(NEXT_SESSION_SHORTCUT_CHANNEL, wrapped);
+			return () => {
+				ipcRenderer.off(NEXT_SESSION_SHORTCUT_CHANNEL, wrapped);
+			};
+		},
+		onFocusTerminalShortcut: (listener: () => void) => {
+			const wrapped = () => listener();
+			ipcRenderer.on(FOCUS_TERMINAL_SHORTCUT_CHANNEL, wrapped);
+			return () => {
+				ipcRenderer.off(FOCUS_TERMINAL_SHORTCUT_CHANNEL, wrapped);
+			};
+		},
 	},
 	terminal: {
 		saveDroppedFile: (input: { name: string; bytes: Uint8Array }) =>
@@ -87,6 +112,12 @@ const api = {
 	window: {
 		setOverlay: (overlay: { color: string; symbolColor: string }) =>
 			ipcRenderer.invoke("window:setOverlay", overlay) as Promise<void>,
+	},
+	theme: {
+		// Propagate the app's theme preference to Electron's nativeTheme so embedded
+		// WebContentsView previews (which follow prefers-color-scheme) stay in sync
+		// with the shell. "system" lets both follow the OS.
+		set: (preference: "light" | "dark" | "system") => ipcRenderer.invoke("theme:set", preference) as Promise<void>,
 	},
 	menu: {
 		action: (action: string) => ipcRenderer.invoke("menu:action", action) as Promise<void>,

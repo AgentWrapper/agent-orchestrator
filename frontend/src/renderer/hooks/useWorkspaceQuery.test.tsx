@@ -123,7 +123,52 @@ describe("useWorkspaceQuery", () => {
 			title: "sess-2",
 			provider: "codex",
 			status: "unknown",
-			branch: "session/sess-2",
+			branch: undefined,
+		});
+	});
+
+	it("preserves scratch projects and leaves branchless scratch sessions branchless", async () => {
+		respondWith({
+			projects: {
+				data: {
+					projects: [
+						{
+							id: "scratch",
+							name: "Scratch",
+							kind: "scratch",
+							path: "/home/me/.ao/scratch/default",
+						},
+					],
+				},
+				error: undefined,
+			},
+			sessions: {
+				data: {
+					sessions: [
+						{
+							id: "scratch-worker-1",
+							projectId: "scratch",
+							harness: "codex",
+							status: "working",
+							isTerminated: false,
+							updatedAt: "2026-06-10T16:15:04Z",
+						},
+					],
+				},
+				error: undefined,
+			},
+		});
+
+		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
+		await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+		expect(result.current.data?.[0]).toMatchObject({
+			id: "scratch",
+			kind: "scratch",
+		});
+		expect(result.current.data?.[0].sessions[0]).toMatchObject({
+			id: "scratch-worker-1",
+			branch: undefined,
 		});
 	});
 

@@ -305,6 +305,143 @@ func TestGetWorkspaceFileReturnsContentAndDiff(t *testing.T) {
 	}
 }
 
+func TestListWorkspaceFilesScratchUsesFilesystem(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, root, "README.md", "one\ntwo\n")
+	writeWorkspaceFile(t, root, ".env", "TOKEN=secret\n")
+	writeWorkspaceFile(t, root, "nested/task.txt", "do it")
+	writeWorkspaceFile(t, root, ".git/config", "[core]\n")
+	if err := os.WriteFile(filepath.Join(root, "image.bin"), []byte{0, 1, 2, 3}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st := newFakeStore()
+	st.projects["scratch"] = domain.ProjectRecord{ID: "scratch", Kind: domain.ProjectKindScratch}
+	st.sessions["scratch-1"] = domain.SessionRecord{
+		ID:        "scratch-1",
+		ProjectID: "scratch",
+		Metadata:  domain.SessionMetadata{WorkspacePath: root},
+	}
+
+	got, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "scratch-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byPath := map[string]WorkspaceFileSummary{}
+	var paths []string
+	for _, file := range got.Files {
+		paths = append(paths, file.Path)
+		byPath[file.Path] = file
+		if file.Status != WorkspaceFileAdded {
+			t.Fatalf("%s status = %q, want added", file.Path, file.Status)
+		}
+	}
+	wantPaths := []string{".env", "README.md", "image.bin", "nested/task.txt"}
+	if strings.Join(paths, "|") != strings.Join(wantPaths, "|") {
+		t.Fatalf("paths = %#v, want %#v", paths, wantPaths)
+	}
+	if byPath["README.md"].Additions != 0 || byPath["README.md"].Deletions != 0 {
+		t.Fatalf("README counts = +%d -%d, want +0 -0", byPath["README.md"].Additions, byPath["README.md"].Deletions)
+	}
+	if byPath["nested/task.txt"].Additions != 0 {
+		t.Fatalf("nested/task.txt additions = %d, want 0", byPath["nested/task.txt"].Additions)
+	}
+	if !byPath["image.bin"].Binary || byPath["image.bin"].Additions != 0 || byPath["image.bin"].Deletions != 0 {
+		t.Fatalf("binary summary = %#v, want binary with zero counts", byPath["image.bin"])
+	}
+	if _, ok := byPath[".git/config"]; ok {
+		t.Fatal(".git content should not be listed for scratch")
+	}
+}
+
+func TestListWorkspaceFilesScratchStopsAtFileLimit(t *testing.T) {
+	root := t.TempDir()
+	for i := 0; i < maxWorkspaceFiles+1; i++ {
+		writeWorkspaceFile(t, root, fmt.Sprintf("file-%05d.txt", i), "content\n")
+	}
+	st := newFakeStore()
+	st.projects["scratch"] = domain.ProjectRecord{ID: "scratch", Kind: domain.ProjectKindScratch}
+	st.sessions["scratch-1"] = domain.SessionRecord{
+		ID:        "scratch-1",
+		ProjectID: "scratch",
+		Metadata:  domain.SessionMetadata{WorkspacePath: root},
+	}
+
+	got, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "scratch-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Truncated {
+		t.Fatal("Truncated = false, want true")
+	}
+	if len(got.Files) != maxWorkspaceFiles {
+		t.Fatalf("file count = %d, want %d", len(got.Files), maxWorkspaceFiles)
+	}
+}
+
+func TestListWorkspaceFilesScratchSkipsSymlinkEscapes(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	writeWorkspaceFile(t, root, "real.txt", "inside\n")
+	writeWorkspaceFile(t, outside, "secret.txt", "outside\n")
+	if err := os.Symlink(filepath.Join(root, "real.txt"), filepath.Join(root, "inside-link.txt")); err != nil {
+		t.Skipf("creating inside symlink: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "secret.txt"), filepath.Join(root, "outside-link.txt")); err != nil {
+		t.Skipf("creating outside symlink: %v", err)
+	}
+	st := newFakeStore()
+	st.projects["scratch"] = domain.ProjectRecord{ID: "scratch", Kind: domain.ProjectKindScratch}
+	st.sessions["scratch-1"] = domain.SessionRecord{
+		ID:        "scratch-1",
+		ProjectID: "scratch",
+		Metadata:  domain.SessionMetadata{WorkspacePath: root},
+	}
+
+	got, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "scratch-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byPath := map[string]WorkspaceFileSummary{}
+	for _, file := range got.Files {
+		byPath[file.Path] = file
+	}
+	if _, ok := byPath["inside-link.txt"]; !ok {
+		t.Fatalf("inside symlink was not listed: %#v", got.Files)
+	}
+	if _, ok := byPath["outside-link.txt"]; ok {
+		t.Fatalf("outside symlink escape was listed: %#v", got.Files)
+	}
+}
+
+func TestGetWorkspaceFileScratchReturnsContentWithEmptyDiff(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, root, "README.md", "one\ntwo\n")
+	st := newFakeStore()
+	st.projects["scratch"] = domain.ProjectRecord{ID: "scratch", Kind: domain.ProjectKindScratch}
+	st.sessions["scratch-1"] = domain.SessionRecord{
+		ID:        "scratch-1",
+		ProjectID: "scratch",
+		Metadata:  domain.SessionMetadata{WorkspacePath: root},
+	}
+
+	got, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "scratch-1", "README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != WorkspaceFileAdded {
+		t.Fatalf("status = %q, want added", got.Status)
+	}
+	if got.Content != "one\ntwo\n" {
+		t.Fatalf("content = %q", got.Content)
+	}
+	if got.Additions != 2 || got.Deletions != 0 {
+		t.Fatalf("counts = +%d -%d, want +2 -0", got.Additions, got.Deletions)
+	}
+	if got.Diff != "" || got.DiffTruncated {
+		t.Fatalf("scratch diff = %q truncated=%v, want empty", got.Diff, got.DiffTruncated)
+	}
+}
+
 func TestGetWorkspaceFileRejectsTraversal(t *testing.T) {
 	repo := newWorkspaceRepo(t)
 	st := newFakeStore()
@@ -348,6 +485,7 @@ type fakeCommander struct {
 	killed          []domain.SessionID
 	retired         []domain.SessionID
 	sent            []domain.SessionID
+	sentMessages    []string
 	cleanupProjects []domain.ProjectID
 	killErr         error
 	retireErr       error
@@ -394,11 +532,12 @@ func (f *fakeCommander) RetireForReplacement(_ context.Context, id domain.Sessio
 	f.retired = append(f.retired, id)
 	return nil
 }
-func (f *fakeCommander) Send(_ context.Context, id domain.SessionID, _ string) error {
+func (f *fakeCommander) Send(_ context.Context, id domain.SessionID, message string) error {
 	if f.sendErr != nil {
 		return f.sendErr
 	}
 	f.sent = append(f.sent, id)
+	f.sentMessages = append(f.sentMessages, message)
 	return nil
 }
 func (f *fakeCommander) Cleanup(_ context.Context, project domain.ProjectID) (sessionmanager.CleanupResult, error) {
@@ -512,6 +651,24 @@ func TestSpawnOrchestratorCleanContinuesWhenRetireNoticeFails(t *testing.T) {
 	}
 	if !fc.spawned {
 		t.Fatal("replacement should still spawn when retire notice delivery fails")
+	}
+}
+
+func TestSpawnOrchestratorCleanRetireNoticeIsBranchNeutral(t *testing.T) {
+	st := newFakeStore()
+	st.projects["scratch"] = domain.ProjectRecord{ID: "scratch", Kind: domain.ProjectKindScratch}
+	st.sessions["scratch-1"] = domain.SessionRecord{ID: "scratch-1", ProjectID: "scratch", Kind: domain.KindOrchestrator}
+	fc := &fakeCommander{}
+	svc := &Service{manager: fc, store: st}
+
+	if _, err := svc.SpawnOrchestrator(context.Background(), "scratch", true); err != nil {
+		t.Fatalf("SpawnOrchestrator: %v", err)
+	}
+	if len(fc.sentMessages) != 1 {
+		t.Fatalf("retire messages = %d, want 1", len(fc.sentMessages))
+	}
+	if strings.Contains(strings.ToLower(fc.sentMessages[0]), "branch") {
+		t.Fatalf("retire notice must be branch-neutral, got %q", fc.sentMessages[0])
 	}
 }
 
@@ -1025,6 +1182,39 @@ func (f fakeSCM) FetchPullRequests(context.Context, []ports.SCMPRRef) ([]ports.S
 
 func (f fakeSCM) FetchReviewThreads(context.Context, ports.SCMPRRef) (ports.SCMReviewObservation, error) {
 	return f.review, f.reviewErr
+}
+
+func TestClaimPRRejectsScratchProject(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["scratch-1"] = domain.SessionRecord{
+		ID:        "scratch-1",
+		ProjectID: "scratch",
+		Kind:      domain.KindWorker,
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/scratch-1"},
+	}
+	st.projects["scratch"] = domain.ProjectRecord{ID: "scratch", Kind: domain.ProjectKindScratch}
+	svc := NewWithDeps(Deps{
+		Store:     st,
+		PRClaimer: fakePRClaimer{},
+		SCM: fakeSCM{
+			obs: ports.SCMObservation{
+				Fetched:  true,
+				Provider: "github",
+				Host:     "github.com",
+				Repo:     "acme/repo",
+				PR:       ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7},
+			},
+		},
+	})
+
+	for _, ref := range []string{"https://github.com/acme/repo/pull/7", "7"} {
+		t.Run(ref, func(t *testing.T) {
+			_, err := svc.ClaimPR(context.Background(), "scratch-1", ref, ClaimPROptions{})
+			if !errors.Is(err, ErrSessionNotClaimable) {
+				t.Fatalf("ClaimPR scratch err = %v, want ErrSessionNotClaimable", err)
+			}
+		})
+	}
 }
 
 func TestClaimPRMapsObserverAndStoreErrors(t *testing.T) {

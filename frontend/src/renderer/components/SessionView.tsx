@@ -5,18 +5,21 @@ import { BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
 import { CenterPane } from "./CenterPane";
 import { SessionFilesView } from "./SessionFilesView";
 import { SessionInspector } from "./SessionInspector";
+import { ShellTopbar } from "./ShellTopbar";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resizable";
 import { useResolvedTheme, useUiStore, type InspectorView } from "../stores/ui-store";
 import { useShell } from "../lib/shell-context";
 import { useBrowserView } from "../hooks/useBrowserView";
 import { useCloseShellTerminal, useShellTerminals } from "../hooks/useShellTerminals";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
+import { hidesShellTopbar } from "../lib/platform";
 import { isOrchestratorSession } from "../types/workspace";
 import type { TerminalTarget } from "../types/terminal";
 
 const INSPECTOR_MIN_PERCENT = 22;
 const INSPECTOR_MAX_PERCENT = 45;
 const inspectorSplitStorageKey = "ao.inspector.split";
+const shellTopbarHiddenByPlatform = hidesShellTopbar();
 
 function initialSplitPercent(): number {
 	const raw = typeof window === "undefined" ? null : window.localStorage?.getItem(inspectorSplitStorageKey);
@@ -36,10 +39,12 @@ type SessionViewProps = {
 	sessionId: string;
 };
 
-// The session detail screen: terminal + git rail, under the shell-owned
-// ShellTopbar. Rendered by both the project-scoped and cross-project session
-// routes. TerminalPane owns the terminal lifetime and remounts by terminal
-// handle so each session gets a clean xterm/mux binding.
+// The session detail screen: terminal + git rail. On Win/Linux the shell owns
+// ShellTopbar above this view; when the platform hides the shell topbar
+// (macOS), the same topbar mounts here so the outer panel stays full-height.
+// Rendered by both the project-scoped and cross-project session routes.
+// TerminalPane owns the terminal lifetime and remounts by terminal handle so
+// each session gets a clean xterm/mux binding.
 //
 // The split is shadcn's resizable (react-resizable-panels v4) with a fully
 // collapsible inspector: the panel is `collapsible` and driven to 0% via the
@@ -295,6 +300,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	return (
 		<div className="relative flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="session-detail">
+			{shellTopbarHiddenByPlatform ? <ShellTopbar /> : null}
 			<ResizablePanelGroup className="session-split min-h-0 flex-1" id="session-workspace" orientation="horizontal">
 				{/* react-resizable-panels v4: bare numbers are PIXELS; percentages must
             be strings. Numeric sizes here once clamped the inspector to 45px. */}

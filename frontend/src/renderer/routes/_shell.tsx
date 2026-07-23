@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 import { CommandPalette } from "../components/CommandPalette";
 import { CenterPanelShell } from "../components/CenterPanelShell";
+import { DaemonFailureBanner } from "../components/DaemonFailureBanner";
 import { NotificationRuntime } from "../components/NotificationCenter";
 import { GlobalNewTaskDialog } from "../components/GlobalNewTaskDialog";
 import { KeyboardShortcutsDialog } from "../components/KeyboardShortcutsDialog";
@@ -10,7 +11,6 @@ import { ShellTopbar } from "../components/ShellTopbar";
 import { OrchestratorReplacementDialog } from "../components/OrchestratorReplacementDialog";
 import { Sidebar } from "../components/Sidebar";
 import { SidebarProvider } from "../components/ui/sidebar";
-import { TitlebarNav } from "../components/TitlebarNav";
 import { WindowTitlebar } from "../components/WindowTitlebar";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
@@ -24,9 +24,15 @@ import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { captureOrchestratorReplacementFailure } from "../lib/orchestrator-replacement-telemetry";
 import { applyDocumentTheme } from "../lib/theme";
 import { aoBridge } from "../lib/bridge";
-import { isLinuxPlatform, isMacPlatform, isWindowsPlatform, usesFramedAppTopbar } from "../lib/platform";
+import {
+	isLinuxPlatform,
+	isMacPlatform,
+	isWindowsPlatform,
+	usesFramedAppTopbar,
+	hidesShellTopbar,
+} from "../lib/platform";
 import { useUiStore } from "../stores/ui-store";
-import type { WorkspaceSummary } from "../types/workspace";
+import { toProjectKind, type WorkspaceSummary } from "../types/workspace";
 import type { components } from "../../api/schema";
 
 export const Route = createFileRoute("/_shell")({
@@ -62,6 +68,7 @@ const isMac = isMacPlatform();
 const isWindows = isWindowsPlatform();
 const isLinux = isLinuxPlatform();
 const framedAppTopbar = usesFramedAppTopbar();
+const shellTopbarHiddenByPlatform = hidesShellTopbar();
 
 // Persistent app shell: the Sidebar + shared state survive route changes; only
 // the <Outlet> content (board / session / settings / …) swaps. Lifted out of
@@ -103,12 +110,40 @@ function ShellLayout() {
 	const isSettingsRoute =
 		Boolean(matchRoute({ to: "/settings", fuzzy: true })) ||
 		Boolean(matchRoute({ to: "/projects/$projectId/settings", fuzzy: true }));
-	const hideShellTopbar = isWelcomeBoard || isSettingsRoute;
+	// Welcome/settings always self-frame. Platforms that hide the shell-owned
+	// topbar (macOS) use the same full-height inset; session actions mount
+	// inside SessionView.
+	const selfFramedCenterPanel = isWelcomeBoard || isSettingsRoute;
+	const hideShellTopbar = selfFramedCenterPanel || shellTopbarHiddenByPlatform;
 	const setProjectRestarting = useUiStore((state) => state.setProjectRestarting);
 	const orchestratorReplacementErrors = useUiStore((state) => state.orchestratorReplacementErrors);
 	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
 	const setOrchestratorStartupError = useUiStore((state) => state.setOrchestratorStartupError);
 	const replacementErrorProjectId = Object.keys(orchestratorReplacementErrors)[0] ?? null;
+
+	const navigateSession = useCallback(
+		(direction: -1 | 1) => {
+			if (!scopedProjectId) return;
+			const sessions = (workspaces.find((workspace) => workspace.id === scopedProjectId)?.sessions ?? []).filter(
+				(session) => session.status !== "terminated",
+			);
+			if (sessions.length === 0) return;
+			const currentIndex = sessions.findIndex((session) => session.id === routeParams.sessionId);
+			const nextIndex =
+				currentIndex === -1
+					? direction === 1
+						? 0
+						: sessions.length - 1
+					: (currentIndex + direction + sessions.length) % sessions.length;
+			const session = sessions[nextIndex];
+			if (!session || session.id === routeParams.sessionId) return;
+			void navigate({
+				to: "/projects/$projectId/sessions/$sessionId",
+				params: { projectId: scopedProjectId, sessionId: session.id },
+			});
+		},
+		[navigate, routeParams.sessionId, scopedProjectId, workspaces],
+	);
 
 	const updateWorkspaces = useCallback(
 		(updater: (workspaces: WorkspaceSummary[]) => WorkspaceSummary[]) => {
@@ -157,7 +192,7 @@ function ShellLayout() {
 			const workspace: WorkspaceSummary = {
 				id: data.project.id,
 				name: data.project.name,
-				kind: data.project.kind === "workspace" ? "workspace" : "single_repo",
+				kind: toProjectKind(data.project.kind),
 				path: data.project.path,
 				workspaceRepos: data.project.workspaceRepos,
 				type: "main",
@@ -272,6 +307,14 @@ function ShellLayout() {
 		applyDocumentTheme(resolvedTheme);
 	}, [resolvedTheme]);
 
+	// Keep Electron's nativeTheme in step with the shell so the embedded preview
+	// WebContentsView (which follows prefers-color-scheme) flips at the same time.
+	// Send the preference, not the resolved theme, so "system" keeps both surfaces
+	// following the OS instead of freezing matchMedia to a forced value.
+	useEffect(() => {
+		void aoBridge.theme?.set(themePreference);
+	}, [themePreference]);
+
 	useEffect(() => {
 		if (daemonStatus.state !== "ready" || !daemonStatus.port) return;
 		if (agentCatalogPortRef.current === daemonStatus.port) return;
@@ -362,17 +405,33 @@ function ShellLayout() {
 		setActiveShellTerminal,
 	]);
 
+	useEffect(() => aoBridge.app.onOpenSettingsShortcut(() => void navigate({ to: "/settings" })), [navigate]);
+
+	useEffect(() => {
+		const disposePrevious = aoBridge.app.onPreviousSessionShortcut(() => navigateSession(-1));
+		const disposeNext = aoBridge.app.onNextSessionShortcut(() => navigateSession(1));
+		return () => {
+			disposePrevious();
+			disposeNext();
+		};
+	}, [navigateSession]);
+
+	useEffect(
+		() =>
+			aoBridge.app.onFocusTerminalShortcut(() => {
+				document.querySelector<HTMLElement>(".xterm-helper-textarea")?.focus();
+			}),
+		[],
+	);
+
 	return (
 		<ShellProvider value={{ daemonStatus, createProject, initializeProjectRepository }}>
 			<NotificationRuntime />
 			<GlobalNewTaskDialog />
 			<KeyboardShortcutsDialog open={isKeyboardShortcutsOpen} onOpenChange={setIsKeyboardShortcutsOpen} />
-			{/* The topbar spans the full window width above the sidebar row (the
-          macOS traffic lights + TitlebarNav cluster sit in its left inset),
-          and the sidebar hangs below it — so the sidebar border stops at the
-          header instead of cutting through the titlebar strip. The bar lives
-          in the layout, not the screens, so the crumb and actions never shift
-          when the outlet content swaps. */}
+			{/* Shell chrome: Win/Linux hang the sidebar under a topbar. macOS uses a
+          full-height sidebar with TitlebarNav under the traffic lights. The bar
+          lives in the layout so crumb/actions never shift when the outlet swaps. */}
 			<div className="flex h-screen min-h-0 flex-col bg-sidebar text-foreground">
 				{/* Windows-only custom title bar (sidebar toggle + File/Edit/View/…
             menu); paints the chrome the frameless window drops. Renders null on
@@ -394,12 +453,13 @@ function ShellLayout() {
 						} as CSSProperties
 					}
 				>
-					{/* Hang the fixed sidebar below shell chrome. macOS keeps room for the traffic-light/titlebar controls; Windows clears only its custom titlebar because the app topbar is inside the framed panel. When the topbar lives inside the framed panel (framedAppTopbar), Linux reserves no offset — otherwise the sidebar would clear a full-width topbar that isn't there. */}
+					{/* Hang the fixed sidebar below shell chrome on Win/Linux. macOS
+              keeps a full-height sidebar so TitlebarNav can sit under the
+              traffic lights inside the sidebar header (no center-panel pad). */}
 					<Sidebar
 						hideEdgeBorder={isWelcomeBoard}
-						underTopbar={
-							isMac || isWindows || (!framedAppTopbar && !hideShellTopbar && (isLinux ? isSessionRoute : true))
-						}
+						historyLocked={isWelcomeBoard}
+						underTopbar={isWindows || (!framedAppTopbar && !hideShellTopbar && (isLinux ? isSessionRoute : true))}
 						topbarOffset={isWindows ? "titlebar" : "toolbar"}
 						onCreateProject={createProject}
 						onInitializeProject={initializeProjectRepository}
@@ -408,47 +468,44 @@ function ShellLayout() {
 						workspaces={workspaces}
 					/>
 					<main className="flex min-w-0 flex-1 flex-col overflow-x-hidden">
+						<DaemonFailureBanner status={daemonStatus} />
 						<div className="min-h-0 flex-1 overflow-x-hidden">
 							{/* Board/session routes render inside the same inset box the welcome board and settings paint for themselves, so every screen sits within the app's outer boundary. */}
 							{hideShellTopbar ? (
-								<Outlet />
+								selfFramedCenterPanel ? (
+									<Outlet />
+								) : (
+									// Platform hides shell topbar: full-height panel; session mounts actions in-panel.
+									<CenterPanelShell>
+										<Outlet />
+									</CenterPanelShell>
+								)
 							) : framedAppTopbar ? (
-								<CenterPanelShell className={isMac ? "center-panel-shell--mac" : undefined} variant="app">
+								<CenterPanelShell>
 									<ShellTopbar />
 									<div className="flex min-h-0 flex-1 flex-col">
 										<Outlet />
 									</div>
 								</CenterPanelShell>
 							) : (
-								<CenterPanelShell variant="app">
+								<CenterPanelShell>
 									<Outlet />
 								</CenterPanelShell>
 							)}
 						</div>
 					</main>
-					{/* When ShellTopbar is hidden on the welcome board, keep a macOS
-              window-drag strip in the same 56px band — otherwise only
-              TitlebarNav's no-drag buttons remain and the top chrome can't
-              move the window. Invisible/fixed so the start-page layout is
-              unchanged. */}
-					{isWelcomeBoard && isMac ? (
+					{/* When ShellTopbar is hidden, keep a macOS window-drag strip over
+              the traffic-light band only (same --size-traffic-light-clearance
+              as the Sidebar header pad). TitlebarNav sits in the sidebar below
+              that band, so a taller strip would cover the toggle/arrows and
+              swallow clicks. Width matches the sidebar. */}
+					{hideShellTopbar && isMac ? (
 						<div
 							aria-hidden="true"
-							className="fixed inset-x-0 top-0 z-chrome h-toolbar"
+							className="fixed top-0 left-0 z-chrome h-traffic-light-clearance w-(--ao-sidebar-w,var(--size-sidebar-default))"
 							style={{ WebkitAppRegion: "drag" } as CSSProperties}
 						/>
 					) : null}
-					{/* Fixed macOS titlebar cluster beside the traffic lights — rendered
-              once here so the toggle/history buttons never move when the
-              sidebar collapses or expands. History arrows stay visible but
-              locked on the empty start page. MUST come after the drag strip
-              (ShellTopbar or the welcome substitute) in the DOM: Electron
-              builds the window-drag region in document order (drag rects add,
-              no-drag rects subtract), so the cluster's no-drag holes only
-              survive if they're processed after the drag strips they overlap.
-              Rendered first, real clicks get swallowed by window-drag even
-              though DOM hit-testing looks correct. */}
-					<TitlebarNav historyLocked={isWelcomeBoard} />
 				</SidebarProvider>
 				<OrchestratorReplacementDialog
 					error={replacementErrorProjectId ? orchestratorReplacementErrors[replacementErrorProjectId] : undefined}

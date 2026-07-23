@@ -224,6 +224,7 @@ type WorkspaceHookConfig struct {
 // RestoreConfig carries inputs needed to continue an existing native agent session.
 type RestoreConfig struct {
 	Config      AgentConfig
+	DataDir     string
 	Kind        domain.SessionKind
 	Permissions PermissionMode
 	Session     SessionRef

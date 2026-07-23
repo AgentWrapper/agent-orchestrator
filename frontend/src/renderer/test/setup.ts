@@ -63,12 +63,19 @@ if (typeof window !== "undefined") {
 			onNewSessionShortcut: () => () => undefined,
 			onKeyboardShortcutsHelp: () => () => undefined,
 			onNewShellTerminalShortcut: () => () => undefined,
+			onOpenSettingsShortcut: () => () => undefined,
+			onPreviousSessionShortcut: () => () => undefined,
+			onNextSessionShortcut: () => () => undefined,
+			onFocusTerminalShortcut: () => () => undefined,
 		},
 		terminal: {
 			saveDroppedFile: async () => "",
 		},
 		window: {
 			setOverlay: async () => undefined,
+		},
+		theme: {
+			set: async () => undefined,
 		},
 		menu: {
 			action: async () => undefined,

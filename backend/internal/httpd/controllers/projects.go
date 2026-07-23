@@ -28,6 +28,7 @@ func (c *ProjectsController) Register(r chi.Router) {
 	r.Post("/projects", c.add)
 	r.Post("/projects/initialize", c.initialize)
 	r.Get("/projects/{id}", c.get)
+	r.Put("/projects/{id}", c.updateSettings)
 	r.Put("/projects/{id}/config", c.setConfig)
 	r.Delete("/projects/{id}", c.remove)
 }
@@ -99,6 +100,24 @@ func (c *ProjectsController) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, resp)
+}
+
+func (c *ProjectsController) updateSettings(w http.ResponseWriter, r *http.Request) {
+	if c.Mgr == nil {
+		apispec.NotImplemented(w, r, "PUT", "/api/v1/projects/{id}")
+		return
+	}
+	var in projectsvc.UpdateSettingsInput
+	if err := decodeJSONStrict(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	p, err := c.Mgr.UpdateSettings(r.Context(), projectID(r), in)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, ProjectResponse{Project: p})
 }
 
 func (c *ProjectsController) setConfig(w http.ResponseWriter, r *http.Request) {

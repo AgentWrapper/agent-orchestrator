@@ -78,6 +78,22 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
+// GetConfigSpec reports the per-project agent config keys Auggie understands.
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.ConfigSpec{}, err
+	}
+	return ports.ConfigSpec{
+		Fields: []ports.ConfigField{
+			{
+				Key:         "model",
+				Type:        ports.ConfigFieldString,
+				Description: "Model override passed to `auggie --model`.",
+			},
+		},
+	}, nil
+}
+
 // GetLaunchCommand builds the argv to start a new headless Auggie session:
 //
 //	auggie --print [--rules <f>] [-- <prompt>]
@@ -99,6 +115,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	if cfg.SystemPromptFile != "" {
 		cmd = append(cmd, "--rules", cfg.SystemPromptFile)
 	}
+	appendModelFlag(&cmd, cfg.Config)
 	if cfg.Prompt != "" {
 		cmd = append(cmd, "--", cfg.Prompt)
 	}
@@ -129,8 +146,18 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	if cfg.SystemPromptFile != "" {
 		cmd = append(cmd, "--rules", cfg.SystemPromptFile)
 	}
+	appendModelFlag(&cmd, cfg.Config)
 	cmd = append(cmd, "--resume", agentSessionID)
 	return cmd, true, nil
+}
+
+// appendModelFlag treats the configured model as opaque: it trims and forwards
+// non-empty values for Auggie to validate. Invalid models intentionally surface
+// Auggie's error; AO does not silently retry with Auggie's default model.
+func appendModelFlag(cmd *[]string, cfg ports.AgentConfig) {
+	if model := strings.TrimSpace(cfg.Model); model != "" {
+		*cmd = append(*cmd, "--model", model)
+	}
 }
 
 // Auggie has no single blanket auto-approve/bypass flag; unattended tool/file

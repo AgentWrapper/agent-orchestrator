@@ -49,8 +49,8 @@ export function ProjectBoardEmpty({
 			<div className="flex w-full max-w-preview-content flex-col items-center pb-empty-offset-y text-center">
 				<h2 className="text-subtitle font-semibold tracking-tight text-foreground">No worker sessions yet</h2>
 				<p className="mt-2 text-md-sm leading-relaxed text-muted-foreground">
-					Describe a task and the orchestrator plans it, spawns worker sessions, and tracks them here from work to
-					merge.
+					Describe a task and the orchestrator plans it, spawns worker sessions, and tracks them here as work moves
+					forward.
 				</p>
 				<div className="mt-5 flex items-center gap-2">
 					<TopbarButton

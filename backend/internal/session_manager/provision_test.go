@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -130,6 +131,9 @@ func TestEffectiveHarnessAndAgentConfig(t *testing.T) {
 }
 
 func TestApplySymlinks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows symlink creation requires a host privilege outside this unit test")
+	}
 	project := t.TempDir()
 	workspace := t.TempDir()
 	if err := os.WriteFile(filepath.Join(project, ".env"), []byte("X=1"), 0o644); err != nil {

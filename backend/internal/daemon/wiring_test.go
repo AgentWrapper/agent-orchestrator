@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -18,6 +20,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
@@ -198,6 +201,73 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
 	}
 }
 
+func TestWiring_StartSessionSpawnsScratchWithoutGitRepo(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	binDir := t.TempDir()
+	writeFakeExecutable(t, filepath.Join(binDir, "claude"))
+	writeFakeExecutable(t, filepath.Join(binDir, "claude.cmd"))
+	writeFakeExecutable(t, filepath.Join(binDir, "tmux"))
+	writeFakeExecutable(t, filepath.Join(binDir, "tmux.cmd"))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
+
+	dataDir := t.TempDir()
+	scratchPath := filepath.Join(dataDir, "scratch", "default")
+	if err := os.MkdirAll(scratchPath, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertProject(ctx, domain.ProjectRecord{
+		ID:           "scratch",
+		Path:         scratchPath,
+		Kind:         domain.ProjectKindScratch,
+		RegisteredAt: time.Now(),
+		Config: domain.ProjectConfig{
+			Worker:       domain.RoleOverride{Harness: domain.HarnessClaudeCode},
+			Orchestrator: domain.RoleOverride{Harness: domain.HarnessClaudeCode},
+		},
+	}); err != nil {
+		t.Fatalf("UpsertProject: %v", err)
+	}
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	lcm := lifecycle.New(store, nil)
+	runtime := &selectableRuntime{}
+	cfg := config.Config{DataDir: dataDir, Agent: string(domain.HarnessClaudeCode)}
+	messenger := newSessionMessenger(store, runtime, log)
+	agents, err := buildAgentResolver(string(domain.HarnessClaudeCode), log)
+	if err != nil {
+		t.Fatalf("buildAgentResolver: %v", err)
+	}
+	svc, _, _, err := startSession(cfg, runtime, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, log)
+	if err != nil {
+		t.Fatalf("startSession: %v", err)
+	}
+
+	session, err := svc.Spawn(ctx, ports.SpawnConfig{ProjectID: "scratch", Kind: domain.KindWorker, Prompt: "try scratch"})
+	if err != nil {
+		t.Fatalf("Spawn scratch: %v", err)
+	}
+	if session.Metadata.Branch != "" {
+		t.Fatalf("scratch branch = %q, want empty", session.Metadata.Branch)
+	}
+	wantWorkspace := filepath.Join(dataDir, "worktrees", "scratch", "workers", string(session.ID))
+	if runtime.lastCfg.WorkspacePath != wantWorkspace {
+		t.Fatalf("runtime workspace = %q, want %q", runtime.lastCfg.WorkspacePath, wantWorkspace)
+	}
+	if _, err := os.Stat(wantWorkspace); err != nil {
+		t.Fatalf("scratch workspace not created at %q: %v", wantWorkspace, err)
+	}
+}
+
 // TestStartSession_SpawnDoesNotPanicWhenNoTrackerToken is a regression test for
 // issue #2685: when no GitHub token is configured, startSession must wire a
 // true-nil ports.Tracker so Spawn's issue-context guard fires instead of
@@ -237,6 +307,32 @@ func TestStartSession_SpawnDoesNotPanicWhenNoTrackerToken(t *testing.T) {
 	// tries to materialize a workspace. The manager may return an error from the
 	// no-op runtime, but it must not panic — that is the regression.
 	_, _ = svc.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "107"})
+}
+
+func TestWiring_SeedScratchProjectOnBootUsesDataDir(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	cfg := config.Config{DataDir: t.TempDir(), Agent: string(domain.HarnessCodex)}
+	projects := projectsvc.NewWithDeps(projectsvc.Deps{Store: store, DefaultHarness: domain.HarnessCodex})
+	if err := seedScratchProjectOnBoot(ctx, cfg, projects); err != nil {
+		t.Fatalf("seedScratchProjectOnBoot: %v", err)
+	}
+
+	got, ok, err := store.GetProject(ctx, "scratch")
+	if err != nil || !ok {
+		t.Fatalf("GetProject(scratch): ok=%v err=%v", ok, err)
+	}
+	if got.Kind != domain.ProjectKindScratch {
+		t.Fatalf("kind = %q, want scratch", got.Kind)
+	}
+	if want := filepath.Join(cfg.DataDir, "scratch", "default"); got.Path != want {
+		t.Fatalf("path = %q, want %q", got.Path, want)
+	}
 }
 
 // TestStartTrackerIntake_RunsEvenWithoutEnabledProjects is a regression test:
@@ -556,5 +652,41 @@ func TestWiring_SessionLifecycleInterfaceInvokedByDaemon(t *testing.T) {
 	}
 	if !fake.restoreAllCalled {
 		t.Fatal("RestoreAll was not called through the interface")
+	}
+}
+
+type selectableRuntime struct {
+	lastCfg ports.RuntimeConfig
+}
+
+func (r *selectableRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
+	r.lastCfg = cfg
+	return ports.RuntimeHandle{ID: "runtime-1"}, nil
+}
+
+func (r *selectableRuntime) Destroy(context.Context, ports.RuntimeHandle) error { return nil }
+
+func (r *selectableRuntime) GetOutput(context.Context, ports.RuntimeHandle, int) (string, error) {
+	return "", nil
+}
+
+func (r *selectableRuntime) IsAlive(context.Context, ports.RuntimeHandle) (bool, error) {
+	return true, nil
+}
+
+func (r *selectableRuntime) Attach(context.Context, ports.RuntimeHandle, uint16, uint16) (ports.Stream, error) {
+	return nil, nil
+}
+
+func (r *selectableRuntime) Interrupt(context.Context, ports.RuntimeHandle) error { return nil }
+
+func (r *selectableRuntime) SendMessage(context.Context, ports.RuntimeHandle, string) error {
+	return nil
+}
+
+func writeFakeExecutable(t *testing.T, path string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write fake executable %s: %v", path, err)
 	}
 }

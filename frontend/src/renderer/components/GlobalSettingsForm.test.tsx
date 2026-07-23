@@ -116,6 +116,27 @@ describe("GlobalSettingsForm", () => {
 		expect(screen.getByRole("button", { name: "Report a problem" })).toBeInTheDocument();
 	});
 
+	it("closes settings with Escape", async () => {
+		const user = userEvent.setup();
+		renderForm();
+		await screen.findByLabelText("Settings");
+
+		await user.keyboard("{Escape}");
+
+		expect(navigateMock).toHaveBeenCalledWith({ to: "/" });
+	});
+
+	it("lets an open settings dialog consume Escape first", async () => {
+		const user = userEvent.setup();
+		renderForm();
+		await user.click(await screen.findByRole("button", { name: "Report a problem" }));
+
+		await user.keyboard("{Escape}");
+
+		await waitFor(() => expect(screen.queryByRole("dialog", { name: "Report a problem" })).not.toBeInTheDocument());
+		expect(navigateMock).not.toHaveBeenCalled();
+	});
+
 	it("shows the nightly warning when the nightly channel is loaded", async () => {
 		getUpdate.mockResolvedValue({ enabled: true, channel: "nightly", nightlyAck: true, feature: null });
 		renderForm();

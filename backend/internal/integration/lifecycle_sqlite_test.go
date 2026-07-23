@@ -103,6 +103,10 @@ func (s *stubWorkspace) ApplyPreserved(_ context.Context, _ ports.WorkspaceInfo,
 	return nil
 }
 
+func (s *stubWorkspace) AddExclude(_ context.Context, _ ports.WorkspaceInfo, _ ...string) error {
+	return nil
+}
+
 type captureMessenger struct{ msgs []string }
 
 func (c *captureMessenger) Send(_ context.Context, _ domain.SessionID, msg string) error {
