@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -61,7 +62,7 @@ func (p previewProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writePreviewProxyError(w, http.StatusNotImplemented)
 		return
 	}
-	p.serveFile(w, r, workspace, target.url.Path)
+	p.serveFile(w, r, workspace, resolvePreviewFileRequestPath(target.url.Path, chi.URLParam(r, "*")))
 }
 
 func parsePreviewTarget(raw string) (previewTarget, error) {
@@ -75,10 +76,12 @@ func parsePreviewTarget(raw string) (previewTarget, error) {
 	}
 	switch strings.ToLower(u.Scheme) {
 	case "file":
-		if u.Host != "" || u.Opaque != "" || u.RawQuery != "" || !filepath.IsAbs(u.Path) {
+		filePath, ok := normalizePreviewFileURLPath(runtime.GOOS, u.Path)
+		if u.Host != "" || u.Opaque != "" || u.RawQuery != "" || !ok {
 			return previewTarget{}, errInvalidPreviewTarget
 		}
 		u.Scheme = "file"
+		u.Path = filePath
 	case "http", "https":
 		if err := normalizeLoopbackPreviewURL(u); err != nil || isPreviewBlockedTargetPath(u.Path) {
 			return previewTarget{}, errInvalidPreviewTarget
@@ -87,6 +90,24 @@ func parsePreviewTarget(raw string) (previewTarget, error) {
 		return previewTarget{}, errInvalidPreviewTarget
 	}
 	return previewTarget{url: u}, nil
+}
+
+func normalizePreviewFileURLPath(goos, raw string) (string, bool) {
+	if isWindowsDriveURLPath(raw) {
+		if goos != "windows" {
+			return "", false
+		}
+		return strings.ReplaceAll(raw[1:], "/", `\`), true
+	}
+	return raw, filepath.IsAbs(raw)
+}
+
+func isWindowsDriveURLPath(raw string) bool {
+	return len(raw) >= 4 && raw[0] == '/' && isASCIILetter(raw[1]) && raw[2] == ':' && raw[3] == '/'
+}
+
+func isASCIILetter(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
 }
 
 func normalizeLoopbackPreviewURL(u *url.URL) error {
@@ -133,6 +154,14 @@ func isPreviewBlockedTargetPath(path string) bool {
 		return true
 	}
 	return path == "/_ao/preview" || strings.HasPrefix(path, "/_ao/preview/")
+}
+
+func resolvePreviewFileRequestPath(entry, requestPath string) string {
+	requestPath = strings.TrimPrefix(requestPath, "/")
+	if requestPath == "" || requestPath == filepath.Base(entry) {
+		return entry
+	}
+	return filepath.Join(filepath.Dir(entry), filepath.FromSlash(requestPath))
 }
 
 func (p previewProxy) serveFile(w http.ResponseWriter, r *http.Request, workspace, targetPath string) {

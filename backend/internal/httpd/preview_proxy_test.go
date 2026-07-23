@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -91,6 +92,36 @@ func TestPreviewProxy_Validation(t *testing.T) {
 	}
 }
 
+func TestPreviewProxy_ValidationRejectsWindowsFileURLOutsideWindows(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows file URLs are valid on Windows")
+	}
+	if _, err := parsePreviewTarget("file:///C:/workspace/index.html"); err == nil {
+		t.Fatal("Windows file URL was accepted on a non-Windows platform")
+	}
+}
+
+func TestNormalizePreviewFileURLPath(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		goos string
+		raw  string
+		want string
+		ok   bool
+	}{
+		{name: "POSIX path", goos: "darwin", raw: "/workspace/index.html", want: "/workspace/index.html", ok: true},
+		{name: "Windows drive URL", goos: "windows", raw: "/C:/workspace/index.html", want: `C:\workspace\index.html`, ok: true},
+		{name: "POSIX rejects Windows drive URL", goos: "darwin", raw: "/C:/workspace/index.html"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := normalizePreviewFileURLPath(tc.goos, tc.raw)
+			if ok != tc.ok || got != tc.want {
+				t.Fatalf("normalizePreviewFileURLPath(%q, %q) = (%q, %v), want (%q, %v)", tc.goos, tc.raw, got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
+
 func TestPreviewProxy_Files(t *testing.T) {
 	workspace := t.TempDir()
 	writePreviewFile(t, filepath.Join(workspace, "index.html"), "<h1>hello</h1>")
@@ -159,8 +190,53 @@ func TestPreviewProxy_Files(t *testing.T) {
 	}
 }
 
+func TestPreviewProxy_FilesResolveRequestPathRelativeToEntry(t *testing.T) {
+	workspace := t.TempDir()
+	entry := filepath.Join(workspace, "dist", "index.html")
+	writePreviewFile(t, entry, "entry")
+	writePreviewFile(t, filepath.Join(workspace, "dist", "assets", "app.css"), "asset")
+	outside := filepath.Join(t.TempDir(), "secret.css")
+	writePreviewFile(t, outside, "secret")
+	if err := os.Symlink(outside, filepath.Join(workspace, "dist", "assets", "escape.css")); err != nil {
+		t.Fatal(err)
+	}
+
+	router := NewRouterWithControl(config.Config{}, discardLogger(), nil, APIDeps{
+		PreviewSessions: fakePreviewSessions{workspaces: map[domain.SessionID]string{"ao-1": workspace}},
+	}, ControlDeps{})
+
+	for _, tc := range []struct {
+		name        string
+		requestPath string
+		wantStatus  int
+		wantBody    string
+	}{
+		{name: "entry path", requestPath: "/index.html", wantStatus: http.StatusOK, wantBody: "entry"},
+		{name: "asset path", requestPath: "/assets/app.css", wantStatus: http.StatusOK, wantBody: "asset"},
+		{name: "asset symlink escape", requestPath: "/assets/escape.css", wantStatus: http.StatusNotFound},
+		{name: "parent traversal escape", requestPath: "/../../secret.css", wantStatus: http.StatusNotFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := previewProxyRequestPath(router, http.MethodGet, "ao-1", previewFileTarget(entry), tc.requestPath)
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d", rec.Code, tc.wantStatus)
+			}
+			if tc.wantBody != "" && rec.Body.String() != tc.wantBody {
+				t.Fatalf("body = %q, want %q", rec.Body.String(), tc.wantBody)
+			}
+			if strings.Contains(rec.Body.String(), "secret") {
+				t.Fatalf("response leaked escaped asset: %q", rec.Body.String())
+			}
+		})
+	}
+}
+
 func previewProxyRequest(router http.Handler, method, sessionID, target string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(method, "/_ao/preview/"+sessionID+"/", nil)
+	return previewProxyRequestPath(router, method, sessionID, target, "/")
+}
+
+func previewProxyRequestPath(router http.Handler, method, sessionID, target, requestPath string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, "/_ao/preview/"+sessionID+requestPath, nil)
 	if target != "" {
 		req.Header.Set("X-AO-Preview-Target", target)
 	}
@@ -175,6 +251,9 @@ func previewFileTarget(file string) string {
 
 func writePreviewFile(t *testing.T, path, contents string) {
 	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
