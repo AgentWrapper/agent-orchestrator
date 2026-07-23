@@ -191,222 +191,222 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 
 	return (
 		<>
-		<form
-			className="mx-auto flex max-w-2xl flex-col gap-4"
-			onSubmit={(event) => {
-				event.preventDefault();
-				setSavedAt(null);
-				setReplacementError(null);
-				if (missingRequiredAgent) {
-					setValidationError("Worker and orchestrator agents are required.");
-					return;
-				}
-				if (form.displayName.trim() === "") {
-					setValidationError("Project name is required.");
-					return;
-				}
-				if (intakeIncomplete) {
-					setValidationError("Enabling intake requires an assignee.");
-					return;
-				}
-				setValidationError(null);
-				mutation.mutate();
-			}}
-		>
-			<Card>
-				<CardHeader>
-					<CardTitle className="text-control">Identity</CardTitle>
-				</CardHeader>
-				<CardContent className="flex flex-col gap-4 font-mono text-xs text-muted-foreground">
-					<Field label="Project name" htmlFor="projectName">
-						<input
-							id="projectName"
-							className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 font-sans text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
-							value={form.displayName}
-							onChange={(e) => setForm((f) => ({ ...f, displayName: e.target.value }))}
-						/>
-					</Field>
-					<ReadonlyRow label="id" value={project.id} />
-					<ReadonlyRow label="kind" value={projectKindLabel(project.kind)} />
-					<ReadonlyRow label="path" value={project.path} />
-					<ReadonlyRow label="repo" value={project.repo || "—"} />
-				</CardContent>
-			</Card>
-
-			{project.kind === "workspace" && (
+			<form
+				className="mx-auto flex max-w-2xl flex-col gap-4"
+				onSubmit={(event) => {
+					event.preventDefault();
+					setSavedAt(null);
+					setReplacementError(null);
+					if (missingRequiredAgent) {
+						setValidationError("Worker and orchestrator agents are required.");
+						return;
+					}
+					if (form.displayName.trim() === "") {
+						setValidationError("Project name is required.");
+						return;
+					}
+					if (intakeIncomplete) {
+						setValidationError("Enabling intake requires an assignee.");
+						return;
+					}
+					setValidationError(null);
+					mutation.mutate();
+				}}
+			>
 				<Card>
 					<CardHeader>
-						<CardTitle className="text-[13px]">Workspace repos</CardTitle>
+						<CardTitle className="text-control">Identity</CardTitle>
 					</CardHeader>
-					<CardContent className="flex flex-col gap-2">
-						{project.workspaceRepos?.length ? (
-							project.workspaceRepos.map((repo) => (
-								<div
-									key={repo.name}
-									className="grid grid-cols-[minmax(0,120px)_minmax(0,1fr)] gap-3 rounded-md border border-border px-3 py-2 font-mono text-[12px]"
-								>
-									<span className="truncate text-foreground">{repo.name}</span>
-									<span className="min-w-0 truncate text-muted-foreground">
-										{repo.relativePath}
-										{repo.repo ? ` · ${repo.repo}` : ""}
-									</span>
-								</div>
-							))
-						) : (
-							<p className="text-[12px] text-muted-foreground">No child repositories are registered.</p>
+					<CardContent className="flex flex-col gap-4 font-mono text-xs text-muted-foreground">
+						<Field label="Project name" htmlFor="projectName">
+							<input
+								id="projectName"
+								className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 font-sans text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
+								value={form.displayName}
+								onChange={(e) => setForm((f) => ({ ...f, displayName: e.target.value }))}
+							/>
+						</Field>
+						<ReadonlyRow label="id" value={project.id} />
+						<ReadonlyRow label="kind" value={projectKindLabel(project.kind)} />
+						<ReadonlyRow label="path" value={project.path} />
+						<ReadonlyRow label="repo" value={project.repo || "—"} />
+					</CardContent>
+				</Card>
+
+				{project.kind === "workspace" && (
+					<Card>
+						<CardHeader>
+							<CardTitle className="text-[13px]">Workspace repos</CardTitle>
+						</CardHeader>
+						<CardContent className="flex flex-col gap-2">
+							{project.workspaceRepos?.length ? (
+								project.workspaceRepos.map((repo) => (
+									<div
+										key={repo.name}
+										className="grid grid-cols-[minmax(0,120px)_minmax(0,1fr)] gap-3 rounded-md border border-border px-3 py-2 font-mono text-[12px]"
+									>
+										<span className="truncate text-foreground">{repo.name}</span>
+										<span className="min-w-0 truncate text-muted-foreground">
+											{repo.relativePath}
+											{repo.repo ? ` · ${repo.repo}` : ""}
+										</span>
+									</div>
+								))
+							) : (
+								<p className="text-[12px] text-muted-foreground">No child repositories are registered.</p>
+							)}
+						</CardContent>
+					</Card>
+				)}
+
+				{!isScratchProject && (
+					<Card>
+						<CardHeader>
+							<CardTitle className="text-control">Worktrees</CardTitle>
+						</CardHeader>
+						<CardContent className="flex flex-col gap-4">
+							<Field label="Default branch" htmlFor="defaultBranch">
+								<input
+									id="defaultBranch"
+									className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
+									value={form.defaultBranch}
+									onChange={(e) => setForm((f) => ({ ...f, defaultBranch: e.target.value }))}
+									placeholder="main"
+								/>
+							</Field>
+							<Field label="Session prefix" htmlFor="sessionPrefix">
+								<input
+									id="sessionPrefix"
+									className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
+									value={form.sessionPrefix}
+									onChange={(e) => setForm((f) => ({ ...f, sessionPrefix: e.target.value }))}
+									placeholder="ao"
+								/>
+							</Field>
+						</CardContent>
+					</Card>
+				)}
+
+				<Card>
+					<CardHeader>
+						<CardTitle className="text-control">Agents</CardTitle>
+					</CardHeader>
+					<CardContent className="flex flex-col gap-4">
+						<RequiredAgentField
+							id="workerAgent"
+							value={form.workerAgent}
+							placeholder="Select worker agent"
+							label="Default worker agent"
+							authorized={agentCatalog?.authorized}
+							installed={agentCatalog?.installed}
+							supported={agentCatalog?.supported}
+							disabled={agentsQuery.isFetching && agentCatalog === undefined}
+							invalid={validationError !== null && form.workerAgent === ""}
+							onChange={(v) => setForm((f) => ({ ...f, workerAgent: v }))}
+						/>
+						<RequiredAgentField
+							id="orchestratorAgent"
+							value={form.orchestratorAgent}
+							placeholder="Select orchestrator agent"
+							label="Default orchestrator agent"
+							authorized={agentCatalog?.authorized}
+							installed={agentCatalog?.installed}
+							supported={agentCatalog?.supported}
+							disabled={agentsQuery.isFetching && agentCatalog === undefined}
+							invalid={validationError !== null && form.orchestratorAgent === ""}
+							onChange={(v) => setForm((f) => ({ ...f, orchestratorAgent: v }))}
+						/>
+						<div className="flex items-center justify-between gap-3 text-xs leading-row text-muted-foreground">
+							<span>Agent availability is cached.</span>
+							<button
+								type="button"
+								className="shrink-0 rounded text-foreground underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
+								disabled={refreshAgentsMutation.isPending}
+								onClick={() => refreshAgentsMutation.mutate()}
+							>
+								{refreshAgentsMutation.isPending ? "Refreshing..." : "Refresh agents"}
+							</button>
+						</div>
+						{refreshAgentsMutation.isError && (
+							<p className="text-xs leading-row text-error">
+								{refreshAgentsMutation.error instanceof Error
+									? refreshAgentsMutation.error.message
+									: "Could not refresh agent catalog."}
+							</p>
 						)}
-					</CardContent>
-				</Card>
-			)}
-
-			{!isScratchProject && (
-				<Card>
-					<CardHeader>
-						<CardTitle className="text-control">Worktrees</CardTitle>
-					</CardHeader>
-					<CardContent className="flex flex-col gap-4">
-						<Field label="Default branch" htmlFor="defaultBranch">
+						{missingRequiredAgent && (
+							<p className="text-xs leading-row text-error">Worker and orchestrator agents are required.</p>
+						)}
+						<Field label="Model override" htmlFor="model">
 							<input
-								id="defaultBranch"
+								id="model"
 								className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
-								value={form.defaultBranch}
-								onChange={(e) => setForm((f) => ({ ...f, defaultBranch: e.target.value }))}
-								placeholder="main"
+								value={form.model}
+								onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
+								placeholder="(agent default)"
 							/>
 						</Field>
-						<Field label="Session prefix" htmlFor="sessionPrefix">
-							<input
-								id="sessionPrefix"
-								className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
-								value={form.sessionPrefix}
-								onChange={(e) => setForm((f) => ({ ...f, sessionPrefix: e.target.value }))}
-								placeholder="ao"
-							/>
-						</Field>
-					</CardContent>
-				</Card>
-			)}
-
-			<Card>
-				<CardHeader>
-					<CardTitle className="text-control">Agents</CardTitle>
-				</CardHeader>
-				<CardContent className="flex flex-col gap-4">
-					<RequiredAgentField
-						id="workerAgent"
-						value={form.workerAgent}
-						placeholder="Select worker agent"
-						label="Default worker agent"
-						authorized={agentCatalog?.authorized}
-						installed={agentCatalog?.installed}
-						supported={agentCatalog?.supported}
-						disabled={agentsQuery.isFetching && agentCatalog === undefined}
-						invalid={validationError !== null && form.workerAgent === ""}
-						onChange={(v) => setForm((f) => ({ ...f, workerAgent: v }))}
-					/>
-					<RequiredAgentField
-						id="orchestratorAgent"
-						value={form.orchestratorAgent}
-						placeholder="Select orchestrator agent"
-						label="Default orchestrator agent"
-						authorized={agentCatalog?.authorized}
-						installed={agentCatalog?.installed}
-						supported={agentCatalog?.supported}
-						disabled={agentsQuery.isFetching && agentCatalog === undefined}
-						invalid={validationError !== null && form.orchestratorAgent === ""}
-						onChange={(v) => setForm((f) => ({ ...f, orchestratorAgent: v }))}
-					/>
-					<div className="flex items-center justify-between gap-3 text-xs leading-row text-muted-foreground">
-						<span>Agent availability is cached.</span>
-						<button
-							type="button"
-							className="shrink-0 rounded text-foreground underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
-							disabled={refreshAgentsMutation.isPending}
-							onClick={() => refreshAgentsMutation.mutate()}
-						>
-							{refreshAgentsMutation.isPending ? "Refreshing..." : "Refresh agents"}
-						</button>
-					</div>
-					{refreshAgentsMutation.isError && (
-						<p className="text-xs leading-row text-error">
-							{refreshAgentsMutation.error instanceof Error
-								? refreshAgentsMutation.error.message
-								: "Could not refresh agent catalog."}
-						</p>
-					)}
-					{missingRequiredAgent && (
-						<p className="text-xs leading-row text-error">Worker and orchestrator agents are required.</p>
-					)}
-					<Field label="Model override" htmlFor="model">
-						<input
-							id="model"
-							className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
-							value={form.model}
-							onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
-							placeholder="(agent default)"
-						/>
-					</Field>
-					<Field label="Permission mode" htmlFor="permissionMode">
-						<PermissionModeSelect
-							id="permissionMode"
-							value={form.permissions}
-							onChange={(v) => setForm((f) => ({ ...f, permissions: v }))}
-						/>
-					</Field>
-				</CardContent>
-			</Card>
-
-			{!isScratchProject && (
-				<Card>
-					<CardHeader>
-						<CardTitle className="text-control">Reviewers</CardTitle>
-					</CardHeader>
-					<CardContent className="flex flex-col gap-4">
-						<Field label="Default reviewer agent" htmlFor="reviewerHarness">
-							<ReviewerSelect
-								id="reviewerHarness"
-								value={form.reviewerHarness}
-								onChange={(v) => setForm((f) => ({ ...f, reviewerHarness: v }))}
+						<Field label="Permission mode" htmlFor="permissionMode">
+							<PermissionModeSelect
+								id="permissionMode"
+								value={form.permissions}
+								onChange={(v) => setForm((f) => ({ ...f, permissions: v }))}
 							/>
 						</Field>
 					</CardContent>
 				</Card>
-			)}
 
-			{!isScratchProject && (
-				<Card>
-					<CardHeader>
-						<CardTitle className="text-control">Tracker intake</CardTitle>
-					</CardHeader>
-					<CardContent>
-						<IntakeFields form={intakeForm} onChange={patchIntake} repoPreview={{ value: effectiveIntakeRepo }} />
-					</CardContent>
-				</Card>
-			)}
-
-			<div className="flex items-center gap-3">
-				<Button type="submit" variant="primary" disabled={mutation.isPending}>
-					{mutation.isPending ? "Saving…" : "Save changes"}
-				</Button>
-				{validationError && <span className="text-xs text-error">{validationError}</span>}
-				{mutation.isError && (
-					<span className="text-xs text-error">
-						{mutation.error instanceof Error ? mutation.error.message : "Save failed"}
-					</span>
+				{!isScratchProject && (
+					<Card>
+						<CardHeader>
+							<CardTitle className="text-control">Reviewers</CardTitle>
+						</CardHeader>
+						<CardContent className="flex flex-col gap-4">
+							<Field label="Default reviewer agent" htmlFor="reviewerHarness">
+								<ReviewerSelect
+									id="reviewerHarness"
+									value={form.reviewerHarness}
+									onChange={(v) => setForm((f) => ({ ...f, reviewerHarness: v }))}
+								/>
+							</Field>
+						</CardContent>
+					</Card>
 				)}
-				{savedAt && !mutation.isPending && !mutation.isError && <span className="text-xs text-success">Saved.</span>}
-				{replacementError && !mutation.isPending && !mutation.isError && (
-					<span className="text-xs text-warning">Orchestrator restart failed: {replacementError}</span>
+
+				{!isScratchProject && (
+					<Card>
+						<CardHeader>
+							<CardTitle className="text-control">Tracker intake</CardTitle>
+						</CardHeader>
+						<CardContent>
+							<IntakeFields form={intakeForm} onChange={patchIntake} repoPreview={{ value: effectiveIntakeRepo }} />
+						</CardContent>
+					</Card>
 				)}
-			</div>
-		</form>
-		<RelaunchSessionsDialog
-			open={relaunchOpen}
-			projectId={projectId}
-			onOpenChange={setRelaunchOpen}
-			onDone={onSaved}
-		/>
-	</>
+
+				<div className="flex items-center gap-3">
+					<Button type="submit" variant="primary" disabled={mutation.isPending}>
+						{mutation.isPending ? "Saving…" : "Save changes"}
+					</Button>
+					{validationError && <span className="text-xs text-error">{validationError}</span>}
+					{mutation.isError && (
+						<span className="text-xs text-error">
+							{mutation.error instanceof Error ? mutation.error.message : "Save failed"}
+						</span>
+					)}
+					{savedAt && !mutation.isPending && !mutation.isError && <span className="text-xs text-success">Saved.</span>}
+					{replacementError && !mutation.isPending && !mutation.isError && (
+						<span className="text-xs text-warning">Orchestrator restart failed: {replacementError}</span>
+					)}
+				</div>
+			</form>
+			<RelaunchSessionsDialog
+				open={relaunchOpen}
+				projectId={projectId}
+				onOpenChange={setRelaunchOpen}
+				onDone={onSaved}
+			/>
+		</>
 	);
 }
 
