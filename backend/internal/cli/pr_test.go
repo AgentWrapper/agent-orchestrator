@@ -27,6 +27,20 @@ func TestPRMergePostsToDaemon(t *testing.T) {
 	}
 }
 
+func TestPRMergeOmitsMissingMethodFromOutput(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, _ := reviewServer(t, http.StatusOK, `{"ok":true,"prNumber":42}`)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, aliveDeps(), "pr", "merge", "42")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if out != "merged PR #42\n" {
+		t.Fatalf("stdout = %q, want %q", out, "merged PR #42\n")
+	}
+}
+
 func TestPRMergeRejectsInvalidNumber(t *testing.T) {
 	setConfigEnv(t)
 

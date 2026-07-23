@@ -335,7 +335,8 @@ func TestReviewListJSONPreservesResponse(t *testing.T) {
 			"title":"Fix session resume",
 			"targetSha":"abc123",
 			"status":"running",
-			"latestRun":{"id":"run-1","reviewId":"review-1","status":"running"}
+			"latestRun":{"id":"run-1","reviewId":"review-1","status":"running"},
+			"previousRun":{"id":"run-0","reviewId":"review-1","status":"completed","verdict":"approved"}
 		}]
 	}`)
 	writeRunFileFor(t, cfg, srv)
@@ -353,6 +354,9 @@ func TestReviewListJSONPreservesResponse(t *testing.T) {
 	}
 	if res.Reviews[0].LatestRun == nil || res.Reviews[0].LatestRun.ReviewID != "review-1" {
 		t.Fatalf("latest run = %+v", res.Reviews[0].LatestRun)
+	}
+	if res.Reviews[0].PreviousRun == nil || res.Reviews[0].PreviousRun.ID != "run-0" {
+		t.Fatalf("previous run = %+v", res.Reviews[0].PreviousRun)
 	}
 }
 

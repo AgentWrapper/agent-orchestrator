@@ -275,6 +275,15 @@ func usageErrorCommand(args []string) (string, string) {
 	return command, commandPath
 }
 
+func usageArgs(validate cobra.PositionalArgs) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if err := validate(cmd, args); err != nil {
+			return usageError{err}
+		}
+		return nil
+	}
+}
+
 func noArgs(cmd *cobra.Command, args []string) error {
 	if err := cobra.ExactArgs(0)(cmd, args); err != nil {
 		return usageError{err}

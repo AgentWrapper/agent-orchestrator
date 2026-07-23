@@ -112,7 +112,7 @@ func newReviewListCommand(ctx *commandContext) *cobra.Command {
 		Use:     "ls <worker-session-id>",
 		Aliases: []string{"list"},
 		Short:   "List reviews for a worker session",
-		Args:    exactReviewArgs(1),
+		Args:    usageArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			session := strings.TrimSpace(args[0])
 			if session == "" {
@@ -313,15 +313,6 @@ func writeReviewList(cmd *cobra.Command, session string, res listReviewsResponse
 		}
 	}
 	return tw.Flush()
-}
-
-func exactReviewArgs(n int) cobra.PositionalArgs {
-	return func(cmd *cobra.Command, args []string) error {
-		if err := cobra.ExactArgs(n)(cmd, args); err != nil {
-			return usageError{err}
-		}
-		return nil
-	}
 }
 
 func readReviewItems(cmd *cobra.Command, path string) ([]submitReviewItem, error) {
