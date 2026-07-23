@@ -151,13 +151,7 @@ export function ShellTopbar() {
 						) : null}
 						{session ? <SessionStatusPill session={session} /> : null}
 					</div>
-<<<<<<< HEAD
-				) : (isProjectBoardRoute && boardActionsInPanel) ||
-				  (isMac && isRootBoardRoute && boardActionsInPanel) ? null : (
-=======
-				) : (isProjectBoardRoute && !boardActionsInFramedTopbar) ||
-					(isMac && isRootBoardRoute && !boardActionsInFramedTopbar) ? null : (
->>>>>>> 001965fe5 (fix(ui): use valid topbar button variants and define isBoardEmpty)
+				) : (isProjectBoardRoute || (isMac && isRootBoardRoute)) && boardActionsInPanel ? null : (
 					<div className="inline-flex min-w-0 items-center gap-1.5">
 						<span className={topbarProjectLabelClass}>{projectLabel}</span>
 					</div>
