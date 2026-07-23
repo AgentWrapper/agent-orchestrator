@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 import { CommandPalette } from "../components/CommandPalette";
 import { CenterPanelShell } from "../components/CenterPanelShell";
+import { DaemonFailureBanner } from "../components/DaemonFailureBanner";
 import { NotificationRuntime } from "../components/NotificationCenter";
 import { GlobalNewTaskDialog } from "../components/GlobalNewTaskDialog";
 import { KeyboardShortcutsDialog } from "../components/KeyboardShortcutsDialog";
@@ -424,6 +425,7 @@ function ShellLayout() {
 						workspaces={workspaces}
 					/>
 					<main className="flex min-w-0 flex-1 flex-col overflow-x-hidden">
+						<DaemonFailureBanner status={daemonStatus} />
 						<div className="min-h-0 flex-1 overflow-x-hidden">
 							{/* Board/session routes render inside the same inset box the welcome board and settings paint for themselves, so every screen sits within the app's outer boundary. */}
 							{hideShellTopbar ? (
