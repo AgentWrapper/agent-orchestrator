@@ -243,4 +243,5 @@ type WorkspaceRepo struct {
 	RelativePath  string
 	RepoOriginURL string
 	RegisteredAt  time.Time
+	DefaultBranch string
 }
