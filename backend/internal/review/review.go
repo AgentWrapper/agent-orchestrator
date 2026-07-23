@@ -389,7 +389,8 @@ func (e *Engine) List(ctx stdctx.Context, workerID domain.SessionID) (SessionRev
 	return SessionReviews{ReviewerHandleID: handle, Runs: runs, Reviews: Plan(prs, runs)}, nil
 }
 
-// Cancel interrupts the live reviewer pane for a worker and marks running
+// Cancel stops the live reviewer for a worker: it interrupts the pane, tears it
+// down so a cancelled reviewer does not leak a live pane, and marks running
 // review runs as cancelled so they no longer block a fresh trigger.
 func (e *Engine) Cancel(ctx stdctx.Context, workerID domain.SessionID) (CancelResult, error) {
 	if workerID == "" {
@@ -415,6 +416,13 @@ func (e *Engine) Cancel(ctx stdctx.Context, workerID domain.SessionID) (CancelRe
 			return CancelResult{}, err
 		}
 	}
+	// Destroy the pane, not just interrupt it: a cancelled reviewer should not
+	// leave "review-"+workerID (and its agent process) running. Idempotent and
+	// serialised against a concurrent Trigger respawn via lockWorker inside
+	// TeardownReviewer.
+	if err := e.TeardownReviewer(ctx, workerID); err != nil {
+		return CancelResult{}, err
+	}
 	if _, err := e.store.CancelRunningReviewRunsBySession(ctx, workerID, "cancelled by user"); err != nil {
 		return CancelResult{}, err
 	}
@@ -435,6 +443,37 @@ func (e *Engine) Cancel(ctx stdctx.Context, workerID domain.SessionID) (CancelRe
 		return CancelResult{}, err
 	}
 	return CancelResult{ReviewerHandleID: review.ReviewerHandleID, Reviews: Plan(prs, runs), CancelledRuns: cancelled}, nil
+}
+
+// TeardownReviewer destroys a worker's reviewer pane so a cancelled or ended
+// reviewer does not leak a live pane. The reviewer pane ("review-"+workerID) is
+// stable per worker and reused across passes, so nothing else tears it down;
+// without this, an explicit cancel (or, wired later, a terminated worker) leaves
+// the pane and its agent process running. It is idempotent — no reviewer / an
+// already-gone pane is a no-op — and serialises against Trigger via lockWorker so
+// it cannot race a concurrent (re)spawn on the same deterministic handle.
+func (e *Engine) TeardownReviewer(ctx stdctx.Context, workerID domain.SessionID) error {
+	if workerID == "" {
+		return fmt.Errorf("%w: worker session id is required", ErrInvalid)
+	}
+	unlock := e.lockWorker(workerID)
+	defer unlock()
+	return e.launcher.Teardown(ctx, reviewerHandleID(workerID))
+}
+
+// ReviewerAlive reports whether the worker's reviewer pane ("review-"+workerID)
+// is still running. The terminal-resource reconciler calls this after
+// TeardownReviewer to gate worktree removal on the pane's actual liveness rather
+// than on a cancel/teardown return, so an in-flight reviewer in the worker's
+// worktree is never corrupted by a reclaim. It serialises against Trigger via
+// lockWorker, and reports not-alive for an unknown worker id.
+func (e *Engine) ReviewerAlive(ctx stdctx.Context, workerID domain.SessionID) (bool, error) {
+	if workerID == "" {
+		return false, nil
+	}
+	unlock := e.lockWorker(workerID)
+	defer unlock()
+	return e.launcher.Alive(ctx, reviewerHandleID(workerID))
 }
 
 // reviewerHarness resolves which harness reviews the worker's PR: a configured

@@ -80,4 +80,8 @@ type Session struct {
 	// They feed status derivation and are surfaced on the API read model. Not
 	// serialized here: the HTTP boundary maps them to the curated wire shape.
 	PRs []PRFacts `json:"-"`
+	// Cleanup holds the terminal-resource cleanup facts for a terminated session,
+	// nil when none exist yet (a live session, or one not yet finalized). Joined
+	// at read time; the HTTP boundary maps it to the curated wire shape.
+	Cleanup *SessionCleanupRecord `json:"-"`
 }

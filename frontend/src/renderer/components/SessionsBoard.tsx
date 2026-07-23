@@ -19,6 +19,7 @@ import {
 	type AttentionZoneView,
 } from "../lib/session-presentation";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
+import { useCleanupSession } from "../hooks/useCleanupSession";
 import { useRestoreSession } from "../hooks/useRestoreSession";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { NotificationCenter } from "./NotificationCenter";
@@ -50,6 +51,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const restoreSessionById = useRestoreSession();
+	const cleanupSessionById = useCleanupSession();
 	const workspaceQuery = useWorkspaceQuery();
 	// Evaluated at render so platform mocks in tests can flip the in-panel chrome.
 	const boardActionsInPanel = usesBoardActionsInPanel();
@@ -111,12 +113,16 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const [restoringSessionId, setRestoringSessionId] = useState<string | undefined>();
 	const [restoreErrors, setRestoreErrors] = useState<Record<string, string>>({});
 	const [restoreUnavailableSession, setRestoreUnavailableSession] = useState<WorkspaceSession | undefined>();
+	const [cleaningUpSessionId, setCleaningUpSessionId] = useState<string | undefined>();
+	const [cleanupErrors, setCleanupErrors] = useState<Record<string, string>>({});
 	const activeProjectIdRef = useRef(projectId);
 	activeProjectIdRef.current = projectId;
 	useEffect(() => {
 		setRestoringSessionId(undefined);
 		setRestoreErrors({});
 		setRestoreUnavailableSession(undefined);
+		setCleaningUpSessionId(undefined);
+		setCleanupErrors({});
 	}, [projectId]);
 
 	const openSession = (session: WorkspaceSession) =>
@@ -154,6 +160,33 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 		} finally {
 			if (isStillActiveProject()) {
 				setRestoringSessionId(undefined);
+			}
+		}
+	};
+
+	// cleanupDoneSession retries the terminal-resource cleanup for a preserved-dirty
+	// or failed session. Unlike restore it stays on the board — the refreshed
+	// cleanup facts (via the hook's query invalidation) re-render in place.
+	const cleanupDoneSession = async (event: MouseEvent<HTMLButtonElement>, session: WorkspaceSession) => {
+		event.stopPropagation();
+		if (cleaningUpSessionId) return;
+		const cleanupProjectId = projectId;
+		const isStillActiveProject = () => !cleanupProjectId || activeProjectIdRef.current === cleanupProjectId;
+		setCleaningUpSessionId(session.id);
+		setCleanupErrors((current) => {
+			const next = { ...current };
+			delete next[session.id];
+			return next;
+		});
+		try {
+			const result = await cleanupSessionById(session.id);
+			if (!isStillActiveProject()) return;
+			if (result.status === "error") {
+				setCleanupErrors((current) => ({ ...current, [session.id]: result.message }));
+			}
+		} finally {
+			if (isStillActiveProject()) {
+				setCleaningUpSessionId(undefined);
 			}
 		}
 	};
@@ -332,6 +365,9 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 									restoreError={restoreErrors[s.id]}
 									isRestoring={restoringSessionId === s.id}
 									isRestoreDisabled={restoringSessionId !== undefined}
+									cleanupAction={cleanupRetryable(s) ? (event) => void cleanupDoneSession(event, s) : undefined}
+									cleanupError={cleanupErrors[s.id]}
+									isCleaningUp={cleaningUpSessionId === s.id}
 								/>
 							))}
 						</div>
@@ -458,6 +494,34 @@ function IdleSessionsStack({
 	);
 }
 
+// cleanupRetryable reports whether a terminated session's cleanup can be
+// user-retried: a preserved-dirty worktree or an exhausted failure. Gated on the
+// raw isTerminated fact, so a merged (but terminated) session qualifies too.
+function cleanupRetryable(session: WorkspaceSession): boolean {
+	if (!session.isTerminated) return false;
+	const d = session.cleanup?.disposition;
+	return d === "preserved_dirty" || d === "failed";
+}
+
+type CleanupCardView = { label: string; tone: string; retryLabel?: string };
+
+// cleanupCardView renders a terminated session's cleanup state into a compact
+// board label, or null when there is nothing to surface (never terminal, no
+// facts, or an already-clean removed/not_applicable outcome).
+function cleanupCardView(session: WorkspaceSession): CleanupCardView | null {
+	if (!session.isTerminated || !session.cleanup) return null;
+	switch (session.cleanup.disposition) {
+		case "pending":
+			return { label: "Cleaning up…", tone: "text-passive" };
+		case "preserved_dirty":
+			return { label: "Worktree kept — uncommitted changes", tone: "text-foreground", retryLabel: "Try cleanup again" };
+		case "failed":
+			return { label: "Cleanup failed", tone: "text-destructive", retryLabel: "Retry cleanup" };
+		default:
+			return null; // removed / not_applicable — nothing to act on
+	}
+}
+
 function SessionCard({
 	session,
 	onOpen,
@@ -466,6 +530,9 @@ function SessionCard({
 	restoreError,
 	isRestoring = false,
 	isRestoreDisabled = false,
+	cleanupAction,
+	cleanupError,
+	isCleaningUp = false,
 }: {
 	session: WorkspaceSession;
 	onOpen?: () => void;
@@ -474,8 +541,12 @@ function SessionCard({
 	restoreError?: string;
 	isRestoring?: boolean;
 	isRestoreDisabled?: boolean;
+	cleanupAction?: (event: MouseEvent<HTMLButtonElement>) => void;
+	cleanupError?: string;
+	isCleaningUp?: boolean;
 }) {
 	const badge = getSessionStatusView(session.status);
+	const cleanup = cleanupCardView(session);
 	const issueId = canonicalTrackerIssueId(session.issueId);
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
@@ -533,6 +604,30 @@ function SessionCard({
 				</div>
 				{showBranch && <div className="px-3.25 pb-2.5 font-mono text-2xs text-passive">{branch}</div>}
 			</div>
+			{cleanup && (
+				<div
+					className="flex items-center gap-2 border-t border-border px-3.25 py-1.5 text-2xs"
+					onClick={(event) => event.stopPropagation()}
+				>
+					<span className={cn("truncate", cleanup.tone)} title={cleanup.label}>
+						{cleanup.label}
+					</span>
+					{cleanup.retryLabel && cleanupAction && (
+						<button
+							aria-label={`${cleanup.retryLabel} for ${session.title}`}
+							className="ml-auto inline-flex h-control-xs shrink-0 items-center justify-center rounded-sm border border-border px-2 text-2xs font-semibold text-foreground transition-colors hover:border-border-strong disabled:cursor-not-allowed disabled:opacity-60"
+							disabled={isCleaningUp}
+							onClick={cleanupAction}
+							type="button"
+						>
+							{isCleaningUp ? "Cleaning up" : cleanup.retryLabel}
+						</button>
+					)}
+				</div>
+			)}
+			{cleanupError && (
+				<div className="border-t border-border px-3.25 py-1.5 text-2xs text-destructive">{cleanupError}</div>
+			)}
 			{restoreError && (
 				<div className="border-t border-border px-3.25 py-1.5 text-2xs text-destructive">{restoreError}</div>
 			)}

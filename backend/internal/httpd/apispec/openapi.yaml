@@ -1217,6 +1217,45 @@ paths:
       summary: Report an agent activity-state signal for a session
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/cleanup:
+    post:
+      operationId: cleanupSession
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleanupSessionResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Reclaim a single terminated session's runtime + workspace resources
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/kill:
     post:
       operationId: killSession
@@ -2165,6 +2204,21 @@ components:
       - branchChanged
       - takenOverFrom
       type: object
+    CleanupSessionResponse:
+      properties:
+        cleanup:
+          $ref: '#/components/schemas/SessionCleanupView'
+        isTerminated:
+          type: boolean
+        ok:
+          type: boolean
+        sessionId:
+          type: string
+      required:
+      - ok
+      - sessionId
+      - isTerminated
+      type: object
     CleanupSessionsResponse:
       properties:
         cleaned:
@@ -2198,6 +2252,8 @@ components:
           $ref: '#/components/schemas/DomainActivity'
         branch:
           type: string
+        cleanup:
+          $ref: '#/components/schemas/SessionCleanupView'
         createdAt:
           format: date-time
           type: string
@@ -3034,6 +3090,28 @@ components:
       - ok
       - sessionId
       - message
+      type: object
+    SessionCleanupView:
+      properties:
+        attemptCount:
+          format: int64
+          type: integer
+        failureCode:
+          type: string
+        nextAttemptAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        runtimeReleasedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        workspaceDisposition:
+          type: string
+      required:
+      - workspaceDisposition
       type: object
     SessionPRCISummary:
       properties:
