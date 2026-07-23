@@ -145,6 +145,41 @@ describe("remote-forwarder", () => {
 		expect(otherOwner.origin).not.toBe(first.origin);
 	});
 
+	it.each([
+		{
+			name: "IPv4 unspecified and loopback hosts",
+			first: "http://0.0.0.0:5173/a?q=1#first",
+			second: "http://127.0.0.1:5173/b?q=2#second",
+			wantTarget: "http://127.0.0.1:5173",
+		},
+		{
+			name: "IPv6 unspecified and loopback hosts",
+			first: "http://[::]:5173/a?q=1#first",
+			second: "http://[::1]:5173/b?q=2#second",
+			wantTarget: "http://[::1]:5173",
+		},
+	])("preserves source aliases while reusing a normalized mapping: $name", async ({ first, second, wantTarget }) => {
+		const receivedTargets: Array<string | undefined> = [];
+		const daemon = http.createServer((req, res) => {
+			receivedTargets.push(req.headers["x-ao-preview-target"] as string | undefined);
+			res.end("ok");
+		});
+		servers.push(daemon);
+		const daemonPort = await listen(daemon);
+		const forwarder = await startRemoteForwarder({ host: "127.0.0.1", port: daemonPort, password: "secret" });
+		forwarders.push(forwarder);
+
+		const firstLocal = new URL(forwarder.resolvePreviewURL("owner", "session", first));
+		const secondLocal = new URL(forwarder.resolvePreviewURL("owner", "session", second));
+		await forwarderRequest(forwarder, firstLocal.toString());
+		await forwarderRequest(forwarder, secondLocal.toString());
+
+		expect(secondLocal.origin).toBe(firstLocal.origin);
+		expect(receivedTargets).toEqual([wantTarget, wantTarget]);
+		expect(forwarder.originalPreviewURL(secondLocal.toString())).toBe(second);
+		expect(forwarder.originalPreviewURL(firstLocal.toString())).toBe(first);
+	});
+
 	it("translates file aliases and invalidates all mappings owned by a released view", async () => {
 		const upstream = http.createServer((_req, res) => res.end("ok"));
 		servers.push(upstream);

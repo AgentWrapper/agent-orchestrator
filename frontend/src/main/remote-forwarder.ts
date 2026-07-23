@@ -50,10 +50,11 @@ type PreviewMapping = {
 	kind: "http" | "file";
 	targetHeader: string;
 	sourceOrigin?: string;
+	sourceOriginsByLocalURL: Map<string, string>;
 	fileURL?: string;
 };
 
-type PreviewTarget = Omit<PreviewMapping, "token" | "ownerId" | "sessionId"> & {
+type PreviewTarget = Omit<PreviewMapping, "token" | "ownerId" | "sessionId" | "sourceOriginsByLocalURL"> & {
 	key: string;
 	pathname: string;
 	search: string;
@@ -292,12 +293,23 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 		for (const mapping of owned.values()) previewsByToken.delete(mapping.token);
 		previewsByOwner.delete(ownerId);
 	};
-	const localPreviewURL = (mapping: PreviewMapping, pathname: string, search: string, hash: string) => {
+	const localPreviewURL = (
+		mapping: PreviewMapping,
+		pathname: string,
+		search: string,
+		hash: string,
+		sourceOrigin?: string,
+	) => {
 		const local = new URL(`http://${mapping.token}${previewHostSuffix}:${forwarderPort}`);
 		local.pathname = pathname;
 		local.search = search;
 		local.hash = hash;
-		return local.toString();
+		const localURL = local.toString();
+		if (sourceOrigin) {
+			mapping.sourceOrigin = sourceOrigin;
+			mapping.sourceOriginsByLocalURL.set(localURL, sourceOrigin);
+		}
+		return localURL;
 	};
 	const registerPreview = (ownerId: string, sessionId: string, target: PreviewTarget): PreviewMapping => {
 		let owned = previewsByOwner.get(ownerId);
@@ -319,6 +331,7 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 			kind: target.kind,
 			targetHeader: target.targetHeader,
 			sourceOrigin: target.sourceOrigin,
+			sourceOriginsByLocalURL: new Map(),
 			fileURL: target.fileURL,
 		};
 		owned.set(key, mapping);
@@ -329,7 +342,13 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 		if (closed) return rawURL;
 		const target = previewTarget(rawURL);
 		if (!target) return rawURL;
-		return localPreviewURL(registerPreview(ownerId, sessionId, target), target.pathname, target.search, target.hash);
+		return localPreviewURL(
+			registerPreview(ownerId, sessionId, target),
+			target.pathname,
+			target.search,
+			target.hash,
+			target.sourceOrigin,
+		);
 	};
 	const originalPreviewURL = (localURL: string): string => {
 		let local: URL;
@@ -349,7 +368,7 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 		const mapping = previewsByToken.get(token);
 		if (!mapping) return localURL;
 		if (mapping.kind === "http") {
-			const original = new URL(mapping.sourceOrigin!);
+			const original = new URL(mapping.sourceOriginsByLocalURL.get(local.toString()) ?? mapping.sourceOrigin!);
 			original.pathname = local.pathname;
 			original.search = local.search;
 			original.hash = local.hash;
@@ -418,6 +437,7 @@ export async function startRemoteForwarder(config: RemoteServerConfigInput): Pro
 						destination.pathname,
 						destination.search,
 						destination.hash,
+						destination.sourceOrigin,
 					),
 				};
 			}
