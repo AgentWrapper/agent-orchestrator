@@ -21,6 +21,7 @@ export const AGENT_OPTIONS = [
 	"kilocode",
 	"vibe",
 	"pi",
+	"kimchi",
 	"autohand",
 	"fake",
 ] as const;
