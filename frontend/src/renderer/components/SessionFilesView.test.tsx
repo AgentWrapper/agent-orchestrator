@@ -237,6 +237,21 @@ describe("SessionFilesView", () => {
 		expect(container.querySelector('[class*="bg-error/35"]')?.textContent).toBe("0");
 	});
 
+	it("switches between unified and side-by-side split diff", async () => {
+		const { container } = renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+		await screen.findByText(diffLine("const value = 1;"));
+		expect(container.querySelector(".grid-cols-2")).toBeNull();
+
+		await userEvent.click(screen.getByRole("button", { name: "Split diff view" }));
+		expect(container.querySelector(".grid-cols-2")).not.toBeNull();
+		// Old on the left, new on the right — both still rendered.
+		expect(screen.getByText(diffLine("const value = 0;"))).toBeInTheDocument();
+		expect(screen.getByText(diffLine("const value = 1;"))).toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("button", { name: "Unified diff view" }));
+		expect(container.querySelector(".grid-cols-2")).toBeNull();
+	});
+
 	it("renders changed files as one integrated review list instead of boxed cards", async () => {
 		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
 

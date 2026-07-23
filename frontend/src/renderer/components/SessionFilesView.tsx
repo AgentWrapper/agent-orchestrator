@@ -6,6 +6,7 @@ import {
 	ChevronRight,
 	ChevronsDownUp,
 	ChevronsUpDown,
+	Columns2,
 	Copy,
 	Maximize2,
 	Minimize2,
@@ -59,6 +60,7 @@ export function SessionFilesView({
 	const [filter, setFilter] = useState("");
 	const [searchOpen, setSearchOpen] = useState(false);
 	const [wrap, setWrap] = useState(false);
+	const [split, setSplit] = useState(false);
 	const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
 	const initializedExpansionFor = useRef<string | null>(null);
 
@@ -180,6 +182,17 @@ export function SessionFilesView({
 					)}
 				</Button>
 				<Button
+					aria-label={split ? "Unified diff view" : "Split diff view"}
+					aria-pressed={split}
+					className={cn("shrink-0", split && "text-accent")}
+					onClick={() => setSplit((current) => !current)}
+					size="icon-sm"
+					type="button"
+					variant="ghost"
+				>
+					<Columns2 className="size-icon-sm" aria-hidden="true" />
+				</Button>
+				<Button
 					aria-label={wrap ? "Disable line wrapping" : "Wrap long lines"}
 					aria-pressed={wrap}
 					className={cn("shrink-0", wrap && "text-accent")}
@@ -232,6 +245,7 @@ export function SessionFilesView({
 						onRetry={() => void filesQuery.refetch()}
 						onToggle={toggleFile}
 						sessionId={sessionId}
+						split={split}
 						wrap={wrap}
 					/>
 				</div>
@@ -248,6 +262,7 @@ function ReviewFileList({
 	onRetry,
 	onToggle,
 	sessionId,
+	split,
 	wrap,
 }: {
 	error: Error | null;
@@ -257,6 +272,7 @@ function ReviewFileList({
 	onRetry: () => void;
 	onToggle: (path: string) => void;
 	sessionId: string;
+	split: boolean;
 	wrap: boolean;
 }) {
 	if (isLoading) {
@@ -279,6 +295,7 @@ function ReviewFileList({
 						file={file}
 						onToggle={() => onToggle(file.path)}
 						sessionId={sessionId}
+						split={split}
 						wrap={wrap}
 					/>
 				</li>
@@ -292,12 +309,14 @@ function ReviewFileCard({
 	file,
 	onToggle,
 	sessionId,
+	split,
 	wrap,
 }: {
 	expanded: boolean;
 	file: WorkspaceFileSummary;
 	onToggle: () => void;
 	sessionId: string;
+	split: boolean;
 	wrap: boolean;
 }) {
 	const detailQuery = useQuery({
@@ -343,7 +362,7 @@ function ReviewFileCard({
 						</PanelMessage>
 					) : null}
 					{!detailQuery.isPending && !detailQuery.error && detailQuery.data ? (
-						<ReviewDiffBody detail={detailQuery.data} wrap={wrap} />
+						<ReviewDiffBody detail={detailQuery.data} split={split} wrap={wrap} />
 					) : null}
 				</div>
 			) : null}
@@ -384,7 +403,7 @@ async function loadWorkspaceFile(sessionId: string, path: string) {
 	return data;
 }
 
-function ReviewDiffBody({ detail, wrap }: { detail: WorkspaceFileDetail; wrap: boolean }) {
+function ReviewDiffBody({ detail, split, wrap }: { detail: WorkspaceFileDetail; split: boolean; wrap: boolean }) {
 	if (detail.binary) {
 		return <PanelMessage>Binary file preview is not available.</PanelMessage>;
 	}
@@ -392,7 +411,7 @@ function ReviewDiffBody({ detail, wrap }: { detail: WorkspaceFileDetail; wrap: b
 	if (rows.length === 0) {
 		return <PanelMessage>No changes against HEAD.</PanelMessage>;
 	}
-	return <DiffView rows={rows} truncated={detail.diffTruncated} wrap={wrap} />;
+	return <DiffView rows={rows} split={split} truncated={detail.diffTruncated} wrap={wrap} />;
 }
 
 type DiffRowKind = "context" | "add" | "del" | "hunk";
@@ -568,7 +587,7 @@ const diffMarkerGlyph: Record<Exclude<DiffRowKind, "hunk">, string> = {
 	context: " ",
 };
 
-function DiffView({ rows, truncated, wrap }: { rows: DiffRow[]; truncated?: boolean; wrap: boolean }) {
+function DiffView({ rows, split, truncated, wrap }: { rows: DiffRow[]; split: boolean; truncated?: boolean; wrap: boolean }) {
 	return (
 		<div className="flex min-h-[220px] max-h-[min(620px,calc(100vh-18rem))] flex-col">
 			{truncated ? (
@@ -577,41 +596,115 @@ function DiffView({ rows, truncated, wrap }: { rows: DiffRow[]; truncated?: bool
 				</div>
 			) : null}
 			<div className="session-files-diff-scrollbar min-h-0 flex-1 overflow-auto bg-terminal font-mono text-xs leading-row text-terminal-foreground">
-				<div className={cn(!wrap && "min-w-max")}>
-					{rows.map((row, index) =>
-						row.kind === "hunk" ? (
-							<div
-								className="flex select-none items-baseline gap-3 bg-surface-faint px-3 py-1 text-passive"
-								key={`h${index}`}
-							>
-								<span className="shrink-0 text-passive/70">{row.text}</span>
-								{row.section ? <span className="min-w-0 truncate text-passive/90">{row.section}</span> : null}
-							</div>
-						) : (
-							<div className={cn("flex", diffRowTone[row.kind])} key={`r${index}`}>
-								<span className="w-9 shrink-0 select-none border-r border-border/50 bg-terminal px-1.5 text-right text-passive/70 tabular-nums">
-									{row.oldNo ?? ""}
-								</span>
-								<span className="w-9 shrink-0 select-none border-r border-border/50 bg-terminal px-1.5 text-right text-passive/70 tabular-nums">
-									{row.newNo ?? ""}
-								</span>
-								<span
-									className={cn(
-										"w-4 shrink-0 select-none text-center",
-										row.kind === "add" && "text-success",
-										row.kind === "del" && "text-error",
-									)}
-								>
-									{diffMarkerGlyph[row.kind]}
-								</span>
-								<span className={cn("pr-4", wrap ? "whitespace-pre-wrap break-all" : "whitespace-pre")}>
-									{row.segments ? <DiffLineSegments add={row.kind === "add"} segments={row.segments} /> : row.text || " "}
-								</span>
-							</div>
-						),
-					)}
-				</div>
+				{split ? (
+					<SplitDiff rows={rows} />
+				) : (
+					<div className={cn(!wrap && "min-w-max")}>
+						{rows.map((row, index) =>
+							row.kind === "hunk" ? (
+								<HunkBand key={`h${index}`} row={row} />
+							) : (
+								<div className={cn("flex", diffRowTone[row.kind])} key={`r${index}`}>
+									<span className="w-9 shrink-0 select-none border-r border-border/50 bg-terminal px-1.5 text-right text-passive/70 tabular-nums">
+										{row.oldNo ?? ""}
+									</span>
+									<span className="w-9 shrink-0 select-none border-r border-border/50 bg-terminal px-1.5 text-right text-passive/70 tabular-nums">
+										{row.newNo ?? ""}
+									</span>
+									<span
+										className={cn(
+											"w-4 shrink-0 select-none text-center",
+											row.kind === "add" && "text-success",
+											row.kind === "del" && "text-error",
+										)}
+									>
+										{diffMarkerGlyph[row.kind]}
+									</span>
+									<span className={cn("pr-4", wrap ? "whitespace-pre-wrap break-all" : "whitespace-pre")}>
+										{row.segments ? <DiffLineSegments add={row.kind === "add"} segments={row.segments} /> : row.text || " "}
+									</span>
+								</div>
+							),
+						)}
+					</div>
+				)}
 			</div>
+		</div>
+	);
+}
+
+function HunkBand({ row }: { row: DiffRow }) {
+	return (
+		<div className="flex select-none items-baseline gap-3 bg-surface-faint px-3 py-1 text-passive">
+			<span className="shrink-0 text-passive/70">{row.text}</span>
+			{row.section ? <span className="min-w-0 truncate text-passive/90">{row.section}</span> : null}
+		</div>
+	);
+}
+
+type SplitRow =
+	| { kind: "hunk"; row: DiffRow }
+	| { kind: "pair"; left: DiffRow | null; right: DiffRow | null };
+
+// toSplitRows aligns the unified rows into left (old) / right (new) pairs: each
+// run of deletions lines up index-for-index with the additions that follow it,
+// context appears on both sides, and hunk headers span the full width.
+function toSplitRows(rows: DiffRow[]): SplitRow[] {
+	const out: SplitRow[] = [];
+	let dels: DiffRow[] = [];
+	let adds: DiffRow[] = [];
+	const flush = () => {
+		const count = Math.max(dels.length, adds.length);
+		for (let i = 0; i < count; i += 1) out.push({ kind: "pair", left: dels[i] ?? null, right: adds[i] ?? null });
+		dels = [];
+		adds = [];
+	};
+	for (const row of rows) {
+		if (row.kind === "del") {
+			dels.push(row);
+			continue;
+		}
+		if (row.kind === "add") {
+			adds.push(row);
+			continue;
+		}
+		flush();
+		if (row.kind === "hunk") out.push({ kind: "hunk", row });
+		else out.push({ kind: "pair", left: row, right: row });
+	}
+	flush();
+	return out;
+}
+
+function SplitDiff({ rows }: { rows: DiffRow[] }) {
+	return (
+		<div>
+			{toSplitRows(rows).map((splitRow, index) =>
+				splitRow.kind === "hunk" ? (
+					<HunkBand key={`sh${index}`} row={splitRow.row} />
+				) : (
+					<div className="grid grid-cols-2 divide-x divide-border/40" key={`sp${index}`}>
+						<SplitSide row={splitRow.left} side="old" />
+						<SplitSide row={splitRow.right} side="new" />
+					</div>
+				),
+			)}
+		</div>
+	);
+}
+
+function SplitSide({ row, side }: { row: DiffRow | null; side: "old" | "new" }) {
+	if (!row) return <div className="bg-surface-faint/20" aria-hidden="true" />;
+	const lineNo = side === "old" ? row.oldNo : row.newNo;
+	const tone = row.kind === "hunk" ? "" : diffRowTone[row.kind];
+	return (
+		<div className={cn("flex min-w-0", tone)}>
+			<span className="w-9 shrink-0 select-none border-r border-border/50 bg-terminal px-1.5 text-right text-passive/70 tabular-nums">
+				{lineNo ?? ""}
+			</span>
+			<span className="min-w-0 whitespace-pre-wrap break-all px-2">
+				{row.segments ? <DiffLineSegments add={row.kind === "add"} segments={row.segments} /> : row.text || " "}
+			</span>
 		</div>
 	);
 }
