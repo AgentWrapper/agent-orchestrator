@@ -22,6 +22,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/mobilebridge"
 	"github.com/aoagents/agent-orchestrator/backend/internal/notify"
+	"github.com/aoagents/agent-orchestrator/backend/internal/observe/reconciler"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/preview"
 	"github.com/aoagents/agent-orchestrator/backend/internal/push"
@@ -263,9 +264,10 @@ func Run() error {
 	}
 
 	// Reconcile sessions on boot: adopt crash-surviving runtimes, capture and
-	// terminate dead ones, reap leaked tmux, then restore shutdown-saved
-	// sessions. Best-effort: a failure is logged but never blocks boot. Placed
-	// before srv.Run so sessions are consistent before the server serves.
+	// terminate dead ones, then restore shutdown-saved sessions. Run to
+	// completion (synchronous, as before) so restore-pending sessions are settled
+	// before the terminal-resource reconciler starts and before the server
+	// serves. Best-effort: a failure is logged but never blocks boot.
 	if reconcileErr := sessMgr.Reconcile(ctx); reconcileErr != nil {
 		log.Error("reconcile sessions on boot failed", "err", reconcileErr)
 	}
@@ -275,6 +277,16 @@ func Run() error {
 	// boot path (a store read plus a possible pane write per pending project);
 	// the recovery sweep is the backstop if it does not finish before shutdown.
 	go lcStack.LCM.DispatchAllPendingWorkerIdleEvents(ctx)
+
+	// Start the terminal-resource reconciler AFTER Reconcile/RestoreAll has
+	// settled: it subscribes to the CDC session_updated wake, then drains the
+	// sessions-driven candidate backlog (the pre-existing leaked worktrees #2811
+	// is about) onto its async worker, and retries capped-backoff pending
+	// cleanups on a sweep. Subscribing before its own boot snapshot closes the
+	// boot-window race; draining is async so a large backlog never delays serving.
+	// Its done-channel joins lcStack.Stop so it unsubscribes before cdcPipe.Stop.
+	termReconciler := reconciler.New(sessMgr, store, cdcPipe.Broadcaster, reconciler.Config{Logger: log})
+	lcStack.reconcilerDone = termReconciler.Start(ctx)
 
 	// ponytail: 5s tolerates a brief frontend restart; tune if dev hot-reload trips it.
 	const supervisorGrace = 5 * time.Second

@@ -272,7 +272,7 @@ func TestLauncherAlive(t *testing.T) {
 
 func TestLauncherTeardownDestroysPane(t *testing.T) {
 	rt := &fakeRuntime{}
-	l := NewLauncher(fakeReviewerResolver{ok: true}, rt)
+	l := NewLauncher(fakeReviewerResolver{ok: true}, rt, t.TempDir())
 	if err := l.Teardown(context.Background(), "review-mer-1"); err != nil {
 		t.Fatalf("Teardown: %v", err)
 	}
@@ -282,7 +282,7 @@ func TestLauncherTeardownDestroysPane(t *testing.T) {
 
 	// An empty handle is a no-op (nothing to destroy).
 	rtEmpty := &fakeRuntime{}
-	lEmpty := NewLauncher(fakeReviewerResolver{ok: true}, rtEmpty)
+	lEmpty := NewLauncher(fakeReviewerResolver{ok: true}, rtEmpty, t.TempDir())
 	if err := lEmpty.Teardown(context.Background(), ""); err != nil {
 		t.Fatalf("empty-handle Teardown: %v", err)
 	}

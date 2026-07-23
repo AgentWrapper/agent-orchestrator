@@ -461,6 +461,21 @@ func (e *Engine) TeardownReviewer(ctx stdctx.Context, workerID domain.SessionID)
 	return e.launcher.Teardown(ctx, reviewerHandleID(workerID))
 }
 
+// ReviewerAlive reports whether the worker's reviewer pane ("review-"+workerID)
+// is still running. The terminal-resource reconciler calls this after
+// TeardownReviewer to gate worktree removal on the pane's actual liveness rather
+// than on a cancel/teardown return, so an in-flight reviewer in the worker's
+// worktree is never corrupted by a reclaim. It serialises against Trigger via
+// lockWorker, and reports not-alive for an unknown worker id.
+func (e *Engine) ReviewerAlive(ctx stdctx.Context, workerID domain.SessionID) (bool, error) {
+	if workerID == "" {
+		return false, nil
+	}
+	unlock := e.lockWorker(workerID)
+	defer unlock()
+	return e.launcher.Alive(ctx, reviewerHandleID(workerID))
+}
+
 // reviewerHarness resolves which harness reviews the worker's PR: a configured
 // reviewer wins, otherwise worker's own harness is reused when it is a
 // supported reviewer, otherwise fallback to claude-code.
