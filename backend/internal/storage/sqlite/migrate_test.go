@@ -37,31 +37,7 @@ func TestMigrateAllowsEveryShippedHarness(t *testing.T) {
 		t.Fatalf("read sessions schema: %v", err)
 	}
 
-	harnesses := []domain.AgentHarness{
-		domain.HarnessClaudeCode,
-		domain.HarnessCodex,
-		domain.HarnessAider,
-		domain.HarnessOpenCode,
-		domain.HarnessGrok,
-		domain.HarnessDroid,
-		domain.HarnessAmp,
-		domain.HarnessAgy,
-		domain.HarnessCrush,
-		domain.HarnessCursor,
-		domain.HarnessQwen,
-		domain.HarnessCopilot,
-		domain.HarnessGoose,
-		domain.HarnessAuggie,
-		domain.HarnessContinue,
-		domain.HarnessDevin,
-		domain.HarnessCline,
-		domain.HarnessKimi,
-		domain.HarnessKiro,
-		domain.HarnessKilocode,
-		domain.HarnessVibe,
-		domain.HarnessPi,
-		domain.HarnessAutohand,
-	}
+	harnesses := domain.AllHarnesses
 
 	for _, h := range harnesses {
 		if !strings.Contains(schema, "'"+string(h)+"'") {
