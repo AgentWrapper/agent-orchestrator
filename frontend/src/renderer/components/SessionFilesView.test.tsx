@@ -103,7 +103,7 @@ describe("SessionFilesView", () => {
 		expect(screen.getByText("2 files")).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: /README\.md/ })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Download src/App.tsx" })).not.toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: "Copy path for src/App.tsx" })).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Copy path for src/App.tsx" })).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Diff layout" })).not.toBeInTheDocument();
 		expect(screen.queryByText("Stacked")).not.toBeInTheDocument();
 

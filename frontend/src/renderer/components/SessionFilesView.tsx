@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+	Check,
 	ChevronDown,
 	ChevronRight,
 	ChevronsDownUp,
 	ChevronsUpDown,
+	Copy,
 	Maximize2,
 	Minimize2,
 	RefreshCw,
@@ -307,15 +309,17 @@ function ReviewFileCard({
 
 	return (
 		<article className="session-files-review-row overflow-hidden bg-transparent">
-			<div className="flex min-h-14 items-center">
+			<div
+				className={cn(
+					"group/row flex min-h-14 items-center transition-colors",
+					expanded ? "bg-interactive-active/45" : "hover:bg-interactive-hover/50",
+				)}
+			>
 				<button
 					aria-controls={`workspace-diff-${file.path}`}
 					aria-expanded={expanded}
 					aria-label={`${expanded ? "Collapse" : "Expand"} ${file.path}`}
-					className={cn(
-						"flex min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left transition-colors",
-						expanded ? "bg-interactive-active/45" : "hover:bg-interactive-hover/50",
-					)}
+					className="flex min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left"
 					onClick={onToggle}
 					type="button"
 				>
@@ -328,6 +332,7 @@ function ReviewFileCard({
 					<span className="min-w-0 flex-1 truncate font-mono text-sm font-semibold text-foreground">{file.path}</span>
 					<ChangeBadges additions={file.additions} deletions={file.deletions} />
 				</button>
+				<CopyPathButton path={file.path} />
 			</div>
 			{expanded ? (
 				<div id={`workspace-diff-${file.path}`} className="border-t border-border/60 bg-background/40">
@@ -343,6 +348,30 @@ function ReviewFileCard({
 				</div>
 			) : null}
 		</article>
+	);
+}
+
+function CopyPathButton({ path }: { path: string }) {
+	const [copied, setCopied] = useState(false);
+	return (
+		<Button
+			aria-label={copied ? "Path copied" : `Copy path for ${path}`}
+			className="mr-2 shrink-0 opacity-0 transition-opacity focus-visible:opacity-100 group-hover/row:opacity-100"
+			onClick={() => {
+				void navigator.clipboard?.writeText(path);
+				setCopied(true);
+				setTimeout(() => setCopied(false), 1200);
+			}}
+			size="icon-sm"
+			type="button"
+			variant="ghost"
+		>
+			{copied ? (
+				<Check className="size-icon-sm text-success" aria-hidden="true" />
+			) : (
+				<Copy className="size-icon-sm" aria-hidden="true" />
+			)}
+		</Button>
 	);
 }
 
