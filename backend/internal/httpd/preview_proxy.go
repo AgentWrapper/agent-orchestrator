@@ -93,13 +93,20 @@ func parsePreviewTarget(raw string) (previewTarget, error) {
 }
 
 func normalizePreviewFileURLPath(goos, raw string) (string, bool) {
-	if isWindowsDriveURLPath(raw) {
-		if goos != "windows" {
-			return "", false
-		}
+	if goos == "windows" && isWindowsDriveURLPath(raw) {
 		return strings.ReplaceAll(raw[1:], "/", `\`), true
 	}
-	return raw, filepath.IsAbs(raw)
+	if goos == "windows" {
+		return "", false
+	}
+	if !isPOSIXAbsolutePreviewFileURLPath(raw) {
+		return "", false
+	}
+	return raw, true
+}
+
+func isPOSIXAbsolutePreviewFileURLPath(raw string) bool {
+	return strings.HasPrefix(raw, "/") && !isWindowsDriveURLPath(raw)
 }
 
 func isWindowsDriveURLPath(raw string) bool {

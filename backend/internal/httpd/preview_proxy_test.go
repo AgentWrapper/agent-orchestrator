@@ -122,6 +122,18 @@ func TestNormalizePreviewFileURLPath(t *testing.T) {
 	}
 }
 
+func TestIsPOSIXAbsolutePreviewFileURLPath(t *testing.T) {
+	for raw, want := range map[string]bool{
+		"/workspace/index.html":    true,
+		"workspace/index.html":     false,
+		"/C:/workspace/index.html": false,
+	} {
+		if got := isPOSIXAbsolutePreviewFileURLPath(raw); got != want {
+			t.Fatalf("isPOSIXAbsolutePreviewFileURLPath(%q) = %v, want %v", raw, got, want)
+		}
+	}
+}
+
 func TestPreviewProxy_Files(t *testing.T) {
 	workspace := t.TempDir()
 	writePreviewFile(t, filepath.Join(workspace, "index.html"), "<h1>hello</h1>")
