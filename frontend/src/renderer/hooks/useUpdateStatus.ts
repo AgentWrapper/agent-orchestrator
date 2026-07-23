@@ -4,8 +4,8 @@ import { aoBridge } from "../lib/bridge";
 
 /**
  * Live desktop update status: seeded from updates.getStatus, then streamed via
- * the updates:status push channel. Used by the sidebar restart-to-update row
- * and the Global Settings Updates section.
+ * the updates:status push channel. Used by the sidebar restart-to-update row,
+ * the Global Settings Updates section, and the Kanban board update banner.
  */
 export function useUpdateStatus(): UpdateStatus {
 	const [status, setStatus] = useState<UpdateStatus>({ state: "idle" });

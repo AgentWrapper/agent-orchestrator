@@ -30,6 +30,14 @@ vi.mock("../hooks/useWorkspaceQuery", () => ({
 
 vi.mock("../lib/bridge", () => bridgeMock);
 
+const { updateStatusMock } = vi.hoisted(() => ({
+	updateStatusMock: vi.fn().mockReturnValue({ state: "idle" }),
+}));
+
+vi.mock("../hooks/useUpdateStatus", () => ({
+	useUpdateStatus: updateStatusMock,
+}));
+
 vi.mock("../lib/api-client", () => ({
 	apiClient: { POST: (...args: unknown[]) => postMock(...args) },
 	apiErrorMessage: (_error: unknown, fallback: string) => fallback,
@@ -55,6 +63,7 @@ beforeEach(() => {
 	navigateMock.mockReset();
 	postMock.mockReset().mockResolvedValue({ data: {} });
 	workspaceQueryMock.mockReset().mockReturnValue({ data: [], isError: false });
+	updateStatusMock.mockReset().mockReturnValue({ state: "idle" });
 });
 
 describe("SessionsBoard", () => {
@@ -601,6 +610,41 @@ describe("SessionsBoard", () => {
 			to: "/projects/$projectId/sessions/$sessionId",
 			params: { projectId: "p1", sessionId: "s-merged" },
 		});
+	});
+	it("renders the update banner and calls install on click", async () => {
+		updateStatusMock.mockReturnValue({ state: "downloaded", version: "1.2.3" });
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				{
+					id: "p1",
+					name: "radic",
+					path: "/tmp/radic",
+					sessions: [],
+				},
+			],
+			isError: false,
+		});
+
+		renderBoard("p1");
+
+		expect(screen.getByText(/Update ready/i)).toBeInTheDocument();
+		expect(screen.getByText(/v1\.2\.3/i)).toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("button", { name: /relaunch to update/i }));
+
+		expect(bridgeMock.aoBridge.updates.install).toHaveBeenCalledTimes(1);
+	});
+
+	it("does not render the update banner when idle", () => {
+		updateStatusMock.mockReturnValue({ state: "idle" });
+		workspaceQueryMock.mockReturnValue({
+			data: [],
+			isError: false,
+		});
+
+		renderBoard();
+
+		expect(screen.queryByText(/Update ready/i)).not.toBeInTheDocument();
 	});
 });
 

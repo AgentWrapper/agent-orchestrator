@@ -21,6 +21,7 @@ import {
 } from "../lib/session-presentation";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { useRestoreSession } from "../hooks/useRestoreSession";
+import { useUpdateStatus } from "../hooks/useUpdateStatus";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { NotificationCenter } from "./NotificationCenter";
 import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyState";
@@ -31,7 +32,6 @@ import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { cn } from "../lib/utils";
 import { aoBridge } from "../lib/bridge";
-import type { UpdateStatus } from "../../main/update-settings";
 import { useUiStore } from "../stores/ui-store";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
 
@@ -71,19 +71,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
 	const isProjectRestarting = projectId ? restartingProjectIds.has(projectId) : false;
 
-	const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: "idle" });
-	useEffect(() => {
-		if (!aoBridge.updates) return;
-		let live = true;
-		void aoBridge.updates.getStatus().then((s) => {
-			if (live) setUpdateStatus(s);
-		});
-		const off = aoBridge.updates.onStatus(setUpdateStatus);
-		return () => {
-			live = false;
-			off?.();
-		};
-	}, []);
+	const updateStatus = useUpdateStatus();
 	const health = workspace ? orchestratorHealth(workspace, isProjectRestarting) : { state: "ok" as const };
 	const visibleSpawnError = spawnError ?? orchestratorStartupError;
 	// The board instance survives project-to-project navigation (same route,
@@ -260,9 +248,9 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				/>
 			)}
 
-			<div className="min-h-0 flex-1 overflow-hidden p-4.5">
+			<div className="flex min-h-0 flex-1 flex-col overflow-hidden p-4.5">
 				{projectId && health.state !== "ok" ? (
-					<div className="mb-3 flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-xs text-muted-foreground">
+					<div className="mb-3 flex shrink-0 items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-xs text-muted-foreground">
 						<AlertTriangle className="size-icon-base shrink-0 text-warning" aria-hidden="true" />
 						<span className="min-w-0 flex-1">{health.message}</span>
 						{health.state === "restart_needed" || health.state === "duplicates" ? (
@@ -274,7 +262,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 					</div>
 				) : null}
 				{updateStatus.state === "downloaded" && (
-					<div className="mb-3 flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-xs text-muted-foreground">
+					<div className="mb-3 flex shrink-0 items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-xs text-muted-foreground">
 						<RotateCw className="size-icon-base shrink-0 text-success" aria-hidden="true" />
 						<span className="min-w-0 flex-1">
 							Update ready{updateStatus.version ? ` (v${updateStatus.version})` : ""}. Relaunch to apply.
@@ -299,7 +287,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						spawnError={visibleSpawnError}
 					/>
 				) : (
-					<div className="grid h-full grid-cols-4 gap-2">
+					<div className="grid min-h-0 flex-1 grid-cols-4 gap-2">
 						{COLUMNS.map((col) => (
 							<ZoneColumn
 								key={`${projectId ?? "all"}:${col.zone}`}
