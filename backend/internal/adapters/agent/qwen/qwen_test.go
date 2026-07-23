@@ -304,15 +304,15 @@ func TestGetConfigSpecReportsModelField(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(spec.Fields) != 1 {
-		t.Fatalf("want 1 config field, got %d: %#v", len(spec.Fields), spec.Fields)
+	want := []ports.ConfigField{
+		{
+			Key:         "model",
+			Type:        ports.ConfigFieldString,
+			Description: "Model override passed to `qwen --model`.",
+		},
 	}
-	f := spec.Fields[0]
-	if f.Key != "model" {
-		t.Fatalf("field key = %q, want %q", f.Key, "model")
-	}
-	if f.Type != ports.ConfigFieldString {
-		t.Fatalf("field type = %q, want %q", f.Type, ports.ConfigFieldString)
+	if !reflect.DeepEqual(spec.Fields, want) {
+		t.Fatalf("config fields\nwant: %#v\n got: %#v", want, spec.Fields)
 	}
 }
 
