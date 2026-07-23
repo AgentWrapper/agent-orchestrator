@@ -141,6 +141,84 @@ func TestGetLaunchCommandSystemPromptFileReadError(t *testing.T) {
 	}
 }
 
+func TestGetLaunchCommandEmitsToolAllowlist(t *testing.T) {
+	p := &Plugin{resolvedBinary: "kimchi"}
+
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		AllowedTools:    []string{"read", "grep", "bash(git diff:*)"},
+		DisallowedTools: []string{"edit", "write", "bash(git push:*)"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Kimchi uses repeated --allow-tool / --deny-tool pairs (one per rule),
+	// not a single comma-joined value, so each rule survives as its own
+	// flag pair even when it contains spaces (e.g. "bash(git diff:*)").
+	if !containsSubsequence(cmd, []string{"--allow-tool", "read"}) {
+		t.Fatalf("missing --allow-tool read pair; got %#v", cmd)
+	}
+	if !containsSubsequence(cmd, []string{"--allow-tool", "grep"}) {
+		t.Fatalf("missing --allow-tool grep pair; got %#v", cmd)
+	}
+	if !containsSubsequence(cmd, []string{"--allow-tool", "bash(git diff:*)"}) {
+		t.Fatalf("missing --allow-tool bash(git diff:*) pair; got %#v", cmd)
+	}
+	if !containsSubsequence(cmd, []string{"--deny-tool", "edit"}) {
+		t.Fatalf("missing --deny-tool edit pair; got %#v", cmd)
+	}
+	if !containsSubsequence(cmd, []string{"--deny-tool", "write"}) {
+		t.Fatalf("missing --deny-tool write pair; got %#v", cmd)
+	}
+	if !containsSubsequence(cmd, []string{"--deny-tool", "bash(git push:*)"}) {
+		t.Fatalf("missing --deny-tool bash(git push:*) pair; got %#v", cmd)
+	}
+}
+
+func TestGetLaunchCommandOmitsToolFlagsWhenUnset(t *testing.T) {
+	p := &Plugin{resolvedBinary: "kimchi"}
+
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{Prompt: "do it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsString(cmd, "--allow-tool") || containsString(cmd, "--deny-tool") {
+		t.Fatalf("unrestricted launch should emit no tool flags; got %#v", cmd)
+	}
+}
+
+func containsSubsequence(values, needle []string) bool {
+	if len(needle) == 0 {
+		return true
+	}
+	for start := 0; start+len(needle) <= len(values); start++ {
+		ok := true
+		for i, w := range needle {
+			if values[start+i] != w {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
+}
+
+// containsString reports whether values contains the given string. It is the
+// slice-membership counterpart to the file's existing substring contains();
+// the two share a name in the claudecode test but are distinguished here to
+// avoid a collision with the substring helper below.
+func containsString(values []string, needle string) bool {
+	for _, v := range values {
+		if v == needle {
+			return true
+		}
+	}
+	return false
+}
+
 func TestGetRestoreCommand(t *testing.T) {
 	p := &Plugin{resolvedBinary: "kimchi"}
 	cmd, ok, err := p.GetRestoreCommand(context.Background(), ports.RestoreConfig{
