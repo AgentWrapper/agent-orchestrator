@@ -790,27 +790,23 @@ function SessionCard({
 			data-session-id={session.id}
 		>
 			{showTerminate ? (
-				<Tooltip>
-					<TooltipTrigger asChild>
-						<button
-							aria-label={`Terminate ${session.title}`}
-							className={cn(
-								"absolute right-2 top-1.5 z-10 inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-[color,background-color,opacity] hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
-								keepTerminateVisible
-									? "opacity-100"
-									: "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100",
-							)}
-							onClick={(event) => {
-								event.stopPropagation();
-								onTerminate();
-							}}
-							type="button"
-						>
-							<Trash2 className="size-icon-sm" aria-hidden="true" />
-						</button>
-					</TooltipTrigger>
-					<TooltipContent>Terminate session</TooltipContent>
-				</Tooltip>
+				<button
+					aria-label={`Terminate ${session.title}`}
+					className={cn(
+						"absolute right-2 top-1.5 z-10 inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-[color,background-color,opacity] hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+						keepTerminateVisible
+							? "opacity-100"
+							: "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100",
+					)}
+					onClick={(event) => {
+						event.stopPropagation();
+						onTerminate();
+					}}
+					title="Terminate session"
+					type="button"
+				>
+					<Trash2 className="size-icon-sm" aria-hidden="true" />
+				</button>
 			) : null}
 			<div {...cardBodyProps}>
 				<div className="flex items-center gap-2 px-3 pb-2 pt-2.5">
