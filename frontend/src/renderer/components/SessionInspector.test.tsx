@@ -251,7 +251,9 @@ describe("SessionInspector completion controls", () => {
 	it("terminates a live merged session and returns to its project after success", async () => {
 		renderWithQuery(<SessionInspector session={session([pr(7, "merged")], { status: "merged" })} />);
 
-		expect(screen.queryByRole("switch", { name: "Terminate session when pull requests merge" })).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("switch", { name: "Terminate session when pull requests merge" }),
+		).not.toBeInTheDocument();
 		await userEvent.click(screen.getByRole("button", { name: "Terminate session" }));
 		expect(screen.getByRole("dialog", { name: "Terminate do the thing?" })).toBeInTheDocument();
 		await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Terminate session" }));

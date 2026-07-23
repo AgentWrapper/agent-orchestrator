@@ -1,16 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
-import {
-	ArrowUpRight,
-	Files as FilesIcon,
-	GitPullRequest,
-	Play,
-	Shield,
-	Terminal,
-	Trash2,
-	X,
-} from "lucide-react";
+import { ArrowUpRight, Files as FilesIcon, GitPullRequest, Play, Shield, Terminal, Trash2, X } from "lucide-react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";

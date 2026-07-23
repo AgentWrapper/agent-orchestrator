@@ -246,8 +246,7 @@ function fallbackSCMStatus(prs: PullRequestFacts[]): SessionStatus | undefined {
 		return open
 			.map(prStatus)
 			.reduce((worst, status) =>
-				(scmStatusSeverity[status] ?? Number.MAX_SAFE_INTEGER) <
-				(scmStatusSeverity[worst] ?? Number.MAX_SAFE_INTEGER)
+				(scmStatusSeverity[status] ?? Number.MAX_SAFE_INTEGER) < (scmStatusSeverity[worst] ?? Number.MAX_SAFE_INTEGER)
 					? status
 					: worst,
 			);
@@ -255,9 +254,9 @@ function fallbackSCMStatus(prs: PullRequestFacts[]): SessionStatus | undefined {
 	return prs.some((pr) => pr.state === "merged") ? "merged" : undefined;
 }
 
-export function getSessionDotView(
-	session: Pick<WorkspaceSession, "activity" | "scmStatus" | "prs">,
-): { className: string } {
+export function getSessionDotView(session: Pick<WorkspaceSession, "activity" | "scmStatus" | "prs">): {
+	className: string;
+} {
 	const activity = getAgentActivityView(session.activity);
 	if (activity.state !== "active") return { className: activity.dotClassName };
 

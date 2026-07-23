@@ -136,17 +136,20 @@ describe("session presentation", () => {
 		["an approved PR", { ...openPr, review: "approved" }, "bg-status-ready"],
 		["a mergeable PR", { ...openPr, mergeability: "mergeable" }, "bg-status-ready"],
 		["a merged PR", { ...openPr, state: "merged" }, "bg-status-merged"],
-	] as const)("derives the active sidebar color from %s when an older daemon omits scmStatus", (_label, pr, expectedClass) => {
-		const dot = getSessionDotView(
-			sessionWith({
-				activity: { state: "active", lastActivityAt: "" },
-				prs: [pr],
-			}),
-		);
+	] as const)(
+		"derives the active sidebar color from %s when an older daemon omits scmStatus",
+		(_label, pr, expectedClass) => {
+			const dot = getSessionDotView(
+				sessionWith({
+					activity: { state: "active", lastActivityAt: "" },
+					prs: [pr],
+				}),
+			);
 
-		expect(dot?.className).toContain(expectedClass);
-		expect(dot?.className).toContain("animate-status-pulse");
-	});
+			expect(dot?.className).toContain(expectedClass);
+			expect(dot?.className).toContain("animate-status-pulse");
+		},
+	);
 
 	it("prefers the daemon's stack-aware scmStatus over the compatibility fallback", () => {
 		const dot = getSessionDotView(
