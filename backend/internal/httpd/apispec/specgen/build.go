@@ -216,9 +216,9 @@ var schemaNames = map[string]string{
 	"DomainReviewRun":     "ReviewRun",
 	"ReviewPRReviewState": "PRReviewState",
 	// httpd/controllers: permission relaunch wire envelopes
-	"ControllersAffectedSessionItem":                "AffectedSessionItem",
-	"ControllersAffectedByPermissionChangeResponse": "AffectedByPermissionChangeResponse",
-	"ControllersRelaunchOutcomeItem":                "RelaunchOutcomeItem",
+	"ControllersAffectedSessionItem":                 "AffectedSessionItem",
+	"ControllersAffectedByPermissionChangeResponse":  "AffectedByPermissionChangeResponse",
+	"ControllersRelaunchOutcomeItem":                 "RelaunchOutcomeItem",
 	"ControllersRelaunchForPermissionChangeResponse": "RelaunchForPermissionChangeResponse",
 	// httpd/controllers: import wire envelopes
 	"ControllersImportStatusResponse": "ImportStatusResponse",
