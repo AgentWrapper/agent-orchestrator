@@ -20,9 +20,11 @@ settings:
     CODE_SIGN_STYLE: Automatic
     MARKETING_VERSION: "1.0"
     CURRENT_PROJECT_VERSION: "1"
-    # DEVELOPMENT_TEAM is intentionally left unset so Xcode's automatic signing
-    # picks your team. Select it once in Xcode (AOWatch target → Signing &
-    # Capabilities → Team) — e.g. "Dhruv Sharma (Personal Team)".
+    # Dhruv Sharma (Personal Team). Team IDs are not secret. This is the team
+    # Xcode selected and signed with successfully. If you build under a different
+    # Apple ID, change it in Xcode (AOWatch target → Signing & Capabilities → Team)
+    # or here, then re-run `xcodegen generate`.
+    DEVELOPMENT_TEAM: U639YBDSDN
 targets:
   AOWatch:
     type: application
