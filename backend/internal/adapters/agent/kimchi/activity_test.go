@@ -27,8 +27,11 @@ func TestDeriveActivityState(t *testing.T) {
 		{"session-end prompt_input_exit -> exited", "session-end", `{"reason":"prompt_input_exit"}`, domain.ActivityExited, true},
 		{"session-end other -> exited", "session-end", `{"reason":"other"}`, domain.ActivityExited, true},
 		{"session-end absent reason -> exited", "session-end", `{}`, domain.ActivityExited, true},
-		{"session-end clear -> no signal", "session-end", `{"reason":"clear"}`, "", false},
+		{"session-end quit -> exited", "session-end", `{"reason":"quit"}`, domain.ActivityExited, true},
+		{"session-end reload -> no signal", "session-end", `{"reason":"reload"}`, "", false},
+		{"session-end new -> no signal", "session-end", `{"reason":"new"}`, "", false},
 		{"session-end resume -> no signal", "session-end", `{"reason":"resume"}`, "", false},
+		{"session-end fork -> no signal", "session-end", `{"reason":"fork"}`, "", false},
 		{"session-start -> no signal", "session-start", `{}`, "", false},
 		{"unknown event -> no signal", "frobnicate", `{}`, "", false},
 	}
