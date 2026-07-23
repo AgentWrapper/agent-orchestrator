@@ -2,10 +2,12 @@ package httpd
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -19,7 +21,10 @@ import (
 	previewutil "github.com/aoagents/agent-orchestrator/backend/internal/preview"
 )
 
-const previewTargetHeader = "X-AO-Preview-Target"
+const (
+	previewTargetHeader         = "X-AO-Preview-Target"
+	previewRedirectTargetHeader = "X-AO-Preview-Redirect-Target"
+)
 
 // PreviewSessionService supplies only the durable workspace required to serve a
 // preview asset. It deliberately does not build a session display model.
@@ -40,10 +45,6 @@ func mountPreviewProxy(r chi.Router, sessions PreviewSessionService) {
 }
 
 func (p previewProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		writePreviewProxyError(w, http.StatusMethodNotAllowed)
-		return
-	}
 	target, err := parsePreviewTarget(r.Header.Get(previewTargetHeader))
 	if err != nil {
 		writePreviewProxyError(w, http.StatusBadRequest)
@@ -58,11 +59,24 @@ func (p previewProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writePreviewProxyError(w, http.StatusNotFound)
 		return
 	}
-	if target.url.Scheme != "file" {
-		writePreviewProxyError(w, http.StatusNotImplemented)
+	if target.url.Scheme == "file" {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			writePreviewProxyError(w, http.StatusMethodNotAllowed)
+			return
+		}
+		p.serveFile(w, r, workspace, resolvePreviewFileRequestPath(target.url.Path, chi.URLParam(r, "*")))
 		return
 	}
-	p.serveFile(w, r, workspace, resolvePreviewFileRequestPath(target.url.Path, chi.URLParam(r, "*")))
+	if (target.url.Path != "" && target.url.Path != "/") || target.url.RawQuery != "" {
+		writePreviewProxyError(w, http.StatusBadRequest)
+		return
+	}
+	requestPath := "/" + strings.TrimPrefix(chi.URLParam(r, "*"), "/")
+	if isPreviewBlockedTargetPath(requestPath) {
+		writePreviewProxyError(w, http.StatusBadRequest)
+		return
+	}
+	p.serveLoopback(w, r, target.url, requestPath)
 }
 
 func parsePreviewTarget(raw string) (previewTarget, error) {
@@ -163,6 +177,145 @@ func isPreviewBlockedTargetPath(path string) bool {
 	return path == "/_ao/preview" || strings.HasPrefix(path, "/_ao/preview/")
 }
 
+func (p previewProxy) serveLoopback(w http.ResponseWriter, r *http.Request, target *url.URL, requestPath string) {
+	targetOrigin := &url.URL{Scheme: target.Scheme, Host: target.Host}
+	transport := previewLoopbackTransport(targetOrigin)
+	defer transport.CloseIdleConnections()
+	proxy := &httputil.ReverseProxy{
+		Transport:     transport,
+		FlushInterval: -1,
+		Rewrite: func(request *httputil.ProxyRequest) {
+			request.Out.URL.Scheme = targetOrigin.Scheme
+			request.Out.URL.Host = targetOrigin.Host
+			request.Out.Host = targetOrigin.Host
+			if request.Out.Header.Get("Origin") != "" {
+				request.Out.Header.Set("Origin", previewOrigin(targetOrigin))
+			}
+			stripPreviewProxyRequestHeaders(request.Out)
+		},
+		ModifyResponse: func(response *http.Response) error {
+			return mapPreviewRedirect(response, targetOrigin)
+		},
+		ErrorHandler: func(response http.ResponseWriter, _ *http.Request, _ error) {
+			writePreviewProxyError(response, http.StatusBadGateway)
+		},
+	}
+	proxyRequest := r.Clone(r.Context())
+	requestURL := *r.URL
+	requestURL.Path = requestPath
+	requestURL.RawPath = ""
+	proxyRequest.URL = &requestURL
+	proxy.ServeHTTP(w, proxyRequest)
+}
+
+func previewLoopbackTransport(target *url.URL) *http.Transport {
+	dialHost := target.Hostname()
+	if dialHost == "localhost" {
+		dialHost = "127.0.0.1"
+	}
+	port := target.Port()
+	if port == "" {
+		if target.Scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+	dialAddress := net.JoinHostPort(dialHost, port)
+	baseTransport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		baseTransport = &http.Transport{}
+	}
+	transport := baseTransport.Clone()
+	transport.Proxy = nil
+	transport.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, dialAddress)
+	}
+	if target.Scheme == "https" {
+		transport.TLSClientConfig = &tls.Config{
+			InsecureSkipVerify: true, //nolint:gosec // local development preview servers commonly use self-signed certificates
+			ServerName:         target.Hostname(),
+		}
+	}
+	return transport
+}
+
+func stripPreviewProxyRequestHeaders(r *http.Request) {
+	if fields := strings.Fields(r.Header.Get("Authorization")); len(fields) > 0 && strings.EqualFold(fields[0], "Bearer") {
+		r.Header.Del("Authorization")
+	}
+	for name := range r.Header {
+		lower := strings.ToLower(name)
+		if strings.HasPrefix(lower, "x-ao-preview-") || strings.HasPrefix(lower, "x-forwarded-") || lower == "forwarded" || lower == "x-real-ip" {
+			r.Header.Del(name)
+		}
+	}
+	cookies := r.Cookies()
+	r.Header.Del("Cookie")
+	for _, cookie := range cookies {
+		if cookie.Name != "ao_conn" {
+			r.AddCookie(cookie)
+		}
+	}
+}
+
+func mapPreviewRedirect(response *http.Response, target *url.URL) error {
+	location := response.Header.Get("Location")
+	if location == "" {
+		return nil
+	}
+	reference, err := url.Parse(location)
+	if err != nil {
+		return errInvalidPreviewRedirect
+	}
+	if reference.Scheme == "" && reference.Host == "" {
+		return nil
+	}
+	redirect := response.Request.URL.ResolveReference(reference)
+	redirect.Scheme = strings.ToLower(redirect.Scheme)
+	if (redirect.Scheme != "http" && redirect.Scheme != "https") || redirect.Host == "" || redirect.User != nil {
+		return errInvalidPreviewRedirect
+	}
+	redirectOrigin := &url.URL{Scheme: redirect.Scheme, Host: redirect.Host}
+	if samePreviewOrigin(target, redirectOrigin) {
+		return nil
+	}
+	if err := normalizeLoopbackPreviewURL(redirectOrigin); err != nil {
+		if isLoopbackPreviewHostname(redirect.Hostname()) {
+			return errInvalidPreviewRedirect
+		}
+		return nil
+	}
+	response.Header.Set(previewRedirectTargetHeader, previewOrigin(redirectOrigin))
+	return nil
+}
+
+func isLoopbackPreviewHostname(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && (ip.IsLoopback() || ip.IsUnspecified())
+}
+
+func samePreviewOrigin(a, b *url.URL) bool {
+	return a.Scheme == b.Scheme && a.Hostname() == b.Hostname() && previewPort(a) == previewPort(b)
+}
+
+func previewOrigin(u *url.URL) string {
+	return (&url.URL{Scheme: u.Scheme, Host: u.Host}).String()
+}
+
+func previewPort(u *url.URL) string {
+	if port := u.Port(); port != "" {
+		return port
+	}
+	if u.Scheme == "https" {
+		return "443"
+	}
+	return "80"
+}
+
 func resolvePreviewFileRequestPath(entry, requestPath string) string {
 	requestPath = strings.TrimPrefix(requestPath, "/")
 	if requestPath == "" || requestPath == filepath.Base(entry) {
@@ -182,13 +335,13 @@ func (p previewProxy) serveFile(w http.ResponseWriter, r *http.Request, workspac
 		writePreviewProxyError(w, http.StatusNotFound)
 		return
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	file, err := root.Open(rel)
 	if err != nil {
 		writePreviewProxyError(w, http.StatusNotFound)
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	info, err := file.Stat()
 	if err != nil || !info.Mode().IsRegular() {
 		writePreviewProxyError(w, http.StatusNotFound)
@@ -226,4 +379,7 @@ func writePreviewProxyError(w http.ResponseWriter, status int) {
 	_, _ = w.Write([]byte(http.StatusText(status)))
 }
 
-var errInvalidPreviewTarget = errors.New("invalid preview target")
+var (
+	errInvalidPreviewTarget   = errors.New("invalid preview target")
+	errInvalidPreviewRedirect = errors.New("invalid preview redirect")
+)
