@@ -15,6 +15,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/project"
+	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
@@ -114,6 +115,7 @@ func wantCode(t *testing.T, err error, code string) {
 
 type fakeProjectTeardowner struct {
 	projects []domain.ProjectID
+	out      sessionsvc.ProjectTeardownOutcome
 	err      error
 }
 
@@ -127,9 +129,9 @@ func (s *captureSink) Emit(_ context.Context, ev ports.TelemetryEvent) {
 
 func (*captureSink) Close(context.Context) error { return nil }
 
-func (f *fakeProjectTeardowner) TeardownProject(_ context.Context, project domain.ProjectID) error {
+func (f *fakeProjectTeardowner) TeardownProject(_ context.Context, project domain.ProjectID) (sessionsvc.ProjectTeardownOutcome, error) {
 	f.projects = append(f.projects, project)
-	return f.err
+	return f.out, f.err
 }
 
 func TestManager_AddListGetRemove(t *testing.T) {
@@ -411,6 +413,48 @@ func TestManager_RemoveDoesNotArchiveWhenTeardownFails(t *testing.T) {
 	}
 	if got, err := m.Get(ctx, "ao"); err != nil || got.Project == nil || got.Project.ID != "ao" {
 		t.Fatalf("project after failed remove = %#v, %v; want still active", got, err)
+	}
+}
+
+func TestManager_RemoveReturnsConflictWhenTeardownBlocked(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	teardown := sessionsvc.ProjectTeardownOutcome{
+		Killed: []sessionsvc.ProjectTeardownKilled{{
+			SessionID:      "ao-1",
+			WorkspaceFreed: false,
+			Terminated:     false,
+		}},
+		Cleaned: []domain.SessionID{},
+		Blockers: []sessionsvc.ProjectTeardownBlocker{{
+			SessionID: "ao-1",
+			Phase:     "kill",
+			Reason:    "workspace has uncommitted changes",
+		}},
+	}
+	m := project.NewWithDeps(project.Deps{Store: store, Sessions: &fakeProjectTeardowner{out: teardown}})
+
+	if _, err := m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("ao")}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	_, err = m.Remove(ctx, "ao")
+	var api *apierr.Error
+	if !errors.As(err, &api) || api.Kind != apierr.KindConflict || api.Code != "PROJECT_REMOVE_BLOCKED" {
+		t.Fatalf("Remove err = %v, want PROJECT_REMOVE_BLOCKED conflict", err)
+	}
+	if api.Details["projectId"] != "ao" {
+		t.Fatalf("details projectId = %#v, want ao", api.Details["projectId"])
+	}
+	blockers, ok := api.Details["blockers"].([]sessionsvc.ProjectTeardownBlocker)
+	if !ok || len(blockers) != 1 || blockers[0].Reason != "workspace has uncommitted changes" {
+		t.Fatalf("details blockers = %#v, want dirty blocker", api.Details["blockers"])
+	}
+	if got, err := m.Get(ctx, "ao"); err != nil || got.Project == nil || got.Project.ID != "ao" {
+		t.Fatalf("project after blocked remove = %#v, %v; want still active", got, err)
 	}
 }
 
