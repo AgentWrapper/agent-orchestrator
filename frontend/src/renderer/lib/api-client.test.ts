@@ -123,7 +123,7 @@ describe("apiClient runtime base URL", () => {
 
 		const { error } = await apiClient.GET("/api/v1/projects");
 
-		expect(error).toEqual({ message: "AO daemon is not ready." });
+		expect(error).toEqual({ message: "AO daemon is not ready: unknown error" });
 		expect(getApiBaseUrl()).toBe("");
 		expect(hasTrustedApiBaseUrl()).toBe(false);
 		expect(fetchSpy).not.toHaveBeenCalled();
