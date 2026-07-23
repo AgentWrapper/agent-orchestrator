@@ -42,7 +42,7 @@ func TestGetConfigSpecReportsModelField(t *testing.T) {
 		{
 			Key:         "model",
 			Type:        ports.ConfigFieldString,
-			Description: "Model override passed to `grok --model`.",
+			Description: "Model override passed to `grok -m`.",
 		},
 	}
 	if !reflect.DeepEqual(spec.Fields, want) {
@@ -58,7 +58,7 @@ func TestGetLaunchCommandAppendsConfiguredModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	want := []string{"grok", "--no-auto-update", "--model", "grok-build"}
+	want := []string{"grok", "--no-auto-update", "-m", "grok-build"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
@@ -72,8 +72,10 @@ func TestGetLaunchCommandOmitsBlankConfiguredModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if strings.Contains(strings.Join(cmd, " "), "--model") {
-		t.Fatalf("cmd = %#v contains --model for blank model", cmd)
+	for _, arg := range cmd {
+		if arg == "-m" {
+			t.Fatalf("cmd = %#v contains -m for blank model", cmd)
+		}
 	}
 }
 
@@ -93,7 +95,7 @@ func TestGetRestoreCommandAppendsConfiguredModel(t *testing.T) {
 	if !ok {
 		t.Fatal("ok=false, want true")
 	}
-	want := []string{"grok", "--no-auto-update", "--model", "grok-build", "-r", "sess-abc123"}
+	want := []string{"grok", "--no-auto-update", "-m", "grok-build", "-r", "sess-abc123"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}

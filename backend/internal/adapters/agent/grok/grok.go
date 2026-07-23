@@ -115,7 +115,7 @@ func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 			{
 				Key:         "model",
 				Type:        ports.ConfigFieldString,
-				Description: "Model override passed to `grok --model`.",
+				Description: "Model override passed to `grok -m`.",
 			},
 		},
 	}, nil
@@ -246,11 +246,13 @@ func grokClaudeSettingsPath(workspacePath string) string {
 	return filepath.Join(workspacePath, grokClaudeSettingsDirName, grokClaudeSettingsFileName)
 }
 
-// appendModelFlag appends a trimmed --model flag when a model override is
-// configured.
+// appendModelFlag appends a trimmed -m flag when a model override is
+// configured. -m is the documented model-selection flag for both headless
+// and TUI launches (https://docs.x.ai/build/overview: "grok -p \"Hello\" -m
+// my-model" / "pick the model in headless mode or in the TUI").
 func appendModelFlag(cmd *[]string, cfg ports.AgentConfig) {
 	if model := strings.TrimSpace(cfg.Model); model != "" {
-		*cmd = append(*cmd, "--model", model)
+		*cmd = append(*cmd, "-m", model)
 	}
 }
 
