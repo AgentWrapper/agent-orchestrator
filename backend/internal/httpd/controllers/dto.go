@@ -162,6 +162,20 @@ type SpawnSessionRequest struct {
 	// `ao spawn --name` always sets it; other clients (e.g. the desktop new-task
 	// dialog) may omit it and fall back to the session id in the read model.
 	DisplayName string `json:"displayName,omitempty" maxLength:"20"`
+	// Attachments are images pasted or dropped into the task brief. Each carries
+	// its bytes as standard base64 (no data: URL prefix). The daemon writes them
+	// into the session worktree and appends path references to the prompt.
+	Attachments []SpawnAttachmentInput `json:"attachments,omitempty"`
+}
+
+// SpawnAttachmentInput is one image attached to a spawn request.
+type SpawnAttachmentInput struct {
+	// MimeType is the browser-reported content type (e.g. "image/png"). Used to
+	// derive the on-disk file extension; only image/* types are accepted.
+	MimeType string `json:"mimeType,omitempty"`
+	// Data is the raw image bytes, standard base64-encoded, without any
+	// "data:...;base64," prefix.
+	Data string `json:"data"`
 }
 
 // SessionResponse is the { session } body shared by session create/get.

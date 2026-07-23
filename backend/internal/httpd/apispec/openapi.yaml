@@ -2212,6 +2212,15 @@ components:
       - status
       - prs
       type: object
+    ControllersSpawnAttachmentInput:
+      properties:
+        data:
+          type: string
+        mimeType:
+          type: string
+      required:
+      - data
+      type: object
     DegradedProject:
       properties:
         id:
@@ -3323,6 +3332,10 @@ components:
       type: object
     SpawnSessionRequest:
       properties:
+        attachments:
+          items:
+            $ref: '#/components/schemas/ControllersSpawnAttachmentInput'
+          type: array
         branch:
           type: string
         displayName:
@@ -3423,6 +3436,10 @@ components:
       type: object
     TriggerReviewResponse:
       properties:
+        created:
+          description: True when a new review pass was started; false when an existing
+            run for the same commit was reused.
+          type: boolean
         reviewerHandleId:
           type: string
         reviews:
@@ -3432,6 +3449,7 @@ components:
       required:
       - reviewerHandleId
       - reviews
+      - created
       type: object
     UnregisterPushDeviceResponse:
       properties:

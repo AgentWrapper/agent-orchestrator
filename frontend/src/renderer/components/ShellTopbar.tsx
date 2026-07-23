@@ -185,13 +185,13 @@ export function ShellTopbar() {
 
 			<div className="flex shrink-0 items-center gap-1.5">
 				{/* Standalone shell, independent of any agent session — the same action
-				    Ctrl+` fires, routed through the store so the two cannot drift. Leads
-				    the actions row so it stays visible on every route. */}
+				    Ctrl+Shift+` fires, routed through the store so the two cannot drift.
+				    Leads the actions row so it stays visible on every route. */}
 				<TopbarButton
 					aria-label="New terminal"
 					onClick={requestNewShellTerminal}
 					style={noDragStyle}
-					title="New terminal (Ctrl+`)"
+					title="New terminal (Ctrl+Shift+`)"
 					variant="icon"
 				>
 					<SquareTerminal className="size-icon-md" aria-hidden="true" />

@@ -324,6 +324,26 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: provision: %w", id, err)
 	}
 
+	// CLI agents receive the prompt as text and cannot consume inline binary
+	// data, so any pasted/dropped images are written into the worktree and
+	// referenced by path in the prompt. Done after provisioning (so the worktree
+	// exists) and before the launch command is built (so the references reach
+	// the agent).
+	if len(cfg.Attachments) > 0 {
+		refs, err := writeSpawnAttachments(ws.Path, cfg.Attachments)
+		if err != nil {
+			_ = m.workspace.Destroy(ctx, ws)
+			m.rollbackSpawnSeedRow(ctx, id)
+			return domain.SessionRecord{}, fmt.Errorf("spawn %s: attachments: %w", id, err)
+		}
+		// Keep the attachments dir out of git status. Best-effort: the images are
+		// already written and usable, so an exclude failure must not fail the spawn.
+		if err := m.workspace.AddExclude(ctx, ws, "/"+attachmentsDir+"/"); err != nil {
+			m.logger.Warn("spawn: exclude attachments dir", "sessionID", id, "error", err)
+		}
+		prompt = appendAttachmentReferences(prompt, refs)
+	}
+
 	agent, ok := m.agents.Agent(cfg.Harness)
 	if !ok {
 		m.destroySpawnWorkspace(ctx, ws, workspaceProject)
@@ -387,7 +407,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: runtime: %w", id, err)
 	}
 
-	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, Prompt: prompt}
+	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, WorkspaceRepoPath: ws.RepoPath, RuntimeHandleID: handle.ID, Prompt: prompt}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
@@ -887,7 +907,7 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 		m.cleanupSystemPromptDir(rec.ID)
 		return RestoreResult{}, fmt.Errorf("restore %s: runtime: %w", rec.ID, err)
 	}
-	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, AgentSessionID: rec.Metadata.AgentSessionID, Prompt: rec.Metadata.Prompt}
+	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, WorkspaceRepoPath: ws.RepoPath, RuntimeHandleID: handle.ID, AgentSessionID: rec.Metadata.AgentSessionID, Prompt: rec.Metadata.Prompt}
 	if err := m.lcm.MarkSpawned(ctx, rec.ID, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		m.cleanupSystemPromptDir(rec.ID)
@@ -1810,6 +1830,9 @@ func cleanupSkipReason(err error) string {
 	if errors.Is(err, ports.ErrWorkspaceDirty) {
 		return "workspace has uncommitted changes"
 	}
+	if errors.Is(err, ErrProjectNotResolvable) {
+		return "project is archived or unregistered — remove worktree manually"
+	}
 	return "workspace teardown failed"
 }
 
@@ -1930,6 +1953,54 @@ func promptProjectContext(projectID domain.ProjectID, project domain.ProjectReco
 		DefaultBranch: cfg.DefaultBranch,
 		Path:          project.Path,
 	}
+}
+
+// attachmentsDir is the worktree-relative directory where spawn image
+// attachments are written.
+const attachmentsDir = ".ao/attachments"
+
+// writeSpawnAttachments writes each attachment into the worktree under
+// attachmentsDir as image-1<ext>, image-2<ext>, ... and returns the
+// worktree-relative paths in order. The files are excluded from git via the
+// worktree's info/exclude so they do not dirty the working tree.
+func writeSpawnAttachments(workspacePath string, attachments []ports.SpawnAttachment) ([]string, error) {
+	dir := filepath.Join(workspacePath, filepath.FromSlash(attachmentsDir))
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return nil, fmt.Errorf("create attachments dir: %w", err)
+	}
+	refs := make([]string, 0, len(attachments))
+	for i, a := range attachments {
+		ext := a.Ext
+		if ext == "" {
+			ext = ".bin"
+		}
+		name := fmt.Sprintf("image-%d%s", i+1, ext)
+		if err := os.WriteFile(filepath.Join(dir, name), a.Data, 0o600); err != nil {
+			return nil, fmt.Errorf("write attachment %d: %w", i+1, err)
+		}
+		// Worktree-relative reference, always forward-slashed for the prompt.
+		refs = append(refs, attachmentsDir+"/"+name)
+	}
+	return refs, nil
+}
+
+// appendAttachmentReferences appends a block listing the attached image paths so
+// the agent knows to read them. Placed after the human's brief.
+func appendAttachmentReferences(prompt string, refs []string) string {
+	if len(refs) == 0 {
+		return prompt
+	}
+	var b strings.Builder
+	b.WriteString(prompt)
+	if strings.TrimSpace(prompt) != "" {
+		b.WriteString("\n\n")
+	}
+	b.WriteString("Attached images (read these files in the workspace for visual context):")
+	for _, ref := range refs {
+		b.WriteString("\n- ")
+		b.WriteString(ref)
+	}
+	return b.String()
 }
 
 // buildSpawnTexts returns the user-facing prompt and the system prompt to
@@ -2786,6 +2857,7 @@ func workspaceInfo(rec domain.SessionRecord) ports.WorkspaceInfo {
 		Branch:    rec.Metadata.Branch,
 		SessionID: rec.ID,
 		ProjectID: rec.ProjectID,
+		RepoPath:  rec.Metadata.WorkspaceRepoPath,
 	}
 }
 

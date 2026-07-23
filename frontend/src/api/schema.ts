@@ -840,6 +840,10 @@ export interface components {
             /** Format: date-time */
             updatedAt: string;
         };
+        ControllersSpawnAttachmentInput: {
+            data: string;
+            mimeType?: string;
+        };
         DegradedProject: {
             id: string;
             kind: string;
@@ -1275,6 +1279,7 @@ export interface components {
             orchestrator: components["schemas"]["OrchestratorResponse"];
         };
         SpawnSessionRequest: {
+            attachments?: components["schemas"]["ControllersSpawnAttachmentInput"][];
             branch?: string;
             displayName?: string;
             /** @enum {string} */
@@ -1315,6 +1320,8 @@ export interface components {
             repo?: string;
         };
         TriggerReviewResponse: {
+            /** @description True when a new review pass was started; false when an existing run for the same commit was reused. */
+            created: boolean;
             reviewerHandleId: string;
             reviews: components["schemas"]["PRReviewState"][];
         };
