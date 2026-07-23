@@ -2,9 +2,12 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
@@ -25,6 +28,7 @@ import (
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
+	"github.com/aoagents/agent-orchestrator/backend/internal/testgate"
 )
 
 type notificationSink interface {
@@ -134,7 +138,7 @@ type sessionLifecycle interface {
 // LCM, the per-session agent resolver, and the agent messenger. The returned
 // service is mounted at httpd APIDeps.Sessions. It also returns the manager so
 // the caller can wire Reconcile into the boot sequence.
-func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, agents ports.AgentResolver, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
+func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, agents ports.AgentResolver, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
 	gitWS, err := gitworktree.New(gitworktree.Options{
 		// Per-session worktrees live under the data dir, so a single AO_DATA_DIR
 		// override moves all durable per-user state together.
@@ -211,8 +215,50 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		Projects: store,
 		Launcher: reviewcore.NewLauncher(reviewers, runtime, cfg.DataDir),
 	})
-	reviewSvc := reviewsvc.New(reviewEngine, store, reviewsvc.WithLifecycleReducer(lcm))
+	testGate := testgate.NewManager(testgate.ManagerDeps{
+		Store:  store,
+		Runner: testGateRunnerFromEnv(log),
+		Logger: log,
+	})
+	reviewSvc := reviewsvc.New(
+		reviewEngine,
+		store,
+		reviewsvc.WithLifecycleReducer(lcm),
+		reviewsvc.WithTestGate(testGate),
+		reviewsvc.WithAsyncTestGate(),
+		reviewsvc.WithBackgroundContext(ctx),
+		reviewsvc.WithLogger(log),
+	)
 	return sessionSvc, reviewSvc, mgr, nil
+}
+
+func testGateRunnerFromEnv(log *slog.Logger) testgate.Runner {
+	command := strings.TrimSpace(os.Getenv("AO_TEST_GATE_COMMAND"))
+	if command == "" {
+		return testgate.NotConfiguredRunner{}
+	}
+	args := []string{}
+	if raw := strings.TrimSpace(os.Getenv("AO_TEST_GATE_ARGS")); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &args); err != nil {
+			if log != nil {
+				log.Warn("testgate command disabled: AO_TEST_GATE_ARGS must be a JSON string array", "err", err)
+			}
+			return testgate.NotConfiguredRunner{Summary: "runtime verification command is misconfigured"}
+		}
+	}
+	timeout := 20 * time.Minute
+	if raw := strings.TrimSpace(os.Getenv("AO_TEST_GATE_TIMEOUT")); raw != "" {
+		if parsed, err := time.ParseDuration(raw); err == nil && parsed > 0 {
+			timeout = parsed
+		} else if log != nil {
+			log.Warn("testgate command timeout ignored: AO_TEST_GATE_TIMEOUT must be a positive duration", "value", raw)
+		}
+	}
+	return testgate.NewCommandRunner(testgate.CommandRunnerOptions{
+		Command: command,
+		Args:    args,
+		Timeout: timeout,
+	})
 }
 
 // runtimeMessageSender is the narrow part of the concrete runtime needed by
