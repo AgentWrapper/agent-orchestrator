@@ -357,7 +357,10 @@ function wireUpdaterEvents(): void {
 			restoreAutomaticCheckPreviousStatus();
 			return;
 		}
-		broadcast(withActiveRequest({ state: "error", message: err?.message ?? String(err) }));
+		// Manual check failures (e.g. 404 on latest-mac.yml) are logged, not
+		// shown to users — the error message is misleading and not actionable.
+		console.error("update check failed:", err);
+		restoreAutomaticCheckPreviousStatus();
 	});
 }
 
@@ -479,11 +482,7 @@ export async function checkForUpdatesNow(stateDir: string, options: UpdateCheckO
 			options.requestId,
 		);
 	} catch (err) {
-		broadcast({
-			state: "error",
-			message: (err as Error)?.message ?? "Update check failed",
-			requestId: options.requestId,
-		});
+		console.error("manual update check failed:", err);
 	}
 }
 
@@ -503,7 +502,7 @@ export async function downloadUpdateNow(requestId?: string): Promise<void> {
 			requestId,
 		);
 	} catch (err) {
-		broadcast({ state: "error", message: (err as Error)?.message ?? "Download failed", requestId });
+		console.error("update download failed:", err);
 	}
 }
 
