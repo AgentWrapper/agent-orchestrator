@@ -450,17 +450,74 @@ button.settings-row-bar {
 	gap: calc(var(--spacing) * 2);
 	white-space: nowrap;
 	border-radius: var(--radius-settings-action);
-	border-width: 1px;
-	border-style: solid;
+	border: 1px solid var(--color-border-settings-input);
+	background-color: var(--color-bg-settings-input);
 	padding-inline: var(--space-3);
 	font-size: var(--font-size-md);
 	line-height: 1.25rem;
+	color: var(--color-text-settings-row);
 	outline: none;
 	transition-property: color, background-color, border-color, opacity, box-shadow;
 	transition-duration: var(--duration-normal);
 
+	&:hover {
+		opacity: 0.9;
+	}
+
 	&:focus-visible {
 		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+	}
+}
+
+/* Segmented control — ReportProblem destination picker, ConnectMobile LAN/Tailscale. */
+@utility settings-segment {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-0_5);
+	border-radius: var(--radius-settings-action);
+	border: 1px solid var(--color-border-settings-input);
+	background-color: var(--color-bg-settings-input);
+	padding: var(--space-0_5);
+}
+
+@utility settings-segment-item {
+	display: inline-flex;
+	height: var(--size-control-form);
+	cursor: default;
+	align-items: center;
+	gap: calc(var(--spacing) * 1.5);
+	border-radius: var(--radius-lg);
+	padding-inline: var(--space-3);
+	font-size: var(--font-size-base);
+	line-height: 1;
+	color: var(--color-text-settings-muted);
+	outline: none;
+	transition-property: color, background-color;
+	transition-duration: var(--duration-normal);
+
+	&:hover {
+		color: var(--color-text-settings-title);
+	}
+
+	&:focus-visible {
+		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+	}
+
+	&[data-state="checked"] {
+		background-color: var(--color-bg-settings-menu-selected);
+		color: var(--color-text-settings-title);
+	}
+}
+
+@utility settings-mobile-steps {
+	list-style-type: decimal;
+	padding-left: var(--space-4);
+	font-size: var(--font-size-caption);
+	line-height: var(--leading-settings-mobile-hint);
+	color: var(--color-text-settings-muted);
+
+	& > li + li {
+		margin-top: calc(var(--spacing) * 1.5);
 	}
 }
 

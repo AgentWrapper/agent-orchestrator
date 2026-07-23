@@ -9,16 +9,16 @@ test("LAN steps show by default", () => {
 	expect(screen.queryByText(/tailscale ip -4/i)).not.toBeInTheDocument();
 });
 
-test("Tailscale tab explains manual entry and echoes the live port", async () => {
+test("Tailscale mode explains manual entry and echoes the live port", async () => {
 	render(<ConnectMobileSetup port={3011} enabled={true} />);
-	await userEvent.click(screen.getByRole("tab", { name: "Tailscale" }));
+	await userEvent.click(screen.getByRole("radio", { name: "Tailscale" }));
 	expect(screen.getByText(/tailscale ip -4/i)).toBeInTheDocument();
 	expect(
 		screen.getByText((_, el) => el?.textContent?.includes("port 3011") ?? false, { selector: "li" }),
 	).toBeInTheDocument();
 });
 
-test("tabs leave the tab order while the bridge is disabled", () => {
+test("segments leave the tab order while the bridge is disabled", () => {
 	render(<ConnectMobileSetup port={3011} enabled={false} />);
-	expect(screen.getByRole("tab", { name: "LAN" })).toHaveAttribute("tabindex", "-1");
+	expect(screen.getByRole("radio", { name: "LAN" })).toHaveAttribute("tabindex", "-1");
 });

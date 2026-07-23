@@ -202,14 +202,10 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 							clearStatus();
 						}}
 						aria-label="Report destination"
-						className="inline-flex items-center gap-0.5 self-start rounded-(--radius-settings-action) border border-[var(--color-border-settings-input)] bg-[var(--color-bg-settings-input)] p-0.5"
+						className="settings-segment self-start"
 					>
 						{DESTINATIONS.map((option) => (
-							<RadioGroup.Item
-								key={option.value}
-								value={option.value}
-								className="inline-flex h-8 cursor-default items-center gap-1.5 rounded-lg px-3 text-control leading-none text-settings-muted outline-none transition-colors duration-150 hover:text-settings-title focus-visible:ring-2 focus-visible:ring-accent-weak data-[state=checked]:bg-[var(--color-bg-settings-menu-selected)] data-[state=checked]:text-settings-title"
-							>
+							<RadioGroup.Item key={option.value} value={option.value} className="settings-segment-item">
 								<option.icon className="size-icon-sm" aria-hidden="true" />
 								{option.label}
 							</RadioGroup.Item>
@@ -228,16 +224,13 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 
 				<div className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-[var(--color-border-settings-dialog-header)] px-6 py-3.5">
 					<DialogClose asChild>
-						<button
-							type="button"
-							className="settings-footer-button border-[var(--color-border-settings-input)] bg-[var(--color-bg-settings-input)] text-settings-label transition-opacity hover:opacity-90"
-						>
+						<button type="button" className="settings-footer-button">
 							Cancel
 						</button>
 					</DialogClose>
 					<button
 						type="button"
-						className="settings-footer-button border-transparent bg-settings-accent text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+						className="settings-footer-button border-transparent bg-settings-accent text-white disabled:cursor-not-allowed disabled:opacity-50"
 						disabled={!canCopy}
 						onClick={() => void copyDraft()}
 					>
