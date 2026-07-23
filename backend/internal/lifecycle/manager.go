@@ -282,7 +282,7 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	// preserved shell. Other same-generation callbacks may have been delayed
 	// behind the process-exit report and cannot resurrect an exited workload.
 	if rec.Activity.State == domain.ActivityExited && s.Valid && s.State != domain.ActivityExited &&
-		!(s.State == domain.ActivityActive && s.Event == "user-prompt-submit") {
+		(s.State != domain.ActivityActive || s.Event != "user-prompt-submit") {
 		m.mu.Unlock()
 		return nil
 	}
