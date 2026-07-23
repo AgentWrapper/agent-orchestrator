@@ -4,15 +4,21 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 
-const { navigateMock, notificationShowMock, postMock, workspaceQueryMock, boardActionsInPanelMock } = vi.hoisted(
-	() => ({
-		navigateMock: vi.fn(),
-		notificationShowMock: vi.fn(),
-		postMock: vi.fn(),
-		workspaceQueryMock: vi.fn(),
-		boardActionsInPanelMock: vi.fn(() => false),
-	}),
-);
+const {
+	clipboardWriteTextMock,
+	navigateMock,
+	notificationShowMock,
+	postMock,
+	workspaceQueryMock,
+	boardActionsInPanelMock,
+} = vi.hoisted(() => ({
+	clipboardWriteTextMock: vi.fn(),
+	navigateMock: vi.fn(),
+	notificationShowMock: vi.fn(),
+	postMock: vi.fn(),
+	workspaceQueryMock: vi.fn(),
+	boardActionsInPanelMock: vi.fn(() => false),
+}));
 
 vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => navigateMock,
@@ -30,6 +36,9 @@ vi.mock("../lib/api-client", () => ({
 
 vi.mock("../lib/bridge", () => ({
 	aoBridge: {
+		clipboard: {
+			writeText: (...args: unknown[]) => clipboardWriteTextMock(...args),
+		},
 		notifications: {
 			show: (...args: unknown[]) => notificationShowMock(...args),
 		},
@@ -62,6 +71,7 @@ function renderBoardWithClient(queryClient: QueryClient, projectId?: string) {
 }
 
 beforeEach(() => {
+	clipboardWriteTextMock.mockReset().mockResolvedValue(undefined);
 	navigateMock.mockReset();
 	notificationShowMock.mockReset().mockResolvedValue(undefined);
 	postMock.mockReset().mockResolvedValue({ data: {} });
@@ -161,6 +171,49 @@ describe("SessionsBoard", () => {
 		fireEvent.click(screen.getByRole("button", { name: /idle sessions/i }));
 		const idleCard = screen.getByText("brand-font-pipeline").closest('[role="button"]') as HTMLElement;
 		expect(within(idleCard).getByText("Idle")).toBeInTheDocument();
+	});
+
+	it("copies visible branch names and PR URLs without opening the session", async () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				{
+					id: "p1",
+					name: "radic",
+					path: "/tmp/radic",
+					sessions: [
+						{
+							id: "s1",
+							workspaceId: "p1",
+							workspaceName: "radic",
+							title: "clipboard support",
+							provider: "claude-code",
+							branch: "feat/copy-actions",
+							status: "working",
+							activity: { state: "active", lastActivityAt: "2026-01-01T00:00:00Z" },
+							updatedAt: "2026-01-01T00:00:00Z",
+							prs: [{ number: 45, url: "https://github.com/acme/radic/pull/45", state: "open" }],
+						},
+					],
+				},
+			],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		await userEvent.click(screen.getByRole("button", { name: "Copy branch feat/copy-actions" }));
+		expect(clipboardWriteTextMock).toHaveBeenLastCalledWith("feat/copy-actions");
+		expect(screen.getByRole("button", { name: "Copied branch feat/copy-actions" })).toBeInTheDocument();
+		expect(navigateMock).not.toHaveBeenCalled();
+
+		await userEvent.click(screen.getByRole("button", { name: "Copy PR #45 URL" }));
+		expect(clipboardWriteTextMock).toHaveBeenLastCalledWith("https://github.com/acme/radic/pull/45");
+		expect(screen.getByRole("button", { name: "Copied PR #45 URL" })).toBeInTheDocument();
+		expect(navigateMock).not.toHaveBeenCalled();
+		await waitFor(() => expect(screen.getByRole("button", { name: "Copy PR #45 URL" })).toBeInTheDocument(), {
+			timeout: 2_000,
+		});
 	});
 
 	it("uses distinct card badge tones for idle, no signal, and draft PR sessions", () => {
