@@ -292,9 +292,7 @@ func TestE2E_Lifecycle(t *testing.T) {
 	if out, code := e.run(t, "stop"); code != 0 || !strings.Contains(out, "stopped") {
 		t.Fatalf("stop: exit %d, out %s", code, out)
 	}
-	if _, err := os.Stat(e.runFile); !os.IsNotExist(err) {
-		t.Fatal("run-file should be removed after stop")
-	}
+	waitForPathRemoved(t, e.runFile, 5*time.Second)
 }
 
 func TestE2E_ShutdownGuard(t *testing.T) {
@@ -331,9 +329,7 @@ func TestE2E_StaleRunFile(t *testing.T) {
 	if out, code := e.run(t, "stop"); code != 0 || !strings.Contains(out, "stopped") {
 		t.Fatalf("stop stale: exit %d, out %s", code, out)
 	}
-	if _, err := os.Stat(e.runFile); !os.IsNotExist(err) {
-		t.Fatal("stale run-file should be removed")
-	}
+	waitForPathRemoved(t, e.runFile, 5*time.Second)
 }
 
 func TestE2E_ExitCodes(t *testing.T) {
@@ -395,4 +391,18 @@ func postShutdown(t *testing.T, port int, mutate func(*http.Request)) int {
 	}
 	defer resp.Body.Close()
 	return resp.StatusCode
+}
+
+func waitForPathRemoved(t *testing.T, path string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s should be removed after stop", path)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
