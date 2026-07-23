@@ -185,7 +185,7 @@ function upstreamHeaders(
 	for (const [name, value] of Object.entries(headers)) {
 		const lower = name.toLowerCase();
 		if (value === undefined || hopByHopHeaders.has(lower) || connectionTokens.has(lower)) continue;
-		if (options.preview && (lower === "origin" || lower.startsWith("x-ao-preview-"))) continue;
+		if (lower.startsWith("x-ao-preview-") || (options.preview && lower === "origin")) continue;
 		if (lower === "cookie") {
 			const cookie = requestCookieHeader(value);
 			if (cookie) forwarded[lower] = cookie;
@@ -225,7 +225,7 @@ function responseHeaders(
 	for (const [name, value] of Object.entries(headers)) {
 		const lower = name.toLowerCase();
 		if (value === undefined || hopByHopHeaders.has(lower) || connectionTokens.has(lower)) continue;
-		if (options.preview && lower.startsWith("x-ao-preview-")) continue;
+		if (lower.startsWith("x-ao-preview-")) continue;
 		if (lower === "set-cookie") {
 			const setCookie = options.preview ? previewSetCookieHeader(value) : responseSetCookieHeader(value);
 			if (setCookie) forwarded[lower] = setCookie;
@@ -260,7 +260,7 @@ function rawResponseHead(response: http.IncomingMessage, options: ResponseHeader
 		const name = response.rawHeaders[i];
 		const lower = name.toLowerCase();
 		const value = response.rawHeaders[i + 1];
-		if (options.preview && lower.startsWith("x-ao-preview-")) continue;
+		if (lower.startsWith("x-ao-preview-")) continue;
 		if (lower === "set-cookie") {
 			const setCookie = options.preview ? previewSetCookieHeader(value) : responseSetCookieHeader(value);
 			if (typeof setCookie === "string") headers.push(`${name}: ${setCookie}`);

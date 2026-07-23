@@ -671,6 +671,94 @@ describe("remote-forwarder", () => {
 		expect(forwarder.originalPreviewURL(location!)).toBe("http://127.0.0.1:43210/next?q=1#cross");
 	});
 
+	it("strips forged preview transport headers on ordinary HTTP forwarding", async () => {
+		let received: http.IncomingHttpHeaders | undefined;
+		const daemon = http.createServer((req, res) => {
+			received = req.headers;
+			res.writeHead(200, {
+				"x-ao-preview-target": "http://127.0.0.1:5173",
+				"x-ao-preview-upstream-authorization": "Bearer internal",
+				"x-ao-preview-debug": "internal",
+			});
+			res.end("ok");
+		});
+		servers.push(daemon);
+		const daemonPort = await listen(daemon);
+		const forwarder = await startRemoteForwarder({ host: "127.0.0.1", port: daemonPort, password: "remote-secret" });
+		forwarders.push(forwarder);
+
+		const response = await forwarderRequest(
+			forwarder,
+			`http://127.0.0.1:${forwarder.port}/_ao/preview/forged/private`,
+			{
+				headers: {
+					"x-ao-preview-target": "http://127.0.0.1:5173",
+					"x-ao-preview-upstream-authorization": "Basic forged",
+					"x-ao-preview-forged": "caller-controlled",
+				},
+			},
+		);
+
+		expect.soft(received?.authorization).toBe("Bearer remote-secret");
+		expect.soft(received?.["x-ao-preview-target"]).toBeUndefined();
+		expect.soft(received?.["x-ao-preview-upstream-authorization"]).toBeUndefined();
+		expect.soft(received?.["x-ao-preview-forged"]).toBeUndefined();
+		expect.soft(response.headers["x-ao-preview-target"]).toBeUndefined();
+		expect.soft(response.headers["x-ao-preview-upstream-authorization"]).toBeUndefined();
+		expect.soft(response.headers["x-ao-preview-debug"]).toBeUndefined();
+	});
+
+	it("strips forged preview transport headers on ordinary WebSocket forwarding", async () => {
+		let received: http.IncomingHttpHeaders | undefined;
+		let daemonSocket: { destroy(): void } | undefined;
+		const daemon = http.createServer();
+		daemon.on("upgrade", (req, socket) => {
+			received = req.headers;
+			daemonSocket = socket;
+			socket.write(
+				"HTTP/1.1 101 Switching Protocols\r\n" +
+					"Connection: Upgrade\r\n" +
+					"Upgrade: websocket\r\n" +
+					"X-AO-Preview-Target: http://127.0.0.1:5173\r\n" +
+					"X-AO-Preview-Upstream-Authorization: Bearer internal\r\n" +
+					"X-AO-Preview-Debug: internal\r\n\r\n",
+			);
+		});
+		servers.push(daemon);
+		const daemonPort = await listen(daemon);
+		const forwarder = await startRemoteForwarder({ host: "127.0.0.1", port: daemonPort, password: "remote-secret" });
+		forwarders.push(forwarder);
+		const client = net.connect(forwarder.port, "127.0.0.1");
+		await once(client, "connect");
+		client.write(
+			"GET /_ao/preview/forged/socket HTTP/1.1\r\n" +
+				`Host: 127.0.0.1:${forwarder.port}\r\n` +
+				"Connection: Upgrade\r\n" +
+				"Upgrade: websocket\r\n" +
+				"Sec-WebSocket-Version: 13\r\n" +
+				"Sec-WebSocket-Key: dGVzdC1rZXk=\r\n" +
+				"X-AO-Preview-Target: http://127.0.0.1:5173\r\n" +
+				"X-AO-Preview-Upstream-Authorization: Basic forged\r\n" +
+				"X-AO-Preview-Forged: caller-controlled\r\n\r\n",
+		);
+		let responseHead = "";
+		client.on("data", (chunk) => {
+			responseHead += chunk.toString("utf8");
+		});
+		await new Promise<void>((resolve) => {
+			const check = () => (responseHead.includes("\r\n\r\n") ? resolve() : setTimeout(check, 5));
+			check();
+		});
+		client.destroy();
+		daemonSocket?.destroy();
+
+		expect.soft(received?.authorization).toBe("Bearer remote-secret");
+		expect.soft(received?.["x-ao-preview-target"]).toBeUndefined();
+		expect.soft(received?.["x-ao-preview-upstream-authorization"]).toBeUndefined();
+		expect.soft(received?.["x-ao-preview-forged"]).toBeUndefined();
+		expect.soft(responseHead).not.toContain("X-AO-Preview-");
+	});
+
 	it("forwards HTTP requests and injects the existing bearer password", async () => {
 		let received:
 			| { method?: string; url?: string; origin?: string; authorization?: string; host?: string; body: string }
