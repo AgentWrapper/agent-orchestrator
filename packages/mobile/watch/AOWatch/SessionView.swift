@@ -14,12 +14,6 @@ struct SessionView: View {
 			ScrollView {
 				VStack(alignment: .leading, spacing: 6) {
 					statusLine
-					if let detail = stream.detail {
-						Text("attempt \(stream.attempts) · \(detail)")
-							.font(.system(size: 11))
-							.foregroundStyle(.orange)
-							.frame(maxWidth: .infinity, alignment: .leading)
-					}
 					Text(stream.output.isEmpty ? "Waiting for output…" : stream.output)
 						.font(.system(size: 13, design: .monospaced))
 						.foregroundStyle(stream.output.isEmpty ? .secondary : .primary)
@@ -52,17 +46,14 @@ struct SessionView: View {
 
 	@ViewBuilder private var statusLine: some View {
 		switch stream.status {
-		case .idle, .connecting:
-			Label("Connecting…", systemImage: "dot.radiowaves.left.and.right")
+		case .idle, .loading:
+			Label("Loading…", systemImage: "arrow.clockwise")
 				.font(.caption2).foregroundStyle(.secondary)
-		case .socketOpen:
-			Label("Handshaking…", systemImage: "dot.radiowaves.left.and.right")
-				.font(.caption2).foregroundStyle(.yellow)
 		case .live:
-			Label("Live", systemImage: "dot.radiowaves.left.and.right")
+			Label("Live · refreshes 2s", systemImage: "dot.radiowaves.left.and.right")
 				.font(.caption2).foregroundStyle(.green)
 		case .closed:
-			Label("Ended", systemImage: "stop.circle")
+			Label("Paused", systemImage: "pause.circle")
 				.font(.caption2).foregroundStyle(.secondary)
 		case let .error(message):
 			Label(message, systemImage: "exclamationmark.triangle")

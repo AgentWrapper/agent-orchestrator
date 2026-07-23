@@ -60,6 +60,18 @@ struct AOClient: Sendable {
 		return decoded.projects ?? []
 	}
 
+	/// Plain-text snapshot of a session's recent terminal output (tmux
+	/// capture-pane server-side). Polled by the watch since watchOS can't hold
+	/// the /mux WebSocket open.
+	func getOutput(sessionId: String, lines: Int = 200) async throws -> String {
+		let encodedId = sessionId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? sessionId
+		let data = try await request(path: "/sessions/\(encodedId)/output?lines=\(lines)", method: "GET", body: nil)
+		guard let decoded = try? JSONDecoder().decode(OutputResponse.self, from: data) else {
+			throw AOError.decoding
+		}
+		return decoded.output ?? ""
+	}
+
 	func send(sessionId: String, message: String) async throws {
 		let encodedId = sessionId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? sessionId
 		let body = try JSONSerialization.data(withJSONObject: ["message": message])

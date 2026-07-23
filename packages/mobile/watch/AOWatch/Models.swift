@@ -67,6 +67,11 @@ struct ProjectsResponse: Decodable, Sendable {
 	let projects: [WireProject]?
 }
 
+// GET /api/v1/sessions/{id}/output → plain-text terminal snapshot.
+struct OutputResponse: Decodable, Sendable {
+	let output: String?
+}
+
 // The daemon's error envelope: { error, code, message, requestId }.
 struct ErrorEnvelope: Decodable, Sendable {
 	let error: String?
