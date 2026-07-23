@@ -37,6 +37,39 @@ export function toSessionStatus(status?: string, isTerminated = false): SessionS
 	return isTerminated ? "terminated" : "unknown";
 }
 
+// CleanupDisposition is the session-level rollup of a terminated session's
+// runtime + workspace release, mirroring the backend's workspace_disposition.
+export type CleanupDisposition = "pending" | "removed" | "preserved_dirty" | "failed" | "not_applicable";
+
+// SessionCleanup is the client view of a terminated session's terminal-resource
+// cleanup facts. Present only for a terminated session that has a facts row.
+export type SessionCleanup = {
+	disposition: CleanupDisposition;
+	runtimeReleasedAt?: string;
+	attemptCount?: number;
+	nextAttemptAt?: string;
+	failureCode?: string;
+};
+
+// toSessionCleanup maps the API cleanup facts onto the client shape, or undefined
+// when the session has none (a live or not-yet-finalized session).
+export function toSessionCleanup(cleanup?: {
+	workspaceDisposition: string;
+	runtimeReleasedAt?: string | null;
+	attemptCount?: number;
+	nextAttemptAt?: string | null;
+	failureCode?: string;
+}): SessionCleanup | undefined {
+	if (!cleanup) return undefined;
+	return {
+		disposition: cleanup.workspaceDisposition as CleanupDisposition,
+		runtimeReleasedAt: cleanup.runtimeReleasedAt ?? undefined,
+		attemptCount: cleanup.attemptCount,
+		nextAttemptAt: cleanup.nextAttemptAt ?? undefined,
+		failureCode: cleanup.failureCode,
+	};
+}
+
 export type SessionActivityState = "active" | "idle" | "waiting_input" | "blocked" | "exited" | "unknown";
 
 const sessionActivityStates = new Set<SessionActivityState>(["active", "idle", "waiting_input", "blocked", "exited"]);
@@ -127,6 +160,15 @@ export type WorkspaceSession = {
 	kind?: SessionKind;
 	branch?: string;
 	status: SessionStatus;
+	/**
+	 * Raw terminal fact from the daemon, independent of the derived status: a
+	 * merged session is terminated but has status "merged", so cleanup affordances
+	 * gate on this rather than status === "terminated". Optional only so existing
+	 * fixtures need not set it; the daemon mapping always populates it.
+	 */
+	isTerminated?: boolean;
+	/** Terminal-resource cleanup state; present only for a terminated session with a facts row. */
+	cleanup?: SessionCleanup;
 	/** ISO timestamp from the daemon — used for relative time in the inspector. */
 	createdAt?: string;
 	/** ISO timestamp from the daemon. */
