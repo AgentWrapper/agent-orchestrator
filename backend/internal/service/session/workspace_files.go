@@ -504,7 +504,7 @@ func workspaceFileDiff(ctx context.Context, root, rel string, status WorkspaceFi
 		truncatedDiff, truncated := truncateUTF8(diff, maxWorkspaceDiffBytes)
 		return truncatedDiff, truncated, nil
 	}
-	out, err := gitWorkspaceOutput(ctx, root, "diff", "--no-ext-diff", "--unified=80", "HEAD", "--", rel)
+	out, err := gitWorkspaceOutput(ctx, root, "diff", "--no-ext-diff", "--unified=3", "HEAD", "--", rel)
 	if err != nil {
 		return "", false, err
 	}

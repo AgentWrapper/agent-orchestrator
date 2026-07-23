@@ -370,14 +370,14 @@ function ShellLayout() {
 
 	useEffect(() => aoBridge.app.onKeyboardShortcutsHelp(() => setIsKeyboardShortcutsOpen(true)), []);
 
-	// New standalone terminal (Ctrl+`), also detected in the main process so it
+	// New standalone terminal (Ctrl+Shift+`), also detected in the main process so it
 	// fires from inside a terminal pane. It raises the same store signal as the
-	// topbar button so the two cannot drift apart.
+	// tab-strip + button so the two cannot drift apart.
 	useEffect(() => aoBridge.app.onNewShellTerminalShortcut(() => requestNewShellTerminal()), [requestNewShellTerminal]);
 
 	// The shell layout is the single consumer of that signal, because it is the
 	// only component mounted on EVERY route. Owning it here is what lets the
-	// button and Ctrl+` work from the board, a project page, or a session alike
+	// button and Ctrl+Shift+` work from the board, a project page, or a session alike
 	// — when the session view owned it, both silently did nothing outside a
 	// session, since nothing was listening.
 	//
@@ -468,7 +468,6 @@ function ShellLayout() {
 						workspaces={workspaces}
 					/>
 					<main className="flex min-w-0 flex-1 flex-col overflow-x-hidden">
-						<DaemonFailureBanner status={daemonStatus} />
 						<div className="min-h-0 flex-1 overflow-x-hidden">
 							{/* Board/session routes render inside the same inset box the welcome board and settings paint for themselves, so every screen sits within the app's outer boundary. */}
 							{hideShellTopbar ? (
@@ -494,6 +493,7 @@ function ShellLayout() {
 							)}
 						</div>
 					</main>
+					<DaemonFailureBanner status={daemonStatus} />
 					{/* When ShellTopbar is hidden, keep a macOS window-drag strip over
               the traffic-light band only (same --size-traffic-light-clearance
               as the Sidebar header pad). TitlebarNav sits in the sidebar below

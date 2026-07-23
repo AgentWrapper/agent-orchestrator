@@ -177,6 +177,8 @@
 	--spacing-browser-min: var(--size-browser-min);
 	--spacing-dot-sm: var(--size-dot-sm);
 	--spacing-content-max: var(--size-content-max);
+	--spacing-flex-min: var(--size-flex-min);
+	--spacing-shell-tab-min: var(--size-shell-tab-min);
 	--spacing-shell-tab-max: var(--size-shell-tab-max);
 	--spacing-board-empty: var(--size-board-empty);
 	--spacing-preview-content: var(--size-preview-content);
@@ -185,6 +187,7 @@
 	--spacing-notification-max-height: var(--size-notification-max-height);
 	--spacing-select-menu-max: var(--size-select-menu-max);
 	--spacing-notification-icon: var(--size-notification-icon);
+	--spacing-daemon-failure-details-max: var(--size-daemon-failure-details-max);
 	--spacing-font-size-label: var(--size-font-size-label);
 	--spacing-pr-table-actions: var(--size-pr-table-actions);
 	--spacing-pr-col-number: var(--size-pr-col-number);
@@ -237,6 +240,10 @@
 	background-color: var(--color-scrim);
 	-webkit-backdrop-filter: blur(var(--blur-overlay));
 	backdrop-filter: blur(var(--blur-overlay));
+}
+
+@utility w-daemon-failure-toast {
+	width: min(var(--size-daemon-failure-toast), calc(100vw - var(--space-6)));
 }
 
 @utility w-dialog-md {
@@ -345,7 +352,6 @@
 	border: 1px solid var(--color-border-strong);
 	background-color: var(--color-bg-primary);
 }
-
 @utility settings-row-bar {
 	display: flex;
 	height: var(--size-settings-row);

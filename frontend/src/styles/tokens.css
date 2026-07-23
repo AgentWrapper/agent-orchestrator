@@ -215,6 +215,9 @@
 	--size-notification-max-height: 420px;
 	--size-select-menu-max: 320px; /* agent/select dropdown scroll cap (was max-h-80) */
 	--size-notification-icon: 26px;
+	/* DaemonFailureBanner floating toast (was w-[min(22rem,…)] / max-h-40). */
+	--size-daemon-failure-toast: 22rem;
+	--size-daemon-failure-details-max: 10rem;
 	--size-font-size-label: 44px;
 	--size-inspector-status-chip-max: 58%;
 	--size-board-empty: 460px;
@@ -224,6 +227,10 @@
 	--size-pr-col-number: 64px;
 	--size-pr-col-state: 96px;
 	--size-content-max: 320px;
+	/* Lets flex children shrink for truncation without hardcoding zero-width utilities in components. */
+	--size-flex-min: 0px;
+	/* Keeps terminal tabs usable after title truncation while leaving room for several tabs. */
+	--size-shell-tab-min: 64px;
 	/* Caps a standalone shell terminal's tab label so several open shells stay
 	   readable side by side instead of one long path crowding out the rest. */
 	--size-shell-tab-max: 140px;
@@ -258,6 +265,7 @@
 	--size-import-folder-dialog: 640px;
 	--size-import-mode-card-min: 252px;
 	--size-import-mode-card-min-sm: 292px;
+	--size-import-mode-illustration: 178px;
 
 	/* Settings page (Figma) */
 	--color-bg-settings-row: #18181c;
