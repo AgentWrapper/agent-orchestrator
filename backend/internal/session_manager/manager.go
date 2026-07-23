@@ -781,6 +781,9 @@ func effectiveAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig) por
 	if override.Model != "" {
 		merged.Model = override.Model
 	}
+	if strings.TrimSpace(override.ReasoningEffort) != "" {
+		merged.ReasoningEffort = override.ReasoningEffort
+	}
 	if override.Permissions != "" {
 		merged.Permissions = override.Permissions
 	}

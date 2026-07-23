@@ -1,6 +1,9 @@
 package domain
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // PermissionMode controls how much review an agent requires before acting. It
 // lives in domain (not ports) so the typed AgentConfig can carry it; ports
@@ -25,6 +28,8 @@ const (
 type AgentConfig struct {
 	// Model overrides the agent's default model (e.g. claude-opus-4-5).
 	Model string `json:"model,omitempty"`
+	// ReasoningEffort overrides the agent's reasoning effort when supported.
+	ReasoningEffort string `json:"reasoningEffort,omitempty"`
 	// Permissions sets the agent's starting permission mode. Empty is treated
 	// like the adapter's default mode.
 	Permissions PermissionMode `json:"permissions,omitempty"`
@@ -41,8 +46,18 @@ func (c AgentConfig) IsZero() bool {
 func (c AgentConfig) Validate() error {
 	switch c.Permissions {
 	case "", PermissionModeDefault, PermissionModeAcceptEdits, PermissionModeAuto, PermissionModeBypassPermissions:
-		return nil
 	default:
 		return fmt.Errorf("invalid permissions %q: want one of default, accept-edits, auto, bypass-permissions", c.Permissions)
 	}
+
+	effort := strings.TrimSpace(c.ReasoningEffort)
+	switch effort {
+	case "":
+		return nil
+	case "low", "medium", "high", "xhigh":
+		if effort == c.ReasoningEffort {
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid reasoning effort %q: want one of low, medium, high, xhigh", c.ReasoningEffort)
 }

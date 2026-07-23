@@ -54,6 +54,7 @@ func TestGetLaunchCommandBuildsCrossPlatformArgv(t *testing.T) {
 
 	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 		Permissions:      ports.PermissionModeBypassPermissions,
+		Config:           ports.AgentConfig{Model: " gpt-5.6-sol ", ReasoningEffort: "high"},
 		Prompt:           "-fix this",
 		SystemPromptFile: filepath.Join("tmp", "prompt with spaces.md"),
 		SystemPrompt:     "inline wins",
@@ -76,6 +77,8 @@ func TestGetLaunchCommandBuildsCrossPlatformArgv(t *testing.T) {
 	}
 	want = append(want,
 		"-c", `projects={`+codexTOMLConfigString(workspace)+`={trust_level="trusted"}}`,
+		"--model", "gpt-5.6-sol",
+		"-c", `model_reasoning_effort="high"`,
 		"-c", "developer_instructions="+codexTOMLConfigString("inline wins"),
 		"--", "-fix this",
 	)
@@ -105,17 +108,30 @@ func TestGetLaunchCommandAppendsConfiguredModel(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "codex"}
 
 	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
-		Config: ports.AgentConfig{Model: "  gpt-5.4-mini  "},
+		Config: ports.AgentConfig{Model: "  gpt-5.6-sol  ", ReasoningEffort: "high"},
 		Prompt: "fix this",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !containsSubsequence(cmd, []string{"--model", "gpt-5.4-mini"}) {
-		t.Fatalf("command %#v missing trimmed --model flag", cmd)
+	if !containsSubsequence(cmd, []string{"--model", "gpt-5.6-sol", "-c", `model_reasoning_effort="high"`}) {
+		t.Fatalf("command %#v missing model/reasoning flags", cmd)
 	}
-	if containsSubsequence(cmd, []string{"--model", "  gpt-5.4-mini  "}) {
+	if containsSubsequence(cmd, []string{"--model", "  gpt-5.6-sol  "}) {
 		t.Fatalf("command %#v used untrimmed model", cmd)
+	}
+}
+
+func TestGetLaunchCommandOmitsBlankReasoningEffort(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "codex"}
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{Config: ports.AgentConfig{ReasoningEffort: " \t "}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, arg := range cmd {
+		if strings.Contains(arg, "model_reasoning_effort") {
+			t.Fatalf("command %#v contains reasoning effort for blank value", cmd)
+		}
 	}
 }
 
@@ -338,6 +354,12 @@ func TestGetConfigSpecReportsModelField(t *testing.T) {
 			Type:        ports.ConfigFieldString,
 			Description: "Model override passed to `codex --model`.",
 		},
+		{
+			Key:         "reasoningEffort",
+			Type:        ports.ConfigFieldEnum,
+			Description: "Reasoning effort passed to Codex as `model_reasoning_effort`.",
+			Enum:        []string{"low", "medium", "high", "xhigh"},
+		},
 	}
 	if !reflect.DeepEqual(spec.Fields, want) {
 		t.Fatalf("config fields\nwant: %#v\n got: %#v", want, spec.Fields)
@@ -519,6 +541,7 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 
 	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
 		Permissions:      ports.PermissionModeAuto,
+		Config:           ports.AgentConfig{Model: " gpt-5.6-terra ", ReasoningEffort: "medium"},
 		SystemPrompt:     "restore inline wins",
 		SystemPromptFile: filepath.Join("tmp", "restore-system.md"),
 		Session: ports.SessionRef{
@@ -547,6 +570,8 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	}
 	want = append(want,
 		"-c", `projects={`+codexTOMLConfigString(workspace)+`={trust_level="trusted"}}`,
+		"--model", "gpt-5.6-terra",
+		"-c", `model_reasoning_effort="medium"`,
 		"-c", "developer_instructions="+codexTOMLConfigString("restore inline wins"),
 		"thread-123",
 	)
@@ -559,7 +584,7 @@ func TestGetRestoreCommandAppendsConfiguredModel(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "codex"}
 
 	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
-		Config: ports.AgentConfig{Model: "  gpt-5.4-mini  "},
+		Config: ports.AgentConfig{Model: "  gpt-5.6-terra  ", ReasoningEffort: "medium"},
 		Session: ports.SessionRef{
 			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "thread-123"},
 		},
@@ -570,8 +595,30 @@ func TestGetRestoreCommandAppendsConfiguredModel(t *testing.T) {
 	if !ok {
 		t.Fatal("ok = false, want true")
 	}
-	if !containsSubsequence(cmd, []string{"--model", "gpt-5.4-mini"}) {
-		t.Fatalf("restore command %#v missing trimmed --model flag", cmd)
+	if !containsSubsequence(cmd, []string{"--model", "gpt-5.6-terra", "-c", `model_reasoning_effort="medium"`}) {
+		t.Fatalf("restore command %#v missing model/reasoning flags", cmd)
+	}
+}
+
+func TestGetRestoreCommandOmitsBlankReasoningEffort(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "codex"}
+
+	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Config: ports.AgentConfig{ReasoningEffort: " \t "},
+		Session: ports.SessionRef{
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "thread-123"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	for _, arg := range cmd {
+		if strings.Contains(arg, "model_reasoning_effort") {
+			t.Fatalf("restore command %#v contains reasoning effort for blank value", cmd)
+		}
 	}
 }
 

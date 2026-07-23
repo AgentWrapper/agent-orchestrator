@@ -95,6 +95,16 @@ func TestBuildProjectConfigTrackerIntakeFlags(t *testing.T) {
 	}
 }
 
+func TestBuildProjectConfigPreservesRoleReasoningEffort(t *testing.T) {
+	got, err := buildProjectConfig(projectSetConfigOptions{configJSON: `{"orchestrator":{"agent":"codex","agentConfig":{"model":"gpt-5.6-sol","reasoningEffort":"high"}},"worker":{"agent":"codex","agentConfig":{"model":"gpt-5.6-terra","reasoningEffort":"medium"}}}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Orchestrator.AgentConfig.ReasoningEffort != "high" || got.Worker.AgentConfig.ReasoningEffort != "medium" {
+		t.Fatalf("reasoning efforts = orchestrator %q worker %q, want high/medium", got.Orchestrator.AgentConfig.ReasoningEffort, got.Worker.AgentConfig.ReasoningEffort)
+	}
+}
+
 func TestProjectList_Success(t *testing.T) {
 	cfg := setConfigEnv(t)
 	srv, capture := projectServer(t, http.StatusOK, `{"projects":[{"id":"zeta","name":"Zeta","sessionPrefix":"zeta"},{"id":"alpha","name":"Alpha","sessionPrefix":"alpha","resolveError":"config missing"}]}`)

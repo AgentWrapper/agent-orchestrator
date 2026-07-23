@@ -121,9 +121,13 @@ func TestHookPATH(t *testing.T) {
 
 func TestEffectiveHarnessAndAgentConfig(t *testing.T) {
 	cfg := domain.ProjectConfig{
-		AgentConfig:  domain.AgentConfig{Model: "base", Permissions: domain.PermissionModeAuto},
-		Worker:       domain.RoleOverride{Harness: domain.HarnessCodex, AgentConfig: domain.AgentConfig{Model: "worker"}},
-		Orchestrator: domain.RoleOverride{Harness: domain.HarnessClaudeCode},
+		AgentConfig: domain.AgentConfig{Model: "base-model", ReasoningEffort: "low", Permissions: domain.PermissionModeAuto},
+		Worker: domain.RoleOverride{Harness: domain.HarnessCodex, AgentConfig: domain.AgentConfig{
+			Model: "gpt-5.6-terra", ReasoningEffort: "medium",
+		}},
+		Orchestrator: domain.RoleOverride{Harness: domain.HarnessClaudeCode, AgentConfig: domain.AgentConfig{
+			Model: "gpt-5.6-sol", ReasoningEffort: "high",
+		}},
 	}
 
 	// Explicit harness always wins.
@@ -140,12 +144,24 @@ func TestEffectiveHarnessAndAgentConfig(t *testing.T) {
 
 	// Role override merges over the base agent config (set fields win; unset keep base).
 	got := effectiveAgentConfig(domain.KindWorker, cfg)
-	if got.Model != "worker" || got.Permissions != domain.PermissionModeAuto {
-		t.Fatalf("merged worker config = %#v, want model=worker permissions=auto", got)
+	if got.Model != "gpt-5.6-terra" || got.ReasoningEffort != "medium" || got.Permissions != domain.PermissionModeAuto {
+		t.Fatalf("merged worker config = %#v, want model=gpt-5.6-terra reasoning=medium permissions=auto", got)
 	}
-	// Orchestrator has no agent-config override, so the base config is used as-is.
-	if got := effectiveAgentConfig(domain.KindOrchestrator, cfg); got.Model != "base" {
-		t.Fatalf("orchestrator config = %#v, want base", got)
+	if got := effectiveAgentConfig(domain.KindOrchestrator, cfg); got.Model != "gpt-5.6-sol" || got.ReasoningEffort != "high" || got.Permissions != domain.PermissionModeAuto {
+		t.Fatalf("orchestrator config = %#v, want model=gpt-5.6-sol reasoning=high permissions=auto", got)
+	}
+}
+
+func TestEffectiveAgentConfigBlankRoleReasoningEffortKeepsBase(t *testing.T) {
+	cfg := domain.ProjectConfig{
+		AgentConfig: domain.AgentConfig{ReasoningEffort: "high"},
+		Worker: domain.RoleOverride{AgentConfig: domain.AgentConfig{
+			ReasoningEffort: " \t ",
+		}},
+	}
+
+	if got := effectiveAgentConfig(domain.KindWorker, cfg); got.ReasoningEffort != "high" {
+		t.Fatalf("worker reasoning effort = %q, want inherited base value %q", got.ReasoningEffort, "high")
 	}
 }
 
