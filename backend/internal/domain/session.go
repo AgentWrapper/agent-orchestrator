@@ -60,14 +60,8 @@ type SessionRecord struct {
 	FirstSignalAt time.Time       `json:"-"`
 	IsTerminated  bool            `json:"isTerminated"`
 	Metadata      SessionMetadata `json:"-"`
-	// CleanupGeneration is a monotonic counter bumped each time the session is
-	// un-terminated (spawn/restore). The terminal-resource reconciler stamps its
-	// durable cleanup facts with the generation they were written for so a
-	// finalize started under an earlier terminal episode cannot satisfy a later
-	// one. Internal fact, not part of the API read model.
-	CleanupGeneration int64     `json:"-"`
-	CreatedAt         time.Time `json:"createdAt"`
-	UpdatedAt         time.Time `json:"updatedAt"`
+	CreatedAt     time.Time       `json:"createdAt"`
+	UpdatedAt     time.Time       `json:"updatedAt"`
 }
 
 // Session is the read-model returned across the API boundary: a SessionRecord
