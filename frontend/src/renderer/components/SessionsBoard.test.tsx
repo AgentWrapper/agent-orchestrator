@@ -4,15 +4,21 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 
-const { navigateMock, notificationShowMock, postMock, workspaceQueryMock, boardActionsInPanelMock } = vi.hoisted(
-	() => ({
+const {
+	navigateMock,
+	notificationShowMock,
+	postMock,
+	workspaceQueryMock,
+	boardActionsInPanelMock,
+	clipboardWriteTextMock,
+} = vi.hoisted(() => ({
 		navigateMock: vi.fn(),
 		notificationShowMock: vi.fn(),
 		postMock: vi.fn(),
 		workspaceQueryMock: vi.fn(),
 		boardActionsInPanelMock: vi.fn(() => false),
-	}),
-);
+		clipboardWriteTextMock: vi.fn(),
+}));
 
 vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => navigateMock,
@@ -30,6 +36,9 @@ vi.mock("../lib/api-client", () => ({
 
 vi.mock("../lib/bridge", () => ({
 	aoBridge: {
+		clipboard: {
+			writeText: (...args: unknown[]) => clipboardWriteTextMock(...args),
+		},
 		notifications: {
 			show: (...args: unknown[]) => notificationShowMock(...args),
 		},
@@ -67,6 +76,7 @@ beforeEach(() => {
 	postMock.mockReset().mockResolvedValue({ data: {} });
 	workspaceQueryMock.mockReset().mockReturnValue({ data: [], isError: false });
 	boardActionsInPanelMock.mockReset().mockReturnValue(false);
+	clipboardWriteTextMock.mockReset().mockResolvedValue(undefined);
 });
 
 describe("SessionsBoard", () => {
@@ -161,6 +171,76 @@ describe("SessionsBoard", () => {
 		fireEvent.click(screen.getByRole("button", { name: /idle sessions/i }));
 		const idleCard = screen.getByText("brand-font-pipeline").closest('[role="button"]') as HTMLElement;
 		expect(within(idleCard).getByText("Idle")).toBeInTheDocument();
+	});
+
+	it("copies visible branch names without opening the session", async () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				{
+					id: "p1",
+					name: "radic",
+					path: "/tmp/radic",
+					sessions: [
+						{
+							id: "s1",
+							workspaceId: "p1",
+							workspaceName: "radic",
+							title: "branch copy task",
+							provider: "codex",
+							branch: "demo/copy-branch",
+							status: "running",
+							activity: { state: "working", lastActivityAt: "2026-01-01T00:00:00Z" },
+							updatedAt: "2026-01-01T00:00:00Z",
+							prs: [],
+						},
+					],
+				},
+			],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		await userEvent.click(screen.getByRole("button", { name: "Copy branch demo/copy-branch" }));
+
+		await waitFor(() => expect(clipboardWriteTextMock).toHaveBeenCalledWith("demo/copy-branch"));
+		expect(navigateMock).not.toHaveBeenCalled();
+	});
+
+	it("copies PR URLs without opening the session", async () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				{
+					id: "p1",
+					name: "radic",
+					path: "/tmp/radic",
+					sessions: [
+						{
+							id: "s1",
+							workspaceId: "p1",
+							workspaceName: "radic",
+							title: "pr copy task",
+							provider: "codex",
+							branch: "demo/pr-copy",
+							status: "running",
+							activity: { state: "working", lastActivityAt: "2026-01-01T00:00:00Z" },
+							updatedAt: "2026-01-01T00:00:00Z",
+							prs: [{ number: 42, url: "https://github.com/acme/radic/pull/42", state: "open" }],
+						},
+					],
+				},
+			],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		await userEvent.click(screen.getByRole("button", { name: "Copy PR #42 URL" }));
+
+		await waitFor(() => expect(clipboardWriteTextMock).toHaveBeenCalledWith("https://github.com/acme/radic/pull/42"));
+		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
 	it("uses distinct card badge tones for idle, no signal, and draft PR sessions", () => {
