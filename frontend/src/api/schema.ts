@@ -305,7 +305,8 @@ export interface paths {
         };
         /** Fetch one project; discriminates ok vs degraded */
         get: operations["getProject"];
-        put?: never;
+        /** Atomically replace a project's display name and config */
+        put: operations["updateProjectSettings"];
         post?: never;
         /** Remove a project; stops sessions, cleans workspaces, unregisters */
         delete: operations["removeProject"];
@@ -1333,6 +1334,10 @@ export interface components {
             deleted: boolean;
             token: string;
         };
+        UpdateProjectSettingsInput: {
+            config: components["schemas"]["ProjectConfig"];
+            displayName: string;
+        };
         WorkspaceFileResponse: {
             additions: number;
             binary: boolean;
@@ -2260,6 +2265,60 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProjectGetResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    updateProjectSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project identifier (registry key). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateProjectSettingsInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Not Found */

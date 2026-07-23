@@ -195,6 +195,27 @@ func (s *Store) ListProjects(ctx context.Context) ([]domain.ProjectRecord, error
 	return out, nil
 }
 
+// UpdateProjectSettings atomically updates the user-facing display name and
+// config for an active project. It returns ok=false when the project is missing
+// or archived.
+func (s *Store) UpdateProjectSettings(ctx context.Context, id, displayName string, config domain.ProjectConfig) (bool, error) {
+	encodedConfig, err := marshalProjectConfig(config)
+	if err != nil {
+		return false, err
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.UpdateProjectSettings(ctx, gen.UpdateProjectSettingsParams{
+		ID:          domain.ProjectID(id),
+		DisplayName: displayName,
+		Config:      encodedConfig,
+	})
+	if err != nil {
+		return false, fmt.Errorf("update project settings %s: %w", id, err)
+	}
+	return rows > 0, nil
+}
+
 // CountProjectsIncludingArchived returns all registry rows, including projects
 // the user archived. It is intentionally separate from ListProjects so first-run
 // seeding does not recreate Scratch after any project has existed.

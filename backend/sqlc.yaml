@@ -84,6 +84,10 @@ sql:
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
               type: "SessionID"
+          - column: "session_cleanup_facts.session_id"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "SessionID"
           - column: "sessions.id"
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"

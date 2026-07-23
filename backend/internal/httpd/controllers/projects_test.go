@@ -197,6 +197,40 @@ func TestProjectsAPI_ListAddGet(t *testing.T) {
 
 }
 
+func TestProjectsAPI_UpdateSettings(t *testing.T) {
+	srv := newTestServer(t)
+	repo := gitRepo(t, "legacy-project")
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/projects", `{"path":`+quote(repo)+`,"projectId":"legacy-project"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("seed create = %d, want 201; body=%s", status, body)
+	}
+
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/legacy-project", `{"displayName":"Friendly project","config":{"defaultBranch":"develop"}}`)
+	if status != http.StatusOK {
+		t.Fatalf("PUT settings = %d, want 200; body=%s", status, body)
+	}
+	var updated struct {
+		Project projectBody `json:"project"`
+	}
+	mustJSON(t, body, &updated)
+	if updated.Project.ID != "legacy-project" || updated.Project.Name != "Friendly project" || updated.Project.DefaultBranch != "develop" {
+		t.Fatalf("update response = %#v", updated.Project)
+	}
+
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/legacy-project", `{"displayName":"  ","config":{}}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "DISPLAY_NAME_REQUIRED")
+
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/legacy-project", `{"displayName":"`+strings.Repeat("x", 21)+`","config":{}}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "DISPLAY_NAME_TOO_LONG")
+
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/missing", `{"displayName":"Missing","config":{}}`)
+	assertErrorCode(t, body, status, http.StatusNotFound, "PROJECT_NOT_FOUND")
+
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/legacy-project", `{`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
+}
+
 func TestProjectsAPI_AddValidationAndConflicts(t *testing.T) {
 
 	srv := newTestServer(t)
@@ -362,19 +396,19 @@ func TestProjectsAPI_RejectsUnknownConfigKeys(t *testing.T) {
 		t.Fatalf("seed create = %d, want 201; body=%s", status, body)
 	}
 
-	// PUT a config body with an extraneous top-level key.
-	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/rej/config", `{"config":{"defaultBranch":"develop"},"surprise":"!"}`)
+	// PUT settings with an extraneous top-level key.
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/rej", `{"displayName":"Rejects unknown","config":{"defaultBranch":"develop"},"surprise":"!"}`)
 	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
 
 	// Prompt rules are now modeled and accepted in project config.
-	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/rej/config", `{"config":{"agentRules":"x"}}`)
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/rej", `{"displayName":"Rejects unknown","config":{"agentRules":"x"}}`)
 	if status != http.StatusOK {
-		t.Fatalf("agentRules config = %d, want 200; body=%s", status, body)
+		t.Fatalf("agentRules settings = %d, want 200; body=%s", status, body)
 	}
 
 	// A still-unknown nested config field is rejected, so misspellings cannot be
 	// silently persisted.
-	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/rej/config", `{"config":{"tracker":{"plugin":"github"}}}`)
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/rej", `{"displayName":"Rejects unknown","config":{"tracker":{"plugin":"github"}}}`)
 	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
 
 	// POST /projects gets the same gate, so add-time config rides the same rail.
@@ -395,7 +429,7 @@ func TestProjectsRoutes_LegacyUnregistered(t *testing.T) {
 		wantStatus int
 	}{
 
-		{method: "PUT", path: "/api/v1/projects/p1", wantStatus: 405, wantCode: "METHOD_NOT_ALLOWED", why: "R3 PUT not registered"},
+		{method: "PATCH", path: "/api/v1/projects/p1", wantStatus: 405, wantCode: "METHOD_NOT_ALLOWED", why: "standalone rename is not registered"},
 	}
 
 	for _, tc := range cases {

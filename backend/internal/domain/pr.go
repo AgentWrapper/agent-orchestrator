@@ -113,6 +113,7 @@ type PullRequestReview struct {
 	Author      string
 	State       ReviewDecision
 	URL         string
+	Body        string
 	IsBot       bool
 	SubmittedAt time.Time
 }

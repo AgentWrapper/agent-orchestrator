@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -33,6 +34,10 @@ type Manager interface {
 
 	// InitializeRepository prepares a selected folder for project registration.
 	InitializeRepository(ctx context.Context, in InitializeRepositoryInput) (InitializeRepositoryResult, error)
+
+	// UpdateSettings atomically replaces a project's user-facing display name
+	// and per-project config, returning the updated read-model.
+	UpdateSettings(ctx context.Context, id domain.ProjectID, in UpdateSettingsInput) (Project, error)
 
 	// SetConfig replaces a project's per-project config, returning the updated
 	// read-model.
@@ -62,6 +67,8 @@ type Service struct {
 	// subsequent mutation must be atomic from the perspective of concurrent callers.
 	addMu sync.Mutex
 }
+
+const maxDisplayNameLen = 20
 
 var _ Manager = (*Service)(nil)
 
@@ -508,6 +515,46 @@ func (m *Service) emitProjectAdded(row domain.ProjectRecord, firstProject bool) 
 		ProjectID:  &projectID,
 		Payload:    payload,
 	})
+}
+
+// UpdateSettings atomically replaces the project's stored display name and
+// config. Both values are validated before a single database update.
+func (m *Service) UpdateSettings(ctx context.Context, id domain.ProjectID, in UpdateSettingsInput) (Project, error) {
+	if err := validateProjectID(id); err != nil {
+		return Project{}, err
+	}
+	displayName := strings.TrimSpace(in.DisplayName)
+	if displayName == "" {
+		return Project{}, apierr.Invalid("DISPLAY_NAME_REQUIRED", "Display name is required", nil)
+	}
+	if utf8.RuneCountInString(displayName) > maxDisplayNameLen {
+		return Project{}, apierr.Invalid("DISPLAY_NAME_TOO_LONG", "Display name must be 20 characters or fewer", nil)
+	}
+	if err := in.Config.Validate(); err != nil {
+		return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+	}
+	row, ok, err := m.store.GetProject(ctx, string(id))
+	if err != nil {
+		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
+	}
+	if !ok || !row.ArchivedAt.IsZero() {
+		return Project{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
+	}
+	if row.Kind.WithDefault() == domain.ProjectKindScratch {
+		if err := validateScratchProjectConfig(in.Config); err != nil {
+			return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+		}
+	}
+	updated, err := m.store.UpdateProjectSettings(ctx, string(id), displayName, in.Config)
+	if err != nil {
+		return Project{}, apierr.Internal("PROJECT_SETTINGS_UPDATE_FAILED", "Failed to update project settings")
+	}
+	if !updated {
+		return Project{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
+	}
+	row.DisplayName = displayName
+	row.Config = in.Config
+	return m.projectFromRow(row), nil
 }
 
 // EnsureDefaultScratchProject seeds the built-in first-run scratch project when

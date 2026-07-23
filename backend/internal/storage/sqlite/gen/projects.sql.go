@@ -120,6 +120,26 @@ func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
 	return items, nil
 }
 
+const updateProjectSettings = `-- name: UpdateProjectSettings :execrows
+UPDATE projects
+SET display_name = ?, config = ?
+WHERE id = ? AND archived_at IS NULL
+`
+
+type UpdateProjectSettingsParams struct {
+	DisplayName string
+	Config      sql.NullString
+	ID          domain.ProjectID
+}
+
+func (q *Queries) UpdateProjectSettings(ctx context.Context, arg UpdateProjectSettingsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateProjectSettings, arg.DisplayName, arg.Config, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const upsertImportedProject = `-- name: UpsertImportedProject :exec
 INSERT INTO projects (id, path, repo_origin_url, display_name, registered_at, archived_at, config, kind)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)

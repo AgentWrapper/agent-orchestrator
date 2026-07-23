@@ -121,6 +121,30 @@ function ShellLayout() {
 	const setOrchestratorStartupError = useUiStore((state) => state.setOrchestratorStartupError);
 	const replacementErrorProjectId = Object.keys(orchestratorReplacementErrors)[0] ?? null;
 
+	const navigateSession = useCallback(
+		(direction: -1 | 1) => {
+			if (!scopedProjectId) return;
+			const sessions = (workspaces.find((workspace) => workspace.id === scopedProjectId)?.sessions ?? []).filter(
+				(session) => session.status !== "terminated",
+			);
+			if (sessions.length === 0) return;
+			const currentIndex = sessions.findIndex((session) => session.id === routeParams.sessionId);
+			const nextIndex =
+				currentIndex === -1
+					? direction === 1
+						? 0
+						: sessions.length - 1
+					: (currentIndex + direction + sessions.length) % sessions.length;
+			const session = sessions[nextIndex];
+			if (!session || session.id === routeParams.sessionId) return;
+			void navigate({
+				to: "/projects/$projectId/sessions/$sessionId",
+				params: { projectId: scopedProjectId, sessionId: session.id },
+			});
+		},
+		[navigate, routeParams.sessionId, scopedProjectId, workspaces],
+	);
+
 	const updateWorkspaces = useCallback(
 		(updater: (workspaces: WorkspaceSummary[]) => WorkspaceSummary[]) => {
 			queryClient.setQueryData<WorkspaceSummary[]>(workspaceQueryKey, (current = []) => updater(current));
@@ -380,6 +404,25 @@ function ShellLayout() {
 		navigate,
 		setActiveShellTerminal,
 	]);
+
+	useEffect(() => aoBridge.app.onOpenSettingsShortcut(() => void navigate({ to: "/settings" })), [navigate]);
+
+	useEffect(() => {
+		const disposePrevious = aoBridge.app.onPreviousSessionShortcut(() => navigateSession(-1));
+		const disposeNext = aoBridge.app.onNextSessionShortcut(() => navigateSession(1));
+		return () => {
+			disposePrevious();
+			disposeNext();
+		};
+	}, [navigateSession]);
+
+	useEffect(
+		() =>
+			aoBridge.app.onFocusTerminalShortcut(() => {
+				document.querySelector<HTMLElement>(".xterm-helper-textarea")?.focus();
+			}),
+		[],
+	);
 
 	return (
 		<ShellProvider value={{ daemonStatus, createProject, initializeProjectRepository }}>

@@ -103,6 +103,35 @@ beforeEach(() => {
 });
 
 describe("ProjectSettingsForm", () => {
+	it("atomically saves the project display name and config without changing its stable ID", async () => {
+		mockProject({
+			id: "tg_content_factory_5863f66be3",
+			name: "tg_content_factory_5863f66be3",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings("tg_content_factory_5863f66be3");
+
+		const projectName = await screen.findByLabelText("Project name");
+		await userEvent.clear(projectName);
+		await userEvent.type(projectName, "TG Content Factory");
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}", {
+			params: { path: { id: "tg_content_factory_5863f66be3" } },
+			body: expect.objectContaining({ displayName: "TG Content Factory" }),
+		});
+		expect(screen.getByText("tg_content_factory_5863f66be3")).toBeInTheDocument();
+	});
+
 	it("loads the current project settings and saves the exposed fields without dropping hidden config", async () => {
 		mockProject({
 			id: "proj-1",
@@ -159,9 +188,10 @@ describe("ProjectSettingsForm", () => {
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
-		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}/config", {
+		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}", {
 			params: { path: { id: "proj-1" } },
 			body: {
+				displayName: "Project One",
 				config: {
 					defaultBranch: "release",
 					sessionPrefix: "rel",
@@ -188,7 +218,7 @@ describe("ProjectSettingsForm", () => {
 		expect(await screen.findByText("Saved.")).toBeInTheDocument();
 	}, 20_000);
 
-	it("shows the daemon validation message when save fails", async () => {
+	it("shows the daemon validation message when the atomic settings save fails", async () => {
 		mockProject({
 			id: "proj-1",
 			name: "Project One",
@@ -208,11 +238,39 @@ describe("ProjectSettingsForm", () => {
 
 		renderSettings();
 
+		const projectName = await screen.findByLabelText("Project name");
+		await userEvent.clear(projectName);
+		await userEvent.type(projectName, "Updated Project");
 		await userEvent.click(await screen.findByRole("button", { name: "Save changes" }));
 
 		expect(await screen.findByText("invalid permissions")).toBeInTheDocument();
 		expect(screen.queryByText("Saved.")).not.toBeInTheDocument();
 		expect(postMock).not.toHaveBeenCalled();
+	});
+
+	it("rejects a blank project name before sending the settings update", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings();
+
+		const projectName = await screen.findByLabelText("Project name");
+		await userEvent.clear(projectName);
+		await userEvent.type(projectName, "   ");
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		expect(await screen.findByText("Project name is required.")).toBeInTheDocument();
+		expect(putMock).not.toHaveBeenCalled();
 	});
 
 	it("requires worker and orchestrator agents for existing projects missing role config", async () => {
@@ -307,9 +365,10 @@ describe("ProjectSettingsForm", () => {
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
-		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}/config", {
+		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}", {
 			params: { path: { id: "scratch" } },
 			body: {
+				displayName: "Scratch",
 				config: {
 					env: { FOO: "bar" },
 					sessionPrefix: "ao",

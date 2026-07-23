@@ -16,5 +16,6 @@ type Store interface {
 	UpsertProject(ctx context.Context, row domain.ProjectRecord) error
 	UpsertWorkspaceProject(ctx context.Context, row domain.ProjectRecord, repos []domain.WorkspaceRepoRecord) error
 	ListWorkspaceRepos(ctx context.Context, projectID string) ([]domain.WorkspaceRepoRecord, error)
+	UpdateProjectSettings(ctx context.Context, id string, displayName string, config domain.ProjectConfig) (bool, error)
 	ArchiveProject(ctx context.Context, id string, at time.Time) (bool, error)
 }
