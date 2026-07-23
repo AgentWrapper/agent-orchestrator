@@ -18,6 +18,14 @@ function setupHost() {
 	let currentURL = "";
 	let displayHandler: DisplayHandler | null = null;
 	const webContentsListeners = new Map<string, (...args: never[]) => void>();
+	const debuggerListeners = new Map<string, (...args: never[]) => void>();
+	let debuggerAttached = false;
+	const debuggerSendCommand = vi.fn(async (method: string): Promise<unknown> => {
+		if (method === "Accessibility.getFullAXTree") return { nodes: [] };
+		if (method === "DOM.resolveNode") return { object: { objectId: "object-1" } };
+		if (method === "Runtime.evaluate") return { result: { value: true } };
+		return {};
+	});
 	const webContents = {
 		id: 99,
 		mainFrame: { frameToken: "preview-frame" },
@@ -26,7 +34,20 @@ function setupHost() {
 		capturePage: vi.fn(async () => ({
 			isEmpty: () => false,
 			toJPEG: () => Buffer.from("snapshot"),
+			toPNG: () => Buffer.from("png-snapshot"),
+			getSize: () => ({ width: 640, height: 480 }),
 		})),
+		debugger: {
+			attach: vi.fn(() => {
+				debuggerAttached = true;
+			}),
+			detach: vi.fn(() => {
+				debuggerAttached = false;
+			}),
+			isAttached: () => debuggerAttached,
+			on: (event: string, listener: (...args: never[]) => void) => debuggerListeners.set(event, listener),
+			sendCommand: debuggerSendCommand,
+		},
 		clearHistory: () => undefined,
 		getTitle: () => "",
 		getURL: () => currentURL,
@@ -126,6 +147,9 @@ function setupHost() {
 		shellSend,
 		view,
 		webContents,
+		webContentsListeners,
+		debuggerListeners,
+		debuggerSendCommand,
 	};
 }
 
@@ -227,6 +251,120 @@ describe("browser:capture", () => {
 		const snapshot = await invoke("browser:capture", "1:missing");
 
 		expect(snapshot).toBe("");
+	});
+});
+
+describe("agent browser runtime", () => {
+	it("creates one hidden target per session and reuses it when the panel mounts", async () => {
+		const { host, invoke, view } = setupHost();
+		await host.execute("sess-1", "open", { url: "http://localhost:4173" });
+
+		const state = await invoke("browser:ensure", "sess-1");
+
+		expect(state.viewId).toBe("0:sess-1");
+		expect(view.webContents.loadURL).toHaveBeenCalledTimes(1);
+	});
+
+	it("returns compact refs and targets only the referenced WebContents node", async () => {
+		const { debuggerSendCommand, host } = setupHost();
+		debuggerSendCommand.mockImplementation(async (method: string) => {
+			if (method === "Accessibility.getFullAXTree") {
+				return {
+					nodes: [
+						{ nodeId: "1", role: { value: "document" }, name: { value: "Demo" } },
+						{
+							nodeId: "2",
+							parentId: "1",
+							backendDOMNodeId: 42,
+							role: { value: "button" },
+							name: { value: "Save" },
+						},
+					],
+				};
+			}
+			if (method === "DOM.resolveNode") return { object: { objectId: "save-button" } };
+			return {};
+		});
+
+		const snapshot = (await host.execute("sess-1", "snapshot", {})) as { text: string };
+		await host.execute("sess-1", "click", { ref: "e1" });
+
+		expect(snapshot.text).toContain('button "Save" [ref=e1]');
+		expect(debuggerSendCommand).toHaveBeenCalledWith("DOM.resolveNode", { backendNodeId: 42 });
+		expect(debuggerSendCommand).toHaveBeenCalledWith(
+			"Runtime.callFunctionOn",
+			expect.objectContaining({ objectId: "save-button" }),
+		);
+	});
+
+	it("fills the same session target mounted in the visible browser panel", async () => {
+		const { debuggerSendCommand, emit, host, invoke, view } = setupHost();
+		debuggerSendCommand.mockImplementation(async (method: string) => {
+			if (method === "Accessibility.getFullAXTree") {
+				return {
+					nodes: [
+						{
+							nodeId: "1",
+							backendDOMNodeId: 77,
+							role: { value: "textbox" },
+							name: { value: "Profile" },
+						},
+					],
+				};
+			}
+			if (method === "DOM.resolveNode") return { object: { objectId: "profile-input" } };
+			return {};
+		});
+
+		await host.execute("sess-1", "snapshot", { interactive: true });
+		const panelState = await invoke("browser:ensure", "sess-1");
+		emit("browser:setBounds", 1, {
+			viewId: panelState.viewId,
+			rect: { x: 20, y: 30, width: 400, height: 300 },
+			visible: true,
+		});
+		await host.execute("sess-1", "fill", { ref: "e1", text: "hello i am AO" });
+
+		expect(panelState.viewId).toBe("0:sess-1");
+		expect(view.setVisible).toHaveBeenLastCalledWith(true);
+		expect(debuggerSendCommand).toHaveBeenCalledWith(
+			"Runtime.callFunctionOn",
+			expect.objectContaining({
+				objectId: "profile-input",
+				arguments: [{ value: "hello i am AO" }],
+			}),
+		);
+	});
+
+	it("invalidates refs after navigation", async () => {
+		const { debuggerSendCommand, host, webContentsListeners } = setupHost();
+		debuggerSendCommand.mockImplementation(async (method: string) => {
+			if (method === "Accessibility.getFullAXTree") {
+				return {
+					nodes: [{ nodeId: "1", backendDOMNodeId: 42, role: { value: "button" }, name: { value: "Save" } }],
+				};
+			}
+			return {};
+		});
+		await host.execute("sess-1", "snapshot", {});
+		webContentsListeners.get("did-start-loading")?.();
+
+		await expect(host.execute("sess-1", "click", { ref: "e1" })).rejects.toMatchObject({
+			code: "STALE_REFERENCE",
+		});
+	});
+
+	it("captures a PNG and separates errors from other console messages", async () => {
+		const { host, webContentsListeners } = setupHost();
+		const screenshot = (await host.execute("sess-1", "screenshot")) as { data: string; width: number };
+		const consoleListener = webContentsListeners.get("console-message");
+		consoleListener?.({} as never, { level: "info", message: "ready" } as never);
+		consoleListener?.({} as never, { level: "error", message: "boom" } as never);
+
+		const errors = (await host.execute("sess-1", "errors")) as { messages: Array<{ message: string }> };
+		expect(screenshot.data).toBe(Buffer.from("png-snapshot").toString("base64"));
+		expect(screenshot.width).toBe(640);
+		expect(errors.messages.map((entry) => entry.message)).toEqual(["boom"]);
 	});
 });
 

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
+	"github.com/aoagents/agent-orchestrator/backend/internal/browserruntime"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/daemon/supervisor"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -168,6 +169,7 @@ func Run() error {
 		DefaultPort: mobilebridge.DefaultPort,
 	}
 	mc := &controllers.MobileController{Bridge: bs}
+	browserBroker := browserruntime.New(log)
 
 	// Push-device registry: persisted phones that receive OS push notifications.
 	// A load failure must not block boot — degrade to no push rather than refusing
@@ -216,6 +218,7 @@ func Run() error {
 		Activity:  lcStack.LCM,
 		Telemetry: telemetrySink,
 		Mobile:    mc,
+		Browser:   browserBroker,
 	})
 	if err != nil {
 		stop()
@@ -226,6 +229,16 @@ func Run() error {
 		return err
 	}
 	previewDone := preview.NewPoller(store, sessionSvc, "http://"+srv.Addr().String(), preview.PollerConfig{Logger: log}).Start(ctx)
+	if ln, addr, err := browserruntime.Listen(cfg.RunFilePath); err != nil {
+		log.Warn("browser runtime: listener unavailable; agent browser control disabled", "err", err)
+	} else {
+		log.Info("browser runtime: listening", "addr", addr)
+		go func() {
+			if err := browserBroker.Serve(ctx, ln); err != nil {
+				log.Warn("browser runtime: serve stopped with error", "err", err)
+			}
+		}()
+	}
 
 	// Late-bind: the LAN listener shares the exact loopback router instance so
 	// the LAN surface and loopback surface never drift apart.

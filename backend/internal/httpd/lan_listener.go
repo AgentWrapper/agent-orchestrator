@@ -56,6 +56,7 @@ var lanControlBlockedPrefixes = []string{
 	"/internal/",
 	"/api/v1/mobile",
 	"/api/v1/dev",
+	"/api/v1/browser",
 }
 
 // lanControlBlock returns 404 for any request whose path is, or is nested

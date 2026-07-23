@@ -2008,8 +2008,13 @@ func (m *Manager) aoSkillPointer() string {
 	dir := skillassets.Dir(m.dataDir)
 	skillFile := filepath.Join(dir, "SKILL.md")
 	commandsGlob := filepath.Join(dir, "commands", "*.md")
+	browserFile := filepath.Join(dir, "commands", "browser.md")
 	return "\n\n" + "## Using the ao CLI\n\n" +
-		"When you need to use the `ao` CLI, read `" + skillFile + "` first (and the relevant `" + commandsGlob + "`) for the full command catalog, flags, and examples."
+		"When you need to use the `ao` CLI, read `" + skillFile + "` first (and the relevant `" + commandsGlob + "`) for the full command catalog, flags, and examples.\n\n" +
+		"## AO desktop Browser panel\n\n" +
+		"When the user asks you to inspect, test, click, or type in the page shown in AO's desktop Browser panel, read `" + browserFile + "` and use `ao browser` from this AO session. " +
+		"Do not use Codex/host in-app browser connectors, `agent.browsers.get(\"iab\")`, or a browser MCP for the AO Browser panel: those are separate browser runtimes and cannot see or control AO's session-owned page. " +
+		"`ao browser` deliberately operates the same live page the user sees in that panel."
 }
 
 func (m *Manager) workspaceProjectPrompt(ctx context.Context, kind domain.SessionKind, projectID domain.ProjectID) (string, error) {

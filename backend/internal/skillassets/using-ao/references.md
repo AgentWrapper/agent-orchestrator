@@ -5,6 +5,10 @@ Natural-language-to-command mappings for common AO tasks.
 | You want to... | Command |
 |---|---|
 | Show me this webpage / open this page | `ao preview "<url>"` |
+| Inspect and verify this webpage as the agent | `ao browser open "<url>"`, then `ao browser snapshot` |
+| Click or fill a page element | `ao browser snapshot`, then `ao browser click <ref>` or `ao browser fill <ref> "<text>"` |
+| Check frontend runtime failures | `ao browser errors` and `ao browser console` |
+| Capture the page | `ao browser screenshot [path]` |
 | Spawn a worker on issue N | `ao spawn --project <p> --issue N --name "<=20 chars>" --prompt "..."` |
 | Message a running agent | `ao send --session <id> --message "..."` |
 | Kill a session | `ao session kill <id>` |

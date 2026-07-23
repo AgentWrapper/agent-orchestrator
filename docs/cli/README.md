@@ -56,6 +56,7 @@ Every product command resolves to a daemon HTTP route. Run `ao <command>
 | `ao orchestrator ls`                | `GET /api/v1/orchestrators`                    |
 | `ao send`                           | `POST /api/v1/sessions/{id}/send`              |
 | `ao preview [url]`                  | `POST /api/v1/sessions/{id}/preview`           |
+| `ao browser ...`                    | `GET /api/v1/browser/status`, `POST /api/v1/browser/commands` |
 | `ao hooks <agent> <event>`          | `POST /api/v1/sessions/{id}/activity` (hidden) |
 
 `ao agent ls` prints the daemon-supported agent catalog with local install/auth
@@ -79,6 +80,14 @@ spawn remains the authoritative runtime validation point. Use
 (it is meant to run inside a session), not a flag. With no argument it
 autodetects an `index.html` in the session workspace; with a URL argument it
 opens that URL verbatim (`file://`, `http`, `https`).
+
+`ao browser` also resolves its target from `AO_SESSION_ID`, but controls the
+session-owned live Electron browser rather than only setting its preview URL.
+The initial target-isolated command set is `status`, `open`, `snapshot`,
+`click`, `fill`, `wait`, `screenshot`, `console`, and `errors`. The AO desktop
+app must be open because Electron owns the `WebContentsView`. References from a
+snapshot are invalidated after navigation or DOM replacement; take another
+snapshot when a command reports `STALE_REFERENCE`.
 
 `go run .` in `backend/` remains a compatibility wrapper around the daemon.
 

@@ -77,6 +77,8 @@ func Build() ([]byte, error) {
 			"Developer-only maintenance operations"),
 		*(&openapi31.Tag{Name: "mobile"}).WithDescription(
 			"Connect Mobile LAN bridge control (loopback/desktop only)"),
+		*(&openapi31.Tag{Name: "browser"}).WithDescription(
+			"Target-isolated desktop browser runtime (loopback only)"),
 	}
 
 	for _, op := range operations() {
@@ -153,6 +155,10 @@ var schemaNames = map[string]string{
 	"ControllersSessionResponse":                  "SessionResponse",
 	"ControllersSessionPreviewResponse":           "SessionPreviewResponse",
 	"ControllersSetSessionPreviewRequest":         "SetSessionPreviewRequest",
+	"ControllersBrowserStatusQuery":               "BrowserStatusQuery",
+	"ControllersBrowserStatusResponse":            "BrowserStatusResponse",
+	"ControllersBrowserCommandRequest":            "BrowserCommandRequest",
+	"ControllersBrowserCommandResponse":           "BrowserCommandResponse",
 	"ControllersRenameSessionRequest":             "RenameSessionRequest",
 	"ControllersRenameSessionResponse":            "RenameSessionResponse",
 	"ControllersRestoreSessionResponse":           "RestoreSessionResponse",
@@ -322,7 +328,38 @@ func operations() []operation {
 	ops = append(ops, importOperations()...)
 	ops = append(ops, devOperations()...)
 	ops = append(ops, mobileOperations()...)
+	ops = append(ops, browserOperations()...)
 	return ops
+}
+
+func browserOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/browser/status", id: "getBrowserStatus", tag: "browser",
+			summary:    "Check whether the desktop browser runtime is connected for a session",
+			pathParams: []any{controllers.BrowserStatusQuery{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.BrowserStatusResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/browser/commands", id: "executeBrowserCommand", tag: "browser",
+			summary: "Execute a target-scoped command in a session's desktop browser",
+			reqBody: controllers.BrowserCommandRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.BrowserCommandResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusUnprocessableEntity, envelope.APIError{}},
+				{http.StatusServiceUnavailable, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
 }
 
 func agentOperations() []operation {
