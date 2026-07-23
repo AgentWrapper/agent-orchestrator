@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { PostHog } from "posthog-js/dist/module.full.no-external";
 import {
+	buildPostHogConfig,
 	buildTelemetryContext,
 	reserveCapture,
 	reserveDailyActiveCapture,
@@ -25,6 +27,46 @@ function memoryStorage(initial: Record<string, string> = {}) {
 }
 
 describe("telemetry sanitizers", () => {
+	it("isolates anonymous AO installation identity from persisted PostHog person state", () => {
+		const config = buildPostHogConfig("ins_stable-install-id");
+
+		expect(config.persistence).toBe("memory");
+		expect(config.person_profiles).toBe("never");
+		expect(config.capture_performance).toBe(false);
+		expect(config.bootstrap).toEqual({
+			distinctID: "ins_stable-install-id",
+			isIdentifiedID: false,
+		});
+	});
+
+	it("emits the stable AO installation id without creating a person profile", () => {
+		const client = new PostHog();
+		client.init("phc_test", {
+			...buildPostHogConfig("ins_stable-install-id"),
+			advanced_disable_decide: true,
+			advanced_disable_flags: true,
+			disable_session_recording: true,
+			disable_surveys: true,
+		});
+		try {
+			const captured = client.capture("ao.app.active", { channel: "renderer" });
+
+			expect(captured?.properties).toMatchObject({
+				distinct_id: "ins_stable-install-id",
+				$device_id: "ins_stable-install-id",
+				$is_identified: false,
+				$process_person_profile: false,
+			});
+		} finally {
+			const queue = client._requestQueue as unknown as
+				{ _queue: unknown[]; _clearFlushTimeout: () => void } | undefined;
+			if (queue) {
+				queue._queue.length = 0;
+				queue._clearFlushTimeout();
+			}
+		}
+	});
+
 	it("builds stable AO version context for PostHog events", () => {
 		expect(buildTelemetryContext(" 1.2.3-nightly.20260707 ", "linux")).toMatchObject({
 			app_version: "1.2.3-nightly.20260707",
@@ -340,7 +382,9 @@ describe("daily active heartbeat", () => {
 		const stop = startDailyActiveHeartbeat({
 			storage,
 			now: () => now,
-			capture: () => captured.push(now.toISOString()),
+			capture: () => {
+				captured.push(now.toISOString());
+			},
 			window,
 			document,
 		});
@@ -354,6 +398,32 @@ describe("daily active heartbeat", () => {
 			now = new Date("2026-07-12T12:00:00.000Z");
 			window.dispatchEvent(new Event("focus"));
 			expect(captured).toEqual(["2026-07-12T08:00:00.000Z", "2026-07-12T12:00:00.000Z"]);
+		} finally {
+			stop();
+		}
+	});
+
+	it("retries the same six-hour UTC slot when PostHog rejects the first capture", async () => {
+		const storage = memoryStorage();
+		let attempts = 0;
+		const slotTime = new Date("2026-07-23T08:00:00.000Z");
+		const stop = startDailyActiveHeartbeat({
+			storage,
+			now: () => slotTime,
+			capture: () => {
+				attempts += 1;
+				return attempts > 1;
+			},
+			window,
+			document,
+		});
+		try {
+			await Promise.resolve();
+			window.dispatchEvent(new Event("focus"));
+			await Promise.resolve();
+
+			expect(attempts).toBe(2);
+			expect(reserveDailyActiveCapture(storage, new Date("2026-07-23T09:00:00.000Z"))).toBe(false);
 		} finally {
 			stop();
 		}
