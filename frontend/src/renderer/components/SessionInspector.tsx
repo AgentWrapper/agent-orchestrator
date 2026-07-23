@@ -40,7 +40,9 @@ type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
 type SessionPRReviewEntry = components["schemas"]["SessionPRReviewEntry"];
 type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
+type FusedVerdict = components["schemas"]["FusedVerdict"];
 type OpenReviewerTerminal = (target: { handleId: string; harness: string }) => void;
+type ReviewTone = "neutral" | "running" | "success" | "danger";
 
 export type InspectorView = "summary" | "reviews" | "browser" | "files";
 
@@ -110,7 +112,7 @@ const kvValueClass = "min-w-0 truncate text-settings-label @max-[300px]/inspecto
 
 const kvValueMonoClass = "font-mono text-sm-md";
 
-const reviewerVerdictTone: Record<"neutral" | "running" | "success" | "danger", string> = {
+const reviewerVerdictTone: Record<ReviewTone, string> = {
 	neutral: "text-muted-foreground",
 	running: "text-working",
 	success: "text-success",
@@ -1099,11 +1101,15 @@ function ReviewPanel({
 function AoReviewRow({ reviewState }: { reviewState: PRReviewState }) {
 	const verdict = reviewVerdict(reviewState);
 	const previousVerdict = previousReviewVerdict(reviewState);
+	const gate = testGateVerdict(reviewState.fusedVerdict);
 	const summary = reviewState.latestRun?.body?.trim();
 	const reviewUrl = aoReviewCommentUrl(reviewState.latestRun);
 	return (
 		<div className={cn("flex min-w-0 flex-col gap-2", reviewState.status === "ineligible" && "opacity-70")}>
 			<VerdictBadge label={verdict.label} tone={verdict.tone} />
+			{gate ? (
+				<p className={cn("text-2xs font-medium", reviewerVerdictTone[gate.tone])}>Test gate: {gate.label}</p>
+			) : null}
 			{summary ? <p className="line-clamp-2 text-2xs leading-relaxed text-passive">{summary}</p> : null}
 			{previousVerdict ? (
 				<p className={cn("text-2xs font-medium", reviewerVerdictTone[previousVerdict.tone])}>
@@ -1134,13 +1140,22 @@ function aoReviewCommentUrl(run: PRReviewState["latestRun"]): string | null {
 
 function reviewVerdict(reviewState: PRReviewState): {
 	label: string;
-	tone: "neutral" | "running" | "success" | "danger";
+	tone: ReviewTone;
 } {
 	if (reviewState.latestRun?.status === "failed") {
 		return { label: "Failed", tone: "danger" };
 	}
 	if (reviewState.latestRun?.status === "cancelled") {
 		return { label: "Cancelled", tone: "neutral" };
+	}
+	if (reviewState.fusedVerdict?.outcome === "app_failed") {
+		return { label: "App failed", tone: "danger" };
+	}
+	if (reviewState.fusedVerdict?.outcome === "approved") {
+		return { label: "Approved", tone: "success" };
+	}
+	if (reviewState.fusedVerdict?.outcome === "changes_requested") {
+		return { label: "Changes requested", tone: "danger" };
 	}
 	switch (reviewState.status) {
 		case "running":
@@ -1166,6 +1181,22 @@ function previousReviewVerdict(reviewState: PRReviewState): {
 			return { label: "Approved", tone: "success" };
 		case "changes_requested":
 			return { label: "Changes requested", tone: "danger" };
+		default:
+			return null;
+	}
+}
+
+function testGateVerdict(fused: FusedVerdict | undefined): { label: string; tone: ReviewTone } | null {
+	if (!fused) return null;
+	switch (fused.outcome) {
+		case "approved":
+			return { label: "Approved", tone: "success" };
+		case "changes_requested":
+			return { label: "Changes requested", tone: "danger" };
+		case "app_failed":
+			return { label: "App failed", tone: "danger" };
+		case "neutral":
+			return { label: "Neutral", tone: "neutral" };
 		default:
 			return null;
 	}

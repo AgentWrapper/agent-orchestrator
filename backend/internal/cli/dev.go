@@ -184,5 +184,8 @@ func resolvedPath(path string) (string, error) {
 	if errors.Is(err, os.ErrNotExist) {
 		return filepath.Clean(abs), nil
 	}
+	if _, statErr := os.Stat(abs); statErr == nil {
+		return filepath.Clean(abs), nil
+	}
 	return "", fmt.Errorf("resolve path %s: %w", path, err)
 }

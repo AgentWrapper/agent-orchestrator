@@ -946,6 +946,26 @@ describe("SessionInspector reviews tab", () => {
 		expect(screen.queryByText("Pull request reviews")).not.toBeInTheDocument();
 	});
 
+	it("shows fused test-gate verdicts for review rows", async () => {
+		mockCommonGets([approvedReview], "reviewer-pane", [
+			{
+				...reviewState(3, "changes_requested", "abc123"),
+				fusedVerdict: {
+					outcome: "approved",
+					blocking: false,
+					summary: "runtime refuted the behavioral finding",
+					findings: [],
+				},
+			},
+		]);
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsTab();
+
+		expect(await screen.findByText("Test gate: Approved")).toBeInTheDocument();
+		expect(screen.queryByText("Changes requested")).not.toBeInTheDocument();
+	});
+
 	it("shows failed latest runs as failed and still allows rerun", async () => {
 		mockCommonGets([failedReview], "reviewer-pane", [
 			{ ...reviewState(3, "needs_review", "abc123"), latestRun: failedReview },
