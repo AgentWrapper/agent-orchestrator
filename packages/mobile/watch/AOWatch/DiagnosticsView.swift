@@ -9,6 +9,8 @@ struct DiagnosticsView: View {
 	@State private var httpDaemon = "—"
 	@State private var wsPublic = "—"
 	@State private var wsDaemon = "—"
+	@State private var nwPublic = "—"
+	@State private var nwDaemon = "—"
 	@State private var running = false
 
 	private let publicHTTP = "https://captive.apple.com/hotspot-detect.html"
@@ -19,8 +21,10 @@ struct DiagnosticsView: View {
 			VStack(alignment: .leading, spacing: 10) {
 				row("HTTP → public", httpPublic)
 				row("HTTP → daemon", httpDaemon)
-				row("WS → public", wsPublic)
-				row("WS → daemon", wsDaemon)
+				row("WS (URLSession) → public", wsPublic)
+				row("WS (URLSession) → daemon", wsDaemon)
+				row("WS (NWConnection) → public", nwPublic)
+				row("WS (NWConnection) → daemon", nwDaemon)
 
 				Button {
 					Task { await runAll() }
@@ -73,6 +77,11 @@ struct DiagnosticsView: View {
 		if let u = daemonWSURL() {
 			wsDaemon = await NetDiag.testWebSocket(u, origin: "http://localhost", bearer: model.config.password)
 		} else { wsDaemon = "no server set" }
+
+		nwPublic = await NetDiag.testNWWebSocket(publicWS, origin: nil, bearer: nil)
+		if let u = daemonWSURL() {
+			nwDaemon = await NetDiag.testNWWebSocket(u, origin: "http://localhost", bearer: model.config.password)
+		} else { nwDaemon = "no server set" }
 
 		running = false
 	}

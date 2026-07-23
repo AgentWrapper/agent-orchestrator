@@ -1,4 +1,5 @@
 import Foundation
+import Network
 
 // Standalone connectivity probes for diagnosing why the mux WebSocket won't
 // connect on the watch. Tests HTTP vs WebSocket against a public host and the
@@ -39,6 +40,51 @@ enum NetDiag {
 		}
 		task.cancel(with: .goingAway, reason: nil)
 		session.invalidateAndCancel()
+		return result
+	}
+
+	/// Open a WebSocket using Network.framework (NWConnection) instead of
+	/// URLSession. Reaching `.ready` means the WS upgrade succeeded. Some watchOS
+	/// setups connect here where URLSessionWebSocketTask fails.
+	static func testNWWebSocket(_ urlString: String, origin: String?, bearer: String?, timeout: TimeInterval = 10) async -> String {
+		guard let url = URL(string: urlString), let scheme = url.scheme else { return "bad url" }
+
+		let opts = NWProtocolWebSocket.Options()
+		opts.autoReplyPing = true
+		var headers: [(String, String)] = []
+		if let origin { headers.append(("Origin", origin)) }
+		if let bearer, !bearer.isEmpty { headers.append(("Authorization", "Bearer \(bearer)")) }
+		if !headers.isEmpty { opts.setAdditionalHeaders(headers) }
+
+		let params: NWParameters = (scheme == "wss") ? .tls : .tcp
+		params.defaultProtocolStack.applicationProtocols.insert(opts, at: 0)
+
+		let conn = NWConnection(to: .url(url), using: params)
+		let result: String = await withCheckedContinuation { cont in
+			let lock = NSLock()
+			var finished = false
+			func finish(_ s: String) {
+				lock.lock(); defer { lock.unlock() }
+				if !finished { finished = true; cont.resume(returning: s) }
+			}
+			conn.stateUpdateHandler = { state in
+				switch state {
+				case .ready:
+					finish("OPEN ✓")
+				case let .failed(err):
+					finish("FAIL \(err.localizedDescription)")
+				case let .waiting(err):
+					finish("WAITING \(err.localizedDescription)")
+				default:
+					break
+				}
+			}
+			conn.start(queue: .global())
+			DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
+				finish("TIMEOUT (>\(Int(timeout))s)")
+			}
+		}
+		conn.cancel()
 		return result
 	}
 
