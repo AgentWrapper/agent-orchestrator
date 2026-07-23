@@ -40,7 +40,7 @@ function DaemonFailureContent({ status }: { status: DaemonStatus }) {
 	return (
 		<section
 			aria-live="assertive"
-			className="pointer-events-auto fixed top-3 right-3 z-overlay flex w-[min(22rem,calc(100vw-1.5rem))] flex-col rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-modal)] px-3.5 py-3 text-xs shadow-[var(--shadow-import-modal)]"
+			className="pointer-events-auto fixed top-3 right-3 z-overlay flex w-daemon-failure-toast flex-col rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-modal)] px-3.5 py-3 text-xs shadow-[var(--shadow-import-modal)]"
 			role="alert"
 		>
 			<div className="flex items-start gap-3">
@@ -75,7 +75,7 @@ function DaemonFailureContent({ status }: { status: DaemonStatus }) {
 				) : null}
 			</div>
 			{details && detailsOpen ? (
-				<pre className="mt-2 max-h-40 w-full overflow-auto rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-1.5 py-1 font-mono text-caption leading-relaxed text-[var(--color-text-import-muted)]">
+				<pre className="mt-2 max-h-daemon-failure-details-max w-full overflow-auto rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-1.5 py-1 font-mono text-caption leading-relaxed text-[var(--color-text-import-muted)]">
 					{details}
 				</pre>
 			) : null}

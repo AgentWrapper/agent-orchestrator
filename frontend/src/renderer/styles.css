@@ -185,6 +185,7 @@
 	--spacing-notification-max-height: var(--size-notification-max-height);
 	--spacing-select-menu-max: var(--size-select-menu-max);
 	--spacing-notification-icon: var(--size-notification-icon);
+	--spacing-daemon-failure-details-max: var(--size-daemon-failure-details-max);
 	--spacing-font-size-label: var(--size-font-size-label);
 	--spacing-pr-table-actions: var(--size-pr-table-actions);
 	--spacing-pr-col-number: var(--size-pr-col-number);
@@ -237,6 +238,10 @@
 	background-color: var(--color-scrim);
 	-webkit-backdrop-filter: blur(var(--blur-overlay));
 	backdrop-filter: blur(var(--blur-overlay));
+}
+
+@utility w-daemon-failure-toast {
+	width: min(var(--size-daemon-failure-toast), calc(100vw - var(--space-6)));
 }
 
 @utility w-dialog-md {
