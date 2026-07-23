@@ -130,6 +130,28 @@ afterEach(() => {
 	vi.useRealTimers();
 });
 
+describe("SessionInspector tabs", () => {
+	it("sizes rail tabs to their labels instead of stretching across the inspector", () => {
+		renderWithQuery(<SessionInspector session={session([])} />);
+
+		const summaryTab = screen.getByRole("tab", { name: "Summary" });
+
+		expect(summaryTab).not.toHaveClass("flex-1");
+	});
+
+	it("renders the supplied files view when the Files tab opens", async () => {
+		const onOpenFiles = vi.fn();
+		renderWithQuery(
+			<SessionInspector filesView={<div>workspace file review</div>} onOpenFiles={onOpenFiles} session={session([])} />,
+		);
+
+		await userEvent.click(screen.getByRole("tab", { name: "Files" }));
+
+		expect(onOpenFiles).toHaveBeenCalledTimes(1);
+		expect(screen.getByText("workspace file review")).toBeInTheDocument();
+	});
+});
+
 describe("SessionInspector PR section", () => {
 	// Scope assertions to the PR section so the card order is explicit.
 	const prSection = (title: string) =>
@@ -193,7 +215,7 @@ describe("SessionInspector Activity section", () => {
 		expect(activitySection().getByText(label)).toBeInTheDocument();
 	});
 
-	it("renders unknown activity as unavailable instead of leaking the internal enum", () => {
+	it("renders unknown activity through the shared activity label", () => {
 		renderWithQuery(
 			<SessionInspector
 				session={session([], {
@@ -203,14 +225,14 @@ describe("SessionInspector Activity section", () => {
 			/>,
 		);
 
-		expect(activitySection().getByText("Activity Unavailable")).toBeInTheDocument();
-		expect(activitySection().queryByText("Unknown")).not.toBeInTheDocument();
+		expect(activitySection().getByText("Unknown")).toBeInTheDocument();
+		expect(activitySection().queryByText("Activity Unavailable")).not.toBeInTheDocument();
 	});
 
-	it("falls back to unavailable when no activity has been reported", () => {
+	it("falls back to unknown when no activity has been reported", () => {
 		renderWithQuery(<SessionInspector session={session([], { status: "working" })} />);
 
-		expect(activitySection().getByText("Activity Unavailable")).toBeInTheDocument();
+		expect(activitySection().getByText("Unknown")).toBeInTheDocument();
 	});
 
 	it("keeps the last known activity visible when the daemon reports no signal", () => {
@@ -298,7 +320,34 @@ describe("SessionInspector Activity section", () => {
 		expect(within(activityRow).getByText("2h ago")).toBeInTheDocument();
 	});
 
-	it("keeps worktree, PR, and SCM context rows in the Activity timeline", () => {
+	it("aligns text-row dots lower while keeping the Activity chip dot centered", () => {
+		renderWithQuery(
+			<SessionInspector
+				session={session([pr(7, "open")], {
+					status: "working",
+					createdAt: "2026-06-15T09:00:00Z",
+					activity: { state: "idle", lastActivityAt: "2026-06-15T10:00:00Z" },
+				})}
+			/>,
+		);
+
+		const workspaceRow = activitySection()
+			.getByText(/Created workspace/)
+			.closest("[data-testid='inspector-timeline-event']") as HTMLElement;
+		const workspaceMarker = workspaceRow.querySelector("span[aria-hidden='true'].rounded-full") as HTMLElement;
+		expect(workspaceMarker.parentElement).toHaveClass("relative", "flex", "items-center");
+		expect(workspaceMarker).toHaveClass("top-1.5");
+		expect(workspaceMarker).not.toHaveClass("top-1/2", "-translate-y-1/2");
+
+		const activityRow = activitySection()
+			.getByText("Idle")
+			.closest("[data-testid='inspector-timeline-event']") as HTMLElement;
+		const activityMarker = activityRow.querySelector("span[aria-hidden='true'].rounded-full") as HTMLElement;
+		expect(activityMarker.parentElement).toHaveClass("relative", "flex", "items-center");
+		expect(activityMarker).toHaveClass("top-1/2", "-translate-y-1/2");
+	});
+
+	it("keeps workspace, PR, and SCM context rows in the Activity timeline", () => {
 		renderWithQuery(
 			<SessionInspector
 				session={session([pr(7, "open", { ci: "failing", review: "changes_requested" })], {
@@ -308,7 +357,7 @@ describe("SessionInspector Activity section", () => {
 			/>,
 		);
 
-		expect(activitySection().getByText(/Created worktree/)).toBeInTheDocument();
+		expect(activitySection().getByText(/Created workspace/)).toBeInTheDocument();
 		expect(activitySection().getByText("Opened")).toBeInTheDocument();
 		expect(activitySection().getByText("PR #7")).toBeInTheDocument();
 		const activityRow = activitySection()
@@ -338,7 +387,7 @@ describe("SessionInspector Activity section", () => {
 			row.textContent?.replace(/\s+/g, " ").trim(),
 		);
 		expect(rows).toEqual([
-			"Created worktree & branch3h ago",
+			"Created workspace3h ago",
 			"Draft PR #42",
 			"Opened PR #41",
 			"Opened PR #40",
@@ -350,10 +399,10 @@ describe("SessionInspector Activity section", () => {
 });
 
 describe("SessionInspector tabs", () => {
-	it("exposes Summary, Reviews, and Browser as the three inspector tabs", () => {
+	it("exposes Summary, Reviews, Browser, and Files as inspector tabs", () => {
 		renderWithQuery(<SessionInspector session={session([pr(1, "open")])} />);
 		const tabs = screen.getAllByRole("tab").map((el) => el.textContent?.trim());
-		expect(tabs).toEqual(["Summary", "Reviews", "Browser"]);
+		expect(tabs).toEqual(["Summary", "Reviews", "Browser", "Files"]);
 	});
 
 	it("shows the intake issue id in the summary overview when present", () => {
@@ -361,6 +410,13 @@ describe("SessionInspector tabs", () => {
 
 		expect(screen.getByText("Issue")).toBeInTheDocument();
 		expect(screen.getByText("github:acme/project-one#42")).toBeInTheDocument();
+	});
+
+	it("omits the branch overview row when the session has no branch", () => {
+		renderWithQuery(<SessionInspector session={session([], { branch: undefined })} />);
+
+		expect(screen.queryByText("Branch")).not.toBeInTheDocument();
+		expect(screen.queryByText("session/sess-1")).not.toBeInTheDocument();
 	});
 });
 
@@ -445,6 +501,63 @@ describe("SessionInspector reviews tab", () => {
 		expect(screen.getByRole("button", { name: "Re-run review" })).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Run" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Re-run" })).not.toBeInTheDocument();
+	});
+
+	it.each([
+		["needs_review", "changes_requested", "Changes requested", "Not run", "Run review"],
+		["running", "approved", "Approved", "Reviewing...", "Cancel review"],
+	] as const)(
+		"shows the previous verdict while the current head is %s without changing its current status",
+		async (status, previousVerdict, previousLabel, currentLabel, actionLabel) => {
+			const current = {
+				...reviewState(3, status, "sha-current"),
+				previousRun: {
+					...approvedReview,
+					id: "run-previous",
+					status: "delivered",
+					verdict: previousVerdict,
+					targetSha: "sha-previous",
+				},
+			};
+			if (status === "running") {
+				current.latestRun = {
+					...approvedReview,
+					id: "run-current",
+					status: "running",
+					verdict: "",
+					targetSha: "sha-current",
+				};
+			}
+			mockCommonGets([], "reviewer-pane", [current]);
+
+			renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+			await openReviewsTab();
+
+			const previous = await screen.findByText(`Previous: ${previousLabel}`);
+			expect(within(previous.parentElement as HTMLElement).getByText(currentLabel)).toBeInTheDocument();
+			expect(screen.getByRole("button", { name: actionLabel })).toBeInTheDocument();
+		},
+	);
+
+	it("hides the previous verdict after the current head review completes", async () => {
+		const current = {
+			...reviewState(3, "up_to_date", "sha-current"),
+			previousRun: {
+				...approvedReview,
+				id: "run-previous",
+				status: "delivered",
+				verdict: "changes_requested",
+				targetSha: "sha-previous",
+			},
+		};
+		mockCommonGets([], "reviewer-pane", [current]);
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsTab();
+
+		expect(await screen.findAllByText("Approved")).not.toHaveLength(0);
+		expect(screen.queryByText(/Previous:/)).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Re-run review" })).toBeInTheDocument();
 	});
 
 	it("shows a no-needed-reviews notice instead of opening the terminal when the backend reuses runs", async () => {

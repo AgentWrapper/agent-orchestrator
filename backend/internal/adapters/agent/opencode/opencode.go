@@ -1,12 +1,15 @@
 // Package opencode implements the opencode (sst/opencode) agent adapter:
 // launching new TUI sessions, resuming sessions by native id, installing a
-// workspace-local activity plugin, and reading plugin-derived session info.
+// workspace-local activity plugin plus the using-ao skill, and reading
+// plugin-derived session info.
 //
 // opencode differs from Claude Code and Codex in two ways AO has to bridge:
 //   - It has no native command-hook config (no settings.local.json / hooks.json
 //     equivalent). Its only lifecycle-extensibility surface is a JS/TS plugin
 //     loaded from .opencode/plugins/, so GetAgentHooks installs an AO-owned
-//     plugin file (see hooks.go) instead of merging JSON.
+//     plugin file (see hooks.go) instead of merging JSON. The same install also
+//     materializes using-ao under .opencode/skills/ so opencode's skill tool
+//     can discover it (the data-dir skill path alone is invisible to opencode).
 //   - Its CLI exposes only one approval flag (--dangerously-skip-permissions)
 //     and no system-prompt flag, so AO injects standing instructions by writing
 //     an AO-owned per-session config and selecting the generated agent.
@@ -30,6 +33,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 
@@ -48,6 +52,11 @@ const (
 	// (same value), but GetRestoreCommand reads it directly, so the const stays.
 	opencodeAgentSessionIDMetadataKey = "agentSessionId"
 )
+
+var opencodeUnixPaths = []string{
+	"/usr/local/bin/opencode",
+	"/opt/homebrew/bin/opencode",
+}
 
 // Plugin is the opencode agent adapter. It is safe for concurrent use; the
 // binary path is resolved once and cached under binaryMu.
@@ -457,15 +466,19 @@ func ResolveOpenCodeBinary(ctx context.Context) (string, error) {
 		return path, nil
 	}
 
-	candidates := []string{
-		"/usr/local/bin/opencode",
-		"/opt/homebrew/bin/opencode",
-	}
+	candidates := append([]string(nil), opencodeUnixPaths...)
 	if home, err := os.UserHomeDir(); err == nil {
 		candidates = append(candidates,
-			filepath.Join(home, ".opencode", "bin", "opencode"),
+			filepath.Join(home, ".npm-global", "bin", "opencode"),
 			filepath.Join(home, ".npm", "bin", "opencode"),
+			filepath.Join(home, ".local", "bin", "opencode"),
+			filepath.Join(home, ".opencode", "bin", "opencode"),
 		)
+		nodeManagerCandidates, err := binaryutil.UnixNodeManagerBinCandidates(ctx, home, "opencode")
+		if err != nil {
+			return "", err
+		}
+		candidates = append(candidates, nodeManagerCandidates...)
 	}
 
 	for _, candidate := range candidates {

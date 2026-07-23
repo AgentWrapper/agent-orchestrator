@@ -41,7 +41,7 @@ type AppState = {
 	reloadConfig: () => Promise<void>;
 	refresh: () => Promise<void>;
 	setActiveProject: (id: string) => void;
-	spawn: (prompt?: string, projectId?: string, harness?: string) => Promise<void>;
+	spawn: (prompt?: string, projectId?: string, harness?: string) => Promise<DashboardSession>;
 	launchConductor: (projectId: string, clean?: boolean) => Promise<OrchestratorLink>;
 	merge: (pr: DashboardPR) => Promise<void>;
 	kill: (id: string) => Promise<void>;
@@ -178,8 +178,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			const c = cfgRef.current;
 			const proj = projectId ?? targetProject();
 			if (!c || !proj) throw new Error("Pick a project first");
-			await spawnSession(c, { projectId: proj, prompt, harness });
+			const session = await spawnSession(c, { projectId: proj, prompt, harness });
 			await fetchAll();
+			return session;
 		},
 		[targetProject, fetchAll],
 	);

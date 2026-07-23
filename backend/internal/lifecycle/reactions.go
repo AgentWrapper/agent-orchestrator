@@ -203,6 +203,14 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 		}
 		nudges = append(nudges, pendingNudge{key: "review:" + o.URL, sig: sig, msg: msg, maxAttempts: reviewMaxNudge})
 	}
+	// Only the merge-conflict nudge needs a store read (the parent-stack check).
+	// A read error there must NOT discard the CI/review nudges already queued
+	// above — returning early here would re-introduce the "one condition
+	// suppresses the others" coupling this queue was built to remove. So on error
+	// we skip only the merge-conflict nudge (it self-heals on the next poll) and
+	// defer the error past the send loop, still surfacing it so the observer logs
+	// and re-polls.
+	var blockedCheckErr error
 	if o.Mergeability == domain.MergeConflicting {
 		// Only the bottom of a stack is eligible for the rebase nudge. A PR
 		// stacked on an open parent is expected to report conflicts against its
@@ -210,10 +218,10 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 		// agent to rebase it now would be noise. Mergeability UNKNOWN (the brief
 		// post-retarget recompute window) never reaches here.
 		blocked, err := m.prBlockedByOpenParent(ctx, id, o.URL)
-		if err != nil {
-			return err
-		}
-		if !blocked {
+		switch {
+		case err != nil:
+			blockedCheckErr = err
+		case !blocked:
 			msg := "There are merge conflicts on " + ident + ". Rebase onto the base branch and resolve them."
 			if o.URL != "" {
 				msg += "\nPR: " + domain.SanitizeControlChars(o.URL)
@@ -227,7 +235,9 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 			return err
 		}
 	}
-	return nil
+	// Surface a deferred parent-stack read error only after the independent
+	// CI/review nudges have been sent, so none of them are lost to it.
+	return blockedCheckErr
 }
 
 // ApplyReviewResult reacts to a completed AO-internal review pass after the

@@ -207,8 +207,28 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 		return TriggerResult{}, err
 	}
 
+	// Harness the live reviewer pane was launched under, captured before the
+	// upsert below overwrites it. The reviewer handle is stable per worker, so a
+	// harness switch keeps the previous harness's process alive; reusing it (via
+	// Notify, which only sends prompt text) would silently run the review under
+	// the old harness's sandbox/permissions/env, since those apply only at Spawn.
+	// A changed (or unrecorded) harness therefore respawns instead of reusing.
+	prevHarness := reviewRow.Harness
+
 	now := e.clock()
-	reviewRow, err = e.upsertReview(ctx, worker, harness, reviewRow.ReviewerHandleID, now)
+	// This eager upsert only needs the review row to exist so the runs below can
+	// reference it; it must NOT advance the recorded harness past what the live
+	// pane actually runs. On a harness switch that creates no run, the
+	// len(created)==0 early return below reuses the old pane without respawning,
+	// so recording the new harness here would make the next trigger read it back
+	// as prevHarness, see prevHarness == harness, and Notify the stale old-harness
+	// pane. Preserve an existing row's harness; only the post-spawn upsert (after
+	// an actual Spawn/Notify) records the harness we launched under.
+	eagerHarness := harness
+	if hasReview {
+		eagerHarness = prevHarness
+	}
+	reviewRow, err = e.upsertReview(ctx, worker, eagerHarness, reviewRow.ReviewerHandleID, now)
 	if err != nil {
 		return TriggerResult{}, err
 	}
@@ -266,7 +286,7 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 
 	handleID := ""
 	queue := reviewQueue(created)
-	if hasReview && reviewRow.ReviewerHandleID != "" {
+	if hasReview && reviewRow.ReviewerHandleID != "" && prevHarness == harness {
 		alive, err := e.launcher.Alive(ctx, reviewRow.ReviewerHandleID)
 		if err != nil {
 			return TriggerResult{}, failRuns(0, err)
@@ -299,6 +319,7 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 func reviewLaunchSpec(worker domain.SessionRecord, harness domain.ReviewerHarness, run domain.ReviewRun, queue []ports.ReviewTask, index int) LaunchSpec {
 	return LaunchSpec{
 		RunID:         run.ID,
+		BatchID:       run.BatchID,
 		WorkerID:      worker.ID,
 		Harness:       harness,
 		WorkspacePath: worker.Metadata.WorkspacePath,

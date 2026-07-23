@@ -21,6 +21,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # Composite action: installs react-doctor itself, runs the scan against
       # the landing site, posts a sticky PR summary + inline review comments,

@@ -2,7 +2,9 @@ package controllers
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -26,17 +28,44 @@ const (
 	maxPromptLen      = 4096
 	maxMessageLen     = 4096
 	maxDisplayNameLen = 20
+
+	// Attachment limits guard the daemon against oversized spawn bodies. Images
+	// are pasted/dropped into the task brief and inlined as base64 in the JSON
+	// body, so the caps are deliberately conservative.
+	maxAttachments      = 8
+	maxAttachmentBytes  = 10 << 20 // 10 MiB per image, decoded
+	maxAttachmentsBytes = 25 << 20 // 25 MiB total, decoded
+	// maxSpawnBodyBytes bounds the raw request body before it is decoded. The
+	// per-attachment and total caps above only apply after the whole body is
+	// materialized, so without this an oversized body (base64 inflates the
+	// decoded total by ~4/3) would allocate in full first. Derived from the
+	// decoded total plus headroom for the prompt and JSON envelope.
+	maxSpawnBodyBytes = maxAttachmentsBytes*4/3 + (2 << 20)
 )
+
+// attachmentExtByMime maps the accepted image MIME types to the file extension
+// used when the image is written into the worktree. Raster formats only: the
+// agent is told to open the file for visual context, so active-content formats
+// (notably image/svg+xml, which is XML that can carry scripts/external entities)
+// are intentionally excluded.
+var attachmentExtByMime = map[string]string{
+	"image/png":  ".png",
+	"image/jpeg": ".jpg",
+	"image/jpg":  ".jpg",
+	"image/gif":  ".gif",
+	"image/webp": ".webp",
+	"image/bmp":  ".bmp",
+}
 
 var errPreviewFileNotFound = errors.New("preview file not found")
 
 // SessionService is the controller-facing session service contract.
 type SessionService interface {
 	List(ctx context.Context, filter sessionsvc.ListFilter) ([]domain.Session, error)
-	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, error)
+	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, int, int, error)
 	SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error)
 	Get(ctx context.Context, id domain.SessionID) (domain.Session, error)
-	Restore(ctx context.Context, id domain.SessionID) (domain.Session, error)
+	Restore(ctx context.Context, id domain.SessionID) (sessionsvc.RestoreOutcome, error)
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 	RollbackSpawn(ctx context.Context, id domain.SessionID) (sessionsvc.RollbackOutcome, error)
 	Cleanup(ctx context.Context, project domain.ProjectID) (sessionsvc.CleanupOutcome, error)
@@ -45,6 +74,8 @@ type SessionService interface {
 	Send(ctx context.Context, id domain.SessionID, message string) error
 	ListPRSummaries(ctx context.Context, id domain.SessionID) ([]sessionsvc.PRSummary, error)
 	ClaimPR(ctx context.Context, id domain.SessionID, ref string, opts sessionsvc.ClaimPROptions) (sessionsvc.ClaimPRResult, error)
+	ListWorkspaceFiles(ctx context.Context, id domain.SessionID) (sessionsvc.WorkspaceFiles, error)
+	GetWorkspaceFile(ctx context.Context, id domain.SessionID, path string) (sessionsvc.WorkspaceFileDetail, error)
 }
 
 // ActivityRecorder applies an agent activity-state signal to a session. It is
@@ -73,6 +104,8 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Post("/sessions/{sessionId}/preview", c.setPreview)
 	r.Delete("/sessions/{sessionId}/preview", c.clearPreview)
 	r.Get("/sessions/{sessionId}/preview/files/*", c.previewFile)
+	r.Get("/sessions/{sessionId}/workspace/files", c.listWorkspaceFiles)
+	r.Get("/sessions/{sessionId}/workspace/file", c.getWorkspaceFile)
 	r.Get("/sessions/{sessionId}/pr", c.listPRs)
 	r.Post("/sessions/{sessionId}/pr/claim", c.claimPR)
 	r.Patch("/sessions/{sessionId}", c.rename)
@@ -109,6 +142,11 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions")
 		return
 	}
+	// Bound the body before decoding: this route is served on the LAN listener
+	// (AO Mobile), not just loopback, and the attachment caps only run after the
+	// whole body is decoded. MaxBytesReader stops the read past the limit so an
+	// oversized base64 payload can't allocate in full first.
+	r.Body = http.MaxBytesReader(w, r.Body, maxSpawnBodyBytes)
 	var in SpawnSessionRequest
 	if err := decodeJSON(r, &in); err != nil {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
@@ -134,12 +172,60 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 	if in.Kind == "" {
 		in.Kind = domain.KindWorker
 	}
-	sess, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, Kind: in.Kind, Harness: in.Harness, Branch: in.Branch, Prompt: in.Prompt, DisplayName: displayName})
+	attachments, attachErr := decodeSpawnAttachments(in.Attachments)
+	if attachErr != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", attachErr.code, attachErr.message, nil)
+		return
+	}
+	sess, promptBytes, systemPromptBytes, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, Kind: in.Kind, Harness: in.Harness, Branch: in.Branch, Prompt: in.Prompt, DisplayName: displayName, Attachments: attachments})
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusCreated, SessionResponse{Session: sessionView(sess)})
+	envelope.WriteJSON(w, http.StatusCreated, SpawnSessionResponse{Session: sessionView(sess), PromptBytes: promptBytes, SystemPromptBytes: systemPromptBytes})
+}
+
+// spawnAttachmentError carries a client-facing API error code + message for a
+// rejected attachment payload.
+type spawnAttachmentError struct {
+	code    string
+	message string
+}
+
+// decodeSpawnAttachments validates and base64-decodes the inline image
+// attachments from a spawn request, enforcing count, per-image, and total size
+// caps. It returns a nil slice when there are no attachments.
+func decodeSpawnAttachments(in []SpawnAttachmentInput) ([]ports.SpawnAttachment, *spawnAttachmentError) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+	if len(in) > maxAttachments {
+		return nil, &spawnAttachmentError{"TOO_MANY_ATTACHMENTS", "too many attachments"}
+	}
+	out := make([]ports.SpawnAttachment, 0, len(in))
+	total := 0
+	for _, a := range in {
+		ext, ok := attachmentExtByMime[strings.ToLower(strings.TrimSpace(a.MimeType))]
+		if !ok {
+			return nil, &spawnAttachmentError{"UNSUPPORTED_ATTACHMENT_TYPE", "unsupported attachment type"}
+		}
+		data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(a.Data))
+		if err != nil {
+			return nil, &spawnAttachmentError{"INVALID_ATTACHMENT_DATA", "attachment data is not valid base64"}
+		}
+		if len(data) == 0 {
+			return nil, &spawnAttachmentError{"INVALID_ATTACHMENT_DATA", "attachment is empty"}
+		}
+		if len(data) > maxAttachmentBytes {
+			return nil, &spawnAttachmentError{"ATTACHMENT_TOO_LARGE", "attachment is too large"}
+		}
+		total += len(data)
+		if total > maxAttachmentsBytes {
+			return nil, &spawnAttachmentError{"ATTACHMENTS_TOO_LARGE", "attachments are too large"}
+		}
+		out = append(out, ports.SpawnAttachment{Ext: ext, Data: data})
+	}
+	return out, nil
 }
 
 func (c *SessionsController) get(w http.ResponseWriter, r *http.Request) {
@@ -169,7 +255,11 @@ func (c *SessionsController) preview(w http.ResponseWriter, r *http.Request) {
 	res := SessionPreviewResponse{SessionID: sessionID(r)}
 	if ok {
 		res.Entry = entry
-		res.PreviewURL = previewFileURL(r, sessionID(r), entry)
+		res.PreviewURL, err = previewFileURL(r, sessionID(r), entry)
+		if err != nil {
+			writePreviewResolveError(w, r, err)
+			return
+		}
 	}
 	envelope.WriteJSON(w, http.StatusOK, res)
 }
@@ -184,35 +274,132 @@ func (c *SessionsController) previewFile(w http.ResponseWriter, r *http.Request)
 		envelope.WriteError(w, r, err)
 		return
 	}
-	file, ok := confinedPreviewPath(sess.Metadata.WorkspacePath, chi.URLParam(r, "*"))
-	if !ok {
-		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PREVIEW_FILE_NOT_FOUND", "Preview file not found", nil)
-		return
-	}
-	if previewutil.IsMarkdownPath(file) {
-		c.servePreviewMarkdown(w, r, file)
-		return
-	}
-	http.ServeFile(w, r, file)
+	c.serveWorkspacePreviewFile(w, r, sess.Metadata.WorkspacePath, chi.URLParam(r, "*"))
 }
 
-// servePreviewMarkdown renders a workspace Markdown file to a self-contained
-// HTML document so the browser panel displays formatted content instead of raw
-// source.
-func (c *SessionsController) servePreviewMarkdown(w http.ResponseWriter, r *http.Request, file string) {
-	source, err := os.ReadFile(file)
+// PreviewOrigin serves a workspace preview from its isolated *.localhost
+// origin. It returns false when the request host is not a preview origin so the
+// daemon router can continue handling its normal API and control surfaces.
+//
+// The selected entry's directory is mounted at the origin root. For example,
+// dist/index.html is reachable at both /dist/ (the persisted URL) and /, while
+// /assets/app.css maps to dist/assets/app.css. This mirrors a production static
+// server and fixes root-relative URLs without rewriting user-generated files.
+func (c *SessionsController) PreviewOrigin(w http.ResponseWriter, r *http.Request) bool {
+	id, ok := previewutil.SessionIDFromHost(r.Host)
+	if !ok {
+		return false
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		envelope.WriteAPIError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "METHOD_NOT_ALLOWED",
+			r.Method+" not allowed on preview origin", nil)
+		return true
+	}
+	if c.Svc == nil {
+		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PREVIEW_NOT_FOUND", "Preview not found", nil)
+		return true
+	}
+	sess, err := c.Svc.Get(r.Context(), id)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return true
+	}
+	entry, ok := previewOriginEntry(sess)
+	if !ok {
+		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "NO_PREVIEW_ENTRY", "No preview entry point found in session workspace", nil)
+		return true
+	}
+	asset := previewOriginAssetPath(entry, r.URL.Path)
+	c.serveWorkspacePreviewFile(w, r, sess.Metadata.WorkspacePath, asset)
+	return true
+}
+
+func previewOriginEntry(sess domain.Session) (string, bool) {
+	if entry, ok := previewutil.StoredWorkspaceEntry(sess.Metadata.PreviewURL, sess.ID); ok {
+		if stored, exists := previewutil.EntryAtPath(sess.Metadata.WorkspacePath, entry); exists {
+			return stored.Path, true
+		}
+	}
+	return discoverPreviewEntry(sess.Metadata.WorkspacePath)
+}
+
+func previewOriginAssetPath(entry, requestPath string) string {
+	requested := strings.TrimPrefix(path.Clean("/"+requestPath), "/")
+	if requested == "" || requested == "." {
+		return entry
+	}
+	root := path.Dir(entry)
+	if root == "." {
+		return requested
+	}
+	if requested == root {
+		return entry
+	}
+	requested = strings.TrimPrefix(requested, root+"/")
+	return path.Join(root, requested)
+}
+
+// serveWorkspacePreviewFile is the single serving path for both the legacy API
+// route and isolated preview origins. OpenRoot keeps symlink traversal and the
+// subsequent read on the same workspace-confined file handle.
+func (c *SessionsController) serveWorkspacePreviewFile(w http.ResponseWriter, r *http.Request, workspacePath, assetPath string) {
+	file, info, clean, err := previewutil.OpenWorkspaceFile(workspacePath, assetPath)
 	if err != nil {
 		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PREVIEW_FILE_NOT_FOUND", "Preview file not found", nil)
 		return
 	}
-	rendered, err := previewutil.RenderMarkdown(source, filepath.Base(file))
+	defer func() { _ = file.Close() }()
+	if !previewutil.IsMarkdownPath(clean) {
+		http.ServeContent(w, r, info.Name(), info.ModTime(), file)
+		return
+	}
+
+	source, err := io.ReadAll(file)
+	if err != nil {
+		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PREVIEW_FILE_NOT_FOUND", "Preview file not found", nil)
+		return
+	}
+	rendered, err := previewutil.RenderMarkdown(source, filepath.Base(clean))
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if r.Method != http.MethodHead {
+		_, _ = w.Write(rendered) //nolint:gosec // G705: preview content is workspace-local and agent-trusted
+	}
+}
 
-	_, _ = w.Write(rendered) //nolint:gosec // G705: preview content is workspace-local and agent-trusted
+func (c *SessionsController) listWorkspaceFiles(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "GET", "/api/v1/sessions/{sessionId}/workspace/files")
+		return
+	}
+	files, err := c.Svc.ListWorkspaceFiles(r.Context(), sessionID(r))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, workspaceFilesResponse(files))
+}
+
+func (c *SessionsController) getWorkspaceFile(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "GET", "/api/v1/sessions/{sessionId}/workspace/file")
+		return
+	}
+	relPath := strings.TrimSpace(r.URL.Query().Get("path"))
+	if relPath == "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "WORKSPACE_PATH_REQUIRED", "path is required", nil)
+		return
+	}
+	file, err := c.Svc.GetWorkspaceFile(r.Context(), sessionID(r), relPath)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, workspaceFileResponse(file))
 }
 
 // setPreview persists the browser preview URL the desktop app opens for a
@@ -249,7 +436,11 @@ func (c *SessionsController) setPreview(w http.ResponseWriter, r *http.Request) 
 	previewURL := strings.TrimSpace(in.URL)
 	if previewURL == "" {
 		if entry, ok := discoverPreviewEntry(sess.Metadata.WorkspacePath); ok {
-			previewURL = previewFileURL(r, sessionID(r), entry)
+			previewURL, err = previewFileURL(r, sessionID(r), entry)
+			if err != nil {
+				writePreviewResolveError(w, r, err)
+				return
+			}
 		} else if existing := strings.TrimSpace(sess.Metadata.PreviewURL); existing != "" {
 			var resolveErr error
 			previewURL, resolveErr = resolvePreviewTarget(r, sessionID(r), sess.Metadata.WorkspacePath, existing)
@@ -361,12 +552,12 @@ func (c *SessionsController) restore(w http.ResponseWriter, r *http.Request) {
 		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/restore")
 		return
 	}
-	sess, err := c.Svc.Restore(r.Context(), sessionID(r))
+	out, err := c.Svc.Restore(r.Context(), sessionID(r))
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, RestoreSessionResponse{OK: true, SessionID: sessionID(r), Session: sessionView(sess)})
+	envelope.WriteJSON(w, http.StatusOK, RestoreSessionResponse{OK: true, SessionID: sessionID(r), RestoreMode: out.Mode, Session: sessionView(out.Session)})
 }
 
 func (c *SessionsController) kill(w http.ResponseWriter, r *http.Request) {
@@ -459,10 +650,17 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state := domain.ActivityState(in.State)
-	switch state {
-	case domain.ActivityActive, domain.ActivityIdle, domain.ActivityWaitingInput, domain.ActivityBlocked, domain.ActivityExited:
-	default:
-		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_ACTIVITY_STATE", "Unknown activity state", nil)
+	if state != "" {
+		switch state {
+		case domain.ActivityActive, domain.ActivityIdle, domain.ActivityWaitingInput, domain.ActivityBlocked, domain.ActivityExited:
+		default:
+			envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_ACTIVITY_STATE", "Unknown activity state", nil)
+			return
+		}
+	}
+	agentSessionID := capActivityMeta(domain.SanitizeControlChars(strings.TrimSpace(in.AgentSessionID)))
+	if state == "" && agentSessionID == "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "ACTIVITY_OR_SESSION_ID_REQUIRED", "Activity state or agent session ID is required", nil)
 		return
 	}
 	// The correlation fields ride the same lenient decode: absent on old CLIs.
@@ -471,11 +669,12 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 	// never match its pre/post counterpart, so overlong values are dropped by
 	// the CLI; the cap here is defense against non-AO callers).
 	sig := ports.ActivitySignal{
-		Valid:     true,
-		State:     state,
-		Event:     capActivityMeta(domain.SanitizeControlChars(in.Event)),
-		ToolName:  capActivityMeta(domain.SanitizeControlChars(in.ToolName)),
-		ToolUseID: capActivityMeta(domain.SanitizeControlChars(in.ToolUseID)),
+		Valid:          state != "",
+		State:          state,
+		Event:          capActivityMeta(domain.SanitizeControlChars(in.Event)),
+		ToolName:       capActivityMeta(domain.SanitizeControlChars(in.ToolName)),
+		ToolUseID:      capActivityMeta(domain.SanitizeControlChars(in.ToolUseID)),
+		AgentSessionID: agentSessionID,
 	}
 	if err := c.Activity.ApplyActivitySignal(r.Context(), sessionID(r), sig); err != nil {
 		if errors.Is(err, ports.ErrSessionNotFound) {
@@ -622,21 +821,16 @@ func discoverPreviewEntry(workspacePath string) (string, bool) {
 // that already looks like a URL (an http(s)/file scheme, or a host:port dev
 // server) and for paths that escape the workspace or do not point at a file, so
 // the caller keeps those targets verbatim.
-func resolveLocalPreview(r *http.Request, id domain.SessionID, workspacePath, raw string) (string, bool) {
-	raw = strings.TrimSpace(raw)
+func resolveLocalPreview(r *http.Request, id domain.SessionID, workspacePath, raw string) (string, bool, error) {
 	if raw == "" || hasURLScheme(raw) {
-		return "", false
+		return "", false, nil
 	}
-	file, ok := confinedPreviewPath(workspacePath, raw)
+	entry, ok := previewutil.EntryAtPath(workspacePath, raw)
 	if !ok {
-		return "", false
+		return "", false, nil
 	}
-	info, err := os.Stat(file)
-	if err != nil || info.IsDir() {
-		return "", false
-	}
-	entry := strings.TrimPrefix(path.Clean("/"+raw), "/")
-	return previewFileURL(r, id, entry), true
+	resolved, err := previewFileURL(r, id, entry.Path)
+	return resolved, true, err
 }
 
 func resolvePreviewTarget(r *http.Request, id domain.SessionID, workspacePath, raw string) (string, error) {
@@ -644,8 +838,8 @@ func resolvePreviewTarget(r *http.Request, id domain.SessionID, workspacePath, r
 	if isAbsolutePreviewPath(raw) {
 		return absolutePreviewFileURL(raw)
 	}
-	if resolved, ok := resolveLocalPreview(r, id, workspacePath, raw); ok {
-		return resolved, nil
+	if resolved, ok, err := resolveLocalPreview(r, id, workspacePath, raw); ok || err != nil {
+		return resolved, err
 	}
 	return raw, nil
 }
@@ -679,6 +873,10 @@ func writePreviewResolveError(w http.ResponseWriter, r *http.Request, err error)
 		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PREVIEW_FILE_NOT_FOUND", "Preview file not found", nil)
 		return
 	}
+	if errors.Is(err, previewutil.ErrPreviewHostUnsupported) {
+		envelope.WriteAPIError(w, r, http.StatusUnprocessableEntity, "unprocessable", "PREVIEW_SESSION_ID_UNSUPPORTED", "Session ID is too long for an isolated preview hostname", nil)
+		return
+	}
 	envelope.WriteError(w, r, err)
 }
 
@@ -700,11 +898,7 @@ func hasURLScheme(raw string) bool {
 	return false
 }
 
-func confinedPreviewPath(workspacePath, assetPath string) (string, bool) {
-	return previewutil.ConfinedPath(workspacePath, assetPath)
-}
-
-func previewFileURL(r *http.Request, id domain.SessionID, entry string) string {
+func previewFileURL(r *http.Request, id domain.SessionID, entry string) (string, error) {
 	return previewutil.FileURL("http://"+r.Host, id, entry)
 }
 
@@ -734,6 +928,38 @@ func sessionPRSummaries(prs []sessionsvc.PRSummary) []SessionPRSummary {
 		out = append(out, NewSessionPRSummary(pr))
 	}
 	return out
+}
+
+func workspaceFilesResponse(files sessionsvc.WorkspaceFiles) ListWorkspaceFilesResponse {
+	out := make([]WorkspaceFileSummary, 0, len(files.Files))
+	for _, file := range files.Files {
+		out = append(out, WorkspaceFileSummary{
+			Path:      file.Path,
+			Status:    file.Status,
+			Additions: file.Additions,
+			Deletions: file.Deletions,
+			Size:      file.Size,
+			Binary:    file.Binary,
+		})
+	}
+	return ListWorkspaceFilesResponse{SessionID: files.SessionID, Files: out, Truncated: files.Truncated}
+}
+
+func workspaceFileResponse(file sessionsvc.WorkspaceFileDetail) WorkspaceFileResponse {
+	return WorkspaceFileResponse{
+		SessionID:        file.SessionID,
+		Path:             file.Path,
+		Status:           file.Status,
+		Additions:        file.Additions,
+		Deletions:        file.Deletions,
+		Size:             file.Size,
+		Binary:           file.Binary,
+		Deleted:          file.Deleted,
+		Content:          file.Content,
+		ContentTruncated: file.ContentTruncated,
+		Diff:             file.Diff,
+		DiffTruncated:    file.DiffTruncated,
+	}
 }
 
 func prState(pr domain.PRFacts) string {

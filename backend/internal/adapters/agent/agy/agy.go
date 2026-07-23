@@ -21,7 +21,8 @@ var agyBinarySpec = binaryutil.BinarySpec{
 	Names:         []string{"agy"},
 	WinNames:      []string{"agy.cmd", "agy.exe", "agy"},
 	UnixPaths:     []string{"/usr/local/bin/agy", "/opt/homebrew/bin/agy"},
-	UnixHomePaths: [][]string{{".local", "bin", "agy"}, {".cargo", "bin", "agy"}, {".npm", "bin", "agy"}},
+	UnixHomePaths: binaryutil.NodeManagedUnixHomePaths("agy", []string{".cargo", "bin", "agy"}),
+	NodeManaged:   true,
 	WinPaths: []binaryutil.WinPath{
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "agy.cmd"}},
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "agy.exe"}},

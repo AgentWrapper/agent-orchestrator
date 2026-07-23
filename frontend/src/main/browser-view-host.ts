@@ -15,6 +15,7 @@ import type {
 	BrowserAnnotationPageSubmitPayload,
 	BrowserAnnotationSubmitPayload,
 } from "../shared/browser-annotations";
+import { attachAppShortcuts } from "./app-shortcuts";
 
 export type BrowserRect = Pick<Rectangle, "x" | "y" | "width" | "height">;
 
@@ -75,7 +76,7 @@ type BrowserWindowLike = {
 		removeChildView?: (view: BrowserViewLike) => void;
 	};
 	getContentBounds: () => BrowserRect;
-	webContents: Pick<WebContents, "id" | "send"> & {
+	webContents: Pick<WebContents, "focus" | "id" | "send"> & {
 		session?: Pick<Session, "setDisplayMediaRequestHandler">;
 	};
 	isDestroyed?: () => boolean;
@@ -94,6 +95,9 @@ export type BrowserViewHostOptions = {
 	WebContentsView: WebContentsViewConstructor;
 	annotatePreloadPath: string;
 	rendererOrigin: string;
+	// Platform flag for application shortcuts forwarded from each preview view
+	// to the shell. Defaults to non-mac when omitted (tests).
+	isMac?: boolean;
 };
 
 export type BrowserViewHost = {
@@ -236,6 +240,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		viewIdsByWebContentsId.set(view.webContents.id, viewId);
 		hardenWebContents(view.webContents, options, entry);
 		wireNavEvents(view.webContents, options, entry);
+		// The preview is a separate WebContentsView, so renderer-window keydown
+		// listeners never see keys typed here. Forward application shortcuts to the
+		// shell renderer so they still work with the panel focused.
+		attachAppShortcuts(view.webContents, Boolean(options.isMac), options.mainWindow.webContents, true);
 		view.webContents.on("focus", () => {
 			lastFocusedViewId = viewId;
 		});

@@ -3,7 +3,10 @@ package opencode
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -66,6 +69,119 @@ func TestReviewCommandUsesReadOnlyPermissionPolicy(t *testing.T) {
 	}
 }
 
+func TestReviewCommandKeepsSystemPromptFileOutOfVisiblePrompt(t *testing.T) {
+	agent := &captureAgent{}
+	r := &Reviewer{agent: agent}
+	taskPromptRoot := filepath.Join("ao", "prompts", "reviewer")
+	taskPromptFile := filepath.Join(taskPromptRoot, "requests", "batch-1", "run-1", "task.md")
+
+	got, err := r.ReviewCommand(context.Background(), ports.ReviewInvocation{
+		Prompt:           "Start the AO review task.",
+		SystemPromptFile: "/ao/prompts/reviewer/system.md",
+		TaskPromptFile:   taskPromptFile,
+		TaskPromptRoot:   taskPromptRoot,
+	})
+	if err != nil {
+		t.Fatalf("ReviewCommand: %v", err)
+	}
+	if agent.got.Prompt != "Start the AO review task." || agent.got.SystemPrompt != "" || agent.got.SystemPromptFile != "/ao/prompts/reviewer/system.md" {
+		t.Fatalf("launch config = %+v", agent.got)
+	}
+	var config struct {
+		Permission struct {
+			ExternalDirectory map[string]string `json:"external_directory"`
+		} `json:"permission"`
+	}
+	if err := json.Unmarshal([]byte(got.Env["OPENCODE_CONFIG_CONTENT"]), &config); err != nil {
+		t.Fatalf("reviewer config: %v", err)
+	}
+	wantPattern := filepath.ToSlash(taskPromptRoot) + "/**"
+	if len(config.Permission.ExternalDirectory) != 1 || config.Permission.ExternalDirectory[wantPattern] != "allow" {
+		t.Fatalf("external directory policy = %#v, want only %q allowed", config.Permission.ExternalDirectory, wantPattern)
+	}
+}
+
+func TestBuildReviewerConfigLeavesOtherExternalPathsDenied(t *testing.T) {
+	configText, err := buildReviewerConfig("")
+	if err != nil {
+		t.Fatalf("buildReviewerConfig: %v", err)
+	}
+	var config struct {
+		Permission map[string]json.RawMessage `json:"permission"`
+	}
+	if err := json.Unmarshal([]byte(configText), &config); err != nil {
+		t.Fatalf("reviewer config: %v", err)
+	}
+	if _, ok := config.Permission["external_directory"]; ok {
+		t.Fatalf("unexpected external-directory exception: %s", config.Permission["external_directory"])
+	}
+	var catchAll string
+	if err := json.Unmarshal(config.Permission["*"], &catchAll); err != nil || catchAll != "deny" {
+		t.Fatalf("catch-all permission = %q, err = %v", catchAll, err)
+	}
+}
+
+func TestReviewCommandBuildsBothOpenCodeConfigSources(t *testing.T) {
+	binDir := t.TempDir()
+	binaryName := "opencode"
+	binaryBody := "#!/bin/sh\n"
+	if runtime.GOOS == "windows" {
+		binaryName = "opencode.cmd"
+		binaryBody = "@echo off\r\n"
+	}
+	if err := os.WriteFile(filepath.Join(binDir, binaryName), []byte(binaryBody), 0o755); err != nil {
+		t.Fatalf("write fake opencode: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	promptDir := t.TempDir()
+	systemPath := filepath.Join(promptDir, "system.md")
+	taskPath := filepath.Join(promptDir, "requests", "batch-1", "run-1", "task.md")
+	if err := os.MkdirAll(filepath.Dir(taskPath), 0o700); err != nil {
+		t.Fatalf("create task prompt dir: %v", err)
+	}
+	if err := os.WriteFile(systemPath, []byte("review system prompt\n"), 0o600); err != nil {
+		t.Fatalf("write system prompt: %v", err)
+	}
+	if err := os.WriteFile(taskPath, []byte("review task\n"), 0o600); err != nil {
+		t.Fatalf("write task prompt: %v", err)
+	}
+
+	spec, err := New().ReviewCommand(context.Background(), ports.ReviewInvocation{
+		ReviewerID:       "review-w1",
+		WorkspacePath:    t.TempDir(),
+		Prompt:           "Read the AO review task.",
+		SystemPromptFile: systemPath,
+		TaskPromptFile:   taskPath,
+		TaskPromptRoot:   promptDir,
+	})
+	if err != nil {
+		t.Fatalf("ReviewCommand: %v", err)
+	}
+	configPath := filepath.Join(promptDir, "opencode.json")
+	joinedArgv := strings.Join(spec.Argv, "\n")
+	for _, want := range []string{
+		"OPENCODE_CONFIG=" + configPath,
+		"--agent\nao-review-w1",
+		"--prompt\nRead the AO review task.",
+	} {
+		if !strings.Contains(joinedArgv, want) {
+			t.Fatalf("argv missing %q: %#v", want, spec.Argv)
+		}
+	}
+	generated, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read generated opencode config: %v", err)
+	}
+	if !strings.Contains(string(generated), `"prompt": "{file:./system.md}"`) {
+		t.Fatalf("generated prompt config = %s", generated)
+	}
+	if !strings.Contains(spec.Env["OPENCODE_CONFIG_CONTENT"], `"external_directory"`) ||
+		!strings.Contains(spec.Env["OPENCODE_CONFIG_CONTENT"], `"permission"`) {
+		t.Fatalf("inline reviewer config = %s", spec.Env["OPENCODE_CONFIG_CONTENT"])
+	}
+}
+
 func TestBashAllowlistCoversPromptRequiredCommands(t *testing.T) {
 	bash := reviewerConfigBashPolicy(t)
 
@@ -112,14 +228,18 @@ func TestReviewMessageReturnsTaskPrompt(t *testing.T) {
 
 func reviewerConfigBashPolicy(t *testing.T) map[string]string {
 	t.Helper()
+	configText, err := buildReviewerConfig("")
+	if err != nil {
+		t.Fatalf("buildReviewerConfig: %v", err)
+	}
 
 	var config struct {
 		Permission struct {
 			Bash map[string]string `json:"bash"`
 		} `json:"permission"`
 	}
-	if err := json.Unmarshal([]byte(reviewerConfig), &config); err != nil {
-		t.Fatalf("reviewerConfig is invalid JSON: %v", err)
+	if err := json.Unmarshal([]byte(configText), &config); err != nil {
+		t.Fatalf("reviewer config is invalid JSON: %v", err)
 	}
 	if len(config.Permission.Bash) == 0 {
 		t.Fatal("reviewerConfig permission.bash is empty")

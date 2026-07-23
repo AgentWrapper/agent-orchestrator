@@ -40,7 +40,8 @@ var devinBinarySpec = binaryutil.BinarySpec{
 	Names:         []string{"devin"},
 	WinNames:      []string{"devin.cmd", "devin.exe", "devin"},
 	UnixPaths:     []string{"/usr/local/bin/devin", "/opt/homebrew/bin/devin"},
-	UnixHomePaths: [][]string{{".devin", "bin", "devin"}, {".local", "bin", "devin"}},
+	UnixHomePaths: binaryutil.NodeManagedUnixHomePaths("devin", []string{".devin", "bin", "devin"}),
+	NodeManaged:   true,
 	WinPaths: []binaryutil.WinPath{
 		{Base: binaryutil.WinHome, Parts: []string{".devin", "bin", "devin.exe"}},
 	},

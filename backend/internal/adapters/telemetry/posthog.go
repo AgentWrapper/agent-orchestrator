@@ -41,6 +41,13 @@ var remotePayloadAllowlist = map[string]map[string]struct{}{
 		"error_kind":   {},
 		"fingerprint":  {},
 		"operation":    {},
+		// Rolled up by AggregatingSink (adapters/telemetry/aggregate.go) into
+		// one event per minute; without these, a rollup's whole reason for
+		// existing - the true occurrence count of a burst - is silently
+		// stripped before it ever reaches PostHog.
+		"count":        {},
+		"window_start": {},
+		"window_end":   {},
 	},
 	"ao.daemon.panic": {
 		"component":         {},
@@ -50,6 +57,9 @@ var remotePayloadAllowlist = map[string]map[string]struct{}{
 		"path":              {},
 		"panic_kind":        {},
 		"stack_fingerprint": {},
+		"count":             {},
+		"window_start":      {},
+		"window_end":        {},
 	},
 	"ao.daemon.started": {
 		"agent": {},
@@ -66,6 +76,9 @@ var remotePayloadAllowlist = map[string]map[string]struct{}{
 		"path":          {},
 		"status":        {},
 		"status_family": {},
+		"count":         {},
+		"window_start":  {},
+		"window_end":    {},
 	},
 	"ao.onboarding.first_project_added": {
 		"has_git_remote": {},
@@ -217,6 +230,10 @@ func (s *PostHogSink) properties(ev ports.TelemetryEvent) map[string]any {
 	props := map[string]any{
 		"source": ev.Source,
 		"level":  string(ev.Level),
+		// The distinct ID is a random install ID with no person data behind it,
+		// so skip PostHog person-profile processing: identified events bill at
+		// several times the anonymous rate and the profiles would hold nothing.
+		"$process_person_profile": false,
 	}
 	if ev.RequestID != "" {
 		props["request_id"] = ev.RequestID

@@ -35,7 +35,7 @@ func TestSpawnCommand_MissingProjectContext(t *testing.T) {
 	t.Cleanup(srv.Close)
 	writeRunFileFor(t, cfg, srv)
 
-	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--agent", "codex")
+	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--agent", "codex", "--name", "worker")
 	if err == nil {
 		t.Fatal("expected an error when project context is missing")
 	}
@@ -157,6 +157,15 @@ func TestSpawnNoTakeoverRequiresClaimPR(t *testing.T) {
 	}
 }
 
+// TestSpawnCommand_RequiresName asserts `ao spawn` rejects a missing --name
+// without contacting the daemon.
+func TestSpawnCommand_RequiresName(t *testing.T) {
+	_, _, err := executeCLI(t, Deps{}, "spawn", "--project", "demo", "--agent", "codex")
+	if err == nil || ExitCode(err) != 2 || !strings.Contains(err.Error(), "--name is required") {
+		t.Fatalf("err=%v exit=%d, want --name is required", err, ExitCode(err))
+	}
+}
+
 // TestSpawnCommand_RejectsOverlongName asserts `ao spawn` rejects a --name
 // longer than 20 characters without contacting the daemon.
 func TestSpawnCommand_RejectsOverlongName(t *testing.T) {
@@ -182,7 +191,7 @@ func TestSpawnResolvesProjectFromEnvAndDefaultAgent(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatal(err)
 			}
-			_, _ = io.WriteString(w, `{"session":{"id":"demo-11","status":"idle"}}`)
+			_, _ = io.WriteString(w, `{"session":{"id":"demo-11","status":"idle"},"promptBytes":0,"systemPromptBytes":123}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -191,14 +200,17 @@ func TestSpawnResolvesProjectFromEnvAndDefaultAgent(t *testing.T) {
 	writeRunFileFor(t, cfg, srv)
 	t.Setenv("AO_PROJECT_ID", "demo")
 
-	out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--prompt", "Fix failing tests in auth")
+	out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--prompt", "Fix failing tests in auth", "--name", "worker")
 	if err != nil {
 		t.Fatalf("spawn failed: %v stderr=%s", err, errOut)
 	}
 	if !strings.Contains(out, "spawned session demo-11") {
 		t.Fatalf("output missing spawn: %s", out)
 	}
-	if req.ProjectID != "demo" || req.Harness != "codex" || req.DisplayName != "Fix failing tests in" {
+	if !strings.Contains(out, "[prompt 0 B, system 123 B]") {
+		t.Fatalf("output missing system-only prompt metrics: %s", out)
+	}
+	if req.ProjectID != "demo" || req.Harness != "codex" || req.DisplayName != "worker" {
 		t.Fatalf("spawn request = %#v", req)
 	}
 	want := []string{"GET /api/v1/projects/demo", "POST /api/v1/agents/refresh", "POST /api/v1/sessions"}
@@ -234,7 +246,7 @@ func TestSpawnResolvesProjectFromAOSessionID(t *testing.T) {
 	writeRunFileFor(t, cfg, srv)
 	t.Setenv("AO_SESSION_ID", "demo-1")
 
-	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--prompt", "Fix tests")
+	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--prompt", "Fix tests", "--name", "worker")
 	if err != nil {
 		t.Fatalf("spawn failed: %v stderr=%s", err, errOut)
 	}
@@ -265,7 +277,7 @@ func TestSpawnAOSessionIDFailureRequiresProject(t *testing.T) {
 	writeRunFileFor(t, cfg, srv)
 	t.Setenv("AO_SESSION_ID", "missing")
 
-	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--agent", "codex")
+	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--agent", "codex", "--name", "worker")
 	if err == nil || !strings.Contains(err.Error(), `project could not be resolved from AO_SESSION_ID "missing"; pass --project`) {
 		t.Fatalf("err=%v, want AO_SESSION_ID project error", err)
 	}
@@ -313,12 +325,91 @@ func TestSpawnResolvesProjectFromCWD(t *testing.T) {
 	t.Cleanup(srv.Close)
 	writeRunFileFor(t, cfg, srv)
 
-	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--prompt", "Fix tests")
+	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--prompt", "Fix tests", "--name", "worker")
 	if err != nil {
 		t.Fatalf("spawn failed: %v stderr=%s", err, errOut)
 	}
 	if req.ProjectID != "demo" || req.Harness != "codex" {
 		t.Fatalf("spawn request = %#v", req)
+	}
+}
+
+func TestSpawnDefaultsToScratchWhenOnlyActiveProject(t *testing.T) {
+	cfg := setConfigEnv(t)
+	var requests []string
+	var req spawnRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		appendPrimaryRequest(&requests, r)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects":
+			_, _ = io.WriteString(w, `{"projects":[{"id":"scratch","name":"Scratch","kind":"scratch"}]}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/scratch":
+			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"scratch","name":"Scratch","kind":"scratch","path":"/ao/scratch","config":{"worker":{"agent":"codex"}}}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/agents/refresh":
+			_, _ = io.WriteString(w, authorizedAgentsJSON("codex"))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions":
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			_, _ = io.WriteString(w, `{"session":{"id":"scratch-1","status":"idle"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--name", "Try AO", "--prompt", "Try AO")
+	if err != nil {
+		t.Fatalf("spawn failed: %v stderr=%s", err, errOut)
+	}
+	if !strings.Contains(out, "spawned session scratch-1") {
+		t.Fatalf("output missing scratch session: %s", out)
+	}
+	if req.ProjectID != "scratch" || req.Harness != "codex" || req.Branch != "" {
+		t.Fatalf("spawn request = %#v", req)
+	}
+	want := []string{"GET /api/v1/projects", "GET /api/v1/projects/scratch", "POST /api/v1/agents/refresh", "POST /api/v1/sessions"}
+	if !reflect.DeepEqual(requests, want) {
+		t.Fatalf("requests=%#v want %#v", requests, want)
+	}
+}
+
+func TestSpawnScratchRejectsGitOnlyFlags(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{name: "branch", args: []string{"spawn", "--project", "scratch", "--agent", "codex", "--name", "Scratch Task", "--branch", "feature/x"}, wantErr: "scratch projects do not support --branch"},
+		{name: "claim pr", args: []string{"spawn", "--project", "scratch", "--agent", "codex", "--name", "Scratch Task", "--claim-pr", "142"}, wantErr: "scratch projects do not support --claim-pr"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := setConfigEnv(t)
+			var requests []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				appendPrimaryRequest(&requests, r)
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/scratch":
+					_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"scratch","name":"Scratch","kind":"scratch","path":"/ao/scratch","config":{"worker":{"agent":"codex"}}}}`)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(srv.Close)
+			writeRunFileFor(t, cfg, srv)
+
+			_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, tc.args...)
+			if err == nil || ExitCode(err) != 2 || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("err=%v exit=%d, want %q", err, ExitCode(err), tc.wantErr)
+			}
+			want := []string{"GET /api/v1/projects/scratch"}
+			if !reflect.DeepEqual(requests, want) {
+				t.Fatalf("requests=%#v want %#v", requests, want)
+			}
+		})
 	}
 }
 
@@ -348,7 +439,7 @@ func TestSpawnStaleUnauthorizedAgentRefreshesProbesThenAllows(t *testing.T) {
 	t.Cleanup(srv.Close)
 	writeRunFileFor(t, cfg, srv)
 
-	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex")
+	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex", "--name", "worker")
 	if err != nil {
 		t.Fatalf("spawn failed: %v stderr=%s", err, errOut)
 	}
@@ -390,7 +481,7 @@ func TestSpawnFreshUnauthorizedWarnsAndAllows(t *testing.T) {
 	t.Cleanup(srv.Close)
 	writeRunFileFor(t, cfg, srv)
 
-	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex")
+	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex", "--name", "worker")
 	if err != nil {
 		t.Fatalf("spawn failed: %v stderr=%s", err, errOut)
 	}
@@ -433,7 +524,7 @@ func TestSpawnUnavailableFreshProbeWarnsAndAllows(t *testing.T) {
 	t.Cleanup(srv.Close)
 	writeRunFileFor(t, cfg, srv)
 
-	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex")
+	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex", "--name", "worker")
 	if err != nil {
 		t.Fatalf("spawn failed: %v stderr=%s", err, errOut)
 	}
@@ -467,7 +558,7 @@ func TestSpawnUnsupportedAgentRefreshesThenBlocks(t *testing.T) {
 	t.Cleanup(srv.Close)
 	writeRunFileFor(t, cfg, srv)
 
-	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "unknown")
+	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "unknown", "--name", "worker")
 	if err == nil || !strings.Contains(err.Error(), "agent \"unknown\" is not supported") {
 		t.Fatalf("err=%v, want unsupported", err)
 	}
@@ -497,7 +588,7 @@ func TestSpawnNotInstalledAgentRefreshesThenBlocks(t *testing.T) {
 	t.Cleanup(srv.Close)
 	writeRunFileFor(t, cfg, srv)
 
-	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex")
+	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex", "--name", "worker")
 	if err == nil || !strings.Contains(err.Error(), "agent \"codex\" needs install") {
 		t.Fatalf("err=%v, want needs install", err)
 	}
@@ -533,7 +624,7 @@ func TestSpawnStaleNotInstalledFreshInstalledWarnsAndAllows(t *testing.T) {
 	t.Cleanup(srv.Close)
 	writeRunFileFor(t, cfg, srv)
 
-	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex")
+	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex", "--name", "worker")
 	if err != nil {
 		t.Fatalf("spawn failed: %v stderr=%s", err, errOut)
 	}
@@ -576,7 +667,7 @@ func TestSpawnUnavailableFreshProbeForNotInstalledWarnsAndAllows(t *testing.T) {
 	t.Cleanup(srv.Close)
 	writeRunFileFor(t, cfg, srv)
 
-	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex")
+	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex", "--name", "worker")
 	if err != nil {
 		t.Fatalf("spawn failed: %v stderr=%s", err, errOut)
 	}
@@ -613,7 +704,7 @@ func TestSpawnFreshProbeServerErrorBlocks(t *testing.T) {
 	t.Cleanup(srv.Close)
 	writeRunFileFor(t, cfg, srv)
 
-	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex")
+	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex", "--name", "worker")
 	if err == nil || !strings.Contains(err.Error(), "probe failed (PROBE_FAILED) [request req-1]") {
 		t.Fatalf("err=%v, want probe server error", err)
 	}
@@ -645,7 +736,7 @@ func TestSpawnSkipAgentCheckBypassesOnlyPreflight(t *testing.T) {
 	t.Cleanup(srv.Close)
 	writeRunFileFor(t, cfg, srv)
 
-	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "unsupported", "--skip-agent-check")
+	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "unsupported", "--skip-agent-check", "--name", "worker")
 	if err != nil {
 		t.Fatalf("spawn failed: %v stderr=%s", err, errOut)
 	}
@@ -680,7 +771,7 @@ func TestSpawnUnknownAuthRefreshesWarnsAndAllows(t *testing.T) {
 	t.Cleanup(srv.Close)
 	writeRunFileFor(t, cfg, srv)
 
-	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex")
+	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex", "--name", "worker")
 	if err != nil {
 		t.Fatalf("spawn failed: %v stderr=%s", err, errOut)
 	}
@@ -689,5 +780,49 @@ func TestSpawnUnknownAuthRefreshesWarnsAndAllows(t *testing.T) {
 	}
 	if req.ProjectID != "demo" || req.Harness != "codex" {
 		t.Fatalf("spawn request = %#v", req)
+	}
+}
+
+// TestSpawnCommand_RejectsInvalidKind asserts `ao spawn` rejects a --kind value
+// outside worker/orchestrator at the CLI boundary, without contacting the daemon.
+func TestSpawnCommand_RejectsInvalidKind(t *testing.T) {
+	// Pass a valid --name so this exercises the --kind boundary specifically:
+	// spawn validates the required --name before --kind, so omitting it would
+	// trip the "--name is required" error instead of the kind error.
+	_, _, err := executeCLI(t, Deps{}, "spawn", "--project", "demo", "--name", "orch", "--kind", "orchestartor")
+	if err == nil || ExitCode(err) != 2 || !strings.Contains(err.Error(), `--kind must be "worker" or "orchestrator"`) {
+		t.Fatalf("err=%v exit=%d, want --kind validation error", err, ExitCode(err))
+	}
+}
+
+// TestResolveSpawnHarness_OrchestratorDefault asserts the orchestrator role falls
+// back to the project's orchestrator agent (and worker to the worker agent), while
+// an explicit --agent always wins.
+func TestResolveSpawnHarness_OrchestratorDefault(t *testing.T) {
+	project := projectDetails{
+		ID: "demo",
+		Config: &projectConfig{
+			Worker:       roleOverride{Agent: "codex"},
+			Orchestrator: roleOverride{Agent: "claude-code"},
+		},
+	}
+	if got, err := resolveSpawnHarness("", "orchestrator", project); err != nil || got != "claude-code" {
+		t.Fatalf("orchestrator default: got %q err %v, want claude-code", got, err)
+	}
+	if got, err := resolveSpawnHarness("", "worker", project); err != nil || got != "codex" {
+		t.Fatalf("worker default: got %q err %v, want codex", got, err)
+	}
+	if got, err := resolveSpawnHarness("aider", "orchestrator", project); err != nil || got != "aider" {
+		t.Fatalf("explicit agent: got %q err %v, want aider", got, err)
+	}
+	// Unset kind is the default `ao spawn` path and must resolve to worker.agent.
+	if got, err := resolveSpawnHarness("", "", project); err != nil || got != "codex" {
+		t.Fatalf("unset kind: got %q err %v, want codex", got, err)
+	}
+	// Orchestrator spawn with no orchestrator.agent configured surfaces the
+	// --orchestrator-agent hint (the error branch this PR adds).
+	noOrch := projectDetails{ID: "demo", Config: &projectConfig{Worker: roleOverride{Agent: "codex"}}}
+	if _, err := resolveSpawnHarness("", "orchestrator", noOrch); err == nil || !strings.Contains(err.Error(), "--orchestrator-agent") {
+		t.Fatalf("missing orchestrator agent: err=%v, want --orchestrator-agent hint", err)
 	}
 }

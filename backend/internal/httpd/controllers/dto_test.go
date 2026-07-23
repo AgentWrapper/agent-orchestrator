@@ -1,0 +1,52 @@
+package controllers_test
+
+import (
+	"testing"
+	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
+	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
+)
+
+func TestNewSessionPRSummaryMapsProviderReviewEntries(t *testing.T) {
+	submitted := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
+	in := sessionsvc.PRSummary{
+		URL: "https://github.com/o/r/pull/7",
+		Review: sessionsvc.PRReviewSummary{
+			Decision: domain.ReviewChangesRequest,
+			Reviews: []sessionsvc.PRReviewEntry{{
+				Reviewer:    "alice",
+				Verdict:     domain.ReviewApproved,
+				Body:        "looks good to me",
+				URL:         "https://github.com/o/r/pull/7#pullrequestreview-1",
+				SubmittedAt: submitted,
+				IsBot:       true,
+			}},
+		},
+	}
+
+	got := controllers.NewSessionPRSummary(in)
+	if len(got.Review.Reviews) != 1 {
+		t.Fatalf("review entries = %+v, want 1", got.Review.Reviews)
+	}
+	entry := got.Review.Reviews[0]
+	if entry.ReviewerID != "alice" {
+		t.Fatalf("reviewerId = %q, want alice", entry.ReviewerID)
+	}
+	if entry.Verdict != domain.ReviewApproved {
+		t.Fatalf("verdict = %q, want approved", entry.Verdict)
+	}
+	if entry.Body != "looks good to me" {
+		t.Fatalf("body = %q", entry.Body)
+	}
+	if entry.ReviewURL != "https://github.com/o/r/pull/7#pullrequestreview-1" {
+		t.Fatalf("reviewUrl = %q", entry.ReviewURL)
+	}
+	if !entry.SubmittedAt.Equal(submitted) {
+		t.Fatalf("submittedAt = %v, want %v", entry.SubmittedAt, submitted)
+	}
+	if !entry.IsBot {
+		t.Fatalf("isBot = false, want true")
+	}
+}

@@ -92,8 +92,6 @@ surface (`npm run sqlc`, `npm run api`).
   ([#110](https://github.com/aoagents/agent-orchestrator/issues/110)) and in
   `ao session get` ([#111](https://github.com/aoagents/agent-orchestrator/issues/111))
   is still open.
-- **CLI parity for PR/review actions**: merge, resolve-comments, and review are
-  HTTP-only (frontend-driven); there are no `ao pr` / `ao review` commands.
 
 Tracking milestone:
 [`rewrite`](https://github.com/aoagents/agent-orchestrator/milestone/1).

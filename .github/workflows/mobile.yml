@@ -1,0 +1,37 @@
+name: Mobile
+
+# Typechecks the Expo mobile app. Without this, changes under packages/mobile
+# (e.g. the push-notification client) shipped with no CI coverage — the existing
+# frontend/go workflows don't touch this package.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "packages/mobile/**"
+      - ".github/workflows/mobile.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: packages/mobile/package-lock.json
+
+      # .npmrc pins legacy-peer-deps for this package; npm ci honors it.
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck

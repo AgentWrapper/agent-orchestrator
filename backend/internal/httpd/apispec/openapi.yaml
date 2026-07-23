@@ -97,6 +97,43 @@ paths:
       summary: Refresh the cached local agent adapter catalog
       tags:
       - agents
+  /api/v1/dev/import-projects:
+    post:
+      operationId: runDevImportProjects
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DevImportProjectsRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevImportProjectsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Run the developer project-registry import through the daemon store
+      tags:
+      - dev
   /api/v1/events:
     get:
       operationId: streamEvents
@@ -672,6 +709,50 @@ paths:
       summary: Fetch one project; discriminates ok vs degraded
       tags:
       - projects
+    put:
+      operationId: updateProjectSettings
+      parameters:
+      - description: Project identifier (registry key).
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Project identifier (registry key).
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProjectSettingsInput'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Atomically replace a project's display name and config
+      tags:
+      - projects
   /api/v1/projects/{id}/config:
     put:
       operationId: setProjectConfig
@@ -838,6 +919,76 @@ paths:
       summary: Resolve review threads on a pull request
       tags:
       - prs
+  /api/v1/push/devices:
+    post:
+      operationId: registerPushDevice
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterPushDeviceRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PushDeviceEnvelope'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Register (upsert) a phone's Expo push token
+      tags:
+      - push
+  /api/v1/push/devices/{token}:
+    delete:
+      operationId: unregisterPushDevice
+      parameters:
+      - description: Expo push token (URL-encoded) identifying the device.
+        in: path
+        name: token
+        required: true
+        schema:
+          description: Expo push token (URL-encoded) identifying the device.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnregisterPushDeviceResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Unregister a phone's Expo push token
+      tags:
+      - push
   /api/v1/sessions:
     get:
       operationId: listSessions
@@ -909,7 +1060,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SessionResponse'
+                $ref: '#/components/schemas/SpawnSessionResponse'
           description: Created
         "400":
           content:
@@ -1671,6 +1822,96 @@ paths:
       summary: Send a message to a running session's agent
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/workspace/file:
+    get:
+      operationId: getSessionWorkspaceFile
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Session-worktree-relative file path.
+        in: query
+        name: path
+        schema:
+          description: Session-worktree-relative file path.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceFileResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Read one session workspace file and its git diff
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/workspace/files:
+    get:
+      operationId: listSessionWorkspaceFiles
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListWorkspaceFilesResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List files in a session workspace with git change status
+      tags:
+      - sessions
   /api/v1/sessions/cleanup:
     post:
       operationId: cleanupSessions
@@ -1705,6 +1946,114 @@ paths:
       summary: Clean up terminated session workspaces
       tags:
       - sessions
+  /api/v1/shell-terminals:
+    get:
+      operationId: listShellTerminals
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListShellTerminalsResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List the standalone shell terminals owned by the current app run
+      tags:
+      - shellTerminals
+    post:
+      operationId: openShellTerminal
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenShellTerminalRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShellTerminalEnvelope'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Open a standalone shell terminal
+      tags:
+      - shellTerminals
+  /api/v1/shell-terminals/{handleId}:
+    delete:
+      operationId: closeShellTerminal
+      parameters:
+      - description: Shell terminal runtime handle identifier.
+        in: path
+        name: handleId
+        required: true
+        schema:
+          description: Shell terminal runtime handle identifier.
+          type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Close a standalone shell terminal and destroy its PTY
+      tags:
+      - shellTerminals
 components:
   schemas:
     APIError:
@@ -1907,11 +2256,24 @@ components:
       - status
       - prs
       type: object
+    ControllersSpawnAttachmentInput:
+      properties:
+        data:
+          type: string
+        mimeType:
+          type: string
+      required:
+      - data
+      type: object
     DegradedProject:
       properties:
         id:
           type: string
         kind:
+          enum:
+          - single_repo
+          - workspace
+          - scratch
           type: string
         name:
           type: string
@@ -1925,6 +2287,67 @@ components:
       - kind
       - path
       - resolveError
+      type: object
+    DevImportProjectsConflict:
+      properties:
+        path:
+          type: string
+        projectId:
+          type: string
+        reason:
+          type: string
+        targetId:
+          type: string
+        targetPath:
+          type: string
+      required:
+      - projectId
+      - path
+      - reason
+      type: object
+    DevImportProjectsReport:
+      properties:
+        conflicts:
+          items:
+            $ref: '#/components/schemas/DevImportProjectsConflict'
+          type: array
+        dryRun:
+          type: boolean
+        inserted:
+          type: integer
+        skipped:
+          type: integer
+        sourceDataDir:
+          type: string
+        targetDataDir:
+          type: string
+        updated:
+          type: integer
+      required:
+      - sourceDataDir
+      - targetDataDir
+      - dryRun
+      - inserted
+      - updated
+      - skipped
+      type: object
+    DevImportProjectsRequest:
+      properties:
+        dryRun:
+          type: boolean
+        sourceDataDir:
+          minLength: 1
+          type: string
+      required:
+      - sourceDataDir
+      - dryRun
+      type: object
+    DevImportProjectsResponse:
+      properties:
+        report:
+          $ref: '#/components/schemas/DevImportProjectsReport'
+      required:
+      - report
       type: object
     DomainActivity:
       properties:
@@ -2080,6 +2503,30 @@ components:
       required:
       - sessions
       type: object
+    ListShellTerminalsResponse:
+      properties:
+        shellTerminals:
+          items:
+            $ref: '#/components/schemas/ShellTerminalResponse'
+          type: array
+      required:
+      - shellTerminals
+      type: object
+    ListWorkspaceFilesResponse:
+      properties:
+        files:
+          items:
+            $ref: '#/components/schemas/WorkspaceFileSummary'
+          type: array
+        sessionId:
+          type: string
+        truncated:
+          type: boolean
+      required:
+      - sessionId
+      - files
+      - truncated
+      type: object
     MarkAllNotificationsReadResponse:
       properties:
         notifications:
@@ -2196,6 +2643,13 @@ components:
       - kind
       - sessionId
       type: object
+    OpenShellTerminalRequest:
+      properties:
+        projectId:
+          description: Project whose root the shell starts in. Omitted opens the shell
+            in the daemon data dir.
+          type: string
+      type: object
     OrchestratorResponse:
       properties:
         id:
@@ -2216,6 +2670,8 @@ components:
           type: integer
         prUrl:
           type: string
+        previousRun:
+          $ref: '#/components/schemas/ReviewRun'
         status:
           enum:
           - needs_review
@@ -2259,6 +2715,10 @@ components:
         id:
           type: string
         kind:
+          enum:
+          - single_repo
+          - workspace
+          - scratch
           type: string
         name:
           type: string
@@ -2345,6 +2805,10 @@ components:
         id:
           type: string
         kind:
+          enum:
+          - single_repo
+          - workspace
+          - scratch
           type: string
         name:
           type: string
@@ -2362,6 +2826,49 @@ components:
       - path
       - kind
       - sessionPrefix
+      type: object
+    PushDeviceEnvelope:
+      properties:
+        device:
+          $ref: '#/components/schemas/PushDeviceResponse'
+      required:
+      - device
+      type: object
+    PushDeviceResponse:
+      properties:
+        createdAt:
+          format: date-time
+          type: string
+        deviceName:
+          type: string
+        lastSeenAt:
+          format: date-time
+          type: string
+        platform:
+          type: string
+        token:
+          type: string
+      required:
+      - token
+      - createdAt
+      - lastSeenAt
+      type: object
+    RegisterPushDeviceRequest:
+      properties:
+        deviceName:
+          description: Human-friendly device label.
+          type: string
+        platform:
+          description: Device platform.
+          enum:
+          - ios
+          - android
+          type: string
+        token:
+          description: Expo push token, e.g. ExponentPushToken[...].
+          type: string
+      required:
+      - token
       type: object
     RemoveProjectResult:
       properties:
@@ -2408,6 +2915,12 @@ components:
       properties:
         ok:
           type: boolean
+        restoreMode:
+          enum:
+          - native
+          - saved_prompt
+          - fresh
+          type: string
         session:
           $ref: '#/components/schemas/ControllersSessionView'
         sessionId:
@@ -2415,6 +2928,7 @@ components:
       required:
       - ok
       - sessionId
+      - restoreMode
       - session
       type: object
     ReviewRun:
@@ -2649,6 +3163,31 @@ components:
         url:
           type: string
       type: object
+    SessionPRReviewEntry:
+      properties:
+        body:
+          type: string
+        isBot:
+          type: boolean
+        reviewUrl:
+          type: string
+        reviewerId:
+          type: string
+        submittedAt:
+          format: date-time
+          type: string
+        verdict:
+          enum:
+          - none
+          - approved
+          - changes_requested
+          - review_required
+          type: string
+      required:
+      - reviewerId
+      - verdict
+      - submittedAt
+      type: object
     SessionPRReviewSummary:
       properties:
         decision:
@@ -2660,6 +3199,10 @@ components:
           type: string
         hasUnresolvedHumanComments:
           type: boolean
+        reviews:
+          items:
+            $ref: '#/components/schemas/SessionPRReviewEntry'
+          type: array
         unresolvedBy:
           items:
             $ref: '#/components/schemas/SessionPRUnresolvedReviewer'
@@ -2782,11 +3325,15 @@ components:
       type: object
     SetActivityRequest:
       properties:
+        agentSessionId:
+          description: Native agent session identifier used to resume its transcript.
+          type: string
         event:
           description: AO hook sub-command that produced this state (e.g. post-tool-use).
           type: string
         state:
-          description: Agent activity state reported by an agent hook.
+          description: Agent activity state reported by an agent hook. Optional for
+            metadata-only hooks.
           enum:
           - active
           - idle
@@ -2800,8 +3347,6 @@ components:
         toolUseId:
           description: Native tool-use id, for tool-use hook events.
           type: string
-      required:
-      - state
       type: object
     SetActivityResponse:
       properties:
@@ -2830,6 +3375,32 @@ components:
             entry point in the session workspace.
           type: string
       type: object
+    ShellTerminalEnvelope:
+      properties:
+        shellTerminal:
+          $ref: '#/components/schemas/ShellTerminalResponse'
+      required:
+      - shellTerminal
+      type: object
+    ShellTerminalResponse:
+      properties:
+        createdAt:
+          format: date-time
+          type: string
+        handleId:
+          type: string
+        projectId:
+          type: string
+        title:
+          type: string
+        workingDir:
+          type: string
+      required:
+      - handleId
+      - workingDir
+      - title
+      - createdAt
+      type: object
     SpawnOrchestratorRequest:
       properties:
         clean:
@@ -2848,6 +3419,10 @@ components:
       type: object
     SpawnSessionRequest:
       properties:
+        attachments:
+          items:
+            $ref: '#/components/schemas/ControllersSpawnAttachmentInput'
+          type: array
         branch:
           type: string
         displayName:
@@ -2878,6 +3453,7 @@ components:
           - vibe
           - pi
           - autohand
+          - fake
           type: string
         issueId:
           type: string
@@ -2893,6 +3469,19 @@ components:
           type: string
       required:
       - projectId
+      type: object
+    SpawnSessionResponse:
+      properties:
+        promptBytes:
+          type: integer
+        session:
+          $ref: '#/components/schemas/ControllersSessionView'
+        systemPromptBytes:
+          type: integer
+      required:
+      - session
+      - promptBytes
+      - systemPromptBytes
       type: object
     SubmitReviewInput:
       properties:
@@ -2947,6 +3536,10 @@ components:
       type: object
     TriggerReviewResponse:
       properties:
+        created:
+          description: True when a new review pass was started; false when an existing
+            run for the same commit was reused.
+          type: boolean
         reviewerHandleId:
           type: string
         reviews:
@@ -2956,6 +3549,105 @@ components:
       required:
       - reviewerHandleId
       - reviews
+      - created
+      type: object
+    UnregisterPushDeviceResponse:
+      properties:
+        deleted:
+          type: boolean
+        token:
+          type: string
+      required:
+      - token
+      - deleted
+      type: object
+    UpdateProjectSettingsInput:
+      properties:
+        config:
+          $ref: '#/components/schemas/ProjectConfig'
+        displayName:
+          maxLength: 20
+          minLength: 1
+          type: string
+      required:
+      - displayName
+      - config
+      type: object
+    WorkspaceFileResponse:
+      properties:
+        additions:
+          type: integer
+        binary:
+          type: boolean
+        content:
+          type: string
+        contentTruncated:
+          type: boolean
+        deleted:
+          type: boolean
+        deletions:
+          type: integer
+        diff:
+          type: string
+        diffTruncated:
+          type: boolean
+        path:
+          type: string
+        sessionId:
+          type: string
+        size:
+          format: int64
+          type: integer
+        status:
+          enum:
+          - unmodified
+          - modified
+          - added
+          - deleted
+          - renamed
+          type: string
+      required:
+      - sessionId
+      - path
+      - status
+      - additions
+      - deletions
+      - size
+      - binary
+      - deleted
+      - content
+      - contentTruncated
+      - diff
+      - diffTruncated
+      type: object
+    WorkspaceFileSummary:
+      properties:
+        additions:
+          type: integer
+        binary:
+          type: boolean
+        deletions:
+          type: integer
+        path:
+          type: string
+        size:
+          format: int64
+          type: integer
+        status:
+          enum:
+          - unmodified
+          - modified
+          - added
+          - deleted
+          - renamed
+          type: string
+      required:
+      - path
+      - status
+      - additions
+      - deletions
+      - size
+      - binary
       type: object
     WorkspaceRepo:
       properties:
@@ -2983,9 +3675,13 @@ tags:
   name: reviews
 - description: Durable dashboard notifications
   name: notifications
+- description: Mobile push-device registration for OS push notifications
+  name: push
 - description: Server-sent CDC event stream with durable replay
   name: events
 - description: Legacy AO project import (availability probe and run)
   name: import
+- description: Developer-only maintenance operations
+  name: dev
 - description: Connect Mobile LAN bridge control (loopback/desktop only)
   name: mobile

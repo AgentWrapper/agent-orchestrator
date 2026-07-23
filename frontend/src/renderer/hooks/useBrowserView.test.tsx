@@ -68,9 +68,20 @@ function setupBridge() {
 	return bridge;
 }
 
+// jsdom does not implement the Fullscreen API, so `document.fullscreenElement`
+// has no property descriptor to spy on. Define it directly, and clear it after
+// each test so state never leaks between cases.
+function setFullscreenElement(element: Element | null): void {
+	Object.defineProperty(document, "fullscreenElement", {
+		configurable: true,
+		get: () => element,
+	});
+}
+
 describe("useBrowserView", () => {
 	afterEach(() => {
 		vi.restoreAllMocks();
+		setFullscreenElement(null);
 		document.body.replaceChildren();
 	});
 
@@ -301,6 +312,158 @@ describe("useBrowserView", () => {
 		await waitFor(() => expect(result.current.mirrorUrl).toBe(""));
 	});
 
+	it("parks the native view while a dropdown menu is open", async () => {
+		const bridge = setupBridge();
+		const slot = createSlot();
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+
+		await waitFor(() => expect(bridge.ensure).toHaveBeenCalledWith("sess-1"));
+		act(() =>
+			bridge.emit({
+				viewId: "42:sess-1",
+				url: "http://localhost:3000/",
+				title: "",
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			}),
+		);
+		act(() => result.current.slotRef(slot));
+		await waitFor(() =>
+			expect(bridge.setBounds).toHaveBeenCalledWith({
+				viewId: "42:sess-1",
+				rect: { x: 12, y: 34, width: 320, height: 240 },
+				visible: true,
+			}),
+		);
+
+		bridge.setBounds.mockClear();
+		const menu = document.createElement("div");
+		menu.setAttribute("role", "menu");
+		menu.setAttribute("data-state", "open");
+		await act(async () => {
+			document.body.appendChild(menu);
+			await Promise.resolve();
+		});
+
+		await waitFor(() =>
+			expect(bridge.setBounds).toHaveBeenLastCalledWith({
+				viewId: "42:sess-1",
+				rect: { x: 12, y: 34, width: 320, height: 240 },
+				visible: true,
+				parked: true,
+			}),
+		);
+	});
+
+	it("parks the native view synchronously when an overlay opens, without waiting for a frame", async () => {
+		// Regression for the notifications-over-browser overlay race: parking used to
+		// be deferred to requestAnimationFrame, leaving a ~16ms window where the live
+		// native view painted over the just-opened dropdown. Under fake timers the
+		// parked bounds must land from the MutationObserver microtask alone, before
+		// any rAF/timer is advanced.
+		vi.useFakeTimers();
+		try {
+			const bridge = setupBridge();
+			const slot = createSlot();
+			const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+			await act(async () => {
+				await Promise.resolve();
+			});
+			act(() =>
+				bridge.emit({
+					viewId: "42:sess-1",
+					url: "http://localhost:3000/",
+					title: "",
+					canGoBack: false,
+					canGoForward: false,
+					isLoading: false,
+				}),
+			);
+			act(() => result.current.slotRef(slot));
+			await act(async () => {
+				vi.advanceTimersByTime(300);
+			});
+
+			bridge.setBounds.mockClear();
+			const menu = document.createElement("div");
+			menu.setAttribute("role", "menu");
+			menu.setAttribute("data-state", "open");
+			// Flush only the observer microtask — deliberately do NOT advance timers,
+			// so a parked call here proves the park is synchronous, not rAF-deferred.
+			await act(async () => {
+				document.body.appendChild(menu);
+				await Promise.resolve();
+			});
+			expect(bridge.setBounds).toHaveBeenCalledWith({
+				viewId: "42:sess-1",
+				rect: { x: 12, y: 34, width: 320, height: 240 },
+				visible: true,
+				parked: true,
+			});
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("re-parks when a reused portal flips data-state in place under rapid toggling", async () => {
+		// Radix reuses its portal node and flips data-state="open"↔"closed" without
+		// adding/removing a body child. A childList-only observer misses this, so the
+		// view stays un-parked while the dropdown is open. The hardened observer must
+		// catch the in-place attribute flip and re-park.
+		const bridge = setupBridge();
+		const slot = createSlot();
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+
+		await waitFor(() => expect(bridge.ensure).toHaveBeenCalledWith("sess-1"));
+		act(() =>
+			bridge.emit({
+				viewId: "42:sess-1",
+				url: "http://localhost:3000/",
+				title: "",
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			}),
+		);
+		act(() => result.current.slotRef(slot));
+
+		// The portal node is present the whole time; only its data-state flips.
+		const portal = document.createElement("div");
+		portal.setAttribute("role", "menu");
+		portal.setAttribute("data-state", "closed");
+		await act(async () => {
+			document.body.appendChild(portal);
+			await Promise.resolve();
+		});
+
+		await act(async () => {
+			portal.setAttribute("data-state", "open");
+			await Promise.resolve();
+		});
+		await waitFor(() =>
+			expect(bridge.setBounds).toHaveBeenLastCalledWith({
+				viewId: "42:sess-1",
+				rect: { x: 12, y: 34, width: 320, height: 240 },
+				visible: true,
+				parked: true,
+			}),
+		);
+
+		bridge.setBounds.mockClear();
+		await act(async () => {
+			portal.setAttribute("data-state", "closed");
+			await Promise.resolve();
+		});
+		await waitFor(() =>
+			expect(bridge.setBounds).toHaveBeenLastCalledWith({
+				viewId: "42:sess-1",
+				rect: { x: 12, y: 34, width: 320, height: 240 },
+				visible: true,
+			}),
+		);
+	});
+
 	it("updates nav state only for the current view", async () => {
 		const bridge = setupBridge();
 		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
@@ -435,5 +598,102 @@ describe("useBrowserView", () => {
 		rerender({ terminated: true });
 		await waitFor(() => expect(bridge.clear).toHaveBeenCalledWith("42:sess-1"));
 		expect(bridge.navigate).toHaveBeenCalledTimes(1);
+	});
+
+	it("hides the native view while an element outside the slot is fullscreen, and restores it on exit", async () => {
+		// The terminal pane's fullscreen button promotes it into the DOM top layer,
+		// which covers every DOM node but not the native view — Chromium composites
+		// that above the page regardless. The transition also leaves the slot's box
+		// untouched, so no observer fires and the view kept painting its stale
+		// bounds over the fullscreen terminal, toolbar-less. Fullscreen must hide it.
+		vi.useFakeTimers();
+		try {
+			const bridge = setupBridge();
+			const slot = createSlot();
+			const terminalPane = document.createElement("div");
+			document.body.appendChild(terminalPane);
+
+			const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+			await act(async () => {
+				await Promise.resolve();
+			});
+			act(() =>
+				bridge.emit({
+					viewId: "42:sess-1",
+					url: "http://localhost:3000/",
+					title: "",
+					canGoBack: false,
+					canGoForward: false,
+					isLoading: false,
+				}),
+			);
+			act(() => result.current.slotRef(slot));
+			await act(async () => {
+				vi.advanceTimersByTime(300);
+			});
+			expect(bridge.setBounds).toHaveBeenLastCalledWith(
+				expect.objectContaining({ visible: true, rect: expect.objectContaining({ width: 320 }) }),
+			);
+
+			// Terminal pane enters fullscreen: the slot is not inside it, so the
+			// view must go hidden even though the slot's own box never changed.
+			bridge.setBounds.mockClear();
+			setFullscreenElement(terminalPane);
+			act(() => document.dispatchEvent(new Event("fullscreenchange")));
+			await act(async () => {
+				vi.advanceTimersByTime(300);
+			});
+			expect(bridge.setBounds).toHaveBeenLastCalledWith({
+				viewId: "42:sess-1",
+				rect: { x: 0, y: 0, width: 0, height: 0 },
+				visible: false,
+			});
+
+			// Exiting fullscreen restores the view at its measured bounds.
+			bridge.setBounds.mockClear();
+			setFullscreenElement(null);
+			act(() => document.dispatchEvent(new Event("fullscreenchange")));
+			await act(async () => {
+				vi.advanceTimersByTime(300);
+			});
+			expect(bridge.setBounds).toHaveBeenLastCalledWith(
+				expect.objectContaining({ visible: true, rect: expect.objectContaining({ x: 12, width: 320 }) }),
+			);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("keeps the native view visible when the slot itself is inside the fullscreen element", async () => {
+		// Guards the `contains` check: if the browser subtree is the thing going
+		// fullscreen, the slot is still on screen and must keep painting.
+		const bridge = setupBridge();
+		const host = document.createElement("div");
+		document.body.appendChild(host);
+		const slot = createSlot();
+		host.appendChild(slot);
+
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+		await waitFor(() => expect(bridge.ensure).toHaveBeenCalledWith("sess-1"));
+		act(() =>
+			bridge.emit({
+				viewId: "42:sess-1",
+				url: "http://localhost:3000/",
+				title: "",
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			}),
+		);
+		act(() => result.current.slotRef(slot));
+
+		setFullscreenElement(host);
+		act(() => document.dispatchEvent(new Event("fullscreenchange")));
+
+		await waitFor(() =>
+			expect(bridge.setBounds).toHaveBeenLastCalledWith(
+				expect.objectContaining({ visible: true, rect: expect.objectContaining({ width: 320 }) }),
+			),
+		);
 	});
 });

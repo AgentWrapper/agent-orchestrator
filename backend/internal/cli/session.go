@@ -27,6 +27,7 @@ type sessionListOptions struct {
 type sessionCleanupOptions struct {
 	project string
 	yes     bool
+	dryRun  bool
 }
 
 type sessionClaimPROptions struct {
@@ -255,6 +256,7 @@ func newSessionCleanupCommand(ctx *commandContext) *cobra.Command {
 	}
 	addSessionProjectFlag(cmd.Flags(), &opts.project, "Filter by project ID")
 	cmd.Flags().BoolVarP(&opts.yes, "yes", "y", false, "Skip confirmation prompt")
+	cmd.Flags().BoolVar(&opts.dryRun, "dry-run", false, "Preview which sessions would be cleaned without removing anything")
 	return cmd
 }
 
@@ -513,6 +515,10 @@ func (c *commandContext) cleanupSessions(ctx context.Context, cmd *cobra.Command
 		if _, err := fmt.Fprintf(out, "  Would clean %s\n", label); err != nil {
 			return err
 		}
+	}
+	if opts.dryRun {
+		_, err = fmt.Fprintln(out, "\n(dry-run: no sessions were removed)")
+		return err
 	}
 	if !opts.yes {
 		confirmed, err := confirmSessionCleanup(cmd, len(candidates), opts.project)

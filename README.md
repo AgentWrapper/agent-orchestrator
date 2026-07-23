@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="ao-logo.svg" alt="Agent Orchestrator" width="160" height="160" />
+  <img src="assets/ao-logo.svg" alt="Agent Orchestrator" width="160" height="160" />
 
 # Agent Orchestrator
 
@@ -143,7 +143,7 @@ Download the latest desktop build for your platform:
 | Windows               | [Download](https://github.com/AgentWrapper/agent-orchestrator/releases/latest/download/agent-orchestrator-win32-x64.exe)      |
 | Linux                 | [Download](https://github.com/AgentWrapper/agent-orchestrator/releases/latest/download/agent-orchestrator-linux-x64.AppImage) |
 
-After installing, open Agent Orchestrator and point it at the repository you want AO to manage. The desktop app runs the daemon for you, so no CLI is required. See the [installation guide](https://ao-agents.com/docs/installation) for agent CLI setup and troubleshooting.
+After installing, open Agent Orchestrator and point it at the repository you want AO to manage. The desktop app runs the daemon for you, so no CLI is required. Installed desktop builds check for updates on launch and periodically while the app is running. See the [installation guide](https://ao-agents.com/docs/installation) for agent CLI setup and troubleshooting.
 
 <details>
 <summary>Install via npm (legacy CLI, no longer recommended)</summary>
@@ -163,12 +163,12 @@ ao start
   <tr>
     <td width="50%" align="center">
       <a href="https://x.com/agent_wrapper/status/2026329204405723180">
-        <img src="screenshots/tweet2.png" height="330" alt="Agent Orchestrator journey screenshot one" />
+        <img src="assets/tweet2.png" height="330" alt="Agent Orchestrator journey screenshot one" />
       </a>
     </td>
     <td width="50%" align="center">
       <a href="https://x.com/agent_wrapper/status/2025986105485733945">
-        <img src="screenshots/tweet1.png" height="330" alt="Agent Orchestrator journey screenshot two" />
+        <img src="assets/tweet1.png" height="330" alt="Agent Orchestrator journey screenshot two" />
       </a>
     </td>
   </tr>
