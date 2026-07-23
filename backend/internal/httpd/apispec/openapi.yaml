@@ -3117,6 +3117,31 @@ components:
         url:
           type: string
       type: object
+    SessionPRReviewEntry:
+      properties:
+        body:
+          type: string
+        isBot:
+          type: boolean
+        reviewUrl:
+          type: string
+        reviewerId:
+          type: string
+        submittedAt:
+          format: date-time
+          type: string
+        verdict:
+          enum:
+          - none
+          - approved
+          - changes_requested
+          - review_required
+          type: string
+      required:
+      - reviewerId
+      - verdict
+      - submittedAt
+      type: object
     SessionPRReviewSummary:
       properties:
         decision:
@@ -3128,6 +3153,10 @@ components:
           type: string
         hasUnresolvedHumanComments:
           type: boolean
+        reviews:
+          items:
+            $ref: '#/components/schemas/SessionPRReviewEntry'
+          type: array
         unresolvedBy:
           items:
             $ref: '#/components/schemas/SessionPRUnresolvedReviewer'
