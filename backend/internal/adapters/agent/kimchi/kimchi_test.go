@@ -233,9 +233,95 @@ func TestGetRestoreCommand(t *testing.T) {
 		t.Fatal("ok=false, want true")
 	}
 
+	// Full argv: binary + (no permission flag for default) + (no system prompt)
+	// + --session <id> last. Permissions and system prompt are absent here
+	// because the RestoreConfig carries neither, so the only trailing flag is
+	// --session. The tests below assert the permission and system-prompt
+	// re-application paths separately.
 	want := []string{"kimchi", "--session", "019e950e-52e0-7411-961b-d380ca7e610f"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+}
+
+func TestGetRestoreCommandWithPermissions(t *testing.T) {
+	tests := []struct {
+		mode ports.PermissionMode
+		want []string
+	}{
+		{ports.PermissionModeDefault, []string{"kimchi"}},
+		{"", []string{"kimchi"}},
+		{ports.PermissionModeAcceptEdits, []string{"kimchi", "--auto"}},
+		{ports.PermissionModeAuto, []string{"kimchi", "--auto"}},
+		{ports.PermissionModeBypassPermissions, []string{"kimchi", "--yolo"}},
+	}
+
+	for _, tc := range tests {
+		t.Run(string(tc.mode), func(t *testing.T) {
+			p := &Plugin{resolvedBinary: "kimchi"}
+			cmd, ok, err := p.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+				Session: ports.SessionRef{
+					Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "sess-1"},
+				},
+				Permissions: tc.mode,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !ok {
+				t.Fatal("ok=false, want true")
+			}
+			// The permission flag must be re-applied on resume before
+			// --session, which is appended last.
+			want := append(append([]string{}, tc.want...), "--session", "sess-1")
+			if !reflect.DeepEqual(cmd, want) {
+				t.Fatalf("cmd = %#v, want %#v", cmd, want)
+			}
+		})
+	}
+}
+
+func TestGetRestoreCommandWithSystemPromptFile(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "system.md")
+	if err := os.WriteFile(file, []byte("file contents win"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &Plugin{resolvedBinary: "kimchi"}
+	cmd, ok, err := p.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Session: ports.SessionRef{
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "019e950e-52e0-7411-961b-d380ca7e610f"},
+		},
+		SystemPromptFile: file,
+		SystemPrompt:     "inline ignored",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("ok=false, want true")
+	}
+
+	// The file's contents are inlined as --append-system-prompt before
+	// --session (which is appended last). Inline cfg.SystemPrompt is ignored
+	// because the file takes precedence, mirroring the launch-side behavior.
+	want := []string{"kimchi", "--append-system-prompt", "file contents win", "--session", "019e950e-52e0-7411-961b-d380ca7e610f"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+}
+
+func TestGetRestoreCommandSystemPromptFileReadError(t *testing.T) {
+	p := &Plugin{resolvedBinary: "kimchi"}
+	_, _, err := p.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Session: ports.SessionRef{
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "sess-1"},
+		},
+		SystemPromptFile: filepath.Join(t.TempDir(), "missing.md"),
+	})
+	if err == nil {
+		t.Fatal("expected error for unreadable system-prompt file, got nil")
 	}
 }
 
