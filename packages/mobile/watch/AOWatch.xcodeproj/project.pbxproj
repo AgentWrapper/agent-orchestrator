@@ -14,17 +14,21 @@
 		75EFE17E7EB52EBAC04AE674 /* SessionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AEE3D7B5418D674A86EB10D9 /* SessionsView.swift */; };
 		7F102194F4A5B0D7D0400ABA /* AOClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7217A6B0EA4FB9EB0E312AC /* AOClient.swift */; };
 		8BD7F845B58F4D1DBA88F0F1 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D83574BD0EC1BDAC0C5D0ED3 /* Assets.xcassets */; };
+		9D0BD47E1F540D933800810D /* NetDiag.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05ED770F4EA545A449FEB7B7 /* NetDiag.swift */; };
+		A4E76B07951D1615B6407D5D /* DiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97FC7C3252A4FA9BE24F9CAD /* DiagnosticsView.swift */; };
 		D3A6BB21DF48B0665BC64B21 /* AOWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 293DA41CA728B917EA7AB310 /* AOWatchApp.swift */; };
 		E61B6313DEF51C1AB90E171D /* ConnectView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98DFE6BE8022D9FA07179000 /* ConnectView.swift */; };
 		F31442D1D787E8FBC32ADF34 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0AEF4620208FE5561CCB65F /* Models.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		05ED770F4EA545A449FEB7B7 /* NetDiag.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetDiag.swift; sourceTree = "<group>"; };
 		0E3ACBBDFA9B9B0D5D1E60AB /* AOWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AOWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		293DA41CA728B917EA7AB310 /* AOWatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AOWatchApp.swift; sourceTree = "<group>"; };
 		55C5B32A5A893A3684A0BCA1 /* SessionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionView.swift; sourceTree = "<group>"; };
 		7AAB8F6CB0EF6651F48DAEC8 /* SessionStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStream.swift; sourceTree = "<group>"; };
 		905EDC48AAD094A9A38F7C5C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		97FC7C3252A4FA9BE24F9CAD /* DiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsView.swift; sourceTree = "<group>"; };
 		98DFE6BE8022D9FA07179000 /* ConnectView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectView.swift; sourceTree = "<group>"; };
 		AEE3D7B5418D674A86EB10D9 /* SessionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsView.swift; sourceTree = "<group>"; };
 		C0AEF4620208FE5561CCB65F /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
@@ -59,8 +63,10 @@
 				F1160EA6F534E1F9249B8B1E /* AppModel.swift */,
 				D83574BD0EC1BDAC0C5D0ED3 /* Assets.xcassets */,
 				98DFE6BE8022D9FA07179000 /* ConnectView.swift */,
+				97FC7C3252A4FA9BE24F9CAD /* DiagnosticsView.swift */,
 				905EDC48AAD094A9A38F7C5C /* Info.plist */,
 				C0AEF4620208FE5561CCB65F /* Models.swift */,
+				05ED770F4EA545A449FEB7B7 /* NetDiag.swift */,
 				7AAB8F6CB0EF6651F48DAEC8 /* SessionStream.swift */,
 				AEE3D7B5418D674A86EB10D9 /* SessionsView.swift */,
 				55C5B32A5A893A3684A0BCA1 /* SessionView.swift */,
@@ -144,7 +150,9 @@
 				D3A6BB21DF48B0665BC64B21 /* AOWatchApp.swift in Sources */,
 				23CBA328CB885AA4943A04A8 /* AppModel.swift in Sources */,
 				E61B6313DEF51C1AB90E171D /* ConnectView.swift in Sources */,
+				A4E76B07951D1615B6407D5D /* DiagnosticsView.swift in Sources */,
 				F31442D1D787E8FBC32ADF34 /* Models.swift in Sources */,
+				9D0BD47E1F540D933800810D /* NetDiag.swift in Sources */,
 				5664C6754041D67907482E2A /* SessionStream.swift in Sources */,
 				57346FC2DEEDDFD3F5FA3354 /* SessionView.swift in Sources */,
 				75EFE17E7EB52EBAC04AE674 /* SessionsView.swift in Sources */,

@@ -48,6 +48,12 @@ struct ConnectView: View {
 				}
 				.disabled(host.trimmingCharacters(in: .whitespaces).isEmpty)
 			}
+
+			Section {
+				NavigationLink { DiagnosticsView() } label: {
+					Label("Diagnostics", systemImage: "stethoscope")
+				}
+			}
 		}
 		.navigationTitle("Connect")
 		.onAppear(perform: seedFromModel)
