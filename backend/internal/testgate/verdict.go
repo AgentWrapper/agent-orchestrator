@@ -11,39 +11,57 @@ import (
 
 const verdictPrefix = "AO_VERDICT "
 
+// Classification describes the outcome of a runtime verification run.
 type Classification string
 
 const (
-	ClassificationPassed        Classification = "passed"
-	ClassificationAppFailed     Classification = "app_failed"
-	ClassificationInfra         Classification = "infra"
+	// ClassificationPassed means runtime verification completed without app failures.
+	ClassificationPassed Classification = "passed"
+	// ClassificationAppFailed means runtime verification found a product failure.
+	ClassificationAppFailed Classification = "app_failed"
+	// ClassificationInfra means runtime verification could not produce a product verdict.
+	ClassificationInfra Classification = "infra"
+	// ClassificationNotConfigured means no runtime verification runner is configured.
 	ClassificationNotConfigured Classification = "not_configured"
 )
 
+// EvidenceSource identifies where a fused finding's evidence came from.
 type EvidenceSource string
 
 const (
-	EvidenceSourceStatic    EvidenceSource = "static"
+	// EvidenceSourceStatic marks findings that only came from the reviewer.
+	EvidenceSourceStatic EvidenceSource = "static"
+	// EvidenceSourceTestInfra marks findings confirmed or refuted by runtime tests.
 	EvidenceSourceTestInfra EvidenceSource = "test-infra"
 )
 
+// EvidenceOutcome describes how runtime evidence relates to a reviewer finding.
 type EvidenceOutcome string
 
 const (
-	EvidenceOutcomeUntested  EvidenceOutcome = "not_tested"
+	// EvidenceOutcomeUntested means the runtime runner did not test the finding.
+	EvidenceOutcomeUntested EvidenceOutcome = "not_tested"
+	// EvidenceOutcomeConfirmed means runtime evidence reproduced the finding.
 	EvidenceOutcomeConfirmed EvidenceOutcome = "confirmed"
-	EvidenceOutcomeRefuted   EvidenceOutcome = "refuted"
+	// EvidenceOutcomeRefuted means runtime evidence did not reproduce the finding.
+	EvidenceOutcomeRefuted EvidenceOutcome = "refuted"
 )
 
+// Severity ranks a reviewer finding's impact.
 type Severity string
 
 const (
-	SeverityLow      Severity = "low"
-	SeverityMedium   Severity = "medium"
-	SeverityHigh     Severity = "high"
+	// SeverityLow marks a low-impact finding.
+	SeverityLow Severity = "low"
+	// SeverityMedium marks a medium-impact finding.
+	SeverityMedium Severity = "medium"
+	// SeverityHigh marks a high-impact finding.
+	SeverityHigh Severity = "high"
+	// SeverityCritical marks a critical finding.
 	SeverityCritical Severity = "critical"
 )
 
+// Valid reports whether the severity is one AO accepts.
 func (s Severity) Valid() bool {
 	switch s {
 	case "", SeverityLow, SeverityMedium, SeverityHigh, SeverityCritical:
@@ -53,22 +71,31 @@ func (s Severity) Valid() bool {
 	}
 }
 
+// ReviewVerdict is the reviewer agent's submitted PR verdict.
 type ReviewVerdict string
 
 const (
-	ReviewVerdictApproved         ReviewVerdict = "approved"
+	// ReviewVerdictApproved means the reviewer accepted the PR changes.
+	ReviewVerdictApproved ReviewVerdict = "approved"
+	// ReviewVerdictChangesRequested means the reviewer found blocking issues.
 	ReviewVerdictChangesRequested ReviewVerdict = "changes_requested"
 )
 
+// FusedOutcome is the combined reviewer and runtime-verification verdict.
 type FusedOutcome string
 
 const (
-	FusedOutcomeApproved         FusedOutcome = "approved"
+	// FusedOutcomeApproved means the fused gate accepts the PR changes.
+	FusedOutcomeApproved FusedOutcome = "approved"
+	// FusedOutcomeChangesRequested means the fused gate has blocking findings.
 	FusedOutcomeChangesRequested FusedOutcome = "changes_requested"
-	FusedOutcomeAppFailed        FusedOutcome = "app_failed"
-	FusedOutcomeNeutral          FusedOutcome = "neutral"
+	// FusedOutcomeAppFailed means baseline runtime verification failed.
+	FusedOutcomeAppFailed FusedOutcome = "app_failed"
+	// FusedOutcomeNeutral means the fused gate has no blocking product verdict.
+	FusedOutcomeNeutral FusedOutcome = "neutral"
 )
 
+// TestRun is one baseline or targeted runtime-verification execution.
 type TestRun struct {
 	ID             string         `json:"id,omitempty"`
 	SessionID      string         `json:"sessionId,omitempty"`
@@ -91,13 +118,17 @@ type verdictPayload struct {
 	ArtifactsURL string         `json:"artifactsUrl,omitempty"`
 }
 
+// RunKind identifies which runtime-verification phase produced a run.
 type RunKind string
 
 const (
+	// RunKindBaseline verifies the PR before applying specific reviewer findings.
 	RunKindBaseline RunKind = "baseline"
+	// RunKindTargeted verifies behavioral reviewer findings.
 	RunKindTargeted RunKind = "targeted"
 )
 
+// ReviewFinding is a structured reviewer finding that may be runtime-testable.
 type ReviewFinding struct {
 	ID              string    `json:"id"`
 	RunID           string    `json:"runId,omitempty"`
@@ -111,6 +142,7 @@ type ReviewFinding struct {
 	CreatedAt       time.Time `json:"createdAt,omitempty"`
 }
 
+// TestEvidence records runtime evidence for one reviewer finding.
 type TestEvidence struct {
 	ID        string          `json:"id,omitempty"`
 	TestRunID string          `json:"testRunId,omitempty"`
@@ -122,6 +154,7 @@ type TestEvidence struct {
 	CreatedAt time.Time       `json:"createdAt,omitempty"`
 }
 
+// SynthesisInput is the data required to fuse reviewer and runtime outcomes.
 type SynthesisInput struct {
 	Baseline      TestRun
 	ReviewVerdict ReviewVerdict
@@ -129,6 +162,7 @@ type SynthesisInput struct {
 	Evidence      []TestEvidence
 }
 
+// FusedFinding is one reviewer finding after runtime evidence is applied.
 type FusedFinding struct {
 	FindingID      string          `json:"findingId,omitempty"`
 	File           string          `json:"file,omitempty"`
@@ -142,6 +176,7 @@ type FusedFinding struct {
 	Blocking       bool            `json:"blocking"`
 }
 
+// FusedVerdict is the durable combined verdict shown to the UI and API clients.
 type FusedVerdict struct {
 	ID          string         `json:"id,omitempty"`
 	SessionID   string         `json:"sessionId,omitempty"`
@@ -156,6 +191,7 @@ type FusedVerdict struct {
 	CreatedAt   time.Time      `json:"createdAt,omitempty"`
 }
 
+// ParseVerdictLine extracts the legacy test run payload from an AO_VERDICT line.
 func ParseVerdictLine(line string) (TestRun, bool, error) {
 	result, ok, err := ParseRunResultLine(line)
 	if err != nil || !ok {
@@ -164,6 +200,7 @@ func ParseVerdictLine(line string) (TestRun, bool, error) {
 	return result.Run, true, nil
 }
 
+// ParseRunResultLine extracts a test run and evidence payload from an AO_VERDICT line.
 func ParseRunResultLine(line string) (RunResult, bool, error) {
 	idx := strings.Index(line, verdictPrefix)
 	if idx < 0 {
@@ -208,6 +245,7 @@ func ParseRunResultLine(line string) (RunResult, bool, error) {
 	return RunResult{Run: run, Evidence: payload.Evidence}, true, nil
 }
 
+// ParseRunResultOutput extracts the last AO_VERDICT payload from command output.
 func ParseRunResultOutput(output string) (RunResult, bool, error) {
 	var last string
 	for _, line := range strings.Split(output, "\n") {
@@ -221,6 +259,7 @@ func ParseRunResultOutput(output string) (RunResult, bool, error) {
 	return ParseRunResultLine(last)
 }
 
+// Valid reports whether the classification is one AO accepts.
 func (c Classification) Valid() bool {
 	switch c {
 	case ClassificationPassed, ClassificationAppFailed, ClassificationInfra, ClassificationNotConfigured:
@@ -230,6 +269,7 @@ func (c Classification) Valid() bool {
 	}
 }
 
+// Valid reports whether the evidence source is one AO accepts.
 func (s EvidenceSource) Valid() bool {
 	switch s {
 	case EvidenceSourceStatic, EvidenceSourceTestInfra:
@@ -239,6 +279,7 @@ func (s EvidenceSource) Valid() bool {
 	}
 }
 
+// Valid reports whether the evidence outcome is one AO accepts.
 func (o EvidenceOutcome) Valid() bool {
 	switch o {
 	case EvidenceOutcomeUntested, EvidenceOutcomeConfirmed, EvidenceOutcomeRefuted:
@@ -248,6 +289,7 @@ func (o EvidenceOutcome) Valid() bool {
 	}
 }
 
+// Synthesize combines reviewer findings with runtime evidence into a fused verdict.
 func Synthesize(in SynthesisInput) FusedVerdict {
 	switch in.Baseline.Classification {
 	case ClassificationAppFailed:
@@ -272,7 +314,7 @@ func Synthesize(in SynthesisInput) FusedVerdict {
 		return FusedVerdict{Outcome: FusedOutcomeNeutral}
 	}
 
-	evidenceByFinding := map[string]TestEvidence{}
+	evidenceByFinding := make(map[string]TestEvidence, len(in.Evidence))
 	for _, ev := range in.Evidence {
 		if ev.FindingID == "" {
 			continue
@@ -280,7 +322,7 @@ func Synthesize(in SynthesisInput) FusedVerdict {
 		evidenceByFinding[ev.FindingID] = ev
 	}
 
-	out := FusedVerdict{Outcome: FusedOutcomeApproved}
+	out := FusedVerdict{Outcome: FusedOutcomeApproved, Findings: make([]FusedFinding, 0, len(in.Findings))}
 	for _, finding := range in.Findings {
 		fused := FusedFinding{
 			FindingID: finding.ID,

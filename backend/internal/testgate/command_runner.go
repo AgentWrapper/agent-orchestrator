@@ -1,6 +1,7 @@
 package testgate
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -22,6 +23,7 @@ type CommandRunner struct {
 	timeout time.Duration
 }
 
+// CommandRunnerOptions configures the external runtime-verification command.
 type CommandRunnerOptions struct {
 	Command string
 	Args    []string
@@ -30,12 +32,13 @@ type CommandRunnerOptions struct {
 	Timeout time.Duration
 }
 
+// NewCommandRunner creates a runner for an external test-gate command.
 func NewCommandRunner(opts CommandRunnerOptions) *CommandRunner {
 	timeout := opts.Timeout
 	if timeout <= 0 {
 		timeout = defaultCommandTimeout
 	}
-	env := map[string]string{}
+	env := make(map[string]string, len(opts.Env))
 	for k, v := range opts.Env {
 		env[k] = v
 	}
@@ -48,6 +51,7 @@ func NewCommandRunner(opts CommandRunnerOptions) *CommandRunner {
 	}
 }
 
+// Run executes the configured command and parses its AO_VERDICT output.
 func (r *CommandRunner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	if r == nil || r.command == "" {
 		return NotConfiguredRunner{}.Run(ctx, req)
@@ -64,7 +68,7 @@ func (r *CommandRunner) Run(ctx context.Context, req RunRequest) (RunResult, err
 		return RunResult{}, fmt.Errorf("encode test gate request: %w", err)
 	}
 	cmd := exec.CommandContext(runCtx, r.command, r.args...)
-	cmd.Stdin = strings.NewReader(string(payload))
+	cmd.Stdin = bytes.NewReader(payload)
 	cmd.Env = commandEnv(os.Environ(), r.env, req)
 	if req.WorkspacePath != "" {
 		cmd.Dir = req.WorkspacePath
@@ -92,7 +96,8 @@ func (r *CommandRunner) Run(ctx context.Context, req RunRequest) (RunResult, err
 }
 
 func commandEnv(base []string, extra map[string]string, req RunRequest) []string {
-	env := append([]string(nil), base...)
+	env := make([]string, 0, len(base)+len(extra)+5)
+	env = append(env, base...)
 	for k, v := range extra {
 		env = append(env, k+"="+v)
 	}
