@@ -254,7 +254,14 @@ export function SessionFilesView({
 						)}
 					</Button>
 				) : null}
-				<Button aria-label="Close files" className="shrink-0" onClick={onClose} size="icon-sm" type="button" variant="ghost">
+				<Button
+					aria-label="Close files"
+					className="shrink-0"
+					onClick={onClose}
+					size="icon-sm"
+					type="button"
+					variant="ghost"
+				>
 					<X className="size-icon-sm" aria-hidden="true" />
 				</Button>
 			</header>
@@ -568,7 +575,10 @@ function pushSegment(segments: DiffSegment[], text: string, changed: boolean): v
 
 // intraLineSegments token-diffs two lines via LCS and returns the tokens that
 // only exist on one side marked as changed.
-function intraLineSegments(oldText: string, newText: string): { oldSegments: DiffSegment[]; newSegments: DiffSegment[] } {
+function intraLineSegments(
+	oldText: string,
+	newText: string,
+): { oldSegments: DiffSegment[]; newSegments: DiffSegment[] } {
 	const a = tokenizeLine(oldText);
 	const b = tokenizeLine(newText);
 	const lcs: number[][] = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
@@ -612,7 +622,17 @@ const diffMarkerGlyph: Record<Exclude<DiffRowKind, "hunk">, string> = {
 	context: " ",
 };
 
-function DiffView({ rows, split, truncated, wrap }: { rows: DiffRow[]; split: boolean; truncated?: boolean; wrap: boolean }) {
+function DiffView({
+	rows,
+	split,
+	truncated,
+	wrap,
+}: {
+	rows: DiffRow[];
+	split: boolean;
+	truncated?: boolean;
+	wrap: boolean;
+}) {
 	return (
 		<div className="flex min-h-[220px] max-h-[min(620px,calc(100vh-18rem))] flex-col">
 			{truncated ? (
@@ -646,7 +666,11 @@ function DiffView({ rows, split, truncated, wrap }: { rows: DiffRow[]; split: bo
 										{diffMarkerGlyph[row.kind]}
 									</span>
 									<span className={cn("pr-4", wrap ? "whitespace-pre-wrap break-all" : "whitespace-pre")}>
-										{row.segments ? <DiffLineSegments add={row.kind === "add"} segments={row.segments} /> : row.text || " "}
+										{row.segments ? (
+											<DiffLineSegments add={row.kind === "add"} segments={row.segments} />
+										) : (
+											row.text || " "
+										)}
 									</span>
 								</div>
 							),
@@ -667,9 +691,7 @@ function HunkBand({ row }: { row: DiffRow }) {
 	);
 }
 
-type SplitRow =
-	| { kind: "hunk"; row: DiffRow }
-	| { kind: "pair"; left: DiffRow | null; right: DiffRow | null };
+type SplitRow = { kind: "hunk"; row: DiffRow } | { kind: "pair"; left: DiffRow | null; right: DiffRow | null };
 
 // toSplitRows aligns the unified rows into left (old) / right (new) pairs: each
 // run of deletions lines up index-for-index with the additions that follow it,
