@@ -233,28 +233,6 @@ func (s *lifecycleStore) UpdatePRLastNudgeSignature(_ context.Context, _ string,
 	return nil
 }
 
-// The worker-idle outbox methods are inert stubs like the PR methods above:
-// this test drives activity transitions only, never idle-event delivery.
-func (s *lifecycleStore) ListSessions(_ context.Context, _ domain.ProjectID) ([]domain.SessionRecord, error) {
-	return nil, nil
-}
-
-func (s *lifecycleStore) RecordWorkerIdle(ctx context.Context, rec domain.SessionRecord, _ domain.WorkerIdleEvent) error {
-	return s.UpdateSession(ctx, rec)
-}
-
-func (s *lifecycleStore) ListPendingWorkerIdleEventsByProject(_ context.Context, _ domain.ProjectID) ([]domain.WorkerIdleEvent, error) {
-	return nil, nil
-}
-
-func (s *lifecycleStore) ListPendingWorkerIdleEvents(_ context.Context) ([]domain.WorkerIdleEvent, error) {
-	return nil, nil
-}
-
-func (s *lifecycleStore) MarkWorkerIdleEventDelivered(_ context.Context, _ string, _ time.Time) error {
-	return nil
-}
-
 // TestFullLifecycleSpawnToTermination is the end-to-end integration test the
 // #2692 re-review asked for: it drives the real path — spawn (GetLaunchCommand)
 // -> hooks fire (the script actually runs, calling a stub `ao` on PATH that
