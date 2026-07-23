@@ -26,7 +26,18 @@ type Notification struct {
 	Target Target
 }
 
-// ListFilter controls unread notification listing.
+// ListStatus controls which stored notifications are returned.
+type ListStatus string
+
+const (
+	// ListStatusUnread returns only unread notifications.
+	ListStatusUnread ListStatus = "unread"
+	// ListStatusAll returns recent notifications across read states.
+	ListStatusAll ListStatus = "all"
+)
+
+// ListFilter controls notification listing.
 type ListFilter struct {
-	Limit int
+	Status ListStatus
+	Limit  int
 }

@@ -1818,8 +1818,8 @@ export interface operations {
     listNotifications: {
         parameters: {
             query?: {
-                /** @description Notification status filter. V1 supports only unread. */
-                status?: "unread";
+                /** @description Notification status filter. Defaults to unread; all returns recent read and unread notifications. */
+                status?: "unread" | "all";
                 /** @description Maximum notifications to return. Defaults to 50; capped at 100. */
                 limit?: number;
             };

@@ -33,7 +33,7 @@ type fakeNotificationStream struct {
 	ch         chan domain.NotificationRecord
 }
 
-func (f *fakeNotificationService) ListUnread(_ context.Context, filter notificationsvc.ListFilter) ([]notificationsvc.Notification, error) {
+func (f *fakeNotificationService) List(_ context.Context, filter notificationsvc.ListFilter) ([]notificationsvc.Notification, error) {
 	f.gotFilter = filter
 	return f.items, f.err
 }
@@ -87,6 +87,9 @@ func TestNotificationsAPI_ListUnread(t *testing.T) {
 	if svc.gotFilter.Limit != 10 {
 		t.Fatalf("filter = %+v", svc.gotFilter)
 	}
+	if svc.gotFilter.Status != notificationsvc.ListStatusUnread {
+		t.Fatalf("status = %q, want unread", svc.gotFilter.Status)
+	}
 	var resp struct {
 		Notifications []struct {
 			ID        string `json:"id"`
@@ -102,6 +105,39 @@ func TestNotificationsAPI_ListUnread(t *testing.T) {
 	}
 	mustJSON(t, body, &resp)
 	if len(resp.Notifications) != 1 || resp.Notifications[0].ID != "ntf_1" || resp.Notifications[0].Target.Kind != "session" {
+		t.Fatalf("resp = %+v", resp)
+	}
+}
+
+func TestNotificationsAPI_ListAllIncludesReadHistory(t *testing.T) {
+	now := time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC)
+	svc := &fakeNotificationService{items: []notificationsvc.Notification{
+		{
+			NotificationRecord: domain.NotificationRecord{ID: "ntf_2", SessionID: "mer-2", ProjectID: "mer", Type: domain.NotificationReadyToMerge, Title: "ready", Status: domain.NotificationUnread, CreatedAt: now.Add(time.Minute)},
+			Target:             notificationsvc.Target{Kind: notificationsvc.TargetSession, SessionID: "mer-2"},
+		},
+		{
+			NotificationRecord: domain.NotificationRecord{ID: "ntf_1", SessionID: "mer-1", ProjectID: "mer", Type: domain.NotificationNeedsInput, Title: "past", Status: domain.NotificationRead, CreatedAt: now},
+			Target:             notificationsvc.Target{Kind: notificationsvc.TargetSession, SessionID: "mer-1"},
+		},
+	}}
+	srv := newNotificationTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "GET", "/api/v1/notifications?status=all&limit=10", "")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", status, body)
+	}
+	if svc.gotFilter.Status != notificationsvc.ListStatusAll {
+		t.Fatalf("status filter = %q, want all", svc.gotFilter.Status)
+	}
+	var resp struct {
+		Notifications []struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		} `json:"notifications"`
+	}
+	mustJSON(t, body, &resp)
+	if len(resp.Notifications) != 2 || resp.Notifications[0].Status != "unread" || resp.Notifications[1].Status != "read" {
 		t.Fatalf("resp = %+v", resp)
 	}
 }
@@ -122,7 +158,7 @@ func TestNotificationsAPI_DefaultsAndCapsLimit(t *testing.T) {
 func TestNotificationsAPI_RejectsUnsupportedStatus(t *testing.T) {
 	srv := newNotificationTestServer(t, &fakeNotificationService{})
 
-	body, status, _ := doRequest(t, srv, "GET", "/api/v1/notifications?status=read", "")
+	body, status, _ := doRequest(t, srv, "GET", "/api/v1/notifications?status=archived", "")
 	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_QUERY")
 }
 

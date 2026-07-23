@@ -1,10 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NotificationCenter } from "./NotificationCenter";
 import type { NotificationDTO } from "../lib/notifications";
 
-const notifications: NotificationDTO[] = [
+const defaultNotifications: NotificationDTO[] = [
 	{
 		id: "ntf_1",
 		sessionId: "sess-1",
@@ -30,13 +31,14 @@ const notifications: NotificationDTO[] = [
 		target: { kind: "session", sessionId: "sess-2" },
 	},
 ];
+let queryNotifications = defaultNotifications;
 
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
 
 vi.mock("../hooks/useNotificationsQuery", () => ({
 	useMarkAllNotificationsReadMutation: () => ({ isPending: false, mutateAsync: vi.fn() }),
 	useMarkNotificationReadMutation: () => ({ isPending: false, mutateAsync: vi.fn() }),
-	useNotificationsQuery: () => ({ data: notifications, isError: false }),
+	useNotificationsQuery: () => ({ data: queryNotifications, isError: false }),
 }));
 
 vi.mock("../lib/notifications", async (importOriginal) => ({
@@ -54,6 +56,10 @@ function renderNotificationCenter() {
 }
 
 describe("NotificationCenter", () => {
+	beforeEach(() => {
+		queryNotifications = defaultNotifications;
+	});
+
 	it("renders a filled bell with a text-only yellow unread count", () => {
 		renderNotificationCenter();
 
@@ -67,5 +73,24 @@ describe("NotificationCenter", () => {
 		expect(count).not.toHaveClass("bg-warning");
 		expect(count).not.toHaveClass("rounded-full");
 		expect(count).not.toHaveClass("text-background");
+	});
+
+	it("renders read history as muted items without unread actions", async () => {
+		queryNotifications = [
+			{
+				...defaultNotifications[0],
+				id: "ntf_read",
+				title: "Past notification",
+				status: "read",
+			},
+		];
+
+		renderNotificationCenter();
+		await userEvent.click(screen.getByRole("button", { name: "Notifications" }));
+
+		const title = await screen.findByText("Past notification");
+		expect(title).toHaveClass("text-muted-foreground");
+		expect(screen.queryByText("No unread notifications.")).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Mark notification read" })).not.toBeInTheDocument();
 	});
 });

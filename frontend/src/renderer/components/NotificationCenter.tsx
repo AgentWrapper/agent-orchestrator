@@ -9,7 +9,7 @@ import {
 } from "../hooks/useNotificationsQuery";
 import { aoBridge } from "../lib/bridge";
 import { formatTimeCompact } from "../lib/format-time";
-import { createNotificationsTransport, type NotificationDTO, unreadNotificationsQueryKey } from "../lib/notifications";
+import { createNotificationsTransport, notificationsQueryKey, type NotificationDTO } from "../lib/notifications";
 import { captureRendererEvent } from "../lib/telemetry";
 import { cn } from "../lib/utils";
 import { TopbarButton } from "./TopbarButton";
@@ -59,7 +59,7 @@ export function NotificationRuntime() {
 
 	useEffect(() => {
 		return aoBridge.notifications.onClick((id) => {
-			const current = queryClient.getQueryData<NotificationDTO[]>(unreadNotificationsQueryKey) ?? [];
+			const current = queryClient.getQueryData<NotificationDTO[]>(notificationsQueryKey) ?? [];
 			const notification = current.find((item) => item.id === id);
 			if (notification) openTarget(notification);
 		});
@@ -74,7 +74,7 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 	const markAllRead = useMarkAllNotificationsReadMutation();
 	const [actionError, setActionError] = useState<string | null>(null);
 	const notifications = useMemo(() => notificationsQuery.data ?? [], [notificationsQuery.data]);
-	const unreadCount = notifications.length;
+	const unreadCount = notifications.filter((notification) => notification.status === "unread").length;
 	const openTarget = useNotificationTargetNavigation();
 
 	const markOneRead = async (id: string) => {
@@ -133,10 +133,10 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 					</button>
 				</div>
 				{actionError ? <div className="border-b border-border px-3 py-2 text-xs text-error">{actionError}</div> : null}
-				{notificationsQuery.isError && unreadCount === 0 ? (
+				{notificationsQuery.isError && notifications.length === 0 ? (
 					<div className="px-3 py-8 text-center text-control text-muted-foreground">Could not load notifications.</div>
-				) : unreadCount === 0 ? (
-					<div className="px-3 py-8 text-center text-control text-muted-foreground">No unread notifications.</div>
+				) : notifications.length === 0 ? (
+					<div className="px-3 py-8 text-center text-control text-muted-foreground">No notifications yet.</div>
 				) : (
 					<div className="max-h-notification-max-height overflow-y-auto p-1">
 						{notifications.map((notification, index) => (
@@ -169,26 +169,39 @@ function NotificationItem({
 	onOpen: (notification: NotificationDTO) => void;
 }) {
 	const Icon = notificationIcon(notification.type);
+	const isRead = notification.status === "read";
 	return (
 		<div className="grid grid-cols-notification gap-2 rounded-md px-2 py-2.5">
 			<div
 				className={cn(
 					"mt-0.5 grid size-control-sm place-items-center rounded-md border",
-					notification.type === "needs_input" && "border-warning/40 text-warning",
-					notification.type === "ready_to_merge" && "border-success/40 text-success",
-					notification.type === "pr_merged" && "border-accent-dim text-accent",
-					notification.type === "pr_closed_unmerged" && "border-error/40 text-error",
+					isRead && "border-border text-muted-foreground",
+					!isRead && notification.type === "needs_input" && "border-warning/40 text-warning",
+					!isRead && notification.type === "ready_to_merge" && "border-success/40 text-success",
+					!isRead && notification.type === "pr_merged" && "border-accent-dim text-accent",
+					!isRead && notification.type === "pr_closed_unmerged" && "border-error/40 text-error",
 				)}
 			>
 				<Icon className="size-icon-md" aria-hidden="true" />
 			</div>
 			<div className="min-w-0">
 				<div className="flex min-w-0 items-center gap-2">
-					<p className="truncate text-control font-medium leading-row text-foreground">{notification.title}</p>
+					<p
+						className={cn(
+							"truncate text-control font-medium leading-row",
+							isRead ? "text-muted-foreground" : "text-foreground",
+						)}
+					>
+						{notification.title}
+					</p>
 					<span className="shrink-0 text-caption text-passive">{formatTimeCompact(notification.createdAt)}</span>
 				</div>
 				{notification.body ? (
-					<p className="mt-0.5 line-clamp-2 text-xs leading-row text-muted-foreground">{notification.body}</p>
+					<p
+						className={cn("mt-0.5 line-clamp-2 text-xs leading-row", isRead ? "text-passive" : "text-muted-foreground")}
+					>
+						{notification.body}
+					</p>
 				) : null}
 			</div>
 			<div className="flex items-start gap-1">
@@ -201,16 +214,18 @@ function NotificationItem({
 				>
 					<ExternalLink className="size-icon-md" aria-hidden="true" />
 				</button>
-				<button
-					aria-label="Mark notification read"
-					className="grid size-control-md place-items-center rounded-md text-muted-foreground hover:bg-surface hover:text-foreground disabled:pointer-events-none disabled:opacity-45"
-					disabled={disabled}
-					onClick={() => void onMarkRead(notification.id)}
-					title="Mark read"
-					type="button"
-				>
-					<Check className="size-icon-md" aria-hidden="true" />
-				</button>
+				{isRead ? null : (
+					<button
+						aria-label="Mark notification read"
+						className="grid size-control-md place-items-center rounded-md text-muted-foreground hover:bg-surface hover:text-foreground disabled:pointer-events-none disabled:opacity-45"
+						disabled={disabled}
+						onClick={() => void onMarkRead(notification.id)}
+						title="Mark read"
+						type="button"
+					>
+						<Check className="size-icon-md" aria-hidden="true" />
+					</button>
+				)}
 			</div>
 		</div>
 	);
