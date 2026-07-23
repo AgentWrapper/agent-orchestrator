@@ -10,6 +10,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -59,24 +60,28 @@ func (p previewProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writePreviewProxyError(w, http.StatusNotFound)
 		return
 	}
+	requestPath, rawRequestPath, err := previewRequestSuffixPath(r)
+	if err != nil {
+		writePreviewProxyError(w, http.StatusBadRequest)
+		return
+	}
 	if target.url.Scheme == "file" {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			writePreviewProxyError(w, http.StatusMethodNotAllowed)
 			return
 		}
-		p.serveFile(w, r, workspace, resolvePreviewFileRequestPath(target.url.Path, chi.URLParam(r, "*")))
+		p.serveFile(w, r, workspace, resolvePreviewFileRequestPath(target.url.Path, requestPath))
 		return
 	}
 	if (target.url.Path != "" && target.url.Path != "/") || target.url.RawQuery != "" {
 		writePreviewProxyError(w, http.StatusBadRequest)
 		return
 	}
-	requestPath := "/" + strings.TrimPrefix(chi.URLParam(r, "*"), "/")
-	if isPreviewBlockedTargetPath(requestPath) {
+	if isPreviewBlockedTargetPath(pathpkg.Clean(requestPath)) {
 		writePreviewProxyError(w, http.StatusBadRequest)
 		return
 	}
-	p.serveLoopback(w, r, target.url, requestPath)
+	p.serveLoopback(w, r, target.url, requestPath, rawRequestPath)
 }
 
 func parsePreviewTarget(raw string) (previewTarget, error) {
@@ -177,7 +182,28 @@ func isPreviewBlockedTargetPath(path string) bool {
 	return path == "/_ao/preview" || strings.HasPrefix(path, "/_ao/preview/")
 }
 
-func (p previewProxy) serveLoopback(w http.ResponseWriter, r *http.Request, target *url.URL, requestPath string) {
+func previewRequestSuffixPath(r *http.Request) (string, string, error) {
+	routePath, ok := strings.CutPrefix(r.URL.EscapedPath(), "/_ao/preview/")
+	if !ok {
+		return "", "", errInvalidPreviewTarget
+	}
+	separator := strings.IndexByte(routePath, '/')
+	if separator < 0 {
+		return "", "", errInvalidPreviewTarget
+	}
+	sessionID, err := url.PathUnescape(routePath[:separator])
+	if err != nil || sessionID != chi.URLParam(r, "sessionId") {
+		return "", "", errInvalidPreviewTarget
+	}
+	rawPath := routePath[separator:]
+	requestPath, err := url.PathUnescape(rawPath)
+	if err != nil {
+		return "", "", errInvalidPreviewTarget
+	}
+	return requestPath, rawPath, nil
+}
+
+func (p previewProxy) serveLoopback(w http.ResponseWriter, r *http.Request, target *url.URL, requestPath, rawRequestPath string) {
 	targetOrigin := &url.URL{Scheme: target.Scheme, Host: target.Host}
 	transport := previewLoopbackTransport(targetOrigin)
 	defer transport.CloseIdleConnections()
@@ -187,10 +213,9 @@ func (p previewProxy) serveLoopback(w http.ResponseWriter, r *http.Request, targ
 		Rewrite: func(request *httputil.ProxyRequest) {
 			request.Out.URL.Scheme = targetOrigin.Scheme
 			request.Out.URL.Host = targetOrigin.Host
+			request.Out.URL.RawQuery = request.In.URL.RawQuery
 			request.Out.Host = targetOrigin.Host
-			if request.Out.Header.Get("Origin") != "" {
-				request.Out.Header.Set("Origin", previewOrigin(targetOrigin))
-			}
+			request.Out.Header.Set("Origin", previewOrigin(targetOrigin))
 			stripPreviewProxyRequestHeaders(request.Out)
 		},
 		ModifyResponse: func(response *http.Response) error {
@@ -203,7 +228,7 @@ func (p previewProxy) serveLoopback(w http.ResponseWriter, r *http.Request, targ
 	proxyRequest := r.Clone(r.Context())
 	requestURL := *r.URL
 	requestURL.Path = requestPath
-	requestURL.RawPath = ""
+	requestURL.RawPath = rawRequestPath
 	proxyRequest.URL = &requestURL
 	proxy.ServeHTTP(w, proxyRequest)
 }
@@ -260,6 +285,16 @@ func stripPreviewProxyRequestHeaders(r *http.Request) {
 }
 
 func mapPreviewRedirect(response *http.Response, target *url.URL) error {
+	for name := range response.Header {
+		if strings.HasPrefix(strings.ToLower(name), "x-ao-preview-") {
+			response.Header.Del(name)
+		}
+	}
+	switch response.StatusCode {
+	case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+	default:
+		return nil
+	}
 	location := response.Header.Get("Location")
 	if location == "" {
 		return nil

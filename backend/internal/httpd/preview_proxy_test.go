@@ -232,6 +232,7 @@ func TestPreviewProxy_FilesResolveRequestPathRelativeToEntry(t *testing.T) {
 	}{
 		{name: "entry path", requestPath: "/index.html", wantStatus: http.StatusOK, wantBody: "entry"},
 		{name: "asset path", requestPath: "/assets/app.css", wantStatus: http.StatusOK, wantBody: "asset"},
+		{name: "encoded asset path", requestPath: "/assets%2Fapp.css", wantStatus: http.StatusOK, wantBody: "asset"},
 		{name: "asset symlink escape", requestPath: "/assets/escape.css", wantStatus: http.StatusNotFound},
 		{name: "parent traversal escape", requestPath: "/../../secret.css", wantStatus: http.StatusNotFound},
 	} {
@@ -347,6 +348,83 @@ func TestPreviewProxy_HTTP(t *testing.T) {
 	}
 }
 
+func TestPreviewProxy_SetsUpstreamOriginWithoutIncomingOrigin(t *testing.T) {
+	upstreamOrigin := make(chan string, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamOrigin <- r.Header.Get("Origin")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+	daemon := newPreviewProxyTestServer(t)
+	defer daemon.Close()
+
+	req, err := http.NewRequest(http.MethodGet, daemon.URL+"/_ao/preview/ao-1/origin", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set(previewTargetHeader, upstream.URL)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if got := <-upstreamOrigin; got != upstream.URL {
+		t.Fatalf("upstream Origin = %q, want %q", got, upstream.URL)
+	}
+}
+
+func TestPreviewProxy_PreservesRawQuery(t *testing.T) {
+	const wantQuery = "a=1;b=2&x=%2F"
+	upstreamQuery := make(chan string, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamQuery <- r.URL.RawQuery
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+	daemon := newPreviewProxyTestServer(t)
+	defer daemon.Close()
+
+	req, err := http.NewRequest(http.MethodGet, daemon.URL+"/_ao/preview/ao-1/query?"+wantQuery, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set(previewTargetHeader, upstream.URL)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if got := <-upstreamQuery; got != wantQuery {
+		t.Fatalf("upstream RawQuery = %q, want %q", got, wantQuery)
+	}
+}
+
+func TestPreviewProxy_PreservesEscapedPath(t *testing.T) {
+	const wantRequestURI = "/assets/a%2Fb%20c%3Fd.js"
+	upstreamRequestURI := make(chan string, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamRequestURI <- r.RequestURI
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+	daemon := newPreviewProxyTestServer(t)
+	defer daemon.Close()
+
+	req, err := http.NewRequest(http.MethodGet, daemon.URL+"/_ao/preview/ao-1"+wantRequestURI, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set(previewTargetHeader, upstream.URL)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if got := <-upstreamRequestURI; got != wantRequestURI {
+		t.Fatalf("upstream RequestURI = %q, want %q", got, wantRequestURI)
+	}
+}
+
 func TestPreviewProxy_HTTPRedirects(t *testing.T) {
 	var targetOrigin string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -413,6 +491,69 @@ func TestPreviewProxy_HTTPRedirects(t *testing.T) {
 	}
 }
 
+func TestPreviewProxy_StripsUpstreamPreviewResponseHeaders(t *testing.T) {
+	var targetOrigin string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(previewRedirectTargetHeader, "http://127.0.0.1:1")
+		w.Header().Set("X-AO-Preview-Upstream-Secret", "leak")
+		switch r.URL.Path {
+		case "/ok":
+			w.WriteHeader(http.StatusOK)
+		case "/ok-location":
+			w.Header().Set("Location", "http://127.0.0.1:43210/next")
+			w.WriteHeader(http.StatusOK)
+		case "/error-location":
+			w.Header().Set("Location", "http://127.0.0.1:43210/next")
+			w.WriteHeader(http.StatusNotFound)
+		case "/same-origin":
+			w.Header().Set("Location", targetOrigin+"/next")
+			w.WriteHeader(http.StatusFound)
+		case "/cross-loopback":
+			w.Header().Set("Location", "http://127.0.0.1:43210/next")
+			w.WriteHeader(http.StatusFound)
+		}
+	}))
+	defer upstream.Close()
+	targetOrigin = previewTargetWithHostname(t, upstream.URL, "localhost")
+	daemon := newPreviewProxyTestServer(t)
+	defer daemon.Close()
+	client := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+
+	for _, tc := range []struct {
+		path               string
+		wantLocation       string
+		wantRedirectTarget string
+	}{
+		{path: "/ok"},
+		{path: "/ok-location", wantLocation: "http://127.0.0.1:43210/next"},
+		{path: "/error-location", wantLocation: "http://127.0.0.1:43210/next"},
+		{path: "/same-origin", wantLocation: targetOrigin + "/next"},
+		{path: "/cross-loopback", wantLocation: "http://127.0.0.1:43210/next", wantRedirectTarget: "http://127.0.0.1:43210"},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodGet, daemon.URL+"/_ao/preview/ao-1"+tc.path, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set(previewTargetHeader, targetOrigin)
+			resp, err := client.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if got := resp.Header.Get("Location"); got != tc.wantLocation {
+				t.Fatalf("Location = %q, want %q", got, tc.wantLocation)
+			}
+			if got := resp.Header.Get(previewRedirectTargetHeader); got != tc.wantRedirectTarget {
+				t.Fatalf("%s = %q, want %q", previewRedirectTargetHeader, got, tc.wantRedirectTarget)
+			}
+			if got := resp.Header.Get("X-AO-Preview-Upstream-Secret"); got != "" {
+				t.Fatalf("upstream internal response header leaked: %q", got)
+			}
+		})
+	}
+}
+
 func TestPreviewProxy_HTTPRejectsNonOriginTargetsAndBlockedSuffixes(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		t.Error("blocked preview request reached upstream")
@@ -431,6 +572,8 @@ func TestPreviewProxy_HTTPRejectsNonOriginTargetsAndBlockedSuffixes(t *testing.T
 		{name: "target query", target: upstream.URL + "?base=1", path: "/asset.js"},
 		{name: "recursive suffix", target: upstream.URL, path: "/_ao/preview/ao-1/asset.js"},
 		{name: "control suffix", target: upstream.URL, path: "/shutdown"},
+		{name: "encoded cleaned recursive suffix", target: upstream.URL, path: "/%2F_ao%2Fpreview%2Fao-1/asset.js"},
+		{name: "encoded cleaned control suffix", target: upstream.URL, path: "/%2Fshutdown"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req, err := http.NewRequest(http.MethodGet, daemon.URL+"/_ao/preview/ao-1"+tc.path, nil)
@@ -529,9 +672,14 @@ func TestPreviewProxy_HTTPS(t *testing.T) {
 
 func TestPreviewProxy_WebSocket(t *testing.T) {
 	upstreamResult := make(chan error, 1)
+	var targetOrigin string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/socket" || r.URL.RawQuery != "room=one" {
 			upstreamResult <- fmt.Errorf("unexpected upstream path/query: %s", r.URL.RequestURI())
+			return
+		}
+		if got := r.Header.Get("Origin"); got != targetOrigin {
+			upstreamResult <- fmt.Errorf("upstream Origin = %q, want %q", got, targetOrigin)
 			return
 		}
 		conn, err := websocket.Accept(w, r, nil)
@@ -547,6 +695,7 @@ func TestPreviewProxy_WebSocket(t *testing.T) {
 		upstreamResult <- err
 	}))
 	defer upstream.Close()
+	targetOrigin = upstream.URL
 	daemon := newPreviewProxyTestServer(t)
 	defer daemon.Close()
 
@@ -555,7 +704,6 @@ func TestPreviewProxy_WebSocket(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(daemon.URL, "http") + "/_ao/preview/ao-1/socket?room=one"
 	conn, resp, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{HTTPHeader: http.Header{
 		previewTargetHeader: []string{upstream.URL},
-		"Origin":            []string{daemon.URL},
 	}})
 	if err != nil {
 		if resp != nil {
