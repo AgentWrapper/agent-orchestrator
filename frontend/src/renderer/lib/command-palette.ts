@@ -63,6 +63,10 @@ type SessionCommandGroup = Extract<CommandGroupId, "attention" | "sessions">;
 
 const SESSION_ID_PREFIX: Record<SessionCommandGroup, string> = { attention: "attention", sessions: "session" };
 
+function keywords(...values: Array<string | undefined>): string[] {
+	return values.filter((value): value is string => Boolean(value));
+}
+
 function sessionCommand(
 	workspace: WorkspaceSummary,
 	session: WorkspaceSession,
@@ -196,7 +200,7 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 					group: "prs",
 					title: `#${pr.number}`,
 					subtitle: `${session.title} · ${workspace.name}`,
-					keywords: [
+					keywords: keywords(
 						`#${pr.number}`,
 						String(pr.number),
 						pr.url,
@@ -204,7 +208,7 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 						session.branch ?? "",
 						workspace.name,
 						pr.state,
-					],
+					),
 					action: {
 						kind: "navigate",
 						target: {

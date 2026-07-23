@@ -3,6 +3,7 @@ package testgate
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -88,6 +89,33 @@ func (f *fakeRunner) Run(_ context.Context, req RunRequest) (RunResult, error) {
 	return f.result, f.err
 }
 
+type blockingRunner struct {
+	mu       sync.Mutex
+	requests []RunRequest
+	result   RunResult
+	started  chan struct{}
+	release  chan struct{}
+}
+
+func (r *blockingRunner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
+	r.mu.Lock()
+	r.requests = append(r.requests, req)
+	r.mu.Unlock()
+	r.started <- struct{}{}
+	select {
+	case <-r.release:
+		return r.result, nil
+	case <-ctx.Done():
+		return RunResult{}, ctx.Err()
+	}
+}
+
+func (r *blockingRunner) requestCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.requests)
+}
+
 func TestManagerRunBaselineExecutesRunnerAndStoresRun(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	st := &fakeManagerStore{}
@@ -115,6 +143,65 @@ func TestManagerRunBaselineExecutesRunnerAndStoresRun(t *testing.T) {
 	}
 	if len(st.insertedRuns) != 1 || st.insertedRuns[0].Artifacts[0] != "trace.zip" {
 		t.Fatalf("inserted runs = %+v", st.insertedRuns)
+	}
+}
+
+func TestManagerRunAfterReviewSubmitWaitsForActiveBaselineInsteadOfUsingStaleStoredRun(t *testing.T) {
+	st := &fakeManagerStore{
+		hasBaseline: true,
+		baseline:    TestRun{ID: "old-baseline", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Kind: RunKindBaseline, Classification: ClassificationAppFailed, Summary: "old failure"},
+	}
+	runner := &blockingRunner{
+		result:  RunResult{Run: TestRun{Classification: ClassificationPassed, Summary: "fresh baseline passed"}},
+		started: make(chan struct{}, 1),
+		release: make(chan struct{}),
+	}
+	ids := []string{"fresh-baseline", "fused-1"}
+	m := NewManager(ManagerDeps{
+		Store:  st,
+		Runner: runner,
+		NewID: func() string {
+			id := ids[0]
+			ids = ids[1:]
+			return id
+		},
+	})
+	reviewRun := domain.ReviewRun{ID: "review-run-1", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Verdict: domain.VerdictApproved}
+
+	m.StartBaseline(context.Background(), reviewRun)
+	select {
+	case <-runner.started:
+	case <-time.After(time.Second):
+		t.Fatal("baseline runner did not start")
+	}
+	fusedCh := make(chan FusedVerdict, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		fused, ok, err := m.RunAfterReviewSubmit(context.Background(), reviewRun)
+		if err != nil {
+			errCh <- err
+			return
+		}
+		if !ok {
+			errCh <- errors.New("RunAfterReviewSubmit ok=false")
+			return
+		}
+		fusedCh <- fused
+	}()
+
+	close(runner.release)
+	select {
+	case err := <-errCh:
+		t.Fatalf("RunAfterReviewSubmit: %v", err)
+	case fused := <-fusedCh:
+		if fused.Outcome != FusedOutcomeApproved || fused.TestRunID != "fresh-baseline" {
+			t.Fatalf("fused = %+v, want fresh approved baseline", fused)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("RunAfterReviewSubmit did not finish after baseline release")
+	}
+	if got := runner.requestCount(); got != 1 {
+		t.Fatalf("runner calls = %d, want single active baseline reused", got)
 	}
 }
 

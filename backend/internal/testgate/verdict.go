@@ -44,6 +44,15 @@ const (
 	SeverityCritical Severity = "critical"
 )
 
+func (s Severity) Valid() bool {
+	switch s {
+	case "", SeverityLow, SeverityMedium, SeverityHigh, SeverityCritical:
+		return true
+	default:
+		return false
+	}
+}
+
 type ReviewVerdict string
 
 const (
@@ -122,6 +131,8 @@ type SynthesisInput struct {
 
 type FusedFinding struct {
 	FindingID      string          `json:"findingId,omitempty"`
+	File           string          `json:"file,omitempty"`
+	Line           int             `json:"line,omitempty"`
 	Source         EvidenceSource  `json:"source" enum:"static,test-infra"`
 	RuntimeOutcome EvidenceOutcome `json:"runtimeOutcome,omitempty" enum:"not_tested,confirmed,refuted"`
 	Severity       Severity        `json:"severity,omitempty" enum:"low,medium,high,critical"`
@@ -273,6 +284,8 @@ func Synthesize(in SynthesisInput) FusedVerdict {
 	for _, finding := range in.Findings {
 		fused := FusedFinding{
 			FindingID: finding.ID,
+			File:      finding.File,
+			Line:      finding.Line,
 			Source:    EvidenceSourceStatic,
 			Severity:  finding.Severity,
 			Title:     finding.Title,

@@ -7,6 +7,7 @@ package review
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -41,6 +42,9 @@ type Service struct {
 	lifecycle Reducer
 	testGate  TestGate
 	clock     func() time.Time
+	logger    *slog.Logger
+	bgCtx     context.Context
+	asyncGate bool
 }
 
 var _ Manager = (*Service)(nil)
@@ -82,6 +86,23 @@ func WithTestGate(g TestGate) Option {
 	return func(s *Service) { s.testGate = g }
 }
 
+// WithAsyncTestGate lets submit return after persistence while runtime
+// verification and worker delivery continue on the service background context.
+func WithAsyncTestGate() Option {
+	return func(s *Service) { s.asyncGate = true }
+}
+
+// WithBackgroundContext owns asynchronous review work. When unset, async work
+// is detached from the caller's cancellation with context.WithoutCancel.
+func WithBackgroundContext(ctx context.Context) Option {
+	return func(s *Service) { s.bgCtx = ctx }
+}
+
+// WithLogger overrides the service logger for tests.
+func WithLogger(logger *slog.Logger) Option {
+	return func(s *Service) { s.logger = logger }
+}
+
 // WithClock overrides the service clock for tests.
 func WithClock(clock func() time.Time) Option {
 	return func(s *Service) { s.clock = clock }
@@ -93,6 +114,7 @@ func New(engine *reviewcore.Engine, store Store, opts ...Option) *Service {
 		engine: engine,
 		store:  store,
 		clock:  func() time.Time { return time.Now().UTC() },
+		logger: slog.Default(),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -108,7 +130,7 @@ func (s *Service) Trigger(ctx context.Context, workerID domain.SessionID) (revie
 	}
 	if s.testGate != nil {
 		for _, run := range res.CreatedRuns {
-			s.testGate.StartBaseline(ctx, run)
+			s.testGate.StartBaseline(s.testGateContext(ctx), run)
 		}
 	}
 	return res, nil
@@ -166,14 +188,16 @@ func (s *Service) SubmitMany(ctx context.Context, workerID domain.SessionID, rev
 			return nil, err
 		}
 		runs = append(runs, run)
-		if s.testGate != nil {
-			fused, ok, err := s.testGate.RunAfterReviewSubmit(ctx, run)
-			if err != nil {
-				return nil, err
-			}
-			if ok {
-				fusedByRun[run.ID] = fused
-			}
+	}
+	if s.testGate != nil && s.asyncGate {
+		s.runSubmittedTestGateAsync(ctx, workerID, runs)
+		return runs, nil
+	}
+	if s.testGate != nil {
+		var err error
+		fusedByRun, err = s.runSubmittedTestGate(ctx, runs)
+		if err != nil {
+			return nil, err
 		}
 	}
 	if s.lifecycle == nil {
@@ -193,6 +217,45 @@ func (s *Service) SubmitMany(ctx context.Context, workerID domain.SessionID, rev
 		}
 	}
 	return runs, nil
+}
+
+func (s *Service) runSubmittedTestGateAsync(ctx context.Context, workerID domain.SessionID, runs []domain.ReviewRun) {
+	bg := s.testGateContext(ctx)
+	runs = append([]domain.ReviewRun(nil), runs...)
+	go func() {
+		fusedByRun, err := s.runSubmittedTestGate(bg, runs)
+		if err != nil {
+			s.logger.Warn("review test gate failed after submit", "workerID", workerID, "err", err)
+			return
+		}
+		if s.lifecycle == nil {
+			return
+		}
+		if _, err := s.deliverSubmitted(bg, workerID, runs, fusedByRun); err != nil {
+			s.logger.Warn("review delivery failed after test gate", "workerID", workerID, "err", err)
+		}
+	}()
+}
+
+func (s *Service) runSubmittedTestGate(ctx context.Context, runs []domain.ReviewRun) (map[string]testgate.FusedVerdict, error) {
+	fusedByRun := make(map[string]testgate.FusedVerdict, len(runs))
+	for _, run := range runs {
+		fused, ok, err := s.testGate.RunAfterReviewSubmit(ctx, run)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			fusedByRun[run.ID] = fused
+		}
+	}
+	return fusedByRun, nil
+}
+
+func (s *Service) testGateContext(ctx context.Context) context.Context {
+	if s.bgCtx != nil {
+		return s.bgCtx
+	}
+	return context.WithoutCancel(ctx)
 }
 
 func (s *Service) submitOne(ctx context.Context, workerID domain.SessionID, review SubmittedReview) (domain.ReviewRun, error) {
@@ -218,6 +281,14 @@ func (s *Service) submitOne(ctx context.Context, workerID domain.SessionID, revi
 	}
 	if run.SessionID != workerID {
 		return domain.ReviewRun{}, fmt.Errorf("%w: review run %q does not belong to worker %q", ErrInvalid, runID, workerID)
+	}
+	var findings []testgate.ReviewFinding
+	if review.Findings != nil {
+		var err error
+		findings, err = normalizeFindings(run.ID, review.Findings)
+		if err != nil {
+			return domain.ReviewRun{}, err
+		}
 	}
 
 	switch run.Status {
@@ -249,7 +320,7 @@ func (s *Service) submitOne(ctx context.Context, workerID domain.SessionID, revi
 		return domain.ReviewRun{}, fmt.Errorf("%w: review run %q is not running", ErrInvalid, runID)
 	}
 	if review.Findings != nil {
-		if err := s.store.ReplaceReviewFindings(ctx, run.ID, normalizeFindings(run.ID, review.Findings), s.clock()); err != nil {
+		if err := s.store.ReplaceReviewFindings(ctx, run.ID, findings, s.clock()); err != nil {
 			return domain.ReviewRun{}, err
 		}
 	}
@@ -393,9 +464,12 @@ func (s *Service) List(ctx context.Context, workerID domain.SessionID) (reviewco
 	return res, nil
 }
 
-func normalizeFindings(runID string, findings []testgate.ReviewFinding) []testgate.ReviewFinding {
+func normalizeFindings(runID string, findings []testgate.ReviewFinding) ([]testgate.ReviewFinding, error) {
 	out := make([]testgate.ReviewFinding, 0, len(findings))
 	for i, finding := range findings {
+		if !finding.Severity.Valid() {
+			return nil, fmt.Errorf("%w: finding %d severity must be low, medium, high, or critical", ErrInvalid, i+1)
+		}
 		finding.ID = normalizeFindingID(runID, finding.ID, i)
 		finding.RunID = runID
 		if strings.TrimSpace(finding.Title) == "" {
@@ -403,7 +477,7 @@ func normalizeFindings(runID string, findings []testgate.ReviewFinding) []testga
 		}
 		out = append(out, finding)
 	}
-	return out
+	return out, nil
 }
 
 func normalizeFindingID(runID, id string, index int) string {
@@ -435,6 +509,10 @@ func fusedDeliveryBody(reviewBody string, fused testgate.FusedVerdict) string {
 		}
 		title := firstNonEmpty(finding.Title, finding.Claim, "Runtime finding")
 		b.WriteString("\n- ")
+		if location := findingLocation(finding); location != "" {
+			b.WriteString(location)
+			b.WriteString(" ")
+		}
 		b.WriteString(title)
 		if finding.Summary != "" {
 			b.WriteString(": ")
@@ -442,6 +520,16 @@ func fusedDeliveryBody(reviewBody string, fused testgate.FusedVerdict) string {
 		}
 	}
 	return b.String()
+}
+
+func findingLocation(finding testgate.FusedFinding) string {
+	if strings.TrimSpace(finding.File) == "" {
+		return ""
+	}
+	if finding.Line > 0 {
+		return fmt.Sprintf("%s:%d", finding.File, finding.Line)
+	}
+	return finding.File
 }
 
 func hasRuntimeRefutation(fused testgate.FusedVerdict) bool {

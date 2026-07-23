@@ -98,6 +98,23 @@ describe("buildCommands grouping", () => {
 		const orch = buildCommands({ workspaces: workspaces(), currentSessionId: "orch" });
 		expect(byId(orch).has("current-copy-branch")).toBe(false);
 	});
+
+	it("omits branch-only command data when a session has no branch", () => {
+		const ws: WorkspaceSummary[] = [
+			{
+				id: "proj-1",
+				name: "app",
+				path: "/repos/app",
+				type: "main",
+				sessions: [session({ id: "w-branchless", title: "branchless", branch: undefined, prs: [pr(77)] })],
+			},
+		];
+
+		const items = buildCommands({ workspaces: ws, currentSessionId: "w-branchless" });
+		const map = byId(items);
+		expect(map.has("current-copy-branch")).toBe(false);
+		expect(map.get("pr:w-branchless:77")?.keywords).not.toContain(undefined);
+	});
 });
 
 describe("buildCommands attention", () => {
