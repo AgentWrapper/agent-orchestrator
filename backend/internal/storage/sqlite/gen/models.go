@@ -109,6 +109,7 @@ type PRReview struct {
 	URL         string
 	IsBot       int64
 	SubmittedAt time.Time
+	Body        string
 }
 
 type PRReviewThread struct {
