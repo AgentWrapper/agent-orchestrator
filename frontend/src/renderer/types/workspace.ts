@@ -131,8 +131,6 @@ export type WorkspaceSession = {
 	status: SessionStatus;
 	/** Durable runtime fact from the daemon; independent of the derived SCM-aware status. */
 	isTerminated?: boolean;
-	/** User preference to tear down this session when its PR set completes through a merge. */
-	terminateOnPrMerge?: boolean;
 	/** ISO timestamp from the daemon — used for relative time in the inspector. */
 	createdAt?: string;
 	/** ISO timestamp from the daemon. */

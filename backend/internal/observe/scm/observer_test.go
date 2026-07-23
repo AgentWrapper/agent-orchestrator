@@ -254,19 +254,6 @@ func TestDispatchOrderIsDeterministic(t *testing.T) {
 	}
 }
 
-func TestTrackedPRsForSessionRetainsTerminalPRsOnlyForAutoTerminationRetry(t *testing.T) {
-	prs := []domain.PullRequest{
-		{Number: 1},
-		{Number: 2, Merged: true},
-		{Number: 3, Closed: true},
-	}
-	if got := trackedPRsForSession(domain.SessionRecord{}, prs); len(got) != 1 || got[0].Number != 1 {
-		t.Fatalf("default tracked PRs = %+v, want only open PR", got)
-	}
-	if got := trackedPRsForSession(domain.SessionRecord{TerminateOnPRMerge: true}, prs); len(got) != 3 {
-		t.Fatalf("auto-termination tracked PRs = %+v, want open and terminal PRs", got)
-	}
-}
 func quietSlog() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
 func testStoreWithSession() *fakeStore {

@@ -371,9 +371,11 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 	return true, nil
 }
 
-// IsSupervisedProcessAlive reports whether the exact AO supervisor for ref is
-// still a descendant of this tmux pane. A successful process-table scan with
-// no match is definitive workload exit; command failures remain inconclusive.
+// IsSupervisedProcessAlive reports whether the managed workload for ref is
+// still a descendant of this tmux pane. The initial launch is identified by
+// its exact AO supervisor. After that supervisor exits and leaves the
+// interactive shell behind, a child launched from that shell is treated as a
+// manually resumed workload. Command failures remain inconclusive.
 func (r *Runtime) IsSupervisedProcessAlive(ctx context.Context, handle ports.RuntimeHandle, ref ports.SupervisedProcessRef) (bool, error) {
 	id, err := handleID(handle)
 	if err != nil {
@@ -396,7 +398,7 @@ func (r *Runtime) IsSupervisedProcessAlive(ctx context.Context, handle ports.Run
 	if err != nil {
 		return false, fmt.Errorf("tmux runtime: parse process tree %s: %w", id, err)
 	}
-	return containsSupervisor(entries, panePID, string(ref.SessionID), ref.LaunchID), nil
+	return containsManagedWorkload(entries, panePID, string(ref.SessionID), ref.LaunchID), nil
 }
 
 // SendMessage sends literal text to the session (chunked via send-keys -l) then
@@ -583,7 +585,7 @@ func parseProcessTable(out string) ([]processEntry, error) {
 	return entries, nil
 }
 
-func containsSupervisor(entries []processEntry, rootPID int, sessionID, launchID string) bool {
+func descendantPIDs(entries []processEntry, rootPID int) map[int]bool {
 	descendants := map[int]bool{rootPID: true}
 	for changed := true; changed; {
 		changed = false
@@ -595,8 +597,47 @@ func containsSupervisor(entries []processEntry, rootPID int, sessionID, launchID
 			changed = true
 		}
 	}
+	return descendants
+}
+
+func containsManagedWorkload(entries []processEntry, rootPID int, sessionID, launchID string) bool {
+	descendants := descendantPIDs(entries, rootPID)
+	hasChild := false
+	hasSupervisor := false
+	for _, entry := range entries {
+		if entry.pid == rootPID || !descendants[entry.pid] {
+			continue
+		}
+		hasChild = true
+		if !isAnySupervisorCommand(entry.command) {
+			continue
+		}
+		hasSupervisor = true
+		if isSupervisorCommand(entry.command, sessionID, launchID) {
+			return true
+		}
+	}
+
+	// A supervisor in the pane tree must match the current generation. Once no
+	// supervisor remains, the pane root is the preserved interactive shell and
+	// any child is a workload the operator launched from that shell.
+	return hasChild && !hasSupervisor
+}
+
+func containsSupervisor(entries []processEntry, rootPID int, sessionID, launchID string) bool {
+	descendants := descendantPIDs(entries, rootPID)
 	for _, entry := range entries {
 		if entry.pid != rootPID && descendants[entry.pid] && isSupervisorCommand(entry.command, sessionID, launchID) {
+			return true
+		}
+	}
+	return false
+}
+
+func isAnySupervisorCommand(command string) bool {
+	fields := strings.Fields(command)
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] == "agent-process" && fields[i+1] == "supervise" {
 			return true
 		}
 	}

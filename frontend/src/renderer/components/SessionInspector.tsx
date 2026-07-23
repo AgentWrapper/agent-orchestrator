@@ -9,7 +9,7 @@ import { formatTimeCompact } from "../lib/format-time";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { useTerminateSession } from "../hooks/useTerminateSession";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
-import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
+import type { WorkspaceSession } from "../types/workspace";
 import { canonicalTrackerIssueId, sortedPRs } from "../types/workspace";
 import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session-presentation";
 import { aoBridge } from "../lib/bridge";
@@ -21,7 +21,6 @@ import { cn } from "../lib/utils";
 import { PRSummaryMeta, PRSummaryParts } from "./PRSummaryDisplay";
 import { StatusPill } from "./StatusPill";
 import { SessionTerminationDialog } from "./SessionTerminationDialog";
-import { Switch } from "./ui/switch";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
@@ -331,7 +330,6 @@ function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
 
 function CompletionControls({ session }: { session: WorkspaceSession }) {
 	const navigate = useNavigate();
-	const queryClient = useQueryClient();
 	const [confirmOpen, setConfirmOpen] = useState(false);
 	const terminate = useTerminateSession({
 		onSuccess: (terminated) => {
@@ -339,68 +337,25 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 			void navigate({ to: "/projects/$projectId", params: { projectId: terminated.workspaceId } });
 		},
 	});
-	const policy = useMutation({
-		mutationFn: async (terminateOnPrMerge: boolean) => {
-			if (usePreviewData) return;
-			const { error, response } = await apiClient.PATCH("/api/v1/sessions/{sessionId}/merge-policy", {
-				params: { path: { sessionId: session.id } },
-				body: { terminateOnPrMerge },
-			});
-			if (error) throw new Error(apiErrorMessage(error, `Failed to update merge policy (${response.status})`));
-		},
-		onMutate: async (terminateOnPrMerge) => {
-			await queryClient.cancelQueries({ queryKey: workspaceQueryKey });
-			const previous = queryClient.getQueryData<WorkspaceSummary[]>(workspaceQueryKey);
-			queryClient.setQueryData<WorkspaceSummary[]>(workspaceQueryKey, (current) =>
-				updateSessionMergePolicy(current, session.id, terminateOnPrMerge),
-			);
-			return { previous };
-		},
-		onError: (_error, _next, context) => {
-			if (context?.previous) queryClient.setQueryData(workspaceQueryKey, context.previous);
-		},
-		onSettled: () => {
-			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-		},
-	});
-	const policyError = policy.error instanceof Error ? policy.error.message : null;
 	const terminateError = terminate.error instanceof Error ? terminate.error.message : null;
 	const canTerminateNow = session.status === "merged" && session.isTerminated !== true;
+	if (!canTerminateNow) return null;
 
 	return (
 		<Section title="Completion">
-			<div className="flex items-center justify-between gap-3 py-1">
-				<label className="min-w-0 text-xs font-medium text-foreground" htmlFor={`merge-policy-${session.id}`}>
-					Terminate on merge
-				</label>
-				<Switch
-					aria-label="Terminate session when pull requests merge"
-					checked={Boolean(session.terminateOnPrMerge)}
-					disabled={policy.isPending || session.isTerminated === true}
-					id={`merge-policy-${session.id}`}
-					onCheckedChange={(checked) => policy.mutate(checked)}
-				/>
-			</div>
-			{policyError ? (
-				<p className="mt-1 text-2xs leading-normal text-error" role="status">
-					{policyError}
-				</p>
-			) : null}
-			{canTerminateNow ? (
-				<Button
-					className="mt-3 w-full border-error/45 text-error hover:bg-error/10 hover:text-error"
-					onClick={() => {
-						terminate.reset();
-						setConfirmOpen(true);
-					}}
-					size="sm"
-					type="button"
-					variant="outline"
-				>
-					<Square className="size-icon-sm" aria-hidden="true" />
-					Terminate session
-				</Button>
-			) : null}
+			<Button
+				className="w-full border-error/45 text-error hover:bg-error/10 hover:text-error"
+				onClick={() => {
+					terminate.reset();
+					setConfirmOpen(true);
+				}}
+				size="sm"
+				type="button"
+				variant="outline"
+			>
+				<Square className="size-icon-sm" aria-hidden="true" />
+				Terminate session
+			</Button>
 			<SessionTerminationDialog
 				busy={terminate.isPending}
 				error={terminateError}
@@ -413,19 +368,6 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 			/>
 		</Section>
 	);
-}
-
-function updateSessionMergePolicy(
-	workspaces: WorkspaceSummary[] | undefined,
-	sessionId: string,
-	terminateOnPrMerge: boolean,
-): WorkspaceSummary[] | undefined {
-	return workspaces?.map((workspace) => ({
-		...workspace,
-		sessions: workspace.sessions.map((candidate) =>
-			candidate.id === sessionId ? { ...candidate, terminateOnPrMerge } : candidate,
-		),
-	}));
 }
 
 function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {

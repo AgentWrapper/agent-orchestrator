@@ -119,8 +119,10 @@ type SupervisedProcessRef struct {
 }
 
 // SupervisedProcessInspector is an optional runtime capability used by the
-// reaper for agents without native exit hooks. A false result is definitive
-// only when err is nil; inspection errors must never be interpreted as exit.
+// reaper for agents without native exit hooks. Implementations may also detect
+// a workload relaunched from a preserved runtime shell. A false result is
+// definitive only when err is nil; inspection errors must never be interpreted
+// as exit.
 type SupervisedProcessInspector interface {
 	IsSupervisedProcessAlive(ctx context.Context, handle RuntimeHandle, ref SupervisedProcessRef) (bool, error)
 }

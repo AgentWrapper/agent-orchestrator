@@ -109,16 +109,6 @@ func (f *fakeSessionService) SetPreview(_ context.Context, id domain.SessionID, 
 	return s, nil
 }
 
-func (f *fakeSessionService) SetTerminateOnPRMerge(_ context.Context, id domain.SessionID, terminate bool) (domain.Session, error) {
-	s, ok := f.sessions[id]
-	if !ok {
-		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
-	}
-	s.TerminateOnPRMerge = terminate
-	f.sessions[id] = s
-	return s, nil
-}
-
 func (f *fakeSessionService) Restore(_ context.Context, id domain.SessionID) (sessionsvc.RestoreOutcome, error) {
 	s := f.sessions[id]
 	s.IsTerminated = false
@@ -428,23 +418,6 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	}
 	if svc.sessions["ao-2"].DisplayName != "Renamed" {
 		t.Fatalf("session displayName not updated: %+v", svc.sessions["ao-2"])
-	}
-
-	body, status, _ = doRequest(t, srv, "PATCH", "/api/v1/sessions/ao-2/merge-policy", `{"terminateOnPrMerge":true}`)
-	if status != http.StatusOK {
-		t.Fatalf("merge policy = %d, want 200; body=%s", status, body)
-	}
-	var policy struct {
-		OK                 bool   `json:"ok"`
-		SessionID          string `json:"sessionId"`
-		TerminateOnPRMerge bool   `json:"terminateOnPrMerge"`
-	}
-	mustJSON(t, body, &policy)
-	if !policy.OK || policy.SessionID != "ao-2" || !policy.TerminateOnPRMerge {
-		t.Fatalf("merge policy response = %#v", policy)
-	}
-	if !svc.sessions["ao-2"].TerminateOnPRMerge {
-		t.Fatalf("session merge policy not updated: %+v", svc.sessions["ao-2"])
 	}
 
 	body, status, _ = doRequest(t, srv, "POST", "/api/v1/orchestrators", `{"projectId":"ao"}`)

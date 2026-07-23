@@ -58,12 +58,9 @@ type SessionRecord struct {
 	// activity state. Zero means no hook has ever reported, which deriveStatus
 	// surfaces as StatusNoSignal after a grace period. Internal fact, not part
 	// of the API read model.
-	FirstSignalAt time.Time `json:"-"`
-	IsTerminated  bool      `json:"isTerminated"`
-	// TerminateOnPRMerge is a user-controlled lifecycle policy. When enabled,
-	// completing the session's PR set through a merge tears down the session.
-	TerminateOnPRMerge bool            `json:"terminateOnPrMerge"`
-	Metadata           SessionMetadata `json:"-"`
+	FirstSignalAt time.Time       `json:"-"`
+	IsTerminated  bool            `json:"isTerminated"`
+	Metadata      SessionMetadata `json:"-"`
 	// CleanupGeneration is a monotonic counter bumped each time the session is
 	// un-terminated (spawn/restore). The terminal-resource reconciler stamps its
 	// durable cleanup facts with the generation they were written for so a

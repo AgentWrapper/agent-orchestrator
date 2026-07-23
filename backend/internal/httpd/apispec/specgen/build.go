@@ -153,8 +153,6 @@ var schemaNames = map[string]string{
 	"ControllersSessionResponse":                  "SessionResponse",
 	"ControllersSessionPreviewResponse":           "SessionPreviewResponse",
 	"ControllersSetSessionPreviewRequest":         "SetSessionPreviewRequest",
-	"ControllersSetSessionMergePolicyRequest":     "SetSessionMergePolicyRequest",
-	"ControllersSetSessionMergePolicyResponse":    "SetSessionMergePolicyResponse",
 	"ControllersRenameSessionRequest":             "RenameSessionRequest",
 	"ControllersRenameSessionResponse":            "RenameSessionResponse",
 	"ControllersRestoreSessionResponse":           "RestoreSessionResponse",
@@ -868,19 +866,6 @@ func sessionOperations() []operation {
 			reqBody:    controllers.RenameSessionRequest{},
 			resps: []respUnit{
 				{http.StatusOK, controllers.RenameSessionResponse{}},
-				{http.StatusBadRequest, envelope.APIError{}},
-				{http.StatusNotFound, envelope.APIError{}},
-				{http.StatusInternalServerError, envelope.APIError{}},
-				{http.StatusNotImplemented, envelope.APIError{}},
-			},
-		},
-		{
-			method: http.MethodPatch, path: "/api/v1/sessions/{sessionId}/merge-policy", id: "setSessionMergePolicy", tag: "sessions",
-			summary:    "Configure whether PR completion terminates the session",
-			pathParams: []any{controllers.SessionIDParam{}},
-			reqBody:    controllers.SetSessionMergePolicyRequest{},
-			resps: []respUnit{
-				{http.StatusOK, controllers.SetSessionMergePolicyResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},

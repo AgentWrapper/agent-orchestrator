@@ -560,8 +560,31 @@ func TestIsSupervisedProcessAliveRejectsStaleAndUnrelatedProcesses(t *testing.T)
 	if containsSupervisor(entries, 100, "sess-1", "launch-new") {
 		t.Fatal("stale descendant or matching process outside the pane tree was accepted")
 	}
+	if containsManagedWorkload(entries, 100, "sess-1", "launch-new") {
+		t.Fatal("stale supervised generation was accepted as a manual workload")
+	}
 	if !containsSupervisor(entries, 100, "sess-1", "launch-old") {
 		t.Fatal("exact supervised descendant was not found")
+	}
+}
+
+func TestIsSupervisedProcessAliveFindsManualRelaunchFromPreservedShell(t *testing.T) {
+	entries, err := parseProcessTable("100 1 /bin/zsh -i\n101 100 codex resume native-1\n102 101 codex worker\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsManagedWorkload(entries, 100, "sess-1", "launch-2") {
+		t.Fatal("workload relaunched from the preserved shell was not found")
+	}
+}
+
+func TestIsSupervisedProcessAliveRejectsBarePreservedShell(t *testing.T) {
+	entries, err := parseProcessTable("100 1 /bin/zsh -i\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsManagedWorkload(entries, 100, "sess-1", "launch-2") {
+		t.Fatal("bare preserved shell was accepted as a live workload")
 	}
 }
 

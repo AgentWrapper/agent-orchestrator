@@ -48,10 +48,6 @@ type notificationSink interface {
 	Notify(ctx context.Context, intent ports.NotificationIntent) error
 }
 
-type sessionTerminator interface {
-	Kill(ctx context.Context, id domain.SessionID) (bool, error)
-}
-
 type pendingLaunch struct {
 	launchID string
 	ready    chan struct{}
@@ -90,15 +86,11 @@ type Manager struct {
 	// nudges become no-ops but the reducer still runs.
 	guard         *sessionguard.Guard
 	notifications notificationSink
-	// completionTerminator is late-bound because Session Manager itself depends
-	// on this lifecycle reducer. It is required before the SCM observer starts.
-	completionTerminator sessionTerminator
-
-	mu        sync.Mutex
-	window    time.Duration
-	clock     func() time.Time
-	react     reactionState
-	telemetry ports.EventSink
+	mu            sync.Mutex
+	window        time.Duration
+	clock         func() time.Time
+	react         reactionState
+	telemetry     ports.EventSink
 	// flights tracks, per session, the in-flight tool executions and the
 	// pending permission dialog's identity (see toolFlight). Guarded by mu.
 	flights map[domain.SessionID]*toolFlight
@@ -142,14 +134,6 @@ func New(store sessionStore, messenger ports.AgentMessenger, opts ...Option) *Ma
 		opt(m)
 	}
 	return m
-}
-
-// SetCompletionTerminator wires merge completion to the same teardown path as
-// an explicit user kill.
-func (m *Manager) SetCompletionTerminator(terminator sessionTerminator) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.completionTerminator = terminator
 }
 
 // PrepareLaunch registers a supervised generation before the runtime starts.
@@ -294,9 +278,11 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		m.mu.Unlock()
 		return nil
 	}
-	// Process exit is terminal for one managed launch. Delayed turn hooks from
-	// that launch cannot resurrect it; MarkSpawned is the sole reset point.
-	if rec.Activity.State == domain.ActivityExited && s.Valid && s.State != domain.ActivityExited {
+	// An explicit prompt submission is proof that an agent was relaunched in the
+	// preserved shell. Other same-generation callbacks may have been delayed
+	// behind the process-exit report and cannot resurrect an exited workload.
+	if rec.Activity.State == domain.ActivityExited && s.Valid && s.State != domain.ActivityExited &&
+		!(s.State == domain.ActivityActive && s.Event == "user-prompt-submit") {
 		m.mu.Unlock()
 		return nil
 	}

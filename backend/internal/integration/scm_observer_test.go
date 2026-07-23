@@ -11,7 +11,6 @@ package integration
 
 import (
 	"context"
-	"errors"
 	"io"
 	"log/slog"
 	"strings"
@@ -155,27 +154,6 @@ type scmFixture struct {
 	now      time.Time
 }
 
-type lifecycleMarkTerminator struct {
-	lcm *lifecycle.Manager
-}
-
-func (t lifecycleMarkTerminator) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
-	return true, t.lcm.MarkTerminated(ctx, id)
-}
-
-type failOnceTerminator struct {
-	lcm   *lifecycle.Manager
-	calls int
-}
-
-func (t *failOnceTerminator) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
-	t.calls++
-	if t.calls == 1 {
-		return false, errors.New("transient runtime teardown failure")
-	}
-	return true, t.lcm.MarkTerminated(ctx, id)
-}
-
 func newSCMFixture(t *testing.T, branch string) *scmFixture {
 	t.Helper()
 	ctx := context.Background()
@@ -209,7 +187,6 @@ func newSCMFixture(t *testing.T, branch string) *scmFixture {
 
 	spy := &scmMessengerSpy{}
 	lcm := lifecycle.New(store, spy)
-	lcm.SetCompletionTerminator(lifecycleMarkTerminator{lcm: lcm})
 	provider := newCannedSCMProvider()
 	observer := scmobserve.New(provider, store, lcm, scmobserve.Config{
 		Tick:   time.Hour,
@@ -225,15 +202,6 @@ func newSCMFixture(t *testing.T, branch string) *scmFixture {
 		session:  sess,
 		now:      now,
 	}
-}
-
-func (f *scmFixture) enableTerminateOnPRMerge(t *testing.T) {
-	t.Helper()
-	ok, err := f.store.SetSessionTerminateOnPRMerge(context.Background(), f.session.ID, true, f.now)
-	if err != nil || !ok {
-		t.Fatalf("enable terminate-on-merge: ok=%v err=%v", ok, err)
-	}
-	f.session.TerminateOnPRMerge = true
 }
 
 func failingSCMObservation(prURL string, num int, headSHA, logTail string) ports.SCMObservation {
@@ -398,10 +366,9 @@ func TestSCMObserverEndToEnd(t *testing.T) {
 		}
 	})
 
-	t.Run("Merged observation terminates the session and sends no nudge", func(t *testing.T) {
+	t.Run("Merged observation stays live and sends no nudge", func(t *testing.T) {
 		ctx := context.Background()
 		f := newSCMFixture(t, "feat/x")
-		f.enableTerminateOnPRMerge(t)
 		const (
 			prURL   = "https://github.com/octocat/hello/pull/77"
 			headSHA = "cafef00d"
@@ -419,40 +386,11 @@ func TestSCMObserverEndToEnd(t *testing.T) {
 		if err != nil || !ok {
 			t.Fatalf("GetSession: ok=%v err=%v", ok, err)
 		}
-		if !rec.IsTerminated {
-			t.Fatalf("merged observation should MarkTerminated the session: %+v", rec)
+		if rec.IsTerminated {
+			t.Fatalf("SCM observation must not terminate the session: %+v", rec)
 		}
 		if got := f.spy.count(); got != 0 {
 			t.Fatalf("merged observation must not nudge, got %d msgs: %+v", got, f.spy.snapshot())
-		}
-	})
-
-	t.Run("Merged teardown failure remains live and retries on the next poll", func(t *testing.T) {
-		ctx := context.Background()
-		f := newSCMFixture(t, "feat/x")
-		f.enableTerminateOnPRMerge(t)
-		terminator := &failOnceTerminator{lcm: f.lcm}
-		f.lcm.SetCompletionTerminator(terminator)
-		const prURL = "https://github.com/octocat/hello/pull/78"
-		f.provider.detected["feat/x"] = ports.SCMPRObservation{
-			URL: prURL, Number: 78, SourceBranch: "feat/x", HeadRepo: scmTestRepo.Repo, TargetBranch: "main", HeadSHA: "deadbeef", Merged: true,
-		}
-		f.provider.observations[78] = mergedSCMObservation(prURL, 78, "deadbeef")
-
-		if err := f.observer.Poll(ctx); err != nil {
-			t.Fatalf("first Poll: %v", err)
-		}
-		if rec, _, _ := f.store.GetSession(ctx, f.session.ID); rec.IsTerminated {
-			t.Fatalf("failed teardown hid a live session: %+v", rec)
-		}
-		if err := f.observer.Poll(ctx); err != nil {
-			t.Fatalf("second Poll: %v", err)
-		}
-		if terminator.calls != 2 {
-			t.Fatalf("terminator calls = %d, want 2", terminator.calls)
-		}
-		if rec, _, _ := f.store.GetSession(ctx, f.session.ID); !rec.IsTerminated {
-			t.Fatalf("successful retry left session live: %+v", rec)
 		}
 	})
 
@@ -582,10 +520,9 @@ func TestSCMObserverMultiPREndToEnd(t *testing.T) {
 		}
 	})
 
-	t.Run("session stays alive while a stacked PR is open and terminates once all are merged", func(t *testing.T) {
+	t.Run("session stays alive as stacked PRs merge", func(t *testing.T) {
 		ctx := context.Background()
 		f := newSCMFixture(t, "feat/x")
-		f.enableTerminateOnPRMerge(t)
 		const (
 			rootURL  = "https://github.com/octocat/hello/pull/201"
 			childURL = "https://github.com/octocat/hello/pull/202"
@@ -620,8 +557,8 @@ func TestSCMObserverMultiPREndToEnd(t *testing.T) {
 			t.Fatal("session terminated while the stacked child PR is still open")
 		}
 
-		// Poll 3: the child merges too. Now every PR is merged/closed and at least
-		// one merged, so the session completes and terminates.
+		// Poll 3: the child merges too. SCM completion remains a display fact;
+		// it does not own runtime/worktree teardown.
 		f.provider.observations[202] = mergedSCMObservationBranches(childURL, 202, "sha-child", "feat/x/auth", "feat/x")
 		if err := f.observer.Poll(ctx); err != nil {
 			t.Fatalf("Poll 3: %v", err)
@@ -630,11 +567,11 @@ func TestSCMObserverMultiPREndToEnd(t *testing.T) {
 		if err != nil || !ok {
 			t.Fatalf("GetSession: ok=%v err=%v", ok, err)
 		}
-		if !rec.IsTerminated {
-			t.Fatalf("session should terminate once all PRs are merged: %+v", rec)
+		if rec.IsTerminated {
+			t.Fatalf("SCM completion terminated the session: %+v", rec)
 		}
 		if got := f.spy.count(); got != 0 {
-			t.Fatalf("merge-driven completion must not nudge, got %d: %+v", got, f.spy.snapshot())
+			t.Fatalf("merged PRs must not nudge, got %d: %+v", got, f.spy.snapshot())
 		}
 	})
 

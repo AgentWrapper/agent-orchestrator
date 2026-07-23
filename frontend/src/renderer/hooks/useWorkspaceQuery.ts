@@ -91,7 +91,6 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 						branch: session.branch || undefined,
 						status,
 						isTerminated: session.isTerminated,
-						terminateOnPrMerge: session.terminateOnPrMerge ?? false,
 						createdAt: session.createdAt,
 						updatedAt: session.updatedAt,
 						activity,
