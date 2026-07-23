@@ -251,6 +251,7 @@ describe("SessionInspector completion controls", () => {
 	it("terminates a live merged session and returns to its project after success", async () => {
 		renderWithQuery(<SessionInspector session={session([pr(7, "merged")], { status: "merged" })} />);
 
+		expect(screen.queryByRole("switch", { name: "Terminate session when pull requests merge" })).not.toBeInTheDocument();
 		await userEvent.click(screen.getByRole("button", { name: "Terminate session" }));
 		expect(screen.getByRole("dialog", { name: "Terminate do the thing?" })).toBeInTheDocument();
 		await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Terminate session" }));
@@ -275,6 +276,15 @@ describe("SessionInspector completion controls", () => {
 		expect(await screen.findByText("runtime teardown failed")).toBeInTheDocument();
 		expect(screen.getByRole("dialog")).toBeInTheDocument();
 		expect(navigateMock).not.toHaveBeenCalled();
+	});
+
+	it("hides completion controls after the session is terminated", () => {
+		renderWithQuery(
+			<SessionInspector session={session([pr(7, "merged")], { status: "merged", isTerminated: true })} />,
+		);
+
+		expect(screen.queryByText("Completion")).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Terminate session" })).not.toBeInTheDocument();
 	});
 
 	it("does not show completion controls for orchestrator sessions", () => {
@@ -452,7 +462,7 @@ describe("SessionInspector Activity section", () => {
 		expect(within(activityRow).getByText("Conflict")).toBeInTheDocument();
 	});
 
-	it("uses activity.lastActivityAt for the Activity timestamp", () => {
+	it("does not timestamp the live Activity state as a historical event", () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date("2026-06-15T12:00:00Z"));
 
@@ -469,7 +479,7 @@ describe("SessionInspector Activity section", () => {
 		const activityRow = activitySection()
 			.getByText("Working")
 			.closest("[data-testid='inspector-timeline-event']") as HTMLElement;
-		expect(within(activityRow).getByText("2h ago")).toBeInTheDocument();
+		expect(within(activityRow).queryByText("2h ago")).not.toBeInTheDocument();
 	});
 
 	it("aligns text-row dots lower while keeping the Activity chip dot centered", () => {
@@ -576,9 +586,11 @@ describe("SessionInspector Activity section", () => {
 		expect(
 			within(mergedLink.closest("[data-testid='inspector-timeline-event']") as HTMLElement).getByText("30m ago"),
 		).toBeInTheDocument();
+		const doneRow = screen.getByText("Done").closest("[data-testid='inspector-timeline-event']") as HTMLElement;
+		expect(within(doneRow).getByText("30m ago")).toBeInTheDocument();
 	});
 
-	it("orders timeline milestones around the combined current state row", () => {
+	it("renders the current state before reverse-chronological historical milestones", () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date("2026-06-15T12:00:00Z"));
 
@@ -598,14 +610,20 @@ describe("SessionInspector Activity section", () => {
 			row.textContent?.replace(/\s+/g, " ").trim(),
 		);
 		expect(rows).toEqual([
-			"Created workspace3h ago",
-			"Draft PR #42",
-			"Opened PR #41",
-			"Opened PR #40",
-			"Idle2h ago",
+			"Idle",
+			"Done",
 			"Merged PR #40",
-			"Done5m ago",
+			"Opened PR #40",
+			"Opened PR #41",
+			"Draft PR #42",
+			"Created workspace3h ago",
 		]);
+
+		const eventRows = section.querySelectorAll("[data-testid='inspector-timeline-event']");
+		expect(section.querySelectorAll("[data-testid='inspector-timeline-connector']")).toHaveLength(eventRows.length - 1);
+		expect(
+			within(eventRows[eventRows.length - 1] as HTMLElement).queryByTestId("inspector-timeline-connector"),
+		).not.toBeInTheDocument();
 	});
 });
 

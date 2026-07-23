@@ -41,12 +41,8 @@ func deriveStatus(rec domain.SessionRecord, prs []domain.PRFacts, now time.Time,
 		return domain.StatusNeedsInput
 	}
 
-	open := openPRs(prs)
-	if len(open) > 0 {
-		return aggregatePRStatus(open)
-	}
-	if anyMerged(prs) {
-		return domain.StatusMerged
+	if scmStatus := deriveSCMStatus(prs); scmStatus != "" {
+		return scmStatus
 	}
 
 	// No hook callback has ever arrived for this spawn/restore even though the
@@ -56,6 +52,19 @@ func deriveStatus(rec domain.SessionRecord, prs []domain.PRFacts, now time.Time,
 		return domain.StatusNoSignal
 	}
 	return domain.StatusIdle
+}
+
+// deriveSCMStatus returns the session's stack-aware PR context independently
+// of runtime activity. It is empty when the session has no open or merged PR.
+func deriveSCMStatus(prs []domain.PRFacts) domain.SessionStatus {
+	open := openPRs(prs)
+	if len(open) > 0 {
+		return aggregatePRStatus(open)
+	}
+	if anyMerged(prs) {
+		return domain.StatusMerged
+	}
+	return ""
 }
 
 // openPRs returns the PRs that are neither merged nor closed, preserving order.

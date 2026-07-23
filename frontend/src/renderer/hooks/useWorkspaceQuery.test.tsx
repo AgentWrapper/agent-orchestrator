@@ -79,6 +79,7 @@ describe("useWorkspaceQuery", () => {
 							harness: "claude-code",
 							branch: "qa/modal-worker",
 							status: "mergeable",
+							scmStatus: "review_pending",
 							isTerminated: false,
 							activity: { state: "idle", lastActivityAt: "2026-06-10T15:30:00Z" },
 							updatedAt: "2026-06-10T16:15:04Z",
@@ -120,6 +121,7 @@ describe("useWorkspaceQuery", () => {
 			provider: "claude-code",
 			branch: "qa/modal-worker",
 			status: "mergeable",
+			scmStatus: "review_pending",
 			activity: { state: "idle", lastActivityAt: "2026-06-10T15:30:00Z" },
 		});
 		expect(workspace.sessions[1]).toMatchObject({

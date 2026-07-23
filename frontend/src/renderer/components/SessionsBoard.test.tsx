@@ -162,8 +162,13 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		const idleCard = screen.getByText("brand-font-pipeline").closest('[role="button"]') as HTMLElement;
+		const idleCard = screen
+			.getByText("brand-font-pipeline")
+			.closest('[data-testid="board-session-card"]') as HTMLElement;
 		expect(within(idleCard).getByText("Idle")).toBeInTheDocument();
+		const terminateButton = within(idleCard).getByRole("button", { name: "Terminate brand-font-pipeline" });
+		expect(terminateButton).toHaveClass("opacity-0", "group-hover:opacity-100", "group-focus-within:opacity-100");
+		expect(terminateButton.querySelector("svg")).toHaveClass("lucide-trash-2");
 	});
 
 	it("uses distinct card badge tones for idle, no signal, and draft PR sessions", () => {
@@ -817,6 +822,33 @@ describe("SessionsBoard", () => {
 		expect(screen.queryByRole("button", { name: /archive/i })).not.toBeInTheDocument();
 	});
 
+	it("keeps every Kanban lane scrollable without visible scrollbar chrome", () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					boardSession({ id: "s-idle", title: "idle worker", status: "idle" }),
+					boardSession({ id: "s-working", title: "working worker", status: "working" }),
+					boardSession({ id: "s-action", title: "action worker", status: "needs_input" }),
+					boardSession({ id: "s-review", title: "review worker", status: "review_pending" }),
+					boardSession({ id: "s-ready", title: "ready worker", status: "mergeable" }),
+					boardSession({ id: "s-merged", title: "merged worker", status: "merged" }),
+				]),
+			],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		const laneScrollers = screen
+			.getAllByTestId("board-column")
+			.flatMap((column) => Array.from(column.querySelectorAll<HTMLElement>(".overflow-y-auto")));
+		expect(laneScrollers).toHaveLength(6);
+		for (const scroller of laneScrollers) {
+			expect(scroller).toHaveClass("scrollbar-none", "overflow-y-auto");
+		}
+	});
+
 	it("archives a terminated merged runtime without duplicating it in the merged lane", async () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
@@ -844,8 +876,25 @@ describe("SessionsBoard", () => {
 		expect(
 			within(archivedMergedCard!).queryByRole("button", { name: "Open archived merged worker" }),
 		).not.toBeInTheDocument();
+		expect(
+			within(archivedMergedCard!).queryByRole("button", { name: "Terminate archived merged worker" }),
+		).not.toBeInTheDocument();
 		expect(within(archivedMergedCard!).getByText("Merged").closest("span")).toHaveClass("text-status-merged");
 		expect(within(archive).getByRole("button", { name: "Restore archived merged worker" })).toBeInTheDocument();
+	});
+
+	it("asks for confirmation when terminating an ordinary live session from its card", async () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([boardSession({ id: "s-idle", title: "idle worker", status: "idle" })])],
+			isError: false,
+			isSuccess: true,
+		});
+		renderBoard("p1");
+
+		await userEvent.click(screen.getByRole("button", { name: "Terminate idle worker" }));
+
+		expect(navigateMock).not.toHaveBeenCalled();
+		expect(screen.getByRole("dialog", { name: "Terminate idle worker?" })).toBeInTheDocument();
 	});
 
 	it("terminates a live merged session from its card without opening the session", async () => {
@@ -856,7 +905,10 @@ describe("SessionsBoard", () => {
 		});
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: "Terminate merged worker" }));
+		const terminateButton = screen.getByRole("button", { name: "Terminate merged worker" });
+		expect(terminateButton).toHaveClass("opacity-100");
+		expect(terminateButton).not.toHaveClass("opacity-0");
+		await userEvent.click(terminateButton);
 		expect(navigateMock).not.toHaveBeenCalled();
 		const dialog = screen.getByRole("dialog", { name: "Terminate merged worker?" });
 		await userEvent.click(within(dialog).getByRole("button", { name: "Terminate session" }));

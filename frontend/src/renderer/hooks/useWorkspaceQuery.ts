@@ -74,6 +74,7 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 				.filter((session) => session.projectId === project.id)
 				.map((session) => {
 					const status = toSessionStatus(session.status, session.isTerminated);
+					const scmStatus = session.scmStatus ? toSessionStatus(session.scmStatus) : undefined;
 					const activity = toSessionActivity(session.activity);
 					if (status === "unknown") reportUnknownSessionField("status", session.status);
 					if (!activity || activity.state === "unknown") {
@@ -90,6 +91,7 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 						kind: session.kind === "orchestrator" ? "orchestrator" : session.kind === "worker" ? "worker" : undefined,
 						branch: session.branch || undefined,
 						status,
+						scmStatus,
 						isTerminated: session.isTerminated,
 						terminateOnPrMerge: session.terminateOnPrMerge ?? false,
 						createdAt: session.createdAt,

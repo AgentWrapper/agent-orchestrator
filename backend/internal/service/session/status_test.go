@@ -113,6 +113,36 @@ func TestDeriveStatusActivityPrecedence(t *testing.T) {
 	}
 }
 
+func TestDeriveSCMStatusRemainsAvailableWhileAgentIsActive(t *testing.T) {
+	tests := []struct {
+		name string
+		prs  []domain.PRFacts
+		want domain.SessionStatus
+	}{
+		{"without-pr", nil, ""},
+		{"open", statusPR(domain.PRFacts{}), domain.StatusPROpen},
+		{"draft", statusPR(domain.PRFacts{Draft: true}), domain.StatusDraft},
+		{"ci-failed", statusPR(domain.PRFacts{CI: domain.CIFailing}), domain.StatusCIFailed},
+		{"changes-requested", statusPR(domain.PRFacts{Review: domain.ReviewChangesRequest}), domain.StatusChangesRequested},
+		{"review-pending", statusPR(domain.PRFacts{Review: domain.ReviewRequired}), domain.StatusReviewPending},
+		{"approved", statusPR(domain.PRFacts{Review: domain.ReviewApproved}), domain.StatusApproved},
+		{"mergeable", statusPR(domain.PRFacts{Mergeability: domain.MergeMergeable}), domain.StatusMergeable},
+		{"merged", statusPR(domain.PRFacts{Merged: true}), domain.StatusMerged},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := deriveSCMStatus(tt.prs); got != tt.want {
+				t.Fatalf("deriveSCMStatus() = %q, want %q", got, tt.want)
+			}
+			if tt.want != "" {
+				if got := deriveStatus(statusRec(domain.ActivityActive, false), tt.prs, statusNow, true); got != domain.StatusWorking {
+					t.Fatalf("deriveStatus(active) = %q, want working", got)
+				}
+			}
+		})
+	}
+}
+
 // A blocked stacked child cannot merge until its parent does, so its readiness
 // signals are suppressed, but its problem signals (failing CI, draft,
 // requested-changes/unresolved-comments) must still surface for the session.

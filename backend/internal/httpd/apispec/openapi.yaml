@@ -2320,6 +2320,17 @@ components:
           items:
             $ref: '#/components/schemas/SessionPRFacts'
           type: array
+        scmStatus:
+          enum:
+          - pr_open
+          - draft
+          - ci_failed
+          - review_pending
+          - changes_requested
+          - approved
+          - mergeable
+          - merged
+          type: string
         status:
           enum:
           - working

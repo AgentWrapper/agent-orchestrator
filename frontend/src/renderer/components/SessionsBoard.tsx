@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { AlertTriangle, LayoutGrid, Plus, RotateCcw, RotateCw, Rows3, Square } from "lucide-react";
+import { AlertTriangle, LayoutGrid, Plus, RotateCcw, RotateCw, Rows3, Trash2 } from "lucide-react";
 import {
 	type WorkspaceSession,
 	canonicalTrackerIssueId,
@@ -440,19 +440,21 @@ function BoardColumn({
 	onOpen: (s: WorkspaceSession) => void;
 	onTerminate: (s: WorkspaceSession) => void;
 }) {
-	if (col.zone === "working") return <WorkLaneColumn sessions={sessions} onOpen={onOpen} />;
+	if (col.zone === "working") return <WorkLaneColumn sessions={sessions} onOpen={onOpen} onTerminate={onTerminate} />;
 	if (col.zone === "merge") return <MergeLaneColumn sessions={sessions} onOpen={onOpen} onTerminate={onTerminate} />;
-	return <ZoneColumn col={col} sessions={sessions} onOpen={onOpen} />;
+	return <ZoneColumn col={col} sessions={sessions} onOpen={onOpen} onTerminate={onTerminate} />;
 }
 
 function ZoneColumn({
 	col,
 	sessions,
 	onOpen,
+	onTerminate,
 }: {
 	col: Column;
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
+	onTerminate: (s: WorkspaceSession) => void;
 }) {
 	return (
 		<section
@@ -477,10 +479,15 @@ function ZoneColumn({
 				</span>
 				<span className="ml-auto font-mono text-sm leading-none text-passive">{sessions.length}</span>
 			</div>
-			<div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+			<div className="scrollbar-none min-h-0 flex-1 overflow-y-auto px-2 pb-2">
 				<div className="flex min-h-full flex-col gap-2">
 					{sessions.map((session) => (
-						<SessionCard key={session.id} session={session} onOpen={() => onOpen(session)} />
+						<SessionCard
+							key={session.id}
+							session={session}
+							onOpen={() => onOpen(session)}
+							onTerminate={() => onTerminate(session)}
+						/>
 					))}
 				</div>
 			</div>
@@ -538,7 +545,15 @@ const mergedLaneTone: SplitLaneTone = {
 	dotGlow: false,
 };
 
-function WorkLaneColumn({ sessions, onOpen }: { sessions: WorkspaceSession[]; onOpen: (s: WorkspaceSession) => void }) {
+function WorkLaneColumn({
+	sessions,
+	onOpen,
+	onTerminate,
+}: {
+	sessions: WorkspaceSession[];
+	onOpen: (s: WorkspaceSession) => void;
+	onTerminate: (s: WorkspaceSession) => void;
+}) {
 	const idleSessions = sessions.filter(isSessionIdle);
 	const workingSessions = sessions.filter((session) => !isSessionIdle(session));
 
@@ -551,6 +566,7 @@ function WorkLaneColumn({ sessions, onOpen }: { sessions: WorkspaceSession[]; on
 			secondarySessions={workingSessions}
 			secondaryTone={workingLaneTone}
 			onOpen={onOpen}
+			onTerminate={onTerminate}
 		/>
 	);
 }
@@ -576,7 +592,7 @@ function MergeLaneColumn({
 			secondarySessions={mergedSessions}
 			secondaryTone={mergedLaneTone}
 			onOpen={onOpen}
-			onTerminateSecondary={onTerminate}
+			onTerminate={onTerminate}
 		/>
 	);
 }
@@ -589,7 +605,7 @@ function SplitLaneColumn({
 	secondarySessions,
 	secondaryTone,
 	onOpen,
-	onTerminateSecondary,
+	onTerminate,
 }: {
 	ariaLabel: string;
 	zone: Extract<AttentionZone, "working" | "merge">;
@@ -598,7 +614,7 @@ function SplitLaneColumn({
 	secondarySessions: WorkspaceSession[];
 	secondaryTone: SplitLaneTone;
 	onOpen: (s: WorkspaceSession) => void;
-	onTerminateSecondary?: (s: WorkspaceSession) => void;
+	onTerminate: (s: WorkspaceSession) => void;
 }) {
 	const showPrimary = primarySessions.length > 0;
 	const showSecondary = secondarySessions.length > 0;
@@ -635,12 +651,20 @@ function SplitLaneColumn({
 				{showPrimary ? (
 					<div
 						aria-label={primaryTone.regionLabel}
-						className={cn("min-h-0 overflow-y-auto px-2", showSecondary ? "flex-[3] pb-2" : "flex-1 pb-2")}
+						className={cn(
+							"scrollbar-none min-h-0 overflow-y-auto px-2",
+							showSecondary ? "flex-[3] pb-2" : "flex-1 pb-2",
+						)}
 						role="region"
 					>
 						<div className="flex min-h-full flex-col gap-2">
 							{primarySessions.map((session) => (
-								<SessionCard key={session.id} session={session} onOpen={() => onOpen(session)} />
+								<SessionCard
+									key={session.id}
+									session={session}
+									onOpen={() => onOpen(session)}
+									onTerminate={() => onTerminate(session)}
+								/>
 							))}
 						</div>
 					</div>
@@ -651,7 +675,7 @@ function SplitLaneColumn({
 						standalone={!showPrimary}
 						tone={secondaryTone}
 						onOpen={onOpen}
-						onTerminate={onTerminateSecondary}
+						onTerminate={onTerminate}
 					/>
 				) : null}
 			</div>
@@ -706,7 +730,7 @@ function SecondaryLaneSection({
 				</div>
 				<span className="ml-auto font-mono text-caption leading-none text-passive">{sessions.length}</span>
 			</div>
-			<div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+			<div className="scrollbar-none min-h-0 flex-1 overflow-y-auto px-2 pb-2">
 				<div className="flex min-h-full flex-col gap-2">
 					{sessions.map((session) => (
 						<SessionCard
@@ -738,7 +762,8 @@ function SessionCard({
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
-	const showTerminate = interactive && session.status === "merged" && session.isTerminated !== true && onTerminate;
+	const showTerminate = interactive && session.isTerminated !== true && onTerminate;
+	const keepTerminateVisible = session.status === "merged";
 	const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
 		if (!interactive || !onOpen) return;
 		if (event.currentTarget !== event.target) return;
@@ -769,14 +794,19 @@ function SessionCard({
 					<TooltipTrigger asChild>
 						<button
 							aria-label={`Terminate ${session.title}`}
-							className="absolute right-2 top-1.5 z-10 inline-flex size-control-md items-center justify-center rounded-md text-passive transition-colors hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+							className={cn(
+								"absolute right-2 top-1.5 z-10 inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-[color,background-color,opacity] hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+								keepTerminateVisible
+									? "opacity-100"
+									: "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100",
+							)}
 							onClick={(event) => {
 								event.stopPropagation();
 								onTerminate();
 							}}
 							type="button"
 						>
-							<Square className="size-icon-sm" aria-hidden="true" />
+							<Trash2 className="size-icon-sm" aria-hidden="true" />
 						</button>
 					</TooltipTrigger>
 					<TooltipContent>Terminate session</TooltipContent>

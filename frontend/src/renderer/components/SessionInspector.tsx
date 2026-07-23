@@ -1,7 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
-import { ArrowUpRight, Files as FilesIcon, GitPullRequest, Play, Shield, Square, Terminal, X } from "lucide-react";
+import {
+	ArrowUpRight,
+	Files as FilesIcon,
+	GitPullRequest,
+	Play,
+	Shield,
+	Terminal,
+	Trash2,
+	X,
+} from "lucide-react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
@@ -365,42 +374,48 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 	});
 	const policyError = policy.error instanceof Error ? policy.error.message : null;
 	const terminateError = terminate.error instanceof Error ? terminate.error.message : null;
-	const canTerminateNow = session.status === "merged" && session.isTerminated !== true;
+	const canTerminateNow = session.status === "merged";
+
+	if (session.isTerminated === true) return null;
 
 	return (
 		<Section title="Completion">
-			<div className="flex items-center justify-between gap-3 py-1">
-				<label className="min-w-0 text-xs font-medium text-foreground" htmlFor={`merge-policy-${session.id}`}>
-					Terminate on merge
-				</label>
-				<Switch
-					aria-label="Terminate session when pull requests merge"
-					checked={Boolean(session.terminateOnPrMerge)}
-					disabled={policy.isPending || session.isTerminated === true}
-					id={`merge-policy-${session.id}`}
-					onCheckedChange={(checked) => policy.mutate(checked)}
-				/>
-			</div>
-			{policyError ? (
-				<p className="mt-1 text-2xs leading-normal text-error" role="status">
-					{policyError}
-				</p>
-			) : null}
 			{canTerminateNow ? (
-				<Button
-					className="mt-3 w-full border-error/45 text-error hover:bg-error/10 hover:text-error"
-					onClick={() => {
-						terminate.reset();
-						setConfirmOpen(true);
-					}}
-					size="sm"
-					type="button"
-					variant="outline"
-				>
-					<Square className="size-icon-sm" aria-hidden="true" />
-					Terminate session
-				</Button>
-			) : null}
+				<div className="flex items-center justify-between gap-3 py-1">
+					<span className="min-w-0 text-xs font-medium text-foreground">Terminate</span>
+					<button
+						aria-label="Terminate session"
+						className="inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-colors hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+						onClick={() => {
+							terminate.reset();
+							setConfirmOpen(true);
+						}}
+						type="button"
+					>
+						<Trash2 className="size-icon-sm" aria-hidden="true" />
+					</button>
+				</div>
+			) : (
+				<>
+					<div className="flex items-center justify-between gap-3 py-1">
+						<label className="min-w-0 text-xs font-medium text-foreground" htmlFor={`merge-policy-${session.id}`}>
+							Terminate on merge
+						</label>
+						<Switch
+							aria-label="Terminate session when pull requests merge"
+							checked={Boolean(session.terminateOnPrMerge)}
+							disabled={policy.isPending}
+							id={`merge-policy-${session.id}`}
+							onCheckedChange={(checked) => policy.mutate(checked)}
+						/>
+					</div>
+					{policyError ? (
+						<p className="mt-1 text-2xs leading-normal text-error" role="status">
+							{policyError}
+						</p>
+					) : null}
+				</>
+			)}
 			<SessionTerminationDialog
 				busy={terminate.isPending}
 				error={terminateError}
@@ -467,16 +482,16 @@ const timelineNodeTone: Record<TimelineTone, string> = {
 };
 
 function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: WorkspaceSession }) {
-	const events: { tone: TimelineTone; node: ReactNode; ts: string | null }[] = [];
+	const history: { tone: TimelineTone; node: ReactNode; ts: string | null }[] = [];
 
-	events.push({
+	history.push({
 		tone: "neutral",
 		node: <>Created workspace</>,
 		ts: formatTimeCompact(session.createdAt ?? session.updatedAt),
 	});
 
 	for (const pr of prs.filter((pr) => pr.state === "draft")) {
-		events.push({
+		history.push({
 			tone: "neutral",
 			node: <PRTimelineLink pr={pr} verb="Draft" />,
 			ts: prStateTime(pr),
@@ -484,14 +499,33 @@ function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: 
 	}
 
 	for (const pr of prs.filter((pr) => pr.state !== "draft")) {
-		events.push({
+		history.push({
 			tone: "neutral",
 			node: <PRTimelineLink pr={pr} verb="Opened" />,
 			ts: prCreatedTime(pr),
 		});
 	}
 
-	events.push({
+	for (const pr of prs.filter((pr) => pr.state === "merged")) {
+		history.push({
+			tone: "good",
+			node: <PRTimelineLink pr={pr} verb="Merged" />,
+			ts: prStateTime(pr),
+		});
+	}
+
+	if (session.status === "merged") {
+		history.push({
+			tone: "good",
+			node: <>Done</>,
+			ts: latestMergedTime(prs),
+		});
+	}
+
+	// Current activity is a live reading, not a historical event. Keep it above
+	// the optional reverse-chronological history and do not imply that its last
+	// hook time is when the state transition occurred.
+	const current = {
 		tone: "now",
 		node: (
 			<span className="inline-flex flex-wrap items-center gap-1.5">
@@ -510,29 +544,24 @@ function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: 
 				))}
 			</span>
 		),
-		ts: session.activity?.lastActivityAt ? formatTimeCompact(session.activity.lastActivityAt) : null,
-	});
-
-	for (const pr of prs.filter((pr) => pr.state === "merged")) {
-		events.push({
-			tone: "good",
-			node: <PRTimelineLink pr={pr} verb="Merged" />,
-			ts: prStateTime(pr),
-		});
-	}
-
-	if (session.status === "merged") {
-		events.push({
-			tone: "good",
-			node: <>Done</>,
-			ts: formatTimeCompact(session.updatedAt),
-		});
-	}
+		ts: null,
+	} satisfies { tone: TimelineTone; node: ReactNode; ts: null };
+	const events = [current, ...history.reverse()];
 
 	return (
-		<div className="relative pl-5 before:absolute before:top-1 before:bottom-1.5 before:left-1.25 before:w-px before:bg-border before:content-['']">
+		<div className="relative pl-5">
 			{events.map((event, index) => (
 				<div key={index} className="relative pb-4 last:pb-0" data-testid="inspector-timeline-event">
+					{index < events.length - 1 ? (
+						<span
+							aria-hidden="true"
+							className={cn(
+								"absolute -bottom-[10.5px] -left-3.5 w-px bg-border",
+								event.tone === "now" ? "top-1/2" : "top-[10.5px]",
+							)}
+							data-testid="inspector-timeline-connector"
+						/>
+					) : null}
 					<div className="relative flex min-h-icon-xs items-center">
 						<span
 							aria-hidden="true"
@@ -573,6 +602,19 @@ function prStateTime(pr: SessionPRSummary): string | null {
 
 function prCreatedTime(pr: SessionPRSummary): string | null {
 	return pr.createdAt ? formatTimeCompact(pr.createdAt) : null;
+}
+
+function latestMergedTime(prs: SessionPRSummary[]): string | null {
+	let latest: { timestamp: string; milliseconds: number } | undefined;
+	for (const pr of prs) {
+		if (pr.state !== "merged" || !pr.stateChangedAt) continue;
+		const milliseconds = Date.parse(pr.stateChangedAt);
+		if (!Number.isFinite(milliseconds)) continue;
+		if (!latest || milliseconds > latest.milliseconds) {
+			latest = { timestamp: pr.stateChangedAt, milliseconds };
+		}
+	}
+	return latest ? formatTimeCompact(latest.timestamp) : null;
 }
 
 type ScmTimelineState = "ci_failed" | "changes_requested" | "conflict";

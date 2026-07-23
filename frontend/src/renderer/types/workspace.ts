@@ -129,6 +129,8 @@ export type WorkspaceSession = {
 	kind?: SessionKind;
 	branch?: string;
 	status: SessionStatus;
+	/** Stack-aware PR context derived by the daemon independently of runtime activity. */
+	scmStatus?: SessionStatus;
 	/** Durable runtime fact from the daemon; independent of the derived SCM-aware status. */
 	isTerminated?: boolean;
 	/** User preference to tear down this session when its PR set completes through a merge. */

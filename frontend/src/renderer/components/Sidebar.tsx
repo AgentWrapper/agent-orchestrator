@@ -106,7 +106,8 @@ function useSelection() {
 	};
 }
 
-// 6px session dot: mirrors the topbar's raw agent-activity language.
+// Activity controls motion; live PR context controls an active session's
+// color. Idle activity remains visible as a static gray dot.
 function SessionDot({ session }: { session: WorkspaceSession }) {
 	const dot = getSessionDotView(session);
 	return <span aria-hidden="true" className={cn("mt-px h-1.5 w-1.5 shrink-0 rounded-full", dot.className)} />;
