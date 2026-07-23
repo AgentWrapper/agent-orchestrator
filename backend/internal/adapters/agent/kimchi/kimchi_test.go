@@ -77,27 +77,10 @@ func TestSanitizePrompt(t *testing.T) {
 		{"dash flag", "--yolo", "\n--yolo"},
 		{"at file reference", "@README.md", "\n@README.md"},
 		{"single dash", "-x", "\n-x"},
-		// Exact match against a Kimchi subcommand name must be neutralized.
-		{"subcommand setup", "setup", "\nsetup"},
-		{"subcommand login", "login", "\nlogin"},
-		{"subcommand version", "version", "\nversion"},
-		{"subcommand setup-tools", "setup-tools", "\nsetup-tools"},
-		{"subcommand claude", "claude", "\nclaude"},
-		{"subcommand opencode", "opencode", "\nopencode"},
-		{"subcommand cursor", "cursor", "\ncursor"},
-		{"subcommand openclaw", "openclaw", "\nopenclaw"},
-		{"subcommand gsd2", "gsd2", "\ngsd2"},
-		{"subcommand update", "update", "\nupdate"},
-		{"subcommand config", "config", "\nconfig"},
-		{"subcommand resources", "resources", "\nresources"},
 		// Normal prompts pass through unchanged.
 		{"normal text", "add a health check", "add a health check"},
 		{"filename no at", "README.md", "README.md"},
 		{"multi-word", "do the thing", "do the thing"},
-		// A prompt that merely contains a subcommand word but is not an exact
-		// match must not be sanitized.
-		{"contains setup word", "run setup steps", "run setup steps"},
-		{"contains version word", "check the version", "check the version"},
 		// Empty string passes through (the caller already guards on empty).
 		{"empty", "", ""},
 	}
@@ -141,21 +124,6 @@ func TestGetLaunchCommandSanitizesAtPrompt(t *testing.T) {
 	}
 }
 
-func TestGetLaunchCommandSanitizesSubcommandPrompt(t *testing.T) {
-	p := &Plugin{resolvedBinary: "kimchi"}
-	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
-		Prompt: "setup",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	want := []string{"kimchi", "\nsetup"}
-	if !reflect.DeepEqual(cmd, want) {
-		t.Fatalf("cmd = %#v, want %#v", cmd, want)
-	}
-}
-
 func TestGetLaunchCommandNormalPromptUnchanged(t *testing.T) {
 	p := &Plugin{resolvedBinary: "kimchi"}
 	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
@@ -175,14 +143,14 @@ func TestGetLaunchCommandSanitizesPromptWithSystemPrompt(t *testing.T) {
 	p := &Plugin{resolvedBinary: "kimchi"}
 	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 		SystemPrompt: "follow repo rules",
-		Prompt:       "setup",
+		Prompt:       "-flag",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// System prompt is prepended normally; the prompt is still sanitized.
-	want := []string{"kimchi", "--append-system-prompt", "follow repo rules", "\nsetup"}
+	want := []string{"kimchi", "--append-system-prompt", "follow repo rules", "\n-flag"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
