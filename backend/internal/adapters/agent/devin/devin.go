@@ -75,7 +75,19 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
-// GetLaunchCommand builds `devin [--permission-mode <mode>] [-- <prompt>]`.
+// GetConfigSpec reports the per-project agent config keys Devin understands.
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.ConfigSpec{}, err
+	}
+	return ports.ConfigSpec{
+		Fields: []ports.ConfigField{
+			agentbase.ModelConfigField("Model override passed to `devin --model`."),
+		},
+	}, nil
+}
+
+// GetLaunchCommand builds `devin [--permission-mode <mode>] [--model <model>] [-- <prompt>]`.
 //
 // The `-- <prompt>` form starts an interactive session. Do not use `-p`, which
 // is Devin's non-interactive print mode.
@@ -87,6 +99,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 
 	cmd = []string{binary}
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	agentbase.AppendModelFlag(&cmd, cfg.Config)
 	if prompt := strings.TrimSpace(cfg.Prompt); prompt != "" {
 		cmd = append(cmd, "--", prompt)
 	}
@@ -150,9 +163,10 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 		return nil, false, err
 	}
 
-	cmd = make([]string, 0, 5)
+	cmd = make([]string, 0, 7)
 	cmd = append(cmd, binary)
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	agentbase.AppendModelFlag(&cmd, cfg.Config)
 	cmd = append(cmd, "-r", agentSessionID)
 	return cmd, true, nil
 }
