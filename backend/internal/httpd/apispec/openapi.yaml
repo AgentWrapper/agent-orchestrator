@@ -3423,6 +3423,7 @@ components:
           - kilocode
           - vibe
           - pi
+          - kimchi
           - autohand
           - fake
           type: string
