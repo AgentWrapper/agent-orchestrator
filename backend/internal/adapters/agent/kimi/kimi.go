@@ -150,6 +150,9 @@ func (p *Plugin) PromptReadinessHints(ctx context.Context, _ ports.LaunchConfig)
 // approval settings of the original session -- so cfg.Permissions is
 // intentionally ignored here.
 func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig) (cmd []string, ok bool, err error) {
+	// Deliberately does not forward cfg.Config.Model: --model + --session
+	// composition is unverified against a real kimi install (see #2890 and
+	// appendModelFlag). Pinned by TestGetRestoreCommandDoesNotForwardModelOverride.
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
 	}
