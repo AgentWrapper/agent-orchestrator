@@ -45,6 +45,9 @@ export const aoBridge: AoBridge =
 			stop: async () => ({ state: "stopped" }),
 			onStatus: () => () => undefined,
 		},
+		cloud: {
+			validateDaytonaKey: async () => ({ ok: true }),
+		},
 		telemetry: {
 			getBootstrap: async () => null,
 		},

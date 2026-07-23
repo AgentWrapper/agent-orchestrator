@@ -4,6 +4,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { cn } from "../lib/utils";
+import { aoBridge } from "../lib/bridge";
 
 type SetupStep = "daytona" | "repository" | "github" | "codex";
 
@@ -39,6 +40,7 @@ export function CloudWorkspaceSetup({ resetSignal = 0 }: { resetSignal?: number 
 	const [repository, setRepository] = useState("");
 	const [githubPat, setGithubPat] = useState("");
 	const [error, setError] = useState<string | null>(null);
+	const [isValidating, setIsValidating] = useState(false);
 
 	useEffect(() => {
 		setStep("daytona");
@@ -46,11 +48,12 @@ export function CloudWorkspaceSetup({ resetSignal = 0 }: { resetSignal?: number 
 		setRepository("");
 		setGithubPat("");
 		setError(null);
+		setIsValidating(false);
 	}, [resetSignal]);
 
 	const currentIndex = steps.findIndex((item) => item.id === step);
 
-	function submit(event: FormEvent<HTMLFormElement>) {
+	async function submit(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
 		setError(null);
 
@@ -59,8 +62,24 @@ export function CloudWorkspaceSetup({ resetSignal = 0 }: { resetSignal?: number 
 				setError("Enter a Daytona API key.");
 				return;
 			}
-			setDaytonaApiKey("");
-			setStep("repository");
+			setIsValidating(true);
+			try {
+				const result = await aoBridge.cloud.validateDaytonaKey(daytonaApiKey);
+				if (!result.ok) {
+					setError(result.error);
+					return;
+				}
+				setDaytonaApiKey("");
+				setStep("repository");
+			} catch (validationError) {
+				setError(
+					validationError instanceof Error
+						? validationError.message
+						: "Could not validate the Daytona API key.",
+				);
+			} finally {
+				setIsValidating(false);
+			}
 			return;
 		}
 
@@ -144,6 +163,7 @@ export function CloudWorkspaceSetup({ resetSignal = 0 }: { resetSignal?: number 
 								autoComplete="off"
 								description="Used by Electron to create or reuse your sandbox. It is never sent into the sandbox."
 								label="Daytona API key"
+								disabled={isValidating}
 								onChange={setDaytonaApiKey}
 								placeholder="dtn_..."
 								type="password"
@@ -182,7 +202,9 @@ export function CloudWorkspaceSetup({ resetSignal = 0 }: { resetSignal?: number 
 									Back
 								</Button>
 							)}
-							<Button type="submit">{step === "github" ? "Continue to Codex login" : "Continue"}</Button>
+							<Button disabled={isValidating} type="submit">
+								{isValidating ? "Validating..." : step === "github" ? "Continue to Codex login" : "Continue"}
+							</Button>
 						</div>
 					</form>
 				)}
@@ -194,6 +216,7 @@ export function CloudWorkspaceSetup({ resetSignal = 0 }: { resetSignal?: number 
 function SetupField({
 	autoComplete,
 	description,
+	disabled = false,
 	label,
 	onChange,
 	placeholder,
@@ -202,6 +225,7 @@ function SetupField({
 }: {
 	autoComplete: string;
 	description: string;
+	disabled?: boolean;
 	label: string;
 	onChange: (value: string) => void;
 	placeholder: string;
@@ -216,6 +240,7 @@ function SetupField({
 			<Input
 				autoComplete={autoComplete}
 				autoFocus
+				disabled={disabled}
 				id={id}
 				onChange={(event) => onChange(event.target.value)}
 				placeholder={placeholder}

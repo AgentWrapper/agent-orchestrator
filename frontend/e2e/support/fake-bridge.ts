@@ -126,6 +126,9 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					install: async () => undefined,
 					onStatus: unsubscribe,
 				},
+				cloud: {
+					validateDaytonaKey: async () => ({ ok: true }),
+				},
 				// UpdatesSection calls featureBuilds.getActive() immediately on mount; an
 				// omitted namespace would surface as a swallowed React Query error.
 				featureBuilds: {
@@ -465,6 +468,9 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					download: async () => undefined,
 					install: async () => undefined,
 					onStatus: unsubscribe,
+				},
+				cloud: {
+					validateDaytonaKey: async () => ({ ok: true }),
 				},
 				// UpdatesSection calls featureBuilds.getActive() immediately on mount; an
 				// omitted namespace would surface as a swallowed React Query error.

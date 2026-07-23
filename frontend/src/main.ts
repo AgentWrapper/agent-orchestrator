@@ -56,6 +56,7 @@ import { connectSupervisor, type SupervisorLinkHandle } from "./main/supervisor-
 import { keepDaemonAlive, shouldLinkOnAttach } from "./main/daemon-owner";
 import { readMigrationState, updateMigration, writeAppStateMarker, type MigrationState } from "./main/app-state";
 import { isAllowedAppExternalURL, openAllowedAppExternalURL } from "./main/external-open";
+import { DaytonaSupervisor } from "./main/cloud/daytona-supervisor";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -72,6 +73,8 @@ const ignoreStdStreamError = (err: NodeJS.ErrnoException): void => {
 };
 process.stdout.on("error", ignoreStdStreamError);
 process.stderr.on("error", ignoreStdStreamError);
+
+const daytonaSupervisor = new DaytonaSupervisor();
 
 // Must run before app ready so the About panel and default-menu role labels use it.
 app.setName("Agent Orchestrator");
@@ -1051,6 +1054,16 @@ function stopDaemon(): DaemonStatus {
 ipcMain.handle("daemon:getStatus", () => refreshDaemonStatus());
 ipcMain.handle("daemon:start", () => startDaemon());
 ipcMain.handle("daemon:stop", () => stopDaemon());
+ipcMain.handle("cloud:validateDaytonaKey", async (_event, apiKey: unknown) => {
+	try {
+		return await daytonaSupervisor.validateApiKey(apiKey);
+	} catch (error) {
+		return {
+			ok: false,
+			error: error instanceof Error ? error.message : "Could not validate the Daytona API key.",
+		};
+	}
+});
 ipcMain.handle("app:getVersion", () => app.getVersion());
 ipcMain.handle("app:openExternal", async (_event, url: string) => {
 	await openAllowedAppExternalURL(url, shell);

@@ -11,6 +11,7 @@ import type { MigrationState } from "./main/app-state";
 import type { UpdateSettings, UpdateStatus } from "./main/update-settings";
 import type { UpdateCheckOptions } from "./main/auto-updater";
 import type { FeatureBuild } from "./main/feature-builds";
+import type { DaytonaKeyValidationResult } from "./shared/cloud";
 import type {
 	BrowserAnnotationCancelPayload,
 	BrowserAnnotationModeInput,
@@ -113,6 +114,10 @@ const api = {
 				ipcRenderer.off("daemon:status", wrapped);
 			};
 		},
+	},
+	cloud: {
+		validateDaytonaKey: (apiKey: string) =>
+			ipcRenderer.invoke("cloud:validateDaytonaKey", apiKey) as Promise<DaytonaKeyValidationResult>,
 	},
 	telemetry: {
 		getBootstrap: () => ipcRenderer.invoke("telemetry:getBootstrap") as Promise<TelemetryBootstrap | null>,
