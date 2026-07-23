@@ -301,7 +301,7 @@ async function runRetirementPoll(stateDir: string): Promise<void> {
 // to users as an error dialog.
 function isManifest404Error(err: unknown): boolean {
 	const msg = (err as Error)?.message ?? "";
-	return msg.includes("HttpError: 404");
+	return msg.includes("HttpError: 404") && /\.yml\b/i.test(msg);
 }
 
 // wireUpdaterEvents registers electron-updater listeners once and forwards each
@@ -366,10 +366,14 @@ function wireUpdaterEvents(): void {
 			return;
 		}
 		// Manifest 404 (missing latest-mac.yml etc.) is a routine condition,
-		// not an actionable error — log and restore prior status silently.
+		// not an actionable error — log and broadcast a terminal state so
+		// the renderer does not hang.
 		if (isManifest404Error(err)) {
 			console.error("update check failed (404, manifest not found):", err);
-			restoreAutomaticCheckPreviousStatus();
+			const terminalState = activeUpdaterOperation === "manual-download"
+				? { state: "idle" as const }
+				: { state: "not-available" as const };
+			broadcast(withActiveRequest(terminalState));
 			return;
 		}
 		// All other errors: broadcast so the user knows something went wrong.
@@ -497,6 +501,7 @@ export async function checkForUpdatesNow(stateDir: string, options: UpdateCheckO
 	} catch (err) {
 		if (isManifest404Error(err)) {
 			console.error("manual update check failed:", err);
+			broadcast({ state: "not-available", requestId: options.requestId });
 		} else {
 			broadcast({
 				state: "error",
@@ -525,7 +530,7 @@ export async function downloadUpdateNow(requestId?: string): Promise<void> {
 	} catch (err) {
 		if (isManifest404Error(err)) {
 			console.error("update download failed:", err);
-			broadcast({ state: "not-available", requestId });
+			broadcast({ state: "idle", requestId });
 		} else {
 			broadcast({ state: "error", message: (err as Error)?.message ?? "Download failed", requestId });
 		}

@@ -481,6 +481,73 @@ describe("startAutoUpdates", () => {
 		expect(module.getUpdateStatus()).toEqual({ state: "error", message: "manual feed failed" });
 	});
 
+	it("broadcasts not-available on manifest 404 event during manual check", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => undefined);
+		const { module, updaterEvents } = await importAutoUpdater();
+		const err = new Error(
+			"Cannot find latest-mac.yml in the latest release artifacts (https://github.com/AgentWrapper/agent-orchestrator/releases/download/v0.10.1/latest-mac.yml):\nHttpError: 404 \"method: GET url: https://github.com/AgentWrapper/agent-orchestrator/releases/download/v0.10.1/latest-mac.yml\"",
+		);
+
+		await module.checkForUpdatesNow(stateDir);
+		updaterEvents.get("error")?.(err);
+
+		expect(module.getUpdateStatus()).toEqual({ state: "not-available" });
+	});
+
+	it("broadcasts idle on manifest 404 event during manual download", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => undefined);
+		const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+		const err = new Error(
+			"Cannot find latest-mac.yml in the latest release artifacts (https://github.com/AgentWrapper/agent-orchestrator/releases/download/v0.10.1/latest-mac.yml):\nHttpError: 404 \"method: GET url: https://github.com/AgentWrapper/agent-orchestrator/releases/download/v0.10.1/latest-mac.yml\"",
+		);
+		autoUpdater.downloadUpdate.mockImplementationOnce(() => {
+			updaterEvents.get("error")?.(err);
+			return Promise.resolve();
+		});
+
+		await module.downloadUpdateNow();
+
+		expect(module.getUpdateStatus()).toEqual({ state: "idle" });
+	});
+
+	it("broadcasts not-available on rejected checkForUpdatesNow with manifest 404", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => undefined);
+		const { module, autoUpdater } = await importAutoUpdater();
+		const err = new Error(
+			"Cannot find latest-mac.yml in the latest release artifacts (https://github.com/AgentWrapper/agent-orchestrator/releases/download/v0.10.1/latest-mac.yml):\nHttpError: 404 \"method: GET url: https://github.com/AgentWrapper/agent-orchestrator/releases/download/v0.10.1/latest-mac.yml\"",
+		);
+		autoUpdater.checkForUpdates.mockRejectedValueOnce(err);
+
+		await module.checkForUpdatesNow(stateDir);
+
+		expect(module.getUpdateStatus()).toEqual({ state: "not-available" });
+	});
+
+	it("broadcasts idle on rejected downloadUpdateNow with manifest 404", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => undefined);
+		const { module, autoUpdater } = await importAutoUpdater();
+		const err = new Error(
+			"Cannot find latest-mac.yml in the latest release artifacts (https://github.com/AgentWrapper/agent-orchestrator/releases/download/v0.10.1/latest-mac.yml):\nHttpError: 404 \"method: GET url: https://github.com/AgentWrapper/agent-orchestrator/releases/download/v0.10.1/latest-mac.yml\"",
+		);
+		autoUpdater.downloadUpdate.mockRejectedValueOnce(err);
+
+		await module.downloadUpdateNow();
+
+		expect(module.getUpdateStatus()).toEqual({ state: "idle" });
+	});
+
+	it("still surfaces non-manifest 404 errors", async () => {
+		const { module, updaterEvents } = await importAutoUpdater();
+		const err = new Error(
+			"HttpError: 404 \"method: GET url: https://github.com/AgentWrapper/agent-orchestrator/releases/download/v0.10.1/some-file.png\"",
+		);
+
+		await module.checkForUpdatesNow(stateDir);
+		updaterEvents.get("error")?.(err);
+
+		expect(module.getUpdateStatus()).toEqual({ state: "error", message: err.message });
+	});
+
 	it("logs settings failures during automatic checks and retries on later ticks", async () => {
 		vi.useFakeTimers();
 		const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
