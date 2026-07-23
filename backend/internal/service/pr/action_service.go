@@ -2,7 +2,6 @@ package pr
 
 import (
 	"context"
-	"strconv"
 )
 
 // ActionManager is the controller-facing contract for /prs/{id} action routes.
@@ -34,13 +33,12 @@ func NewActionService() *ActionService {
 
 // Merge squash-merges the PR identified by prID.
 // TODO: implement — squash-merge the PR via the SCM provider.
-func (s *ActionService) Merge(_ context.Context, prID string) (MergeResult, error) {
-	n, _ := strconv.Atoi(prID)
-	return MergeResult{PRNumber: n, Method: "squash"}, nil
+func (s *ActionService) Merge(_ context.Context, _ string) (MergeResult, error) {
+	return MergeResult{}, ErrPRActionsUnavailable
 }
 
 // ResolveComments resolves review threads on the PR identified by prID.
 // TODO: implement — resolve review threads via the SCM provider.
 func (s *ActionService) ResolveComments(_ context.Context, _ string, _ []string) (ResolveResult, error) {
-	return ResolveResult{Resolved: 0}, nil
+	return ResolveResult{}, ErrPRActionsUnavailable
 }

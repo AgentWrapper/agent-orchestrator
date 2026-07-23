@@ -52,6 +52,20 @@ func TestPRsRoutes_NilService_ResolveCommentsReturns501(t *testing.T) {
 	assertErrorCode(t, body, status, http.StatusNotImplemented, "NOT_IMPLEMENTED")
 }
 
+func TestPRsRoutes_ActionService_MergeReturns501(t *testing.T) {
+	srv := newPRTestServer(t, prsvc.NewActionService())
+	body, status, headers := doRequest(t, srv, "POST", "/api/v1/prs/1/merge", "")
+	assertJSON(t, headers)
+	assertErrorCode(t, body, status, http.StatusNotImplemented, "NOT_IMPLEMENTED")
+}
+
+func TestPRsRoutes_ActionService_ResolveCommentsReturns501(t *testing.T) {
+	srv := newPRTestServer(t, prsvc.NewActionService())
+	body, status, headers := doRequest(t, srv, "POST", "/api/v1/prs/1/resolve-comments", "")
+	assertJSON(t, headers)
+	assertErrorCode(t, body, status, http.StatusNotImplemented, "NOT_IMPLEMENTED")
+}
+
 // ---- Merge: 200 ----
 
 func TestPRsRoutes_Merge_200(t *testing.T) {

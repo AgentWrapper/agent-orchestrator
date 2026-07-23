@@ -31,7 +31,7 @@ func (c *PRsController) merge(w http.ResponseWriter, r *http.Request) {
 	prID := chi.URLParam(r, "id")
 	res, err := c.Svc.Merge(r.Context(), prID)
 	if err != nil {
-		writePRError(w, r, err)
+		writePRError(w, r, err, "POST", "/api/v1/prs/{id}/merge")
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, MergePRResponse{OK: true, PRNumber: res.PRNumber, Method: res.Method})
@@ -53,7 +53,7 @@ func (c *PRsController) resolveComments(w http.ResponseWriter, r *http.Request) 
 
 	res, err := c.Svc.ResolveComments(r.Context(), prID, in.CommentIDs)
 	if err != nil {
-		writePRError(w, r, err)
+		writePRError(w, r, err, "POST", "/api/v1/prs/{id}/resolve-comments")
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, ResolveCommentsResponse{OK: true, Resolved: res.Resolved})
@@ -61,8 +61,10 @@ func (c *PRsController) resolveComments(w http.ResponseWriter, r *http.Request) 
 
 // writePRError maps PR sentinel errors to their locked HTTP envelopes,
 // falling back to 500 for unexpected failures.
-func writePRError(w http.ResponseWriter, r *http.Request, err error) {
+func writePRError(w http.ResponseWriter, r *http.Request, err error, method, path string) {
 	switch {
+	case errors.Is(err, prsvc.ErrPRActionsUnavailable):
+		apispec.NotImplemented(w, r, method, path)
 	case errors.Is(err, prsvc.ErrPRNotFound):
 		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PR_NOT_FOUND", "Unknown PR", nil)
 	case errors.Is(err, prsvc.ErrPRNotMergeable):
