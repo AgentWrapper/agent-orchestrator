@@ -56,12 +56,13 @@ func TestServiceDerivesStatusFromSessionFactsAndPR(t *testing.T) {
 
 		// A live session whose hook-capable agent never signaled is no_signal
 		// once the grace passes — never a confident idle.
-		{"no-signal-after-grace", silentRec(2 * noSignalGrace), nil, false, domain.StatusNoSignal},
+		{"no-signal-after-grace", silentRec(5*time.Minute + time.Second), nil, false, domain.StatusNoSignal},
 		// A hook-less harness can never signal: its silence stays idle forever
 		// instead of degrading into a false "needs you".
 		{"hookless-silent-stays-idle", silentRec(2 * noSignalGrace), nil, true, domain.StatusIdle},
 		// Right after spawn the agent legitimately hasn't called back yet.
-		{"silent-within-grace-is-idle", silentRec(10 * time.Second), nil, false, domain.StatusIdle},
+		{"silent-within-grace-is-idle", silentRec(2 * time.Minute), nil, false, domain.StatusIdle},
+		{"silent-at-grace-boundary-is-idle", silentRec(5 * time.Minute), nil, false, domain.StatusIdle},
 		// Termination and PR facts outrank the missing-signal downgrade.
 		{
 			"no-signal-terminated-wins",

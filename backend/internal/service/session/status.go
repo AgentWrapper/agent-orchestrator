@@ -13,7 +13,7 @@ import (
 // prompt — its SessionStart hook fires earlier but carries no activity state);
 // past it, a silent session is indistinguishable from one with a broken hook
 // pipeline, and the dashboard must not claim a confident "idle".
-const noSignalGrace = 90 * time.Second
+const noSignalGrace = 5 * time.Minute
 
 // deriveStatus computes the display status. signalCapable says whether this
 // session's harness has an activity hook pipeline at all; only then can
