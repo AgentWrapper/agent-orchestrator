@@ -2,7 +2,6 @@ import createClient from "openapi-fetch";
 import type { paths } from "../../api/schema";
 import { captureRendererEvent } from "./telemetry";
 import { getLastDaemonMessage } from "../lib/daemon-status";
-import { getLastDaemonMessage } from "../lib/daemon-status";
 
 function devApiBaseUrl(): string {
 	return typeof window === "undefined" ? "http://127.0.0.1:3001" : window.location.origin;
