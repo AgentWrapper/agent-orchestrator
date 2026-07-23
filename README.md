@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="ao-logo.svg" alt="Agent Orchestrator" width="160" height="160" />
+  <img src="assets/ao-logo.svg" alt="Agent Orchestrator" width="160" height="160" />
 
 # Agent Orchestrator
 
@@ -163,12 +163,12 @@ ao start
   <tr>
     <td width="50%" align="center">
       <a href="https://x.com/agent_wrapper/status/2026329204405723180">
-        <img src="screenshots/tweet2.png" height="330" alt="Agent Orchestrator journey screenshot one" />
+        <img src="assets/tweet2.png" height="330" alt="Agent Orchestrator journey screenshot one" />
       </a>
     </td>
     <td width="50%" align="center">
       <a href="https://x.com/agent_wrapper/status/2025986105485733945">
-        <img src="screenshots/tweet1.png" height="330" alt="Agent Orchestrator journey screenshot two" />
+        <img src="assets/tweet1.png" height="330" alt="Agent Orchestrator journey screenshot two" />
       </a>
     </td>
   </tr>
