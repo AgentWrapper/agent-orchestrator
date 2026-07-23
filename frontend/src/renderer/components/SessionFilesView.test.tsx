@@ -252,6 +252,19 @@ describe("SessionFilesView", () => {
 		expect(container.querySelector(".grid-cols-2")).toBeNull();
 	});
 
+	it("moves focus between file rows with j and k", async () => {
+		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
+		const first = await screen.findByRole("button", { name: "Collapse src/App.tsx" });
+		const second = screen.getByRole("button", { name: "Expand docs/guide.md" });
+
+		first.focus();
+		await userEvent.keyboard("j");
+		expect(second).toHaveFocus();
+
+		await userEvent.keyboard("k");
+		expect(first).toHaveFocus();
+	});
+
 	it("renders changed files as one integrated review list instead of boxed cards", async () => {
 		renderWithQuery(<SessionFilesView onClose={vi.fn()} sessionId="sess-1" />);
 

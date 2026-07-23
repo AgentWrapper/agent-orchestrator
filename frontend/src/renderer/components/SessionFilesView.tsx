@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	Check,
@@ -63,6 +63,7 @@ export function SessionFilesView({
 	const [split, setSplit] = useState(false);
 	const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
 	const initializedExpansionFor = useRef<string | null>(null);
+	const rootRef = useRef<HTMLElement>(null);
 
 	const filesQuery = useQuery({
 		queryKey: ["session-workspace-files", sessionId],
@@ -131,8 +132,31 @@ export function SessionFilesView({
 		});
 	};
 
+	// j / k move focus between file rows (Vim-style), unless the user is typing
+	// in the search box. The rows themselves handle Enter/Space to expand.
+	const onFilesKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+		if (event.key !== "j" && event.key !== "k") return;
+		const active = document.activeElement;
+		if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) return;
+		const toggles = Array.from(rootRef.current?.querySelectorAll<HTMLButtonElement>("[data-file-toggle]") ?? []);
+		if (toggles.length === 0) return;
+		event.preventDefault();
+		const current = toggles.findIndex((button) => button === active);
+		if (current === -1) {
+			toggles[0].focus();
+			return;
+		}
+		const next = event.key === "j" ? Math.min(toggles.length - 1, current + 1) : Math.max(0, current - 1);
+		toggles[next].focus();
+	};
+
 	return (
-		<section className="flex h-full min-h-0 flex-col bg-background text-foreground" aria-label="Session files">
+		<section
+			ref={rootRef}
+			onKeyDown={onFilesKeyDown}
+			className="flex h-full min-h-0 flex-col bg-background text-foreground"
+			aria-label="Session files"
+		>
 			<header className="flex h-13 shrink-0 items-center gap-0.5 border-b border-border bg-surface px-2">
 				{searchOpen ? (
 					<label className="relative mr-auto min-w-0 flex-1 max-w-[280px]">
@@ -339,6 +363,7 @@ function ReviewFileCard({
 					aria-expanded={expanded}
 					aria-label={`${expanded ? "Collapse" : "Expand"} ${file.path}`}
 					className="flex min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left"
+					data-file-toggle=""
 					onClick={onToggle}
 					type="button"
 				>
