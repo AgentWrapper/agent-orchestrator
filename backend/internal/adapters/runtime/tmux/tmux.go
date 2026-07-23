@@ -238,13 +238,14 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 	// keep-alive shell would still be running but IsAlive would report the
 	// agent as dead, incorrectly failing Create (issue #2802, #2822).
 	handle := ports.RuntimeHandle{ID: id}
-	if out, err := r.run(ctx, hasSessionArgs(id)...); err != nil {
+	exists, err := r.hasSession(ctx, id)
+	if err != nil {
 		_ = r.Destroy(context.Background(), handle)
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && sessionMissingOutput(string(out)) {
-			return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: session %s exited before ready", id)
-		}
 		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: verify session %s: %w", id, err)
+	}
+	if !exists {
+		_ = r.Destroy(context.Background(), handle)
+		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: session %s exited before ready", id)
 	}
 	return handle, nil
 }
@@ -329,27 +330,46 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 	if err != nil {
 		return false, err
 	}
+	exists, err := r.hasSession(ctx, id)
+	if err != nil {
+		return false, fmt.Errorf("tmux runtime: probe session %s: %w", id, err)
+	}
+	if !exists {
+		return false, nil
+	}
+
+	exited, err := r.agentExited(ctx, id)
+	if err != nil {
+		return false, fmt.Errorf("tmux runtime: probe session %s: %w", id, err)
+	}
+	return !exited, nil
+}
+
+// hasSession reports whether tmux still has the exact session. Only recognized
+// missing-session failures become false; all other command failures remain
+// errors so callers never turn a failed probe into a liveness fact.
+func (r *Runtime) hasSession(ctx context.Context, id string) (bool, error) {
 	out, err := r.run(ctx, hasSessionArgs(id)...)
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && sessionMissingOutput(string(out)) {
 			return false, nil
 		}
-		return false, fmt.Errorf("tmux runtime: probe session %s: %w", id, err)
-	}
-
-	// Session exists — check whether the pane option signals a dead agent.
-	// show-options -q -v -p exits 0 with empty output when the option is
-	// unset (agent alive), exits 0 with "1" when the option is set (agent
-	// dead), and exits non-zero for genuine tmux failures (probe error).
-	optionOut, err := r.run(ctx, exitedOptionArgs(id)...)
-	if err != nil {
-		return false, fmt.Errorf("tmux runtime: probe session %s: %w", id, err)
-	}
-	if strings.TrimSpace(string(optionOut)) == "1" {
-		return false, nil
+		return false, err
 	}
 	return true, nil
+}
+
+// agentExited reports the pane-scoped agent exit marker. show-options -q -v -p
+// exits 0 with empty output when the option is unset (agent alive), exits 0
+// with "1" when the option is set (agent dead), and exits non-zero for genuine
+// tmux failures (probe error).
+func (r *Runtime) agentExited(ctx context.Context, id string) (bool, error) {
+	optionOut, err := r.run(ctx, exitedOptionArgs(id)...)
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(string(optionOut)) == "1", nil
 }
 
 // SendMessage sends literal text to the session (chunked via send-keys -l) then

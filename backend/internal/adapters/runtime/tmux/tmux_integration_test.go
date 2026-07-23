@@ -2,7 +2,9 @@ package tmux
 
 import (
 	"context"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +21,8 @@ func TestRuntimeIntegration(t *testing.T) {
 	ctx := context.Background()
 	id := strings.ReplaceAll(t.Name(), "/", "_")
 	r := New(Options{Timeout: 5 * time.Second})
+	workspace := t.TempDir()
+	exitSignal := filepath.Join(workspace, "agent-exit")
 
 	// Ensure clean slate: ignore errors (session may not exist).
 	_ = r.Destroy(ctx, ports.RuntimeHandle{ID: id})
@@ -30,32 +34,43 @@ func TestRuntimeIntegration(t *testing.T) {
 
 	h, err := r.Create(ctx, ports.RuntimeConfig{
 		SessionID:     domain.SessionID(id),
-		WorkspacePath: t.TempDir(),
-		// Run a trivial command then drop into an interactive shell (the keep-alive
-		// exec is added by buildLaunchCommand, but we also verify here that output
-		// appears).
-		Argv: []string{"sh", "-c", "echo hello-from-tmux"},
+		WorkspacePath: workspace,
+		// Keep the agent alive until the test creates agent-exit. This removes
+		// the race between Create returning and a fixed-duration command exiting.
+		Argv: []string{"sh", "-c", "echo agent-ready; while [ ! -f agent-exit ]; do sleep 0.05; done; echo agent-finished"},
 		Env:  map[string]string{"AO_SESSION_ID": id},
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
-	// IsAlive after create may return true (agent still running) or false
-	// (agent finished quickly and option is set, but keep-alive shell lives).
-	// We only require it not to error; the session is usable either way.
-	if _, err := r.IsAlive(ctx, h); err != nil {
+	out := waitForOutput(t, r, h, "agent-ready", 5*time.Second)
+	if !strings.Contains(out, "agent-ready") {
+		t.Fatalf("output = %q, want agent-ready", out)
+	}
+
+	alive, err := r.IsAlive(ctx, h)
+	if err != nil {
 		t.Fatalf("IsAlive: %v", err)
 	}
-
-	// Wait for the echo output to appear (the session may take a moment to
-	// write it to the pane history).
-	out := waitForOutput(t, r, h, "hello-from-tmux", 5*time.Second)
-	if !strings.Contains(out, "hello-from-tmux") {
-		t.Fatalf("output = %q, want hello-from-tmux", out)
+	if !alive {
+		t.Fatal("alive = false while controlled agent is still running")
 	}
 
-	// Send a command and verify it echoes back.
+	if err := os.WriteFile(exitSignal, nil, 0o600); err != nil {
+		t.Fatalf("release agent: %v", err)
+	}
+	waitForAliveState(t, r, h, false, 5*time.Second)
+
+	// The agent is dead, but the keep-alive shell and tmux session must remain.
+	exists, err := r.hasSession(ctx, h.ID)
+	if err != nil {
+		t.Fatalf("hasSession after agent exit: %v", err)
+	}
+	if !exists {
+		t.Fatal("tmux session exited with agent; want surviving keep-alive shell")
+	}
+
 	if err := r.SendMessage(ctx, h, "echo hello-send"); err != nil {
 		t.Fatalf("SendMessage: %v", err)
 	}
@@ -68,13 +83,30 @@ func TestRuntimeIntegration(t *testing.T) {
 	if err := r.Destroy(ctx, h); err != nil {
 		t.Fatalf("Destroy: %v", err)
 	}
-	alive, err := r.IsAlive(ctx, h)
+	alive, err = r.IsAlive(ctx, h)
 	if err != nil {
 		t.Fatalf("IsAlive after destroy: %v", err)
 	}
 	if alive {
 		t.Fatal("alive after destroy = true, want false")
 	}
+}
+
+// waitForAliveState polls IsAlive until it matches want or the deadline passes.
+func waitForAliveState(t *testing.T, r *Runtime, h ports.RuntimeHandle, want bool, deadline time.Duration) {
+	t.Helper()
+	end := time.Now().Add(deadline)
+	for time.Now().Before(end) {
+		alive, err := r.IsAlive(context.Background(), h)
+		if err != nil {
+			t.Fatalf("IsAlive: %v", err)
+		}
+		if alive == want {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("IsAlive did not become %v before deadline", want)
 }
 
 // TestRuntimeIntegrationExactSessionParsing verifies that IsAlive uses exact
