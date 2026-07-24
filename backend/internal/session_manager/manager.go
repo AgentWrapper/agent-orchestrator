@@ -433,7 +433,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 			wsOK := m.rollbackPreparedSpawnWorkspace(destroyCtx, rec, ws, workspaceProject)
 			if rtErr != nil || !wsOK {
 				m.markSpawnFailedTerminated(destroyCtx, id)
-				return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: deliver prompt: %w (runtime destroy: %v)", id, err, rtErr)
+				return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: deliver prompt: %w (runtime destroy: %w)", id, err, rtErr)
 			}
 			m.markSpawnFailedTerminatedWithoutWorkspace(destroyCtx, id)
 			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: deliver prompt: %w", id, err)
@@ -518,8 +518,8 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 			State:        "active",
 		}); err != nil {
 			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-			defer cancel()
 			_ = workspaceProject.DestroyWorkspaceProject(cleanupCtx, info)
+			cancel()
 			return ports.WorkspaceInfo{}, nil, fmt.Errorf("record workspace worktree %q: %w", wt.RepoName, err)
 		}
 	}
