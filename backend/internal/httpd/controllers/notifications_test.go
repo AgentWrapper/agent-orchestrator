@@ -24,7 +24,7 @@ type fakeNotificationService struct {
 	gotMarkID    string
 	items        []notificationsvc.Notification
 	markItem     notificationsvc.Notification
-	markAllItems []notificationsvc.Notification
+	markAllCount int64
 	err          error
 }
 
@@ -33,9 +33,9 @@ type fakeNotificationStream struct {
 	ch         chan domain.NotificationRecord
 }
 
-func (f *fakeNotificationService) ListUnread(_ context.Context, filter notificationsvc.ListFilter) ([]notificationsvc.Notification, error) {
+func (f *fakeNotificationService) List(_ context.Context, filter notificationsvc.ListFilter) (notificationsvc.ListPage, error) {
 	f.gotFilter = filter
-	return f.items, f.err
+	return notificationsvc.ListPage{Notifications: f.items, NextCursor: "next-page", UnreadCount: 7}, f.err
 }
 
 func (f *fakeNotificationService) MarkRead(_ context.Context, id string) (notificationsvc.Notification, bool, error) {
@@ -43,8 +43,8 @@ func (f *fakeNotificationService) MarkRead(_ context.Context, id string) (notifi
 	return f.markItem, f.err == nil, f.err
 }
 
-func (f *fakeNotificationService) MarkAllRead(context.Context) ([]notificationsvc.Notification, error) {
-	return f.markAllItems, f.err
+func (f *fakeNotificationService) MarkAllRead(context.Context) (int64, error) {
+	return f.markAllCount, f.err
 }
 
 func (f *fakeNotificationStream) Subscribe(projectID domain.ProjectID) (<-chan domain.NotificationRecord, func()) {
@@ -80,12 +80,18 @@ func TestNotificationsAPI_ListUnread(t *testing.T) {
 	}}}
 	srv := newNotificationTestServer(t, svc)
 
-	body, status, _ := doRequest(t, srv, "GET", "/api/v1/notifications?limit=10", "")
+	body, status, _ := doRequest(t, srv, "GET", "/api/v1/notifications?limit=10&cursor=previous-page", "")
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", status, body)
 	}
 	if svc.gotFilter.Limit != 10 {
 		t.Fatalf("filter = %+v", svc.gotFilter)
+	}
+	if svc.gotFilter.Status != notificationsvc.ListUnread {
+		t.Fatalf("status = %q, want unread", svc.gotFilter.Status)
+	}
+	if svc.gotFilter.Cursor != "previous-page" {
+		t.Fatalf("cursor = %q, want previous-page", svc.gotFilter.Cursor)
 	}
 	var resp struct {
 		Notifications []struct {
@@ -99,10 +105,26 @@ func TestNotificationsAPI_ListUnread(t *testing.T) {
 				SessionID string `json:"sessionId"`
 			} `json:"target"`
 		} `json:"notifications"`
+		NextCursor  string `json:"nextCursor"`
+		UnreadCount int    `json:"unreadCount"`
 	}
 	mustJSON(t, body, &resp)
-	if len(resp.Notifications) != 1 || resp.Notifications[0].ID != "ntf_1" || resp.Notifications[0].Target.Kind != "session" {
+	if len(resp.Notifications) != 1 || resp.Notifications[0].ID != "ntf_1" ||
+		resp.Notifications[0].Target.Kind != "session" || resp.NextCursor != "next-page" || resp.UnreadCount != 7 {
 		t.Fatalf("resp = %+v", resp)
+	}
+}
+
+func TestNotificationsAPI_ListAllHistory(t *testing.T) {
+	svc := &fakeNotificationService{}
+	srv := newNotificationTestServer(t, svc)
+
+	_, status, _ := doRequest(t, srv, "GET", "/api/v1/notifications?status=all", "")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", status)
+	}
+	if svc.gotFilter.Status != notificationsvc.ListAll || svc.gotFilter.Limit != notificationsvc.DefaultListLimit {
+		t.Fatalf("filter = %+v", svc.gotFilter)
 	}
 }
 
@@ -110,7 +132,7 @@ func TestNotificationsAPI_DefaultsAndCapsLimit(t *testing.T) {
 	svc := &fakeNotificationService{}
 	srv := newNotificationTestServer(t, svc)
 
-	_, status, _ := doRequest(t, srv, "GET", "/api/v1/notifications?limit=999", "")
+	_, status, _ := doRequest(t, srv, "GET", "/api/v1/notifications?limit=9999", "")
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want 200", status)
 	}
@@ -174,11 +196,7 @@ func TestNotificationsAPI_MarkReadUnknownNotification(t *testing.T) {
 }
 
 func TestNotificationsAPI_MarkAllRead(t *testing.T) {
-	now := time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC)
-	svc := &fakeNotificationService{markAllItems: []notificationsvc.Notification{{
-		NotificationRecord: domain.NotificationRecord{ID: "ntf_1", SessionID: "mer-1", ProjectID: "mer", Type: domain.NotificationNeedsInput, Title: "needs", Status: domain.NotificationRead, CreatedAt: now},
-		Target:             notificationsvc.Target{Kind: notificationsvc.TargetSession, SessionID: "mer-1"},
-	}}}
+	svc := &fakeNotificationService{markAllCount: 123}
 	srv := newNotificationTestServer(t, svc)
 
 	body, status, _ := doRequest(t, srv, "POST", "/api/v1/notifications/read-all", "")
@@ -186,13 +204,11 @@ func TestNotificationsAPI_MarkAllRead(t *testing.T) {
 		t.Fatalf("status = %d, want 200; body=%s", status, body)
 	}
 	var resp struct {
-		Notifications []struct {
-			ID     string `json:"id"`
-			Status string `json:"status"`
-		} `json:"notifications"`
+		Notifications []controllers.NotificationResponse `json:"notifications"`
+		UpdatedCount  int64                              `json:"updatedCount"`
 	}
 	mustJSON(t, body, &resp)
-	if len(resp.Notifications) != 1 || resp.Notifications[0].ID != "ntf_1" || resp.Notifications[0].Status != "read" {
+	if len(resp.Notifications) != 0 || resp.UpdatedCount != 123 {
 		t.Fatalf("resp = %+v", resp)
 	}
 }

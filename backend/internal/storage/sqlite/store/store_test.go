@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"sync"
 	"testing"
@@ -45,6 +46,19 @@ func sampleRecord(project string) domain.SessionRecord {
 	}
 }
 
+// Regression: the sessions.harness CHECK must allow the 'fake' harness (added
+// in migration 0024) so fake-driven e2e sessions can be created.
+func TestSessionCreateAllowsFakeHarness(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	rec := sampleRecord("mer")
+	rec.Harness = domain.HarnessFake
+	if _, err := s.CreateSession(ctx, rec); err != nil {
+		t.Fatalf("create fake-harness session: %v", err)
+	}
+}
+
 func TestProjectCRUDAndArchive(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -69,6 +83,84 @@ func TestProjectCRUDAndArchive(t *testing.T) {
 	}
 	if _, ok, _ := s.GetProject(ctx, "mer"); !ok {
 		t.Fatal("archived project must still resolve by id")
+	}
+}
+
+func TestImportWorkspaceProjectConflictsWithArchivedSameID(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	archivedAt := time.Now().UTC().Truncate(time.Second)
+	if err := s.UpsertWorkspaceProject(ctx, domain.ProjectRecord{
+		ID: "alpha", Path: "/tmp/target", RegisteredAt: time.Now().UTC().Truncate(time.Second),
+	}, nil); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	if ok, err := s.ArchiveProject(ctx, "alpha", archivedAt); err != nil || !ok {
+		t.Fatalf("archive: ok=%v err=%v", ok, err)
+	}
+
+	err := s.ImportWorkspaceProject(ctx, domain.ProjectRecord{
+		ID: "alpha", Path: "/tmp/source", RegisteredAt: time.Now().UTC().Truncate(time.Second),
+	}, nil)
+	var conflict *domain.ProjectImportConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("err = %v, want project import conflict", err)
+	}
+	if conflict.Conflict.Reason != domain.ProjectImportConflictSameIDArchivedTarget || conflict.Conflict.TargetPath != "/tmp/target" {
+		t.Fatalf("conflict = %#v", conflict.Conflict)
+	}
+	got, ok, err := s.GetProject(ctx, "alpha")
+	if err != nil || !ok {
+		t.Fatalf("get project: ok=%v err=%v", ok, err)
+	}
+	if got.ArchivedAt.IsZero() || got.Path != "/tmp/target" {
+		t.Fatalf("project = %+v, want archived target preserved", got)
+	}
+}
+
+func TestProjectScratchKindAndArchivedCount(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	count, err := s.CountProjectsIncludingArchived(ctx)
+	if err != nil {
+		t.Fatalf("count initial: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("initial project count = %d, want 0", count)
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := s.UpsertProject(ctx, domain.ProjectRecord{
+		ID:           "scratch",
+		DisplayName:  "Scratch",
+		Path:         "/ao/scratch/default",
+		Kind:         domain.ProjectKindScratch,
+		RegisteredAt: now,
+	}); err != nil {
+		t.Fatalf("upsert scratch: %v", err)
+	}
+
+	got, ok, err := s.GetProject(ctx, "scratch")
+	if err != nil || !ok {
+		t.Fatalf("get scratch: ok=%v err=%v", ok, err)
+	}
+	if got.Kind != domain.ProjectKindScratch {
+		t.Fatalf("kind = %q, want scratch", got.Kind)
+	}
+
+	if ok, err := s.ArchiveProject(ctx, "scratch", now.Add(time.Minute)); err != nil || !ok {
+		t.Fatalf("archive scratch: ok=%v err=%v", ok, err)
+	}
+	if list, err := s.ListProjects(ctx); err != nil || len(list) != 0 {
+		t.Fatalf("active projects = %#v, %v; want empty", list, err)
+	}
+	count, err = s.CountProjectsIncludingArchived(ctx)
+	if err != nil {
+		t.Fatalf("count after archive: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("project count including archived = %d, want 1", count)
 	}
 }
 
@@ -415,7 +507,7 @@ func TestWriteSCMObservationPersistsMetadataChecksReviewsAndComments(t *testing.
 		UpdatedAt: now, ObservedAt: now, CIObservedAt: now, ReviewObservedAt: now,
 	}
 	checks := []domain.PullRequestCheck{{Name: "build", CommitHash: "h1", Status: domain.PRCheckFailed, Conclusion: "failure", URL: "ci", Details: "99", LogTail: "boom", CreatedAt: now}}
-	reviews := []domain.PullRequestReview{{ID: "review-1", Author: "reviewer", State: domain.ReviewChangesRequest, URL: "https://github.com/o/r/pull/1#pullrequestreview-1", SubmittedAt: now}}
+	reviews := []domain.PullRequestReview{{ID: "review-1", Author: "reviewer", State: domain.ReviewChangesRequest, URL: "https://github.com/o/r/pull/1#pullrequestreview-1", Body: "please fix the nil check", SubmittedAt: now}}
 	threads := []domain.PullRequestReviewThread{{ThreadID: "t1", Path: "main.go", Line: 7, SemanticHash: "th", UpdatedAt: now}}
 	comments := []domain.PullRequestComment{{ThreadID: "t1", ID: "c1", Author: "reviewer", File: "main.go", Line: 7, Body: "fix", URL: "comment", CreatedAt: now}}
 
@@ -438,12 +530,46 @@ func TestWriteSCMObservationPersistsMetadataChecksReviewsAndComments(t *testing.
 		t.Fatalf("threads not persisted: %+v", gotThreads)
 	}
 	gotReviews, _ := s.ListPRReviews(ctx, pr.URL)
-	if len(gotReviews) != 1 || gotReviews[0].ID != "review-1" || gotReviews[0].URL != "https://github.com/o/r/pull/1#pullrequestreview-1" {
+	if len(gotReviews) != 1 || gotReviews[0].ID != "review-1" || gotReviews[0].URL != "https://github.com/o/r/pull/1#pullrequestreview-1" || gotReviews[0].Body != "please fix the nil check" {
 		t.Fatalf("reviews not persisted: %+v", gotReviews)
 	}
 	gotComments, _ := s.ListPRComments(ctx, pr.URL)
 	if len(gotComments) != 1 || gotComments[0].ThreadID != "t1" || gotComments[0].URL != "comment" {
 		t.Fatalf("comments not persisted: %+v", gotComments)
+	}
+}
+
+func TestUpsertPRReviewUpdatesBody(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	now := time.Now().UTC().Truncate(time.Second)
+
+	pr := domain.PullRequest{
+		URL: "https://github.com/o/r/pull/9", SessionID: r.ID, Number: 9,
+		Provider: "github", Host: "github.com", Repo: "o/r",
+		SourceBranch: "feat/body", TargetBranch: "main", HeadSHA: "h1",
+		Title: "review body", UpdatedAt: now, ObservedAt: now,
+	}
+	review := domain.PullRequestReview{ID: "review-1", Author: "reviewer", State: domain.ReviewChangesRequest, URL: "https://github.com/o/r/pull/9#pullrequestreview-1", Body: "first pass", SubmittedAt: now}
+
+	if err := s.WriteSCMObservation(ctx, pr, nil, []domain.PullRequestReview{review}, nil, nil, ports.ReviewWriteReplace); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.ListPRReviews(ctx, pr.URL); len(got) != 1 || got[0].Body != "first pass" {
+		t.Fatalf("initial body not persisted: %+v", got)
+	}
+
+	// A re-observation of the same review id must overwrite the stored body.
+	review.State = domain.ReviewApproved
+	review.Body = "resolved, approving"
+	if err := s.WriteSCMObservation(ctx, pr, nil, []domain.PullRequestReview{review}, nil, nil, ports.ReviewWriteReplace); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.ListPRReviews(ctx, pr.URL)
+	if len(got) != 1 || got[0].Body != "resolved, approving" || got[0].State != domain.ReviewApproved {
+		t.Fatalf("body/state not updated on upsert: %+v", got)
 	}
 }
 
@@ -709,6 +835,50 @@ func TestSetSessionPreviewURLBumpsRevisionAndFiresCDCOnSameURL(t *testing.T) {
 	}
 	if updates != 2 {
 		t.Fatalf("session_updated events = %d, want 2 (one per same-URL set)", updates)
+	}
+}
+
+func TestRenameSessionFiresCDCEvent(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
+
+	base, _ := s.LatestSeq(ctx)
+	renamedAt := r.UpdatedAt.Add(time.Minute)
+	if ok, err := s.RenameSession(ctx, r.ID, "Fix flaky tests", renamedAt); err != nil || !ok {
+		t.Fatalf("rename: ok=%v err=%v", ok, err)
+	}
+
+	// A rename must reach the live SSE stream: display_name is in the
+	// sessions_cdc_update WHEN guard, so the rename writes exactly one
+	// session_updated row. The event is an invalidation-only nudge (renderer
+	// consumers refetch the workspace and read the new name from durable
+	// state), so we assert the fan-out fired, not the payload contents — the
+	// payload carries the shared {id,activity,isTerminated,preview*} shape
+	// common to every session_updated emitter.
+	evs, err := s.EventsAfter(ctx, base, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payloads []json.RawMessage
+	for _, e := range evs {
+		if string(e.Type) == "session_updated" {
+			payloads = append(payloads, e.Payload)
+		}
+	}
+	if len(payloads) != 1 {
+		t.Fatalf("session_updated events = %d, want 1 after rename", len(payloads))
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(payloads[0], &payload); err != nil {
+		t.Fatalf("session_updated payload JSON: %v", err)
+	}
+	if payload["id"] != string(r.ID) {
+		t.Fatalf("payload id = %v, want %q", payload["id"], r.ID)
+	}
+	if _, carried := payload["displayName"]; carried {
+		t.Fatalf("session_updated must stay invalidation-only; payload should not carry displayName: %v", payload)
 	}
 }
 

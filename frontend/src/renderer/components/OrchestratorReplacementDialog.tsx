@@ -35,7 +35,7 @@ export function OrchestratorReplacementDialog({
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
-				<Dialog.Overlay className="fixed inset-0 z-overlay bg-scrim" />
+				<Dialog.Overlay className="dialog-overlay" />
 				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-dialog-orchestrator -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-surface p-5 shadow-lg">
 					<div className="flex items-start gap-3">
 						<div className="grid size-8 shrink-0 place-items-center rounded-md border border-border bg-muted text-warning">

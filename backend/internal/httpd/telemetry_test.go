@@ -15,15 +15,20 @@ func TestCLIInvokedRouteEmitsTelemetry(t *testing.T) {
 	sink := &captureSink{}
 	r := NewRouterWithControl(config.Config{}, discardLogger(), nil, APIDeps{Telemetry: sink}, ControlDeps{})
 
-	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/internal/telemetry/cli-invoked", strings.NewReader(`{"command":"status","commandPath":"ao status"}`))
-	req.Host = "127.0.0.1:3001"
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("status = %d, want 202", rec.Code)
+	postInvoked := func(command, commandPath string) {
+		t.Helper()
+		body := `{"command":"` + command + `","commandPath":"` + commandPath + `"}`
+		req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/internal/telemetry/cli-invoked", strings.NewReader(body))
+		req.Host = "127.0.0.1:3001"
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("status = %d, want 202", rec.Code)
+		}
 	}
+
+	postInvoked("status", "ao status")
 	if len(sink.events) != 2 {
 		t.Fatalf("events = %d, want 2", len(sink.events))
 	}
@@ -38,6 +43,27 @@ func TestCLIInvokedRouteEmitsTelemetry(t *testing.T) {
 	}
 	if got := sink.events[1].Payload["channel"]; got != "cli" {
 		t.Fatalf("channel = %#v, want cli", got)
+	}
+
+	// Repeat invocations of the same command the same day are polling noise:
+	// both the per-command invocation event and the daily activity heartbeat
+	// stay silent.
+	postInvoked("status", "ao status")
+	if len(sink.events) != 2 {
+		t.Fatalf("events after repeat invocation = %d, want 2", len(sink.events))
+	}
+
+	// A different command the same day still reports its first invocation, but
+	// no additional heartbeat.
+	postInvoked("ls", "ao session ls")
+	if len(sink.events) != 3 {
+		t.Fatalf("events after new command = %d, want 3", len(sink.events))
+	}
+	if sink.events[2].Name != "ao.cli.invoked" {
+		t.Fatalf("third event name = %q, want ao.cli.invoked", sink.events[2].Name)
+	}
+	if got := sink.events[2].Payload["command_path"]; got != "ao session ls" {
+		t.Fatalf("command_path = %#v, want ao session ls", got)
 	}
 }
 

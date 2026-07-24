@@ -1,4 +1,5 @@
 export type Theme = "light" | "dark";
+export type ThemePreference = Theme | "system";
 
 export const themeStorageKey = "ao.theme";
 
@@ -12,18 +13,20 @@ export function systemTheme(): Theme {
 	return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
 }
 
-export function readStoredTheme(): Theme | null {
+export function readStoredThemePreference(): ThemePreference {
 	try {
 		const stored = getLocalStorage()?.getItem(themeStorageKey);
-		return stored === "light" || stored === "dark" ? stored : null;
+		if (stored === "light" || stored === "dark" || stored === "system") return stored;
 	} catch {
-		return null;
+		// ignore
 	}
+	return "system";
 }
 
-/** Stored preference, else OS appearance. */
-export function resolveTheme(): Theme {
-	return readStoredTheme() ?? systemTheme();
+/** Resolve the active light/dark appearance from a stored preference. */
+export function resolveTheme(preference: ThemePreference = readStoredThemePreference()): Theme {
+	if (preference === "system") return systemTheme();
+	return preference;
 }
 
 export function applyDocumentTheme(theme: Theme): void {

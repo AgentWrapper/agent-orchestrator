@@ -52,6 +52,23 @@ func New() *Plugin {
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
 
+// GetConfigSpec reports the per-project agent config keys Qwen Code
+// understands.
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.ConfigSpec{}, err
+	}
+	return ports.ConfigSpec{
+		Fields: []ports.ConfigField{
+			{
+				Key:         "model",
+				Type:        ports.ConfigFieldString,
+				Description: "Model override passed to `qwen --model`.",
+			},
+		},
+	}, nil
+}
+
 // Manifest returns the adapter's static self-description.
 func (p *Plugin) Manifest() adapters.Manifest {
 	return adapters.Manifest{
@@ -79,6 +96,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 
 	cmd = []string{binary}
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	appendModelFlag(&cmd, cfg.Config)
 
 	systemPrompt, err := launchSystemPromptText(cfg)
 	if err != nil {
@@ -112,7 +130,7 @@ func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.Launch
 }
 
 // GetRestoreCommand rebuilds the argv that continues an existing Qwen Code
-// session: `qwen [--approval-mode <mode>] -r <agentSessionId>`. ok is false when
+// session: `qwen [--approval-mode <mode>] --resume <agentSessionId>`. ok is false when
 // the hook-derived native session id has not landed yet, so callers can fall
 // back to fresh launch behavior. Note: ports.RestoreConfig carries no Prompt.
 func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig) (cmd []string, ok bool, err error) {
@@ -132,6 +150,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	cmd = make([]string, 0, 3)
 	cmd = append(cmd, binary)
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	appendModelFlag(&cmd, cfg.Config)
 	systemPrompt, err := restoreSystemPromptText(cfg)
 	if err != nil {
 		return nil, false, err
@@ -139,7 +158,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	if systemPrompt != "" {
 		cmd = append(cmd, "--append-system-prompt", systemPrompt)
 	}
-	cmd = append(cmd, "-r", agentSessionID)
+	cmd = append(cmd, "--resume", agentSessionID)
 	return cmd, true, nil
 }
 
@@ -183,7 +202,8 @@ var qwenBinarySpec = binaryutil.BinarySpec{
 	Names:         []string{"qwen"},
 	WinNames:      []string{"qwen.cmd", "qwen.exe", "qwen"},
 	UnixPaths:     []string{"/usr/local/bin/qwen", "/opt/homebrew/bin/qwen"},
-	UnixHomePaths: [][]string{{".npm-global", "bin", "qwen"}, {".npm", "bin", "qwen"}, {".local", "bin", "qwen"}},
+	UnixHomePaths: binaryutil.NodeManagedUnixHomePaths("qwen"),
+	NodeManaged:   true,
 	WinPaths: []binaryutil.WinPath{
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "qwen.cmd"}},
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "qwen.exe"}},
@@ -225,6 +245,13 @@ func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
 		*cmd = append(*cmd, "--approval-mode", "auto")
 	case ports.PermissionModeBypassPermissions:
 		*cmd = append(*cmd, "--approval-mode", "yolo")
+	}
+}
+
+// appendModelFlag appends --model if a non-empty model is configured.
+func appendModelFlag(cmd *[]string, cfg ports.AgentConfig) {
+	if model := strings.TrimSpace(cfg.Model); model != "" {
+		*cmd = append(*cmd, "--model", model)
 	}
 }
 

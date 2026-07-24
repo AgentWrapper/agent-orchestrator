@@ -1,17 +1,19 @@
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Sidebar } from "./Sidebar";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
+import { useUiStore } from "../stores/ui-store";
 
-const { getMock, navigateMock, mockParams, renameSessionMock } = vi.hoisted(() => ({
+const { getMock, navigateMock, mockParams, renameSessionMock, updateStatusMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
 	navigateMock: vi.fn(),
 	mockParams: { projectId: undefined as string | undefined },
 	renameSessionMock: vi.fn().mockResolvedValue(undefined),
+	updateStatusMock: vi.fn(),
 }));
 
 vi.mock("../lib/rename-session", () => ({ renameSession: renameSessionMock }));
@@ -24,6 +26,16 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
 		useParams: () => ({}),
 		useRouterState: ({ select }: { select: (state: { location: { pathname: string } }) => unknown }) =>
 			select({ location: { pathname: "/" } }),
+	};
+});
+
+vi.mock("../lib/bridge", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../lib/bridge")>();
+	return {
+		aoBridge: {
+			...actual.aoBridge,
+			updates: { ...actual.aoBridge.updates, getStatus: updateStatusMock },
+		},
 	};
 });
 
@@ -105,7 +117,6 @@ function renderSidebar({
 		<QueryClientProvider client={queryClient}>
 			<SidebarProvider>
 				<Sidebar
-					daemonStatus={{ state: "running" }}
 					onCreateProject={onCreateProject}
 					onInitializeProject={onInitializeProject}
 					onRemoveProject={onRemoveProject}
@@ -183,6 +194,7 @@ beforeEach(() => {
 	});
 	navigateMock.mockReset();
 	renameSessionMock.mockReset().mockResolvedValue(undefined);
+	updateStatusMock.mockReset().mockResolvedValue({ state: "idle" });
 	mockParams.projectId = undefined;
 });
 
@@ -240,6 +252,39 @@ describe("Sidebar", () => {
 		expect(screen.getByRole("dialog", { name: "Remove project" })).toBeInTheDocument();
 	});
 
+	it("requests a new task for the project from the kebab menu", async () => {
+		const user = userEvent.setup();
+		renderSidebar();
+		const before = useUiStore.getState().newTaskRequest?.nonce ?? 0;
+
+		await user.click(screen.getByLabelText("Project actions for Project One"));
+		await user.click(await screen.findByRole("menuitem", { name: /New session/ }));
+
+		const request = useUiStore.getState().newTaskRequest;
+		expect(request?.projectId).toBe("proj-1");
+		expect(request?.nonce ?? 0).toBeGreaterThan(before);
+	});
+
+	it("opens the create-project flow when the no-project shortcut signal arrives", async () => {
+		renderSidebar();
+
+		act(() => {
+			useUiStore.getState().requestCreateProject();
+		});
+
+		expect(await screen.findByRole("dialog", { name: "Import to Agent Orchestrator" })).toBeInTheDocument();
+	});
+
+	it("keeps the create-project shortcut available when there are no projects", async () => {
+		renderSidebar({ workspaces: [] });
+
+		act(() => {
+			useUiStore.getState().requestCreateProject();
+		});
+
+		expect(await screen.findByRole("dialog", { name: "Import to Agent Orchestrator" })).toBeInTheDocument();
+	});
+
 	it("reveals dashboard and orchestrator buttons alongside the kebab on the project row", () => {
 		renderSidebar();
 
@@ -257,7 +302,7 @@ describe("Sidebar", () => {
 		expect(navigateMock).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "proj-1" } });
 	});
 
-	it("requires explicit worker and orchestrator agents when creating a project", async () => {
+	it("defaults worker and orchestrator agents when creating a project", async () => {
 		const user = userEvent.setup();
 		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;
 		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/new-project");
@@ -272,16 +317,73 @@ describe("Sidebar", () => {
 		expect(window.ao!.app.chooseDirectory).toHaveBeenCalledWith("Choose a project repository");
 		const dialog = screen.getByRole("dialog", { name: "Project agents" });
 		expect(dialog).toHaveClass("left-1/2", "top-1/2", "-translate-x-1/2", "-translate-y-1/2");
-		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Codex");
-		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create and start" }));
 
 		await waitFor(() =>
 			expect(onCreateProject).toHaveBeenCalledWith(
 				expect.objectContaining({
 					path: "/repo/new-project",
-					workerAgent: "codex",
+					workerAgent: "claude-code",
 					orchestratorAgent: "claude-code",
+				}),
+			),
+		);
+	});
+
+	it("prioritizes authorized project agents by preferred agent order", async () => {
+		const user = userEvent.setup();
+		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;
+		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/new-project");
+		getMock.mockResolvedValueOnce({
+			data: {
+				supported: [
+					{ id: "goose", label: "Goose" },
+					{ id: "devin", label: "Devin" },
+					{ id: "aider", label: "Aider" },
+					{ id: "opencode", label: "OpenCode" },
+					{ id: "cursor", label: "Cursor" },
+				],
+				installed: [
+					{ id: "goose", label: "Goose", authStatus: "authorized" },
+					{ id: "devin", label: "Devin", authStatus: "authorized" },
+					{ id: "aider", label: "Aider", authStatus: "authorized" },
+					{ id: "opencode", label: "OpenCode", authStatus: "authorized" },
+					{ id: "cursor", label: "Cursor", authStatus: "authorized" },
+				],
+				authorized: [
+					{ id: "goose", label: "Goose", authStatus: "authorized" },
+					{ id: "devin", label: "Devin", authStatus: "authorized" },
+					{ id: "aider", label: "Aider", authStatus: "authorized" },
+					{ id: "opencode", label: "OpenCode", authStatus: "authorized" },
+					{ id: "cursor", label: "Cursor", authStatus: "authorized" },
+				],
+			},
+			error: undefined,
+		});
+		renderSidebar({ onCreateProject, seedAgents: false });
+
+		await user.click(screen.getByLabelText("New project"));
+		await user.click(screen.getByRole("button", { name: /^Project/i }));
+		expect(await screen.findByText("/repo/new-project")).toBeInTheDocument();
+		expect(screen.getByRole("combobox", { name: "Worker agent" })).toHaveTextContent(/cursor/i);
+		expect(screen.getByRole("combobox", { name: "Orchestrator agent" })).toHaveTextContent(/cursor/i);
+
+		await user.click(screen.getByRole("combobox", { name: "Worker agent" }));
+		expect((await screen.findAllByRole("option")).map((option) => option.textContent)).toEqual([
+			"Cursor",
+			"OpenCode",
+			"Aider",
+			"Devin",
+			"Goose",
+		]);
+		await user.keyboard("{Escape}");
+
+		await user.click(screen.getByRole("button", { name: "Create and start" }));
+		await waitFor(() =>
+			expect(onCreateProject).toHaveBeenCalledWith(
+				expect.objectContaining({
+					workerAgent: "cursor",
+					orchestratorAgent: "cursor",
 				}),
 			),
 		);
@@ -390,13 +492,13 @@ describe("Sidebar", () => {
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Workspace/i }));
 		await screen.findByRole("dialog", { name: "Workspace agents" });
-		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Codex");
 		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
 
 		await waitFor(() => expect(onCreateProject).toHaveBeenCalledTimes(1));
 		expect(onInitializeProject).not.toHaveBeenCalled();
 		expect(await screen.findByText(/Import failed · workspace not registered/i)).toBeInTheDocument();
+		expect(screen.getByText("Review the error above or choose a different folder")).toBeInTheDocument();
 		expect(window.ao!.app.scanImportFolder).toHaveBeenCalledWith({
 			path: "/repo/workspace",
 			mode: "workspace",
@@ -436,7 +538,6 @@ describe("Sidebar", () => {
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Workspace/i }));
 		await screen.findByRole("dialog", { name: "Workspace agents" });
-		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Codex");
 		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
 
@@ -463,7 +564,6 @@ describe("Sidebar", () => {
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Workspace/i }));
 		await screen.findByRole("dialog", { name: "Workspace agents" });
-		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Codex");
 		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
 
@@ -505,7 +605,7 @@ describe("Sidebar", () => {
 		await user.click(screen.getByRole("button", { name: /^Project/i }));
 		expect(await screen.findByText("/repo/new-project")).toBeInTheDocument();
 
-		await user.click(screen.getByRole("combobox", { name: "Worker agent" }));
+		await user.click(screen.getByRole("combobox", { name: "Orchestrator agent" }));
 		const options = await screen.findAllByRole("option");
 		expect(options.map((option) => option.textContent)).toEqual([
 			"Claude Code",
@@ -516,12 +616,10 @@ describe("Sidebar", () => {
 		expect(options[2]).toHaveAttribute("aria-disabled", "true");
 		await user.keyboard("{Escape}");
 
-		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Claude Code");
-		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create and start" }));
 
 		await waitFor(() =>
-			expect(onCreateProject).toHaveBeenCalledWith(expect.objectContaining({ workerAgent: "claude-code" })),
+			expect(onCreateProject).toHaveBeenCalledWith(expect.objectContaining({ orchestratorAgent: "claude-code" })),
 		);
 	});
 
@@ -567,14 +665,13 @@ describe("Sidebar", () => {
 			error: undefined,
 		});
 
-		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Codex");
 		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create and start" }));
 
 		await waitFor(() =>
 			expect(onCreateProject).toHaveBeenCalledWith({
 				path: "/repo/new-project",
-				workerAgent: "codex",
+				workerAgent: "claude-code",
 				orchestratorAgent: "claude-code",
 				trackerIntake: undefined,
 				asWorkspace: false,
@@ -582,139 +679,11 @@ describe("Sidebar", () => {
 		);
 	});
 
-	it("opens feedback above Settings and copies redacted report drafts", async () => {
-		const user = userEvent.setup();
-		const writeText = vi.fn().mockResolvedValue(undefined);
-		const openExternal = vi.fn().mockResolvedValue(undefined);
-		const open = vi.spyOn(window, "open").mockReturnValue(null);
-		window.ao!.clipboard.writeText = writeText;
-		window.ao!.app.openExternal = openExternal;
-		window.ao!.app.getVersion = vi.fn().mockResolvedValue("9.9.9-test");
-		window.ao!.daemon.getStatus = vi.fn().mockResolvedValue({
-			state: "ready",
-			message: "Listening at http://127.0.0.1:31001?token=secret",
-		});
-		renderSidebar();
-
-		const feedbackButton = screen.getAllByRole("button", { name: "Feedback" })[0];
-		const settingsButton = screen.getAllByRole("button", { name: "Settings" })[0];
-		expect(feedbackButton.compareDocumentPosition(settingsButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-
-		await user.click(feedbackButton);
-		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
-
-		await user.type(screen.getByLabelText("Summary"), "Create project fails in /Users/alice/private-repo");
-		await user.type(
-			screen.getByLabelText("Details"),
-			"Open http://127.0.0.1:5173/projects/demo?access_token=local-secret and click Create. Show a clear prerequisite error.",
-		);
-		expect(screen.queryByRole("combobox", { name: "Report type" })).not.toBeInTheDocument();
-		expect(screen.queryByLabelText("Include safe diagnostics")).not.toBeInTheDocument();
-		expect(screen.queryByLabelText("Expected behavior")).not.toBeInTheDocument();
-		const destinationButton = screen.getByRole("button", { name: "Report destination" });
-		expect(destinationButton).toHaveTextContent("GitHub issue");
-		await user.click(destinationButton);
-		expect(await screen.findByRole("menu")).toHaveClass("w-[var(--radix-dropdown-menu-trigger-width)]");
-		await user.click(await screen.findByRole("menuitem", { name: "GitHub issue" }));
-		expect(screen.queryByLabelText("Report preview")).not.toBeInTheDocument();
-
-		expect(screen.getByRole("button", { name: "Copy and raise GitHub issue" })).toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: "Copy and open email" })).not.toBeInTheDocument();
-		await user.click(screen.getByRole("button", { name: "Copy and raise GitHub issue" }));
-
-		await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
-		const copied = writeText.mock.calls[0][0] as string;
-		expect(copied).toContain("Create project fails");
-		expect(copied).toContain("AO version: 9.9.9-test");
-		expect(copied).toContain("Daemon: ready");
-		expect(copied).toContain("[redacted-local-path]");
-		expect(copied).toContain("[redacted-local-url]");
-		expect(copied).not.toContain("/Users/alice");
-		expect(copied).not.toContain("local-secret");
-		expect(copied).not.toContain("## Type");
-		expect(copied).not.toContain("Generated locally by AO");
-		expect(openExternal).toHaveBeenCalledWith(
-			expect.stringContaining("https://github.com/AgentWrapper/agent-orchestrator/issues/new"),
-		);
-		expect(open).not.toHaveBeenCalled();
-		expect(screen.getByLabelText("Summary")).toHaveValue("");
-		expect(screen.getByLabelText("Details")).toHaveValue("");
-	});
-
-	it("opens Discord with an official invite and email with the support mailbox", async () => {
-		const user = userEvent.setup();
-		const writeText = vi.fn().mockResolvedValue(undefined);
-		const openExternal = vi.fn().mockResolvedValue(undefined);
-		const open = vi.spyOn(window, "open").mockReturnValue(null);
-		window.ao!.clipboard.writeText = writeText;
-		window.ao!.app.openExternal = openExternal;
-		window.ao!.app.getVersion = vi.fn().mockRejectedValue(new Error("version unavailable"));
-		window.ao!.daemon.getStatus = vi.fn().mockRejectedValue(new Error("daemon unavailable"));
-		renderSidebar();
-
-		await user.click(screen.getAllByRole("button", { name: "Feedback" })[0]);
-		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
-		await user.type(screen.getByLabelText("Summary"), "Need help with setup");
-
-		await user.click(screen.getByRole("button", { name: "Report destination" }));
-		await user.click(await screen.findByRole("menuitem", { name: "Discord" }));
-		expect(screen.getByRole("button", { name: "Copy and open Discord" })).toHaveClass("w-full");
-		expect(screen.queryByRole("button", { name: "Copy and open email" })).not.toBeInTheDocument();
-		await user.click(screen.getByRole("button", { name: "Copy and open Discord" }));
-		await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
-		expect(writeText.mock.calls[0][0]).toContain("**AO feedback**");
-		expect(screen.getByText("Discord draft copied.")).toBeInTheDocument();
-
-		await user.click(screen.getByRole("button", { name: "Report destination" }));
-		await user.click(await screen.findByRole("menuitem", { name: "Email support" }));
-		expect(screen.getByRole("button", { name: "Copy and open email" })).toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: "Copy and open Discord" })).not.toBeInTheDocument();
-		expect(screen.queryByText("Discord draft copied.")).not.toBeInTheDocument();
-		await user.click(screen.getByRole("button", { name: "Copy and open email" }));
-
-		await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
-		expect(writeText.mock.calls[0][0]).toContain("Daemon: unknown");
-		expect(writeText.mock.calls[1][0]).toContain("To: support@aoagents.dev");
-		expect(writeText.mock.calls[1][0]).toContain("AO feedback");
-		expect(openExternal).toHaveBeenCalledWith("https://discord.com/invite/UZv7JjxbwG");
-		expect(openExternal).toHaveBeenCalledWith(expect.stringContaining("mailto:support@aoagents.dev"));
-		expect(open).not.toHaveBeenCalled();
-	});
-
-	it("clears draft text when the feedback dialog closes", async () => {
-		const user = userEvent.setup();
-		const githubToken = `ghp_${"abcdefghijklmnopqrstuvwxyz"}${"1234567890AB"}`;
-		renderSidebar();
-
-		await user.click(screen.getAllByRole("button", { name: "Feedback" })[0]);
-		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
-		await user.type(screen.getByLabelText("Summary"), "Sensitive setup problem");
-		await user.type(screen.getByLabelText("Details"), `Token is ${githubToken}`);
-
-		await user.click(screen.getByRole("button", { name: "Close report dialog" }));
-		await waitFor(() => expect(screen.queryByRole("dialog", { name: "Report a problem" })).not.toBeInTheDocument());
-
-		await user.click(screen.getAllByRole("button", { name: "Feedback" })[0]);
-		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
-		expect(screen.getByLabelText("Summary")).toHaveValue("");
-		expect(screen.getByLabelText("Details")).toHaveValue("");
-	});
-
-	it("keeps the report form to summary and details while tailoring placeholder guidance", async () => {
+	it("navigates to settings when the footer Settings button is clicked", async () => {
 		const user = userEvent.setup();
 		renderSidebar();
-
-		await user.click(screen.getAllByRole("button", { name: "Feedback" })[0]);
-		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
-		expect(screen.getByLabelText("Summary")).toHaveAttribute("placeholder", "Brief title");
-		expect(screen.getByLabelText("Details")).toHaveAttribute(
-			"placeholder",
-			"Share what happened, what you want, or what you need help with.",
-		);
-		expect(screen.queryByLabelText("Expected behavior")).not.toBeInTheDocument();
-		expect(screen.queryByRole("combobox", { name: "Report type" })).not.toBeInTheDocument();
-		expect(screen.queryByLabelText("Include safe diagnostics")).not.toBeInTheDocument();
-		expect(screen.queryByLabelText("Report preview")).not.toBeInTheDocument();
+		await user.click(screen.getAllByRole("button", { name: "Settings" })[0]);
+		expect(navigateMock).toHaveBeenCalledWith({ to: "/settings" });
 	});
 
 	it("shows the project name and context in the ConfirmDialog description", async () => {
@@ -840,24 +809,103 @@ describe("Sidebar", () => {
 		}
 	});
 
-	it("renders a calm non-pulsing dot for an idle session and a pulsing one for a working session", () => {
+	it("renders sidebar dots from attention zones without activity overrides", () => {
 		renderSidebar({
 			workspaces: [
 				{
 					...workspace,
 					sessions: [
 						{ ...session, id: "proj-1-idle", title: "idle task", status: "idle" },
-						{ ...session, id: "proj-1-work", title: "working task", status: "working" },
+						{
+							...session,
+							id: "proj-1-work",
+							title: "working task",
+							status: "working",
+							activity: { state: "active", lastActivityAt: "2026-06-30T00:00:00Z" },
+						},
+						{
+							...session,
+							id: "proj-1-ci",
+							title: "ci failed task",
+							status: "ci_failed",
+							activity: { state: "active", lastActivityAt: "2026-06-30T00:00:00Z" },
+						},
 					],
 				},
 			],
 		});
 
 		const idleDot = screen.getByLabelText("Open idle task").querySelector('span[aria-hidden="true"]');
-		expect(idleDot).toHaveClass("bg-passive");
+		expect(idleDot).toHaveClass("bg-working");
 		expect(idleDot).not.toHaveClass("animate-status-pulse");
 
 		const workingDot = screen.getByLabelText("Open working task").querySelector('span[aria-hidden="true"]');
-		expect(workingDot).toHaveClass("animate-status-pulse", "bg-working");
+		expect(workingDot).toHaveClass("bg-working");
+		expect(workingDot).not.toHaveClass("animate-status-pulse");
+
+		const ciFailedDot = screen.getByLabelText("Open ci failed task").querySelector('span[aria-hidden="true"]');
+		expect(ciFailedDot).toHaveClass("bg-warning");
+		expect(ciFailedDot).not.toHaveClass("bg-error");
+		expect(ciFailedDot).not.toHaveClass("animate-status-pulse");
+	});
+
+	it("renders idle activity as quiet while preserving PR status color", () => {
+		renderSidebar({
+			workspaces: [
+				{
+					...workspace,
+					sessions: [
+						{
+							...session,
+							id: "proj-1-idle-activity",
+							title: "idle activity task",
+							status: "working",
+							activity: { state: "idle", lastActivityAt: "2026-06-30T00:00:00Z" },
+						},
+						{
+							...session,
+							id: "proj-1-idle-draft",
+							title: "idle draft task",
+							status: "draft",
+							activity: { state: "idle", lastActivityAt: "2026-06-30T00:00:00Z" },
+						},
+					],
+				},
+			],
+		});
+
+		const idleDot = screen.getByLabelText("Open idle activity task").querySelector('span[aria-hidden="true"]');
+		expect(idleDot).toHaveClass("bg-working");
+		expect(idleDot).not.toHaveClass("animate-status-pulse");
+
+		const idleDraftDot = screen.getByLabelText("Open idle draft task").querySelector('span[aria-hidden="true"]');
+		expect(idleDraftDot).toHaveClass("bg-accent-dim");
+		expect(idleDraftDot).not.toHaveClass("animate-status-pulse");
+	});
+
+	it("does not render the restart-to-update row unless an update is downloaded", async () => {
+		updateStatusMock.mockResolvedValue({ state: "available", version: "9.9.9" });
+		renderSidebar();
+
+		await waitFor(() => expect(updateStatusMock).toHaveBeenCalled());
+		expect(screen.queryByLabelText(/Restart to install update/)).not.toBeInTheDocument();
+	});
+
+	it("renders the restart-to-update row with the working-orange treatment when escalated", async () => {
+		updateStatusMock.mockResolvedValue({
+			state: "downloaded",
+			version: "9.9.9",
+			stagedAt: Date.now(),
+			escalated: true,
+		});
+		renderSidebar();
+
+		// Both footer variants (expanded row and collapsed rail icon) are mounted.
+		const buttons = await screen.findAllByLabelText("Restart to install update v9.9.9");
+		expect(buttons.length).toBeGreaterThan(0);
+		for (const button of buttons) {
+			expect(button).toHaveClass("text-working", "bg-working/12");
+		}
+		expect(screen.getByText("v9.9.9 ready")).toBeInTheDocument();
 	});
 });

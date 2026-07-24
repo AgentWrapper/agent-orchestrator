@@ -55,24 +55,25 @@ func (f *fakeSessionService) List(context.Context, sessionsvc.ListFilter) ([]dom
 	return nil, nil
 }
 
-func (f *fakeSessionService) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.Session, error) {
+func (f *fakeSessionService) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.Session, int, int, error) {
 	f.spawned = cfg
 	return domain.Session{
 		SessionRecord: domain.SessionRecord{ID: domain.SessionID(string(cfg.ProjectID) + "-1")},
 		Status:        domain.StatusIdle,
-	}, nil
+	}, len(cfg.Prompt), 0, nil
 }
 
 func (f *fakeSessionService) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, _ bool) (domain.Session, error) {
-	return f.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
+	s, _, _, err := f.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
+	return s, err
 }
 
 func (f *fakeSessionService) Get(context.Context, domain.SessionID) (domain.Session, error) {
 	return domain.Session{}, nil
 }
 
-func (f *fakeSessionService) Restore(context.Context, domain.SessionID) (domain.Session, error) {
-	return domain.Session{}, nil
+func (f *fakeSessionService) Restore(context.Context, domain.SessionID) (sessionsvc.RestoreOutcome, error) {
+	return sessionsvc.RestoreOutcome{}, nil
 }
 
 func (f *fakeSessionService) Kill(context.Context, domain.SessionID) (bool, error) {
@@ -105,6 +106,14 @@ func (f *fakeSessionService) ListPRSummaries(context.Context, domain.SessionID) 
 
 func (f *fakeSessionService) ClaimPR(context.Context, domain.SessionID, string, sessionsvc.ClaimPROptions) (sessionsvc.ClaimPRResult, error) {
 	return sessionsvc.ClaimPRResult{}, nil
+}
+
+func (f *fakeSessionService) ListWorkspaceFiles(context.Context, domain.SessionID) (sessionsvc.WorkspaceFiles, error) {
+	return sessionsvc.WorkspaceFiles{}, nil
+}
+
+func (f *fakeSessionService) GetWorkspaceFile(context.Context, domain.SessionID, string) (sessionsvc.WorkspaceFileDetail, error) {
+	return sessionsvc.WorkspaceFileDetail{}, nil
 }
 
 type fakeAgentCatalog struct{}
@@ -162,6 +171,11 @@ func (f *fakeProjectManager) Add(_ context.Context, in projectsvc.AddInput) (pro
 
 func (f *fakeProjectManager) InitializeRepository(_ context.Context, in projectsvc.InitializeRepositoryInput) (projectsvc.InitializeRepositoryResult, error) {
 	return projectsvc.InitializeRepositoryResult(in), nil
+}
+
+func (f *fakeProjectManager) UpdateSettings(_ context.Context, id domain.ProjectID, in projectsvc.UpdateSettingsInput) (projectsvc.Project, error) {
+	cfg := in.Config
+	return projectsvc.Project{ID: id, Name: in.DisplayName, Config: &cfg}, nil
 }
 
 func (f *fakeProjectManager) SetConfig(_ context.Context, id domain.ProjectID, in projectsvc.SetConfigInput) (projectsvc.Project, error) {

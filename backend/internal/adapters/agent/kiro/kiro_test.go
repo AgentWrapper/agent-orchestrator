@@ -337,18 +337,6 @@ func TestPromptReadinessHints(t *testing.T) {
 	}
 }
 
-func TestGetConfigSpecHasNoCustomFieldsYet(t *testing.T) {
-	plugin := &Plugin{}
-
-	spec, err := plugin.GetConfigSpec(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(spec.Fields) != 0 {
-		t.Fatalf("unexpected config fields: %#v", spec.Fields)
-	}
-}
-
 func TestAuthStatusUsesKiroWhoami(t *testing.T) {
 	restore := stubKiroAuthRunner(t, func(_ context.Context, name string, arg ...string) ([]byte, error) {
 		if name != "kiro-cli" {
@@ -371,6 +359,42 @@ func TestAuthStatusUsesKiroWhoami(t *testing.T) {
 	}
 }
 
+func TestGetConfigSpecReportsModelField(t *testing.T) {
+	p := New()
+
+	spec, err := p.GetConfigSpec(context.Background())
+	if err != nil {
+		t.Fatalf("GetConfigSpec: %v", err)
+	}
+
+	var found bool
+	for _, f := range spec.Fields {
+		if f.Key != "model" {
+			continue
+		}
+		found = true
+		if f.Type != ports.ConfigFieldString {
+			t.Errorf("model field Type = %v, want %v", f.Type, ports.ConfigFieldString)
+		}
+		if f.Description == "" {
+			t.Error("model field Description is empty")
+		}
+	}
+	if !found {
+		t.Fatal("GetConfigSpec did not report a \"model\" field")
+	}
+}
+
+func TestGetConfigSpecHonorsContextCancellation(t *testing.T) {
+	p := New()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := p.GetConfigSpec(ctx)
+	if err == nil {
+		t.Fatal("GetConfigSpec with canceled context: want error, got nil")
+	}
+}
 func TestAuthStatusUnauthorizedFromKiroWhoami(t *testing.T) {
 	restore := stubKiroAuthRunner(t, func(_ context.Context, _ string, _ ...string) ([]byte, error) {
 		return []byte("Not logged in\n"), nil

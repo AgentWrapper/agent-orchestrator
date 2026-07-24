@@ -65,10 +65,11 @@ type Manager struct {
 	Managed []HookSpec
 }
 
-// Install merges AO's managed hooks into the workspace's hooks file, preserving
-// user-defined hooks and unrelated settings, and is idempotent (a command
-// already present is not appended). It also writes a self-ignoring .gitignore
-// covering the hooks file so it does not block worktree teardown.
+// Install reconciles AO's managed hooks into the workspace's hooks file,
+// preserving user-defined hooks and unrelated settings. A managed command is
+// moved when its matcher changes and is never duplicated. It also writes a
+// self-ignoring .gitignore covering the hooks file so it does not block
+// worktree teardown.
 func (m Manager) Install(ctx context.Context, workspacePath string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -89,10 +90,8 @@ func (m Manager) Install(ctx context.Context, workspacePath string) error {
 			return fmt.Errorf("%s.GetAgentHooks: %w", m.Label, err)
 		}
 		for _, spec := range specs {
-			if !commandExists(groups, spec.Command) {
-				entry := HookEntry{Type: "command", Command: spec.Command, Timeout: m.Timeout}
-				groups = addHook(groups, entry, spec.Matcher)
-			}
+			entry := HookEntry{Type: "command", Command: spec.Command, Timeout: m.Timeout}
+			groups = reconcileHook(groups, entry, spec.Matcher)
 		}
 		if err := marshalEvent(rawHooks, event, groups); err != nil {
 			return fmt.Errorf("%s.GetAgentHooks: %w", m.Label, err)
@@ -281,15 +280,25 @@ func marshalEvent(rawHooks map[string]json.RawMessage, event string, groups []Ma
 	return nil
 }
 
-func commandExists(groups []MatcherGroup, command string) bool {
+// reconcileHook removes every copy of one AO-owned command before adding the
+// current managed entry under its declared matcher. This lets adapter upgrades
+// change a matcher or timeout without leaving stale or duplicate commands,
+// while preserving every unrelated hook in the affected groups.
+func reconcileHook(groups []MatcherGroup, hook HookEntry, matcher *string) []MatcherGroup {
+	result := make([]MatcherGroup, 0, len(groups))
 	for _, group := range groups {
-		for _, hook := range group.Hooks {
-			if hook.Command == command {
-				return true
+		kept := make([]HookEntry, 0, len(group.Hooks))
+		for _, existing := range group.Hooks {
+			if existing.Command != hook.Command {
+				kept = append(kept, existing)
 			}
 		}
+		if len(kept) > 0 {
+			group.Hooks = kept
+			result = append(result, group)
+		}
 	}
-	return false
+	return addHook(result, hook, matcher)
 }
 
 // addHook appends hook to the group with a matching matcher, creating that group

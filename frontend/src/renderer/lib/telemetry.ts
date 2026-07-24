@@ -1,6 +1,7 @@
 import posthog from "posthog-js/dist/module.full.no-external";
 import { aoBridge } from "./bridge";
 import { isLoopbackHostname } from "./loopback";
+import { ORCHESTRATOR_SPAWN_SOURCES } from "./orchestrator-spawn-sources";
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "../../shared/posthog-config";
 
 const POSTHOG_KEY = import.meta.env.VITE_AO_POSTHOG_KEY?.trim() || DEFAULT_POSTHOG_PROJECT_KEY;
@@ -8,14 +9,64 @@ const POSTHOG_HOST = import.meta.env.VITE_AO_POSTHOG_HOST?.trim() || DEFAULT_POS
 const RELEASE_TAG = "2026-01-30";
 const REDACTED_LOCAL_URL = "[redacted-local-url]";
 const REDACTED_LOCAL_PATH = "[redacted-local-path]";
+const DAILY_ACTIVE_STORAGE_KEY = "ao.telemetry.lastActiveDate";
 const EMBEDDED_LOCAL_URL_PATTERN =
 	/(?:\bfile:\/\/\/\S+|\bapp:\/\/renderer\/\S+|\bhttps?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?\S*)/gi;
 
 let initPromise: Promise<boolean> | null = null;
 let errorHandlersBound = false;
 let telemetryContext: TelemetryProperties = {};
+let fallbackDailyActiveDate = "";
+
+// Bounds how many captures of a single event (or exception) name reach
+// PostHog. Mirrors the daemon-side RateLimitedSink: a re-render loop or
+// repeatedly-thrown exception must not turn into an unbounded PostHog bill.
+// A per-minute cap alone doesn't bound the daily total — a loop paced just
+// under it would sit under the ceiling forever — so this pairs a small burst
+// allowance with a hard daily ceiling per name.
+const EVENTS_PER_NAME_PER_MINUTE = 5;
+const EVENTS_PER_NAME_PER_DAY = 200;
+const MINUTE_MS = 60_000;
+const DAY_MS = 24 * 60 * 60_000;
+const minuteWindows = new Map<string, { start: number; count: number }>();
+const dayWindows = new Map<string, { start: number; count: number }>();
+
+function reserveWindow(
+	windows: Map<string, { start: number; count: number }>,
+	name: string,
+	now: number,
+	size: number,
+	limit: number,
+): boolean {
+	const window = windows.get(name);
+	if (!window || now - window.start >= size) {
+		windows.set(name, { start: now, count: 1 });
+		return true;
+	}
+	if (window.count >= limit) return false;
+	window.count += 1;
+	return true;
+}
+
+export function reserveCapture(name: string, now = Date.now()): boolean {
+	if (!reserveWindow(minuteWindows, name, now, MINUTE_MS, EVENTS_PER_NAME_PER_MINUTE)) return false;
+	return reserveWindow(dayWindows, name, now, DAY_MS, EVENTS_PER_NAME_PER_DAY);
+}
 
 type TelemetryProperties = Record<string, unknown>;
+type DailyActiveStorage = Pick<Storage, "getItem" | "setItem">;
+type DailyActiveEventTarget = {
+	addEventListener: (type: string, listener: EventListener, options?: AddEventListenerOptions) => void;
+	removeEventListener: (type: string, listener: EventListener, options?: EventListenerOptions) => void;
+};
+
+export type DailyActiveHeartbeatOptions = {
+	storage?: DailyActiveStorage;
+	now?: () => Date;
+	capture: () => void;
+	window: DailyActiveEventTarget;
+	document: DailyActiveEventTarget & Pick<Document, "visibilityState">;
+};
 
 export function buildTelemetryContext(appVersion: string, platform: string): TelemetryProperties {
 	const version = appVersion.trim() || "unknown";
@@ -31,6 +82,60 @@ function withTelemetryContext(properties: TelemetryProperties): TelemetryPropert
 	return { ...telemetryContext, ...properties };
 }
 
+export function reserveDailyActiveCapture(storage?: DailyActiveStorage, now = new Date()): boolean {
+	const utcDate = now.toISOString().slice(0, 10);
+	if (!storage) {
+		if (fallbackDailyActiveDate === utcDate) return false;
+		fallbackDailyActiveDate = utcDate;
+		return true;
+	}
+	try {
+		if (storage.getItem(DAILY_ACTIVE_STORAGE_KEY) === utcDate) return false;
+		storage.setItem(DAILY_ACTIVE_STORAGE_KEY, utcDate);
+		return true;
+	} catch {
+		if (fallbackDailyActiveDate === utcDate) return false;
+		fallbackDailyActiveDate = utcDate;
+		return true;
+	}
+}
+
+export function startDailyActiveHeartbeat({
+	storage,
+	now = () => new Date(),
+	capture,
+	window,
+	document,
+}: DailyActiveHeartbeatOptions): () => void {
+	const maybeCapture = () => {
+		if (reserveDailyActiveCapture(storage, now())) {
+			capture();
+		}
+	};
+	const onVisibilityChange = () => {
+		if (document.visibilityState === "visible") {
+			maybeCapture();
+		}
+	};
+	const activityEvents = ["pointerdown", "keydown"] as const;
+	const passiveOptions = { passive: true };
+
+	maybeCapture();
+	window.addEventListener("focus", maybeCapture);
+	document.addEventListener("visibilitychange", onVisibilityChange);
+	for (const event of activityEvents) {
+		document.addEventListener(event, maybeCapture, passiveOptions);
+	}
+
+	return () => {
+		window.removeEventListener("focus", maybeCapture);
+		document.removeEventListener("visibilitychange", onVisibilityChange);
+		for (const event of activityEvents) {
+			document.removeEventListener(event, maybeCapture);
+		}
+	};
+}
+
 function normalizeException(reason: unknown): Error {
 	if (reason instanceof Error) return reason;
 	if (typeof reason === "string") return new Error(reason);
@@ -43,7 +148,7 @@ function normalizeException(reason: unknown): Error {
 
 function routeSurface(pathname: string): string {
 	if (pathname === "/") return "home";
-	if (/^\/prs(?:\/|$)/.test(pathname)) return "pull_requests";
+	if (/^\/settings(?:\/|$)/.test(pathname)) return "global_settings";
 	if (/^\/projects\/[^/]+\/sessions\/[^/]+$/.test(pathname)) return "session_detail";
 	if (/^\/projects\/[^/]+(?:\/|$)/.test(pathname)) {
 		if (/\/settings$/.test(pathname)) return "project_settings";
@@ -141,18 +246,7 @@ async function sanitizeRendererContextProperties(properties?: TelemetryPropertie
 	return safe;
 }
 
-// Allowed `source` enum for the orchestrator-spawn triad. Kept as a literal set
-// here (rather than imported from spawn-orchestrator.ts, which imports this
-// module) to avoid a cycle; keep in sync with OrchestratorSpawnSource.
-const ORCHESTRATOR_SPAWN_SOURCES = new Set([
-	"board",
-	"restore_dialog",
-	"topbar",
-	"sidebar",
-	"project_add",
-	"settings",
-	"restart",
-]);
+const ORCHESTRATOR_SPAWN_SOURCE_SET = new Set<string>(ORCHESTRATOR_SPAWN_SOURCES);
 
 export async function sanitizeRendererProperties(
 	event: string,
@@ -192,7 +286,7 @@ export async function sanitizeRendererProperties(
 		case "ao.renderer.orchestrator_spawn_failed": {
 			const projectIDHash = await hashedTelemetryID(properties?.project_id);
 			if (projectIDHash) safe.project_id_hash = projectIDHash;
-			if (typeof properties?.source === "string" && ORCHESTRATOR_SPAWN_SOURCES.has(properties.source)) {
+			if (typeof properties?.source === "string" && ORCHESTRATOR_SPAWN_SOURCE_SET.has(properties.source)) {
 				safe.source = properties.source;
 			}
 			break;
@@ -272,6 +366,14 @@ export async function initTelemetry(): Promise<boolean> {
 			capture_pageview: false,
 			capture_exceptions: false,
 			persistence: "localStorage",
+			// The distinct ID is a random install ID, never a person, so keep
+			// every event anonymous: identified events bill at several times the
+			// anonymous rate and the person profiles would hold nothing. The
+			// bootstrap distinct ID keeps renderer and daemon events deduplicated
+			// without an identify() call, which would flip the install to
+			// identified billing permanently.
+			person_profiles: "identified_only",
+			bootstrap: { distinctID: bootstrap.distinctId },
 			before_send: (event) => (event ? sanitizePostHogCaptureResult(event) : event),
 			session_recording: {
 				maskCapturedNetworkRequestFn: (request) => {
@@ -282,19 +384,30 @@ export async function initTelemetry(): Promise<boolean> {
 				},
 			},
 		});
-		posthog.identify(bootstrap.distinctId, {
-			...telemetryContext,
-			surface: "renderer",
-		});
 		posthog.register({
 			...telemetryContext,
 			surface: "renderer",
 		});
 		bindErrorHandlers();
-		posthog.capture(
-			"ao.app.active",
-			withTelemetryContext(await sanitizeRendererProperties("ao.app.active", { channel: "renderer" })),
-		);
+		let storage: DailyActiveStorage | undefined;
+		try {
+			storage = window.localStorage;
+		} catch {
+			storage = undefined;
+		}
+		startDailyActiveHeartbeat({
+			storage,
+			window,
+			document,
+			capture: () => {
+				void (async () => {
+					posthog.capture(
+						"ao.app.active",
+						withTelemetryContext(await sanitizeRendererProperties("ao.app.active", { channel: "renderer" })),
+					);
+				})();
+			},
+		});
 		posthog.capture("ao.renderer.loaded", withTelemetryContext(await sanitizeRendererProperties("ao.renderer.loaded")));
 		return true;
 	})().catch(() => false);
@@ -302,12 +415,14 @@ export async function initTelemetry(): Promise<boolean> {
 }
 
 export async function captureRendererEvent(event: string, properties?: Record<string, unknown>): Promise<void> {
+	if (!reserveCapture(event)) return;
 	if (!(await initTelemetry())) return;
 	const safeProperties = withTelemetryContext(await sanitizeRendererProperties(event, properties));
 	posthog.capture(event, safeProperties);
 }
 
 export async function captureRendererException(error: unknown, properties?: Record<string, unknown>): Promise<void> {
+	if (!reserveCapture(`exception:${exceptionName(error)}`)) return;
 	if (!(await initTelemetry())) return;
 	const safeProperties = withTelemetryContext(await sanitizeRendererExceptionProperties(error, properties));
 	posthog.captureException(normalizeException(error), safeProperties);

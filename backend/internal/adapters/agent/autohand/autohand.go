@@ -52,12 +52,29 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
+// GetConfigSpec reports the per-project agent config keys Autohand understands.
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.ConfigSpec{}, err
+	}
+	return ports.ConfigSpec{
+		Fields: []ports.ConfigField{
+			{
+				Key:         "model",
+				Type:        ports.ConfigFieldString,
+				Description: "Model override passed to `autohand --model`.",
+			},
+		},
+	}, nil
+}
+
 // GetLaunchCommand builds the argv to start a new Autohand command-mode session,
-// scoping the run to the workspace, applying the approval-mode flags and optional
-// system-prompt override, and passing the initial prompt as a positional argument
-// after `--` so a prompt beginning with "-" is not read as a flag.
+// scoping the run to the workspace, applying the approval-mode flags, an
+// optional model override, and optional system-prompt override, and passing
+// the initial prompt as a positional argument after `--` so a prompt beginning
+// with "-" is not read as a flag.
 //
-//	autohand [--path <workspace>] [<approval flags>] [--sys-prompt <value>] [-- <prompt>]
+//	autohand [--path <workspace>] [<approval flags>] [--model <value>] [--sys-prompt <value>] [-- <prompt>]
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	binary, err := p.autohandBinary(ctx)
 	if err != nil {
@@ -67,6 +84,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	cmd = []string{binary}
 	appendWorkspaceFlag(&cmd, cfg.WorkspacePath)
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	appendModelFlag(&cmd, cfg.Config)
 
 	// Autohand's --sys-prompt accepts either an inline string or a file path,
 	// auto-detected by the CLI; prefer inline instructions when AO has them.
@@ -84,11 +102,11 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 }
 
 // GetRestoreCommand rebuilds the argv that continues an existing Autohand
-// session: `autohand resume [--path <workspace>] <sessionId>`. ok is false when
-// the hook-derived native session id has not landed yet, so callers can fall
-// back to fresh launch behavior. Autohand's resume sub-command only accepts the
-// workspace path and session id, so approval and system-prompt flags are not
-// re-applied here.
+// session: `autohand resume [--path <workspace>] [--model <value>] <sessionId>`.
+// ok is false when the hook-derived native session id has not landed yet, so
+// callers can fall back to fresh launch behavior. Autohand's resume
+// sub-command only accepts the workspace path, model, and session id, so
+// approval and system-prompt flags are not re-applied here.
 func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig) (cmd []string, ok bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
@@ -103,9 +121,10 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 		return nil, false, err
 	}
 
-	cmd = make([]string, 0, 5)
+	cmd = make([]string, 0, 7)
 	cmd = append(cmd, binary, "resume")
 	appendWorkspaceFlag(&cmd, cfg.Session.WorkspacePath)
+	appendModelFlag(&cmd, cfg.Config)
 	cmd = append(cmd, agentSessionID)
 	return cmd, true, nil
 }
@@ -124,6 +143,14 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 func appendWorkspaceFlag(cmd *[]string, workspacePath string) {
 	if strings.TrimSpace(workspacePath) != "" {
 		*cmd = append(*cmd, "--path", workspacePath)
+	}
+}
+
+// appendModelFlag appends a trimmed --model flag when a model override is
+// configured. Accepted on both the launch and resume argv.
+func appendModelFlag(cmd *[]string, cfg ports.AgentConfig) {
+	if model := strings.TrimSpace(cfg.Model); model != "" {
+		*cmd = append(*cmd, "--model", model)
 	}
 }
 
@@ -150,7 +177,8 @@ var autohandBinarySpec = binaryutil.BinarySpec{
 	Names:         []string{"autohand"},
 	WinNames:      []string{"autohand.cmd", "autohand.exe", "autohand"},
 	UnixPaths:     []string{"/usr/local/bin/autohand", "/opt/homebrew/bin/autohand"},
-	UnixHomePaths: [][]string{{".local", "bin", "autohand"}, {".npm", "bin", "autohand"}},
+	UnixHomePaths: binaryutil.NodeManagedUnixHomePaths("autohand"),
+	NodeManaged:   true,
 	WinPaths: []binaryutil.WinPath{
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "autohand.cmd"}},
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "autohand.exe"}},

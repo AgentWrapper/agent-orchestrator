@@ -11,41 +11,92 @@ import (
 )
 
 type fakeStore struct {
-	rows        []domain.NotificationRecord
-	markRow     domain.NotificationRecord
-	markOK      bool
-	markAllRows []domain.NotificationRecord
-	err         error
+	rows         []domain.NotificationRecord
+	listStatus   ListStatus
+	listBeforeAt time.Time
+	listBeforeID string
+	listLimit    int
+	unreadCount  int64
+	markRow      domain.NotificationRecord
+	markOK       bool
+	markAllCount int64
+	err          error
 }
 
 func (f *fakeStore) CreateNotification(context.Context, domain.NotificationRecord) (domain.NotificationRecord, bool, error) {
 	return domain.NotificationRecord{}, false, nil
 }
 
-func (f *fakeStore) ListUnreadNotifications(_ context.Context, _ int) ([]domain.NotificationRecord, error) {
+func (f *fakeStore) ListNotifications(
+	_ context.Context,
+	status ListStatus,
+	beforeCreatedAt time.Time,
+	beforeID string,
+	limit int,
+) ([]domain.NotificationRecord, error) {
+	f.listStatus = status
+	f.listBeforeAt = beforeCreatedAt
+	f.listBeforeID = beforeID
+	f.listLimit = limit
 	return f.rows, f.err
+}
+
+func (f *fakeStore) CountUnreadNotifications(context.Context) (int64, error) {
+	return f.unreadCount, f.err
 }
 
 func (f *fakeStore) MarkNotificationRead(_ context.Context, _ string) (domain.NotificationRecord, bool, error) {
 	return f.markRow, f.markOK, f.err
 }
 
-func (f *fakeStore) MarkAllNotificationsRead(context.Context) ([]domain.NotificationRecord, error) {
-	return f.markAllRows, f.err
+func (f *fakeStore) MarkAllNotificationsRead(context.Context) (int64, error) {
+	return f.markAllCount, f.err
 }
 
-func TestListUnreadAddsTargets(t *testing.T) {
+func TestListAddsTargetsAndReturnsNextCursor(t *testing.T) {
+	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
 	st := &fakeStore{rows: []domain.NotificationRecord{
-		{ID: "n1", SessionID: "mer-1", ProjectID: "mer", Type: domain.NotificationNeedsInput, Title: "needs", Status: domain.NotificationUnread, CreatedAt: time.Now()},
-		{ID: "n2", SessionID: "mer-1", ProjectID: "mer", PRURL: "https://github.com/o/r/pull/1", Type: domain.NotificationReadyToMerge, Title: "ready", Status: domain.NotificationUnread, CreatedAt: time.Now()},
-	}}
+		{ID: "n3", SessionID: "mer-1", ProjectID: "mer", Type: domain.NotificationNeedsInput, Title: "needs", Status: domain.NotificationUnread, CreatedAt: now},
+		{ID: "n2", SessionID: "mer-1", ProjectID: "mer", PRURL: "https://github.com/o/r/pull/1", Type: domain.NotificationReadyToMerge, Title: "ready", Status: domain.NotificationUnread, CreatedAt: now.Add(-time.Minute)},
+		{ID: "n1", SessionID: "mer-1", ProjectID: "mer", Type: domain.NotificationNeedsInput, Title: "older", Status: domain.NotificationRead, CreatedAt: now.Add(-2 * time.Minute)},
+	}, unreadCount: 2}
 	mgr := New(Deps{Store: st})
-	got, err := mgr.ListUnread(context.Background(), ListFilter{Limit: 10})
+	got, err := mgr.List(context.Background(), ListFilter{Status: ListAll, Limit: 2})
 	if err != nil {
-		t.Fatalf("ListUnread: %v", err)
+		t.Fatalf("List: %v", err)
 	}
-	if got[0].Target.Kind != TargetSession || got[1].Target.Kind != TargetPR || got[1].Target.PRURL == "" {
+	if len(got.Notifications) != 2 || got.Notifications[0].Target.Kind != TargetSession ||
+		got.Notifications[1].Target.Kind != TargetPR || got.Notifications[1].Target.PRURL == "" {
 		t.Fatalf("targets = %+v", got)
+	}
+	if got.UnreadCount != 2 || got.NextCursor == "" {
+		t.Fatalf("page = %+v", got)
+	}
+	cursorAt, cursorID, err := decodeCursor(got.NextCursor)
+	if err != nil || !cursorAt.Equal(now.Add(-time.Minute)) || cursorID != "n2" {
+		t.Fatalf("cursor at=%s id=%q err=%v", cursorAt, cursorID, err)
+	}
+	if st.listStatus != ListAll || st.listLimit != 3 || !st.listBeforeAt.IsZero() || st.listBeforeID != "" {
+		t.Fatalf("list filter status=%q before=%s/%q limit=%d", st.listStatus, st.listBeforeAt, st.listBeforeID, st.listLimit)
+	}
+}
+
+func TestListDefaultsToUnreadAndOneHundred(t *testing.T) {
+	st := &fakeStore{}
+	mgr := New(Deps{Store: st})
+	if _, err := mgr.List(context.Background(), ListFilter{}); err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if st.listStatus != ListUnread || st.listLimit != DefaultListLimit+1 {
+		t.Fatalf("list status=%q limit=%d", st.listStatus, st.listLimit)
+	}
+}
+
+func TestListRejectsInvalidCursor(t *testing.T) {
+	_, err := New(Deps{Store: &fakeStore{}}).List(context.Background(), ListFilter{Cursor: "not-a-cursor"})
+	var apiErr *apierr.Error
+	if !errors.As(err, &apiErr) || apiErr.Code != "INVALID_NOTIFICATION_CURSOR" {
+		t.Fatalf("err = %v, want invalid cursor", err)
 	}
 }
 
@@ -76,22 +127,20 @@ func TestMarkReadMissingReturnsNotFound(t *testing.T) {
 	}
 }
 
-func TestMarkAllReadAddsTargets(t *testing.T) {
-	st := &fakeStore{markAllRows: []domain.NotificationRecord{{
-		ID: "n1", SessionID: "mer-1", ProjectID: "mer", Type: domain.NotificationNeedsInput, Title: "needs", Status: domain.NotificationRead, CreatedAt: time.Now(),
-	}}}
+func TestMarkAllReadReturnsUpdatedCount(t *testing.T) {
+	st := &fakeStore{markAllCount: 42}
 	mgr := New(Deps{Store: st})
 	got, err := mgr.MarkAllRead(context.Background())
 	if err != nil {
 		t.Fatalf("MarkAllRead: %v", err)
 	}
-	if len(got) != 1 || got[0].Target.Kind != TargetSession || got[0].Status != domain.NotificationRead {
-		t.Fatalf("notifications = %+v", got)
+	if got != 42 {
+		t.Fatalf("updated count = %d, want 42", got)
 	}
 }
 
 func TestListUnreadRequiresStore(t *testing.T) {
-	_, err := New(Deps{}).ListUnread(context.Background(), ListFilter{})
+	_, err := New(Deps{}).List(context.Background(), ListFilter{})
 	if err == nil {
 		t.Fatal("want missing store error")
 	}

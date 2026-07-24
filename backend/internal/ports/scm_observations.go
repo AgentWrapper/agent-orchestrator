@@ -204,6 +204,9 @@ type SCMReviewSummaryObservation struct {
 	State string
 	// URL is a provider link to the submitted review summary.
 	URL string
+	// Body is the reviewer's submitted summary text, empty when the provider
+	// review carried no body.
+	Body string
 	// IsBot is true when the provider identifies the reviewer as a bot.
 	IsBot bool
 	// SubmittedAt is the provider's review submission timestamp.

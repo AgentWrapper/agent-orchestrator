@@ -32,13 +32,22 @@ func TestManifest(t *testing.T) {
 	}
 }
 
-func TestGetConfigSpecEmpty(t *testing.T) {
-	spec, err := (&Plugin{}).GetConfigSpec(context.Background())
+func TestGetConfigSpecReportsModelField(t *testing.T) {
+	plugin := &Plugin{}
+
+	spec, err := plugin.GetConfigSpec(context.Background())
 	if err != nil {
-		t.Fatalf("err: %v", err)
+		t.Fatal(err)
 	}
-	if len(spec.Fields) != 0 {
-		t.Fatalf("expected no fields, got %d", len(spec.Fields))
+	want := []ports.ConfigField{
+		{
+			Key:         "model",
+			Type:        ports.ConfigFieldString,
+			Description: "Model override written to generated Vibe agent config (`active_model`).",
+		},
+	}
+	if !reflect.DeepEqual(spec.Fields, want) {
+		t.Fatalf("config fields\nwant: %#v\n got: %#v", want, spec.Fields)
 	}
 }
 
@@ -190,6 +199,214 @@ func TestGetLaunchCommandBuildsCustomAgentForSystemPrompt(t *testing.T) {
 	}
 }
 
+func TestGetLaunchCommandBuildsCustomAgentForModelOnly(t *testing.T) {
+	p := &Plugin{resolvedBinary: "vibe"}
+	dataDir := t.TempDir()
+	workspace := t.TempDir()
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config:        ports.AgentConfig{Model: "mistral-medium-latest"},
+		DataDir:       dataDir,
+		SessionID:     "mer-1",
+		Prompt:        "add a health check",
+		WorkspacePath: workspace,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	addDir := filepath.Join(dataDir, "prompts", "mer-1", "vibe")
+	want := []string{"vibe", "--trust", "--workdir", workspace, "--add-dir", addDir, "--agent", "ao-system-prompt", "--", "add a health check"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+	agentData, err := os.ReadFile(filepath.Join(addDir, ".vibe", "agents", "ao-system-prompt.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(agentData)
+	if !strings.Contains(body, `active_model = "mistral-medium-latest"`) {
+		t.Fatalf("agent config missing active_model:\n%s", body)
+	}
+	if strings.Contains(body, "system_prompt_id") {
+		t.Fatalf("model-only agent config unexpectedly has system_prompt_id:\n%s", body)
+	}
+}
+
+func TestVibeTOMLBasicStringEscapesExactTOMLBasicStrings(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{name: "quotes and backslashes", value: `mistral "medium" \ latest`, want: `"mistral \"medium\" \\ latest"`},
+		{name: "standard control escapes", value: "\b\t\n\f\r", want: `"\b\t\n\f\r"`},
+		{name: "other C0 controls and DEL", value: "\x00\a\v\x1f\x7f", want: `"\u0000\u0007\u000B\u001F\u007F"`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := vibeTOMLBasicString(tt.value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Fatalf("vibeTOMLBasicString(%q) = %q, want %q", tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestVibeTOMLBasicStringRejectsInvalidUTF8(t *testing.T) {
+	got, err := vibeTOMLBasicString(string([]byte{'m', 0xff}))
+	if err == nil || !strings.Contains(err.Error(), "invalid UTF-8") {
+		t.Fatalf("vibeTOMLBasicString invalid UTF-8 = (%q, %v), want invalid UTF-8 error", got, err)
+	}
+	if got != "" {
+		t.Fatalf("vibeTOMLBasicString invalid UTF-8 output = %q, want empty string", got)
+	}
+}
+
+func TestGetLaunchCommandWritesExactModelTOML(t *testing.T) {
+	p := &Plugin{resolvedBinary: "vibe"}
+	dataDir := t.TempDir()
+	_, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config:    ports.AgentConfig{Model: "mistral\n\a\x7f"},
+		DataDir:   dataDir,
+		SessionID: "mer-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := readVibeAgentConfig(t, filepath.Join(dataDir, "prompts", "mer-1", "vibe"))
+	want := strings.Join([]string{
+		`agent_type = "agent"`,
+		`display_name = "AO Session"`,
+		`description = "AO session standing instructions."`,
+		`safety = "neutral"`,
+		`active_model = "mistral\n\u0007\u007F"`,
+		"",
+	}, "\n")
+	if got != want {
+		t.Fatalf("agent config\nwant:\n%s\n got:\n%s", want, got)
+	}
+}
+
+func TestGetLaunchCommandBuildsCustomAgentForSystemPromptAndModel(t *testing.T) {
+	p := &Plugin{resolvedBinary: "vibe"}
+	promptFile := filepath.Join(t.TempDir(), "system.md")
+	workspace := t.TempDir()
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config:           ports.AgentConfig{Model: `mistral "medium" \ latest`},
+		Permissions:      ports.PermissionModeAuto,
+		Prompt:           "add a health check",
+		SystemPrompt:     "follow AO rules",
+		SystemPromptFile: promptFile,
+		WorkspacePath:    workspace,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	addDir := filepath.Join(filepath.Dir(promptFile), "vibe")
+	want := []string{"vibe", "--trust", "--workdir", workspace, "--add-dir", addDir, "--agent", "ao-system-prompt", "--auto-approve", "--", "add a health check"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+	agentData, err := os.ReadFile(filepath.Join(addDir, ".vibe", "agents", "ao-system-prompt.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantConfig := strings.Join([]string{
+		`agent_type = "agent"`,
+		`display_name = "AO Session"`,
+		`description = "AO session standing instructions."`,
+		`safety = "neutral"`,
+		`system_prompt_id = "ao-system-prompt"`,
+		`active_model = "mistral \"medium\" \\ latest"`,
+		"",
+	}, "\n")
+	if string(agentData) != wantConfig {
+		t.Fatalf("agent config\nwant:\n%s\n got:\n%s", wantConfig, agentData)
+	}
+}
+
+func TestVibeAgentRootManagerOwnedPromptAndModelOnlyResolveSameRoot(t *testing.T) {
+	dataDir := t.TempDir()
+	sessionID := "mer-1"
+	promptFile := filepath.Join(dataDir, "prompts", sessionID, "system.md")
+	want := filepath.Join(dataDir, "prompts", sessionID, "vibe")
+
+	promptBackedRoot, err := vibeAgentRoot(promptFile, dataDir, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	modelOnlyRoot, err := vibeAgentRoot("", dataDir, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	managerOwnedRoot := vibeManagerOwnedAgentRoot(dataDir, sessionID)
+
+	if promptBackedRoot != want || modelOnlyRoot != want || managerOwnedRoot != want {
+		t.Fatalf("manager-owned roots = (%q, %q, %q), want all %q", promptBackedRoot, modelOnlyRoot, managerOwnedRoot, want)
+	}
+}
+
+func TestVibeAgentRootRequiresDataDirAndSessionIDForModelOnly(t *testing.T) {
+	tests := []struct {
+		name      string
+		dataDir   string
+		sessionID string
+	}{
+		{name: "missing data dir", dataDir: "", sessionID: "mer-1"},
+		{name: "missing session id", dataDir: t.TempDir(), sessionID: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := vibeAgentRoot("", tt.dataDir, tt.sessionID)
+			if err == nil || !strings.Contains(err.Error(), "data dir and session id required") {
+				t.Fatalf("vibeAgentRoot = (%q, %v), want data dir/session id error", got, err)
+			}
+			if got != "" {
+				t.Fatalf("vibeAgentRoot output = %q, want empty root", got)
+			}
+		})
+	}
+}
+
+func readVibeAgentConfig(t *testing.T, addDir string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(addDir, ".vibe", "agents", "ao-system-prompt.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+func TestGetLaunchCommandOmitsBlankModelWithoutCustomAgent(t *testing.T) {
+	p := &Plugin{resolvedBinary: "vibe"}
+	dataDir := t.TempDir()
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config:    ports.AgentConfig{Model: " \t\n "},
+		DataDir:   dataDir,
+		SessionID: "mer-1",
+		Prompt:    "task",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"vibe", "--trust", "--", "task"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+	addDir := filepath.Join(dataDir, "prompts", "mer-1", "vibe")
+	if _, err := os.Stat(filepath.Join(addDir, ".vibe", "agents", "ao-system-prompt.toml")); !os.IsNotExist(err) {
+		t.Fatalf("blank model wrote custom agent config at %s: %v", addDir, err)
+	}
+}
+
 func TestGetLaunchCommandCustomAgentAcceptEdits(t *testing.T) {
 	p := &Plugin{resolvedBinary: "vibe"}
 	promptFile := filepath.Join(t.TempDir(), "system.md")
@@ -335,6 +552,45 @@ func TestGetRestoreCommandReappliesSystemPromptAgent(t *testing.T) {
 	}
 }
 
+func TestGetRestoreCommandBuildsCustomAgentForModelOnly(t *testing.T) {
+	p := &Plugin{resolvedBinary: "vibe"}
+	dataDir := t.TempDir()
+	workspace := t.TempDir()
+	cmd, ok, err := p.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Config:      ports.AgentConfig{Model: "mistral-medium-latest"},
+		DataDir:     dataDir,
+		Permissions: ports.PermissionModeAuto,
+		Session: ports.SessionRef{
+			ID:            "mer-1",
+			WorkspacePath: workspace,
+			Metadata:      map[string]string{ports.MetadataKeyAgentSessionID: "abcd1234"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("ok=false, want true")
+	}
+
+	addDir := filepath.Join(dataDir, "prompts", "mer-1", "vibe")
+	want := []string{"vibe", "--trust", "--workdir", workspace, "--add-dir", addDir, "--agent", "ao-system-prompt", "--auto-approve", "--resume", "abcd1234"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+	agentData, err := os.ReadFile(filepath.Join(addDir, ".vibe", "agents", "ao-system-prompt.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(agentData)
+	if !strings.Contains(body, `active_model = "mistral-medium-latest"`) {
+		t.Fatalf("agent config missing active_model:\n%s", body)
+	}
+	if strings.Contains(body, "system_prompt_id") {
+		t.Fatalf("model-only agent config unexpectedly has system_prompt_id:\n%s", body)
+	}
+}
+
 func TestGetRestoreCommandNoID(t *testing.T) {
 	p := &Plugin{resolvedBinary: "vibe"}
 	_, ok, err := p.GetRestoreCommand(context.Background(), ports.RestoreConfig{
@@ -348,24 +604,133 @@ func TestGetRestoreCommandNoID(t *testing.T) {
 	}
 }
 
-func TestGetAgentHooksNoOp(t *testing.T) {
-	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{WorkspacePath: t.TempDir()}); err != nil {
-		t.Fatalf("GetAgentHooks err = %v, want nil", err)
+func TestGetAgentHooksInstallsManagedHooksWithoutChangingConfig(t *testing.T) {
+	workspace := t.TempDir()
+	dir := filepath.Join(workspace, ".vibe")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	userHooks := "[[hooks]]\nname = \"user-hook\"\ntype = \"post_agent\"\ncommand = \"user-command\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "hooks.toml"), []byte(userHooks), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	userConfig := "log_interactions = false\nactive_model = \"custom-model\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(userConfig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &Plugin{}
+	for range 2 {
+		if err := p.GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{WorkspacePath: workspace}); err != nil {
+			t.Fatalf("GetAgentHooks: %v", err)
+		}
+	}
+
+	hooks, err := os.ReadFile(filepath.Join(dir, "hooks.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(hooks)
+	for _, want := range []string{
+		"user-command",
+		`name = "ao-session-metadata"`,
+		`type = "post_agent"`,
+		`name = "ao-pre-tool"`,
+		`type = "pre_tool"`,
+		`name = "ao-post-tool"`,
+		`type = "post_tool"`,
+		`match = "*"`,
+		`command = "ao hooks vibe post-agent"`,
+		`command = "ao hooks vibe pre-tool"`,
+		`command = "ao hooks vibe post-tool"`,
+		"timeout = 30.0",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("hooks.toml missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Count(body, vibeHooksSentinelStart) != 1 || strings.Count(body, "ao hooks vibe post-agent") != 1 {
+		t.Fatalf("managed hooks duplicated:\n%s", body)
+	}
+	if strings.Count(body, "timeout = 30.0") != 3 || strings.Count(body, `match = "*"`) != 2 {
+		t.Fatalf("unexpected Vibe hook schema:\n%s", body)
+	}
+
+	config, err := os.ReadFile(filepath.Join(dir, "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(config); got != userConfig {
+		t.Fatalf("config.toml changed\nwant: %q\n got: %q", userConfig, got)
+	}
+	ignore, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"/hooks.toml\n"} {
+		if !strings.Contains(string(ignore), want) {
+			t.Fatalf(".gitignore missing %q:\n%s", want, ignore)
+		}
+	}
+	if strings.Contains(string(ignore), "/config.toml\n") {
+		t.Fatalf(".gitignore unexpectedly claims user config:\n%s", ignore)
 	}
 }
 
-func TestSessionInfoNoOp(t *testing.T) {
+func TestGetAgentHooksRequiresWorkspace(t *testing.T) {
+	err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{})
+	if err == nil || !strings.Contains(err.Error(), "WorkspacePath is required") {
+		t.Fatalf("GetAgentHooks error = %v", err)
+	}
+}
+
+func TestUninstallHooksPreservesUserHooks(t *testing.T) {
+	workspace := t.TempDir()
+	p := &Plugin{}
+	if err := p.GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{WorkspacePath: workspace}); err != nil {
+		t.Fatal(err)
+	}
+	installed, err := p.AreHooksInstalled(context.Background(), workspace)
+	if err != nil || !installed {
+		t.Fatalf("AreHooksInstalled = (%v, %v), want (true, nil)", installed, err)
+	}
+	path := filepath.Join(workspace, ".vibe", "hooks.toml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withUserHook := "[[hooks]]\nname = \"user-hook\"\ntype = \"post_agent\"\ncommand = \"user-command\"\n\n" + string(data)
+	if err := os.WriteFile(path, []byte(withUserHook), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.UninstallHooks(context.Background(), workspace); err != nil {
+		t.Fatal(err)
+	}
+	installed, err = p.AreHooksInstalled(context.Background(), workspace)
+	if err != nil || installed {
+		t.Fatalf("AreHooksInstalled after uninstall = (%v, %v), want (false, nil)", installed, err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "user-command") || strings.Contains(string(got), "ao hooks vibe") {
+		t.Fatalf("hooks after uninstall:\n%s", got)
+	}
+}
+
+func TestSessionInfoReadsHookMetadata(t *testing.T) {
 	info, ok, err := (&Plugin{}).SessionInfo(context.Background(), ports.SessionRef{
 		Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "abcd1234"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ok {
-		t.Fatalf("ok=true with info %#v, want no-op false", info)
+	if !ok {
+		t.Fatal("ok=false, want hook metadata")
 	}
-	if !reflect.DeepEqual(info, ports.SessionInfo{}) {
-		t.Fatalf("info = %#v, want zero", info)
+	if info.AgentSessionID != "abcd1234" {
+		t.Fatalf("AgentSessionID = %q", info.AgentSessionID)
 	}
 }
 
