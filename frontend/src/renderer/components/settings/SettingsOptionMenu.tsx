@@ -45,9 +45,13 @@ export function SettingsOptionMenu<T extends string>({
 					<ChevronDown className="size-icon-sm shrink-0 opacity-70" aria-hidden="true" />
 				</button>
 			</DropdownMenuTrigger>
-			{/* bg-settings-menu and border-settings-menu must be real color utilities so
-			    twMerge drops DropdownMenuContent's bg-popover and border-border. */}
-			<DropdownMenuContent align="end" className="settings-menu-surface border-settings-menu bg-settings-menu p-2">
+			{/* bg-settings-menu / border-settings-menu / rounded-(--radius-settings-panel) must
+			    be real utilities so twMerge drops DropdownMenuContent's bg-popover, border-border,
+			    and rounded-lg. */}
+			<DropdownMenuContent
+				align="end"
+				className="settings-menu-surface rounded-(--radius-settings-panel) border-settings-menu bg-settings-menu"
+			>
 				{options.map((option) => (
 					<DropdownMenuItem
 						key={option.value}
