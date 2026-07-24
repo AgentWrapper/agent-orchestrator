@@ -35,6 +35,13 @@ func deriveStatus(rec domain.SessionRecord, prs []domain.PRFacts, now time.Time,
 	if rec.Activity.State.NeedsInput() {
 		return domain.StatusNeedsInput
 	}
+	// An actively working agent takes precedence over the PR lifecycle:
+	// a session fixing CI or addressing reviews is "working", not "in review".
+	// Without this, the sidebar dot and kanban badge are locked to a PR-derived
+	// color whenever a PR exists, hiding real-time activity from those surfaces.
+	if rec.Activity.State == domain.ActivityActive {
+		return domain.StatusWorking
+	}
 
 	open := openPRs(prs)
 	if len(open) > 0 {
@@ -42,10 +49,6 @@ func deriveStatus(rec domain.SessionRecord, prs []domain.PRFacts, now time.Time,
 	}
 	if anyMerged(prs) {
 		return domain.StatusMerged
-	}
-
-	if rec.Activity.State == domain.ActivityActive {
-		return domain.StatusWorking
 	}
 
 	// No hook callback has ever arrived for this spawn/restore even though the

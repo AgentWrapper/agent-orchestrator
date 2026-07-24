@@ -51,6 +51,13 @@ func TestServiceDerivesStatusFromSessionFactsAndPR(t *testing.T) {
 		{"review-pending", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{Review: domain.ReviewRequired}), false, domain.StatusReviewPending},
 		{"pr-open", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{}), false, domain.StatusPROpen},
 		{"working", statusRec(domain.ActivityActive, false), nil, false, domain.StatusWorking},
+		// An actively working agent takes precedence over any PR lifecycle
+		// status — the sidebar dot and kanban badge must reflect real-time
+		// activity even when a PR is open. Without this, those surfaces are
+		// locked to a PR-derived color and can't show "working".
+		{"active-pr-open-wins", statusRec(domain.ActivityActive, false), statusPR(domain.PRFacts{}), false, domain.StatusWorking},
+		{"active-ci-failed-wins", statusRec(domain.ActivityActive, false), statusPR(domain.PRFacts{CI: domain.CIFailing}), false, domain.StatusWorking},
+		{"active-review-pending-wins", statusRec(domain.ActivityActive, false), statusPR(domain.PRFacts{Review: domain.ReviewRequired}), false, domain.StatusWorking},
 		{"idle", statusRec(domain.ActivityIdle, false), nil, false, domain.StatusIdle},
 
 		// A live session whose hook-capable agent never signaled is no_signal
