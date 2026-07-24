@@ -43,7 +43,7 @@ type ListFilter struct {
 // commander is the command-side surface Service delegates to: the
 // *sessionmanager.Manager in production, a fake in tests.
 type commander interface {
-	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, error)
+	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, int, int, error)
 	RestoreWithMode(ctx context.Context, id domain.SessionID) (sessionmanager.RestoreResult, error)
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 	RetireForReplacement(ctx context.Context, id domain.SessionID) error
@@ -155,28 +155,33 @@ func NewWithDeps(d Deps) *Service {
 	return s
 }
 
-// Spawn creates a session and returns the API-facing read model.
-func (s *Service) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, error) {
+// Spawn creates a session and returns the API-facing read model plus
+// ephemeral prompt size measurements.
+func (s *Service) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, int, int, error) {
 	project, err := s.requireProject(ctx, cfg.ProjectID)
 	if err != nil {
-		return domain.Session{}, err
+		return domain.Session{}, 0, 0, err
 	}
 	start := s.now()
 	firstSession, err := s.isFirstSession(ctx)
 	if err != nil {
-		return domain.Session{}, fmt.Errorf("count sessions: %w", err)
+		return domain.Session{}, 0, 0, fmt.Errorf("count sessions: %w", err)
 	}
 	cfg = s.withIssueContext(ctx, cfg, project)
-	rec, err := s.manager.Spawn(ctx, cfg)
+	rec, promptBytes, systemPromptBytes, err := s.manager.Spawn(ctx, cfg)
 	if err != nil {
 		s.emitSpawnFailed(cfg, err, s.now().Sub(start).Milliseconds())
-		return domain.Session{}, toAPIError(err)
+		return domain.Session{}, 0, 0, toAPIError(err)
 	}
 	s.emitSpawned(rec, s.now().Sub(start).Milliseconds())
 	if firstSession {
 		s.emitFirstSessionSpawned(rec, project)
 	}
-	return s.toSession(ctx, rec)
+	sess, err := s.toSession(ctx, rec)
+	if err != nil {
+		return domain.Session{}, 0, 0, err
+	}
+	return sess, promptBytes, systemPromptBytes, nil
 }
 
 // requireProject verifies the project is registered before any spawn write
@@ -319,7 +324,7 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 			return newestSession(existing), nil
 		}
 	}
-	sess, err := s.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
+	sess, _, _, err := s.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
 	if err != nil {
 		return domain.Session{}, err
 	}

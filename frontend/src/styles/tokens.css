@@ -205,13 +205,15 @@
 	--size-sidebar-default: 240px;
 	--size-sidebar-mobile: 288px;
 	/* Clears macOS traffic lights (y:20 discs) before in-sidebar TitlebarNav;
-	   keep Sidebar header padding and the shell drag strip on this same token. */
+	   keep Sidebar header padding and the shell drag strip on this same token.
+	   Fullscreen drops the lights, so TitlebarNav uses the tighter inset. */
 	--size-traffic-light-clearance: 36px;
+	--size-traffic-light-clearance-fullscreen: var(--space-2);
 	--size-resize-handle: 7px;
 	--size-resize-handle-offset: 3px;
 	--size-kanban-glow: 130px;
 	--size-kv-label: 74px;
-	--size-notification-width: 380px;
+	--size-notification-width: 460px;
 	--size-notification-max-height: 420px;
 	--size-select-menu-max: 320px; /* agent/select dropdown scroll cap (was max-h-80) */
 	--size-notification-icon: 26px;
@@ -227,6 +229,10 @@
 	--size-pr-col-number: 64px;
 	--size-pr-col-state: 96px;
 	--size-content-max: 320px;
+	/* Lets flex children shrink for truncation without hardcoding zero-width utilities in components. */
+	--size-flex-min: 0px;
+	/* Keeps terminal tabs usable after title truncation while leaving room for several tabs. */
+	--size-shell-tab-min: 64px;
 	/* Caps a standalone shell terminal's tab label so several open shells stay
 	   readable side by side instead of one long path crowding out the rest. */
 	--size-shell-tab-max: 140px;
@@ -277,8 +283,8 @@
 	--tracking-settings-title: -0.015em;
 	--tracking-settings-section: 0.06em;
 	--tracking-settings-mono: 0.08em;
-	--radius-settings-panel: var(--radius-center-panel);
-	--radius-settings-row: 12px;
+	--radius-settings-panel: 14px;
+	--radius-settings-row: 16px;
 	--size-settings-row: 52px;
 	--size-settings-content-width: 768px;
 	--size-settings-panel-padding-top: 64px;
@@ -325,8 +331,8 @@
 	--leading-settings-mobile-hint: 14px;
 	--leading-settings-mobile-warning: 15px;
 	--size-settings-action-height: 38px;
-	--radius-settings-action: 12px;
-	--radius-settings-dialog-lg: 16px;
+	--radius-settings-action: 16px;
+	--radius-settings-dialog-lg: 20px;
 	--shadow-settings-dialog: 0px 20px 25px -5px rgba(0, 0, 0, 0.1), 0px 8px 10px -6px rgba(0, 0, 0, 0.1);
 	--shadow-settings-qr: 0px 10px 15px -3px rgba(0, 0, 0, 0.1), 0px 4px 6px -4px rgba(0, 0, 0, 0.1);
 

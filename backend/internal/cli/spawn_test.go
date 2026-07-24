@@ -191,7 +191,7 @@ func TestSpawnResolvesProjectFromEnvAndDefaultAgent(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatal(err)
 			}
-			_, _ = io.WriteString(w, `{"session":{"id":"demo-11","status":"idle"}}`)
+			_, _ = io.WriteString(w, `{"session":{"id":"demo-11","status":"idle"},"promptBytes":0,"systemPromptBytes":123}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -206,6 +206,9 @@ func TestSpawnResolvesProjectFromEnvAndDefaultAgent(t *testing.T) {
 	}
 	if !strings.Contains(out, "spawned session demo-11") {
 		t.Fatalf("output missing spawn: %s", out)
+	}
+	if !strings.Contains(out, "[prompt 0 B, system 123 B]") {
+		t.Fatalf("output missing system-only prompt metrics: %s", out)
 	}
 	if req.ProjectID != "demo" || req.Harness != "codex" || req.DisplayName != "worker" {
 		t.Fatalf("spawn request = %#v", req)

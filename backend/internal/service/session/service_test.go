@@ -500,17 +500,17 @@ type fakeCommander struct {
 	restoreResult   sessionmanager.RestoreResult
 }
 
-func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, error) {
+func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, int, int, error) {
 	if f.spawnErr != nil {
-		return domain.SessionRecord{}, f.spawnErr
+		return domain.SessionRecord{}, 0, 0, f.spawnErr
 	}
 	f.spawned = true
 	f.spawnedCfg = cfg
 	f.killsAtSpawn = len(f.retired)
 	if f.spawnRecord.ID != "" {
-		return f.spawnRecord, nil
+		return f.spawnRecord, len(cfg.Prompt), 0, nil
 	}
-	return domain.SessionRecord{ID: "mer-9", ProjectID: cfg.ProjectID, Kind: cfg.Kind, Harness: cfg.Harness}, nil
+	return domain.SessionRecord{ID: "mer-9", ProjectID: cfg.ProjectID, Kind: cfg.Kind, Harness: cfg.Harness}, len(cfg.Prompt), 0, nil
 }
 func (f *fakeCommander) RestoreWithMode(context.Context, domain.SessionID) (sessionmanager.RestoreResult, error) {
 	if f.restoreErr != nil {
@@ -681,7 +681,7 @@ func TestSpawnUnknownProjectReturns404(t *testing.T) {
 	fc := &fakeCommander{}
 	svc := &Service{manager: fc, store: st}
 
-	_, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "ghost", Kind: domain.KindWorker})
+	_, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "ghost", Kind: domain.KindWorker})
 	var e *apierr.Error
 	if !errors.As(err, &e) || e.Kind != apierr.KindNotFound || e.Code != "PROJECT_NOT_FOUND" {
 		t.Fatalf("err = %v, want apierr.NotFound PROJECT_NOT_FOUND", err)
@@ -703,7 +703,7 @@ func TestSpawnEmitsFirstSessionOnboardingAndDuration(t *testing.T) {
 		Clock:     func() time.Time { return time.Unix(102, 0).UTC() },
 	})
 
-	if _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer"}); err != nil {
+	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer"}); err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
 	if len(sink.events) != 2 {
@@ -755,7 +755,7 @@ func TestSpawnEnrichesIssueContextFromTracker(t *testing.T) {
 	}}
 	svc := NewWithDeps(Deps{Manager: fc, Store: st, Tracker: tracker})
 
-	if _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "42"}); err != nil {
+	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "42"}); err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
 	if len(tracker.ids) != 1 || tracker.ids[0].Provider != domain.TrackerProviderGitHub || tracker.ids[0].Native != "acme/repo#42" {
@@ -784,7 +784,7 @@ func TestSpawnIssueContextFetchFailureFallsBack(t *testing.T) {
 	tracker := &fakeTracker{err: errors.New("tracker unavailable")}
 	svc := NewWithDeps(Deps{Manager: fc, Store: st, Tracker: tracker})
 
-	if _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "42"}); err != nil {
+	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "42"}); err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
 	if len(tracker.ids) != 1 {
@@ -806,7 +806,7 @@ func TestSpawnPreservesIssueIDWhenTrackerIsNil(t *testing.T) {
 	fc := &fakeCommander{}
 	svc := NewWithDeps(Deps{Manager: fc, Store: st, Tracker: nil})
 
-	if _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "107"}); err != nil {
+	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "107"}); err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
 	if fc.spawnedCfg.IssueID != "107" {
@@ -824,7 +824,7 @@ func TestSpawnIssueContextSkipsUnresolvableIssueRef(t *testing.T) {
 	tracker := &fakeTracker{}
 	svc := NewWithDeps(Deps{Manager: fc, Store: st, Tracker: tracker})
 
-	if _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "not-an-issue"}); err != nil {
+	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "not-an-issue"}); err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
 	if len(tracker.ids) != 0 {
@@ -852,7 +852,7 @@ func TestSpawnFailedEmitsDuration(t *testing.T) {
 		},
 	})
 
-	if _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer"}); err == nil {
+	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer"}); err == nil {
 		t.Fatal("Spawn should fail")
 	}
 	if len(sink.events) != 1 || sink.events[0].Name != "ao.session.spawn_failed" {
@@ -883,7 +883,7 @@ func TestSpawnEmitsTelemetryOnSuccess(t *testing.T) {
 	ts := &fakeTelemetrySink{}
 	svc := NewWithDeps(Deps{Manager: fc, Store: st, Telemetry: ts, Clock: func() time.Time { return time.Unix(1700000000, 0).UTC() }})
 
-	_, err := svc.Spawn(context.Background(), ports.SpawnConfig{
+	_, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{
 		ProjectID: "mer",
 		Kind:      domain.KindWorker,
 		Harness:   domain.HarnessCodex,
@@ -910,7 +910,7 @@ func TestSpawnEmitsTelemetryOnFailure(t *testing.T) {
 	ts := &fakeTelemetrySink{}
 	svc := NewWithDeps(Deps{Manager: fc, Store: st, Telemetry: ts, Clock: func() time.Time { return time.Unix(1700000000, 0).UTC() }})
 
-	_, err := svc.Spawn(context.Background(), ports.SpawnConfig{
+	_, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{
 		ProjectID: "mer",
 		Kind:      domain.KindWorker,
 		Harness:   domain.HarnessCodex,
@@ -952,7 +952,7 @@ func TestSpawnEmitsTypedErrorCodeOnFailure(t *testing.T) {
 	ts := &fakeTelemetrySink{}
 	svc := NewWithDeps(Deps{Manager: fc, Store: st, Telemetry: ts, Clock: func() time.Time { return time.Unix(1700000000, 0).UTC() }})
 
-	_, err := svc.Spawn(context.Background(), ports.SpawnConfig{
+	_, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{
 		ProjectID: "mer",
 		Kind:      domain.KindWorker,
 		Harness:   domain.HarnessCodex,
@@ -1272,7 +1272,7 @@ func TestListPRsOrdersActiveBeforeClosedThenUpdatedDesc(t *testing.T) {
 	}
 }
 
-func TestListPRSummariesOmitsRawLogsAndReviewBodies(t *testing.T) {
+func TestListPRSummariesExposesReviewSummariesButKeepsRawLogsAndCommentBodiesPrivate(t *testing.T) {
 	st := newFakeStore()
 	now := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
@@ -1303,7 +1303,7 @@ func TestListPRSummariesOmitsRawLogsAndReviewBodies(t *testing.T) {
 		{Name: "lint", Status: domain.PRCheckPassed, Conclusion: "success", URL: "https://github.com/acme/repo/actions/runs/2"},
 	}
 	stList.reviews[prURL] = []domain.PullRequestReview{
-		{ID: "review-1", Author: "reviewer-a", State: domain.ReviewChangesRequest, URL: "https://github.com/acme/repo/pull/7#pullrequestreview-1", SubmittedAt: now.Add(-30 * time.Second)},
+		{ID: "review-1", Author: "reviewer-a", State: domain.ReviewChangesRequest, URL: "https://github.com/acme/repo/pull/7#pullrequestreview-1", Body: "summary: please fix the failing unit test", SubmittedAt: now.Add(-30 * time.Second)},
 	}
 	stList.comments[prURL] = []domain.PullRequestComment{
 		{Author: "reviewer-a", File: "main.go", Line: 12, Body: "raw body must stay private", URL: "https://github.com/acme/repo/pull/7#discussion_r1"},
@@ -1335,6 +1335,48 @@ func TestListPRSummariesOmitsRawLogsAndReviewBodies(t *testing.T) {
 	}
 	if pr.Mergeability.State != domain.MergeConflicting || len(pr.Mergeability.ConflictFiles) != 0 || !containsString(pr.Mergeability.Reasons, "conflicts") {
 		t.Fatalf("mergeability = %+v", pr.Mergeability)
+	}
+	if len(pr.Review.Reviews) != 1 {
+		t.Fatalf("review summaries = %+v", pr.Review.Reviews)
+	}
+	if entry := pr.Review.Reviews[0]; entry.Reviewer != "reviewer-a" || entry.Verdict != domain.ReviewChangesRequest ||
+		entry.Body != "summary: please fix the failing unit test" ||
+		entry.URL != "https://github.com/acme/repo/pull/7#pullrequestreview-1" {
+		t.Fatalf("review summary entry = %+v", entry)
+	}
+	// The review summary body is surfaced, but inline comment bodies and CI log
+	// tails must never leak into the PR summary.
+	blob := fmt.Sprintf("%+v", got)
+	for _, secret := range []string{"raw body must stay private", "another raw body", "bot body", "panic: secret"} {
+		if strings.Contains(blob, secret) {
+			t.Fatalf("summary leaked private text %q", secret)
+		}
+	}
+}
+
+func TestSummarizeReviewSurfacesApprovedAndChangesRequestedSummaries(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	reviews := []domain.PullRequestReview{
+		// alice's approved review supersedes her earlier changes_requested one.
+		{ID: "a-old", Author: "alice", State: domain.ReviewChangesRequest, Body: "old note", URL: "url-a-old", SubmittedAt: now.Add(-time.Hour)},
+		{ID: "a-new", Author: "alice", State: domain.ReviewApproved, Body: "looks good now", URL: "url-a-new", SubmittedAt: now},
+		{ID: "b", Author: "bob", State: domain.ReviewChangesRequest, Body: "please fix", URL: "url-b", SubmittedAt: now},
+	}
+
+	got := summarizeReview(domain.PullRequest{URL: "u", Review: domain.ReviewChangesRequest}, nil, reviews)
+
+	byReviewer := map[string]PRReviewEntry{}
+	for _, entry := range got.Reviews {
+		byReviewer[entry.Reviewer] = entry
+	}
+	if len(got.Reviews) != 2 {
+		t.Fatalf("review summaries = %+v, want alice + bob", got.Reviews)
+	}
+	if a := byReviewer["alice"]; a.Verdict != domain.ReviewApproved || a.Body != "looks good now" || a.URL != "url-a-new" {
+		t.Fatalf("alice entry = %+v, want latest approved with its body", a)
+	}
+	if b := byReviewer["bob"]; b.Verdict != domain.ReviewChangesRequest || b.Body != "please fix" {
+		t.Fatalf("bob entry = %+v, want changes_requested with its body", b)
 	}
 }
 

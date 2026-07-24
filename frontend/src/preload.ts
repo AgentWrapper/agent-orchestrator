@@ -67,7 +67,7 @@ const api = {
 				ipcRenderer.off(KEYBOARD_SHORTCUTS_HELP_CHANNEL, wrapped);
 			};
 		},
-		// Fired by the main process when Ctrl+` is pressed in any web contents,
+		// Fired by the main process when Ctrl+Shift+` is pressed in any web contents,
 		// including while focus is inside a terminal pane.
 		onNewShellTerminalShortcut: (listener: () => void) => {
 			const wrapped = () => listener();
@@ -112,6 +112,14 @@ const api = {
 	window: {
 		setOverlay: (overlay: { color: string; symbolColor: string }) =>
 			ipcRenderer.invoke("window:setOverlay", overlay) as Promise<void>,
+		isFullScreen: () => ipcRenderer.invoke("window:isFullScreen") as Promise<boolean>,
+		onFullScreen: (listener: (fullScreen: boolean) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, fullScreen: boolean) => listener(fullScreen);
+			ipcRenderer.on("window:fullscreen", wrapped);
+			return () => {
+				ipcRenderer.off("window:fullscreen", wrapped);
+			};
+		},
 	},
 	theme: {
 		// Propagate the app's theme preference to Electron's nativeTheme so embedded

@@ -73,6 +73,8 @@ if (typeof window !== "undefined") {
 		},
 		window: {
 			setOverlay: async () => undefined,
+			isFullScreen: async () => false,
+			onFullScreen: () => () => undefined,
 		},
 		theme: {
 			set: async () => undefined,

@@ -15,6 +15,7 @@ import { WindowTitlebar } from "../components/WindowTitlebar";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useOpenShellTerminal } from "../hooks/useShellTerminals";
+import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
 import { refreshDaemonStatus } from "../lib/daemon-status";
@@ -24,6 +25,7 @@ import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { captureOrchestratorReplacementFailure } from "../lib/orchestrator-replacement-telemetry";
 import { applyDocumentTheme } from "../lib/theme";
 import { aoBridge } from "../lib/bridge";
+import { cn } from "../lib/utils";
 import {
 	isLinuxPlatform,
 	isMacPlatform,
@@ -90,6 +92,32 @@ function ShellLayout() {
 	const newShellTerminalNonce = useUiStore((state) => state.newShellTerminalNonce);
 	const setActiveShellTerminal = useUiStore((state) => state.setActiveShellTerminal);
 	const openShellTerminal = useOpenShellTerminal();
+	// Single subscription for sidebar clearance + drag strip (macOS no-ops inside the hook).
+	const isFullScreen = useWindowFullScreen();
+	// Drag is on immediately for a normal windowed launch. After leaving fullscreen,
+	// wait for the pad/height transition so the growing strip cannot steal clicks.
+	const [trafficLightDragActive, setTrafficLightDragActive] = useState(isMac);
+	const leftFullScreenRef = useRef(false);
+	useEffect(() => {
+		if (!isMac) return;
+		if (isFullScreen) {
+			leftFullScreenRef.current = true;
+			setTrafficLightDragActive(false);
+			return;
+		}
+		if (!leftFullScreenRef.current) {
+			setTrafficLightDragActive(true);
+			return;
+		}
+		const reducedMotion =
+			typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+		if (reducedMotion) {
+			setTrafficLightDragActive(true);
+			return;
+		}
+		const timer = window.setTimeout(() => setTrafficLightDragActive(true), 200);
+		return () => window.clearTimeout(timer);
+	}, [isFullScreen]);
 	// Seeded to the current value so a mount never opens a terminal unasked.
 	const handledShellNonceRef = useRef(newShellTerminalNonce);
 	const [isKeyboardShortcutsOpen, setIsKeyboardShortcutsOpen] = useState(false);
@@ -370,14 +398,14 @@ function ShellLayout() {
 
 	useEffect(() => aoBridge.app.onKeyboardShortcutsHelp(() => setIsKeyboardShortcutsOpen(true)), []);
 
-	// New standalone terminal (Ctrl+`), also detected in the main process so it
+	// New standalone terminal (Ctrl+Shift+`), also detected in the main process so it
 	// fires from inside a terminal pane. It raises the same store signal as the
-	// topbar button so the two cannot drift apart.
+	// tab-strip + button so the two cannot drift apart.
 	useEffect(() => aoBridge.app.onNewShellTerminalShortcut(() => requestNewShellTerminal()), [requestNewShellTerminal]);
 
 	// The shell layout is the single consumer of that signal, because it is the
 	// only component mounted on EVERY route. Owning it here is what lets the
-	// button and Ctrl+` work from the board, a project page, or a session alike
+	// button and Ctrl+Shift+` work from the board, a project page, or a session alike
 	// — when the session view owned it, both silently did nothing outside a
 	// session, since nothing was listening.
 	//
@@ -459,6 +487,7 @@ function ShellLayout() {
 					<Sidebar
 						hideEdgeBorder={isWelcomeBoard}
 						historyLocked={isWelcomeBoard}
+						isFullScreen={isFullScreen}
 						underTopbar={isWindows || (!framedAppTopbar && !hideShellTopbar && (isLinux ? isSessionRoute : true))}
 						topbarOffset={isWindows ? "titlebar" : "toolbar"}
 						onCreateProject={createProject}
@@ -498,12 +527,16 @@ function ShellLayout() {
               the traffic-light band only (same --size-traffic-light-clearance
               as the Sidebar header pad). TitlebarNav sits in the sidebar below
               that band, so a taller strip would cover the toggle/arrows and
-              swallow clicks. Width matches the sidebar. */}
+              swallow clicks. Height eases with the header pad on fullscreen
+              toggle. Width matches the sidebar. */}
 					{hideShellTopbar && isMac ? (
 						<div
 							aria-hidden="true"
-							className="fixed top-0 left-0 z-chrome h-traffic-light-clearance w-(--ao-sidebar-w,var(--size-sidebar-default))"
-							style={{ WebkitAppRegion: "drag" } as CSSProperties}
+							className={cn(
+								"fixed top-0 left-0 z-chrome w-(--ao-sidebar-w,var(--size-sidebar-default)) transition-[height] duration-200 ease-out motion-reduce:transition-none",
+								isFullScreen ? "pointer-events-none h-0" : "h-traffic-light-clearance",
+							)}
+							style={trafficLightDragActive ? ({ WebkitAppRegion: "drag" } as CSSProperties) : undefined}
 						/>
 					) : null}
 				</SidebarProvider>
