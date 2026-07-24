@@ -32,13 +32,84 @@ func TestManifest(t *testing.T) {
 	}
 }
 
-func TestGetConfigSpecEmpty(t *testing.T) {
+func TestGetConfigSpecAdvertisesModelField(t *testing.T) {
 	spec, err := (&Plugin{}).GetConfigSpec(context.Background())
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if len(spec.Fields) != 0 {
-		t.Fatalf("expected no fields, got %d", len(spec.Fields))
+	if len(spec.Fields) != 1 {
+		t.Fatalf("expected 1 field, got %d", len(spec.Fields))
+	}
+	if spec.Fields[0].Key != "model" || spec.Fields[0].Type != ports.ConfigFieldString {
+		t.Fatalf("field = %#v, want model/string", spec.Fields[0])
+	}
+}
+
+func TestGetLaunchCommandAppendsModelFlagWhenConfigured(t *testing.T) {
+	p := &Plugin{resolvedBinary: "kimi"}
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config: ports.AgentConfig{Model: "k2.5"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"kimi", "--model", "k2.5"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+}
+
+func TestGetLaunchCommandOmitsModelFlagWhenBlank(t *testing.T) {
+	p := &Plugin{resolvedBinary: "kimi"}
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config: ports.AgentConfig{Model: "   "},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"kimi"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+}
+
+func TestGetLaunchCommandModelFlagComposesWithApprovalFlags(t *testing.T) {
+	p := &Plugin{resolvedBinary: "kimi"}
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Permissions: ports.PermissionModeBypassPermissions,
+		Config:      ports.AgentConfig{Model: "k2.5"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"kimi", "-y", "--model", "k2.5"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+}
+
+// Mirrors the issue #2890 harness note: --model + --session composition is
+// unverified against a real kimi install, so appendModelFlag is intentionally
+// not wired into GetRestoreCommand. This test locks that decision in so a
+// future "just mirror Copilot/Codex" edit doesn't silently forward the model
+// override on restore without re-verifying first.
+func TestGetRestoreCommandDoesNotForwardModelOverride(t *testing.T) {
+	p := &Plugin{resolvedBinary: "kimi"}
+	cmd, ok, err := p.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Session: ports.SessionRef{
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "01HZABC"},
+		},
+		Config: ports.AgentConfig{Model: "k2.5"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("ok=false, want true")
+	}
+	want := []string{"kimi", "--session", "01HZABC"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v (model override must not be forwarded on restore)", cmd, want)
 	}
 }
 
@@ -194,10 +265,12 @@ func TestGetRestoreCommandNoID(t *testing.T) {
 
 func TestGetAgentHooksInstallsSystemPromptInstructions(t *testing.T) {
 	workspace := t.TempDir()
+	kimiHome := t.TempDir()
 
 	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
 		WorkspacePath: workspace,
 		SystemPrompt:  "follow AO rules\n",
+		Env:           map[string]string{"KIMI_CODE_HOME": kimiHome},
 	}); err != nil {
 		t.Fatalf("GetAgentHooks err = %v", err)
 	}
@@ -227,8 +300,201 @@ func TestGetAgentHooksInstallsSystemPromptInstructions(t *testing.T) {
 	}
 }
 
+func TestGetAgentHooksInstallsKimiConfigHooksWithoutSystemPrompt(t *testing.T) {
+	workspace := t.TempDir()
+	kimiHome := t.TempDir()
+	configPath := filepath.Join(kimiHome, "config.toml")
+	existing := `default_model = "kimi-code/kimi-for-coding"
+
+[[hooks]]
+event = "Notification"
+matcher = "task\\.completed"
+command = "notify-send done"
+timeout = 7
+`
+	if err := os.WriteFile(configPath, []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		Env:           map[string]string{"KIMI_CODE_HOME": kimiHome},
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		`default_model = "kimi-code/kimi-for-coding"`,
+		`command = "notify-send done"`,
+		kimiHooksSentinelStart,
+		`event = "SessionStart"`,
+		`matcher = "startup"`,
+		`command = "ao hooks kimi session-start"`,
+		`event = "UserPromptSubmit"`,
+		`command = "ao hooks kimi user-prompt-submit"`,
+		`event = "PermissionRequest"`,
+		`command = "ao hooks kimi permission-request"`,
+		`event = "Stop"`,
+		`command = "ao hooks kimi stop"`,
+		kimiHooksSentinelEnd,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("config missing %q:\n%s", want, text)
+		}
+	}
+	if _, err := os.Stat(kimiInstructionsPath(workspace)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("instructions path err = %v, want not exist", err)
+	}
+}
+
+func TestGetAgentHooksSeedsAOManagedConfigFromUserKimiConfig(t *testing.T) {
+	workspace := t.TempDir()
+	userHome := t.TempDir()
+	aoHome := t.TempDir()
+	t.Setenv(kimiCodeHomeEnv, userHome)
+	userConfig := `api_key = "user-key"
+default_model = "kimi-code/kimi-for-coding"
+`
+	if err := os.WriteFile(filepath.Join(userHome, "config.toml"), []byte(userConfig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		Env:           map[string]string{kimiCodeHomeEnv: aoHome},
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(aoHome, "config.toml"))
+	if err != nil {
+		t.Fatalf("read AO config: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		`api_key = "user-key"`,
+		`default_model = "kimi-code/kimi-for-coding"`,
+		`command = "ao hooks kimi session-start"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("AO config missing %q:\n%s", want, text)
+		}
+	}
+	source, err := os.ReadFile(filepath.Join(userHome, "config.toml"))
+	if err != nil {
+		t.Fatalf("read source config: %v", err)
+	}
+	if string(source) != userConfig {
+		t.Fatalf("source config mutated:\n%s", source)
+	}
+}
+
+func TestGetAgentHooksReseedsAOManagedConfigWithoutAuth(t *testing.T) {
+	workspace := t.TempDir()
+	userHome := t.TempDir()
+	aoHome := t.TempDir()
+	t.Setenv(kimiCodeHomeEnv, userHome)
+	if err := os.WriteFile(filepath.Join(userHome, "config.toml"), []byte(`api_key = "user-key"`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(aoHome, "config.toml"), []byte(kimiHooksConfigBlock()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		Env:           map[string]string{kimiCodeHomeEnv: aoHome},
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(aoHome, "config.toml"))
+	if err != nil {
+		t.Fatalf("read AO config: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{`api_key = "user-key"`, `command = "ao hooks kimi session-start"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("AO config missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Count(text, kimiHooksSentinelStart) != 1 {
+		t.Fatalf("managed hook block duplicated:\n%s", text)
+	}
+}
+
+func TestGetAgentHooksRewritesManagedKimiConfigBlock(t *testing.T) {
+	workspace := t.TempDir()
+	kimiHome := t.TempDir()
+	configPath := filepath.Join(kimiHome, "config.toml")
+	existing := "before = true\n\n" +
+		kimiHooksSentinelStart + "\nold = true\n" + kimiHooksSentinelEnd + "\n\n" +
+		"after = true\n"
+	if err := os.WriteFile(configPath, []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	plugin := &Plugin{}
+	cfg := ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		Env:           map[string]string{"KIMI_CODE_HOME": kimiHome},
+	}
+	if err := plugin.GetAgentHooks(context.Background(), cfg); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+	if err := plugin.GetAgentHooks(context.Background(), cfg); err != nil {
+		t.Fatalf("second GetAgentHooks err = %v", err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{"before = true", "after = true", `command = "ao hooks kimi session-start"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("config missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "old = true") {
+		t.Fatalf("stale managed block preserved:\n%s", text)
+	}
+	if strings.Count(text, kimiHooksSentinelStart) != 1 {
+		t.Fatalf("managed block duplicated:\n%s", text)
+	}
+}
+
+func TestAugmentRuntimeEnvUsesAODataDir(t *testing.T) {
+	env := map[string]string{kimiCodeHomeEnv: "/outside-ao"}
+	dataDir := filepath.Join(t.TempDir(), "ao")
+
+	(&Plugin{}).AugmentRuntimeEnv(env, dataDir)
+
+	if got, want := env[kimiCodeHomeEnv], kimiCodeHomeDir(dataDir); got != want {
+		t.Fatalf("%s = %q, want %q", kimiCodeHomeEnv, got, want)
+	}
+}
+
+func TestGetAgentHooksRequiresAOManagedKimiHome(t *testing.T) {
+	t.Setenv(kimiCodeHomeEnv, t.TempDir())
+
+	err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: t.TempDir(),
+	})
+
+	if err == nil || !strings.Contains(err.Error(), "AO-managed Kimi Code home is unavailable") {
+		t.Fatalf("GetAgentHooks err = %v, want AO-managed Kimi home requirement", err)
+	}
+}
+
 func TestGetAgentHooksReadsSystemPromptFile(t *testing.T) {
 	workspace := t.TempDir()
+	kimiHome := t.TempDir()
 	promptFile := filepath.Join(t.TempDir(), "system.md")
 	if err := os.WriteFile(promptFile, []byte("file rules\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -237,6 +503,7 @@ func TestGetAgentHooksReadsSystemPromptFile(t *testing.T) {
 	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
 		WorkspacePath:    workspace,
 		SystemPromptFile: promptFile,
+		Env:              map[string]string{"KIMI_CODE_HOME": kimiHome},
 	}); err != nil {
 		t.Fatalf("GetAgentHooks err = %v", err)
 	}
@@ -252,6 +519,7 @@ func TestGetAgentHooksReadsSystemPromptFile(t *testing.T) {
 
 func TestGetAgentHooksPreservesUserInstructions(t *testing.T) {
 	workspace := t.TempDir()
+	kimiHome := t.TempDir()
 	path := kimiInstructionsPath(workspace)
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		t.Fatal(err)
@@ -263,6 +531,7 @@ func TestGetAgentHooksPreservesUserInstructions(t *testing.T) {
 	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
 		WorkspacePath: workspace,
 		SystemPrompt:  "AO rules",
+		Env:           map[string]string{"KIMI_CODE_HOME": kimiHome},
 	}); err != nil {
 		t.Fatalf("GetAgentHooks err = %v", err)
 	}
@@ -288,6 +557,7 @@ func TestGetAgentHooksPreservesUserInstructions(t *testing.T) {
 
 func TestGetAgentHooksRewritesManagedInstructions(t *testing.T) {
 	workspace := t.TempDir()
+	kimiHome := t.TempDir()
 	path := kimiInstructionsPath(workspace)
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		t.Fatal(err)
@@ -299,6 +569,7 @@ func TestGetAgentHooksRewritesManagedInstructions(t *testing.T) {
 	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
 		WorkspacePath: workspace,
 		SystemPrompt:  "new rules",
+		Env:           map[string]string{"KIMI_CODE_HOME": kimiHome},
 	}); err != nil {
 		t.Fatalf("GetAgentHooks err = %v", err)
 	}
@@ -315,6 +586,7 @@ func TestGetAgentHooksRewritesManagedInstructions(t *testing.T) {
 
 func TestGetAgentHooksRewritesManagedBlockAndPreservesSurroundingUserInstructions(t *testing.T) {
 	workspace := t.TempDir()
+	kimiHome := t.TempDir()
 	path := kimiInstructionsPath(workspace)
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		t.Fatal(err)
@@ -327,6 +599,7 @@ func TestGetAgentHooksRewritesManagedBlockAndPreservesSurroundingUserInstruction
 	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
 		WorkspacePath: workspace,
 		SystemPrompt:  "new rules",
+		Env:           map[string]string{"KIMI_CODE_HOME": kimiHome},
 	}); err != nil {
 		t.Fatalf("GetAgentHooks err = %v", err)
 	}

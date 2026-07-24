@@ -54,18 +54,9 @@ Keep this change limited to the API route. Do not refactor the shared client.
 
 ## Review PRs
 
-Open `/prs` to see every PR created by AO-managed sessions.
+PR status lives on the session board and session detail pages. Cards move into **Review** or **Merge** when a linked PR needs attention, and the session detail view shows size, CI state, review decision, and unresolved threads.
 
-The PR page lets you filter by:
-
-| Tab        | Shows                        |
-| ---------- | ---------------------------- |
-| **All**    | Open, merged, and closed PRs |
-| **Open**   | PRs still in progress        |
-| **Merged** | Completed PRs                |
-| **Closed** | Closed but unmerged PRs      |
-
-Each PR shows its size, CI state, review decision, and unresolved threads. Use this page when you want a repository-level review queue instead of a session-by-session view.
+Use the board when you want a queue of sessions that need review; open a session when you need the full PR context.
 
 ## Manage Projects
 
@@ -94,7 +85,7 @@ The terminal reconnects automatically when the WebSocket drops. If terminal outp
 
 On smaller screens, the dashboard switches to a mobile layout:
 
-- A bottom tab bar links to Dashboard, PRs, and Orchestrator.
+- A bottom tab bar links to Dashboard and Orchestrator.
 - Sessions are ordered by urgency: Respond, Merge, Review, Pending, Working.
 - Tapping a card opens a bottom sheet with quick actions.
 - The terminal opens in a compact full-screen style.
@@ -124,7 +115,7 @@ The favicon and document title also change when sessions need attention, so you 
 | `/`                                   | Project overview or current project board |
 | `/projects/{projectId}`               | One project's board                       |
 | `/projects/{projectId}/settings`      | Project behavior settings                 |
-| `/prs`                                | PR review queue                           |
+| `/settings`                           | Global app settings                       |
 | `/sessions/{id}`                      | Session detail and terminal               |
 | `/projects/{projectId}/sessions/{id}` | Project-scoped session detail             |
 | `/orchestrators?project={projectId}`  | Pick or start an orchestrator session     |

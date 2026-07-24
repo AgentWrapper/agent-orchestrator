@@ -69,6 +69,22 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
+// GetConfigSpec reports the per-project agent config keys Kilo Code understands.
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.ConfigSpec{}, err
+	}
+	return ports.ConfigSpec{
+		Fields: []ports.ConfigField{
+			{
+				Key:         "model",
+				Type:        ports.ConfigFieldString,
+				Description: "Model override written to the AO-generated Kilo agent (agent.<name>.model); format provider/model-id (e.g. anthropic/claude-haiku-4-20250514).",
+			},
+		},
+	}, nil
+}
+
 // GetLaunchCommand builds the argv to start a new interactive Kilo Code session.
 // Shape:
 //
@@ -86,7 +102,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 		return nil, err
 	}
 
-	envPrefix, agentName, err := kilocodeConfigEnvPrefix(cfg.Permissions, cfg.SystemPrompt, cfg.SystemPromptFile, cfg.SessionID)
+	envPrefix, agentName, err := kilocodeConfigEnvPrefix(cfg.Permissions, cfg.SystemPrompt, cfg.SystemPromptFile, cfg.SessionID, cfg.Config.Model)
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +137,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 		return nil, false, err
 	}
 
-	envPrefix, agentName, err := kilocodeConfigEnvPrefix(cfg.Permissions, cfg.SystemPrompt, cfg.SystemPromptFile, cfg.Session.ID)
+	envPrefix, agentName, err := kilocodeConfigEnvPrefix(cfg.Permissions, cfg.SystemPrompt, cfg.SystemPromptFile, cfg.Session.ID, cfg.Config.Model)
 	if err != nil {
 		return nil, false, err
 	}
@@ -185,6 +201,7 @@ type kilocodeInlineConfig struct {
 
 type kilocodeAgentSettings struct {
 	Prompt string `json:"prompt,omitempty"`
+	Model  string `json:"model,omitempty"`
 }
 
 // kilocodeConfigEnvPrefix renders permission and system-prompt config as an
@@ -197,17 +214,22 @@ type kilocodeAgentSettings struct {
 // runtime shell-quotes every element, and a quoted token is run as a command
 // rather than read as an assignment — hence the explicit `env` wrapper.
 // POSIX-only, which matches the tmux runtime.
-func kilocodeConfigEnvPrefix(mode ports.PermissionMode, inlinePrompt, promptFile, sessionID string) ([]string, string, error) {
+func kilocodeConfigEnvPrefix(mode ports.PermissionMode, inlinePrompt, promptFile, sessionID, model string) ([]string, string, error) {
 	config := kilocodeInlineConfig{Permission: kilocodePermissionConfig(mode)}
 	agentName := ""
 	systemPrompt, err := kilocodeSystemPromptText(inlinePrompt, promptFile)
 	if err != nil {
 		return nil, "", err
 	}
-	if systemPrompt != "" {
+	model = strings.TrimSpace(model)
+	// A non-default permission mode rides on the permission map alone, but a
+	// system prompt or a role-specific model must be carried on AO's generated
+	// agent (selected with --agent): Kilo Code reads the per-agent model from
+	// agent.<name>.model, and its interactive TUI has no reliable --model flag.
+	if systemPrompt != "" || model != "" {
 		agentName = kilocodeAOAgentName(sessionID)
 		config.Agent = map[string]kilocodeAgentSettings{
-			agentName: {Prompt: systemPrompt},
+			agentName: {Prompt: systemPrompt, Model: model},
 		}
 	}
 	if len(config.Permission) == 0 && len(config.Agent) == 0 {
@@ -268,7 +290,8 @@ var kilocodeBinarySpec = binaryutil.BinarySpec{
 	Names:         []string{"kilocode"},
 	WinNames:      []string{"kilocode.cmd", "kilocode.exe", "kilocode"},
 	UnixPaths:     []string{"/usr/local/bin/kilocode", "/opt/homebrew/bin/kilocode"},
-	UnixHomePaths: [][]string{{".npm-global", "bin", "kilocode"}, {".npm", "bin", "kilocode"}, {".local", "bin", "kilocode"}},
+	UnixHomePaths: binaryutil.NodeManagedUnixHomePaths("kilocode"),
+	NodeManaged:   true,
 	WinPaths: []binaryutil.WinPath{
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "kilocode.cmd"}},
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "kilocode.exe"}},

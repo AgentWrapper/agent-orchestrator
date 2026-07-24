@@ -7,7 +7,7 @@ type Summary struct {
 	ID                domain.ProjectID    `json:"id"`
 	Name              string              `json:"name"`
 	Path              string              `json:"path"`
-	Kind              domain.ProjectKind  `json:"kind"`
+	Kind              domain.ProjectKind  `json:"kind" enum:"single_repo,workspace,scratch"`
 	SessionPrefix     string              `json:"sessionPrefix"`
 	OrchestratorAgent domain.AgentHarness `json:"orchestratorAgent,omitempty"`
 	ResolveError      string              `json:"resolveError,omitempty"`
@@ -17,7 +17,7 @@ type Summary struct {
 type Project struct {
 	ID             domain.ProjectID      `json:"id"`
 	Name           string                `json:"name"`
-	Kind           domain.ProjectKind    `json:"kind"`
+	Kind           domain.ProjectKind    `json:"kind" enum:"single_repo,workspace,scratch"`
 	Path           string                `json:"path"`
 	Repo           string                `json:"repo"`
 	DefaultBranch  string                `json:"defaultBranch"`
@@ -30,7 +30,7 @@ type Project struct {
 type Degraded struct {
 	ID           domain.ProjectID   `json:"id"`
 	Name         string             `json:"name"`
-	Kind         domain.ProjectKind `json:"kind"`
+	Kind         domain.ProjectKind `json:"kind" enum:"single_repo,workspace,scratch"`
 	Path         string             `json:"path"`
 	ResolveError string             `json:"resolveError"`
 }

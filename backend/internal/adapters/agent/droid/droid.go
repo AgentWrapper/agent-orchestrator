@@ -228,7 +228,8 @@ var droidBinarySpec = binaryutil.BinarySpec{
 	Names:         []string{"droid"},
 	WinNames:      []string{"droid.cmd", "droid.exe", "droid"},
 	UnixPaths:     []string{"/usr/local/bin/droid", "/opt/homebrew/bin/droid"},
-	UnixHomePaths: [][]string{{".local", "bin", "droid"}, {".factory", "bin", "droid"}},
+	UnixHomePaths: binaryutil.NodeManagedUnixHomePaths("droid", []string{".factory", "bin", "droid"}),
+	NodeManaged:   true,
 	WinPaths: []binaryutil.WinPath{
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "droid.cmd"}},
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "droid.exe"}},

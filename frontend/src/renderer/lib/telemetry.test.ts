@@ -1,12 +1,26 @@
 import { describe, expect, it } from "vitest";
 import {
 	buildTelemetryContext,
+	reserveCapture,
+	reserveDailyActiveCapture,
 	routeSurface,
 	sanitizePostHogEvent,
 	sanitizeReplayRequestName,
 	sanitizeRendererExceptionProperties,
 	sanitizeRendererProperties,
+	startDailyActiveHeartbeat,
 } from "./telemetry";
+import { ORCHESTRATOR_SPAWN_SOURCES } from "./orchestrator-spawn-sources";
+
+function memoryStorage(initial: Record<string, string> = {}) {
+	const values = new Map(Object.entries(initial));
+	return {
+		getItem: (key: string) => values.get(key) ?? null,
+		setItem: (key: string, value: string) => {
+			values.set(key, value);
+		},
+	};
+}
 
 describe("telemetry sanitizers", () => {
 	it("builds stable AO version context for PostHog events", () => {
@@ -24,10 +38,10 @@ describe("telemetry sanitizers", () => {
 
 	it("categorizes routes without exporting raw paths", () => {
 		expect(routeSurface("/")).toBe("home");
+		expect(routeSurface("/settings")).toBe("global_settings");
 		expect(routeSurface("/projects/demo")).toBe("project_board");
 		expect(routeSurface("/projects/demo/settings")).toBe("project_settings");
 		expect(routeSurface("/projects/demo/sessions/demo-1")).toBe("session_detail");
-		expect(routeSurface("/prs")).toBe("pull_requests");
 	});
 
 	it("hashes renderer ids and drops raw route identifiers", async () => {
@@ -41,6 +55,18 @@ describe("telemetry sanitizers", () => {
 			search: "?token=secret",
 		});
 		expect(routeProps).toEqual({ surface: "project_board" });
+	});
+
+	it("keeps only the renderer channel on app active events", async () => {
+		const props = await sanitizeRendererProperties("ao.app.active", {
+			channel: "renderer",
+			project_id: "demo-project",
+			ip: "203.0.113.10",
+			country: "US",
+		});
+
+		expect(props).toEqual({ channel: "renderer" });
+		expect(await sanitizeRendererProperties("ao.app.active", { channel: "cli" })).toEqual({});
 	});
 
 	it("strips exception details down to coarse metadata", async () => {
@@ -165,8 +191,8 @@ describe("telemetry sanitizers", () => {
 		expect(badSource).not.toHaveProperty("source");
 	});
 
-	it("keeps every whitelisted spawn source, including topbar/sidebar/project_add/settings/restart", async () => {
-		for (const source of ["board", "restore_dialog", "topbar", "sidebar", "project_add", "settings", "restart"]) {
+	it("keeps every whitelisted spawn source (the shared ORCHESTRATOR_SPAWN_SOURCES list)", async () => {
+		for (const source of ORCHESTRATOR_SPAWN_SOURCES) {
 			const props = await sanitizeRendererProperties("ao.renderer.orchestrator_spawn_succeeded", {
 				project_id: "demo-project",
 				source,
@@ -223,5 +249,90 @@ describe("telemetry sanitizers", () => {
 		expect(
 			await sanitizeRendererProperties("ao.renderer.terminal_attach_failed", { reason: "something else" }),
 		).toEqual({});
+	});
+});
+
+describe("reserveCapture", () => {
+	it("allows up to 5 captures of a name within a minute", () => {
+		const start = 1_000_000;
+		for (let i = 0; i < 5; i += 1) {
+			expect(reserveCapture("ao.renderer.route_viewed", start + i)).toBe(true);
+		}
+		expect(reserveCapture("ao.renderer.route_viewed", start + 5)).toBe(false);
+	});
+
+	it("tracks each name in its own window", () => {
+		const start = 2_000_000;
+		for (let i = 0; i < 5; i += 1) {
+			reserveCapture("ao.renderer.route_viewed", start + i);
+		}
+		expect(reserveCapture("exception:TypeError", start)).toBe(true);
+	});
+
+	it("resets the burst window once a minute elapses", () => {
+		const start = 3_000_000;
+		for (let i = 0; i < 5; i += 1) {
+			reserveCapture("ao.renderer.loaded", start + i);
+		}
+		expect(reserveCapture("ao.renderer.loaded", start + 60_001)).toBe(true);
+	});
+
+	it("caps the daily total even when calls are paced under the burst limit", () => {
+		const name = "ao.renderer.paced_loop";
+		let start = 10_000_000;
+		let allowed = 0;
+		for (let i = 0; i < 210; i += 1) {
+			if (reserveCapture(name, start)) allowed += 1;
+			start += 60_000; // one call per simulated minute: never trips the burst cap
+		}
+		expect(allowed).toBe(200);
+	});
+
+	it("resets the daily ceiling after 24 hours", () => {
+		const name = "ao.renderer.daily_reset";
+		let start = 20_000_000;
+		for (let i = 0; i < 200; i += 1) {
+			expect(reserveCapture(name, start)).toBe(true);
+			start += 60_000;
+		}
+		expect(reserveCapture(name, start)).toBe(false);
+		expect(reserveCapture(name, start + 24 * 60 * 60_000)).toBe(true);
+	});
+});
+
+describe("daily active heartbeat", () => {
+	it("reserves one active capture per UTC date", () => {
+		const storage = memoryStorage();
+
+		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T23:59:00.000Z"))).toBe(true);
+		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T23:59:59.000Z"))).toBe(false);
+		expect(reserveDailyActiveCapture(storage, new Date("2026-07-13T00:00:00.000Z"))).toBe(true);
+	});
+
+	it("emits at startup and then only after a later UTC date is observed on user activity", () => {
+		const storage = memoryStorage();
+		const captured: string[] = [];
+		let now = new Date("2026-07-12T08:00:00.000Z");
+
+		const stop = startDailyActiveHeartbeat({
+			storage,
+			now: () => now,
+			capture: () => captured.push(now.toISOString()),
+			window,
+			document,
+		});
+		try {
+			expect(captured).toEqual(["2026-07-12T08:00:00.000Z"]);
+
+			window.dispatchEvent(new Event("focus"));
+			document.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+			expect(captured).toHaveLength(1);
+
+			now = new Date("2026-07-13T09:00:00.000Z");
+			window.dispatchEvent(new Event("focus"));
+			expect(captured).toEqual(["2026-07-12T08:00:00.000Z", "2026-07-13T09:00:00.000Z"]);
+		} finally {
+			stop();
+		}
 	});
 });

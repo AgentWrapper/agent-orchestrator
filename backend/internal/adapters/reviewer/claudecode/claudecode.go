@@ -66,13 +66,16 @@ var reviewerDisallowedTools = []string{
 }
 
 // ReviewCommand builds a claude-code invocation that reviews the worker's
-// checkout for the PR, with the review prompt baked in.
+// checkout for the PR. Production launches provide the standing instructions
+// through an AO-owned prompt file so only the short task-file reference is
+// terminal-visible.
 func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
 	argv, err := r.agent.GetLaunchCommand(ctx, ports.LaunchConfig{
-		SessionID:     inv.ReviewerID,
-		WorkspacePath: inv.WorkspacePath,
-		Prompt:        inv.Prompt,
-		SystemPrompt:  inv.SystemPrompt,
+		SessionID:        inv.ReviewerID,
+		WorkspacePath:    inv.WorkspacePath,
+		Prompt:           inv.Prompt,
+		SystemPrompt:     inv.SystemPrompt,
+		SystemPromptFile: inv.SystemPromptFile,
 		// Launch off bypassPermissions so the allow/deny lists are enforced.
 		// Set an explicit non-bypass mode instead of deferring to the user's
 		// Claude defaultMode, which may itself be bypassPermissions.

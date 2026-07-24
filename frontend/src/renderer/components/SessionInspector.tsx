@@ -1,14 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
-import { ArrowUpRight, GitPullRequest, Play, Shield, Terminal, X } from "lucide-react";
+import { ArrowUpRight, Files as FilesIcon, GitPullRequest, Play, Shield, Terminal, X } from "lucide-react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
-import type { SessionActivityState, WorkspaceSession } from "../types/workspace";
+import type { WorkspaceSession } from "../types/workspace";
 import { canonicalTrackerIssueId, sortedPRs } from "../types/workspace";
+import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session-presentation";
 import { BrowserPanelView, type BrowserAnnotationQueueModel } from "./BrowserPanel";
 import type { BrowserViewModel } from "../hooks/useBrowserView";
 import { Badge } from "./ui/badge";
@@ -22,7 +23,7 @@ type PRReviewState = components["schemas"]["PRReviewState"];
 type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
 type OpenReviewerTerminal = (target: { handleId: string; harness: string }) => void;
 
-export type InspectorView = "summary" | "reviews" | "browser";
+export type InspectorView = "summary" | "reviews" | "browser" | "files";
 
 const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
 	{
@@ -59,6 +60,11 @@ const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
 			</svg>
 		),
 	},
+	{
+		id: "files",
+		label: "Files",
+		icon: <FilesIcon aria-hidden="true" />,
+	},
 ];
 
 const usePreviewData = import.meta.env.VITE_NO_ELECTRON === "1";
@@ -70,7 +76,7 @@ const prStateTone: Record<SessionPRSummary["state"], string> = {
 	closed: "border-error/40 bg-error/10 text-error",
 };
 
-const inspectorShellClass = "@container/inspector flex h-full min-h-0 flex-col overflow-hidden bg-background";
+const inspectorShellClass = "@container/inspector flex h-full min-h-0 flex-col overflow-hidden";
 
 const inspectorBodyClass = "min-h-0 flex-1 overflow-y-auto p-5 pb-10 @max-[300px]/inspector:px-3.5";
 
@@ -116,6 +122,8 @@ export function SessionInspector({
 	browserAnnotationQueue,
 	isInspectorVisible = true,
 	onToggleBrowserPopOut,
+	onOpenFiles,
+	filesView,
 	browserView,
 	view: viewProp,
 	onViewChange,
@@ -126,6 +134,8 @@ export function SessionInspector({
 	browserAnnotationQueue?: BrowserAnnotationQueueModel;
 	isInspectorVisible?: boolean;
 	onToggleBrowserPopOut?: (next: boolean) => void;
+	onOpenFiles?: () => void;
+	filesView?: ReactNode;
 	browserView?: BrowserViewModel;
 	/** Controlled active tab. Omit to let the inspector own its own selection. */
 	view?: InspectorView;
@@ -136,6 +146,7 @@ export function SessionInspector({
 	const setView = (next: InspectorView) => {
 		setInternalView(next);
 		onViewChange?.(next);
+		if (next === "files") onOpenFiles?.();
 	};
 
 	if (!session) {
@@ -158,7 +169,7 @@ export function SessionInspector({
 						role="tab"
 						aria-selected={view === entry.id}
 						className={cn(
-							"inline-flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md p-1.5 text-sm-md font-semibold text-passive transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground",
+							"inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md p-1.5 text-sm-md font-semibold text-passive transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground",
 							view === entry.id && "bg-interactive-active text-foreground",
 						)}
 						onClick={() => setView(entry.id)}
@@ -178,6 +189,7 @@ export function SessionInspector({
 					view === "browser" &&
 						!browserPoppedOut &&
 						"p-0 overflow-hidden [&>[role=tabpanel]]:border-0 [&>[role=tabpanel]]:rounded-none",
+					view === "files" && "p-0 overflow-hidden [&>[role=tabpanel]]:h-full",
 				)}
 			>
 				{view === "summary" ? <SummaryView session={session} /> : null}
@@ -192,6 +204,7 @@ export function SessionInspector({
 						session={session}
 					/>
 				) : null}
+				{view === "files" ? <FilesView filesView={filesView} onOpenFiles={onOpenFiles} /> : null}
 			</div>
 		</aside>
 	);
@@ -223,7 +236,6 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 	const query = useSessionScmSummary(session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, query.data);
 	const prSectionTitle = prSummaries.length > 1 ? `Pull requests (${prSummaries.length})` : "Pull request";
-	const branchLabel = session.branch || `session/${session.id}`;
 	const issueId = canonicalTrackerIssueId(session.issueId);
 
 	return (
@@ -248,7 +260,7 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 				<dl className="flex flex-col gap-1">
 					<Row k="Agent" v={session.provider} mono />
 					{issueId && <Row k="Issue" v={issueId} mono />}
-					<Row k="Branch" v={branchLabel} mono />
+					{session.branch && <Row k="Branch" v={session.branch} mono />}
 					<Row k="Started" v={formatTimeCompact(session.createdAt ?? session.updatedAt)} mono />
 					<Row k="Session" v={session.id} mono />
 				</dl>
@@ -297,7 +309,7 @@ function ActivityTimeline({ session }: { session: WorkspaceSession }) {
 
 	events.push({
 		tone: "neutral",
-		node: <>Created worktree &amp; branch</>,
+		node: <>Created workspace</>,
 		ts: formatTimeCompact(session.createdAt ?? session.updatedAt),
 	});
 
@@ -331,11 +343,11 @@ function ActivityTimeline({ session }: { session: WorkspaceSession }) {
 		node: (
 			<span className="inline-flex flex-wrap items-center gap-1.5">
 				<span className="inline-flex align-middle">
-					<InspectorActivityPill state={session.activity?.state ?? "unknown"} />
+					<InspectorActivityPill activity={session.activity} />
 				</span>
 				{session.status === "no_signal" ? (
 					<span className="inline-flex align-middle">
-						<TimelinePill {...ACTIVITY_WARNING_PILL.no_signal} />
+						<TimelinePill {...getSessionTimelinePillView("no_signal")} />
 					</span>
 				) : null}
 				{scmTimelineStates(session).map((state) => (
@@ -372,11 +384,17 @@ function ActivityTimeline({ session }: { session: WorkspaceSession }) {
 		<div className="relative pl-5 before:absolute before:top-1 before:bottom-1.5 before:left-1.25 before:w-px before:bg-border before:content-['']">
 			{events.map((event, index) => (
 				<div key={index} className="relative pb-4 last:pb-0" data-testid="inspector-timeline-event">
-					<span
-						aria-hidden="true"
-						className={cn("absolute -left-4.5 top-0.75 size-icon-xs rounded-full", timelineNodeTone[event.tone])}
-					/>
-					<div className="text-xs leading-normal text-foreground [&_b]:font-semibold">{event.node}</div>
+					<div className="relative flex min-h-icon-xs items-center">
+						<span
+							aria-hidden="true"
+							className={cn(
+								"absolute -left-4.5 size-icon-xs rounded-full",
+								event.tone === "now" ? "top-1/2 -translate-y-1/2" : "top-1.5",
+								timelineNodeTone[event.tone],
+							)}
+						/>
+						<div className="text-xs leading-normal text-foreground [&_b]:font-semibold">{event.node}</div>
+					</div>
 					{event.ts ? <div className="mt-1 font-mono text-2xs text-passive">{event.ts}</div> : null}
 				</div>
 			))}
@@ -384,33 +402,17 @@ function ActivityTimeline({ session }: { session: WorkspaceSession }) {
 	);
 }
 
-const ACTIVITY_PILL: Record<SessionActivityState, { label: string; tone: string; breathe: boolean }> = {
-	active: { label: "Working", tone: "var(--color-working)", breathe: true },
-	idle: { label: "Idle", tone: "var(--color-text-muted)", breathe: false },
-	waiting_input: { label: "Input Needed", tone: "var(--color-warning)", breathe: false },
-	blocked: { label: "Awaiting Decision", tone: "var(--color-warning)", breathe: false },
-	exited: { label: "Exited", tone: "var(--color-text-muted)", breathe: false },
-	unknown: { label: "Activity Unavailable", tone: "var(--color-text-muted)", breathe: false },
-};
-
-const ACTIVITY_WARNING_PILL: Record<"no_signal", { label: string; tone: string; breathe: boolean }> = {
-	no_signal: { label: "No Signal", tone: "var(--color-text-muted)", breathe: false },
-};
-
 type ScmTimelineState = "ci_failed" | "changes_requested" | "conflict";
 
-const SCM_PILL: Record<ScmTimelineState, { label: string; tone: string; breathe: boolean }> = {
-	ci_failed: { label: "CI Failed", tone: "var(--color-danger)", breathe: false },
-	changes_requested: { label: "Changes Requested", tone: "var(--color-warning)", breathe: false },
-	conflict: { label: "Conflict", tone: "var(--color-danger)", breathe: false },
-};
+const CONFLICT_PILL = { label: "Conflict", tone: "var(--color-danger)", breathe: false };
 
-function InspectorActivityPill({ state }: { state: SessionActivityState }) {
-	return <TimelinePill {...ACTIVITY_PILL[state]} />;
+function InspectorActivityPill({ activity }: { activity?: WorkspaceSession["activity"] }) {
+	return <TimelinePill {...getAgentActivityView(activity)} />;
 }
 
 function InspectorScmPill({ state }: { state: ScmTimelineState }) {
-	return <TimelinePill {...SCM_PILL[state]} />;
+	if (state === "conflict") return <TimelinePill {...CONFLICT_PILL} />;
+	return <TimelinePill {...getSessionTimelinePillView(state)} />;
 }
 
 function TimelinePill({ label, tone, breathe }: { label: string; tone: string; breathe: boolean }) {
@@ -737,6 +739,7 @@ function ReviewPanel({
 
 function ReviewStateRow({ reviewState }: { reviewState: PRReviewState }) {
 	const verdict = reviewVerdict(reviewState);
+	const previousVerdict = previousReviewVerdict(reviewState);
 	const title = reviewState.title?.trim() || `PR #${reviewState.prNumber}`;
 	return (
 		<div
@@ -760,9 +763,14 @@ function ReviewStateRow({ reviewState }: { reviewState: PRReviewState }) {
 					<span className="col-start-1 font-mono text-caption text-passive">#{reviewState.prNumber}</span>
 				</div>
 			</div>
-			<span className={cn("whitespace-nowrap text-caption font-semibold", reviewerVerdictTone[verdict.tone])}>
-				{verdict.label}
-			</span>
+			<div className="flex flex-col items-end gap-1 whitespace-nowrap">
+				<span className={cn("text-caption font-semibold", reviewerVerdictTone[verdict.tone])}>{verdict.label}</span>
+				{previousVerdict ? (
+					<span className={cn("text-2xs font-medium", reviewerVerdictTone[previousVerdict.tone])}>
+						Previous: {previousVerdict.label}
+					</span>
+				) : null}
+			</div>
 		</div>
 	);
 }
@@ -812,6 +820,21 @@ function reviewVerdict(reviewState: PRReviewState): {
 			return { label: "Not run", tone: "neutral" };
 	}
 	return { label: "Not run", tone: "neutral" };
+}
+
+function previousReviewVerdict(reviewState: PRReviewState): {
+	label: string;
+	tone: "success" | "danger";
+} | null {
+	if (reviewState.status !== "needs_review" && reviewState.status !== "running") return null;
+	switch (reviewState.previousRun?.verdict) {
+		case "approved":
+			return { label: "Approved", tone: "success" };
+		case "changes_requested":
+			return { label: "Changes requested", tone: "danger" };
+		default:
+			return null;
+	}
 }
 
 function reviewSessionRunAction(reviewStates: PRReviewState[], isTriggering: boolean): string {
@@ -869,6 +892,26 @@ function BrowserView({
 			poppedOut={false}
 			session={session}
 		/>
+	);
+}
+
+function FilesView({ filesView, onOpenFiles }: { filesView?: ReactNode; onOpenFiles?: () => void }) {
+	if (filesView) {
+		return (
+			<div className="h-full min-h-0" role="tabpanel">
+				{filesView}
+			</div>
+		);
+	}
+	return (
+		<div role="tabpanel">
+			<div className={cn(inspectorEmptyClass, "flex flex-col items-center gap-2 px-5 py-10 text-center")}>
+				<p className="text-md-sm text-muted-foreground">Files are not available for this session.</p>
+				<Button disabled={!onOpenFiles} onClick={() => onOpenFiles?.()} size="sm" type="button" variant="outline">
+					Open files
+				</Button>
+			</div>
+		</div>
 	);
 }
 

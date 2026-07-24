@@ -30,6 +30,17 @@ func (q *Queries) ArchiveProject(ctx context.Context, arg ArchiveProjectParams) 
 	return result.RowsAffected()
 }
 
+const countProjectsIncludingArchived = `-- name: CountProjectsIncludingArchived :one
+SELECT COUNT(*) FROM projects
+`
+
+func (q *Queries) CountProjectsIncludingArchived(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countProjectsIncludingArchived)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const findProjectByPath = `-- name: FindProjectByPath :one
 SELECT id, path, repo_origin_url, display_name, registered_at, archived_at, config, kind
 FROM projects WHERE path = ? AND archived_at IS NULL
@@ -107,6 +118,64 @@ func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateProjectSettings = `-- name: UpdateProjectSettings :execrows
+UPDATE projects
+SET display_name = ?, config = ?
+WHERE id = ? AND archived_at IS NULL
+`
+
+type UpdateProjectSettingsParams struct {
+	DisplayName string
+	Config      sql.NullString
+	ID          domain.ProjectID
+}
+
+func (q *Queries) UpdateProjectSettings(ctx context.Context, arg UpdateProjectSettingsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateProjectSettings, arg.DisplayName, arg.Config, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const upsertImportedProject = `-- name: UpsertImportedProject :exec
+INSERT INTO projects (id, path, repo_origin_url, display_name, registered_at, archived_at, config, kind)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (id) DO UPDATE SET
+    path = excluded.path,
+    repo_origin_url = excluded.repo_origin_url,
+    display_name = excluded.display_name,
+    registered_at = excluded.registered_at,
+    archived_at = excluded.archived_at,
+    config = excluded.config,
+    kind = excluded.kind
+`
+
+type UpsertImportedProjectParams struct {
+	ID            domain.ProjectID
+	Path          string
+	RepoOriginURL string
+	DisplayName   string
+	RegisteredAt  time.Time
+	ArchivedAt    sql.NullTime
+	Config        sql.NullString
+	Kind          string
+}
+
+func (q *Queries) UpsertImportedProject(ctx context.Context, arg UpsertImportedProjectParams) error {
+	_, err := q.db.ExecContext(ctx, upsertImportedProject,
+		arg.ID,
+		arg.Path,
+		arg.RepoOriginURL,
+		arg.DisplayName,
+		arg.RegisteredAt,
+		arg.ArchivedAt,
+		arg.Config,
+		arg.Kind,
+	)
+	return err
 }
 
 const upsertProject = `-- name: UpsertProject :exec

@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/aoagents/agent-orchestrator/backend/internal/daemonmeta"
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
 )
@@ -32,6 +34,16 @@ func TestRootHelpDoesNotShowDaemon(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("help missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestRootCommandsHaveUniqueNames(t *testing.T) {
+	seen := make(map[string]struct{})
+	for _, cmd := range NewRootCommand(Deps{}).Commands() {
+		if _, exists := seen[cmd.Name()]; exists {
+			t.Fatalf("root command %q is registered more than once", cmd.Name())
+		}
+		seen[cmd.Name()] = struct{}{}
 	}
 }
 
@@ -82,6 +94,53 @@ func TestVersionEmitsCLIInvocationBestEffort(t *testing.T) {
 		}
 	default:
 		t.Fatal("version did not emit CLI invocation")
+	}
+}
+
+func TestShouldEmitCLIInvocationSkipsOnlyNonUsageCommands(t *testing.T) {
+	byName := map[string]*cobra.Command{}
+	for _, cmd := range NewRootCommand(Deps{}).Commands() {
+		byName[cmd.Name()] = cmd
+	}
+	for name, want := range map[string]bool{
+		"daemon": false, // supervisor-driven bootstrapping, not human usage
+		"start":  false,
+		// "hooks" and "pty-host" ARE usage signal (an agent session doing
+		// something), even though a machine invokes them; the daily
+		// per-command cap in httpd/router.go, not this exclusion, is what
+		// keeps their invocation frequency off PostHog. Excluding them here
+		// would zero out ao.app.active on any day an install's only activity
+		// was agent work, undercounting DAU for headless/CLI-only installs.
+		"hooks":    true,
+		"pty-host": true,
+		"status":   true,
+		"spawn":    true,
+	} {
+		cmd, ok := byName[name]
+		if !ok {
+			t.Fatalf("command %q not registered", name)
+		}
+		if got := shouldEmitCLIInvocation(cmd); got != want {
+			t.Errorf("shouldEmitCLIInvocation(%s) = %v, want %v", cmd.CommandPath(), got, want)
+		}
+	}
+}
+
+func TestUsageErrorCommandDropsUserArgs(t *testing.T) {
+	for _, tc := range []struct {
+		args        []string
+		wantCommand string
+		wantPath    string
+	}{
+		{[]string{"send", "orchestrator-pack-5", "wake", "heartbeat.reconcile"}, "send", "ao send"},
+		{[]string{"status", "extra"}, "status", "ao status"},
+		{[]string{"not-a-command", "whatever"}, "ao", "ao"},
+		{[]string{"--bad-flag"}, "ao", "ao"},
+	} {
+		command, path := usageErrorCommand(tc.args)
+		if command != tc.wantCommand || path != tc.wantPath {
+			t.Errorf("usageErrorCommand(%v) = (%q, %q), want (%q, %q)", tc.args, command, path, tc.wantCommand, tc.wantPath)
+		}
 	}
 }
 

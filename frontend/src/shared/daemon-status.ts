@@ -12,7 +12,8 @@ export type DaemonFailureCode =
 	| "exited"
 	| "port_unconfirmed"
 	| "not_ready"
-	| "identity_mismatch";
+	| "identity_mismatch"
+	| "datadir_unwritable";
 
 export type DaemonStatus = {
 	state: "starting" | "ready" | "stopped" | "error";
@@ -21,6 +22,9 @@ export type DaemonStatus = {
 	executablePath?: string;
 	workingDirectory?: string;
 	message?: string;
+	// Recent daemon stdout/stderr retained by the Electron supervisor for local
+	// troubleshooting. It is never sent to telemetry.
+	details?: string;
 	code?: DaemonFailureCode;
 	exitCode?: number | null;
 	signal?: string | null;

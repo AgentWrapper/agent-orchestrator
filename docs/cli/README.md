@@ -82,21 +82,23 @@ opens that URL verbatim (`file://`, `http`, `https`).
 
 `go run .` in `backend/` remains a compatibility wrapper around the daemon.
 
-PR and review actions (merge, resolve-comments, review execute/send) are
-HTTP-only today and driven by the frontend; there are no `ao pr` / `ao review`
-commands yet.
+PR actions are available through `ao pr merge` and
+`ao pr resolve-comments`. Review actions are available through `ao review ls`,
+`ao review trigger` (also `execute` and `restart`), `ao review cancel` (also
+`stop`), and `ao review submit`.
 
 ## Configuration
 
 The CLI and daemon share the same environment-driven config:
 
-| Var                   | Default              | Purpose                |
-| --------------------- | -------------------- | ---------------------- |
-| `AO_PORT`             | `3001`               | Loopback daemon port.  |
-| `AO_RUN_FILE`         | `~/.ao/running.json` | PID/port handshake.    |
-| `AO_DATA_DIR`         | `~/.ao/data`         | SQLite data directory. |
-| `AO_REQUEST_TIMEOUT`  | `60s`                | REST request timeout.  |
-| `AO_SHUTDOWN_TIMEOUT` | `10s`                | Graceful shutdown cap. |
+| Var                   | Default              | Purpose                                                                                        |
+| --------------------- | -------------------- | ---------------------------------------------------------------------------------------------- |
+| `AO_PORT`             | `3001`               | Loopback daemon port.                                                                          |
+| `AO_RUN_FILE`         | `~/.ao/running.json` | PID/port handshake.                                                                            |
+| `AO_DATA_DIR`         | `~/.ao/data`         | SQLite data directory.                                                                         |
+| `AO_REQUEST_TIMEOUT`  | `60s`                | REST request timeout.                                                                          |
+| `AO_SHUTDOWN_TIMEOUT` | `10s`                | Graceful shutdown cap.                                                                         |
+| `AO_KEEP_DAEMON`      | unset (off)          | Keep the desktop app's daemon running after the window closes; stop only via `ao stop`. (fork) |
 
 The daemon always binds `127.0.0.1`.
 

@@ -21,15 +21,15 @@ const (
 	qwenHookTimeout = 30000
 )
 
-// qwenStartupMatcher is referenced by pointer so SessionStart serializes with
-// its "startup" source matcher.
-var qwenStartupMatcher = "startup"
+// qwenSessionStartMatcher is referenced by pointer so SessionStart serializes
+// with the Qwen-documented startup and resume source matcher.
+var qwenSessionStartMatcher = "startup|resume"
 
 // qwenManagedHooks is the source of truth for the hooks AO installs:
-// SessionStart (under the "startup" source matcher), UserPromptSubmit,
+// SessionStart (under the startup/resume source matcher), UserPromptSubmit,
 // PermissionRequest, and Stop.
 var qwenManagedHooks = []hooksjson.HookSpec{
-	{Event: "SessionStart", Matcher: &qwenStartupMatcher, Command: qwenHookCommandPrefix + "session-start"},
+	{Event: "SessionStart", Matcher: &qwenSessionStartMatcher, Command: qwenHookCommandPrefix + "session-start"},
 	{Event: "UserPromptSubmit", Command: qwenHookCommandPrefix + "user-prompt-submit"},
 	{Event: "PermissionRequest", Command: qwenHookCommandPrefix + "permission-request"},
 	{Event: "Stop", Command: qwenHookCommandPrefix + "stop"},

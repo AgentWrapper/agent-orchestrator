@@ -83,8 +83,12 @@ func isLoopbackOrigin(origin string) bool {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
 		return false
 	}
-	host := u.Hostname()
-	if host == "localhost" {
+	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	// RFC 6761 reserves localhost and every name below it for loopback.
+	// Workspace previews use a per-session subdomain so browser-enforced CORS
+	// requests (ES modules and fetch) remain isolated without being rejected by
+	// the daemon's origin boundary.
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
 		return true
 	}
 	if ip := net.ParseIP(host); ip != nil {

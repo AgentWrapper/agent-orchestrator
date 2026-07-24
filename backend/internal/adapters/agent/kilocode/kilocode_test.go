@@ -119,6 +119,77 @@ func TestGetLaunchCommandMapsPermissionModes(t *testing.T) {
 	}
 }
 
+func TestGetLaunchCommandAppendsConfiguredModel(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "kilocode"}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Permissions:  ports.PermissionModeBypassPermissions,
+		SystemPrompt: "follow AO rules",
+		SessionID:    "sess-1",
+		// Surrounding whitespace must be trimmed before it reaches the config.
+		Config: ports.AgentConfig{Model: "  anthropic/claude-haiku-4-20250514  "},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The role model rides on the AO-generated agent (agent.<name>.model),
+	// alongside the injected system prompt, selected with --agent.
+	want := []string{
+		"env", `KILO_CONFIG_CONTENT={"permission":{"*":"allow"},"agent":{"ao-sess-1":{"prompt":"follow AO rules","model":"anthropic/claude-haiku-4-20250514"}}}`,
+		"kilocode",
+		"--agent", "ao-sess-1",
+	}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+	if strings.Contains(strings.Join(cmd, " "), "  anthropic/claude-haiku-4-20250514  ") {
+		t.Fatalf("command %#v used untrimmed model", cmd)
+	}
+}
+
+// TestGetLaunchCommandAppendsModelWithoutSystemPrompt is the issue's repro: a
+// role config with a model but no system prompt. The model must still create and
+// select an AO agent, otherwise --agent is never passed and the model is dropped.
+func TestGetLaunchCommandAppendsModelWithoutSystemPrompt(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "kilocode"}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		SessionID: "sess-1",
+		Config:    ports.AgentConfig{Model: "anthropic/claude-haiku-4-20250514"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"env", `KILO_CONFIG_CONTENT={"agent":{"ao-sess-1":{"model":"anthropic/claude-haiku-4-20250514"}}}`,
+		"kilocode",
+		"--agent", "ao-sess-1",
+	}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetLaunchCommandOmitsBlankConfiguredModel(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "kilocode"}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		SessionID: "sess-1",
+		Config:    ports.AgentConfig{Model: " \t "},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A blank model must not fabricate an agent, an --agent flag, or an env prefix.
+	want := []string{"kilocode"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
 func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
 	plugin := &Plugin{}
 
@@ -131,15 +202,22 @@ func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
 	}
 }
 
-func TestGetConfigSpecHasNoCustomFieldsYet(t *testing.T) {
+func TestGetConfigSpecReportsModelField(t *testing.T) {
 	plugin := &Plugin{}
 
 	spec, err := plugin.GetConfigSpec(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(spec.Fields) != 0 {
-		t.Fatalf("unexpected config fields: %#v", spec.Fields)
+	want := []ports.ConfigField{
+		{
+			Key:         "model",
+			Type:        ports.ConfigFieldString,
+			Description: "Model override written to the AO-generated Kilo agent (agent.<name>.model); format provider/model-id (e.g. anthropic/claude-haiku-4-20250514).",
+		},
+	}
+	if !reflect.DeepEqual(spec.Fields, want) {
+		t.Fatalf("config fields\nwant: %#v\n got: %#v", want, spec.Fields)
 	}
 }
 
@@ -201,6 +279,14 @@ func TestGetAgentHooksInstallsPlugin(t *testing.T) {
 	// the explanatory comment mentions it unquoted, which is fine).
 	if strings.Contains(body, `"session.idle"`) {
 		t.Fatalf("plugin subscribes to deprecated session.idle; use session.status(idle):\n%s", body)
+	}
+	for _, marker := range []string{"function readSessionID", "function readCreatedSessionID", "sessionID", "sessionId", "session_id"} {
+		if !strings.Contains(body, marker) {
+			t.Fatalf("installed plugin missing session id normalization marker %q:\n%s", marker, body)
+		}
+	}
+	if strings.Contains(body, "value?.session_id ?? value?.id") {
+		t.Fatalf("readSessionID must not fall back to generic object id:\n%s", body)
 	}
 	// A hung `ao hooks` call must not block Kilo forever, so each spawn is
 	// time-boxed (parity with the claude/codex 30s hook timeout).
@@ -356,6 +442,34 @@ func TestGetRestoreCommandReappliesSystemPromptAgent(t *testing.T) {
 	}
 	want := []string{
 		"env", `KILO_CONFIG_CONTENT={"agent":{"ao-sess-1":{"prompt":"restore AO rules"}}}`,
+		"kilocode",
+		"--agent", "ao-sess-1",
+		"--session", "ses_abc123",
+	}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetRestoreCommandAppendsConfiguredModel(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "kilocode"}
+
+	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Session: ports.SessionRef{
+			ID:       "sess-1",
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "ses_abc123"},
+		},
+		Config: ports.AgentConfig{Model: "anthropic/claude-haiku-4-20250514"},
+	})
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	// Resume re-injects the role model on the AO agent, mirroring launch.
+	want := []string{
+		"env", `KILO_CONFIG_CONTENT={"agent":{"ao-sess-1":{"model":"anthropic/claude-haiku-4-20250514"}}}`,
 		"kilocode",
 		"--agent", "ao-sess-1",
 		"--session", "ses_abc123",

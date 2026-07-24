@@ -63,6 +63,9 @@ func TestPostHogSinkCapturesEvent(t *testing.T) {
 		if props["project_id_hash"] == "" || props["session_id_hash"] == "" {
 			t.Fatalf("hashed ids missing from properties: %#v", props)
 		}
+		if props["$process_person_profile"] != false {
+			t.Fatalf("properties.$process_person_profile = %#v, want false", props["$process_person_profile"])
+		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("PostHog sink did not send request")
 	}
@@ -128,6 +131,64 @@ func TestPostHogSinkSanitizesPayloads(t *testing.T) {
 		}
 		if _, ok := props["stack"]; ok {
 			t.Fatalf("stack property should be dropped: %#v", props)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("PostHog sink did not send request")
+	}
+}
+
+func TestPostHogSinkSanitizesAppActivePayload(t *testing.T) {
+	requests := make(chan map[string]any, 1)
+	sink, err := NewPostHogSink(t.TempDir(), "phc_test", "https://us.i.posthog.com", roundTripClient(func(req *http.Request) (*http.Response, error) {
+		defer req.Body.Close()
+		var body map[string]any
+		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+			return nil, err
+		}
+		requests <- body
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       http.NoBody,
+		}, nil
+	}), nil)
+	if err != nil {
+		t.Fatalf("NewPostHogSink: %v", err)
+	}
+
+	sink.Emit(context.Background(), ports.TelemetryEvent{
+		Name:       "ao.app.active",
+		Source:     "cli",
+		OccurredAt: time.Unix(1700000000, 0).UTC(),
+		Level:      ports.TelemetryLevelInfo,
+		Payload: map[string]any{
+			"channel":      "cli",
+			"command":      "spawn",
+			"command_path": "ao spawn",
+			"ip":           "203.0.113.10",
+			"country":      "US",
+			"city":         "San Francisco",
+			"latitude":     37.7749,
+			"longitude":    -122.4194,
+		},
+	})
+	if err := sink.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	select {
+	case req := <-requests:
+		props, ok := req["properties"].(map[string]any)
+		if !ok {
+			t.Fatalf("properties type = %T, want map[string]any", req["properties"])
+		}
+		if props["channel"] != "cli" || props["command"] != "spawn" || props["command_path"] != "ao spawn" {
+			t.Fatalf("sanitized properties = %#v, want active CLI metadata", props)
+		}
+		for _, key := range []string{"ip", "country", "city", "latitude", "longitude"} {
+			if _, ok := props[key]; ok {
+				t.Fatalf("%s property should be dropped: %#v", key, props)
+			}
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("PostHog sink did not send request")

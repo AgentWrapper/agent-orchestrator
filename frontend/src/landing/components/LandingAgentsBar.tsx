@@ -1,3 +1,5 @@
+import Image from "next/image";
+
 const agents = [
 	{ name: "Claude Code", id: "claude-code", src: "/docs/logos/claude-code.svg" },
 	{ name: "Codex", id: "codex", src: "/docs/logos/codex.svg" },
@@ -24,8 +26,49 @@ const agents = [
 	{ name: "Autohand", id: "autohand", src: "https://www.google.com/s2/favicons?domain=npmjs.com&sz=64" },
 ];
 
+type Agent = (typeof agents)[number];
+
+function AgentChip({ agent }: { agent: Agent }) {
+	return (
+		<div className="agent-chip group flex h-12 shrink-0 items-center gap-2.5 pl-3 pr-4">
+			<div className="agent-chip-icon">
+				<Image
+					src={agent.src}
+					alt=""
+					width={24}
+					height={24}
+					unoptimized
+					referrerPolicy="no-referrer"
+					className={`agent-logo-image ${agent.id === "kilocode" ? "agent-logo-image-kilocode" : ""}`}
+				/>
+			</div>
+			<div className="text-[13px] font-medium leading-none text-[color:var(--fg-muted)] transition-colors duration-200 group-hover:text-[color:var(--fg)]">
+				{agent.name}
+			</div>
+		</div>
+	);
+}
+
+function MarqueeRow({ agents: rowAgents, reverse = false }: { agents: Agent[]; reverse?: boolean }) {
+	const doubled = [...rowAgents, ...rowAgents];
+	return (
+		<div className="relative overflow-hidden">
+			<div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-24 bg-gradient-to-r from-[color:var(--bg)] to-transparent" />
+			<div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-24 bg-gradient-to-l from-[color:var(--bg)] to-transparent" />
+			<div
+				className={`flex w-max items-center gap-2.5 ${reverse ? "agents-marquee-track-reverse" : "agents-marquee-track"}`}
+			>
+				{doubled.map((agent, index) => (
+					<AgentChip key={`${agent.id}-${index < rowAgents.length ? "a" : "b"}`} agent={agent} />
+				))}
+			</div>
+		</div>
+	);
+}
+
 export function LandingAgentsBar() {
-	const marqueeAgents = [...agents, ...agents];
+	const firstRow = agents.slice(0, 12);
+	const secondRow = agents.slice(12);
 
 	return (
 		<section
@@ -40,37 +83,18 @@ export function LandingAgentsBar() {
 							<span className="landing-eyebrow">Coverage</span>
 							<h2 className="mt-4 max-w-[720px] text-[28px] font-semibold leading-[1.1] text-[color:var(--fg)] sm:text-[40px]">
 								Use the agent you already trust.
-								<span className="block text-[color:var(--fg-muted)]">AO keeps the workflow the same</span>
+								<span className="block text-[color:var(--fg-muted)]">AO keeps the workflow the same.</span>
 							</h2>
 						</div>
 					</div>
 
-					<div className="relative mt-12 overflow-hidden">
-						<div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-24 bg-gradient-to-r from-[color:var(--bg)] to-transparent" />
-						<div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-24 bg-gradient-to-l from-[color:var(--bg)] to-transparent" />
-						<div className="agents-marquee-track flex w-max items-center gap-3">
-							{marqueeAgents.map((agent, index) => (
-								<div
-									key={`${agent.id}-${index}`}
-									className="agent-logo-pill group flex h-14 shrink-0 items-center gap-3 px-4"
-								>
-									<div className="agent-logo-pill-icon">
-										<img
-											src={agent.src}
-											alt=""
-											referrerPolicy="no-referrer"
-											className={`agent-logo-image ${agent.id === "kilocode" ? "agent-logo-image-kilocode" : ""}`}
-										/>
-									</div>
-									<div className="font-mono text-[12px] leading-none text-[color:var(--fg-dim)]">{agent.name}</div>
-								</div>
-							))}
-						</div>
+					<div className="mt-12 flex flex-col gap-2.5">
+						<MarqueeRow agents={firstRow} />
+						<MarqueeRow agents={secondRow} reverse />
 					</div>
 
 					<div className="mt-7 flex flex-wrap items-center gap-x-6 gap-y-3 font-mono text-[11px] uppercase text-[color:var(--fg-dim)]">
 						<span>23 harnesses</span>
-						<span>one daemon</span>
 						<span>per-project agent choice</span>
 					</div>
 				</div>
