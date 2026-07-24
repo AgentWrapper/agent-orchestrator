@@ -20,10 +20,12 @@
 ### Task 1: Isolate topbar kill state by session
 
 **Files:**
+
 - Modify: `frontend/src/renderer/components/ShellTopbar.tsx:225`
 - Test: `frontend/src/renderer/components/ShellTopbar.test.tsx:253`
 
 **Interfaces:**
+
 - Consumes: `WorkspaceSession.id`, the existing `renderTopbarSessions` test helper, and the existing `TopbarKillButton` mutation flow.
 - Produces: A `TopbarKillButton` instance whose React identity is the selected session ID.
 
