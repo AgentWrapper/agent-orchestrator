@@ -45,6 +45,7 @@ export function ConfirmDialog({
 				<DialogClose asChild>
 					<button
 						type="button"
+						disabled={busy}
 						className="settings-dialog-close-button settings-close-button"
 						aria-label="Close dialog"
 						title="Close (Esc)"

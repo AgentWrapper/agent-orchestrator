@@ -339,7 +339,10 @@ export function TopbarKillButton({
 				destructive
 				busy={kill.isPending}
 				error={error}
-				onConfirm={() => kill.mutate()}
+				onConfirm={() => {
+					setError(null);
+					kill.mutate();
+				}}
 			/>
 		</>
 	);
