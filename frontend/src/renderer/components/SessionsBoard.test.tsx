@@ -191,7 +191,10 @@ describe("SessionsBoard", () => {
 							status: "working",
 							activity: { state: "active", lastActivityAt: "2026-01-01T00:00:00Z" },
 							updatedAt: "2026-01-01T00:00:00Z",
-							prs: [{ number: 45, url: "https://github.com/acme/radic/pull/45", state: "open" }],
+							prs: [
+								{ number: 45, url: "https://github.com/acme/radic/pull/45", state: "open" },
+								{ number: 46, url: "https://github.com/acme/radic/pull/46", state: "open" },
+							],
 						},
 					],
 				},
@@ -211,6 +214,8 @@ describe("SessionsBoard", () => {
 		expect(clipboardWriteTextMock).toHaveBeenLastCalledWith("https://github.com/acme/radic/pull/45");
 		expect(screen.getByRole("button", { name: "Copied PR #45 URL" })).toBeInTheDocument();
 		expect(navigateMock).not.toHaveBeenCalled();
+		const firstPRCopyButton = screen.getByRole("button", { name: "Copied PR #45 URL" });
+		expect(firstPRCopyButton.parentElement?.nextSibling?.textContent).toBe(",");
 		await waitFor(() => expect(screen.getByRole("button", { name: "Copy PR #45 URL" })).toBeInTheDocument(), {
 			timeout: 2_000,
 		});

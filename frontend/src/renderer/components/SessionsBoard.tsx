@@ -591,20 +591,22 @@ function BoardPRGroup({ group, linksInteractive = true }: { group: BoardPRGroup;
 		>
 			<span>PR</span>
 			{group.prs.map((pr, index) => (
-				<span className="inline-flex items-center gap-0.5" key={pr.number}>
-					{linksInteractive ? (
-						<a
-							className="text-passive underline-offset-2 transition-colors hover:text-foreground hover:underline"
-							href={prBrowserUrl(pr)}
-							rel="noreferrer"
-							target="_blank"
-						>
-							#{pr.number}
-						</a>
-					) : (
-						<span>#{pr.number}</span>
-					)}
-					<CopyActionButton label={`PR #${pr.number} URL`} value={prBrowserUrl(pr)} />
+				<span className="inline-flex items-center" key={pr.number}>
+					<span className="inline-flex items-center gap-0.5">
+						{linksInteractive ? (
+							<a
+								className="text-passive underline-offset-2 transition-colors hover:text-foreground hover:underline"
+								href={prBrowserUrl(pr)}
+								rel="noreferrer"
+								target="_blank"
+							>
+								#{pr.number}
+							</a>
+						) : (
+							<span>#{pr.number}</span>
+						)}
+						<CopyActionButton label={`PR #${pr.number} URL`} value={prBrowserUrl(pr)} />
+					</span>
 					{index < group.prs.length - 1 ? "," : null}
 				</span>
 			))}
