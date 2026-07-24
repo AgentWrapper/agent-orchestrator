@@ -98,7 +98,7 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 	const input = { summary, details };
 	const draft = formatReportProblemDraft(input, diagnostics, selectedOutput);
 	const destination = DESTINATIONS.find((option) => option.value === selectedOutput) ?? DESTINATIONS[0];
-	const canCopy = summary.trim().length > 0;
+	const canSubmit = summary.trim().length > 0 && details.trim().length > 0;
 
 	const clearStatus = () => {
 		setCopiedOutput(null);
@@ -106,7 +106,7 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 	};
 
 	const copyDraft = async () => {
-		if (!canCopy) return;
+		if (!canSubmit) return;
 		setCopyError(null);
 		const output = selectedOutput;
 		try {
@@ -230,8 +230,8 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 					</DialogClose>
 					<button
 						type="button"
-						className="settings-footer-button border-transparent bg-settings-accent text-white disabled:cursor-not-allowed disabled:opacity-50"
-						disabled={!canCopy}
+						className="settings-footer-button border-transparent bg-settings-accent text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+						disabled={!canSubmit}
 						onClick={() => void copyDraft()}
 					>
 						{destination.action}
