@@ -69,8 +69,9 @@
 	--spacing-8: var(--space-8);
 	--spacing-10: var(--space-10);
 
-	/* Z-index — z-chrome, z-titlebar, z-overlay */
+	/* Z-index — z-chrome, z-sidebar-preview, z-titlebar, z-overlay */
 	--z-index-chrome: var(--z-chrome);
+	--z-index-sidebar-preview: var(--z-sidebar-preview);
 	--z-index-titlebar: var(--z-titlebar);
 	--z-index-overlay: var(--z-overlay);
 
@@ -163,6 +164,8 @@
 
 	/* Layout — toolbar offset for fixed sidebar below topbar */
 	--spacing-toolbar: var(--size-toolbar);
+	--spacing-titlebar-content-offset: var(--size-titlebar-content-offset);
+	--spacing-titlebar-cluster-left: var(--size-titlebar-cluster-left);
 	--spacing-traffic-light-clearance: var(--size-traffic-light-clearance);
 	--spacing-traffic-light-clearance-fullscreen: var(--size-traffic-light-clearance-fullscreen);
 	--spacing-control-xs: var(--size-control-xs);
@@ -223,6 +226,16 @@
 	--color-success-bright: var(--color-success-bright);
 	--color-warning: var(--bridge-warning);
 	--color-error: var(--bridge-danger);
+	--color-status-working: var(--bridge-status-working);
+	--color-status-needs-you: var(--bridge-status-needs-you);
+	--color-status-in-review: var(--bridge-status-in-review);
+	--color-status-ready: var(--bridge-status-ready);
+	--color-status-merged: var(--bridge-status-merged);
+	--color-status-idle: var(--bridge-status-idle);
+	--color-status-exited: var(--bridge-status-exited);
+	--color-status-terminated: var(--bridge-status-terminated);
+	--color-status-terminated-foreground: var(--bridge-status-terminated-foreground);
+	--color-status-unknown: var(--bridge-status-unknown);
 	--color-destructive: var(--bridge-danger);
 	--color-destructive-foreground: var(--color-accent-foreground);
 
@@ -294,6 +307,11 @@
 		0 0 8px var(--color-working);
 }
 
+@utility session-card-terminated {
+	border-color: color-mix(in srgb, var(--color-status-terminated) 32%, var(--color-border));
+	background-color: color-mix(in srgb, var(--color-status-terminated) 7%, var(--color-bg-secondary));
+}
+
 @utility bg-surface-faint {
 	background-color: color-mix(in srgb, var(--color-bg-primary) 35%, transparent);
 }
@@ -339,8 +357,8 @@
 	width: 100%;
 	background-color: var(--color-bg-sidebar);
 	padding-top: var(--size-center-panel-inset);
-	padding-right: var(--size-center-panel-inset);
-	padding-bottom: var(--size-center-panel-inset);
+	padding-right: var(--size-center-panel-inline-inset);
+	padding-bottom: var(--size-center-panel-bottom-inset);
 	padding-left: 0;
 }
 
@@ -354,6 +372,13 @@
 	border: 1px solid var(--color-border-strong);
 	background-color: var(--color-bg-primary);
 }
+
+/* A fully hidden sidebar no longer contributes a left layout gutter. Restore
+ * the shared frame inset while transient hover previews overlay this surface. */
+.sidebar-hidden .center-panel-shell {
+	padding-left: var(--size-center-panel-inline-inset);
+}
+
 @utility settings-row-bar {
 	display: flex;
 	height: var(--size-settings-row);
@@ -1009,38 +1034,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	min-width: 0;
 	align-items: center;
 	gap: 13px;
-}
-
-/* ── macOS titlebar cluster (TitlebarNav) ─────────────────────────────────
- * In-flow inside the Sidebar header, below the traffic lights while windowed.
- * In native fullscreen the header drops the clearance pad so this cluster
- * moves up. The toggle is pinned in a --size-sidebar-icon column so its screen
- * position never changes during the width animation; history arrows are
- * absolute to the right and fade with .sidebar-expanded-chrome. */
-.titlebar-nav {
-	position: relative;
-	display: flex;
-	height: var(--size-control-md);
-	flex-shrink: 0;
-	align-items: center;
-	margin-bottom: var(--space-2);
-}
-
-.titlebar-nav__toggle-slot {
-	display: flex;
-	width: var(--size-sidebar-icon);
-	flex-shrink: 0;
-	align-items: center;
-	justify-content: center;
-}
-
-.titlebar-nav__history {
-	position: absolute;
-	top: 0;
-	left: var(--size-sidebar-icon);
-	display: flex;
-	align-items: center;
-	gap: var(--space-1);
 }
 
 /* Windows custom title bar (WindowTitlebar): the app paints the sidebar toggle

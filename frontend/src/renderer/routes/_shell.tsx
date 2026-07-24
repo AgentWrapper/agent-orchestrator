@@ -11,6 +11,7 @@ import { ShellTopbar } from "../components/ShellTopbar";
 import { OrchestratorReplacementDialog } from "../components/OrchestratorReplacementDialog";
 import { Sidebar } from "../components/Sidebar";
 import { SidebarProvider } from "../components/ui/sidebar";
+import { TitlebarNav } from "../components/TitlebarNav";
 import { WindowTitlebar } from "../components/WindowTitlebar";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
@@ -34,7 +35,7 @@ import {
 	hidesShellTopbar,
 } from "../lib/platform";
 import { useUiStore } from "../stores/ui-store";
-import { toProjectKind, type WorkspaceSummary } from "../types/workspace";
+import { sessionIsActive, toProjectKind, type WorkspaceSummary } from "../types/workspace";
 import type { components } from "../../api/schema";
 
 export const Route = createFileRoute("/_shell")({
@@ -121,6 +122,8 @@ function ShellLayout() {
 	// Seeded to the current value so a mount never opens a terminal unasked.
 	const handledShellNonceRef = useRef(newShellTerminalNonce);
 	const [isKeyboardShortcutsOpen, setIsKeyboardShortcutsOpen] = useState(false);
+	const [isSidebarPeekOpen, setIsSidebarPeekOpen] = useState(false);
+	const sidebarPeekCloseTimerRef = useRef<number | undefined>(undefined);
 	const routeParams = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
 	// Project in scope for a new-session shortcut: the route's project, or the
 	// workspace owning the open session (so the shortcut works from a worker's
@@ -149,11 +152,32 @@ function ShellLayout() {
 	const setOrchestratorStartupError = useUiStore((state) => state.setOrchestratorStartupError);
 	const replacementErrorProjectId = Object.keys(orchestratorReplacementErrors)[0] ?? null;
 
+	const cancelSidebarPeekClose = useCallback(() => {
+		if (sidebarPeekCloseTimerRef.current === undefined) return;
+		window.clearTimeout(sidebarPeekCloseTimerRef.current);
+		sidebarPeekCloseTimerRef.current = undefined;
+	}, []);
+
+	const previewSidebar = useCallback(() => {
+		if (isSidebarOpen) return;
+		cancelSidebarPeekClose();
+		setIsSidebarPeekOpen(true);
+	}, [cancelSidebarPeekClose, isSidebarOpen]);
+
+	const scheduleSidebarPeekClose = useCallback(() => {
+		if (isSidebarOpen) return;
+		cancelSidebarPeekClose();
+		sidebarPeekCloseTimerRef.current = window.setTimeout(() => {
+			setIsSidebarPeekOpen(false);
+			sidebarPeekCloseTimerRef.current = undefined;
+		}, 140);
+	}, [cancelSidebarPeekClose, isSidebarOpen]);
+
 	const navigateSession = useCallback(
 		(direction: -1 | 1) => {
 			if (!scopedProjectId) return;
 			const sessions = (workspaces.find((workspace) => workspace.id === scopedProjectId)?.sessions ?? []).filter(
-				(session) => session.status !== "terminated",
+				sessionIsActive,
 			);
 			if (sessions.length === 0) return;
 			const currentIndex = sessions.findIndex((session) => session.id === routeParams.sessionId);
@@ -344,6 +368,45 @@ function ShellLayout() {
 	}, [themePreference]);
 
 	useEffect(() => {
+		void aoBridge.window.setTrafficLightsInset(!isSidebarOpen);
+	}, [isSidebarOpen]);
+
+	useEffect(() => {
+		if (!isSidebarOpen) return;
+		cancelSidebarPeekClose();
+		setIsSidebarPeekOpen(false);
+	}, [cancelSidebarPeekClose, isSidebarOpen]);
+
+	useEffect(() => cancelSidebarPeekClose, [cancelSidebarPeekClose]);
+
+	useEffect(() => {
+		if (!isSidebarPeekOpen || isSidebarOpen) return;
+
+		const handlePointerMove = (event: PointerEvent) => {
+			const target = event.target instanceof Element ? event.target : null;
+			const isInSidebarPortal = Boolean(target?.closest('[role="dialog"], [role="listbox"], [role="menu"]'));
+			const sidebar = document.querySelector<HTMLElement>('[data-slot="sidebar-container"]');
+			const bounds = sidebar?.getBoundingClientRect();
+			const isInSidebar = Boolean(
+				bounds &&
+				event.clientX >= bounds.left &&
+				event.clientX <= bounds.right &&
+				event.clientY >= bounds.top &&
+				event.clientY <= bounds.bottom,
+			);
+
+			if (isInSidebar || isInSidebarPortal) {
+				cancelSidebarPeekClose();
+				return;
+			}
+			scheduleSidebarPeekClose();
+		};
+
+		window.addEventListener("pointermove", handlePointerMove);
+		return () => window.removeEventListener("pointermove", handlePointerMove);
+	}, [cancelSidebarPeekClose, isSidebarOpen, isSidebarPeekOpen, scheduleSidebarPeekClose]);
+
+	useEffect(() => {
 		if (daemonStatus.state !== "ready" || !daemonStatus.port) return;
 		if (agentCatalogPortRef.current === daemonStatus.port) return;
 
@@ -458,13 +521,13 @@ function ShellLayout() {
 			<GlobalNewTaskDialog />
 			<KeyboardShortcutsDialog open={isKeyboardShortcutsOpen} onOpenChange={setIsKeyboardShortcutsOpen} />
 			{/* Shell chrome: Win/Linux hang the sidebar under a topbar. macOS uses a
-          full-height sidebar with TitlebarNav under the traffic lights. The bar
-          lives in the layout so crumb/actions never shift when the outlet swaps. */}
+          titlebar strip above the off-canvas sidebar. Session and board actions
+          render inside the center panel when the shell topbar is hidden. */}
 			<div className="flex h-screen min-h-0 flex-col bg-sidebar text-foreground">
 				{/* Windows-only custom title bar (sidebar toggle + File/Edit/View/…
             menu); paints the chrome the frameless window drops. Renders null on
             macOS/Linux. */}
-				<WindowTitlebar />
+				<WindowTitlebar onSidebarPreviewEnter={previewSidebar} />
 				{/* App routes render their topbar inside the framed panel, matching the board chrome across platforms while leaving OS titlebars native. */}
 				{!framedAppTopbar && !hideShellTopbar ? <ShellTopbar /> : null}
 				{/* Controlled by the ui-store so TitlebarNav / Topbar toggles (which
@@ -472,8 +535,12 @@ function ShellLayout() {
             the drag-resizable --ao-sidebar-w set on :root by useResizable. */}
 				<SidebarProvider
 					className="min-h-0 flex-1 overflow-x-hidden"
-					onOpenChange={(open) => open !== isSidebarOpen && toggleSidebar()}
-					open={isSidebarOpen}
+					onOpenChange={(open) => {
+						cancelSidebarPeekClose();
+						setIsSidebarPeekOpen(false);
+						if (open !== isSidebarOpen) toggleSidebar();
+					}}
+					open={isSidebarOpen || isSidebarPeekOpen}
 					style={
 						{
 							"--sidebar-width": "var(--ao-sidebar-w, var(--size-sidebar-default))",
@@ -482,13 +549,14 @@ function ShellLayout() {
 					}
 				>
 					{/* Hang the fixed sidebar below shell chrome on Win/Linux. macOS
-              keeps a full-height sidebar so TitlebarNav can sit under the
-              traffic lights inside the sidebar header (no center-panel pad). */}
+              keeps a full-height sidebar beneath the fixed titlebar controls. */}
 					<Sidebar
 						hideEdgeBorder={isWelcomeBoard}
-						historyLocked={isWelcomeBoard}
-						isFullScreen={isFullScreen}
-						underTopbar={isWindows || (!framedAppTopbar && !hideShellTopbar && (isLinux ? isSessionRoute : true))}
+						isOverlay={isSidebarPeekOpen && !isSidebarOpen}
+						onPreviewLeave={scheduleSidebarPeekClose}
+						underTopbar={
+							isMac || isWindows || (!framedAppTopbar && !hideShellTopbar && (isLinux ? isSessionRoute : true))
+						}
 						topbarOffset={isWindows ? "titlebar" : "toolbar"}
 						onCreateProject={createProject}
 						onInitializeProject={initializeProjectRepository}
@@ -496,7 +564,7 @@ function ShellLayout() {
 						workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}
 						workspaces={workspaces}
 					/>
-					<main className="flex min-w-0 flex-1 flex-col overflow-x-hidden">
+					<main className={cn("flex min-w-0 flex-1 flex-col overflow-x-hidden", !isSidebarOpen && "sidebar-hidden")}>
 						<div className="min-h-0 flex-1 overflow-x-hidden">
 							{/* Board/session routes render inside the same inset box the welcome board and settings paint for themselves, so every screen sits within the app's outer boundary. */}
 							{hideShellTopbar ? (
@@ -524,11 +592,8 @@ function ShellLayout() {
 					</main>
 					<DaemonFailureBanner status={daemonStatus} />
 					{/* When ShellTopbar is hidden, keep a macOS window-drag strip over
-              the traffic-light band only (same --size-traffic-light-clearance
-              as the Sidebar header pad). TitlebarNav sits in the sidebar below
-              that band, so a taller strip would cover the toggle/arrows and
-              swallow clicks. Height eases with the header pad on fullscreen
-              toggle. Width matches the sidebar. */}
+              the traffic-light band only. The fixed TitlebarNav renders after
+              this strip so its no-drag buttons remain clickable. */}
 					{hideShellTopbar && isMac ? (
 						<div
 							aria-hidden="true"
@@ -539,6 +604,21 @@ function ShellLayout() {
 							style={trafficLightDragActive ? ({ WebkitAppRegion: "drag" } as CSSProperties) : undefined}
 						/>
 					) : null}
+					{/* Fixed macOS titlebar cluster beside the traffic lights — rendered
+              once here so the toggle/history buttons never move when the
+              sidebar collapses or expands. History arrows stay visible but
+              locked on the empty start page. MUST come after the drag strip
+              (ShellTopbar or the welcome substitute) in the DOM: Electron
+              builds the window-drag region in document order (drag rects add,
+              no-drag rects subtract), so the cluster's no-drag holes only
+              survive if they're processed after the drag strips they overlap.
+              Rendered first, real clicks get swallowed by window-drag even
+              though DOM hit-testing looks correct. */}
+					<TitlebarNav
+						historyLocked={isWelcomeBoard}
+						isFullScreen={isFullScreen}
+						onSidebarPreviewEnter={previewSidebar}
+					/>
 				</SidebarProvider>
 				<OrchestratorReplacementDialog
 					error={replacementErrorProjectId ? orchestratorReplacementErrors[replacementErrorProjectId] : undefined}

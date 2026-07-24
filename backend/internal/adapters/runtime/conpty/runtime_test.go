@@ -396,6 +396,47 @@ func TestIsAlive_TrueWhileServing_FalseAfterClose(t *testing.T) {
 	}
 }
 
+func TestSupervisedProcessExitKeepsHostAlive(t *testing.T) {
+	isolateRegistry(t)
+	hosts := map[string]*inProcHost{}
+	rt := New(Options{Spawner: fakeSpawnerFor(t, hosts, livePID())})
+	ctx := context.Background()
+
+	handle, err := rt.Create(ctx, ports.RuntimeConfig{
+		SessionID:     "sess-supervised",
+		WorkspacePath: "/tmp/w",
+		Argv:          []string{"ao", "agent-process", "supervise"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := hosts["sess-supervised"]
+	t.Cleanup(func() { h.cleanup(t) })
+
+	if alive, err := rt.IsSupervisedProcessAlive(ctx, handle, ports.SupervisedProcessRef{}); err != nil || !alive {
+		t.Fatalf("supervised process before exit = (%v, %v), want (true, nil)", alive, err)
+	}
+	h.pty.signalExit(42)
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		alive, probeErr := rt.IsSupervisedProcessAlive(ctx, handle, ports.SupervisedProcessRef{})
+		if probeErr != nil {
+			t.Fatal(probeErr)
+		}
+		if !alive {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("supervised process remained alive after PTY exit")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if alive, probeErr := rt.IsAlive(ctx, handle); probeErr != nil || !alive {
+		t.Fatalf("runtime host after child exit = (%v, %v), want (true, nil)", alive, probeErr)
+	}
+}
+
 // TestIsAlive_FalseForUnknownSession verifies IsAlive returns (false, nil) for
 // a session not in the map or registry.
 func TestIsAlive_FalseForUnknownSession(t *testing.T) {

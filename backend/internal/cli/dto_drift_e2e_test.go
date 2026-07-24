@@ -76,6 +76,10 @@ func (f *fakeSessionService) Restore(context.Context, domain.SessionID) (session
 	return sessionsvc.RestoreOutcome{}, nil
 }
 
+func (f *fakeSessionService) ResumeAgent(context.Context, domain.SessionID) (sessionsvc.ResumeAgentOutcome, error) {
+	return sessionsvc.ResumeAgentOutcome{}, nil
+}
+
 func (f *fakeSessionService) Kill(context.Context, domain.SessionID) (bool, error) {
 	return false, nil
 }
@@ -93,6 +97,10 @@ func (f *fakeSessionService) Rename(context.Context, domain.SessionID, string) e
 }
 
 func (f *fakeSessionService) SetPreview(context.Context, domain.SessionID, string) (domain.Session, error) {
+	return domain.Session{}, nil
+}
+
+func (f *fakeSessionService) SetTerminateOnPRMerge(context.Context, domain.SessionID, bool) (domain.Session, error) {
 	return domain.Session{}, nil
 }
 

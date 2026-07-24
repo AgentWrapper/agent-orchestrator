@@ -16,10 +16,10 @@
 // reaches the daemon and its activity reports land against the spawning session.
 //
 // The terminal state is deterministic: the run ends on a `session-end` event
-// that derives ActivityExited (a durable, is_terminated fact), NOT an incidental
-// idle left behind by a trailing `stop`. A turn-boundary event (session-end)
-// also clears the sticky `blocked` state that precedes it, so the lifecycle
-// reaches its terminal cleanly without needing the pre/post-tool-use trio.
+// that derives ActivityExited, NOT an incidental idle left behind by a trailing
+// `stop`. Exited records agent-process death while the runtime remains available;
+// it does not set is_terminated. A turn-boundary event (session-end) also clears
+// the sticky `blocked` state that precedes it.
 //
 // Timing is controlled by AO_FAKE_SPEEDUP (a float, default 1): every phase
 // sleeps for a base duration divided by the speedup, so tests can compress the
@@ -216,9 +216,9 @@ func phaseSleep() float64 {
 // pr-push event fires during the active work phase — the canned "pushed PR"
 // marker plus a `pr-push` hook (which derives active, so it refreshes rather
 // than changes state). The run ENDS on session-end (derives exited), a
-// turn-boundary event that both clears the sticky `blocked` and terminates the
-// session — a deterministic terminal, not an ageable idle. No trailing sleep
-// follows the terminal event, so a high AO_FAKE_SPEEDUP collapses the whole run.
+// turn-boundary event that clears the sticky `blocked` without terminating the
+// runtime. No trailing sleep follows the terminal event, so a high
+// AO_FAKE_SPEEDUP collapses the whole run.
 func timelineScript(sleepSeconds float64) string {
 	d := formatSeconds(sleepSeconds)
 	var b strings.Builder

@@ -85,7 +85,7 @@ function initialSidebarOpen() {
 }
 
 function inspectorState(sessions: Record<string, InspectorSessionState>, sessionId: string): InspectorSessionState {
-	return sessions[sessionId] ?? { isOpen: false, view: "summary" };
+	return sessions[sessionId] ?? { isOpen: true, view: "summary" };
 }
 
 const initialThemePreference = readStoredThemePreference();

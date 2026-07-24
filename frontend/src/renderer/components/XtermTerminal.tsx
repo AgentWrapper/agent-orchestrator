@@ -295,13 +295,13 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				fontSize: props.fontSize ?? TERMINAL_FONT_SIZE_DEFAULT,
 				lineHeight: 1.35,
 				linkHandler: { activate: activateLink },
-				// Agent TUIs leave SGR bold active while using ANSI black for
-				// separators; keep bold weight-only so black stays black.
-				drawBoldTextInBrightColors: false,
-				// Auto-adjust glyph colors that don't clear WCAG AA against their cell
-				// background, the way VS Code's terminal does; without it dim colors
-				// render washed out.
-				minimumContrastRatio: 4.5,
+				// Preserve standard terminal semantics: many agent TUIs use bold ANSI
+				// colors specifically to select the bright palette.
+				drawBoldTextInBrightColors: true,
+				// Agent TUIs already choose foreground/background pairs. A forced
+				// contrast transform changes their RGB values and makes syntax and diff
+				// colors diverge from the same CLI in a native terminal.
+				minimumContrastRatio: 1,
 				// Alt-buffer panes (tmux attach, mouse-tracking agent TUIs) never feed
 				// this buffer — the alt screen doesn't accumulate scrollback — so this
 				// only matters for normal-buffer panes that print their transcript and

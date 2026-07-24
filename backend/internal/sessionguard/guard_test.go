@@ -49,7 +49,7 @@ func TestGuard_OutcomeByState(t *testing.T) {
 		{"blocked", record(domain.ActivityBlocked, false), true, SuppressedAwaitingUser, SuppressedAwaitingUser},
 		// exited is refused even without IsTerminated: the pane holds an
 		// interactive shell after agent exit, so a paste would execute there.
-		{"exited", record(domain.ActivityExited, false), true, SuppressedTerminated, SuppressedTerminated},
+		{"exited", record(domain.ActivityExited, false), true, SuppressedExited, SuppressedExited},
 		{"terminated", record(domain.ActivityIdle, true), true, SuppressedTerminated, SuppressedTerminated},
 		{"missing", domain.SessionRecord{}, false, SuppressedNotFound, SuppressedNotFound},
 	}

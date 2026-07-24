@@ -460,11 +460,12 @@ func (o *Observer) checkCredentials(ctx context.Context) (bool, error) {
 	return observe.CheckCredentialsOnce(ctx, probe, &o.credentialsChecked, &o.disabled, o.logger, "scm observer")
 }
 
-// discoverSubjects builds the per-PR refresh subjects (one per open tracked PR)
+// discoverSubjects builds the per-PR refresh subjects (normally one per open
+// tracked PR)
 // and the per-session repo list used for branch-prefix discovery of new PRs. A
-// session may own several PRs, so each open tracked PR becomes its own subject;
-// merged/closed PRs are not re-fetched since lifecycle already saw the terminal
-// transition and the completion rule reads them from the store.
+// session may own several PRs, so each open tracked PR becomes its own subject.
+// Terminal PRs stay eligible only for an opted-in live session, allowing an
+// unacknowledged teardown failure to be delivered again on a later poll.
 func (o *Observer) discoverSubjects(ctx context.Context) (map[string]*subject, []sessionRepo, error) {
 	sessions, err := o.store.ListAllSessions(ctx)
 	if err != nil {
@@ -530,7 +531,7 @@ func (o *Observer) discoverSubjects(ctx context.Context) (map[string]*subject, [
 		if err != nil {
 			return nil, nil, err
 		}
-		for _, pr := range openTrackedPRs(prs) {
+		for _, pr := range trackedPRsForSession(sess, prs) {
 			prRepo, ok := repoForTrackedPR(pr, repos)
 			if !ok {
 				o.logger.Warn("scm observer: tracked PR repo no longer belongs to project", "session", sess.ID, "pr", pr.URL, "repo", pr.Repo)
@@ -654,6 +655,22 @@ func openTrackedPRs(prs []domain.PullRequest) []domain.PullRequest {
 	out := make([]domain.PullRequest, 0, len(prs))
 	for _, pr := range prs {
 		if pr.Number > 0 && !pr.Merged && !pr.Closed {
+			out = append(out, pr)
+		}
+	}
+	return out
+}
+
+// trackedPRsForSession keeps terminal PRs discoverable only while an opted-in
+// session remains live. If merge-driven teardown fails, the observer has not
+// acknowledged the terminal semantic hash, so a later poll can redeliver it.
+func trackedPRsForSession(sess domain.SessionRecord, prs []domain.PullRequest) []domain.PullRequest {
+	if !sess.TerminateOnPRMerge {
+		return openTrackedPRs(prs)
+	}
+	out := make([]domain.PullRequest, 0, len(prs))
+	for _, pr := range prs {
+		if pr.Number > 0 {
 			out = append(out, pr)
 		}
 	}
@@ -962,6 +979,9 @@ func applyStoredFailedLogTails(obs *ports.SCMObservation, checks []domain.PullRe
 func (o *Observer) refreshReviews(ctx context.Context, subjects map[string]*subject, observations map[string]ports.SCMObservation, subjectsByPR map[string]*subject, reviewModes map[string]ports.ReviewWriteMode, localOnlyObservations, reviewStale map[string]bool, now time.Time) {
 	for _, s := range subjects {
 		if !s.hasPR || s.known.Number <= 0 {
+			continue
+		}
+		if s.known.Merged || s.known.Closed {
 			continue
 		}
 		pkey := prKey(s.repo, s.known.Number)

@@ -49,10 +49,22 @@
 	--color-accent-weak: rgb(77 141 255 / 0.16);
 	--color-accent-dim: #24406e;
 
-	/* Status — matches daemon derived statuses */
-	--color-working: #f59f4c; /* agent working */
-	--color-warning: #e8c14a; /* needs-you / amber */
-	--color-success: #74b98a; /* mergeable */
+	/* Session status roles */
+	--color-status-working: #36c2b4;
+	--color-status-needs-you: #f2b84b;
+	--color-status-in-review: #5b8def;
+	--color-status-ready: #9ad97a;
+	--color-status-merged: #3e9b62;
+	--color-status-idle: #8e96a3;
+	--color-status-exited: #ee6a6a;
+	--color-status-terminated: #6f7680;
+	--color-status-terminated-foreground: #8e96a3;
+	--color-status-unknown: #a78bfa;
+
+	/* Compatibility roles used by non-session surfaces. */
+	--color-working: var(--color-status-working);
+	--color-warning: var(--color-status-needs-you);
+	--color-success: var(--color-status-ready);
 	--color-success-bright: #8bdc75; /* reviewer role highlight (was hardcoded) */
 	--color-danger: #ef6b6b; /* fail */
 	--color-purple: #a78bfa; /* accessory / magenta lane */
@@ -151,6 +163,7 @@
 	   ═══════════════════════════════════════════════════════════════ */
 
 	--z-chrome: 10;
+	--z-sidebar-preview: 15;
 	--z-titlebar: 20;
 	--z-overlay: 50;
 
@@ -204,9 +217,9 @@
 	--size-sidebar-icon: 48px;
 	--size-sidebar-default: 240px;
 	--size-sidebar-mobile: 288px;
-	/* Clears macOS traffic lights (y:20 discs) before in-sidebar TitlebarNav;
-	   keep Sidebar header padding and the shell drag strip on this same token.
-	   Fullscreen drops the lights, so TitlebarNav uses the tighter inset. */
+	--size-titlebar-cluster-left: 79px;
+	--size-titlebar-content-offset: 174px;
+	/* Clears the macOS traffic-light row used by the fixed titlebar controls. */
 	--size-traffic-light-clearance: 36px;
 	--size-traffic-light-clearance-fullscreen: var(--space-2);
 	--size-resize-handle: 7px;
@@ -245,8 +258,10 @@
 	--size-textarea-min: 112px;
 	--size-sidebar-project-actions: 84px;
 
-	/* Shared inset-panel geometry */
-	--size-center-panel-inset: 14px;
+	/* Shared inset-panel geometry (welcome board + settings page) */
+	--size-center-panel-inset: 12px;
+	--size-center-panel-inline-inset: 8px;
+	--size-center-panel-bottom-inset: 6px;
 	--radius-center-panel: 17px;
 
 	/* Welcome / import radius alias (CreateProjectFlow rounded-welcome-panel) */
@@ -357,29 +372,28 @@
 	--color-project-accent-mint: #6ee7b7;
 	--color-project-accent-sky: #93c5fd;
 
-	/* xterm extended palette (ANSI bright + selection) */
-	--color-term-cyan: #6fb3c9;
+	/* Terminal ANSI palette. Keep this independent from product status colors:
+	   agent TUIs own the semantic meaning of these slots. */
+	--color-term-black: #1f2329;
+	--color-term-red: #f05d5e;
+	--color-term-green: #44c97a;
+	--color-term-yellow: #e5c34b;
+	--color-term-blue: #5b9cff;
+	--color-term-magenta: #c678dd;
+	--color-term-cyan: #56b6c2;
+	--color-term-white: #d7dae0;
 	--color-term-selection-dark: rgb(77 141 255 / 0.3);
 	--color-term-selection-light: rgb(37 99 235 / 0.25);
 	--color-term-selection-inactive: rgb(128 128 128 / 0.2);
 	--color-term-selection-inactive-light: rgb(128 128 128 / 0.15);
-	--color-term-bright-red: #ff8a8a;
-	--color-term-bright-green: #8fd6a6;
-	--color-term-bright-yellow: #f0d06b;
-	--color-term-bright-blue: #7eaaff;
-	--color-term-bright-magenta: #c4b0fc;
-	--color-term-bright-cyan: #8fcfe0;
-	--color-term-red-light: #b42318;
-	--color-term-magenta-light: #8e24aa;
-	--color-term-cyan-light: #0b7285;
-	--color-term-white-light: #4b5563;
-	--color-term-bright-black-light: #374151;
-	--color-term-bright-red-light: #912018;
-	--color-term-bright-green-light: #176639;
-	--color-term-bright-yellow-light: #6f4a00;
-	--color-term-bright-blue-light: #1d4ed8;
-	--color-term-bright-magenta-light: #7b1fa2;
-	--color-term-bright-cyan-light: #155e75;
+	--color-term-bright-black: #7f8792;
+	--color-term-bright-red: #ff7b7c;
+	--color-term-bright-green: #62df91;
+	--color-term-bright-yellow: #f2d66d;
+	--color-term-bright-blue: #79b1ff;
+	--color-term-bright-magenta: #d99aee;
+	--color-term-bright-cyan: #79d4df;
+	--color-term-bright-white: #f4f5f7;
 
 	/* ═══════════════════════════════════════════════════════════════
 	   SHADOWS
@@ -401,6 +415,16 @@
 	--bridge-success: var(--color-success);
 	--bridge-warning: var(--color-warning);
 	--bridge-danger: var(--color-danger);
+	--bridge-status-working: var(--color-status-working);
+	--bridge-status-needs-you: var(--color-status-needs-you);
+	--bridge-status-in-review: var(--color-status-in-review);
+	--bridge-status-ready: var(--color-status-ready);
+	--bridge-status-merged: var(--color-status-merged);
+	--bridge-status-idle: var(--color-status-idle);
+	--bridge-status-exited: var(--color-status-exited);
+	--bridge-status-terminated: var(--color-status-terminated);
+	--bridge-status-terminated-foreground: var(--color-status-terminated-foreground);
+	--bridge-status-unknown: var(--color-status-unknown);
 	--bridge-interactive-hover: var(--color-interactive-hover);
 	--bridge-interactive-active: var(--color-interactive-active);
 	--bridge-scrim: var(--color-scrim);
@@ -446,9 +470,20 @@
 	--color-accent-weak: rgb(37 99 235 / 0.12);
 	--color-accent-dim: #bcd2f7;
 
-	--color-working: #c2410c;
-	--color-warning: #9a6b00;
-	--color-success: #1a7f37;
+	--color-status-working: #087f75;
+	--color-status-needs-you: #946200;
+	--color-status-in-review: #255fc4;
+	--color-status-ready: #2f7d32;
+	--color-status-merged: #0d5f35;
+	--color-status-idle: #69717d;
+	--color-status-exited: #b83232;
+	--color-status-terminated: #626975;
+	--color-status-terminated-foreground: #626975;
+	--color-status-unknown: #6d46c2;
+
+	--color-working: var(--color-status-working);
+	--color-warning: var(--color-status-needs-you);
+	--color-success: var(--color-status-ready);
 	--color-success-bright: #176639;
 	--color-danger: #c0392b;
 	--color-purple: #7c3aed;
@@ -501,4 +536,21 @@
 	/* Settings accents stay brand-blue in light mode (same Figma values). */
 	--color-settings-accent: #4f8afa;
 	--color-settings-switch-on: #3b82f6;
+
+	--color-term-black: #24292f;
+	--color-term-red: #cf222e;
+	--color-term-green: #1a7f37;
+	--color-term-yellow: #9a6700;
+	--color-term-blue: #0969da;
+	--color-term-magenta: #8250df;
+	--color-term-cyan: #0a7f89;
+	--color-term-white: #6e7781;
+	--color-term-bright-black: #57606a;
+	--color-term-bright-red: #a40e26;
+	--color-term-bright-green: #116329;
+	--color-term-bright-yellow: #7d4e00;
+	--color-term-bright-blue: #0550ae;
+	--color-term-bright-magenta: #6639ba;
+	--color-term-bright-cyan: #096b73;
+	--color-term-bright-white: #24292f;
 }

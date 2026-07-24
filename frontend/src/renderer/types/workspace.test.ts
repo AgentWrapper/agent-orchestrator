@@ -10,8 +10,6 @@ import {
 	toAgentProvider,
 	toSessionActivity,
 	toSessionStatus,
-	workerDisplayStatus,
-	workerStatusPulses,
 	openPRs,
 	mergedPRCount,
 	primaryPR,
@@ -61,6 +59,7 @@ describe("toSessionStatus", () => {
 	it("passes through a known status", () => {
 		expect(toSessionStatus("mergeable")).toBe("mergeable");
 		expect(toSessionStatus("no_signal")).toBe("no_signal");
+		expect(toSessionStatus("exited")).toBe("exited");
 	});
 
 	it("keeps a backend merged status even when the session is terminated", () => {
@@ -95,38 +94,20 @@ describe("toSessionActivity", () => {
 	});
 });
 
-describe("workerDisplayStatus", () => {
-	it("prefers an explicit displayStatus override", () => {
-		expect(workerDisplayStatus(sessionWith({ status: "ci_failed", displayStatus: "done" }))).toBe("done");
-	});
-
-	it.each([
-		["needs_input", "needs_you"],
-		["changes_requested", "needs_you"],
-		["review_pending", "needs_you"],
-		["ci_failed", "ci_failed"],
-		["no_signal", "no_signal"],
-		["approved", "mergeable"],
-		["mergeable", "mergeable"],
-		["merged", "done"],
-		["terminated", "done"],
-		["unknown", "unknown"],
-		["working", "working"],
-		["idle", "working"],
-	] as const)("maps %s to %s", (status, expected) => {
-		expect(workerDisplayStatus(sessionWith({ status }))).toBe(expected);
-	});
-});
-
 describe("sessionIsActive", () => {
-	it("is false for merged and terminated", () => {
-		expect(sessionIsActive(sessionWith({ status: "merged" }))).toBe(false);
+	it("keeps a merged session active until its runtime is terminated", () => {
+		expect(sessionIsActive(sessionWith({ status: "merged", isTerminated: false }))).toBe(true);
+		expect(sessionIsActive(sessionWith({ status: "merged", isTerminated: true }))).toBe(false);
+	});
+
+	it("is false for a terminated session", () => {
 		expect(sessionIsActive(sessionWith({ status: "terminated" }))).toBe(false);
 	});
 
 	it("is true for in-progress statuses", () => {
 		expect(sessionIsActive(sessionWith({ status: "working" }))).toBe(true);
 		expect(sessionIsActive(sessionWith({ status: "pr_open" }))).toBe(true);
+		expect(sessionIsActive(sessionWith({ status: "exited" }))).toBe(true);
 	});
 });
 
@@ -212,7 +193,7 @@ describe("findProjectOrchestrator", () => {
 });
 
 describe("sessionNeedsAttention", () => {
-	it.each(["needs_input", "no_signal", "changes_requested", "ci_failed", "unknown"] as const)(
+	it.each(["needs_input", "exited", "no_signal", "changes_requested", "ci_failed", "unknown"] as const)(
 		"is true for %s",
 		(status) => {
 			expect(sessionNeedsAttention(sessionWith({ status }))).toBe(true);
@@ -275,17 +256,6 @@ describe("orchestratorHealth", () => {
 	});
 });
 
-describe("workerStatusPulses", () => {
-	it("pulses only for working and needs_you", () => {
-		expect(workerStatusPulses("working")).toBe(true);
-		expect(workerStatusPulses("needs_you")).toBe(true);
-		expect(workerStatusPulses("mergeable")).toBe(false);
-		expect(workerStatusPulses("no_signal")).toBe(false);
-		expect(workerStatusPulses("done")).toBe(false);
-		expect(workerStatusPulses("unknown")).toBe(false);
-	});
-});
-
 describe("toAgentProvider", () => {
 	it("passes through a known provider", () => {
 		expect(toAgentProvider("opencode")).toBe("opencode");
@@ -341,6 +311,7 @@ describe("attentionZone", () => {
 		["mergeable", "merge"],
 		["approved", "merge"],
 		["needs_input", "action"],
+		["exited", "action"],
 		["no_signal", "action"],
 		["ci_failed", "action"],
 		["changes_requested", "action"],
@@ -350,7 +321,7 @@ describe("attentionZone", () => {
 		["draft", "pending"],
 		["working", "working"],
 		["idle", "working"],
-		["merged", "done"],
+		["merged", "merge"],
 		["terminated", "done"],
 	];
 

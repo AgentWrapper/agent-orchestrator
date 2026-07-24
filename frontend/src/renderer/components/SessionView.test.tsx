@@ -94,26 +94,32 @@ vi.mock("./SessionFilesView", () => ({
 		</button>
 	),
 }));
-const browserDestroy = vi.hoisted(() => vi.fn());
+const { browserDestroy, browserViewOptions } = vi.hoisted(() => ({
+	browserDestroy: vi.fn(),
+	browserViewOptions: { current: undefined as { sessionId: string; terminated: boolean } | undefined },
+}));
 vi.mock("../hooks/useBrowserView", () => ({
-	useBrowserView: () => ({
-		viewId: "browser:sess-1",
-		navState: {
+	useBrowserView: (options: { sessionId: string; terminated: boolean }) => {
+		browserViewOptions.current = options;
+		return {
 			viewId: "browser:sess-1",
-			url: "http://127.0.0.1:4173/",
-			title: "Calculator",
-			canGoBack: false,
-			canGoForward: false,
-			isLoading: false,
-		},
-		slotRef: vi.fn(),
-		navigate: vi.fn(),
-		goBack: vi.fn(),
-		goForward: vi.fn(),
-		reload: vi.fn(),
-		stop: vi.fn(),
-		destroy: browserDestroy,
-	}),
+			navState: {
+				viewId: "browser:sess-1",
+				url: "http://127.0.0.1:4173/",
+				title: "Calculator",
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			},
+			slotRef: vi.fn(),
+			navigate: vi.fn(),
+			goBack: vi.fn(),
+			goForward: vi.fn(),
+			reload: vi.fn(),
+			stop: vi.fn(),
+			destroy: browserDestroy,
+		};
+	},
 }));
 vi.mock("./SessionInspector", () => ({
 	SessionInspector: ({
@@ -232,7 +238,7 @@ function workerSession(sessionId: string): WorkspaceSession {
 }
 
 function inspectorOpen(sessionId: string): boolean {
-	return useUiStore.getState().inspectorSessions[sessionId]?.isOpen ?? false;
+	return useUiStore.getState().inspectorSessions[sessionId]?.isOpen ?? true;
 }
 
 function inspectorButton(): HTMLElement {
@@ -247,12 +253,15 @@ describe("SessionView", () => {
 		for (const session of workspaces[0].sessions) {
 			delete session.previewUrl;
 			delete session.previewRevision;
+			delete session.isTerminated;
+			session.status = "working";
 		}
 		workspaceQueryState.data = workspaces;
 		workspaceQueryState.isLoading = false;
 		useUiStore.setState({ inspectorSessions: {} });
 		panels.clear();
 		browserDestroy.mockReset();
+		browserViewOptions.current = undefined;
 	});
 
 	// Regression: react-resizable-panels v4 treats bare numeric sizes as PIXELS
@@ -271,16 +280,29 @@ describe("SessionView", () => {
 		}
 	});
 
-	it("marks the inspector collapsible and renders the resize handle", () => {
-		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
+	it("opens the Summary inspector alongside the terminal by default", () => {
 		render(<SessionView sessionId="sess-1" />);
 
+		expect(screen.getByText("terminal center")).toBeInTheDocument();
+		expect(panelSizes("inspector")[0]).toBe("28%");
 		expect(screen.getByTestId("panel-inspector")).toHaveAttribute("data-collapsible", "true");
 		expect(screen.getByTestId("resize-handle")).toBeInTheDocument();
 		expect(screen.getByTestId("panel-inspector")).not.toHaveAttribute("inert");
+		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
+	});
+
+	it("treats a merged terminated session as terminated for Browser preview", () => {
+		const worker = workerSession("sess-1");
+		worker.status = "merged";
+		worker.isTerminated = true;
+
+		render(<SessionView sessionId="sess-1" />);
+
+		expect(browserViewOptions.current).toMatchObject({ sessionId: "sess-1", terminated: true });
 	});
 
 	it("mounts collapsed and inert when the store says closed", () => {
+		act(() => useUiStore.getState().setInspectorOpen("sess-1", false));
 		render(<SessionView sessionId="sess-1" />);
 
 		expect(panelSizes("inspector")[0]).toBe("0%");
@@ -291,6 +313,7 @@ describe("SessionView", () => {
 	});
 
 	it("keeps StrictMode mount imperative-free and expands on the first user toggle", () => {
+		act(() => useUiStore.getState().setInspectorOpen("sess-1", false));
 		render(
 			<StrictMode>
 				<SessionView sessionId="sess-1" />
@@ -395,12 +418,14 @@ describe("SessionView", () => {
 	});
 
 	it("expands on the first toggle after a closed worker inspector remounts", () => {
+		act(() => useUiStore.getState().setInspectorOpen("sess-1", false));
 		const { rerender } = render(<SessionView sessionId="sess-1" />);
 		const handle = panels.get("inspector")!.handle;
 
 		rerender(<SessionView sessionId="sess-orch" />);
 		expect(screen.queryByTestId("panel-inspector")).not.toBeInTheDocument();
 
+		act(() => useUiStore.getState().setInspectorOpen("sess-2", false));
 		rerender(<SessionView sessionId="sess-2" />);
 		expect(panelSizes("inspector")[0]).toBe("0%");
 		expect(handle.collapse).not.toHaveBeenCalled();
@@ -419,7 +444,7 @@ describe("SessionView", () => {
 
 		// The shortcut is inactive without an inspector.
 		fireEvent.keyDown(window, { key: "B", metaKey: true, shiftKey: true });
-		expect(inspectorOpen("sess-orch")).toBe(false);
+		expect(useUiStore.getState().inspectorSessions["sess-orch"]).toBeUndefined();
 	});
 
 	it("maximizes the browser over the whole app window and returns to the rail", () => {
@@ -493,20 +518,19 @@ describe("SessionView", () => {
 
 		const { rerender } = render(<SessionView sessionId="sess-1" />);
 
-		expect(panelSizes("inspector")[0]).toBe("0%");
-		expect(screen.getByTestId("panel-inspector")).toHaveAttribute("inert");
+		expect(panelSizes("inspector")[0]).toBe("28%");
+		expect(screen.getByTestId("panel-inspector")).not.toHaveAttribute("inert");
 		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
 
-		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 		act(() => useUiStore.getState().setInspectorView("sess-1", "browser"));
 		expect(inspectorOpen("sess-1")).toBe(true);
 		expect(inspectorButton()).toHaveAttribute("data-view", "browser");
 
 		// Navigating to another worker with an already-known preview URL must
-		// baseline that preview as seen, not open the global rail or Browser tab.
+		// baseline that preview as seen and retain the default Summary tab.
 		rerender(<SessionView sessionId="sess-2" />);
-		expect(inspectorOpen("sess-2")).toBe(false);
-		expect(screen.getByTestId("panel-inspector")).toHaveAttribute("inert");
+		expect(inspectorOpen("sess-2")).toBe(true);
+		expect(screen.getByTestId("panel-inspector")).not.toHaveAttribute("inert");
 		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
 
 		// Switching back restores the first worker's own open Browser state.
@@ -537,8 +561,8 @@ describe("SessionView", () => {
 		workspaceQueryState.isLoading = false;
 		rerender(<SessionView sessionId="sess-2" />);
 
-		expect(inspectorOpen("sess-2")).toBe(false);
-		expect(screen.getByTestId("panel-inspector")).toHaveAttribute("inert");
+		expect(inspectorOpen("sess-2")).toBe(true);
+		expect(screen.getByTestId("panel-inspector")).not.toHaveAttribute("inert");
 		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
 		const handle = panels.get("inspector")!.handle;
 		expect(handle.expand).not.toHaveBeenCalled();
@@ -548,6 +572,6 @@ describe("SessionView", () => {
 
 		expect(inspectorOpen("sess-2")).toBe(true);
 		expect(inspectorButton()).toHaveAttribute("data-view", "browser");
-		expect(handle.expand).toHaveBeenCalledTimes(1);
+		expect(handle.expand).not.toHaveBeenCalled();
 	});
 });

@@ -37,11 +37,12 @@ type lifecycleStack struct {
 	// LCM is the Lifecycle Manager (the canonical write path). It is exposed so
 	// startSession can share the same reducer the reaper drives, rather than
 	// standing up a second store+LCM pair that would diverge under writes.
-	LCM         *lifecycle.Manager
-	reaperDone  <-chan struct{}
-	scmDone     <-chan struct{}
-	trackerDone <-chan struct{}
-	sweepDone   <-chan struct{}
+	LCM           *lifecycle.Manager
+	runtimeReaper *reaper.Reaper
+	reaperDone    <-chan struct{}
+	scmDone       <-chan struct{}
+	trackerDone   <-chan struct{}
+	sweepDone     <-chan struct{}
 }
 
 // workerIdleSweepInterval is the low-frequency recovery cadence that redelivers
@@ -59,7 +60,19 @@ func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runt
 		lifecycle.WithActiveSteering(activeTurnSteering(agents)),
 	)
 	rp := reaper.New(lcm, store, runtime, reaper.Config{Logger: logger})
-	return &lifecycleStack{LCM: lcm, reaperDone: rp.Start(ctx), sweepDone: startWorkerIdleSweep(ctx, lcm)}
+	return &lifecycleStack{
+		LCM:           lcm,
+		runtimeReaper: rp,
+		reaperDone:    rp.Start(ctx),
+		sweepDone:     startWorkerIdleSweep(ctx, lcm),
+	}
+}
+
+// ReconcileRuntime runs the same conservative runtime/workload observation as
+// the periodic reaper. The daemon calls it after session-manager reconciliation
+// so exits missed while AO was stopped are folded before the API starts serving.
+func (l *lifecycleStack) ReconcileRuntime(ctx context.Context) error {
+	return l.runtimeReaper.Tick(ctx)
 }
 
 // activeTurnSteering resolves the per-harness active-turn steering capability
@@ -127,6 +140,7 @@ func (l *lifecycleStack) Stop() {
 type sessionLifecycle interface {
 	Reconcile(ctx context.Context) error
 	RestoreAll(ctx context.Context) error
+	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 }
 
 // startSession builds the controller-facing session service: a session manager

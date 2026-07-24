@@ -73,6 +73,7 @@ if (typeof window !== "undefined") {
 		},
 		window: {
 			setOverlay: async () => undefined,
+			setTrafficLightsInset: async () => undefined,
 			isFullScreen: async () => false,
 			onFullScreen: () => () => undefined,
 		},

@@ -2,7 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { TerminalTarget } from "../types/terminal";
-import type { WorkspaceSession } from "../types/workspace";
+import { sessionIsActive, type WorkspaceSession } from "../types/workspace";
 import type { Theme } from "../stores/ui-store";
 import { useTerminalSession, type AttachableTerminal, type TerminalSessionState } from "../hooks/useTerminalSession";
 import { apiClient } from "../lib/api-client";
@@ -242,9 +242,13 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	const handleId = shellTerminalHandleId ?? attachSession?.terminalHandleId;
 	const provider = terminalTarget?.kind === "reviewer" ? terminalTarget.harness : session?.provider;
 	const hadAttachmentRef = useRef(false);
+	const isSessionActive = session ? sessionIsActive(session) : false;
 	// A standalone shell is never restorable: there is no session row to restore.
 	const canRestoreSession =
-		terminalTarget?.kind !== "reviewer" && terminalTarget?.kind !== "shell" && session?.status === "terminated";
+		terminalTarget?.kind !== "reviewer" &&
+		terminalTarget?.kind !== "shell" &&
+		session !== undefined &&
+		!isSessionActive;
 
 	const handleReady = useCallback((handle: AttachableTerminal) => {
 		setTerminal(handle);
@@ -255,7 +259,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	}, []);
 	const handleLinkOpen = useCallback(
 		(uri: string) => {
-			if (!session?.id || session.kind !== "worker" || session.status === "terminated") return;
+			if (!session?.id || session.kind !== "worker" || !isSessionActive) return;
 			try {
 				const url = new URL(uri);
 				if ((url.protocol !== "http:" && url.protocol !== "https:") || !isLoopbackHostname(url.hostname)) return;
@@ -278,7 +282,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 				}
 			})();
 		},
-		[queryClient, session?.id, session?.kind, session?.status],
+		[isSessionActive, queryClient, session?.id, session?.kind],
 	);
 	const restoreSession = useCallback(async () => {
 		if (!session?.id || !canRestoreSession || isRestoring) return;

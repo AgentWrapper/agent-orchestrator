@@ -4,16 +4,24 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionInspector } from "./SessionInspector";
+import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
 import type { PRState, PullRequestFacts, WorkspaceSession } from "../types/workspace";
 
-const { getMock, postMock } = vi.hoisted(() => ({
+const { getMock, navigateMock, patchMock, postMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
+	navigateMock: vi.fn(),
+	patchMock: vi.fn(),
 	postMock: vi.fn(),
+}));
+
+vi.mock("@tanstack/react-router", () => ({
+	useNavigate: () => navigateMock,
 }));
 
 vi.mock("../lib/api-client", () => ({
 	apiClient: {
 		GET: getMock,
+		PATCH: patchMock,
 		POST: postMock,
 	},
 	apiErrorMessage: (error: unknown, fallback = "Request failed") => {
@@ -55,6 +63,35 @@ const sessionWithProvider = (prs: PullRequestFacts[], provider: WorkspaceSession
 	...session(prs),
 	provider,
 });
+
+const prSummary = (
+	number: number,
+	state: SessionPRSummary["state"],
+	overrides: Partial<SessionPRSummary> = {},
+): SessionPRSummary => {
+	const url = `https://github.com/acme/repo/pull/${number}`;
+	return {
+		url: `https://api.github.com/repos/acme/repo/pulls/${number}`,
+		htmlUrl: url,
+		number,
+		title: `PR ${number}`,
+		state,
+		provider: "github",
+		repo: "acme/repo",
+		author: "ada",
+		sourceBranch: `feat/${number}`,
+		targetBranch: "main",
+		headSha: `sha-${number}`,
+		additions: 4,
+		deletions: 1,
+		changedFiles: 2,
+		ci: { state: "passing", failingChecks: [] },
+		review: { decision: "none", hasUnresolvedHumanComments: false, unresolvedBy: [] },
+		mergeability: { state: "mergeable", reasons: [], prUrl: url, conflictFiles: [] },
+		updatedAt: "2026-06-15T12:00:00Z",
+		...overrides,
+	};
+};
 
 function renderWithQuery(children: ReactNode) {
 	const client = new QueryClient({
@@ -121,8 +158,11 @@ const reviewState = (n: number, status: string, targetSha = `sha-${n}`) => ({
 
 beforeEach(() => {
 	getMock.mockReset();
+	navigateMock.mockReset();
+	patchMock.mockReset();
 	postMock.mockReset();
 	getMock.mockResolvedValue({ data: { reviewerHandleId: "", reviews: [] }, error: undefined });
+	patchMock.mockResolvedValue({ data: { ok: true }, error: undefined, response: { status: 200 } });
 	postMock.mockResolvedValue({ data: { ok: true, sessionId: "sess-1" }, error: undefined });
 });
 
@@ -176,6 +216,7 @@ describe("SessionInspector PR section", () => {
 		expect(prSection("Pull request").getByText("PR #7")).toBeInTheDocument();
 		// CI/Merge/Review facts surface per card.
 		expect(prSection("Pull request").getAllByText("Passing").length).toBeGreaterThan(0);
+		expect(prSection("Pull request").getByText("open")).toHaveClass("text-[9px]", "leading-none");
 	});
 
 	it("shows the empty state when there are no PRs", () => {
@@ -185,7 +226,7 @@ describe("SessionInspector PR section", () => {
 
 	it("links each PR to its url", () => {
 		renderWithQuery(<SessionInspector session={session([pr(41, "open"), pr(42, "draft")])} />);
-		const links = screen.getAllByRole("link", { name: /Open/ });
+		const links = prSection("Pull requests (2)").getAllByRole("link", { name: "Open" });
 		expect(links.map((a) => a.getAttribute("href"))).toEqual([
 			"https://example.com/pr/41",
 			"https://example.com/pr/42",
@@ -193,9 +234,132 @@ describe("SessionInspector PR section", () => {
 	});
 });
 
+describe("SessionInspector completion controls", () => {
+	it("persists the terminate-on-merge preference", async () => {
+		renderWithQuery(<SessionInspector session={session([])} />);
+
+		await userEvent.click(screen.getByRole("switch", { name: "Terminate session when pull requests merge" }));
+
+		await waitFor(() =>
+			expect(patchMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/merge-policy", {
+				params: { path: { sessionId: "sess-1" } },
+				body: { terminateOnPrMerge: true },
+			}),
+		);
+	});
+
+	it("terminates a live merged session and returns to its project after success", async () => {
+		renderWithQuery(<SessionInspector session={session([pr(7, "merged")], { status: "merged" })} />);
+
+		expect(
+			screen.queryByRole("switch", { name: "Terminate session when pull requests merge" }),
+		).not.toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Terminate session" }));
+		expect(screen.getByRole("dialog", { name: "Terminate do the thing?" })).toBeInTheDocument();
+		await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Terminate session" }));
+
+		await waitFor(() =>
+			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/kill", {
+				params: { path: { sessionId: "sess-1" } },
+			}),
+		);
+		await waitFor(() =>
+			expect(navigateMock).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "ws-1" } }),
+		);
+	});
+
+	it("keeps the confirmation open and does not navigate when termination fails", async () => {
+		postMock.mockResolvedValueOnce({ error: new Error("runtime teardown failed"), response: { status: 500 } });
+		renderWithQuery(<SessionInspector session={session([pr(7, "merged")], { status: "merged" })} />);
+
+		await userEvent.click(screen.getByRole("button", { name: "Terminate session" }));
+		await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Terminate session" }));
+
+		expect(await screen.findByText("runtime teardown failed")).toBeInTheDocument();
+		expect(screen.getByRole("dialog")).toBeInTheDocument();
+		expect(navigateMock).not.toHaveBeenCalled();
+	});
+
+	it("hides completion controls after the session is terminated", () => {
+		renderWithQuery(
+			<SessionInspector session={session([pr(7, "merged")], { status: "merged", isTerminated: true })} />,
+		);
+
+		expect(screen.queryByText("Completion")).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Terminate session" })).not.toBeInTheDocument();
+	});
+
+	it("does not show completion controls for orchestrator sessions", () => {
+		renderWithQuery(<SessionInspector session={session([], { kind: "orchestrator" })} />);
+
+		expect(screen.queryByText("Completion")).not.toBeInTheDocument();
+		expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+	});
+});
+
 describe("SessionInspector Activity section", () => {
 	const activitySection = () =>
 		within(screen.getByText("Activity").closest("[data-testid='inspector-section']") as HTMLElement);
+
+	it("offers a managed resume only for an exited, nonterminated agent", async () => {
+		renderWithQuery(
+			<SessionInspector
+				session={session([], {
+					status: "exited",
+					activity: { state: "exited", lastActivityAt: "2026-06-15T10:00:00Z" },
+				})}
+			/>,
+		);
+
+		await userEvent.click(activitySection().getByRole("button", { name: "Resume agent" }));
+
+		await waitFor(() =>
+			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/resume-agent", {
+				params: { path: { sessionId: "sess-1" } },
+			}),
+		);
+	});
+
+	it("does not offer agent resume for a live or terminated session", () => {
+		const live = renderWithQuery(
+			<SessionInspector
+				session={session([], {
+					status: "idle",
+					activity: { state: "idle", lastActivityAt: "2026-06-15T10:00:00Z" },
+				})}
+			/>,
+		);
+
+		expect(screen.queryByRole("button", { name: "Resume agent" })).not.toBeInTheDocument();
+
+		live.unmount();
+		renderWithQuery(
+			<SessionInspector
+				session={session([], {
+					status: "terminated",
+					isTerminated: true,
+					activity: { state: "exited", lastActivityAt: "2026-06-15T10:00:00Z" },
+				})}
+			/>,
+		);
+		expect(screen.queryByRole("button", { name: "Resume agent" })).not.toBeInTheDocument();
+	});
+
+	it("keeps resume failures visible beside the action", async () => {
+		postMock.mockResolvedValueOnce({ error: new Error("agent restart failed"), response: { status: 500 } });
+		renderWithQuery(
+			<SessionInspector
+				session={session([], {
+					status: "exited",
+					activity: { state: "exited", lastActivityAt: "2026-06-15T10:00:00Z" },
+				})}
+			/>,
+		);
+
+		await userEvent.click(activitySection().getByRole("button", { name: "Resume agent" }));
+
+		expect(await activitySection().findByText("agent restart failed")).toBeInTheDocument();
+	});
 
 	it.each([
 		["idle", "Idle"],
@@ -300,7 +464,7 @@ describe("SessionInspector Activity section", () => {
 		expect(within(activityRow).getByText("Conflict")).toBeInTheDocument();
 	});
 
-	it("uses activity.lastActivityAt for the Activity timestamp", () => {
+	it("does not timestamp the live Activity state as a historical event", () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date("2026-06-15T12:00:00Z"));
 
@@ -317,7 +481,7 @@ describe("SessionInspector Activity section", () => {
 		const activityRow = activitySection()
 			.getByText("Working")
 			.closest("[data-testid='inspector-timeline-event']") as HTMLElement;
-		expect(within(activityRow).getByText("2h ago")).toBeInTheDocument();
+		expect(within(activityRow).queryByText("2h ago")).not.toBeInTheDocument();
 	});
 
 	it("aligns text-row dots lower while keeping the Activity chip dot centered", () => {
@@ -367,7 +531,68 @@ describe("SessionInspector Activity section", () => {
 		expect(within(activityRow).getByText("Changes Requested")).toBeInTheDocument();
 	});
 
-	it("orders timeline milestones around the combined current state row", () => {
+	it("links and timestamps draft, opened, and merged PR milestones from backend lifecycle times", async () => {
+		const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60 * 1000).toISOString();
+		const summaries = [
+			prSummary(8, "draft", {
+				createdAt: minutesAgo(120),
+				stateChangedAt: minutesAgo(120),
+			}),
+			prSummary(7, "open", {
+				createdAt: minutesAgo(60),
+				stateChangedAt: minutesAgo(15),
+			}),
+			prSummary(6, "merged", {
+				createdAt: minutesAgo(180),
+				stateChangedAt: minutesAgo(30),
+			}),
+		];
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/sessions/{sessionId}/pr") {
+				return { data: { sessionId: "sess-1", prs: summaries }, error: undefined };
+			}
+			return { data: { reviewerHandleId: "", reviews: [] }, error: undefined };
+		});
+
+		renderWithQuery(
+			<SessionInspector
+				session={session([pr(8, "draft"), pr(7, "open"), pr(6, "merged")], {
+					status: "merged",
+					activity: { state: "idle", lastActivityAt: "2026-06-15T11:50:00Z" },
+				})}
+			/>,
+		);
+
+		await waitFor(() => {
+			expect(screen.getByRole("link", { name: "Draft PR #8" })).toHaveAttribute(
+				"href",
+				"https://github.com/acme/repo/pull/8",
+			);
+		});
+		const draftLink = screen.getByRole("link", { name: "Draft PR #8" });
+		expect(
+			within(draftLink.closest("[data-testid='inspector-timeline-event']") as HTMLElement).getByText("2h ago"),
+		).toBeInTheDocument();
+
+		const openLink = screen.getByRole("link", { name: "Opened PR #7" });
+		expect(
+			within(openLink.closest("[data-testid='inspector-timeline-event']") as HTMLElement).getByText("1h ago"),
+		).toBeInTheDocument();
+
+		const mergedOpenedLink = screen.getByRole("link", { name: "Opened PR #6" });
+		expect(
+			within(mergedOpenedLink.closest("[data-testid='inspector-timeline-event']") as HTMLElement).getByText("3h ago"),
+		).toBeInTheDocument();
+
+		const mergedLink = screen.getByRole("link", { name: "Merged PR #6" });
+		expect(
+			within(mergedLink.closest("[data-testid='inspector-timeline-event']") as HTMLElement).getByText("30m ago"),
+		).toBeInTheDocument();
+		const doneRow = screen.getByText("Done").closest("[data-testid='inspector-timeline-event']") as HTMLElement;
+		expect(within(doneRow).getByText("30m ago")).toBeInTheDocument();
+	});
+
+	it("renders the current state before reverse-chronological historical milestones", () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date("2026-06-15T12:00:00Z"));
 
@@ -387,14 +612,20 @@ describe("SessionInspector Activity section", () => {
 			row.textContent?.replace(/\s+/g, " ").trim(),
 		);
 		expect(rows).toEqual([
-			"Created workspace3h ago",
-			"Draft PR #42",
-			"Opened PR #41",
-			"Opened PR #40",
-			"Idle2h ago",
+			"Idle",
+			"Done",
 			"Merged PR #40",
-			"Done5m ago",
+			"Opened PR #40",
+			"Opened PR #41",
+			"Draft PR #42",
+			"Created workspace3h ago",
 		]);
+
+		const eventRows = section.querySelectorAll("[data-testid='inspector-timeline-event']");
+		expect(section.querySelectorAll("[data-testid='inspector-timeline-connector']")).toHaveLength(eventRows.length - 1);
+		expect(
+			within(eventRows[eventRows.length - 1] as HTMLElement).queryByTestId("inspector-timeline-connector"),
+		).not.toBeInTheDocument();
 	});
 });
 

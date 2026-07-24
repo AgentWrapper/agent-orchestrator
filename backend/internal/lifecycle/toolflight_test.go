@@ -267,18 +267,17 @@ func TestToolPrecedence_ReaperTerminationReleasesFlight(t *testing.T) {
 	// tool-flight state. A leaked entry would otherwise persist for the
 	// daemon's life (later observations return early on cur.IsTerminated).
 	m, st, _ := newManager()
-	// A live (non-sticky) session with stale activity so the reaper considers
-	// it clearly dead, plus an in-flight tool tracked in the flights map.
+	// A live session with an in-flight tool tracked in the flights map.
 	st.sessions["mer-1"] = domain.SessionRecord{
 		ID: "mer-1", ProjectID: "mer",
 		Activity:      domain.Activity{State: domain.ActivityActive, LastActivityAt: time.Now().Add(-2 * time.Minute)},
-		FirstSignalAt: time.Now().Add(-2 * time.Minute),
+		FirstSignalAt: time.Now(),
 	}
 	mustApply(t, m, "mer-1", sig(domain.ActivityActive, "pre-tool-use", "Bash", "toolu_1"))
 	if _, ok := m.flights["mer-1"]; !ok {
 		t.Fatal("setup: expected a flights entry after pre-tool-use")
 	}
-	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{Probe: ports.ProbeDead}); err != nil {
+	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{Runtime: ports.ProbeDead, Workload: ports.ProbeFailed}); err != nil {
 		t.Fatal(err)
 	}
 	if !st.sessions["mer-1"].IsTerminated {

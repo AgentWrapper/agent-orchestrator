@@ -149,6 +149,17 @@ func (f *fakeStore) SetSessionPreviewURL(_ context.Context, id domain.SessionID,
 	return true, nil
 }
 
+func (f *fakeStore) SetSessionTerminateOnPRMerge(_ context.Context, id domain.SessionID, terminate bool, updatedAt time.Time) (bool, error) {
+	r, ok := f.sessions[id]
+	if !ok {
+		return false, nil
+	}
+	r.TerminateOnPRMerge = terminate
+	r.UpdatedAt = updatedAt
+	f.sessions[id] = r
+	return true, nil
+}
+
 func (f *fakeStore) GetDisplayPRFactsForSession(_ context.Context, id domain.SessionID) (domain.PRFacts, bool, error) {
 	pr, ok := f.pr[id]
 	return pr, ok, nil
@@ -191,17 +202,28 @@ func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectReco
 	return p, ok, nil
 }
 
-func TestSessionListDerivesStatusFromPRFacts(t *testing.T) {
-	st := newFakeStore()
-	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityActive}}
-	st.pr["mer-1"] = domain.PRFacts{URL: "pr1", CI: domain.CIFailing}
+func TestSessionListAppliesActivityBeforePRFacts(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		activity domain.ActivityState
+		want     domain.SessionStatus
+	}{
+		{"active", domain.ActivityActive, domain.StatusWorking},
+		{"idle", domain.ActivityIdle, domain.StatusCIFailed},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			st := newFakeStore()
+			st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: tt.activity}}
+			st.pr["mer-1"] = domain.PRFacts{URL: "pr1", CI: domain.CIFailing}
 
-	list, err := (&Service{store: st}).List(context.Background(), ListFilter{ProjectID: "mer"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(list) != 1 || list[0].Status != domain.StatusCIFailed {
-		t.Fatalf("got %+v", list)
+			list, err := (&Service{store: st}).List(context.Background(), ListFilter{ProjectID: "mer"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(list) != 1 || list[0].Status != tt.want {
+				t.Fatalf("got %+v, want status %q", list, tt.want)
+			}
+		})
 	}
 }
 
@@ -238,6 +260,25 @@ func TestSessionSetPreviewUnknownSession(t *testing.T) {
 	st := newFakeStore()
 	if _, err := (&Service{store: st}).SetPreview(context.Background(), "ghost-1", "http://x"); err == nil {
 		t.Fatal("want error for unknown session")
+	}
+}
+
+func TestSessionSetTerminateOnPRMergePersistsPolicy(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+
+	sess, err := (&Service{store: st}).SetTerminateOnPRMerge(context.Background(), "mer-1", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sess.TerminateOnPRMerge || !st.sessions["mer-1"].TerminateOnPRMerge {
+		t.Fatalf("terminate-on-merge policy was not persisted: session=%+v stored=%+v", sess, st.sessions["mer-1"])
+	}
+}
+
+func TestSessionSetTerminateOnPRMergeUnknownSession(t *testing.T) {
+	if _, err := (&Service{store: newFakeStore()}).SetTerminateOnPRMerge(context.Background(), "ghost-1", true); err == nil {
+		t.Fatal("expected missing session error")
 	}
 }
 
@@ -513,6 +554,12 @@ func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.
 	return domain.SessionRecord{ID: "mer-9", ProjectID: cfg.ProjectID, Kind: cfg.Kind, Harness: cfg.Harness}, len(cfg.Prompt), 0, nil
 }
 func (f *fakeCommander) RestoreWithMode(context.Context, domain.SessionID) (sessionmanager.RestoreResult, error) {
+	if f.restoreErr != nil {
+		return sessionmanager.RestoreResult{}, f.restoreErr
+	}
+	return f.restoreResult, nil
+}
+func (f *fakeCommander) ResumeAgentWithMode(context.Context, domain.SessionID) (sessionmanager.RestoreResult, error) {
 	if f.restoreErr != nil {
 		return sessionmanager.RestoreResult{}, f.restoreErr
 	}
@@ -1007,6 +1054,9 @@ func TestToAPIErrorMapsWorkspaceBranchSentinels(t *testing.T) {
 		{"unknown harness", fmt.Errorf("spawn: %w: %q", sessionmanager.ErrUnknownHarness, "bogus"), apierr.KindInvalid, "UNKNOWN_HARNESS"},
 		{"missing harness", fmt.Errorf("spawn: %w: configure project worker.agent or pass --harness", sessionmanager.ErrMissingHarness), apierr.KindInvalid, "AGENT_REQUIRED"},
 		{"awaiting decision", fmt.Errorf("send mer-1: %w", sessionmanager.ErrAwaitingDecision), apierr.KindConflict, "SESSION_AWAITING_DECISION"},
+		{"agent exited", fmt.Errorf("send mer-1: %w", sessionmanager.ErrAgentExited), apierr.KindConflict, "AGENT_EXITED"},
+		{"agent not exited", fmt.Errorf("resume agent mer-1: %w", sessionmanager.ErrAgentNotExited), apierr.KindConflict, "AGENT_NOT_EXITED"},
+		{"resume in progress", fmt.Errorf("resume agent mer-1: %w", sessionmanager.ErrResumeInProgress), apierr.KindConflict, "AGENT_RESUME_IN_PROGRESS"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1056,6 +1106,32 @@ func TestRestoreMapsManagerModeToServiceView(t *testing.T) {
 	}
 	if got.Mode != RestoreModeViewSavedPrompt {
 		t.Fatalf("mode = %q, want %q", got.Mode, RestoreModeViewSavedPrompt)
+	}
+}
+
+func TestResumeAgentMapsManagerModeToServiceView(t *testing.T) {
+	st := newFakeStore()
+	rec := domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessCodex,
+		Activity:  domain.Activity{State: domain.ActivityIdle},
+	}
+	fc := &fakeCommander{
+		restoreResult: sessionmanager.RestoreResult{
+			Session: rec,
+			Mode:    sessionmanager.RestoreModeNative,
+		},
+	}
+	svc := &Service{manager: fc, store: st}
+
+	got, err := svc.ResumeAgent(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("ResumeAgent: %v", err)
+	}
+	if got.Session.ID != "mer-1" || got.Mode != RestoreModeViewNative {
+		t.Fatalf("resume outcome = %+v", got)
 	}
 }
 
@@ -1377,6 +1453,43 @@ func TestSummarizeReviewSurfacesApprovedAndChangesRequestedSummaries(t *testing.
 	}
 	if b := byReviewer["bob"]; b.Verdict != domain.ReviewChangesRequest || b.Body != "please fix" {
 		t.Fatalf("bob entry = %+v, want changes_requested with its body", b)
+	}
+}
+
+func TestListPRSummariesExposesPRLifecycleTimes(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+	createdAt := time.Date(2026, 6, 4, 9, 0, 0, 0, time.UTC)
+	readyAt := time.Date(2026, 6, 4, 10, 30, 0, 0, time.UTC)
+	mergedAt := time.Date(2026, 6, 4, 11, 0, 0, 0, time.UTC)
+	observedAt := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
+	stList := &multiPRFakeStore{fakeStore: st, prs: []domain.PullRequest{
+		{URL: "draft", SessionID: "mer-1", Number: 1, Draft: true, CreatedAtProvider: createdAt, UpdatedAt: observedAt},
+		{URL: "ready", SessionID: "mer-1", Number: 2, StateChangedAt: readyAt, CreatedAtProvider: createdAt, UpdatedAt: observedAt},
+		{URL: "merged", SessionID: "mer-1", Number: 3, Merged: true, CreatedAtProvider: createdAt, MergedAtProvider: mergedAt, UpdatedAt: observedAt},
+	}}
+
+	got, err := (&Service{store: stList}).ListPRSummaries(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byURL := map[string]PRSummary{}
+	for _, pr := range got {
+		byURL[pr.URL] = pr
+	}
+	if !byURL["draft"].StateChangedAt.Equal(createdAt) {
+		t.Fatalf("draft stateChangedAt = %s, want created time %s", byURL["draft"].StateChangedAt, createdAt)
+	}
+	if !byURL["ready"].StateChangedAt.Equal(readyAt) {
+		t.Fatalf("ready stateChangedAt = %s, want ready/open transition %s", byURL["ready"].StateChangedAt, readyAt)
+	}
+	if !byURL["merged"].StateChangedAt.Equal(mergedAt) {
+		t.Fatalf("merged stateChangedAt = %s, want merged time %s", byURL["merged"].StateChangedAt, mergedAt)
+	}
+	for _, url := range []string{"draft", "ready", "merged"} {
+		if !byURL[url].CreatedAt.Equal(createdAt) {
+			t.Fatalf("%s createdAt = %s, want provider creation time %s", url, byURL[url].CreatedAt, createdAt)
+		}
 	}
 }
 

@@ -141,7 +141,6 @@ func Run() error {
 	}
 
 	lcStack := startLifecycle(ctx, store, runtimeAdapter, messenger, notificationWriter, telemetrySink, agents, log)
-	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
 
 	// Wire the controller-facing session service over the same store + LCM, the
 	// selected runtime, routed git/scratch workspaces, the per-session agent
@@ -156,6 +155,8 @@ func Run() error {
 		}
 		return fmt.Errorf("wire session service: %w", err)
 	}
+	lcStack.LCM.SetCompletionTerminator(sessMgr)
+	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
 	projectSvc := projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink})
 	if err := seedScratchProjectOnBoot(ctx, cfg, projectSvc); err != nil {
 		stop()
@@ -269,6 +270,9 @@ func Run() error {
 	// before srv.Run so sessions are consistent before the server serves.
 	if reconcileErr := sessMgr.Reconcile(ctx); reconcileErr != nil {
 		log.Error("reconcile sessions on boot failed", "err", reconcileErr)
+	}
+	if reconcileErr := lcStack.ReconcileRuntime(ctx); reconcileErr != nil {
+		log.Error("reconcile agent processes on boot failed", "err", reconcileErr)
 	}
 
 	// Redeliver any worker_idle events left pending across the restart, now that

@@ -32,12 +32,18 @@ func (s fakeSessions) ListAllSessions(context.Context) ([]domain.SessionRecord, 
 }
 
 type fakeRuntime struct {
-	alive bool
-	err   error
+	alive         bool
+	err           error
+	workloadAlive bool
+	workloadErr   error
 }
 
 func (r fakeRuntime) IsAlive(context.Context, ports.RuntimeHandle) (bool, error) {
 	return r.alive, r.err
+}
+
+func (r fakeRuntime) IsSupervisedProcessAlive(context.Context, ports.RuntimeHandle, ports.SupervisedProcessRef) (bool, error) {
+	return r.workloadAlive, r.workloadErr
 }
 
 func probableSession(id domain.SessionID) domain.SessionRecord {
@@ -60,8 +66,50 @@ func TestTick_ReportsAliveProbe(t *testing.T) {
 	if err := newReaper(lcm, sessions, fakeRuntime{alive: true}).Tick(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if lcm.observed["mer-1"].Probe != ports.ProbeAlive {
-		t.Fatalf("want alive probe, got %q", lcm.observed["mer-1"].Probe)
+	if got := lcm.observed["mer-1"]; got.Runtime != ports.ProbeAlive || got.Workload != ports.ProbeFailed {
+		t.Fatalf("want alive runtime with unsupported workload, got %+v", got)
+	}
+}
+
+func TestTick_ReportsSupervisedWorkloadExit(t *testing.T) {
+	lcm := &fakeLCM{}
+	session := probableSession("mer-1")
+	session.Metadata.RuntimeLaunchID = "launch-1"
+	sessions := fakeSessions{rows: []domain.SessionRecord{session}}
+	if err := newReaper(lcm, sessions, fakeRuntime{alive: true, workloadAlive: false}).Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got := lcm.observed["mer-1"]
+	if got.Runtime != ports.ProbeAlive || got.Workload != ports.ProbeDead || got.LaunchID != "launch-1" {
+		t.Fatalf("unexpected supervised workload facts: %+v", got)
+	}
+}
+
+func TestTick_ReportsSupervisedWorkloadAlive(t *testing.T) {
+	lcm := &fakeLCM{}
+	session := probableSession("mer-1")
+	session.Metadata.RuntimeLaunchID = "launch-1"
+	sessions := fakeSessions{rows: []domain.SessionRecord{session}}
+	if err := newReaper(lcm, sessions, fakeRuntime{alive: true, workloadAlive: true}).Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got := lcm.observed["mer-1"]
+	if got.Runtime != ports.ProbeAlive || got.Workload != ports.ProbeAlive {
+		t.Fatalf("unexpected supervised workload facts: %+v", got)
+	}
+}
+
+func TestTick_ReportsWorkloadProbeErrorAsFailed(t *testing.T) {
+	lcm := &fakeLCM{}
+	session := probableSession("mer-1")
+	session.Metadata.RuntimeLaunchID = "launch-1"
+	sessions := fakeSessions{rows: []domain.SessionRecord{session}}
+	if err := newReaper(lcm, sessions, fakeRuntime{alive: true, workloadErr: errors.New("ps unavailable")}).Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got := lcm.observed["mer-1"]
+	if got.Runtime != ports.ProbeAlive || got.Workload != ports.ProbeFailed {
+		t.Fatalf("workload probe error must remain inconclusive, got %+v", got)
 	}
 }
 
@@ -71,8 +119,8 @@ func TestTick_ReportsProbeErrorAsFailed(t *testing.T) {
 	if err := newReaper(lcm, sessions, fakeRuntime{err: errors.New("tmux gone")}).Tick(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if lcm.observed["mer-1"].Probe != ports.ProbeFailed {
-		t.Fatalf("probe error must be reported as failed, got %q", lcm.observed["mer-1"].Probe)
+	if got := lcm.observed["mer-1"]; got.Runtime != ports.ProbeFailed || got.Workload != ports.ProbeFailed {
+		t.Fatalf("probe error must report failed facts, got %+v", got)
 	}
 }
 

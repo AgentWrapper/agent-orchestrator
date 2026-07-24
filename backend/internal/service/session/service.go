@@ -22,6 +22,7 @@ type Store interface {
 	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
 	RenameSession(ctx context.Context, id domain.SessionID, displayName string, updatedAt time.Time) (bool, error)
 	SetSessionPreviewURL(ctx context.Context, id domain.SessionID, previewURL string, updatedAt time.Time) (bool, error)
+	SetSessionTerminateOnPRMerge(ctx context.Context, id domain.SessionID, terminate bool, updatedAt time.Time) (bool, error)
 	GetDisplayPRFactsForSession(ctx context.Context, id domain.SessionID) (domain.PRFacts, bool, error)
 	ListPRFactsForSession(ctx context.Context, id domain.SessionID) ([]domain.PRFacts, error)
 	ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]domain.PullRequest, error)
@@ -45,6 +46,7 @@ type ListFilter struct {
 type commander interface {
 	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, int, int, error)
 	RestoreWithMode(ctx context.Context, id domain.SessionID) (sessionmanager.RestoreResult, error)
+	ResumeAgentWithMode(ctx context.Context, id domain.SessionID) (sessionmanager.RestoreResult, error)
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 	RetireForReplacement(ctx context.Context, id domain.SessionID) error
 	Send(ctx context.Context, id domain.SessionID, message string) error
@@ -89,6 +91,12 @@ const (
 type RestoreOutcome struct {
 	Session domain.Session  `json:"session"`
 	Mode    RestoreModeView `json:"restoreMode"`
+}
+
+// ResumeAgentOutcome reports the resumed read model and how AO relaunched it.
+type ResumeAgentOutcome struct {
+	Session domain.Session  `json:"session"`
+	Mode    RestoreModeView `json:"resumeMode"`
 }
 
 type scmProvider interface {
@@ -420,6 +428,20 @@ func (s *Service) Restore(ctx context.Context, id domain.SessionID) (RestoreOutc
 	return RestoreOutcome{Session: session, Mode: restoreModeView(res.Mode)}, nil
 }
 
+// ResumeAgent relaunches an exited agent without restoring a terminated
+// session or recreating its workspace.
+func (s *Service) ResumeAgent(ctx context.Context, id domain.SessionID) (ResumeAgentOutcome, error) {
+	res, err := s.manager.ResumeAgentWithMode(ctx, id)
+	if err != nil {
+		return ResumeAgentOutcome{}, toAPIError(err)
+	}
+	session, err := s.toSession(ctx, res.Session)
+	if err != nil {
+		return ResumeAgentOutcome{}, err
+	}
+	return ResumeAgentOutcome{Session: session, Mode: restoreModeView(res.Mode)}, nil
+}
+
 func restoreModeView(mode sessionmanager.RestoreMode) RestoreModeView {
 	switch mode {
 	case sessionmanager.RestoreModeNative:
@@ -482,6 +504,19 @@ func (s *Service) SetPreview(ctx context.Context, id domain.SessionID, previewUR
 	updated, err := s.store.SetSessionPreviewURL(ctx, id, previewURL, time.Now().UTC())
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("set preview url %s: %w", id, err)
+	}
+	if !updated {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	return s.Get(ctx, id)
+}
+
+// SetTerminateOnPRMerge persists the user's merge-completion lifecycle policy
+// and returns the refreshed read model.
+func (s *Service) SetTerminateOnPRMerge(ctx context.Context, id domain.SessionID, terminate bool) (domain.Session, error) {
+	updated, err := s.store.SetSessionTerminateOnPRMerge(ctx, id, terminate, time.Now().UTC())
+	if err != nil {
+		return domain.Session{}, fmt.Errorf("set terminate-on-pr-merge %s: %w", id, err)
 	}
 	if !updated {
 		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
@@ -599,6 +634,15 @@ func toAPIError(err error) error {
 		return apierr.Conflict("SESSION_NOT_RESTORABLE", "Session is not restorable", nil)
 	case errors.Is(err, sessionmanager.ErrTerminated):
 		return apierr.Conflict("SESSION_TERMINATED", "Session is terminated", nil)
+	case errors.Is(err, sessionmanager.ErrAgentExited):
+		return apierr.Conflict("AGENT_EXITED",
+			"The agent process exited; relaunch it before sending another message", nil)
+	case errors.Is(err, sessionmanager.ErrAgentNotExited):
+		return apierr.Conflict("AGENT_NOT_EXITED",
+			"The agent is still running; only exited agents can be resumed", nil)
+	case errors.Is(err, sessionmanager.ErrResumeInProgress):
+		return apierr.Conflict("AGENT_RESUME_IN_PROGRESS",
+			"The agent is already being resumed", nil)
 	case errors.Is(err, sessionmanager.ErrAwaitingDecision):
 		return apierr.Conflict("SESSION_AWAITING_DECISION",
 			"Session is paused on a permission decision; answer it in the session terminal first", nil)
@@ -635,7 +679,13 @@ func (s *Service) toSession(ctx context.Context, rec domain.SessionRecord) (doma
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("pr facts %s: %w", rec.ID, err)
 	}
-	return domain.Session{SessionRecord: rec, Status: deriveStatus(rec, prs, s.now(), s.harnessSignals(rec.Harness)), TerminalHandleID: rec.Metadata.RuntimeHandleID, PRs: prs}, nil
+	return domain.Session{
+		SessionRecord:    rec,
+		Status:           deriveStatus(rec, prs, s.now(), s.harnessSignals(rec.Harness)),
+		SCMStatus:        deriveSCMStatus(prs),
+		TerminalHandleID: rec.Metadata.RuntimeHandleID,
+		PRs:              prs,
+	}, nil
 }
 
 // now tolerates a zero-value Service (tests construct the struct literally
