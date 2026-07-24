@@ -51,6 +51,20 @@ type Entry struct {
 // previewable file (.html/.htm/.md/.markdown) anywhere in the workspace, so a
 // freshly generated report or document shows up automatically.
 func DiscoverEntry(workspacePath string) (Entry, bool) {
+	if entry, ok := DiscoverWebEntrypoint(workspacePath); ok {
+		return entry, true
+	}
+	return mostRecentPreviewable(workspacePath)
+}
+
+// DiscoverWebEntrypoint returns a conventional static-frontend entrypoint
+// (index.html or its public/dist/build variants) if one exists in the
+// workspace. Unlike DiscoverEntry it does NOT fall back to the most-recent
+// previewable document, so it is the right choice when auto-previewing a
+// brand-new session the user has never explicitly previewed: surfacing an
+// arbitrary repo README or generated report as the initial browser target is
+// noise, not the intended preview. See issue #2859.
+func DiscoverWebEntrypoint(workspacePath string) (Entry, bool) {
 	if strings.TrimSpace(workspacePath) == "" {
 		return Entry{}, false
 	}
@@ -59,7 +73,7 @@ func DiscoverEntry(workspacePath string) (Entry, bool) {
 			return entry, true
 		}
 	}
-	return mostRecentPreviewable(workspacePath)
+	return Entry{}, false
 }
 
 // mostRecentPreviewable walks the workspace and returns the newest previewable
