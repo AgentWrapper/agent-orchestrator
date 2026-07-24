@@ -32,6 +32,10 @@ const (
 	// the cap truncates it first, so a persistently failing hook cannot grow
 	// the file without bound.
 	maxHooksLogBytes = 1 << 20
+	// devinSessionLookupTimeout keeps Devin's SessionStart hook comfortably
+	// inside the adapter's 30-second native hook timeout. Devin does not include
+	// its conversation id in the hook payload, so AO asks the local CLI registry.
+	devinSessionLookupTimeout = 5 * time.Second
 )
 
 // setActivityAPIRequest mirrors the daemon's SetActivityRequest body for
@@ -153,6 +157,9 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 	if activitydispatch.SupportsHarness(domain.AgentHarness(agent)) {
 		agentSessionID = hookAgentSessionID(payload)
 	}
+	if agent == "devin" && event == "session-start" && agentSessionID == "" {
+		agentSessionID = c.devinSessionID(ctx, sessionID)
+	}
 	if !hasActivity && agentSessionID == "" {
 		// Unknown agent, or an event carrying neither activity nor resumable
 		// session metadata: report nothing.
@@ -176,6 +183,42 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 		c.reportHookFailure(agent, event, sessionID, err)
 	}
 	return nil
+}
+
+// devinSessionID reads the newest conversation id for the hook's current
+// working directory. Unlike the other Claude-compatible agents, Devin's real
+// SessionStart payload contains only hook_event_name and source; its resumable
+// id is exposed by `devin list --format json` instead. The hook process inherits
+// the agent worktree as its cwd, and `devin list` scopes results to that cwd.
+func (c *commandContext) devinSessionID(ctx context.Context, aoSessionID string) string {
+	lookupCtx, cancel := context.WithTimeout(ctx, devinSessionLookupTimeout)
+	defer cancel()
+	out, err := c.deps.CommandOutput(lookupCtx, "devin", "list", "--format", "json")
+	if err != nil {
+		c.reportHookFailure("devin", "session-start", aoSessionID, fmt.Errorf("resolve native session id: %w", err))
+		return ""
+	}
+	var sessions []struct {
+		ID             string `json:"id"`
+		LastActivityAt int64  `json:"last_activity_at"`
+	}
+	if err := json.Unmarshal(out, &sessions); err != nil {
+		c.reportHookFailure("devin", "session-start", aoSessionID, fmt.Errorf("parse native session list: %w", err))
+		return ""
+	}
+	var newestID string
+	var newestActivity int64
+	for _, session := range sessions {
+		id := strings.TrimSpace(session.ID)
+		if id == "" || len(id) > maxActivityMetaLen {
+			continue
+		}
+		if newestID == "" || session.LastActivityAt > newestActivity {
+			newestID = id
+			newestActivity = session.LastActivityAt
+		}
+	}
+	return newestID
 }
 
 func shouldEmitSessionStartContext(agent, event string) bool {

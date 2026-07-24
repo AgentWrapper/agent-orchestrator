@@ -17,7 +17,8 @@
 // BypassPermissions maps to `dangerous`.
 //
 // Restore prefers a native session id from AO session metadata via `-r <id>`
-// when one is available.
+// when one is available. Devin's SessionStart payload omits that id, so AO's
+// hook receiver discovers it from `devin list --format json` and persists it.
 package devin
 
 import (

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -516,7 +518,7 @@ func TestHooks_CopilotSessionStartReportsSessionID(t *testing.T) {
 	}
 }
 
-func TestHooks_DevinSessionStartInjectsSystemPromptContext(t *testing.T) {
+func TestHooks_DevinSessionStartReportsSessionIDAndInjectsSystemPromptContext(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "ao-7")
 	cfg := setConfigEnv(t)
 	promptDir := filepath.Join(cfg.dataDir, "prompts", "ao-7")
@@ -530,8 +532,17 @@ func TestHooks_DevinSessionStartInjectsSystemPromptContext(t *testing.T) {
 	writeRunFileFor(t, cfg, srv)
 
 	out, _, err := executeCLI(t, Deps{
-		In:           strings.NewReader(`{"source":"startup"}`),
+		In:           strings.NewReader(`{"hook_event_name":"SessionStart","source":"startup"}`),
 		ProcessAlive: func(int) bool { return true },
+		CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			if name != "devin" || !reflect.DeepEqual(args, []string{"list", "--format", "json"}) {
+				t.Fatalf("command = %q %q", name, args)
+			}
+			return []byte(`[
+				{"id":"older-session","last_activity_at":100},
+				{"id":"devin-native-1","last_activity_at":200}
+			]`), nil
+		},
 	}, "hooks", "devin", "session-start")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -551,8 +562,16 @@ func TestHooks_DevinSessionStartInjectsSystemPromptContext(t *testing.T) {
 	if got.HookSpecificOutput.AdditionalContext != "follow AO standing instructions" {
 		t.Fatalf("additionalContext = %q", got.HookSpecificOutput.AdditionalContext)
 	}
-	if got := capturedState(t, capture); got != "active" {
-		t.Errorf("state = %q, want active", got)
+	if capture.hits != 1 {
+		t.Fatalf("daemon calls = %d, want 1", capture.hits)
+	}
+	var req setActivityAPIRequest
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
+	}
+	want := setActivityAPIRequest{State: "active", Event: "session-start", AgentSessionID: "devin-native-1"}
+	if req != want {
+		t.Fatalf("body = %+v, want %+v", req, want)
 	}
 }
 

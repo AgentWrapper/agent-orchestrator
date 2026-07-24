@@ -2699,13 +2699,14 @@ func TestRestore_OpenCodeWithoutAgentSessionIDFallsBackToSavedPrompt(t *testing.
 	}
 }
 
-func TestRestore_AgyAndCopilotWithoutAgentSessionIDFallBackToSavedPrompt(t *testing.T) {
+func TestRestore_AgyCopilotAndDevinWithoutAgentSessionIDFallBackToSavedPrompt(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		harness domain.AgentHarness
 	}{
 		{name: "agy", harness: domain.HarnessAgy},
 		{name: "copilot", harness: domain.HarnessCopilot},
+		{name: "devin", harness: domain.HarnessDevin},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := newFakeStore()
@@ -2747,13 +2748,14 @@ func TestRestore_AgyAndCopilotWithoutAgentSessionIDFallBackToSavedPrompt(t *test
 	}
 }
 
-func TestRestore_AgyAndCopilotWithAgentSessionIDUseNativeResume(t *testing.T) {
+func TestRestore_AgyCopilotAndDevinWithAgentSessionIDUseNativeResume(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		harness domain.AgentHarness
 	}{
 		{name: "agy", harness: domain.HarnessAgy},
 		{name: "copilot", harness: domain.HarnessCopilot},
+		{name: "devin", harness: domain.HarnessDevin},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := newFakeStore()
@@ -2799,13 +2801,14 @@ func TestRestore_AgyAndCopilotWithAgentSessionIDUseNativeResume(t *testing.T) {
 	}
 }
 
-func TestRestore_AgyAndCopilotPromptlessWorkersWithoutAgentSessionIDNotResumable(t *testing.T) {
+func TestRestore_AgyCopilotAndDevinPromptlessWorkersWithoutAgentSessionIDNotResumable(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		harness domain.AgentHarness
 	}{
 		{name: "agy", harness: domain.HarnessAgy},
 		{name: "copilot", harness: domain.HarnessCopilot},
+		{name: "devin", harness: domain.HarnessDevin},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := newFakeStore()
