@@ -1,5 +1,5 @@
 import { X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { type MouseEvent, useEffect, useRef, useState } from "react";
 import { useTruncatedText } from "../hooks/useTruncatedText";
 import type { ShellTerminal } from "../hooks/useShellTerminals";
 import { isWindowsPlatform } from "../lib/platform";
@@ -42,10 +42,23 @@ export function ShellTerminalTab({ shell, isActive, onSelect, onClose, onRename 
 	}, [isEditing]);
 
 	const beginEdit = () => {
-		if (!onRename) return;
+		if (!onRename || isEditing) return;
 		setDraft(shell.title);
 		setIsEditing(true);
 	};
+
+	// The rename gesture lives on the whole tab so a double-click (or right-click
+	// on Windows) anywhere on the tab works, not just precisely on the label.
+	const containerRenameHandlers = isEditing
+		? {}
+		: renameViaRightClick
+			? {
+					onContextMenu: (event: MouseEvent) => {
+						event.preventDefault();
+						beginEdit();
+					},
+				}
+			: { onDoubleClick: beginEdit };
 
 	const commit = () => {
 		if (!isEditing) return;
@@ -65,6 +78,7 @@ export function ShellTerminalTab({ shell, isActive, onSelect, onClose, onRename 
 				"group inline-flex min-w-shell-tab-min items-center gap-1 rounded-md px-2 py-1 transition-colors",
 				isActive ? "bg-interactive-active" : "hover:bg-interactive-hover/60",
 			)}
+			{...containerRenameHandlers}
 		>
 			{isEditing ? (
 				<input
@@ -93,15 +107,6 @@ export function ShellTerminalTab({ shell, isActive, onSelect, onClose, onRename 
 						isActive ? "text-foreground" : "text-passive hover:text-foreground",
 					)}
 					onClick={onSelect}
-					onDoubleClick={renameViaRightClick ? undefined : beginEdit}
-					onContextMenu={
-						renameViaRightClick
-							? (event) => {
-									event.preventDefault();
-									beginEdit();
-								}
-							: undefined
-					}
 					title={
 						isTruncated
 							? shell.title
@@ -116,6 +121,8 @@ export function ShellTerminalTab({ shell, isActive, onSelect, onClose, onRename 
 				aria-label={`Close terminal ${shell.title}`}
 				className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-passive opacity-0 transition-[background,color,opacity] group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
 				onClick={onClose}
+				onDoubleClick={(event) => event.stopPropagation()}
+				onContextMenu={(event) => event.stopPropagation()}
 				title="Close terminal"
 				type="button"
 			>
