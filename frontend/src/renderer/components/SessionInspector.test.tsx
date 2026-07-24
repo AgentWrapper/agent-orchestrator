@@ -177,6 +177,9 @@ describe("SessionInspector tabs", () => {
 		const summaryTab = screen.getByRole("tab", { name: "Summary" });
 
 		expect(summaryTab).not.toHaveClass("flex-1");
+		expect(summaryTab).toHaveClass("h-control-md", "px-1.5");
+		expect(summaryTab).toHaveAttribute("title", "Summary");
+		expect(within(summaryTab).getByText("Summary")).toHaveClass("@max-[350px]/inspector:hidden");
 	});
 
 	it("renders the supplied files view when the Files tab opens", async () => {
