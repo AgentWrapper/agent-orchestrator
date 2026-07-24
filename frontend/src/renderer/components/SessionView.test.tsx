@@ -354,6 +354,16 @@ describe("SessionView", () => {
 		expect(window.localStorage.getItem("ao.inspector.split")).toBe("31.5");
 	});
 
+	it("persists a drag collapse from the default-open inspector state", () => {
+		render(<SessionView sessionId="sess-1" />);
+		const entry = panels.get("inspector")!;
+		screen.getByTestId("resize-handle").setAttribute("data-separator", "active");
+
+		act(() => entry.onResize?.({ asPercentage: 0, inPixels: 0 }));
+
+		expect(useUiStore.getState().inspectorSessions["sess-1"]).toMatchObject({ isOpen: false, view: "summary" });
+	});
+
 	// Regression: rrp v4 reports observed DOM sizes, so the flex-grow
 	// transition animating an imperative collapse fires onResize with transient
 	// non-zero sizes. Mirroring those into the store re-opened the panel

@@ -280,7 +280,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const handleInspectorResize = useCallback(
 		(size: PanelSize) => {
 			if (inspectorSeparatorRef.current?.getAttribute("data-separator") !== "active") return;
-			const currentOpen = useUiStore.getState().inspectorSessions[sessionId]?.isOpen ?? false;
+			const currentOpen = useUiStore.getState().inspectorSessions[sessionId]?.isOpen ?? true;
 			if (size.asPercentage > 0) {
 				window.localStorage?.setItem(inspectorSplitStorageKey, String(size.asPercentage));
 				if (!currentOpen) toggleInspector(sessionId);

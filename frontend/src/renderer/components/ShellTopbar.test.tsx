@@ -205,6 +205,17 @@ describe("ShellTopbar orchestrator actions", () => {
 });
 
 describe("ShellTopbar inspector state", () => {
+	it("treats missing worker inspector state as open", async () => {
+		renderTopbarSessions([worker], "sess-1");
+
+		const toggle = screen.getByRole("button", { name: "Close inspector panel" });
+		expect(toggle).toHaveAttribute("aria-pressed", "true");
+
+		await userEvent.click(toggle);
+
+		expect(useUiStore.getState().inspectorSessions["sess-1"]).toEqual({ isOpen: false, view: "summary" });
+	});
+
 	it("routes aria-pressed to the current worker session", () => {
 		useUiStore.setState({
 			inspectorSessions: {

@@ -45,7 +45,7 @@ export function ShellTopbar() {
 	const params = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
 	const currentSessionId = params.sessionId;
 	const isInspectorOpen = useUiStore((state) =>
-		currentSessionId ? (state.inspectorSessions[currentSessionId]?.isOpen ?? false) : false,
+		currentSessionId ? (state.inspectorSessions[currentSessionId]?.isOpen ?? true) : false,
 	);
 	const toggleInspector = useUiStore((state) => state.toggleInspector);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
