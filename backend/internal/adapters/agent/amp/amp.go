@@ -62,6 +62,14 @@ func (p *Plugin) Manifest() adapters.Manifest {
 // options would make launches version-fragile. Amp also has no documented
 // per-run system-prompt flag, so standing instructions are installed by
 // GetAgentHooks as a workspace-local plugin.
+//
+// cfg.Config.Model is likewise intentionally not forwarded: Amp has no
+// --model flag, model env var, or config key for a specific model string.
+// It abstracts model choice behind an interactive "mode" system (low/medium/
+// high/ultra, switched via Ctrl+O -> mode in the TUI), which is not a 1:1
+// mapping onto a model name. Until Amp's CLI exposes a real per-model
+// override, agentConfig.model has no effect when agent is "amp" — see
+// https://github.com/AgentWrapper/agent-orchestrator/issues/2902.
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
