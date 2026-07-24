@@ -105,6 +105,22 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
+// GetConfigSpec reports the per-project agent config keys Grok Build understands.
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.ConfigSpec{}, err
+	}
+	return ports.ConfigSpec{
+		Fields: []ports.ConfigField{
+			{
+				Key:         "model",
+				Type:        ports.ConfigFieldString,
+				Description: "Model override passed to `grok -m`.",
+			},
+		},
+	}, nil
+}
+
 // GetLaunchCommand builds `grok --no-auto-update [--permission-mode <mode>] [-- prompt]`.
 // Prompt is delivered positionally so Grok starts an interactive coding session.
 //
@@ -118,6 +134,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 
 	cmd = []string{binary, "--no-auto-update"}
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	appendModelFlag(&cmd, cfg.Config)
 
 	systemPrompt, err := launchSystemPromptText(cfg)
 	if err != nil {
@@ -179,9 +196,10 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 		return nil, false, err
 	}
 
-	cmd = make([]string, 0, 4)
+	cmd = make([]string, 0, 6)
 	cmd = append(cmd, binary, "--no-auto-update")
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	appendModelFlag(&cmd, cfg.Config)
 	systemPrompt, err := restoreSystemPromptText(cfg)
 	if err != nil {
 		return nil, false, err
@@ -226,6 +244,16 @@ func (p *Plugin) grokBinary(ctx context.Context) (string, error) {
 
 func grokClaudeSettingsPath(workspacePath string) string {
 	return filepath.Join(workspacePath, grokClaudeSettingsDirName, grokClaudeSettingsFileName)
+}
+
+// appendModelFlag appends a trimmed -m flag when a model override is
+// configured. -m is the documented model-selection flag for both headless
+// and TUI launches (https://docs.x.ai/build/overview: "grok -p \"Hello\" -m
+// my-model" / "pick the model in headless mode or in the TUI").
+func appendModelFlag(cmd *[]string, cfg ports.AgentConfig) {
+	if model := strings.TrimSpace(cfg.Model); model != "" {
+		*cmd = append(*cmd, "-m", model)
+	}
 }
 
 func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
