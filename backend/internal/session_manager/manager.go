@@ -2418,11 +2418,15 @@ func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueI
 	env[EnvProjectID] = string(project)
 	env[EnvIssueID] = string(issue)
 	env[EnvDataDir] = dataDir
-	// Only pin AO_RUN_FILE when this daemon has an explicit path. An empty value
-	// would export AO_RUN_FILE="", which config treats as unset anyway; leaving
-	// it out keeps the session env clean and the fallback behavior unchanged.
+	// AO_RUN_FILE is AO-owned like the vars above: a project must not set it, and
+	// an empty daemon path must leave it unset (config then falls back to the
+	// default ~/.ao/running.json). Setting it unconditionally covers the non-empty
+	// case; deleting any project-supplied value covers the empty case, since
+	// projectEnv was copied in above and would otherwise survive.
 	if runFilePath != "" {
 		env[EnvRunFile] = runFilePath
+	} else {
+		delete(env, EnvRunFile)
 	}
 	return env
 }

@@ -48,6 +48,14 @@ func TestSpawnEnvRunFile(t *testing.T) {
 	if _, ok := noPath[EnvRunFile]; ok {
 		t.Fatalf("AO_RUN_FILE set for empty run-file path; want unset so config default applies")
 	}
+
+	// Combined case: an empty daemon path must not let a project-supplied
+	// AO_RUN_FILE survive, or the session's hooks would target a project-chosen
+	// run-file instead of falling back to the config default.
+	overridden := spawnEnv("s-1", "p", "", "/data", "", map[string]string{EnvRunFile: "/wrong"})
+	if _, ok := overridden[EnvRunFile]; ok {
+		t.Fatalf("AO_RUN_FILE = %q survived empty run-file path; project must not override an AO-owned var", overridden[EnvRunFile])
+	}
 }
 
 func TestHookPATH(t *testing.T) {
