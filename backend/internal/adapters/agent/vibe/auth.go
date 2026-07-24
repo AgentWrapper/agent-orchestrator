@@ -3,13 +3,14 @@ package vibe
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/authprobe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 )
 
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
@@ -121,6 +122,9 @@ func vibeEnvFileAuthStatus(path, envVar string) (ports.AgentAuthStatus, bool, er
 }
 
 func vibeKeychainAuthStatus(ctx context.Context, envVar string) (ports.AgentAuthStatus, bool, error) {
+	if runtime.GOOS != "darwin" {
+		return ports.AgentAuthStatusUnknown, false, nil
+	}
 	if strings.TrimSpace(envVar) == "" {
 		return ports.AgentAuthStatusUnknown, false, nil
 	}
@@ -128,7 +132,7 @@ func vibeKeychainAuthStatus(ctx context.Context, envVar string) (ports.AgentAuth
 	defer cancel()
 
 	//nolint:gosec // invokes macOS security with fixed command and validated account/service arguments
-	out, err := exec.CommandContext(probeCtx, "security", "find-generic-password", "-s", vibeKeychainService, "-a", envVar, "-w").CombinedOutput()
+	out, err := aoprocess.CommandContext(probeCtx, "security", "find-generic-password", "-s", vibeKeychainService, "-a", envVar, "-w").CombinedOutput()
 	if probeCtx.Err() != nil {
 		return ports.AgentAuthStatusUnknown, false, nil
 	}

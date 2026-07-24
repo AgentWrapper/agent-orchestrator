@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -126,6 +127,25 @@ func TestVibeSessionLogAuthStatusAuthorizedWithAssistantMessage(t *testing.T) {
 	}
 	if !ok || status != ports.AgentAuthStatusAuthorized {
 		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusAuthorized)
+	}
+}
+
+func TestVibeKeychainAuthStatus(t *testing.T) {
+	status, ok, err := vibeKeychainAuthStatus(context.Background(), "test-env-var")
+	if runtime.GOOS != "darwin" {
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if ok {
+			t.Fatalf("expected ok = false on non-darwin, got true")
+		}
+		if status != ports.AgentAuthStatusUnknown {
+			t.Fatalf("expected status %q, got %q", ports.AgentAuthStatusUnknown, status)
+		}
+	} else {
+		if err != nil {
+			t.Fatalf("unexpected error on darwin: %v", err)
+		}
 	}
 }
 
