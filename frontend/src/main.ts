@@ -23,6 +23,7 @@ import {
 	quitAndInstallUpdate,
 	getUpdateStatus,
 	setUpdateSettings,
+	returnToHome,
 	type UpdateCheckOptions,
 } from "./main/auto-updater";
 import { listFeatureBuilds, getActiveFeatureBuild } from "./main/feature-builds";
@@ -1454,6 +1455,11 @@ ipcMain.handle("updates:check", async (_event, options?: UpdateCheckOptions) => 
 	const runFile = runFilePath();
 	if (!runFile) return;
 	await checkForUpdatesNow(path.dirname(runFile), options);
+});
+ipcMain.handle("updates:returnHome", async (_event, requestId?: string) => {
+	const runFile = runFilePath();
+	if (!runFile) return;
+	await returnToHome(path.dirname(runFile), requestId);
 });
 ipcMain.handle("updates:download", async (_event, requestId?: string) => {
 	await downloadUpdateNow(requestId);

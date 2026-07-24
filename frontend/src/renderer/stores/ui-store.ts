@@ -33,6 +33,8 @@ type UiState = {
 	themePreference: ThemePreference;
 	/** Resolved light/dark for React consumers; may track OS while preference is system. */
 	resolvedTheme: Theme;
+	/** When true, developer-only surfaces (e.g. Feature Releases) are revealed. Default off. */
+	developerMode: boolean;
 	restartingProjectIds: ReadonlySet<string>;
 	orchestratorReplacementErrors: Record<string, string>;
 	orchestratorStartupErrors: Record<string, string>;
@@ -56,6 +58,7 @@ type UiState = {
 	activeShellTerminalHandleId: string | null;
 	setWorkbenchTab: (tab: WorkbenchTab) => void;
 	setThemePreference: (theme: ThemePreference) => void;
+	setDeveloperMode: (enabled: boolean) => void;
 	/** Refresh resolvedTheme from OS without writing light/dark to storage. */
 	syncSystemTheme: () => void;
 	toggleSidebar: () => void;
@@ -74,6 +77,7 @@ type UiState = {
 };
 
 const sidebarStorageKey = "ao.sidebar.open";
+const developerModeStorageKey = "ao.developerMode";
 
 function getLocalStorage() {
 	if (typeof window === "undefined" || !window.localStorage) return null;
@@ -82,6 +86,10 @@ function getLocalStorage() {
 
 function initialSidebarOpen() {
 	return getLocalStorage()?.getItem(sidebarStorageKey) !== "false";
+}
+
+function initialDeveloperMode() {
+	return getLocalStorage()?.getItem(developerModeStorageKey) === "true";
 }
 
 function inspectorState(sessions: Record<string, InspectorSessionState>, sessionId: string): InspectorSessionState {
@@ -97,6 +105,7 @@ export const useUiStore = create<UiState>((set) => ({
 	isCommandPaletteOpen: false,
 	themePreference: initialThemePreference,
 	resolvedTheme: resolveTheme(initialThemePreference),
+	developerMode: initialDeveloperMode(),
 	restartingProjectIds: new Set<string>(),
 	orchestratorReplacementErrors: {},
 	orchestratorStartupErrors: {},
@@ -108,6 +117,10 @@ export const useUiStore = create<UiState>((set) => ({
 	setThemePreference: (themePreference) => {
 		getLocalStorage()?.setItem(themeStorageKey, themePreference);
 		set({ themePreference, resolvedTheme: resolveTheme(themePreference) });
+	},
+	setDeveloperMode: (developerMode) => {
+		getLocalStorage()?.setItem(developerModeStorageKey, String(developerMode));
+		set({ developerMode });
 	},
 	syncSystemTheme: () =>
 		set((state) => {

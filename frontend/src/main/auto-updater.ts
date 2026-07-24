@@ -80,7 +80,7 @@ let escalationTimer: ReturnType<typeof setInterval> | undefined;
 let escalationStateDir: string | undefined;
 const AUTOMATIC_UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 let automaticUpdateTimer: ReturnType<typeof setInterval> | undefined;
-type UpdaterOperation = "automatic-check" | "manual-check" | "manual-download" | "settings-write";
+type UpdaterOperation = "automatic-check" | "manual-check" | "manual-download" | "settings-write" | "return-home";
 let activeUpdaterOperation: UpdaterOperation | undefined;
 let activeUpdaterRequestId: string | undefined;
 let automaticCheckPreviousStatus: { status: UpdateStatus; independentRevision: number } | undefined;
@@ -483,6 +483,49 @@ export async function checkForUpdatesNow(stateDir: string, options: UpdateCheckO
 			state: "error",
 			message: (err as Error)?.message ?? "Update check failed",
 			requestId: options.requestId,
+		});
+	}
+}
+
+// returnToHome clears any pinned feature build and resolves the home channel in a
+// SINGLE updater-serialized operation. Clearing and checking must share one
+// operation on updaterOperationQueue: a separate clear (on the settings queue)
+// could interleave with a queued settings-write or an in-flight check and see the
+// stale pin restored, leaving the app on the pr<N> feed. The pin is cleared against
+// persisted state, so this never depends on renderer form hydration.
+export async function returnToHome(stateDir: string, requestId?: string): Promise<void> {
+	escalationStateDir = stateDir;
+	wireUpdaterEvents();
+	if (!app.isPackaged) {
+		broadcast({
+			state: "unsupported",
+			message: "Updates are only available in the installed app.",
+			requestId,
+		});
+		return;
+	}
+	try {
+		await runSerializedUpdaterOperation(
+			"return-home",
+			async () => {
+				const cleared = await updateUpdateSettings(stateDir, (current) =>
+					current.feature ? { ...current, feature: null } : current,
+				);
+				const settings = await reconcileAndPersist(stateDir, cleared);
+				reconcileAutomaticUpdateSchedule(stateDir, settings.enabled);
+				configureFeed(settings);
+				autoUpdater.autoDownload = false;
+				autoUpdater.autoInstallOnAppQuit = true;
+				broadcastUpdaterStatus({ state: "checking" });
+				await autoUpdater.checkForUpdates();
+			},
+			requestId,
+		);
+	} catch (err) {
+		broadcast({
+			state: "error",
+			message: (err as Error)?.message ?? "Return failed",
+			requestId,
 		});
 	}
 }

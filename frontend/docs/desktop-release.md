@@ -259,7 +259,10 @@ no environment gate (no secrets needed for deletion).
 
 ### How users consume feature releases
 
-Users install and track a feature build from **Settings > Updates**:
+Feature Releases is gated behind **Developer Mode** (off by default). Enable it first
+under **Settings > Developer Mode**; the **Feature Releases** channel option only
+appears while Developer Mode is on. Users then install and track a feature build from
+**Settings > Updates**:
 
 1. Change the primary channel to **Feature Releases**. A second dropdown appears
    showing currently live feature builds, each labeled `PR #N: <title>` with its
