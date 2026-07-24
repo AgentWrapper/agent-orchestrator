@@ -5,6 +5,7 @@ import {
 	sessionIsActive,
 	sessionNeedsAttention,
 	workerSessions,
+	type PullRequestFacts,
 	type WorkspaceSession,
 	type WorkspaceSummary,
 } from "../types/workspace";
@@ -23,6 +24,9 @@ export type CommandAction =
 	| { kind: "open-new-project" }
 	| { kind: "open-orchestrator"; projectId: string }
 	| { kind: "copy-branch"; branch: string }
+	| { kind: "open-pr"; url: string }
+	| { kind: "copy-pr-url"; url: string }
+	| { kind: "trigger-review"; sessionId: string }
 	| { kind: "toggle-theme" };
 
 export type CommandItem = {
@@ -59,6 +63,45 @@ function isSyntheticBranch(session: WorkspaceSession): boolean {
 	return session.branch === `session/${session.id}`;
 }
 
+function copyableBranch(session: WorkspaceSession): string | undefined {
+	if (session.kind === "orchestrator") return undefined;
+	if (!session.branch || isSyntheticBranch(session)) return undefined;
+	return session.branch;
+}
+
+function compactKeywords(...values: Array<string | undefined | null>): string[] {
+	return values.filter((value): value is string => Boolean(value));
+}
+
+function prKeywords(
+	workspace: WorkspaceSummary,
+	session: WorkspaceSession,
+	pr: PullRequestFacts,
+	...extra: string[]
+): string[] {
+	return compactKeywords(
+		`#${pr.number}`,
+		String(pr.number),
+		pr.url,
+		session.title,
+		session.branch,
+		workspace.name,
+		pr.state,
+		...extra,
+	);
+}
+
+function reviewCommandTitle(session: WorkspaceSession): string {
+	if (
+		session.status === "changes_requested" ||
+		session.status === "approved" ||
+		openPRs(session).some((pr) => pr.review !== "none" && pr.review !== "pending")
+	) {
+		return "Re-run review";
+	}
+	return "Trigger review";
+}
+
 type SessionCommandGroup = Extract<CommandGroupId, "attention" | "sessions">;
 
 const SESSION_ID_PREFIX: Record<SessionCommandGroup, string> = { attention: "attention", sessions: "session" };
@@ -73,7 +116,7 @@ function sessionCommand(
 		group,
 		title: session.title,
 		subtitle: workspace.name,
-		keywords: [workspace.name, session.branch, session.issueId ?? ""],
+		keywords: compactKeywords(workspace.name, session.branch, session.issueId),
 		action: {
 			kind: "navigate",
 			target: {
@@ -141,14 +184,26 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 		});
 	}
 
-	if (currentSession && currentSession.kind !== "orchestrator" && !isSyntheticBranch(currentSession)) {
+	const currentBranch = currentSession ? copyableBranch(currentSession) : undefined;
+	if (currentSession && currentBranch) {
 		items.push({
 			id: "current-copy-branch",
 			group: "current",
 			title: "Copy branch name",
-			subtitle: currentSession.branch,
-			keywords: ["branch", "git", currentSession.branch, currentSession.title],
-			action: { kind: "copy-branch", branch: currentSession.branch },
+			subtitle: currentBranch,
+			keywords: compactKeywords("branch", "git", "copy", currentBranch, currentSession.title),
+			action: { kind: "copy-branch", branch: currentBranch },
+		});
+	}
+
+	if (currentSession && currentSession.kind !== "orchestrator" && openPRs(currentSession).length > 0) {
+		items.push({
+			id: "current-trigger-review",
+			group: "current",
+			title: reviewCommandTitle(currentSession),
+			subtitle: currentSession.title,
+			keywords: compactKeywords("review", "trigger", "run", "rerun", currentSession.title, currentSession.branch),
+			action: { kind: "trigger-review", sessionId: currentSession.id },
 		});
 	}
 
@@ -174,7 +229,7 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 			id: `project:${workspace.id}`,
 			group: "projects",
 			title: workspace.name,
-			keywords: [workspace.path],
+			keywords: compactKeywords(workspace.path),
 			action: { kind: "navigate", target: { to: "/projects/$projectId", params: { projectId: workspace.id } } },
 		});
 	}
@@ -189,28 +244,33 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 
 	for (const workspace of workspaces) {
 		for (const session of workerSessions(workspace.sessions)) {
-			for (const pr of openPRs(session)) {
+			const prs = openPRs(session);
+			if (prs.length > 0 && session.id !== currentSessionId) {
+				items.push({
+					id: `review:${session.id}`,
+					group: "prs",
+					title: reviewCommandTitle(session),
+					subtitle: `${session.title} - ${workspace.name}`,
+					keywords: compactKeywords("review", "trigger", "run", "rerun", session.title, session.branch, workspace.name),
+					action: { kind: "trigger-review", sessionId: session.id },
+				});
+			}
+			for (const pr of prs) {
 				items.push({
 					id: `pr:${session.id}:${pr.number}`,
 					group: "prs",
-					title: `#${pr.number}`,
+					title: `Open PR #${pr.number}`,
 					subtitle: `${session.title} · ${workspace.name}`,
-					keywords: [
-						`#${pr.number}`,
-						String(pr.number),
-						pr.url,
-						session.title,
-						session.branch,
-						workspace.name,
-						pr.state,
-					],
-					action: {
-						kind: "navigate",
-						target: {
-							to: "/projects/$projectId/sessions/$sessionId",
-							params: { projectId: workspace.id, sessionId: session.id },
-						},
-					},
+					keywords: prKeywords(workspace, session, pr, "open", "pull request"),
+					action: { kind: "open-pr", url: pr.url },
+				});
+				items.push({
+					id: `pr-copy:${session.id}:${pr.number}`,
+					group: "prs",
+					title: `Copy PR #${pr.number} URL`,
+					subtitle: `${session.title} - ${workspace.name}`,
+					keywords: prKeywords(workspace, session, pr, "copy", "url", "pull request"),
+					action: { kind: "copy-pr-url", url: pr.url },
 				});
 			}
 		}

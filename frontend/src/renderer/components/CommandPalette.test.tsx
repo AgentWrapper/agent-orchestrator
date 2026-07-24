@@ -8,6 +8,9 @@ import { useUiStore } from "../stores/ui-store";
 const navigateMock = vi.hoisted(() => vi.fn());
 const spawnMock = vi.hoisted(() => vi.fn());
 const choosePathMock = vi.hoisted(() => vi.fn());
+const openExternalMock = vi.hoisted(() => vi.fn());
+const clipboardWriteTextMock = vi.hoisted(() => vi.fn());
+const postMock = vi.hoisted(() => vi.fn());
 
 const ctx = vi.hoisted(() => {
 	const workspaces: WorkspaceSummary[] = [
@@ -52,6 +55,29 @@ const ctx = vi.hoisted(() => {
 					status: "terminated",
 					updatedAt: "2026-06-10T00:00:00Z",
 					prs: [],
+				},
+				{
+					id: "w-pr",
+					workspaceId: "proj-1",
+					workspaceName: "app",
+					title: "add cache",
+					provider: "codex",
+					kind: "worker",
+					branch: "feature/cache",
+					status: "pr_open",
+					updatedAt: "2026-06-10T00:00:00Z",
+					prs: [
+						{
+							url: "https://github.com/o/r/pull/42",
+							number: 42,
+							state: "open",
+							ci: "passing",
+							review: "pending",
+							mergeability: "clean",
+							reviewComments: false,
+							updatedAt: "2026-06-10T00:00:00Z",
+						},
+					],
 				},
 				{
 					id: "orch",
@@ -103,6 +129,24 @@ vi.mock("../lib/shell-context", () => ({
 
 vi.mock("../lib/spawn-orchestrator", () => ({ spawnOrchestrator: spawnMock }));
 
+vi.mock("../lib/bridge", () => ({
+	aoBridge: {
+		app: {
+			openExternal: (...args: unknown[]) => openExternalMock(...args),
+		},
+		clipboard: {
+			writeText: (...args: unknown[]) => clipboardWriteTextMock(...args),
+		},
+	},
+}));
+
+vi.mock("../lib/api-client", () => ({
+	apiClient: {
+		POST: (...args: unknown[]) => postMock(...args),
+	},
+	apiErrorMessage: (_error: unknown, fallback: string) => fallback,
+}));
+
 vi.mock("./NewTaskDialog", () => ({
 	NewTaskDialog: ({ open, projectId }: { open: boolean; projectId?: string }) =>
 		open ? <div data-testid="new-task-dialog">new task {projectId}</div> : null,
@@ -150,6 +194,9 @@ beforeEach(() => {
 	navigateMock.mockReset();
 	spawnMock.mockReset();
 	choosePathMock.mockReset();
+	openExternalMock.mockReset().mockResolvedValue(undefined);
+	clipboardWriteTextMock.mockReset().mockResolvedValue(undefined);
+	postMock.mockReset().mockResolvedValue({ data: {} });
 	act(() => {
 		useUiStore.setState({
 			isCommandPaletteOpen: false,
@@ -377,6 +424,50 @@ describe("CommandPalette actions", () => {
 		expect(await screen.findByRole("alert")).toHaveTextContent("daemon down");
 		expect(spawnMock).toHaveBeenCalledWith("proj-2", "command_palette");
 		expect(useUiStore.getState().isCommandPaletteOpen).toBe(true);
+	});
+
+	it("opens PRs externally from the palette", async () => {
+		ctx.params = {};
+		renderPalette();
+		act(() => useUiStore.getState().setCommandPaletteOpen(true));
+		const input = await screen.findByPlaceholderText(/search projects/i);
+		fireEvent.change(input, { target: { value: "open pr 42" } });
+
+		await waitFor(() => expect(screen.getByText("Open PR #42")).toBeInTheDocument());
+		fireEvent.click(screen.getByText("Open PR #42"));
+
+		expect(openExternalMock).toHaveBeenCalledWith("https://github.com/o/r/pull/42");
+		await waitFor(() => expect(paletteInput()).toBeNull());
+	});
+
+	it("copies PR URLs from the palette", async () => {
+		ctx.params = {};
+		renderPalette();
+		act(() => useUiStore.getState().setCommandPaletteOpen(true));
+		const input = await screen.findByPlaceholderText(/search projects/i);
+		fireEvent.change(input, { target: { value: "copy pr 42" } });
+
+		await waitFor(() => expect(screen.getByText("Copy PR #42 URL")).toBeInTheDocument());
+		fireEvent.click(screen.getByText("Copy PR #42 URL"));
+
+		expect(clipboardWriteTextMock).toHaveBeenCalledWith("https://github.com/o/r/pull/42");
+		await waitFor(() => expect(paletteInput()).toBeNull());
+	});
+
+	it("triggers review for the current session from the palette", async () => {
+		ctx.params = { projectId: "proj-1", sessionId: "w-pr" };
+		renderPalette();
+		act(() => useUiStore.getState().setCommandPaletteOpen(true));
+		await screen.findByPlaceholderText(/search projects/i);
+
+		fireEvent.click(screen.getByText("Trigger review"));
+
+		await waitFor(() =>
+			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/reviews/trigger", {
+				params: { path: { sessionId: "w-pr" } },
+			}),
+		);
+		await waitFor(() => expect(paletteInput()).toBeNull());
 	});
 
 	it("toggles the theme and closes", async () => {

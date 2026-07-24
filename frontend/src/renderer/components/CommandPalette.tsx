@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObjec
 import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { aoBridge } from "../lib/bridge";
+import { apiClient, apiErrorMessage } from "../lib/api-client";
 import {
 	buildCommands,
 	displayGroups,
@@ -132,6 +133,18 @@ export function CommandPalette() {
 		[workspaces, navigateToTarget, queryClient, closePalette, blockedByRestart],
 	);
 
+	const triggerReview = useCallback(
+		async (sessionId: string) => {
+			const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/trigger", {
+				params: { path: { sessionId } },
+			});
+			if (error) throw new Error(apiErrorMessage(error, "Unable to start review"));
+			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			closePalette();
+		},
+		[queryClient, closePalette],
+	);
+
 	const runAction = useCallback(
 		async (item: CommandItemModel) => {
 			const action = item.action;
@@ -152,6 +165,17 @@ export function CommandPalette() {
 					case "copy-branch":
 						await aoBridge.clipboard.writeText(action.branch);
 						closePalette();
+						break;
+					case "open-pr":
+						await aoBridge.app.openExternal(action.url);
+						closePalette();
+						break;
+					case "copy-pr-url":
+						await aoBridge.clipboard.writeText(action.url);
+						closePalette();
+						break;
+					case "trigger-review":
+						await triggerReview(action.sessionId);
 						break;
 					case "open-new-task":
 						if (blockedByRestart(action.projectId)) break;
@@ -174,7 +198,7 @@ export function CommandPalette() {
 				setPendingId(null);
 			}
 		},
-		[navigateToTarget, closePalette, toggleTheme, openOrchestrator, blockedByRestart],
+		[navigateToTarget, closePalette, toggleTheme, openOrchestrator, blockedByRestart, triggerReview],
 	);
 
 	const onSelectItem = useCallback(
