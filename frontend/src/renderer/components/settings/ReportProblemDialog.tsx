@@ -59,10 +59,10 @@ const DESTINATIONS: {
 	action: string;
 	icon: (props: DestinationIconProps) => ReactNode;
 }[] = [
-	{ value: "github", label: "GitHub", action: "Copy & Create GitHub Issue", icon: GithubIcon },
-	{ value: "discord", label: "Discord", action: "Copy & Open Discord", icon: DiscordIcon },
-	{ value: "email", label: "Email", action: "Copy & Open Email", icon: EmailIcon },
-];
+		{ value: "github", label: "GitHub", action: "Copy & Create GitHub Issue", icon: GithubIcon },
+		{ value: "discord", label: "Discord", action: "Copy & Open Discord", icon: DiscordIcon },
+		{ value: "email", label: "Email", action: "Copy & Open Email", icon: EmailIcon },
+	];
 
 export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogProps) {
 	const titleId = useId();
@@ -232,7 +232,10 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 						type="button"
 						className="settings-footer-button border-transparent bg-settings-accent text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
 						disabled={!canSubmit}
-						onClick={() => void copyDraft()}
+						onClick={() => {
+							if (!canSubmit) return;
+							void copyDraft()
+						}}
 					>
 						{destination.action}
 					</button>
