@@ -107,6 +107,7 @@
 
 	/* Settings page (Figma) */
 	--color-settings-row: var(--color-bg-settings-row);
+	--color-settings-menu: var(--color-bg-settings-menu);
 	--color-settings-menu-selected: var(--color-bg-settings-menu-selected);
 	--color-settings-title: var(--color-text-settings-title);
 	--color-settings-muted: var(--color-text-settings-muted);

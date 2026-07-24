@@ -298,6 +298,38 @@ describe("ProjectSettingsForm", () => {
 		expect(putMock).not.toHaveBeenCalled();
 	});
 
+	it("disables agent selectors while the initial agent catalog is loading", async () => {
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") {
+				return new Promise(() => {});
+			}
+			return {
+				data: {
+					status: "ok",
+					project: {
+						id: "proj-1",
+						name: "Project One",
+						kind: "single_repo",
+						path: "/repo/project-one",
+						repo: "",
+						defaultBranch: "main",
+						config: {
+							worker: { agent: "codex" },
+							orchestrator: { agent: "claude-code" },
+						},
+					},
+				},
+				error: undefined,
+			};
+		});
+
+		renderSettings();
+
+		expect(await screen.findByRole("combobox", { name: "Default worker agent" })).toBeDisabled();
+		expect(screen.getByRole("combobox", { name: "Default orchestrator agent" })).toBeDisabled();
+		expect(screen.getByRole("combobox", { name: "Default reviewer agent" })).toBeDisabled();
+	});
+
 	it("shows unknown-auth agents as selectable with a warning in project settings", async () => {
 		mockProject({
 			id: "proj-1",

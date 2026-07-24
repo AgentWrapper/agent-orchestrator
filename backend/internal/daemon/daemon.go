@@ -167,6 +167,7 @@ func Run() error {
 		return err
 	}
 	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, log)
+
 	agentSvc := agentsvc.New()
 	go func() {
 		if _, err := agentSvc.Refresh(ctx); err != nil {
