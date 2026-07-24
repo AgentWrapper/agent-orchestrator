@@ -105,6 +105,24 @@ func TestGetLaunchCommandPermissionModesEmitNoFlag(t *testing.T) {
 	}
 }
 
+func TestGetLaunchCommandIgnoresModelConfig(t *testing.T) {
+	// Amp has no CLI/config surface for model selection (see amp.go's
+	// GetLaunchCommand doc comment and issue #2902), so a configured model
+	// must never appear in the launch argv.
+	p := &Plugin{resolvedBinary: "amp"}
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config: ports.AgentConfig{Model: "claude-opus-4-5"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"amp"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v (model must not be forwarded)", cmd, want)
+	}
+}
+
 func TestGetLaunchCommandUsesPluginForSystemPrompt(t *testing.T) {
 	p := &Plugin{resolvedBinary: "amp"}
 	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
