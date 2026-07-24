@@ -34,6 +34,30 @@ Non-trivial work? Comment on the issue or ping Discord first. Get a thumbs-up, t
 
 Need the product/run overview first? Start with [README.md](README.md) and [docs/architecture.md](docs/architecture.md).
 
+### Run from source
+
+The desktop app lives in `frontend/`. For renderer-only UI work, run the web
+preview from the source checkout:
+
+```bash
+cd frontend
+npm install
+npm run dev:web
+```
+
+`dev:web` sets `VITE_NO_ELECTRON=1` through a Node launcher so it works on
+macOS, Linux, and Windows. On Windows, if PowerShell blocks `npm.ps1` with a
+script execution policy error, use the command shim directly:
+
+```powershell
+cd frontend
+npm.cmd install
+npm.cmd run dev:web
+```
+
+The command prints a local Vite URL, usually `http://127.0.0.1:5173/`. Use
+`npm run dev` from `frontend/` when you need the full Electron desktop shell.
+
 ### Bugs and features
 
 Use the GitHub issue forms (**Bug report** / **Feature request**) so reports stay reproducible.
