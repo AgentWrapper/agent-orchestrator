@@ -324,4 +324,19 @@ describe("TopbarKillButton", () => {
 			expect(onKilledMock).toHaveBeenCalledWith("proj-1", undefined);
 		});
 	});
+
+	it("does not leak pending kill state when switching worker sessions", async () => {
+		postMock.mockReturnValue(new Promise(() => {}));
+		const view = renderTopbarSessions([worker, secondWorker], "sess-1");
+
+		await userEvent.click(screen.getByRole("button", { name: "Kill session" }));
+		await clickKillDialogConfirm();
+		expect(await screen.findByRole("button", { name: "Killing..." })).toBeDisabled();
+
+		paramsMock.sessionId = "sess-2";
+		view.rerenderTopbar();
+
+		expect(screen.queryByRole("dialog", { name: "Kill session?" })).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Kill session" })).toBeEnabled();
+	});
 });
