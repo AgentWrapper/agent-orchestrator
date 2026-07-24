@@ -41,7 +41,7 @@ npm run typecheck
 npm run build
 ```
 
-When showing or demoing frontend changes, run `ao preview [url]` from inside the session so the change renders in the desktop browser panel (the inspector rail's Browser tab); do not just describe it.
+When showing or demoing frontend changes, run `ao preview [url]` from inside the session so the change renders in the desktop browser panel (the inspector rail's Browser tab); do not just describe it. Do not open local preview URLs with the OS browser, `open`/`xdg-open`, or headless browser tooling (Playwright, etc.) — only fall back to those if the user explicitly asks, or `ao preview` returns an error you report. `ao preview` only has a Browser tab to render into from a **worker** session; it has no effect from an orchestrator session.
 
 ## Where to look first
 

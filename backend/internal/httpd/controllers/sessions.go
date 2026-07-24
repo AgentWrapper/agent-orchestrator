@@ -432,6 +432,13 @@ func (c *SessionsController) setPreview(w http.ResponseWriter, r *http.Request) 
 		envelope.WriteError(w, r, err)
 		return
 	}
+	// Orchestrator sessions have no inspector rail in the desktop app, so a
+	// preview write here would silently succeed with nothing visible for it.
+	// Reject loudly instead of storing a target no one can see.
+	if sess.Kind == domain.KindOrchestrator {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "PREVIEW_UNSUPPORTED_SESSION_KIND", "Orchestrator sessions have no browser preview panel; run ao preview from a worker session", nil)
+		return
+	}
 	// ponytail: no URL sanitization on preview target; agent-trusted for now
 	previewURL := strings.TrimSpace(in.URL)
 	if previewURL == "" {
@@ -476,6 +483,15 @@ func (c *SessionsController) setPreview(w http.ResponseWriter, r *http.Request) 
 func (c *SessionsController) clearPreview(w http.ResponseWriter, r *http.Request) {
 	if c.Svc == nil {
 		apispec.NotImplemented(w, r, "DELETE", "/api/v1/sessions/{sessionId}/preview")
+		return
+	}
+	sess, err := c.Svc.Get(r.Context(), sessionID(r))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	if sess.Kind == domain.KindOrchestrator {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "PREVIEW_UNSUPPORTED_SESSION_KIND", "Orchestrator sessions have no browser preview panel; run ao preview from a worker session", nil)
 		return
 	}
 	updated, err := c.Svc.SetPreview(r.Context(), sessionID(r), "")
