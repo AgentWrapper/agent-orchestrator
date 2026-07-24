@@ -147,7 +147,7 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 			id: "current-copy-branch",
 			group: "current",
 			title: "Copy branch name",
-			subtitle: currentBranch,
+			subtitle: currentSession.branch,
 			keywords: ["branch", "git", currentBranch, currentSession.title],
 			action: { kind: "copy-branch", branch: currentBranch },
 		});
