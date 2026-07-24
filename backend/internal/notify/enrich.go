@@ -33,13 +33,16 @@ func enrich(intent Intent) (domain.NotificationRecord, error) {
 func titleForIntent(intent Intent) string {
 	switch intent.Type {
 	case domain.NotificationNeedsInput:
-		return fmt.Sprintf("%s needs input", sessionLabel(intent))
+		return fmt.Sprintf("%s needs your input", sessionLabel(intent))
 	case domain.NotificationReadyToMerge:
+		if s := sessionLabel(intent); s != "session" {
+			return fmt.Sprintf("%s is ready to merge", s)
+		}
 		return fmt.Sprintf("%s is ready to merge", prLabel(intent))
 	case domain.NotificationPRMerged:
-		return fmt.Sprintf("%s was merged", prLabel(intent))
+		return fmt.Sprintf("%s merged", prLabel(intent))
 	case domain.NotificationPRClosedUnmerged:
-		return fmt.Sprintf("%s was closed without merging", prLabel(intent))
+		return fmt.Sprintf("%s closed", prLabel(intent))
 	default:
 		return "Notification"
 	}
@@ -48,22 +51,23 @@ func titleForIntent(intent Intent) string {
 func bodyForIntent(intent Intent) string {
 	switch intent.Type {
 	case domain.NotificationNeedsInput:
-		return "The agent is waiting for your response."
+		return "Your agent is waiting on you to continue."
 	case domain.NotificationReadyToMerge:
-		if s := sessionLabel(intent); s != "session" {
-			return fmt.Sprintf("%s has no known blocking CI or review feedback.", s)
-		}
-		return "The pull request has no known blocking CI or review feedback."
+		return "CI passed with no blocking review feedback."
 	case domain.NotificationPRMerged:
-		if title := strings.TrimSpace(intent.PRTitle); title != "" {
+		title := strings.TrimSpace(intent.PRTitle)
+		if target := strings.TrimSpace(intent.PRTargetBranch); title != "" && target != "" {
+			return fmt.Sprintf("%s is now on %s.", title, target)
+		}
+		if title != "" {
 			return fmt.Sprintf("%s was merged.", title)
 		}
 		return "The pull request was merged."
 	case domain.NotificationPRClosedUnmerged:
 		if title := strings.TrimSpace(intent.PRTitle); title != "" {
-			return fmt.Sprintf("%s was closed without merging.", title)
+			return fmt.Sprintf("%s was closed without merging. Reopen it if this wasn't intended.", title)
 		}
-		return "The pull request was closed without merging."
+		return "Closed without merging. Reopen it if this wasn't intended."
 	default:
 		return ""
 	}

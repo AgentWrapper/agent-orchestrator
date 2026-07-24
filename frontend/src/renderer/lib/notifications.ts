@@ -216,6 +216,7 @@ export function createNotificationsTransport(queryClient: QueryClient) {
 								id: notification.id,
 								title: notification.title,
 								body: notification.body || undefined,
+								type: notification.type,
 							});
 						}
 					});

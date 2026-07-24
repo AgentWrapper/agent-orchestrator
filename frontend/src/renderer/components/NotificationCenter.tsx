@@ -79,8 +79,17 @@ function useNotificationTargetNavigation() {
 export function NotificationRuntime() {
 	const queryClient = useQueryClient();
 	const { openPrimary } = useNotificationTargetNavigation();
+	const unreadQuery = useNotificationsQuery("unread");
+	const unreadCount = getCachedUnreadCount(unreadQuery.data);
 
 	useEffect(() => createNotificationsTransport(queryClient).connect(), [queryClient]);
+
+	// Keep the OS launcher badge in sync here rather than in NotificationCenter:
+	// NotificationRuntime is always mounted in the shell, whereas the notification
+	// bell is absent from the Linux topbar and only mounts on the sessions board.
+	useEffect(() => {
+		void aoBridge.notifications.setBadge(unreadCount);
+	}, [unreadCount]);
 
 	useEffect(() => {
 		return aoBridge.notifications.onClick((id) => {
