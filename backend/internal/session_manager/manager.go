@@ -341,7 +341,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if len(cfg.Attachments) > 0 {
 		refs, err := writeSpawnAttachments(ws.Path, cfg.Attachments)
 		if err != nil {
-			_ = m.workspace.Destroy(ctx, ws)
+			m.destroySpawnWorkspace(ctx, ws, workspaceProject)
 			m.rollbackSpawnSeedRow(ctx, id)
 			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: attachments: %w", id, err)
 		}
@@ -418,16 +418,24 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 
 	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, WorkspaceRepoPath: ws.RepoPath, RuntimeHandleID: handle.ID, Prompt: prompt}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
-		_ = m.runtime.Destroy(ctx, handle)
-		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
-		m.markSpawnFailedTerminated(ctx, id)
+		destroyCtx, destroyCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer destroyCancel()
+		_ = m.runtime.Destroy(destroyCtx, handle)
+		m.rollbackPreparedSpawnWorkspace(destroyCtx, rec, ws, workspaceProject)
+		m.markSpawnFailedTerminated(destroyCtx, id)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: completed: %w", id, err)
 	}
 	if delivery == ports.PromptDeliveryAfterStart && prompt != "" {
 		if err := m.deliverAfterStartPrompt(ctx, agent, launchCfg, handle, id, prompt); err != nil {
-			_ = m.runtime.Destroy(ctx, handle)
-			m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
-			m.markSpawnFailedTerminatedWithoutWorkspace(ctx, id)
+			destroyCtx, destroyCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			defer destroyCancel()
+			rtErr := m.runtime.Destroy(destroyCtx, handle)
+			wsOK := m.rollbackPreparedSpawnWorkspace(destroyCtx, rec, ws, workspaceProject)
+			if rtErr != nil || !wsOK {
+				m.markSpawnFailedTerminated(destroyCtx, id)
+				return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: deliver prompt: %w (runtime destroy: %w)", id, err, rtErr)
+			}
+			m.markSpawnFailedTerminatedWithoutWorkspace(destroyCtx, id)
 			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: deliver prompt: %w", id, err)
 		}
 	}
@@ -509,7 +517,9 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 			WorktreePath: wt.Path,
 			State:        "active",
 		}); err != nil {
-			_ = workspaceProject.DestroyWorkspaceProject(ctx, info)
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			_ = workspaceProject.DestroyWorkspaceProject(cleanupCtx, info)
+			cancel()
 			return ports.WorkspaceInfo{}, nil, fmt.Errorf("record workspace worktree %q: %w", wt.RepoName, err)
 		}
 	}
@@ -519,20 +529,28 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 func (m *Manager) destroySpawnWorkspace(ctx context.Context, ws ports.WorkspaceInfo, workspaceProject *ports.WorkspaceProjectInfo) bool {
 	if workspaceProject != nil {
 		if adapter, ok := m.workspace.(ports.WorkspaceProject); ok {
-			err := adapter.DestroyWorkspaceProject(ctx, *workspaceProject)
+			if err := adapter.DestroyWorkspaceProject(ctx, *workspaceProject); err != nil {
+				return false
+			}
 			_ = m.store.DeleteSessionWorktrees(ctx, ws.SessionID)
-			return err == nil
+			return true
 		}
 	}
-	err := m.workspace.Destroy(ctx, ws)
+	if err := m.workspace.Destroy(ctx, ws); err != nil {
+		return false
+	}
 	_ = m.store.DeleteSessionWorktrees(ctx, ws.SessionID)
-	return err == nil
+	return true
 }
 
-func (m *Manager) rollbackPreparedSpawnWorkspace(ctx context.Context, rec domain.SessionRecord, ws ports.WorkspaceInfo, workspaceProject *ports.WorkspaceProjectInfo) {
-	if m.destroySpawnWorkspace(ctx, ws, workspaceProject) {
-		m.cleanupAgentWorkspace(ctx, rec, ws.Path)
+func (m *Manager) rollbackPreparedSpawnWorkspace(ctx context.Context, rec domain.SessionRecord, ws ports.WorkspaceInfo, workspaceProject *ports.WorkspaceProjectInfo) bool {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	if m.destroySpawnWorkspace(cleanupCtx, ws, workspaceProject) {
+		m.cleanupAgentWorkspace(cleanupCtx, rec, ws.Path)
+		return true
 	}
+	return false
 }
 
 // effectiveHarness resolves the harness for a spawn: an explicit harness wins;
@@ -597,10 +615,6 @@ func (m *Manager) markSpawnFailedTerminated(ctx context.Context, id domain.Sessi
 	m.cleanupSystemPromptDir(id)
 }
 
-// markSpawnFailedTerminatedWithoutWorkspace parks a spawn failure after the
-// runtime row had become observable, but clears launch handles for resources
-// that were destroyed during rollback. This keeps later restore/cleanup paths
-// from treating a removed worktree as reusable state.
 func (m *Manager) markSpawnFailedTerminatedWithoutWorkspace(ctx context.Context, id domain.SessionID) {
 	m.markSpawnFailedTerminated(ctx, id)
 	rec, ok, err := m.store.GetSession(ctx, id)
@@ -614,17 +628,14 @@ func (m *Manager) markSpawnFailedTerminatedWithoutWorkspace(ctx context.Context,
 	_ = m.store.UpdateSession(ctx, rec)
 }
 
-// rollbackSpawnSeedRow best-effort removes the row of a spawn that failed
-// before anything observable (worktree, runtime) was built, so failed spawns
-// don't accumulate terminated rows in session lists. DeleteSession only removes
-// rows still in seed state; if the row has progressed or the delete itself
-// fails, fall back to parking it terminated so a phantom row never looks live.
 func (m *Manager) rollbackSpawnSeedRow(ctx context.Context, id domain.SessionID) {
-	if deleted, err := m.store.DeleteSession(ctx, id); err == nil && deleted {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	if deleted, err := m.store.DeleteSession(cleanupCtx, id); err == nil && deleted {
 		m.cleanupSystemPromptDir(id)
 		return
 	}
-	m.markSpawnFailedTerminated(ctx, id)
+	m.markSpawnFailedTerminated(cleanupCtx, id)
 }
 
 // rollbackSpawn deletes a session row when it is still in seed state — used

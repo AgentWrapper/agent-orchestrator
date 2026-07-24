@@ -137,9 +137,15 @@ type fakeLCM struct {
 	completed int
 	// terminated counts MarkTerminated calls per session id.
 	terminated map[domain.SessionID]int
+	// markSpawnedErr, when non-nil, is returned from MarkSpawned instead
+	// of recording the session as spawned.
+	markSpawnedErr error
 }
 
 func (l *fakeLCM) MarkSpawned(_ context.Context, id domain.SessionID, metadata domain.SessionMetadata) error {
+	if l.markSpawnedErr != nil {
+		return l.markSpawnedErr
+	}
 	l.completed++
 	rec := l.store.sessions[id]
 	rec.IsTerminated = false
@@ -5243,4 +5249,185 @@ func (m *flipOnNudgeMessenger) Send(_ context.Context, _ domain.SessionID, msg s
 		m.flipped = true
 	}
 	return nil
+}
+
+type cancelAwareStore struct {
+	*fakeStore
+}
+
+func (s *cancelAwareStore) DeleteSession(ctx context.Context, id domain.SessionID) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	return s.fakeStore.DeleteSession(ctx, id)
+}
+
+func (s *cancelAwareStore) GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return domain.SessionRecord{}, false, err
+	}
+	return s.fakeStore.GetSession(ctx, id)
+}
+
+func (s *cancelAwareStore) UpdateSession(ctx context.Context, rec domain.SessionRecord) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return s.fakeStore.UpdateSession(ctx, rec)
+}
+
+type cancelAwareLCM struct {
+	*fakeLCM
+}
+
+func (l *cancelAwareLCM) MarkTerminated(ctx context.Context, id domain.SessionID) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return l.fakeLCM.MarkTerminated(ctx, id)
+}
+
+type ctxCancellingRuntime struct {
+	cancel    context.CancelFunc
+	err       error
+	destroyed int
+}
+
+func (r *ctxCancellingRuntime) Create(_ context.Context, _ ports.RuntimeConfig) (ports.RuntimeHandle, error) {
+	if r.cancel != nil {
+		r.cancel()
+	}
+	return ports.RuntimeHandle{}, r.err
+}
+
+func (r *ctxCancellingRuntime) Destroy(ctx context.Context, _ ports.RuntimeHandle) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	r.destroyed++
+	return nil
+}
+func (r *ctxCancellingRuntime) IsAlive(_ context.Context, _ ports.RuntimeHandle) (bool, error) {
+	return false, nil
+}
+func (r *ctxCancellingRuntime) GetOutput(_ context.Context, _ ports.RuntimeHandle, _ int) (string, error) {
+	return "", nil
+}
+
+type cancelAwareWorkspace struct {
+	*fakeWorkspace
+	destroyed int
+}
+
+func (w *cancelAwareWorkspace) Destroy(ctx context.Context, ws ports.WorkspaceInfo) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	w.destroyed++
+	return w.fakeWorkspace.Destroy(ctx, ws)
+}
+
+func TestSpawn_CleansUpOnCancelledContext(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	awareStore := &cancelAwareStore{fakeStore: st}
+	awareLCM := &cancelAwareLCM{fakeLCM: &fakeLCM{store: st}}
+
+	spawnCtx, cancel := context.WithCancel(context.Background())
+	rt := &ctxCancellingRuntime{cancel: cancel, err: context.Canceled}
+	ws := &cancelAwareWorkspace{fakeWorkspace: &fakeWorkspace{}}
+
+	m := New(Deps{
+		Runtime:   rt,
+		Agents:    fakeAgents{},
+		Workspace: ws,
+		Store:     awareStore,
+		Messenger: &fakeMessenger{},
+		Lifecycle: awareLCM,
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	_, _, _, err := m.Spawn(spawnCtx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err == nil {
+		t.Fatal("Spawn err = nil, want runtime cancellation error")
+	}
+
+	if rec, present := st.sessions["mer-1"]; present {
+		if !rec.IsTerminated {
+			t.Fatalf("session row left as orphan after cancelled spawn: %#v, want deleted or terminated", rec)
+		}
+	}
+
+	if ws.destroyed == 0 {
+		t.Fatal("workspace was not destroyed after cancelled spawn, want ws.destroyed > 0")
+	}
+}
+
+func TestSpawn_RollbackWorksOnCancelledContext_WorkspaceCreation(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	awareStore := &cancelAwareStore{fakeStore: st}
+	awareLCM := &cancelAwareLCM{fakeLCM: &fakeLCM{store: st}}
+
+	spawnCtx, cancel := context.WithCancel(context.Background())
+	ws := &fakeWorkspace{createErr: context.Canceled}
+
+	m := New(Deps{
+		Runtime:   &fakeRuntime{},
+		Agents:    fakeAgents{},
+		Workspace: ws,
+		Store:     awareStore,
+		Messenger: &fakeMessenger{},
+		Lifecycle: awareLCM,
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	cancel()
+
+	_, _, _, err := m.Spawn(spawnCtx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err == nil {
+		t.Fatal("Spawn err = nil, want workspace creation error")
+	}
+
+	if rec, present := st.sessions["mer-1"]; present {
+		if !rec.IsTerminated {
+			t.Fatalf("session row left as orphan after cancelled spawn: %#v, want deleted or terminated", rec)
+		}
+	}
+}
+
+func TestSpawn_MarkSpawnedFailureDestroysRuntimeWithDetachedContext(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	awareStore := &cancelAwareStore{fakeStore: st}
+
+	spawnCtx, cancel := context.WithCancel(context.Background())
+	rt := &ctxCancellingRuntime{err: nil}
+	ws := &cancelAwareWorkspace{fakeWorkspace: &fakeWorkspace{}}
+	failLCM := &fakeLCM{store: st, markSpawnedErr: context.Canceled}
+
+	m := New(Deps{
+		Runtime:   rt,
+		Agents:    fakeAgents{},
+		Workspace: ws,
+		Store:     awareStore,
+		Messenger: &fakeMessenger{},
+		Lifecycle: failLCM,
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	_, _, _, err := m.Spawn(spawnCtx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err == nil {
+		t.Fatal("Spawn err = nil, want MarkSpawned failure error")
+	}
+
+	if rt.destroyed == 0 {
+		t.Fatal("runtime was not destroyed after MarkSpawned failure, want rt.destroyed > 0")
+	}
+
+	if ws.destroyed == 0 {
+		t.Fatal("workspace was not destroyed after MarkSpawned failure, want ws.destroyed > 0")
+	}
+
+	cancel()
 }
