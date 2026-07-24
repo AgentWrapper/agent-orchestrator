@@ -106,7 +106,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 
 	cmd = append(cmd, binary)
 	appendApprovalFlags(&cmd, cfg.Permissions)
-	appendModelFlag(&cmd, cfg.Config.Model)
+	appendModelFlag(&cmd, cfg.Config)
 	if agentName := copilotAgentName(cfg.SessionID, cfg.SystemPrompt, cfg.SystemPromptFile); agentName != "" {
 		cmd = append(cmd, "--agent="+agentName)
 	}
@@ -151,7 +151,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 
 	cmd = append(cmd, binary)
 	appendApprovalFlags(&cmd, cfg.Permissions)
-	appendModelFlag(&cmd, cfg.Config.Model)
+	appendModelFlag(&cmd, cfg.Config)
 	if agentName := copilotAgentName(cfg.Session.ID, cfg.SystemPrompt, cfg.SystemPromptFile); agentName != "" {
 		cmd = append(cmd, "--agent="+agentName)
 	}
@@ -338,13 +338,14 @@ func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
 	}
 }
 
-// appendModelFlag appends `--model <trimmed>` when cfg.Config.Model is set,
-// mirroring the Codex adapter's pattern (see #2869). A blank or
+// appendModelFlag appends `--model <trimmed>` when cfg.Model is set,
+// mirroring the Codex adapter's pattern (see #2869) and taking the full
+// ports.AgentConfig for consistency with the sibling adapters. A blank or
 // whitespace-only value is omitted so Copilot falls back to its own default
 // resolution (COPILOT_MODEL env, or its configured default) exactly as an
 // unconfigured launch would.
-func appendModelFlag(cmd *[]string, model string) {
-	if trimmed := strings.TrimSpace(model); trimmed != "" {
+func appendModelFlag(cmd *[]string, cfg ports.AgentConfig) {
+	if trimmed := strings.TrimSpace(cfg.Model); trimmed != "" {
 		*cmd = append(*cmd, "--model", trimmed)
 	}
 }
