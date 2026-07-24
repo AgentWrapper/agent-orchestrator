@@ -137,9 +137,15 @@ type fakeLCM struct {
 	completed int
 	// terminated counts MarkTerminated calls per session id.
 	terminated map[domain.SessionID]int
+	// markSpawnedErr, when non-nil, is returned from MarkSpawned instead
+	// of recording the session as spawned.
+	markSpawnedErr error
 }
 
 func (l *fakeLCM) MarkSpawned(_ context.Context, id domain.SessionID, metadata domain.SessionMetadata) error {
+	if l.markSpawnedErr != nil {
+		return l.markSpawnedErr
+	}
 	l.completed++
 	rec := l.store.sessions[id]
 	rec.IsTerminated = false
@@ -5294,7 +5300,10 @@ func (r *ctxCancellingRuntime) Create(_ context.Context, _ ports.RuntimeConfig) 
 	return ports.RuntimeHandle{}, r.err
 }
 
-func (r *ctxCancellingRuntime) Destroy(_ context.Context, _ ports.RuntimeHandle) error {
+func (r *ctxCancellingRuntime) Destroy(ctx context.Context, _ ports.RuntimeHandle) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	r.destroyed++
 	return nil
 }
@@ -5348,6 +5357,10 @@ func TestSpawn_CleansUpOnCancelledContext(t *testing.T) {
 			t.Fatalf("session row left as orphan after cancelled spawn: %#v, want deleted or terminated", rec)
 		}
 	}
+
+	if ws.destroyed == 0 {
+		t.Fatal("workspace was not destroyed after cancelled spawn, want ws.destroyed > 0")
+	}
 }
 
 func TestSpawn_RollbackWorksOnCancelledContext_WorkspaceCreation(t *testing.T) {
@@ -5381,4 +5394,40 @@ func TestSpawn_RollbackWorksOnCancelledContext_WorkspaceCreation(t *testing.T) {
 			t.Fatalf("session row left as orphan after cancelled spawn: %#v, want deleted or terminated", rec)
 		}
 	}
+}
+
+func TestSpawn_MarkSpawnedFailureDestroysRuntimeWithDetachedContext(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	awareStore := &cancelAwareStore{fakeStore: st}
+
+	spawnCtx, cancel := context.WithCancel(context.Background())
+	rt := &ctxCancellingRuntime{err: nil}
+	ws := &cancelAwareWorkspace{fakeWorkspace: &fakeWorkspace{}}
+	failLCM := &fakeLCM{store: st, markSpawnedErr: context.Canceled}
+
+	m := New(Deps{
+		Runtime:   rt,
+		Agents:    fakeAgents{},
+		Workspace: ws,
+		Store:     awareStore,
+		Messenger: &fakeMessenger{},
+		Lifecycle: failLCM,
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	_, _, _, err := m.Spawn(spawnCtx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err == nil {
+		t.Fatal("Spawn err = nil, want MarkSpawned failure error")
+	}
+
+	if rt.destroyed == 0 {
+		t.Fatal("runtime was not destroyed after MarkSpawned failure, want rt.destroyed > 0")
+	}
+
+	if ws.destroyed == 0 {
+		t.Fatal("workspace was not destroyed after MarkSpawned failure, want ws.destroyed > 0")
+	}
+
+	cancel()
 }
