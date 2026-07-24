@@ -69,6 +69,18 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
+// GetConfigSpec reports the per-project agent config keys Cursor understands.
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.ConfigSpec{}, err
+	}
+	return ports.ConfigSpec{
+		Fields: []ports.ConfigField{
+			agentbase.ModelConfigField("Model override passed to `cursor-agent --model`."),
+		},
+	}, nil
+}
+
 // GetLaunchCommand builds the argv to start a new interactive Cursor CLI
 // session:
 //
@@ -88,6 +100,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 
 	cmd = []string{binary}
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	agentbase.AppendModelFlag(&cmd, cfg.Config)
 
 	// Prompt is positional and must be last. The `--` sentinel ends option
 	// parsing so a leading "-" in the prompt is not read as a flag.
@@ -120,9 +133,10 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 		return nil, false, err
 	}
 
-	cmd = make([]string, 0, 6)
+	cmd = make([]string, 0, 8)
 	cmd = append(cmd, binary)
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	agentbase.AppendModelFlag(&cmd, cfg.Config)
 	cmd = append(cmd, "--resume", agentSessionID)
 	return cmd, true, nil
 }
