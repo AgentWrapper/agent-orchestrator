@@ -1,10 +1,9 @@
 // Package crush implements the Crush agent adapter: launching new sessions,
 // resuming sessions by native ID, and reading session info.
 //
-// Crush differs from other agents in that it doesn't yet expose AO-compatible
-// activity hooks. GetAgentHooks only injects AO's standing system prompt through
-// project-local context configuration; activity tracking still falls back to
-// basic session ID management.
+// Crush differs from other agents in that it exposes only a PreToolUse hook,
+// rather than enough lifecycle events for AO activity tracking. AO uses that
+// hook to capture Crush's native session ID for exact restoration.
 package crush
 
 import (
@@ -121,13 +120,15 @@ func (p *Plugin) PromptReadinessHints(ctx context.Context, _ ports.LaunchConfig)
 // GetRestoreCommand rebuilds the argv that continues an existing Crush session:
 // `crush [--cwd <WorkspacePath>] [--yolo] --session <agentSessionId>`.
 // It re-applies the permission flag but not the prompt, which the session
-// already carries. ok is false when the native session id is not available.
+// already carries. When the native ID was not captured (for example, an older
+// session or one that never invoked a tool), --continue safely selects the most
+// recent Crush session in AO's session-specific worktree.
 func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig) (cmd []string, ok bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
 	}
 	agentSessionID := strings.TrimSpace(cfg.Session.Metadata[ports.MetadataKeyAgentSessionID])
-	if agentSessionID == "" {
+	if agentSessionID == "" && strings.TrimSpace(cfg.Session.WorkspacePath) == "" {
 		return nil, false, nil
 	}
 
@@ -146,7 +147,11 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 		cmd = append(cmd, "--yolo")
 	}
 
-	cmd = append(cmd, "--session", agentSessionID)
+	if agentSessionID != "" {
+		cmd = append(cmd, "--session", agentSessionID)
+	} else {
+		cmd = append(cmd, "--continue")
+	}
 	return cmd, true, nil
 }
 
