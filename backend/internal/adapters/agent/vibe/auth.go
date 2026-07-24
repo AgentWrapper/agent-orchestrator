@@ -131,7 +131,6 @@ func vibeKeychainAuthStatus(ctx context.Context, envVar string) (ports.AgentAuth
 	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	//nolint:gosec // invokes macOS security with fixed command and validated account/service arguments
 	out, err := aoprocess.CommandContext(probeCtx, "security", "find-generic-password", "-s", vibeKeychainService, "-a", envVar, "-w").CombinedOutput()
 	if probeCtx.Err() != nil {
 		return ports.AgentAuthStatusUnknown, false, nil
