@@ -12,10 +12,11 @@ import (
 )
 
 func TestSpawnEnvProjectVarsCannotOverrideInternal(t *testing.T) {
-	env := spawnEnv("mer-1", "mer", "issue-9", "/data", map[string]string{
+	env := spawnEnv("mer-1", "mer", "issue-9", "/data", "/run/ao.json", map[string]string{
 		"FOO":        "bar",
 		EnvSessionID: "hacked", // a project must not override AO-internal vars
 		EnvProjectID: "hacked",
+		EnvRunFile:   "hacked",
 	})
 	if env["FOO"] != "bar" {
 		t.Fatalf("FOO = %q, want bar", env["FOO"])
@@ -25,6 +26,35 @@ func TestSpawnEnvProjectVarsCannotOverrideInternal(t *testing.T) {
 	}
 	if env[EnvProjectID] != "mer" {
 		t.Fatalf("AO_PROJECT_ID = %q, want mer (internal wins)", env[EnvProjectID])
+	}
+	if env[EnvRunFile] != "/run/ao.json" {
+		t.Fatalf("AO_RUN_FILE = %q, want /run/ao.json (internal wins)", env[EnvRunFile])
+	}
+}
+
+// TestSpawnEnvRunFile covers AO_RUN_FILE propagation: `ao hooks` inside a
+// spawned session must connect to THIS daemon's run-file, not the default
+// ~/.ao/running.json. A daemon launched with a non-default run-file (every dev
+// build uses ~/.ao/dev/running.json) would otherwise be invisible to its own
+// sessions' hooks. An empty path leaves AO_RUN_FILE unset so the config default
+// still applies.
+func TestSpawnEnvRunFile(t *testing.T) {
+	withPath := spawnEnv("s-1", "p", "", "/data", "/home/u/.ao/dev/running.json", nil)
+	if got := withPath[EnvRunFile]; got != "/home/u/.ao/dev/running.json" {
+		t.Fatalf("AO_RUN_FILE = %q, want the daemon run-file path", got)
+	}
+
+	noPath := spawnEnv("s-1", "p", "", "/data", "", nil)
+	if _, ok := noPath[EnvRunFile]; ok {
+		t.Fatalf("AO_RUN_FILE set for empty run-file path; want unset so config default applies")
+	}
+
+	// Combined case: an empty daemon path must not let a project-supplied
+	// AO_RUN_FILE survive, or the session's hooks would target a project-chosen
+	// run-file instead of falling back to the config default.
+	overridden := spawnEnv("s-1", "p", "", "/data", "", map[string]string{EnvRunFile: "/wrong"})
+	if _, ok := overridden[EnvRunFile]; ok {
+		t.Fatalf("AO_RUN_FILE = %q survived empty run-file path; project must not override an AO-owned var", overridden[EnvRunFile])
 	}
 }
 

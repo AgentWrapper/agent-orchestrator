@@ -78,6 +78,13 @@ const (
 	EnvRuntimeLaunchID = "AO_RUNTIME_LAUNCH_ID"
 	// EnvDataDir tells a spawned agent's AO hook commands where the store lives.
 	EnvDataDir = "AO_DATA_DIR"
+	// EnvRunFile tells a spawned agent's `ao hooks` callbacks which run-file to
+	// read when locating the daemon. Without it they fall back to the default
+	// ~/.ao/running.json (config.resolveRunFilePath), so a daemon launched with
+	// an AO_RUN_FILE override — every dev build uses ~/.ao/dev/running.json —
+	// is invisible to the hooks and every callback fails with "AO daemon is not
+	// running (stale run-file at ...)", silently stalling activity tracking.
+	EnvRunFile = "AO_RUN_FILE"
 )
 
 // hookBinaryName is the executable name the workspace hook commands invoke:
@@ -168,7 +175,10 @@ type Manager struct {
 	messenger *sessionguard.Guard
 	lcm       lifecycleRecorder
 	dataDir   string
-	clock     func() time.Time
+	// runFilePath is exported to spawned agents as AO_RUN_FILE so their `ao
+	// hooks` callbacks locate this daemon rather than the default run-file path.
+	runFilePath string
+	clock       func() time.Time
 	// lookPath is exec.LookPath in production; tests substitute a stub so
 	// they don't need real binaries on PATH. Returns ports.ErrAgentBinaryNotFound
 	// when the binary is missing so the sentinel propagates through toAPIError.
@@ -223,7 +233,12 @@ type Deps struct {
 	// DataDir is exported to spawned agents as AO_DATA_DIR so their hook
 	// commands can open the same store.
 	DataDir string
-	Clock   func() time.Time
+	// RunFilePath is exported to spawned agents as AO_RUN_FILE so their `ao
+	// hooks` callbacks connect to this daemon's run-file instead of the default
+	// ~/.ao/running.json. Empty leaves AO_RUN_FILE unset (hooks fall back to the
+	// config default, which is correct only when this daemon uses that default).
+	RunFilePath string
+	Clock       func() time.Time
 	// LookPath overrides exec.LookPath for the pre-launch agent-binary check.
 	// Production wiring leaves this nil and the manager defaults to
 	// exec.LookPath; tests inject a stub so they need not seed real binaries.
@@ -249,6 +264,7 @@ func New(d Deps) *Manager {
 		store:       d.Store,
 		lcm:         d.Lifecycle,
 		dataDir:     d.DataDir,
+		runFilePath: d.RunFilePath,
 		clock:       d.Clock,
 		lookPath:    d.LookPath,
 		executable:  d.Executable,
@@ -2393,8 +2409,8 @@ func workspaceRepoList(repos []domain.WorkspaceRepoRecord) string {
 // spawnEnv builds the runtime environment: the per-project env vars first, then
 // the AO-internal vars last so they always win (a project cannot override
 // AO_SESSION_ID and friends).
-func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, dataDir string, projectEnv map[string]string) map[string]string {
-	env := make(map[string]string, len(projectEnv)+4)
+func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, dataDir, runFilePath string, projectEnv map[string]string) map[string]string {
+	env := make(map[string]string, len(projectEnv)+5)
 	for k, v := range projectEnv {
 		env[k] = v
 	}
@@ -2402,6 +2418,16 @@ func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueI
 	env[EnvProjectID] = string(project)
 	env[EnvIssueID] = string(issue)
 	env[EnvDataDir] = dataDir
+	// AO_RUN_FILE is AO-owned like the vars above: a project must not set it, and
+	// an empty daemon path must leave it unset (config then falls back to the
+	// default ~/.ao/running.json). Setting it unconditionally covers the non-empty
+	// case; deleting any project-supplied value covers the empty case, since
+	// projectEnv was copied in above and would otherwise survive.
+	if runFilePath != "" {
+		env[EnvRunFile] = runFilePath
+	} else {
+		delete(env, EnvRunFile)
+	}
 	return env
 }
 
@@ -2413,7 +2439,7 @@ func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueI
 // When the pin cannot be applied the inherited PATH is kept and a warning is
 // logged so the degradation isn't silent.
 func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, projectEnv map[string]string) map[string]string {
-	env := spawnEnv(id, project, issue, m.dataDir, projectEnv)
+	env := spawnEnv(id, project, issue, m.dataDir, m.runFilePath, projectEnv)
 	path, err := HookPATH(m.executable, os.Getenv, projectEnv)
 	if err != nil {
 		m.logger.Warn("session PATH not pinned to the daemon binary; `ao hooks` callbacks may resolve to a different ao and activity tracking will stall",
@@ -2618,7 +2644,7 @@ func (m *Manager) cleanupAgentWorkspace(ctx context.Context, rec domain.SessionR
 	if !ok {
 		return
 	}
-	env := spawnEnv(rec.ID, rec.ProjectID, rec.IssueID, m.dataDir, nil)
+	env := spawnEnv(rec.ID, rec.ProjectID, rec.IssueID, m.dataDir, m.runFilePath, nil)
 	if project, err := m.loadProject(ctx, rec.ProjectID); err == nil {
 		env = m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
 	} else {
