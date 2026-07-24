@@ -207,7 +207,7 @@ export function ShellTopbar() {
 									disabled={isProjectRestarting}
 									onClick={openNewTask}
 									style={noDragStyle}
-									variant={isBoardEmpty ? "primary" : "accent"}
+									variant={isBoardEmpty ? "accent" : "primary"}
 								>
 									<Plus className="size-icon-md" aria-hidden="true" />
 									New task
@@ -242,7 +242,7 @@ export function ShellTopbar() {
 								disabled={isSpawning || isProjectRestarting}
 								onClick={() => void openOrchestrator()}
 								style={noDragStyle}
-								variant={isBoardEmpty ? "icon" : "primary"}
+								variant={isBoardEmpty ? "accent" : "primary"}
 							>
 								<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
 								{isProjectRestarting ? "Restarting…" : isSpawning ? "Spawning…" : "Orchestrator"}
