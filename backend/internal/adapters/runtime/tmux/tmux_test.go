@@ -91,12 +91,19 @@ func TestCommandBuilders(t *testing.T) {
 		[]string{"new-session", "-d", "-s", "sess-1", "-x", "220", "-y", "50", "-c", "/tmp/ws", "/bin/sh", "-c", `echo hi; exec "${SHELL:-/bin/sh}" -i`}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("newSessionArgs = %#v, want %#v", got, want)
 	}
+	if got, want := respawnPaneArgs("sess-1", "/tmp/ws", "/bin/sh", "echo hi"),
+		[]string{"respawn-pane", "-k", "-t", "sess-1:0.0", "-c", "/tmp/ws", "/bin/sh", "-c", "echo hi"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("respawnPaneArgs = %#v, want %#v", got, want)
+	}
 	// set-option uses pane-targeting (no = prefix).
 	if got, want := setStatusOffArgs("sess-1"), []string{"set-option", "-t", "sess-1", "status", "off"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("setStatusOffArgs = %#v, want %#v", got, want)
 	}
 	if got, want := setWindowSizeLargestArgs("sess-1"), []string{"set-option", "-t", "sess-1", "window-size", "largest"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("setWindowSizeLargestArgs = %#v, want %#v", got, want)
+	}
+	if got, want := paneCurrentPathArgs("sess-1"), []string{"display-message", "-p", "-t", "sess-1", "#{pane_current_path}"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("paneCurrentPathArgs = %#v, want %#v", got, want)
 	}
 	if got, want := setMouseOnArgs("sess-1"), []string{"set-option", "-t", "sess-1", "mouse", "on"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("setMouseOnArgs = %#v, want %#v", got, want)
@@ -107,6 +114,9 @@ func TestCommandBuilders(t *testing.T) {
 	}
 	if got, want := hasSessionArgs("sess-1"), []string{"has-session", "-t", "=sess-1"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("hasSessionArgs = %#v, want %#v", got, want)
+	}
+	if got, want := panePIDArgs("sess-1"), []string{"display-message", "-p", "-t", "sess-1:0.0", "#{pane_pid}"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("panePIDArgs = %#v, want %#v", got, want)
 	}
 	// list-panes reaps whole-session (-s) with exact-match target and prints pane pids.
 	if got, want := listPanePIDsArgs("sess-1"), []string{"list-panes", "-s", "-t", "=sess-1", "-F", "#{pane_pid}"}; !reflect.DeepEqual(got, want) {
@@ -183,10 +193,10 @@ func TestCreateRejectsInvalidEnvKeys(t *testing.T) {
 // -- Create tests --
 
 func TestCreateIssuesNewSessionAndStatusOff(t *testing.T) {
-	// new-session, set-option status, set-option mouse, set-option window-size,
-	// has-session (exit 0 = alive)
+	// new-session, display-message cwd verification, set-option status,
+	// set-option mouse, set-option window-size, has-session (exit 0 = alive)
 	r, fr := newTestRuntime(0)
-	fr.outputs = [][]byte{nil, nil, nil, nil, nil}
+	fr.outputs = [][]byte{nil, []byte("/tmp/ws\n"), nil, nil, nil, nil}
 
 	h, err := r.Create(context.Background(), ports.RuntimeConfig{
 		SessionID:     "sess-1",
@@ -200,10 +210,10 @@ func TestCreateIssuesNewSessionAndStatusOff(t *testing.T) {
 	if h.ID != "sess-1" {
 		t.Fatalf("handle ID = %q, want sess-1", h.ID)
 	}
-	// Expect 5 calls: new-session, set-option status, set-option mouse,
-	// set-option window-size, has-session.
-	if len(fr.calls) != 5 {
-		t.Fatalf("calls = %d, want 5", len(fr.calls))
+	// Expect 6 calls: new-session, display-message cwd verification,
+	// set-option status, set-option mouse, set-option window-size, has-session.
+	if len(fr.calls) != 6 {
+		t.Fatalf("calls = %d, want 6", len(fr.calls))
 	}
 
 	// Call 0: new-session
@@ -223,31 +233,36 @@ func TestCreateIssuesNewSessionAndStatusOff(t *testing.T) {
 		t.Fatalf("new-session args missing -x/-y: %v", fr.calls[0].args)
 	}
 
-	// Call 1: set-option status off (plain target, pane-targeting does not use =).
-	if got, want := fr.calls[1].args, setStatusOffArgs("sess-1"); !reflect.DeepEqual(got, want) {
+	// Call 1: verify pane cwd.
+	if got, want := fr.calls[1].args, paneCurrentPathArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("call[1] = %#v, want %#v", got, want)
 	}
 
-	// Call 2: set-option mouse on (enables wheel-scroll of the pane).
-	if got, want := fr.calls[2].args, setMouseOnArgs("sess-1"); !reflect.DeepEqual(got, want) {
+	// Call 2: set-option status off (plain target, pane-targeting does not use =).
+	if got, want := fr.calls[2].args, setStatusOffArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("call[2] = %#v, want %#v", got, want)
 	}
 
-	// Call 3: set-option window-size largest (multi-client sizing, see
-	// setWindowSizeLargestArgs).
-	if got, want := fr.calls[3].args, setWindowSizeLargestArgs("sess-1"); !reflect.DeepEqual(got, want) {
+	// Call 3: set-option mouse on (enables wheel-scroll of the pane).
+	if got, want := fr.calls[3].args, setMouseOnArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("call[3] = %#v, want %#v", got, want)
 	}
 
-	// Call 4: has-session (IsAlive, uses exact-match target =sess-1).
-	if got, want := fr.calls[4].args, hasSessionArgs("sess-1"); !reflect.DeepEqual(got, want) {
+	// Call 4: set-option window-size largest (multi-client sizing, see
+	// setWindowSizeLargestArgs).
+	if got, want := fr.calls[4].args, setWindowSizeLargestArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("call[4] = %#v, want %#v", got, want)
+	}
+
+	// Call 5: has-session (IsAlive, uses exact-match target =sess-1).
+	if got, want := fr.calls[5].args, hasSessionArgs("sess-1"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("call[5] = %#v, want %#v", got, want)
 	}
 }
 
 func TestCreateLaunchCommandContainsKeepAliveShell(t *testing.T) {
 	r, fr := newTestRuntime(0)
-	fr.outputs = [][]byte{nil, nil, nil}
+	fr.outputs = [][]byte{nil, []byte("/tmp/ws\n"), nil, nil, nil, nil}
 
 	_, err := r.Create(context.Background(), ports.RuntimeConfig{
 		SessionID:     "sess-1",
@@ -262,6 +277,9 @@ func TestCreateLaunchCommandContainsKeepAliveShell(t *testing.T) {
 	launchCmd := args[len(args)-1]
 	if !strings.Contains(launchCmd, `exec "${SHELL:-/bin/sh}" -i`) {
 		t.Fatalf("launch command missing keep-alive shell: %q", launchCmd)
+	}
+	if !strings.HasPrefix(launchCmd, "cd '/tmp/ws' || exit; ") {
+		t.Fatalf("launch command missing cwd guard: %q", launchCmd)
 	}
 	if !strings.Contains(launchCmd, "'myagent'") {
 		t.Fatalf("launch command missing quoted argv: %q", launchCmd)
@@ -279,7 +297,7 @@ func TestCreateLaunchCommandExportsEnvVars(t *testing.T) {
 	defer func() { getenv = oldGetenv }()
 
 	r, fr := newTestRuntime(0)
-	fr.outputs = [][]byte{nil, nil, nil}
+	fr.outputs = [][]byte{nil, []byte("/tmp/ws\n"), nil, nil, nil, nil}
 
 	_, err := r.Create(context.Background(), ports.RuntimeConfig{
 		SessionID:     "sess-1",
@@ -287,6 +305,7 @@ func TestCreateLaunchCommandExportsEnvVars(t *testing.T) {
 		Argv:          []string{"myagent"},
 		Env: map[string]string{
 			"AO_SESSION_ID": "sess-1",
+			"COLORTERM":     "ansi",
 			"ODD":           "can't",
 			"PATH":          "/custom/bin:/usr/bin",
 		},
@@ -297,13 +316,56 @@ func TestCreateLaunchCommandExportsEnvVars(t *testing.T) {
 	args := fr.calls[0].args
 	launchCmd := args[len(args)-1]
 	for _, want := range []string{
+		"unset NO_COLOR;",
 		"export AO_SESSION_ID='sess-1';",
+		"export COLORTERM='truecolor';",
 		"export ODD='can'\\''t';",
 		"export PATH='/custom/bin:/usr/bin';",
 	} {
 		if !strings.Contains(launchCmd, want) {
 			t.Fatalf("launch command missing %q in: %q", want, launchCmd)
 		}
+	}
+}
+
+func TestBuildLaunchCommandPreservesExplicitNoColor(t *testing.T) {
+	launchCmd := buildLaunchCommand(ports.RuntimeConfig{
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"myagent"},
+		Env:           map[string]string{"NO_COLOR": "1"},
+	})
+
+	if !strings.Contains(launchCmd, "export NO_COLOR='1';") {
+		t.Fatalf("launch command does not preserve configured NO_COLOR: %q", launchCmd)
+	}
+	if strings.Contains(launchCmd, "unset NO_COLOR;") {
+		t.Fatalf("launch command unsets configured NO_COLOR: %q", launchCmd)
+	}
+	if !strings.Contains(launchCmd, "export COLORTERM='truecolor';") {
+		t.Fatalf("launch command does not advertise true color: %q", launchCmd)
+	}
+}
+
+func TestCreateDestroysAndReturnsErrorWhenPaneCWDDoesNotMatch(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{nil, []byte("/deleted/shipit\n")}
+
+	_, err := r.Create(context.Background(), ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"myagent"},
+	})
+	if err == nil || !strings.Contains(err.Error(), `started in "/deleted/shipit", want "/tmp/ws"`) {
+		t.Fatalf("Create err = %v, want pane cwd mismatch", err)
+	}
+	hasKill := false
+	for _, c := range fr.calls {
+		if len(c.args) > 0 && c.args[0] == "kill-session" {
+			hasKill = true
+		}
+	}
+	if !hasKill {
+		t.Fatal("expected kill-session cleanup call when pane cwd verification fails")
 	}
 }
 
@@ -368,7 +430,53 @@ func (f *fakeRunnerSelectiveErr) Run(_ context.Context, env []string, name strin
 	if len(args) > 0 && args[0] == f.exitErrOn {
 		return f.errOutput, &exec.ExitError{}
 	}
+	if len(args) > 0 && args[0] == "display-message" {
+		return []byte("/tmp/ws\n"), nil
+	}
 	return nil, nil
+}
+
+func TestRestartRespawnsExistingPaneAndPreservesHandle(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	handle := ports.RuntimeHandle{ID: "sess-1"}
+	cfg := ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"codex", "resume", "native-1"},
+		Env:           map[string]string{"AO_SESSION_ID": "sess-1"},
+	}
+
+	got, err := r.Restart(context.Background(), handle, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != handle {
+		t.Fatalf("Restart handle = %+v, want %+v", got, handle)
+	}
+	if len(fr.calls) != 2 {
+		t.Fatalf("calls = %d, want respawn + liveness probe", len(fr.calls))
+	}
+	if args := fr.calls[0].args; len(args) < 6 || args[0] != "respawn-pane" || args[1] != "-k" || args[3] != "sess-1:0.0" || args[5] != "/tmp/ws" {
+		t.Fatalf("respawn args = %#v", args)
+	}
+	if args := fr.calls[1].args; !reflect.DeepEqual(args, hasSessionArgs("sess-1")) {
+		t.Fatalf("liveness args = %#v, want %#v", args, hasSessionArgs("sess-1"))
+	}
+}
+
+func TestRestartRejectsMismatchedSessionHandle(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	_, err := r.Restart(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, ports.RuntimeConfig{
+		SessionID:     "sess-2",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"codex"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("Restart error = %v, want handle mismatch", err)
+	}
+	if len(fr.calls) != 0 {
+		t.Fatalf("runtime called after validation failure: %+v", fr.calls)
+	}
 }
 
 // -- Destroy tests --
@@ -422,6 +530,70 @@ func TestDestroyArgs(t *testing.T) {
 	}
 	if got, want := fr.calls[1].args, killSessionArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("destroy args = %#v, want %#v", got, want)
+	}
+}
+
+func TestIsSupervisedProcessAliveFindsExactDescendant(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{
+		[]byte("100\n"),
+		[]byte("100 1 /bin/sh -c launch\n101 100 /opt/ao agent-process supervise --session sess-1 --launch launch-2 -- codex\n102 101 codex\n"),
+	}
+
+	alive, err := r.IsSupervisedProcessAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, ports.SupervisedProcessRef{
+		SessionID: "sess-1",
+		LaunchID:  "launch-2",
+	})
+	if err != nil || !alive {
+		t.Fatalf("IsSupervisedProcessAlive = (%v, %v), want (true, nil)", alive, err)
+	}
+	if len(fr.calls) != 2 || fr.calls[1].name != "ps" {
+		t.Fatalf("calls = %#v, want tmux pane lookup followed by ps", fr.calls)
+	}
+}
+
+func TestIsSupervisedProcessAliveRejectsStaleAndUnrelatedProcesses(t *testing.T) {
+	entries, err := parseProcessTable("100 1 /bin/sh\n101 100 /opt/ao agent-process supervise --session sess-1 --launch launch-old -- codex\n200 1 /opt/ao agent-process supervise --session sess-1 --launch launch-new -- codex\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsSupervisor(entries, 100, "sess-1", "launch-new") {
+		t.Fatal("stale descendant or matching process outside the pane tree was accepted")
+	}
+	if containsManagedWorkload(entries, 100, "sess-1", "launch-new") {
+		t.Fatal("stale supervised generation was accepted as a manual workload")
+	}
+	if !containsSupervisor(entries, 100, "sess-1", "launch-old") {
+		t.Fatal("exact supervised descendant was not found")
+	}
+}
+
+func TestIsSupervisedProcessAliveFindsManualRelaunchFromPreservedShell(t *testing.T) {
+	entries, err := parseProcessTable("100 1 /bin/zsh -i\n101 100 codex resume native-1\n102 101 codex worker\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsManagedWorkload(entries, 100, "sess-1", "launch-2") {
+		t.Fatal("workload relaunched from the preserved shell was not found")
+	}
+}
+
+func TestIsSupervisedProcessAliveRejectsBarePreservedShell(t *testing.T) {
+	entries, err := parseProcessTable("100 1 /bin/zsh -i\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsManagedWorkload(entries, 100, "sess-1", "launch-2") {
+		t.Fatal("bare preserved shell was accepted as a live workload")
+	}
+}
+
+func TestIsSupervisedProcessAliveRejectsInvalidPanePID(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{[]byte("not-a-pid\n")}
+
+	if _, err := r.IsSupervisedProcessAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, ports.SupervisedProcessRef{}); err == nil {
+		t.Fatal("invalid pane pid should remain an inconclusive probe error")
 	}
 }
 
@@ -710,7 +882,7 @@ func TestAttachCommandReturnsExpectedArgv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AttachCommand: %v", err)
 	}
-	want := []string{"/usr/bin/tmux", "-u", "attach-session", "-t", "sess-1"}
+	want := []string{"/usr/bin/tmux", "-u", "-T", "RGB", "attach-session", "-t", "sess-1"}
 	if !reflect.DeepEqual(argv, want) {
 		t.Fatalf("argv = %#v, want %#v", argv, want)
 	}
@@ -725,13 +897,13 @@ func TestAttachCommandRejectsInvalidHandle(t *testing.T) {
 }
 
 func TestAttachEnvForcesUsableTerm(t *testing.T) {
-	env := attachEnv([]string{"PATH=/bin", "TERM=dumb", "SHELL=/bin/sh"})
-	if got, want := env, []string{"PATH=/bin", "TERM=xterm-256color", "SHELL=/bin/sh"}; !reflect.DeepEqual(got, want) {
+	env := attachEnv([]string{"PATH=/bin", "TERM=dumb", "COLORTERM=ansi", "SHELL=/bin/sh"})
+	if got, want := env, []string{"PATH=/bin", "TERM=xterm-256color", "COLORTERM=truecolor", "SHELL=/bin/sh"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("attachEnv = %#v, want %#v", got, want)
 	}
 
 	env = attachEnv([]string{"PATH=/bin"})
-	if got, want := env, []string{"PATH=/bin", "TERM=xterm-256color"}; !reflect.DeepEqual(got, want) {
+	if got, want := env, []string{"PATH=/bin", "TERM=xterm-256color", "COLORTERM=truecolor"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("attachEnv without TERM = %#v, want %#v", got, want)
 	}
 }

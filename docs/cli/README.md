@@ -82,9 +82,10 @@ opens that URL verbatim (`file://`, `http`, `https`).
 
 `go run .` in `backend/` remains a compatibility wrapper around the daemon.
 
-PR and review actions (merge, resolve-comments, review execute/send) are
-HTTP-only today and driven by the frontend; there are no `ao pr` / `ao review`
-commands yet.
+PR actions are available through `ao pr merge` and
+`ao pr resolve-comments`. Review actions are available through `ao review ls`,
+`ao review trigger` (also `execute` and `restart`), `ao review cancel` (also
+`stop`), and `ao review submit`.
 
 ## Configuration
 

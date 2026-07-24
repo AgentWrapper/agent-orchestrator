@@ -1,18 +1,14 @@
 import { useCanGoBack, useRouter } from "@tanstack/react-router";
 import { ArrowLeft, ArrowRight, PanelLeft } from "lucide-react";
 import { useEffect, useState } from "react";
+import { isMacPlatform } from "../lib/platform";
 import { useUiStore } from "../stores/ui-store";
 
-const isMac = typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
+const isMac = isMacPlatform();
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
-// macOS-only titlebar cluster (sidebar toggle + history arrows) pinned beside
-// the traffic lights, VS Code-style. Approved divergence from the web
-// reference, which has no window chrome (DESIGN.md banner, 2026-06-10).
-// Rendered once by the shell as a fixed overlay (.titlebar-nav in styles.css)
-// over the full-width topbar's left inset, so the buttons occupy the exact
-// same spot whether the sidebar is expanded or collapsed; the topbar starts
-// its content past the cluster (.is-under-titlebar-nav).
+// macOS-only sidebar chrome cluster (sidebar toggle + history arrows). It stays
+// fixed while the sidebar expands, collapses, or appears as a hover preview.
 // The installed router has no useCanGoForward, and deriving one as
 // `__TSR_index < history.length - 1` (the upstream hook's approach) is wrong
 // here: window.history.length also counts entries the router never created —
@@ -36,7 +32,15 @@ function useCanGoForward(): boolean {
 	return canGoForward;
 }
 
-export function TitlebarNav({ historyLocked = false }: { historyLocked?: boolean }) {
+export function TitlebarNav({
+	historyLocked = false,
+	isFullScreen = false,
+	onSidebarPreviewEnter,
+}: {
+	historyLocked?: boolean;
+	isFullScreen?: boolean;
+	onSidebarPreviewEnter?: React.PointerEventHandler<HTMLButtonElement>;
+}) {
 	const { isSidebarOpen, toggleSidebar } = useUiStore();
 	const router = useRouter();
 	const canGoBack = useCanGoBack();
@@ -44,14 +48,17 @@ export function TitlebarNav({ historyLocked = false }: { historyLocked?: boolean
 
 	if (!isMac) return null;
 
+	const topClass = isFullScreen || isSidebarOpen ? "top-0" : "top-3.25";
+
 	return (
 		<div
-			className="fixed top-0 left-titlebar-cluster-left z-titlebar flex h-toolbar items-center gap-1"
+			className={`fixed left-titlebar-cluster-left z-titlebar flex h-toolbar items-center gap-1 transition-[top] duration-200 ease-in-out motion-reduce:transition-none ${topClass}`}
 			style={noDragStyle}
 		>
 			<TitlebarButton
 				label={isSidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
 				onClick={toggleSidebar}
+				onPointerEnter={onSidebarPreviewEnter}
 				title={`${isSidebarOpen ? "Collapse" : "Expand"} sidebar · ⌘B`}
 			>
 				<PanelLeft className="size-icon-lg" aria-hidden="true" />
@@ -80,13 +87,17 @@ function TitlebarButton({
 	label,
 	title,
 	disabled,
+	tabIndex,
 	onClick,
+	onPointerEnter,
 	children,
 }: {
 	label: string;
 	title: string;
 	disabled?: boolean;
+	tabIndex?: number;
 	onClick: () => void;
+	onPointerEnter?: React.PointerEventHandler<HTMLButtonElement>;
 	children: React.ReactNode;
 }) {
 	return (
@@ -96,7 +107,9 @@ function TitlebarButton({
 			className="grid size-control-md place-items-center rounded-md text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent disabled:hover:text-passive"
 			disabled={disabled}
 			onClick={onClick}
+			onPointerEnter={onPointerEnter}
 			style={noDragStyle}
+			tabIndex={tabIndex}
 			title={title}
 			type="button"
 		>

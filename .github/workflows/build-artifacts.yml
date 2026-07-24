@@ -114,6 +114,34 @@ jobs:
           jq -n --arg f "$name" --arg h "$hash" \
             '{($f): $h}' > "dist-artifact/$PLATFORM.digest.json"
           echo "$PLATFORM: $name sha256=$hash" >> "$GITHUB_STEP_SUMMARY"
+      # The deb maker in forge.config.ts also runs on linux; capture its output
+      # as a separate `linux-deb` artifact. It lives in its own dist-deb dir so
+      # the `linux` artifact's agent-orchestrator-linux-x64.* glob below cannot
+      # pick it up. Its digest is merged into the linux-x64 digest fragment so
+      # the digests job still reads one fragment per platform.
+      - name: Collect Linux .deb and compute digest
+        if: matrix.platform == 'linux-x64'
+        shell: bash
+        run: |
+          mkdir -p dist-deb
+          # maker-deb output: out/make/deb/x64/<name>_<version>_amd64.deb
+          src="$(find out/make -name '*.deb' | head -n1)"
+          if [ -z "$src" ]; then echo "no .deb output found" >&2; exit 1; fi
+          name="agent-orchestrator-linux-x64.deb"
+          cp "$src" "dist-deb/$name"
+          hash="$(openssl dgst -sha256 "dist-deb/$name" | awk '{print $NF}')"
+          jq --arg f "$name" --arg h "$hash" '. + {($f): $h}' \
+            dist-artifact/linux-x64.digest.json > dist-artifact/linux-x64.digest.json.tmp
+          mv dist-artifact/linux-x64.digest.json.tmp dist-artifact/linux-x64.digest.json
+          echo "linux-x64: $name sha256=$hash" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload Linux .deb artifact
+        if: matrix.platform == 'linux-x64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-deb
+          path: frontend/dist-deb/agent-orchestrator-linux-x64.deb
+          retention-days: 1
+          if-no-files-found: error
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:

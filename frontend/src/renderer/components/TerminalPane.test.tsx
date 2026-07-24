@@ -95,7 +95,7 @@ describe("TerminalPane empty states", () => {
 			expect(screen.getByText("Starting session")).toBeInTheDocument();
 			expect(
 				screen.getByText(
-					"Preparing the worker terminal. This can take a moment while AO creates the worktree and starts the agent.",
+					"Preparing the worker terminal. This can take a moment while AO creates the workspace and starts the agent.",
 				),
 			).toBeInTheDocument();
 			expect(screen.queryByText("No session selected. Pick a worker to attach its terminal.")).not.toBeInTheDocument();
@@ -110,7 +110,7 @@ describe("TerminalPane empty states", () => {
 			expect(screen.getByText("Starting session")).toBeInTheDocument();
 			expect(
 				screen.getByText(
-					"Preparing the orchestrator terminal. This can take a moment while AO creates the worktree and starts the agent.",
+					"Preparing the orchestrator terminal. This can take a moment while AO creates the workspace and starts the agent.",
 				),
 			).toBeInTheDocument();
 			expect(screen.queryByText(/worker terminal/i)).not.toBeInTheDocument();
@@ -139,6 +139,20 @@ describe("terminal restore", () => {
 				}),
 			);
 			expect(invalidate).toHaveBeenCalledWith({ queryKey: ["workspaces"] });
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("offers restore when a merged session is terminated", () => {
+		const view = renderPane({
+			...worker,
+			status: "merged",
+			isTerminated: true,
+			terminalHandleId: "term-1",
+		});
+		try {
+			expect(screen.getByRole("button", { name: "Restore session" })).toBeInTheDocument();
 		} finally {
 			view.restore();
 		}
@@ -217,6 +231,16 @@ describe("terminal link preview", () => {
 
 	it("does not mirror links for terminated workers because their Browser inspector is cleared", () => {
 		const view = renderPane({ ...worker, status: "terminated" });
+		try {
+			act(() => terminalLinkHandler?.("http://localhost:3000"));
+			expect(postMock).not.toHaveBeenCalled();
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("does not mirror links for merged workers whose session is terminated", () => {
+		const view = renderPane({ ...worker, status: "merged", isTerminated: true });
 		try {
 			act(() => terminalLinkHandler?.("http://localhost:3000"));
 			expect(postMock).not.toHaveBeenCalled();

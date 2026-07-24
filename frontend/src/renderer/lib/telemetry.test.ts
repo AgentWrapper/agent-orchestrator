@@ -69,6 +69,17 @@ describe("telemetry sanitizers", () => {
 		expect(await sanitizeRendererProperties("ao.app.active", { channel: "cli" })).toEqual({});
 	});
 
+	it("keeps only bounded session-state fallback diagnostics", async () => {
+		expect(
+			await sanitizeRendererProperties("ao.renderer.session_state_unknown", {
+				field: "status",
+				reason: "unrecognized",
+				raw_value: "future-backend-state",
+				session_id: "private-session-id",
+			}),
+		).toEqual({ field: "status", reason: "unrecognized" });
+	});
+
 	it("strips exception details down to coarse metadata", async () => {
 		const props = await sanitizeRendererExceptionProperties(new TypeError("local path /tmp/private"), {
 			source: "window-error",

@@ -13,23 +13,27 @@ import (
 
 // PRSummary is the user-facing SCM read model for one PR owned by a session.
 type PRSummary struct {
-	URL              string
-	HTMLURL          string
-	Number           int
-	Title            string
-	State            domain.PRState
-	Provider         string
-	Repo             string
-	Author           string
-	SourceBranch     string
-	TargetBranch     string
-	HeadSHA          string
-	Additions        int
-	Deletions        int
-	ChangedFiles     int
-	CI               PRCISummary
-	Review           PRReviewSummary
-	Mergeability     PRMergeabilitySummary
+	URL          string
+	HTMLURL      string
+	Number       int
+	Title        string
+	State        domain.PRState
+	Provider     string
+	Repo         string
+	Author       string
+	SourceBranch string
+	TargetBranch string
+	HeadSHA      string
+	Additions    int
+	Deletions    int
+	ChangedFiles int
+	CI           PRCISummary
+	Review       PRReviewSummary
+	Mergeability PRMergeabilitySummary
+	// StateChangedAt is when the current draft/open/merged/closed state became
+	// active. It is backend-selected from durable PR/provider facts.
+	StateChangedAt   time.Time
+	CreatedAt        time.Time
 	UpdatedAt        time.Time
 	ObservedAt       time.Time
 	CIObservedAt     time.Time
@@ -55,6 +59,22 @@ type PRReviewSummary struct {
 	Decision                   domain.ReviewDecision
 	HasUnresolvedHumanComments bool
 	UnresolvedBy               []PRUnresolvedReviewer
+	// Reviews is the latest decisive submitted review per reviewer, carrying
+	// the reviewer's summary body so the UI can show a verdict with context.
+	// Inline review comment bodies are deliberately not included here; they
+	// stay folded into UnresolvedBy counts and links.
+	Reviews []PRReviewEntry
+}
+
+// PRReviewEntry is one submitted provider review summary: a reviewer's decisive
+// verdict and the body they submitted with it.
+type PRReviewEntry struct {
+	Reviewer    string
+	Verdict     domain.ReviewDecision
+	Body        string
+	URL         string
+	SubmittedAt time.Time
+	IsBot       bool
 }
 
 // PRUnresolvedReviewer groups unresolved human comments by reviewer.
@@ -142,10 +162,28 @@ func summarizePR(pr domain.PullRequest, checks []domain.PullRequestCheck, review
 		CI:               summarizeCI(pr, checks),
 		Review:           summarizeReview(pr, comments, reviews),
 		Mergeability:     summarizeMergeability(pr, threads),
+		StateChangedAt:   summarizePRStateChangedAt(pr),
+		CreatedAt:        pr.CreatedAtProvider,
 		UpdatedAt:        pr.UpdatedAt,
 		ObservedAt:       pr.ObservedAt,
 		CIObservedAt:     pr.CIObservedAt,
 		ReviewObservedAt: pr.ReviewObservedAt,
+	}
+}
+
+func summarizePRStateChangedAt(pr domain.PullRequest) time.Time {
+	if !pr.StateChangedAt.IsZero() {
+		return pr.StateChangedAt
+	}
+	switch pullRequestState(pr) {
+	case domain.PRStateMerged:
+		return pr.MergedAtProvider
+	case domain.PRStateClosed:
+		return pr.ClosedAtProvider
+	case domain.PRStateDraft, domain.PRStateOpen:
+		return pr.CreatedAtProvider
+	default:
+		return time.Time{}
 	}
 }
 
@@ -200,14 +238,30 @@ func summarizeReview(pr domain.PullRequest, comments []domain.PullRequestComment
 			Line: c.Line,
 		})
 	}
+	latestReviews := latestChangesRequestedReviews(reviews)
 	reviewURLByAuthor := map[string]string{}
-	for reviewer, review := range latestChangesRequestedReviews(reviews) {
+	for reviewer, review := range latestReviews {
 		if _, ok := byReviewer[reviewer]; !ok {
 			order = append(order, reviewer)
 		}
 		reviewURLByAuthor[reviewer] = review.URL
 		isBot[reviewer] = review.IsBot
 	}
+	// Reviews carries every reviewer's latest decisive verdict (approved and
+	// changes_requested alike), not just the changes-requested subset used for
+	// the unresolved-comment grouping above, so an approved review's summary
+	// body is surfaced too.
+	for reviewer, review := range latestDecisiveReviews(reviews) {
+		out.Reviews = append(out.Reviews, PRReviewEntry{
+			Reviewer:    reviewer,
+			Verdict:     reviewOrNone(review.State),
+			Body:        review.Body,
+			URL:         review.URL,
+			SubmittedAt: review.SubmittedAt,
+			IsBot:       review.IsBot,
+		})
+	}
+	sort.Slice(out.Reviews, func(i, j int) bool { return out.Reviews[i].Reviewer < out.Reviews[j].Reviewer })
 	sort.Strings(order)
 	for _, reviewer := range order {
 		out.UnresolvedBy = append(out.UnresolvedBy, PRUnresolvedReviewer{
@@ -227,7 +281,9 @@ func summarizeReview(pr domain.PullRequest, comments []domain.PullRequestComment
 	return out
 }
 
-func latestChangesRequestedReviews(reviews []domain.PullRequestReview) map[string]domain.PullRequestReview {
+// latestDecisiveReviews returns each reviewer's most recent decisive review —
+// the latest one whose verdict is approved or changes_requested.
+func latestDecisiveReviews(reviews []domain.PullRequestReview) map[string]domain.PullRequestReview {
 	latestByReviewer := map[string]domain.PullRequestReview{}
 	for _, review := range reviews {
 		if review.State != domain.ReviewChangesRequest && review.State != domain.ReviewApproved {
@@ -242,8 +298,15 @@ func latestChangesRequestedReviews(reviews []domain.PullRequestReview) map[strin
 			latestByReviewer[reviewer] = review
 		}
 	}
+	return latestByReviewer
+}
+
+// latestChangesRequestedReviews narrows latestDecisiveReviews to reviewers whose
+// latest decisive verdict is changes_requested — used to attach a review link to
+// the unresolved-comment grouping.
+func latestChangesRequestedReviews(reviews []domain.PullRequestReview) map[string]domain.PullRequestReview {
 	out := map[string]domain.PullRequestReview{}
-	for reviewer, review := range latestByReviewer {
+	for reviewer, review := range latestDecisiveReviews(reviews) {
 		if review.State == domain.ReviewChangesRequest {
 			out[reviewer] = review
 		}

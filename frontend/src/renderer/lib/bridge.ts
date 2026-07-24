@@ -14,12 +14,19 @@ export const aoBridge: AoBridge =
 			onNewSessionShortcut: () => () => undefined,
 			onKeyboardShortcutsHelp: () => () => undefined,
 			onNewShellTerminalShortcut: () => () => undefined,
+			onOpenSettingsShortcut: () => () => undefined,
+			onPreviousSessionShortcut: () => () => undefined,
+			onNextSessionShortcut: () => () => undefined,
+			onFocusTerminalShortcut: () => () => undefined,
 		},
 		terminal: {
 			saveDroppedFile: async () => "",
 		},
 		window: {
 			setOverlay: async () => undefined,
+			setTrafficLightsInset: async () => undefined,
+			isFullScreen: async () => false,
+			onFullScreen: () => () => undefined,
 		},
 		theme: {
 			set: async () => undefined,

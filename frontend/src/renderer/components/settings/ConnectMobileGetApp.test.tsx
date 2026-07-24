@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
-import { ConnectMobileGetApp, TESTFLIGHT_URL } from "./ConnectMobileGetApp";
+import { ANDROID_SIGNUP_URL, ConnectMobileGetApp, TESTFLIGHT_URL } from "./ConnectMobileGetApp";
 
 const { openExternal } = vi.hoisted(() => ({ openExternal: vi.fn() }));
 
@@ -21,10 +21,12 @@ test("TestFlight button opens the join link through the app bridge", async () =>
 	expect(TESTFLIGHT_URL).toBe("https://testflight.apple.com/join/t4U3fu2H");
 });
 
-test("Android is listed as not yet available", () => {
+test("Android signup button opens the internal-testing form", async () => {
 	render(<ConnectMobileGetApp />);
 	expect(screen.getByText("Android")).toBeInTheDocument();
-	expect(screen.getByText("Coming soon")).toBeInTheDocument();
+	await userEvent.click(screen.getByRole("button", { name: "Sign up for Android internal testing" }));
+	expect(openExternal).toHaveBeenCalledWith("https://forms.gle/pWLWoxTPXySAN4Ws8");
+	expect(ANDROID_SIGNUP_URL).toBe("https://forms.gle/pWLWoxTPXySAN4Ws8");
 });
 
 // The join link is useless without Apple's TestFlight app, and "TestFlight beta"

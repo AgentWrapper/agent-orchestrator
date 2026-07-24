@@ -118,6 +118,52 @@ func TestImportWorkspaceProjectConflictsWithArchivedSameID(t *testing.T) {
 	}
 }
 
+func TestProjectScratchKindAndArchivedCount(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	count, err := s.CountProjectsIncludingArchived(ctx)
+	if err != nil {
+		t.Fatalf("count initial: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("initial project count = %d, want 0", count)
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := s.UpsertProject(ctx, domain.ProjectRecord{
+		ID:           "scratch",
+		DisplayName:  "Scratch",
+		Path:         "/ao/scratch/default",
+		Kind:         domain.ProjectKindScratch,
+		RegisteredAt: now,
+	}); err != nil {
+		t.Fatalf("upsert scratch: %v", err)
+	}
+
+	got, ok, err := s.GetProject(ctx, "scratch")
+	if err != nil || !ok {
+		t.Fatalf("get scratch: ok=%v err=%v", ok, err)
+	}
+	if got.Kind != domain.ProjectKindScratch {
+		t.Fatalf("kind = %q, want scratch", got.Kind)
+	}
+
+	if ok, err := s.ArchiveProject(ctx, "scratch", now.Add(time.Minute)); err != nil || !ok {
+		t.Fatalf("archive scratch: ok=%v err=%v", ok, err)
+	}
+	if list, err := s.ListProjects(ctx); err != nil || len(list) != 0 {
+		t.Fatalf("active projects = %#v, %v; want empty", list, err)
+	}
+	count, err = s.CountProjectsIncludingArchived(ctx)
+	if err != nil {
+		t.Fatalf("count after archive: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("project count including archived = %d, want 1", count)
+	}
+}
+
 func TestProjectConfigRoundTrips(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -293,6 +339,79 @@ func TestSessionRenameUpdatesDisplayName(t *testing.T) {
 	}
 }
 
+func TestSessionTerminateOnPRMergePolicyRoundTripAndCDC(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
+
+	base, _ := s.LatestSeq(ctx)
+	updatedAt := r.UpdatedAt.Add(time.Minute)
+	ok, err := s.SetSessionTerminateOnPRMerge(ctx, r.ID, true, updatedAt)
+	if err != nil || !ok {
+		t.Fatalf("enable terminate-on-merge: ok=%v err=%v", ok, err)
+	}
+	got, found, err := s.GetSession(ctx, r.ID)
+	if err != nil || !found {
+		t.Fatalf("get session: found=%v err=%v", found, err)
+	}
+	if !got.TerminateOnPRMerge || !got.UpdatedAt.Equal(updatedAt) {
+		t.Fatalf("policy not persisted: %+v", got)
+	}
+
+	evs, err := s.EventsAfter(ctx, base, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 1 || string(evs[0].Type) != "session_updated" {
+		t.Fatalf("policy change events = %+v, want one session_updated", evs)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(evs[0].Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if enabled, ok := payload["terminateOnPrMerge"].(bool); !ok || !enabled {
+		t.Fatalf("terminateOnPrMerge payload = %#v, want true", payload["terminateOnPrMerge"])
+	}
+
+	ok, err = s.SetSessionTerminateOnPRMerge(ctx, "mer-missing", true, updatedAt)
+	if err != nil || ok {
+		t.Fatalf("missing policy update: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestSessionRuntimeLaunchIDRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	rec := sampleRecord("mer")
+	rec.Metadata.RuntimeHandleID = "tmux-1"
+	rec.Metadata.RuntimeLaunchID = "launch-1"
+
+	created, err := s.CreateSession(ctx, rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Metadata.RuntimeLaunchID != "launch-1" {
+		t.Fatalf("created launch id = %q", created.Metadata.RuntimeLaunchID)
+	}
+	created.Metadata.RuntimeLaunchID = "launch-2"
+	if err := s.UpdateSession(ctx, created); err != nil {
+		t.Fatal(err)
+	}
+	got, found, err := s.GetSession(ctx, created.ID)
+	if err != nil || !found {
+		t.Fatalf("get: found=%v err=%v", found, err)
+	}
+	if got.Metadata.RuntimeLaunchID != "launch-2" {
+		t.Fatalf("updated launch id = %q", got.Metadata.RuntimeLaunchID)
+	}
+	listed, err := s.ListSessions(ctx, "mer")
+	if err != nil || len(listed) != 1 || listed[0].Metadata.RuntimeLaunchID != "launch-2" {
+		t.Fatalf("listed sessions = %+v err=%v", listed, err)
+	}
+}
+
 func TestSessionUpdateActivityAndTermination(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -360,7 +479,7 @@ func TestPRCRUD(t *testing.T) {
 
 	pr := domain.PullRequest{
 		URL: "https://gh/pr/1", SessionID: r.ID, Number: 1,
-		Review: domain.ReviewRequired, CI: domain.CIFailing, Mergeability: domain.MergeBlocked, UpdatedAt: now,
+		Review: domain.ReviewRequired, CI: domain.CIFailing, Mergeability: domain.MergeBlocked, UpdatedAt: now, StateChangedAt: now,
 	}
 	if err := s.WritePR(ctx, pr, nil, nil); err != nil {
 		t.Fatal(err)
@@ -461,7 +580,7 @@ func TestWriteSCMObservationPersistsMetadataChecksReviewsAndComments(t *testing.
 		UpdatedAt: now, ObservedAt: now, CIObservedAt: now, ReviewObservedAt: now,
 	}
 	checks := []domain.PullRequestCheck{{Name: "build", CommitHash: "h1", Status: domain.PRCheckFailed, Conclusion: "failure", URL: "ci", Details: "99", LogTail: "boom", CreatedAt: now}}
-	reviews := []domain.PullRequestReview{{ID: "review-1", Author: "reviewer", State: domain.ReviewChangesRequest, URL: "https://github.com/o/r/pull/1#pullrequestreview-1", SubmittedAt: now}}
+	reviews := []domain.PullRequestReview{{ID: "review-1", Author: "reviewer", State: domain.ReviewChangesRequest, URL: "https://github.com/o/r/pull/1#pullrequestreview-1", Body: "please fix the nil check", SubmittedAt: now}}
 	threads := []domain.PullRequestReviewThread{{ThreadID: "t1", Path: "main.go", Line: 7, SemanticHash: "th", UpdatedAt: now}}
 	comments := []domain.PullRequestComment{{ThreadID: "t1", ID: "c1", Author: "reviewer", File: "main.go", Line: 7, Body: "fix", URL: "comment", CreatedAt: now}}
 
@@ -484,12 +603,46 @@ func TestWriteSCMObservationPersistsMetadataChecksReviewsAndComments(t *testing.
 		t.Fatalf("threads not persisted: %+v", gotThreads)
 	}
 	gotReviews, _ := s.ListPRReviews(ctx, pr.URL)
-	if len(gotReviews) != 1 || gotReviews[0].ID != "review-1" || gotReviews[0].URL != "https://github.com/o/r/pull/1#pullrequestreview-1" {
+	if len(gotReviews) != 1 || gotReviews[0].ID != "review-1" || gotReviews[0].URL != "https://github.com/o/r/pull/1#pullrequestreview-1" || gotReviews[0].Body != "please fix the nil check" {
 		t.Fatalf("reviews not persisted: %+v", gotReviews)
 	}
 	gotComments, _ := s.ListPRComments(ctx, pr.URL)
 	if len(gotComments) != 1 || gotComments[0].ThreadID != "t1" || gotComments[0].URL != "comment" {
 		t.Fatalf("comments not persisted: %+v", gotComments)
+	}
+}
+
+func TestUpsertPRReviewUpdatesBody(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	now := time.Now().UTC().Truncate(time.Second)
+
+	pr := domain.PullRequest{
+		URL: "https://github.com/o/r/pull/9", SessionID: r.ID, Number: 9,
+		Provider: "github", Host: "github.com", Repo: "o/r",
+		SourceBranch: "feat/body", TargetBranch: "main", HeadSHA: "h1",
+		Title: "review body", UpdatedAt: now, ObservedAt: now,
+	}
+	review := domain.PullRequestReview{ID: "review-1", Author: "reviewer", State: domain.ReviewChangesRequest, URL: "https://github.com/o/r/pull/9#pullrequestreview-1", Body: "first pass", SubmittedAt: now}
+
+	if err := s.WriteSCMObservation(ctx, pr, nil, []domain.PullRequestReview{review}, nil, nil, ports.ReviewWriteReplace); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.ListPRReviews(ctx, pr.URL); len(got) != 1 || got[0].Body != "first pass" {
+		t.Fatalf("initial body not persisted: %+v", got)
+	}
+
+	// A re-observation of the same review id must overwrite the stored body.
+	review.State = domain.ReviewApproved
+	review.Body = "resolved, approving"
+	if err := s.WriteSCMObservation(ctx, pr, nil, []domain.PullRequestReview{review}, nil, nil, ports.ReviewWriteReplace); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.ListPRReviews(ctx, pr.URL)
+	if len(got) != 1 || got[0].Body != "resolved, approving" || got[0].State != domain.ReviewApproved {
+		t.Fatalf("body/state not updated on upsert: %+v", got)
 	}
 }
 

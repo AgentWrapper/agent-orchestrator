@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"io"
 	"net/http"
@@ -27,22 +28,51 @@ const (
 	maxPromptLen      = 4096
 	maxMessageLen     = 4096
 	maxDisplayNameLen = 20
+
+	// Attachment limits guard the daemon against oversized spawn bodies. Images
+	// are pasted/dropped into the task brief and inlined as base64 in the JSON
+	// body, so the caps are deliberately conservative.
+	maxAttachments      = 8
+	maxAttachmentBytes  = 10 << 20 // 10 MiB per image, decoded
+	maxAttachmentsBytes = 25 << 20 // 25 MiB total, decoded
+	// maxSpawnBodyBytes bounds the raw request body before it is decoded. The
+	// per-attachment and total caps above only apply after the whole body is
+	// materialized, so without this an oversized body (base64 inflates the
+	// decoded total by ~4/3) would allocate in full first. Derived from the
+	// decoded total plus headroom for the prompt and JSON envelope.
+	maxSpawnBodyBytes = maxAttachmentsBytes*4/3 + (2 << 20)
 )
+
+// attachmentExtByMime maps the accepted image MIME types to the file extension
+// used when the image is written into the worktree. Raster formats only: the
+// agent is told to open the file for visual context, so active-content formats
+// (notably image/svg+xml, which is XML that can carry scripts/external entities)
+// are intentionally excluded.
+var attachmentExtByMime = map[string]string{
+	"image/png":  ".png",
+	"image/jpeg": ".jpg",
+	"image/jpg":  ".jpg",
+	"image/gif":  ".gif",
+	"image/webp": ".webp",
+	"image/bmp":  ".bmp",
+}
 
 var errPreviewFileNotFound = errors.New("preview file not found")
 
 // SessionService is the controller-facing session service contract.
 type SessionService interface {
 	List(ctx context.Context, filter sessionsvc.ListFilter) ([]domain.Session, error)
-	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, error)
+	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, int, int, error)
 	SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error)
 	Get(ctx context.Context, id domain.SessionID) (domain.Session, error)
 	Restore(ctx context.Context, id domain.SessionID) (sessionsvc.RestoreOutcome, error)
+	ResumeAgent(ctx context.Context, id domain.SessionID) (sessionsvc.ResumeAgentOutcome, error)
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 	RollbackSpawn(ctx context.Context, id domain.SessionID) (sessionsvc.RollbackOutcome, error)
 	Cleanup(ctx context.Context, project domain.ProjectID) (sessionsvc.CleanupOutcome, error)
 	Rename(ctx context.Context, id domain.SessionID, displayName string) error
 	SetPreview(ctx context.Context, id domain.SessionID, previewURL string) (domain.Session, error)
+	SetTerminateOnPRMerge(ctx context.Context, id domain.SessionID, terminate bool) (domain.Session, error)
 	Send(ctx context.Context, id domain.SessionID, message string) error
 	ListPRSummaries(ctx context.Context, id domain.SessionID) ([]sessionsvc.PRSummary, error)
 	ClaimPR(ctx context.Context, id domain.SessionID, ref string, opts sessionsvc.ClaimPROptions) (sessionsvc.ClaimPRResult, error)
@@ -81,7 +111,9 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Get("/sessions/{sessionId}/pr", c.listPRs)
 	r.Post("/sessions/{sessionId}/pr/claim", c.claimPR)
 	r.Patch("/sessions/{sessionId}", c.rename)
+	r.Patch("/sessions/{sessionId}/merge-policy", c.setMergePolicy)
 	r.Post("/sessions/{sessionId}/restore", c.restore)
+	r.Post("/sessions/{sessionId}/resume-agent", c.resumeAgent)
 	r.Post("/sessions/{sessionId}/kill", c.kill)
 	r.Post("/sessions/{sessionId}/rollback", c.rollback)
 	r.Post("/sessions/{sessionId}/send", c.send)
@@ -114,6 +146,11 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions")
 		return
 	}
+	// Bound the body before decoding: this route is served on the LAN listener
+	// (AO Mobile), not just loopback, and the attachment caps only run after the
+	// whole body is decoded. MaxBytesReader stops the read past the limit so an
+	// oversized base64 payload can't allocate in full first.
+	r.Body = http.MaxBytesReader(w, r.Body, maxSpawnBodyBytes)
 	var in SpawnSessionRequest
 	if err := decodeJSON(r, &in); err != nil {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
@@ -139,12 +176,60 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 	if in.Kind == "" {
 		in.Kind = domain.KindWorker
 	}
-	sess, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, Kind: in.Kind, Harness: in.Harness, Branch: in.Branch, Prompt: in.Prompt, DisplayName: displayName})
+	attachments, attachErr := decodeSpawnAttachments(in.Attachments)
+	if attachErr != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", attachErr.code, attachErr.message, nil)
+		return
+	}
+	sess, promptBytes, systemPromptBytes, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, Kind: in.Kind, Harness: in.Harness, Branch: in.Branch, Prompt: in.Prompt, DisplayName: displayName, Attachments: attachments})
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusCreated, SessionResponse{Session: sessionView(sess)})
+	envelope.WriteJSON(w, http.StatusCreated, SpawnSessionResponse{Session: sessionView(sess), PromptBytes: promptBytes, SystemPromptBytes: systemPromptBytes})
+}
+
+// spawnAttachmentError carries a client-facing API error code + message for a
+// rejected attachment payload.
+type spawnAttachmentError struct {
+	code    string
+	message string
+}
+
+// decodeSpawnAttachments validates and base64-decodes the inline image
+// attachments from a spawn request, enforcing count, per-image, and total size
+// caps. It returns a nil slice when there are no attachments.
+func decodeSpawnAttachments(in []SpawnAttachmentInput) ([]ports.SpawnAttachment, *spawnAttachmentError) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+	if len(in) > maxAttachments {
+		return nil, &spawnAttachmentError{"TOO_MANY_ATTACHMENTS", "too many attachments"}
+	}
+	out := make([]ports.SpawnAttachment, 0, len(in))
+	total := 0
+	for _, a := range in {
+		ext, ok := attachmentExtByMime[strings.ToLower(strings.TrimSpace(a.MimeType))]
+		if !ok {
+			return nil, &spawnAttachmentError{"UNSUPPORTED_ATTACHMENT_TYPE", "unsupported attachment type"}
+		}
+		data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(a.Data))
+		if err != nil {
+			return nil, &spawnAttachmentError{"INVALID_ATTACHMENT_DATA", "attachment data is not valid base64"}
+		}
+		if len(data) == 0 {
+			return nil, &spawnAttachmentError{"INVALID_ATTACHMENT_DATA", "attachment is empty"}
+		}
+		if len(data) > maxAttachmentBytes {
+			return nil, &spawnAttachmentError{"ATTACHMENT_TOO_LARGE", "attachment is too large"}
+		}
+		total += len(data)
+		if total > maxAttachmentsBytes {
+			return nil, &spawnAttachmentError{"ATTACHMENTS_TOO_LARGE", "attachments are too large"}
+		}
+		out = append(out, ports.SpawnAttachment{Ext: ext, Data: data})
+	}
+	return out, nil
 }
 
 func (c *SessionsController) get(w http.ResponseWriter, r *http.Request) {
@@ -466,6 +551,29 @@ func (c *SessionsController) rename(w http.ResponseWriter, r *http.Request) {
 	envelope.WriteJSON(w, http.StatusOK, RenameSessionResponse{OK: true, SessionID: sessionID(r), DisplayName: displayName})
 }
 
+func (c *SessionsController) setMergePolicy(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "PATCH", "/api/v1/sessions/{sessionId}/merge-policy")
+		return
+	}
+	var in SetSessionMergePolicyRequest
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	sess, err := c.Svc.SetTerminateOnPRMerge(r.Context(), sessionID(r), in.TerminateOnPRMerge)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, SetSessionMergePolicyResponse{
+		OK:                 true,
+		SessionID:          sessionID(r),
+		TerminateOnPRMerge: in.TerminateOnPRMerge,
+		Session:            sessionView(sess),
+	})
+}
+
 func (c *SessionsController) restore(w http.ResponseWriter, r *http.Request) {
 	if c.Svc == nil {
 		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/restore")
@@ -477,6 +585,24 @@ func (c *SessionsController) restore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, RestoreSessionResponse{OK: true, SessionID: sessionID(r), RestoreMode: out.Mode, Session: sessionView(out.Session)})
+}
+
+func (c *SessionsController) resumeAgent(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/resume-agent")
+		return
+	}
+	out, err := c.Svc.ResumeAgent(r.Context(), sessionID(r))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, ResumeAgentResponse{
+		OK:         true,
+		SessionID:  sessionID(r),
+		ResumeMode: out.Mode,
+		Session:    sessionView(out.Session),
+	})
 }
 
 func (c *SessionsController) kill(w http.ResponseWriter, r *http.Request) {
@@ -594,6 +720,7 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 		ToolName:       capActivityMeta(domain.SanitizeControlChars(in.ToolName)),
 		ToolUseID:      capActivityMeta(domain.SanitizeControlChars(in.ToolUseID)),
 		AgentSessionID: agentSessionID,
+		LaunchID:       capActivityMeta(domain.SanitizeControlChars(strings.TrimSpace(in.LaunchID))),
 	}
 	if err := c.Activity.ApplyActivitySignal(r.Context(), sessionID(r), sig); err != nil {
 		if errors.Is(err, ports.ErrSessionNotFound) {

@@ -32,6 +32,13 @@ const (
 	DefaultReviewInterval = 2 * time.Minute
 	// DefaultCacheMax bounds each in-memory ETag/review cache map.
 	DefaultCacheMax = 512
+	// DefaultPRMaxAge bounds how long a locally-open tracked PR may go without a
+	// forced re-fetch. It is a bounded-staleness backstop, not a distrust of the
+	// ETag: the refresh signals the observer consults (the repo PR-list guard and
+	// the per-commit checks guard) do not track a PR's own state, so a merged or
+	// closed PR whose head SHA is unchanged can otherwise read stale. This caps
+	// how long that inference can persist.
+	DefaultPRMaxAge = 5 * time.Minute
 	// BatchSize is the maximum number of PRs in one provider batch fetch.
 	BatchSize = 25
 )
@@ -94,6 +101,10 @@ type ObserverCache struct {
 	// ReviewRefreshFailed marks PRs whose review-thread refresh failed; the
 	// next poll retries regardless of the normal review cadence/status rules.
 	ReviewRefreshFailed map[string]bool
+	// LastPRFetchAt maps PR keys to the last time the PR was successfully fetched from the provider.
+	LastPRFetchAt map[string]time.Time
+	// lastPRFetchOrder tracks FIFO eviction order for LastPRFetchAt.
+	lastPRFetchOrder []string
 	// repoOrder tracks FIFO eviction order for RepoPRListETag.
 	repoOrder []string
 	// commitOrder tracks FIFO eviction order for CommitChecksETag.
@@ -115,6 +126,7 @@ func newCache(maxEntries int) ObserverCache {
 		CommitChecksETag:    map[string]string{},
 		LastReviewPollAt:    map[string]time.Time{},
 		ReviewRefreshFailed: map[string]bool{},
+		LastPRFetchAt:       map[string]time.Time{},
 		max:                 maxEntries,
 	}
 }
@@ -274,7 +286,7 @@ func (o *Observer) Poll(ctx context.Context) error {
 		return err
 	}
 
-	selection := o.selectRefreshCandidates(ctx, subjects, repoGuards, markRepoRefreshFailed)
+	selection := o.selectRefreshCandidates(ctx, subjects, repoGuards, markRepoRefreshFailed, now)
 	observations := map[string]ports.SCMObservation{}
 	prRefreshOK := map[string]bool{}
 	for key := range selection.candidateKeys {
@@ -403,6 +415,7 @@ func (o *Observer) Poll(ctx context.Context) error {
 		if reviewModes[key] != ports.ReviewWritePreserve {
 			o.cacheSetTime(o.Cache.LastReviewPollAt, &o.Cache.lastReviewPollOrder, key, now)
 		}
+		o.cacheSetTime(o.Cache.LastPRFetchAt, &o.Cache.lastPRFetchOrder, key, now)
 	}
 	for key, ok := range repoRefreshOK {
 		if !ok {
@@ -447,11 +460,12 @@ func (o *Observer) checkCredentials(ctx context.Context) (bool, error) {
 	return observe.CheckCredentialsOnce(ctx, probe, &o.credentialsChecked, &o.disabled, o.logger, "scm observer")
 }
 
-// discoverSubjects builds the per-PR refresh subjects (one per open tracked PR)
+// discoverSubjects builds the per-PR refresh subjects (normally one per open
+// tracked PR)
 // and the per-session repo list used for branch-prefix discovery of new PRs. A
-// session may own several PRs, so each open tracked PR becomes its own subject;
-// merged/closed PRs are not re-fetched since lifecycle already saw the terminal
-// transition and the completion rule reads them from the store.
+// session may own several PRs, so each open tracked PR becomes its own subject.
+// Terminal PRs stay eligible only for an opted-in live session, allowing an
+// unacknowledged teardown failure to be delivered again on a later poll.
 func (o *Observer) discoverSubjects(ctx context.Context) (map[string]*subject, []sessionRepo, error) {
 	sessions, err := o.store.ListAllSessions(ctx)
 	if err != nil {
@@ -517,7 +531,7 @@ func (o *Observer) discoverSubjects(ctx context.Context) (map[string]*subject, [
 		if err != nil {
 			return nil, nil, err
 		}
-		for _, pr := range openTrackedPRs(prs) {
+		for _, pr := range trackedPRsForSession(sess, prs) {
 			prRepo, ok := repoForTrackedPR(pr, repos)
 			if !ok {
 				o.logger.Warn("scm observer: tracked PR repo no longer belongs to project", "session", sess.ID, "pr", pr.URL, "repo", pr.Repo)
@@ -641,6 +655,22 @@ func openTrackedPRs(prs []domain.PullRequest) []domain.PullRequest {
 	out := make([]domain.PullRequest, 0, len(prs))
 	for _, pr := range prs {
 		if pr.Number > 0 && !pr.Merged && !pr.Closed {
+			out = append(out, pr)
+		}
+	}
+	return out
+}
+
+// trackedPRsForSession keeps terminal PRs discoverable only while an opted-in
+// session remains live. If merge-driven teardown fails, the observer has not
+// acknowledged the terminal semantic hash, so a later poll can redeliver it.
+func trackedPRsForSession(sess domain.SessionRecord, prs []domain.PullRequest) []domain.PullRequest {
+	if !sess.TerminateOnPRMerge {
+		return openTrackedPRs(prs)
+	}
+	out := make([]domain.PullRequest, 0, len(prs))
+	for _, pr := range prs {
+		if pr.Number > 0 {
 			out = append(out, pr)
 		}
 	}
@@ -817,7 +847,7 @@ func sessionBranchPrefixes(branch string) []string {
 	return prefixes
 }
 
-func (o *Observer) selectRefreshCandidates(ctx context.Context, subjects map[string]*subject, guards map[string]repoGuardState, markRepoFailed func(ports.SCMRepo)) refreshSelection {
+func (o *Observer) selectRefreshCandidates(ctx context.Context, subjects map[string]*subject, guards map[string]repoGuardState, markRepoFailed func(ports.SCMRepo), now time.Time) refreshSelection {
 	selection := refreshSelection{
 		subjectsByPR:  map[string]*subject{},
 		commitETags:   map[string]pendingCacheString{},
@@ -848,6 +878,19 @@ func (o *Observer) selectRefreshCandidates(ctx context.Context, subjects map[str
 				if res.ETag != "" {
 					selection.commitETags[key] = pendingCacheString{key: commitKey, value: res.ETag}
 				}
+			}
+		}
+		if !candidate {
+			// Force an unconditional fetch once the snapshot is older than
+			// DefaultPRMaxAge. Trade-off: GitHub does not bill 304 responses, so
+			// this forgoes the conditional-request savings the ETag path bought.
+			// At the current 30s tick / 5m max-age that is ~12 unconditional
+			// fetches/hour per tracked open PR, and it scales linearly with the
+			// number of tracked PRs. It also fires for every stale PR in the same
+			// tick, so watch secondary-rate-limit burstiness as fleets grow.
+			last := o.Cache.LastPRFetchAt[key]
+			if last.IsZero() || now.Sub(last) > DefaultPRMaxAge {
+				candidate = true
 			}
 		}
 		if candidate {
@@ -936,6 +979,9 @@ func applyStoredFailedLogTails(obs *ports.SCMObservation, checks []domain.PullRe
 func (o *Observer) refreshReviews(ctx context.Context, subjects map[string]*subject, observations map[string]ports.SCMObservation, subjectsByPR map[string]*subject, reviewModes map[string]ports.ReviewWriteMode, localOnlyObservations, reviewStale map[string]bool, now time.Time) {
 	for _, s := range subjects {
 		if !s.hasPR || s.known.Number <= 0 {
+			continue
+		}
+		if s.known.Merged || s.known.Closed {
 			continue
 		}
 		pkey := prKey(s.repo, s.known.Number)
@@ -1110,6 +1156,7 @@ func domainFromObservation(sessionID domain.SessionID, obs ports.SCMObservation,
 			Author:      review.Author,
 			State:       domain.ReviewDecision(firstNonEmpty(review.State, string(domain.ReviewNone))),
 			URL:         review.URL,
+			Body:        review.Body,
 			IsBot:       review.IsBot,
 			SubmittedAt: firstTime(review.SubmittedAt, now),
 		})

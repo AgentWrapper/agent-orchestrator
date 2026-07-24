@@ -69,8 +69,9 @@
 	--spacing-8: var(--space-8);
 	--spacing-10: var(--space-10);
 
-	/* Z-index — z-chrome, z-titlebar, z-overlay */
+	/* Z-index — z-chrome, z-sidebar-preview, z-titlebar, z-overlay */
 	--z-index-chrome: var(--z-chrome);
+	--z-index-sidebar-preview: var(--z-sidebar-preview);
 	--z-index-titlebar: var(--z-titlebar);
 	--z-index-overlay: var(--z-overlay);
 
@@ -106,6 +107,7 @@
 
 	/* Settings page (Figma) */
 	--color-settings-row: var(--color-bg-settings-row);
+	--color-settings-menu: var(--color-bg-settings-menu);
 	--color-settings-menu-selected: var(--color-bg-settings-menu-selected);
 	--color-settings-title: var(--color-text-settings-title);
 	--color-settings-muted: var(--color-text-settings-muted);
@@ -162,7 +164,10 @@
 
 	/* Layout — toolbar offset for fixed sidebar below topbar */
 	--spacing-toolbar: var(--size-toolbar);
+	--spacing-titlebar-content-offset: var(--size-titlebar-content-offset);
+	--spacing-titlebar-cluster-left: var(--size-titlebar-cluster-left);
 	--spacing-traffic-light-clearance: var(--size-traffic-light-clearance);
+	--spacing-traffic-light-clearance-fullscreen: var(--size-traffic-light-clearance-fullscreen);
 	--spacing-control-xs: var(--size-control-xs);
 	--spacing-control-sm: var(--size-control-sm);
 	--spacing-control-form: var(--size-control-form);
@@ -177,6 +182,8 @@
 	--spacing-browser-min: var(--size-browser-min);
 	--spacing-dot-sm: var(--size-dot-sm);
 	--spacing-content-max: var(--size-content-max);
+	--spacing-flex-min: var(--size-flex-min);
+	--spacing-shell-tab-min: var(--size-shell-tab-min);
 	--spacing-shell-tab-max: var(--size-shell-tab-max);
 	--spacing-board-empty: var(--size-board-empty);
 	--spacing-preview-content: var(--size-preview-content);
@@ -185,6 +192,7 @@
 	--spacing-notification-max-height: var(--size-notification-max-height);
 	--spacing-select-menu-max: var(--size-select-menu-max);
 	--spacing-notification-icon: var(--size-notification-icon);
+	--spacing-daemon-failure-details-max: var(--size-daemon-failure-details-max);
 	--spacing-font-size-label: var(--size-font-size-label);
 	--spacing-pr-table-actions: var(--size-pr-table-actions);
 	--spacing-pr-col-number: var(--size-pr-col-number);
@@ -218,6 +226,16 @@
 	--color-success-bright: var(--color-success-bright);
 	--color-warning: var(--bridge-warning);
 	--color-error: var(--bridge-danger);
+	--color-status-working: var(--bridge-status-working);
+	--color-status-needs-you: var(--bridge-status-needs-you);
+	--color-status-in-review: var(--bridge-status-in-review);
+	--color-status-ready: var(--bridge-status-ready);
+	--color-status-merged: var(--bridge-status-merged);
+	--color-status-idle: var(--bridge-status-idle);
+	--color-status-exited: var(--bridge-status-exited);
+	--color-status-terminated: var(--bridge-status-terminated);
+	--color-status-terminated-foreground: var(--bridge-status-terminated-foreground);
+	--color-status-unknown: var(--bridge-status-unknown);
 	--color-destructive: var(--bridge-danger);
 	--color-destructive-foreground: var(--color-accent-foreground);
 
@@ -237,6 +255,10 @@
 	background-color: var(--color-scrim);
 	-webkit-backdrop-filter: blur(var(--blur-overlay));
 	backdrop-filter: blur(var(--blur-overlay));
+}
+
+@utility w-daemon-failure-toast {
+	width: min(var(--size-daemon-failure-toast), calc(100vw - var(--space-6)));
 }
 
 @utility w-dialog-md {
@@ -285,6 +307,11 @@
 		0 0 8px var(--color-working);
 }
 
+@utility session-card-terminated {
+	border-color: color-mix(in srgb, var(--color-status-terminated) 32%, var(--color-border));
+	background-color: color-mix(in srgb, var(--color-status-terminated) 7%, var(--color-bg-secondary));
+}
+
 @utility bg-surface-faint {
 	background-color: color-mix(in srgb, var(--color-bg-primary) 35%, transparent);
 }
@@ -330,8 +357,8 @@
 	width: 100%;
 	background-color: var(--color-bg-sidebar);
 	padding-top: var(--size-center-panel-inset);
-	padding-right: var(--size-center-panel-inset);
-	padding-bottom: var(--size-center-panel-inset);
+	padding-right: var(--size-center-panel-inline-inset);
+	padding-bottom: var(--size-center-panel-bottom-inset);
 	padding-left: 0;
 }
 
@@ -344,6 +371,12 @@
 	border-radius: var(--radius-center-panel);
 	border: 1px solid var(--color-border-strong);
 	background-color: var(--color-bg-primary);
+}
+
+/* A fully hidden sidebar no longer contributes a left layout gutter. Restore
+ * the shared frame inset while transient hover previews overlay this surface. */
+.sidebar-hidden .center-panel-shell {
+	padding-left: var(--size-center-panel-inline-inset);
 }
 
 @utility settings-row-bar {
@@ -444,17 +477,74 @@ button.settings-row-bar {
 	gap: calc(var(--spacing) * 2);
 	white-space: nowrap;
 	border-radius: var(--radius-settings-action);
-	border-width: 1px;
-	border-style: solid;
+	border: 1px solid var(--color-border-settings-input);
+	background-color: var(--color-bg-settings-input);
 	padding-inline: var(--space-3);
 	font-size: var(--font-size-md);
 	line-height: 1.25rem;
+	color: var(--color-text-settings-row);
 	outline: none;
 	transition-property: color, background-color, border-color, opacity, box-shadow;
 	transition-duration: var(--duration-normal);
 
+	&:hover {
+		opacity: 0.9;
+	}
+
 	&:focus-visible {
 		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+	}
+}
+
+/* Segmented control — ReportProblem destination picker, ConnectMobile LAN/Tailscale. */
+@utility settings-segment {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-0_5);
+	border-radius: var(--radius-settings-action);
+	border: 1px solid var(--color-border-settings-input);
+	background-color: var(--color-bg-settings-input);
+	padding: var(--space-0_5);
+}
+
+@utility settings-segment-item {
+	display: inline-flex;
+	height: var(--size-control-form);
+	cursor: default;
+	align-items: center;
+	gap: calc(var(--spacing) * 1.5);
+	border-radius: var(--radius-lg);
+	padding-inline: var(--space-3);
+	font-size: var(--font-size-base);
+	line-height: 1;
+	color: var(--color-text-settings-muted);
+	outline: none;
+	transition-property: color, background-color;
+	transition-duration: var(--duration-normal);
+
+	&:hover {
+		color: var(--color-text-settings-title);
+	}
+
+	&:focus-visible {
+		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+	}
+
+	&[data-state="checked"] {
+		background-color: var(--color-bg-settings-menu-selected);
+		color: var(--color-text-settings-title);
+	}
+}
+
+@utility settings-mobile-steps {
+	list-style-type: decimal;
+	padding-left: var(--space-4);
+	font-size: var(--font-size-caption);
+	line-height: var(--leading-settings-mobile-hint);
+	color: var(--color-text-settings-muted);
+
+	& > li + li {
+		margin-top: calc(var(--spacing) * 1.5);
 	}
 }
 
@@ -691,6 +781,7 @@ select {
 		scrollbar-color: color-mix(in srgb, var(--color-scrollbar) 42%, transparent) transparent;
 	}
 }
+
 .session-files-diff-scrollbar {
 	scrollbar-width: thin;
 	scrollbar-color: var(--color-scrollbar) transparent;
@@ -991,37 +1082,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	min-width: 0;
 	align-items: center;
 	gap: 13px;
-}
-
-/* ── macOS titlebar cluster (TitlebarNav) ─────────────────────────────────
- * In-flow inside the Sidebar header, below the traffic lights. The toggle is
- * pinned in a --size-sidebar-icon column so its screen position never changes
- * during the width animation; history arrows are absolute to the right and
- * fade with .sidebar-expanded-chrome. */
-.titlebar-nav {
-	position: relative;
-	display: flex;
-	height: var(--size-control-md);
-	flex-shrink: 0;
-	align-items: center;
-	margin-bottom: var(--space-2);
-}
-
-.titlebar-nav__toggle-slot {
-	display: flex;
-	width: var(--size-sidebar-icon);
-	flex-shrink: 0;
-	align-items: center;
-	justify-content: center;
-}
-
-.titlebar-nav__history {
-	position: absolute;
-	top: 0;
-	left: var(--size-sidebar-icon);
-	display: flex;
-	align-items: center;
-	gap: var(--space-1);
 }
 
 /* Windows custom title bar (WindowTitlebar): the app paints the sidebar toggle

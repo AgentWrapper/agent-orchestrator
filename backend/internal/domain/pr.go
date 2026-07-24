@@ -35,6 +35,10 @@ type PullRequest struct {
 	Review       ReviewDecision
 	Mergeability Mergeability
 	UpdatedAt    time.Time
+	// StateChangedAt is when the current normalized PR lifecycle state became
+	// active. It is seeded from provider timestamps and updated when AO observes
+	// a draft/open/merged/closed transition.
+	StateChangedAt time.Time
 
 	Provider string
 	Host     string
@@ -113,6 +117,7 @@ type PullRequestReview struct {
 	Author      string
 	State       ReviewDecision
 	URL         string
+	Body        string
 	IsBot       bool
 	SubmittedAt time.Time
 }

@@ -1,15 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
-import { ArrowUpRight, Files as FilesIcon, GitPullRequest, Play, Shield, Terminal, X } from "lucide-react";
+import { ArrowUpRight, Files as FilesIcon, GitPullRequest, Play, Shield, Terminal, Trash2, X } from "lucide-react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
+import { useTerminateSession } from "../hooks/useTerminateSession";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
-import type { WorkspaceSession } from "../types/workspace";
+import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { canonicalTrackerIssueId, sortedPRs } from "../types/workspace";
 import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session-presentation";
+import { aoBridge } from "../lib/bridge";
 import { BrowserPanelView, type BrowserAnnotationQueueModel } from "./BrowserPanel";
 import type { BrowserViewModel } from "../hooks/useBrowserView";
 import { Badge } from "./ui/badge";
@@ -17,6 +20,8 @@ import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
 import { PRSummaryMeta, PRSummaryParts } from "./PRSummaryDisplay";
 import { StatusPill } from "./StatusPill";
+import { SessionTerminationDialog } from "./SessionTerminationDialog";
+import { Switch } from "./ui/switch";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
@@ -76,9 +81,9 @@ const prStateTone: Record<SessionPRSummary["state"], string> = {
 	closed: "border-error/40 bg-error/10 text-error",
 };
 
-const inspectorShellClass = "@container/inspector flex h-full min-h-0 flex-col overflow-hidden bg-background";
+const inspectorShellClass = "@container/inspector flex h-full min-h-0 flex-col overflow-hidden";
 
-const inspectorBodyClass = "min-h-0 flex-1 overflow-y-auto p-5 pb-10 @max-[300px]/inspector:px-3.5";
+const inspectorBodyClass = "min-h-0 flex-1 overflow-y-auto p-4 pb-6 @max-[300px]/inspector:px-3";
 
 const inspectorEmptyClass = "text-xs text-muted-foreground leading-normal";
 
@@ -222,8 +227,8 @@ function Section({
 	title: string;
 }) {
 	return (
-		<section className={cn("mb-6", className)} data-testid="inspector-section">
-			<div className="mb-3 flex items-center justify-between text-2xs font-semibold uppercase tracking-wide-lg text-passive">
+		<section className={cn("mb-5 last:mb-0", className)} data-testid="inspector-section">
+			<div className="mb-2 flex items-center justify-between text-2xs font-semibold uppercase tracking-wide-lg text-passive">
 				<span>{title}</span>
 				{action ?? null}
 			</div>
@@ -236,7 +241,6 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 	const query = useSessionScmSummary(session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, query.data);
 	const prSectionTitle = prSummaries.length > 1 ? `Pull requests (${prSummaries.length})` : "Pull request";
-	const branchLabel = session.branch || `session/${session.id}`;
 	const issueId = canonicalTrackerIssueId(session.issueId);
 
 	return (
@@ -253,15 +257,18 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 				)}
 			</Section>
 
+			{session.kind !== "orchestrator" ? <CompletionControls session={session} /> : null}
+
 			<Section title="Activity">
-				<ActivityTimeline session={session} />
+				<ActivityTimeline prs={prSummaries} session={session} />
+				<ResumeAgentControl session={session} />
 			</Section>
 
-			<Section className="border-t border-border pt-5" title="Overview">
+			<Section className="border-t border-border pt-4" title="Overview">
 				<dl className="flex flex-col gap-1">
 					<Row k="Agent" v={session.provider} mono />
 					{issueId && <Row k="Issue" v={issueId} mono />}
-					<Row k="Branch" v={branchLabel} mono />
+					{session.branch && <Row k="Branch" v={session.branch} mono />}
 					<Row k="Started" v={formatTimeCompact(session.createdAt ?? session.updatedAt)} mono />
 					<Row k="Session" v={session.id} mono />
 				</dl>
@@ -270,13 +277,173 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 	);
 }
 
+function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
+	const queryClient = useQueryClient();
+	const resume = useMutation({
+		mutationFn: async () => {
+			if (usePreviewData) return;
+			const { data, error, response } = await apiClient.POST("/api/v1/sessions/{sessionId}/resume-agent", {
+				params: { path: { sessionId: session.id } },
+			});
+			if (error) throw new Error(apiErrorMessage(error, `Failed to resume agent (${response.status})`));
+			return data;
+		},
+		onSuccess: async (data) => {
+			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			if (data?.resumeMode === "saved_prompt") {
+				void aoBridge.notifications
+					.show({
+						id: `resume-agent-fallback:${session.id}:${Date.now()}`,
+						title: "Started from saved prompt",
+						body: "AO could not resume the native agent session, so it started a new conversation from the saved prompt.",
+					})
+					.catch((err) => {
+						console.warn("Unable to show resume fallback notification", err);
+					});
+			}
+		},
+	});
+
+	if (session.isTerminated === true || session.activity?.state !== "exited") return null;
+
+	const error = resume.error instanceof Error ? resume.error.message : null;
+	return (
+		<div className="mt-3 border-t border-border pt-3">
+			<Button
+				className="w-full"
+				disabled={resume.isPending}
+				onClick={() => resume.mutate()}
+				size="sm"
+				type="button"
+				variant="outline"
+			>
+				<Play className="size-icon-sm" aria-hidden="true" />
+				{resume.isPending ? "Resuming agent…" : "Resume agent"}
+			</Button>
+			{error ? (
+				<p className="mt-2 text-2xs leading-normal text-error" role="status">
+					{error}
+				</p>
+			) : null}
+		</div>
+	);
+}
+
+function CompletionControls({ session }: { session: WorkspaceSession }) {
+	const navigate = useNavigate();
+	const queryClient = useQueryClient();
+	const [confirmOpen, setConfirmOpen] = useState(false);
+	const terminate = useTerminateSession({
+		onSuccess: (terminated) => {
+			setConfirmOpen(false);
+			void navigate({ to: "/projects/$projectId", params: { projectId: terminated.workspaceId } });
+		},
+	});
+	const policy = useMutation({
+		mutationFn: async (terminateOnPrMerge: boolean) => {
+			if (usePreviewData) return;
+			const { error, response } = await apiClient.PATCH("/api/v1/sessions/{sessionId}/merge-policy", {
+				params: { path: { sessionId: session.id } },
+				body: { terminateOnPrMerge },
+			});
+			if (error) throw new Error(apiErrorMessage(error, `Failed to update merge policy (${response.status})`));
+		},
+		onMutate: async (terminateOnPrMerge) => {
+			await queryClient.cancelQueries({ queryKey: workspaceQueryKey });
+			const previous = queryClient.getQueryData<WorkspaceSummary[]>(workspaceQueryKey);
+			queryClient.setQueryData<WorkspaceSummary[]>(workspaceQueryKey, (current) =>
+				updateSessionMergePolicy(current, session.id, terminateOnPrMerge),
+			);
+			return { previous };
+		},
+		onError: (_error, _next, context) => {
+			if (context?.previous) queryClient.setQueryData(workspaceQueryKey, context.previous);
+		},
+		onSettled: () => {
+			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+		},
+	});
+	const policyError = policy.error instanceof Error ? policy.error.message : null;
+	const terminateError = terminate.error instanceof Error ? terminate.error.message : null;
+	const canTerminateNow = session.status === "merged";
+
+	if (session.isTerminated === true) return null;
+
+	return (
+		<Section title="Completion">
+			{canTerminateNow ? (
+				<div className="flex items-center justify-between gap-3 py-1">
+					<span className="min-w-0 text-xs font-medium text-foreground">Terminate</span>
+					<button
+						aria-label="Terminate session"
+						className="inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-colors hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+						onClick={() => {
+							terminate.reset();
+							setConfirmOpen(true);
+						}}
+						type="button"
+					>
+						<Trash2 className="size-icon-sm" aria-hidden="true" />
+					</button>
+				</div>
+			) : (
+				<>
+					<div className="flex items-center justify-between gap-3 py-1">
+						<label className="min-w-0 text-xs font-medium text-foreground" htmlFor={`merge-policy-${session.id}`}>
+							Terminate on merge
+						</label>
+						<Switch
+							aria-label="Terminate session when pull requests merge"
+							checked={Boolean(session.terminateOnPrMerge)}
+							disabled={policy.isPending}
+							id={`merge-policy-${session.id}`}
+							onCheckedChange={(checked) => policy.mutate(checked)}
+						/>
+					</div>
+					{policyError ? (
+						<p className="mt-1 text-2xs leading-normal text-error" role="status">
+							{policyError}
+						</p>
+					) : null}
+				</>
+			)}
+			<SessionTerminationDialog
+				busy={terminate.isPending}
+				error={terminateError}
+				onConfirm={() => terminate.mutate(session)}
+				onOpenChange={(open) => {
+					if (!terminate.isPending) setConfirmOpen(open);
+				}}
+				open={confirmOpen}
+				session={session}
+			/>
+		</Section>
+	);
+}
+
+function updateSessionMergePolicy(
+	workspaces: WorkspaceSummary[] | undefined,
+	sessionId: string,
+	terminateOnPrMerge: boolean,
+): WorkspaceSummary[] | undefined {
+	return workspaces?.map((workspace) => ({
+		...workspace,
+		sessions: workspace.sessions.map((candidate) =>
+			candidate.id === sessionId ? { ...candidate, terminateOnPrMerge } : candidate,
+		),
+	}));
+}
+
 function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 	return (
-		<div className="rounded-md border border-border bg-surface px-3 py-2.5">
+		<div className="rounded-md border border-border bg-surface px-3 py-2">
 			<div className="flex items-center gap-2">
 				<GitPullRequest className="size-icon-md shrink-0 text-passive" aria-hidden="true" />
 				<span className="text-md-sm font-medium text-foreground">PR #{pr.number}</span>
-				<Badge variant="outline" className={cn("h-5 px-1.5 text-micro font-medium", prStateTone[pr.state])}>
+				<Badge
+					variant="outline"
+					className={cn("h-5 px-1.5 text-[9px] leading-none font-medium", prStateTone[pr.state])}
+				>
 					{pr.state}
 				</Badge>
 				<a
@@ -305,41 +472,51 @@ const timelineNodeTone: Record<TimelineTone, string> = {
 	warn: "bg-warning shadow-timeline-dot",
 };
 
-function ActivityTimeline({ session }: { session: WorkspaceSession }) {
-	const events: { tone: TimelineTone; node: ReactNode; ts: string | null }[] = [];
+function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: WorkspaceSession }) {
+	const history: { tone: TimelineTone; node: ReactNode; ts: string | null }[] = [];
 
-	events.push({
+	history.push({
 		tone: "neutral",
-		node: <>Created worktree &amp; branch</>,
+		node: <>Created workspace</>,
 		ts: formatTimeCompact(session.createdAt ?? session.updatedAt),
 	});
 
-	const prs = sortedPRs(session);
 	for (const pr of prs.filter((pr) => pr.state === "draft")) {
-		events.push({
+		history.push({
 			tone: "neutral",
-			node: (
-				<>
-					Draft <b>PR #{pr.number}</b>
-				</>
-			),
-			ts: null,
+			node: <PRTimelineLink pr={pr} verb="Draft" />,
+			ts: prStateTime(pr),
 		});
 	}
 
 	for (const pr of prs.filter((pr) => pr.state !== "draft")) {
-		events.push({
+		history.push({
 			tone: "neutral",
-			node: (
-				<>
-					Opened <b>PR #{pr.number}</b>
-				</>
-			),
-			ts: null,
+			node: <PRTimelineLink pr={pr} verb="Opened" />,
+			ts: prCreatedTime(pr),
 		});
 	}
 
-	events.push({
+	for (const pr of prs.filter((pr) => pr.state === "merged")) {
+		history.push({
+			tone: "good",
+			node: <PRTimelineLink pr={pr} verb="Merged" />,
+			ts: prStateTime(pr),
+		});
+	}
+
+	if (session.status === "merged") {
+		history.push({
+			tone: "good",
+			node: <>Done</>,
+			ts: latestMergedTime(prs),
+		});
+	}
+
+	// Current activity is a live reading, not a historical event. Keep it above
+	// the optional reverse-chronological history and do not imply that its last
+	// hook time is when the state transition occurred.
+	const current = {
 		tone: "now",
 		node: (
 			<span className="inline-flex flex-wrap items-center gap-1.5">
@@ -358,33 +535,24 @@ function ActivityTimeline({ session }: { session: WorkspaceSession }) {
 				))}
 			</span>
 		),
-		ts: session.activity?.lastActivityAt ? formatTimeCompact(session.activity.lastActivityAt) : null,
-	});
-
-	for (const pr of prs.filter((pr) => pr.state === "merged")) {
-		events.push({
-			tone: "good",
-			node: (
-				<>
-					Merged <b>PR #{pr.number}</b>
-				</>
-			),
-			ts: null,
-		});
-	}
-
-	if (session.status === "merged") {
-		events.push({
-			tone: "good",
-			node: <>Done</>,
-			ts: formatTimeCompact(session.updatedAt),
-		});
-	}
+		ts: null,
+	} satisfies { tone: TimelineTone; node: ReactNode; ts: null };
+	const events = [current, ...history.reverse()];
 
 	return (
-		<div className="relative pl-5 before:absolute before:top-1 before:bottom-1.5 before:left-1.25 before:w-px before:bg-border before:content-['']">
+		<div className="relative pl-5">
 			{events.map((event, index) => (
 				<div key={index} className="relative pb-4 last:pb-0" data-testid="inspector-timeline-event">
+					{index < events.length - 1 ? (
+						<span
+							aria-hidden="true"
+							className={cn(
+								"absolute -bottom-[10.5px] -left-3.5 w-px bg-border",
+								event.tone === "now" ? "top-1/2" : "top-[10.5px]",
+							)}
+							data-testid="inspector-timeline-connector"
+						/>
+					) : null}
 					<div className="relative flex min-h-icon-xs items-center">
 						<span
 							aria-hidden="true"
@@ -401,6 +569,43 @@ function ActivityTimeline({ session }: { session: WorkspaceSession }) {
 			))}
 		</div>
 	);
+}
+
+function PRTimelineLink({ pr, verb }: { pr: SessionPRSummary; verb: "Draft" | "Opened" | "Merged" }) {
+	return (
+		<a
+			aria-label={`${verb} PR #${pr.number}`}
+			className="inline-flex min-w-0 items-center gap-1 rounded-xs text-foreground underline-offset-2 transition-colors hover:text-accent hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent/50"
+			href={prBrowserUrl(pr)}
+			rel="noopener noreferrer"
+			target="_blank"
+		>
+			<span>{verb} </span>
+			<b>PR #{pr.number}</b>
+			<ArrowUpRight aria-hidden="true" className="size-icon-2xs shrink-0" strokeWidth={2} />
+		</a>
+	);
+}
+
+function prStateTime(pr: SessionPRSummary): string | null {
+	return pr.stateChangedAt ? formatTimeCompact(pr.stateChangedAt) : null;
+}
+
+function prCreatedTime(pr: SessionPRSummary): string | null {
+	return pr.createdAt ? formatTimeCompact(pr.createdAt) : null;
+}
+
+function latestMergedTime(prs: SessionPRSummary[]): string | null {
+	let latest: { timestamp: string; milliseconds: number } | undefined;
+	for (const pr of prs) {
+		if (pr.state !== "merged" || !pr.stateChangedAt) continue;
+		const milliseconds = Date.parse(pr.stateChangedAt);
+		if (!Number.isFinite(milliseconds)) continue;
+		if (!latest || milliseconds > latest.milliseconds) {
+			latest = { timestamp: pr.stateChangedAt, milliseconds };
+		}
+	}
+	return latest ? formatTimeCompact(latest.timestamp) : null;
 }
 
 type ScmTimelineState = "ci_failed" | "changes_requested" | "conflict";
@@ -740,6 +945,7 @@ function ReviewPanel({
 
 function ReviewStateRow({ reviewState }: { reviewState: PRReviewState }) {
 	const verdict = reviewVerdict(reviewState);
+	const previousVerdict = previousReviewVerdict(reviewState);
 	const title = reviewState.title?.trim() || `PR #${reviewState.prNumber}`;
 	return (
 		<div
@@ -763,9 +969,14 @@ function ReviewStateRow({ reviewState }: { reviewState: PRReviewState }) {
 					<span className="col-start-1 font-mono text-caption text-passive">#{reviewState.prNumber}</span>
 				</div>
 			</div>
-			<span className={cn("whitespace-nowrap text-caption font-semibold", reviewerVerdictTone[verdict.tone])}>
-				{verdict.label}
-			</span>
+			<div className="flex flex-col items-end gap-1 whitespace-nowrap">
+				<span className={cn("text-caption font-semibold", reviewerVerdictTone[verdict.tone])}>{verdict.label}</span>
+				{previousVerdict ? (
+					<span className={cn("text-2xs font-medium", reviewerVerdictTone[previousVerdict.tone])}>
+						Previous: {previousVerdict.label}
+					</span>
+				) : null}
+			</div>
 		</div>
 	);
 }
@@ -815,6 +1026,21 @@ function reviewVerdict(reviewState: PRReviewState): {
 			return { label: "Not run", tone: "neutral" };
 	}
 	return { label: "Not run", tone: "neutral" };
+}
+
+function previousReviewVerdict(reviewState: PRReviewState): {
+	label: string;
+	tone: "success" | "danger";
+} | null {
+	if (reviewState.status !== "needs_review" && reviewState.status !== "running") return null;
+	switch (reviewState.previousRun?.verdict) {
+		case "approved":
+			return { label: "Approved", tone: "success" };
+		case "changes_requested":
+			return { label: "Changes requested", tone: "danger" };
+		default:
+			return null;
+	}
 }
 
 function reviewSessionRunAction(reviewStates: PRReviewState[], isTriggering: boolean): string {

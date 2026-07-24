@@ -2,10 +2,12 @@ import { useQuery } from "@tanstack/react-query";
 import type { components } from "../../api/schema";
 import { apiClient, hasTrustedApiBaseUrl } from "../lib/api-client";
 import { mockWorkspaces } from "../lib/mock-data";
+import { captureRendererEvent } from "../lib/telemetry";
 import {
 	type PRState,
 	type PullRequestFacts,
 	toAgentProvider,
+	toProjectKind,
 	toSessionActivity,
 	toSessionStatus,
 	type WorkspaceSummary,
@@ -26,6 +28,15 @@ function toPullRequestFacts(pr: components["schemas"]["SessionPRFacts"]): PullRe
 
 export const workspaceQueryKey = ["workspaces"] as const;
 const usePreviewData = import.meta.env.VITE_NO_ELECTRON === "1";
+const reportedUnknownSessionFields = new Set<string>();
+
+function reportUnknownSessionField(field: "status" | "activity", value?: string): void {
+	const reason = value ? "unrecognized" : "missing";
+	const key = `${field}:${reason}`;
+	if (reportedUnknownSessionFields.has(key)) return;
+	reportedUnknownSessionFields.add(key);
+	void captureRendererEvent("ao.renderer.session_state_unknown", { field, reason });
+}
 
 // e2e seam (dev:web only): the Playwright fake-agent harness injects
 // `window.__aoFakeAgent` (see e2e/support/fake-bridge.ts) to drive a
@@ -51,33 +62,48 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 
 	if (projectsError || sessionsError) throw projectsError ?? sessionsError;
 
-	return (projectsData?.projects ?? []).map((project) => ({
-		id: project.id,
-		name: project.name,
-		kind: project.kind === "workspace" ? "workspace" : "single_repo",
-		path: project.path,
-		orchestratorAgent: project.orchestratorAgent ? toAgentProvider(project.orchestratorAgent) : undefined,
-		sessions: (sessionsData?.sessions ?? [])
-			.filter((session) => session.projectId === project.id)
-			.map((session) => ({
-				id: session.id,
-				terminalHandleId: session.terminalHandleId,
-				workspaceId: project.id,
-				workspaceName: project.name,
-				title: session.displayName ?? session.issueId ?? session.id,
-				issueId: session.issueId,
-				provider: toAgentProvider(session.harness),
-				kind: session.kind === "orchestrator" ? "orchestrator" : session.kind === "worker" ? "worker" : undefined,
-				branch: session.branch ?? `session/${session.id}`,
-				status: toSessionStatus(session.status, session.isTerminated),
-				createdAt: session.createdAt,
-				updatedAt: session.updatedAt,
-				activity: toSessionActivity(session.activity),
-				previewUrl: session.previewUrl,
-				previewRevision: session.previewRevision,
-				prs: (session.prs ?? []).map(toPullRequestFacts),
-			})),
-	}));
+	return (projectsData?.projects ?? []).map((project) => {
+		const kind = toProjectKind(project.kind);
+		return {
+			id: project.id,
+			name: project.name,
+			kind,
+			path: project.path,
+			orchestratorAgent: project.orchestratorAgent ? toAgentProvider(project.orchestratorAgent) : undefined,
+			sessions: (sessionsData?.sessions ?? [])
+				.filter((session) => session.projectId === project.id)
+				.map((session) => {
+					const status = toSessionStatus(session.status, session.isTerminated);
+					const scmStatus = session.scmStatus ? toSessionStatus(session.scmStatus) : undefined;
+					const activity = toSessionActivity(session.activity);
+					if (status === "unknown") reportUnknownSessionField("status", session.status);
+					if (!activity || activity.state === "unknown") {
+						reportUnknownSessionField("activity", session.activity?.state);
+					}
+					return {
+						id: session.id,
+						terminalHandleId: session.terminalHandleId,
+						workspaceId: project.id,
+						workspaceName: project.name,
+						title: session.displayName ?? session.issueId ?? session.id,
+						issueId: session.issueId,
+						provider: toAgentProvider(session.harness),
+						kind: session.kind === "orchestrator" ? "orchestrator" : session.kind === "worker" ? "worker" : undefined,
+						branch: session.branch || undefined,
+						status,
+						scmStatus,
+						isTerminated: session.isTerminated,
+						terminateOnPrMerge: session.terminateOnPrMerge ?? false,
+						createdAt: session.createdAt,
+						updatedAt: session.updatedAt,
+						activity,
+						previewUrl: session.previewUrl,
+						previewRevision: session.previewRevision,
+						prs: (session.prs ?? []).map(toPullRequestFacts),
+					};
+				}),
+		};
+	});
 }
 
 // Shared so route loaders can prefetch via queryClient.ensureQueryData (paired

@@ -189,6 +189,7 @@ func NewRootCommand(deps Deps) *cobra.Command {
 	root.AddCommand(newSendCommand(ctx))
 	root.AddCommand(newPreviewCommand(ctx))
 	root.AddCommand(newHooksCommand(ctx))
+	root.AddCommand(newAgentProcessCommand(ctx))
 	root.AddCommand(newLaunchCommand(ctx))
 	root.AddCommand(newPtyHostCommand())
 	root.AddCommand(newImportCommand(ctx))
@@ -196,6 +197,7 @@ func NewRootCommand(deps Deps) *cobra.Command {
 	root.AddCommand(newProjectCommand(ctx))
 	root.AddCommand(newSessionCommand(ctx))
 	root.AddCommand(newOrchestratorCommand(ctx))
+	root.AddCommand(newPRCommand(ctx))
 	root.AddCommand(newReviewCommand(ctx))
 	root.AddCommand(newCompletionCommand())
 	root.AddCommand(newVersionCommand())
@@ -216,7 +218,7 @@ func shouldEmitCLIInvocation(cmd *cobra.Command) bool {
 	// something) even though a machine invokes them, so they are allowed
 	// through here; the per-command-path daily cap in httpd/router.go is what
 	// keeps their invocation frequency from reaching PostHog uncapped.
-	case "ao daemon", "ao start", "ao completion", "ao help":
+	case "ao daemon", "ao start", "ao completion", "ao help", "ao agent-process", "ao agent-process supervise":
 		return false
 	default:
 		return true
@@ -272,6 +274,15 @@ func usageErrorCommand(args []string) (string, string) {
 		command = tokens[len(tokens)-1]
 	}
 	return command, commandPath
+}
+
+func usageArgs(validate cobra.PositionalArgs) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if err := validate(cmd, args); err != nil {
+			return usageError{err}
+		}
+		return nil
+	}
 }
 
 func noArgs(cmd *cobra.Command, args []string) error {

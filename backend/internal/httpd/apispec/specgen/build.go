@@ -150,12 +150,16 @@ var schemaNames = map[string]string{
 	"ControllersCleanupSessionsQuery":             "CleanupSessionsQuery",
 	"ControllersListSessionsResponse":             "ListSessionsResponse",
 	"ControllersSpawnSessionRequest":              "SpawnSessionRequest",
+	"ControllersSpawnSessionResponse":             "SpawnSessionResponse",
 	"ControllersSessionResponse":                  "SessionResponse",
 	"ControllersSessionPreviewResponse":           "SessionPreviewResponse",
 	"ControllersSetSessionPreviewRequest":         "SetSessionPreviewRequest",
+	"ControllersSetSessionMergePolicyRequest":     "SetSessionMergePolicyRequest",
+	"ControllersSetSessionMergePolicyResponse":    "SetSessionMergePolicyResponse",
 	"ControllersRenameSessionRequest":             "RenameSessionRequest",
 	"ControllersRenameSessionResponse":            "RenameSessionResponse",
 	"ControllersRestoreSessionResponse":           "RestoreSessionResponse",
+	"ControllersResumeAgentResponse":              "ResumeAgentResponse",
 	"ControllersCleanupSessionsResponse":          "CleanupSessionsResponse",
 	"ControllersCleanupSkippedSession":            "CleanupSkippedSession",
 	"ControllersWorkspaceFileQuery":               "WorkspaceFileQuery",
@@ -173,6 +177,7 @@ var schemaNames = map[string]string{
 	"ControllersSessionPRCISummary":               "SessionPRCISummary",
 	"ControllersSessionPRFailingCheck":            "SessionPRFailingCheck",
 	"ControllersSessionPRReviewSummary":           "SessionPRReviewSummary",
+	"ControllersSessionPRReviewEntry":             "SessionPRReviewEntry",
 	"ControllersSessionPRUnresolvedReviewer":      "SessionPRUnresolvedReviewer",
 	"ControllersSessionPRReviewCommentLink":       "SessionPRReviewCommentLink",
 	"ControllersSessionPRMergeabilitySummary":     "SessionPRMergeabilitySummary",
@@ -242,6 +247,7 @@ var schemaNames = map[string]string{
 	"ProjectInitializeRepositoryResult": "InitializeRepositoryResult",
 	"ProjectRemoveResult":               "RemoveProjectResult",
 	"ProjectSetConfigInput":             "SetProjectConfigInput",
+	"ProjectUpdateSettingsInput":        "UpdateProjectSettingsInput",
 	"ProjectWorkspaceRepo":              "WorkspaceRepo",
 	"SessionWorkspaceFileStatus":        "WorkspaceFileStatus",
 }
@@ -498,7 +504,7 @@ func notificationOperations() []operation {
 	return []operation{
 		{
 			method: http.MethodGet, path: "/api/v1/notifications", id: "listNotifications", tag: "notifications",
-			summary:    "List unread notifications",
+			summary:    "List notification history",
 			pathParams: []any{controllers.ListNotificationsQuery{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.ListNotificationsResponse{}},
@@ -646,7 +652,7 @@ func eventOperations() []operation {
 	}
 }
 
-// projectOperations declares the 4 canonical /projects operations. The set must
+// projectOperations declares the canonical /projects operations. The set must
 // stay 1:1 with the routes ProjectsController.Register mounts —
 // TestRouteSpecParity fails the build otherwise.
 func projectOperations() []operation {
@@ -686,6 +692,18 @@ func projectOperations() []operation {
 			pathParams: []any{controllers.ProjectIDParam{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.GetProjectResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPut, path: "/api/v1/projects/{id}", id: "updateProjectSettings", tag: "projects",
+			summary:    "Atomically replace a project's display name and config",
+			pathParams: []any{controllers.ProjectIDParam{}},
+			reqBody:    projectsvc.UpdateSettingsInput{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ProjectResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 			},
@@ -733,7 +751,7 @@ func sessionOperations() []operation {
 			summary: "Spawn a new agent session",
 			reqBody: controllers.SpawnSessionRequest{},
 			resps: []respUnit{
-				{http.StatusCreated, controllers.SessionResponse{}},
+				{http.StatusCreated, controllers.SpawnSessionResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
@@ -859,6 +877,19 @@ func sessionOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodPatch, path: "/api/v1/sessions/{sessionId}/merge-policy", id: "setSessionMergePolicy", tag: "sessions",
+			summary:    "Configure whether PR completion terminates the session",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.SetSessionMergePolicyRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.SetSessionMergePolicyResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodPost, path: "/api/v1/sessions/cleanup", id: "cleanupSessions", tag: "sessions",
 			summary:    "Clean up terminated session workspaces",
 			pathParams: []any{controllers.CleanupSessionsQuery{}},
@@ -877,6 +908,18 @@ func sessionOperations() []operation {
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/resume-agent", id: "resumeAgent", tag: "sessions",
+			summary:    "Resume an exited agent in its existing session",
+			pathParams: []any{controllers.SessionIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ResumeAgentResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
 			},
 		},
 		{

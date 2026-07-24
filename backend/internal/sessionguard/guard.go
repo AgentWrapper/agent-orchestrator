@@ -42,6 +42,10 @@ const (
 	// SuppressedTerminated means the session is terminated; its pane is gone
 	// or about to be reaped.
 	SuppressedTerminated
+	// SuppressedExited means the managed pane remains available but its agent
+	// process exited. The pane may now contain an interactive shell, so writing
+	// an agent prompt would execute it as shell input.
+	SuppressedExited
 	// SuppressedAwaitingUser means the session awaits the human — blocked on a
 	// permission decision (Deliver and Nudge), or waiting at the prompt for
 	// the next instruction (Nudge only).
@@ -60,6 +64,8 @@ func (o Outcome) String() string {
 		return "suppressed_not_found"
 	case SuppressedTerminated:
 		return "suppressed_terminated"
+	case SuppressedExited:
+		return "suppressed_exited"
 	case SuppressedAwaitingUser:
 		return "suppressed_awaiting_user"
 	case SuppressedBusy:
@@ -106,8 +112,8 @@ func (g *Guard) Send(ctx context.Context, id domain.SessionID, msg string) error
 }
 
 // Deliver writes a user-initiated message (or its Enter-only re-submit: an
-// empty msg) into the session. It refuses only when the session is blocked on
-// a pending decision — waiting_input does NOT suppress, because an agent
+// empty msg) into a live agent. Its activity-specific policy refuses when the
+// session is blocked on a pending decision — waiting_input does NOT suppress, because an agent
 // sitting at an idle prompt is exactly where a user message (or the Enter that
 // submits its unsent draft) belongs.
 func (g *Guard) Deliver(ctx context.Context, id domain.SessionID, msg string) (Outcome, error) {
@@ -116,8 +122,8 @@ func (g *Guard) Deliver(ctx context.Context, id domain.SessionID, msg string) (O
 	})
 }
 
-// Nudge writes an AO-initiated (unsolicited) message into the session. It
-// refuses whenever the session awaits the human in any form — blocked on a
+// Nudge writes an AO-initiated (unsolicited) message into a live agent. Its
+// activity-specific policy refuses whenever the session awaits the human — blocked on a
 // decision or waiting at the prompt — because an automated paste+Enter there
 // either answers a dialog or submits text the user never saw.
 func (g *Guard) Nudge(ctx context.Context, id domain.SessionID, msg string) (Outcome, error) {
@@ -160,14 +166,13 @@ func (g *Guard) send(ctx context.Context, id domain.SessionID, msg string, refus
 		g.logger.Info("sessionguard: write suppressed", "sessionID", id, "reason", "not_found")
 		return SuppressedNotFound, nil
 	}
-	// ActivityExited is refused alongside IsTerminated as defense-in-depth:
-	// every exited writer today also sets IsTerminated, but a pane whose agent
-	// exited execs an interactive shell, so a paste+Enter there would run the
-	// message as shell commands — the invariant must not depend on writer
-	// discipline alone.
-	if rec.IsTerminated || rec.Activity.State == domain.ActivityExited {
+	if rec.IsTerminated {
 		g.logger.Info("sessionguard: write suppressed", "sessionID", id, "reason", "terminated")
 		return SuppressedTerminated, nil
+	}
+	if rec.Activity.State == domain.ActivityExited {
+		g.logger.Info("sessionguard: write suppressed", "sessionID", id, "reason", "agent_exited")
+		return SuppressedExited, nil
 	}
 	if outcome, deny := refuse(rec); deny {
 		g.logger.Info("sessionguard: write suppressed", "sessionID", id, "reason", outcome.String(), "state", string(rec.Activity.State))

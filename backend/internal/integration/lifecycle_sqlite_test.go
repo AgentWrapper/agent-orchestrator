@@ -25,7 +25,7 @@ type stubRuntime struct {
 	destroyedHandles []string
 }
 
-func (s *stubRuntime) Create(context.Context, ports.RuntimeConfig) (ports.RuntimeHandle, error) {
+func (s *stubRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
 	s.created++
 	return ports.RuntimeHandle{ID: "h1"}, nil
 }
@@ -103,6 +103,10 @@ func (s *stubWorkspace) ApplyPreserved(_ context.Context, _ ports.WorkspaceInfo,
 	return nil
 }
 
+func (s *stubWorkspace) AddExclude(_ context.Context, _ ports.WorkspaceInfo, _ ...string) error {
+	return nil
+}
+
 type captureMessenger struct{ msgs []string }
 
 func (c *captureMessenger) Send(_ context.Context, _ domain.SessionID, msg string) error {
@@ -146,14 +150,53 @@ func newStack(t *testing.T) *stack {
 	rt := &stubRuntime{}
 	ws := &stubWorkspace{}
 	mgr := sessionmanager.New(sessionmanager.Deps{Runtime: rt, Agents: stubAgents{}, Workspace: ws, Store: store, Messenger: msg, Lifecycle: lcm, LookPath: func(string) (string, error) { return "/usr/bin/true", nil }})
+	lcm.SetCompletionTerminator(mgr)
 	sm := sessionsvc.New(mgr, store)
 	return &stack{store: store, sm: sm, mgr: mgr, lcm: lcm, prm: prm, rt: rt, ws: ws, msg: msg}
+}
+
+func TestMergedPRUsesSessionManagerOnlyWhenOptedIn(t *testing.T) {
+	ctx := context.Background()
+	st := newStack(t)
+	sess, _, _, err := st.sm.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Branch: "b", Prompt: "do it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := st.prm.ApplyObservation(ctx, sess.ID, ports.PRObservation{Fetched: true, URL: "pr1", Number: 1, Merged: true}); err != nil {
+		t.Fatal(err)
+	}
+	if st.rt.destroyed != 0 || st.ws.destroyed != 0 {
+		t.Fatalf("default policy tore down resources: runtime=%d workspace=%d", st.rt.destroyed, st.ws.destroyed)
+	}
+	rec, _, _ := st.store.GetSession(ctx, sess.ID)
+	if rec.IsTerminated {
+		t.Fatalf("default policy terminated merged session: %+v", rec)
+	}
+
+	sess2, _, _, err := st.sm.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Branch: "c", Prompt: "do more"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := st.store.SetSessionTerminateOnPRMerge(ctx, sess2.ID, true, time.Now().UTC()); err != nil || !ok {
+		t.Fatalf("enable terminate-on-merge: ok=%v err=%v", ok, err)
+	}
+	if err := st.prm.ApplyObservation(ctx, sess2.ID, ports.PRObservation{Fetched: true, URL: "pr2", Number: 2, Merged: true}); err != nil {
+		t.Fatal(err)
+	}
+	if st.rt.destroyed != 1 || st.ws.destroyed != 1 {
+		t.Fatalf("opted-in merge teardown: runtime=%d workspace=%d, want 1/1", st.rt.destroyed, st.ws.destroyed)
+	}
+	rec, _, _ = st.store.GetSession(ctx, sess2.ID)
+	if !rec.IsTerminated {
+		t.Fatalf("opted-in merged session remained live: %+v", rec)
+	}
 }
 
 func TestSpawnPRKillRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	st := newStack(t)
-	sess, err := st.sm.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Branch: "b", Prompt: "do it"})
+	sess, _, _, err := st.sm.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Branch: "b", Prompt: "do it"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +230,7 @@ func TestSpawnPRKillRoundTrip(t *testing.T) {
 func TestRestoreRoundTripPreservesMetadata(t *testing.T) {
 	ctx := context.Background()
 	st := newStack(t)
-	sess, err := st.sm.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Branch: "b", Prompt: "prompt"})
+	sess, _, _, err := st.sm.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Branch: "b", Prompt: "prompt"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,7 +354,7 @@ func TestCDCPollerReceivesSessionAndPREvents(t *testing.T) {
 	var got []cdc.Event
 	b.Subscribe(func(e cdc.Event) { got = append(got, e) })
 	poller := cdc.NewPoller(st.store, b, cdc.PollerConfig{})
-	sess, err := st.sm.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	sess, _, _, err := st.sm.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if err != nil {
 		t.Fatal(err)
 	}

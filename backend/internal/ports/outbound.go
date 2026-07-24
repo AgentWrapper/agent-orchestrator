@@ -86,6 +86,13 @@ type Runtime interface {
 	IsAlive(ctx context.Context, handle RuntimeHandle) (bool, error)
 }
 
+// RuntimeRestarter is an optional runtime capability for replacing the process
+// inside an existing terminal session. Implementations should preserve the
+// handle when possible so attached clients do not need a new terminal identity.
+type RuntimeRestarter interface {
+	Restart(ctx context.Context, handle RuntimeHandle, cfg RuntimeConfig) (RuntimeHandle, error)
+}
+
 // RuntimeConfig is the spec for launching a session's process in a Runtime.
 // Argv is the agent's launch command as discrete arguments; each Runtime
 // shell-quotes it for its own shell, so the command survives args with spaces
@@ -101,6 +108,23 @@ type RuntimeConfig struct {
 // the concrete runtime adapter.
 type RuntimeHandle struct {
 	ID string
+}
+
+// SupervisedProcessRef identifies the AO-owned supervisor belonging to one
+// managed agent launch. LaunchID fences process observations from older
+// spawn/restore generations of the same session.
+type SupervisedProcessRef struct {
+	SessionID domain.SessionID
+	LaunchID  string
+}
+
+// SupervisedProcessInspector is an optional runtime capability used by the
+// reaper for agents without native exit hooks. Implementations may also detect
+// a workload relaunched from a preserved runtime shell. A false result is
+// definitive only when err is nil; inspection errors must never be interpreted
+// as exit.
+type SupervisedProcessInspector interface {
+	IsSupervisedProcessAlive(ctx context.Context, handle RuntimeHandle, ref SupervisedProcessRef) (bool, error)
 }
 
 // Stream is one live terminal attach: PTY-like bytes plus resize. Returned
@@ -142,6 +166,12 @@ type Workspace interface {
 	// tree, and ErrPreservedConflict (wrapped) is returned. The ref must never
 	// be deleted on a failed or conflicted apply.
 	ApplyPreserved(ctx context.Context, info WorkspaceInfo, ref string) error
+	// AddExclude appends the given git ignore patterns to the worktree's local
+	// info/exclude so daemon-generated files (e.g. pasted task attachments) never
+	// surface as untracked changes or get committed. Idempotent: patterns already
+	// present are skipped. Owning this here keeps git/process execution inside the
+	// workspace adapter rather than leaking into callers.
+	AddExclude(ctx context.Context, info WorkspaceInfo, patterns ...string) error
 }
 
 // WorkspaceProject is an optional extension for projects composed from a

@@ -5,18 +5,21 @@ import { BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
 import { CenterPane } from "./CenterPane";
 import { SessionFilesView } from "./SessionFilesView";
 import { SessionInspector } from "./SessionInspector";
+import { ShellTopbar } from "./ShellTopbar";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resizable";
 import { useResolvedTheme, useUiStore, type InspectorView } from "../stores/ui-store";
 import { useShell } from "../lib/shell-context";
 import { useBrowserView } from "../hooks/useBrowserView";
 import { useCloseShellTerminal, useShellTerminals } from "../hooks/useShellTerminals";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
-import { isOrchestratorSession } from "../types/workspace";
+import { hidesShellTopbar } from "../lib/platform";
+import { isOrchestratorSession, sessionIsActive } from "../types/workspace";
 import type { TerminalTarget } from "../types/terminal";
 
 const INSPECTOR_MIN_PERCENT = 22;
 const INSPECTOR_MAX_PERCENT = 45;
 const inspectorSplitStorageKey = "ao.inspector.split";
+const shellTopbarHiddenByPlatform = hidesShellTopbar();
 
 function initialSplitPercent(): number {
 	const raw = typeof window === "undefined" ? null : window.localStorage?.getItem(inspectorSplitStorageKey);
@@ -36,10 +39,12 @@ type SessionViewProps = {
 	sessionId: string;
 };
 
-// The session detail screen: terminal + git rail, under the shell-owned
-// ShellTopbar. Rendered by both the project-scoped and cross-project session
-// routes. TerminalPane owns the terminal lifetime and remounts by terminal
-// handle so each session gets a clean xterm/mux binding.
+// The session detail screen: terminal + git rail. On Win/Linux the shell owns
+// ShellTopbar above this view; when the platform hides the shell topbar
+// (macOS), the same topbar mounts here so the outer panel stays full-height.
+// Rendered by both the project-scoped and cross-project session routes.
+// TerminalPane owns the terminal lifetime and remounts by terminal handle so
+// each session gets a clean xterm/mux binding.
 //
 // The split is shadcn's resizable (react-resizable-panels v4) with a fully
 // collapsible inspector: the panel is `collapsible` and driven to 0% via the
@@ -50,7 +55,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const workspaceQuery = useWorkspaceQuery();
 	const workspaces = workspaceQuery.data ?? [];
 	const theme = useResolvedTheme();
-	const isInspectorOpen = useUiStore((state) => state.inspectorSessions[sessionId]?.isOpen ?? false);
+	const isInspectorOpen = useUiStore((state) => state.inspectorSessions[sessionId]?.isOpen ?? true);
 	const inspectorView = useUiStore((state) => state.inspectorSessions[sessionId]?.view ?? "summary");
 	const setInspectorOpenForSession = useUiStore((state) => state.setInspectorOpen);
 	const toggleInspector = useUiStore((state) => state.toggleInspector);
@@ -72,6 +77,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const closeShellTerminal = useCloseShellTerminal();
 	const activeShellTerminalHandleId = useUiStore((state) => state.activeShellTerminalHandleId);
 	const setActiveShellTerminal = useUiStore((state) => state.setActiveShellTerminal);
+	const requestNewShellTerminal = useUiStore((state) => state.requestNewShellTerminal);
 
 	const selectShellTerminal = useCallback(
 		(handleId: string) => {
@@ -104,7 +110,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	}, [setActiveShellTerminal]);
 
 	// The shell layout owns opening (it is mounted on every route, so the button
-	// and Ctrl+` work everywhere); this view only follows the result. When a new
+	// and Ctrl+Shift+` work everywhere); this view only follows the result. When a new
 	// shell becomes active while a session is on screen, switch the pane to it —
 	// that is what makes the shortcut feel like it opened a terminal *here*.
 	useEffect(() => {
@@ -126,7 +132,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		sessionId,
 		active: Boolean(session && hasInspector && (browserPoppedOut || isInspectorOpen)),
 		poppedOut: browserPoppedOut,
-		terminated: session?.status === "terminated",
+		terminated: session ? !sessionIsActive(session) : false,
 		previewUrl,
 		previewRevision,
 	});
@@ -274,7 +280,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const handleInspectorResize = useCallback(
 		(size: PanelSize) => {
 			if (inspectorSeparatorRef.current?.getAttribute("data-separator") !== "active") return;
-			const currentOpen = useUiStore.getState().inspectorSessions[sessionId]?.isOpen ?? false;
+			const currentOpen = useUiStore.getState().inspectorSessions[sessionId]?.isOpen ?? true;
 			if (size.asPercentage > 0) {
 				window.localStorage?.setItem(inspectorSplitStorageKey, String(size.asPercentage));
 				if (!currentOpen) toggleInspector(sessionId);
@@ -287,7 +293,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	if (!session && !workspaceQuery.isLoading) {
 		return (
-			<div className="grid h-full place-items-center bg-background p-6 text-center font-mono text-xs text-passive">
+			<div className="grid h-full place-items-center p-6 text-center font-mono text-xs text-passive">
 				Session not found. It may have been cleaned up — pick another from the sidebar.
 			</div>
 		);
@@ -295,6 +301,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	return (
 		<div className="relative flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="session-detail">
+			{shellTopbarHiddenByPlatform ? <ShellTopbar /> : null}
 			<ResizablePanelGroup className="session-split min-h-0 flex-1" id="session-workspace" orientation="horizontal">
 				{/* react-resizable-panels v4: bare numbers are PIXELS; percentages must
             be strings. Numeric sizes here once clamped the inspector to 45px. */}
@@ -302,6 +309,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 					<CenterPane
 						daemonReady={daemonStatus.state === "ready"}
 						onCloseShellTerminal={closeShellTerminalByHandle}
+						onNewShellTerminal={requestNewShellTerminal}
 						onSelectSessionTerminal={selectSessionTerminal}
 						onSelectShellTerminal={selectShellTerminal}
 						onSelectWorkerTerminal={selectSessionTerminal}

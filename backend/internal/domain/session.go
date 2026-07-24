@@ -25,11 +25,13 @@ const (
 // SessionMetadata is the typed, off-status metadata for a session: operational
 // handles and seed inputs used by Session Manager and reaper.
 type SessionMetadata struct {
-	Branch          string `json:"branch,omitempty"`
-	WorkspacePath   string `json:"workspacePath,omitempty"`
-	RuntimeHandleID string `json:"runtimeHandleId,omitempty"`
-	AgentSessionID  string `json:"agentSessionId,omitempty"`
-	Prompt          string `json:"prompt,omitempty"`
+	Branch            string `json:"branch,omitempty"`
+	WorkspacePath     string `json:"workspacePath,omitempty"`
+	WorkspaceRepoPath string `json:"workspaceRepoPath,omitempty"`
+	RuntimeHandleID   string `json:"runtimeHandleId,omitempty"`
+	RuntimeLaunchID   string `json:"runtimeLaunchId,omitempty"`
+	AgentSessionID    string `json:"agentSessionId,omitempty"`
+	Prompt            string `json:"prompt,omitempty"`
 	// PreviewURL is the browser preview target the desktop app opens for this
 	// session. Set via `ao preview` (POST /sessions/{id}/preview); persisted so
 	// it survives a daemon restart. Empty means no preview has been requested.
@@ -56,18 +58,28 @@ type SessionRecord struct {
 	// activity state. Zero means no hook has ever reported, which deriveStatus
 	// surfaces as StatusNoSignal after a grace period. Internal fact, not part
 	// of the API read model.
-	FirstSignalAt time.Time       `json:"-"`
-	IsTerminated  bool            `json:"isTerminated"`
-	Metadata      SessionMetadata `json:"-"`
-	CreatedAt     time.Time       `json:"createdAt"`
-	UpdatedAt     time.Time       `json:"updatedAt"`
+	FirstSignalAt time.Time `json:"-"`
+	IsTerminated  bool      `json:"isTerminated"`
+	// TerminateOnPRMerge is a user-controlled lifecycle policy. When enabled,
+	// completing the session's PR set through a merge tears down the session.
+	TerminateOnPRMerge bool            `json:"terminateOnPrMerge"`
+	Metadata           SessionMetadata `json:"-"`
+	// CleanupGeneration is a monotonic counter bumped each time the session is
+	// un-terminated (spawn/restore). The terminal-resource reconciler stamps its
+	// durable cleanup facts with the generation they were written for so a
+	// finalize started under an earlier terminal episode cannot satisfy a later
+	// one. Internal fact, not part of the API read model.
+	CleanupGeneration int64     `json:"-"`
+	CreatedAt         time.Time `json:"createdAt"`
+	UpdatedAt         time.Time `json:"updatedAt"`
 }
 
 // Session is the read-model returned across the API boundary: a SessionRecord
-// plus the derived display Status.
+// plus derived display facts. Neither Status nor SCMStatus is persisted.
 type Session struct {
 	SessionRecord
-	Status           SessionStatus `json:"status" enum:"working,pr_open,draft,ci_failed,review_pending,changes_requested,approved,mergeable,merged,needs_input,idle,terminated,no_signal"`
+	Status           SessionStatus `json:"status" enum:"working,pr_open,draft,ci_failed,review_pending,changes_requested,approved,mergeable,merged,needs_input,exited,idle,terminated,no_signal"`
+	SCMStatus        SessionStatus `json:"scmStatus,omitempty" enum:"pr_open,draft,ci_failed,review_pending,changes_requested,approved,mergeable,merged"`
 	TerminalHandleID string        `json:"terminalHandleId,omitempty"`
 	// PRs are the session's attributed pull requests (one session can own many).
 	// They feed status derivation and are surfaced on the API read model. Not

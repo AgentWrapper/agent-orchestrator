@@ -2,6 +2,7 @@ package controllers_test
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	previewutil "github.com/aoagents/agent-orchestrator/backend/internal/preview"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
@@ -60,14 +62,14 @@ func (f *fakeSessionService) List(_ context.Context, filter sessionsvc.ListFilte
 	return out, nil
 }
 
-func (f *fakeSessionService) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.Session, error) {
+func (f *fakeSessionService) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.Session, int, int, error) {
 	if f.spawnErr != nil {
-		return domain.Session{}, f.spawnErr
+		return domain.Session{}, 0, 0, f.spawnErr
 	}
 	now := time.Now().UTC()
 	s := domain.Session{SessionRecord: domain.SessionRecord{ID: domain.SessionID(string(cfg.ProjectID) + "-2"), ProjectID: cfg.ProjectID, IssueID: cfg.IssueID, Kind: cfg.Kind, Harness: cfg.Harness, DisplayName: cfg.DisplayName, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, CreatedAt: now, UpdatedAt: now}, Status: domain.StatusIdle}
 	f.sessions[s.ID] = s
-	return s, nil
+	return s, len(cfg.Prompt), 0, nil
 }
 
 func (f *fakeSessionService) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error) {
@@ -83,7 +85,8 @@ func (f *fakeSessionService) SpawnOrchestrator(ctx context.Context, projectID do
 			}
 		}
 	}
-	return f.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
+	s, _, _, err := f.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
+	return s, err
 }
 
 func (f *fakeSessionService) Get(_ context.Context, id domain.SessionID) (domain.Session, error) {
@@ -107,12 +110,30 @@ func (f *fakeSessionService) SetPreview(_ context.Context, id domain.SessionID, 
 	return s, nil
 }
 
+func (f *fakeSessionService) SetTerminateOnPRMerge(_ context.Context, id domain.SessionID, terminate bool) (domain.Session, error) {
+	s, ok := f.sessions[id]
+	if !ok {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	s.TerminateOnPRMerge = terminate
+	f.sessions[id] = s
+	return s, nil
+}
+
 func (f *fakeSessionService) Restore(_ context.Context, id domain.SessionID) (sessionsvc.RestoreOutcome, error) {
 	s := f.sessions[id]
 	s.IsTerminated = false
 	s.Status = domain.StatusIdle
 	f.sessions[id] = s
 	return sessionsvc.RestoreOutcome{Session: s, Mode: sessionsvc.RestoreModeView("native")}, nil
+}
+
+func (f *fakeSessionService) ResumeAgent(_ context.Context, id domain.SessionID) (sessionsvc.ResumeAgentOutcome, error) {
+	s := f.sessions[id]
+	s.Activity.State = domain.ActivityIdle
+	s.Status = domain.StatusIdle
+	f.sessions[id] = s
+	return sessionsvc.ResumeAgentOutcome{Session: s, Mode: sessionsvc.RestoreModeViewNative}, nil
 }
 
 func (f *fakeSessionService) Kill(_ context.Context, id domain.SessionID) (bool, error) {
@@ -205,7 +226,9 @@ func (f *fakeSessionService) ListPRSummaries(_ context.Context, id domain.Sessio
 			Reasons: []string{"conflicts"},
 			PRURL:   "https://github.com/aoagents/agent-orchestrator/pull/142",
 		},
-		UpdatedAt: time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC),
+		StateChangedAt: time.Date(2026, 6, 4, 11, 30, 0, 0, time.UTC),
+		CreatedAt:      time.Date(2026, 6, 4, 9, 0, 0, 0, time.UTC),
+		UpdatedAt:      time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC),
 	}}, nil
 }
 
@@ -296,6 +319,7 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	svc := newFakeSessionService()
 	s := svc.sessions["ao-1"]
 	s.Metadata = domain.SessionMetadata{Branch: "qa/modal-worker", WorkspacePath: "/tmp/private-worktree", RuntimeHandleID: "runtime-1", Prompt: "private prompt"}
+	s.SCMStatus = domain.StatusReviewPending
 	svc.sessions["ao-1"] = s
 	srv := newSessionTestServer(t, svc)
 
@@ -307,7 +331,7 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 		Sessions []sessionBody `json:"sessions"`
 	}
 	mustJSON(t, body, &list)
-	if len(list.Sessions) != 1 || list.Sessions[0].ID != "ao-1" || list.Sessions[0].Status != string(domain.StatusIdle) || list.Sessions[0].TerminalHandleID != "ao-1/terminal_0" {
+	if len(list.Sessions) != 1 || list.Sessions[0].ID != "ao-1" || list.Sessions[0].Status != string(domain.StatusIdle) || list.Sessions[0].SCMStatus != string(domain.StatusReviewPending) || list.Sessions[0].TerminalHandleID != "ao-1/terminal_0" {
 		t.Fatalf("list = %#v", list)
 	}
 	if list.Sessions[0].Branch != "qa/modal-worker" {
@@ -332,7 +356,9 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 		t.Fatalf("POST session = %d, want 201; body=%s", status, body)
 	}
 	var spawned struct {
-		Session sessionBody `json:"session"`
+		Session           sessionBody `json:"session"`
+		PromptBytes       *int        `json:"promptBytes"`
+		SystemPromptBytes *int        `json:"systemPromptBytes"`
 	}
 	mustJSON(t, body, &spawned)
 	if spawned.Session.ID != "ao-2" || spawned.Session.IssueID != "ISS-1" || spawned.Session.Harness != "codex" {
@@ -340,6 +366,12 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	}
 	if spawned.Session.DisplayName != "my worker" {
 		t.Fatalf("spawned displayName = %q, want %q", spawned.Session.DisplayName, "my worker")
+	}
+	if spawned.PromptBytes == nil || *spawned.PromptBytes != len("fix") {
+		t.Fatalf("spawned promptBytes = %v, want %d", spawned.PromptBytes, len("fix"))
+	}
+	if spawned.SystemPromptBytes == nil || *spawned.SystemPromptBytes != 0 {
+		t.Fatalf("spawned systemPromptBytes = %v, want present zero", spawned.SystemPromptBytes)
 	}
 
 	body, status, _ = doRequest(t, srv, "GET", "/api/v1/sessions/ao-2", "")
@@ -378,6 +410,19 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 		t.Fatalf("restore response = %#v", restored)
 	}
 
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ao-2/resume-agent", "")
+	if status != http.StatusOK {
+		t.Fatalf("resume agent = %d, want 200; body=%s", status, body)
+	}
+	var resumed struct {
+		SessionID  string `json:"sessionId"`
+		ResumeMode string `json:"resumeMode"`
+	}
+	mustJSON(t, body, &resumed)
+	if resumed.SessionID != "ao-2" || resumed.ResumeMode != "native" {
+		t.Fatalf("resume response = %#v", resumed)
+	}
+
 	body, status, _ = doRequest(t, srv, "PATCH", "/api/v1/sessions/ao-2", `{"displayName":"Renamed"}`)
 	if status != http.StatusOK {
 		t.Fatalf("rename = %d, want 200; body=%s", status, body)
@@ -395,10 +440,45 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 		t.Fatalf("session displayName not updated: %+v", svc.sessions["ao-2"])
 	}
 
+	body, status, _ = doRequest(t, srv, "PATCH", "/api/v1/sessions/ao-2/merge-policy", `{"terminateOnPrMerge":true}`)
+	if status != http.StatusOK {
+		t.Fatalf("merge policy = %d, want 200; body=%s", status, body)
+	}
+	var policy struct {
+		OK                 bool   `json:"ok"`
+		SessionID          string `json:"sessionId"`
+		TerminateOnPRMerge bool   `json:"terminateOnPrMerge"`
+	}
+	mustJSON(t, body, &policy)
+	if !policy.OK || policy.SessionID != "ao-2" || !policy.TerminateOnPRMerge {
+		t.Fatalf("merge policy response = %#v", policy)
+	}
+	if !svc.sessions["ao-2"].TerminateOnPRMerge {
+		t.Fatalf("session merge policy not updated: %+v", svc.sessions["ao-2"])
+	}
+
 	body, status, _ = doRequest(t, srv, "POST", "/api/v1/orchestrators", `{"projectId":"ao"}`)
 	if status != http.StatusCreated {
 		t.Fatalf("orchestrator = %d, want 201; body=%s", status, body)
 	}
+}
+
+func TestSessionsAPI_SpawnRejectsOversizedBody(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	// A body past the ~35 MiB maxSpawnBodyBytes cap is rejected while decoding
+	// (MaxBytesReader), before the attachment size caps and without materializing
+	// the whole body. The oversized bytes live in an *attachment* payload (not the
+	// prompt, which has its own much smaller PROMPT_TOO_LONG cap), so this pins the
+	// body cap specifically: MaxBytesReader makes the read/decode fail with
+	// INVALID_JSON. If that line were removed the body would decode fully and be
+	// rejected later with an attachment-specific code (ATTACHMENT_TOO_LARGE),
+	// failing this test. 40 MiB of base64 comfortably exceeds the ~35 MiB cap.
+	oversized := `{"projectId":"ao","attachments":[{"mimeType":"image/png","data":"` +
+		strings.Repeat("A", 40<<20) + `"}]}`
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions", oversized)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
 }
 
 func TestSessionsAPI_PreviewDiscoversAndServesStaticIndex(t *testing.T) {
@@ -1198,6 +1278,7 @@ type sessionBody struct {
 	DisplayName      string `json:"displayName"`
 	Branch           string `json:"branch"`
 	Status           string `json:"status"`
+	SCMStatus        string `json:"scmStatus"`
 	TerminalHandleID string `json:"terminalHandleId"`
 }
 
@@ -1211,11 +1292,13 @@ func TestSessionsAPI_PRRoutes(t *testing.T) {
 	var listed struct {
 		SessionID string `json:"sessionId"`
 		PRs       []struct {
-			URL    string `json:"url"`
-			Number int    `json:"number"`
-			Title  string `json:"title"`
-			State  string `json:"state"`
-			CI     struct {
+			URL            string `json:"url"`
+			Number         int    `json:"number"`
+			Title          string `json:"title"`
+			State          string `json:"state"`
+			StateChangedAt string `json:"stateChangedAt"`
+			CreatedAt      string `json:"createdAt"`
+			CI             struct {
 				State         string `json:"state"`
 				FailingChecks []struct {
 					Name       string `json:"name"`
@@ -1253,6 +1336,12 @@ func TestSessionsAPI_PRRoutes(t *testing.T) {
 	if listed.SessionID != "ao-1" || len(listed.PRs) != 1 || listed.PRs[0].State != "open" || listed.PRs[0].Title == "" {
 		t.Fatalf("GET shape = %#v", listed)
 	}
+	if listed.PRs[0].StateChangedAt != "2026-06-04T11:30:00Z" {
+		t.Fatalf("stateChangedAt = %q, want backend-selected PR state time", listed.PRs[0].StateChangedAt)
+	}
+	if listed.PRs[0].CreatedAt != "2026-06-04T09:00:00Z" {
+		t.Fatalf("createdAt = %q, want provider PR creation time", listed.PRs[0].CreatedAt)
+	}
 	if checks := listed.PRs[0].CI.FailingChecks; len(checks) != 1 || checks[0].Name != "unit" || checks[0].LogTail != "" {
 		t.Fatalf("failing checks = %#v", checks)
 	}
@@ -1277,6 +1366,23 @@ func TestSessionsAPI_PRRoutes(t *testing.T) {
 	mustJSON(t, body, &claimed)
 	if !claimed.OK || claimed.SessionID != "ao-1" || len(claimed.PRs) != 1 || !claimed.BranchChanged || len(claimed.TakenOverFrom) != 0 {
 		t.Fatalf("claim shape = %#v", claimed)
+	}
+}
+
+func TestSessionPRSummaryOmitsUnavailableLifecycleTimes(t *testing.T) {
+	payload, err := json.Marshal(controllers.NewSessionPRSummary(sessionsvc.PRSummary{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(payload, &got); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got["createdAt"]; ok {
+		t.Fatalf("createdAt must be omitted when provider creation time is unavailable: %s", payload)
+	}
+	if _, ok := got["stateChangedAt"]; ok {
+		t.Fatalf("stateChangedAt must be omitted when lifecycle time is unavailable: %s", payload)
 	}
 }
 

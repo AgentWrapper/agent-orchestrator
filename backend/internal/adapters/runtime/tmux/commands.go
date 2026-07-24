@@ -16,6 +16,17 @@ func newSessionArgs(id, cwd, shellPath, launchCmd string) []string {
 	}
 }
 
+// respawnPaneArgs replaces the process in the session's only pane while keeping
+// the tmux session and terminal handle intact.
+func respawnPaneArgs(id, cwd, shellPath, launchCmd string) []string {
+	return []string{
+		"respawn-pane", "-k",
+		"-t", id + ":0.0",
+		"-c", cwd,
+		shellPath, "-c", launchCmd,
+	}
+}
+
 // setStatusOffArgs hides the tmux status bar for the given session.
 // set-option uses pane-targeting syntax which does not accept the `=` prefix,
 // so we pass the session name directly.
@@ -42,6 +53,19 @@ func setMouseOnArgs(id string) []string {
 // (see setStatusOffArgs).
 func setWindowSizeLargestArgs(id string) []string {
 	return []string{"set-option", "-t", id, "window-size", "largest"}
+}
+
+// panePIDArgs returns the pid of tmux's direct pane process. AO walks its
+// descendants to find the exact supervisor for the current launch.
+func panePIDArgs(id string) []string {
+	return []string{"display-message", "-p", "-t", id + ":0.0", "#{pane_pid}"}
+}
+
+// paneCurrentPathArgs prints tmux's cwd for the session's active pane. Create
+// uses this after new-session so a poisoned tmux server that ignores -c fails
+// loudly instead of silently starting the agent in the wrong directory.
+func paneCurrentPathArgs(id string) []string {
+	return []string{"display-message", "-p", "-t", id, "#{pane_current_path}"}
 }
 
 // killSessionArgs builds args for `tmux kill-session -t =<id>`. The `=` prefix

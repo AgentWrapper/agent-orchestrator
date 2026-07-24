@@ -1,15 +1,6 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import {
-	GitBranch,
-	LayoutDashboard,
-	PanelRightClose,
-	PanelRightOpen,
-	Plus,
-	Square,
-	SquareTerminal,
-	Trash2,
-} from "lucide-react";
+import { GitBranch, LayoutDashboard, PanelRightClose, PanelRightOpen, Plus, Square, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { NotificationCenter } from "./NotificationCenter";
 import {
@@ -19,7 +10,7 @@ import {
 	type WorkspaceSession,
 } from "../types/workspace";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
-import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { useTerminateSession } from "../hooks/useTerminateSession";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { useUiStore } from "../stores/ui-store";
@@ -53,12 +44,11 @@ export function ShellTopbar() {
 	const params = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
 	const currentSessionId = params.sessionId;
 	const isInspectorOpen = useUiStore((state) =>
-		currentSessionId ? (state.inspectorSessions[currentSessionId]?.isOpen ?? false) : false,
+		currentSessionId ? (state.inspectorSessions[currentSessionId]?.isOpen ?? true) : false,
 	);
 	const toggleInspector = useUiStore((state) => state.toggleInspector);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
-	const requestNewShellTerminal = useUiStore((state) => state.requestNewShellTerminal);
 	const [isSpawning, setIsSpawning] = useState(false);
 	// Board-scope spawn failures surface where the board actions render.
 	const [boardSpawnError, setBoardSpawnError] = useState<string | null>(null);
@@ -171,18 +161,6 @@ export function ShellTopbar() {
 			<div className="min-w-0 flex-1" />
 
 			<div className="flex shrink-0 items-center gap-1.5">
-				{/* Standalone shell, independent of any agent session — the same action
-				    Ctrl+Shift+` fires, routed through the store so the two cannot drift.
-				    Leads the actions row so it stays visible on every route. */}
-				<TopbarButton
-					aria-label="New terminal"
-					onClick={requestNewShellTerminal}
-					style={noDragStyle}
-					title="New terminal (Ctrl+Shift+`)"
-					variant="icon"
-				>
-					<SquareTerminal className="size-icon-md" aria-hidden="true" />
-				</TopbarButton>
 				{/* Native-titlebar platforms keep the bell leading the actions row; the custom titlebar pins it to the far edge. */}
 				{boardActionsInPanel && !isLinux && !isWindows ? <NotificationCenter style={noDragStyle} /> : null}
 				{!boardActionsInPanel && isProjectBoardRoute ? (
@@ -310,29 +288,14 @@ export function TopbarKillButton({
 	orchestratorId?: string;
 	onKilled: (workspaceId: string, orchestratorId?: string) => void;
 }) {
-	const queryClient = useQueryClient();
 	const [confirming, setConfirming] = useState(false);
-	const [error, setError] = useState<string | null>(null);
-
-	const kill = useMutation({
-		mutationFn: async () => {
-			void captureRendererEvent("ao.renderer.session_kill_requested", { project_id: session.workspaceId });
-			const { error: apiError } = await apiClient.POST("/api/v1/sessions/{sessionId}/kill", {
-				params: { path: { sessionId: session.id } },
-			});
-			if (apiError) throw new Error(apiErrorMessage(apiError));
-		},
-		onSuccess: () => {
-			void captureRendererEvent("ao.renderer.session_kill_succeeded", { project_id: session.workspaceId });
+	const kill = useTerminateSession({
+		onSuccess: (terminatedSession) => {
 			setConfirming(false);
-			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-			onKilled(session.workspaceId, orchestratorId);
-		},
-		onError: (e) => {
-			void captureRendererEvent("ao.renderer.session_kill_failed", { project_id: session.workspaceId });
-			setError(e instanceof Error ? e.message : "Kill failed");
+			onKilled(terminatedSession.workspaceId, orchestratorId);
 		},
 	});
+	const error = kill.error instanceof Error ? kill.error.message : null;
 
 	if (confirming) {
 		return (
@@ -340,7 +303,7 @@ export function TopbarKillButton({
 				<TopbarButton
 					aria-label="Confirm kill"
 					disabled={kill.isPending}
-					onClick={() => kill.mutate()}
+					onClick={() => kill.mutate(session)}
 					variant="killConfirm"
 				>
 					<Square className="size-icon-md" aria-hidden="true" />
@@ -358,7 +321,7 @@ export function TopbarKillButton({
 		<TopbarButton
 			aria-label="Kill session"
 			onClick={() => {
-				setError(null);
+				kill.reset();
 				setConfirming(true);
 			}}
 			style={noDragStyle}

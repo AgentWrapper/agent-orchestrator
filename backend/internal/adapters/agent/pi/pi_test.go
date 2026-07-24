@@ -32,13 +32,20 @@ func TestManifest(t *testing.T) {
 	}
 }
 
-func TestGetConfigSpecEmpty(t *testing.T) {
+func TestGetConfigSpecReportsModelField(t *testing.T) {
 	spec, err := (&Plugin{}).GetConfigSpec(context.Background())
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if len(spec.Fields) != 0 {
-		t.Fatalf("expected no fields, got %d", len(spec.Fields))
+	want := []ports.ConfigField{
+		{
+			Key:         "model",
+			Type:        ports.ConfigFieldString,
+			Description: "Model override passed to `pi --model`.",
+		},
+	}
+	if !reflect.DeepEqual(spec.Fields, want) {
+		t.Fatalf("config fields\nwant: %#v\n got: %#v", want, spec.Fields)
 	}
 }
 
@@ -65,6 +72,38 @@ func TestGetLaunchCommandWorkerWithPromptIsInteractive(t *testing.T) {
 	want := []string{"pi", "add a health check"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetLaunchCommandAppendsConfiguredModelBeforePrompt(t *testing.T) {
+	p := &Plugin{resolvedBinary: "pi"}
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config:       ports.AgentConfig{Model: "  openai/gpt-4o  "},
+		SystemPrompt: "follow repo rules",
+		Prompt:       "add a health check",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"pi", "--append-system-prompt", "follow repo rules", "--model", "openai/gpt-4o", "add a health check"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+}
+
+func TestGetLaunchCommandOmitsBlankConfiguredModel(t *testing.T) {
+	p := &Plugin{resolvedBinary: "pi"}
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config: ports.AgentConfig{Model: " \t "},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"pi"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
 }
 
@@ -182,6 +221,28 @@ func TestGetRestoreCommand(t *testing.T) {
 	}
 
 	want := []string{"pi", "--append-system-prompt", "restore inline wins", "--session", "019e950e-52e0-7411-961b-d380ca7e610f"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+}
+
+func TestGetRestoreCommandAppendsConfiguredModelBeforeSession(t *testing.T) {
+	p := &Plugin{resolvedBinary: "pi"}
+	cmd, ok, err := p.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Config: ports.AgentConfig{Model: "  openai/gpt-4o  "},
+		Session: ports.SessionRef{
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "019e950e-52e0-7411-961b-d380ca7e610f"},
+		},
+		SystemPrompt: "follow repo rules",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("ok=false, want true")
+	}
+
+	want := []string{"pi", "--append-system-prompt", "follow repo rules", "--model", "openai/gpt-4o", "--session", "019e950e-52e0-7411-961b-d380ca7e610f"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
