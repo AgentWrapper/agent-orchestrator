@@ -35,6 +35,9 @@ jobs:
       - name: Typecheck project
         run: npm run typecheck
 
+      - name: Typecheck E2E suite
+        run: npm run typecheck:e2e
+
       - name: Run vitest suite
         run: npx vitest run
 
