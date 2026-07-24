@@ -26,7 +26,7 @@ type Notification struct {
 	Target Target
 }
 
-// ListStatus selects which retained notifications are returned.
+// ListStatus selects which stored notifications are returned.
 type ListStatus = domain.NotificationListStatus
 
 const (
@@ -36,8 +36,16 @@ const (
 	ListAll = domain.NotificationListAll
 )
 
-// ListFilter controls recent notification listing.
+// ListFilter controls paginated notification history.
 type ListFilter struct {
 	Status ListStatus
 	Limit  int
+	Cursor string
+}
+
+// ListPage is one newest-first page of notification history.
+type ListPage struct {
+	Notifications []Notification
+	NextCursor    string
+	UnreadCount   int
 }

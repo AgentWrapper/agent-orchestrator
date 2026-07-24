@@ -40,7 +40,7 @@ func TestNotificationStore_InsertListAndDedupe(t *testing.T) {
 	if err != nil || inserted {
 		t.Fatalf("duplicate inserted=%v err=%v, want false nil", inserted, err)
 	}
-	rows, err := s.ListNotifications(ctx, domain.NotificationListUnread, time.Time{}, 10)
+	rows, err := s.ListNotifications(ctx, domain.NotificationListUnread, time.Time{}, "", 10)
 	if err != nil {
 		t.Fatalf("ListNotifications: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestNotificationStore_MarkReadReopensUnreadDedupe(t *testing.T) {
 	if read.Status != domain.NotificationRead {
 		t.Fatalf("status = %q, want read", read.Status)
 	}
-	rows, err := s.ListNotifications(ctx, domain.NotificationListUnread, time.Time{}, 10)
+	rows, err := s.ListNotifications(ctx, domain.NotificationListUnread, time.Time{}, "", 10)
 	if err != nil {
 		t.Fatalf("ListNotifications: %v", err)
 	}
@@ -117,19 +117,18 @@ func TestNotificationStore_MarkAllRead(t *testing.T) {
 			t.Fatalf("insert %s inserted=%v err=%v", rec.ID, inserted, err)
 		}
 	}
-	read, err := s.MarkAllNotificationsRead(ctx)
+	updated, err := s.MarkAllNotificationsRead(ctx)
 	if err != nil {
 		t.Fatalf("MarkAllNotificationsRead: %v", err)
 	}
-	if len(read) != 2 {
-		t.Fatalf("read rows = %+v", read)
+	if updated != 2 {
+		t.Fatalf("updated = %d, want 2", updated)
 	}
-	for _, row := range read {
-		if row.Status != domain.NotificationRead {
-			t.Fatalf("row = %+v, want read", row)
-		}
+	updated, err = s.MarkAllNotificationsRead(ctx)
+	if err != nil || updated != 0 {
+		t.Fatalf("second mark-all updated=%d err=%v, want 0 nil", updated, err)
 	}
-	rows, err := s.ListNotifications(ctx, domain.NotificationListUnread, time.Time{}, 10)
+	rows, err := s.ListNotifications(ctx, domain.NotificationListUnread, time.Time{}, "", 10)
 	if err != nil {
 		t.Fatalf("ListNotifications: %v", err)
 	}
@@ -155,7 +154,7 @@ func TestNotificationStore_ListUnreadNewestFirstAcrossProjects(t *testing.T) {
 			t.Fatalf("insert %s inserted=%v err=%v", rec.ID, inserted, err)
 		}
 	}
-	rows, err := s.ListNotifications(ctx, domain.NotificationListUnread, time.Time{}, 2)
+	rows, err := s.ListNotifications(ctx, domain.NotificationListUnread, time.Time{}, "", 2)
 	if err != nil {
 		t.Fatalf("ListNotifications: %v", err)
 	}
@@ -164,40 +163,39 @@ func TestNotificationStore_ListUnreadNewestFirstAcrossProjects(t *testing.T) {
 	}
 }
 
-func TestNotificationStore_ListRecentAllIncludesReadAndPrunesExpired(t *testing.T) {
+func TestNotificationStore_ListAllUsesStableCursorWithoutAgeCutoff(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	seedProject(t, s, "mer")
 	sess, _ := s.CreateSession(ctx, sampleRecord("mer"))
 	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
-	recentRead := domain.NotificationRecord{ID: "read", SessionID: sess.ID, ProjectID: sess.ProjectID, PRURL: "https://github.com/o/r/pull/1", Type: domain.NotificationPRMerged, Title: "read", Status: domain.NotificationRead, CreatedAt: now.Add(-time.Hour)}
-	if _, inserted, err := s.CreateNotification(ctx, recentRead); err != nil || !inserted {
-		t.Fatalf("insert recent read inserted=%v err=%v", inserted, err)
-	}
-	recentUnread := domain.NotificationRecord{ID: "unread", SessionID: sess.ID, ProjectID: sess.ProjectID, Type: domain.NotificationNeedsInput, Title: "unread", Status: domain.NotificationUnread, CreatedAt: now}
-	if _, inserted, err := s.CreateNotification(ctx, recentUnread); err != nil || !inserted {
-		t.Fatalf("insert recent unread inserted=%v err=%v", inserted, err)
-	}
-	// Backfill an expired row after the recent rows so it remains physically
-	// present long enough to prove the rolling-window query excludes it.
-	old := domain.NotificationRecord{ID: "expired", SessionID: sess.ID, ProjectID: sess.ProjectID, PRURL: "https://github.com/o/r/pull/old", Type: domain.NotificationPRClosedUnmerged, Title: "expired", Status: domain.NotificationUnread, CreatedAt: now.Add(-domain.NotificationRetentionWindow - time.Minute)}
-	if _, inserted, err := s.CreateNotification(ctx, old); err != nil || !inserted {
-		t.Fatalf("insert expired inserted=%v err=%v", inserted, err)
+	for _, rec := range []domain.NotificationRecord{
+		{ID: "same-z", SessionID: sess.ID, ProjectID: sess.ProjectID, Type: domain.NotificationNeedsInput, Title: "same z", Status: domain.NotificationUnread, CreatedAt: now},
+		{ID: "same-a", SessionID: sess.ID, ProjectID: sess.ProjectID, PRURL: "https://github.com/o/r/pull/1", Type: domain.NotificationPRMerged, Title: "same a", Status: domain.NotificationRead, CreatedAt: now},
+		{ID: "old", SessionID: sess.ID, ProjectID: sess.ProjectID, PRURL: "https://github.com/o/r/pull/old", Type: domain.NotificationPRClosedUnmerged, Title: "old", Status: domain.NotificationUnread, CreatedAt: now.Add(-30 * 24 * time.Hour)},
+	} {
+		if _, inserted, err := s.CreateNotification(ctx, rec); err != nil || !inserted {
+			t.Fatalf("insert %s inserted=%v err=%v", rec.ID, inserted, err)
+		}
 	}
 
-	rows, err := s.ListNotifications(ctx, domain.NotificationListAll, now.Add(-domain.NotificationRetentionWindow), 0)
+	rows, err := s.ListNotifications(ctx, domain.NotificationListAll, time.Time{}, "", 2)
 	if err != nil {
 		t.Fatalf("ListNotifications: %v", err)
 	}
-	if len(rows) != 2 || rows[0].ID != "unread" || rows[1].ID != "read" {
+	if len(rows) != 2 || rows[0].ID != "same-z" || rows[1].ID != "same-a" {
 		t.Fatalf("rows = %+v", rows)
 	}
-	trigger := domain.NotificationRecord{ID: "trigger", SessionID: sess.ID, ProjectID: sess.ProjectID, PRURL: "https://github.com/o/r/pull/2", Type: domain.NotificationReadyToMerge, Title: "trigger", Status: domain.NotificationUnread, CreatedAt: now}
-	if _, inserted, err := s.CreateNotification(ctx, trigger); err != nil || !inserted {
-		t.Fatalf("insert prune trigger inserted=%v err=%v", inserted, err)
+	older, err := s.ListNotifications(ctx, domain.NotificationListAll, rows[1].CreatedAt, rows[1].ID, 2)
+	if err != nil {
+		t.Fatalf("ListNotifications older: %v", err)
 	}
-	if _, ok, err := s.MarkNotificationRead(ctx, old.ID); err != nil || ok {
-		t.Fatalf("expired row was not pruned: ok=%v err=%v", ok, err)
+	if len(older) != 1 || older[0].ID != "old" {
+		t.Fatalf("older = %+v", older)
+	}
+	count, err := s.CountUnreadNotifications(ctx)
+	if err != nil || count != 2 {
+		t.Fatalf("unread count=%d err=%v", count, err)
 	}
 }
 

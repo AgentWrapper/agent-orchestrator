@@ -42,7 +42,7 @@ surface (`npm run sqlc`, `npm run api`).
   `POST /reviews/{id}/send`.
 - Durable dashboard notifications for `needs_input`, `ready_to_merge`,
   `pr_merged`, and `pr_closed_unmerged`: backend enrichment/persistence,
-  rolling seven-day read/unread history, live notification stream, and read
+  cursor-paginated read/unread history, live notification stream, and read
   acknowledgement API.
 - SCM observer (`internal/observe/scm`) wired into the daemon: GitHub provider,
   lazy/non-blocking auth, per-PR polling with ETag guards and semantic diffing,
@@ -78,7 +78,7 @@ surface (`npm run sqlc`, `npm run api`).
   intentionally not part of the desktop V1 API/UI.
 - Terminal pane (xterm) over the mux WebSocket, with a live SSE events
   connection and port-rebind on daemon restart.
-- In-app notification center with hover access, Unread/All filters, seven-day
+- In-app notification center with click access, Unread/All filters, paginated
   REST catch-up, live notification stream updates, separate PR/session target
   actions, persistent read history, mark-read controls, and Electron app toasts
   while the app is running.

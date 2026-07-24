@@ -4,23 +4,33 @@ INSERT INTO notifications (
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
--- name: ListRecentUnreadNotifications :many
+-- name: ListUnreadNotificationsPage :many
 SELECT *
 FROM notifications
-WHERE status = 'unread' AND created_at >= ?
-ORDER BY created_at DESC
-LIMIT ?;
+WHERE status = 'unread'
+  AND (
+    CAST(sqlc.arg(before_id) AS TEXT) = ''
+    OR created_at < sqlc.arg(before_created_at)
+    OR (created_at = sqlc.arg(before_created_at) AND id < CAST(sqlc.arg(before_id) AS TEXT))
+  )
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg(page_limit);
 
--- name: ListRecentNotifications :many
+-- name: ListNotificationsPage :many
 SELECT *
 FROM notifications
-WHERE created_at >= ?
-ORDER BY created_at DESC
-LIMIT ?;
+WHERE (
+    CAST(sqlc.arg(before_id) AS TEXT) = ''
+    OR created_at < sqlc.arg(before_created_at)
+    OR (created_at = sqlc.arg(before_created_at) AND id < CAST(sqlc.arg(before_id) AS TEXT))
+  )
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg(page_limit);
 
--- name: DeleteNotificationsBefore :exec
-DELETE FROM notifications
-WHERE created_at < ?;
+-- name: CountUnreadNotifications :one
+SELECT COUNT(*)
+FROM notifications
+WHERE status = 'unread';
 
 -- name: MarkNotificationRead :one
 UPDATE notifications
@@ -28,11 +38,10 @@ SET status = 'read'
 WHERE id = ? AND status = 'unread'
 RETURNING *;
 
--- name: MarkAllNotificationsRead :many
+-- name: MarkAllNotificationsRead :execrows
 UPDATE notifications
 SET status = 'read'
-WHERE status = 'unread'
-RETURNING *;
+WHERE status = 'unread';
 
 -- name: GetUnreadNotificationByDedupe :one
 SELECT *

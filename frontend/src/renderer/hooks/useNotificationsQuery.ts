@@ -1,17 +1,23 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-	fetchRecentNotifications,
+	fetchNotificationsPage,
 	markAllCachedNotificationsRead,
 	markCachedNotificationRead,
 	markAllNotificationsRead,
 	markNotificationRead,
+	notificationsQueryKey,
 	recentNotificationsQueryKey,
+	type NotificationListStatus,
+	unreadNotificationsQueryKey,
 } from "../lib/notifications";
 
-export function useNotificationsQuery() {
-	return useQuery({
-		queryKey: recentNotificationsQueryKey,
-		queryFn: fetchRecentNotifications,
+export function useNotificationsQuery(status: NotificationListStatus, enabled = true) {
+	return useInfiniteQuery({
+		queryKey: notificationsQueryKey(status),
+		queryFn: ({ pageParam }) => fetchNotificationsPage(status, pageParam),
+		initialPageParam: "",
+		getNextPageParam: (lastPage) => lastPage.nextCursor || undefined,
+		enabled,
 		retry: 1,
 	});
 }
@@ -33,6 +39,7 @@ export function useMarkAllNotificationsReadMutation() {
 		onSuccess: () => {
 			markAllCachedNotificationsRead(queryClient);
 			void queryClient.invalidateQueries({ queryKey: recentNotificationsQueryKey });
+			void queryClient.invalidateQueries({ queryKey: unreadNotificationsQueryKey });
 		},
 	});
 }

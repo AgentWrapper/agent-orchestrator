@@ -22,9 +22,6 @@ func (s *Store) CreateNotification(ctx context.Context, rec domain.NotificationR
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	if err := s.qw.DeleteNotificationsBefore(ctx, rec.CreatedAt.Add(-domain.NotificationRetentionWindow)); err != nil {
-		return domain.NotificationRecord{}, false, fmt.Errorf("prune expired notifications: %w", err)
-	}
 	if existing, ok, err := s.getUnreadNotificationByDedupe(ctx, rec); err != nil {
 		return domain.NotificationRecord{}, false, err
 	} else if ok {
@@ -54,26 +51,45 @@ func (s *Store) CreateNotification(ctx context.Context, rec domain.NotificationR
 	return notificationFromGen(row), true, nil
 }
 
-// ListNotifications returns retained notifications newest-first. A zero limit
-// means the full seven-day window; SQLite uses -1 for an unlimited LIMIT.
-func (s *Store) ListNotifications(ctx context.Context, status domain.NotificationListStatus, since time.Time, limit int) ([]domain.NotificationRecord, error) {
-	sqlLimit := int64(limit)
-	if sqlLimit <= 0 {
-		sqlLimit = -1
-	}
+// ListNotifications returns one stable newest-first page of notifications.
+func (s *Store) ListNotifications(
+	ctx context.Context,
+	status domain.NotificationListStatus,
+	beforeCreatedAt time.Time,
+	beforeID string,
+	limit int,
+) ([]domain.NotificationRecord, error) {
 	var (
 		rows []gen.Notification
 		err  error
 	)
 	if status == domain.NotificationListUnread {
-		rows, err = s.qr.ListRecentUnreadNotifications(ctx, gen.ListRecentUnreadNotificationsParams{CreatedAt: since, Limit: sqlLimit})
+		rows, err = s.qr.ListUnreadNotificationsPage(ctx, gen.ListUnreadNotificationsPageParams{
+			BeforeID:        beforeID,
+			BeforeCreatedAt: beforeCreatedAt,
+			PageLimit:       int64(limit),
+		})
 	} else {
-		rows, err = s.qr.ListRecentNotifications(ctx, gen.ListRecentNotificationsParams{CreatedAt: since, Limit: sqlLimit})
+		rows, err = s.qr.ListNotificationsPage(ctx, gen.ListNotificationsPageParams{
+			BeforeID:        beforeID,
+			BeforeCreatedAt: beforeCreatedAt,
+			PageLimit:       int64(limit),
+		})
 	}
 	if err != nil {
 		return nil, fmt.Errorf("list notifications: %w", err)
 	}
 	return notificationsFromGen(rows), nil
+}
+
+// CountUnreadNotifications returns the exact unread badge count independently
+// from the bounded history page.
+func (s *Store) CountUnreadNotifications(ctx context.Context) (int64, error) {
+	count, err := s.qr.CountUnreadNotifications(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("count unread notifications: %w", err)
+	}
+	return count, nil
 }
 
 // MarkNotificationRead marks one unread notification read.
@@ -91,14 +107,14 @@ func (s *Store) MarkNotificationRead(ctx context.Context, id string) (domain.Not
 }
 
 // MarkAllNotificationsRead marks every unread notification read.
-func (s *Store) MarkAllNotificationsRead(ctx context.Context) ([]domain.NotificationRecord, error) {
+func (s *Store) MarkAllNotificationsRead(ctx context.Context) (int64, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	rows, err := s.qw.MarkAllNotificationsRead(ctx)
+	count, err := s.qw.MarkAllNotificationsRead(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("mark all notifications read: %w", err)
+		return 0, fmt.Errorf("mark all notifications read: %w", err)
 	}
-	return notificationsFromGen(rows), nil
+	return count, nil
 }
 
 func (s *Store) getUnreadNotificationByDedupe(ctx context.Context, rec domain.NotificationRecord) (domain.NotificationRecord, bool, error) {
