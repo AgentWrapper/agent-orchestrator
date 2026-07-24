@@ -490,13 +490,15 @@ describe("SessionInspector reviews tab", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open"), pr(4, "open"), pr(5, "draft")])} />);
 		await openReviewsTab();
 
-		expect(screen.getByText("Pull requests")).toBeInTheDocument();
+		expect(screen.getByText("AO code reviews")).toBeInTheDocument();
 		expect(await screen.findByText("Reviewable change 3")).toBeInTheDocument();
 		expect(screen.getByText("#3")).toBeInTheDocument();
 		expect(screen.getByText("Reviewable change 4")).toBeInTheDocument();
-		expect(screen.getByText("#4")).toBeInTheDocument();
 		expect(screen.queryByText("Reviewable change 5")).not.toBeInTheDocument();
+		// PR #3 is expanded by default, so its verdict is visible.
 		expect(screen.getAllByText("Not run")).not.toHaveLength(0);
+		// PR #4 is collapsed by default — expand it to reveal its verdict.
+		await userEvent.click(screen.getByRole("button", { name: /Reviewable change 4/ }));
 		expect(screen.getAllByText("Approved")).not.toHaveLength(0);
 		expect(screen.getByRole("button", { name: "Re-run review" })).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Run" })).not.toBeInTheDocument();
@@ -614,7 +616,7 @@ describe("SessionInspector reviews tab", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsTab();
 
-		expect(await screen.findAllByText("Cancelled")).toHaveLength(2);
+		expect(await screen.findAllByText("Cancelled")).toHaveLength(1);
 		expect(screen.queryByText("Failed")).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Re-run review" })).toBeEnabled();
 	});
@@ -630,6 +632,84 @@ describe("SessionInspector reviews tab", () => {
 		expect(screen.queryByText("sess-1")).not.toBeInTheDocument();
 		expect(screen.queryByText("review session")).not.toBeInTheDocument();
 		expect(screen.getAllByText("Changes requested")).not.toHaveLength(0);
+	});
+
+	function prSummaryWithReviews(reviews: unknown[]) {
+		return {
+			url: "https://example.com/pr/3",
+			htmlUrl: "https://example.com/pr/3",
+			number: 3,
+			title: "Fix the dashboard",
+			state: "open",
+			provider: "github",
+			repo: "o/r",
+			author: "dev",
+			sourceBranch: "feat",
+			targetBranch: "main",
+			headSha: "abc123",
+			additions: 1,
+			deletions: 0,
+			changedFiles: 1,
+			ci: { state: "passing", failingChecks: [] },
+			review: { decision: "changes_requested", hasUnresolvedHumanComments: false, unresolvedBy: [], reviews },
+			mergeability: { state: "mergeable", reasons: [], prUrl: "https://example.com/pr/3" },
+			updatedAt: "2026-06-15T00:00:00Z",
+			observedAt: "2026-06-15T00:00:00Z",
+			ciObservedAt: "2026-06-15T00:00:00Z",
+			reviewObservedAt: "2026-06-15T00:00:00Z",
+		};
+	}
+
+	const mockReviewsTabGets = (prs: unknown[]) => {
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/sessions/{sessionId}/reviews") return { data: { reviewerHandleId: "", reviews: [] } };
+			if (path === "/api/v1/projects/{id}") {
+				return { data: { status: "ok", project: { id: "ws-1", config: { reviewers: [{ harness: "codex" }] } } } };
+			}
+			if (path === "/api/v1/sessions/{sessionId}/pr") return { data: { sessionId: "sess-1", prs } };
+			return { data: undefined };
+		});
+	};
+
+	it("renders GitHub review summaries under a Pull request reviews section", async () => {
+		mockReviewsTabGets([
+			prSummaryWithReviews([
+				{
+					reviewerId: "alice",
+					verdict: "changes_requested",
+					body: "please fix the nil check",
+					submittedAt: "2026-06-15T00:00:00Z",
+					isBot: false,
+				},
+				{
+					reviewerId: "review-bot",
+					verdict: "approved",
+					body: "automated approval",
+					submittedAt: "2026-06-15T00:00:00Z",
+					isBot: true,
+				},
+			]),
+		]);
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsTab();
+
+		expect(await screen.findByText("Pull request reviews")).toBeInTheDocument();
+		expect(screen.getByText("please fix the nil check")).toBeInTheDocument();
+		expect(screen.getByText("automated approval")).toBeInTheDocument();
+		expect(screen.getByText("alice")).toBeInTheDocument();
+		expect(screen.getByText("review-bot · bot")).toBeInTheDocument();
+		expect(screen.getByText("AO code reviews")).toBeInTheDocument();
+	});
+
+	it("omits the Pull request reviews section when no PR has review summaries", async () => {
+		mockReviewsTabGets([prSummaryWithReviews([])]);
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsTab();
+
+		expect(await screen.findByText("AO code reviews")).toBeInTheDocument();
+		expect(screen.queryByText("Pull request reviews")).not.toBeInTheDocument();
 	});
 
 	it("shows failed latest runs as failed and still allows rerun", async () => {
