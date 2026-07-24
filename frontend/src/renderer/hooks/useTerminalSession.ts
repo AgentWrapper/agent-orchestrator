@@ -17,7 +17,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getApiBaseUrl } from "../lib/api-client";
 import { captureRendererEvent } from "../lib/telemetry";
 import { createTerminalMux, muxUrlFromApiBase, type TerminalMux } from "../lib/terminal-mux";
-import type { WorkspaceSession } from "../types/workspace";
+import { sessionIsActive, type WorkspaceSession } from "../types/workspace";
 import { workspaceQueryKey } from "./useWorkspaceQuery";
 
 /**
@@ -97,7 +97,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 
 	const sessionRef = useRef(session);
 	sessionRef.current = session;
-	const previousSessionStatusRef = useRef(session?.status);
+	const previousSessionActiveRef = useRef(session ? sessionIsActive(session) : false);
 	const previousActivityStateRef = useRef(session?.activity?.state);
 	const optionsRef = useRef(options);
 	optionsRef.current = options;
@@ -355,11 +355,12 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 	useEffect(() => {
 		const r = runtime.current;
 		const handle = session?.terminalHandleId ?? null;
-		const previousStatus = previousSessionStatusRef.current;
+		const isActive = session ? sessionIsActive(session) : false;
+		const wasActive = previousSessionActiveRef.current;
 		const previousActivityState = previousActivityStateRef.current;
-		previousSessionStatusRef.current = session?.status;
+		previousSessionActiveRef.current = isActive;
 		previousActivityStateRef.current = session?.activity?.state;
-		const restoredSession = previousStatus === "terminated" && session?.status !== "terminated";
+		const restoredSession = !wasActive && isActive;
 		const resumedAgent = previousActivityState === "exited" && session?.activity?.state !== "exited";
 		if (!handle || (!restoredSession && !resumedAgent) || r.detached || !r.terminal) {
 			return;
@@ -372,7 +373,14 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		} else {
 			transition("reattaching");
 		}
-	}, [connect, session?.activity?.state, session?.status, session?.terminalHandleId, transition]);
+	}, [
+		connect,
+		session?.activity?.state,
+		session?.isTerminated,
+		session?.status,
+		session?.terminalHandleId,
+		transition,
+	]);
 
 	// Belt-and-braces: never leak a socket past unmount, even if the owner
 	// forgot to call detach.

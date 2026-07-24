@@ -263,7 +263,7 @@ describe("useTerminalSession", () => {
 		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: workspaceQueryKey });
 	});
 
-	it("reconnects when a restored session becomes live with the same terminal handle", () => {
+	it("reconnects when a merged terminated session is restored with the same terminal handle", () => {
 		const muxes: FakeMux[] = [];
 		const createMux = () => {
 			const fake = createFakeMux();
@@ -286,10 +286,14 @@ describe("useTerminalSession", () => {
 		act(() => muxes[0].emitExit("handle-1"));
 		expect(view.result.current.state).toBe("exited");
 
-		view.rerender({ attachedSession: { ...session, status: "terminated", updatedAt: "terminated" } });
+		view.rerender({
+			attachedSession: { ...session, status: "merged", isTerminated: true, updatedAt: "terminated" },
+		});
 		expect(muxes).toHaveLength(1);
 
-		view.rerender({ attachedSession: { ...session, status: "idle", updatedAt: "restored" } });
+		view.rerender({
+			attachedSession: { ...session, status: "merged", isTerminated: false, updatedAt: "restored" },
+		});
 		expect(view.result.current.state).toBe("connecting");
 		expect(muxes).toHaveLength(2);
 		expect(muxes[0].disposed).toBe(true);

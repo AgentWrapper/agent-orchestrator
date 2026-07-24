@@ -94,26 +94,32 @@ vi.mock("./SessionFilesView", () => ({
 		</button>
 	),
 }));
-const browserDestroy = vi.hoisted(() => vi.fn());
+const { browserDestroy, browserViewOptions } = vi.hoisted(() => ({
+	browserDestroy: vi.fn(),
+	browserViewOptions: { current: undefined as { sessionId: string; terminated: boolean } | undefined },
+}));
 vi.mock("../hooks/useBrowserView", () => ({
-	useBrowserView: () => ({
-		viewId: "browser:sess-1",
-		navState: {
+	useBrowserView: (options: { sessionId: string; terminated: boolean }) => {
+		browserViewOptions.current = options;
+		return {
 			viewId: "browser:sess-1",
-			url: "http://127.0.0.1:4173/",
-			title: "Calculator",
-			canGoBack: false,
-			canGoForward: false,
-			isLoading: false,
-		},
-		slotRef: vi.fn(),
-		navigate: vi.fn(),
-		goBack: vi.fn(),
-		goForward: vi.fn(),
-		reload: vi.fn(),
-		stop: vi.fn(),
-		destroy: browserDestroy,
-	}),
+			navState: {
+				viewId: "browser:sess-1",
+				url: "http://127.0.0.1:4173/",
+				title: "Calculator",
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			},
+			slotRef: vi.fn(),
+			navigate: vi.fn(),
+			goBack: vi.fn(),
+			goForward: vi.fn(),
+			reload: vi.fn(),
+			stop: vi.fn(),
+			destroy: browserDestroy,
+		};
+	},
 }));
 vi.mock("./SessionInspector", () => ({
 	SessionInspector: ({
@@ -247,12 +253,15 @@ describe("SessionView", () => {
 		for (const session of workspaces[0].sessions) {
 			delete session.previewUrl;
 			delete session.previewRevision;
+			delete session.isTerminated;
+			session.status = "working";
 		}
 		workspaceQueryState.data = workspaces;
 		workspaceQueryState.isLoading = false;
 		useUiStore.setState({ inspectorSessions: {} });
 		panels.clear();
 		browserDestroy.mockReset();
+		browserViewOptions.current = undefined;
 	});
 
 	// Regression: react-resizable-panels v4 treats bare numeric sizes as PIXELS
@@ -280,6 +289,16 @@ describe("SessionView", () => {
 		expect(screen.getByTestId("resize-handle")).toBeInTheDocument();
 		expect(screen.getByTestId("panel-inspector")).not.toHaveAttribute("inert");
 		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
+	});
+
+	it("treats a merged terminated session as terminated for Browser preview", () => {
+		const worker = workerSession("sess-1");
+		worker.status = "merged";
+		worker.isTerminated = true;
+
+		render(<SessionView sessionId="sess-1" />);
+
+		expect(browserViewOptions.current).toMatchObject({ sessionId: "sess-1", terminated: true });
 	});
 
 	it("mounts collapsed and inert when the store says closed", () => {

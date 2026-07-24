@@ -180,6 +180,7 @@ const workspaces = [
 		sessions: [
 			{ id: "sess-1", status: "working" },
 			{ id: "sess-2", status: "terminated" },
+			{ id: "sess-merged-terminated", status: "merged", isTerminated: true },
 			{ id: "sess-3", status: "idle" },
 		],
 	},
@@ -377,7 +378,7 @@ describe("shell application shortcut subscriptions", () => {
 		expect(shellMocks.navigate).toHaveBeenCalledWith({ to: "/settings" });
 	});
 
-	it("moves to the next non-terminated session in the current project", async () => {
+	it("moves to the next active session in the current project", async () => {
 		shellMocks.state.routeParams = { sessionId: "sess-1" };
 		await renderShell();
 

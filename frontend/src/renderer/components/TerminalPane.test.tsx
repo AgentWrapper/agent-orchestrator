@@ -143,6 +143,20 @@ describe("terminal restore", () => {
 			view.restore();
 		}
 	});
+
+	it("offers restore when a merged session is terminated", () => {
+		const view = renderPane({
+			...worker,
+			status: "merged",
+			isTerminated: true,
+			terminalHandleId: "term-1",
+		});
+		try {
+			expect(screen.getByRole("button", { name: "Restore session" })).toBeInTheDocument();
+		} finally {
+			view.restore();
+		}
+	});
 });
 
 describe("providerScrollsByKeyboard", () => {
@@ -217,6 +231,16 @@ describe("terminal link preview", () => {
 
 	it("does not mirror links for terminated workers because their Browser inspector is cleared", () => {
 		const view = renderPane({ ...worker, status: "terminated" });
+		try {
+			act(() => terminalLinkHandler?.("http://localhost:3000"));
+			expect(postMock).not.toHaveBeenCalled();
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("does not mirror links for merged workers whose session is terminated", () => {
+		const view = renderPane({ ...worker, status: "merged", isTerminated: true });
 		try {
 			act(() => terminalLinkHandler?.("http://localhost:3000"));
 			expect(postMock).not.toHaveBeenCalled();

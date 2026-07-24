@@ -13,7 +13,7 @@ import { useBrowserView } from "../hooks/useBrowserView";
 import { useCloseShellTerminal, useShellTerminals } from "../hooks/useShellTerminals";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { hidesShellTopbar } from "../lib/platform";
-import { isOrchestratorSession } from "../types/workspace";
+import { isOrchestratorSession, sessionIsActive } from "../types/workspace";
 import type { TerminalTarget } from "../types/terminal";
 
 const INSPECTOR_MIN_PERCENT = 22;
@@ -132,7 +132,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		sessionId,
 		active: Boolean(session && hasInspector && (browserPoppedOut || isInspectorOpen)),
 		poppedOut: browserPoppedOut,
-		terminated: session?.status === "terminated",
+		terminated: session ? !sessionIsActive(session) : false,
 		previewUrl,
 		previewRevision,
 	});

@@ -34,7 +34,7 @@ import {
 	hidesShellTopbar,
 } from "../lib/platform";
 import { useUiStore } from "../stores/ui-store";
-import { toProjectKind, type WorkspaceSummary } from "../types/workspace";
+import { sessionIsActive, toProjectKind, type WorkspaceSummary } from "../types/workspace";
 import type { components } from "../../api/schema";
 
 export const Route = createFileRoute("/_shell")({
@@ -150,7 +150,7 @@ function ShellLayout() {
 		(direction: -1 | 1) => {
 			if (!scopedProjectId) return;
 			const sessions = (workspaces.find((workspace) => workspace.id === scopedProjectId)?.sessions ?? []).filter(
-				(session) => session.status !== "terminated",
+				sessionIsActive,
 			);
 			if (sessions.length === 0) return;
 			const currentIndex = sessions.findIndex((session) => session.id === routeParams.sessionId);
