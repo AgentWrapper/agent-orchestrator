@@ -11,6 +11,11 @@ on:
 
 jobs:
   latest-release:
+    # This guard only means something against the canonical repo's own
+    # releases/latest feed. On a fork, github.repository is the fork (which
+    # has no releases of its own), so `gh release view` would hard-fail on
+    # every scheduled run. Skip cleanly there instead of failing forever.
+    if: github.repository == 'AgentWrapper/agent-orchestrator'
     runs-on: ubuntu-latest
     permissions:
       contents: read
