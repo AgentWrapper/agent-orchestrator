@@ -46,6 +46,17 @@ func RenderMarkdown(source []byte, title string) ([]byte, error) {
 const markdownStyles = `
 :root { color-scheme: light dark; }
 * { box-sizing: border-box; }
+/* Minimal scrollbars: thin, neutral gray, no track or buttons, so the panel
+   chrome stays quiet in both light and dark schemes. */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { min-height: 8px; background: rgba(128,128,128,0.35); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(128,128,128,0.55); }
+::-webkit-scrollbar-corner { background: transparent; }
+@supports (-moz-appearance: none) {
+  * { scrollbar-width: thin; scrollbar-color: rgba(128,128,128,0.45) transparent; }
+}
 body {
   margin: 0;
   background: #ffffff;

@@ -554,6 +554,7 @@ describe("SessionsBoard", () => {
 		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
 
 		const archive = screen.getByRole("list", { name: "Archived sessions" });
+		expect(archive).toHaveClass("board-scrollbar", "overflow-y-auto");
 		const terminatedCard = within(archive).getByText("dead worker").closest<HTMLElement>("[role='listitem']");
 		expect(terminatedCard).not.toBeNull();
 		expect(within(terminatedCard!).queryByRole("button", { name: "Open dead worker" })).not.toBeInTheDocument();
@@ -880,7 +881,7 @@ describe("SessionsBoard", () => {
 		expect(screen.queryByRole("button", { name: /archive/i })).not.toBeInTheDocument();
 	});
 
-	it("keeps every Kanban lane scrollable without visible scrollbar chrome", () => {
+	it("uses the shared minimal scrollbar styling for every Kanban lane", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
 				workspaceWithSessions([
@@ -903,7 +904,7 @@ describe("SessionsBoard", () => {
 			.flatMap((column) => Array.from(column.querySelectorAll<HTMLElement>(".overflow-y-auto")));
 		expect(laneScrollers).toHaveLength(6);
 		for (const scroller of laneScrollers) {
-			expect(scroller).toHaveClass("scrollbar-none", "overflow-y-auto");
+			expect(scroller).toHaveClass("board-scrollbar", "overflow-y-auto");
 		}
 	});
 

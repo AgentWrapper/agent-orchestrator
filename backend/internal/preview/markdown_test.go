@@ -41,3 +41,27 @@ func TestRenderMarkdownEscapesTitle(t *testing.T) {
 		t.Errorf("expected escaped title, got:\n%s", out)
 	}
 }
+
+func TestRenderMarkdownScrollbarStylesUseWebKitOutsideFirefox(t *testing.T) {
+	out, err := RenderMarkdown([]byte("hi"), "notes.md")
+	if err != nil {
+		t.Fatalf("RenderMarkdown: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{
+		"::-webkit-scrollbar { width: 4px; height: 4px; }",
+		"::-webkit-scrollbar-button { display: none; width: 0; height: 0; }",
+		"@supports (-moz-appearance: none)",
+		"* { scrollbar-width: thin; scrollbar-color: rgba(128,128,128,0.45) transparent; }",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("rendered output missing %q\n%s", want, got)
+		}
+	}
+
+	supportsStart := strings.Index(got, "@supports (-moz-appearance: none)")
+	standardProps := strings.Index(got, "* { scrollbar-width: thin;")
+	if supportsStart < 0 || standardProps < 0 || standardProps < supportsStart {
+		t.Errorf("standard scrollbar properties must stay inside the Firefox-only support block:\n%s", got)
+	}
+}

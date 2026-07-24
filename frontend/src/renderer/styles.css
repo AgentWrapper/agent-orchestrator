@@ -734,6 +734,54 @@ select {
 	height: 0;
 }
 
+.board-scrollbar::-webkit-scrollbar {
+	width: 4px;
+	height: 4px;
+}
+
+.board-scrollbar::-webkit-scrollbar-button {
+	display: none;
+	width: 0;
+	height: 0;
+}
+
+.board-scrollbar::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+.board-scrollbar::-webkit-scrollbar-thumb {
+	min-height: 8px;
+	border-radius: 999px;
+	background-color: color-mix(in srgb, var(--color-scrollbar) 24%, transparent);
+}
+
+.board-scrollbar:hover::-webkit-scrollbar-thumb,
+.board-scrollbar:focus-within::-webkit-scrollbar-thumb,
+.board-scrollbar:active::-webkit-scrollbar-thumb {
+	background-color: color-mix(in srgb, var(--color-scrollbar) 42%, transparent);
+}
+
+.board-scrollbar::-webkit-scrollbar-thumb:hover {
+	background-color: color-mix(in srgb, var(--color-scrollbar) 56%, transparent);
+}
+
+.board-scrollbar::-webkit-scrollbar-corner {
+	background: transparent;
+}
+
+@supports (-moz-appearance: none) {
+	.board-scrollbar {
+		scrollbar-width: thin;
+		scrollbar-color: color-mix(in srgb, var(--color-scrollbar) 24%, transparent) transparent;
+	}
+
+	.board-scrollbar:hover,
+	.board-scrollbar:focus-within,
+	.board-scrollbar:active {
+		scrollbar-color: color-mix(in srgb, var(--color-scrollbar) 42%, transparent) transparent;
+	}
+}
+
 .session-files-diff-scrollbar {
 	scrollbar-width: thin;
 	scrollbar-color: var(--color-scrollbar) transparent;

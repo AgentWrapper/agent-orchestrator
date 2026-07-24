@@ -384,7 +384,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						<div
 							aria-label="Archived sessions"
 							className={cn(
-								"max-h-[45vh] overflow-y-auto pb-3",
+								"board-scrollbar max-h-[45vh] overflow-y-auto pb-3",
 								archiveLayout === "grid" && "grid grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-2",
 							)}
 							role="list"
@@ -480,7 +480,7 @@ function ZoneColumn({
 				</span>
 				<span className="ml-auto font-mono text-sm leading-none text-passive">{sessions.length}</span>
 			</div>
-			<div className="scrollbar-none min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+			<div className="board-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-2">
 				<div className="flex min-h-full flex-col gap-2">
 					{sessions.map((session) => (
 						<SessionCard
@@ -653,7 +653,7 @@ function SplitLaneColumn({
 					<div
 						aria-label={primaryTone.regionLabel}
 						className={cn(
-							"scrollbar-none min-h-0 overflow-y-auto px-2",
+							"board-scrollbar min-h-0 overflow-y-auto px-2",
 							showSecondary ? "flex-[3] pb-2" : "flex-1 pb-2",
 						)}
 						role="region"
@@ -731,7 +731,7 @@ function SecondaryLaneSection({
 				</div>
 				<span className="ml-auto font-mono text-caption leading-none text-passive">{sessions.length}</span>
 			</div>
-			<div className="scrollbar-none min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+			<div className="board-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-2">
 				<div className="flex min-h-full flex-col gap-2">
 					{sessions.map((session) => (
 						<SessionCard
