@@ -246,7 +246,8 @@ export function Sidebar({
 				    Wordmark fades in beside it when expanded. */}
 				<div
 					className={cn(
-						"flex shrink-0 items-center pb-4.5 group-data-[collapsible=icon]:pb-2",
+						"flex shrink-0 items-center group-data-[collapsible=icon]:pb-2",
+						commandPaletteEnabled ? "pb-2" : "pb-4.5",
 						!isMac &&
 							"group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:gap-1",
 					)}
@@ -302,7 +303,7 @@ export function Sidebar({
 
 			<SidebarContent className="gap-0 pl-2.5 pr-1.75 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
 				{commandPaletteEnabled ? (
-					<SidebarGroup className="p-0 pb-2">
+					<SidebarGroup className="p-0 pb-3">
 						<SidebarGroupContent>
 							<SidebarMenu className="gap-0 group-data-[collapsible=icon]:gap-1">
 								<SidebarSearchButton onOpen={() => setCommandPaletteOpen(true)} />
@@ -812,20 +813,27 @@ function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
 			? "⌘K"
 			: "Ctrl+K";
 	return (
-		<SidebarMenuItem className="mb-px group-data-[collapsible=icon]:mb-0">
+		<SidebarMenuItem className="group-data-[collapsible=icon]:mb-0">
 			<SidebarMenuButton
 				aria-label={`Search · ${shortcutLabel}`}
 				onClick={onOpen}
 				tooltip={`Search · ${shortcutLabel}`}
 				className={cn(
-					"h-control-board gap-2.25 rounded-sm px-1.5 py-0 text-control font-medium text-muted-foreground transition-[background-color,color]",
+					"h-control-form gap-2 rounded-settings-row bg-interactive-hover px-3 py-0 text-control font-medium text-muted-foreground",
 					"hover:bg-interactive-hover hover:text-foreground active:bg-interactive-hover active:text-foreground",
-					"group-data-[collapsible=icon]:size-control-board! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:p-0!",
+					"[&>svg]:size-icon-md!",
+					"group-data-[collapsible=icon]:size-control-form! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-settings-row group-data-[collapsible=icon]:p-0!",
 				)}
 			>
-				<Search className="size-icon-lg shrink-0" aria-hidden="true" />
-				<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">
+				<Search strokeWidth={1.75} aria-hidden="true" />
+				<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate leading-none group-data-[collapsible=icon]:hidden">
 					Search
+				</span>
+				<span
+					aria-hidden="true"
+					className="sidebar-expanded-chrome shrink-0 text-caption leading-none text-passive group-data-[collapsible=icon]:hidden"
+				>
+					{shortcutLabel}
 				</span>
 			</SidebarMenuButton>
 		</SidebarMenuItem>
