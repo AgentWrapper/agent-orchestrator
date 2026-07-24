@@ -16,6 +16,9 @@
 		"ios": {
 			"supportsTablet": true,
 			"bundleIdentifier": "aoagents.ao",
+			"infoPlist": {
+				"NSLocalNetworkUsageDescription": "Allow AO to connect to the Agent Orchestrator running on your local network."
+			},
 			"config": {
 				"usesNonExemptEncryption": false
 			}
