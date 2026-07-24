@@ -59,7 +59,8 @@ describe("telemetry sanitizers", () => {
 			});
 		} finally {
 			const queue = client._requestQueue as unknown as
-				{ _queue: unknown[]; _clearFlushTimeout: () => void } | undefined;
+				| { _queue: unknown[]; _clearFlushTimeout: () => void }
+				| undefined;
 			if (queue) {
 				queue._queue.length = 0;
 				queue._clearFlushTimeout();

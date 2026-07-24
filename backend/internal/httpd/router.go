@@ -154,14 +154,14 @@ func mountTelemetry(r chi.Router, cfg config.Config, sink ports.EventSink) {
 	if sink == nil {
 		return
 	}
-	// CLI telemetry is capped to daily uniques: ao.app.active once per UTC day
-	// (matching the renderer heartbeat) and ao.cli.invoked once per command
-	// path per UTC day. Scripts and agent sessions invoke read-only commands
-	// (status, ls, get) in polling loops, so raw invocation counts measure
-	// automation, not usage; daily uniques keep the "which commands, how many
-	// users" signal without the firehose. The reservation state is persisted
-	// under DataDir so daemon restarts cannot turn polling loops back into raw
-	// event volume.
+	// CLI telemetry is capped to bounded uniques: ao.app.active once per UTC
+	// six-hour slot for user-context CLI activity (matching the renderer
+	// heartbeat) and ao.cli.invoked once per actor type + command path per UTC
+	// day. Scripts and agent sessions invoke read-only commands (status, ls,
+	// get) in polling loops, so raw invocation counts measure automation, not
+	// usage; bounded uniques keep the "which commands, how many users" signal
+	// without the firehose. The reservation state is persisted under DataDir so
+	// daemon restarts cannot turn polling loops back into raw event volume.
 	cliTelemetry := newCLITelemetryReservoir(cfg.DataDir)
 	r.Post("/internal/telemetry/cli-invoked", func(w http.ResponseWriter, req *http.Request) {
 		if !localControlRequest(req) {
