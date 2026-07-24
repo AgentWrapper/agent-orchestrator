@@ -2,10 +2,10 @@ package authprobe
 
 import (
 	"context"
-	"os/exec"
 	"strings"
 	"time"
 
+	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -21,7 +21,7 @@ var DefaultCommands = [][]string{
 // CmdRunner runs the command and returns the combined stdout/stderr.
 // It is exposed as a package variable to allow mocking in tests.
 var CmdRunner = func(ctx context.Context, name string, arg ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, name, arg...).CombinedOutput()
+	return aoprocess.CommandContext(ctx, name, arg...).CombinedOutput()
 }
 
 // CLIStatus runs bounded local CLI probes and classifies their output.
