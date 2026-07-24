@@ -344,6 +344,51 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 		},
 	})
 
+	var networkDuration int
+	networkCmd := &cobra.Command{
+		Use:   "network",
+		Short: "Temporarily capture sanitized network request metadata",
+		Args:  noArgs,
+	}
+	networkStart := &cobra.Command{
+		Use:   "start",
+		Short: "Start bounded metadata-only capture on the active tab",
+		Args:  noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if networkDuration < 1 || networkDuration > 300 {
+				return usageError{errors.New("--duration must be between 1 and 300 seconds")}
+			}
+			return ctx.runBrowserAction(
+				cmd,
+				"network-start",
+				map[string]any{"durationSeconds": networkDuration},
+				jsonOutput,
+			)
+		},
+	}
+	networkStart.Flags().IntVar(&networkDuration, "duration", 60, "capture duration in seconds (maximum 300)")
+	networkCmd.AddCommand(networkStart)
+	for _, subcommand := range []struct {
+		name  string
+		short string
+	}{
+		{name: "status", short: "Show capture state without enabling it"},
+		{name: "list", short: "List captured sanitized request metadata"},
+		{name: "stop", short: "Stop capture and list the retained requests"},
+		{name: "clear", short: "Clear retained requests without changing capture state"},
+	} {
+		subcommand := subcommand
+		networkCmd.AddCommand(&cobra.Command{
+			Use:   subcommand.name,
+			Short: subcommand.short,
+			Args:  noArgs,
+			RunE: func(cmd *cobra.Command, _ []string) error {
+				return ctx.runBrowserAction(cmd, "network-"+subcommand.name, nil, jsonOutput)
+			},
+		})
+	}
+	cmd.AddCommand(networkCmd)
+
 	for _, action := range []string{"console", "errors"} {
 		action := action
 		cmd.AddCommand(&cobra.Command{
@@ -466,12 +511,83 @@ func writeBrowserResult(cmd *cobra.Command, action string, result map[string]any
 		}
 		return nil
 	}
+	if strings.HasPrefix(action, "network-") {
+		return writeBrowserNetworkResult(cmd, action, result)
+	}
 	if currentURL, ok := result["url"].(string); ok && currentURL != "" {
 		_, err := fmt.Fprintln(cmd.OutOrStdout(), currentURL)
 		return err
 	}
 	_, err := fmt.Fprintln(cmd.OutOrStdout(), "Browser "+action+" completed.")
 	return err
+}
+
+func writeBrowserNetworkResult(cmd *cobra.Command, action string, result map[string]any) error {
+	if action == "network-clear" {
+		_, err := fmt.Fprintln(cmd.OutOrStdout(), "Browser network capture cleared.")
+		return err
+	}
+	active, _ := result["active"].(bool)
+	state := "inactive"
+	if active {
+		state = "active"
+	}
+	tabID, _ := result["tabId"].(string)
+	count := numberString(result["requestCount"])
+	maxEntries := numberString(result["maxEntries"])
+	if count == "" {
+		count = "0"
+	}
+	if maxEntries == "" {
+		maxEntries = "200"
+	}
+	if action == "network-start" || action == "network-status" {
+		_, err := fmt.Fprintf(
+			cmd.OutOrStdout(),
+			"Browser network capture: %s (tab %s, %s/%s requests, metadata only)\n",
+			state,
+			tabID,
+			count,
+			maxEntries,
+		)
+		return err
+	}
+
+	requests, _ := result["requests"].([]any)
+	if len(requests) == 0 {
+		_, err := fmt.Fprintln(cmd.OutOrStdout(), "No browser network requests captured.")
+		return err
+	}
+	for _, raw := range requests {
+		request, _ := raw.(map[string]any)
+		method, _ := request["method"].(string)
+		currentURL, _ := request["url"].(string)
+		resourceType, _ := request["resourceType"].(string)
+		status := numberString(request["status"])
+		if failed, _ := request["failed"].(bool); failed {
+			status = "FAILED"
+		} else if status == "" {
+			status = "PENDING"
+		}
+		duration := numberString(request["durationMs"])
+		if duration != "" {
+			duration += "ms"
+		} else {
+			duration = "-"
+		}
+		if _, err := fmt.Fprintf(
+			cmd.OutOrStdout(),
+			"%s %s %s %s %s\n",
+			method,
+			status,
+			resourceType,
+			duration,
+			currentURL,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func writeBrowserScreenshot(cmd *cobra.Command, result map[string]any, target string) error {

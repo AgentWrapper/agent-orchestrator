@@ -35,6 +35,7 @@ type APIDeps struct {
 	Telemetry          ports.EventSink
 	Mobile             *controllers.MobileController
 	Browser            controllers.BrowserRuntime
+	PreviewServer      controllers.ManagedPreviewServer
 }
 
 // API owns one controller per resource and is the single Register call the
@@ -67,8 +68,9 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 			Mgr: deps.Projects,
 		},
 		sessions: &controllers.SessionsController{
-			Svc:      deps.Sessions,
-			Activity: deps.Activity,
+			Svc:           deps.Sessions,
+			Activity:      deps.Activity,
+			PreviewServer: deps.PreviewServer,
 		},
 		prs:           &controllers.PRsController{Svc: deps.PRs},
 		reviews:       &controllers.ReviewsController{Svc: deps.Reviews},

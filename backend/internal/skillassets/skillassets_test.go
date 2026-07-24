@@ -39,6 +39,60 @@ func TestEmbeddedSkillFrontmatterIsValidYAML(t *testing.T) {
 	}
 }
 
+func TestEmbeddedPreviewGuidanceDoesNotScaffoldStaticSites(t *testing.T) {
+	previewBody, err := files.ReadFile("using-ao/commands/preview.md")
+	if err != nil {
+		t.Fatalf("read embedded preview guidance: %v", err)
+	}
+	previewText := string(previewBody)
+	normalizedPreviewText := strings.Join(strings.Fields(previewText), " ")
+	for _, required := range []string{
+		"Static HTML and Markdown do not need a development server",
+		"Never create or modify `package.json`",
+		"Do not create `.ao/launch.json` unless the user asks",
+		"reuse the repository's existing dev command",
+		"without waiting for a separate \"open it\" request",
+		"Do not steal the browser from an active application",
+		"open the primary requested artifact",
+	} {
+		if !strings.Contains(normalizedPreviewText, required) {
+			t.Fatalf("preview guidance missing %q:\n%s", required, previewText)
+		}
+	}
+
+	skillBody, err := files.ReadFile("using-ao/SKILL.md")
+	if err != nil {
+		t.Fatalf("read embedded SKILL.md: %v", err)
+	}
+	skillText := string(skillBody)
+	normalizedSkillText := strings.Join(strings.Fields(skillText), " ")
+	if !strings.Contains(normalizedSkillText, "[commands/preview.md](commands/preview.md) before acting") ||
+		!strings.Contains(normalizedSkillText, "automatic-handoff rules are load-bearing") ||
+		!strings.Contains(normalizedSkillText, "[commands/browser.md](commands/browser.md)") ||
+		!strings.Contains(normalizedSkillText, "opt-in network policy") {
+		t.Fatalf("skill catalog is missing focused preview/browser routing:\n%s", skillText)
+	}
+}
+
+func TestEmbeddedBrowserGuidanceKeepsNetworkCaptureOptional(t *testing.T) {
+	body, err := files.ReadFile("using-ao/commands/browser.md")
+	if err != nil {
+		t.Fatalf("read embedded browser guidance: %v", err)
+	}
+	text := strings.Join(strings.Fields(string(body)), " ")
+	for _, required := range []string{
+		"Network capture is optional and disabled by default",
+		"Do not enable it for routine navigation or interaction",
+		"no request or response bodies, credentials, cookies, or query values",
+		"`network status` and `network list` never enable capture",
+		"The user can select or close these same tabs",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("browser guidance missing %q:\n%s", required, body)
+		}
+	}
+}
+
 // TestInstall_WritesSkillAndIsIdempotent: Install must lay down the embedded
 // skill (SKILL.md plus a commands file) under <dataDir>/skills/using-ao, and a
 // second run must clobber cleanly, leaving no stale files. This is the whole

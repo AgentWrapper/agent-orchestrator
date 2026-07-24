@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { BrowserNavState, BrowserRect } from "../../main/browser-view-host";
+import type {
+	BrowserNavState,
+	BrowserRect,
+	BrowserTabState,
+	BrowserTabsState,
+} from "../../main/browser-view-host";
 import type { BrowserAnnotationCancelPayload, BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
 import { OPEN_DIALOG_OR_MENU_SELECTOR } from "../lib/dom-selectors";
 
@@ -40,6 +45,12 @@ export type BrowserViewModel = {
 	goForward: () => Promise<void>;
 	reload: () => Promise<void>;
 	stop: () => Promise<void>;
+	tabs: BrowserTabState[];
+	activeTabId: string;
+	tabNotice: string;
+	selectTab: (tabId: string) => Promise<void>;
+	closeTab: (tabId: string) => Promise<void>;
+	agentBrowserActive: boolean;
 	destroy: () => void;
 	annotationMode: boolean;
 	setAnnotationMode: (enabled: boolean) => Promise<void>;
@@ -52,6 +63,12 @@ const EMPTY_NAV_STATE: BrowserNavState = {
 	canGoBack: false,
 	canGoForward: false,
 	isLoading: false,
+};
+
+const EMPTY_TABS_STATE: BrowserTabsState = {
+	viewId: "",
+	activeTabId: "",
+	tabs: [],
 };
 
 const HIDDEN_RECT: BrowserRect = { x: 0, y: 0, width: 0, height: 0 };
@@ -104,6 +121,9 @@ export function useBrowserView({
 	const [mirrorUrl, setMirrorUrl] = useState("");
 	const [mirrorStream, setMirrorStream] = useState<MediaStream | null>(null);
 	const [annotationMode, setAnnotationModeState] = useState(false);
+	const [tabsState, setTabsState] = useState<BrowserTabsState>(EMPTY_TABS_STATE);
+	const [tabNotice, setTabNotice] = useState("");
+	const [agentBrowserActive, setAgentBrowserActive] = useState(false);
 	const slotNodeRef = useRef<HTMLDivElement | null>(null);
 	const viewIdRef = useRef("");
 	const annotationModeRef = useRef(false);
@@ -116,6 +136,7 @@ export function useBrowserView({
 	const modalOpenRef = useRef(false);
 	const mirrorTokenRef = useRef(0);
 	const mirrorTimerRef = useRef<number | null>(null);
+	const tabNoticeTimerRef = useRef<number | null>(null);
 	const mirrorStreamRef = useRef<MediaStream | null>(null);
 	const hasNativeBrowser = Boolean(window.ao?.browser);
 
@@ -218,6 +239,17 @@ export function useBrowserView({
 
 	useEffect(() => {
 		let disposed = false;
+		// Preview revisions are scoped to a session. Reset the trigger before
+		// ensuring a different worker so equal revision numbers cannot suppress
+		// that worker's own target.
+		previewTriggerRef.current = null;
+		setTabsState(EMPTY_TABS_STATE);
+		setTabNotice("");
+		setAgentBrowserActive(false);
+		if (tabNoticeTimerRef.current !== null) {
+			window.clearTimeout(tabNoticeTimerRef.current);
+			tabNoticeTimerRef.current = null;
+		}
 		if (!hasNativeBrowser) {
 			const state = {
 				...EMPTY_NAV_STATE,
@@ -238,6 +270,12 @@ export function useBrowserView({
 			viewIdRef.current = state.viewId;
 			setViewId(state.viewId);
 			setNavState(state);
+			void window.ao?.browser
+				.getTabs(state.viewId)
+				.then((tabs) => {
+					if (!disposed && viewIdRef.current === tabs.viewId) setTabsState(tabs);
+				})
+				.catch(() => undefined);
 			scheduleSettleMeasure();
 		});
 		return () => {
@@ -260,6 +298,34 @@ export function useBrowserView({
 			setNavState(state);
 		});
 	}, []);
+
+	useEffect(() => {
+		return window.ao?.browser.onTabsState((state) => {
+			if (state.viewId !== viewIdRef.current) return;
+			setTabsState(state);
+			if (state.change?.kind !== "popup") return;
+			setTabNotice("Opened new tab");
+			if (tabNoticeTimerRef.current !== null) window.clearTimeout(tabNoticeTimerRef.current);
+			tabNoticeTimerRef.current = window.setTimeout(() => {
+				tabNoticeTimerRef.current = null;
+				setTabNotice("");
+			}, 3_000);
+		});
+	}, []);
+
+	useEffect(() => {
+		return window.ao?.browser.onAgentActivity((state) => {
+			if (state.viewId !== viewIdRef.current) return;
+			setAgentBrowserActive(state.active);
+		});
+	}, []);
+
+	useEffect(
+		() => () => {
+			if (tabNoticeTimerRef.current !== null) window.clearTimeout(tabNoticeTimerRef.current);
+		},
+		[],
+	);
 
 	useEffect(() => {
 		if (navState.url && active) {
@@ -398,6 +464,26 @@ export function useBrowserView({
 		[hasNativeBrowser],
 	);
 
+	const selectTab = useCallback(
+		async (tabId: string) => {
+			const viewId = viewIdRef.current;
+			if (!viewId || !hasNativeBrowser) return;
+			const state = await window.ao!.browser.selectTab({ viewId, tabId });
+			if (viewIdRef.current === state.viewId) setTabsState(state);
+		},
+		[hasNativeBrowser],
+	);
+
+	const closeTab = useCallback(
+		async (tabId: string) => {
+			const viewId = viewIdRef.current;
+			if (!viewId || !hasNativeBrowser) return;
+			const state = await window.ao!.browser.closeTab({ viewId, tabId });
+			if (viewIdRef.current === state.viewId) setTabsState(state);
+		},
+		[hasNativeBrowser],
+	);
+
 	useEffect(() => {
 		const handleDone = (payload: BrowserAnnotationSubmitPayload | BrowserAnnotationCancelPayload) => {
 			if (payload.viewId !== viewIdRef.current) return;
@@ -452,7 +538,10 @@ export function useBrowserView({
 	// this on previewRevision (bumped on every `ao preview` call); older daemons
 	// did not send it, so fall back to URL changes for compatibility.
 	useEffect(() => {
-		if (!viewId || terminated) return;
+		// During a session switch React still renders once with the prior
+		// viewId state, while the cleanup has already cleared viewIdRef. Do not
+		// consume the new session's preview revision against that stale view.
+		if (!viewId || viewIdRef.current !== viewId || terminated) return;
 		const target = previewUrl?.trim() ?? "";
 		const revision = typeof previewRevision === "number" ? previewRevision : null;
 		const previous = previewTriggerRef.current;
@@ -464,7 +553,7 @@ export function useBrowserView({
 		} else if ((revision !== null && revision > 0) || previous?.target) {
 			void clear();
 		}
-	}, [clear, navigate, previewRevision, previewUrl, viewId]);
+	}, [clear, navigate, previewRevision, previewUrl, terminated, viewId]);
 
 	const destroy = useCallback(() => {
 		const id = viewIdRef.current;
@@ -492,6 +581,12 @@ export function useBrowserView({
 		goForward: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.goForward(id)) : Promise.resolve()),
 		reload: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.reload(id)) : Promise.resolve()),
 		stop: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.stop(id)) : Promise.resolve()),
+		tabs: tabsState.tabs,
+		activeTabId: tabsState.activeTabId,
+		tabNotice,
+		selectTab,
+		closeTab,
+		agentBrowserActive,
 		destroy,
 		annotationMode,
 		setAnnotationMode,

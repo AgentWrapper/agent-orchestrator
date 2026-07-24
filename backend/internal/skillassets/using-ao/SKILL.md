@@ -16,7 +16,7 @@ trigger: "Using the ao CLI in an AO workspace: spawning workers, managing sessio
 | `orchestrator` | List orchestrator sessions | Viewing which sessions are orchestrators | [commands/orchestrator.md](commands/orchestrator.md) |
 | `review` | Submit a reviewer result for a worker's PR | Completing a code review loop | [commands/review.md](commands/review.md) |
 | `send` | Send a message to a running agent session | Correcting or directing a live agent | [commands/send.md](commands/send.md) |
-| `preview` | Open a URL in the desktop browser panel | Demoing a local server or file from inside a session | [commands/preview.md](commands/preview.md) |
+| `preview` | Start a session-owned app or open an exact URL/file | Running and showing the worker's relevant app, Markdown, HTML, PDF, or image | [commands/preview.md](commands/preview.md) |
 | `browser` | Inspect and control the session's shared live browser | Verifying a web app through snapshots, interactions, waits, screenshots, console, and errors | [commands/browser.md](commands/browser.md) |
 | `start` | Fetch (if needed) and open the AO desktop app | Launching the app | [commands/start.md](commands/start.md) |
 | `stop` | Stop the AO daemon | Shutting down AO | [commands/stop.md](commands/stop.md) |
@@ -33,6 +33,12 @@ trigger: "Using the ao CLI in an AO workspace: spawning workers, managing sessio
 - Session and project ids are shown by `ao session ls` and `ao project ls`.
 - `--agent` is an alias for `--harness` on `ao spawn`.
 - Every command accepts `-h / --help` for the full flag list.
-- For frontend work, prefer `ao browser`: check status, open the app, snapshot, interact, wait for the update, snapshot again, and inspect `ao browser errors` before completing.
+- For frontend launch, preview selection, or artifact handoff, read
+  [commands/preview.md](commands/preview.md) before acting. Its static-file,
+  project-runtime, and automatic-handoff rules are load-bearing.
+- For page inspection, interaction, or request diagnosis, read
+  [commands/browser.md](commands/browser.md). It defines shared-tab behavior
+  and the opt-in network policy.
 
-See [references.md](references.md) for natural-language-to-command mappings.
+Use [references.md](references.md) only when a natural-language request does
+not map clearly to a command above.

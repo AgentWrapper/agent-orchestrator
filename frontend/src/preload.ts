@@ -1,6 +1,11 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL } from "./shared/shortcuts";
-import type { BrowserNavState, BrowserRect } from "./main/browser-view-host";
+import type {
+	BrowserAgentActivityState,
+	BrowserNavState,
+	BrowserRect,
+	BrowserTabsState,
+} from "./main/browser-view-host";
 import type { DaemonStatus } from "./shared/daemon-status";
 import type { TelemetryBootstrap } from "./shared/telemetry";
 import type { MigrationState } from "./main/app-state";
@@ -110,6 +115,11 @@ const api = {
 		goForward: (viewId: string) => ipcRenderer.invoke("browser:goForward", viewId) as Promise<BrowserNavState>,
 		reload: (viewId: string) => ipcRenderer.invoke("browser:reload", viewId) as Promise<BrowserNavState>,
 		stop: (viewId: string) => ipcRenderer.invoke("browser:stop", viewId) as Promise<BrowserNavState>,
+		getTabs: (viewId: string) => ipcRenderer.invoke("browser:getTabs", viewId) as Promise<BrowserTabsState>,
+		selectTab: (input: { viewId: string; tabId: string }) =>
+			ipcRenderer.invoke("browser:selectTab", input) as Promise<BrowserTabsState>,
+		closeTab: (input: { viewId: string; tabId: string }) =>
+			ipcRenderer.invoke("browser:closeTab", input) as Promise<BrowserTabsState>,
 		destroy: (viewId: string) => ipcRenderer.send("browser:destroy", viewId),
 		setAnnotationMode: (input: BrowserAnnotationModeInput) =>
 			ipcRenderer.invoke("browser:annotation:setMode", input) as Promise<void>,
@@ -118,6 +128,20 @@ const api = {
 			ipcRenderer.on("browser:navState", wrapped);
 			return () => {
 				ipcRenderer.off("browser:navState", wrapped);
+			};
+		},
+		onTabsState: (listener: (state: BrowserTabsState) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, state: BrowserTabsState) => listener(state);
+			ipcRenderer.on("browser:tabsState", wrapped);
+			return () => {
+				ipcRenderer.off("browser:tabsState", wrapped);
+			};
+		},
+		onAgentActivity: (listener: (state: BrowserAgentActivityState) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, state: BrowserAgentActivityState) => listener(state);
+			ipcRenderer.on("browser:agentActivity", wrapped);
+			return () => {
+				ipcRenderer.off("browser:agentActivity", wrapped);
 			};
 		},
 		onAnnotationSubmit: (listener: (payload: BrowserAnnotationSubmitPayload) => void) => {

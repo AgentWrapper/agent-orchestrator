@@ -132,7 +132,7 @@ type sessionLifecycle interface {
 // store + LCM, the per-session agent resolver, and the agent messenger. The
 // returned service is mounted at httpd APIDeps.Sessions. It also returns the
 // manager so the caller can wire Reconcile into the boot sequence.
-func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, agents ports.AgentResolver, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
+func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, agents ports.AgentResolver, previewLifecycle ports.SessionPreviewLifecycle, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
 	ws, err := gitworktree.New(gitworktree.Options{
 		// Per-session worktrees live under the data dir, so a single AO_DATA_DIR
 		// override moves all durable per-user state together.
@@ -152,6 +152,7 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		Store:     store,
 		Messenger: messenger,
 		Lifecycle: lcm,
+		Preview:   previewLifecycle,
 		DataDir:   cfg.DataDir,
 		Logger:    log,
 	})

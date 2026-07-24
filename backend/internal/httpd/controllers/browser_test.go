@@ -74,6 +74,7 @@ func TestBrowserCoreInteractionActionsReachRuntime(t *testing.T) {
 		"type", "press", "hover", "highlight", "unhighlight",
 		"tabs", "tab-new", "tab-select", "tab-close",
 		"scroll", "select", "check", "uncheck", "get",
+		"network-start", "network-status", "network-list", "network-stop", "network-clear",
 	}
 
 	for _, action := range actions {

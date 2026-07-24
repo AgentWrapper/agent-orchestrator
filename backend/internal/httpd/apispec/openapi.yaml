@@ -1573,6 +1573,158 @@ paths:
       summary: Serve a static browser preview file from a session workspace
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/preview/server:
+    delete:
+      operationId: stopSessionPreviewServer
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreviewServerStatusResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Stop the managed preview server for a session
+      tags:
+      - sessions
+    get:
+      operationId: getSessionPreviewServer
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreviewServerStatusResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Get the managed preview server status for a session
+      tags:
+      - sessions
+    post:
+      operationId: startSessionPreviewServer
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartPreviewServerRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreviewServerStatusResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "408":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Request Timeout
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "504":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Gateway Timeout
+      summary: Start a session-owned server from .ao/launch.json and open its application
+        preview
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/restore:
     post:
       operationId: restoreSession
@@ -2645,6 +2797,43 @@ components:
       - targetSha
       - status
       type: object
+    PreviewServerStatusResponse:
+      properties:
+        configuration:
+          type: string
+        error:
+          type: string
+        logs:
+          items:
+            type: string
+          type: array
+        port:
+          type: integer
+        sessionId:
+          type: string
+        startedAt:
+          format: date-time
+          type: string
+        state:
+          enum:
+          - stopped
+          - starting
+          - ready
+          - stopping
+          - failed
+          type: string
+        targetKind:
+          enum:
+          - app
+          - api
+          type: string
+        url:
+          type: string
+      required:
+      - sessionId
+      - state
+      - logs
+      type: object
     ProbeAgentResponse:
       properties:
         agent:
@@ -3355,6 +3544,13 @@ components:
           type: string
       required:
       - projectId
+      type: object
+    StartPreviewServerRequest:
+      properties:
+        configuration:
+          description: Named preview configuration. Optional when exactly one configuration
+            exists.
+          type: string
       type: object
     SubmitReviewInput:
       properties:

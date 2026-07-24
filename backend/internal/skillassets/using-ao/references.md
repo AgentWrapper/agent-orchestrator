@@ -5,9 +5,15 @@ Natural-language-to-command mappings for common AO tasks.
 | You want to... | Command |
 |---|---|
 | Show me this webpage / open this page | `ao preview "<url>"` |
+| Start an existing configured dev app | `ao preview start [configuration]` |
+| Check or stop the worker's managed dev app | `ao preview status` / `ao preview stop` |
+| Show this Markdown or HTML file without a server | `ao preview "<workspace-path>"` |
+| Hand off a newly created browser-displayable artifact | `ao preview "<workspace-path>"` immediately after writing the primary artifact |
 | Inspect and verify this webpage as the agent | `ao browser open "<url>"`, then `ao browser snapshot` |
 | Click or fill a page element | `ao browser snapshot`, then `ao browser click <ref>` or `ao browser fill <ref> "<text>"` |
 | Check frontend runtime failures | `ao browser errors` and `ao browser console` |
+| Diagnose a request/API/CORS/auth/redirect failure when normal page evidence is insufficient | `ao browser network start`, reproduce once, then `ao browser network stop` |
+| Check network capture without enabling it | `ao browser network status` or `ao browser network list` |
 | Capture the page | `ao browser screenshot [path]` |
 | Spawn a worker on issue N | `ao spawn --project <p> --issue N --name "<=20 chars>" --prompt "..."` |
 | Message a running agent | `ao send --session <id> --message "..."` |

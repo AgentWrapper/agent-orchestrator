@@ -846,6 +846,14 @@ Electron attaches its debugger directly to the selected session's
 AO renderer or a different session. The loopback `/api/v1/browser` surface is
 blocked entirely on the opt-in LAN listener.
 
+Request observation is an explicit, temporary browser command rather than a
+standing debugger feature. Capture is off by default, bound to the active tab
+that starts it, limited to 200 in-memory metadata entries, and automatically
+expires within at most five minutes. AO never requests or stores request or
+response bodies; it allowlists safe headers and redacts URL credentials,
+fragments, and query values. Closing the tab, ending the session, or shutting
+down Electron disables and discards the capture.
+
 ---
 
 ## Load-Bearing Rules

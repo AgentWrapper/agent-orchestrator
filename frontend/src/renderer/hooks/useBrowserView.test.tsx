@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { useBrowserView, type BrowserNavState } from "./useBrowserView";
 
 type Listener = (state: BrowserNavState) => void;
+type TabsListener = (state: import("../../main/browser-view-host").BrowserTabsState) => void;
+type ActivityListener = (state: import("../../main/browser-view-host").BrowserAgentActivityState) => void;
 
 function createSlot(rect: Partial<DOMRect> = {}) {
 	const slot = document.createElement("div");
@@ -24,6 +26,8 @@ function createSlot(rect: Partial<DOMRect> = {}) {
 
 function setupBridge() {
 	const listeners = new Set<Listener>();
+	const tabsListeners = new Set<TabsListener>();
+	const activityListeners = new Set<ActivityListener>();
 	const bridge = {
 		stateFor(viewId: string): BrowserNavState {
 			return {
@@ -52,16 +56,45 @@ function setupBridge() {
 		goForward: vi.fn(async (viewId: string) => bridge.stateFor(viewId)),
 		reload: vi.fn(async (viewId: string) => bridge.stateFor(viewId)),
 		stop: vi.fn(async (viewId: string) => bridge.stateFor(viewId)),
+		getTabs: vi.fn(async (viewId: string) => ({
+			viewId,
+			activeTabId: "t1",
+			tabs: [{ id: "t1", url: "", title: "", active: true }],
+		})),
+		selectTab: vi.fn(async ({ viewId, tabId }: { viewId: string; tabId: string }) => ({
+			viewId,
+			activeTabId: tabId,
+			tabs: [{ id: tabId, url: "http://localhost:4173/", title: "Selected", active: true }],
+		})),
+		closeTab: vi.fn(async ({ viewId }: { viewId: string; tabId: string }) => ({
+			viewId,
+			activeTabId: "t1",
+			tabs: [{ id: "t1", url: "http://localhost:3000/", title: "First", active: true }],
+		})),
 		destroy: vi.fn(),
 		setAnnotationMode: vi.fn(async () => undefined),
 		onNavState: vi.fn((listener: Listener) => {
 			listeners.add(listener);
 			return () => listeners.delete(listener);
 		}),
+		onTabsState: vi.fn((listener: TabsListener) => {
+			tabsListeners.add(listener);
+			return () => tabsListeners.delete(listener);
+		}),
+		onAgentActivity: vi.fn((listener: ActivityListener) => {
+			activityListeners.add(listener);
+			return () => activityListeners.delete(listener);
+		}),
 		onAnnotationSubmit: vi.fn(() => () => undefined),
 		onAnnotationCancel: vi.fn(() => () => undefined),
 		emit(state: BrowserNavState) {
 			listeners.forEach((listener) => listener(state));
+		},
+		emitTabs(state: Parameters<TabsListener>[0]) {
+			tabsListeners.forEach((listener) => listener(state));
+		},
+		emitActivity(state: Parameters<ActivityListener>[0]) {
+			activityListeners.forEach((listener) => listener(state));
 		},
 	};
 	window.ao = { ...window.ao!, browser: bridge };
@@ -113,6 +146,53 @@ describe("useBrowserView", () => {
 			}),
 		);
 		expect(result.current.viewId).toBe("42:sess-1");
+	});
+
+	it("tracks popup tabs and routes manual select and close actions", async () => {
+		const bridge = setupBridge();
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+
+		await waitFor(() => expect(result.current.tabs.map((tab) => tab.id)).toEqual(["t1"]));
+		act(() =>
+			bridge.emitTabs({
+				viewId: "42:sess-1",
+				activeTabId: "t2",
+				tabs: [
+					{ id: "t1", url: "http://localhost:3000/", title: "First", active: false },
+					{ id: "t2", url: "http://localhost:4173/", title: "Popup", active: true },
+				],
+				change: { kind: "popup", tabId: "t2" },
+			}),
+		);
+
+		expect(result.current.activeTabId).toBe("t2");
+		expect(result.current.tabNotice).toBe("Opened new tab");
+
+		await act(() => result.current.selectTab("t1"));
+		expect(bridge.selectTab).toHaveBeenCalledWith({ viewId: "42:sess-1", tabId: "t1" });
+		await act(() => result.current.closeTab("t2"));
+		expect(bridge.closeTab).toHaveBeenCalledWith({ viewId: "42:sess-1", tabId: "t2" });
+	});
+
+	it("tracks browser-command activity only for the current worker view", async () => {
+		const bridge = setupBridge();
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
+
+		act(() => {
+			bridge.emitActivity({ viewId: "42:other-session", active: true, action: "click" });
+		});
+		expect(result.current.agentBrowserActive).toBe(false);
+
+		act(() => {
+			bridge.emitActivity({ viewId: "42:sess-1", active: true, action: "click" });
+		});
+		expect(result.current.agentBrowserActive).toBe(true);
+
+		act(() => {
+			bridge.emitActivity({ viewId: "42:sess-1", active: false, action: "click" });
+		});
+		expect(result.current.agentBrowserActive).toBe(false);
 	});
 
 	it("clamps the native view to its resizable-panel column when the slot overspills", async () => {
@@ -416,6 +496,38 @@ describe("useBrowserView", () => {
 			expect(bridge.navigate).toHaveBeenCalledWith({ viewId: "42:sess-1", url: "file:///tmp/preview/index.html" }),
 		);
 		expect(bridge.navigate).toHaveBeenCalledTimes(3);
+	});
+
+	it("navigates each worker to its own target when sessions share a revision number", async () => {
+		const bridge = setupBridge();
+		const { rerender } = renderHook(
+			({ sessionId, previewUrl }) =>
+				useBrowserView({
+					sessionId,
+					active: true,
+					poppedOut: false,
+					previewUrl,
+					previewRevision: 1,
+				}),
+			{ initialProps: { sessionId: "sess-1", previewUrl: "http://127.0.0.1:4173/" } },
+		);
+
+		await waitFor(() =>
+			expect(bridge.navigate).toHaveBeenCalledWith({
+				viewId: "42:sess-1",
+				url: "http://127.0.0.1:4173/",
+			}),
+		);
+
+		rerender({ sessionId: "sess-2", previewUrl: "http://127.0.0.1:5173/" });
+		await waitFor(() => expect(bridge.ensure).toHaveBeenCalledWith("sess-2"));
+		await waitFor(() =>
+			expect(bridge.navigate).toHaveBeenCalledWith({
+				viewId: "42:sess-2",
+				url: "http://127.0.0.1:5173/",
+			}),
+		);
+		expect(bridge.navigate).toHaveBeenCalledTimes(2);
 	});
 
 	it("navigates legacy preview URLs when the daemon omits preview revisions", async () => {

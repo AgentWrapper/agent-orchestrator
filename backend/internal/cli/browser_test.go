@@ -40,6 +40,12 @@ func browserCLIServer(t *testing.T, capture *browserRequestCapture) *httptest.Se
 			result = `{"data":"cG5n","width":10,"height":20}`
 		case "tabs":
 			result = `{"activeTabId":"t2","tabs":[{"id":"t1","title":"First","url":"http://localhost:3000/","active":false},{"id":"t2","title":"Second","url":"http://localhost:4173/","active":true}]}`
+		case "network-start", "network-status":
+			result = `{"active":true,"metadataOnly":true,"tabId":"t1","requestCount":1,"maxEntries":200}`
+		case "network-list", "network-stop":
+			result = `{"active":false,"metadataOnly":true,"tabId":"t1","requestCount":1,"maxEntries":200,"requests":[{"method":"GET","url":"https://api.example.test/items?token=%5Bredacted%5D","resourceType":"xhr","status":200,"durationMs":42}]}`
+		case "network-clear":
+			result = `{"active":true,"metadataOnly":true,"tabId":"t1","requestCount":0,"maxEntries":200}`
 		}
 		_, _ = io.WriteString(w, `{"requestId":"r1","sessionId":"ao-1","action":"`+capture.body.Action+`","result":`+result+`}`)
 	}))
@@ -183,6 +189,40 @@ func TestBrowserTabsPrintStableIDsAndActiveTab(t *testing.T) {
 	}
 	if !strings.Contains(out, "  t1") || !strings.Contains(out, "* t2") {
 		t.Fatalf("tabs output = %q", out)
+	}
+}
+
+func TestBrowserNetworkCommandsAreExplicitAndReadable(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-1")
+	cfg := setConfigEnv(t)
+	capture := &browserRequestCapture{}
+	srv := browserCLIServer(t, capture)
+	writeRunFileFor(t, cfg, srv)
+	deps := Deps{ProcessAlive: func(int) bool { return true }}
+
+	out, errOut, err := executeCLI(t, deps, "browser", "network", "start", "--duration", "45")
+	if err != nil {
+		t.Fatalf("network start err=%v stderr=%s", err, errOut)
+	}
+	if capture.body.Action != "network-start" || capture.body.Args["durationSeconds"] != float64(45) {
+		t.Fatalf("network start = %#v", capture.body)
+	}
+	if !strings.Contains(out, "active") || !strings.Contains(out, "metadata only") {
+		t.Fatalf("network start output = %q", out)
+	}
+
+	out, errOut, err = executeCLI(t, deps, "browser", "network", "list")
+	if err != nil {
+		t.Fatalf("network list err=%v stderr=%s", err, errOut)
+	}
+	if capture.body.Action != "network-list" ||
+		!strings.Contains(out, "GET 200 xhr 42ms") ||
+		!strings.Contains(out, "token=%5Bredacted%5D") {
+		t.Fatalf("network list command=%#v output=%q", capture.body, out)
+	}
+
+	if _, _, err := executeCLI(t, deps, "browser", "network", "start", "--duration", "301"); ExitCode(err) != 2 {
+		t.Fatalf("network duration error = %v code=%d", err, ExitCode(err))
 	}
 }
 

@@ -30,6 +30,29 @@ export type BrowserNavState = {
 	error?: string;
 };
 
+export type BrowserTabState = {
+	id: string;
+	url: string;
+	title: string;
+	active: boolean;
+};
+
+export type BrowserTabsState = {
+	viewId: string;
+	activeTabId: string;
+	tabs: BrowserTabState[];
+	change?: {
+		kind: "opened" | "popup" | "selected" | "closed";
+		tabId: string;
+	};
+};
+
+export type BrowserAgentActivityState = {
+	viewId: string;
+	active: boolean;
+	action: string;
+};
+
 type BrowserBoundsInput = {
 	viewId: string;
 	rect: BrowserRect;
@@ -40,6 +63,11 @@ type BrowserBoundsInput = {
 type BrowserNavigateInput = {
 	viewId: string;
 	url: string;
+};
+
+type BrowserTabInput = {
+	viewId: string;
+	tabId: string;
 };
 
 type BrowserWebContents = Pick<
@@ -123,6 +151,7 @@ type BrowserEntry = {
 	refs: Map<string, { backendNodeId: number; generation: number }>;
 	consoleMessages: BrowserLogEntry[];
 	errors: BrowserLogEntry[];
+	networkCapture?: BrowserNetworkCapture;
 };
 
 type BrowserSessionEntry = {
@@ -135,6 +164,8 @@ type BrowserSessionEntry = {
 	bounds: BrowserRect;
 	visible: boolean;
 	parked: boolean;
+	networkTabId?: string;
+	agentBrowserCommands: number;
 };
 
 type BrowserLogEntry = {
@@ -145,7 +176,49 @@ type BrowserLogEntry = {
 	timestamp: string;
 };
 
+type BrowserNetworkRequest = {
+	id: string;
+	method: string;
+	url: string;
+	resourceType?: string;
+	startedAt: string;
+	status?: number;
+	statusText?: string;
+	mimeType?: string;
+	durationMs?: number;
+	failed?: boolean;
+	canceled?: boolean;
+	errorText?: string;
+	fromCache?: boolean;
+	fromServiceWorker?: boolean;
+	redirectedTo?: string;
+	requestHeaders?: Record<string, string>;
+	responseHeaders?: Record<string, string>;
+};
+
+type InternalBrowserNetworkRequest = BrowserNetworkRequest & {
+	protocolRequestId: string;
+	startedMonotonic?: number;
+};
+
+type BrowserNetworkCapture = {
+	active: boolean;
+	tabId: string;
+	startedAt: string;
+	expiresAt: string;
+	stoppedAt?: string;
+	stopReason?: string;
+	maxEntries: number;
+	nextSequence: number;
+	requests: InternalBrowserNetworkRequest[];
+	byRequestId: Map<string, InternalBrowserNetworkRequest>;
+	timer?: ReturnType<typeof setTimeout>;
+};
+
 const OFFSCREEN_BOUNDS: BrowserRect = { x: -10_000, y: -10_000, width: 0, height: 0 };
+const DEFAULT_NETWORK_CAPTURE_SECONDS = 60;
+const MAX_NETWORK_CAPTURE_SECONDS = 300;
+const MAX_NETWORK_REQUESTS = 200;
 // ponytail: file:// allowed unsanitized; preview targets are agent-trusted for now
 const ALLOWED_PROTOCOLS = new Set(["http:", "https:", "file:"]);
 
@@ -215,6 +288,14 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	const forgetIfFocused = (viewId: string): void => {
 		if (lastFocusedViewId === viewId) lastFocusedViewId = null;
 	};
+	const setAgentBrowserActivity = (session: BrowserSessionEntry, action: string, active: boolean): void => {
+		session.agentBrowserCommands = Math.max(0, session.agentBrowserCommands + (active ? 1 : -1));
+		options.mainWindow.webContents.send("browser:agentActivity", {
+			viewId: session.viewId,
+			active: session.agentBrowserCommands > 0,
+			action,
+		} satisfies BrowserAgentActivityState);
+	};
 	let pendingMirror: { viewId: string; expires: number; frame: WebFrameMain } | null = null;
 
 	const sameFrame = (a: WebFrameMain, b: WebFrameMain | null | undefined): boolean =>
@@ -279,7 +360,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		session.tabs.set(tabId, entry);
 		tabsByWebContentsId.set(view.webContents.id, entry);
 		hardenWebContents(view.webContents, options, entry, (url) => {
-			void openTab(session, url, true).catch((error) => {
+			void openTab(session, url, true, "popup").catch((error) => {
 				pushBrowserLog(entry.errors, {
 					level: "error",
 					message: error instanceof Error ? error.message : "Unable to open browser popup",
@@ -293,6 +374,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			entry,
 			() => entries.get(session.viewId)?.activeTabId === entry.tabId,
 			() => applySessionBounds(session, entry),
+			() => pushTabsState(options, session),
 		);
 		wireAutomationEvents(view.webContents, entry);
 		// The preview is a separate WebContentsView, so renderer-window keydown
@@ -302,7 +384,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		view.webContents.on("focus", () => {
 			lastFocusedViewId = session.viewId;
 		});
-		if (activate) activateTab(session, tabId);
+		if (activate) activateTab(session, tabId, false);
 		return entry;
 	};
 
@@ -324,6 +406,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				bounds: OFFSCREEN_BOUNDS,
 				visible: false,
 				parked: false,
+				agentBrowserCommands: 0,
 			};
 			entries.set(viewId, session);
 			viewIdsBySessionId.set(sessionId, viewId);
@@ -337,7 +420,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		return session;
 	};
 
-	const openTab = async (session: BrowserSessionEntry, url: string | undefined, activate: boolean): Promise<BrowserEntry> => {
+	const openTab = async (
+		session: BrowserSessionEntry,
+		url: string | undefined,
+		activate: boolean,
+		reason: "opened" | "popup" = "opened",
+	): Promise<BrowserEntry> => {
 		let normalizedURL: string | undefined;
 		if (url) {
 			const normalized = normalizeBrowserURL(url);
@@ -348,13 +436,17 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		}
 		const entry = createTab(session, activate);
 		if (normalizedURL) {
-			const state = await navigateEntry(entry, normalizedURL);
+			const navigation = navigateEntry(entry, normalizedURL);
+			pushTabsState(options, session, { kind: reason, tabId: entry.tabId });
+			const state = await navigation;
 			if (state.error) throw browserError("NAVIGATION_FAILED", state.error);
+		} else {
+			pushTabsState(options, session, { kind: reason, tabId: entry.tabId });
 		}
 		return entry;
 	};
 
-	function activateTab(session: BrowserSessionEntry, tabId: string): BrowserEntry {
+	function activateTab(session: BrowserSessionEntry, tabId: string, notify = true): BrowserEntry {
 		const next = session.tabs.get(tabId);
 		if (!next) throw browserError("TAB_NOT_FOUND", `Browser tab ${tabId} does not exist`);
 		const previous = session.tabs.get(session.activeTabId);
@@ -367,7 +459,29 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		invalidateRefs(next);
 		applySessionBounds(session, next);
 		pushNavState(options, next);
+		if (notify) pushTabsState(options, session, { kind: "selected", tabId });
 		return next;
+	}
+
+	function closeTab(session: BrowserSessionEntry, tabId = session.activeTabId): BrowserTabsState {
+		if (session.tabs.size === 1) {
+			throw browserError("CANNOT_CLOSE_LAST_TAB", "The only browser tab cannot be closed");
+		}
+		const tab = session.tabs.get(tabId);
+		if (!tab) throw browserError("TAB_NOT_FOUND", `Browser tab ${tabId} does not exist`);
+		const wasActive = tabId === session.activeTabId;
+		disposeNetworkCapture(tab, "tab-closed");
+		if (session.networkTabId === tabId) session.networkTabId = undefined;
+		session.tabs.delete(tabId);
+		tabsByWebContentsId.delete(tab.view.webContents.id);
+		destroyTabView(tab);
+		if (wasActive) {
+			const nextTabId = [...session.tabs.keys()].at(-1)!;
+			activateTab(session, nextTabId, false);
+		}
+		const state = listTabs(session, { kind: "closed", tabId });
+		options.mainWindow.webContents.send("browser:tabsState", state);
+		return state;
 	}
 
 	function applySessionBounds(session: BrowserSessionEntry, entry: BrowserEntry): void {
@@ -486,11 +600,15 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		// Electron has torn down contentView and the child WebContentsViews. Touching
 		// them throws "Object has been destroyed", so just drop our reference.
 		if (options.mainWindow.isDestroyed?.()) {
-			for (const entry of session.tabs.values()) tabsByWebContentsId.delete(entry.view.webContents.id);
+			for (const entry of session.tabs.values()) {
+				tabsByWebContentsId.delete(entry.view.webContents.id);
+				disposeNetworkCapture(entry, "session-closed");
+			}
 			return;
 		}
 		for (const entry of session.tabs.values()) {
 			tabsByWebContentsId.delete(entry.view.webContents.id);
+			disposeNetworkCapture(entry, "session-closed");
 			destroyTabView(entry);
 		}
 	};
@@ -613,6 +731,22 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	handle("browser:stop", (event, viewId: string) =>
 		isRendererOwned(event, viewId) ? invokeNav(viewId, (contents) => contents.stop()) : emptyNavState(viewId),
 	);
+	handle("browser:getTabs", (event, viewId: string) => {
+		const session = entries.get(viewId);
+		return session && isRendererOwned(event, viewId) ? listTabs(session) : emptyTabsState(viewId);
+	});
+	handle("browser:selectTab", (event, input: BrowserTabInput) => {
+		const session = entries.get(input.viewId);
+		if (!session || !isRendererOwned(event, input.viewId)) return emptyTabsState(input.viewId);
+		activateTab(session, input.tabId);
+		return listTabs(session);
+	});
+	handle("browser:closeTab", (event, input: BrowserTabInput) => {
+		const session = entries.get(input.viewId);
+		return session && isRendererOwned(event, input.viewId)
+			? closeTab(session, input.tabId)
+			: emptyTabsState(input.viewId);
+	});
 	handle("browser:annotation:setMode", (event, input: BrowserAnnotationModeInput) => setAnnotationMode(event, input));
 	on("browser:destroy", (event, viewId: string) => {
 		if (isRendererOwned(event, viewId)) destroy(viewId);
@@ -629,7 +763,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			if (!sessionId.trim()) throw browserError("INVALID_ARGUMENT", "sessionId is required");
 			const session = ensureSession(sessionId);
 			const entry = activeEntry(session);
-			switch (action) {
+			setAgentBrowserActivity(session, action, true);
+			try {
+				switch (action) {
 				case "open": {
 					const url = stringArg(args, "url", "URL_REQUIRED", "url is required");
 					const state = await navigate({ viewId: entry.state.viewId, url });
@@ -675,22 +811,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 					return tabResult(tab, true);
 				}
 				case "tab-close": {
-					if (session.tabs.size === 1) {
-						throw browserError("CANNOT_CLOSE_LAST_TAB", "The only browser tab cannot be closed");
-					}
 					const tabId =
 						typeof args.tabId === "string" && args.tabId.trim() ? args.tabId.trim() : session.activeTabId;
-					const tab = session.tabs.get(tabId);
-					if (!tab) throw browserError("TAB_NOT_FOUND", `Browser tab ${tabId} does not exist`);
-					const wasActive = tabId === session.activeTabId;
-					session.tabs.delete(tabId);
-					tabsByWebContentsId.delete(tab.view.webContents.id);
-					destroyTabView(tab);
-					if (wasActive) {
-						const nextTabId = [...session.tabs.keys()].at(-1)!;
-						activateTab(session, nextTabId);
-					}
-					return { closedTabId: tabId, ...listTabs(session) };
+					return { closedTabId: tabId, ...closeTab(session, tabId) };
 				}
 				case "scroll":
 					return scrollEntry(
@@ -726,12 +849,29 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 					return waitForEntry(entry, args);
 				case "screenshot":
 					return screenshotEntry(entry);
+				case "network-start":
+					return startNetworkCapture(
+						session,
+						entry,
+						networkDurationArg(args.durationSeconds),
+					);
+				case "network-status":
+					return networkCaptureStatus(networkEntryFor(session));
+				case "network-list":
+					return networkCaptureResult(networkEntryFor(session));
+				case "network-stop":
+					return stopNetworkCapture(networkEntryFor(session), "stopped");
+				case "network-clear":
+					return clearNetworkCapture(networkEntryFor(session));
 				case "console":
 					return { messages: [...entry.consoleMessages] };
 				case "errors":
 					return { messages: [...entry.errors] };
 				default:
 					throw browserError("INVALID_ARGUMENT", `Unsupported browser action: ${action}`);
+				}
+			} finally {
+				setAgentBrowserActivity(session, action, false);
 			}
 		},
 		dispose: () => {
@@ -804,6 +944,10 @@ function emptyNavState(viewId: string): BrowserNavState {
 	};
 }
 
+function emptyTabsState(viewId: string): BrowserTabsState {
+	return { viewId, activeTabId: "", tabs: [] };
+}
+
 function activeEntry(session: BrowserSessionEntry): BrowserEntry {
 	const entry = session.tabs.get(session.activeTabId);
 	if (!entry) throw browserError("BROWSER_TARGET_UNAVAILABLE", "Active browser tab is unavailable");
@@ -824,14 +968,23 @@ function tabResult(entry: BrowserEntry, active: boolean): {
 	};
 }
 
-function listTabs(session: BrowserSessionEntry): {
-	activeTabId: string;
-	tabs: Array<{ id: string; url: string; title: string; active: boolean }>;
-} {
+function listTabs(session: BrowserSessionEntry, change?: BrowserTabsState["change"]): BrowserTabsState {
 	return {
+		viewId: session.viewId,
 		activeTabId: session.activeTabId,
 		tabs: [...session.tabs.values()].map((entry) => tabResult(entry, entry.tabId === session.activeTabId)),
+		...(change ? { change } : {}),
 	};
+}
+
+function pushTabsState(
+	options: BrowserViewHostOptions,
+	session: BrowserSessionEntry,
+	change?: BrowserTabsState["change"],
+): BrowserTabsState {
+	const state = listTabs(session, change);
+	options.mainWindow.webContents.send("browser:tabsState", state);
+	return state;
 }
 
 function hardenWebContents(
@@ -863,8 +1016,10 @@ function wireNavEvents(
 	entry: BrowserEntry,
 	isActive: () => boolean,
 	syncActiveBounds: () => void,
+	syncTabs: () => void,
 ): void {
 	const update = () => {
+		syncTabs();
 		if (isActive()) pushNavState(options, entry);
 	};
 	contents.on("did-navigate", () => {
@@ -986,6 +1141,7 @@ function wireAutomationEvents(contents: BrowserWebContents, entry: BrowserEntry)
 	const targetDebugger = contents.debugger;
 	if (!targetDebugger) return;
 	targetDebugger.on("message", (_event, method, params) => {
+		handleNetworkDebuggerEvent(entry, method, params as Record<string, unknown>);
 		if (method === "DOM.documentUpdated") {
 			invalidateRefs(entry);
 			return;
@@ -1029,6 +1185,274 @@ async function ensureDebugger(entry: BrowserEntry): Promise<void> {
 	}
 	await debug.sendCommand("Runtime.enable");
 	await debug.sendCommand("DOM.enable");
+}
+
+function networkEntryFor(session: BrowserSessionEntry): BrowserEntry {
+	if (session.networkTabId) {
+		const captured = session.tabs.get(session.networkTabId);
+		if (captured) return captured;
+		session.networkTabId = undefined;
+	}
+	return activeEntry(session);
+}
+
+async function startNetworkCapture(
+	session: BrowserSessionEntry,
+	entry: BrowserEntry,
+	durationSeconds: number,
+): Promise<unknown> {
+	const existing = networkEntryFor(session);
+	if (existing.networkCapture?.active) {
+		return { ...networkCaptureStatus(existing), alreadyActive: true };
+	}
+	if (existing !== entry) disposeNetworkCapture(existing, "restarted");
+	disposeNetworkCapture(entry, "restarted");
+	await ensureDebugger(entry);
+	await entry.view.webContents.debugger.sendCommand("Network.enable");
+	const started = Date.now();
+	const capture: BrowserNetworkCapture = {
+		active: true,
+		tabId: entry.tabId,
+		startedAt: new Date(started).toISOString(),
+		expiresAt: new Date(started + durationSeconds * 1_000).toISOString(),
+		maxEntries: MAX_NETWORK_REQUESTS,
+		nextSequence: 1,
+		requests: [],
+		byRequestId: new Map(),
+	};
+	capture.timer = setTimeout(() => {
+		void stopNetworkCapture(entry, "expired");
+	}, durationSeconds * 1_000);
+	entry.networkCapture = capture;
+	session.networkTabId = entry.tabId;
+	return networkCaptureStatus(entry);
+}
+
+function networkCaptureStatus(entry: BrowserEntry): Record<string, unknown> {
+	const capture = entry.networkCapture;
+	if (!capture) {
+		return {
+			active: false,
+			metadataOnly: true,
+			tabId: entry.tabId,
+			requestCount: 0,
+			maxEntries: MAX_NETWORK_REQUESTS,
+		};
+	}
+	return {
+		active: capture.active,
+		metadataOnly: true,
+		tabId: capture.tabId,
+		requestCount: capture.requests.length,
+		maxEntries: capture.maxEntries,
+		startedAt: capture.startedAt,
+		expiresAt: capture.expiresAt,
+		...(capture.stoppedAt ? { stoppedAt: capture.stoppedAt } : {}),
+		...(capture.stopReason ? { stopReason: capture.stopReason } : {}),
+	};
+}
+
+function networkCaptureResult(entry: BrowserEntry): Record<string, unknown> {
+	return {
+		...networkCaptureStatus(entry),
+		requests: (entry.networkCapture?.requests ?? []).map(publicNetworkRequest),
+	};
+}
+
+async function stopNetworkCapture(entry: BrowserEntry, reason: string): Promise<Record<string, unknown>> {
+	const capture = entry.networkCapture;
+	if (!capture?.active) return networkCaptureResult(entry);
+	if (capture.timer) {
+		clearTimeout(capture.timer);
+		capture.timer = undefined;
+	}
+	capture.active = false;
+	capture.stoppedAt = new Date().toISOString();
+	capture.stopReason = reason;
+	try {
+		await entry.view.webContents.debugger.sendCommand("Network.disable");
+	} catch {
+		// The target may have closed while an expiry timer was firing. The in-memory
+		// capture is still safely stopped and can be discarded with the tab.
+	}
+	return networkCaptureResult(entry);
+}
+
+function clearNetworkCapture(entry: BrowserEntry): Record<string, unknown> {
+	const capture = entry.networkCapture;
+	if (capture) {
+		capture.requests = [];
+		capture.byRequestId.clear();
+	}
+	return networkCaptureStatus(entry);
+}
+
+function disposeNetworkCapture(entry: BrowserEntry, reason: string): void {
+	const capture = entry.networkCapture;
+	if (!capture) return;
+	const wasActive = capture.active;
+	if (capture.timer) clearTimeout(capture.timer);
+	capture.timer = undefined;
+	capture.active = false;
+	capture.stoppedAt = new Date().toISOString();
+	capture.stopReason = reason;
+	try {
+		if (wasActive && entry.view.webContents.debugger?.isAttached()) {
+			void entry.view.webContents.debugger.sendCommand("Network.disable").catch(() => undefined);
+		}
+	} catch {
+		// Electron may already have destroyed the target during window shutdown.
+	}
+}
+
+function handleNetworkDebuggerEvent(entry: BrowserEntry, method: string, params: Record<string, unknown>): void {
+	const capture = entry.networkCapture;
+	if (!capture?.active || !method.startsWith("Network.")) return;
+
+	const requestID = typeof params.requestId === "string" ? params.requestId : "";
+	if (!requestID) return;
+	const timestamp = finiteNumber(params.timestamp);
+
+	if (method === "Network.requestWillBeSent") {
+		const request = objectValue(params.request);
+		const url = typeof request.url === "string" ? request.url : "";
+		const previous = capture.byRequestId.get(requestID);
+		const redirect = objectValue(params.redirectResponse);
+		if (previous && Object.keys(redirect).length > 0) {
+			applyNetworkResponse(previous, redirect);
+			finishNetworkRequest(previous, timestamp);
+			previous.redirectedTo = sanitizeNetworkURL(url);
+		}
+		const wallTime = finiteNumber(params.wallTime);
+		const item: InternalBrowserNetworkRequest = {
+			id: `n${capture.nextSequence++}`,
+			protocolRequestId: requestID,
+			method: typeof request.method === "string" ? request.method : "GET",
+			url: sanitizeNetworkURL(url),
+			resourceType: typeof params.type === "string" ? params.type.toLowerCase() : undefined,
+			startedAt: wallTime ? new Date(wallTime * 1_000).toISOString() : new Date().toISOString(),
+			startedMonotonic: timestamp,
+			requestHeaders: selectedNetworkHeaders(request.headers, "request"),
+		};
+		appendNetworkRequest(capture, item);
+		capture.byRequestId.set(requestID, item);
+		return;
+	}
+
+	const item = capture.byRequestId.get(requestID);
+	if (!item) return;
+	switch (method) {
+		case "Network.responseReceived":
+			applyNetworkResponse(item, objectValue(params.response));
+			break;
+		case "Network.loadingFinished":
+			finishNetworkRequest(item, timestamp);
+			break;
+		case "Network.loadingFailed":
+			item.failed = true;
+			item.canceled = params.canceled === true;
+			item.errorText = typeof params.errorText === "string" ? params.errorText : "Request failed";
+			finishNetworkRequest(item, timestamp);
+			break;
+		case "Network.requestServedFromCache":
+			item.fromCache = true;
+			break;
+	}
+}
+
+function applyNetworkResponse(item: InternalBrowserNetworkRequest, response: Record<string, unknown>): void {
+	const status = finiteNumber(response.status);
+	if (status !== undefined) item.status = status;
+	if (typeof response.statusText === "string" && response.statusText) item.statusText = response.statusText;
+	if (typeof response.mimeType === "string" && response.mimeType) item.mimeType = response.mimeType;
+	item.fromCache =
+		item.fromCache === true ||
+		response.fromDiskCache === true ||
+		response.fromPrefetchCache === true;
+	item.fromServiceWorker = response.fromServiceWorker === true;
+	item.responseHeaders = selectedNetworkHeaders(response.headers, "response");
+}
+
+function finishNetworkRequest(item: InternalBrowserNetworkRequest, timestamp: number | undefined): void {
+	if (timestamp !== undefined && item.startedMonotonic !== undefined) {
+		item.durationMs = Math.max(0, Math.round((timestamp - item.startedMonotonic) * 1_000));
+	}
+}
+
+function appendNetworkRequest(capture: BrowserNetworkCapture, item: InternalBrowserNetworkRequest): void {
+	capture.requests.push(item);
+	if (capture.requests.length <= capture.maxEntries) return;
+	const removed = capture.requests.shift();
+	if (removed && capture.byRequestId.get(removed.protocolRequestId) === removed) {
+		capture.byRequestId.delete(removed.protocolRequestId);
+	}
+}
+
+function publicNetworkRequest(item: InternalBrowserNetworkRequest): BrowserNetworkRequest {
+	const { protocolRequestId: _protocolRequestId, startedMonotonic: _startedMonotonic, ...result } = item;
+	return result;
+}
+
+const SAFE_REQUEST_HEADERS = new Set([
+	"accept",
+	"content-type",
+	"origin",
+	"referer",
+	"sec-fetch-mode",
+	"sec-fetch-site",
+]);
+const SAFE_RESPONSE_HEADERS = new Set([
+	"access-control-allow-headers",
+	"access-control-allow-methods",
+	"access-control-allow-origin",
+	"cache-control",
+	"content-length",
+	"content-type",
+	"location",
+	"vary",
+]);
+
+function selectedNetworkHeaders(value: unknown, kind: "request" | "response"): Record<string, string> | undefined {
+	const headers = objectValue(value);
+	const allowed = kind === "request" ? SAFE_REQUEST_HEADERS : SAFE_RESPONSE_HEADERS;
+	const selected: Record<string, string> = {};
+	for (const [rawName, rawValue] of Object.entries(headers)) {
+		const name = rawName.toLowerCase();
+		if (!allowed.has(name)) continue;
+		let headerValue = typeof rawValue === "string" ? rawValue : String(rawValue);
+		if (name === "referer" || name === "location") headerValue = sanitizeNetworkURL(headerValue);
+		selected[name] = headerValue.slice(0, 1_000);
+	}
+	return Object.keys(selected).length > 0 ? selected : undefined;
+}
+
+function sanitizeNetworkURL(raw: string): string {
+	try {
+		const url = new URL(raw);
+		if (!["http:", "https:", "file:"].includes(url.protocol)) {
+			return `${url.protocol}[redacted]`;
+		}
+		url.username = "";
+		url.password = "";
+		url.hash = "";
+		for (const name of [...url.searchParams.keys()]) {
+			url.searchParams.set(name, "[redacted]");
+		}
+		return url.href;
+	} catch {
+		const withoutFragment = raw.split("#", 1)[0] ?? "";
+		return (withoutFragment.split("?", 1)[0] ?? "").slice(0, 2_000);
+	}
+}
+
+function objectValue(value: unknown): Record<string, unknown> {
+	return value && typeof value === "object" && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: {};
+}
+
+function finiteNumber(value: unknown): number | undefined {
+	return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 async function snapshotEntry(entry: BrowserEntry, interactiveOnly: boolean): Promise<unknown> {
@@ -1520,6 +1944,23 @@ function stringArg(
 function numberArg(value: unknown, min: number, max: number): number {
 	if (typeof value !== "number" || !Number.isFinite(value)) return 0;
 	return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+function networkDurationArg(value: unknown): number {
+	if (value === undefined) return DEFAULT_NETWORK_CAPTURE_SECONDS;
+	if (
+		typeof value !== "number" ||
+		!Number.isFinite(value) ||
+		!Number.isInteger(value) ||
+		value < 1 ||
+		value > MAX_NETWORK_CAPTURE_SECONDS
+	) {
+		throw browserError(
+			"INVALID_ARGUMENT",
+			`network capture duration must be an integer from 1 to ${MAX_NETWORK_CAPTURE_SECONDS} seconds`,
+		);
+	}
+	return value;
 }
 
 function stringValue(value: AXValue | undefined): string {

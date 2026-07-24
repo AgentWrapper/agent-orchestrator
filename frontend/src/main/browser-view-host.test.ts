@@ -155,6 +155,8 @@ function setupHost() {
 
 function setupTabHost() {
 	const constructorOptions: Array<{ webPreferences: { partition?: string } }> = [];
+	const handlers = new Map<string, InvokeHandler>();
+	const sent: Array<{ channel: string; payload: unknown }> = [];
 	const views: Array<{
 		webContents: {
 			id: number;
@@ -239,10 +241,14 @@ function setupTabHost() {
 		mainWindow: {
 			contentView: { addChildView: () => undefined, removeChildView: () => undefined },
 			getContentBounds: () => ({ x: 0, y: 0, width: 800, height: 600 }),
-			webContents: { id: 1, focus: () => undefined, send: () => undefined },
+			webContents: {
+				id: 1,
+				focus: () => undefined,
+				send: (channel: string, payload: unknown) => sent.push({ channel, payload }),
+			},
 		} as never,
 		ipcMain: {
-			handle: () => undefined,
+			handle: (channel: string, fn: InvokeHandler) => handlers.set(channel, fn),
 			on: () => undefined,
 			removeHandler: () => undefined,
 			off: () => undefined,
@@ -255,7 +261,9 @@ function setupTabHost() {
 		annotatePreloadPath: "/preload.js",
 		rendererOrigin: "http://localhost:5173",
 	});
-	return { constructorOptions, host, views };
+	const invoke = (channel: string, ...args: unknown[]) =>
+		handlers.get(channel)!({ sender: { id: 1 } }, ...args) as Promise<unknown>;
+	return { constructorOptions, host, invoke, sent, views };
 }
 
 describe("new-session shortcut forwarding", () => {
@@ -615,6 +623,44 @@ describe("agent browser runtime", () => {
 		expect(errors.messages.map((entry) => entry.message)).toEqual(["boom"]);
 	});
 
+	it("reports agent activity only while a browser command is executing", async () => {
+		const { debuggerSendCommand, host, sent } = setupHost();
+		let resolveSnapshot: (value: unknown) => void = () => undefined;
+		debuggerSendCommand.mockImplementation((method: string) => {
+			if (method === "Accessibility.getFullAXTree") {
+				return new Promise((resolve) => {
+					resolveSnapshot = resolve;
+				});
+			}
+			return Promise.resolve({});
+		});
+
+		const pendingSnapshot = host.execute("sess-1", "snapshot");
+		await vi.waitFor(() =>
+			expect(sent).toContainEqual({
+				channel: "browser:agentActivity",
+				payload: {
+					viewId: "0:sess-1",
+					active: true,
+					action: "snapshot",
+				},
+			}),
+		);
+		await vi.waitFor(() => expect(debuggerSendCommand).toHaveBeenCalledWith("Accessibility.getFullAXTree"));
+
+		resolveSnapshot({ nodes: [] });
+		await pendingSnapshot;
+
+		expect(
+			sent
+				.filter(({ channel }) => channel === "browser:agentActivity")
+				.map(({ payload }) => payload),
+		).toEqual([
+			{ viewId: "0:sess-1", active: true, action: "snapshot" },
+			{ viewId: "0:sess-1", active: false, action: "snapshot" },
+		]);
+	});
+
 	it("keeps stable logical tab IDs, separate targets, and the selected tab active", async () => {
 		const { host, views } = setupTabHost();
 		await host.execute("sess-1", "open", { url: "http://localhost:3000" });
@@ -684,6 +730,189 @@ describe("agent browser runtime", () => {
 		await expect(host.execute("sess-1", "tab-close")).rejects.toMatchObject({
 			code: "CANNOT_CLOSE_LAST_TAB",
 		});
+	});
+
+	it("exposes owned tab state and manual tab actions to the renderer", async () => {
+		const { invoke, sent, views } = setupTabHost();
+		const ensured = (await invoke("browser:ensure", "sess-1")) as BrowserNavState;
+
+		views[0].webContents.openWindow("http://localhost:3000/popup");
+		await vi.waitFor(async () => {
+			const state = (await invoke("browser:getTabs", ensured.viewId)) as {
+				activeTabId: string;
+				tabs: Array<{ id: string }>;
+			};
+			expect(state.tabs).toHaveLength(2);
+			expect(state.activeTabId).toBe("t2");
+		});
+		expect(sent).toContainEqual({
+			channel: "browser:tabsState",
+			payload: expect.objectContaining({
+				viewId: ensured.viewId,
+				change: { kind: "popup", tabId: "t2" },
+			}),
+		});
+
+		const selected = (await invoke("browser:selectTab", {
+			viewId: ensured.viewId,
+			tabId: "t1",
+		})) as { activeTabId: string };
+		expect(selected.activeTabId).toBe("t1");
+
+		const closed = (await invoke("browser:closeTab", {
+			viewId: ensured.viewId,
+			tabId: "t2",
+		})) as { tabs: Array<{ id: string }> };
+		expect(closed.tabs.map((tab) => tab.id)).toEqual(["t1"]);
+		expect(views[1].webContents.close).toHaveBeenCalled();
+	});
+});
+
+describe("agent browser network capture", () => {
+	it("is opt-in and exposes only sanitized request metadata", async () => {
+		const { debuggerListeners, debuggerSendCommand, host } = setupHost();
+		const emitDebuggerMessage = (method: string, params: Record<string, unknown>) =>
+			debuggerListeners.get("message")?.({} as never, method as never, params as never);
+
+		emitDebuggerMessage("Network.requestWillBeSent", {
+			requestId: "before-start",
+			request: { method: "GET", url: "https://example.test/unobserved" },
+		});
+		expect(await host.execute("sess-1", "network-list")).toMatchObject({
+			active: false,
+			requestCount: 0,
+			requests: [],
+		});
+
+		expect(await host.execute("sess-1", "network-start", { durationSeconds: 30 })).toMatchObject({
+			active: true,
+			metadataOnly: true,
+			tabId: "t1",
+			requestCount: 0,
+			maxEntries: 200,
+		});
+		expect(debuggerSendCommand).toHaveBeenCalledWith("Network.enable");
+
+		emitDebuggerMessage("Network.requestWillBeSent", {
+			requestId: "request-1",
+			timestamp: 12,
+			wallTime: 1_750_000_000,
+			type: "XHR",
+			request: {
+				method: "POST",
+				url: "https://user:password@api.example.test/items?token=secret&page=2#private",
+				postData: "must-not-be-stored",
+				headers: {
+					Authorization: "Bearer very-secret",
+					Cookie: "session=very-secret",
+					"Content-Type": "application/json",
+					Origin: "https://app.example.test",
+				},
+			},
+		});
+		emitDebuggerMessage("Network.responseReceived", {
+			requestId: "request-1",
+			response: {
+				status: 401,
+				statusText: "Unauthorized",
+				mimeType: "application/json",
+				headers: {
+					"Set-Cookie": "session=server-secret",
+					"Content-Type": "application/json",
+					"Access-Control-Allow-Origin": "https://app.example.test",
+				},
+			},
+		});
+		emitDebuggerMessage("Network.loadingFinished", { requestId: "request-1", timestamp: 12.125 });
+
+		const result = (await host.execute("sess-1", "network-list")) as {
+			requestCount: number;
+			requests: Array<Record<string, unknown>>;
+		};
+		expect(result.requestCount).toBe(1);
+		expect(result.requests[0]).toMatchObject({
+			id: "n1",
+			method: "POST",
+			resourceType: "xhr",
+			status: 401,
+			durationMs: 125,
+			requestHeaders: {
+				"content-type": "application/json",
+				origin: "https://app.example.test",
+			},
+			responseHeaders: {
+				"content-type": "application/json",
+				"access-control-allow-origin": "https://app.example.test",
+			},
+		});
+		expect(JSON.stringify(result)).not.toContain("very-secret");
+		expect(JSON.stringify(result)).not.toContain("must-not-be-stored");
+		expect(JSON.stringify(result)).not.toContain("password");
+		expect(result.requests[0]?.url).toContain("token=%5Bredacted%5D");
+		expect(result.requests[0]).not.toHaveProperty("protocolRequestId");
+		expect(result.requests[0]).not.toHaveProperty("startedMonotonic");
+
+		expect(await host.execute("sess-1", "network-stop")).toMatchObject({
+			active: false,
+			stopReason: "stopped",
+			requestCount: 1,
+		});
+		expect(debuggerSendCommand).toHaveBeenCalledWith("Network.disable");
+	});
+
+	it("retains only the newest 200 requests and validates the capture duration", async () => {
+		const { debuggerListeners, host } = setupHost();
+		await expect(host.execute("sess-1", "network-start", { durationSeconds: 0 })).rejects.toMatchObject({
+			code: "INVALID_ARGUMENT",
+		});
+		await expect(host.execute("sess-1", "network-start", { durationSeconds: 301 })).rejects.toMatchObject({
+			code: "INVALID_ARGUMENT",
+		});
+
+		await host.execute("sess-1", "network-start", { durationSeconds: 30 });
+		const emitDebuggerMessage = debuggerListeners.get("message")!;
+		for (let index = 0; index < 205; index++) {
+			emitDebuggerMessage(
+				{} as never,
+				"Network.requestWillBeSent" as never,
+				{
+					requestId: `request-${index}`,
+					request: {
+						method: "GET",
+						url: `https://api.example.test/items?index=${index}`,
+					},
+				} as never,
+			);
+		}
+
+		const result = (await host.execute("sess-1", "network-list")) as {
+			requestCount: number;
+			requests: Array<{ id: string }>;
+		};
+		expect(result.requestCount).toBe(200);
+		expect(result.requests[0]?.id).toBe("n6");
+		expect(result.requests.at(-1)?.id).toBe("n205");
+		await host.execute("sess-1", "network-stop");
+	});
+
+	it("expires automatically without enabling status or list checks", async () => {
+		vi.useFakeTimers();
+		try {
+			const { debuggerSendCommand, host } = setupHost();
+			expect(await host.execute("sess-1", "network-status")).toMatchObject({ active: false });
+			expect(debuggerSendCommand).not.toHaveBeenCalledWith("Network.enable");
+
+			await host.execute("sess-1", "network-start", { durationSeconds: 1 });
+			await vi.advanceTimersByTimeAsync(1_000);
+
+			expect(await host.execute("sess-1", "network-status")).toMatchObject({
+				active: false,
+				stopReason: "expired",
+			});
+			expect(debuggerSendCommand).toHaveBeenCalledWith("Network.disable");
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });
 

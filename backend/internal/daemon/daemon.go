@@ -24,6 +24,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/notify"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/preview"
+	"github.com/aoagents/agent-orchestrator/backend/internal/previewserver"
 	"github.com/aoagents/agent-orchestrator/backend/internal/push"
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
@@ -104,6 +105,7 @@ func Run() error {
 	// is handed to httpd, which mounts it at /mux. Raw PTY bytes never flow
 	// through the CDC change_log -- only session-state events do.
 	runtimeAdapter := runtimeselect.New(log)
+	managedPreview := previewserver.New(log)
 	termMgr := terminal.NewManager(runtimeAdapter, cdcPipe.Broadcaster, log)
 	defer termMgr.Close()
 
@@ -141,7 +143,7 @@ func Run() error {
 	// selected runtime, a gitworktree workspace, the per-session agent resolver
 	// (AO_AGENT validated here for compatibility), and the agent messenger, then mount it
 	// on the API.
-	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, log)
+	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, managedPreview, log)
 	if err != nil {
 		stop()
 		lcStack.Stop()
@@ -213,12 +215,13 @@ func Run() error {
 				return sqlite.OpenReadOnly(ctx, dataDir)
 			},
 		}),
-		CDC:       store,
-		Events:    cdcPipe.Broadcaster,
-		Activity:  lcStack.LCM,
-		Telemetry: telemetrySink,
-		Mobile:    mc,
-		Browser:   browserBroker,
+		CDC:           store,
+		Events:        cdcPipe.Broadcaster,
+		Activity:      lcStack.LCM,
+		Telemetry:     telemetrySink,
+		Mobile:        mc,
+		Browser:       browserBroker,
+		PreviewServer: managedPreview,
 	})
 	if err != nil {
 		stop()
@@ -297,6 +300,7 @@ func Run() error {
 	// via defer) avoids the LIFO trap where a Stop() that blocks on ctx-cancel
 	// runs before the cancel: a non-signal exit path would hang otherwise.
 	stop()
+	managedPreview.Close()
 	<-previewDone
 	lcStack.Stop()
 	lanStopCtx, lanCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)

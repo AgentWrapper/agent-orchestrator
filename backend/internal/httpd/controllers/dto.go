@@ -221,6 +221,27 @@ type SetSessionPreviewRequest struct {
 	URL string `json:"url,omitempty" description:"Preview target URL. When empty, the daemon autodetects a static entry point in the session workspace."`
 }
 
+// StartPreviewServerRequest selects one named entry from .ao/launch.json. The
+// name may be omitted when the file contains exactly one configuration.
+type StartPreviewServerRequest struct {
+	Configuration string `json:"configuration,omitempty" description:"Named preview configuration. Optional when exactly one configuration exists."`
+}
+
+// PreviewServerStatusResponse reports the deterministic server AO owns for one
+// session. Logs are bounded to the latest lines and never contain global
+// process or port discovery.
+type PreviewServerStatusResponse struct {
+	SessionID     domain.SessionID `json:"sessionId"`
+	State         string           `json:"state" enum:"stopped,starting,ready,stopping,failed"`
+	Configuration string           `json:"configuration,omitempty"`
+	TargetKind    string           `json:"targetKind,omitempty" enum:"app,api"`
+	URL           string           `json:"url,omitempty"`
+	Port          int              `json:"port,omitempty"`
+	StartedAt     time.Time        `json:"startedAt,omitempty"`
+	Error         string           `json:"error,omitempty"`
+	Logs          []string         `json:"logs"`
+}
+
 // BrowserStatusQuery selects the session whose logical browser is inspected.
 type BrowserStatusQuery struct {
 	SessionID domain.SessionID `query:"sessionId" description:"AO session identifier."`
