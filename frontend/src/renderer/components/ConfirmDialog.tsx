@@ -1,6 +1,16 @@
-import * as Dialog from "@radix-ui/react-dialog";
-import { XCircle } from "lucide-react";
-import { Button } from "./ui/button";
+import { X } from "lucide-react";
+import { cn } from "@/lib/utils";
+import {
+	Dialog,
+	DialogClose,
+	DialogContent,
+	DialogDescription,
+	DialogTitle,
+	settingsDialogBodyClass,
+	settingsDialogContentClass,
+	settingsDialogFooterClass,
+	settingsDialogHeaderClass,
+} from "./ui/dialog";
 
 type ConfirmDialogProps = {
 	open: boolean;
@@ -15,6 +25,10 @@ type ConfirmDialogProps = {
 	size?: "default" | "sm";
 };
 
+// Shared confirmation modal styled exactly like the settings dialogs
+// (ReportProblemDialog) — same frame, header typography, and footer buttons
+// via the shared settingsDialog* class constants. Destructive confirms fill
+// with the deep danger-strong token instead of the settings accent.
 export function ConfirmDialog({
 	open,
 	title,
@@ -25,46 +39,57 @@ export function ConfirmDialog({
 	error,
 	onConfirm,
 	onOpenChange,
-	size = "default",
+	size: _size,
 }: ConfirmDialogProps) {
 	return (
-		<Dialog.Root open={open} onOpenChange={onOpenChange}>
-			<Dialog.Portal>
-				<Dialog.Overlay className="dialog-overlay" />
-				<Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-125 -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-surface p-4 shadow-lg">
-					<div className="flex gap-2">
-						<div className="min-w-0 flex-1">
-							<Dialog.Title className="text-sm font-semibold text-foreground">{title}</Dialog.Title>
-							<Dialog.Description asChild>
-								<div className="mt-2">{description}</div>
-							</Dialog.Description>
-						</div>
+		<Dialog open={open} onOpenChange={onOpenChange}>
+			<DialogContent showCloseButton={false} className={settingsDialogContentClass}>
+				<DialogClose asChild>
+					<button
+						type="button"
+						disabled={busy}
+						className="settings-dialog-close-button settings-close-button"
+						aria-label="Close dialog"
+						title="Close (Esc)"
+					>
+						<X className="size-5" aria-hidden="true" />
+					</button>
+				</DialogClose>
+
+				<div className={settingsDialogHeaderClass}>
+					<DialogTitle className="settings-dialog-title">{title}</DialogTitle>
+					<DialogDescription asChild>
+						<div className="text-control leading-4 text-settings-muted">{description}</div>
+					</DialogDescription>
+				</div>
+
+				{error ? (
+					<div className={settingsDialogBodyClass}>
+						<p role="alert" className="text-caption leading-4 text-error">
+							{error}
+						</p>
 					</div>
-					{error && (
-						<div className="mt-3 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] leading-5 text-destructive">
-							<XCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-							<span>{error}</span>
-						</div>
-					)}
-					<div className="mt-4 flex justify-end gap-2">
-						<Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy} size={size}>
+				) : null}
+
+				<div className={settingsDialogFooterClass}>
+					<DialogClose asChild>
+						<button type="button" className="settings-footer-button" disabled={busy}>
 							Cancel
-						</Button>
-						<Button
-							className={
-								destructive
-									? "border-destructive bg-destructive text-destructive-foreground font-medium hover:opacity-90"
-									: ""
-							}
-							onClick={onConfirm}
-							disabled={busy}
-							size={size}
-						>
-							{confirmLabel}
-						</Button>
-					</div>
-				</Dialog.Content>
-			</Dialog.Portal>
-		</Dialog.Root>
+						</button>
+					</DialogClose>
+					<button
+						type="button"
+						className={cn(
+							"settings-footer-button border-transparent text-white disabled:cursor-not-allowed disabled:opacity-50",
+							destructive ? "bg-danger-strong" : "bg-settings-accent",
+						)}
+						disabled={busy}
+						onClick={onConfirm}
+					>
+						{confirmLabel}
+					</button>
+				</div>
+			</DialogContent>
+		</Dialog>
 	);
 }

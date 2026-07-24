@@ -48,6 +48,8 @@
 	--color-accent-foreground: #ffffff;
 	--color-accent-weak: rgb(77 141 255 / 0.16);
 	--color-accent-dim: #24406e;
+	--color-accent-strong: #2e63b8; /* solid primary buttons (IDE chrome) */
+	--color-danger-strong: #c93c37; /* solid destructive confirm buttons */
 
 	/* Session status roles */
 	--color-status-working: #36c2b4;
@@ -209,8 +211,8 @@
 	--size-control-board-sm: 30px;
 	--size-control-board: 36px;
 	--size-table-head: var(--space-10);
-	--size-toolbar: 56px;
-	--size-inspector-tabs: 47px;
+	--size-toolbar: 44px;
+	--size-inspector-tabs: 36px;
 	--size-row-md: 52px;
 	--size-browser-url: 29px;
 	--size-browser-min: 320px;
@@ -310,6 +312,7 @@
 	--size-settings-row-padding: 16px;
 	--size-settings-row-icon-gap: 12px;
 	--size-settings-dialog: 575px;
+	--size-settings-dialog-max-h: 680px;
 	--color-border-settings-dialog: #2d2d34;
 	--color-border-settings-dialog-header: #2d2d34;
 	--color-bg-settings-input: #2a2a2a;
@@ -411,10 +414,12 @@
 	--bridge-accent-fg: var(--color-accent-foreground);
 	--bridge-accent-weak: var(--color-accent-weak);
 	--bridge-accent-dim: var(--color-accent-dim);
+	--bridge-accent-strong: var(--color-accent-strong);
 	--bridge-working: var(--color-working);
 	--bridge-success: var(--color-success);
 	--bridge-warning: var(--color-warning);
 	--bridge-danger: var(--color-danger);
+	--bridge-danger-strong: var(--color-danger-strong);
 	--bridge-status-working: var(--color-status-working);
 	--bridge-status-needs-you: var(--color-status-needs-you);
 	--bridge-status-in-review: var(--color-status-in-review);
@@ -469,6 +474,8 @@
 	--color-accent-foreground: #ffffff;
 	--color-accent-weak: rgb(37 99 235 / 0.12);
 	--color-accent-dim: #bcd2f7;
+	--color-accent-strong: #1d4ed8; /* solid primary buttons (IDE chrome) */
+	--color-danger-strong: #b42318; /* solid destructive confirm buttons */
 
 	--color-status-working: #087f75;
 	--color-status-needs-you: #946200;

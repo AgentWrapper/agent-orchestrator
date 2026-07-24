@@ -301,6 +301,16 @@ describe("SessionView", () => {
 		expect(browserViewOptions.current).toMatchObject({ sessionId: "sess-1", terminated: true });
 	});
 
+	it("mounts the inspector open by default", () => {
+		render(<SessionView sessionId="sess-1" />);
+
+		expect(panelSizes("inspector")[0]).toMatch(/^[1-9]\d*(\.\d+)?%$/);
+		const pane = screen.getByTestId("panel-inspector");
+		expect(pane).not.toHaveAttribute("inert");
+		expect(pane).toHaveAttribute("aria-hidden", "false");
+		expect(panels.get("inspector")!.handle.expand).not.toHaveBeenCalled();
+	});
+
 	it("mounts collapsed and inert when the store says closed", () => {
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", false));
 		render(<SessionView sessionId="sess-1" />);
@@ -310,6 +320,24 @@ describe("SessionView", () => {
 		expect(pane).toHaveAttribute("inert");
 		expect(pane).toHaveAttribute("aria-hidden", "true");
 		expect(panels.get("inspector")!.handle.collapse).not.toHaveBeenCalled();
+	});
+
+	it("keeps StrictMode mount imperative-free and collapses on the first user toggle", () => {
+		render(
+			<StrictMode>
+				<SessionView sessionId="sess-1" />
+			</StrictMode>,
+		);
+		const handle = panels.get("inspector")!.handle;
+
+		expect(handle.expand).not.toHaveBeenCalled();
+		expect(handle.collapse).not.toHaveBeenCalled();
+
+		fireEvent.keyDown(window, { key: "B", metaKey: true, shiftKey: true });
+
+		expect(inspectorOpen("sess-1")).toBe(false);
+		expect(handle.collapse).toHaveBeenCalledTimes(1);
+		expect(handle.expand).not.toHaveBeenCalled();
 	});
 
 	it("keeps StrictMode mount imperative-free and expands on the first user toggle", () => {
@@ -364,6 +392,16 @@ describe("SessionView", () => {
 		act(() => entry.onResize?.({ asPercentage: 31.5, inPixels: 400 }));
 		expect(inspectorOpen("sess-1")).toBe(true);
 		expect(window.localStorage.getItem("ao.inspector.split")).toBe("31.5");
+	});
+
+	it("persists a drag collapse from the default-open inspector state", () => {
+		render(<SessionView sessionId="sess-1" />);
+		const entry = panels.get("inspector")!;
+		screen.getByTestId("resize-handle").setAttribute("data-separator", "active");
+
+		act(() => entry.onResize?.({ asPercentage: 0, inPixels: 0 }));
+
+		expect(useUiStore.getState().inspectorSessions["sess-1"]).toMatchObject({ isOpen: false, view: "summary" });
 	});
 
 	// Regression: rrp v4 reports observed DOM sizes, so the flex-grow
@@ -422,6 +460,7 @@ describe("SessionView", () => {
 		const { rerender } = render(<SessionView sessionId="sess-1" />);
 		const handle = panels.get("inspector")!.handle;
 
+		act(() => useUiStore.getState().setInspectorOpen("sess-2", false));
 		rerender(<SessionView sessionId="sess-orch" />);
 		expect(screen.queryByTestId("panel-inspector")).not.toBeInTheDocument();
 

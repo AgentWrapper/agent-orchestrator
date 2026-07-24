@@ -194,13 +194,24 @@ describe("ShellTopbar orchestrator actions", () => {
 	it("marks Kanban as the primary action on orchestrator sessions", () => {
 		renderTopbar(orchestrator);
 
-		expect(screen.getByRole("button", { name: "Open Kanban" })).toHaveClass("bg-primary");
+		expect(screen.getByRole("button", { name: "Open Kanban" })).toHaveClass("bg-accent-strong");
 		expect(screen.getByRole("button", { name: "New task" })).toHaveClass("bg-raised");
-		expect(screen.getByRole("button", { name: "New task" })).not.toHaveClass("bg-primary");
+		expect(screen.getByRole("button", { name: "New task" })).not.toHaveClass("bg-accent-strong");
 	});
 });
 
 describe("ShellTopbar inspector state", () => {
+	it("treats missing worker inspector state as open", async () => {
+		renderTopbarSessions([worker], "sess-1");
+
+		const toggle = screen.getByRole("button", { name: "Close inspector panel" });
+		expect(toggle).toHaveAttribute("aria-pressed", "true");
+
+		await userEvent.click(toggle);
+
+		expect(useUiStore.getState().inspectorSessions["sess-1"]).toEqual({ isOpen: false, view: "summary" });
+	});
+
 	it("routes aria-pressed to the current worker session", () => {
 		useUiStore.setState({
 			inspectorSessions: {
