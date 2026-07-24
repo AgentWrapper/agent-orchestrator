@@ -261,6 +261,10 @@ function inspectorOpen(sessionId: string): boolean {
 	return useUiStore.getState().inspectorSessions[sessionId]?.isOpen ?? true;
 }
 
+function browserUnseen(sessionId: string): boolean {
+	return Boolean(useUiStore.getState().inspectorSessions[sessionId]?.browserUnseen);
+}
+
 function inspectorButton(): HTMLElement {
 	const button = screen.getByText("pop browser").closest("button");
 	if (!button) throw new Error("missing inspector button");
@@ -584,7 +588,7 @@ describe("SessionView", () => {
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
 	});
 
-	it("reveals an `ao preview` URL in the inspector Browser tab, not the center pane", () => {
+	it("badges the Browser tab on an `ao preview` URL without opening it or leaving the terminal", () => {
 		const worker = workerSession("sess-1");
 		const { rerender } = render(<SessionView sessionId="sess-1" />);
 
@@ -595,12 +599,27 @@ describe("SessionView", () => {
 		// Center pane keeps the terminal — the preview must not pop out over it.
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "browser center" })).not.toBeInTheDocument();
-		// Rail opened and switched to the Browser tab.
-		expect(inspectorOpen("sess-1")).toBe(true);
-		expect(screen.getByRole("button", { name: "pop browser" })).toHaveAttribute("data-view", "browser");
+		// We badge the Browser tab instead of stealing focus: the active view stays
+		// on the default Summary tab and the unseen flag is set.
+		expect(screen.getByRole("button", { name: "pop browser" })).toHaveAttribute("data-view", "summary");
+		expect(browserUnseen("sess-1")).toBe(true);
 	});
 
-	it("keeps inspector state per worker session and opens Browser only for a new preview", () => {
+	it("clears the badge once the user opens the Browser tab", () => {
+		const worker = workerSession("sess-1");
+		const { rerender } = render(<SessionView sessionId="sess-1" />);
+
+		worker.previewUrl = "http://localhost:5173/";
+		worker.previewRevision = 1;
+		rerender(<SessionView sessionId="sess-1" />);
+		expect(browserUnseen("sess-1")).toBe(true);
+
+		act(() => useUiStore.getState().setInspectorView("sess-1", "browser"));
+		expect(inspectorButton()).toHaveAttribute("data-view", "browser");
+		expect(browserUnseen("sess-1")).toBe(false);
+	});
+
+	it("badges the Browser tab per worker session on a new preview, without switching tabs", () => {
 		const secondWorker = workerSession("sess-2");
 		secondWorker.previewUrl = "http://localhost:5173/";
 		secondWorker.previewRevision = 1;
@@ -616,28 +635,24 @@ describe("SessionView", () => {
 		expect(inspectorButton()).toHaveAttribute("data-view", "browser");
 
 		// Navigating to another worker with an already-known preview URL must
-		// baseline that preview as seen and retain the default Summary tab.
+		// baseline that preview as seen: no badge, default Summary tab.
 		rerender(<SessionView sessionId="sess-2" />);
-		expect(inspectorOpen("sess-2")).toBe(true);
-		expect(screen.getByTestId("panel-inspector")).not.toHaveAttribute("inert");
 		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
+		expect(browserUnseen("sess-2")).toBe(false);
 
 		// Switching back restores the first worker's own open Browser state.
 		rerender(<SessionView sessionId="sess-1" />);
-		expect(inspectorOpen("sess-1")).toBe(true);
-		expect(screen.getByTestId("panel-inspector")).not.toHaveAttribute("inert");
 		expect(inspectorButton()).toHaveAttribute("data-view", "browser");
 
-		// A new preview revision for the second worker is an explicit event and
-		// should reveal that session's Browser tab.
+		// A new preview revision for the second worker badges its Browser tab but
+		// does not switch the active view away from Summary.
 		secondWorker.previewRevision = 2;
 		rerender(<SessionView sessionId="sess-2" />);
-		expect(inspectorOpen("sess-2")).toBe(true);
-		expect(screen.getByTestId("panel-inspector")).not.toHaveAttribute("inert");
-		expect(inspectorButton()).toHaveAttribute("data-view", "browser");
+		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
+		expect(browserUnseen("sess-2")).toBe(true);
 	});
 
-	it("baselines an async preview, then expands for the next preview revision", () => {
+	it("baselines an async preview, then badges (not expands) on the next revision", () => {
 		const secondWorker = workerSession("sess-2");
 		secondWorker.previewUrl = "http://localhost:5173/";
 		secondWorker.previewRevision = 1;
@@ -653,14 +668,15 @@ describe("SessionView", () => {
 		expect(inspectorOpen("sess-2")).toBe(true);
 		expect(screen.getByTestId("panel-inspector")).not.toHaveAttribute("inert");
 		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
+		expect(browserUnseen("sess-2")).toBe(false);
 		const handle = panels.get("inspector")!.handle;
 		expect(handle.expand).not.toHaveBeenCalled();
 
 		secondWorker.previewRevision = 2;
 		rerender(<SessionView sessionId="sess-2" />);
 
-		expect(inspectorOpen("sess-2")).toBe(true);
-		expect(inspectorButton()).toHaveAttribute("data-view", "browser");
+		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
+		expect(browserUnseen("sess-2")).toBe(true);
 		expect(handle.expand).not.toHaveBeenCalled();
 	});
 });

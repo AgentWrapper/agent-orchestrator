@@ -56,6 +56,12 @@ export type UseTerminalSessionOptions = {
 	/** Test seam: build the mux client. Defaults to a fresh socket against the current API base. */
 	createMux?: () => TerminalMux;
 	/**
+	 * Observe decoded pane output (post-write). Callers use it to scan the stream
+	 * for signals like printed URLs; it must be cheap and side-effect-light since
+	 * it runs on every output chunk. Omit to skip decoding entirely.
+	 */
+	onOutput?: (text: string) => void;
+	/**
 	 * Attach to a standalone shell terminal (POST /api/v1/shell-terminals)
 	 * instead of a session's pane. When set it wins over `session`, which
 	 * callers pass as undefined for shell panes.
@@ -207,10 +213,15 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		const mux = (optionsRef.current.createMux ?? defaultCreateMux)();
 		r.mux = mux;
 
+		// Streaming decoder so a multi-byte sequence split across chunks decodes
+		// correctly for onOutput. Only built when a caller is listening.
+		const outputDecoder = optionsRef.current.onOutput ? new TextDecoder() : null;
+
 		r.disposers.push(
 			mux.onData(handle, (bytes) => {
 				if (!isCurrentAttachment(generation, handle, mux)) return;
 				terminal.write(bytes);
+				if (outputDecoder) optionsRef.current.onOutput?.(outputDecoder.decode(bytes, { stream: true }));
 			}),
 			mux.onOpened(handle, () => {
 				if (!isCurrentAttachment(generation, handle, mux)) return;

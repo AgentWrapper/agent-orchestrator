@@ -3,10 +3,10 @@ import { RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { TerminalTarget } from "../types/terminal";
 import { sessionIsActive, type WorkspaceSession } from "../types/workspace";
-import type { Theme } from "../stores/ui-store";
+import { useUiStore, type Theme } from "../stores/ui-store";
 import { useTerminalSession, type AttachableTerminal, type TerminalSessionState } from "../hooks/useTerminalSession";
 import { apiClient } from "../lib/api-client";
-import { isLoopbackHostname } from "../lib/loopback";
+import { createUrlWatcher, type UrlWatcher } from "../lib/detect-urls";
 import { cn } from "../lib/utils";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { useRestoreSession } from "../hooks/useRestoreSession";
@@ -238,7 +238,32 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	// A shell pane has no session, so it hands the hook its handle directly
 	// instead of reading one off `attachSession`.
 	const shellTerminalHandleId = terminalTarget?.kind === "shell" ? terminalTarget.handleId : undefined;
-	const { attach, state, error } = useTerminalSession(attachSession, { daemonReady, shellTerminalHandleId });
+	// Glow the Browser tab when the agent prints a URL in this worker's terminal
+	// (e.g. a pushed-PR link). Detection only badges — the user still chooses to
+	// open it — and is skipped while they are already looking at the Browser tab.
+	const watchLinks = Boolean(session?.id && session.kind === "worker" && terminalTarget?.kind !== "shell");
+	const urlWatcherRef = useRef<UrlWatcher | null>(null);
+	const handleOutput = useCallback(
+		(text: string) => {
+			const sessionId = session?.id;
+			if (!sessionId) return;
+			if (!urlWatcherRef.current) {
+				urlWatcherRef.current = createUrlWatcher(() => {
+					const store = useUiStore.getState();
+					const current = store.inspectorSessions[sessionId];
+					const viewingBrowser = (current?.isOpen ?? true) && (current?.view ?? "summary") === "browser";
+					if (!viewingBrowser) store.setBrowserUnseen(sessionId, true);
+				});
+			}
+			urlWatcherRef.current.push(text);
+		},
+		[session?.id],
+	);
+	const { attach, state, error } = useTerminalSession(attachSession, {
+		daemonReady,
+		shellTerminalHandleId,
+		onOutput: watchLinks ? handleOutput : undefined,
+	});
 	const handleId = shellTerminalHandleId ?? attachSession?.terminalHandleId;
 	const provider = terminalTarget?.kind === "reviewer" ? terminalTarget.harness : session?.provider;
 	const hadAttachmentRef = useRef(false);
@@ -257,19 +282,26 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 		console.error("xterm failed to initialize", err);
 		setInitFailed(true);
 	}, []);
+	const setInspectorViewForSession = useUiStore((state) => state.setInspectorView);
+	const setInspectorOpenForSession = useUiStore((state) => state.setInspectorOpen);
 	const handleLinkOpen = useCallback(
 		(uri: string) => {
 			if (!session?.id || session.kind !== "worker" || !isSessionActive) return;
 			try {
 				const url = new URL(uri);
-				if ((url.protocol !== "http:" && url.protocol !== "https:") || !isLoopbackHostname(url.hostname)) return;
+				if (url.protocol !== "http:" && url.protocol !== "https:") return;
 			} catch {
 				return;
 			}
+			const linkSessionId = session.id;
+			// A left-click is an explicit request to view the link, so open the
+			// Browser tab now (unlike a passive `ao preview`, which only badges it).
+			setInspectorViewForSession(linkSessionId, "browser");
+			setInspectorOpenForSession(linkSessionId, true);
 			void (async () => {
 				try {
 					const { error: previewError } = await apiClient.POST("/api/v1/sessions/{sessionId}/preview", {
-						params: { path: { sessionId: session.id } },
+						params: { path: { sessionId: linkSessionId } },
 						body: { url: uri },
 					});
 					if (previewError) {
@@ -282,7 +314,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 				}
 			})();
 		},
-		[isSessionActive, queryClient, session?.id, session?.kind],
+		[isSessionActive, queryClient, session?.id, session?.kind, setInspectorOpenForSession, setInspectorViewForSession],
 	);
 	const restoreSession = useCallback(async () => {
 		if (!session?.id || !canRestoreSession || isRestoring) return;

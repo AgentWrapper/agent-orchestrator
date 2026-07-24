@@ -61,6 +61,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const toggleInspector = useUiStore((state) => state.toggleInspector);
 	const setInspectorViewForSession = useUiStore((state) => state.setInspectorView);
 	const markInspectorPreviewSeen = useUiStore((state) => state.markInspectorPreviewSeen);
+	const setBrowserUnseen = useUiStore((state) => state.setBrowserUnseen);
 	const { daemonStatus } = useShell();
 	const inspectorRef = useRef<PanelImperativeHandle | null>(null);
 	const inspectorSeparatorRef = useRef<HTMLDivElement | null>(null);
@@ -195,11 +196,13 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		setBrowserPoppedOut(next);
 	}, []);
 
-	// `ao preview` sets session.previewUrl (streamed over CDC); surface the result
-	// in this session's inspector rail Browser tab (opening the rail if collapsed),
-	// not the center pane. Navigation alone must not reveal an already-present
-	// preview target, so the first observed preview key for each session is
-	// baselined as "seen"; only a later revision/URL opens the rail.
+	// `ao preview` sets session.previewUrl (streamed over CDC); badge the inspector
+	// rail's Browser tab so the user can open it when they choose — we never steal
+	// focus by opening the rail ourselves. A left-click on a terminal link opens the
+	// tab explicitly (see TerminalPane) and is exempt from the badge because the tab
+	// is already the active view by the time the CDC echo arrives. Navigation alone
+	// must not badge an already-present preview target, so the first observed preview
+	// key for each session is baselined as "seen"; only a later revision/URL badges.
 	useEffect(() => {
 		if (!hasInspector) return;
 		const previewKey = previewRevealKey(previewUrl, previewRevision);
@@ -211,17 +214,28 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		if (seenKey === previewKey) return;
 		markInspectorPreviewSeen(sessionId, previewKey);
 		if (!previewKey) return;
-		setInspectorViewForSession(sessionId, "browser");
-		setInspectorOpenForSession(sessionId, true);
+		// Already looking at the Browser tab? Nothing to badge.
+		if (isInspectorOpen && inspectorView === "browser") return;
+		setBrowserUnseen(sessionId, true);
 	}, [
 		hasInspector,
+		inspectorView,
+		isInspectorOpen,
 		markInspectorPreviewSeen,
 		previewRevision,
 		previewUrl,
 		sessionId,
-		setInspectorOpenForSession,
-		setInspectorViewForSession,
+		setBrowserUnseen,
 	]);
+
+	// Keep the badge honest: clear it whenever the Browser tab is the open, active
+	// view (covers opening the rail while already parked on Browser, which
+	// setInspectorView's own clear does not see).
+	useEffect(() => {
+		if (hasInspector && isInspectorOpen && inspectorView === "browser") {
+			setBrowserUnseen(sessionId, false);
+		}
+	}, [hasInspector, inspectorView, isInspectorOpen, sessionId, setBrowserUnseen]);
 
 	// Computed when the inspector panel mounts and frozen while it stays
 	// mounted: rrp re-registers the panel (a layout effect keyed on defaultSize,
