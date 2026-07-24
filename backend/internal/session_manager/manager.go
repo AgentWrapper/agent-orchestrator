@@ -155,6 +155,7 @@ type Manager struct {
 	// initial-prompt delivery, where a blocked session is impossible.
 	messenger *sessionguard.Guard
 	lcm       lifecycleRecorder
+	preview   ports.SessionPreviewLifecycle
 	dataDir   string
 	clock     func() time.Time
 	// lookPath is exec.LookPath in production; tests substitute a stub so
@@ -205,6 +206,7 @@ type Deps struct {
 	Store     Store
 	Messenger ports.AgentMessenger
 	Lifecycle lifecycleRecorder
+	Preview   ports.SessionPreviewLifecycle
 	// DataDir is exported to spawned agents as AO_DATA_DIR so their hook
 	// commands can open the same store.
 	DataDir string
@@ -231,6 +233,7 @@ func New(d Deps) *Manager {
 		workspace:  d.Workspace,
 		store:      d.Store,
 		lcm:        d.Lifecycle,
+		preview:    d.Preview,
 		dataDir:    d.DataDir,
 		clock:      d.Clock,
 		lookPath:   d.LookPath,
@@ -677,6 +680,7 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	if !ok {
 		return false, nil // already gone: benign race
 	}
+	m.stopPreviewBestEffort(ctx, id)
 	handle := runtimeHandle(rec.Metadata)
 	ws := workspaceInfo(rec)
 
@@ -757,6 +761,7 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 	if !ok || rec.IsTerminated {
 		return nil
 	}
+	m.stopPreviewBestEffort(ctx, id)
 	if rec.Metadata.WorkspacePath == "" || rec.Metadata.Branch == "" {
 		if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
 			return fmt.Errorf("retire replacement %s: clear restore markers: %w", id, err)
@@ -807,6 +812,15 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 		return fmt.Errorf("retire replacement %s: mark terminated: %w", id, err)
 	}
 	return nil
+}
+
+func (m *Manager) stopPreviewBestEffort(ctx context.Context, id domain.SessionID) {
+	if m.preview == nil {
+		return
+	}
+	if err := m.preview.StopSession(ctx, id); err != nil {
+		m.logger.Warn("session preview cleanup failed", "sessionID", id, "error", err)
+	}
 }
 
 func (m *Manager) retireWorkspaceProjectForReplacement(ctx context.Context, rec domain.SessionRecord, rows []ports.WorkspaceRepoInfo) error {
@@ -2113,8 +2127,15 @@ func (m *Manager) aoSkillPointer() string {
 	dir := skillassets.Dir(m.dataDir)
 	skillFile := filepath.ToSlash(filepath.Join(dir, "SKILL.md"))
 	commandsGlob := filepath.ToSlash(filepath.Join(dir, "commands", "*.md"))
+	browserFile := filepath.ToSlash(filepath.Join(dir, "commands", "browser.md"))
+	previewFile := filepath.ToSlash(filepath.Join(dir, "commands", "preview.md"))
 	return "\n\n" + "## Using the ao CLI\n\n" +
-		"When you need to use the `ao` CLI, read `" + skillFile + "` first (and the relevant `" + commandsGlob + "`) for the full command catalog, flags, and examples."
+		"When using `ao`, read `" + skillFile + "` and only the relevant file under `" + commandsGlob + "`; do not load unrelated command guides.\n\n" +
+		"## AO desktop Browser panel\n\n" +
+		"For frontend work, read `" + previewFile + "` before previewing or starting an app: open static HTML or Markdown directly; Never create or modify `package.json` or install dependencies solely to display static files. Do not create `.ao/launch.json` unless the user asks. Automatically open the primary requested browser-displayable artifact immediately after creating or materially updating it, but do not replace an active application preview with a supporting asset. " +
+		"For page inspection or interaction, read `" + browserFile + "` and use `ao browser` from this AO session. Browser network capture is optional and off by default; follow that guide and never enable it for routine browser actions. " +
+		"Do not use Codex/host in-app browser connectors, `agent.browsers.get(\"iab\")`, or a browser MCP for the AO Browser panel: those are separate browser runtimes and cannot see or control AO's session-owned page. " +
+		"`ao browser` operates the same live page the user sees in that panel."
 }
 
 func (m *Manager) workspaceProjectPrompt(ctx context.Context, kind domain.SessionKind, projectID domain.ProjectID) (string, error) {

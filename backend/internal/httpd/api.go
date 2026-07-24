@@ -35,6 +35,8 @@ type APIDeps struct {
 	Events             cdcSubscriber
 	Telemetry          ports.EventSink
 	Mobile             *controllers.MobileController
+	Browser            controllers.BrowserRuntime
+	PreviewServer      controllers.ManagedPreviewServer
 }
 
 // API owns one controller per resource and is the single Register call the
@@ -51,6 +53,7 @@ type API struct {
 	imports       *controllers.ImportController
 	shellTerms    *controllers.ShellTerminalsController
 	dev           *controllers.DevController
+	browser       *controllers.BrowserController
 	events        *EventsController
 }
 
@@ -67,8 +70,9 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 			Mgr: deps.Projects,
 		},
 		sessions: &controllers.SessionsController{
-			Svc:      deps.Sessions,
-			Activity: deps.Activity,
+			Svc:           deps.Sessions,
+			Activity:      deps.Activity,
+			PreviewServer: deps.PreviewServer,
 		},
 		prs:           &controllers.PRsController{Svc: deps.PRs},
 		reviews:       &controllers.ReviewsController{Svc: deps.Reviews},
@@ -77,6 +81,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		imports:       &controllers.ImportController{Svc: deps.Import},
 		shellTerms:    &controllers.ShellTerminalsController{Svc: deps.ShellTerminals},
 		dev:           &controllers.DevController{Import: deps.DevImport},
+		browser:       &controllers.BrowserController{Runtime: deps.Browser, Sessions: deps.Sessions},
 		events:        &EventsController{Source: deps.CDC, Live: deps.Events},
 	}
 }
@@ -105,6 +110,7 @@ func (a *API) Register(root chi.Router) {
 			a.imports.Register(r)
 			a.shellTerms.Register(r)
 			a.dev.Register(r)
+			a.browser.Register(r)
 			// Sibling REST controllers plug in here.
 		})
 		// Long-lived streams intentionally bypass the REST timeout middleware.

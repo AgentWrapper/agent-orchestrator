@@ -56,6 +56,8 @@ Every product command resolves to a daemon HTTP route. Run `ao <command>
 | `ao orchestrator ls`                | `GET /api/v1/orchestrators`                    |
 | `ao send`                           | `POST /api/v1/sessions/{id}/send`              |
 | `ao preview [url]`                  | `POST /api/v1/sessions/{id}/preview`           |
+| `ao preview start/status/stop`      | `POST/GET/DELETE /api/v1/sessions/{id}/preview/server` |
+| `ao browser ...`                    | `GET /api/v1/browser/status`, `POST /api/v1/browser/commands` |
 | `ao hooks <agent> <event>`          | `POST /api/v1/sessions/{id}/activity` (hidden) |
 
 `ao agent ls` prints the daemon-supported agent catalog with local install/auth
@@ -79,6 +81,47 @@ spawn remains the authoritative runtime validation point. Use
 (it is meant to run inside a session), not a flag. With no argument it
 autodetects an `index.html` in the session workspace; with a URL argument it
 opens that URL verbatim (`file://`, `http`, `https`).
+
+`ao preview start [configuration]` loads `.ao/launch.json` from the session
+workspace, starts that exact command under a session-owned supervisor, selects
+or records its loopback port, waits for readiness, and opens application
+targets in the Browser panel. `status` reports bounded recent logs and `stop`
+terminates the managed process tree. Multiple configurations must be selected
+by name; AO does not assign confidence scores to arbitrary localhost servers.
+This is an optional, reusable project configuration, not a prerequisite for
+preview. Agents must not create it automatically. Static HTML and Markdown use
+the direct file preview and must not cause package-manager scaffolding,
+dependency installation, or a development server to be introduced.
+
+When a browser-displayable file is the requested artifact, agents should call
+`ao preview <workspace-path>` immediately after creating or materially updating
+the primary output. Markdown, HTML, PDF, SVG, and common images can be served
+directly. Supporting assets must not replace an active application preview.
+
+`ao browser` also resolves its target from `AO_SESSION_ID`, but controls the
+session-owned live Electron browser rather than only setting its preview URL.
+The target-isolated command set includes `status`, `open`, `snapshot`, `click`,
+`fill`, `type`, `press`, `hover`, `scroll`, `select`, `check`, `uncheck`, `get`,
+`highlight`, `unhighlight`, `tabs`, `tab new`, `tab select`, `tab close`,
+`wait`, `screenshot`, `network start/status/list/stop/clear`, `console`, and
+`errors`. Logical tab IDs remain stable for the session, and allowed popups
+become AO browser tabs rather than separate OS-browser windows. The AO desktop
+app must be open because Electron owns the `WebContentsView`.
+References from a snapshot are invalidated after navigation or DOM replacement;
+they are also invalidated when changing tabs. Take another snapshot when a
+command reports `STALE_REFERENCE`.
+Browser waits cover load completion, text or selector appearance and
+disappearance, URL matching, fixed delays, and a configurable DOM-stability
+window for HMR-driven verification.
+Browser tabs in the same worker share a memory-only Electron profile. Different
+workers receive distinct partitions, so cookies, authentication, local storage,
+and session storage do not leak between their browser runtimes.
+Network capture is disabled by default and must be started explicitly. It is
+scoped to the active tab at start time, expires after 60 seconds by default
+(maximum 300), retains at most 200 in-memory entries, and is cleared with the
+tab/session. Captured data is metadata-only: request and response bodies are
+never read, sensitive headers are omitted, and URL credentials, fragments, and
+query values are redacted.
 
 `go run .` in `backend/` remains a compatibility wrapper around the daemon.
 

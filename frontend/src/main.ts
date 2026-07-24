@@ -53,6 +53,7 @@ import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/post
 import { buildTelemetryBootstrap } from "./shared/telemetry";
 import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view-host";
 import { connectSupervisor, type SupervisorLinkHandle } from "./main/supervisor-link";
+import { connectBrowserRuntime, type BrowserRuntimeLinkHandle } from "./main/browser-runtime-link";
 import { keepDaemonAlive, shouldLinkOnAttach } from "./main/daemon-owner";
 import { readMigrationState, updateMigration, writeAppStateMarker, type MigrationState } from "./main/app-state";
 import { isAllowedAppExternalURL, openAllowedAppExternalURL } from "./main/external-open";
@@ -100,6 +101,7 @@ let daemonStartEpoch = 0;
 let daemonStatus: DaemonStatus = { state: "stopped" };
 let daemonOutput = "";
 let browserViewHost: BrowserViewHost | null = null;
+let browserRuntimeLink: BrowserRuntimeLinkHandle | null = null;
 // Held for the app lifetime. Dropping it (on any exit) triggers daemon self-stop.
 let supervisorLink: SupervisorLinkHandle | null = null;
 
@@ -236,6 +238,9 @@ function applyRuntimeAppIcon(): void {
 function setDaemonStatus(nextStatus: DaemonStatus): void {
 	daemonStatus = nextStatus;
 	mainWindow?.webContents.send("daemon:status", daemonStatus);
+	if (nextStatus.state === "ready" && browserViewHost) {
+		establishBrowserRuntimeLink();
+	}
 }
 
 const MAX_DAEMON_OUTPUT_CHARS = 12_000;
@@ -363,6 +368,7 @@ function createWindow(): void {
 		rendererOrigin: RENDERER_ORIGIN,
 		isMac,
 	});
+	if (daemonStatus.state === "ready") establishBrowserRuntimeLink();
 
 	void mainWindow.loadURL(rendererUrl());
 
@@ -383,6 +389,8 @@ function createWindow(): void {
 	mainWindow.on("leave-full-screen", pushFullScreen);
 
 	mainWindow.on("closed", () => {
+		browserRuntimeLink?.dispose();
+		browserRuntimeLink = null;
 		browserViewHost?.dispose();
 		browserViewHost = null;
 		mainWindow = null;
@@ -600,6 +608,40 @@ function supervisorPipeFromRunFile(rfp: string | null): string {
 	const dir = path.basename(path.dirname(rfp));
 	if (dir === ".ao" || dir === "." || dir === "") return "\\\\.\\pipe\\ao-supervise";
 	return "\\\\.\\pipe\\ao-supervise-" + dir.replace(/[^a-zA-Z0-9-]/g, "-");
+}
+
+function browserRuntimePipeFromRunFile(rfp: string | null): string {
+	if (!rfp) return "\\\\.\\pipe\\ao-browser";
+	const dir = path.basename(path.dirname(rfp));
+	if (dir === ".ao" || dir === "." || dir === "") return "\\\\.\\pipe\\ao-browser";
+	return "\\\\.\\pipe\\ao-browser-" + dir.replace(/[^a-zA-Z0-9-]/g, "-");
+}
+
+function establishBrowserRuntimeLink(): void {
+	if (!browserViewHost || browserRuntimeLink) return;
+	const rfp = runFilePath();
+	const address =
+		process.platform === "win32"
+			? browserRuntimePipeFromRunFile(rfp)
+			: rfp
+				? path.join(path.dirname(rfp), "browser.sock")
+				: null;
+	if (!address) {
+		console.warn("AO: browser runtime link skipped; run-file path unavailable");
+		return;
+	}
+	browserRuntimeLink = connectBrowserRuntime(address, {
+		execute: (command) => {
+			const host = browserViewHost;
+			if (!host) {
+				throw Object.assign(new Error("Browser target owner is unavailable"), {
+					code: "BROWSER_TARGET_UNAVAILABLE",
+				});
+			}
+			return host.execute(command.sessionId, command.action, command.args);
+		},
+		log: (message) => console.log(`AO: ${message}`),
+	});
 }
 
 function establishSupervisorLink(): void {
@@ -1091,6 +1133,8 @@ function stopDaemon(): DaemonStatus {
 	// A later daemon:start re-establishes the link via reportBoundPort.
 	supervisorLink?.dispose();
 	supervisorLink = null;
+	browserRuntimeLink?.dispose();
+	browserRuntimeLink = null;
 	killDaemon(daemonProcess);
 	setDaemonStatus({ state: "stopped" });
 	return daemonStatus;
@@ -1543,6 +1587,8 @@ app.whenReady().then(async () => {
 // The supervisorLink fd is NOT explicitly closed on quit; the OS closes it when
 // the process exits for any reason (Cmd+Q, crash, SIGKILL). Sessions survive.
 app.on("before-quit", () => {
+	browserRuntimeLink?.dispose();
+	browserRuntimeLink = null;
 	browserViewHost?.dispose();
 	browserViewHost = null;
 });

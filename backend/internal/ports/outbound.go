@@ -103,6 +103,13 @@ type RuntimeHandle struct {
 	ID string
 }
 
+// SessionPreviewLifecycle is the narrow teardown hook for any managed preview
+// process attached to a session. Session Manager invokes it before destroying
+// the agent runtime/workspace so non-HTTP lifecycle paths cannot leak servers.
+type SessionPreviewLifecycle interface {
+	StopSession(ctx context.Context, id domain.SessionID) error
+}
+
 // Stream is one live terminal attach: PTY-like bytes plus resize. Returned
 // already-open by a Runtime's Attach. tmux backs it with a local PTY around
 // their attach CLI; conpty backs it with a loopback connection to the pty-host.

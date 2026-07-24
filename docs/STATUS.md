@@ -62,6 +62,21 @@ surface (`npm run sqlc`, `npm run api`).
 ### Frontend (Electron + React)
 
 - Electron + React 19 + TanStack Router/Query + Tailwind + shadcn primitives.
+- Target-isolated per-session browser-control spike: a dedicated local
+  daemon↔Electron bridge drives only the selected session's `WebContentsView`
+  through Electron's bound debugger transport. `ao browser` supports open,
+  compact accessibility snapshots and refs, click/fill/type, keyboard input,
+  hover and non-mutating element highlighting, scrolling, selection and checked
+  state, property reads, stable logical tabs and captured popups, a compact
+  user-facing tab selector for switching/closing tabs and popup notices, waits,
+  including load/disappearance/DOM-stability conditions, screenshots, console
+  messages, page errors, and explicit temporary network-metadata capture while
+  the Browser panel is hidden. Network capture is off by default, tab-scoped,
+  bounded, automatically expires, and omits bodies and sensitive values. Tabs
+  within one worker share an ephemeral Electron profile; different workers
+  have isolated cookies and web storage. The toolbar activity signal is scoped
+  to actual agent browser commands; annotation progress is separate and its
+  successful-delivery confirmation clears automatically.
 - Real daemon wiring via the generated `openapi-fetch` typed client
   (`src/api/schema.ts`); mock data only in `VITE_NO_ELECTRON` web-preview mode.
 - Electron main handles daemon discovery, launch, and status reporting.

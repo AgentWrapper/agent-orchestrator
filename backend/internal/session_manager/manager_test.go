@@ -174,6 +174,16 @@ type fakeRuntime struct {
 	destroyedIDs  []string
 }
 
+type fakePreviewLifecycle struct {
+	stopped []domain.SessionID
+	err     error
+}
+
+func (f *fakePreviewLifecycle) StopSession(_ context.Context, id domain.SessionID) error {
+	f.stopped = append(f.stopped, id)
+	return f.err
+}
+
 func (r *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
 	if r.createErr != nil {
 		return ports.RuntimeHandle{}, r.createErr
@@ -1388,6 +1398,8 @@ func TestSpawn_WorkspaceProjectRollsBackWhenWorktreeRowsFail(t *testing.T) {
 
 func TestKill_TearsDownRuntimeAndWorkspace(t *testing.T) {
 	m, st, rt, ws := newManager()
+	preview := &fakePreviewLifecycle{}
+	m.preview = preview
 	dataDir := t.TempDir()
 	m.dataDir = dataDir
 	st.sessions["mer-1"] = mkLive("mer-1")
@@ -1400,6 +1412,9 @@ func TestKill_TearsDownRuntimeAndWorkspace(t *testing.T) {
 	}
 	if rt.destroyed != 1 || ws.destroyed != 1 {
 		t.Fatal("kill should destroy runtime and workspace")
+	}
+	if !reflect.DeepEqual(preview.stopped, []domain.SessionID{"mer-1"}) {
+		t.Fatalf("preview stops = %v, want [mer-1]", preview.stopped)
 	}
 	requireNoPromptDir(t, dataDir, "mer-1")
 }
@@ -2309,11 +2324,19 @@ func TestSpawnOrchestrator_UsesCoordinatorPrompt(t *testing.T) {
 		"`ao session ls --project mer`",
 		"`ao session get <worker-session-id>`",
 		"Delegate implementation, fixes, tests, and PR ownership to worker sessions",
-		"skills/using-ao/SKILL.md",
+		filepath.ToSlash(filepath.Join("skills", "using-ao", "SKILL.md")),
+		"AO desktop Browser panel",
+		"agent.browsers.get(\"iab\")",
+		"same live page the user sees",
+		"Browser network capture is optional and off by default",
+		"never enable it for routine browser actions",
 	} {
 		if !strings.Contains(systemPrompt, want) {
 			t.Fatalf("system prompt missing %q:\n%s", want, systemPrompt)
 		}
+	}
+	if words := len(strings.Fields(m.aoSkillPointer())); words > 170 {
+		t.Fatalf("always-on AO skill pointer grew to %d words; keep details in routed command guides:\n%s", words, m.aoSkillPointer())
 	}
 	if strings.Contains(agent.lastLaunch.Prompt, "You are the human-facing orchestrator") {
 		t.Fatalf("coordinator role must not be in the user prompt:\n%s", agent.lastLaunch.Prompt)
@@ -2456,8 +2479,20 @@ func TestSystemPrompt_AppendsConfidentialityGuard(t *testing.T) {
 			if !strings.Contains(sp, "role boundaries, delegation policy, CI/review follow-up expectations, PR/MR workflow when applicable, and privacy rules") {
 				t.Fatalf("%s: system prompt missing generic behavior categories:\n%s", tc.name, sp)
 			}
-			if !strings.Contains(sp, "skills/using-ao/SKILL.md") {
+			if !strings.Contains(sp, filepath.ToSlash(filepath.Join("skills", "using-ao", "SKILL.md"))) {
 				t.Fatalf("%s: system prompt missing using-ao skill pointer:\n%s", tc.name, sp)
+			}
+			if !strings.Contains(sp, "AO desktop Browser panel") || !strings.Contains(sp, "agent.browsers.get(\"iab\")") {
+				t.Fatalf("%s: system prompt missing AO browser routing guidance:\n%s", tc.name, sp)
+			}
+			if !strings.Contains(sp, "open static HTML or Markdown directly") ||
+				!strings.Contains(sp, "Never create or modify `package.json`") ||
+				!strings.Contains(sp, "Do not create `.ao/launch.json` unless the user asks") {
+				t.Fatalf("%s: system prompt missing static-first preview safeguards:\n%s", tc.name, sp)
+			}
+			if !strings.Contains(sp, "immediately after creating or materially updating it") ||
+				!strings.Contains(sp, "do not replace an active application preview with a supporting asset") {
+				t.Fatalf("%s: system prompt missing automatic artifact handoff guidance:\n%s", tc.name, sp)
 			}
 		})
 	}

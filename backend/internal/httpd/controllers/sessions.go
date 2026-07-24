@@ -21,6 +21,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	previewutil "github.com/aoagents/agent-orchestrator/backend/internal/preview"
+	"github.com/aoagents/agent-orchestrator/backend/internal/previewserver"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 )
 
@@ -87,11 +88,20 @@ type ActivityRecorder interface {
 	ApplyActivitySignal(ctx context.Context, id domain.SessionID, s ports.ActivitySignal) error
 }
 
+// ManagedPreviewServer is the deterministic server lifecycle attached to a
+// worker. It is separate from static file rendering and browser automation.
+type ManagedPreviewServer interface {
+	Start(ctx context.Context, sessionID domain.SessionID, workspacePath, configurationName string) (previewserver.Status, error)
+	Stop(ctx context.Context, sessionID domain.SessionID) (previewserver.Status, error)
+	Status(sessionID domain.SessionID) previewserver.Status
+}
+
 // SessionsController owns the session routes. Nil keeps routes registered but
 // returns OpenAPI-backed 501s.
 type SessionsController struct {
-	Svc      SessionService
-	Activity ActivityRecorder
+	Svc           SessionService
+	Activity      ActivityRecorder
+	PreviewServer ManagedPreviewServer
 }
 
 // Register mounts the session routes on the supplied router.
@@ -103,6 +113,9 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Get("/sessions/{sessionId}/preview", c.preview)
 	r.Post("/sessions/{sessionId}/preview", c.setPreview)
 	r.Delete("/sessions/{sessionId}/preview", c.clearPreview)
+	r.Get("/sessions/{sessionId}/preview/server", c.previewServerStatus)
+	r.Post("/sessions/{sessionId}/preview/server", c.startPreviewServer)
+	r.Delete("/sessions/{sessionId}/preview/server", c.stopPreviewServer)
 	r.Get("/sessions/{sessionId}/preview/files/*", c.previewFile)
 	r.Get("/sessions/{sessionId}/workspace/files", c.listWorkspaceFiles)
 	r.Get("/sessions/{sessionId}/workspace/file", c.getWorkspaceFile)
@@ -486,6 +499,128 @@ func (c *SessionsController) clearPreview(w http.ResponseWriter, r *http.Request
 	envelope.WriteJSON(w, http.StatusOK, SessionResponse{Session: sessionView(updated)})
 }
 
+func (c *SessionsController) previewServerStatus(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil || c.PreviewServer == nil {
+		apispec.NotImplemented(w, r, http.MethodGet, "/api/v1/sessions/{sessionId}/preview/server")
+		return
+	}
+	if _, err := c.Svc.Get(r.Context(), sessionID(r)); err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, previewServerStatusResponse(c.PreviewServer.Status(sessionID(r))))
+}
+
+func (c *SessionsController) startPreviewServer(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil || c.PreviewServer == nil {
+		apispec.NotImplemented(w, r, http.MethodPost, "/api/v1/sessions/{sessionId}/preview/server")
+		return
+	}
+	var in StartPreviewServerRequest
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	sess, err := c.Svc.Get(r.Context(), sessionID(r))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	if sess.IsTerminated {
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "SESSION_TERMINATED", "Session is terminated", nil)
+		return
+	}
+	status, err := c.PreviewServer.Start(
+		r.Context(),
+		sessionID(r),
+		sess.Metadata.WorkspacePath,
+		strings.TrimSpace(in.Configuration),
+	)
+	if err != nil {
+		writePreviewServerError(w, r, err)
+		return
+	}
+	if status.TargetKind == previewserver.TargetApp {
+		if _, err := c.Svc.SetPreview(r.Context(), sessionID(r), status.URL); err != nil {
+			_, _ = c.PreviewServer.Stop(context.Background(), sessionID(r))
+			envelope.WriteError(w, r, err)
+			return
+		}
+	}
+	envelope.WriteJSON(w, http.StatusOK, previewServerStatusResponse(status))
+}
+
+func (c *SessionsController) stopPreviewServer(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil || c.PreviewServer == nil {
+		apispec.NotImplemented(w, r, http.MethodDelete, "/api/v1/sessions/{sessionId}/preview/server")
+		return
+	}
+	sess, err := c.Svc.Get(r.Context(), sessionID(r))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	previous := c.PreviewServer.Status(sessionID(r))
+	status, err := c.PreviewServer.Stop(r.Context(), sessionID(r))
+	if err != nil {
+		writePreviewServerError(w, r, err)
+		return
+	}
+	if previous.URL != "" && sess.Metadata.PreviewURL == previous.URL {
+		if _, err := c.Svc.SetPreview(r.Context(), sessionID(r), ""); err != nil {
+			envelope.WriteError(w, r, err)
+			return
+		}
+	}
+	envelope.WriteJSON(w, http.StatusOK, previewServerStatusResponse(status))
+}
+
+func previewServerStatusResponse(status previewserver.Status) PreviewServerStatusResponse {
+	logs := status.Logs
+	if logs == nil {
+		logs = []string{}
+	}
+	return PreviewServerStatusResponse{
+		SessionID:     status.SessionID,
+		State:         string(status.State),
+		Configuration: status.Configuration,
+		TargetKind:    string(status.TargetKind),
+		URL:           status.URL,
+		Port:          status.Port,
+		StartedAt:     status.StartedAt,
+		Error:         status.Error,
+		Logs:          logs,
+	}
+}
+
+func writePreviewServerError(w http.ResponseWriter, r *http.Request, err error) {
+	var serviceErr previewserver.Error
+	if !errors.As(err, &serviceErr) {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	status := http.StatusUnprocessableEntity
+	typeName := "unprocessable"
+	switch serviceErr.Code {
+	case "PREVIEW_CONFIG_NOT_FOUND", "PREVIEW_CONFIGURATION_NOT_FOUND":
+		status = http.StatusNotFound
+		typeName = "not_found"
+	case "PREVIEW_CONFIGURATION_REQUIRED":
+		status = http.StatusBadRequest
+		typeName = "bad_request"
+	case "PREVIEW_NOT_READY":
+		status = http.StatusGatewayTimeout
+		typeName = "timeout"
+	case "PREVIEW_START_CANCELED":
+		status = http.StatusRequestTimeout
+		typeName = "timeout"
+	case "PREVIEW_START_FAILED", "PREVIEW_EXITED", "PREVIEW_STOP_FAILED":
+		status = http.StatusInternalServerError
+		typeName = "internal_error"
+	}
+	envelope.WriteAPIError(w, r, status, typeName, serviceErr.Code, serviceErr.Message, nil)
+}
+
 func (c *SessionsController) listPRs(w http.ResponseWriter, r *http.Request) {
 	if c.Svc == nil {
 		apispec.NotImplemented(w, r, "GET", "/api/v1/sessions/{sessionId}/pr")
@@ -564,6 +699,9 @@ func (c *SessionsController) kill(w http.ResponseWriter, r *http.Request) {
 	if c.Svc == nil {
 		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/kill")
 		return
+	}
+	if c.PreviewServer != nil {
+		_, _ = c.PreviewServer.Stop(context.Background(), sessionID(r))
 	}
 	freed, err := c.Svc.Kill(r.Context(), sessionID(r))
 	if err != nil {
