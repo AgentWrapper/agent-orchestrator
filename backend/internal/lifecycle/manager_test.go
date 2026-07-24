@@ -1570,6 +1570,50 @@ func TestSCMObservation_ReadyToMergeSuppressedWhileWaitingInput(t *testing.T) {
 	}
 }
 
+func TestRuntimeObservation_StickyStateProbeMatrix(t *testing.T) {
+	tests := []struct {
+		name     string
+		state    domain.ActivityState
+		probe    ports.ProbeResult
+		handleID string
+		term     bool
+		mutate   bool
+	}{
+		{name: "dead probe terminates blocked", state: domain.ActivityBlocked, probe: ports.ProbeDead, term: true},
+		{name: "dead probe terminates waiting_input", state: domain.ActivityWaitingInput, probe: ports.ProbeDead, term: true},
+		{name: "failed probe does not terminate blocked", state: domain.ActivityBlocked, probe: ports.ProbeFailed, term: false, mutate: false},
+		{name: "alive probe does not terminate waiting_input", state: domain.ActivityWaitingInput, probe: ports.ProbeAlive, term: false, mutate: false},
+		{name: "stale handle dead probe does not terminate blocked", state: domain.ActivityBlocked, probe: ports.ProbeDead, handleID: "old-handle", term: false, mutate: false},
+		{name: "stale handle dead probe does not terminate waiting_input", state: domain.ActivityWaitingInput, probe: ports.ProbeDead, handleID: "old-handle", term: false, mutate: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, st, _ := newManager()
+			rec := working("mer-1")
+			rec.Activity.State = tt.state
+			rec.Activity.LastActivityAt = time.Now()
+			rec.Metadata.RuntimeHandleID = "h1"
+			st.sessions["mer-1"] = rec
+			facts := ports.RuntimeFacts{Probe: tt.probe}
+			if tt.handleID != "" {
+				facts.RuntimeHandleID = tt.handleID
+			}
+			before := st.sessions["mer-1"]
+			if err := m.ApplyRuntimeObservation(ctx, "mer-1", facts); err != nil {
+				t.Fatal(err)
+			}
+			got := st.sessions["mer-1"]
+			if tt.term {
+				if !got.IsTerminated || got.Activity.State != domain.ActivityExited {
+					t.Fatalf("want terminated/exited, got isTerminated=%v state=%q", got.IsTerminated, got.Activity.State)
+				}
+			} else if tt.mutate == false && got != before {
+				t.Fatalf("non-dead probe must not mutate session record, got %+v", got)
+			}
+		})
+	}
+}
+
 func TestActivity_WorkerIdleNudgesOrchestrator(t *testing.T) {
 	m, st, msg := newManager()
 	now := time.Now()
@@ -1996,5 +2040,6 @@ func TestActivity_DeferredReportFlushedWhenOrchestratorIdle(t *testing.T) {
 	}
 	if len(msg.msgs) != 1 {
 		t.Fatalf("re-delivered deferred report: %d, want 1", len(msg.msgs))
+
 	}
 }

@@ -142,7 +142,13 @@ func (m *Manager) mutate(ctx context.Context, id domain.SessionID, fn func(domai
 // failed probe or liveness disagreement is ignored; no transient lifecycle state is stored.
 func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.SessionID, f ports.RuntimeFacts) error {
 	return m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
-		if cur.IsTerminated || !runtimeClearlyDead(f, cur.Activity, now, m.window) {
+		if cur.IsTerminated {
+			return cur, false
+		}
+		if f.RuntimeHandleID != "" && f.RuntimeHandleID != cur.Metadata.RuntimeHandleID {
+			return cur, false
+		}
+		if !runtimeClearlyDead(f, cur.Activity, now, m.window) {
 			return cur, false
 		}
 		next := cur
