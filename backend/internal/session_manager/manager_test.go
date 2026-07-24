@@ -2995,6 +2995,54 @@ func TestRestore_NativeResumeImmediateExitWithoutPromptFailsAndStaysTerminated(t
 	}
 }
 
+func TestRestore_PromptlessOrchestratorNativeResumeImmediateExitRelaunchesFresh(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator, Harness: domain.HarnessClaudeCode, IsTerminated: true,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "stale-native-1", NativeResumeReady: true},
+	}
+	rt := &exitObservingRuntime{statuses: []ports.AgentExitStatus{{Exited: true, ExitCode: 1}}}
+	agent := &recordingAgent{}
+	m := New(Deps{
+		Runtime:   rt,
+		Agents:    singleAgent{agent: agent},
+		Workspace: &fakeWorkspace{},
+		Store:     st,
+		Messenger: &fakeMessenger{},
+		Lifecycle: &fakeLCM{store: st},
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	res, err := m.RestoreWithMode(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("Restore err = %v, want fresh orchestrator fallback", err)
+	}
+	if res.Mode != RestoreModeFresh {
+		t.Fatalf("restore mode = %q, want %q", res.Mode, RestoreModeFresh)
+	}
+	if agent.restoreCalls != 1 {
+		t.Fatalf("GetRestoreCommand calls = %d, want 1", agent.restoreCalls)
+	}
+	if agent.launchCalls != 1 {
+		t.Fatalf("GetLaunchCommand calls = %d, want 1", agent.launchCalls)
+	}
+	if agent.lastLaunch.Prompt != "" {
+		t.Fatalf("fresh orchestrator prompt = %q, want empty", agent.lastLaunch.Prompt)
+	}
+	if rt.created != 2 {
+		t.Fatalf("runtime.Create = %d, want 2 (native then fresh fallback)", rt.created)
+	}
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatal("orchestrator must be live after fresh fallback")
+	}
+	if got := st.sessions["mer-1"].Metadata.AgentSessionID; got != "" {
+		t.Fatalf("fallback metadata AgentSessionID = %q, want cleared", got)
+	}
+	if st.sessions["mer-1"].Metadata.NativeResumeReady {
+		t.Fatal("fallback metadata NativeResumeReady = true, want cleared")
+	}
+}
+
 func TestRestore_AgyAndCopilotWithAgentSessionIDUseNativeResume(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

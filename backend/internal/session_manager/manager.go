@@ -934,7 +934,7 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 		}
 		if !stable {
 			_ = m.runtime.Destroy(ctx, handle)
-			if rec.Metadata.Prompt == "" {
+			if rec.Metadata.Prompt == "" && rec.Kind == domain.KindWorker {
 				_ = m.lcm.MarkTerminated(ctx, rec.ID)
 				m.cleanupSystemPromptDir(rec.ID)
 				return RestoreResult{}, fmt.Errorf("restore %s: native resume exited: %w", rec.ID, ErrNotResumable)
