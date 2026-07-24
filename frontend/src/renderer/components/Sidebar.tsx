@@ -822,7 +822,7 @@ function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
 					"h-control-form gap-2 rounded-settings-row bg-interactive-hover px-3 py-0 text-control font-medium text-muted-foreground",
 					"hover:bg-interactive-hover hover:text-foreground active:bg-interactive-hover active:text-foreground",
 					"[&>svg]:size-icon-md!",
-					"group-data-[collapsible=icon]:size-control-form! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-settings-row group-data-[collapsible=icon]:p-0!",
+					"group-data-[collapsible=icon]:size-control-form! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-full group-data-[collapsible=icon]:p-0!",
 				)}
 			>
 				<Search strokeWidth={1.75} aria-hidden="true" />
