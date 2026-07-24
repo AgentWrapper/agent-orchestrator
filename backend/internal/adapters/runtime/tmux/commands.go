@@ -106,3 +106,14 @@ func sendInterruptArgs(id string) []string {
 func capturePaneArgs(id string, lines int) []string {
 	return []string{"capture-pane", "-t", id, "-p", "-S", fmt.Sprintf("-%d", lines)}
 }
+
+// exitedOptionArgs builds args for `tmux show-options -q -v -p -t <id>
+// @ao_agent_exited`. The -q flag suppresses the "invalid option" error for
+// unset options so IsAlive can distinguish "option unset (agent alive)" from
+// a genuine tmux command failure (probe error). After the agent command exits,
+// buildLaunchCommand sets @ao_agent_exited=1 on the pane before entering the
+// keep-alive shell. Uses plain session-name targeting (no `=` prefix) because
+// pane-level commands do not accept the exact-match prefix — see setStatusOffArgs.
+func exitedOptionArgs(id string) []string {
+	return []string{"show-options", "-q", "-v", "-p", "-t", id, "@ao_agent_exited"}
+}
