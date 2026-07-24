@@ -1812,42 +1812,92 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 		if !rec.IsTerminated {
 			continue
 		}
-		ws := workspaceInfo(rec)
-		if ws.Path == "" {
-			m.cleanupSystemPromptDir(rec.ID)
-			continue
+		cleaned, skipReason := m.reclaimTerminatedWorktree(ctx, rec)
+		switch {
+		case cleaned:
+			result.Cleaned = append(result.Cleaned, rec.ID)
+		case skipReason != "":
+			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: skipReason})
 		}
-		if h := runtimeHandle(rec.Metadata); h.ID != "" {
-			_ = m.runtime.Destroy(ctx, h) // best effort; usually already gone
-		}
-		if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
-			m.logger.Warn("cleanup: workspace rows failed", "sessionID", rec.ID, "error", rowErr)
-			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: "workspace teardown failed"})
-			continue
-		} else if ok {
-			if _, err := m.destroyWorkspaceProjectRows(ctx, rows); err != nil {
-				if !errors.Is(err, ports.ErrWorkspaceDirty) {
-					m.logger.Warn("cleanup: workspace teardown failed", "sessionID", rec.ID, "path", ws.Path, "error", err)
-				}
-				result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: cleanupSkipReason(err)})
-				continue
-			}
-			m.cleanupAgentWorkspace(ctx, rec, ws.Path)
-		} else if err := m.workspace.Destroy(ctx, ws); err != nil {
-			if !errors.Is(err, ports.ErrWorkspaceDirty) {
-				// The public reason stays a fixed string (the raw error carries
-				// internal filesystem paths); the full cause lands here.
-				m.logger.Warn("cleanup: workspace teardown failed", "sessionID", rec.ID, "path", ws.Path, "error", err)
-			}
-			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: cleanupSkipReason(err)})
-			continue
-		} else {
-			m.cleanupAgentWorkspace(ctx, rec, ws.Path)
-		}
-		m.cleanupSystemPromptDir(rec.ID)
-		result.Cleaned = append(result.Cleaned, rec.ID)
 	}
 	return result, nil
+}
+
+// reclaimTerminatedWorktree tears down one already-terminated session's runtime
+// and worktree, honoring the dirty-worktree guard (uncommitted work is never
+// force-removed). The caller must have confirmed rec.IsTerminated.
+//
+// Returns cleaned=true when the worktree was reclaimed; a non-empty skipReason
+// (with cleaned=false) when a present worktree was preserved (uncommitted work
+// or teardown failure); and cleaned=false, skipReason="" for a session that has
+// no worktree to reclaim (only its system-prompt dir is cleared). It does not
+// touch the session_worktrees restore markers: a terminated session's rows are
+// left "active" and so are inert for RestoreAll (only "removed"/legacy rows are
+// restorable), matching Cleanup's long-standing behavior.
+func (m *Manager) reclaimTerminatedWorktree(ctx context.Context, rec domain.SessionRecord) (cleaned bool, skipReason string) {
+	ws := workspaceInfo(rec)
+	if ws.Path == "" {
+		m.cleanupSystemPromptDir(rec.ID)
+		return false, ""
+	}
+	if h := runtimeHandle(rec.Metadata); h.ID != "" {
+		_ = m.runtime.Destroy(ctx, h) // best effort; usually already gone
+	}
+	if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
+		m.logger.Warn("cleanup: workspace rows failed", "sessionID", rec.ID, "error", rowErr)
+		return false, "workspace teardown failed"
+	} else if ok {
+		if _, err := m.destroyWorkspaceProjectRows(ctx, rows); err != nil {
+			if !errors.Is(err, ports.ErrWorkspaceDirty) {
+				m.logger.Warn("cleanup: workspace teardown failed", "sessionID", rec.ID, "path", ws.Path, "error", err)
+			}
+			return false, cleanupSkipReason(err)
+		}
+		m.cleanupAgentWorkspace(ctx, rec, ws.Path)
+	} else if err := m.workspace.Destroy(ctx, ws); err != nil {
+		if !errors.Is(err, ports.ErrWorkspaceDirty) {
+			// The public reason stays a fixed string (the raw error carries
+			// internal filesystem paths); the full cause lands here.
+			m.logger.Warn("cleanup: workspace teardown failed", "sessionID", rec.ID, "path", ws.Path, "error", err)
+		}
+		return false, cleanupSkipReason(err)
+	} else {
+		m.cleanupAgentWorkspace(ctx, rec, ws.Path)
+	}
+	m.cleanupSystemPromptDir(rec.ID)
+	return true, ""
+}
+
+// ReclaimOnTerminate releases the runtime and worktree of a session that
+// lifecycle has just marked terminated in reaction to an observed terminal fact
+// (a PR merged/closed, or a tracker issue reaching a done/cancelled state).
+// Before this, only the UI Kill button / POST /sessions/{id}/kill ran teardown,
+// while the fact-driven termination path flipped is_terminated and returned —
+// leaking a full worktree on disk for every merged-PR session (#2811).
+//
+// Unlike Kill it does not mark the session terminated (the caller already did);
+// unlike Cleanup it targets a single session by id. It is best-effort: a dirty
+// worktree is preserved (never forced), and an unknown or not-yet-terminated
+// session is a no-op so a caller ordering slip can never tear down a live
+// worktree.
+func (m *Manager) ReclaimOnTerminate(ctx context.Context, id domain.SessionID) error {
+	// Detach from the caller's context: this runs from the SCM/tracker observer
+	// loop, whose context is cancelled at daemon shutdown. A cancel landing
+	// mid-teardown would kill `git worktree remove`/prune between steps and leave
+	// the worktree half-removed or still registered — the very leak this reclaim
+	// exists to prevent — so once started it must run to completion (mirrors the
+	// detached spawn-rollback cleanup from #2731). Values are preserved; only
+	// cancellation/deadline are dropped.
+	ctx = context.WithoutCancel(ctx)
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return fmt.Errorf("reclaim %s: %w", id, err)
+	}
+	if !ok || !rec.IsTerminated {
+		return nil
+	}
+	m.reclaimTerminatedWorktree(ctx, rec)
+	return nil
 }
 
 // cleanupSkipReason renders a workspace teardown refusal as a short

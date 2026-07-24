@@ -154,7 +154,7 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 			return err
 		}
 		if done {
-			return m.MarkTerminated(ctx, id)
+			return m.terminateWithReclaim(ctx, id)
 		}
 		return nil
 	}
@@ -492,9 +492,10 @@ func scmToPRObservation(o ports.SCMObservation) ports.PRObservation {
 // the read-side persistence path).
 //
 // Reactions today:
-//   - Issue terminal (state == done or cancelled) → MarkTerminated. The
-//     reducer is idempotent — repeat observations on an already-terminated
-//     session are no-ops because MarkTerminated skips when IsTerminated.
+//   - Issue terminal (state == done or cancelled) → terminate and reclaim the
+//     worktree. The reducer is idempotent — repeat observations on an
+//     already-terminated session are no-ops (the terminate skips when
+//     IsTerminated, and the reclaim runs only on the terminating transition).
 //   - Assignee changed → log only. No session-state reaction yet; the policy
 //     for "assignee changed away from AO" is reserved for the write-side work
 //     tracked by #40.
@@ -507,7 +508,7 @@ func (m *Manager) ApplyTrackerFacts(ctx context.Context, id domain.SessionID, o 
 		return nil
 	}
 	if isTerminalTrackerState(o.Issue.State) {
-		return m.MarkTerminated(ctx, id)
+		return m.terminateWithReclaim(ctx, id)
 	}
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil || !ok {

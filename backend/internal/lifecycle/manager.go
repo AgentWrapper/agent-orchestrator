@@ -48,6 +48,15 @@ type notificationSink interface {
 	Notify(ctx context.Context, intent ports.NotificationIntent) error
 }
 
+// terminationReclaimer releases the external resources (runtime, worktree) of a
+// session lifecycle has just marked terminated in reaction to an observed
+// terminal fact (PR merged/closed, tracker issue done). It is satisfied by the
+// session manager — the layer that owns teardown — so the reducer stays out of
+// runtime/workspace concerns and holds only this one narrow method.
+type terminationReclaimer interface {
+	ReclaimOnTerminate(ctx context.Context, id domain.SessionID) error
+}
+
 // Option customizes a Manager.
 type Option func(*Manager)
 
@@ -81,6 +90,13 @@ type Manager struct {
 	// nudges become no-ops but the reducer still runs.
 	guard         *sessionguard.Guard
 	notifications notificationSink
+	// reclaimer releases a session's external resources (runtime, worktree)
+	// after a fact-driven termination. It is satisfied by the session manager —
+	// the layer that owns teardown — and wired post-construction via
+	// SetTerminationReclaimer, because that manager is built over this same
+	// Manager. Nil leaves termination flag-only (the pre-#2811 behavior);
+	// guarded by mu since it is set after New.
+	reclaimer terminationReclaimer
 
 	mu        sync.Mutex
 	window    time.Duration
@@ -116,6 +132,17 @@ func New(store sessionStore, messenger ports.AgentMessenger, opts ...Option) *Ma
 		opt(m)
 	}
 	return m
+}
+
+// SetTerminationReclaimer wires the post-termination worktree reclaimer. The
+// session manager (the reclaimer) is built over this same Manager, so the
+// dependency can only be closed once both exist; the daemon calls this during
+// single-threaded boot wiring, before any observer drives a reaction. Guarded by
+// mu so a boot-time set can never race the reducer that reads it.
+func (m *Manager) SetTerminationReclaimer(r terminationReclaimer) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.reclaimer = r
 }
 
 func (m *Manager) mutate(ctx context.Context, id domain.SessionID, fn func(domain.SessionRecord, time.Time) (domain.SessionRecord, bool)) error {
@@ -689,15 +716,58 @@ func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, metadata
 
 // MarkTerminated marks a session terminated without tearing down external resources.
 func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error {
-	return m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
+	_, err := m.markTerminated(ctx, id)
+	return err
+}
+
+// markTerminated is MarkTerminated's core, additionally reporting whether it
+// flipped the row (changed=true) versus finding it already terminated
+// (changed=false). terminateWithReclaim uses this so the worktree reclaim runs
+// only on the actual termination transition, never on the idempotent repeat
+// observations a still-terminal PR or tracker issue keeps producing.
+func (m *Manager) markTerminated(ctx context.Context, id domain.SessionID) (bool, error) {
+	changed := false
+	err := m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
 		if cur.IsTerminated {
 			return cur, false
 		}
 		cur.IsTerminated = true
 		cur.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: now}
 		delete(m.flights, id) // runs under m.mu (mutate holds it)
+		changed = true
 		return cur, true
 	})
+	if err != nil {
+		return false, err
+	}
+	return changed, nil
+}
+
+// terminateWithReclaim marks a session terminated for an observed terminal fact
+// and then releases its worktree. Marking is authoritative — a store error fails
+// the reaction — while the worktree reclaim is best-effort: a dirty worktree is
+// preserved and any teardown error is logged, never surfaced, so a filesystem
+// hiccup can neither wedge the observation pipeline nor leave the row
+// un-terminated. Reclaim runs only when this call is the one that terminated the
+// session (and a reclaimer is wired), so repeat observations stay cheap no-ops.
+func (m *Manager) terminateWithReclaim(ctx context.Context, id domain.SessionID) error {
+	changed, err := m.markTerminated(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !changed {
+		return nil
+	}
+	m.mu.Lock()
+	reclaimer := m.reclaimer
+	m.mu.Unlock()
+	if reclaimer == nil {
+		return nil
+	}
+	if rErr := reclaimer.ReclaimOnTerminate(ctx, id); rErr != nil {
+		slog.Default().Warn("lifecycle: worktree reclaim after terminate failed", "session", id, "err", rErr)
+	}
+	return nil
 }
 
 // sameActivity reports whether two activity signals describe the same state.
