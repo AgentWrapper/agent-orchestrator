@@ -20,7 +20,15 @@ if (import.meta.env.DEV) {
 	// __testNotif("needs_input") — simulates a real notification:
 	//   bell count + dock badge update immediately; dock bounces after 3s
 	//   (gives you time to click away from AO so the bounce is visible)
-	w.__testNotif = async (type: "needs_input" | "ready_to_merge" = "needs_input") => {
+	const testNotifTitles: Record<string, string> = {
+		needs_input: "Agent needs your input",
+		ready_to_merge: "Ready to merge",
+		pr_merged: "PR merged",
+		pr_closed_unmerged: "PR closed",
+	};
+	w.__testNotif = async (
+		type: "needs_input" | "ready_to_merge" | "pr_merged" | "pr_closed_unmerged" = "needs_input",
+	) => {
 		const key = ["notifications", "unread"] as const;
 		const id = `test-${Date.now()}`;
 		// Freeze the query so window-focus refetch doesn't wipe test data
@@ -29,7 +37,7 @@ if (import.meta.env.DEV) {
 		mergeUnreadNotification(queryClient, {
 			id,
 			type,
-			title: type === "needs_input" ? "Agent needs your input" : "Ready to merge",
+			title: testNotifTitles[type] ?? "Notification",
 			body: "Test notification",
 			createdAt: new Date().toISOString(),
 			sessionId: "",

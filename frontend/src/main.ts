@@ -56,6 +56,7 @@ import { connectSupervisor, type SupervisorLinkHandle } from "./main/supervisor-
 import { keepDaemonAlive, shouldLinkOnAttach } from "./main/daemon-owner";
 import { readMigrationState, updateMigration, writeAppStateMarker, type MigrationState } from "./main/app-state";
 import { isAllowedAppExternalURL, openAllowedAppExternalURL } from "./main/external-open";
+import { shouldSignalAttention, shouldToast } from "./main/notification-signals";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -1375,13 +1376,10 @@ ipcMain.handle(
 		if (!notification.id || !mainWindow) return;
 		// Only signal when the window isn't already focused (the user is looking).
 		if (mainWindow.isFocused()) return;
-		const type = notification.type;
-		if (type !== "needs_input" && type !== "ready_to_merge" && type !== "pr_merged" && type !== "pr_closed_unmerged")
-			return;
-
 		// OS toast: a native banner the user can click to jump straight back to the
-		// session. Works hand-in-hand with the dock/taskbar attention signal below.
-		if (notification.title && ElectronNotification.isSupported()) {
+		// session. Fires for every backend notification type (see shouldToast), so a
+		// new type in notification.go never silently loses its toast.
+		if (shouldToast(notification, ElectronNotification.isSupported())) {
 			const toast = new ElectronNotification({
 				title: notification.title,
 				body: notification.body,
@@ -1401,17 +1399,21 @@ ipcMain.handle(
 			toast.show();
 		}
 
-		// Dock (macOS) / taskbar (Windows/Linux) attention signal.
-		if (process.platform === "darwin" && app.dock) {
-			app.dock.bounce("informational");
-		} else if (process.platform === "win32" || process.platform === "linux") {
-			if (!isFlashing) {
-				isFlashing = true;
-				mainWindow.flashFrame(true);
-				mainWindow.once("focus", () => {
-					isFlashing = false;
-					mainWindow?.flashFrame(false);
-				});
+		// Dock (macOS) / taskbar (Windows/Linux) attention signal — only for the
+		// actionable types. A merged/closed PR still toasts above, but shouldn't
+		// bounce the dock as insistently as an agent blocked waiting on the user.
+		if (shouldSignalAttention(notification.type)) {
+			if (process.platform === "darwin" && app.dock) {
+				app.dock.bounce("informational");
+			} else if (process.platform === "win32" || process.platform === "linux") {
+				if (!isFlashing) {
+					isFlashing = true;
+					mainWindow.flashFrame(true);
+					mainWindow.once("focus", () => {
+						isFlashing = false;
+						mainWindow?.flashFrame(false);
+					});
+				}
 			}
 		}
 	},
