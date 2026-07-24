@@ -36,17 +36,17 @@ export default function TabsLayout() {
 				}}
 			/>
 			<Tabs.Screen
-				name="prs"
-				options={{
-					title: "PRs",
-					tabBarIcon: ({ color, size }) => <Feather name="git-pull-request" size={size - 2} color={color} />,
-				}}
-			/>
-			<Tabs.Screen
 				name="orchestrator"
 				options={{
 					title: "Orchestrator",
 					tabBarIcon: ({ color, size }) => <Feather name="share-2" size={size - 2} color={color} />,
+				}}
+			/>
+			<Tabs.Screen
+				name="prs"
+				options={{
+					title: "PRs",
+					tabBarIcon: ({ color, size }) => <Feather name="git-pull-request" size={size - 2} color={color} />,
 				}}
 			/>
 			<Tabs.Screen

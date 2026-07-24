@@ -207,6 +207,21 @@ function mapOrchestrator(s: WireSession, projectName: string): OrchestratorLink 
 
 const REQUEST_TIMEOUT_MS = 12000;
 
+// The server answered, but with an error status. Distinct from the errors fetch
+// itself throws (DNS/refused/timeout), which mean the server was never reached —
+// a difference callers must be able to act on, since "wrong password" and "your
+// server is unreachable" need very different advice. The message keeps the
+// `${status} ${statusText}` prefix that call sites already match on.
+export class ApiError extends Error {
+	constructor(
+		readonly status: number,
+		message: string,
+	) {
+		super(message);
+		this.name = "ApiError";
+	}
+}
+
 async function req(cfg: ServerConfig, path: string, init?: RequestInit): Promise<Response> {
 	const url = `${httpBase(cfg)}${path}`;
 	// Without a timeout a sleeping/unreachable host (common over Tailscale) hangs
@@ -237,7 +252,7 @@ async function req(cfg: ServerConfig, path: string, init?: RequestInit): Promise
 		} catch {
 			/* ignore */
 		}
-		throw new Error(`${res.status} ${res.statusText}${detail ? ` - ${detail}` : ""}`);
+		throw new ApiError(res.status, `${res.status} ${res.statusText}${detail ? ` - ${detail}` : ""}`);
 	}
 	return res;
 }
