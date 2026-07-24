@@ -231,7 +231,7 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 					<button
 						type="button"
 						className="settings-footer-button border-transparent bg-settings-accent text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-						disabled={!canCopy}
+						disabled={!canSubmit}
 						onClick={() => void copyDraft()}
 					>
 						{destination.action}
