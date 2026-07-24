@@ -164,7 +164,7 @@ describe("ProjectSettingsForm", () => {
 		expect(await screen.findByText("git@github.com:acme/project-one.git")).toBeInTheDocument();
 		expect(screen.getByLabelText("Default branch")).toHaveValue("develop");
 		expect(screen.getByLabelText("Session prefix")).toHaveValue("po");
-		expect(screen.getByLabelText("Model override")).toHaveValue("claude-opus-4-5");
+		expect(screen.queryByLabelText("Model override")).not.toBeInTheDocument();
 
 		const workerAgent = screen.getByRole("combobox", { name: "Default worker agent" });
 		const orchestratorAgent = screen.getByRole("combobox", { name: "Default orchestrator agent" });
@@ -179,8 +179,6 @@ describe("ProjectSettingsForm", () => {
 		await userEvent.type(screen.getByLabelText("Default branch"), "release");
 		await userEvent.clear(screen.getByLabelText("Session prefix"));
 		await userEvent.type(screen.getByLabelText("Session prefix"), "rel");
-		await userEvent.clear(screen.getByLabelText("Model override"));
-		await userEvent.type(screen.getByLabelText("Model override"), "gpt-5-codex");
 		await chooseOption(workerAgent, "OpenCode");
 		await chooseOption(orchestratorAgent, "Goose");
 		await chooseOption(permissionMode, "Bypass permissions");
@@ -204,7 +202,7 @@ describe("ProjectSettingsForm", () => {
 					},
 					orchestrator: { agent: "goose" },
 					agentConfig: {
-						model: "gpt-5-codex",
+						model: "claude-opus-4-5",
 						permissions: "bypass-permissions",
 					},
 					reviewers: [{ harness: "claude-code" }],
