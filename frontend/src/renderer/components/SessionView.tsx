@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { PanelImperativeHandle, PanelSize } from "react-resizable-panels";
 import { BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
@@ -10,7 +10,7 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resiz
 import { useResolvedTheme, useUiStore, type InspectorView } from "../stores/ui-store";
 import { useShell } from "../lib/shell-context";
 import { useBrowserView } from "../hooks/useBrowserView";
-import { useCloseShellTerminal, useShellTerminals } from "../hooks/useShellTerminals";
+import { useCloseShellTerminal, useRenameShellTerminal, useShellTerminals } from "../hooks/useShellTerminals";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { hidesShellTopbar } from "../lib/platform";
 import { isOrchestratorSession, sessionIsActive } from "../types/workspace";
@@ -69,15 +69,32 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const [filesPoppedOut, setFilesPoppedOut] = useState(false);
 
 	const session = workspaces.flatMap((workspace) => workspace.sessions).find((s) => s.id === sessionId);
+	// The project owning this session: shell terminals are scoped to it below.
+	const currentProjectId = workspaces.find((workspace) => workspace.sessions.some((s) => s.id === sessionId))?.id;
 
 	// Standalone shell terminals live beside the session's pane as extra tabs.
 	// They belong to the app, not this session, so they persist across session
 	// navigation; only which one is *selected* is local state.
-	const shellTerminals = useShellTerminals().data ?? [];
+	//
+	// Scope them to THIS project: the daemon list is app-wide, so without the
+	// filter a shell opened in one project would show up as a tab in every other
+	// project's session view. A shell's projectId is the project it was opened
+	// in; project-less shells (opened from the board) live only on /terminals.
+	const allShellTerminals = useShellTerminals().data ?? [];
+	const shellTerminals = useMemo(
+		() => (currentProjectId ? allShellTerminals.filter((s) => s.projectId === currentProjectId) : []),
+		[allShellTerminals, currentProjectId],
+	);
 	const closeShellTerminal = useCloseShellTerminal();
+	const renameShellTerminal = useRenameShellTerminal();
 	const activeShellTerminalHandleId = useUiStore((state) => state.activeShellTerminalHandleId);
 	const setActiveShellTerminal = useUiStore((state) => state.setActiveShellTerminal);
 	const requestNewShellTerminal = useUiStore((state) => state.requestNewShellTerminal);
+
+	const renameShellTerminalByHandle = useCallback(
+		(handleId: string, title: string) => renameShellTerminal.mutate({ handleId, title }),
+		[renameShellTerminal],
+	);
 
 	const selectShellTerminal = useCallback(
 		(handleId: string) => {
@@ -123,6 +140,18 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				: { kind: "shell", handleId: shell.handleId, title: shell.title },
 		);
 	}, [activeShellTerminalHandleId, shellTerminals]);
+
+	// If the pane is pointed at a shell that is not in THIS project's strip — e.g.
+	// after navigating to a different project whose globally-active shell belongs
+	// elsewhere — fall back to the session's own pane rather than render a tab
+	// that isn't shown here.
+	useEffect(() => {
+		setTerminalTarget((current) =>
+			current.kind === "shell" && !shellTerminals.some((s) => s.handleId === current.handleId)
+				? { kind: "worker" }
+				: current,
+		);
+	}, [shellTerminals]);
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
 	// Orchestrator sessions are terminal-only; only worker sessions have the rail.
 	const hasInspector = Boolean(session && !isOrchestrator);
@@ -310,6 +339,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 						daemonReady={daemonStatus.state === "ready"}
 						onCloseShellTerminal={closeShellTerminalByHandle}
 						onNewShellTerminal={requestNewShellTerminal}
+						onRenameShellTerminal={renameShellTerminalByHandle}
 						onSelectSessionTerminal={selectSessionTerminal}
 						onSelectShellTerminal={selectShellTerminal}
 						onSelectWorkerTerminal={selectSessionTerminal}

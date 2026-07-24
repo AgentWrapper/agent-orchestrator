@@ -793,7 +793,8 @@ export interface paths {
         delete: operations["closeShellTerminal"];
         options?: never;
         head?: never;
-        patch?: never;
+        /** Rename a standalone shell terminal tab */
+        patch: operations["renameShellTerminal"];
         trace?: never;
     };
 }
@@ -1420,6 +1421,10 @@ export interface components {
         UpdateProjectSettingsInput: {
             config: components["schemas"]["ProjectConfig"];
             displayName: string;
+        };
+        UpdateShellTerminalRequest: {
+            /** @description New tab title for the shell terminal. Trimmed; must be non-empty. */
+            title: string;
         };
         WorkspaceFileResponse: {
             additions: number;
@@ -4208,6 +4213,69 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    renameShellTerminal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Shell terminal runtime handle identifier. */
+                handleId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateShellTerminalRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShellTerminalEnvelope"];
+                };
             };
             /** @description Bad Request */
             400: {

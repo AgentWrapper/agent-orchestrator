@@ -2158,6 +2158,56 @@ paths:
       summary: Close a standalone shell terminal and destroy its PTY
       tags:
       - shellTerminals
+    patch:
+      operationId: renameShellTerminal
+      parameters:
+      - description: Shell terminal runtime handle identifier.
+        in: path
+        name: handleId
+        required: true
+        schema:
+          description: Shell terminal runtime handle identifier.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateShellTerminalRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShellTerminalEnvelope'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Rename a standalone shell terminal tab
+      tags:
+      - shellTerminals
 components:
   schemas:
     APIError:
@@ -3759,6 +3809,14 @@ components:
       required:
       - displayName
       - config
+      type: object
+    UpdateShellTerminalRequest:
+      properties:
+        title:
+          description: New tab title for the shell terminal. Trimmed; must be non-empty.
+          type: string
+      required:
+      - title
       type: object
     WorkspaceFileResponse:
       properties:

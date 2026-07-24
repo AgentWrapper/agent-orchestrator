@@ -20,6 +20,7 @@ import (
 type ShellTerminalService interface {
 	OpenShellTerminal(ctx context.Context, in shelltermsvc.OpenShellTerminalInput) (shelltermsvc.ShellTerminal, error)
 	ListShellTerminalsForCurrentAppRun(ctx context.Context) ([]shelltermsvc.ShellTerminal, error)
+	RenameShellTerminal(ctx context.Context, handleID, title string) (shelltermsvc.ShellTerminal, error)
 	CloseShellTerminal(ctx context.Context, handleID string) error
 }
 
@@ -33,6 +34,7 @@ type ShellTerminalsController struct {
 func (c *ShellTerminalsController) Register(r chi.Router) {
 	r.Get("/shell-terminals", c.list)
 	r.Post("/shell-terminals", c.open)
+	r.Patch("/shell-terminals/{handleId}", c.rename)
 	r.Delete("/shell-terminals/{handleId}", c.close)
 }
 
@@ -71,6 +73,26 @@ func (c *ShellTerminalsController) open(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	envelope.WriteJSON(w, http.StatusCreated, ShellTerminalEnvelope{
+		ShellTerminal: shellTerminalResponse(terminal),
+	})
+}
+
+func (c *ShellTerminalsController) rename(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "PATCH", "/api/v1/shell-terminals/{handleId}")
+		return
+	}
+	var req UpdateShellTerminalRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	terminal, err := c.Svc.RenameShellTerminal(r.Context(), chi.URLParam(r, "handleId"), req.Title)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, ShellTerminalEnvelope{
 		ShellTerminal: shellTerminalResponse(terminal),
 	})
 }

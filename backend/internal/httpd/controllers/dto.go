@@ -650,6 +650,11 @@ type OpenShellTerminalRequest struct {
 	ProjectID string `json:"projectId,omitempty" description:"Project whose root the shell starts in. Omitted opens the shell in the daemon data dir."`
 }
 
+// UpdateShellTerminalRequest is the body of PATCH /api/v1/shell-terminals/{handleId}.
+type UpdateShellTerminalRequest struct {
+	Title string `json:"title" description:"New tab title for the shell terminal. Trimmed; must be non-empty."`
+}
+
 // ShellTerminalResponse is one standalone shell terminal. HandleID is what the
 // client opens on the terminal mux, exactly as it would a session's pane.
 type ShellTerminalResponse struct {

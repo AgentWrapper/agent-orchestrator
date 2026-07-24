@@ -113,3 +113,30 @@ export function useCloseShellTerminal() {
 		},
 	});
 }
+
+export type RenameShellTerminalInput = { handleId: string; title: string };
+
+/** Renames a shell terminal's tab. The new title persists on the daemon. */
+export function useRenameShellTerminal() {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: async ({ handleId, title }: RenameShellTerminalInput): Promise<ShellTerminal> => {
+			if (usePreviewData) {
+				previewShellTerminals = previewShellTerminals.map((s) => (s.handleId === handleId ? { ...s, title } : s));
+				const shell = previewShellTerminals.find((s) => s.handleId === handleId);
+				if (!shell) throw new Error("No such shell terminal");
+				return shell;
+			}
+			const { data, error } = await apiClient.PATCH("/api/v1/shell-terminals/{handleId}", {
+				params: { path: { handleId } },
+				body: { title },
+			});
+			if (error) throw error;
+			if (!data) throw new Error("Daemon returned no shell terminal");
+			return toShellTerminal(data.shellTerminal);
+		},
+		onSuccess: () => {
+			void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey });
+		},
+	});
+}

@@ -168,3 +168,29 @@ func (q *Queries) SelectShellTerminalsFromPreviousAppRuns(ctx context.Context, a
 	}
 	return items, nil
 }
+
+const updateShellTerminalTitle = `-- name: UpdateShellTerminalTitle :one
+UPDATE shell_terminals
+SET title = ?
+WHERE handle_id = ?
+RETURNING handle_id, project_id, working_dir, title, app_run_id, created_at
+`
+
+type UpdateShellTerminalTitleParams struct {
+	Title    string
+	HandleID string
+}
+
+func (q *Queries) UpdateShellTerminalTitle(ctx context.Context, arg UpdateShellTerminalTitleParams) (ShellTerminal, error) {
+	row := q.db.QueryRowContext(ctx, updateShellTerminalTitle, arg.Title, arg.HandleID)
+	var i ShellTerminal
+	err := row.Scan(
+		&i.HandleID,
+		&i.ProjectID,
+		&i.WorkingDir,
+		&i.Title,
+		&i.AppRunID,
+		&i.CreatedAt,
+	)
+	return i, err
+}

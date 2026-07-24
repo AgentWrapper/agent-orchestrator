@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Maximize2, Minimize2, Plus, Shield, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Maximize2, Minimize2, Plus, Shield } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type WheelEvent } from "react";
 import { useOverflowScroll } from "../hooks/useOverflowScroll";
 import { useTruncatedText } from "../hooks/useTruncatedText";
@@ -8,6 +8,7 @@ import { cn } from "../lib/utils";
 import type { Theme } from "../stores/ui-store";
 import type { TerminalTarget } from "../types/terminal";
 import { isOrchestratorSession, type WorkspaceSession } from "../types/workspace";
+import { ShellTerminalTab } from "./ShellTerminalTab";
 import { TerminalPane } from "./TerminalPane";
 
 type CenterPaneProps = {
@@ -21,6 +22,7 @@ type CenterPaneProps = {
 	onSelectSessionTerminal?: () => void;
 	onSelectShellTerminal?: (handleId: string) => void;
 	onCloseShellTerminal?: (handleId: string) => void;
+	onRenameShellTerminal?: (handleId: string, title: string) => void;
 	/** Opens a new standalone shell tab (Superset-style "+" at the end of the tab bar). */
 	onNewShellTerminal?: () => void;
 };
@@ -51,6 +53,7 @@ export function CenterPane({
 	onSelectSessionTerminal,
 	onSelectShellTerminal,
 	onCloseShellTerminal,
+	onRenameShellTerminal,
 	onNewShellTerminal,
 }: CenterPaneProps) {
 	const paneRef = useRef<HTMLDivElement | null>(null);
@@ -155,6 +158,7 @@ export function CenterPane({
 								key={shell.handleId}
 								isActive={target.kind === "shell" && target.handleId === shell.handleId}
 								onClose={() => onCloseShellTerminal?.(shell.handleId)}
+								onRename={onRenameShellTerminal ? (title) => onRenameShellTerminal(shell.handleId, title) : undefined}
 								onSelect={() => onSelectShellTerminal?.(shell.handleId)}
 								shell={shell}
 							/>
@@ -291,52 +295,6 @@ function SessionPaneTab({ label, isActive, onSelect }: SessionPaneTabProps) {
 				type="button"
 			>
 				{label}
-			</button>
-		</span>
-	);
-}
-
-type ShellTerminalTabProps = {
-	shell: ShellTerminal;
-	isActive: boolean;
-	onSelect: () => void;
-	onClose: () => void;
-};
-
-// The close control is a sibling button, not nested inside the tab button —
-// nesting interactive elements is invalid HTML and breaks keyboard traversal.
-// It stays hidden until the tab is hovered or focused (group-focus-within
-// keeps it reachable from the keyboard).
-function ShellTerminalTab({ shell, isActive, onSelect, onClose }: ShellTerminalTabProps) {
-	const { ref, isTruncated } = useTruncatedText<HTMLButtonElement>(shell.title);
-	return (
-		<span
-			className={cn(
-				"group inline-flex min-w-shell-tab-min items-center gap-1 rounded-md px-2 py-1 transition-colors",
-				isActive ? "bg-interactive-active" : "hover:bg-interactive-hover/60",
-			)}
-		>
-			<button
-				ref={ref}
-				aria-current={isActive}
-				className={cn(
-					"min-w-flex-min max-w-shell-tab-max truncate font-mono text-control font-semibold transition-colors",
-					isActive ? "text-foreground" : "text-passive hover:text-foreground",
-				)}
-				onClick={onSelect}
-				title={isTruncated ? shell.title : shell.workingDir}
-				type="button"
-			>
-				{shell.title}
-			</button>
-			<button
-				aria-label={`Close terminal ${shell.title}`}
-				className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-passive opacity-0 transition-[background,color,opacity] group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
-				onClick={onClose}
-				title="Close terminal"
-				type="button"
-			>
-				<X aria-hidden="true" className="size-icon-sm" />
 			</button>
 		</span>
 	);

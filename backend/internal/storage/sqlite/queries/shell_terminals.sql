@@ -21,6 +21,12 @@ FROM shell_terminals
 WHERE app_run_id <> ?
 ORDER BY created_at;
 
+-- name: UpdateShellTerminalTitle :one
+UPDATE shell_terminals
+SET title = ?
+WHERE handle_id = ?
+RETURNING *;
+
 -- name: DeleteShellTerminalByHandleID :execrows
 DELETE FROM shell_terminals
 WHERE handle_id = ?;
