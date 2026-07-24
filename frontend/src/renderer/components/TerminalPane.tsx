@@ -23,9 +23,27 @@ type TerminalPaneProps = {
 
 export function TerminalPane({ session, theme, daemonReady, terminalTarget, fontSize }: TerminalPaneProps) {
 	const terminalKey =
-		terminalTarget?.kind === "reviewer" ? terminalTarget.handleId : (session?.terminalHandleId ?? "empty");
+		terminalTarget?.kind === "reviewer" || terminalTarget?.kind === "shell"
+			? terminalTarget.handleId
+			: (session?.terminalHandleId ?? "empty");
 
 	if (!window.ao) {
+		// A standalone shell has no agent and no branch, so it previews as a plain
+		// prompt rather than borrowing the session's agent transcript.
+		if (terminalTarget?.kind === "shell") {
+			return (
+				<pre
+					className="h-full overflow-auto bg-terminal p-4 font-mono leading-relaxed text-terminal"
+					style={{ fontSize }}
+				>
+					<span className="text-terminal-dim">{terminalTarget.title}</span> $ {"\n"}
+					<span className="text-terminal-dim">
+						{"(standalone shell — a live PTY here in the desktop app)"}
+						{"\n"}
+					</span>
+				</pre>
+			);
+		}
 		const provider = terminalTarget?.kind === "reviewer" ? terminalTarget.harness : (session?.provider ?? "claude");
 		const lines =
 			terminalTarget?.kind === "reviewer" ? reviewerPreviewLines(session) : workerPreviewLines(session, provider);
@@ -36,7 +54,8 @@ export function TerminalPane({ session, theme, daemonReady, terminalTarget, font
 				style={{ fontSize }}
 			>
 				<span className="text-terminal-dim">~/{session?.workspaceName ?? "reverbcode"}</span>{" "}
-				<span className="text-accent">{session?.branch || "main"}</span> $ {provider}
+				{session?.branch ? <span className="text-accent">{session.branch}</span> : null}
+				{session?.branch ? " " : ""}$ {provider}
 				{"\n"}
 				{lines.map((line, index) => (
 					<span
@@ -216,11 +235,16 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	const [restoreUnavailable, setRestoreUnavailable] = useState(false);
 	const queryClient = useQueryClient();
 	const restoreSessionById = useRestoreSession();
-	const { attach, state, error } = useTerminalSession(attachSession, { daemonReady });
-	const handleId = attachSession?.terminalHandleId;
+	// A shell pane has no session, so it hands the hook its handle directly
+	// instead of reading one off `attachSession`.
+	const shellTerminalHandleId = terminalTarget?.kind === "shell" ? terminalTarget.handleId : undefined;
+	const { attach, state, error } = useTerminalSession(attachSession, { daemonReady, shellTerminalHandleId });
+	const handleId = shellTerminalHandleId ?? attachSession?.terminalHandleId;
 	const provider = terminalTarget?.kind === "reviewer" ? terminalTarget.harness : session?.provider;
 	const hadAttachmentRef = useRef(false);
-	const canRestoreSession = terminalTarget?.kind !== "reviewer" && session?.status === "terminated";
+	// A standalone shell is never restorable: there is no session row to restore.
+	const canRestoreSession =
+		terminalTarget?.kind !== "reviewer" && terminalTarget?.kind !== "shell" && session?.status === "terminated";
 
 	const handleReady = useCallback((handle: AttachableTerminal) => {
 		setTerminal(handle);
@@ -307,8 +331,8 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	const emptyStateTitle = session ? "Starting session" : "Agent Orchestrator";
 	const emptyStateMessage = session
 		? session.kind === "orchestrator"
-			? "Preparing the orchestrator terminal. This can take a moment while AO creates the worktree and starts the agent."
-			: "Preparing the worker terminal. This can take a moment while AO creates the worktree and starts the agent."
+			? "Preparing the orchestrator terminal. This can take a moment while AO creates the workspace and starts the agent."
+			: "Preparing the worker terminal. This can take a moment while AO creates the workspace and starts the agent."
 		: "No session selected. Pick a worker to attach its terminal.";
 
 	return (
@@ -319,12 +343,18 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 					error={restoreError}
 					isRestoring={isRestoring}
 					onRestore={restoreSession}
-					variant={terminalTarget?.kind === "reviewer" ? "reviewer" : "session"}
+					variant={
+						terminalTarget?.kind === "reviewer" ? "reviewer" : terminalTarget?.kind === "shell" ? "shell" : "session"
+					}
 				/>
 			)}
-			<div className="relative min-h-0 flex-1">
+			{/* p-2 keeps the xterm content off the pane edges; the host fills the
+			    remaining content box, so FitAddon still measures it correctly and
+			    the absolute overlays (empty state, banner) keep covering the
+			    full padding box. */}
+			<div className="relative min-h-0 flex-1 p-2">
 				<XtermTerminal
-					ariaLabel="Session terminal"
+					ariaLabel={terminalTarget?.kind === "shell" ? "Shell terminal" : "Session terminal"}
 					fontSize={fontSize}
 					onError={handleInitError}
 					onLinkOpen={handleLinkOpen}
@@ -365,7 +395,7 @@ type TerminalEndedStripProps = {
 	error?: string;
 	isRestoring: boolean;
 	onRestore: () => void;
-	variant: "reviewer" | "session";
+	variant: "reviewer" | "session" | "shell";
 };
 
 function TerminalEndedStrip({ canRestore, error, isRestoring, onRestore, variant }: TerminalEndedStripProps) {
@@ -373,7 +403,9 @@ function TerminalEndedStrip({ canRestore, error, isRestoring, onRestore, variant
 		? "Restore the session to attach a live terminal and continue writing."
 		: variant === "reviewer"
 			? "This reviewer terminal has ended. Re-run review from the summary panel, or switch back to the agent terminal."
-			: "This terminal process ended, but the session is not marked terminated yet.";
+			: variant === "shell"
+				? "This shell exited. Close the tab, or open a new terminal."
+				: "This terminal process ended, but the session is not marked terminated yet.";
 
 	return (
 		<div className="shrink-0 border-b border-border bg-surface/80 px-4 py-2">

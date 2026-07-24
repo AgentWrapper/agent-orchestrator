@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -77,6 +78,17 @@ func (s *Service) ListWorkspaceFiles(ctx context.Context, id domain.SessionID) (
 	if err != nil {
 		return WorkspaceFiles{}, err
 	}
+	scratch, err := s.isScratchSession(ctx, rec)
+	if err != nil {
+		return WorkspaceFiles{}, err
+	}
+	if scratch {
+		files, truncated, err := scratchWorkspaceFiles(rec.Metadata.WorkspacePath)
+		if err != nil {
+			return WorkspaceFiles{}, err
+		}
+		return WorkspaceFiles{SessionID: id, Files: files, Truncated: truncated}, nil
+	}
 	statuses, counts, err := workspaceChangeMaps(ctx, rec.Metadata.WorkspacePath)
 	if err != nil {
 		return WorkspaceFiles{}, err
@@ -116,6 +128,13 @@ func (s *Service) GetWorkspaceFile(ctx context.Context, id domain.SessionID, raw
 	rel, err := cleanWorkspaceRelativePath(rawPath)
 	if err != nil {
 		return WorkspaceFileDetail{}, err
+	}
+	scratch, err := s.isScratchSession(ctx, rec)
+	if err != nil {
+		return WorkspaceFileDetail{}, err
+	}
+	if scratch {
+		return scratchWorkspaceFile(rec.Metadata.WorkspacePath, id, rel)
 	}
 	statuses, counts, err := workspaceChangeMaps(ctx, rec.Metadata.WorkspacePath)
 	if err != nil {
@@ -175,6 +194,167 @@ func (s *Service) sessionWorkspaceRecord(ctx context.Context, id domain.SessionI
 		return domain.SessionRecord{}, apierr.NotFound("SESSION_WORKSPACE_NOT_FOUND", "Session workspace not found")
 	}
 	return rec, nil
+}
+
+func (s *Service) isScratchSession(ctx context.Context, rec domain.SessionRecord) (bool, error) {
+	if s.store == nil || rec.ProjectID == "" {
+		return false, nil
+	}
+	project, ok, err := s.store.GetProject(ctx, string(rec.ProjectID))
+	if err != nil {
+		return false, fmt.Errorf("get project %s: %w", rec.ProjectID, err)
+	}
+	if !ok {
+		return false, nil
+	}
+	return project.Kind.WithDefault() == domain.ProjectKindScratch, nil
+}
+
+func scratchWorkspaceFiles(root string) ([]WorkspaceFileSummary, bool, error) {
+	rootResolved, err := resolvedWorkspaceRoot(root)
+	if err != nil {
+		return nil, false, err
+	}
+	var files []WorkspaceFileSummary
+	truncated := false
+	err = filepath.WalkDir(rootResolved, func(fullPath string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if fullPath == rootResolved {
+			return nil
+		}
+		relPath, err := filepath.Rel(rootResolved, fullPath)
+		if err != nil {
+			return err
+		}
+		rel := filepath.ToSlash(relPath)
+		if rel == ".git" || strings.HasPrefix(rel, ".git/") {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		info, include, err := scratchWorkspaceFileInfo(rootResolved, fullPath, entry)
+		if err != nil {
+			return err
+		}
+		if !include {
+			return nil
+		}
+		if len(files) >= maxWorkspaceFiles {
+			truncated = true
+			return filepath.SkipAll
+		}
+		_, binary, _, err := readWorkspaceTextFile(fullPath, 8192)
+		if err != nil {
+			return err
+		}
+		files = append(files, WorkspaceFileSummary{
+			Path:      rel,
+			Status:    WorkspaceFileAdded,
+			Additions: 0,
+			Deletions: 0,
+			Size:      info.Size(),
+			Binary:    binary,
+		})
+		return nil
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+	return files, truncated, nil
+}
+
+func scratchWorkspaceFile(root string, id domain.SessionID, rel string) (WorkspaceFileDetail, error) {
+	file, info, err := confinedWorkspaceFile(root, rel)
+	if err != nil {
+		return WorkspaceFileDetail{}, err
+	}
+	content, binary, truncated, err := readWorkspaceTextFile(file, maxWorkspaceFileBytes)
+	if err != nil {
+		return WorkspaceFileDetail{}, err
+	}
+	additions := 0
+	if !binary {
+		additions = textLineCount(content)
+	}
+	detail := WorkspaceFileDetail{
+		SessionID:        id,
+		Path:             rel,
+		Status:           WorkspaceFileAdded,
+		Additions:        additions,
+		Deletions:        0,
+		Size:             info.Size(),
+		Binary:           binary,
+		ContentTruncated: truncated,
+	}
+	if !binary {
+		detail.Content = content
+	}
+	return detail, nil
+}
+
+func resolvedWorkspaceRoot(root string) (string, error) {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return "", apierr.NotFound("SESSION_WORKSPACE_NOT_FOUND", "Session workspace not found")
+	}
+	rootResolved, err := resolvedFilesystemPath(rootAbs)
+	if err != nil {
+		return "", apierr.NotFound("SESSION_WORKSPACE_NOT_FOUND", "Session workspace not found")
+	}
+	info, err := os.Stat(rootResolved)
+	if err != nil || !info.IsDir() {
+		return "", apierr.NotFound("SESSION_WORKSPACE_NOT_FOUND", "Session workspace not found")
+	}
+	return rootResolved, nil
+}
+
+func scratchWorkspaceFileInfo(rootResolved, fullPath string, entry fs.DirEntry) (os.FileInfo, bool, error) {
+	info, err := entry.Info()
+	if err != nil {
+		return nil, false, err
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		if !info.Mode().IsRegular() {
+			return nil, false, nil
+		}
+		abs, err := filepath.Abs(fullPath)
+		if err != nil {
+			return nil, false, err
+		}
+		if !pathWithin(rootResolved, abs) {
+			return nil, false, nil
+		}
+		return info, true, nil
+	}
+	targetInfo, ok := statScratchFileTarget(fullPath)
+	if !ok {
+		return nil, false, nil
+	}
+	resolved, ok := resolvedScratchPath(fullPath)
+	if !ok {
+		return nil, false, nil
+	}
+	if !pathWithin(rootResolved, resolved) {
+		return nil, false, nil
+	}
+	return targetInfo, true, nil
+}
+
+func statScratchFileTarget(filePath string) (os.FileInfo, bool) {
+	info, err := os.Stat(filePath)
+	return info, err == nil && !info.IsDir()
+}
+
+func resolvedScratchPath(filePath string) (string, bool) {
+	resolved, err := resolvedFilesystemPath(filePath)
+	return resolved, err == nil
 }
 
 func workspaceGitFiles(ctx context.Context, root string) ([]string, bool, error) {
@@ -324,7 +504,7 @@ func workspaceFileDiff(ctx context.Context, root, rel string, status WorkspaceFi
 		truncatedDiff, truncated := truncateUTF8(diff, maxWorkspaceDiffBytes)
 		return truncatedDiff, truncated, nil
 	}
-	out, err := gitWorkspaceOutput(ctx, root, "diff", "--no-ext-diff", "--unified=80", "HEAD", "--", rel)
+	out, err := gitWorkspaceOutput(ctx, root, "diff", "--no-ext-diff", "--unified=3", "HEAD", "--", rel)
 	if err != nil {
 		return "", false, err
 	}
@@ -458,7 +638,14 @@ func countUntrackedTextLines(root, rel string) (int, bool) {
 	if content == "" {
 		return 0, true
 	}
-	return strings.Count(content, "\n") + btoi(!strings.HasSuffix(content, "\n")), true
+	return textLineCount(content), true
+}
+
+func textLineCount(content string) int {
+	if content == "" {
+		return 0
+	}
+	return strings.Count(content, "\n") + btoi(!strings.HasSuffix(content, "\n"))
 }
 
 func truncateUTF8(in string, limit int) (string, bool) {

@@ -331,13 +331,13 @@ describe("SessionInspector Activity section", () => {
 			/>,
 		);
 
-		const worktreeRow = activitySection()
-			.getByText(/Created worktree/)
+		const workspaceRow = activitySection()
+			.getByText(/Created workspace/)
 			.closest("[data-testid='inspector-timeline-event']") as HTMLElement;
-		const worktreeMarker = worktreeRow.querySelector("span[aria-hidden='true'].rounded-full") as HTMLElement;
-		expect(worktreeMarker.parentElement).toHaveClass("relative", "flex", "items-center");
-		expect(worktreeMarker).toHaveClass("top-1.5");
-		expect(worktreeMarker).not.toHaveClass("top-1/2", "-translate-y-1/2");
+		const workspaceMarker = workspaceRow.querySelector("span[aria-hidden='true'].rounded-full") as HTMLElement;
+		expect(workspaceMarker.parentElement).toHaveClass("relative", "flex", "items-center");
+		expect(workspaceMarker).toHaveClass("top-1.5");
+		expect(workspaceMarker).not.toHaveClass("top-1/2", "-translate-y-1/2");
 
 		const activityRow = activitySection()
 			.getByText("Idle")
@@ -347,7 +347,7 @@ describe("SessionInspector Activity section", () => {
 		expect(activityMarker).toHaveClass("top-1/2", "-translate-y-1/2");
 	});
 
-	it("keeps worktree, PR, and SCM context rows in the Activity timeline", () => {
+	it("keeps workspace, PR, and SCM context rows in the Activity timeline", () => {
 		renderWithQuery(
 			<SessionInspector
 				session={session([pr(7, "open", { ci: "failing", review: "changes_requested" })], {
@@ -357,7 +357,7 @@ describe("SessionInspector Activity section", () => {
 			/>,
 		);
 
-		expect(activitySection().getByText(/Created worktree/)).toBeInTheDocument();
+		expect(activitySection().getByText(/Created workspace/)).toBeInTheDocument();
 		expect(activitySection().getByText("Opened")).toBeInTheDocument();
 		expect(activitySection().getByText("PR #7")).toBeInTheDocument();
 		const activityRow = activitySection()
@@ -387,7 +387,7 @@ describe("SessionInspector Activity section", () => {
 			row.textContent?.replace(/\s+/g, " ").trim(),
 		);
 		expect(rows).toEqual([
-			"Created worktree & branch3h ago",
+			"Created workspace3h ago",
 			"Draft PR #42",
 			"Opened PR #41",
 			"Opened PR #40",
@@ -410,6 +410,13 @@ describe("SessionInspector tabs", () => {
 
 		expect(screen.getByText("Issue")).toBeInTheDocument();
 		expect(screen.getByText("github:acme/project-one#42")).toBeInTheDocument();
+	});
+
+	it("omits the branch overview row when the session has no branch", () => {
+		renderWithQuery(<SessionInspector session={session([], { branch: undefined })} />);
+
+		expect(screen.queryByText("Branch")).not.toBeInTheDocument();
+		expect(screen.queryByText("session/sess-1")).not.toBeInTheDocument();
 	});
 });
 
@@ -494,6 +501,63 @@ describe("SessionInspector reviews tab", () => {
 		expect(screen.getByRole("button", { name: "Re-run review" })).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Run" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Re-run" })).not.toBeInTheDocument();
+	});
+
+	it.each([
+		["needs_review", "changes_requested", "Changes requested", "Not run", "Run review"],
+		["running", "approved", "Approved", "Reviewing...", "Cancel review"],
+	] as const)(
+		"shows the previous verdict while the current head is %s without changing its current status",
+		async (status, previousVerdict, previousLabel, currentLabel, actionLabel) => {
+			const current = {
+				...reviewState(3, status, "sha-current"),
+				previousRun: {
+					...approvedReview,
+					id: "run-previous",
+					status: "delivered",
+					verdict: previousVerdict,
+					targetSha: "sha-previous",
+				},
+			};
+			if (status === "running") {
+				current.latestRun = {
+					...approvedReview,
+					id: "run-current",
+					status: "running",
+					verdict: "",
+					targetSha: "sha-current",
+				};
+			}
+			mockCommonGets([], "reviewer-pane", [current]);
+
+			renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+			await openReviewsTab();
+
+			const previous = await screen.findByText(`Previous: ${previousLabel}`);
+			expect(within(previous.parentElement as HTMLElement).getByText(currentLabel)).toBeInTheDocument();
+			expect(screen.getByRole("button", { name: actionLabel })).toBeInTheDocument();
+		},
+	);
+
+	it("hides the previous verdict after the current head review completes", async () => {
+		const current = {
+			...reviewState(3, "up_to_date", "sha-current"),
+			previousRun: {
+				...approvedReview,
+				id: "run-previous",
+				status: "delivered",
+				verdict: "changes_requested",
+				targetSha: "sha-previous",
+			},
+		};
+		mockCommonGets([], "reviewer-pane", [current]);
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsTab();
+
+		expect(await screen.findAllByText("Approved")).not.toHaveLength(0);
+		expect(screen.queryByText(/Previous:/)).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Re-run review" })).toBeInTheDocument();
 	});
 
 	it("shows a no-needed-reviews notice instead of opening the terminal when the backend reuses runs", async () => {

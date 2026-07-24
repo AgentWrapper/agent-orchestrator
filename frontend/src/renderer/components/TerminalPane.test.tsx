@@ -95,7 +95,7 @@ describe("TerminalPane empty states", () => {
 			expect(screen.getByText("Starting session")).toBeInTheDocument();
 			expect(
 				screen.getByText(
-					"Preparing the worker terminal. This can take a moment while AO creates the worktree and starts the agent.",
+					"Preparing the worker terminal. This can take a moment while AO creates the workspace and starts the agent.",
 				),
 			).toBeInTheDocument();
 			expect(screen.queryByText("No session selected. Pick a worker to attach its terminal.")).not.toBeInTheDocument();
@@ -110,7 +110,7 @@ describe("TerminalPane empty states", () => {
 			expect(screen.getByText("Starting session")).toBeInTheDocument();
 			expect(
 				screen.getByText(
-					"Preparing the orchestrator terminal. This can take a moment while AO creates the worktree and starts the agent.",
+					"Preparing the orchestrator terminal. This can take a moment while AO creates the workspace and starts the agent.",
 				),
 			).toBeInTheDocument();
 			expect(screen.queryByText(/worker terminal/i)).not.toBeInTheDocument();

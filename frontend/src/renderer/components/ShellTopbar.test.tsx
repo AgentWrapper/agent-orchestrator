@@ -185,6 +185,13 @@ describe("ShellTopbar status pill", () => {
 		renderTopbar(sessionWith({ activity: { state: "unknown", lastActivityAt: "" } }));
 		expect(screen.getByText("Unknown")).toBeInTheDocument();
 	});
+
+	it("does not synthesize branch text for branchless sessions", () => {
+		renderTopbar(sessionWith({ branch: undefined }));
+
+		expect(screen.queryByText("session/sess-1")).not.toBeInTheDocument();
+		expect(screen.getByText("Working")).toBeInTheDocument();
+	});
 });
 
 describe("ShellTopbar orchestrator actions", () => {

@@ -82,9 +82,10 @@ export type AgentProvider =
 	| "kilocode"
 	| "vibe"
 	| "pi"
-	| "autohand";
+	| "autohand"
+	| "fake";
 
-/** A file in a worker's worktree diff (drives the Git review rail). */
+/** A file changed in a worker workspace (drives the review rail). */
 export type ChangedFile = {
 	path: string;
 	additions: number;
@@ -124,7 +125,7 @@ export type WorkspaceSession = {
 	issueId?: string;
 	provider: AgentProvider;
 	kind?: SessionKind;
-	branch: string;
+	branch?: string;
 	status: SessionStatus;
 	/** ISO timestamp from the daemon — used for relative time in the inspector. */
 	createdAt?: string;
@@ -176,7 +177,13 @@ export function canonicalTrackerIssueId(issueId?: string): string | undefined {
 	return TRACKER_PROVIDER_PREFIXES.some((prefix) => issueId.startsWith(prefix)) ? issueId : undefined;
 }
 
-export type ProjectKind = "single_repo" | "workspace";
+export type ProjectKind = "single_repo" | "workspace" | "scratch";
+
+const projectKinds = new Set<ProjectKind>(["single_repo", "workspace", "scratch"]);
+
+export function toProjectKind(kind?: string): ProjectKind | undefined {
+	return projectKinds.has(kind as ProjectKind) ? (kind as ProjectKind) : undefined;
+}
 
 export type WorkspaceRepoSummary = {
 	name: string;
@@ -338,7 +345,10 @@ export type OrchestratorHealth =
 
 export function orchestratorHealth(workspace: WorkspaceSummary, restarting = false): OrchestratorHealth {
 	if (restarting) {
-		return { state: "restarting", message: "Restarting orchestrator. New tasks wait until the replacement is ready." };
+		return {
+			state: "restarting",
+			message: "Restarting orchestrator. New tasks wait until the replacement is ready.",
+		};
 	}
 	const active = workspace.sessions.filter((session) => isOrchestratorSession(session) && sessionIsActive(session));
 	if (active.length > 1) {
@@ -385,6 +395,7 @@ export function toAgentProvider(provider?: string): AgentProvider {
 		case "vibe":
 		case "pi":
 		case "autohand":
+		case "fake":
 			return provider;
 		default:
 			return "codex";

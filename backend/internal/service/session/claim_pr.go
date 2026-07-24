@@ -26,7 +26,7 @@ var (
 	ErrSCMUnavailable = errors.New("session: scm unavailable")
 	// ErrProjectMismatch is returned when the PR repository does not match the session project repository.
 	ErrProjectMismatch = errors.New("session: pr project mismatch")
-	// ErrSessionNotClaimable is returned when an orchestrator session tries to claim a PR.
+	// ErrSessionNotClaimable is returned when a session is not allowed to claim a PR.
 	ErrSessionNotClaimable = errors.New("session: not claimable")
 	// ErrSessionNoWorkspace is returned when a session has no workspace path to associate with PR work.
 	ErrSessionNoWorkspace = errors.New("session: no workspace")
@@ -81,6 +81,9 @@ func (s *Service) ClaimPR(ctx context.Context, id domain.SessionID, ref string, 
 	}
 	if !ok {
 		return ClaimPRResult{}, apierr.Invalid("PROJECT_NOT_RESOLVABLE", "Project is not registered or has no repo — register it with `ao project add`", nil)
+	}
+	if project.Kind.WithDefault() == domain.ProjectKindScratch {
+		return ClaimPRResult{}, ErrSessionNotClaimable
 	}
 	prURL, number, err := normalizePRRef(ref, project.RepoOriginURL)
 	if err != nil {
@@ -240,6 +243,7 @@ func claimRowsFromSCM(sessionID domain.SessionID, obs ports.SCMObservation, now 
 			Author:      review.Author,
 			State:       domain.ReviewDecision(firstNonEmpty(review.State, string(domain.ReviewNone))),
 			URL:         review.URL,
+			Body:        review.Body,
 			IsBot:       review.IsBot,
 			SubmittedAt: submittedAt,
 		})

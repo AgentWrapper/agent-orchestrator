@@ -103,6 +103,10 @@ func (s *stubWorkspace) ApplyPreserved(_ context.Context, _ ports.WorkspaceInfo,
 	return nil
 }
 
+func (s *stubWorkspace) AddExclude(_ context.Context, _ ports.WorkspaceInfo, _ ...string) error {
+	return nil
+}
+
 type captureMessenger struct{ msgs []string }
 
 func (c *captureMessenger) Send(_ context.Context, _ domain.SessionID, msg string) error {
@@ -153,7 +157,7 @@ func newStack(t *testing.T) *stack {
 func TestSpawnPRKillRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	st := newStack(t)
-	sess, err := st.sm.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Branch: "b", Prompt: "do it"})
+	sess, _, _, err := st.sm.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Branch: "b", Prompt: "do it"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +191,7 @@ func TestSpawnPRKillRoundTrip(t *testing.T) {
 func TestRestoreRoundTripPreservesMetadata(t *testing.T) {
 	ctx := context.Background()
 	st := newStack(t)
-	sess, err := st.sm.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Branch: "b", Prompt: "prompt"})
+	sess, _, _, err := st.sm.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Branch: "b", Prompt: "prompt"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,7 +315,7 @@ func TestCDCPollerReceivesSessionAndPREvents(t *testing.T) {
 	var got []cdc.Event
 	b.Subscribe(func(e cdc.Event) { got = append(got, e) })
 	poller := cdc.NewPoller(st.store, b, cdc.PollerConfig{})
-	sess, err := st.sm.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	sess, _, _, err := st.sm.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if err != nil {
 		t.Fatal(err)
 	}

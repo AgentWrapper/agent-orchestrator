@@ -1382,6 +1382,92 @@ func TestDiscoverSubjects_BackfillsRepoOriginURL(t *testing.T) {
 	}
 }
 
+// TestPoll_StaleOpenPRForcedRefreshAfterMaxAge verifies that an open PR whose
+// LastPRFetchAt is zero (never fetched) is re-fetched even when both the repo
+// ETag guard and the commit checks guard return NotModified. This covers the
+// post-merge stale-ETag scenario where the PR has been merged server-side but
+// the provider ETag signals no change.
+func TestPoll_StaleOpenPRForcedRefreshAfterMaxAge(t *testing.T) {
+	store := testStoreWithSession()
+	local := knownPR(1)
+	// Fully-populated open PR — all hashes set, not merged, not closed.
+	local.Merged = false
+	local.Closed = false
+	store.prs["p-1"] = []domain.PullRequest{local}
+
+	// Provider: both guards return NotModified, but the observation reports merged.
+	mergedObs := testObs(1)
+	mergedObs.PR.Merged = true
+	mergedObs.PR.State = "merged"
+
+	repoKey := prKey(testRepo, 0)
+	commitCacheKey := commitKey(testRepo, "sha1")
+
+	provider := &fakeProvider{
+		repoGuards:  map[string]ports.SCMGuardResult{repoKey: {ETag: "v1", NotModified: true}},
+		checkGuards: map[string]ports.SCMGuardResult{commitCacheKey: {ETag: "ci1", NotModified: true}},
+		observations: map[string]ports.SCMObservation{
+			prKey(testRepo, 1): mergedObs,
+		},
+	}
+
+	now := time.Unix(1000, 0).UTC()
+	obs := newTestObserver(store, provider, &fakeLifecycle{}, now)
+	// Pre-seed ETags so both guards fire NotModified.
+	obs.Cache.RepoPRListETag[repoKey] = "v1"
+	obs.Cache.CommitChecksETag[commitCacheKey] = "ci1"
+	// Leave LastPRFetchAt empty (zero time) for the PR key — forces refresh.
+
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(provider.fetchBatches) != 1 {
+		t.Fatalf("expected 1 fetch batch (stale PR forced refresh), got %d: %#v", len(provider.fetchBatches), provider.fetchBatches)
+	}
+	var mergedWrite *fakeWrite
+	for i := range store.writes {
+		if store.writes[i].pr.Number == 1 && store.writes[i].pr.Merged {
+			mergedWrite = &store.writes[i]
+			break
+		}
+	}
+	if mergedWrite == nil {
+		t.Fatalf("expected a write with pr.Merged==true, got writes: %#v", store.writes)
+	}
+
+	// Now simulate a recent fetch: set LastPRFetchAt to now and poll again.
+	// The PR is now merged in the store, so openTrackedPRs will not include it.
+	// Reset the store to still have the open PR so we test the max-age guard specifically.
+	store.writes = nil
+	provider.fetchBatches = nil
+	store.prs["p-1"] = []domain.PullRequest{local} // restore open PR
+	obs.Cache.LastPRFetchAt[prKey(testRepo, 1)] = now
+
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(provider.fetchBatches) != 0 {
+		t.Fatalf("expected no fetch batch within max-age window, got %d: %#v", len(provider.fetchBatches), provider.fetchBatches)
+	}
+
+	// Backdate the last fetch beyond DefaultPRMaxAge. This is the behavior the PR
+	// actually adds: the max-age guard (not the never-fetched branch) forces a
+	// refetch. The clock is pinned, so parts 1 and 2 only cover last.IsZero() and
+	// a zero elapsed time; without this, deleting the `> DefaultPRMaxAge` compare
+	// would still pass.
+	store.writes = nil
+	provider.fetchBatches = nil
+	store.prs["p-1"] = []domain.PullRequest{local} // restore open PR
+	obs.Cache.LastPRFetchAt[prKey(testRepo, 1)] = now.Add(-(DefaultPRMaxAge + time.Minute))
+
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(provider.fetchBatches) != 1 {
+		t.Fatalf("expected forced refresh once older than DefaultPRMaxAge, got %d: %#v", len(provider.fetchBatches), provider.fetchBatches)
+	}
+}
+
 // TestDiscoverSubjects_NonGitPathDoesNotBackfill confirms the backfill is
 // best-effort: a non-git project path leaves RepoOriginURL empty without
 // erroring or persisting a stub, so the project is simply skipped.

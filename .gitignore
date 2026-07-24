@@ -70,6 +70,7 @@ builder-debug.yml
 
 # playwright artifacts
 frontend/test-results/
+/output/
 
 # built daemon binary copied into the frontend bundle dir
 frontend/daemon/
@@ -77,6 +78,9 @@ frontend/daemon/
 # Locally-added agent skills (not for the team)
 .agents/
 skills-lock.json
+
+# e2e pod gate: downloaded pod logs/traces (uploaded as CI artifacts, not committed)
+e2e-artifacts/
 
 # Local pnpm artifacts
 pnpm-lock.yaml

@@ -67,6 +67,7 @@ export type OrchestratorLink = {
 export type ProjectInfo = {
 	id: string;
 	name: string;
+	kind?: "single_repo" | "workspace" | "scratch";
 	sessionPrefix?: string;
 };
 
@@ -118,6 +119,24 @@ type WireSession = {
 	previewUrl?: string;
 	prs?: WirePR[];
 };
+
+type WireProject = {
+	id: string;
+	name: string;
+	kind?: string;
+	sessionPrefix?: string;
+};
+
+function mapProjectKind(kind?: string): ProjectInfo["kind"] {
+	switch (kind) {
+		case "single_repo":
+		case "workspace":
+		case "scratch":
+			return kind;
+		default:
+			return undefined;
+	}
+}
 
 function mapPR(pr: WirePR): DashboardPR {
 	const ci = pr.ci === "passing" || pr.ci === "failing" || pr.ci === "pending" ? pr.ci : "none";
@@ -229,9 +248,10 @@ export async function getProjects(cfg: ServerConfig): Promise<ProjectInfo[]> {
 	const res = await req(cfg, `${API}/projects`);
 	const data = await res.json();
 	const projects = Array.isArray(data?.projects) ? data.projects : [];
-	return projects.map((p: { id: string; name: string; sessionPrefix?: string }) => ({
+	return projects.map((p: WireProject) => ({
 		id: p.id,
 		name: p.name,
+		kind: mapProjectKind(p.kind),
 		sessionPrefix: p.sessionPrefix,
 	}));
 }

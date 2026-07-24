@@ -381,12 +381,12 @@ type fakeSpawner struct {
 	failIssue domain.IssueID
 }
 
-func (f *fakeSpawner) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.Session, error) {
+func (f *fakeSpawner) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.Session, int, int, error) {
 	f.calls = append(f.calls, cfg)
 	if cfg.IssueID == f.failIssue {
-		return domain.Session{}, errors.New("spawn failed")
+		return domain.Session{}, 0, 0, errors.New("spawn failed")
 	}
-	return domain.Session{SessionRecord: domain.SessionRecord{ID: domain.SessionID(string(cfg.ProjectID) + "-1"), ProjectID: cfg.ProjectID, IssueID: cfg.IssueID, Kind: cfg.Kind}}, nil
+	return domain.Session{SessionRecord: domain.SessionRecord{ID: domain.SessionID(string(cfg.ProjectID) + "-1"), ProjectID: cfg.ProjectID, IssueID: cfg.IssueID, Kind: cfg.Kind}}, len(cfg.Prompt), 0, nil
 }
 
 func discardLogger() *slog.Logger {

@@ -78,8 +78,9 @@ const socials = [
 ];
 
 const navLinks = [
-	{ label: "Demo", href: "#see-it" },
-	{ label: "Features", href: "#features" },
+	{ label: "Demo", href: "/#see-it" },
+	{ label: "Features", href: "/#features" },
+	{ label: "Changelog", href: "/changelog" },
 	{ label: "Docs", href: "/docs/" },
 ];
 
@@ -150,7 +151,7 @@ export function LandingNav() {
 					</span>
 				</Link>
 
-				<nav className="absolute left-1/2 hidden -translate-x-1/2 items-center gap-7 md:flex" aria-label="Primary">
+				<nav className="hidden flex-1 items-center justify-center gap-5 md:flex" aria-label="Primary">
 					{navLinks.map((item) =>
 						item.href.startsWith("/") ? (
 							<Link

@@ -5,6 +5,7 @@ import {
 	getApiBaseUrl,
 	hasTrustedApiBaseUrl,
 	normalizeApiOperation,
+	setApiDaemonStatus,
 	setApiBaseUrl,
 	subscribeApiBaseUrl,
 } from "./api-client";
@@ -20,6 +21,7 @@ describe("apiClient runtime base URL", () => {
 	afterEach(() => {
 		vi.restoreAllMocks();
 		setApiBaseUrl("http://127.0.0.1:3001");
+		setApiDaemonStatus({ state: "stopped" });
 	});
 
 	it("rewrites requests to the current runtime daemon port", async () => {
@@ -128,6 +130,19 @@ describe("apiClient runtime base URL", () => {
 		expect(hasTrustedApiBaseUrl()).toBe(false);
 		expect(fetchSpy).not.toHaveBeenCalled();
 	});
+
+	it("returns the current daemon startup failure when the base URL is untrusted", async () => {
+		setApiBaseUrl(null);
+		setApiDaemonStatus({
+			state: "error",
+			code: "exited",
+			message: "AO daemon exited with code 1",
+		});
+
+		const { error } = await apiClient.GET("/api/v1/projects");
+
+		expect(error).toEqual({ code: "exited", message: "AO daemon exited with code 1" });
+	});
 });
 
 describe("subscribeApiBaseUrl", () => {
@@ -221,6 +236,7 @@ describe("api error telemetry", () => {
 		vi.useRealTimers();
 		vi.restoreAllMocks();
 		setApiBaseUrl("http://127.0.0.1:3001");
+		setApiDaemonStatus({ state: "stopped" });
 	});
 
 	it("reports http_5xx with a normalized operation", async () => {

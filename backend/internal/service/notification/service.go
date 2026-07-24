@@ -2,16 +2,19 @@ package notification
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
+	"strings"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 )
 
 const (
-	// DefaultListLimit is the unread notification page size used when none is requested.
-	DefaultListLimit = 50
-	// MaxListLimit caps unread notification API responses.
+	// DefaultListLimit keeps the first dashboard history page bounded.
+	DefaultListLimit = 100
+	// MaxListLimit keeps every notification history page bounded.
 	MaxListLimit = 100
 )
 
@@ -30,21 +33,43 @@ func New(d Deps) *Manager {
 	return &Manager{store: d.Store}
 }
 
-// ListUnread returns unread notifications newest-first.
-func (m *Manager) ListUnread(ctx context.Context, filter ListFilter) ([]Notification, error) {
+// List returns one stable newest-first page of notification history.
+func (m *Manager) List(ctx context.Context, filter ListFilter) (ListPage, error) {
 	if m == nil || m.store == nil {
-		return nil, errors.New("notification: store is required")
+		return ListPage{}, errors.New("notification: store is required")
+	}
+	if filter.Status == "" {
+		filter.Status = ListUnread
+	}
+	if !filter.Status.Valid() {
+		return ListPage{}, apierr.Invalid("INVALID_NOTIFICATION_STATUS", "Notification status must be unread or all", nil)
 	}
 	limit := normalizeLimit(filter.Limit)
-	rows, err := m.store.ListUnreadNotifications(ctx, limit)
+	beforeCreatedAt, beforeID, err := decodeCursor(filter.Cursor)
 	if err != nil {
-		return nil, err
+		return ListPage{}, err
+	}
+	rows, err := m.store.ListNotifications(ctx, filter.Status, beforeCreatedAt, beforeID, limit+1)
+	if err != nil {
+		return ListPage{}, err
+	}
+	unreadCount, err := m.store.CountUnreadNotifications(ctx)
+	if err != nil {
+		return ListPage{}, err
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
 	}
 	out := make([]Notification, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, notificationFromRecord(row))
 	}
-	return out, nil
+	page := ListPage{Notifications: out, UnreadCount: int(unreadCount)}
+	if hasMore {
+		page.NextCursor = encodeCursor(rows[len(rows)-1])
+	}
+	return page, nil
 }
 
 // MarkRead marks one unread notification read.
@@ -65,20 +90,12 @@ func (m *Manager) MarkRead(ctx context.Context, id string) (Notification, bool, 
 	return notificationFromRecord(row), true, nil
 }
 
-// MarkAllRead marks all unread notifications read.
-func (m *Manager) MarkAllRead(ctx context.Context) ([]Notification, error) {
+// MarkAllRead marks all unread notifications read and returns the affected row count.
+func (m *Manager) MarkAllRead(ctx context.Context) (int64, error) {
 	if m == nil || m.store == nil {
-		return nil, errors.New("notification: store is required")
+		return 0, errors.New("notification: store is required")
 	}
-	rows, err := m.store.MarkAllNotificationsRead(ctx)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]Notification, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, notificationFromRecord(row))
-	}
-	return out, nil
+	return m.store.MarkAllNotificationsRead(ctx)
 }
 
 func normalizeLimit(limit int) int {
@@ -89,6 +106,34 @@ func normalizeLimit(limit int) int {
 		return MaxListLimit
 	}
 	return limit
+}
+
+func encodeCursor(rec domain.NotificationRecord) string {
+	value := rec.CreatedAt.UTC().Format(time.RFC3339Nano) + "\n" + rec.ID
+	return base64.RawURLEncoding.EncodeToString([]byte(value))
+}
+
+func decodeCursor(raw string) (time.Time, string, error) {
+	if raw == "" {
+		return time.Time{}, "", nil
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return time.Time{}, "", invalidCursor()
+	}
+	createdAtRaw, id, ok := strings.Cut(string(decoded), "\n")
+	if !ok || id == "" {
+		return time.Time{}, "", invalidCursor()
+	}
+	createdAt, err := time.Parse(time.RFC3339Nano, createdAtRaw)
+	if err != nil {
+		return time.Time{}, "", invalidCursor()
+	}
+	return createdAt.UTC(), id, nil
+}
+
+func invalidCursor() error {
+	return apierr.Invalid("INVALID_NOTIFICATION_CURSOR", "Notification cursor is invalid", nil)
 }
 
 func notificationFromRecord(rec domain.NotificationRecord) Notification {
