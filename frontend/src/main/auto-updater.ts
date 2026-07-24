@@ -370,9 +370,16 @@ function wireUpdaterEvents(): void {
 		// the renderer does not hang.
 		if (isManifest404Error(err)) {
 			console.error("update check failed (404, manifest not found):", err);
-			const terminalState =
-				activeUpdaterOperation === "manual-download" ? { state: "idle" as const } : { state: "not-available" as const };
-			broadcast(withActiveRequest(terminalState));
+			if (activeUpdaterOperation === "manual-download") {
+				broadcast(
+					withActiveRequest({
+						state: "error",
+						message: "Download failed — the update file was not found on the server.",
+					}),
+				);
+			} else {
+				broadcast(withActiveRequest({ state: "idle" }));
+			}
 			return;
 		}
 		// All other errors: broadcast so the user knows something went wrong.
@@ -500,7 +507,7 @@ export async function checkForUpdatesNow(stateDir: string, options: UpdateCheckO
 	} catch (err) {
 		if (isManifest404Error(err)) {
 			console.error("manual update check failed:", err);
-			broadcast({ state: "not-available", requestId: options.requestId });
+			broadcast({ state: "idle", requestId: options.requestId });
 		} else {
 			broadcast({
 				state: "error",
@@ -529,7 +536,11 @@ export async function downloadUpdateNow(requestId?: string): Promise<void> {
 	} catch (err) {
 		if (isManifest404Error(err)) {
 			console.error("update download failed:", err);
-			broadcast({ state: "idle", requestId });
+			broadcast({
+				state: "error",
+				message: "Download failed — the update file was not found on the server.",
+				requestId,
+			});
 		} else {
 			broadcast({ state: "error", message: (err as Error)?.message ?? "Download failed", requestId });
 		}

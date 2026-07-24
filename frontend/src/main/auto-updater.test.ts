@@ -481,7 +481,7 @@ describe("startAutoUpdates", () => {
 		expect(module.getUpdateStatus()).toEqual({ state: "error", message: "manual feed failed" });
 	});
 
-	it("broadcasts not-available on manifest 404 event during manual check", async () => {
+	it("broadcasts idle on manifest 404 event during manual check", async () => {
 		vi.spyOn(console, "error").mockImplementation(() => undefined);
 		const { module, updaterEvents } = await importAutoUpdater();
 		const err = new Error(
@@ -491,10 +491,10 @@ describe("startAutoUpdates", () => {
 		await module.checkForUpdatesNow(stateDir);
 		updaterEvents.get("error")?.(err);
 
-		expect(module.getUpdateStatus()).toEqual({ state: "not-available" });
+		expect(module.getUpdateStatus()).toEqual({ state: "idle" });
 	});
 
-	it("broadcasts idle on manifest 404 event during manual download", async () => {
+	it("broadcasts friendly error on manifest 404 event during manual download", async () => {
 		vi.spyOn(console, "error").mockImplementation(() => undefined);
 		const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
 		const err = new Error(
@@ -507,10 +507,13 @@ describe("startAutoUpdates", () => {
 
 		await module.downloadUpdateNow();
 
-		expect(module.getUpdateStatus()).toEqual({ state: "idle" });
+		expect(module.getUpdateStatus()).toEqual({
+			state: "error",
+			message: "Download failed — the update file was not found on the server.",
+		});
 	});
 
-	it("broadcasts not-available on rejected checkForUpdatesNow with manifest 404", async () => {
+	it("broadcasts idle on rejected checkForUpdatesNow with manifest 404", async () => {
 		vi.spyOn(console, "error").mockImplementation(() => undefined);
 		const { module, autoUpdater } = await importAutoUpdater();
 		const err = new Error(
@@ -520,10 +523,10 @@ describe("startAutoUpdates", () => {
 
 		await module.checkForUpdatesNow(stateDir);
 
-		expect(module.getUpdateStatus()).toEqual({ state: "not-available" });
+		expect(module.getUpdateStatus()).toEqual({ state: "idle" });
 	});
 
-	it("broadcasts idle on rejected downloadUpdateNow with manifest 404", async () => {
+	it("broadcasts friendly error on rejected downloadUpdateNow with manifest 404", async () => {
 		vi.spyOn(console, "error").mockImplementation(() => undefined);
 		const { module, autoUpdater } = await importAutoUpdater();
 		const err = new Error(
@@ -533,7 +536,10 @@ describe("startAutoUpdates", () => {
 
 		await module.downloadUpdateNow();
 
-		expect(module.getUpdateStatus()).toEqual({ state: "idle" });
+		expect(module.getUpdateStatus()).toEqual({
+			state: "error",
+			message: "Download failed — the update file was not found on the server.",
+		});
 	});
 
 	it("still surfaces non-manifest 404 errors", async () => {
