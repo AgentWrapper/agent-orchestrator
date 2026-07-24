@@ -110,6 +110,7 @@ function createFakeTerminal(): FakeTerminal {
 		clear: () => {
 			terminal.clears += 1;
 		},
+		focus: () => {},
 		onUserInput: (listener) => {
 			inputListeners.add(listener);
 			return { dispose: () => inputListeners.delete(listener) };
