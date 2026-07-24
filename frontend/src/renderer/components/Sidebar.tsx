@@ -12,8 +12,8 @@ import {
 } from "../types/workspace";
 import { getSessionDotView } from "../lib/session-presentation";
 import { aoBridge } from "../lib/bridge";
-import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
-import { spawnOrchestrator } from "../lib/spawn-orchestrator";
+import { workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
+import { openOrEnsureOrchestrator } from "../lib/open-orchestrator";
 import { renameSession } from "../lib/rename-session";
 import { useResizable } from "../hooks/useResizable";
 import { useShellMaybe } from "../lib/shell-context";
@@ -425,18 +425,19 @@ function ProjectItem({
 	// button: navigate to it when present, otherwise spawn one first.
 	const orchestrator = newestActiveOrchestrator(workspace.sessions);
 
-	// Mirrors ShellTopbar's launcher: attach to the running orchestrator, or
-	// spawn one via the daemon and follow it once the workspace refetches.
+	// Mirrors ShellTopbar's launcher: reuse the live orchestrator (refetch once
+	// if the cache looks empty), or spawn only when none is active.
 	const openOrchestrator = async () => {
 		if (isProjectRestarting) return;
-		if (orchestrator) {
-			selection.goSession(workspace.id, orchestrator.id);
-			return;
-		}
 		setIsSpawning(true);
 		try {
-			const sessionId = await spawnOrchestrator(workspace.id, "sidebar");
-			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			const { sessionId, didSpawn } = await openOrEnsureOrchestrator(workspace.id, "sidebar", {
+				workspaces: [workspace],
+				refetchWorkspaces: () => queryClient.fetchQuery(workspaceQueryOptions),
+			});
+			if (didSpawn) {
+				await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			}
 			selection.goSession(workspace.id, sessionId);
 		} catch (err) {
 			console.error("Failed to spawn orchestrator:", err);

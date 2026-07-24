@@ -6,7 +6,7 @@ import type { WorkspaceSummary } from "../types/workspace";
 import { useUiStore } from "../stores/ui-store";
 
 const navigateMock = vi.hoisted(() => vi.fn());
-const spawnMock = vi.hoisted(() => vi.fn());
+const openOrEnsureMock = vi.hoisted(() => vi.fn());
 const choosePathMock = vi.hoisted(() => vi.fn());
 
 const ctx = vi.hoisted(() => {
@@ -95,13 +95,14 @@ vi.mock("../hooks/useCommandPaletteEnabled", () => ({
 vi.mock("../hooks/useWorkspaceQuery", () => ({
 	useWorkspaceQuery: () => ({ data: ctx.workspaces }),
 	workspaceQueryKey: ["workspaces"],
+	workspaceQueryOptions: { queryKey: ["workspaces"], queryFn: async () => ctx.workspaces },
 }));
 
 vi.mock("../lib/shell-context", () => ({
 	useShell: () => ({ createProject: vi.fn(), initializeProjectRepository: vi.fn(), daemonStatus: {} }),
 }));
 
-vi.mock("../lib/spawn-orchestrator", () => ({ spawnOrchestrator: spawnMock }));
+vi.mock("../lib/open-orchestrator", () => ({ openOrEnsureOrchestrator: openOrEnsureMock }));
 
 vi.mock("./NewTaskDialog", () => ({
 	NewTaskDialog: ({ open, projectId }: { open: boolean; projectId?: string }) =>
@@ -148,7 +149,7 @@ beforeEach(() => {
 	ctx.params = {};
 	ctx.enabled = true;
 	navigateMock.mockReset();
-	spawnMock.mockReset();
+	openOrEnsureMock.mockReset();
 	choosePathMock.mockReset();
 	act(() => {
 		useUiStore.setState({
@@ -314,7 +315,7 @@ describe("CommandPalette actions", () => {
 		});
 		fireEvent.click(screen.getByText("New task"));
 		expect(navigateMock).not.toHaveBeenCalled();
-		expect(spawnMock).not.toHaveBeenCalled();
+		expect(openOrEnsureMock).not.toHaveBeenCalled();
 	});
 
 	it("does not spawn Open orchestrator while the project is restarting", async () => {
@@ -324,7 +325,7 @@ describe("CommandPalette actions", () => {
 		act(() => useUiStore.getState().setCommandPaletteOpen(true));
 		await screen.findByPlaceholderText(/search projects/i);
 		fireEvent.click(screen.getByText("Open orchestrator"));
-		expect(spawnMock).not.toHaveBeenCalled();
+		expect(openOrEnsureMock).not.toHaveBeenCalled();
 		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
@@ -355,27 +356,31 @@ describe("CommandPalette actions", () => {
 		});
 	});
 
-	it("spawns only once when Open orchestrator is selected twice (in-flight guard)", async () => {
+	it("opens only once when Open orchestrator is selected twice (in-flight guard)", async () => {
 		ctx.params = { projectId: "proj-2" };
-		spawnMock.mockReturnValueOnce(new Promise<string>(() => {}));
+		openOrEnsureMock.mockReturnValueOnce(new Promise(() => {}));
 		renderPalette();
 		act(() => useUiStore.getState().setCommandPaletteOpen(true));
 		await screen.findByPlaceholderText(/search projects/i);
 		const item = screen.getByText("Open orchestrator");
 		fireEvent.click(item);
 		fireEvent.click(item);
-		expect(spawnMock).toHaveBeenCalledTimes(1);
+		expect(openOrEnsureMock).toHaveBeenCalledTimes(1);
 	});
 
-	it("keeps the palette open and shows an error when spawning an orchestrator fails", async () => {
+	it("keeps the palette open and shows an error when opening an orchestrator fails", async () => {
 		ctx.params = { projectId: "proj-2" };
-		spawnMock.mockRejectedValueOnce(new Error("daemon down"));
+		openOrEnsureMock.mockRejectedValueOnce(new Error("daemon down"));
 		renderPalette();
 		act(() => useUiStore.getState().setCommandPaletteOpen(true));
 		await screen.findByPlaceholderText(/search projects/i);
 		fireEvent.click(screen.getByText("Open orchestrator"));
 		expect(await screen.findByRole("alert")).toHaveTextContent("daemon down");
-		expect(spawnMock).toHaveBeenCalledWith("proj-2", "command_palette");
+		expect(openOrEnsureMock).toHaveBeenCalledWith(
+			"proj-2",
+			"command_palette",
+			expect.objectContaining({ workspaces: ctx.workspaces }),
+		);
 		expect(useUiStore.getState().isCommandPaletteOpen).toBe(true);
 	});
 

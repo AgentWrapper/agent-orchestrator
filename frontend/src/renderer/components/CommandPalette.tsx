@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "@tanstack/react-router";
 import { Loader2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
-import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
 import { aoBridge } from "../lib/bridge";
 import {
 	buildCommands,
@@ -12,9 +12,8 @@ import {
 	type NavigateTarget,
 } from "../lib/command-palette";
 import { isDialogOrMenuOpen } from "../lib/dom-selectors";
-import { spawnOrchestrator } from "../lib/spawn-orchestrator";
+import { openOrEnsureOrchestrator } from "../lib/open-orchestrator";
 import { useShell } from "../lib/shell-context";
-import { findProjectOrchestrator } from "../types/workspace";
 import { useUiStore } from "../stores/ui-store";
 import { CreateProjectFlow } from "./CreateProjectFlow";
 import { NewTaskDialog } from "./NewTaskDialog";
@@ -115,18 +114,17 @@ export function CommandPalette() {
 	const openOrchestrator = useCallback(
 		async (projectId: string) => {
 			if (blockedByRestart(projectId)) return;
-			const orchestrator = findProjectOrchestrator(workspaces, projectId);
-			if (orchestrator) {
-				navigateToTarget({
-					to: "/projects/$projectId/sessions/$sessionId",
-					params: { projectId, sessionId: orchestrator.id },
-				});
-				closePalette();
-				return;
+			const { sessionId, didSpawn } = await openOrEnsureOrchestrator(projectId, "command_palette", {
+				workspaces,
+				refetchWorkspaces: () => queryClient.fetchQuery(workspaceQueryOptions),
+			});
+			if (didSpawn) {
+				await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 			}
-			const sessionId = await spawnOrchestrator(projectId, "command_palette");
-			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-			navigateToTarget({ to: "/projects/$projectId/sessions/$sessionId", params: { projectId, sessionId } });
+			navigateToTarget({
+				to: "/projects/$projectId/sessions/$sessionId",
+				params: { projectId, sessionId },
+			});
 			closePalette();
 		},
 		[workspaces, navigateToTarget, queryClient, closePalette, blockedByRestart],
