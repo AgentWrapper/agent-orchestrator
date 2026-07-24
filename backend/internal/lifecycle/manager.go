@@ -726,10 +726,17 @@ func mergeMetadata(base, in domain.SessionMetadata) domain.SessionMetadata {
 			*dst = v
 		}
 	}
+	if in.ResetNativeResume {
+		base.AgentSessionID = ""
+		base.NativeResumeReady = false
+	}
 	set(&base.Branch, in.Branch)
 	set(&base.WorkspacePath, in.WorkspacePath)
 	set(&base.RuntimeHandleID, in.RuntimeHandleID)
 	set(&base.AgentSessionID, in.AgentSessionID)
+	if in.NativeResumeReady {
+		base.NativeResumeReady = true
+	}
 	set(&base.Prompt, in.Prompt)
 	return base
 }

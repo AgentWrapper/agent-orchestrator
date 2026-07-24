@@ -2822,6 +2822,12 @@ func TestRestore_CompletedTurnResumeAgentWithNativeIDButNotReadyFallsBackToSaved
 	if st.sessions["mer-1"].IsTerminated {
 		t.Fatal("session must be live after saved-prompt fallback")
 	}
+	if got := st.sessions["mer-1"].Metadata.AgentSessionID; got != "" {
+		t.Fatalf("fallback metadata AgentSessionID = %q, want cleared", got)
+	}
+	if st.sessions["mer-1"].Metadata.NativeResumeReady {
+		t.Fatal("fallback metadata NativeResumeReady = true, want cleared")
+	}
 }
 
 func TestRestore_CompletedTurnResumeAgentWithNativeIDButNotReadyAndNoPromptNotResumable(t *testing.T) {
@@ -2941,6 +2947,12 @@ func TestRestore_NativeResumeImmediateExitFallsBackToSavedPrompt(t *testing.T) {
 	}
 	if st.sessions["mer-1"].IsTerminated {
 		t.Fatal("session must be live after fallback succeeds")
+	}
+	if got := st.sessions["mer-1"].Metadata.AgentSessionID; got != "" {
+		t.Fatalf("fallback metadata AgentSessionID = %q, want cleared", got)
+	}
+	if st.sessions["mer-1"].Metadata.NativeResumeReady {
+		t.Fatal("fallback metadata NativeResumeReady = true, want cleared")
 	}
 }
 

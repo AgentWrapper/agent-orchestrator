@@ -957,7 +957,12 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 			}
 		}
 	}
-	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, WorkspaceRepoPath: ws.RepoPath, RuntimeHandleID: handle.ID, AgentSessionID: rec.Metadata.AgentSessionID, Prompt: rec.Metadata.Prompt}
+	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, WorkspaceRepoPath: ws.RepoPath, RuntimeHandleID: handle.ID, Prompt: rec.Metadata.Prompt}
+	if mode == RestoreModeNative {
+		metadata.AgentSessionID = rec.Metadata.AgentSessionID
+	} else {
+		metadata.ResetNativeResume = true
+	}
 	if err := m.lcm.MarkSpawned(ctx, rec.ID, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		m.cleanupSystemPromptDir(rec.ID)

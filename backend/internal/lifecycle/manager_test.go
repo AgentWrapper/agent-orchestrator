@@ -413,6 +413,42 @@ func TestMarkSpawnedStoresRuntimeMetadata(t *testing.T) {
 	}
 }
 
+func TestMarkSpawnedCanResetNativeResumeMetadata(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Metadata: domain.SessionMetadata{
+			Branch:            "b",
+			WorkspacePath:     "/ws",
+			RuntimeHandleID:   "old-h",
+			AgentSessionID:    "old-native-1",
+			NativeResumeReady: true,
+			Prompt:            "prompt",
+		},
+	}
+
+	if err := m.MarkSpawned(ctx, "mer-1", domain.SessionMetadata{
+		RuntimeHandleID:   "new-h",
+		ResetNativeResume: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"].Metadata
+	if got.AgentSessionID != "" {
+		t.Fatalf("AgentSessionID = %q, want cleared", got.AgentSessionID)
+	}
+	if got.NativeResumeReady {
+		t.Fatal("NativeResumeReady = true, want cleared")
+	}
+	if got.RuntimeHandleID != "new-h" {
+		t.Fatalf("RuntimeHandleID = %q, want new-h", got.RuntimeHandleID)
+	}
+	if got.Branch != "b" || got.WorkspacePath != "/ws" || got.Prompt != "prompt" {
+		t.Fatalf("non-native metadata was not preserved: %+v", got)
+	}
+}
+
 // TestMarkSpawned_StampsUTCActivity locks the lifecycle clock to UTC so
 // activity-driven timestamps match the session manager's spawn timestamps. A
 // local clock here left `ao session get` showing created in UTC but updated in
