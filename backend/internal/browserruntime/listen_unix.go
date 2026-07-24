@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 )
 
+// Listen creates the local daemon-to-Electron browser bridge listener.
 func Listen(runFilePath string) (net.Listener, string, error) {
 	sockPath := filepath.Join(filepath.Dir(runFilePath), "browser.sock")
 	_ = os.Remove(sockPath)

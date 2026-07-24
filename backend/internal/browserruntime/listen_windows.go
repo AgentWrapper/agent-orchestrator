@@ -23,6 +23,7 @@ func pipeNameFromRunFile(runFilePath string) string {
 	return `\\.\pipe\ao-browser-` + unsafePipeChars.ReplaceAllString(dir, "-")
 }
 
+// Listen creates the local daemon-to-Electron browser bridge listener.
 func Listen(runFilePath string) (net.Listener, string, error) {
 	name := pipeNameFromRunFile(runFilePath)
 	ln, err := winio.ListenPipe(name, nil)

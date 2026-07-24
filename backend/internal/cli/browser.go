@@ -227,7 +227,6 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 	})
 
 	for _, checked := range []bool{true, false} {
-		checked := checked
 		action := "check"
 		short := "Check a checkbox or switch"
 		if !checked {
@@ -334,11 +333,9 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 			if jsonOutput {
 				return writeJSON(cmd.OutOrStdout(), resp)
 			}
-			path := ""
+			path := "ao-browser-" + ctx.deps.Now().Format("20060102-150405.000") + ".png"
 			if len(args) == 1 {
 				path = args[0]
-			} else {
-				path = "ao-browser-" + ctx.deps.Now().Format("20060102-150405.000") + ".png"
 			}
 			return writeBrowserScreenshot(cmd, resp.Result, path)
 		},
@@ -377,7 +374,6 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 		{name: "stop", short: "Stop capture and list the retained requests"},
 		{name: "clear", short: "Clear retained requests without changing capture state"},
 	} {
-		subcommand := subcommand
 		networkCmd.AddCommand(&cobra.Command{
 			Use:   subcommand.name,
 			Short: subcommand.short,
@@ -390,7 +386,6 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 	cmd.AddCommand(networkCmd)
 
 	for _, action := range []string{"console", "errors"} {
-		action := action
 		cmd.AddCommand(&cobra.Command{
 			Use:   action,
 			Short: "Print captured browser " + action,
@@ -412,9 +407,9 @@ func exactArgs(n int) cobra.PositionalArgs {
 	}
 }
 
-func rangeArgs(min, max int) cobra.PositionalArgs {
+func rangeArgs(minimum, maximum int) cobra.PositionalArgs {
 	return func(cmd *cobra.Command, args []string) error {
-		if err := cobra.RangeArgs(min, max)(cmd, args); err != nil {
+		if err := cobra.RangeArgs(minimum, maximum)(cmd, args); err != nil {
 			return usageError{err}
 		}
 		return nil
@@ -603,7 +598,7 @@ func writeBrowserScreenshot(cmd *cobra.Command, result map[string]any, target st
 	if err != nil {
 		return err
 	}
-	file, err := os.OpenFile(abs, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	file, err := os.OpenFile(abs, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		if errors.Is(err, os.ErrExist) {
 			return fmt.Errorf("refusing to overwrite existing screenshot %s", abs)

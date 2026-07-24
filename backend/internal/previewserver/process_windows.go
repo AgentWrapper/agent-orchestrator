@@ -21,7 +21,7 @@ func previewCommand(name string, args ...string) *exec.Cmd {
 		if shell == "" {
 			shell = "cmd.exe"
 		}
-		cmd := exec.Command(shell)
+		cmd := exec.Command(shell) //nolint:gosec // COMSPEC is the OS-selected command interpreter for .cmd/.bat shims
 		cmd.Args = nil
 		cmd.SysProcAttr = &syscall.SysProcAttr{
 			CmdLine:       `/d /s /c "` + windowsBatchCommandLine(resolved, args) + `"`,

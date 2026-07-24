@@ -266,6 +266,7 @@ type BrowserCommandRequest struct {
 	Args      map[string]interface{} `json:"args,omitempty"`
 }
 
+// BrowserCommandResponse returns a correlated result from the browser runtime.
 type BrowserCommandResponse struct {
 	RequestID string           `json:"requestId"`
 	SessionID domain.SessionID `json:"sessionId"`

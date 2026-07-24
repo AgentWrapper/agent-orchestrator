@@ -18,15 +18,19 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
+// ProtocolVersion identifies the daemon-to-Electron browser bridge contract.
 const ProtocolVersion = 1
 
+// ErrUnavailable indicates that no Electron browser runtime can accept a command.
 var ErrUnavailable = errors.New("browser runtime is unavailable")
 
+// Status describes whether Electron is connected to the browser command broker.
 type Status struct {
 	Connected   bool
 	ConnectedAt time.Time
 }
 
+// Command is one session-scoped operation sent to the Electron browser runtime.
 type Command struct {
 	RequestID string                 `json:"requestId"`
 	SessionID domain.SessionID       `json:"sessionId"`
@@ -34,6 +38,7 @@ type Command struct {
 	Args      map[string]interface{} `json:"args,omitempty"`
 }
 
+// CommandError is a stable browser failure returned by the Electron runtime.
 type CommandError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
@@ -46,6 +51,7 @@ func (e CommandError) Error() string {
 	return fmt.Sprintf("%s (%s)", e.Message, e.Code)
 }
 
+// Result contains the correlated response to a browser command.
 type Result struct {
 	RequestID string
 	Value     interface{}
@@ -81,6 +87,7 @@ type Broker struct {
 	writeMu     sync.Mutex
 }
 
+// New creates an empty browser command broker.
 func New(log *slog.Logger) *Broker {
 	if log == nil {
 		log = slog.Default()
@@ -88,12 +95,14 @@ func New(log *slog.Logger) *Broker {
 	return &Broker{log: log, pending: make(map[string]chan pendingResult)}
 }
 
+// Status returns the current Electron runtime connection state.
 func (b *Broker) Status() Status {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return Status{Connected: b.conn != nil, ConnectedAt: b.connectedAt}
 }
 
+// Execute sends one browser command to the connected Electron runtime.
 func (b *Broker) Execute(ctx context.Context, sessionID domain.SessionID, action string, args map[string]interface{}) (Result, error) {
 	requestID := uuid.NewString()
 	resultCh := make(chan pendingResult, 1)
@@ -144,7 +153,7 @@ func (b *Broker) Serve(ctx context.Context, ln net.Listener) error {
 		conn, err := ln.Accept()
 		if err != nil {
 			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
-				return nil
+				return nil //nolint:nilerr // listener closure is the expected shutdown path
 			}
 			return fmt.Errorf("accept browser runtime: %w", err)
 		}

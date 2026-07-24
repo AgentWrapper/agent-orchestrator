@@ -44,20 +44,24 @@ var browserActions = map[string]struct{}{
 	"errors":         {},
 }
 
+// BrowserRuntime executes session-scoped commands through the Electron bridge.
 type BrowserRuntime interface {
 	Status() browserruntime.Status
 	Execute(ctx context.Context, sessionID domain.SessionID, action string, args map[string]interface{}) (browserruntime.Result, error)
 }
 
+// BrowserSessionReader verifies that a requested browser owner exists.
 type BrowserSessionReader interface {
 	Get(ctx context.Context, id domain.SessionID) (domain.Session, error)
 }
 
+// BrowserController exposes the loopback-only browser command API.
 type BrowserController struct {
 	Runtime  BrowserRuntime
 	Sessions BrowserSessionReader
 }
 
+// Register adds browser status and command routes to the API router.
 func (c *BrowserController) Register(r chi.Router) {
 	r.Get("/browser/status", c.status)
 	r.Post("/browser/commands", c.execute)

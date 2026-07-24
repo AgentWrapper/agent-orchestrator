@@ -27,6 +27,7 @@ import (
 )
 
 const (
+	// ConfigPath is the workspace-relative managed preview configuration file.
 	ConfigPath              = ".ao/launch.json"
 	defaultReadyTimeout     = 30 * time.Second
 	maxReadyTimeout         = 55 * time.Second
@@ -38,20 +39,29 @@ const (
 	maxBufferedPartialBytes = 16 * 1024
 )
 
+// State is the lifecycle state of a managed preview process.
 type State string
 
 const (
-	StateStopped  State = "stopped"
+	// StateStopped indicates that no preview process is running.
+	StateStopped State = "stopped"
+	// StateStarting indicates that the preview process is waiting to become ready.
 	StateStarting State = "starting"
-	StateReady    State = "ready"
+	// StateReady indicates that the configured preview URL is responding.
+	StateReady State = "ready"
+	// StateStopping indicates that AO is terminating the preview process.
 	StateStopping State = "stopping"
-	StateFailed   State = "failed"
+	// StateFailed indicates that the preview process could not start, become ready, or stop.
+	StateFailed State = "failed"
 )
 
+// TargetKind distinguishes browser applications from non-browser API servers.
 type TargetKind string
 
 const (
+	// TargetApp is a preview that should open in the Browser panel.
 	TargetApp TargetKind = "app"
+	// TargetAPI is a server that should run without replacing the Browser panel.
 	TargetAPI TargetKind = "api"
 )
 
@@ -117,11 +127,15 @@ type Manager struct {
 	operations   map[domain.SessionID]*sync.Mutex
 }
 
+// New creates a managed preview-server supervisor.
 func New(log *slog.Logger) *Manager {
 	if log == nil {
 		log = slog.Default()
 	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport := &http.Transport{}
+	if defaultTransport, ok := http.DefaultTransport.(*http.Transport); ok {
+		transport = defaultTransport.Clone()
+	}
 	transport.Proxy = nil
 	manager := &Manager{
 		log:        log,
@@ -360,6 +374,7 @@ func (m *Manager) operationLock(sessionID domain.SessionID) *sync.Mutex {
 	return operation
 }
 
+// Status returns the latest managed preview state for a session.
 func (m *Manager) Status(sessionID domain.SessionID) Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -445,7 +460,7 @@ func (m *Manager) failAndStop(
 func (m *Manager) probe(ctx context.Context, target string) error {
 	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, target, nil)
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, target, http.NoBody)
 	if err != nil {
 		return err
 	}
@@ -655,7 +670,12 @@ func selectPort(preferred int, auto bool) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("select preview port: %w", err)
 	}
-	port := listener.Addr().(*net.TCPAddr).Port
+	tcpAddress, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		_ = listener.Close()
+		return 0, errors.New("selected preview listener did not return a TCP address")
+	}
+	port := tcpAddress.Port
 	if err := listener.Close(); err != nil {
 		return 0, fmt.Errorf("release selected preview port: %w", err)
 	}
@@ -714,8 +734,8 @@ type lineBuffer struct {
 	partial string
 }
 
-func newLineBuffer(max int) *lineBuffer {
-	return &lineBuffer{max: max}
+func newLineBuffer(capacity int) *lineBuffer {
+	return &lineBuffer{max: capacity}
 }
 
 func (b *lineBuffer) Write(data []byte) (int, error) {

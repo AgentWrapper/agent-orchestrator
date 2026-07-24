@@ -3,6 +3,7 @@ package browserruntime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -107,8 +108,8 @@ func TestBrokerMapsRuntimeError(t *testing.T) {
 
 	select {
 	case err := <-errCh:
-		commandErr, ok := err.(CommandError)
-		if !ok || commandErr.Code != "STALE_REFERENCE" {
+		var commandErr CommandError
+		if !errors.As(err, &commandErr) || commandErr.Code != "STALE_REFERENCE" {
 			t.Fatalf("error = %#v", err)
 		}
 	case <-time.After(time.Second):
@@ -118,7 +119,7 @@ func TestBrokerMapsRuntimeError(t *testing.T) {
 
 func TestBrokerUnavailableWithoutElectron(t *testing.T) {
 	broker := New(nil)
-	if _, err := broker.Execute(context.Background(), "session-1", "snapshot", nil); err != ErrUnavailable {
+	if _, err := broker.Execute(context.Background(), "session-1", "snapshot", nil); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("error = %v, want ErrUnavailable", err)
 	}
 }
