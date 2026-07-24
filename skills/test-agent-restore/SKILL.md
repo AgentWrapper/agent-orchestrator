@@ -7,6 +7,10 @@ description: Run a repeatable Agent Orchestrator CLI lifecycle test that spawns 
 
 Run the bundled deterministic CLI driver and summarize its report. The test creates real AO sessions, kills them, and leaves successfully restored sessions running for inspection.
 
+## Start the desktop app
+
+The AO desktop app owns the daemon. Before spawning any session, the runner checks `ao status --json`; if the daemon is not `ready`, it runs `ao start` and waits for readiness. This can open the desktop app. A startup failure exits 2 before any agent is counted as a failed restore.
+
 ## Run the test
 
 1. Determine the requested agent count. Use 3 when the user does not specify one.
@@ -28,7 +32,7 @@ The defaults match the development setup:
 - Prompt: `Create RESTORE_TEST.md, then wait for further instructions.`
 - Name prefix: `restore-test`
 
-Pass `--ao`, `--run-file`, `--data-dir`, `--prompt`, or `--name-prefix` only when the user requests a different setup. Use `--settle-seconds` to change the short delay between spawn and kill.
+Pass `--ao`, `--run-file`, `--data-dir`, `--prompt`, or `--name-prefix` only when the user requests a different setup. Use `--settle-seconds` to change the short delay between spawn and kill, or `--daemon-start-timeout-seconds` to change the 60-second readiness wait.
 
 ## Interpret results
 

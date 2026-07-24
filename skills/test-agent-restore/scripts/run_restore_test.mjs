@@ -3,7 +3,7 @@
 import { constants as fsConstants } from "node:fs";
 import { access, mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { delimiter, isAbsolute, join, resolve } from "node:path";
+import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { spawn } from "node:child_process";
 
@@ -26,6 +26,8 @@ Options:
   --prompt TEXT             agent prompt
   --settle-seconds NUMBER   delay after each spawn before kill (default: 5)
   --timeout-seconds NUMBER  timeout for each AO command (default: 120)
+  --daemon-start-timeout-seconds NUMBER
+                           wait for AO readiness after start (default: 60)
   --report PATH             write the full JSON report
   --format markdown|json    stdout report format (default: markdown)
   -h, --help                show this help`);
@@ -42,6 +44,7 @@ function parseArgs(argv) {
     prompt: DEFAULT_PROMPT,
     settleSeconds: 5,
     timeoutSeconds: 120,
+    daemonStartTimeoutSeconds: 60,
     report: "",
     format: "markdown",
   };
@@ -55,6 +58,7 @@ function parseArgs(argv) {
     "--prompt": ["prompt", String],
     "--settle-seconds": ["settleSeconds", Number],
     "--timeout-seconds": ["timeoutSeconds", Number],
+    "--daemon-start-timeout-seconds": ["daemonStartTimeoutSeconds", Number],
     "--report": ["report", String],
     "--format": ["format", String],
   };
@@ -232,6 +236,72 @@ function parseSession(result) {
     };
   }
   return { session: payload.session, error: "" };
+}
+
+function parseDaemonStatus(result) {
+  if (result.exit_code !== 0) {
+    return { ready: false, state: "", error: commandError(result) };
+  }
+  let payload;
+  try {
+    payload = JSON.parse(result.stdout);
+  } catch (error) {
+    return {
+      ready: false,
+      state: "",
+      error: `invalid daemon status JSON: ${error.message}: ${result.stdout || "<empty>"}`,
+    };
+  }
+  const state = typeof payload?.state === "string" ? payload.state : "unknown";
+  if (state === "ready") {
+    return { ready: true, state, error: "" };
+  }
+  return {
+    ready: false,
+    state,
+    error: payload?.error ? `state ${state}: ${payload.error}` : `state ${state}`,
+  };
+}
+
+async function ensureDaemon({ ao, env, timeoutSeconds, startTimeoutSeconds }) {
+  const initial = await runCommand([ao, "status", "--json"], env, timeoutSeconds);
+  const initialStatus = parseDaemonStatus(initial);
+  if (initialStatus.ready) {
+    return { ready: true, started: false, initial, final: initial };
+  }
+
+  console.error(`AO daemon is unavailable (${initialStatus.error}); running ao start.`);
+  const start = await runCommand([ao, "start"], env, timeoutSeconds);
+  if (start.exit_code !== 0) {
+    return {
+      ready: false,
+      started: true,
+      initial,
+      start,
+      final: null,
+      error: `ao start failed: ${commandError(start)}`,
+    };
+  }
+
+  const deadline = performance.now() + startTimeoutSeconds * 1000;
+  let final = initial;
+  let finalStatus = initialStatus;
+  while (performance.now() < deadline) {
+    await sleep(1);
+    final = await runCommand([ao, "status", "--json"], env, timeoutSeconds);
+    finalStatus = parseDaemonStatus(final);
+    if (finalStatus.ready) {
+      return { ready: true, started: true, initial, start, final };
+    }
+  }
+  return {
+    ready: false,
+    started: true,
+    initial,
+    start,
+    final,
+    error: `AO daemon did not become ready within ${startTimeoutSeconds}s (${finalStatus.error})`,
+  };
 }
 
 function fail(agent, stage, reason) {
@@ -412,6 +482,10 @@ async function main() {
     console.error("error: --timeout-seconds must be positive");
     return 2;
   }
+  if (!Number.isFinite(options.daemonStartTimeoutSeconds) || options.daemonStartTimeoutSeconds <= 0) {
+    console.error("error: --daemon-start-timeout-seconds must be positive");
+    return 2;
+  }
   if (!["markdown", "json"].includes(options.format)) {
     console.error("error: --format must be markdown or json");
     return 2;
@@ -442,6 +516,18 @@ async function main() {
     AO_DATA_DIR: dataDir,
   };
 
+  const daemon = await ensureDaemon({
+    ao,
+    env,
+    timeoutSeconds: options.timeoutSeconds,
+    startTimeoutSeconds: options.daemonStartTimeoutSeconds,
+  });
+  if (!daemon.ready) {
+    console.error(`error: ${daemon.error}`);
+    return 2;
+  }
+  console.error(daemon.started ? "AO daemon is ready after start." : "AO daemon is ready.");
+
   const startedAt = new Date();
   const started = performance.now();
   const agents = [];
@@ -470,6 +556,7 @@ async function main() {
     ao,
     run_file: runFile,
     data_dir: dataDir,
+    daemon,
     prompt: options.prompt,
     started_at: startedAt.toISOString(),
     finished_at: new Date().toISOString(),
@@ -485,7 +572,7 @@ async function main() {
 
   if (reportPath) {
     try {
-      await mkdir(resolve(reportPath, ".."), { recursive: true });
+      await mkdir(dirname(reportPath), { recursive: true });
       await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
     } catch (error) {
       console.error(`error: could not write report ${reportPath}: ${error.message}`);
