@@ -1,7 +1,12 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ShellTerminal } from "../hooks/useShellTerminals";
 import { ShellTerminalTab } from "./ShellTerminalTab";
+
+const { isWindowsPlatform } = vi.hoisted(() => ({ isWindowsPlatform: vi.fn(() => false) }));
+vi.mock("../lib/platform", () => ({ isWindowsPlatform }));
+
+afterEach(() => isWindowsPlatform.mockReturnValue(false));
 
 const shell: ShellTerminal = {
 	handleId: "shellterm-1",
@@ -76,5 +81,26 @@ describe("ShellTerminalTab rename", () => {
 		const { onSelect } = renderTab();
 		fireEvent.click(screen.getByRole("button", { name: "ao" }));
 		expect(onSelect).toHaveBeenCalled();
+	});
+});
+
+describe("ShellTerminalTab rename gesture per platform", () => {
+	it("macOS/Linux: double-click enters edit, right-click does not", () => {
+		renderTab(); // isWindowsPlatform() defaults to false
+		const tab = screen.getByRole("button", { name: "ao" });
+		fireEvent.contextMenu(tab);
+		expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+		fireEvent.doubleClick(tab);
+		expect(screen.getByRole("textbox", { name: /rename terminal/i })).toBeInTheDocument();
+	});
+
+	it("Windows: right-click enters edit, double-click does not", () => {
+		isWindowsPlatform.mockReturnValue(true);
+		renderTab();
+		const tab = screen.getByRole("button", { name: "ao" });
+		fireEvent.doubleClick(tab);
+		expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+		fireEvent.contextMenu(tab);
+		expect(screen.getByRole("textbox", { name: /rename terminal/i })).toBeInTheDocument();
 	});
 });

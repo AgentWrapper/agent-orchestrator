@@ -2,6 +2,7 @@ import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTruncatedText } from "../hooks/useTruncatedText";
 import type { ShellTerminal } from "../hooks/useShellTerminals";
+import { isWindowsPlatform } from "../lib/platform";
 import { cn } from "../lib/utils";
 
 type ShellTerminalTabProps = {
@@ -19,15 +20,19 @@ type ShellTerminalTabProps = {
 // inspector rail tabs; the full title only becomes the hover tooltip when the
 // strip truncates it; the close control appears on hover/focus.
 //
-// Double-clicking the label renames the tab inline: Enter or blur commits,
-// Escape cancels, and an empty or unchanged name is discarded. The close
-// control is a sibling button, not nested inside the tab button - nesting
-// interactive elements is invalid HTML and breaks keyboard traversal.
+// Renaming happens inline with the platform's native gesture: double-click on
+// macOS/Linux, right-click on Windows. Enter or blur commits, Escape cancels,
+// and an empty or unchanged name is discarded. The close control is a sibling
+// button, not nested inside the tab button - nesting interactive elements is
+// invalid HTML and breaks keyboard traversal.
 export function ShellTerminalTab({ shell, isActive, onSelect, onClose, onRename }: ShellTerminalTabProps) {
 	const { ref, isTruncated } = useTruncatedText<HTMLButtonElement>(shell.title);
 	const [isEditing, setIsEditing] = useState(false);
 	const [draft, setDraft] = useState(shell.title);
 	const inputRef = useRef<HTMLInputElement | null>(null);
+	// Rename gesture per platform: Windows uses right-click (its convention for
+	// tab/file renames); macOS and Linux use double-click.
+	const renameViaRightClick = isWindowsPlatform();
 
 	useEffect(() => {
 		if (isEditing) {
@@ -88,8 +93,20 @@ export function ShellTerminalTab({ shell, isActive, onSelect, onClose, onRename 
 						isActive ? "text-foreground" : "text-passive hover:text-foreground",
 					)}
 					onClick={onSelect}
-					onDoubleClick={beginEdit}
-					title={isTruncated ? shell.title : shell.workingDir}
+					onDoubleClick={renameViaRightClick ? undefined : beginEdit}
+					onContextMenu={
+						renameViaRightClick
+							? (event) => {
+									event.preventDefault();
+									beginEdit();
+								}
+							: undefined
+					}
+					title={
+						isTruncated
+							? shell.title
+							: `${shell.workingDir} (${renameViaRightClick ? "right-click" : "double-click"} to rename)`
+					}
 					type="button"
 				>
 					{shell.title}
