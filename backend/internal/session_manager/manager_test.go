@@ -703,6 +703,42 @@ func TestSpawn_ResolvesProjectConfig(t *testing.T) {
 	}
 }
 
+// TestManagerExportsRunFileToRuntime exercises the full
+// Config -> Deps -> Manager -> RuntimeConfig.Env handoff: a daemon configured
+// with a non-default run-file must export it as AO_RUN_FILE to every session it
+// spawns and restores, so their `ao hooks` callbacks connect back to THIS
+// daemon rather than the default ~/.ao/running.json. Unlike the direct
+// spawnEnv unit test, this would fail if Deps.RunFilePath were dropped in the
+// lifecycle wiring or New, or if a spawn/restore path stopped threading it.
+func TestManagerExportsRunFileToRuntime(t *testing.T) {
+	const runFile = "/home/u/.ao/dev/running.json"
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{
+		Runtime: rt, Agents: fakeAgents{}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath,
+		RunFilePath: runFile,
+	})
+
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+		t.Fatal(err)
+	}
+	if got := rt.lastCfg.Env[EnvRunFile]; got != runFile {
+		t.Fatalf("spawn runtime env AO_RUN_FILE = %q, want %q", got, runFile)
+	}
+
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x"})
+	rt.lastCfg = ports.RuntimeConfig{}
+	if _, err := m.RestoreWithMode(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if got := rt.lastCfg.Env[EnvRunFile]; got != runFile {
+		t.Fatalf("restore runtime env AO_RUN_FILE = %q, want %q", got, runFile)
+	}
+}
+
 func TestSpawn_RejectsMissingRoleHarness(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
