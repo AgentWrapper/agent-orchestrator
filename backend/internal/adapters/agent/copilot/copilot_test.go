@@ -190,15 +190,87 @@ func TestGetLaunchCommandSelectsSessionCustomAgent(t *testing.T) {
 	}
 }
 
-func TestGetConfigSpecHasNoCustomFieldsYet(t *testing.T) {
+func TestGetConfigSpecReportsModelField(t *testing.T) {
 	plugin := &Plugin{}
 
 	spec, err := plugin.GetConfigSpec(context.Background())
 	if err != nil {
+		t.Fatalf("GetConfigSpec: %v", err)
+	}
+
+	var found bool
+	for _, f := range spec.Fields {
+		if f.Key != "model" {
+			continue
+		}
+		found = true
+		if f.Type != ports.ConfigFieldString {
+			t.Errorf("model field Type = %v, want %v", f.Type, ports.ConfigFieldString)
+		}
+		if f.Description == "" {
+			t.Error("model field Description is empty")
+		}
+	}
+	if !found {
+		t.Fatalf("GetConfigSpec did not report a \"model\" field: %#v", spec.Fields)
+	}
+}
+
+func TestGetConfigSpecRespectsCanceledContext(t *testing.T) {
+	plugin := &Plugin{}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := plugin.GetConfigSpec(ctx); err == nil {
+		t.Fatal("GetConfigSpec with canceled context: err = nil, want non-nil")
+	}
+}
+
+func TestGetLaunchCommandAppendsModelFlag(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "copilot"}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config: ports.AgentConfig{Model: "claude-sonnet-4.5"},
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(spec.Fields) != 0 {
-		t.Fatalf("unexpected config fields: %#v", spec.Fields)
+	if !containsSubsequence(cmd, []string{"--model", "claude-sonnet-4.5"}) {
+		t.Fatalf("command %#v does not contain --model claude-sonnet-4.5", cmd)
+	}
+}
+
+func TestGetLaunchCommandOmitsBlankModel(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "copilot"}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config: ports.AgentConfig{Model: "   "},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contains(cmd, "--model") {
+		t.Fatalf("command %#v unexpectedly contains --model for blank config", cmd)
+	}
+}
+
+func TestGetRestoreCommandAppendsModelFlag(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "copilot"}
+
+	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Config: ports.AgentConfig{Model: "claude-sonnet-4.5"},
+		Session: ports.SessionRef{
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "uuid-123"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	if !containsSubsequence(cmd, []string{"--model", "claude-sonnet-4.5"}) {
+		t.Fatalf("restore command %#v does not contain --model claude-sonnet-4.5", cmd)
 	}
 }
 
