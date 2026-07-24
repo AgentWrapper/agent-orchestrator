@@ -1451,7 +1451,7 @@ func cleanupFactsView(rec *domain.SessionCleanupRecord) *SessionCleanupView {
 		return nil
 	}
 	v := &SessionCleanupView{
-		WorkspaceDisposition: string(rec.WorkspaceDisposition),
+		WorkspaceDisposition: rec.WorkspaceDisposition,
 		AttemptCount:         rec.AttemptCount,
 		FailureCode:          rec.FailureCode,
 	}

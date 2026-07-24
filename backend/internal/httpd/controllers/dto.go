@@ -159,7 +159,7 @@ type SessionView struct {
 type SessionCleanupView struct {
 	// WorkspaceDisposition is the rollup: pending, removed, preserved_dirty,
 	// failed, or not_applicable.
-	WorkspaceDisposition string `json:"workspaceDisposition"`
+	WorkspaceDisposition domain.WorkspaceDisposition `json:"workspaceDisposition" enum:"pending,removed,preserved_dirty,failed,not_applicable"`
 	// RuntimeReleasedAt is when the runtime handle was genuinely released; omitted
 	// when the runtime has not been confirmed released.
 	RuntimeReleasedAt *time.Time `json:"runtimeReleasedAt,omitempty"`

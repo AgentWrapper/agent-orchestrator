@@ -2191,7 +2191,8 @@ export interface components {
             nextAttemptAt?: null | string;
             /** Format: date-time */
             runtimeReleasedAt?: null | string;
-            workspaceDisposition: string;
+            /** @enum {string} */
+            workspaceDisposition: "pending" | "removed" | "preserved_dirty" | "failed" | "not_applicable";
         };
         SessionInterfaceTransition: {
             /** Format: date-time */

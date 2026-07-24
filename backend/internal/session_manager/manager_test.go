@@ -23,13 +23,15 @@ import (
 var ctx = context.Background()
 
 type fakeStore struct {
-	sessions      map[domain.SessionID]domain.SessionRecord
-	pr            map[domain.SessionID]domain.PRFacts
-	projects      map[string]domain.ProjectRecord
-	workspaceRepo map[string][]domain.WorkspaceRepoRecord
-	num           int
-	deleteErr     error
-	upsertWTErr   error
+	sessions         map[domain.SessionID]domain.SessionRecord
+	pr               map[domain.SessionID]domain.PRFacts
+	projects         map[string]domain.ProjectRecord
+	workspaceRepo    map[string][]domain.WorkspaceRepoRecord
+	num              int
+	deleteErr        error
+	upsertWTErr      error
+	upsertCleanupErr error
+	getCleanupErr    error
 	// worktrees maps session ID to its saved worktree rows (shutdown-saved marker).
 	worktrees map[domain.SessionID][]domain.SessionWorktreeRecord
 	// cleanup maps session ID to its persisted terminal-resource cleanup facts.
@@ -136,6 +138,9 @@ func (f *fakeStore) DeleteSessionWorktrees(_ context.Context, id domain.SessionI
 	return nil
 }
 func (f *fakeStore) UpsertSessionCleanupFacts(_ context.Context, rec domain.SessionCleanupRecord) error {
+	if f.upsertCleanupErr != nil {
+		return f.upsertCleanupErr
+	}
 	if f.cleanup == nil {
 		f.cleanup = map[domain.SessionID]domain.SessionCleanupRecord{}
 	}
@@ -143,6 +148,9 @@ func (f *fakeStore) UpsertSessionCleanupFacts(_ context.Context, rec domain.Sess
 	return nil
 }
 func (f *fakeStore) GetSessionCleanupFacts(_ context.Context, id domain.SessionID) (domain.SessionCleanupRecord, bool, error) {
+	if f.getCleanupErr != nil {
+		return domain.SessionCleanupRecord{}, false, f.getCleanupErr
+	}
 	rec, ok := f.cleanup[id]
 	return rec, ok, nil
 }

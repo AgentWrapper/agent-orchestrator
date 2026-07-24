@@ -6325,6 +6325,12 @@ components:
           - "null"
           - string
         workspaceDisposition:
+          enum:
+          - pending
+          - removed
+          - preserved_dirty
+          - failed
+          - not_applicable
           type: string
       required:
       - workspaceDisposition

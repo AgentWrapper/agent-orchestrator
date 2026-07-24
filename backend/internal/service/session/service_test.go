@@ -1255,6 +1255,39 @@ func TestReadModelSurfacesCleanupFacts(t *testing.T) {
 	}
 }
 
+// TestReadModelHidesCleanupFactsForLiveOrStaleGeneration: a facts row from a
+// prior terminal episode must not leak onto a live (Restore un-terminated) or
+// newly re-terminated session — the read model only surfaces facts stamped
+// with the session's current CleanupGeneration, matching the write-side guard
+// finalizeOne and FinalizeTerminalSession already enforce.
+func TestReadModelHidesCleanupFactsForLiveOrStaleGeneration(t *testing.T) {
+	st := newFakeStore()
+	// Restored: no longer terminated, but the prior episode's facts row lingers.
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", IsTerminated: false, CleanupGeneration: 1}
+	st.cleanup["mer-1"] = domain.SessionCleanupRecord{SessionID: "mer-1", SessionGeneration: 0, WorkspaceDisposition: domain.DispositionRemoved}
+	// Re-terminated (generation bumped) before the reconciler wrote fresh facts
+	// for the new episode: the stale generation-0 row must not surface either.
+	st.sessions["mer-2"] = domain.SessionRecord{ID: "mer-2", ProjectID: "mer", IsTerminated: true, CleanupGeneration: 1}
+	st.cleanup["mer-2"] = domain.SessionCleanupRecord{SessionID: "mer-2", SessionGeneration: 0, WorkspaceDisposition: domain.DispositionRemoved}
+	svc := NewWithDeps(Deps{Store: st})
+
+	restored, err := svc.Get(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("Get mer-1: %v", err)
+	}
+	if restored.Cleanup != nil {
+		t.Fatalf("mer-1 (restored, live) cleanup = %+v, want nil", restored.Cleanup)
+	}
+
+	staleGen, err := svc.Get(context.Background(), "mer-2")
+	if err != nil {
+		t.Fatalf("Get mer-2: %v", err)
+	}
+	if staleGen.Cleanup != nil {
+		t.Fatalf("mer-2 (stale generation) cleanup = %+v, want nil", staleGen.Cleanup)
+	}
+}
+
 func TestTeardownProjectKillsActiveSessionsThenCleansProject(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer"}

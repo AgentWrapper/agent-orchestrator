@@ -914,12 +914,17 @@ func (s *Service) toSession(ctx context.Context, rec domain.SessionRecord) (doma
 	}
 	// Join terminal-resource cleanup facts so the UI can render a terminated
 	// session's release progress (pending / preserved_dirty / failed / removed).
+	// Only the current terminal episode's facts qualify: a live session (Restore
+	// un-terminated it) or a stale generation (a second termination since these
+	// facts were written) must not leak the prior episode's disposition.
 	// Derived at read time — no display status is stored.
-	if facts, ok, err := s.store.GetSessionCleanupFacts(ctx, rec.ID); err != nil {
-		return domain.Session{}, fmt.Errorf("cleanup facts %s: %w", rec.ID, err)
-	} else if ok {
-		f := facts
-		sess.Cleanup = &f
+	if rec.IsTerminated {
+		if facts, ok, err := s.store.GetSessionCleanupFacts(ctx, rec.ID); err != nil {
+			return domain.Session{}, fmt.Errorf("cleanup facts %s: %w", rec.ID, err)
+		} else if ok && facts.SessionGeneration == rec.CleanupGeneration {
+			f := facts
+			sess.Cleanup = &f
+		}
 	}
 	return sess, nil
 }

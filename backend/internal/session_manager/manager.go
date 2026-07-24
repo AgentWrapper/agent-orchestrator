@@ -2561,7 +2561,20 @@ func (m *Manager) finalizeOne(ctx context.Context, rec domain.SessionRecord) dom
 		facts.SessionGeneration == rec.CleanupGeneration && isTerminalDisposition(facts.WorkspaceDisposition) {
 		return facts
 	}
-	return m.releaseAndPersistLocked(ctx, rec)
+	facts, err := m.releaseAndPersistLocked(ctx, rec)
+	if err != nil {
+		// Bulk Cleanup has no per-session error channel (CleanupResult is
+		// Cleaned/Skipped only); a storage hiccup here becomes a pending retry the
+		// periodic sweep re-attempts, same as a release failure.
+		m.logger.Warn("cleanup: releaseAndPersistLocked failed", "sessionID", rec.ID, "error", err)
+		return domain.SessionCleanupRecord{
+			SessionID:            rec.ID,
+			SessionGeneration:    rec.CleanupGeneration,
+			WorkspaceDisposition: domain.DispositionPending,
+			FailureCode:          failTeardown,
+		}
+	}
+	return facts
 }
 
 // CleanupSession is the per-session cleanup API primitive (PR 3). Unlike the
@@ -2584,14 +2597,22 @@ func (m *Manager) CleanupSession(ctx context.Context, id domain.SessionID) (doma
 	if !rec.IsTerminated {
 		return domain.SessionCleanupRecord{}, ErrNotTerminal
 	}
-	return m.releaseAndPersistLocked(ctx, rec), nil
+	facts, err := m.releaseAndPersistLocked(ctx, rec)
+	if err != nil {
+		return domain.SessionCleanupRecord{}, fmt.Errorf("cleanup %s: %w", id, err)
+	}
+	return facts, nil
 }
 
 // releaseAndPersistLocked runs the shared release core for a terminal session
 // and persists the resulting facts, returning the stored record. The caller must
-// hold the per-session lock. A transient failure is recorded as a pending retry
-// (or exhausted `failed`) rather than surfaced.
-func (m *Manager) releaseAndPersistLocked(ctx context.Context, rec domain.SessionRecord) domain.SessionCleanupRecord {
+// hold the per-session lock. A *release* failure (runtime/workspace teardown) is
+// recorded as a pending retry (or exhausted `failed`) rather than surfaced — that
+// is expected, retryable steady-state. A *storage* failure (persisting or
+// re-reading the facts) is returned as an error instead: the caller asked for
+// refreshed facts and none were durably recorded, so reporting synthesized
+// success would be a lie.
+func (m *Manager) releaseAndPersistLocked(ctx context.Context, rec domain.SessionRecord) (domain.SessionCleanupRecord, error) {
 	generation := rec.CleanupGeneration
 	res, releaseErr := m.releaseTerminalResources(ctx, rec)
 	if releaseErr != nil {
@@ -2601,19 +2622,23 @@ func (m *Manager) releaseAndPersistLocked(ctx context.Context, rec domain.Sessio
 		}
 	}
 	if err := m.persistCleanupFacts(ctx, rec, generation, res); err != nil {
-		m.logger.Warn("cleanup: persist facts failed", "sessionID", rec.ID, "error", err)
+		return domain.SessionCleanupRecord{}, fmt.Errorf("persist cleanup facts %s: %w", rec.ID, err)
 	}
 	// Re-read so a transient failure that just exhausted its attempt cap reports
 	// its terminal `failed` disposition rather than the in-memory `pending`.
-	if stored, ok, err := m.store.GetSessionCleanupFacts(ctx, rec.ID); err == nil && ok && stored.SessionGeneration == generation {
-		return stored
+	stored, ok, err := m.store.GetSessionCleanupFacts(ctx, rec.ID)
+	if err != nil {
+		return domain.SessionCleanupRecord{}, fmt.Errorf("reload cleanup facts %s: %w", rec.ID, err)
+	}
+	if ok && stored.SessionGeneration == generation {
+		return stored, nil
 	}
 	return domain.SessionCleanupRecord{
 		SessionID:            rec.ID,
 		SessionGeneration:    generation,
 		WorkspaceDisposition: res.disposition,
 		FailureCode:          res.failureCode,
-	}
+	}, nil
 }
 
 // cleanupSkipReason renders a non-removed disposition as a short user-facing

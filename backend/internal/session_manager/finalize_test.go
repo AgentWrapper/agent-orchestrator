@@ -506,6 +506,47 @@ func TestCleanupSession_RetriesTerminalDisposition(t *testing.T) {
 	}
 }
 
+// TestCleanupSession_PersistFailurePropagatesError pins the correctness fix: a
+// storage failure while persisting cleanup facts must surface as an error
+// (the service maps it to a 500) rather than a synthesized-success record —
+// the caller asked for refreshed, durable facts and got neither.
+func TestCleanupSession_PersistFailurePropagatesError(t *testing.T) {
+	m, st, _, ws := finalizeManager(nil)
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", RuntimeHandleID: "h1"})
+	boom := errors.New("db locked")
+	st.upsertCleanupErr = boom
+
+	facts, err := m.CleanupSession(ctx, "mer-1")
+	if err == nil {
+		t.Fatalf("cleanup: want error on persist failure, got facts %+v", facts)
+	}
+	if !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want wrapping %v", err, boom)
+	}
+	// The release itself must still have run (teardown is not gated on storage).
+	if ws.destroyed != 1 {
+		t.Fatalf("workspace destroyed = %d, want 1", ws.destroyed)
+	}
+}
+
+// TestCleanupSession_ReloadFailurePropagatesError: same contract for the
+// post-persist re-read — a storage error there must not be swallowed into a
+// synthesized record either.
+func TestCleanupSession_ReloadFailurePropagatesError(t *testing.T) {
+	m, st, _, _ := finalizeManager(nil)
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", RuntimeHandleID: "h1"})
+	boom := errors.New("db unreachable")
+	st.getCleanupErr = boom
+
+	_, err := m.CleanupSession(ctx, "mer-1")
+	if err == nil {
+		t.Fatal("cleanup: want error on re-read failure")
+	}
+	if !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want wrapping %v", err, boom)
+	}
+}
+
 // TestKill_WritesCleanupFacts pins critique #18: every terminal path (here Kill)
 // persists a facts row so the sessions-driven boot scan doesn't re-enqueue it
 // forever.
