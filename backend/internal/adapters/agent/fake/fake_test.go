@@ -216,6 +216,10 @@ func (s *lifecycleStore) GetSession(_ context.Context, id domain.SessionID) (dom
 	return r, ok, nil
 }
 
+func (s *lifecycleStore) GetProject(_ context.Context, _ string) (domain.ProjectRecord, bool, error) {
+	return domain.ProjectRecord{}, false, nil
+}
+
 func (s *lifecycleStore) UpdateSession(_ context.Context, rec domain.SessionRecord) error {
 	s.sessions[rec.ID] = rec
 	return nil

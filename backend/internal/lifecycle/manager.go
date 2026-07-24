@@ -20,6 +20,7 @@ import (
 )
 
 type sessionStore interface {
+	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
 	UpdateSession(ctx context.Context, rec domain.SessionRecord) error
 	// ListSessions returns every session in a project. The dispatcher reads it

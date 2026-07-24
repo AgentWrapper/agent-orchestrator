@@ -40,11 +40,38 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"tracker intake unknown provider", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Provider: "linear", Assignee: "alice"}}, true},
 		{"tracker intake repo with whitespace", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Repo: " acme/demo", Assignee: "alice"}}, true},
 		{"tracker intake assignee with whitespace", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Assignee: " alice"}}, true},
+		{"good bot review feedback allowlist", ProjectConfig{BotReviewFeedback: BotReviewFeedbackConfig{AllowAuthors: []string{"github-actions"}}}, false},
+		{"good bot review feedback denylist", ProjectConfig{BotReviewFeedback: BotReviewFeedbackConfig{DenyAuthors: []string{"react-doctor[bot]"}}}, false},
+		{"bot review feedback allowlist whitespace", ProjectConfig{BotReviewFeedback: BotReviewFeedbackConfig{AllowAuthors: []string{" github-actions"}}}, true},
+		{"bot review feedback denylist empty", ProjectConfig{BotReviewFeedback: BotReviewFeedbackConfig{DenyAuthors: []string{""}}}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if err := tt.cfg.Validate(); (err != nil) != tt.wantErr {
 				t.Fatalf("Validate() err = %v, wantErr = %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestBotReviewFeedbackConfigAllowsAuthor(t *testing.T) {
+	tests := []struct {
+		name   string
+		cfg    BotReviewFeedbackConfig
+		author string
+		want   bool
+	}{
+		{"default allows concrete author", BotReviewFeedbackConfig{}, "github-actions", true},
+		{"default rejects empty author", BotReviewFeedbackConfig{}, "", false},
+		{"allowlist permits listed author", BotReviewFeedbackConfig{AllowAuthors: []string{"github-actions"}}, "GitHub-Actions", true},
+		{"allowlist rejects unlisted author", BotReviewFeedbackConfig{AllowAuthors: []string{"react-doctor[bot]"}}, "github-actions", false},
+		{"denylist rejects listed author", BotReviewFeedbackConfig{DenyAuthors: []string{"github-actions"}}, "github-actions", false},
+		{"denylist wins over allowlist", BotReviewFeedbackConfig{AllowAuthors: []string{"github-actions"}, DenyAuthors: []string{"github-actions"}}, "github-actions", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.cfg.AllowsAuthor(tt.author); got != tt.want {
+				t.Fatalf("AllowsAuthor(%q) = %v, want %v", tt.author, got, tt.want)
 			}
 		})
 	}

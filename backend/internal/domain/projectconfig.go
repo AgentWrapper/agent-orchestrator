@@ -55,6 +55,19 @@ type ProjectConfig struct {
 	// read-only toward the tracker in v1: matching issues spawn sessions, but the
 	// tracker is not commented on or transitioned.
 	TrackerIntake TrackerIntakeConfig `json:"trackerIntake,omitempty"`
+
+	// BotReviewFeedback controls which bot-authored inline PR review comments
+	// are routed back to the owning agent. Empty lists allow any anchored bot
+	// review feedback; an allowlist narrows delivery, and the denylist wins.
+	BotReviewFeedback BotReviewFeedbackConfig `json:"botReviewFeedback,omitempty"`
+}
+
+// BotReviewFeedbackConfig controls bot-authored inline PR review feedback
+// delivery. Author names are provider logins such as "github-actions" or
+// "react-doctor[bot]"; matching is case-insensitive.
+type BotReviewFeedbackConfig struct {
+	AllowAuthors []string `json:"allowAuthors,omitempty"`
+	DenyAuthors  []string `json:"denyAuthors,omitempty"`
 }
 
 // ReviewerConfig names one reviewer agent by harness. The harness is drawn from
@@ -150,7 +163,56 @@ func (c ProjectConfig) Validate() error {
 	if err := c.TrackerIntake.Validate(); err != nil {
 		return err
 	}
+	if err := c.BotReviewFeedback.Validate(); err != nil {
+		return err
+	}
 	return nil
+}
+
+// AllowsAuthor reports whether bot-authored review feedback from author may be
+// delivered to the agent.
+func (c BotReviewFeedbackConfig) AllowsAuthor(author string) bool {
+	author = strings.TrimSpace(author)
+	if author == "" {
+		return false
+	}
+	if containsFold(c.DenyAuthors, author) {
+		return false
+	}
+	if len(c.AllowAuthors) > 0 {
+		return containsFold(c.AllowAuthors, author)
+	}
+	return true
+}
+
+// Validate rejects ambiguous author entries early when config is set.
+func (c BotReviewFeedbackConfig) Validate() error {
+	for i, author := range c.AllowAuthors {
+		if err := validateNoWhitespaceField(fmt.Sprintf("botReviewFeedback.allowAuthors[%d]", i), author); err != nil {
+			return err
+		}
+		if strings.TrimSpace(author) == "" {
+			return fmt.Errorf("botReviewFeedback.allowAuthors[%d]: must not be empty", i)
+		}
+	}
+	for i, author := range c.DenyAuthors {
+		if err := validateNoWhitespaceField(fmt.Sprintf("botReviewFeedback.denyAuthors[%d]", i), author); err != nil {
+			return err
+		}
+		if strings.TrimSpace(author) == "" {
+			return fmt.Errorf("botReviewFeedback.denyAuthors[%d]: must not be empty", i)
+		}
+	}
+	return nil
+}
+
+func containsFold(values []string, want string) bool {
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), want) {
+			return true
+		}
+	}
+	return false
 }
 
 func validateNoWhitespaceField(name, value string) error {

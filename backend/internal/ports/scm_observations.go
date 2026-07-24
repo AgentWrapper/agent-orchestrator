@@ -225,6 +225,10 @@ type SCMReviewThreadObservation struct {
 	Resolved bool
 	// IsBot is true when the thread's comments are all/primarily bot-authored.
 	IsBot bool
+	// SemanticHash is a stable hash of the provider thread payload. It is also
+	// stored in pr_review_threads.semantic_hash and can anchor dedup when bots
+	// edit an existing inline finding.
+	SemanticHash string
 	// Comments contains normalized comments in this review thread.
 	Comments []SCMReviewCommentObservation
 }

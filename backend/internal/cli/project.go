@@ -93,22 +93,29 @@ type trackerIntakeConfig struct {
 	Assignee string `json:"assignee,omitempty"`
 }
 
+// botReviewFeedbackConfig mirrors domain.BotReviewFeedbackConfig.
+type botReviewFeedbackConfig struct {
+	AllowAuthors []string `json:"allowAuthors,omitempty"`
+	DenyAuthors  []string `json:"denyAuthors,omitempty"`
+}
+
 // projectConfig mirrors the daemon's typed domain.ProjectConfig for the CLI
 // client. The CLI sets common fields via flags and the whole object via
 // --config-json.
 type projectConfig struct {
-	DefaultBranch     string              `json:"defaultBranch,omitempty"`
-	SessionPrefix     string              `json:"sessionPrefix,omitempty"`
-	Env               map[string]string   `json:"env,omitempty"`
-	Symlinks          []string            `json:"symlinks,omitempty"`
-	PostCreate        []string            `json:"postCreate,omitempty"`
-	AgentRules        string              `json:"agentRules,omitempty"`
-	AgentRulesFile    string              `json:"agentRulesFile,omitempty"`
-	OrchestratorRules string              `json:"orchestratorRules,omitempty"`
-	AgentConfig       agentConfig         `json:"agentConfig,omitempty"`
-	Worker            roleOverride        `json:"worker,omitempty"`
-	Orchestrator      roleOverride        `json:"orchestrator,omitempty"`
-	TrackerIntake     trackerIntakeConfig `json:"trackerIntake,omitempty"`
+	DefaultBranch     string                  `json:"defaultBranch,omitempty"`
+	SessionPrefix     string                  `json:"sessionPrefix,omitempty"`
+	Env               map[string]string       `json:"env,omitempty"`
+	Symlinks          []string                `json:"symlinks,omitempty"`
+	PostCreate        []string                `json:"postCreate,omitempty"`
+	AgentRules        string                  `json:"agentRules,omitempty"`
+	AgentRulesFile    string                  `json:"agentRulesFile,omitempty"`
+	OrchestratorRules string                  `json:"orchestratorRules,omitempty"`
+	AgentConfig       agentConfig             `json:"agentConfig,omitempty"`
+	Worker            roleOverride            `json:"worker,omitempty"`
+	Orchestrator      roleOverride            `json:"orchestrator,omitempty"`
+	TrackerIntake     trackerIntakeConfig     `json:"trackerIntake,omitempty"`
+	BotReviewFeedback botReviewFeedbackConfig `json:"botReviewFeedback,omitempty"`
 }
 
 // setConfigRequest mirrors the daemon's SetConfigInput body for

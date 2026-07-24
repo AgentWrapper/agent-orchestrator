@@ -16,6 +16,7 @@ var ctx = context.Background()
 
 type fakeStore struct {
 	sessions   map[domain.SessionID]domain.SessionRecord
+	projects   map[string]domain.ProjectRecord
 	prs        map[domain.SessionID][]domain.PullRequest
 	signatures map[string]string
 	idleEvents []domain.WorkerIdleEvent
@@ -27,7 +28,18 @@ type fakeStore struct {
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{sessions: map[domain.SessionID]domain.SessionRecord{}, prs: map[domain.SessionID][]domain.PullRequest{}, signatures: map[string]string{}, delivered: map[string]bool{}}
+	return &fakeStore{
+		sessions:   map[domain.SessionID]domain.SessionRecord{},
+		projects:   map[string]domain.ProjectRecord{},
+		prs:        map[domain.SessionID][]domain.PullRequest{},
+		signatures: map[string]string{},
+		delivered:  map[string]bool{},
+	}
+}
+
+func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectRecord, bool, error) {
+	r, ok := f.projects[id]
+	return r, ok, nil
 }
 
 func (f *fakeStore) RecordWorkerIdle(_ context.Context, rec domain.SessionRecord, ev domain.WorkerIdleEvent) error {
@@ -847,6 +859,135 @@ func TestSCMObservationProjectsToExistingPRReactions(t *testing.T) {
 	}
 	if len(msg.msgs) != 1 || !strings.Contains(msg.msgs[0], "boom") {
 		t.Fatalf("want SCM CI nudge with log tail, got %v", msg.msgs)
+	}
+}
+
+func TestSCMObservation_AllowlistedBotReviewCommentsNudge(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		BotReviewFeedback: domain.BotReviewFeedbackConfig{AllowAuthors: []string{"github-actions"}},
+	}}
+	o := reactDoctorSCMObservation()
+
+	if err := m.ApplySCMObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("want one allowlisted bot review nudge, got %d: %v", len(msg.msgs), msg.msgs)
+	}
+	got := msg.msgs[0]
+	for _, want := range []string{
+		"The following 2 unresolved review comment(s)",
+		"frontend/src/components/LandingHero.tsx:1218 (@github-actions):",
+		"memoize the video props",
+		"frontend/src/components/LandingInstall.tsx:171 (@github-actions):",
+		"avoid unstable hook deps",
+		"PR: https://github.com/AgentWrapper/agent-orchestrator/pull/2826",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("bot review nudge missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestSCMObservation_DenylistedBotReviewCommentsSuppressed(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		BotReviewFeedback: domain.BotReviewFeedbackConfig{DenyAuthors: []string{"github-actions"}},
+	}}
+
+	if err := m.ApplySCMObservation(ctx, "mer-1", reactDoctorSCMObservation()); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("denylisted bot review feedback must be suppressed, got %v", msg.msgs)
+	}
+}
+
+func TestSCMObservation_BotReviewCommentsDedupOnRepeatedObservation(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = working("mer-1")
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		BotReviewFeedback: domain.BotReviewFeedbackConfig{AllowAuthors: []string{"github-actions"}},
+	}}
+	first := &fakeMessenger{}
+	m1 := New(st, first)
+	o := reactDoctorSCMObservation()
+
+	if err := m1.ApplySCMObservation(ctx, "mer-1", o); err != nil {
+		t.Fatalf("first ApplySCMObservation: %v", err)
+	}
+	if len(first.msgs) != 1 {
+		t.Fatalf("first observation should nudge once, got %d: %v", len(first.msgs), first.msgs)
+	}
+	if st.signatures[o.PR.URL] == "" {
+		t.Fatal("bot review nudge did not persist the semantic dedup payload")
+	}
+
+	second := &fakeMessenger{}
+	m2 := New(st, second)
+	if err := m2.ApplySCMObservation(ctx, "mer-1", o); err != nil {
+		t.Fatalf("second ApplySCMObservation: %v", err)
+	}
+	if len(second.msgs) != 0 {
+		t.Fatalf("repeated bot review observation should dedup after restart, got %d: %v", len(second.msgs), second.msgs)
+	}
+}
+
+func TestSCMObservation_ReactDoctorGreenCINudgesAgent(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	o := reactDoctorSCMObservation()
+
+	if err := m.ApplySCMObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("green CI with actionable React Doctor comments should nudge once, got %d: %v", len(msg.msgs), msg.msgs)
+	}
+	got := msg.msgs[0]
+	if !strings.Contains(got, "memoize the video props") || !strings.Contains(got, "avoid unstable hook deps") {
+		t.Fatalf("React Doctor bot review feedback was not delivered:\n%s", got)
+	}
+}
+
+func reactDoctorSCMObservation() ports.SCMObservation {
+	return ports.SCMObservation{
+		Fetched: true,
+		PR: ports.SCMPRObservation{
+			URL:    "https://github.com/AgentWrapper/agent-orchestrator/pull/2826",
+			Number: 2826,
+			Title:  "frontend polish",
+		},
+		CI: ports.SCMCIObservation{Summary: string(domain.CIPassing), HeadSHA: "sha1"},
+		Review: ports.SCMReviewObservation{
+			Decision: string(domain.ReviewRequired),
+			Threads: []ports.SCMReviewThreadObservation{
+				{
+					ID:           "thread-hero",
+					Path:         "frontend/src/components/LandingHero.tsx",
+					Line:         1218,
+					IsBot:        true,
+					SemanticHash: "react-doctor-thread-hero-v1",
+					Comments: []ports.SCMReviewCommentObservation{{
+						ID: "comment-hero", Author: "github-actions", Body: "memoize the video props", URL: "https://github.com/AgentWrapper/agent-orchestrator/pull/2826#discussion_r1", IsBot: true,
+					}},
+				},
+				{
+					ID:           "thread-install",
+					Path:         "frontend/src/components/LandingInstall.tsx",
+					Line:         171,
+					IsBot:        true,
+					SemanticHash: "react-doctor-thread-install-v1",
+					Comments: []ports.SCMReviewCommentObservation{{
+						ID: "comment-install", Author: "github-actions", Body: "avoid unstable hook deps", URL: "https://github.com/AgentWrapper/agent-orchestrator/pull/2826#discussion_r2", IsBot: true,
+					}},
+				},
+			},
+		},
+		Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeMergeable)},
 	}
 }
 
