@@ -19,7 +19,7 @@ describe("ui-store developerMode persistence", () => {
 		expect(useUiStore.getState().developerMode).toBe(true);
 	});
 
-	it("treats any non-\"true\" stored value as off", async () => {
+	it('treats any non-"true" stored value as off', async () => {
 		window.localStorage.setItem("ao.developerMode", "1");
 		const { useUiStore } = await import("./ui-store");
 		expect(useUiStore.getState().developerMode).toBe(false);
