@@ -11,6 +11,9 @@ export default function TabsLayout() {
 			screenListeners={{ tabPress: () => haptics.select() }}
 			screenOptions={{
 				headerShown: false,
+				// Slide the outgoing/incoming screen toward the tab you moved to,
+				// instead of swapping instantly.
+				animation: "shift",
 				tabBarActiveTintColor: theme.blue,
 				tabBarInactiveTintColor: theme.textTertiary,
 				tabBarStyle: {
