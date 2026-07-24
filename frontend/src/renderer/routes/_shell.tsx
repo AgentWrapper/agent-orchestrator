@@ -34,7 +34,7 @@ import {
 	hidesShellTopbar,
 } from "../lib/platform";
 import { useUiStore } from "../stores/ui-store";
-import { toProjectKind, type WorkspaceSummary } from "../types/workspace";
+import { sessionIsActive, toProjectKind, workerSessions, type WorkspaceSummary } from "../types/workspace";
 import type { components } from "../../api/schema";
 
 export const Route = createFileRoute("/_shell")({
@@ -152,9 +152,10 @@ function ShellLayout() {
 	const navigateSession = useCallback(
 		(direction: -1 | 1) => {
 			if (!scopedProjectId) return;
-			const sessions = (workspaces.find((workspace) => workspace.id === scopedProjectId)?.sessions ?? []).filter(
-				(session) => session.status !== "terminated",
-			);
+			// Same set as the sidebar: live workers only (skip orchestrators,
+			// merged, and terminated — including terminated-merged status).
+			const projectSessions = workspaces.find((workspace) => workspace.id === scopedProjectId)?.sessions ?? [];
+			const sessions = workerSessions(projectSessions).filter(sessionIsActive);
 			if (sessions.length === 0) return;
 			const currentIndex = sessions.findIndex((session) => session.id === routeParams.sessionId);
 			const nextIndex =
@@ -447,7 +448,12 @@ function ShellLayout() {
 	useEffect(
 		() =>
 			aoBridge.app.onFocusTerminalShortcut(() => {
-				document.querySelector<HTMLElement>(".xterm-helper-textarea")?.focus();
+				// Prefer the active session pane so a stray/orphan helper textarea
+				// elsewhere in the document cannot steal focus.
+				const scoped =
+					document.querySelector<HTMLElement>('[data-testid="session-detail"] .xterm-helper-textarea') ??
+					document.querySelector<HTMLElement>('[data-testid="session-terminal"] .xterm-helper-textarea');
+				scoped?.focus();
 			}),
 		[],
 	);

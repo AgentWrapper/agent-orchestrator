@@ -150,9 +150,13 @@ const workspaces = [
 		name: "Project One",
 		path: "/one",
 		sessions: [
-			{ id: "sess-1", status: "working" },
-			{ id: "sess-2", status: "terminated" },
-			{ id: "sess-3", status: "idle" },
+			{ id: "sess-1", status: "working", kind: "worker" },
+			{ id: "sess-2", status: "terminated", kind: "worker" },
+			{ id: "sess-3", status: "idle", kind: "worker" },
+			// Sidebar omits these: keyboard nav must match.
+			{ id: "sess-merged", status: "merged", kind: "worker" },
+			{ id: "sess-merged-terminated", status: "merged", kind: "worker" }, // terminated-merged keeps status "merged"
+			{ id: "sess-orch", status: "working", kind: "orchestrator" },
 		],
 	},
 ] as unknown as WorkspaceSummary[];
@@ -293,7 +297,7 @@ describe("shell application shortcut subscriptions", () => {
 		expect(shellMocks.navigate).toHaveBeenCalledWith({ to: "/settings" });
 	});
 
-	it("moves to the next non-terminated session in the current project", async () => {
+	it("moves to the next live worker session, skipping terminated/merged/orchestrator", async () => {
 		shellMocks.state.routeParams = { sessionId: "sess-1" };
 		await renderShell();
 
@@ -305,7 +309,7 @@ describe("shell application shortcut subscriptions", () => {
 		});
 	});
 
-	it("wraps to the last session when moving previous from the first", async () => {
+	it("wraps to the last live worker when moving previous from the first", async () => {
 		shellMocks.state.routeParams = { sessionId: "sess-1" };
 		await renderShell();
 
@@ -317,15 +321,64 @@ describe("shell application shortcut subscriptions", () => {
 		});
 	});
 
-	it("focuses the mounted terminal", async () => {
+	it("skips merged and terminated-merged workers when cycling", async () => {
+		// sess-1 → next would hit sess-merged / sess-merged-terminated if they were navigable.
+		shellMocks.state.routeParams = { sessionId: "sess-1" };
+		await renderShell();
+
+		act(() => shellMocks.state.nextSessionListener?.());
+
+		expect(shellMocks.navigate).toHaveBeenCalledTimes(1);
+		expect(shellMocks.navigate).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "proj-1", sessionId: "sess-3" },
+		});
+		expect(shellMocks.navigate.mock.calls[0]?.[0]?.params?.sessionId).not.toBe("sess-merged");
+		expect(shellMocks.navigate.mock.calls[0]?.[0]?.params?.sessionId).not.toBe("sess-merged-terminated");
+		expect(shellMocks.navigate.mock.calls[0]?.[0]?.params?.sessionId).not.toBe("sess-orch");
+	});
+
+	it("does not navigate when already on the only live worker", async () => {
+		shellMocks.state.workspaces = [
+			{
+				id: "proj-1",
+				name: "Project One",
+				path: "/one",
+				sessions: [
+					{ id: "sess-only", status: "working", kind: "worker" },
+					{ id: "sess-done", status: "merged", kind: "worker" },
+					{ id: "sess-orch", status: "idle", kind: "orchestrator" },
+				],
+			},
+		] as unknown as WorkspaceSummary[];
+		shellMocks.state.routeParams = { sessionId: "sess-only" };
+		await renderShell();
+
+		act(() => shellMocks.state.nextSessionListener?.());
+		act(() => shellMocks.state.previousSessionListener?.());
+
+		expect(shellMocks.navigate).not.toHaveBeenCalled();
+	});
+
+	it("focuses the terminal inside the active session pane, not a stray helper", async () => {
+		const stray = document.createElement("textarea");
+		stray.className = "xterm-helper-textarea";
+		document.body.appendChild(stray);
+
+		const sessionPane = document.createElement("div");
+		sessionPane.setAttribute("data-testid", "session-detail");
 		const terminalInput = document.createElement("textarea");
 		terminalInput.className = "xterm-helper-textarea";
-		document.body.appendChild(terminalInput);
+		sessionPane.appendChild(terminalInput);
+		document.body.appendChild(sessionPane);
+
 		await renderShell();
 
 		act(() => shellMocks.state.focusTerminalListener?.());
 
 		expect(document.activeElement).toBe(terminalInput);
-		terminalInput.remove();
+		expect(document.activeElement).not.toBe(stray);
+		sessionPane.remove();
+		stray.remove();
 	});
 });
