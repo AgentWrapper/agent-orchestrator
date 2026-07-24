@@ -332,6 +332,33 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 	return true, nil
 }
 
+// AgentExitStatus reads the AO-owned exit marker written after the launched
+// agent command exits. The tmux session itself may still be alive because AO
+// leaves an inspection shell open.
+func (r *Runtime) AgentExitStatus(ctx context.Context, handle ports.RuntimeHandle) (ports.AgentExitStatus, bool, error) {
+	id, err := handleID(handle)
+	if err != nil {
+		return ports.AgentExitStatus{}, false, err
+	}
+	out, err := r.run(ctx, showEnvArgs(id, agentExitEnvKey(id))...)
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return ports.AgentExitStatus{}, false, nil
+		}
+		return ports.AgentExitStatus{}, false, fmt.Errorf("tmux runtime: read agent exit status %s: %w", id, err)
+	}
+	_, value, ok := strings.Cut(strings.TrimSpace(string(out)), "=")
+	if !ok {
+		return ports.AgentExitStatus{}, false, nil
+	}
+	code, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil {
+		return ports.AgentExitStatus{}, false, fmt.Errorf("tmux runtime: parse agent exit status %s: %w", id, err)
+	}
+	return ports.AgentExitStatus{Exited: true, ExitCode: code}, true, nil
+}
+
 // SendMessage sends literal text to the session (chunked via send-keys -l) then
 // presses Enter to submit. An empty message presses Enter alone (the nudge
 // contract on ports.AgentMessenger).
@@ -659,6 +686,10 @@ func buildLaunchCommand(cfg ports.RuntimeConfig) string {
 	b.WriteString("cd ")
 	b.WriteString(shellQuote(cfg.WorkspacePath))
 	b.WriteString(" || exit; ")
+	exitKey := agentExitEnvKey(string(cfg.SessionID))
+	b.WriteString("tmux set-environment -u ")
+	b.WriteString(shellQuote(exitKey))
+	b.WriteString(" >/dev/null 2>&1 || true; ")
 	for _, key := range sortedKeys(cfg.Env) {
 		if key == "PATH" {
 			continue
@@ -680,11 +711,19 @@ func buildLaunchCommand(cfg ports.RuntimeConfig) string {
 		parts[i] = shellQuote(a)
 	}
 	b.WriteString(strings.Join(parts, " "))
+	b.WriteString("; ao_agent_exit=$?; tmux set-environment ")
+	b.WriteString(shellQuote(exitKey))
+	b.WriteString(` "$ao_agent_exit" >/dev/null 2>&1 || true`)
 	// Keep the tmux session alive after the agent exits so the operator can
 	// inspect the terminal. The shell variable expansion picks up $SHELL from
 	// the process env if set, otherwise falls back to /bin/sh.
 	b.WriteString(`; exec "${SHELL:-/bin/sh}" -i`)
 	return b.String()
+}
+
+func agentExitEnvKey(id string) string {
+	key := strings.ToUpper(strings.NewReplacer("-", "_", ".", "_", ":", "_").Replace(id))
+	return "AO_AGENT_EXIT_" + key
 }
 
 func sameDirectory(a, b string) bool {

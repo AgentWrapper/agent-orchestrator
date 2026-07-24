@@ -127,6 +127,9 @@ func TestCommandBuilders(t *testing.T) {
 	if got, want := capturePaneArgs("sess-1", 10), []string{"capture-pane", "-t", "sess-1", "-p", "-S", "-10"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("capturePaneArgs = %#v, want %#v", got, want)
 	}
+	if got, want := showEnvArgs("sess-1", "AO_AGENT_EXIT_SESS_1"), []string{"show-environment", "-t", "=sess-1", "AO_AGENT_EXIT_SESS_1"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("showEnvArgs = %#v, want %#v", got, want)
+	}
 }
 
 // -- session name sanitization --
@@ -276,6 +279,31 @@ func TestCreateLaunchCommandContainsKeepAliveShell(t *testing.T) {
 	}
 	if !strings.Contains(launchCmd, "'myagent'") {
 		t.Fatalf("launch command missing quoted argv: %q", launchCmd)
+	}
+	if !strings.Contains(launchCmd, "tmux set-environment -u 'AO_AGENT_EXIT_SESS_1'") {
+		t.Fatalf("launch command missing stale marker cleanup: %q", launchCmd)
+	}
+	if !strings.Contains(launchCmd, `ao_agent_exit=$?; tmux set-environment 'AO_AGENT_EXIT_SESS_1' "$ao_agent_exit"`) {
+		t.Fatalf("launch command missing exit marker write: %q", launchCmd)
+	}
+}
+
+func TestAgentExitStatusReadsMarker(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{[]byte("AO_AGENT_EXIT_SESS_1=17\n")}
+
+	status, ok, err := r.AgentExitStatus(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
+	if err != nil {
+		t.Fatalf("AgentExitStatus: %v", err)
+	}
+	if !ok {
+		t.Fatal("AgentExitStatus ok=false, want true")
+	}
+	if !status.Exited || status.ExitCode != 17 {
+		t.Fatalf("status = %+v, want exited code 17", status)
+	}
+	if got, want := fr.calls[0].args, showEnvArgs("sess-1", "AO_AGENT_EXIT_SESS_1"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("show env args = %#v, want %#v", got, want)
 	}
 }
 

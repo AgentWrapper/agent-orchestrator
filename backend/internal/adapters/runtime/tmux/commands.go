@@ -106,3 +106,8 @@ func sendInterruptArgs(id string) []string {
 func capturePaneArgs(id string, lines int) []string {
 	return []string{"capture-pane", "-t", id, "-p", "-S", fmt.Sprintf("-%d", lines)}
 }
+
+// showEnvArgs reads a tmux session environment variable.
+func showEnvArgs(id, key string) []string {
+	return []string{"show-environment", "-t", exactSessionTarget(id), key}
+}

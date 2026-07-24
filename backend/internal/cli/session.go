@@ -73,8 +73,9 @@ type killSessionResponse struct {
 }
 
 type restoreSessionResponse struct {
-	SessionID string     `json:"sessionId"`
-	Session   sessionDTO `json:"session"`
+	SessionID   string     `json:"sessionId"`
+	RestoreMode string     `json:"restoreMode"`
+	Session     sessionDTO `json:"session"`
 }
 
 type renameSessionResponse struct {
@@ -222,6 +223,7 @@ func newSessionRestoreCommand(ctx *commandContext) *cobra.Command {
 		},
 	}
 	addSessionProjectFlag(cmd.Flags(), &opts.project, "Project id to scope the lookup")
+	cmd.Flags().BoolVar(&opts.json, "json", false, "Output as JSON")
 	return cmd
 }
 
@@ -459,6 +461,9 @@ func (c *commandContext) restoreSession(ctx context.Context, cmd *cobra.Command,
 	var res restoreSessionResponse
 	if err := c.postJSON(ctx, "sessions/"+url.PathEscape(id)+"/restore", struct{}{}, &res); err != nil {
 		return err
+	}
+	if opts.json {
+		return writeJSON(cmd.OutOrStdout(), res)
 	}
 	out := cmd.OutOrStdout()
 	if _, err := fmt.Fprintf(out, "session %s restored\n", res.SessionID); err != nil {

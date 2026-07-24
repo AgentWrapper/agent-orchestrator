@@ -30,6 +30,12 @@ type SessionMetadata struct {
 	WorkspaceRepoPath string `json:"workspaceRepoPath,omitempty"`
 	RuntimeHandleID   string `json:"runtimeHandleId,omitempty"`
 	AgentSessionID    string `json:"agentSessionId,omitempty"`
+	NativeResumeReady bool   `json:"nativeResumeReady,omitempty"`
+	// ResetNativeResume is an internal write intent for lifecycle merges. It is
+	// not persisted as a column; it tells MarkSpawned that a fresh/saved-prompt
+	// relaunch replaced the native transcript, so stale native resume facts must
+	// be cleared even though mergeMetadata normally ignores empty strings/false.
+	ResetNativeResume bool   `json:"-"`
 	Prompt            string `json:"prompt,omitempty"`
 	// PreviewURL is the browser preview target the desktop app opens for this
 	// session. Set via `ao preview` (POST /sessions/{id}/preview); persisted so

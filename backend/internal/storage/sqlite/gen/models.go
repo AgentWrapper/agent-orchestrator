@@ -183,6 +183,7 @@ type Session struct {
 	PreviewURL        string
 	PreviewRevision   int64
 	CleanupGeneration int64
+	NativeResumeReady bool
 }
 
 type SessionCleanupFact struct {

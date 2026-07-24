@@ -103,6 +103,19 @@ type RuntimeHandle struct {
 	ID string
 }
 
+// AgentExitStatus reports whether the AO-launched agent command has exited
+// inside a runtime that may keep an inspection shell alive afterward.
+type AgentExitStatus struct {
+	Exited   bool
+	ExitCode int
+}
+
+// AgentExitObserver is an optional runtime capability for detecting immediate
+// agent-command failure separately from runtime/container liveness.
+type AgentExitObserver interface {
+	AgentExitStatus(ctx context.Context, handle RuntimeHandle) (AgentExitStatus, bool, error)
+}
+
 // Stream is one live terminal attach: PTY-like bytes plus resize. Returned
 // already-open by a Runtime's Attach. tmux backs it with a local PTY around
 // their attach CLI; conpty backs it with a loopback connection to the pty-host.

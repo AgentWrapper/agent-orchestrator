@@ -208,6 +208,35 @@ func (r *fakeRuntime) GetOutput(_ context.Context, _ ports.RuntimeHandle, _ int)
 	return out, nil
 }
 
+type exitObservingRuntime struct {
+	fakeRuntime
+	statuses []ports.AgentExitStatus
+	statusOK []bool
+}
+
+func (r *exitObservingRuntime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
+	if r.createErr != nil {
+		return ports.RuntimeHandle{}, r.createErr
+	}
+	r.lastCfg = cfg
+	r.created++
+	return ports.RuntimeHandle{ID: fmt.Sprintf("h%d", r.created)}, nil
+}
+
+func (r *exitObservingRuntime) AgentExitStatus(_ context.Context, _ ports.RuntimeHandle) (ports.AgentExitStatus, bool, error) {
+	if len(r.statuses) == 0 {
+		return ports.AgentExitStatus{}, false, nil
+	}
+	status := r.statuses[0]
+	r.statuses = r.statuses[1:]
+	ok := true
+	if len(r.statusOK) > 0 {
+		ok = r.statusOK[0]
+		r.statusOK = r.statusOK[1:]
+	}
+	return status, ok, nil
+}
+
 type fakeAgent struct{}
 
 func (fakeAgent) GetConfigSpec(context.Context) (ports.ConfigSpec, error) {
@@ -285,6 +314,12 @@ type afterStartAgent struct {
 func (a afterStartAgent) GetPromptDeliveryStrategy(context.Context, ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
 	return ports.PromptDeliveryAfterStart, nil
 }
+
+type completedTurnResumeAgent struct {
+	*recordingAgent
+}
+
+func (a completedTurnResumeAgent) RequiresCompletedTurnForResume() bool { return true }
 
 type readinessAgent struct {
 	afterStartAgent
@@ -2744,6 +2779,267 @@ func TestRestore_AgyAndCopilotWithoutAgentSessionIDFallBackToSavedPrompt(t *test
 				t.Fatal("session must be live after fallback launch")
 			}
 		})
+	}
+}
+
+func TestRestore_CompletedTurnResumeAgentWithNativeIDButNotReadyFallsBackToSavedPrompt(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessQwen, IsTerminated: true,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "qwen-native-1", Prompt: "continue the task"},
+	}
+	rt := &fakeRuntime{}
+	agent := &recordingAgent{}
+	m := New(Deps{
+		Runtime:   rt,
+		Agents:    singleAgent{agent: completedTurnResumeAgent{recordingAgent: agent}},
+		Workspace: &fakeWorkspace{},
+		Store:     st,
+		Messenger: &fakeMessenger{},
+		Lifecycle: &fakeLCM{store: st},
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	res, err := m.RestoreWithMode(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("Restore err = %v, want saved-prompt fallback", err)
+	}
+	if res.Mode != RestoreModeSavedPrompt {
+		t.Fatalf("restore mode = %q, want %q", res.Mode, RestoreModeSavedPrompt)
+	}
+	if agent.restoreCalls != 0 {
+		t.Fatalf("GetRestoreCommand calls = %d, want 0 because native id is not ready", agent.restoreCalls)
+	}
+	if agent.launchCalls != 1 {
+		t.Fatalf("GetLaunchCommand calls = %d, want 1", agent.launchCalls)
+	}
+	if agent.lastLaunch.Prompt != "continue the task" {
+		t.Fatalf("fallback launch prompt = %q, want saved prompt", agent.lastLaunch.Prompt)
+	}
+	if rt.created != 1 {
+		t.Fatalf("runtime.Create = %d, want 1", rt.created)
+	}
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session must be live after saved-prompt fallback")
+	}
+	if got := st.sessions["mer-1"].Metadata.AgentSessionID; got != "" {
+		t.Fatalf("fallback metadata AgentSessionID = %q, want cleared", got)
+	}
+	if st.sessions["mer-1"].Metadata.NativeResumeReady {
+		t.Fatal("fallback metadata NativeResumeReady = true, want cleared")
+	}
+}
+
+func TestRestore_CompletedTurnResumeAgentWithNativeIDButNotReadyAndNoPromptNotResumable(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessGoose, IsTerminated: true,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "goose-native-1"},
+	}
+	rt := &fakeRuntime{}
+	agent := &recordingAgent{}
+	m := New(Deps{
+		Runtime:   rt,
+		Agents:    singleAgent{agent: completedTurnResumeAgent{recordingAgent: agent}},
+		Workspace: &fakeWorkspace{},
+		Store:     st,
+		Messenger: &fakeMessenger{},
+		Lifecycle: &fakeLCM{store: st},
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	_, err := m.RestoreWithMode(ctx, "mer-1")
+	if !errors.Is(err, ErrNotResumable) {
+		t.Fatalf("Restore err = %v, want ErrNotResumable", err)
+	}
+	if agent.restoreCalls != 0 {
+		t.Fatalf("GetRestoreCommand calls = %d, want 0 because native id is not ready", agent.restoreCalls)
+	}
+	if agent.launchCalls != 0 {
+		t.Fatalf("GetLaunchCommand calls = %d, want 0", agent.launchCalls)
+	}
+	if rt.created != 0 {
+		t.Fatalf("runtime.Create = %d, want 0", rt.created)
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session must remain terminated")
+	}
+}
+
+func TestRestore_CompletedTurnResumeAgentWithReadyNativeIDUsesNativeResume(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessQwen, IsTerminated: true,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "qwen-native-1", NativeResumeReady: true, Prompt: "continue the task"},
+	}
+	rt := &fakeRuntime{}
+	agent := &recordingAgent{}
+	m := New(Deps{
+		Runtime:   rt,
+		Agents:    singleAgent{agent: completedTurnResumeAgent{recordingAgent: agent}},
+		Workspace: &fakeWorkspace{},
+		Store:     st,
+		Messenger: &fakeMessenger{},
+		Lifecycle: &fakeLCM{store: st},
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	res, err := m.RestoreWithMode(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("Restore err = %v, want native resume", err)
+	}
+	if res.Mode != RestoreModeNative {
+		t.Fatalf("restore mode = %q, want %q", res.Mode, RestoreModeNative)
+	}
+	if agent.restoreCalls != 1 {
+		t.Fatalf("GetRestoreCommand calls = %d, want 1", agent.restoreCalls)
+	}
+	if agent.launchCalls != 0 {
+		t.Fatalf("GetLaunchCommand calls = %d, want 0", agent.launchCalls)
+	}
+	if rt.created != 1 {
+		t.Fatalf("runtime.Create = %d, want 1", rt.created)
+	}
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session must be live after native resume")
+	}
+}
+
+func TestRestore_NativeResumeImmediateExitFallsBackToSavedPrompt(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessQwen, IsTerminated: true,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "qwen-native-1", NativeResumeReady: true, Prompt: "continue the task"},
+	}
+	rt := &exitObservingRuntime{statuses: []ports.AgentExitStatus{{Exited: true, ExitCode: 1}}}
+	agent := &recordingAgent{}
+	m := New(Deps{
+		Runtime:   rt,
+		Agents:    singleAgent{agent: completedTurnResumeAgent{recordingAgent: agent}},
+		Workspace: &fakeWorkspace{},
+		Store:     st,
+		Messenger: &fakeMessenger{},
+		Lifecycle: &fakeLCM{store: st},
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	res, err := m.RestoreWithMode(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("Restore err = %v, want saved-prompt fallback", err)
+	}
+	if res.Mode != RestoreModeSavedPrompt {
+		t.Fatalf("restore mode = %q, want %q", res.Mode, RestoreModeSavedPrompt)
+	}
+	if agent.restoreCalls != 1 {
+		t.Fatalf("GetRestoreCommand calls = %d, want 1", agent.restoreCalls)
+	}
+	if agent.launchCalls != 1 {
+		t.Fatalf("GetLaunchCommand calls = %d, want 1", agent.launchCalls)
+	}
+	if rt.created != 2 {
+		t.Fatalf("runtime.Create = %d, want 2 (native then fallback)", rt.created)
+	}
+	if rt.destroyed != 1 || rt.destroyedIDs[0] != "h1" {
+		t.Fatalf("destroyed = %d ids=%v, want h1", rt.destroyed, rt.destroyedIDs)
+	}
+	if got := rt.lastCfg.Argv; !reflect.DeepEqual(got, []string{"launch"}) {
+		t.Fatalf("fallback argv = %#v, want launch", got)
+	}
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session must be live after fallback succeeds")
+	}
+	if got := st.sessions["mer-1"].Metadata.AgentSessionID; got != "" {
+		t.Fatalf("fallback metadata AgentSessionID = %q, want cleared", got)
+	}
+	if st.sessions["mer-1"].Metadata.NativeResumeReady {
+		t.Fatal("fallback metadata NativeResumeReady = true, want cleared")
+	}
+}
+
+func TestRestore_NativeResumeImmediateExitWithoutPromptFailsAndStaysTerminated(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessGoose, IsTerminated: true,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "goose-native-1", NativeResumeReady: true},
+	}
+	rt := &exitObservingRuntime{statuses: []ports.AgentExitStatus{{Exited: true, ExitCode: 1}}}
+	agent := &recordingAgent{}
+	m := New(Deps{
+		Runtime:   rt,
+		Agents:    singleAgent{agent: completedTurnResumeAgent{recordingAgent: agent}},
+		Workspace: &fakeWorkspace{},
+		Store:     st,
+		Messenger: &fakeMessenger{},
+		Lifecycle: &fakeLCM{store: st},
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	_, err := m.RestoreWithMode(ctx, "mer-1")
+	if !errors.Is(err, ErrNotResumable) {
+		t.Fatalf("Restore err = %v, want ErrNotResumable", err)
+	}
+	if agent.restoreCalls != 1 {
+		t.Fatalf("GetRestoreCommand calls = %d, want 1", agent.restoreCalls)
+	}
+	if agent.launchCalls != 0 {
+		t.Fatalf("GetLaunchCommand calls = %d, want 0", agent.launchCalls)
+	}
+	if rt.created != 1 {
+		t.Fatalf("runtime.Create = %d, want 1", rt.created)
+	}
+	if rt.destroyed != 1 || rt.destroyedIDs[0] != "h1" {
+		t.Fatalf("destroyed = %d ids=%v, want h1", rt.destroyed, rt.destroyedIDs)
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session must remain terminated")
+	}
+}
+
+func TestRestore_PromptlessOrchestratorNativeResumeImmediateExitRelaunchesFresh(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator, Harness: domain.HarnessClaudeCode, IsTerminated: true,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "stale-native-1", NativeResumeReady: true},
+	}
+	rt := &exitObservingRuntime{statuses: []ports.AgentExitStatus{{Exited: true, ExitCode: 1}}}
+	agent := &recordingAgent{}
+	m := New(Deps{
+		Runtime:   rt,
+		Agents:    singleAgent{agent: agent},
+		Workspace: &fakeWorkspace{},
+		Store:     st,
+		Messenger: &fakeMessenger{},
+		Lifecycle: &fakeLCM{store: st},
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	res, err := m.RestoreWithMode(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("Restore err = %v, want fresh orchestrator fallback", err)
+	}
+	if res.Mode != RestoreModeFresh {
+		t.Fatalf("restore mode = %q, want %q", res.Mode, RestoreModeFresh)
+	}
+	if agent.restoreCalls != 1 {
+		t.Fatalf("GetRestoreCommand calls = %d, want 1", agent.restoreCalls)
+	}
+	if agent.launchCalls != 1 {
+		t.Fatalf("GetLaunchCommand calls = %d, want 1", agent.launchCalls)
+	}
+	if agent.lastLaunch.Prompt != "" {
+		t.Fatalf("fresh orchestrator prompt = %q, want empty", agent.lastLaunch.Prompt)
+	}
+	if rt.created != 2 {
+		t.Fatalf("runtime.Create = %d, want 2 (native then fresh fallback)", rt.created)
+	}
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatal("orchestrator must be live after fresh fallback")
+	}
+	if got := st.sessions["mer-1"].Metadata.AgentSessionID; got != "" {
+		t.Fatalf("fallback metadata AgentSessionID = %q, want cleared", got)
+	}
+	if st.sessions["mer-1"].Metadata.NativeResumeReady {
+		t.Fatal("fallback metadata NativeResumeReady = true, want cleared")
 	}
 }
 

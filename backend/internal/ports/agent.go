@@ -71,6 +71,12 @@ type AgentBinaryResolver interface {
 	ResolveBinary(ctx context.Context) (path string, err error)
 }
 
+// CompletedTurnResumeRequirement is an optional capability for adapters whose
+// native resume id is not durable until the agent's completed-turn hook lands.
+type CompletedTurnResumeRequirement interface {
+	RequiresCompletedTurnForResume() bool
+}
+
 // AgentPromptReadinessProvider is an optional capability for interactive
 // adapters that receive their first task after startup. It lets AO wait until a
 // terminal UI is ready before injecting text through the runtime.
