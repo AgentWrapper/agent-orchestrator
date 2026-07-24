@@ -64,7 +64,7 @@ export function ShellTerminalTab({ shell, isActive, onSelect, onClose, onRename 
 			{isEditing ? (
 				<input
 					aria-label={`Rename terminal ${shell.title}`}
-					className="min-w-flex-min max-w-shell-tab-max bg-transparent font-mono text-control font-semibold text-foreground outline-none"
+					className="min-w-flex-min max-w-shell-tab-max rounded-sm border border-accent bg-background px-1 font-mono text-control font-semibold text-foreground shadow-sm outline-none ring-1 ring-accent"
 					onBlur={commit}
 					onChange={(event) => setDraft(event.target.value)}
 					onKeyDown={(event) => {
@@ -84,7 +84,7 @@ export function ShellTerminalTab({ shell, isActive, onSelect, onClose, onRename 
 					ref={ref}
 					aria-current={isActive}
 					className={cn(
-						"min-w-flex-min max-w-shell-tab-max truncate font-mono text-control font-semibold transition-colors",
+						"min-w-flex-min max-w-shell-tab-max select-none truncate font-mono text-control font-semibold transition-colors",
 						isActive ? "text-foreground" : "text-passive hover:text-foreground",
 					)}
 					onClick={onSelect}
