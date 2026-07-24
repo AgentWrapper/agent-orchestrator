@@ -467,7 +467,7 @@ function ZoneColumn({
 				background: `linear-gradient(180deg, ${col.glow}, transparent var(--size-kanban-glow)), var(--color-overlay-subtle)`,
 			}}
 		>
-			<div className="flex shrink-0 items-center gap-2 px-3 pb-2.5 pt-2.5">
+			<div className="flex shrink-0 items-center gap-2 px-3 py-2">
 				<span
 					className="size-dot-sm rounded-full"
 					style={{
@@ -810,7 +810,7 @@ function SessionCard({
 				</button>
 			) : null}
 			<div {...cardBodyProps}>
-				<div className="flex items-center gap-2 px-3 pb-2 pt-2.5">
+				<div className="flex items-center gap-2 px-3 pb-1.5 pt-2">
 					<span className={cn("inline-flex items-center gap-1.5 text-caption font-medium", badge.className)}>
 						<span className={cn("size-dot-sm rounded-full bg-current")} />
 						{badge.label}
@@ -832,7 +832,7 @@ function SessionCard({
 				<div
 					className={cn(
 						"px-3 text-control font-medium leading-snug tracking-tight text-foreground",
-						showBranch ? "pb-1.5" : "pb-2.5",
+						showBranch ? "pb-1" : "pb-2",
 						"line-clamp-2 overflow-hidden",
 					)}
 				>
@@ -841,7 +841,7 @@ function SessionCard({
 			</div>
 			{showBranch && (
 				<div
-					className="flex min-w-0 items-center gap-1 px-3 pb-2 font-mono text-2xs text-passive"
+					className="flex min-w-0 items-center gap-1 px-3 pb-1.5 font-mono text-2xs text-passive"
 					onClick={interactive ? onOpen : undefined}
 				>
 					<span className="truncate">{branch}</span>
@@ -849,7 +849,7 @@ function SessionCard({
 				</div>
 			)}
 			<div aria-hidden="true" className="mx-3 my-px h-px bg-border" />
-			<div className="px-3 py-1.5 font-mono text-2xs text-passive">
+			<div className="px-3 py-1.25 font-mono text-2xs text-passive">
 				{prSummaries.length === 0 ? (
 					"no PR yet"
 				) : (

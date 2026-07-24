@@ -83,7 +83,7 @@ const prStateTone: Record<SessionPRSummary["state"], string> = {
 
 const inspectorShellClass = "@container/inspector flex h-full min-h-0 flex-col overflow-hidden";
 
-const inspectorBodyClass = "min-h-0 flex-1 overflow-y-auto p-4 pb-6 @max-[300px]/inspector:px-3";
+const inspectorBodyClass = "min-h-0 flex-1 overflow-y-auto p-3 pb-4 @max-[300px]/inspector:px-2.5";
 
 const inspectorEmptyClass = "text-xs text-muted-foreground leading-normal";
 
@@ -166,21 +166,23 @@ export function SessionInspector({
 
 	return (
 		<aside className={inspectorShellClass} aria-label="Session inspector">
-			<div className="flex h-inspector-tabs shrink-0 items-center gap-1 border-b border-border px-3" role="tablist">
+			<div className="flex h-inspector-tabs shrink-0 items-center gap-1 border-b border-border px-2.5" role="tablist">
 				{VIEWS.map((entry) => (
 					<button
+						aria-label={entry.label}
 						key={entry.id}
 						type="button"
 						role="tab"
 						aria-selected={view === entry.id}
 						className={cn(
-							"inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md p-1.5 text-sm-md font-semibold text-passive transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground",
+							"inline-flex h-control-md shrink-0 items-center justify-center gap-1.5 rounded-md px-1.5 text-sm-md font-semibold text-passive transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground",
 							view === entry.id && "bg-interactive-active text-foreground",
 						)}
 						onClick={() => setView(entry.id)}
+						title={entry.label}
 					>
 						<span className="inline-flex shrink-0 [&_svg]:size-icon-md">{entry.icon}</span>
-						<span className="truncate">{entry.label}</span>
+						<span className="truncate @max-[350px]/inspector:hidden">{entry.label}</span>
 					</button>
 				))}
 			</div>
@@ -227,8 +229,8 @@ function Section({
 	title: string;
 }) {
 	return (
-		<section className={cn("mb-5 last:mb-0", className)} data-testid="inspector-section">
-			<div className="mb-2 flex items-center justify-between text-2xs font-semibold uppercase tracking-wide-lg text-passive">
+		<section className={cn("mb-4 last:mb-0", className)} data-testid="inspector-section">
+			<div className="mb-1.5 flex items-center justify-between text-2xs font-semibold uppercase tracking-wide-lg text-passive">
 				<span>{title}</span>
 				{action ?? null}
 			</div>
@@ -249,7 +251,7 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 				{prSummaries.length === 0 ? (
 					<p className={inspectorEmptyClass}>No pull request opened yet.</p>
 				) : (
-					<div className="flex flex-col gap-2">
+					<div className="flex flex-col gap-1.5">
 						{prSummaries.map((pr) => (
 							<PRSummaryCard key={pr.number} pr={pr} />
 						))}
@@ -264,7 +266,7 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 				<ResumeAgentControl session={session} />
 			</Section>
 
-			<Section className="border-t border-border pt-4" title="Overview">
+			<Section className="border-t border-border pt-3" title="Overview">
 				<dl className="flex flex-col gap-1">
 					<Row k="Agent" v={session.provider} mono />
 					{issueId && <Row k="Issue" v={issueId} mono />}
@@ -436,7 +438,7 @@ function updateSessionMergePolicy(
 
 function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 	return (
-		<div className="rounded-md border border-border bg-surface px-3 py-2">
+		<div className="rounded-md border border-border bg-surface px-2.5 py-1.5">
 			<div className="flex items-center gap-2">
 				<GitPullRequest className="size-icon-md shrink-0 text-passive" aria-hidden="true" />
 				<span className="text-md-sm font-medium text-foreground">PR #{pr.number}</span>
@@ -456,9 +458,9 @@ function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 					<ArrowUpRight aria-hidden="true" className="size-icon-2xs" strokeWidth={2} />
 				</a>
 			</div>
-			{pr.title ? <div className="mt-2 text-xs font-medium leading-snug text-foreground">{pr.title}</div> : null}
-			<PRSummaryMeta className="mt-1.5" pr={pr} />
-			<PRSummaryParts className="mt-2" pr={pr} variant="stacked" />
+			{pr.title ? <div className="mt-1.5 text-xs font-medium leading-snug text-foreground">{pr.title}</div> : null}
+			<PRSummaryMeta className="mt-1" pr={pr} />
+			<PRSummaryParts className="mt-1.5" pr={pr} variant="stacked" />
 		</div>
 	);
 }
@@ -877,7 +879,7 @@ function ReviewPanel({
 		openReviewStates.every((reviewState) => reviewState.status === "ineligible");
 
 	return (
-		<div className="flex flex-col gap-4">
+		<div className="flex flex-col gap-3">
 			{error ? (
 				<p className="m-0 rounded-md border border-error/28 bg-error/8 px-2.5 py-2 text-sm-md leading-normal text-error">
 					{apiErrorMessage(error, "Review request failed")}
@@ -888,13 +890,13 @@ function ReviewPanel({
 					{notice}
 				</p>
 			) : null}
-			<div className="inline-flex min-w-0 items-center gap-2 font-mono text-control font-semibold text-foreground">
+			<div className="inline-flex min-w-0 items-center gap-1.5 font-mono text-control font-semibold text-foreground">
 				<Shield aria-hidden="true" className="size-icon-lg shrink-0 text-passive" />
 				<span className="min-w-0 truncate">{harness}</span>
 				<span className="font-sans text-sm-md font-medium text-passive">reviewer</span>
 			</div>
-			<div className="flex flex-col gap-3 overflow-hidden rounded-lg border border-border bg-surface p-3 @max-[300px]/inspector:overflow-hidden">
-				<div className="flex min-w-0 items-center justify-between gap-2.5 @max-[300px]/inspector:flex-col @max-[300px]/inspector:items-start">
+			<div className="flex flex-col gap-2 overflow-hidden rounded-lg border border-border bg-surface p-2.5 @max-[300px]/inspector:overflow-hidden">
+				<div className="flex min-w-0 items-center justify-between gap-2 @max-[300px]/inspector:flex-col @max-[300px]/inspector:items-start">
 					<span className="min-w-0 truncate text-xs font-semibold text-muted-foreground">Pull requests</span>
 					<span
 						className={cn(
@@ -913,7 +915,7 @@ function ReviewPanel({
 						<ReviewStateRow key={`${reviewState.prUrl}:${reviewState.targetSha}`} reviewState={reviewState} />
 					))}
 				</div>
-				<div className="grid grid-cols-2 gap-2.5 pt-1 has-[:only-child]:grid-cols-1 @max-[300px]/inspector:grid-cols-1">
+				<div className="grid grid-cols-2 gap-2 has-[:only-child]:grid-cols-1 @max-[300px]/inspector:grid-cols-1">
 					<button
 						className={cn(
 							"inline-flex h-control-xl min-w-0 items-center justify-center gap-2 overflow-hidden truncate rounded-md border px-2.5 text-xs font-semibold transition-[background,border-color,color] duration-fast hover:bg-interactive-hover hover:text-foreground disabled:cursor-not-allowed disabled:opacity-45 [&_svg]:size-icon-md [&_svg]:shrink-0",
@@ -950,7 +952,7 @@ function ReviewStateRow({ reviewState }: { reviewState: PRReviewState }) {
 	return (
 		<div
 			className={cn(
-				"grid min-h-row-md grid-cols-[minmax(0,1fr)_auto] items-center gap-2.5 border-0 border-b border-border bg-transparent p-3 last:border-b-0",
+				"grid min-h-row-md grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-0 border-b border-border bg-transparent p-2 last:border-b-0",
 				reviewState.status === "ineligible" && "opacity-70",
 			)}
 		>
