@@ -280,7 +280,18 @@ describe("SessionView", () => {
 		expect(screen.getByTestId("panel-inspector")).not.toHaveAttribute("inert");
 	});
 
-	it("mounts collapsed and inert when the store says closed", () => {
+	it("mounts the inspector open by default", () => {
+		render(<SessionView sessionId="sess-1" />);
+
+		expect(panelSizes("inspector")[0]).toMatch(/^[1-9]\d*(\.\d+)?%$/);
+		const pane = screen.getByTestId("panel-inspector");
+		expect(pane).not.toHaveAttribute("inert");
+		expect(pane).toHaveAttribute("aria-hidden", "false");
+		expect(panels.get("inspector")!.handle.expand).not.toHaveBeenCalled();
+	});
+
+	it("mounts collapsed and inert when the user has explicitly closed it", () => {
+		act(() => useUiStore.getState().setInspectorOpen("sess-1", false));
 		render(<SessionView sessionId="sess-1" />);
 
 		expect(panelSizes("inspector")[0]).toBe("0%");
@@ -290,7 +301,7 @@ describe("SessionView", () => {
 		expect(panels.get("inspector")!.handle.collapse).not.toHaveBeenCalled();
 	});
 
-	it("keeps StrictMode mount imperative-free and expands on the first user toggle", () => {
+	it("keeps StrictMode mount imperative-free and collapses on the first user toggle", () => {
 		render(
 			<StrictMode>
 				<SessionView sessionId="sess-1" />
@@ -303,9 +314,9 @@ describe("SessionView", () => {
 
 		fireEvent.keyDown(window, { key: "B", metaKey: true, shiftKey: true });
 
-		expect(inspectorOpen("sess-1")).toBe(true);
-		expect(handle.expand).toHaveBeenCalledTimes(1);
-		expect(handle.collapse).not.toHaveBeenCalled();
+		expect(inspectorOpen("sess-1")).toBe(false);
+		expect(handle.collapse).toHaveBeenCalledTimes(1);
+		expect(handle.expand).not.toHaveBeenCalled();
 	});
 
 	it("toggles the inspector with mod+shift+B through the imperative panel API", () => {
@@ -398,6 +409,7 @@ describe("SessionView", () => {
 		const { rerender } = render(<SessionView sessionId="sess-1" />);
 		const handle = panels.get("inspector")!.handle;
 
+		act(() => useUiStore.getState().setInspectorOpen("sess-2", false));
 		rerender(<SessionView sessionId="sess-orch" />);
 		expect(screen.queryByTestId("panel-inspector")).not.toBeInTheDocument();
 
@@ -493,8 +505,8 @@ describe("SessionView", () => {
 
 		const { rerender } = render(<SessionView sessionId="sess-1" />);
 
-		expect(panelSizes("inspector")[0]).toBe("0%");
-		expect(screen.getByTestId("panel-inspector")).toHaveAttribute("inert");
+		expect(panelSizes("inspector")[0]).toMatch(/^[1-9]\d*(\.\d+)?%$/);
+		expect(screen.getByTestId("panel-inspector")).not.toHaveAttribute("inert");
 		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
 
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
@@ -505,8 +517,8 @@ describe("SessionView", () => {
 		// Navigating to another worker with an already-known preview URL must
 		// baseline that preview as seen, not open the global rail or Browser tab.
 		rerender(<SessionView sessionId="sess-2" />);
-		expect(inspectorOpen("sess-2")).toBe(false);
-		expect(screen.getByTestId("panel-inspector")).toHaveAttribute("inert");
+		expect(inspectorOpen("sess-2")).toBe(true);
+		expect(screen.getByTestId("panel-inspector")).not.toHaveAttribute("inert");
 		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
 
 		// Switching back restores the first worker's own open Browser state.
@@ -537,8 +549,8 @@ describe("SessionView", () => {
 		workspaceQueryState.isLoading = false;
 		rerender(<SessionView sessionId="sess-2" />);
 
-		expect(inspectorOpen("sess-2")).toBe(false);
-		expect(screen.getByTestId("panel-inspector")).toHaveAttribute("inert");
+		expect(inspectorOpen("sess-2")).toBe(true);
+		expect(screen.getByTestId("panel-inspector")).not.toHaveAttribute("inert");
 		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
 		const handle = panels.get("inspector")!.handle;
 		expect(handle.expand).not.toHaveBeenCalled();
@@ -548,6 +560,6 @@ describe("SessionView", () => {
 
 		expect(inspectorOpen("sess-2")).toBe(true);
 		expect(inspectorButton()).toHaveAttribute("data-view", "browser");
-		expect(handle.expand).toHaveBeenCalledTimes(1);
+		expect(handle.expand).not.toHaveBeenCalled();
 	});
 });

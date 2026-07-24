@@ -213,6 +213,8 @@
 	--color-accent-foreground: var(--bridge-accent-fg);
 	--color-accent-weak: var(--bridge-accent-weak);
 	--color-accent-dim: var(--bridge-accent-dim);
+	--color-accent-strong: var(--bridge-accent-strong);
+	--color-danger-strong: var(--bridge-danger-strong);
 	--color-ring: var(--bridge-accent);
 
 	--color-border: var(--bridge-border);

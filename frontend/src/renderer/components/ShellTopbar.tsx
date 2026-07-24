@@ -1,7 +1,8 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { GitBranch, LayoutDashboard, PanelRightClose, PanelRightOpen, Plus, Square, Trash2 } from "lucide-react";
+import { GitBranch, LayoutDashboard, PanelRightClose, PanelRightOpen, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { NotificationCenter } from "./NotificationCenter";
 import {
 	findProjectOrchestrator,
@@ -177,7 +178,7 @@ export function ShellTopbar() {
 							style={noDragStyle}
 							variant="accent"
 						>
-							<Plus className="size-icon-md" aria-hidden="true" />
+							<Plus className="size-icon-sm" aria-hidden="true" />
 							New task
 						</TopbarButton>
 						<TopbarButton
@@ -187,7 +188,7 @@ export function ShellTopbar() {
 							style={noDragStyle}
 							variant="primary"
 						>
-							<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
+							<OrchestratorIcon className="size-icon-sm" aria-hidden="true" />
 							{isProjectRestarting
 								? "Restarting…"
 								: isSpawning
@@ -209,11 +210,11 @@ export function ShellTopbar() {
 									style={noDragStyle}
 									variant="accent"
 								>
-									<Plus className="size-icon-md" aria-hidden="true" />
+									<Plus className="size-icon-sm" aria-hidden="true" />
 									New task
 								</TopbarButton>
 								<TopbarButton aria-label="Open Kanban" onClick={openBoard} style={noDragStyle} variant="primary">
-									<LayoutDashboard className="size-icon-md" aria-hidden="true" />
+									<LayoutDashboard className="size-icon-sm" aria-hidden="true" />
 									Kanban
 								</TopbarButton>
 							</>
@@ -244,7 +245,7 @@ export function ShellTopbar() {
 								style={noDragStyle}
 								variant="primary"
 							>
-								<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
+								<OrchestratorIcon className="size-icon-sm" aria-hidden="true" />
 								{isProjectRestarting ? "Restarting…" : isSpawning ? "Spawning…" : "Orchestrator"}
 							</TopbarButton>
 						)}
@@ -274,9 +275,9 @@ export function ShellTopbar() {
 	);
 }
 
-// Compact kill control for the topbar actions row. Stop a running worker and
-// tear down its runtime/workspace. Kill is irreversible from the UI, so the
-// button arms a one-step confirmation before firing POST /sessions/{id}/kill,
+// Kill control for the topbar actions row. Stop a running worker and tear
+// down its runtime/workspace. Kill is irreversible from the UI, so the button
+// opens a modal confirmation dialog before firing POST /sessions/{id}/kill,
 // then invalidates the workspace query so the session drops into the board's
 // terminated group.
 export function TopbarKillButton({
@@ -289,7 +290,7 @@ export function TopbarKillButton({
 	onKilled: (workspaceId: string, orchestratorId?: string) => void;
 }) {
 	const queryClient = useQueryClient();
-	const [confirming, setConfirming] = useState(false);
+	const [confirmOpen, setConfirmOpen] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
 	const kill = useMutation({
@@ -302,7 +303,7 @@ export function TopbarKillButton({
 		},
 		onSuccess: () => {
 			void captureRendererEvent("ao.renderer.session_kill_succeeded", { project_id: session.workspaceId });
-			setConfirming(false);
+			setConfirmOpen(false);
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 			onKilled(session.workspaceId, orchestratorId);
 		},
@@ -312,40 +313,35 @@ export function TopbarKillButton({
 		},
 	});
 
-	if (confirming) {
-		return (
-			<div className="inline-flex items-center gap-1.5" style={noDragStyle}>
-				<TopbarButton
-					aria-label="Confirm kill"
-					disabled={kill.isPending}
-					onClick={() => kill.mutate()}
-					variant="killConfirm"
-				>
-					<Square className="size-icon-md" aria-hidden="true" />
-					{kill.isPending ? "Killing…" : "Confirm kill"}
-				</TopbarButton>
-				<TopbarButton disabled={kill.isPending} onClick={() => setConfirming(false)} variant="killCancel">
-					Cancel
-				</TopbarButton>
-				{error ? <TopbarKillError>{error}</TopbarKillError> : null}
-			</div>
-		);
-	}
-
 	return (
-		<TopbarButton
-			aria-label="Kill session"
-			onClick={() => {
-				setError(null);
-				setConfirming(true);
-			}}
-			style={noDragStyle}
-			title="Kill session"
-			variant="kill"
-		>
-			<Trash2 className="size-icon-sm" aria-hidden="true" />
-			Kill
-		</TopbarButton>
+		<>
+			<TopbarButton
+				aria-label="Kill session"
+				onClick={() => {
+					setError(null);
+					setConfirmOpen(true);
+				}}
+				style={noDragStyle}
+				title="Kill session"
+				variant="kill"
+			>
+				<Trash2 className="size-icon-sm" aria-hidden="true" />
+				Kill
+			</TopbarButton>
+			<ConfirmDialog
+				open={confirmOpen}
+				onOpenChange={(open) => {
+					if (!kill.isPending) setConfirmOpen(open);
+				}}
+				title="Kill session?"
+				description={`Are you sure you want to kill "${session.title}"? This stops the agent and tears down its workspace. This cannot be undone.`}
+				confirmLabel={kill.isPending ? "Killing…" : "Kill session"}
+				destructive
+				busy={kill.isPending}
+				error={error}
+				onConfirm={() => kill.mutate()}
+			/>
+		</>
 	);
 }
 
