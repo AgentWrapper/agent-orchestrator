@@ -142,7 +142,7 @@ function focusTerminal() {
 	return xterm;
 }
 
-const paletteInput = () => screen.queryByPlaceholderText(/search projects/i);
+const paletteInput = () => screen.queryByPlaceholderText(/search agents/i);
 
 beforeEach(() => {
 	ctx.params = {};
@@ -178,7 +178,7 @@ describe("CommandPalette shortcut (Windows/Linux)", () => {
 	it("opens on Ctrl+K and toggles closed on a second Ctrl+K", async () => {
 		renderPalette();
 		pressKey({ key: "k", ctrlKey: true });
-		expect(await screen.findByPlaceholderText(/search projects/i)).toBeInTheDocument();
+		expect(await screen.findByPlaceholderText(/search agents/i)).toBeInTheDocument();
 		pressKey({ key: "k", ctrlKey: true });
 		await waitFor(() => expect(paletteInput()).toBeNull());
 	});
@@ -215,7 +215,7 @@ describe("CommandPalette shortcut (Windows/Linux)", () => {
 	])("swallows $label+digit project-switch while the palette is open", async ({ init }) => {
 		renderPalette();
 		act(() => useUiStore.getState().setCommandPaletteOpen(true));
-		await screen.findByPlaceholderText(/search projects/i);
+		await screen.findByPlaceholderText(/search agents/i);
 		expect(pressKey(init).defaultPrevented).toBe(true);
 	});
 
@@ -239,14 +239,14 @@ describe("CommandPalette shortcut (macOS)", () => {
 	it("opens on Cmd+K", async () => {
 		renderPalette();
 		pressKey({ key: "k", metaKey: true });
-		expect(await screen.findByPlaceholderText(/search projects/i)).toBeInTheDocument();
+		expect(await screen.findByPlaceholderText(/search agents/i)).toBeInTheDocument();
 	});
 
 	it("opens on Cmd+K even when a terminal is focused", async () => {
 		renderPalette();
 		focusTerminal();
 		pressKey({ key: "k", metaKey: true });
-		expect(await screen.findByPlaceholderText(/search projects/i)).toBeInTheDocument();
+		expect(await screen.findByPlaceholderText(/search agents/i)).toBeInTheDocument();
 	});
 
 	it("ignores Ctrl+K on macOS, leaving the system kill-to-end-of-line binding alone", () => {
@@ -262,7 +262,7 @@ describe("CommandPalette search + Enter", () => {
 		ctx.params = {};
 		renderPalette();
 		act(() => useUiStore.getState().setCommandPaletteOpen(true));
-		const input = await screen.findByPlaceholderText(/search projects/i);
+		const input = await screen.findByPlaceholderText(/search agents/i);
 
 		fireEvent.change(input, { target: { value: "ship" } });
 		await waitFor(() => {
@@ -282,7 +282,7 @@ describe("CommandPalette search + Enter", () => {
 		ctx.params = {};
 		renderPalette();
 		act(() => useUiStore.getState().setCommandPaletteOpen(true));
-		const input = await screen.findByPlaceholderText(/search projects/i);
+		const input = await screen.findByPlaceholderText(/search agents/i);
 
 		expect(screen.queryByText("archived cleanup")).toBeNull();
 
@@ -305,7 +305,7 @@ describe("CommandPalette actions", () => {
 		ctx.params = {};
 		renderPalette();
 		act(() => useUiStore.getState().setCommandPaletteOpen(true));
-		await screen.findByPlaceholderText(/search projects/i);
+		await screen.findByPlaceholderText(/search agents/i);
 		expect(screen.getByText("No current project")).toBeInTheDocument();
 		await waitFor(() => {
 			const selected = document.querySelector('[cmdk-item][data-selected="true"]');
@@ -322,7 +322,7 @@ describe("CommandPalette actions", () => {
 		act(() => useUiStore.setState({ restartingProjectIds: new Set(["proj-1"]) }));
 		renderPalette();
 		act(() => useUiStore.getState().setCommandPaletteOpen(true));
-		await screen.findByPlaceholderText(/search projects/i);
+		await screen.findByPlaceholderText(/search agents/i);
 		fireEvent.click(screen.getByText("Open orchestrator"));
 		expect(spawnMock).not.toHaveBeenCalled();
 		expect(navigateMock).not.toHaveBeenCalled();
@@ -332,7 +332,7 @@ describe("CommandPalette actions", () => {
 		ctx.params = {};
 		renderPalette();
 		act(() => useUiStore.getState().setCommandPaletteOpen(true));
-		await screen.findByPlaceholderText(/search projects/i);
+		await screen.findByPlaceholderText(/search agents/i);
 		fireEvent.click(screen.getByText("lib"));
 		expect(navigateMock).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "proj-2" } });
 		await waitFor(() => expect(paletteInput()).toBeNull());
@@ -342,7 +342,7 @@ describe("CommandPalette actions", () => {
 		ctx.params = { projectId: "proj-1" };
 		renderPalette();
 		act(() => useUiStore.getState().setCommandPaletteOpen(true));
-		const input = await screen.findByPlaceholderText(/search projects/i);
+		const input = await screen.findByPlaceholderText(/search agents/i);
 		fireEvent.change(input, { target: { value: "ship" } });
 		await waitFor(() => {
 			const selected = document.querySelector('[cmdk-item][data-selected="true"]');
@@ -360,7 +360,7 @@ describe("CommandPalette actions", () => {
 		spawnMock.mockReturnValueOnce(new Promise<string>(() => {}));
 		renderPalette();
 		act(() => useUiStore.getState().setCommandPaletteOpen(true));
-		await screen.findByPlaceholderText(/search projects/i);
+		await screen.findByPlaceholderText(/search agents/i);
 		const item = screen.getByText("Open orchestrator");
 		fireEvent.click(item);
 		fireEvent.click(item);
@@ -372,7 +372,7 @@ describe("CommandPalette actions", () => {
 		spawnMock.mockRejectedValueOnce(new Error("daemon down"));
 		renderPalette();
 		act(() => useUiStore.getState().setCommandPaletteOpen(true));
-		await screen.findByPlaceholderText(/search projects/i);
+		await screen.findByPlaceholderText(/search agents/i);
 		fireEvent.click(screen.getByText("Open orchestrator"));
 		expect(await screen.findByRole("alert")).toHaveTextContent("daemon down");
 		expect(spawnMock).toHaveBeenCalledWith("proj-2", "command_palette");
@@ -382,7 +382,7 @@ describe("CommandPalette actions", () => {
 	it("toggles the theme and closes", async () => {
 		renderPalette();
 		act(() => useUiStore.getState().setCommandPaletteOpen(true));
-		await screen.findByPlaceholderText(/search projects/i);
+		await screen.findByPlaceholderText(/search agents/i);
 		fireEvent.click(screen.getByText("Toggle theme"));
 		expect(useUiStore.getState().resolvedTheme).toBe("light");
 		await waitFor(() => expect(paletteInput()).toBeNull());
@@ -391,7 +391,7 @@ describe("CommandPalette actions", () => {
 	it("opens the new-project path picker and closes the palette", async () => {
 		renderPalette();
 		act(() => useUiStore.getState().setCommandPaletteOpen(true));
-		await screen.findByPlaceholderText(/search projects/i);
+		await screen.findByPlaceholderText(/search agents/i);
 		fireEvent.click(screen.getByText("New project"));
 		await waitFor(() => expect(choosePathMock).toHaveBeenCalledTimes(1));
 		await waitFor(() => expect(paletteInput()).toBeNull());

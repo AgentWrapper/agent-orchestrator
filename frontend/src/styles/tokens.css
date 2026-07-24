@@ -240,6 +240,23 @@
 	--size-dialog-lg: 440px;
 	--size-dialog-orchestrator: 460px;
 	--size-dialog-xl: 560px;
+
+	/* Command palette (Figma search popover) — dark values must stay exact */
+	--color-bg-command-palette: #121213;
+	--color-border-command-palette: #2c2c2c;
+	--color-bg-command-item-active: #333333;
+	--color-text-command-placeholder: #6b6b6b;
+	--color-text-command-muted: #8b8b8b;
+	--radius-command-palette: 30px;
+	--radius-command-item: 6px;
+	--shadow-command-palette: 0 4px 4px rgb(0 0 0 / 0.25), 0 4px 4px rgb(0 0 0 / 0.25);
+	--size-command-palette: 772px;
+	--size-command-palette-top: 14vh;
+	--size-command-palette-list-max: 420px;
+	--size-command-palette-list-vh: 50vh;
+	--size-command-subtitle-max: 45%;
+	--font-size-command-input: 16px;
+	--leading-command-item: 22px;
 	--size-branch-chip: 13rem;
 	--size-inspector-min: 280px;
 	--size-textarea-min: 112px;
@@ -464,6 +481,14 @@
 	--elevation-md: 0 1px 0 rgb(0 0 0 / 0.03), 0 12px 30px rgb(20 30 50 / 0.1);
 	--elevation-lg: 0 16px 48px rgb(20 30 50 / 0.16);
 	--elevation-xl: 0 1px 0 rgb(0 0 0 / 0.03), 0 20px 50px rgb(20 30 50 / 0.14);
+
+	/* Command palette */
+	--color-bg-command-palette: #f4f4f5;
+	--color-border-command-palette: #e3e3e5;
+	--color-bg-command-item-active: #e4e4e6;
+	--color-text-command-placeholder: #9a9a9a;
+	--color-text-command-muted: #666666;
+	--shadow-command-palette: 0 4px 24px rgb(20 30 50 / 0.12), 0 1px 0 rgb(0 0 0 / 0.04);
 
 	/* Welcome / import radius alias */
 	--color-border-welcome-panel: #d4d4d6;

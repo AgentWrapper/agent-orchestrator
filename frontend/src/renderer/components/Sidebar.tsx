@@ -1,8 +1,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
-import { ChevronRight, LayoutDashboard, MoreVertical, Pencil, Plus, RefreshCw, Settings, Trash2 } from "lucide-react";
+import { ChevronRight, LayoutDashboard, MoreVertical, Pencil, Plus, RefreshCw, Search, Settings, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { UpdateStatus } from "../../main/update-settings";
+import { APP_SHORTCUTS, shortcutKeys } from "../../shared/shortcuts";
 import {
 	newestActiveOrchestrator,
 	sessionIsActive,
@@ -12,6 +13,7 @@ import {
 } from "../types/workspace";
 import { getSessionDotView } from "../lib/session-presentation";
 import { aoBridge } from "../lib/bridge";
+import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { renameSession } from "../lib/rename-session";
@@ -144,6 +146,8 @@ export function Sidebar({
 	// Daemon status for the smoke suite's sr-only mirror in the footer. Null when
 	// rendered outside the shell (unit tests) — the mirror simply doesn't render.
 	const daemonStatus = useShellMaybe()?.daemonStatus ?? null;
+	const commandPaletteEnabled = useCommandPaletteEnabled();
+	const setCommandPaletteOpen = useUiStore((s) => s.setCommandPaletteOpen);
 
 	useEffect(() => {
 		if (isCollapsed) {
@@ -297,6 +301,15 @@ export function Sidebar({
 			</SidebarHeader>
 
 			<SidebarContent className="gap-0 pl-2.5 pr-1.75 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
+				{commandPaletteEnabled ? (
+					<SidebarGroup className="p-0 pb-2">
+						<SidebarGroupContent>
+							<SidebarMenu className="gap-0 group-data-[collapsible=icon]:gap-1">
+								<SidebarSearchButton onOpen={() => setCommandPaletteOpen(true)} />
+							</SidebarMenu>
+						</SidebarGroupContent>
+					</SidebarGroup>
+				) : null}
 				<SidebarGroup className="p-0">
 					{/* Section label (project-sidebar__nav-label) */}
 					<div className="sidebar-expanded-chrome flex shrink-0 items-center justify-between px-2 pb-2 group-data-[collapsible=icon]:hidden">
@@ -788,6 +801,34 @@ function RestartToUpdateRailButton({ status }: { status: UpdateStatus }) {
 				Restart to update{status.version ? ` · v${status.version} ready` : ""}
 			</TooltipContent>
 		</Tooltip>
+	);
+}
+
+function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
+	const paletteShortcut = APP_SHORTCUTS.find((shortcut) => shortcut.id === "command-palette");
+	const shortcutLabel = paletteShortcut
+		? shortcutKeys(paletteShortcut, isMac).join(isMac ? "" : "+")
+		: isMac
+			? "⌘K"
+			: "Ctrl+K";
+	return (
+		<SidebarMenuItem className="mb-px group-data-[collapsible=icon]:mb-0">
+			<SidebarMenuButton
+				aria-label={`Search · ${shortcutLabel}`}
+				onClick={onOpen}
+				tooltip={`Search · ${shortcutLabel}`}
+				className={cn(
+					"h-control-board gap-2.25 rounded-sm px-1.5 py-0 text-control font-medium text-muted-foreground transition-[background-color,color]",
+					"hover:bg-interactive-hover hover:text-foreground active:bg-interactive-hover active:text-foreground",
+					"group-data-[collapsible=icon]:size-control-board! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:p-0!",
+				)}
+			>
+				<Search className="size-icon-lg shrink-0" aria-hidden="true" />
+				<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">
+					Search
+				</span>
+			</SidebarMenuButton>
+		</SidebarMenuItem>
 	);
 }
 

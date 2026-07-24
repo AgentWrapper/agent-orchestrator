@@ -18,7 +18,7 @@ import { findProjectOrchestrator } from "../types/workspace";
 import { useUiStore } from "../stores/ui-store";
 import { CreateProjectFlow } from "./CreateProjectFlow";
 import { NewTaskDialog } from "./NewTaskDialog";
-import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "./ui/command";
+import { CommandDialog, CommandEmpty, CommandFooter, CommandGroup, CommandInput, CommandItem, CommandList } from "./ui/command";
 
 function isMacPlatform(): boolean {
 	return typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
@@ -249,14 +249,14 @@ export function CommandPalette() {
 						setQuery(next);
 						setError(null);
 					}}
-					placeholder="Search projects, sessions, PRs, and commands…"
+					placeholder="Search agents, files, actions…"
 				/>
 				<CommandList>
 					<CommandEmpty>No results.</CommandEmpty>
 					{error && (
 						<div
 							role="alert"
-							className="mx-1 mb-1 overflow-hidden rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs wrap-break-word text-destructive"
+							className="mx-2 mb-1 overflow-hidden rounded-[var(--radius-command-item)] border border-destructive/40 bg-destructive/10 px-5 py-2 text-xs wrap-break-word text-destructive"
 						>
 							{error}
 						</div>
@@ -272,17 +272,35 @@ export function CommandPalette() {
 								>
 									<span className="min-w-0 flex-1 truncate">{item.title}</span>
 									{pendingId === item.id ? (
-										<Loader2 className="ml-auto size-3.5 animate-spin text-passive" aria-hidden="true" />
+										<Loader2 className="ml-auto size-3.5 animate-spin text-[var(--color-text-command-muted)]" aria-hidden="true" />
 									) : item.disabled && item.disabledReason ? (
-										<span className="ml-auto text-2xs text-passive">{item.disabledReason}</span>
+										<span className="ml-auto text-control text-[var(--color-text-command-muted)]">
+											{item.disabledReason}
+										</span>
 									) : item.subtitle ? (
-										<span className="ml-auto max-w-[45%] truncate text-2xs text-passive">{item.subtitle}</span>
+										<span className="ml-auto max-w-command-subtitle truncate text-control text-[var(--color-text-command-muted)]">
+											{item.subtitle}
+										</span>
 									) : null}
 								</CommandItem>
 							))}
 						</CommandGroup>
 					))}
 				</CommandList>
+				<CommandFooter aria-hidden="true">
+					<span className="inline-flex items-center gap-1.5">
+						<span>↑↓</span>
+						<span>Select</span>
+					</span>
+					<span className="inline-flex items-center gap-1.5">
+						<span>↵</span>
+						<span>Open</span>
+					</span>
+					<span className="inline-flex items-center gap-1.5">
+						<span>or</span>
+						<span>Change Filter</span>
+					</span>
+				</CommandFooter>
 			</CommandDialog>
 
 			<NewTaskDialog
