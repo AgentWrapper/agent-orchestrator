@@ -88,6 +88,22 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
+// GetConfigSpec reports the per-project agent config keys opencode understands.
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.ConfigSpec{}, err
+	}
+	return ports.ConfigSpec{
+		Fields: []ports.ConfigField{
+			{
+				Key:         "model",
+				Type:        ports.ConfigFieldString,
+				Description: "Model override passed to `opencode --model`, in provider/model form.",
+			},
+		},
+	}, nil
+}
+
 // GetLaunchCommand builds the argv to start a new interactive opencode session.
 // Shape:
 //
@@ -111,6 +127,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	cmd = envPrefix
 	cmd = append(cmd, binary)
 	appendPermissionFlags(&cmd, cfg.Permissions)
+	appendModelFlag(&cmd, cfg.Config)
 	if agentName != "" {
 		cmd = append(cmd, "--agent", agentName)
 	}
@@ -147,6 +164,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	cmd = envPrefix
 	cmd = append(cmd, binary)
 	appendPermissionFlags(&cmd, cfg.Permissions)
+	appendModelFlag(&cmd, cfg.Config)
 	if agentName != "" {
 		cmd = append(cmd, "--agent", agentName)
 	}
@@ -355,6 +373,12 @@ func opencodeDBCount(ctx context.Context, db *sql.DB, query string) (int, error)
 func appendPermissionFlags(cmd *[]string, permissions ports.PermissionMode) {
 	if ports.NormalizePermissionMode(permissions) == ports.PermissionModeBypassPermissions {
 		*cmd = append(*cmd, "--dangerously-skip-permissions")
+	}
+}
+
+func appendModelFlag(cmd *[]string, cfg ports.AgentConfig) {
+	if model := strings.TrimSpace(cfg.Model); model != "" {
+		*cmd = append(*cmd, "--model", model)
 	}
 }
 
