@@ -182,6 +182,14 @@ func TestCreateReusesRegisteredWorktreeAtExpectedPath(t *testing.T) {
 		t.Fatalf("new: %v", err)
 	}
 	path := filepath.Join(ws.managedRoot, "proj", "orchestrator", "proj-orchestrator")
+	// Directory must exist on disk: registered-but-missing paths are treated as
+	// stale and pruned (would otherwise strand tmux panes in the server cwd).
+	if err := os.MkdirAll(path, 0o750); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(path, ".keep"), []byte("x"), 0o600); err != nil {
+		t.Fatalf("seed worktree: %v", err)
+	}
 	cfg := ports.WorkspaceConfig{
 		ProjectID:     "proj",
 		SessionID:     "proj-1",
