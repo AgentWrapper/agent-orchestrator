@@ -131,10 +131,16 @@ func (s *Server) Run(ctx context.Context) error {
 	defer cancel()
 
 	if err := s.http.Shutdown(shutdownCtx); err != nil {
-		// The deadline elapsed with connections still open; force them closed.
+		// The deadline elapsed with connections still open (long-lived SSE
+		// streams routinely outlive ShutdownTimeout). Force them closed.
+		// This is still a successful intentional stop: returning an error here
+		// makes the daemon process exit 1, which Electron reports as
+		// "daemon start failed" (code: exited) even though the user/app asked
+		// to stop.
 		s.log.Warn("graceful shutdown timed out, forcing close", "err", err)
 		_ = s.http.Close()
-		return fmt.Errorf("graceful shutdown exceeded %s: %w", s.cfg.ShutdownTimeout, err)
+		s.log.Info("daemon stopped after forced close")
+		return <-serveErr
 	}
 
 	s.log.Info("daemon stopped cleanly")
