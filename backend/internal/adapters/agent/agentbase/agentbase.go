@@ -7,6 +7,7 @@ package agentbase
 
 import (
 	"context"
+	"strings"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -50,6 +51,24 @@ func (Base) SessionInfo(ctx context.Context, _ ports.SessionRef) (ports.SessionI
 		return ports.SessionInfo{}, false, err
 	}
 	return ports.SessionInfo{}, false, nil
+}
+
+// AppendModelFlag appends `--model <model>` to cmd when the configured model is
+// non-blank, trimming surrounding whitespace; it is a no-op otherwise.
+func AppendModelFlag(cmd *[]string, cfg ports.AgentConfig) {
+	if model := strings.TrimSpace(cfg.Model); model != "" {
+		*cmd = append(*cmd, "--model", model)
+	}
+}
+
+// ModelConfigField returns the standard user-facing `model` config field, using
+// description to name the concrete CLI flag it maps to.
+func ModelConfigField(description string) ports.ConfigField {
+	return ports.ConfigField{
+		Key:         "model",
+		Type:        ports.ConfigFieldString,
+		Description: description,
+	}
 }
 
 // StandardSessionInfo returns the normalized session metadata (native session
