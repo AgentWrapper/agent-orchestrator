@@ -129,8 +129,17 @@ func sessionsHaveProcesses(ctx context.Context, pids []int) bool {
 
 type execRunner struct{}
 
+// Run executes the tmux CLI from a stable directory rather than the daemon's
+// own cwd. The first tmux CLI call after boot auto-starts the persistent tmux
+// server, which inherits this process's cwd and keeps it for its lifetime.
+// The daemon can be started from inside the packaged app bundle (or a
+// Squirrel/ShipIt staging dir) that the next auto-update swaps or deletes;
+// tmux then silently falls back to that doomed server cwd whenever
+// `new-session -c <dir>` cannot be resolved at spawn time, stranding panes in
+// a deleted directory (issue #2775). os.TempDir() outlives app updates.
 func (execRunner) Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = os.TempDir()
 	cmd.Env = append(append([]string(nil), os.Environ()...), env...)
 	return cmd.CombinedOutput()
 }
@@ -245,15 +254,34 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 }
 
 func (r *Runtime) verifyPaneWorkingDirectory(ctx context.Context, id, want string) error {
-	out, err := r.run(ctx, paneCurrentPathArgs(id)...)
-	if err != nil {
-		return fmt.Errorf("tmux runtime: verify working directory %s: %w", id, err)
+	// Brief retries: the shell may still be applying the launch-command `cd`
+	// when `new-session -c` fell back to the server cwd (missing workspace).
+	// Give that a moment before treating the mismatch as fatal.
+	var got string
+	var lastErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(50 * time.Millisecond):
+			}
+		}
+		out, err := r.run(ctx, paneCurrentPathArgs(id)...)
+		if err != nil {
+			lastErr = fmt.Errorf("tmux runtime: verify working directory %s: %w", id, err)
+			continue
+		}
+		got = strings.TrimSpace(string(out))
+		if sameDirectory(got, want) {
+			return nil
+		}
+		lastErr = nil
 	}
-	got := strings.TrimSpace(string(out))
-	if sameDirectory(got, want) {
-		return nil
+	if lastErr != nil {
+		return lastErr
 	}
-	return fmt.Errorf("tmux runtime: session %s started in %q, want %q", id, got, want)
+	return fmt.Errorf("tmux runtime: session %s started in %q, want %q; tmux falls back to its server cwd when the workspace path is missing or the server is pinned to a stale directory (ensure the worktree exists, or kill the tmux server and retry)", id, got, want)
 }
 
 // Destroy kills the handle's tmux session and reaps the pane processes it
