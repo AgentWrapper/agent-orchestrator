@@ -30,6 +30,7 @@ export function ShellTerminalTab({ shell, isActive, onSelect, onClose, onRename 
 	const [isEditing, setIsEditing] = useState(false);
 	const [draft, setDraft] = useState(shell.title);
 	const inputRef = useRef<HTMLInputElement | null>(null);
+	const lastClickAtRef = useRef(0);
 	// Rename gesture per platform: Windows uses right-click (its convention for
 	// tab/file renames); macOS and Linux use double-click.
 	const renameViaRightClick = isWindowsPlatform();
@@ -47,8 +48,20 @@ export function ShellTerminalTab({ shell, isActive, onSelect, onClose, onRename 
 		setIsEditing(true);
 	};
 
-	// The rename gesture lives on the whole tab so a double-click (or right-click
-	// on Windows) anywhere on the tab works, not just precisely on the label.
+	// Detect a double-click ourselves from two quick clicks rather than relying on
+	// the native dblclick event: some trackpad configurations deliver two taps as
+	// two separate clicks that never synthesize a dblclick, so onDoubleClick would
+	// never fire. Two clicks within 500ms anywhere on the tab start the rename.
+	const handleClick = () => {
+		const now = Date.now();
+		const isDoubleClick = now - lastClickAtRef.current < 500;
+		lastClickAtRef.current = isDoubleClick ? 0 : now;
+		if (isDoubleClick) beginEdit();
+	};
+
+	// The rename gesture lives on the whole tab so it works anywhere on the tab,
+	// not just precisely on the label. Windows uses right-click; macOS/Linux use
+	// the click-timing double-click detector above.
 	const containerRenameHandlers = isEditing
 		? {}
 		: renameViaRightClick
@@ -58,7 +71,7 @@ export function ShellTerminalTab({ shell, isActive, onSelect, onClose, onRename 
 						beginEdit();
 					},
 				}
-			: { onDoubleClick: beginEdit };
+			: { onClick: handleClick, onDoubleClick: beginEdit };
 
 	const commit = () => {
 		if (!isEditing) return;
@@ -120,7 +133,10 @@ export function ShellTerminalTab({ shell, isActive, onSelect, onClose, onRename 
 			<button
 				aria-label={`Close terminal ${shell.title}`}
 				className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-passive opacity-0 transition-[background,color,opacity] group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
-				onClick={onClose}
+				onClick={(event) => {
+					event.stopPropagation();
+					onClose();
+				}}
 				onDoubleClick={(event) => event.stopPropagation()}
 				onContextMenu={(event) => event.stopPropagation()}
 				title="Close terminal"

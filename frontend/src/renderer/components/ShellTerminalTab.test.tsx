@@ -94,6 +94,17 @@ describe("ShellTerminalTab rename gesture per platform", () => {
 		expect(screen.getByRole("textbox", { name: /rename terminal/i })).toBeInTheDocument();
 	});
 
+	it("macOS/Linux: two quick clicks enter edit even without a native dblclick (trackpad)", () => {
+		renderTab();
+		const tab = screen.getByRole("button", { name: "ao" });
+		// Two plain clicks, no dblclick event — mimics a trackpad double-tap that
+		// the OS delivers as separate clicks.
+		fireEvent.click(tab);
+		expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+		fireEvent.click(tab);
+		expect(screen.getByRole("textbox", { name: /rename terminal/i })).toBeInTheDocument();
+	});
+
 	it("Windows: right-click enters edit, double-click does not", () => {
 		isWindowsPlatform.mockReturnValue(true);
 		renderTab();
