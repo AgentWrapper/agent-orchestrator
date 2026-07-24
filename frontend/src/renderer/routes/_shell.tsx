@@ -479,14 +479,17 @@ function ShellLayout() {
 	useEffect(() => {
 		if (handledShellNonceRef.current === newShellTerminalNonce) return;
 		handledShellNonceRef.current = newShellTerminalNonce;
-		openShellTerminal.mutate(scopedProjectId, {
-			onSuccess: (shell) => {
-				setActiveShellTerminal(shell.handleId);
-				if (!routeParams.sessionId) {
-					void navigate({ to: "/terminals" });
-				}
+		openShellTerminal.mutate(
+			{ projectId: scopedProjectId, sessionId: routeParams.sessionId },
+			{
+				onSuccess: (shell) => {
+					setActiveShellTerminal(shell.handleId);
+					if (!routeParams.sessionId) {
+						void navigate({ to: "/terminals" });
+					}
+				},
 			},
-		});
+		);
 	}, [
 		newShellTerminalNonce,
 		openShellTerminal,

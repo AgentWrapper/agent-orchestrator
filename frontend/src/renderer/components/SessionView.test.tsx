@@ -18,7 +18,7 @@ type PanelEntry = {
 	onResize?: (size: { asPercentage: number; inPixels: number }) => void;
 };
 
-const { workspaces, workspaceQueryState, panels } = vi.hoisted(() => {
+const { workspaces, workspaceQueryState, panels, shellTerminalsState } = vi.hoisted(() => {
 	const worker = {
 		id: "sess-1",
 		workspaceId: "proj-1",
@@ -50,14 +50,33 @@ const { workspaces, workspaceQueryState, panels } = vi.hoisted(() => {
 		data: workspaces,
 		isLoading: false,
 	};
-	return { workspaces, workspaceQueryState, panels: new Map<string, PanelEntry>() };
+	const shellTerminalsState: {
+		data: Array<{
+			handleId: string;
+			projectId?: string;
+			sessionId?: string;
+			title: string;
+			workingDir: string;
+			createdAt: string;
+		}>;
+	} = {
+		data: [],
+	};
+	return { workspaces, workspaceQueryState, panels: new Map<string, PanelEntry>(), shellTerminalsState };
 });
 
 // The terminal and inspector body pull in xterm/SSE machinery irrelevant to
 // the split under test. (ShellTopbar is shell-owned on Win/Linux; when the
 // platform hides the shell topbar, SessionView mounts it in-panel.)
 vi.mock("./ShellTopbar", () => ({ ShellTopbar: () => null }));
-vi.mock("./CenterPane", () => ({ CenterPane: () => <div>terminal center</div> }));
+vi.mock("./CenterPane", () => ({
+	CenterPane: ({ shellTerminals = [] }: { shellTerminals?: Array<{ handleId: string; title: string }> }) => (
+		<div>
+			terminal center
+			<div data-testid="shell-tabs">{shellTerminals.map((s) => s.title).join(",")}</div>
+		</div>
+	),
+}));
 vi.mock("./BrowserPanel", () => ({
 	BrowserPanelView: ({
 		poppedOut,
@@ -156,9 +175,10 @@ vi.mock("../hooks/useWorkspaceQuery", () => ({
 // Standalone shell terminals are orthogonal to the split under test, and their
 // real hooks would need a QueryClientProvider this suite deliberately omits.
 vi.mock("../hooks/useShellTerminals", () => ({
-	useShellTerminals: () => ({ data: [], isLoading: false }),
+	useShellTerminals: () => ({ data: shellTerminalsState.data, isLoading: false }),
 	useOpenShellTerminal: () => ({ mutate: vi.fn() }),
 	useCloseShellTerminal: () => ({ mutate: vi.fn() }),
+	useRenameShellTerminal: () => ({ mutate: vi.fn() }),
 }));
 
 // jsdom has no layout engine, so the real react-resizable-panels would never
@@ -262,6 +282,36 @@ describe("SessionView", () => {
 		panels.clear();
 		browserDestroy.mockReset();
 		browserViewOptions.current = undefined;
+		shellTerminalsState.data = [];
+	});
+
+	// Regression: shell terminals are an app-wide list, so without a per-session
+	// filter a shell opened in another session would show up as a tab in this
+	// session's strip. Only this session's shells (not another session's, and no
+	// session-less ones) should reach the terminal pane.
+	it("shows only the current session's shell terminals as tabs", () => {
+		shellTerminalsState.data = [
+			{
+				handleId: "sh-a",
+				sessionId: "sess-1",
+				title: "sess-1-shell",
+				workingDir: "/p",
+				createdAt: "2026-07-24T00:00:00Z",
+			},
+			{
+				handleId: "sh-b",
+				sessionId: "sess-2",
+				title: "sess-2-shell",
+				workingDir: "/q",
+				createdAt: "2026-07-24T00:00:00Z",
+			},
+			{ handleId: "sh-c", title: "loose-shell", workingDir: "/r", createdAt: "2026-07-24T00:00:00Z" },
+		];
+		render(<SessionView sessionId="sess-1" />);
+		const tabs = screen.getByTestId("shell-tabs");
+		expect(tabs).toHaveTextContent("sess-1-shell");
+		expect(tabs).not.toHaveTextContent("sess-2-shell");
+		expect(tabs).not.toHaveTextContent("loose-shell");
 	});
 
 	// Regression: react-resizable-panels v4 treats bare numeric sizes as PIXELS

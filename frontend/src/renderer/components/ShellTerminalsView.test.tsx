@@ -4,6 +4,7 @@ import { ShellTerminalsView } from "./ShellTerminalsView";
 
 vi.mock("../hooks/useShellTerminals", () => ({
 	useCloseShellTerminal: () => ({ mutate: vi.fn() }),
+	useRenameShellTerminal: () => ({ mutate: vi.fn() }),
 	useShellTerminals: () => ({ data: [] }),
 }));
 

@@ -6,7 +6,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
@@ -104,6 +106,7 @@ func (s *Service) OpenShellTerminal(ctx context.Context, in OpenShellTerminalInp
 	rec := ShellTerminalRecord{
 		HandleID:   handle.ID,
 		ProjectID:  in.ProjectID,
+		SessionID:  in.SessionID,
 		WorkingDir: workingDir,
 		Title:      shellTerminalTitle(workingDir),
 		AppRunID:   s.appRunID,
@@ -120,6 +123,35 @@ func (s *Service) OpenShellTerminal(ctx context.Context, in OpenShellTerminalInp
 	}
 
 	s.log.Info("shell terminal opened", "handleId", handle.ID, "workingDir", workingDir)
+	return shellTerminalFromRecord(rec), nil
+}
+
+// maxShellTerminalTitleLen bounds a user-supplied tab name. Tabs are truncated
+// in the UI anyway; this only stops an unbounded string reaching the DB.
+const maxShellTerminalTitleLen = 80
+
+// RenameShellTerminal sets a shell terminal's tab title. The title is trimmed
+// and must be non-empty and within the length bound; an unknown handle is a 404.
+func (s *Service) RenameShellTerminal(ctx context.Context, handleID, title string) (ShellTerminal, error) {
+	if handleID == "" {
+		return ShellTerminal{}, apierr.Invalid("SHELL_TERMINAL_ID_REQUIRED", "A shell terminal id is required", nil)
+	}
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return ShellTerminal{}, apierr.Invalid("SHELL_TERMINAL_TITLE_REQUIRED", "A shell terminal title is required", nil)
+	}
+	if utf8.RuneCountInString(title) > maxShellTerminalTitleLen {
+		return ShellTerminal{}, apierr.Invalid("SHELL_TERMINAL_TITLE_TOO_LONG",
+			fmt.Sprintf("A shell terminal title must be at most %d characters", maxShellTerminalTitleLen), nil)
+	}
+	rec, found, err := s.store.UpdateShellTerminalTitle(ctx, handleID, title)
+	if err != nil {
+		return ShellTerminal{}, fmt.Errorf("rename shell terminal %s: %w", handleID, err)
+	}
+	if !found {
+		return ShellTerminal{}, apierr.NotFound("SHELL_TERMINAL_NOT_FOUND", "No such shell terminal: "+handleID)
+	}
+	s.log.Info("shell terminal renamed", "handleId", handleID)
 	return shellTerminalFromRecord(rec), nil
 }
 
@@ -250,6 +282,7 @@ func shellTerminalFromRecord(rec ShellTerminalRecord) ShellTerminal {
 	return ShellTerminal{
 		HandleID:   rec.HandleID,
 		ProjectID:  rec.ProjectID,
+		SessionID:  rec.SessionID,
 		WorkingDir: rec.WorkingDir,
 		Title:      rec.Title,
 		CreatedAt:  rec.CreatedAt,
