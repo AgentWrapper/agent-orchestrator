@@ -18,7 +18,9 @@ import { TerminalPane } from "./TerminalPane";
 export function ShellTerminalsView() {
 	const { daemonStatus } = useShell();
 	const theme = useResolvedTheme();
-	const shellTerminals = useShellTerminals().data ?? [];
+	// The standalone screen shows only session-less shells; a session's own
+	// shells belong to that session's tab strip, not this global list.
+	const shellTerminals = (useShellTerminals().data ?? []).filter((s) => !s.sessionId);
 	const closeShellTerminal = useCloseShellTerminal();
 	const renameShellTerminal = useRenameShellTerminal();
 	const requestNewShellTerminal = useUiStore((state) => state.requestNewShellTerminal);

@@ -106,6 +106,7 @@ func (s *Service) OpenShellTerminal(ctx context.Context, in OpenShellTerminalInp
 	rec := ShellTerminalRecord{
 		HandleID:   handle.ID,
 		ProjectID:  in.ProjectID,
+		SessionID:  in.SessionID,
 		WorkingDir: workingDir,
 		Title:      shellTerminalTitle(workingDir),
 		AppRunID:   s.appRunID,
@@ -281,6 +282,7 @@ func shellTerminalFromRecord(rec ShellTerminalRecord) ShellTerminal {
 	return ShellTerminal{
 		HandleID:   rec.HandleID,
 		ProjectID:  rec.ProjectID,
+		SessionID:  rec.SessionID,
 		WorkingDir: rec.WorkingDir,
 		Title:      rec.Title,
 		CreatedAt:  rec.CreatedAt,

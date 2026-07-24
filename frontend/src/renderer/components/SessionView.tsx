@@ -69,21 +69,18 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const [filesPoppedOut, setFilesPoppedOut] = useState(false);
 
 	const session = workspaces.flatMap((workspace) => workspace.sessions).find((s) => s.id === sessionId);
-	// The project owning this session: shell terminals are scoped to it below.
-	const currentProjectId = workspaces.find((workspace) => workspace.sessions.some((s) => s.id === sessionId))?.id;
 
-	// Standalone shell terminals live beside the session's pane as extra tabs.
-	// They belong to the app, not this session, so they persist across session
-	// navigation; only which one is *selected* is local state.
+	// Shell terminals opened inside a session live beside its pane as extra tabs.
 	//
-	// Scope them to THIS project: the daemon list is app-wide, so without the
-	// filter a shell opened in one project would show up as a tab in every other
-	// project's session view. A shell's projectId is the project it was opened
-	// in; project-less shells (opened from the board) live only on /terminals.
+	// Scope them to THIS session: the daemon list is app-wide, so without the
+	// filter a shell opened in one session would show up in every other session's
+	// strip (even across projects). A shell's sessionId is the session it was
+	// opened from; session-less shells (opened from the board) live only on the
+	// standalone /terminals screen.
 	const allShellTerminals = useShellTerminals().data ?? [];
 	const shellTerminals = useMemo(
-		() => (currentProjectId ? allShellTerminals.filter((s) => s.projectId === currentProjectId) : []),
-		[allShellTerminals, currentProjectId],
+		() => allShellTerminals.filter((s) => s.sessionId === sessionId),
+		[allShellTerminals, sessionId],
 	);
 	const closeShellTerminal = useCloseShellTerminal();
 	const renameShellTerminal = useRenameShellTerminal();
@@ -141,8 +138,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		);
 	}, [activeShellTerminalHandleId, shellTerminals]);
 
-	// If the pane is pointed at a shell that is not in THIS project's strip — e.g.
-	// after navigating to a different project whose globally-active shell belongs
+	// If the pane is pointed at a shell that is not in THIS session's strip — e.g.
+	// after navigating to a different session whose globally-active shell belongs
 	// elsewhere — fall back to the session's own pane rather than render a tab
 	// that isn't shown here.
 	useEffect(() => {

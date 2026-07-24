@@ -13,6 +13,7 @@ import (
 type ShellTerminalRecord struct {
 	HandleID   string
 	ProjectID  domain.ProjectID
+	SessionID  domain.SessionID
 	WorkingDir string
 	Title      string
 	AppRunID   string

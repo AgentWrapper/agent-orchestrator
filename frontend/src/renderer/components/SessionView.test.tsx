@@ -51,7 +51,14 @@ const { workspaces, workspaceQueryState, panels, shellTerminalsState } = vi.hois
 		isLoading: false,
 	};
 	const shellTerminalsState: {
-		data: Array<{ handleId: string; projectId?: string; title: string; workingDir: string; createdAt: string }>;
+		data: Array<{
+			handleId: string;
+			projectId?: string;
+			sessionId?: string;
+			title: string;
+			workingDir: string;
+			createdAt: string;
+		}>;
 	} = {
 		data: [],
 	};
@@ -278,23 +285,23 @@ describe("SessionView", () => {
 		shellTerminalsState.data = [];
 	});
 
-	// Regression: shell terminals are an app-wide list, so without a per-project
-	// filter a shell opened in another project would show up as a tab in this
-	// session's strip. Only this project's shells (and no project-less ones)
-	// should reach the terminal pane.
-	it("shows only the current project's shell terminals as tabs", () => {
+	// Regression: shell terminals are an app-wide list, so without a per-session
+	// filter a shell opened in another session would show up as a tab in this
+	// session's strip. Only this session's shells (not another session's, and no
+	// session-less ones) should reach the terminal pane.
+	it("shows only the current session's shell terminals as tabs", () => {
 		shellTerminalsState.data = [
 			{
 				handleId: "sh-a",
-				projectId: "proj-1",
-				title: "proj-1-shell",
+				sessionId: "sess-1",
+				title: "sess-1-shell",
 				workingDir: "/p",
 				createdAt: "2026-07-24T00:00:00Z",
 			},
 			{
 				handleId: "sh-b",
-				projectId: "proj-2",
-				title: "proj-2-shell",
+				sessionId: "sess-2",
+				title: "sess-2-shell",
 				workingDir: "/q",
 				createdAt: "2026-07-24T00:00:00Z",
 			},
@@ -302,8 +309,8 @@ describe("SessionView", () => {
 		];
 		render(<SessionView sessionId="sess-1" />);
 		const tabs = screen.getByTestId("shell-tabs");
-		expect(tabs).toHaveTextContent("proj-1-shell");
-		expect(tabs).not.toHaveTextContent("proj-2-shell");
+		expect(tabs).toHaveTextContent("sess-1-shell");
+		expect(tabs).not.toHaveTextContent("sess-2-shell");
 		expect(tabs).not.toHaveTextContent("loose-shell");
 	});
 

@@ -213,6 +213,24 @@ func TestOpenShellTerminalReturnsNotFoundForUnknownProject(t *testing.T) {
 	}
 }
 
+func TestOpenShellTerminalScopesToSession(t *testing.T) {
+	rt := newFakeShellRuntime()
+	st := &fakeShellTerminalStore{}
+	projects := &fakeProjectRootLocator{roots: map[domain.ProjectID]string{"portfolio": "/repos/portfolio"}}
+	svc := newTestService(rt, st, projects)
+
+	term, err := svc.OpenShellTerminal(context.Background(), OpenShellTerminalInput{ProjectID: "portfolio", SessionID: "portfolio-3"})
+	if err != nil {
+		t.Fatalf("OpenShellTerminal: %v", err)
+	}
+	if term.SessionID != "portfolio-3" {
+		t.Errorf("returned session id = %q, want portfolio-3", term.SessionID)
+	}
+	if len(st.records) != 1 || st.records[0].SessionID != "portfolio-3" {
+		t.Fatalf("session id not persisted on the record: %+v", st.records)
+	}
+}
+
 func TestRenameShellTerminalUpdatesTitle(t *testing.T) {
 	st := &fakeShellTerminalStore{records: []ShellTerminalRecord{
 		{HandleID: "shellterm-1", Title: "portfolio", AppRunID: testAppRunID},

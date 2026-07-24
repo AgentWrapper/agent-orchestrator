@@ -20,6 +20,7 @@ func (s *Store) InsertShellTerminal(ctx context.Context, rec shelltermsvc.ShellT
 	_, err := s.qw.InsertShellTerminal(ctx, gen.InsertShellTerminalParams{
 		HandleID:   rec.HandleID,
 		ProjectID:  optionalProjectID(rec.ProjectID),
+		SessionID:  optionalSessionID(rec.SessionID),
 		WorkingDir: rec.WorkingDir,
 		Title:      rec.Title,
 		AppRunID:   rec.AppRunID,
@@ -101,6 +102,16 @@ func optionalProjectID(id domain.ProjectID) *domain.ProjectID {
 	return &id
 }
 
+// optionalSessionID maps the service's "no session" empty string onto the
+// nullable column, so a session-less shell stores NULL rather than an empty
+// string that would violate the sessions FK.
+func optionalSessionID(id domain.SessionID) sql.NullString {
+	if id == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: string(id), Valid: true}
+}
+
 func shellTerminalFromGen(row gen.ShellTerminal) shelltermsvc.ShellTerminalRecord {
 	rec := shelltermsvc.ShellTerminalRecord{
 		HandleID:   row.HandleID,
@@ -111,6 +122,9 @@ func shellTerminalFromGen(row gen.ShellTerminal) shelltermsvc.ShellTerminalRecor
 	}
 	if row.ProjectID != nil {
 		rec.ProjectID = *row.ProjectID
+	}
+	if row.SessionID.Valid {
+		rec.SessionID = domain.SessionID(row.SessionID.String)
 	}
 	return rec
 }
