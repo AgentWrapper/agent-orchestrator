@@ -1,6 +1,15 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { GitBranch, LayoutDashboard, PanelRightClose, PanelRightOpen, Plus, Square, Trash2 } from "lucide-react";
+import {
+	GitBranch,
+	LayoutDashboard,
+	PanelRightClose,
+	PanelRightOpen,
+	Plus,
+	RotateCw,
+	Square,
+	Trash2,
+} from "lucide-react";
 import { useState } from "react";
 import { NotificationCenter } from "./NotificationCenter";
 import {
@@ -12,6 +21,8 @@ import {
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
+import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
+import { captureOrchestratorReplacementFailure } from "../lib/orchestrator-replacement-telemetry";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { useUiStore } from "../stores/ui-store";
 import { OrchestratorIcon } from "./icons";
@@ -202,6 +213,7 @@ export function ShellTopbar() {
 					<>
 						{isOrchestrator ? (
 							<>
+								{projectId ? <NewOrchestratorContextButton projectId={projectId} /> : null}
 								<TopbarButton
 									aria-label="New task"
 									disabled={isProjectRestarting}
@@ -271,6 +283,65 @@ export function ShellTopbar() {
 				{!boardActionsInPanel ? <NotificationCenter style={noDragStyle} /> : null}
 			</div>
 		</header>
+	);
+}
+
+// Starting a fresh orchestrator context replaces the current orchestrator with
+// a clean session so the canonical prompt is injected again. Keep this as an
+// explicit two-step action: replacing the orchestrator intentionally discards
+// its current conversation context even though the project work stays intact.
+export function NewOrchestratorContextButton({ projectId }: { projectId: string }) {
+	const navigate = useNavigate();
+	const queryClient = useQueryClient();
+	const [confirming, setConfirming] = useState(false);
+	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
+	const setProjectRestarting = useUiStore((state) => state.setProjectRestarting);
+	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
+	const isProjectRestarting = restartingProjectIds.has(projectId);
+
+	const startNewContext = async () => {
+		await restartProjectOrchestrator({
+			projectId,
+			queryClient,
+			navigate,
+			setProjectRestarting,
+			setOrchestratorReplacementError,
+			onError: (error) => captureOrchestratorReplacementFailure(error, projectId),
+		});
+		setConfirming(false);
+	};
+
+	if (confirming) {
+		return (
+			<div className="inline-flex items-center gap-1.5" style={noDragStyle}>
+				<TopbarButton
+					aria-label="Confirm new orchestrator context"
+					disabled={isProjectRestarting}
+					onClick={() => void startNewContext()}
+					variant="primary"
+				>
+					<RotateCw className="size-icon-md" aria-hidden="true" />
+					{isProjectRestarting ? "Starting…" : "Confirm new context"}
+				</TopbarButton>
+				<TopbarButton disabled={isProjectRestarting} onClick={() => setConfirming(false)} variant="killCancel">
+					Cancel
+				</TopbarButton>
+			</div>
+		);
+	}
+
+	return (
+		<TopbarButton
+			aria-label="Start new orchestrator context"
+			disabled={isProjectRestarting}
+			onClick={() => setConfirming(true)}
+			style={noDragStyle}
+			title="Start a fresh orchestrator context"
+			variant="accent"
+		>
+			<RotateCw className="size-icon-md" aria-hidden="true" />
+			New context
+		</TopbarButton>
 	);
 }
 
