@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { AlertTriangle, ChevronRight, Plus, RotateCw } from "lucide-react";
+import { AlertTriangle, Check, ChevronRight, Copy, Plus, RotateCw } from "lucide-react";
 import {
 	type WorkspaceSession,
 	canonicalTrackerIssueId,
@@ -32,6 +32,7 @@ import { cn } from "../lib/utils";
 import { isLinuxPlatform, isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { useUiStore } from "../stores/ui-store";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
+import { aoBridge } from "../lib/bridge";
 
 type SessionsBoardProps = {
 	/** When set, the board shows only this project's sessions. */
@@ -531,8 +532,18 @@ function SessionCard({
 				>
 					{session.title}
 				</div>
-				{showBranch && <div className="px-3.25 pb-2.5 font-mono text-2xs text-passive">{branch}</div>}
 			</div>
+			{showBranch && (
+				<div
+					className="flex min-w-0 items-center gap-1.5 px-3.25 pb-2.5 font-mono text-2xs text-passive"
+					onClick={(event) => event.stopPropagation()}
+				>
+					<span className="min-w-0 flex-1 truncate" title={branch}>
+						{branch}
+					</span>
+					<CopyValueButton label={`Copy branch ${branch}`} title="Copy branch name" value={branch} />
+				</div>
+			)}
 			{restoreError && (
 				<div className="border-t border-border px-3.25 py-1.5 text-2xs text-destructive">{restoreError}</div>
 			)}
@@ -581,25 +592,72 @@ function BoardPRGroup({ group, linksInteractive = true }: { group: BoardPRGroup;
 			className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1"
 		>
 			<span>PR</span>
-			{group.prs.map((pr, index) => (
-				<span key={pr.number}>
-					{linksInteractive ? (
-						<a
-							className="text-passive underline-offset-2 transition-colors hover:text-foreground hover:underline"
-							href={prBrowserUrl(pr)}
-							rel="noreferrer"
-							target="_blank"
-						>
-							#{pr.number}
-						</a>
-					) : (
-						<span>#{pr.number}</span>
-					)}
-					{index < group.prs.length - 1 ? "," : null}
-				</span>
-			))}
+			{group.prs.map((pr, index) => {
+				const href = prBrowserUrl(pr);
+				return (
+					<span className="inline-flex items-center gap-0.5" key={pr.number}>
+						{linksInteractive ? (
+							<a
+								className="text-passive underline-offset-2 transition-colors hover:text-foreground hover:underline"
+								href={href}
+								rel="noreferrer"
+								target="_blank"
+							>
+								#{pr.number}
+							</a>
+						) : (
+							<span>#{pr.number}</span>
+						)}
+						{linksInteractive && (
+							<CopyValueButton
+								label={`Copy PR #${pr.number} URL`}
+								title={`Copy PR #${pr.number} URL`}
+								value={href}
+							/>
+						)}
+						{index < group.prs.length - 1 ? "," : null}
+					</span>
+				);
+			})}
 			<span className={cn("font-medium", group.status.className)}>{group.status.label}</span>
 		</span>
+	);
+}
+
+function CopyValueButton({ label, title, value }: { label: string; title: string; value: string }) {
+	const [copied, setCopied] = useState(false);
+
+	useEffect(() => {
+		if (!copied) return undefined;
+		const resetCopied = window.setTimeout(() => setCopied(false), 1400);
+		return () => window.clearTimeout(resetCopied);
+	}, [copied]);
+
+	const handleClick = (event: MouseEvent<HTMLButtonElement>) => {
+		event.preventDefault();
+		event.stopPropagation();
+		void aoBridge.clipboard
+			.writeText(value)
+			.then(() => setCopied(true))
+			.catch((error) => console.warn("Unable to copy board value", error));
+	};
+
+	const Icon = copied ? Check : Copy;
+
+	return (
+		<button
+			aria-label={label}
+			className={cn(
+				"inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-passive opacity-0 transition hover:bg-surface hover:text-foreground focus:opacity-100 focus:outline-none focus:ring-1 focus:ring-accent",
+				"group-hover:opacity-100 group-focus-within:opacity-100",
+				copied && "opacity-100 text-accent",
+			)}
+			onClick={handleClick}
+			title={copied ? "Copied" : title}
+			type="button"
+		>
+			<Icon aria-hidden="true" className="size-3" />
+		</button>
 	);
 }
 
