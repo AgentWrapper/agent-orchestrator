@@ -189,7 +189,13 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	// (old CLIs, adapters without tool identity) pass through untouched —
 	// last-writer-wins, exactly as before.
 	metadataChanged := s.AgentSessionID != "" && rec.Metadata.AgentSessionID != s.AgentSessionID
-	resumeReadyChanged := s.Event == "stop" && !rec.Metadata.NativeResumeReady
+	nativeResumeReady := rec.Metadata.NativeResumeReady
+	if s.Event == "stop" {
+		nativeResumeReady = true
+	} else if metadataChanged {
+		nativeResumeReady = false
+	}
+	resumeReadyChanged := nativeResumeReady != rec.Metadata.NativeResumeReady
 	if s.Valid {
 		s = m.applyToolPrecedenceLocked(id, rec.Activity.State, s)
 	}
@@ -199,6 +205,7 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	}
 	if !s.Valid {
 		rec.Metadata.AgentSessionID = s.AgentSessionID
+		rec.Metadata.NativeResumeReady = nativeResumeReady
 		rec.UpdatedAt = now
 		err := m.store.UpdateSession(ctx, rec)
 		m.mu.Unlock()
@@ -208,6 +215,7 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		// Fold metadata into rec before copying it into next below, so the
 		// activity and resume handle land in one store update.
 		rec.Metadata.AgentSessionID = s.AgentSessionID
+		rec.Metadata.NativeResumeReady = nativeResumeReady
 	}
 	prevState := rec.Activity.State
 	prevAt := rec.Activity.LastActivityAt
@@ -220,9 +228,7 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	// POST is lost and its Stop hook lands idle on the idle-seeded row.
 	if sameState && !rec.FirstSignalAt.IsZero() {
 		if metadataChanged || resumeReadyChanged {
-			if resumeReadyChanged {
-				rec.Metadata.NativeResumeReady = true
-			}
+			rec.Metadata.NativeResumeReady = nativeResumeReady
 			rec.UpdatedAt = now
 			err := m.store.UpdateSession(ctx, rec)
 			m.mu.Unlock()
@@ -233,9 +239,7 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	}
 	next := rec
 	next.Activity = act
-	if s.Event == "stop" {
-		next.Metadata.NativeResumeReady = true
-	}
+	next.Metadata.NativeResumeReady = nativeResumeReady
 	if next.FirstSignalAt.IsZero() {
 		next.FirstSignalAt = timeOr(s.Timestamp, now)
 	}
