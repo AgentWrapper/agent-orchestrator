@@ -359,10 +359,13 @@ function ProjectModeButton({
 		>
 			<span className="flex w-full flex-col items-start">
 				<span
-					className={cn("flex w-full justify-center", isWorkspace ? "h-[178px] items-start" : "h-[120px] items-center")}
+					className={cn(
+						"flex h-(--size-import-mode-illustration) w-full justify-center",
+						isWorkspace ? "items-start" : "items-center",
+					)}
 				>
 					{isWorkspace ? (
-						<span className="flex h-[178px] w-full max-w-[240px] flex-col items-start gap-3 rounded-lg border border-dashed border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-illustration)] p-4">
+						<span className="flex h-(--size-import-mode-illustration) w-full max-w-[240px] flex-col items-start gap-3 rounded-lg border border-dashed border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-illustration)] p-4">
 							<span className="flex items-center gap-2 text-[14px] leading-5 text-[var(--color-text-import-muted)]">
 								<Folder className="size-[14px] shrink-0" aria-hidden="true" />
 								my-workspace/

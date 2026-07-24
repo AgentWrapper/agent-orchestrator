@@ -507,7 +507,7 @@ func TestWriteSCMObservationPersistsMetadataChecksReviewsAndComments(t *testing.
 		UpdatedAt: now, ObservedAt: now, CIObservedAt: now, ReviewObservedAt: now,
 	}
 	checks := []domain.PullRequestCheck{{Name: "build", CommitHash: "h1", Status: domain.PRCheckFailed, Conclusion: "failure", URL: "ci", Details: "99", LogTail: "boom", CreatedAt: now}}
-	reviews := []domain.PullRequestReview{{ID: "review-1", Author: "reviewer", State: domain.ReviewChangesRequest, URL: "https://github.com/o/r/pull/1#pullrequestreview-1", SubmittedAt: now}}
+	reviews := []domain.PullRequestReview{{ID: "review-1", Author: "reviewer", State: domain.ReviewChangesRequest, URL: "https://github.com/o/r/pull/1#pullrequestreview-1", Body: "please fix the nil check", SubmittedAt: now}}
 	threads := []domain.PullRequestReviewThread{{ThreadID: "t1", Path: "main.go", Line: 7, SemanticHash: "th", UpdatedAt: now}}
 	comments := []domain.PullRequestComment{{ThreadID: "t1", ID: "c1", Author: "reviewer", File: "main.go", Line: 7, Body: "fix", URL: "comment", CreatedAt: now}}
 
@@ -530,12 +530,46 @@ func TestWriteSCMObservationPersistsMetadataChecksReviewsAndComments(t *testing.
 		t.Fatalf("threads not persisted: %+v", gotThreads)
 	}
 	gotReviews, _ := s.ListPRReviews(ctx, pr.URL)
-	if len(gotReviews) != 1 || gotReviews[0].ID != "review-1" || gotReviews[0].URL != "https://github.com/o/r/pull/1#pullrequestreview-1" {
+	if len(gotReviews) != 1 || gotReviews[0].ID != "review-1" || gotReviews[0].URL != "https://github.com/o/r/pull/1#pullrequestreview-1" || gotReviews[0].Body != "please fix the nil check" {
 		t.Fatalf("reviews not persisted: %+v", gotReviews)
 	}
 	gotComments, _ := s.ListPRComments(ctx, pr.URL)
 	if len(gotComments) != 1 || gotComments[0].ThreadID != "t1" || gotComments[0].URL != "comment" {
 		t.Fatalf("comments not persisted: %+v", gotComments)
+	}
+}
+
+func TestUpsertPRReviewUpdatesBody(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	now := time.Now().UTC().Truncate(time.Second)
+
+	pr := domain.PullRequest{
+		URL: "https://github.com/o/r/pull/9", SessionID: r.ID, Number: 9,
+		Provider: "github", Host: "github.com", Repo: "o/r",
+		SourceBranch: "feat/body", TargetBranch: "main", HeadSHA: "h1",
+		Title: "review body", UpdatedAt: now, ObservedAt: now,
+	}
+	review := domain.PullRequestReview{ID: "review-1", Author: "reviewer", State: domain.ReviewChangesRequest, URL: "https://github.com/o/r/pull/9#pullrequestreview-1", Body: "first pass", SubmittedAt: now}
+
+	if err := s.WriteSCMObservation(ctx, pr, nil, []domain.PullRequestReview{review}, nil, nil, ports.ReviewWriteReplace); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.ListPRReviews(ctx, pr.URL); len(got) != 1 || got[0].Body != "first pass" {
+		t.Fatalf("initial body not persisted: %+v", got)
+	}
+
+	// A re-observation of the same review id must overwrite the stored body.
+	review.State = domain.ReviewApproved
+	review.Body = "resolved, approving"
+	if err := s.WriteSCMObservation(ctx, pr, nil, []domain.PullRequestReview{review}, nil, nil, ports.ReviewWriteReplace); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.ListPRReviews(ctx, pr.URL)
+	if len(got) != 1 || got[0].Body != "resolved, approving" || got[0].State != domain.ReviewApproved {
+		t.Fatalf("body/state not updated on upsert: %+v", got)
 	}
 }
 

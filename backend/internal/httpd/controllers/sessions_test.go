@@ -60,14 +60,14 @@ func (f *fakeSessionService) List(_ context.Context, filter sessionsvc.ListFilte
 	return out, nil
 }
 
-func (f *fakeSessionService) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.Session, error) {
+func (f *fakeSessionService) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.Session, int, int, error) {
 	if f.spawnErr != nil {
-		return domain.Session{}, f.spawnErr
+		return domain.Session{}, 0, 0, f.spawnErr
 	}
 	now := time.Now().UTC()
 	s := domain.Session{SessionRecord: domain.SessionRecord{ID: domain.SessionID(string(cfg.ProjectID) + "-2"), ProjectID: cfg.ProjectID, IssueID: cfg.IssueID, Kind: cfg.Kind, Harness: cfg.Harness, DisplayName: cfg.DisplayName, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, CreatedAt: now, UpdatedAt: now}, Status: domain.StatusIdle}
 	f.sessions[s.ID] = s
-	return s, nil
+	return s, len(cfg.Prompt), 0, nil
 }
 
 func (f *fakeSessionService) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error) {
@@ -83,7 +83,8 @@ func (f *fakeSessionService) SpawnOrchestrator(ctx context.Context, projectID do
 			}
 		}
 	}
-	return f.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
+	s, _, _, err := f.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
+	return s, err
 }
 
 func (f *fakeSessionService) Get(_ context.Context, id domain.SessionID) (domain.Session, error) {
@@ -332,7 +333,9 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 		t.Fatalf("POST session = %d, want 201; body=%s", status, body)
 	}
 	var spawned struct {
-		Session sessionBody `json:"session"`
+		Session           sessionBody `json:"session"`
+		PromptBytes       *int        `json:"promptBytes"`
+		SystemPromptBytes *int        `json:"systemPromptBytes"`
 	}
 	mustJSON(t, body, &spawned)
 	if spawned.Session.ID != "ao-2" || spawned.Session.IssueID != "ISS-1" || spawned.Session.Harness != "codex" {
@@ -340,6 +343,12 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	}
 	if spawned.Session.DisplayName != "my worker" {
 		t.Fatalf("spawned displayName = %q, want %q", spawned.Session.DisplayName, "my worker")
+	}
+	if spawned.PromptBytes == nil || *spawned.PromptBytes != len("fix") {
+		t.Fatalf("spawned promptBytes = %v, want %d", spawned.PromptBytes, len("fix"))
+	}
+	if spawned.SystemPromptBytes == nil || *spawned.SystemPromptBytes != 0 {
+		t.Fatalf("spawned systemPromptBytes = %v, want present zero", spawned.SystemPromptBytes)
 	}
 
 	body, status, _ = doRequest(t, srv, "GET", "/api/v1/sessions/ao-2", "")

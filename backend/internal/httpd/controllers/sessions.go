@@ -62,7 +62,7 @@ var errPreviewFileNotFound = errors.New("preview file not found")
 // SessionService is the controller-facing session service contract.
 type SessionService interface {
 	List(ctx context.Context, filter sessionsvc.ListFilter) ([]domain.Session, error)
-	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, error)
+	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, int, int, error)
 	SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error)
 	Get(ctx context.Context, id domain.SessionID) (domain.Session, error)
 	Restore(ctx context.Context, id domain.SessionID) (sessionsvc.RestoreOutcome, error)
@@ -177,12 +177,12 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", attachErr.code, attachErr.message, nil)
 		return
 	}
-	sess, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, Kind: in.Kind, Harness: in.Harness, Branch: in.Branch, Prompt: in.Prompt, DisplayName: displayName, Attachments: attachments})
+	sess, promptBytes, systemPromptBytes, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, Kind: in.Kind, Harness: in.Harness, Branch: in.Branch, Prompt: in.Prompt, DisplayName: displayName, Attachments: attachments})
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusCreated, SessionResponse{Session: sessionView(sess)})
+	envelope.WriteJSON(w, http.StatusCreated, SpawnSessionResponse{Session: sessionView(sess), PromptBytes: promptBytes, SystemPromptBytes: systemPromptBytes})
 }
 
 // spawnAttachmentError carries a client-facing API error code + message for a

@@ -24,12 +24,13 @@ const (
 
 // PRReviewState is one PR-scoped review decision for a worker session.
 type PRReviewState struct {
-	PRURL     string            `json:"prUrl"`
-	PRNumber  int               `json:"prNumber"`
-	Title     string            `json:"title"`
-	TargetSHA string            `json:"targetSha"`
-	Status    StateStatus       `json:"status" enum:"needs_review,running,up_to_date,changes_requested,ineligible"`
-	LatestRun *domain.ReviewRun `json:"latestRun,omitempty"`
+	PRURL       string            `json:"prUrl"`
+	PRNumber    int               `json:"prNumber"`
+	Title       string            `json:"title"`
+	TargetSHA   string            `json:"targetSha"`
+	Status      StateStatus       `json:"status" enum:"needs_review,running,up_to_date,changes_requested,ineligible"`
+	LatestRun   *domain.ReviewRun `json:"latestRun,omitempty"`
+	PreviousRun *domain.ReviewRun `json:"previousRun,omitempty"`
 }
 
 // Plan computes per-PR review work from the currently observed PRs and existing
@@ -45,6 +46,9 @@ func Plan(prs []domain.PullRequest, runs []domain.ReviewRun) []PRReviewState {
 			Title:     pr.Title,
 			TargetSHA: pr.HeadSHA,
 			Status:    ReviewStateNeedsReview,
+		}
+		if run, ok := latestCompletedRunForOtherSHA(runs, review.PRURL, review.TargetSHA); ok {
+			review.PreviousRun = &run
 		}
 		if pr.URL == "" || pr.HeadSHA == "" || pr.Draft || pr.Merged || pr.Closed {
 			review.Status = ReviewStateIneligible
@@ -78,6 +82,30 @@ func Plan(prs []domain.PullRequest, runs []domain.ReviewRun) []PRReviewState {
 		return reviews[i].PRURL < reviews[j].PRURL
 	})
 	return reviews
+}
+
+func latestCompletedRunForOtherSHA(runs []domain.ReviewRun, prURL, targetSHA string) (domain.ReviewRun, bool) {
+	if prURL == "" || targetSHA == "" {
+		return domain.ReviewRun{}, false
+	}
+	var latest domain.ReviewRun
+	found := false
+	for _, run := range runs {
+		if run.PRURL != prURL || run.TargetSHA == "" || run.TargetSHA == targetSHA {
+			continue
+		}
+		if run.Status != domain.ReviewRunComplete && run.Status != domain.ReviewRunDelivered {
+			continue
+		}
+		if run.Verdict != domain.VerdictApproved && run.Verdict != domain.VerdictChangesRequested {
+			continue
+		}
+		if !found || run.CreatedAt.After(latest.CreatedAt) {
+			latest = run
+			found = true
+		}
+	}
+	return latest, found
 }
 
 func latestRunsByPRAndSHA(runs []domain.ReviewRun) map[string]domain.ReviewRun {

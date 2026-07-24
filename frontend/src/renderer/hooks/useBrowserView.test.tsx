@@ -356,6 +356,114 @@ describe("useBrowserView", () => {
 		);
 	});
 
+	it("parks the native view synchronously when an overlay opens, without waiting for a frame", async () => {
+		// Regression for the notifications-over-browser overlay race: parking used to
+		// be deferred to requestAnimationFrame, leaving a ~16ms window where the live
+		// native view painted over the just-opened dropdown. Under fake timers the
+		// parked bounds must land from the MutationObserver microtask alone, before
+		// any rAF/timer is advanced.
+		vi.useFakeTimers();
+		try {
+			const bridge = setupBridge();
+			const slot = createSlot();
+			const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+			await act(async () => {
+				await Promise.resolve();
+			});
+			act(() =>
+				bridge.emit({
+					viewId: "42:sess-1",
+					url: "http://localhost:3000/",
+					title: "",
+					canGoBack: false,
+					canGoForward: false,
+					isLoading: false,
+				}),
+			);
+			act(() => result.current.slotRef(slot));
+			await act(async () => {
+				vi.advanceTimersByTime(300);
+			});
+
+			bridge.setBounds.mockClear();
+			const menu = document.createElement("div");
+			menu.setAttribute("role", "menu");
+			menu.setAttribute("data-state", "open");
+			// Flush only the observer microtask — deliberately do NOT advance timers,
+			// so a parked call here proves the park is synchronous, not rAF-deferred.
+			await act(async () => {
+				document.body.appendChild(menu);
+				await Promise.resolve();
+			});
+			expect(bridge.setBounds).toHaveBeenCalledWith({
+				viewId: "42:sess-1",
+				rect: { x: 12, y: 34, width: 320, height: 240 },
+				visible: true,
+				parked: true,
+			});
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("re-parks when a reused portal flips data-state in place under rapid toggling", async () => {
+		// Radix reuses its portal node and flips data-state="open"↔"closed" without
+		// adding/removing a body child. A childList-only observer misses this, so the
+		// view stays un-parked while the dropdown is open. The hardened observer must
+		// catch the in-place attribute flip and re-park.
+		const bridge = setupBridge();
+		const slot = createSlot();
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+
+		await waitFor(() => expect(bridge.ensure).toHaveBeenCalledWith("sess-1"));
+		act(() =>
+			bridge.emit({
+				viewId: "42:sess-1",
+				url: "http://localhost:3000/",
+				title: "",
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			}),
+		);
+		act(() => result.current.slotRef(slot));
+
+		// The portal node is present the whole time; only its data-state flips.
+		const portal = document.createElement("div");
+		portal.setAttribute("role", "menu");
+		portal.setAttribute("data-state", "closed");
+		await act(async () => {
+			document.body.appendChild(portal);
+			await Promise.resolve();
+		});
+
+		await act(async () => {
+			portal.setAttribute("data-state", "open");
+			await Promise.resolve();
+		});
+		await waitFor(() =>
+			expect(bridge.setBounds).toHaveBeenLastCalledWith({
+				viewId: "42:sess-1",
+				rect: { x: 12, y: 34, width: 320, height: 240 },
+				visible: true,
+				parked: true,
+			}),
+		);
+
+		bridge.setBounds.mockClear();
+		await act(async () => {
+			portal.setAttribute("data-state", "closed");
+			await Promise.resolve();
+		});
+		await waitFor(() =>
+			expect(bridge.setBounds).toHaveBeenLastCalledWith({
+				viewId: "42:sess-1",
+				rect: { x: 12, y: 34, width: 320, height: 240 },
+				visible: true,
+			}),
+		);
+	});
+
 	it("updates nav state only for the current view", async () => {
 		const bridge = setupBridge();
 		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));

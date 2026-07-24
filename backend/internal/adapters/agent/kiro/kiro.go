@@ -60,6 +60,26 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
+// GetConfigSpec reports the per-project agent config keys Kiro understands:
+// a model override. Kiro already forwards agentConfig.Model into its
+// workspace-local custom agent config (see setKiroAgentDefaults in
+// hooks.go); this declares that support so it is discoverable/validated
+// through the config-spec surface, matching claude-code and codex.
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.ConfigSpec{}, err
+	}
+	return ports.ConfigSpec{
+		Fields: []ports.ConfigField{
+			{
+				Key:         "model",
+				Type:        ports.ConfigFieldString,
+				Description: "Model override written into Kiro's workspace-local agent config.",
+			},
+		},
+	}, nil
+}
+
 // GetLaunchCommand builds the argv to start a new Kiro session:
 // `kiro-cli chat [--agent ao] --agent ao [trust flags] [-- <prompt>]`.
 //

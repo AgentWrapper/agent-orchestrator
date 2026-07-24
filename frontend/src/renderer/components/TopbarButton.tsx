@@ -35,8 +35,7 @@ export function TopbarKillError({ className, ...props }: React.HTMLAttributes<HT
 	return <span className={cn("text-caption text-destructive", className)} role="alert" {...props} />;
 }
 
-export const topbarHeaderClass =
-	"flex h-toolbar shrink-0 items-center gap-3 border-b border-border bg-background px-4 z-chrome";
+export const topbarHeaderClass = "flex h-toolbar shrink-0 items-center gap-3 border-b border-border px-4 z-chrome";
 
 export const topbarProjectLabelClass =
 	"text-brand font-semibold tracking-tight leading-none text-foreground whitespace-nowrap";

@@ -296,6 +296,13 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 		}
 	}
 	if handleID == "" {
+		// Preflight before launching a new reviewer pane. Runs only when a
+		// fresh launch is actually required (not when an existing pane is
+		// reused via Notify). On failure failRuns marks the created runs as
+		// failed, matching the Spawn error semantics.
+		if err := e.launcher.Preflight(ctx, harness, worker.Metadata.WorkspacePath); err != nil {
+			return TriggerResult{}, failRuns(0, fmt.Errorf("reviewer preflight: %w", err))
+		}
 		h, err := e.launcher.Spawn(ctx, reviewLaunchSpec(worker, harness, created[0], queue, 0))
 		if err != nil {
 			return TriggerResult{}, failRuns(0, fmt.Errorf("launch reviewer: %w", err))

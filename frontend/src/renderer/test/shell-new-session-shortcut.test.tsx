@@ -9,6 +9,10 @@ const shellMocks = vi.hoisted(() => {
 		newSessionListener: undefined as (() => void) | undefined,
 		keyboardShortcutsListener: undefined as (() => void) | undefined,
 		newShellTerminalListener: undefined as (() => void) | undefined,
+		openSettingsListener: undefined as (() => void) | undefined,
+		previousSessionListener: undefined as (() => void) | undefined,
+		nextSessionListener: undefined as (() => void) | undefined,
+		focusTerminalListener: undefined as (() => void) | undefined,
 		routeParams: {} as { projectId?: string; sessionId?: string },
 		workspaces: [] as WorkspaceSummary[],
 	};
@@ -27,6 +31,22 @@ const shellMocks = vi.hoisted(() => {
 			return vi.fn();
 		}),
 		openShellTerminal: vi.fn(),
+		onOpenSettingsShortcut: vi.fn((listener: () => void) => {
+			state.openSettingsListener = listener;
+			return vi.fn();
+		}),
+		onPreviousSessionShortcut: vi.fn((listener: () => void) => {
+			state.previousSessionListener = listener;
+			return vi.fn();
+		}),
+		onNextSessionShortcut: vi.fn((listener: () => void) => {
+			state.nextSessionListener = listener;
+			return vi.fn();
+		}),
+		onFocusTerminalShortcut: vi.fn((listener: () => void) => {
+			state.focusTerminalListener = listener;
+			return vi.fn();
+		}),
 		queryClient: {
 			ensureQueryData: vi.fn(),
 			fetchQuery: vi.fn(),
@@ -56,6 +76,10 @@ vi.mock("../lib/bridge", () => ({
 			onNewSessionShortcut: shellMocks.onNewSessionShortcut,
 			onKeyboardShortcutsHelp: shellMocks.onKeyboardShortcutsHelp,
 			onNewShellTerminalShortcut: shellMocks.onNewShellTerminalShortcut,
+			onOpenSettingsShortcut: shellMocks.onOpenSettingsShortcut,
+			onPreviousSessionShortcut: shellMocks.onPreviousSessionShortcut,
+			onNextSessionShortcut: shellMocks.onNextSessionShortcut,
+			onFocusTerminalShortcut: shellMocks.onFocusTerminalShortcut,
 		},
 	},
 }));
@@ -125,7 +149,11 @@ const workspaces = [
 		id: "proj-1",
 		name: "Project One",
 		path: "/one",
-		sessions: [{ id: "sess-1" }],
+		sessions: [
+			{ id: "sess-1", status: "working" },
+			{ id: "sess-2", status: "terminated" },
+			{ id: "sess-3", status: "idle" },
+		],
 	},
 ] as unknown as WorkspaceSummary[];
 
@@ -141,6 +169,10 @@ async function renderShell() {
 	await waitFor(() => expect(shellMocks.onNewSessionShortcut).toHaveBeenCalledTimes(1));
 	await waitFor(() => expect(shellMocks.onKeyboardShortcutsHelp).toHaveBeenCalledTimes(1));
 	await waitFor(() => expect(shellMocks.onNewShellTerminalShortcut).toHaveBeenCalledTimes(1));
+	await waitFor(() => expect(shellMocks.onOpenSettingsShortcut).toHaveBeenCalledTimes(1));
+	await waitFor(() => expect(shellMocks.onPreviousSessionShortcut).toHaveBeenCalledTimes(1));
+	await waitFor(() => expect(shellMocks.onNextSessionShortcut).toHaveBeenCalledTimes(1));
+	await waitFor(() => expect(shellMocks.onFocusTerminalShortcut).toHaveBeenCalledTimes(1));
 }
 
 function emitShortcut() {
@@ -155,9 +187,17 @@ beforeEach(() => {
 	shellMocks.onKeyboardShortcutsHelp.mockClear();
 	shellMocks.onNewShellTerminalShortcut.mockClear();
 	shellMocks.openShellTerminal.mockClear();
+	shellMocks.state.newShellTerminalListener = undefined;
+	shellMocks.onOpenSettingsShortcut.mockClear();
+	shellMocks.onPreviousSessionShortcut.mockClear();
+	shellMocks.onNextSessionShortcut.mockClear();
+	shellMocks.onFocusTerminalShortcut.mockClear();
 	shellMocks.state.newSessionListener = undefined;
 	shellMocks.state.keyboardShortcutsListener = undefined;
-	shellMocks.state.newShellTerminalListener = undefined;
+	shellMocks.state.openSettingsListener = undefined;
+	shellMocks.state.previousSessionListener = undefined;
+	shellMocks.state.nextSessionListener = undefined;
+	shellMocks.state.focusTerminalListener = undefined;
 	shellMocks.state.routeParams = {};
 	shellMocks.state.workspaces = workspaces;
 	useUiStore.setState({ createProjectNonce: 0, newTaskRequest: null, newShellTerminalNonce: 0 });
@@ -241,5 +281,51 @@ describe("shell new-session shortcut subscription", () => {
 
 		expect(screen.getByTestId("create-project-flow")).toBeInTheDocument();
 		expect(screen.queryByTestId("new-task-flow")).not.toBeInTheDocument();
+	});
+});
+
+describe("shell application shortcut subscriptions", () => {
+	it("opens settings", async () => {
+		await renderShell();
+
+		act(() => shellMocks.state.openSettingsListener?.());
+
+		expect(shellMocks.navigate).toHaveBeenCalledWith({ to: "/settings" });
+	});
+
+	it("moves to the next non-terminated session in the current project", async () => {
+		shellMocks.state.routeParams = { sessionId: "sess-1" };
+		await renderShell();
+
+		act(() => shellMocks.state.nextSessionListener?.());
+
+		expect(shellMocks.navigate).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "proj-1", sessionId: "sess-3" },
+		});
+	});
+
+	it("wraps to the last session when moving previous from the first", async () => {
+		shellMocks.state.routeParams = { sessionId: "sess-1" };
+		await renderShell();
+
+		act(() => shellMocks.state.previousSessionListener?.());
+
+		expect(shellMocks.navigate).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "proj-1", sessionId: "sess-3" },
+		});
+	});
+
+	it("focuses the mounted terminal", async () => {
+		const terminalInput = document.createElement("textarea");
+		terminalInput.className = "xterm-helper-textarea";
+		document.body.appendChild(terminalInput);
+		await renderShell();
+
+		act(() => shellMocks.state.focusTerminalListener?.());
+
+		expect(document.activeElement).toBe(terminalInput);
+		terminalInput.remove();
 	});
 });

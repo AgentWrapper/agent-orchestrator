@@ -17,6 +17,7 @@ Start with [architecture.md](architecture.md) for the current backend model and
 | [cli/README.md](cli/README.md)                         | CLI commands and daemon control surface.                                                                              |
 | [STATUS.md](STATUS.md)                                 | What is shipped on `main` today and what is still in flight.                                                          |
 | [stack.md](stack.md)                                   | Accepted library/runtime choices, pending stack decisions, and dependencies explicitly avoided for V1.                |
+| [telemetry.md](telemetry.md)                           | Telemetry collection, privacy safeguards, configuration, and PostHog dashboard guidance.                              |
 
 ## Mental model
 

@@ -503,6 +503,63 @@ describe("SessionInspector reviews tab", () => {
 		expect(screen.queryByRole("button", { name: "Re-run" })).not.toBeInTheDocument();
 	});
 
+	it.each([
+		["needs_review", "changes_requested", "Changes requested", "Not run", "Run review"],
+		["running", "approved", "Approved", "Reviewing...", "Cancel review"],
+	] as const)(
+		"shows the previous verdict while the current head is %s without changing its current status",
+		async (status, previousVerdict, previousLabel, currentLabel, actionLabel) => {
+			const current = {
+				...reviewState(3, status, "sha-current"),
+				previousRun: {
+					...approvedReview,
+					id: "run-previous",
+					status: "delivered",
+					verdict: previousVerdict,
+					targetSha: "sha-previous",
+				},
+			};
+			if (status === "running") {
+				current.latestRun = {
+					...approvedReview,
+					id: "run-current",
+					status: "running",
+					verdict: "",
+					targetSha: "sha-current",
+				};
+			}
+			mockCommonGets([], "reviewer-pane", [current]);
+
+			renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+			await openReviewsTab();
+
+			const previous = await screen.findByText(`Previous: ${previousLabel}`);
+			expect(within(previous.parentElement as HTMLElement).getByText(currentLabel)).toBeInTheDocument();
+			expect(screen.getByRole("button", { name: actionLabel })).toBeInTheDocument();
+		},
+	);
+
+	it("hides the previous verdict after the current head review completes", async () => {
+		const current = {
+			...reviewState(3, "up_to_date", "sha-current"),
+			previousRun: {
+				...approvedReview,
+				id: "run-previous",
+				status: "delivered",
+				verdict: "changes_requested",
+				targetSha: "sha-previous",
+			},
+		};
+		mockCommonGets([], "reviewer-pane", [current]);
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsTab();
+
+		expect(await screen.findAllByText("Approved")).not.toHaveLength(0);
+		expect(screen.queryByText(/Previous:/)).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Re-run review" })).toBeInTheDocument();
+	});
+
 	it("shows a no-needed-reviews notice instead of opening the terminal when the backend reuses runs", async () => {
 		mockCommonGets([approvedReview], "reviewer-pane", [reviewState(3, "up_to_date")]);
 		postMock.mockResolvedValue({

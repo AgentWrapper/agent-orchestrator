@@ -1,4 +1,49 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+@plugin "@tailwindcss/typography";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+	--color-background: var(--background);
+	--color-foreground: var(--foreground);
+	--color-ring: var(--ring);
+	--color-input: var(--input);
+	--color-border: var(--border);
+	--color-destructive: var(--destructive);
+	--color-accent-foreground: var(--accent-foreground);
+	--color-accent: var(--accent);
+	--color-muted-foreground: var(--muted-foreground);
+	--color-muted: var(--muted);
+	--color-secondary-foreground: var(--secondary-foreground);
+	--color-secondary: var(--secondary);
+	--color-primary-foreground: var(--primary-foreground);
+	--color-primary: var(--primary);
+	--radius-sm: calc(var(--radius) - 4px);
+	--radius-md: calc(var(--radius) - 2px);
+	--radius-lg: var(--radius);
+	--radius-xl: calc(var(--radius) + 4px);
+	--animate-accordion-down: accordion-down 0.2s ease-out;
+	--animate-accordion-up: accordion-up 0.2s ease-out;
+
+	@keyframes accordion-down {
+		from {
+			height: 0;
+		}
+		to {
+			height: var(--radix-accordion-content-height);
+		}
+	}
+
+	@keyframes accordion-up {
+		from {
+			height: var(--radix-accordion-content-height);
+		}
+		to {
+			height: 0;
+		}
+	}
+}
 
 :root {
 	--font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, sans-serif;
@@ -142,6 +187,93 @@ body::-webkit-scrollbar,
 .dark .landing-page {
 	--status-fail: #ef4444;
 	--status-ok: #22c55e;
+}
+
+/* Magic UI changelog structure, branded with the landing page design system. */
+.changelog-template {
+	--font-sans: var(--font-inter), -apple-system, system-ui, sans-serif;
+	--font-mono: var(--font-geist-mono), ui-monospace, "SFMono-Regular", Menlo, monospace;
+	--radius: 0.625rem;
+	--background: var(--color-bg-base);
+	--foreground: var(--color-text-primary);
+	--primary: var(--color-accent);
+	--primary-foreground: #121110;
+	--secondary: var(--color-bg-elevated);
+	--secondary-foreground: var(--color-text-primary);
+	--muted: var(--color-bg-elevated);
+	--muted-foreground: var(--color-text-secondary);
+	--accent: var(--color-accent-dim);
+	--accent-foreground: var(--color-accent);
+	--destructive: #dc2626;
+	--border: var(--color-border-default);
+	--input: var(--color-border-default);
+	--ring: var(--color-accent);
+	font-family:
+		var(--font-inter),
+		-apple-system,
+		system-ui,
+		sans-serif;
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+}
+
+.changelog-template .prose {
+	--tw-prose-body: var(--color-text-secondary);
+	--tw-prose-headings: var(--color-text-primary);
+	--tw-prose-lead: var(--color-text-secondary);
+	--tw-prose-links: var(--color-accent);
+	--tw-prose-bold: var(--color-text-primary);
+	--tw-prose-counters: var(--color-text-tertiary);
+	--tw-prose-bullets: var(--color-accent);
+	--tw-prose-hr: var(--color-border-default);
+	--tw-prose-quotes: var(--color-text-primary);
+	--tw-prose-quote-borders: var(--color-accent-border);
+	--tw-prose-captions: var(--color-text-tertiary);
+	--tw-prose-code: var(--color-text-primary);
+	--tw-prose-pre-code: var(--color-text-primary);
+	--tw-prose-pre-bg: var(--color-bg-inset);
+	--tw-prose-th-borders: var(--color-border-default);
+	--tw-prose-td-borders: var(--color-border-subtle);
+	--tw-prose-invert-body: var(--color-text-secondary);
+	--tw-prose-invert-headings: var(--color-text-primary);
+	--tw-prose-invert-lead: var(--color-text-secondary);
+	--tw-prose-invert-links: var(--color-accent);
+	--tw-prose-invert-bold: var(--color-text-primary);
+	--tw-prose-invert-counters: var(--color-text-tertiary);
+	--tw-prose-invert-bullets: var(--color-accent);
+	--tw-prose-invert-hr: var(--color-border-default);
+	--tw-prose-invert-quotes: var(--color-text-primary);
+	--tw-prose-invert-quote-borders: var(--color-accent-border);
+	--tw-prose-invert-captions: var(--color-text-tertiary);
+	--tw-prose-invert-code: var(--color-text-primary);
+	--tw-prose-invert-pre-code: var(--color-text-primary);
+	--tw-prose-invert-pre-bg: var(--color-bg-inset);
+	--tw-prose-invert-th-borders: var(--color-border-default);
+	--tw-prose-invert-td-borders: var(--color-border-subtle);
+}
+
+.changelog-template .prose a,
+.changelog-template [data-slot="accordion-trigger"]:hover,
+.changelog-template [data-slot="accordion-content"] a:hover {
+	color: var(--color-accent);
+}
+
+.changelog-template .changelog-source-badge {
+	border-color: var(--color-accent-border);
+	background: var(--color-accent-dim);
+	color: var(--color-accent);
+}
+
+.changelog-template .changelog-source-badge:hover {
+	border-color: var(--color-accent);
+	background: var(--color-accent-dim);
+}
+
+.changelog-template nav[aria-label="Changelog pagination"] a:hover,
+.changelog-template nav[aria-label="Changelog pagination"] a[aria-current="page"] {
+	border-color: var(--color-accent-border);
+	background: var(--color-accent-dim);
+	color: var(--color-accent);
 }
 
 /* Keyboard navigation: consistent, visible focus ring on every interactive

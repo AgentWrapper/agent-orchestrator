@@ -517,6 +517,7 @@ func genReviewParams(prURL string, review domain.PullRequestReview) gen.UpsertPR
 		URL:         review.URL,
 		IsBot:       boolInt(review.IsBot),
 		SubmittedAt: review.SubmittedAt,
+		Body:        review.Body,
 	}
 }
 
@@ -526,6 +527,7 @@ func reviewFromGen(review gen.PRReview) domain.PullRequestReview {
 		Author:      review.Author,
 		State:       domain.ReviewDecision(review.State),
 		URL:         review.URL,
+		Body:        review.Body,
 		IsBot:       review.IsBot != 0,
 		SubmittedAt: review.SubmittedAt,
 	}

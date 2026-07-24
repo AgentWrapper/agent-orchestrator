@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { AlertTriangle, ChevronRight, Plus, RotateCw } from "lucide-react";
+import { AlertTriangle, Check, ChevronRight, Copy, Plus, RotateCw } from "lucide-react";
 import {
 	type WorkspaceSession,
 	canonicalTrackerIssueId,
@@ -28,6 +28,7 @@ import { TopbarButton, TopbarKillError, topbarProjectLabelClass } from "./Topbar
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
+import { aoBridge } from "../lib/bridge";
 import { cn } from "../lib/utils";
 import { isLinuxPlatform, isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { useUiStore } from "../stores/ui-store";
@@ -531,8 +532,16 @@ function SessionCard({
 				>
 					{session.title}
 				</div>
-				{showBranch && <div className="px-3.25 pb-2.5 font-mono text-2xs text-passive">{branch}</div>}
 			</div>
+			{showBranch && (
+				<div
+					className="flex min-w-0 items-center gap-1 px-3.25 pb-2.5 font-mono text-2xs text-passive"
+					onClick={interactive ? onOpen : undefined}
+				>
+					<span className="truncate">{branch}</span>
+					<CopyActionButton label={`branch ${branch}`} value={branch} />
+				</div>
+			)}
 			{restoreError && (
 				<div className="border-t border-border px-3.25 py-1.5 text-2xs text-destructive">{restoreError}</div>
 			)}
@@ -582,24 +591,68 @@ function BoardPRGroup({ group, linksInteractive = true }: { group: BoardPRGroup;
 		>
 			<span>PR</span>
 			{group.prs.map((pr, index) => (
-				<span key={pr.number}>
-					{linksInteractive ? (
-						<a
-							className="text-passive underline-offset-2 transition-colors hover:text-foreground hover:underline"
-							href={prBrowserUrl(pr)}
-							rel="noreferrer"
-							target="_blank"
-						>
-							#{pr.number}
-						</a>
-					) : (
-						<span>#{pr.number}</span>
-					)}
+				<span className="inline-flex items-center" key={pr.number}>
+					<span className="inline-flex items-center gap-0.5">
+						{linksInteractive ? (
+							<a
+								className="text-passive underline-offset-2 transition-colors hover:text-foreground hover:underline"
+								href={prBrowserUrl(pr)}
+								rel="noreferrer"
+								target="_blank"
+							>
+								#{pr.number}
+							</a>
+						) : (
+							<span>#{pr.number}</span>
+						)}
+						<CopyActionButton label={`PR #${pr.number} URL`} value={prBrowserUrl(pr)} />
+					</span>
 					{index < group.prs.length - 1 ? "," : null}
 				</span>
 			))}
 			<span className={cn("font-medium", group.status.className)}>{group.status.label}</span>
 		</span>
+	);
+}
+
+function CopyActionButton({ label, value }: { label: string; value: string }) {
+	const [copied, setCopied] = useState(false);
+	const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	useEffect(
+		() => () => {
+			if (copiedTimeoutRef.current !== null) clearTimeout(copiedTimeoutRef.current);
+		},
+		[],
+	);
+	const buttonLabel = copied ? `Copied ${label}` : `Copy ${label}`;
+	const copyValue = async (event: MouseEvent<HTMLButtonElement>) => {
+		event.stopPropagation();
+		try {
+			await aoBridge.clipboard.writeText(value);
+		} catch {
+			return;
+		}
+		setCopied(true);
+		if (copiedTimeoutRef.current !== null) clearTimeout(copiedTimeoutRef.current);
+		copiedTimeoutRef.current = setTimeout(() => {
+			setCopied(false);
+			copiedTimeoutRef.current = null;
+		}, 1_500);
+	};
+	return (
+		<button
+			aria-label={buttonLabel}
+			className="inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-passive transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+			onClick={(event) => void copyValue(event)}
+			title={buttonLabel}
+			type="button"
+		>
+			{copied ? (
+				<Check className="size-icon-2xs text-success" aria-hidden="true" />
+			) : (
+				<Copy className="size-icon-2xs" aria-hidden="true" />
+			)}
+		</button>
 	);
 }
 

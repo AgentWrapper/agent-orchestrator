@@ -348,7 +348,11 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 					}
 				/>
 			)}
-			<div className="relative min-h-0 flex-1">
+			{/* p-2 keeps the xterm content off the pane edges; the host fills the
+			    remaining content box, so FitAddon still measures it correctly and
+			    the absolute overlays (empty state, banner) keep covering the
+			    full padding box. */}
+			<div className="relative min-h-0 flex-1 p-2">
 				<XtermTerminal
 					ariaLabel={terminalTarget?.kind === "shell" ? "Shell terminal" : "Session terminal"}
 					fontSize={fontSize}

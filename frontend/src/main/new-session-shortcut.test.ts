@@ -1,9 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-	KEYBOARD_SHORTCUTS_HELP_CHANNEL,
-	NEW_SESSION_SHORTCUT_CHANNEL,
-	NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL,
-} from "../shared/shortcuts";
+// prettier-ignore
+import { FOCUS_TERMINAL_SHORTCUT_CHANNEL, KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEXT_SESSION_SHORTCUT_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL, NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL, OPEN_SETTINGS_SHORTCUT_CHANNEL, PREVIOUS_SESSION_SHORTCUT_CHANNEL } from "../shared/shortcuts";
 import { attachAppShortcuts } from "./app-shortcuts";
 
 type InputEvent = {
@@ -130,5 +127,21 @@ describe("attachAppShortcuts", () => {
 
 		expect(windowsTarget.send).toHaveBeenCalledWith(KEYBOARD_SHORTCUTS_HELP_CHANNEL);
 		expect(macTarget.send).toHaveBeenCalledWith(KEYBOARD_SHORTCUTS_HELP_CHANNEL);
+	});
+
+	it.each([
+		["settings", { key: ",", control: true }, OPEN_SETTINGS_SHORTCUT_CHANNEL],
+		["previous session", { key: "PageUp", control: true }, PREVIOUS_SESSION_SHORTCUT_CHANNEL],
+		["next session", { key: "PageDown", control: true }, NEXT_SESSION_SHORTCUT_CHANNEL],
+		["focus terminal", { key: "T", control: true, shift: true }, FOCUS_TERMINAL_SHORTCUT_CHANNEL],
+	] as const)("forwards the Windows/Linux %s shortcut", (_label, input, channel) => {
+		const source = fakeSource();
+		const target = fakeTarget();
+		attachAppShortcuts(source, false, target);
+
+		const event = source.emit(input);
+
+		expect(target.send).toHaveBeenCalledWith(channel);
+		expect(event.preventDefault).toHaveBeenCalledTimes(1);
 	});
 });
