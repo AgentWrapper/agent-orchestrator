@@ -838,6 +838,42 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	}
 }
 
+/* Per-project row action cluster (dashboard / orchestrator / kebab). Keep
+ * icons visible on touch devices; on pointer-hover devices hide them until
+ * the row is hovered or keyboard focus moves into the row or actions. The
+ * padding on the project button (pr-sidebar-project-actions) reserves this
+ * space so the project name never overlaps the hidden hit targets.
+ *
+ * The cluster also carries .sidebar-expanded-chrome, whose visible-state rule
+ * has higher specificity than a plain class. Scope our opacity rules under
+ * [data-expanded-chrome="visible"] so they win and the icons actually hide. */
+.sidebar-project-actions {
+	opacity: 1;
+}
+
+@media (hover: hover) {
+	[data-slot="sidebar-container"][data-expanded-chrome="visible"] .sidebar-project-actions {
+		opacity: 0;
+		transition: opacity var(--duration-fast) ease;
+	}
+
+	[data-slot="sidebar-container"][data-expanded-chrome="visible"]
+		[data-sidebar="menu-item"]:hover
+		.sidebar-project-actions,
+	[data-slot="sidebar-container"][data-expanded-chrome="visible"]
+		[data-sidebar="menu-item"]:focus-within
+		.sidebar-project-actions,
+	[data-slot="sidebar-container"][data-expanded-chrome="visible"] .sidebar-project-actions:has([data-state="open"]) {
+		opacity: 1;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.sidebar-project-actions {
+		transition: none;
+	}
+}
+
 /* ── Shell topbar (agent-orchestrator .dashboard-app-header) ──────────────
  * One header for every screen (rendered by the shell layout), so one padding:
  * AO's session-topbar values. Upstream splits this into a 14px dashboard
