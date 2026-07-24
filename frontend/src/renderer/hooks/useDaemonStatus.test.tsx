@@ -3,16 +3,23 @@ import { act } from "react";
 import type { QueryClient } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getStatusMock, onStatusMock, removeStatusMock, connectMock, stopTransportMock, setApiBaseUrlMock } = vi.hoisted(
-	() => ({
-		getStatusMock: vi.fn(),
-		onStatusMock: vi.fn(),
-		removeStatusMock: vi.fn(),
-		connectMock: vi.fn(),
-		stopTransportMock: vi.fn(),
-		setApiBaseUrlMock: vi.fn(),
-	}),
-);
+const {
+	getStatusMock,
+	onStatusMock,
+	removeStatusMock,
+	connectMock,
+	stopTransportMock,
+	setApiBaseUrlMock,
+	setApiDaemonStatusMock,
+} = vi.hoisted(() => ({
+	getStatusMock: vi.fn(),
+	onStatusMock: vi.fn(),
+	removeStatusMock: vi.fn(),
+	connectMock: vi.fn(),
+	stopTransportMock: vi.fn(),
+	setApiBaseUrlMock: vi.fn(),
+	setApiDaemonStatusMock: vi.fn(),
+}));
 
 vi.mock("../lib/bridge", () => ({
 	aoBridge: { daemon: { getStatus: getStatusMock, onStatus: onStatusMock } },
@@ -24,6 +31,7 @@ vi.mock("../lib/event-transport", () => ({
 
 vi.mock("../lib/api-client", () => ({
 	setApiBaseUrl: setApiBaseUrlMock,
+	setApiDaemonStatus: setApiDaemonStatusMock,
 }));
 
 import { useDaemonStatus } from "./useDaemonStatus";
@@ -42,6 +50,7 @@ beforeEach(() => {
 	connectMock.mockReset().mockReturnValue(stopTransportMock);
 	stopTransportMock.mockReset();
 	setApiBaseUrlMock.mockReset();
+	setApiDaemonStatusMock.mockReset();
 });
 
 afterEach(() => {

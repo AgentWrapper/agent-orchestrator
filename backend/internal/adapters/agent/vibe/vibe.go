@@ -23,12 +23,13 @@ package vibe
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
@@ -90,7 +91,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 		return nil, err
 	}
 
-	agentName, addDir, err := vibeAgentFlag(cfg.Permissions, cfg.SystemPrompt, cfg.SystemPromptFile)
+	agentName, addDir, err := vibeAgentFlag(cfg.Permissions, cfg.SystemPrompt, cfg.SystemPromptFile, cfg.Config.Model, cfg.DataDir, cfg.SessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +129,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	if err != nil {
 		return nil, false, err
 	}
-	agentName, addDir, err := vibeAgentFlag(cfg.Permissions, cfg.SystemPrompt, cfg.SystemPromptFile)
+	agentName, addDir, err := vibeAgentFlag(cfg.Permissions, cfg.SystemPrompt, cfg.SystemPromptFile, cfg.Config.Model, cfg.DataDir, cfg.Session.ID)
 	if err != nil {
 		return nil, false, err
 	}
@@ -145,6 +146,22 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	}
 	cmd = append(cmd, "--resume", agentSessionID)
 	return cmd, true, nil
+}
+
+// GetConfigSpec reports the per-project agent config keys Vibe understands.
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.ConfigSpec{}, err
+	}
+	return ports.ConfigSpec{
+		Fields: []ports.ConfigField{
+			{
+				Key:         "model",
+				Type:        ports.ConfigFieldString,
+				Description: "Model override written to generated Vibe agent config (`active_model`).",
+			},
+		},
+	}, nil
 }
 
 // SessionInfo surfaces the native session id captured by AO's Vibe hooks.
@@ -187,54 +204,131 @@ func appendCustomAgentApprovalFlags(cmd *[]string, mode ports.PermissionMode) {
 
 const vibePromptAgentName = "ao-system-prompt"
 
-func vibeAgentFlag(mode ports.PermissionMode, inlinePrompt, promptFile string) (string, string, error) {
-	if inlinePrompt == "" && promptFile == "" {
+func vibeAgentFlag(mode ports.PermissionMode, inlinePrompt, promptFile, model, dataDir, sessionID string) (string, string, error) {
+	trimmedModel := strings.TrimSpace(model)
+	hasPrompt := inlinePrompt != "" || promptFile != ""
+	if !hasPrompt && trimmedModel == "" {
 		return "", "", nil
 	}
-	if strings.TrimSpace(promptFile) == "" {
+	if inlinePrompt != "" && strings.TrimSpace(promptFile) == "" {
 		return "", "", fmt.Errorf("vibe: system prompt file required to build agent config")
 	}
-	vibeRoot := filepath.Join(filepath.Dir(promptFile), "vibe")
+	vibeRoot, err := vibeAgentRoot(promptFile, dataDir, sessionID)
+	if err != nil {
+		return "", "", err
+	}
 	promptsDir := filepath.Join(vibeRoot, ".vibe", "prompts")
 	agentsDir := filepath.Join(vibeRoot, ".vibe", "agents")
 	promptText := inlinePrompt
-	if promptText == "" {
+	if promptText == "" && promptFile != "" {
 		data, err := os.ReadFile(promptFile) //nolint:gosec // path is AO-owned launch config
 		if err != nil {
 			return "", "", err
 		}
 		promptText = string(data)
 	}
-	if err := os.MkdirAll(promptsDir, 0o700); err != nil {
-		return "", "", fmt.Errorf("vibe: create prompts dir: %w", err)
-	}
 	if err := os.MkdirAll(agentsDir, 0o700); err != nil {
 		return "", "", fmt.Errorf("vibe: create agents dir: %w", err)
 	}
-	if err := hookutil.AtomicWriteFile(filepath.Join(promptsDir, vibePromptAgentName+".md"), []byte(strings.TrimRight(promptText, "\n")+"\n"), 0o600); err != nil {
-		return "", "", fmt.Errorf("vibe: write prompt: %w", err)
+	if hasPrompt {
+		if err := os.MkdirAll(promptsDir, 0o700); err != nil {
+			return "", "", fmt.Errorf("vibe: create prompts dir: %w", err)
+		}
+		if err := hookutil.AtomicWriteFile(filepath.Join(promptsDir, vibePromptAgentName+".md"), []byte(strings.TrimRight(promptText, "\n")+"\n"), 0o600); err != nil {
+			return "", "", fmt.Errorf("vibe: write prompt: %w", err)
+		}
 	}
-	agentConfig := vibeAgentTOML(vibePromptAgentName, mode)
+	agentConfig, err := vibeAgentTOML(vibePromptAgentName, mode, trimmedModel, hasPrompt)
+	if err != nil {
+		return "", "", err
+	}
 	if err := hookutil.AtomicWriteFile(filepath.Join(agentsDir, vibePromptAgentName+".toml"), []byte(agentConfig), 0o600); err != nil {
 		return "", "", fmt.Errorf("vibe: write agent config: %w", err)
 	}
 	return vibePromptAgentName, vibeRoot, nil
 }
 
-func vibeAgentTOML(agentName string, mode ports.PermissionMode) string {
+func vibeAgentRoot(promptFile, dataDir, sessionID string) (string, error) {
+	if strings.TrimSpace(promptFile) != "" {
+		return filepath.Join(filepath.Dir(promptFile), "vibe"), nil
+	}
+	if strings.TrimSpace(dataDir) == "" || strings.TrimSpace(sessionID) == "" {
+		return "", fmt.Errorf("vibe: data dir and session id required to build agent config")
+	}
+	return vibeManagerOwnedAgentRoot(dataDir, sessionID), nil
+}
+
+// vibeManagerOwnedAgentRoot is the load-bearing AO-managed custom-agent root:
+// prompt-backed sessions using dataDir/prompts/<sessionID>/system.md and
+// model-only sessions must both resolve to dataDir/prompts/<sessionID>/vibe.
+func vibeManagerOwnedAgentRoot(dataDir, sessionID string) string {
+	return filepath.Join(dataDir, "prompts", sessionID, "vibe")
+}
+
+func vibeAgentTOML(agentName string, mode ports.PermissionMode, model string, hasPrompt bool) (string, error) {
 	var b strings.Builder
 	b.WriteString(`agent_type = "agent"` + "\n")
 	b.WriteString(`display_name = "AO Session"` + "\n")
 	b.WriteString(`description = "AO session standing instructions."` + "\n")
 	b.WriteString(`safety = "neutral"` + "\n")
-	b.WriteString("system_prompt_id = ")
-	b.WriteString(strconv.Quote(agentName))
-	b.WriteString("\n")
+	if hasPrompt {
+		promptID, err := vibeTOMLBasicString(agentName)
+		if err != nil {
+			return "", fmt.Errorf("vibe: encode system prompt id: %w", err)
+		}
+		b.WriteString("system_prompt_id = ")
+		b.WriteString(promptID)
+		b.WriteString("\n")
+	}
+	if model != "" {
+		activeModel, err := vibeTOMLBasicString(model)
+		if err != nil {
+			return "", fmt.Errorf("vibe: encode active model: %w", err)
+		}
+		b.WriteString("active_model = ")
+		b.WriteString(activeModel)
+		b.WriteString("\n")
+	}
 	if ports.NormalizePermissionMode(mode) == ports.PermissionModeAcceptEdits {
 		b.WriteString("\n[tools.write_file]\npermission = \"always\"\n")
 		b.WriteString("\n[tools.search_replace]\npermission = \"always\"\n")
 	}
-	return b.String()
+	return b.String(), nil
+}
+
+// vibeTOMLBasicString serializes a Go string as a TOML basic string. Go's
+// strconv.Quote is not suitable here because it may emit Go-only escapes such
+// as \a, \v, and \xNN, which TOML parsers reject.
+func vibeTOMLBasicString(s string) (string, error) {
+	if !utf8.ValidString(s) {
+		return "", errors.New("invalid UTF-8")
+	}
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range s {
+		switch {
+		case r == '\\':
+			b.WriteString(`\\`)
+		case r == '"':
+			b.WriteString(`\"`)
+		case r == '\b':
+			b.WriteString(`\b`)
+		case r == '\t':
+			b.WriteString(`\t`)
+		case r == '\n':
+			b.WriteString(`\n`)
+		case r == '\f':
+			b.WriteString(`\f`)
+		case r == '\r':
+			b.WriteString(`\r`)
+		case r < 0x20 || r == 0x7f:
+			fmt.Fprintf(&b, `\u%04X`, r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('"')
+	return b.String(), nil
 }
 
 var vibeBinarySpec = binaryutil.BinarySpec{

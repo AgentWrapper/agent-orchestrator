@@ -1,10 +1,18 @@
 import {
+	FOCUS_TERMINAL_SHORTCUT_CHANNEL,
 	KEYBOARD_SHORTCUTS_HELP_CHANNEL,
+	matchesFocusTerminalShortcut,
 	matchesKeyboardShortcutsHelpShortcut,
+	matchesNextSessionShortcut,
 	matchesNewSessionShortcut,
 	matchesNewShellTerminalShortcut,
+	matchesOpenSettingsShortcut,
+	matchesPreviousSessionShortcut,
+	NEXT_SESSION_SHORTCUT_CHANNEL,
 	NEW_SESSION_SHORTCUT_CHANNEL,
 	NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL,
+	OPEN_SETTINGS_SHORTCUT_CHANNEL,
+	PREVIOUS_SESSION_SHORTCUT_CHANNEL,
 	type ShortcutChord,
 } from "../shared/shortcuts";
 
@@ -12,6 +20,10 @@ import {
 // locally so tests can supply a plain fake while WebContents still satisfies it.
 type BeforeInput = {
 	key: string;
+	// Physical key (layout-independent), needed for chords whose character
+	// shifts, e.g. Ctrl+Shift+` reports key "~" but code "Backquote". Optional so
+	// test doubles need not supply it; Electron always does at runtime.
+	code?: string;
 	control: boolean;
 	meta: boolean;
 	shift: boolean;
@@ -36,6 +48,10 @@ const appShortcutChannel = (chord: ShortcutChord, isMac: boolean): string | null
 	if (matchesNewSessionShortcut(chord, isMac)) return NEW_SESSION_SHORTCUT_CHANNEL;
 	if (matchesNewShellTerminalShortcut(chord, isMac)) return NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL;
 	if (matchesKeyboardShortcutsHelpShortcut(chord, isMac)) return KEYBOARD_SHORTCUTS_HELP_CHANNEL;
+	if (matchesOpenSettingsShortcut(chord, isMac)) return OPEN_SETTINGS_SHORTCUT_CHANNEL;
+	if (matchesPreviousSessionShortcut(chord, isMac)) return PREVIOUS_SESSION_SHORTCUT_CHANNEL;
+	if (matchesNextSessionShortcut(chord, isMac)) return NEXT_SESSION_SHORTCUT_CHANNEL;
+	if (matchesFocusTerminalShortcut(chord, isMac)) return FOCUS_TERMINAL_SHORTCUT_CHANNEL;
 	return null;
 };
 
@@ -53,6 +69,7 @@ export function attachAppShortcuts(
 		const channel = appShortcutChannel(
 			{
 				key: input.key,
+				code: input.code,
 				ctrl: input.control,
 				meta: input.meta,
 				shift: input.shift,

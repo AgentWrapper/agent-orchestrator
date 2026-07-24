@@ -324,23 +324,31 @@ paths:
     get:
       operationId: listNotifications
       parameters:
-      - description: Notification status filter. V1 supports only unread.
+      - description: Notification status filter. Defaults to unread; all includes
+          read history.
         in: query
         name: status
         schema:
-          description: Notification status filter. V1 supports only unread.
+          description: Notification status filter. Defaults to unread; all includes
+            read history.
           enum:
           - unread
+          - all
           type: string
-      - description: Maximum notifications to return. Defaults to 50; capped at 100.
+      - description: Maximum notifications to return. Defaults to 100.
         in: query
         name: limit
         schema:
-          description: Maximum notifications to return. Defaults to 50; capped at
-            100.
+          description: Maximum notifications to return. Defaults to 100.
           maximum: 100
           minimum: 1
           type: integer
+      - description: Opaque cursor returned by the previous page.
+        in: query
+        name: cursor
+        schema:
+          description: Opaque cursor returned by the previous page.
+          type: string
       responses:
         "200":
           content:
@@ -366,7 +374,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
-      summary: List unread notifications
+      summary: List notification history
       tags:
       - notifications
   /api/v1/notifications/{id}:
@@ -709,6 +717,50 @@ paths:
       summary: Fetch one project; discriminates ok vs degraded
       tags:
       - projects
+    put:
+      operationId: updateProjectSettings
+      parameters:
+      - description: Project identifier (registry key).
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Project identifier (registry key).
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProjectSettingsInput'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Atomically replace a project's display name and config
+      tags:
+      - projects
   /api/v1/projects/{id}/config:
     put:
       operationId: setProjectConfig
@@ -1016,7 +1068,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SessionResponse'
+                $ref: '#/components/schemas/SpawnSessionResponse'
           description: Created
         "400":
           content:
@@ -2212,11 +2264,24 @@ components:
       - status
       - prs
       type: object
+    ControllersSpawnAttachmentInput:
+      properties:
+        data:
+          type: string
+        mimeType:
+          type: string
+      required:
+      - data
+      type: object
     DegradedProject:
       properties:
         id:
           type: string
         kind:
+          enum:
+          - single_repo
+          - workspace
+          - scratch
           type: string
         name:
           type: string
@@ -2397,12 +2462,17 @@ components:
       type: object
     ListNotificationsResponse:
       properties:
+        nextCursor:
+          type: string
         notifications:
           items:
             $ref: '#/components/schemas/NotificationResponse'
           type: array
+        unreadCount:
+          type: integer
       required:
       - notifications
+      - unreadCount
       type: object
     ListProjectsResponse:
       properties:
@@ -2473,11 +2543,18 @@ components:
     MarkAllNotificationsReadResponse:
       properties:
         notifications:
+          description: Deprecated compatibility field. Always empty so mark-all responses
+            stay bounded.
           items:
             $ref: '#/components/schemas/NotificationResponse'
           type: array
+        updatedCount:
+          description: Number of notifications changed from unread to read.
+          format: int64
+          type: integer
       required:
       - notifications
+      - updatedCount
       type: object
     MarkNotificationReadRequest:
       properties:
@@ -2613,6 +2690,8 @@ components:
           type: integer
         prUrl:
           type: string
+        previousRun:
+          $ref: '#/components/schemas/ReviewRun'
         status:
           enum:
           - needs_review
@@ -2656,6 +2735,10 @@ components:
         id:
           type: string
         kind:
+          enum:
+          - single_repo
+          - workspace
+          - scratch
           type: string
         name:
           type: string
@@ -2742,6 +2825,10 @@ components:
         id:
           type: string
         kind:
+          enum:
+          - single_repo
+          - workspace
+          - scratch
           type: string
         name:
           type: string
@@ -3096,6 +3183,31 @@ components:
         url:
           type: string
       type: object
+    SessionPRReviewEntry:
+      properties:
+        body:
+          type: string
+        isBot:
+          type: boolean
+        reviewUrl:
+          type: string
+        reviewerId:
+          type: string
+        submittedAt:
+          format: date-time
+          type: string
+        verdict:
+          enum:
+          - none
+          - approved
+          - changes_requested
+          - review_required
+          type: string
+      required:
+      - reviewerId
+      - verdict
+      - submittedAt
+      type: object
     SessionPRReviewSummary:
       properties:
         decision:
@@ -3107,6 +3219,10 @@ components:
           type: string
         hasUnresolvedHumanComments:
           type: boolean
+        reviews:
+          items:
+            $ref: '#/components/schemas/SessionPRReviewEntry'
+          type: array
         unresolvedBy:
           items:
             $ref: '#/components/schemas/SessionPRUnresolvedReviewer'
@@ -3323,6 +3439,10 @@ components:
       type: object
     SpawnSessionRequest:
       properties:
+        attachments:
+          items:
+            $ref: '#/components/schemas/ControllersSpawnAttachmentInput'
+          type: array
         branch:
           type: string
         displayName:
@@ -3369,6 +3489,19 @@ components:
           type: string
       required:
       - projectId
+      type: object
+    SpawnSessionResponse:
+      properties:
+        promptBytes:
+          type: integer
+        session:
+          $ref: '#/components/schemas/ControllersSessionView'
+        systemPromptBytes:
+          type: integer
+      required:
+      - session
+      - promptBytes
+      - systemPromptBytes
       type: object
     SubmitReviewInput:
       properties:
@@ -3423,6 +3556,10 @@ components:
       type: object
     TriggerReviewResponse:
       properties:
+        created:
+          description: True when a new review pass was started; false when an existing
+            run for the same commit was reused.
+          type: boolean
         reviewerHandleId:
           type: string
         reviews:
@@ -3432,6 +3569,7 @@ components:
       required:
       - reviewerHandleId
       - reviews
+      - created
       type: object
     UnregisterPushDeviceResponse:
       properties:
@@ -3442,6 +3580,18 @@ components:
       required:
       - token
       - deleted
+      type: object
+    UpdateProjectSettingsInput:
+      properties:
+        config:
+          $ref: '#/components/schemas/ProjectConfig'
+        displayName:
+          maxLength: 20
+          minLength: 1
+          type: string
+      required:
+      - displayName
+      - config
       type: object
     WorkspaceFileResponse:
       properties:

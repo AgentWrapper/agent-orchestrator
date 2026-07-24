@@ -98,6 +98,9 @@ func TestCommandBuilders(t *testing.T) {
 	if got, want := setWindowSizeLargestArgs("sess-1"), []string{"set-option", "-t", "sess-1", "window-size", "largest"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("setWindowSizeLargestArgs = %#v, want %#v", got, want)
 	}
+	if got, want := paneCurrentPathArgs("sess-1"), []string{"display-message", "-p", "-t", "sess-1", "#{pane_current_path}"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("paneCurrentPathArgs = %#v, want %#v", got, want)
+	}
 	if got, want := setMouseOnArgs("sess-1"), []string{"set-option", "-t", "sess-1", "mouse", "on"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("setMouseOnArgs = %#v, want %#v", got, want)
 	}
@@ -183,10 +186,10 @@ func TestCreateRejectsInvalidEnvKeys(t *testing.T) {
 // -- Create tests --
 
 func TestCreateIssuesNewSessionAndStatusOff(t *testing.T) {
-	// new-session, set-option status, set-option mouse, set-option window-size,
-	// has-session (exit 0 = alive)
+	// new-session, display-message cwd verification, set-option status,
+	// set-option mouse, set-option window-size, has-session (exit 0 = alive)
 	r, fr := newTestRuntime(0)
-	fr.outputs = [][]byte{nil, nil, nil, nil, nil}
+	fr.outputs = [][]byte{nil, []byte("/tmp/ws\n"), nil, nil, nil, nil}
 
 	h, err := r.Create(context.Background(), ports.RuntimeConfig{
 		SessionID:     "sess-1",
@@ -200,10 +203,10 @@ func TestCreateIssuesNewSessionAndStatusOff(t *testing.T) {
 	if h.ID != "sess-1" {
 		t.Fatalf("handle ID = %q, want sess-1", h.ID)
 	}
-	// Expect 5 calls: new-session, set-option status, set-option mouse,
-	// set-option window-size, has-session.
-	if len(fr.calls) != 5 {
-		t.Fatalf("calls = %d, want 5", len(fr.calls))
+	// Expect 6 calls: new-session, display-message cwd verification,
+	// set-option status, set-option mouse, set-option window-size, has-session.
+	if len(fr.calls) != 6 {
+		t.Fatalf("calls = %d, want 6", len(fr.calls))
 	}
 
 	// Call 0: new-session
@@ -223,31 +226,36 @@ func TestCreateIssuesNewSessionAndStatusOff(t *testing.T) {
 		t.Fatalf("new-session args missing -x/-y: %v", fr.calls[0].args)
 	}
 
-	// Call 1: set-option status off (plain target, pane-targeting does not use =).
-	if got, want := fr.calls[1].args, setStatusOffArgs("sess-1"); !reflect.DeepEqual(got, want) {
+	// Call 1: verify pane cwd.
+	if got, want := fr.calls[1].args, paneCurrentPathArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("call[1] = %#v, want %#v", got, want)
 	}
 
-	// Call 2: set-option mouse on (enables wheel-scroll of the pane).
-	if got, want := fr.calls[2].args, setMouseOnArgs("sess-1"); !reflect.DeepEqual(got, want) {
+	// Call 2: set-option status off (plain target, pane-targeting does not use =).
+	if got, want := fr.calls[2].args, setStatusOffArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("call[2] = %#v, want %#v", got, want)
 	}
 
-	// Call 3: set-option window-size largest (multi-client sizing, see
-	// setWindowSizeLargestArgs).
-	if got, want := fr.calls[3].args, setWindowSizeLargestArgs("sess-1"); !reflect.DeepEqual(got, want) {
+	// Call 3: set-option mouse on (enables wheel-scroll of the pane).
+	if got, want := fr.calls[3].args, setMouseOnArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("call[3] = %#v, want %#v", got, want)
 	}
 
-	// Call 4: has-session (IsAlive, uses exact-match target =sess-1).
-	if got, want := fr.calls[4].args, hasSessionArgs("sess-1"); !reflect.DeepEqual(got, want) {
+	// Call 4: set-option window-size largest (multi-client sizing, see
+	// setWindowSizeLargestArgs).
+	if got, want := fr.calls[4].args, setWindowSizeLargestArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("call[4] = %#v, want %#v", got, want)
+	}
+
+	// Call 5: has-session (IsAlive, uses exact-match target =sess-1).
+	if got, want := fr.calls[5].args, hasSessionArgs("sess-1"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("call[5] = %#v, want %#v", got, want)
 	}
 }
 
 func TestCreateLaunchCommandContainsKeepAliveShell(t *testing.T) {
 	r, fr := newTestRuntime(0)
-	fr.outputs = [][]byte{nil, nil, nil}
+	fr.outputs = [][]byte{nil, []byte("/tmp/ws\n"), nil, nil, nil, nil}
 
 	_, err := r.Create(context.Background(), ports.RuntimeConfig{
 		SessionID:     "sess-1",
@@ -262,6 +270,9 @@ func TestCreateLaunchCommandContainsKeepAliveShell(t *testing.T) {
 	launchCmd := args[len(args)-1]
 	if !strings.Contains(launchCmd, `exec "${SHELL:-/bin/sh}" -i`) {
 		t.Fatalf("launch command missing keep-alive shell: %q", launchCmd)
+	}
+	if !strings.HasPrefix(launchCmd, "cd '/tmp/ws' || exit; ") {
+		t.Fatalf("launch command missing cwd guard: %q", launchCmd)
 	}
 	if !strings.Contains(launchCmd, "'myagent'") {
 		t.Fatalf("launch command missing quoted argv: %q", launchCmd)
@@ -279,7 +290,7 @@ func TestCreateLaunchCommandExportsEnvVars(t *testing.T) {
 	defer func() { getenv = oldGetenv }()
 
 	r, fr := newTestRuntime(0)
-	fr.outputs = [][]byte{nil, nil, nil}
+	fr.outputs = [][]byte{nil, []byte("/tmp/ws\n"), nil, nil, nil, nil}
 
 	_, err := r.Create(context.Background(), ports.RuntimeConfig{
 		SessionID:     "sess-1",
@@ -304,6 +315,29 @@ func TestCreateLaunchCommandExportsEnvVars(t *testing.T) {
 		if !strings.Contains(launchCmd, want) {
 			t.Fatalf("launch command missing %q in: %q", want, launchCmd)
 		}
+	}
+}
+
+func TestCreateDestroysAndReturnsErrorWhenPaneCWDDoesNotMatch(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{nil, []byte("/deleted/shipit\n")}
+
+	_, err := r.Create(context.Background(), ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"myagent"},
+	})
+	if err == nil || !strings.Contains(err.Error(), `started in "/deleted/shipit", want "/tmp/ws"`) {
+		t.Fatalf("Create err = %v, want pane cwd mismatch", err)
+	}
+	hasKill := false
+	for _, c := range fr.calls {
+		if len(c.args) > 0 && c.args[0] == "kill-session" {
+			hasKill = true
+		}
+	}
+	if !hasKill {
+		t.Fatal("expected kill-session cleanup call when pane cwd verification fails")
 	}
 }
 
@@ -367,6 +401,9 @@ func (f *fakeRunnerSelectiveErr) Run(_ context.Context, env []string, name strin
 	f.calls = append(f.calls, runnerCall{env: append([]string(nil), env...), name: name, args: append([]string(nil), args...)})
 	if len(args) > 0 && args[0] == f.exitErrOn {
 		return f.errOutput, &exec.ExitError{}
+	}
+	if len(args) > 0 && args[0] == "display-message" {
+		return []byte("/tmp/ws\n"), nil
 	}
 	return nil, nil
 }

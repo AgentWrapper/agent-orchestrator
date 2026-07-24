@@ -34,6 +34,10 @@ func RunHost(args []string, stdout io.Writer) int {
 	cwd := args[1]
 	shellCmd := args[2]
 	shellArgs := args[3:]
+	if err := os.Chdir(cwd); err != nil {
+		fmt.Fprintf(os.Stderr, "pty-host [%s]: chdir %s: %v\n", sessionID, cwd, err)
+		return 1
+	}
 
 	// Bind before creating the PTY so we can report READY atomically.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

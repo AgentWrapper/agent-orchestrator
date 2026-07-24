@@ -7,6 +7,8 @@ const (
 	ProjectKindSingleRepo ProjectKind = "single_repo"
 	// ProjectKindWorkspace is a parent root-as-repo plus child repositories.
 	ProjectKindWorkspace ProjectKind = "workspace"
+	// ProjectKindScratch is AO-managed plain-directory work for first-run use.
+	ProjectKindScratch ProjectKind = "scratch"
 	// RootWorkspaceRepoName is the reserved repo_name used for the parent root repo.
 	RootWorkspaceRepoName = "__root__"
 )

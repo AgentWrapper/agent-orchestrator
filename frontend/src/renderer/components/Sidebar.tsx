@@ -50,19 +50,16 @@ import { useUiStore } from "../stores/ui-store";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CreateProjectInput } from "./CreateProjectFlow";
 import { ResizeHandle } from "./ResizeHandle";
+import { TitlebarNav } from "./TitlebarNav";
+import { isMacPlatform, isWindowsPlatform } from "../lib/platform";
 
-// The macOS hiddenInset traffic lights and the fixed TitlebarNav overlay live
-// in the full-width topbar's left inset (_shell renders the bar above the
-// sidebar row); the sidebar itself starts below the 56px header, so its border
-// never crosses the titlebar strip.
-const isMac = typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
-const isWindows =
-	typeof navigator !== "undefined" &&
-	/win/i.test(
-		(navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ??
-			navigator.platform ??
-			"",
-	);
+// On macOS the sidebar is full-height: traffic lights sit over its top chrome,
+// and TitlebarNav (toggle + history) stacks in this header directly below them.
+// In native fullscreen the lights are gone, so the clearance pad drops and
+// TitlebarNav sits near the top edge instead.
+// Win/Linux still hang the sidebar under their shell titlebar/toolbar.
+const isMac = isMacPlatform();
+const isWindows = isWindowsPlatform();
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
 // Shared styling for the per-project hover action buttons (dashboard,
@@ -85,6 +82,10 @@ type SidebarProps = {
 	underTopbar?: boolean;
 	/** Chrome height to clear when underTopbar is set. Defaults to the 56px shell toolbar. */
 	topbarOffset?: "toolbar" | "titlebar";
+	/** Lock back/forward in TitlebarNav (empty welcome board). */
+	historyLocked?: boolean;
+	/** macOS: drop traffic-light clearance when the BrowserWindow is fullscreen. */
+	isFullScreen?: boolean;
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];
 	onCreateProject: (input: CreateProjectInput) => Promise<void>;
@@ -126,6 +127,8 @@ export function Sidebar({
 	hideEdgeBorder = false,
 	underTopbar = true,
 	topbarOffset = "toolbar",
+	historyLocked = false,
+	isFullScreen = false,
 	workspaceError,
 	workspaces,
 	onCreateProject,
@@ -215,31 +218,55 @@ export function Sidebar({
 					: "top-0 h-svh!",
 			)}
 		>
-			<SidebarHeader className="gap-0 p-0 pl-2.5 pr-1.75 pt-2.5 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pt-2">
-				{/* Brand (project-sidebar__brand); in the icon rail it becomes the old
-            36px board button wrapping the 22px accent mark. */}
-				<div className="flex shrink-0 items-center gap-2.5 px-2 pb-4.5 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:pb-2">
-					<Tooltip>
-						<TooltipTrigger asChild>
-							<button
-								aria-label="Orchestrator board"
-								className={cn(
-									"grid h-5.5 w-5.5 shrink-0 place-items-center",
-									"group-data-[collapsible=icon]:size-control-board group-data-[collapsible=icon]:rounded-lg",
-									selection.isHome
-										? "group-data-[collapsible=icon]:bg-interactive-active"
-										: "group-data-[collapsible=icon]:hover:bg-interactive-hover",
-								)}
-								onClick={selection.goHome}
-								type="button"
-							>
-								<img src={aoLogo} alt="" aria-hidden="true" className="h-5.5 w-5.5 rounded-md object-cover" />
-							</button>
-						</TooltipTrigger>
-						<TooltipContent side="right" hidden={state !== "collapsed"}>
-							Orchestrator board
-						</TooltipContent>
-					</Tooltip>
+			{/* macOS: pt clears the traffic lights + drag strip (shared
+			    --size-traffic-light-clearance) while windowed; in fullscreen the
+			    lights are gone so TitlebarNav moves up. Padding eases so the
+			    cluster slides under the lights on leave-fullscreen. Otherwise
+			    stays constant across expand/collapse so the pinned toggle/logo
+			    column does not shift. */}
+			<SidebarHeader
+				className={cn(
+					"gap-0 p-0",
+					isMac
+						? cn(
+								"transition-[padding-top] duration-200 ease-out motion-reduce:transition-none",
+								isFullScreen ? "pt-traffic-light-clearance-fullscreen" : "pt-traffic-light-clearance",
+							)
+						: "pt-2.5 pl-2.5 pr-1.75",
+					!isMac && "group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pt-2",
+				)}
+			>
+				{isMac ? <TitlebarNav historyLocked={historyLocked} /> : null}
+				{/* Brand: logo stays in the --size-sidebar-icon column at a fixed
+				    size so it does not resize or reflow during the width animation.
+				    Wordmark fades in beside it when expanded. */}
+				<div
+					className={cn(
+						"flex shrink-0 items-center pb-4.5 group-data-[collapsible=icon]:pb-2",
+						!isMac &&
+							"group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:gap-1",
+					)}
+				>
+					<div className="flex w-(--size-sidebar-icon) shrink-0 items-center justify-center">
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<button
+									aria-label="Orchestrator board"
+									className={cn(
+										"grid size-control-board shrink-0 place-items-center rounded-lg",
+										selection.isHome ? "bg-interactive-active" : "hover:bg-interactive-hover",
+									)}
+									onClick={selection.goHome}
+									type="button"
+								>
+									<img src={aoLogo} alt="" aria-hidden="true" className="h-5.5 w-5.5 rounded-md object-cover" />
+								</button>
+							</TooltipTrigger>
+							<TooltipContent side="right" hidden={state !== "collapsed"}>
+								Orchestrator board
+							</TooltipContent>
+						</Tooltip>
+					</div>
 					<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate text-sm font-bold tracking-tight-lg text-foreground group-data-[collapsible=icon]:hidden">
 						Agent Orchestrator
 					</span>
@@ -248,9 +275,6 @@ export function Sidebar({
 							nightly
 						</span>
 					)}
-					{/* On macOS the toggle lives in the TitlebarNav cluster, on Windows in
-					    the WindowTitlebar — only Linux keeps the in-header trigger.
-					    SidebarTrigger already toggles open/closed. */}
 					{!isMac && !isWindows && (
 						<Tooltip>
 							<TooltipTrigger asChild>
@@ -312,8 +336,10 @@ export function Sidebar({
 				</SidebarGroup>
 			</SidebarContent>
 
-			{/* Footer — Settings opens the global settings page directly. */}
-			<SidebarFooter className="relative mb-2 mt-auto gap-0 overflow-hidden px-1.75 pb-2.5 pt-1.75 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-[64px] group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pb-1.5 group-data-[collapsible=icon]:pt-1.5">
+			{/* Footer — Settings opens the global settings page directly.
+			    Bottom margin matches the framed center-panel inset so the
+			    button and panel share a bottom edge (no top divider). */}
+			<SidebarFooter className="relative mt-auto mb-5 gap-0 overflow-hidden px-2.5 pb-0 pt-1.5 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-16 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pb-0 group-data-[collapsible=icon]:pt-1.5">
 				{/* Always-present daemon status mirror for the smoke suite: no visible
 				    daemon-state copy is guaranteed to be mounted elsewhere. */}
 				{daemonStatus && (
@@ -321,11 +347,11 @@ export function Sidebar({
 						daemon {daemonStatus.state}
 					</span>
 				)}
-				<div className="sidebar-expanded-chrome relative flex w-full min-w-[186px] flex-col gap-1 transition-[opacity,transform] duration-150 ease-out group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:-translate-x-2 group-data-[collapsible=icon]:opacity-0">
+				<div className="sidebar-expanded-chrome relative flex w-full min-w-46.5 flex-col gap-1 transition-[opacity,transform] duration-150 ease-out group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:-translate-x-2 group-data-[collapsible=icon]:opacity-0">
 					<RestartToUpdateRow status={updateStatus} />
 					<button
 						aria-label="Settings"
-						className="flex w-full items-center justify-center gap-2.5 rounded-md border border-border p-2 text-control font-medium text-passive transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-lg [&_svg]:text-passive"
+						className="flex w-full items-center justify-center gap-2.5 rounded-settings-row bg-interactive-hover px-2.5 py-2.5 text-control font-medium text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-lg [&_svg]:shrink-0 [&_svg]:text-muted-foreground"
 						onClick={() => selection.goGlobalSettings()}
 						type="button"
 					>
@@ -333,13 +359,13 @@ export function Sidebar({
 						<span className="tracking-tight">Settings</span>
 					</button>
 				</div>
-				<div className="pointer-events-none absolute inset-x-1.5 top-[7px] flex min-h-[52px] flex-col items-center justify-center gap-1 opacity-0 transition-opacity duration-150 ease-out group-data-[collapsible=icon]:pointer-events-auto group-data-[collapsible=icon]:opacity-100">
+				<div className="pointer-events-none absolute inset-x-1.5 bottom-0 top-auto flex min-h-row-md flex-col items-center justify-end gap-1 opacity-0 transition-opacity duration-150 ease-out group-data-[collapsible=icon]:pointer-events-auto group-data-[collapsible=icon]:opacity-100">
 					<RestartToUpdateRailButton status={updateStatus} />
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<button
 								aria-label="Settings"
-								className="grid size-control-board place-items-center rounded-lg border border-border text-passive transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-base"
+								className="grid size-control-board place-items-center rounded-settings-row bg-interactive-hover text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-base"
 								onClick={() => selection.goGlobalSettings()}
 								type="button"
 							>
@@ -711,7 +737,7 @@ function RestartToUpdateRow({ status }: { status: UpdateStatus }) {
 		<button
 			aria-label={`Restart to install update${status.version ? ` v${status.version}` : ""}`}
 			className={cn(
-				"flex w-full items-center gap-2.5 rounded-md p-2 text-left text-control font-medium transition-colors",
+				"flex w-full items-center gap-2.5 rounded-settings-row p-2.5 text-left text-control font-medium transition-colors",
 				escalated
 					? "border border-working/35 bg-working/12 text-working hover:bg-working/18 [&_svg]:text-working"
 					: "text-passive hover:bg-interactive-hover hover:text-foreground [&_svg]:text-passive",

@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { NotificationDTO } from "../lib/notifications";
+import type { NotificationDTO, NotificationsCache } from "../lib/notifications";
 import { NotificationRuntime } from "./NotificationCenter";
 
 const notifications: NotificationDTO[] = [
@@ -31,12 +31,17 @@ const notifications: NotificationDTO[] = [
 	},
 ];
 
+const unreadCache: NotificationsCache = {
+	pages: [{ notifications, nextCursor: undefined, unreadCount: notifications.length }],
+	pageParams: [""],
+};
+
 const { setBadge } = vi.hoisted(() => ({ setBadge: vi.fn() }));
 
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
 
 vi.mock("../hooks/useNotificationsQuery", () => ({
-	useNotificationsQuery: () => ({ data: notifications, isError: false }),
+	useNotificationsQuery: () => ({ data: unreadCache, isError: false }),
 }));
 
 vi.mock("../lib/notifications", async (importOriginal) => ({

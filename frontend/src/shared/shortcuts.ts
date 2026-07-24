@@ -4,14 +4,19 @@
 
 export type ShortcutChord = {
 	key: string;
+	// Physical key (KeyboardEvent.code / Electron input.code), independent of
+	// layout and modifiers. Needed for chords whose character shifts — e.g.
+	// Ctrl+Shift+` reports key "~" on a US layout but code "Backquote".
+	code?: string;
 	ctrl: boolean;
 	meta: boolean;
 	shift: boolean;
 	alt: boolean;
 };
 
+// prettier-ignore
 export type AppShortcutId =
-	"new-session" | "new-shell-terminal" | "keyboard-shortcuts" | "toggle-sidebar" | "open-project" | "toggle-inspector";
+	"new-session" | "new-shell-terminal" | "keyboard-shortcuts" | "toggle-sidebar" | "open-project" | "toggle-inspector" | "command-palette" | "open-settings" | "previous-session" | "next-session" | "focus-terminal";
 
 export type ShortcutCategory = "General" | "Navigation" | "Session";
 
@@ -21,7 +26,6 @@ export type ShortcutDefinition = {
 	category: ShortcutCategory;
 	mac: readonly string[];
 	windowsLinux: readonly string[];
-	context?: string;
 };
 
 export const SHORTCUT_CATEGORIES: readonly ShortcutCategory[] = ["General", "Navigation", "Session"];
@@ -40,8 +44,8 @@ export const APP_SHORTCUTS: readonly ShortcutDefinition[] = [
 		id: "new-shell-terminal",
 		label: "New terminal",
 		category: "General",
-		mac: ["Ctrl", "`"],
-		windowsLinux: ["Ctrl", "`"],
+		mac: ["Ctrl", "Shift", "`"],
+		windowsLinux: ["Ctrl", "Shift", "`"],
 	},
 	{
 		id: "keyboard-shortcuts",
@@ -49,6 +53,20 @@ export const APP_SHORTCUTS: readonly ShortcutDefinition[] = [
 		category: "General",
 		mac: ["⌘", "/"],
 		windowsLinux: ["Ctrl", "/"],
+	},
+	{
+		id: "command-palette",
+		label: "Open command palette",
+		category: "General",
+		mac: ["⌘", "K"],
+		windowsLinux: ["Ctrl", "K"],
+	},
+	{
+		id: "open-settings",
+		label: "Open settings",
+		category: "General",
+		mac: ["⌘", ","],
+		windowsLinux: ["Ctrl", ","],
 	},
 	{
 		id: "toggle-sidebar",
@@ -63,7 +81,20 @@ export const APP_SHORTCUTS: readonly ShortcutDefinition[] = [
 		category: "Navigation",
 		mac: ["⌘", "1–9"],
 		windowsLinux: ["Ctrl", "1–9"],
-		context: "When that project exists",
+	},
+	{
+		id: "previous-session",
+		label: "Previous session",
+		category: "Navigation",
+		mac: ["⌘", "Alt", "↑"],
+		windowsLinux: ["Ctrl", "PageUp"],
+	},
+	{
+		id: "next-session",
+		label: "Next session",
+		category: "Navigation",
+		mac: ["⌘", "Alt", "↓"],
+		windowsLinux: ["Ctrl", "PageDown"],
 	},
 	{
 		id: "toggle-inspector",
@@ -71,7 +102,13 @@ export const APP_SHORTCUTS: readonly ShortcutDefinition[] = [
 		category: "Session",
 		mac: ["⌘", "Shift", "B"],
 		windowsLinux: ["Ctrl", "Shift", "B"],
-		context: "Session view",
+	},
+	{
+		id: "focus-terminal",
+		label: "Focus terminal",
+		category: "Session",
+		mac: ["⌘", "Shift", "T"],
+		windowsLinux: ["Ctrl", "Shift", "T"],
 	},
 ];
 
@@ -85,6 +122,10 @@ export function shortcutKeys(shortcut: ShortcutDefinition, isMac: boolean): read
 export const NEW_SESSION_SHORTCUT_CHANNEL = "app:new-session";
 export const KEYBOARD_SHORTCUTS_HELP_CHANNEL = "app:keyboard-shortcuts-help";
 export const NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL = "app:new-shell-terminal";
+export const OPEN_SETTINGS_SHORTCUT_CHANNEL = "app:open-settings";
+export const PREVIOUS_SESSION_SHORTCUT_CHANNEL = "app:previous-session";
+export const NEXT_SESSION_SHORTCUT_CHANNEL = "app:next-session";
+export const FOCUS_TERMINAL_SHORTCUT_CHANNEL = "app:focus-terminal";
 
 // New session: ⌘N on macOS, Ctrl+Shift+N on Windows/Linux. Plain Ctrl+N is a
 // live terminal keystroke (readline/vim "next line"), so the non-mac binding
@@ -98,19 +139,25 @@ export function matchesNewSessionShortcut(chord: ShortcutChord, isMac: boolean):
 		: chord.ctrl && chord.shift && !chord.alt && !chord.meta;
 }
 
-// New standalone terminal: Ctrl+` on every platform, matching VS Code and most
-// IDEs. Ctrl (not ⌘) on macOS too — that is the conventional binding there, and
-// ⌘` is already taken by the OS for cycling an app's windows.
+// New standalone terminal, bound to the backtick chords VS Code / Cursor /
+// Codex use for the integrated terminal — Ctrl (never ⌘) on every platform, so
+// there is nothing platform-specific to learn (⌘` is taken by the OS on macOS):
 //
-// Like the other app shortcuts this is handled in the main process, so it fires
-// even while focus is inside xterm. The tradeoff is deliberate: no shell or TUI
-// running in a pane can receive Ctrl+` while AO owns it. Almost nothing binds
-// that chord, and VS Code makes the same trade.
+//   • Ctrl+Shift+` — "Create New Terminal" (the primary, advertised binding).
+//   • Ctrl+`       — VS Code's toggle/focus chord; also opens one here.
+//
+// Handled in the main process so it fires even while focus is inside xterm; the
+// tradeoff (no pane shell can receive these chords while AO owns them) matches
+// VS Code.
 export function matchesNewShellTerminalShortcut(chord: ShortcutChord, _isMac: boolean): boolean {
-	// Keyboards that need a modifier for the backtick can report the physical
-	// key instead of the character, so accept either spelling.
-	if (chord.key !== "`" && chord.key !== "Backquote") return false;
-	return chord.ctrl && !chord.meta && !chord.alt && !chord.shift;
+	// Match on the physical `code` (Backquote), not the character: with Shift
+	// held the character is layout-shifted — US Ctrl+Shift+` reports key "~", not
+	// "`" — so keying off `key` would miss the advertised Ctrl+Shift+` chord. Fall
+	// back to the `key` spelling for chords supplied without a code. Shift is
+	// optional (Ctrl+` and Ctrl+Shift+` both open a terminal); ⌘/Alt must not hold.
+	const isBackquote = chord.code === "Backquote" || chord.key === "`" || chord.key === "Backquote";
+	if (!isBackquote) return false;
+	return chord.ctrl && !chord.meta && !chord.alt;
 }
 
 // Keyboard shortcut help: ⌘/ on macOS, Ctrl+/ on Windows/Linux. This is also
@@ -121,4 +168,34 @@ export function matchesKeyboardShortcutsHelpShortcut(chord: ShortcutChord, isMac
 	return isMac
 		? chord.meta && !chord.ctrl && !chord.alt && !chord.shift
 		: chord.ctrl && !chord.meta && !chord.alt && !chord.shift;
+}
+
+export function matchesOpenSettingsShortcut(chord: ShortcutChord, isMac: boolean): boolean {
+	if (chord.key !== ",") return false;
+	return isMac
+		? chord.meta && !chord.ctrl && !chord.alt && !chord.shift
+		: chord.ctrl && !chord.meta && !chord.alt && !chord.shift;
+}
+
+export function matchesPreviousSessionShortcut(chord: ShortcutChord, isMac: boolean): boolean {
+	if (isMac) {
+		return (chord.key === "ArrowUp" || chord.key === "Up") && chord.meta && chord.alt && !chord.ctrl && !chord.shift;
+	}
+	return chord.key === "PageUp" && chord.ctrl && !chord.meta && !chord.alt && !chord.shift;
+}
+
+export function matchesNextSessionShortcut(chord: ShortcutChord, isMac: boolean): boolean {
+	if (isMac) {
+		return (
+			(chord.key === "ArrowDown" || chord.key === "Down") && chord.meta && chord.alt && !chord.ctrl && !chord.shift
+		);
+	}
+	return chord.key === "PageDown" && chord.ctrl && !chord.meta && !chord.alt && !chord.shift;
+}
+
+export function matchesFocusTerminalShortcut(chord: ShortcutChord, isMac: boolean): boolean {
+	if (chord.key.toLowerCase() !== "t") return false;
+	return isMac
+		? chord.meta && chord.shift && !chord.ctrl && !chord.alt
+		: chord.ctrl && chord.shift && !chord.meta && !chord.alt;
 }

@@ -105,6 +105,10 @@ type Config struct {
 	AllowedOrigins []string
 	// Telemetry controls local/remote telemetry sinks.
 	Telemetry TelemetryConfig
+	// StartupWorkingDirectory is the daemon process cwd before startup
+	// normalizes it. The desktop uses this to identify dev daemons after the
+	// process cwd is moved to the stable data dir.
+	StartupWorkingDirectory string
 }
 
 // Addr returns the host:port the HTTP server binds. It uses net.JoinHostPort so
@@ -305,7 +309,7 @@ func newAppRunID() string {
 // Electron supervisor share one handshake location.
 func resolveRunFilePath() (string, error) {
 	if p, ok := os.LookupEnv("AO_RUN_FILE"); ok && p != "" {
-		return p, nil
+		return absOverride("AO_RUN_FILE", p)
 	}
 	stateDir, err := defaultStateDir()
 	if err != nil {
@@ -319,7 +323,7 @@ func resolveRunFilePath() (string, error) {
 // directory as the run-file.
 func resolveDataDir() (string, error) {
 	if p, ok := os.LookupEnv("AO_DATA_DIR"); ok && p != "" {
-		return p, nil
+		return absOverride("AO_DATA_DIR", p)
 	}
 	stateDir, err := defaultStateDir()
 	if err != nil {
@@ -334,4 +338,18 @@ func defaultStateDir() (string, error) {
 		return "", fmt.Errorf("resolve state dir: %w", err)
 	}
 	return filepath.Join(homeDir, ".ao"), nil
+}
+
+// absOverride resolves an explicit AO_DATA_DIR/AO_RUN_FILE override to an
+// absolute path against the process's launch cwd. The daemon chdir's into its
+// data dir at startup (see stabilizeWorkingDirectory), so a relative override
+// left as-is would be re-resolved against the new cwd and double-nest state
+// (e.g. AO_DATA_DIR=data -> <cwd>/data/data). Absolutizing here keeps the path
+// stable regardless of the later chdir.
+func absOverride(name, p string) (string, error) {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s %q: %w", name, p, err)
+	}
+	return abs, nil
 }

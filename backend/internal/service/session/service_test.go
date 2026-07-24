@@ -305,6 +305,143 @@ func TestGetWorkspaceFileReturnsContentAndDiff(t *testing.T) {
 	}
 }
 
+func TestListWorkspaceFilesScratchUsesFilesystem(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, root, "README.md", "one\ntwo\n")
+	writeWorkspaceFile(t, root, ".env", "TOKEN=secret\n")
+	writeWorkspaceFile(t, root, "nested/task.txt", "do it")
+	writeWorkspaceFile(t, root, ".git/config", "[core]\n")
+	if err := os.WriteFile(filepath.Join(root, "image.bin"), []byte{0, 1, 2, 3}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st := newFakeStore()
+	st.projects["scratch"] = domain.ProjectRecord{ID: "scratch", Kind: domain.ProjectKindScratch}
+	st.sessions["scratch-1"] = domain.SessionRecord{
+		ID:        "scratch-1",
+		ProjectID: "scratch",
+		Metadata:  domain.SessionMetadata{WorkspacePath: root},
+	}
+
+	got, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "scratch-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byPath := map[string]WorkspaceFileSummary{}
+	var paths []string
+	for _, file := range got.Files {
+		paths = append(paths, file.Path)
+		byPath[file.Path] = file
+		if file.Status != WorkspaceFileAdded {
+			t.Fatalf("%s status = %q, want added", file.Path, file.Status)
+		}
+	}
+	wantPaths := []string{".env", "README.md", "image.bin", "nested/task.txt"}
+	if strings.Join(paths, "|") != strings.Join(wantPaths, "|") {
+		t.Fatalf("paths = %#v, want %#v", paths, wantPaths)
+	}
+	if byPath["README.md"].Additions != 0 || byPath["README.md"].Deletions != 0 {
+		t.Fatalf("README counts = +%d -%d, want +0 -0", byPath["README.md"].Additions, byPath["README.md"].Deletions)
+	}
+	if byPath["nested/task.txt"].Additions != 0 {
+		t.Fatalf("nested/task.txt additions = %d, want 0", byPath["nested/task.txt"].Additions)
+	}
+	if !byPath["image.bin"].Binary || byPath["image.bin"].Additions != 0 || byPath["image.bin"].Deletions != 0 {
+		t.Fatalf("binary summary = %#v, want binary with zero counts", byPath["image.bin"])
+	}
+	if _, ok := byPath[".git/config"]; ok {
+		t.Fatal(".git content should not be listed for scratch")
+	}
+}
+
+func TestListWorkspaceFilesScratchStopsAtFileLimit(t *testing.T) {
+	root := t.TempDir()
+	for i := 0; i < maxWorkspaceFiles+1; i++ {
+		writeWorkspaceFile(t, root, fmt.Sprintf("file-%05d.txt", i), "content\n")
+	}
+	st := newFakeStore()
+	st.projects["scratch"] = domain.ProjectRecord{ID: "scratch", Kind: domain.ProjectKindScratch}
+	st.sessions["scratch-1"] = domain.SessionRecord{
+		ID:        "scratch-1",
+		ProjectID: "scratch",
+		Metadata:  domain.SessionMetadata{WorkspacePath: root},
+	}
+
+	got, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "scratch-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Truncated {
+		t.Fatal("Truncated = false, want true")
+	}
+	if len(got.Files) != maxWorkspaceFiles {
+		t.Fatalf("file count = %d, want %d", len(got.Files), maxWorkspaceFiles)
+	}
+}
+
+func TestListWorkspaceFilesScratchSkipsSymlinkEscapes(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	writeWorkspaceFile(t, root, "real.txt", "inside\n")
+	writeWorkspaceFile(t, outside, "secret.txt", "outside\n")
+	if err := os.Symlink(filepath.Join(root, "real.txt"), filepath.Join(root, "inside-link.txt")); err != nil {
+		t.Skipf("creating inside symlink: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "secret.txt"), filepath.Join(root, "outside-link.txt")); err != nil {
+		t.Skipf("creating outside symlink: %v", err)
+	}
+	st := newFakeStore()
+	st.projects["scratch"] = domain.ProjectRecord{ID: "scratch", Kind: domain.ProjectKindScratch}
+	st.sessions["scratch-1"] = domain.SessionRecord{
+		ID:        "scratch-1",
+		ProjectID: "scratch",
+		Metadata:  domain.SessionMetadata{WorkspacePath: root},
+	}
+
+	got, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "scratch-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byPath := map[string]WorkspaceFileSummary{}
+	for _, file := range got.Files {
+		byPath[file.Path] = file
+	}
+	if _, ok := byPath["inside-link.txt"]; !ok {
+		t.Fatalf("inside symlink was not listed: %#v", got.Files)
+	}
+	if _, ok := byPath["outside-link.txt"]; ok {
+		t.Fatalf("outside symlink escape was listed: %#v", got.Files)
+	}
+}
+
+func TestGetWorkspaceFileScratchReturnsContentWithEmptyDiff(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, root, "README.md", "one\ntwo\n")
+	st := newFakeStore()
+	st.projects["scratch"] = domain.ProjectRecord{ID: "scratch", Kind: domain.ProjectKindScratch}
+	st.sessions["scratch-1"] = domain.SessionRecord{
+		ID:        "scratch-1",
+		ProjectID: "scratch",
+		Metadata:  domain.SessionMetadata{WorkspacePath: root},
+	}
+
+	got, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "scratch-1", "README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != WorkspaceFileAdded {
+		t.Fatalf("status = %q, want added", got.Status)
+	}
+	if got.Content != "one\ntwo\n" {
+		t.Fatalf("content = %q", got.Content)
+	}
+	if got.Additions != 2 || got.Deletions != 0 {
+		t.Fatalf("counts = +%d -%d, want +2 -0", got.Additions, got.Deletions)
+	}
+	if got.Diff != "" || got.DiffTruncated {
+		t.Fatalf("scratch diff = %q truncated=%v, want empty", got.Diff, got.DiffTruncated)
+	}
+}
+
 func TestGetWorkspaceFileRejectsTraversal(t *testing.T) {
 	repo := newWorkspaceRepo(t)
 	st := newFakeStore()
@@ -348,6 +485,7 @@ type fakeCommander struct {
 	killed          []domain.SessionID
 	retired         []domain.SessionID
 	sent            []domain.SessionID
+	sentMessages    []string
 	cleanupProjects []domain.ProjectID
 	killErr         error
 	retireErr       error
@@ -362,17 +500,17 @@ type fakeCommander struct {
 	restoreResult   sessionmanager.RestoreResult
 }
 
-func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, error) {
+func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, int, int, error) {
 	if f.spawnErr != nil {
-		return domain.SessionRecord{}, f.spawnErr
+		return domain.SessionRecord{}, 0, 0, f.spawnErr
 	}
 	f.spawned = true
 	f.spawnedCfg = cfg
 	f.killsAtSpawn = len(f.retired)
 	if f.spawnRecord.ID != "" {
-		return f.spawnRecord, nil
+		return f.spawnRecord, len(cfg.Prompt), 0, nil
 	}
-	return domain.SessionRecord{ID: "mer-9", ProjectID: cfg.ProjectID, Kind: cfg.Kind, Harness: cfg.Harness}, nil
+	return domain.SessionRecord{ID: "mer-9", ProjectID: cfg.ProjectID, Kind: cfg.Kind, Harness: cfg.Harness}, len(cfg.Prompt), 0, nil
 }
 func (f *fakeCommander) RestoreWithMode(context.Context, domain.SessionID) (sessionmanager.RestoreResult, error) {
 	if f.restoreErr != nil {
@@ -394,11 +532,12 @@ func (f *fakeCommander) RetireForReplacement(_ context.Context, id domain.Sessio
 	f.retired = append(f.retired, id)
 	return nil
 }
-func (f *fakeCommander) Send(_ context.Context, id domain.SessionID, _ string) error {
+func (f *fakeCommander) Send(_ context.Context, id domain.SessionID, message string) error {
 	if f.sendErr != nil {
 		return f.sendErr
 	}
 	f.sent = append(f.sent, id)
+	f.sentMessages = append(f.sentMessages, message)
 	return nil
 }
 func (f *fakeCommander) Cleanup(_ context.Context, project domain.ProjectID) (sessionmanager.CleanupResult, error) {
@@ -515,6 +654,24 @@ func TestSpawnOrchestratorCleanContinuesWhenRetireNoticeFails(t *testing.T) {
 	}
 }
 
+func TestSpawnOrchestratorCleanRetireNoticeIsBranchNeutral(t *testing.T) {
+	st := newFakeStore()
+	st.projects["scratch"] = domain.ProjectRecord{ID: "scratch", Kind: domain.ProjectKindScratch}
+	st.sessions["scratch-1"] = domain.SessionRecord{ID: "scratch-1", ProjectID: "scratch", Kind: domain.KindOrchestrator}
+	fc := &fakeCommander{}
+	svc := &Service{manager: fc, store: st}
+
+	if _, err := svc.SpawnOrchestrator(context.Background(), "scratch", true); err != nil {
+		t.Fatalf("SpawnOrchestrator: %v", err)
+	}
+	if len(fc.sentMessages) != 1 {
+		t.Fatalf("retire messages = %d, want 1", len(fc.sentMessages))
+	}
+	if strings.Contains(strings.ToLower(fc.sentMessages[0]), "branch") {
+		t.Fatalf("retire notice must be branch-neutral, got %q", fc.sentMessages[0])
+	}
+}
+
 // TestSpawnUnknownProjectReturns404 covers Bug 1: an HTTP spawn for an
 // unregistered projectId must surface PROJECT_NOT_FOUND (apierr.NotFound)
 // BEFORE any session row is created, so no orphan terminated row is left
@@ -524,7 +681,7 @@ func TestSpawnUnknownProjectReturns404(t *testing.T) {
 	fc := &fakeCommander{}
 	svc := &Service{manager: fc, store: st}
 
-	_, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "ghost", Kind: domain.KindWorker})
+	_, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "ghost", Kind: domain.KindWorker})
 	var e *apierr.Error
 	if !errors.As(err, &e) || e.Kind != apierr.KindNotFound || e.Code != "PROJECT_NOT_FOUND" {
 		t.Fatalf("err = %v, want apierr.NotFound PROJECT_NOT_FOUND", err)
@@ -546,7 +703,7 @@ func TestSpawnEmitsFirstSessionOnboardingAndDuration(t *testing.T) {
 		Clock:     func() time.Time { return time.Unix(102, 0).UTC() },
 	})
 
-	if _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer"}); err != nil {
+	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer"}); err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
 	if len(sink.events) != 2 {
@@ -598,7 +755,7 @@ func TestSpawnEnrichesIssueContextFromTracker(t *testing.T) {
 	}}
 	svc := NewWithDeps(Deps{Manager: fc, Store: st, Tracker: tracker})
 
-	if _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "42"}); err != nil {
+	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "42"}); err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
 	if len(tracker.ids) != 1 || tracker.ids[0].Provider != domain.TrackerProviderGitHub || tracker.ids[0].Native != "acme/repo#42" {
@@ -627,7 +784,7 @@ func TestSpawnIssueContextFetchFailureFallsBack(t *testing.T) {
 	tracker := &fakeTracker{err: errors.New("tracker unavailable")}
 	svc := NewWithDeps(Deps{Manager: fc, Store: st, Tracker: tracker})
 
-	if _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "42"}); err != nil {
+	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "42"}); err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
 	if len(tracker.ids) != 1 {
@@ -649,7 +806,7 @@ func TestSpawnPreservesIssueIDWhenTrackerIsNil(t *testing.T) {
 	fc := &fakeCommander{}
 	svc := NewWithDeps(Deps{Manager: fc, Store: st, Tracker: nil})
 
-	if _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "107"}); err != nil {
+	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "107"}); err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
 	if fc.spawnedCfg.IssueID != "107" {
@@ -667,7 +824,7 @@ func TestSpawnIssueContextSkipsUnresolvableIssueRef(t *testing.T) {
 	tracker := &fakeTracker{}
 	svc := NewWithDeps(Deps{Manager: fc, Store: st, Tracker: tracker})
 
-	if _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "not-an-issue"}); err != nil {
+	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "not-an-issue"}); err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
 	if len(tracker.ids) != 0 {
@@ -695,7 +852,7 @@ func TestSpawnFailedEmitsDuration(t *testing.T) {
 		},
 	})
 
-	if _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer"}); err == nil {
+	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer"}); err == nil {
 		t.Fatal("Spawn should fail")
 	}
 	if len(sink.events) != 1 || sink.events[0].Name != "ao.session.spawn_failed" {
@@ -726,7 +883,7 @@ func TestSpawnEmitsTelemetryOnSuccess(t *testing.T) {
 	ts := &fakeTelemetrySink{}
 	svc := NewWithDeps(Deps{Manager: fc, Store: st, Telemetry: ts, Clock: func() time.Time { return time.Unix(1700000000, 0).UTC() }})
 
-	_, err := svc.Spawn(context.Background(), ports.SpawnConfig{
+	_, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{
 		ProjectID: "mer",
 		Kind:      domain.KindWorker,
 		Harness:   domain.HarnessCodex,
@@ -753,7 +910,7 @@ func TestSpawnEmitsTelemetryOnFailure(t *testing.T) {
 	ts := &fakeTelemetrySink{}
 	svc := NewWithDeps(Deps{Manager: fc, Store: st, Telemetry: ts, Clock: func() time.Time { return time.Unix(1700000000, 0).UTC() }})
 
-	_, err := svc.Spawn(context.Background(), ports.SpawnConfig{
+	_, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{
 		ProjectID: "mer",
 		Kind:      domain.KindWorker,
 		Harness:   domain.HarnessCodex,
@@ -795,7 +952,7 @@ func TestSpawnEmitsTypedErrorCodeOnFailure(t *testing.T) {
 	ts := &fakeTelemetrySink{}
 	svc := NewWithDeps(Deps{Manager: fc, Store: st, Telemetry: ts, Clock: func() time.Time { return time.Unix(1700000000, 0).UTC() }})
 
-	_, err := svc.Spawn(context.Background(), ports.SpawnConfig{
+	_, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{
 		ProjectID: "mer",
 		Kind:      domain.KindWorker,
 		Harness:   domain.HarnessCodex,
@@ -1027,6 +1184,39 @@ func (f fakeSCM) FetchReviewThreads(context.Context, ports.SCMPRRef) (ports.SCMR
 	return f.review, f.reviewErr
 }
 
+func TestClaimPRRejectsScratchProject(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["scratch-1"] = domain.SessionRecord{
+		ID:        "scratch-1",
+		ProjectID: "scratch",
+		Kind:      domain.KindWorker,
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/scratch-1"},
+	}
+	st.projects["scratch"] = domain.ProjectRecord{ID: "scratch", Kind: domain.ProjectKindScratch}
+	svc := NewWithDeps(Deps{
+		Store:     st,
+		PRClaimer: fakePRClaimer{},
+		SCM: fakeSCM{
+			obs: ports.SCMObservation{
+				Fetched:  true,
+				Provider: "github",
+				Host:     "github.com",
+				Repo:     "acme/repo",
+				PR:       ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7},
+			},
+		},
+	})
+
+	for _, ref := range []string{"https://github.com/acme/repo/pull/7", "7"} {
+		t.Run(ref, func(t *testing.T) {
+			_, err := svc.ClaimPR(context.Background(), "scratch-1", ref, ClaimPROptions{})
+			if !errors.Is(err, ErrSessionNotClaimable) {
+				t.Fatalf("ClaimPR scratch err = %v, want ErrSessionNotClaimable", err)
+			}
+		})
+	}
+}
+
 func TestClaimPRMapsObserverAndStoreErrors(t *testing.T) {
 	st := newFakeStore()
 	now := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
@@ -1082,7 +1272,7 @@ func TestListPRsOrdersActiveBeforeClosedThenUpdatedDesc(t *testing.T) {
 	}
 }
 
-func TestListPRSummariesOmitsRawLogsAndReviewBodies(t *testing.T) {
+func TestListPRSummariesExposesReviewSummariesButKeepsRawLogsAndCommentBodiesPrivate(t *testing.T) {
 	st := newFakeStore()
 	now := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
@@ -1113,7 +1303,7 @@ func TestListPRSummariesOmitsRawLogsAndReviewBodies(t *testing.T) {
 		{Name: "lint", Status: domain.PRCheckPassed, Conclusion: "success", URL: "https://github.com/acme/repo/actions/runs/2"},
 	}
 	stList.reviews[prURL] = []domain.PullRequestReview{
-		{ID: "review-1", Author: "reviewer-a", State: domain.ReviewChangesRequest, URL: "https://github.com/acme/repo/pull/7#pullrequestreview-1", SubmittedAt: now.Add(-30 * time.Second)},
+		{ID: "review-1", Author: "reviewer-a", State: domain.ReviewChangesRequest, URL: "https://github.com/acme/repo/pull/7#pullrequestreview-1", Body: "summary: please fix the failing unit test", SubmittedAt: now.Add(-30 * time.Second)},
 	}
 	stList.comments[prURL] = []domain.PullRequestComment{
 		{Author: "reviewer-a", File: "main.go", Line: 12, Body: "raw body must stay private", URL: "https://github.com/acme/repo/pull/7#discussion_r1"},
@@ -1145,6 +1335,48 @@ func TestListPRSummariesOmitsRawLogsAndReviewBodies(t *testing.T) {
 	}
 	if pr.Mergeability.State != domain.MergeConflicting || len(pr.Mergeability.ConflictFiles) != 0 || !containsString(pr.Mergeability.Reasons, "conflicts") {
 		t.Fatalf("mergeability = %+v", pr.Mergeability)
+	}
+	if len(pr.Review.Reviews) != 1 {
+		t.Fatalf("review summaries = %+v", pr.Review.Reviews)
+	}
+	if entry := pr.Review.Reviews[0]; entry.Reviewer != "reviewer-a" || entry.Verdict != domain.ReviewChangesRequest ||
+		entry.Body != "summary: please fix the failing unit test" ||
+		entry.URL != "https://github.com/acme/repo/pull/7#pullrequestreview-1" {
+		t.Fatalf("review summary entry = %+v", entry)
+	}
+	// The review summary body is surfaced, but inline comment bodies and CI log
+	// tails must never leak into the PR summary.
+	blob := fmt.Sprintf("%+v", got)
+	for _, secret := range []string{"raw body must stay private", "another raw body", "bot body", "panic: secret"} {
+		if strings.Contains(blob, secret) {
+			t.Fatalf("summary leaked private text %q", secret)
+		}
+	}
+}
+
+func TestSummarizeReviewSurfacesApprovedAndChangesRequestedSummaries(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	reviews := []domain.PullRequestReview{
+		// alice's approved review supersedes her earlier changes_requested one.
+		{ID: "a-old", Author: "alice", State: domain.ReviewChangesRequest, Body: "old note", URL: "url-a-old", SubmittedAt: now.Add(-time.Hour)},
+		{ID: "a-new", Author: "alice", State: domain.ReviewApproved, Body: "looks good now", URL: "url-a-new", SubmittedAt: now},
+		{ID: "b", Author: "bob", State: domain.ReviewChangesRequest, Body: "please fix", URL: "url-b", SubmittedAt: now},
+	}
+
+	got := summarizeReview(domain.PullRequest{URL: "u", Review: domain.ReviewChangesRequest}, nil, reviews)
+
+	byReviewer := map[string]PRReviewEntry{}
+	for _, entry := range got.Reviews {
+		byReviewer[entry.Reviewer] = entry
+	}
+	if len(got.Reviews) != 2 {
+		t.Fatalf("review summaries = %+v, want alice + bob", got.Reviews)
+	}
+	if a := byReviewer["alice"]; a.Verdict != domain.ReviewApproved || a.Body != "looks good now" || a.URL != "url-a-new" {
+		t.Fatalf("alice entry = %+v, want latest approved with its body", a)
+	}
+	if b := byReviewer["bob"]; b.Verdict != domain.ReviewChangesRequest || b.Body != "please fix" {
+		t.Fatalf("bob entry = %+v, want changes_requested with its body", b)
 	}
 }
 

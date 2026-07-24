@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -203,6 +204,10 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 	if _, err := r.run(ctx, args...); err != nil {
 		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: create session %s: %w", id, err)
 	}
+	if err := r.verifyPaneWorkingDirectory(ctx, id, cfg.WorkspacePath); err != nil {
+		_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id})
+		return ports.RuntimeHandle{}, err
+	}
 
 	// Hide the status bar in the embedded terminal: it clutters the view and
 	// was not designed for the in-browser display context.
@@ -237,6 +242,18 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: session %s exited before ready", id)
 	}
 	return handle, nil
+}
+
+func (r *Runtime) verifyPaneWorkingDirectory(ctx context.Context, id, want string) error {
+	out, err := r.run(ctx, paneCurrentPathArgs(id)...)
+	if err != nil {
+		return fmt.Errorf("tmux runtime: verify working directory %s: %w", id, err)
+	}
+	got := strings.TrimSpace(string(out))
+	if sameDirectory(got, want) {
+		return nil
+	}
+	return fmt.Errorf("tmux runtime: session %s started in %q, want %q", id, got, want)
 }
 
 // Destroy kills the handle's tmux session and reaps the pane processes it
@@ -639,6 +656,9 @@ func buildLaunchCommand(cfg ports.RuntimeConfig) string {
 	}
 
 	var b strings.Builder
+	b.WriteString("cd ")
+	b.WriteString(shellQuote(cfg.WorkspacePath))
+	b.WriteString(" || exit; ")
 	for _, key := range sortedKeys(cfg.Env) {
 		if key == "PATH" {
 			continue
@@ -665,6 +685,27 @@ func buildLaunchCommand(cfg ports.RuntimeConfig) string {
 	// the process env if set, otherwise falls back to /bin/sh.
 	b.WriteString(`; exec "${SHELL:-/bin/sh}" -i`)
 	return b.String()
+}
+
+func sameDirectory(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	absA, errA := filepath.Abs(a)
+	if errA == nil {
+		a = absA
+	}
+	absB, errB := filepath.Abs(b)
+	if errB == nil {
+		b = absB
+	}
+	if realA, err := filepath.EvalSymlinks(a); err == nil {
+		a = realA
+	}
+	if realB, err := filepath.EvalSymlinks(b); err == nil {
+		b = realB
+	}
+	return filepath.Clean(a) == filepath.Clean(b)
 }
 
 // -- error type --

@@ -30,9 +30,18 @@ export function usesFramedAppTopbar(): boolean {
 	return true;
 }
 
-export function usesBoardActionsInFramedTopbar(): boolean {
-	// Paired with usesFramedAppTopbar so board actions can move back out of the
-	// framed header independently if a platform-specific shell regression turns
-	// up during desktop validation.
-	return true;
+/**
+ * macOS: shell does not mount ShellTopbar (full-height inset panel + drag
+ * strip). SessionView mounts the same topbar in-panel for session actions.
+ */
+export function hidesShellTopbar(): boolean {
+	return isMacPlatform();
+}
+
+/**
+ * Board New task / Orchestrator / bell render in the board body instead of the
+ * framed shell topbar (macOS). Win/Linux keep those controls in the topbar.
+ */
+export function usesBoardActionsInPanel(): boolean {
+	return hidesShellTopbar();
 }

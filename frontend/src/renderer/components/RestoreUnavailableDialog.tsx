@@ -40,7 +40,7 @@ export function RestoreUnavailableDialog({ open, session, onOpenChange, onRecrea
 					<Dialog.Title className="text-sm font-medium text-foreground">Session can no longer be restored</Dialog.Title>
 					<Dialog.Description className="mt-2 text-control text-muted-foreground">
 						{orchestrator
-							? "This orchestrator has no saved agent session to resume. You can create a new orchestrator on the same branch; its committed work is preserved and the old worktree is cleaned."
+							? "This orchestrator has no saved agent session to resume. You can create a new orchestrator while AO preserves any workspace data it cannot safely clean."
 							: "This session has no saved agent session or prompt to resume from."}
 					</Dialog.Description>
 					{error && <div className="mt-3 text-xs text-destructive">{error}</div>}
