@@ -370,9 +370,8 @@ function wireUpdaterEvents(): void {
 		// the renderer does not hang.
 		if (isManifest404Error(err)) {
 			console.error("update check failed (404, manifest not found):", err);
-			const terminalState = activeUpdaterOperation === "manual-download"
-				? { state: "idle" as const }
-				: { state: "not-available" as const };
+			const terminalState =
+				activeUpdaterOperation === "manual-download" ? { state: "idle" as const } : { state: "not-available" as const };
 			broadcast(withActiveRequest(terminalState));
 			return;
 		}
