@@ -224,19 +224,28 @@ func TestGetLaunchCommandWorkerRequiresDataDirForRemoteInput(t *testing.T) {
 	}
 }
 
-func TestGetLaunchCommandAppendsConfiguredModel(t *testing.T) {
+func TestGetLaunchCommandWorkerAppendsTrimmedConfiguredModel(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "qwen"}
 
 	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
-		Config:      domain.AgentConfig{Model: "qwen-plus"},
+		Kind:        domain.KindWorker,
+		DataDir:     t.TempDir(),
+		SessionID:   "sess-123",
+		Config:      domain.AgentConfig{Model: "  qwen-plus  "},
 		Permissions: ports.PermissionModeBypassPermissions,
 		Prompt:      "fix it",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !containsSubsequence(cmd, []string{"--model", "qwen-plus"}) {
-		t.Fatalf("command %#v missing --model qwen-plus", cmd)
+	if runtime.GOOS == "windows" {
+		if !containsSubsequence(cmd, []string{"--model", "qwen-plus"}) {
+			t.Fatalf("command %#v missing trimmed --model qwen-plus", cmd)
+		}
+		return
+	}
+	if len(cmd) != 3 || !strings.Contains(cmd[2], "'--model' 'qwen-plus'") {
+		t.Fatalf("worker command %#v missing trimmed --model qwen-plus", cmd)
 	}
 }
 
