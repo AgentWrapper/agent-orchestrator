@@ -75,6 +75,8 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 				window: {
 					setOverlay: async () => undefined,
 					setTrafficLightsInset: async () => undefined,
+					isFullScreen: async () => false,
+					onFullScreen: () => () => undefined,
 				},
 				theme: { set: async () => undefined },
 				menu: { action: async () => undefined, notifyShellFocus: () => undefined },
@@ -432,6 +434,8 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 				window: {
 					setOverlay: async () => undefined,
 					setTrafficLightsInset: async () => undefined,
+					isFullScreen: async () => false,
+					onFullScreen: () => () => undefined,
 				},
 				theme: { set: async () => undefined },
 				menu: { action: async () => undefined, notifyShellFocus: () => undefined },

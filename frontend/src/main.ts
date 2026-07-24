@@ -413,6 +413,16 @@ function createWindow(): void {
 		});
 	}
 
+	// macOS: traffic lights vanish in native fullscreen, so the renderer drops
+	// the clearance pad above TitlebarNav. Push state so the sidebar can react
+	// without polling isFullScreen().
+	const pushFullScreen = () => {
+		if (!mainWindow) return;
+		mainWindow.webContents.send("window:fullscreen", mainWindow.isFullScreen());
+	};
+	mainWindow.on("enter-full-screen", pushFullScreen);
+	mainWindow.on("leave-full-screen", pushFullScreen);
+
 	mainWindow.on("closed", () => {
 		stopMacWindowButtonTransition();
 		browserViewHost?.dispose();
@@ -1151,6 +1161,7 @@ ipcMain.handle("window:setOverlay", (_event, overlay: { color: string; symbolCol
 ipcMain.handle("window:setTrafficLightsInset", (_event, inset: boolean) => {
 	animateMacWindowButtons(inset);
 });
+ipcMain.handle("window:isFullScreen", () => mainWindow?.isFullScreen() ?? false);
 
 // Drive Electron's nativeTheme from the app's theme preference so embedded
 // preview WebContentsViews (which follow prefers-color-scheme) flip in step with

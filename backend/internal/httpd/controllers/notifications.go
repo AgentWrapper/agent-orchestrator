@@ -17,9 +17,9 @@ import (
 
 // NotificationService is the controller-facing notification service contract.
 type NotificationService interface {
-	ListUnread(ctx context.Context, filter notificationsvc.ListFilter) ([]notificationsvc.Notification, error)
+	List(ctx context.Context, filter notificationsvc.ListFilter) (notificationsvc.ListPage, error)
 	MarkRead(ctx context.Context, id string) (notificationsvc.Notification, bool, error)
-	MarkAllRead(ctx context.Context) ([]notificationsvc.Notification, error)
+	MarkAllRead(ctx context.Context) (int64, error)
 }
 
 // NotificationStream is the live notification stream used by SSE clients.
@@ -55,12 +55,16 @@ func (c *NotificationsController) list(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_QUERY", err.Error(), nil)
 		return
 	}
-	notifications, err := c.Svc.ListUnread(r.Context(), filter)
+	page, err := c.Svc.List(r.Context(), filter)
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, ListNotificationsResponse{Notifications: notificationResponses(notifications)})
+	envelope.WriteJSON(w, http.StatusOK, ListNotificationsResponse{
+		Notifications: notificationResponses(page.Notifications),
+		NextCursor:    page.NextCursor,
+		UnreadCount:   page.UnreadCount,
+	})
 }
 
 func (c *NotificationsController) markRead(w http.ResponseWriter, r *http.Request) {
@@ -90,12 +94,15 @@ func (c *NotificationsController) markAllRead(w http.ResponseWriter, r *http.Req
 		apispec.NotImplemented(w, r, "POST", "/api/v1/notifications/read-all")
 		return
 	}
-	notifications, err := c.Svc.MarkAllRead(r.Context())
+	updatedCount, err := c.Svc.MarkAllRead(r.Context())
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, MarkAllNotificationsReadResponse{Notifications: notificationResponses(notifications)})
+	envelope.WriteJSON(w, http.StatusOK, MarkAllNotificationsReadResponse{
+		Notifications: []NotificationResponse{},
+		UpdatedCount:  updatedCount,
+	})
 }
 
 func (c *NotificationsController) stream(w http.ResponseWriter, r *http.Request) {
@@ -148,11 +155,11 @@ func writeNotificationSSE(w http.ResponseWriter, flusher http.Flusher, rec domai
 
 func parseNotificationListFilter(r *http.Request) (notificationsvc.ListFilter, error) {
 	q := r.URL.Query()
-	status := q.Get("status")
+	status := notificationsvc.ListStatus(q.Get("status"))
 	if status == "" {
-		status = "unread"
+		status = notificationsvc.ListUnread
 	}
-	if status != "unread" {
+	if !status.Valid() {
 		return notificationsvc.ListFilter{}, errNotificationStatusUnsupported
 	}
 	limit := notificationsvc.DefaultListLimit
@@ -166,11 +173,11 @@ func parseNotificationListFilter(r *http.Request) (notificationsvc.ListFilter, e
 	if limit > notificationsvc.MaxListLimit {
 		limit = notificationsvc.MaxListLimit
 	}
-	return notificationsvc.ListFilter{Limit: limit}, nil
+	return notificationsvc.ListFilter{Status: status, Limit: limit, Cursor: q.Get("cursor")}, nil
 }
 
 var (
-	errNotificationStatusUnsupported = notificationQueryError("status must be unread")
+	errNotificationStatusUnsupported = notificationQueryError("status must be unread or all")
 	errNotificationLimitInvalid      = notificationQueryError("limit must be a positive integer")
 )
 

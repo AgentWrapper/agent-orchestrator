@@ -7,10 +7,8 @@ import { useUiStore } from "../stores/ui-store";
 const isMac = isMacPlatform();
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
-// macOS-only sidebar chrome cluster (sidebar toggle + history arrows). Lives
-// in the Sidebar header below the traffic lights. The toggle is pinned in the
-// icon-rail column so it never moves during expand/collapse; history arrows
-// sit absolutely to its right and only fade in when expanded.
+// macOS-only sidebar chrome cluster (sidebar toggle + history arrows). It stays
+// fixed while the sidebar expands, collapses, or appears as a hover preview.
 // The installed router has no useCanGoForward, and deriving one as
 // `__TSR_index < history.length - 1` (the upstream hook's approach) is wrong
 // here: window.history.length also counts entries the router never created —
@@ -36,9 +34,11 @@ function useCanGoForward(): boolean {
 
 export function TitlebarNav({
 	historyLocked = false,
+	isFullScreen = false,
 	onSidebarPreviewEnter,
 }: {
 	historyLocked?: boolean;
+	isFullScreen?: boolean;
 	onSidebarPreviewEnter?: React.PointerEventHandler<HTMLButtonElement>;
 }) {
 	const { isSidebarOpen, toggleSidebar } = useUiStore();
@@ -48,9 +48,11 @@ export function TitlebarNav({
 
 	if (!isMac) return null;
 
+	const topClass = isFullScreen || isSidebarOpen ? "top-0" : "top-3.25";
+
 	return (
 		<div
-			className={`fixed left-titlebar-cluster-left z-titlebar flex h-toolbar items-center gap-1 transition-[top] duration-200 ease-in-out motion-reduce:transition-none ${isSidebarOpen ? "top-0" : "top-3.25"}`}
+			className={`fixed left-titlebar-cluster-left z-titlebar flex h-toolbar items-center gap-1 transition-[top] duration-200 ease-in-out motion-reduce:transition-none ${topClass}`}
 			style={noDragStyle}
 		>
 			<TitlebarButton

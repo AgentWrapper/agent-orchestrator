@@ -275,7 +275,7 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 											}}
 											disabled={busy || !enabled}
 											tabIndex={enabled ? 0 : -1}
-											className="settings-footer-button mt-5 w-(--size-settings-mobile-regen-width) border-[var(--color-border-settings-input)] bg-[var(--color-bg-settings-input)] text-settings-label transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+											className="settings-footer-button mt-5 w-(--size-settings-mobile-regen-width) disabled:cursor-not-allowed disabled:opacity-50"
 										>
 											{regenerate.isPending && <Loader2 className="mr-2 size-4 animate-spin" aria-hidden="true" />}
 											Regenerate password

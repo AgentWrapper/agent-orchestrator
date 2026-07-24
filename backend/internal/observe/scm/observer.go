@@ -1156,6 +1156,7 @@ func domainFromObservation(sessionID domain.SessionID, obs ports.SCMObservation,
 			Author:      review.Author,
 			State:       domain.ReviewDecision(firstNonEmpty(review.State, string(domain.ReviewNone))),
 			URL:         review.URL,
+			Body:        review.Body,
 			IsBot:       review.IsBot,
 			SubmittedAt: firstTime(review.SubmittedAt, now),
 		})

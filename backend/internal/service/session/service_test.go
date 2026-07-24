@@ -1348,7 +1348,7 @@ func TestListPRsOrdersActiveBeforeClosedThenUpdatedDesc(t *testing.T) {
 	}
 }
 
-func TestListPRSummariesOmitsRawLogsAndReviewBodies(t *testing.T) {
+func TestListPRSummariesExposesReviewSummariesButKeepsRawLogsAndCommentBodiesPrivate(t *testing.T) {
 	st := newFakeStore()
 	now := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
@@ -1379,7 +1379,7 @@ func TestListPRSummariesOmitsRawLogsAndReviewBodies(t *testing.T) {
 		{Name: "lint", Status: domain.PRCheckPassed, Conclusion: "success", URL: "https://github.com/acme/repo/actions/runs/2"},
 	}
 	stList.reviews[prURL] = []domain.PullRequestReview{
-		{ID: "review-1", Author: "reviewer-a", State: domain.ReviewChangesRequest, URL: "https://github.com/acme/repo/pull/7#pullrequestreview-1", SubmittedAt: now.Add(-30 * time.Second)},
+		{ID: "review-1", Author: "reviewer-a", State: domain.ReviewChangesRequest, URL: "https://github.com/acme/repo/pull/7#pullrequestreview-1", Body: "summary: please fix the failing unit test", SubmittedAt: now.Add(-30 * time.Second)},
 	}
 	stList.comments[prURL] = []domain.PullRequestComment{
 		{Author: "reviewer-a", File: "main.go", Line: 12, Body: "raw body must stay private", URL: "https://github.com/acme/repo/pull/7#discussion_r1"},
@@ -1411,6 +1411,48 @@ func TestListPRSummariesOmitsRawLogsAndReviewBodies(t *testing.T) {
 	}
 	if pr.Mergeability.State != domain.MergeConflicting || len(pr.Mergeability.ConflictFiles) != 0 || !containsString(pr.Mergeability.Reasons, "conflicts") {
 		t.Fatalf("mergeability = %+v", pr.Mergeability)
+	}
+	if len(pr.Review.Reviews) != 1 {
+		t.Fatalf("review summaries = %+v", pr.Review.Reviews)
+	}
+	if entry := pr.Review.Reviews[0]; entry.Reviewer != "reviewer-a" || entry.Verdict != domain.ReviewChangesRequest ||
+		entry.Body != "summary: please fix the failing unit test" ||
+		entry.URL != "https://github.com/acme/repo/pull/7#pullrequestreview-1" {
+		t.Fatalf("review summary entry = %+v", entry)
+	}
+	// The review summary body is surfaced, but inline comment bodies and CI log
+	// tails must never leak into the PR summary.
+	blob := fmt.Sprintf("%+v", got)
+	for _, secret := range []string{"raw body must stay private", "another raw body", "bot body", "panic: secret"} {
+		if strings.Contains(blob, secret) {
+			t.Fatalf("summary leaked private text %q", secret)
+		}
+	}
+}
+
+func TestSummarizeReviewSurfacesApprovedAndChangesRequestedSummaries(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	reviews := []domain.PullRequestReview{
+		// alice's approved review supersedes her earlier changes_requested one.
+		{ID: "a-old", Author: "alice", State: domain.ReviewChangesRequest, Body: "old note", URL: "url-a-old", SubmittedAt: now.Add(-time.Hour)},
+		{ID: "a-new", Author: "alice", State: domain.ReviewApproved, Body: "looks good now", URL: "url-a-new", SubmittedAt: now},
+		{ID: "b", Author: "bob", State: domain.ReviewChangesRequest, Body: "please fix", URL: "url-b", SubmittedAt: now},
+	}
+
+	got := summarizeReview(domain.PullRequest{URL: "u", Review: domain.ReviewChangesRequest}, nil, reviews)
+
+	byReviewer := map[string]PRReviewEntry{}
+	for _, entry := range got.Reviews {
+		byReviewer[entry.Reviewer] = entry
+	}
+	if len(got.Reviews) != 2 {
+		t.Fatalf("review summaries = %+v, want alice + bob", got.Reviews)
+	}
+	if a := byReviewer["alice"]; a.Verdict != domain.ReviewApproved || a.Body != "looks good now" || a.URL != "url-a-new" {
+		t.Fatalf("alice entry = %+v, want latest approved with its body", a)
+	}
+	if b := byReviewer["bob"]; b.Verdict != domain.ReviewChangesRequest || b.Body != "please fix" {
+		t.Fatalf("bob entry = %+v, want changes_requested with its body", b)
 	}
 }
 

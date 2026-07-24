@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -17,6 +18,7 @@ import (
 // reviewRun mirrors the daemon's domain.ReviewRun for the CLI client.
 type reviewRun struct {
 	ID             string     `json:"id"`
+	ReviewID       string     `json:"reviewId"`
 	SessionID      string     `json:"sessionId"`
 	BatchID        string     `json:"batchId"`
 	Harness        string     `json:"harness"`
@@ -28,6 +30,21 @@ type reviewRun struct {
 	GithubReviewID string     `json:"githubReviewId"`
 	CreatedAt      time.Time  `json:"createdAt"`
 	DeliveredAt    *time.Time `json:"deliveredAt,omitempty"`
+}
+
+type reviewState struct {
+	PRURL       string     `json:"prUrl"`
+	PRNumber    int        `json:"prNumber"`
+	Title       string     `json:"title"`
+	TargetSHA   string     `json:"targetSha"`
+	Status      string     `json:"status"`
+	LatestRun   *reviewRun `json:"latestRun,omitempty"`
+	PreviousRun *reviewRun `json:"previousRun,omitempty"`
+}
+
+type listReviewsResponse struct {
+	ReviewerHandleID string        `json:"reviewerHandleId"`
+	Reviews          []reviewState `json:"reviews"`
 }
 
 // triggerReviewResponse mirrors controllers.TriggerReviewResponse. Only the
@@ -73,14 +90,46 @@ type reviewSessionOptions struct {
 	session string
 }
 
+type reviewListOptions struct {
+	json bool
+}
+
 func newReviewCommand(ctx *commandContext) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "review",
 		Short: "Manage AO code reviews of a worker's PR",
 	}
+	cmd.AddCommand(newReviewListCommand(ctx))
 	cmd.AddCommand(newReviewSubmitCommand(ctx))
-	cmd.AddCommand(newReviewStopCommand(ctx))
-	cmd.AddCommand(newReviewRestartCommand(ctx))
+	cmd.AddCommand(newReviewCancelCommand(ctx))
+	cmd.AddCommand(newReviewTriggerCommand(ctx))
+	return cmd
+}
+
+func newReviewListCommand(ctx *commandContext) *cobra.Command {
+	var opts reviewListOptions
+	cmd := &cobra.Command{
+		Use:     "ls <worker-session-id>",
+		Aliases: []string{"list"},
+		Short:   "List reviews for a worker session",
+		Args:    usageArgs(cobra.ExactArgs(1)),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			session := strings.TrimSpace(args[0])
+			if session == "" {
+				return usageError{errors.New("worker session id must not be blank")}
+			}
+			var res listReviewsResponse
+			path := "sessions/" + url.PathEscape(session) + "/reviews"
+			if err := ctx.getJSON(cmd.Context(), path, &res); err != nil {
+				return err
+			}
+			if opts.json {
+				return writeJSON(cmd.OutOrStdout(), res)
+			}
+			return writeReviewList(cmd, session, res)
+		},
+	}
+	cmd.Flags().BoolVar(&opts.json, "json", false, "Output reviews as JSON")
 	return cmd
 }
 
@@ -174,12 +223,13 @@ func (c *commandContext) submitReviewBatch(cmd *cobra.Command, session string, o
 	return err
 }
 
-func newReviewStopCommand(ctx *commandContext) *cobra.Command {
+func newReviewCancelCommand(ctx *commandContext) *cobra.Command {
 	var opts reviewSessionOptions
 	cmd := &cobra.Command{
-		Use:   "stop [worker-session-id]",
-		Short: "Cancel any running review for a worker's PR",
-		Args:  atMostOneArg,
+		Use:     "cancel [worker-session-id]",
+		Aliases: []string{"stop"},
+		Short:   "Cancel any running review for a worker's PR",
+		Args:    atMostOneArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return ctx.stopReview(cmd, args, opts)
 		},
@@ -188,12 +238,13 @@ func newReviewStopCommand(ctx *commandContext) *cobra.Command {
 	return cmd
 }
 
-func newReviewRestartCommand(ctx *commandContext) *cobra.Command {
+func newReviewTriggerCommand(ctx *commandContext) *cobra.Command {
 	var opts reviewSessionOptions
 	cmd := &cobra.Command{
-		Use:   "restart [worker-session-id]",
-		Short: "Trigger a new review pass for a worker's PR",
-		Args:  atMostOneArg,
+		Use:     "trigger [worker-session-id]",
+		Aliases: []string{"execute", "restart"},
+		Short:   "Trigger a new review pass for a worker's PR",
+		Args:    atMostOneArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return ctx.restartReview(cmd, args, opts)
 		},
@@ -239,6 +290,29 @@ func (c *commandContext) restartReview(cmd *cobra.Command, args []string, opts r
 	}
 	_, err := fmt.Fprintf(cmd.OutOrStdout(), msg, session)
 	return err
+}
+
+func writeReviewList(cmd *cobra.Command, session string, res listReviewsResponse) error {
+	out := cmd.OutOrStdout()
+	if len(res.Reviews) == 0 {
+		_, err := fmt.Fprintf(out, "No reviews found for %s.\n", session)
+		return err
+	}
+
+	tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	if _, err := fmt.Fprintln(tw, "PR\tSTATUS\tVERDICT\tTITLE"); err != nil {
+		return err
+	}
+	for _, review := range res.Reviews {
+		verdict := "-"
+		if review.LatestRun != nil && review.LatestRun.Verdict != "" {
+			verdict = review.LatestRun.Verdict
+		}
+		if _, err := fmt.Fprintf(tw, "#%d\t%s\t%s\t%s\n", review.PRNumber, review.Status, verdict, review.Title); err != nil {
+			return err
+		}
+	}
+	return tw.Flush()
 }
 
 func readReviewItems(cmd *cobra.Command, path string) ([]submitReviewItem, error) {

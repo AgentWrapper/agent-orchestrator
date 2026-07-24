@@ -114,6 +114,14 @@ const api = {
 			ipcRenderer.invoke("window:setOverlay", overlay) as Promise<void>,
 		setTrafficLightsInset: (inset: boolean) =>
 			ipcRenderer.invoke("window:setTrafficLightsInset", inset) as Promise<void>,
+		isFullScreen: () => ipcRenderer.invoke("window:isFullScreen") as Promise<boolean>,
+		onFullScreen: (listener: (fullScreen: boolean) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, fullScreen: boolean) => listener(fullScreen);
+			ipcRenderer.on("window:fullscreen", wrapped);
+			return () => {
+				ipcRenderer.off("window:fullscreen", wrapped);
+			};
+		},
 	},
 	theme: {
 		// Propagate the app's theme preference to Electron's nativeTheme so embedded

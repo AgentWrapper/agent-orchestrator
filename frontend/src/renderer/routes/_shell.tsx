@@ -16,6 +16,7 @@ import { WindowTitlebar } from "../components/WindowTitlebar";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useOpenShellTerminal } from "../hooks/useShellTerminals";
+import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
 import { refreshDaemonStatus } from "../lib/daemon-status";
@@ -92,6 +93,32 @@ function ShellLayout() {
 	const newShellTerminalNonce = useUiStore((state) => state.newShellTerminalNonce);
 	const setActiveShellTerminal = useUiStore((state) => state.setActiveShellTerminal);
 	const openShellTerminal = useOpenShellTerminal();
+	// Single subscription for sidebar clearance + drag strip (macOS no-ops inside the hook).
+	const isFullScreen = useWindowFullScreen();
+	// Drag is on immediately for a normal windowed launch. After leaving fullscreen,
+	// wait for the pad/height transition so the growing strip cannot steal clicks.
+	const [trafficLightDragActive, setTrafficLightDragActive] = useState(isMac);
+	const leftFullScreenRef = useRef(false);
+	useEffect(() => {
+		if (!isMac) return;
+		if (isFullScreen) {
+			leftFullScreenRef.current = true;
+			setTrafficLightDragActive(false);
+			return;
+		}
+		if (!leftFullScreenRef.current) {
+			setTrafficLightDragActive(true);
+			return;
+		}
+		const reducedMotion =
+			typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+		if (reducedMotion) {
+			setTrafficLightDragActive(true);
+			return;
+		}
+		const timer = window.setTimeout(() => setTrafficLightDragActive(true), 200);
+		return () => window.clearTimeout(timer);
+	}, [isFullScreen]);
 	// Seeded to the current value so a mount never opens a terminal unasked.
 	const handledShellNonceRef = useRef(newShellTerminalNonce);
 	const [isKeyboardShortcutsOpen, setIsKeyboardShortcutsOpen] = useState(false);
@@ -522,8 +549,7 @@ function ShellLayout() {
 					}
 				>
 					{/* Hang the fixed sidebar below shell chrome on Win/Linux. macOS
-              keeps a full-height sidebar so TitlebarNav can sit under the
-              traffic lights inside the sidebar header (no center-panel pad). */}
+              keeps a full-height sidebar beneath the fixed titlebar controls. */}
 					<Sidebar
 						hideEdgeBorder={isWelcomeBoard}
 						isOverlay={isSidebarPeekOpen && !isSidebarOpen}
@@ -566,15 +592,16 @@ function ShellLayout() {
 					</main>
 					<DaemonFailureBanner status={daemonStatus} />
 					{/* When ShellTopbar is hidden, keep a macOS window-drag strip over
-              the traffic-light band only (same --size-traffic-light-clearance
-              as the Sidebar header pad). TitlebarNav sits in the sidebar below
-              that band, so a taller strip would cover the toggle/arrows and
-              swallow clicks. Width matches the sidebar. */}
+              the traffic-light band only. The fixed TitlebarNav renders after
+              this strip so its no-drag buttons remain clickable. */}
 					{hideShellTopbar && isMac ? (
 						<div
 							aria-hidden="true"
-							className="fixed top-0 left-0 z-chrome h-traffic-light-clearance w-(--ao-sidebar-w,var(--size-sidebar-default))"
-							style={{ WebkitAppRegion: "drag" } as CSSProperties}
+							className={cn(
+								"fixed top-0 left-0 z-chrome w-(--ao-sidebar-w,var(--size-sidebar-default)) transition-[height] duration-200 ease-out motion-reduce:transition-none",
+								isFullScreen ? "pointer-events-none h-0" : "h-traffic-light-clearance",
+							)}
+							style={trafficLightDragActive ? ({ WebkitAppRegion: "drag" } as CSSProperties) : undefined}
 						/>
 					) : null}
 					{/* Fixed macOS titlebar cluster beside the traffic lights — rendered
@@ -587,7 +614,11 @@ function ShellLayout() {
               survive if they're processed after the drag strips they overlap.
               Rendered first, real clicks get swallowed by window-drag even
               though DOM hit-testing looks correct. */}
-					<TitlebarNav historyLocked={isWelcomeBoard} onSidebarPreviewEnter={previewSidebar} />
+					<TitlebarNav
+						historyLocked={isWelcomeBoard}
+						isFullScreen={isFullScreen}
+						onSidebarPreviewEnter={previewSidebar}
+					/>
 				</SidebarProvider>
 				<OrchestratorReplacementDialog
 					error={replacementErrorProjectId ? orchestratorReplacementErrors[replacementErrorProjectId] : undefined}

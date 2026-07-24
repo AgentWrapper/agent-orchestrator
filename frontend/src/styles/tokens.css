@@ -221,11 +221,12 @@
 	--size-titlebar-content-offset: 174px;
 	/* Clears the macOS traffic-light row used by the fixed titlebar controls. */
 	--size-traffic-light-clearance: 36px;
+	--size-traffic-light-clearance-fullscreen: var(--space-2);
 	--size-resize-handle: 7px;
 	--size-resize-handle-offset: 3px;
 	--size-kanban-glow: 130px;
 	--size-kv-label: 74px;
-	--size-notification-width: 380px;
+	--size-notification-width: 460px;
 	--size-notification-max-height: 420px;
 	--size-select-menu-max: 320px; /* agent/select dropdown scroll cap (was max-h-80) */
 	--size-notification-icon: 26px;

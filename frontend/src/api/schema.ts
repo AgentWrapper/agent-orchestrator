@@ -182,7 +182,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List unread notifications */
+        /** List notification history */
         get: operations["listNotifications"];
         put?: never;
         post?: never;
@@ -954,7 +954,9 @@ export interface components {
             supported: components["schemas"]["AgentInfo"][];
         };
         ListNotificationsResponse: {
+            nextCursor?: string;
             notifications: components["schemas"]["NotificationResponse"][];
+            unreadCount: number;
         };
         ListProjectsResponse: {
             projects: components["schemas"]["ProjectSummary"][];
@@ -979,7 +981,13 @@ export interface components {
             truncated: boolean;
         };
         MarkAllNotificationsReadResponse: {
+            /** @description Deprecated compatibility field. Always empty so mark-all responses stay bounded. */
             notifications: components["schemas"]["NotificationResponse"][];
+            /**
+             * Format: int64
+             * @description Number of notifications changed from unread to read.
+             */
+            updatedCount: number;
         };
         MarkNotificationReadRequest: {
             /**
@@ -1232,10 +1240,21 @@ export interface components {
             line?: number;
             url?: string;
         };
+        SessionPRReviewEntry: {
+            body?: string;
+            isBot?: boolean;
+            reviewUrl?: string;
+            reviewerId: string;
+            /** Format: date-time */
+            submittedAt: string;
+            /** @enum {string} */
+            verdict: "none" | "approved" | "changes_requested" | "review_required";
+        };
         SessionPRReviewSummary: {
             /** @enum {string} */
             decision: "none" | "approved" | "changes_requested" | "review_required";
             hasUnresolvedHumanComments: boolean;
+            reviews?: components["schemas"]["SessionPRReviewEntry"][];
             unresolvedBy: components["schemas"]["SessionPRUnresolvedReviewer"][];
         };
         SessionPRSummary: {
@@ -1891,10 +1910,12 @@ export interface operations {
     listNotifications: {
         parameters: {
             query?: {
-                /** @description Notification status filter. V1 supports only unread. */
-                status?: "unread";
-                /** @description Maximum notifications to return. Defaults to 50; capped at 100. */
+                /** @description Notification status filter. Defaults to unread; all includes read history. */
+                status?: "unread" | "all";
+                /** @description Maximum notifications to return. Defaults to 100. */
                 limit?: number;
+                /** @description Opaque cursor returned by the previous page. */
+                cursor?: string;
             };
             header?: never;
             path?: never;
