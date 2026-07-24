@@ -84,7 +84,6 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		sessionPrefix: config.sessionPrefix ?? "",
 		workerAgent: config.worker?.agent ?? "",
 		orchestratorAgent: config.orchestrator?.agent ?? "",
-		model: config.agentConfig?.model ?? "",
 		permissions: config.agentConfig?.permissions ?? "",
 		reviewerHarness: config.reviewers?.[0]?.harness ?? "",
 		intakeEnabled: intake.enabled ?? false,
@@ -134,7 +133,6 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						orchestrator: { ...config.orchestrator, agent: form.orchestratorAgent },
 						agentConfig: blankToUndefined({
 							...config.agentConfig,
-							model: form.model || undefined,
 							permissions: form.permissions || undefined,
 						}),
 					}
@@ -146,7 +144,6 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						orchestrator: { ...config.orchestrator, agent: form.orchestratorAgent },
 						agentConfig: blankToUndefined({
 							...config.agentConfig,
-							model: form.model || undefined,
 							permissions: form.permissions || undefined,
 						}),
 						reviewers: form.reviewerHarness ? [{ harness: form.reviewerHarness }] : undefined,
@@ -331,15 +328,6 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					{missingRequiredAgent && (
 						<p className="text-xs leading-row text-error">Worker and orchestrator agents are required.</p>
 					)}
-					<Field label="Model override" htmlFor="model">
-						<input
-							id="model"
-							className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
-							value={form.model}
-							onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
-							placeholder="(agent default)"
-						/>
-					</Field>
 					<Field label="Permission mode" htmlFor="permissionMode">
 						<PermissionModeSelect
 							id="permissionMode"
