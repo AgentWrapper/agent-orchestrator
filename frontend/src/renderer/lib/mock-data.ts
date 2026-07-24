@@ -356,8 +356,25 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 			additions: 128,
 			deletions: 31,
 			review: {
-				decision: "review_required",
+				decision: "approved",
 				hasUnresolvedHumanComments: false,
+				reviews: [
+					{
+						reviewerId: "prateek",
+						verdict: "approved",
+						submittedAt: minutesAgo(41),
+						reviewUrl: "https://github.com/me/webgl-preview/pull/52#pullrequestreview-2001",
+						body: "Pan clamping reads cleanly now and the easing feels right. Good to go.",
+					},
+					{
+						reviewerId: "codex",
+						isBot: true,
+						verdict: "approved",
+						submittedAt: minutesAgo(38),
+						reviewUrl: "https://github.com/me/webgl-preview/pull/52#pullrequestreview-2002",
+						body: "No issues found across the changed camera math.",
+					},
+				],
 				unresolvedBy: [],
 			},
 		}),
@@ -370,6 +387,23 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 			review: {
 				decision: "changes_requested",
 				hasUnresolvedHumanComments: true,
+				reviews: [
+					{
+						reviewerId: "maya",
+						verdict: "changes_requested",
+						submittedAt: minutesAgo(24),
+						reviewUrl: "https://github.com/me/webgl-preview/pull/56#pullrequestreview-1001",
+						body: "Pointer lock leaks its pointermove listener when the canvas unmounts — tear it down in the effect cleanup.",
+					},
+					{
+						reviewerId: "copilot",
+						isBot: true,
+						verdict: "none",
+						submittedAt: minutesAgo(19),
+						reviewUrl: "https://github.com/me/webgl-preview/pull/56#pullrequestreview-1002",
+						body: "Consider guarding requestPointerLock behind a user-gesture check to avoid the console warning.",
+					},
+				],
 				unresolvedBy: [
 					{
 						reviewerId: "maya",

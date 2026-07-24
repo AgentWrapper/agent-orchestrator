@@ -27,6 +27,7 @@ import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
 import { PRSummaryMeta, PRSummaryParts } from "./PRSummaryDisplay";
 import { StatusPill } from "./StatusPill";
+import { CodexIcon } from "./icons";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
@@ -121,6 +122,15 @@ function VerdictBadge({ label, tone }: { label: string; tone: "neutral" | "runni
 			{label}
 		</span>
 	);
+}
+
+// The AO reviewer runs on a configurable harness; show its own mark where we
+// have one (codex today) and fall back to the generic shield otherwise.
+function ReviewerHarnessIcon({ harness, className }: { harness: string; className?: string }) {
+	if (harness === "codex") {
+		return <CodexIcon aria-hidden="true" className={className} />;
+	}
+	return <Shield aria-hidden="true" className={className} />;
 }
 
 /**
@@ -552,7 +562,7 @@ function ReviewsView({
 
 	return (
 		<div role="tabpanel">
-			{prReviewSummaries.length > 0 ? <PullRequestReviewsSection prs={prReviewSummaries} /> : null}
+			{/* AO code reviews lead: the flow is run AO review first, then raise the PR for others. */}
 			<Section surface title="AO code reviews">
 				<ReviewPanel
 					config={projectConfigQuery.data}
@@ -569,6 +579,7 @@ function ReviewsView({
 					session={session}
 				/>
 			</Section>
+			{prReviewSummaries.length > 0 ? <PullRequestReviewsSection prs={prReviewSummaries} /> : null}
 		</div>
 	);
 }
@@ -611,7 +622,7 @@ function ReviewDisclosure({
 }) {
 	const [open, setOpen] = useState(defaultOpen);
 	return (
-		<div className="py-1.5 first:pt-0 last:pb-0">
+		<div className="py-2 first:pt-0.5 last:pb-0.5">
 			<button
 				aria-expanded={open}
 				className="-mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-center gap-2 rounded-md px-1.5 py-1.5 text-left transition-colors hover:bg-interactive-hover/30"
@@ -792,6 +803,9 @@ function ReviewPanel({
 	const harness = latest?.harness || config?.reviewers?.[0]?.harness || "claude-code";
 	const terminalEnabled = Boolean(reviewerHandleId && onOpenTerminal);
 	const reviewRunning = openReviewStates.some((reviewState) => reviewState.status === "running");
+	// The reviewer terminal only exists once a review has actually run (or is
+	// running), so keep the button out of the footer until then.
+	const reviewHasRun = reviewRunning || Boolean(latest);
 	const runAction = reviewSessionRunAction(openReviewStates, isTriggering);
 	const openReviewerTerminal = () => {
 		if (!terminalEnabled) return;
@@ -803,7 +817,7 @@ function ReviewPanel({
 		openReviewStates.every((reviewState) => reviewState.status === "ineligible");
 
 	return (
-		<div className="flex flex-col gap-2">
+		<div className="flex flex-col gap-3">
 			{error ? (
 				<p className="m-0 rounded-md border border-error/28 bg-error/8 px-2.5 py-2 text-sm-md leading-normal text-error">
 					{apiErrorMessage(error, "Review request failed")}
@@ -814,8 +828,8 @@ function ReviewPanel({
 					{notice}
 				</p>
 			) : null}
-			<p className={cn(inspectorEmptyClass, "mb-1 inline-flex min-w-0 items-center gap-1.5")}>
-				<Shield aria-hidden="true" className="size-icon-sm shrink-0 text-passive" />
+			<p className={cn(inspectorEmptyClass, "inline-flex min-w-0 items-center gap-1.5")}>
+				<ReviewerHarnessIcon className="size-icon-sm shrink-0 text-passive" harness={harness} />
 				<span className="truncate font-mono font-medium text-foreground">{harness}</span>
 				<span className="shrink-0">reviewer</span>
 			</p>
@@ -851,17 +865,19 @@ function ReviewPanel({
 					{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
 					{reviewRunning ? (isCancelling ? "Cancelling..." : "Cancel review") : runAction}
 				</Button>
-				<Button
-					className="gap-1.5 [&_svg]:size-icon-sm"
-					disabled={!terminalEnabled}
-					onClick={openReviewerTerminal}
-					size="sm"
-					type="button"
-					variant="ghost"
-				>
-					<Terminal aria-hidden="true" />
-					Open terminal
-				</Button>
+				{reviewHasRun ? (
+					<Button
+						className="gap-1.5 [&_svg]:size-icon-sm"
+						disabled={!terminalEnabled}
+						onClick={openReviewerTerminal}
+						size="sm"
+						type="button"
+						variant="ghost"
+					>
+						<Terminal aria-hidden="true" />
+						Open terminal
+					</Button>
+				) : null}
 			</div>
 		</div>
 	);
@@ -871,17 +887,36 @@ function AoReviewRow({ reviewState }: { reviewState: PRReviewState }) {
 	const verdict = reviewVerdict(reviewState);
 	const previousVerdict = previousReviewVerdict(reviewState);
 	const summary = reviewState.latestRun?.body?.trim();
+	const reviewUrl = aoReviewCommentUrl(reviewState.latestRun);
 	return (
-		<div className={cn("min-w-0", reviewState.status === "ineligible" && "opacity-70")}>
+		<div className={cn("flex min-w-0 flex-col gap-2", reviewState.status === "ineligible" && "opacity-70")}>
 			<VerdictBadge label={verdict.label} tone={verdict.tone} />
-			{summary ? <p className="mt-1.5 line-clamp-2 text-2xs leading-relaxed text-passive">{summary}</p> : null}
+			{summary ? <p className="line-clamp-2 text-2xs leading-relaxed text-passive">{summary}</p> : null}
 			{previousVerdict ? (
-				<p className={cn("mt-1.5 text-2xs font-medium", reviewerVerdictTone[previousVerdict.tone])}>
+				<p className={cn("text-2xs font-medium", reviewerVerdictTone[previousVerdict.tone])}>
 					Previous: {previousVerdict.label}
 				</p>
 			) : null}
+			{reviewUrl ? (
+				<a
+					className="inline-flex items-center gap-0.5 self-start text-2xs font-medium text-passive no-underline transition-colors hover:text-foreground"
+					href={reviewUrl}
+					target="_blank"
+					rel="noopener noreferrer"
+				>
+					View review
+					<ArrowUpRight aria-hidden="true" className="size-3 shrink-0" />
+				</a>
+			) : null}
 		</div>
 	);
+}
+
+// GitHub anchors a posted review at #pullrequestreview-<id> on the PR page; we
+// only have that link once the run has been delivered to GitHub.
+function aoReviewCommentUrl(run: PRReviewState["latestRun"]): string | null {
+	if (!run?.prUrl || !run.githubReviewId) return null;
+	return `${run.prUrl}#pullrequestreview-${run.githubReviewId}`;
 }
 
 function reviewVerdict(reviewState: PRReviewState): {
