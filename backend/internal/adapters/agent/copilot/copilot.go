@@ -151,7 +151,10 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 
 	cmd = append(cmd, binary)
 	appendApprovalFlags(&cmd, cfg.Permissions)
-	appendModelFlag(&cmd, cfg.Config)
+	// Deliberately does not forward cfg.Config.Model: --model + --resume
+	// composition is unverified against a real copilot install (see #2895
+	// and appendModelFlag). Pinned by
+	// TestGetRestoreCommandDoesNotForwardModelOverride.
 	if agentName := copilotAgentName(cfg.Session.ID, cfg.SystemPrompt, cfg.SystemPromptFile); agentName != "" {
 		cmd = append(cmd, "--agent="+agentName)
 	}
@@ -344,6 +347,15 @@ func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
 // whitespace-only value is omitted so Copilot falls back to its own default
 // resolution (COPILOT_MODEL env, or its configured default) exactly as an
 // unconfigured launch would.
+//
+// Restore-path note: this is intentionally NOT called from
+// GetRestoreCommand. An attempt to verify `--model` + `--resume`
+// composition against a real copilot install was inconclusive: the test
+// account is on the Copilot Free plan, which only grants access to "auto"
+// regardless of --model, on both launch and resume. That makes the plan
+// itself a confound, not evidence either way about whether --resume
+// honors --model. Left as a fast-follow pending verification from an
+// account with paid-plan model access (see #2895).
 func appendModelFlag(cmd *[]string, cfg ports.AgentConfig) {
 	if trimmed := strings.TrimSpace(cfg.Model); trimmed != "" {
 		*cmd = append(*cmd, "--model", trimmed)

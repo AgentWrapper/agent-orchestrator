@@ -235,8 +235,9 @@ func TestGetLaunchCommandAppendsModelFlag(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !containsSubsequence(cmd, []string{"--model", "claude-sonnet-4.5"}) {
-		t.Fatalf("command %#v does not contain --model claude-sonnet-4.5", cmd)
+	want := []string{"copilot", "--model", "claude-sonnet-4.5"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
 }
 
@@ -254,7 +255,13 @@ func TestGetLaunchCommandOmitsBlankModel(t *testing.T) {
 	}
 }
 
-func TestGetRestoreCommandAppendsModelFlag(t *testing.T) {
+// Restore path intentionally does not forward a configured model override —
+// see appendModelFlag's doc comment (issue #2895; --model + --resume
+// composition could not be verified — the test account's Copilot Free plan
+// only grants "auto" regardless of --model). This test locks that decision
+// in so a future "just mirror the launch path" edit doesn't silently wire
+// it without re-verifying.
+func TestGetRestoreCommandDoesNotForwardModelOverride(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "copilot"}
 
 	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
@@ -269,8 +276,9 @@ func TestGetRestoreCommandAppendsModelFlag(t *testing.T) {
 	if !ok {
 		t.Fatal("ok = false, want true")
 	}
-	if !containsSubsequence(cmd, []string{"--model", "claude-sonnet-4.5"}) {
-		t.Fatalf("restore command %#v does not contain --model claude-sonnet-4.5", cmd)
+	want := []string{"copilot", "--resume", "uuid-123"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v (model override must not be forwarded on restore)", cmd, want)
 	}
 }
 
