@@ -13,6 +13,8 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/gitworktree"
+	workspacerouter "github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/router"
+	scratchworkspace "github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/scratch"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
@@ -128,12 +130,12 @@ type sessionLifecycle interface {
 }
 
 // startSession builds the controller-facing session service: a session manager
-// over the selected runtime, a per-session gitworktree workspace, the shared
-// store + LCM, the per-session agent resolver, and the agent messenger. The
-// returned service is mounted at httpd APIDeps.Sessions. It also returns the
-// manager so the caller can wire Reconcile into the boot sequence.
+// over the selected runtime, routed git/scratch workspaces, the shared store +
+// LCM, the per-session agent resolver, and the agent messenger. The returned
+// service is mounted at httpd APIDeps.Sessions. It also returns the manager so
+// the caller can wire Reconcile into the boot sequence.
 func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, agents ports.AgentResolver, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
-	ws, err := gitworktree.New(gitworktree.Options{
+	gitWS, err := gitworktree.New(gitworktree.Options{
 		// Per-session worktrees live under the data dir, so a single AO_DATA_DIR
 		// override moves all durable per-user state together.
 		ManagedRoot: filepath.Join(cfg.DataDir, "worktrees"),
@@ -145,6 +147,17 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("session workspace: %w", err)
 	}
+	scratchWS, err := scratchworkspace.New(scratchworkspace.Options{
+		ManagedRoot: filepath.Join(cfg.DataDir, "worktrees"),
+	})
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("scratch session workspace: %w", err)
+	}
+	ws := workspacerouter.New(workspacerouter.Deps{
+		Git:      gitWS,
+		Scratch:  scratchWS,
+		Projects: store,
+	})
 	mgr := sessionmanager.New(sessionmanager.Deps{
 		Runtime:   runtime,
 		Agents:    agents,

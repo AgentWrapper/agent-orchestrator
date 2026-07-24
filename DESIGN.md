@@ -32,8 +32,10 @@ sections below — where they conflict, **agent-orchestrator wins**. Do not re-f
 - The one carried-over divergence still holds: the **accent is refined blue**, and
   the **terminal keeps its own palette**. Everything else tracks agent-orchestrator.
 - **Approved divergence (2026-06-10):** on macOS, a titlebar cluster (sidebar toggle +
-  back/forward history arrows, `TitlebarNav`) sits beside the traffic lights,
-  VS Code-style — the web reference has no window chrome, so no analogue exists.
+  back/forward history arrows, `TitlebarNav`) lives in the sidebar header below the
+  traffic lights — the web reference has no window chrome, so no analogue exists.
+  The toggle is pinned in the icon-rail column so it stays put during expand/collapse;
+  arrows hide when the sidebar is collapsed.
 - **Approved divergence (2026-06-10):** the session inspector rail is fully
   collapsible, built on the shadcn resizable primitive (`pnpm dlx shadcn add
 resizable`, react-resizable-panels v4 `collapsible` panel + imperative API,
@@ -41,12 +43,11 @@ resizable`, react-resizable-panels v4 `collapsible` panel + imperative API,
   content keeps a stable min-width (yyork-style, no mid-animation reflow). Toggled
   by a `PanelRight` icon button in the session topbar and ⌘⇧B; open state + split
   width persist. The AO reference keeps the rail always visible.
-- **Approved divergence (2026-06-12):** the shell topbar spans the full window
-  width and the sidebar is pinned below it (`top-14`), so the sidebar's right
-  border stops at the header instead of cutting through the macOS traffic-light
-  strip (user-requested). The AO reference keeps a full-height sidebar with the
-  header beside it. On macOS the header always pads past the lights + TitlebarNav
-  cluster (`.is-under-titlebar-nav`, 180px).
+- **Approved divergence (2026-06-12):** on Win/Linux the shell topbar spans the
+  window and the sidebar hangs below it so the sidebar border stops at the header.
+  On macOS the shell topbar is hidden (in-panel actions) and the sidebar is
+  full-height; traffic-light clearance uses `--size-traffic-light-clearance` for
+  both the sidebar header pad and the window-drag strip.
 
 ## Product Context
 

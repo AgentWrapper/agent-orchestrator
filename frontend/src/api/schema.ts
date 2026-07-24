@@ -182,7 +182,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List unread notifications */
+        /** List notification history */
         get: operations["listNotifications"];
         put?: never;
         post?: never;
@@ -305,7 +305,8 @@ export interface paths {
         };
         /** Fetch one project; discriminates ok vs degraded */
         get: operations["getProject"];
-        put?: never;
+        /** Atomically replace a project's display name and config */
+        put: operations["updateProjectSettings"];
         post?: never;
         /** Remove a project; stops sessions, cleans workspaces, unregisters */
         delete: operations["removeProject"];
@@ -846,7 +847,8 @@ export interface components {
         };
         DegradedProject: {
             id: string;
-            kind: string;
+            /** @enum {string} */
+            kind: "single_repo" | "workspace" | "scratch";
             name: string;
             path: string;
             resolveError: string;
@@ -915,7 +917,9 @@ export interface components {
             supported: components["schemas"]["AgentInfo"][];
         };
         ListNotificationsResponse: {
+            nextCursor?: string;
             notifications: components["schemas"]["NotificationResponse"][];
+            unreadCount: number;
         };
         ListProjectsResponse: {
             projects: components["schemas"]["ProjectSummary"][];
@@ -940,7 +944,13 @@ export interface components {
             truncated: boolean;
         };
         MarkAllNotificationsReadResponse: {
+            /** @description Deprecated compatibility field. Always empty so mark-all responses stay bounded. */
             notifications: components["schemas"]["NotificationResponse"][];
+            /**
+             * Format: int64
+             * @description Number of notifications changed from unread to read.
+             */
+            updatedCount: number;
         };
         MarkNotificationReadRequest: {
             /**
@@ -998,6 +1008,7 @@ export interface components {
             latestRun?: components["schemas"]["ReviewRun"];
             prNumber: number;
             prUrl: string;
+            previousRun?: components["schemas"]["ReviewRun"];
             /** @enum {string} */
             status: "needs_review" | "running" | "up_to_date" | "changes_requested" | "ineligible";
             targetSha: string;
@@ -1013,7 +1024,8 @@ export interface components {
             config?: components["schemas"]["ProjectConfig"];
             defaultBranch: string;
             id: string;
-            kind: string;
+            /** @enum {string} */
+            kind: "single_repo" | "workspace" | "scratch";
             name: string;
             path: string;
             repo: string;
@@ -1047,7 +1059,8 @@ export interface components {
         };
         ProjectSummary: {
             id: string;
-            kind: string;
+            /** @enum {string} */
+            kind: "single_repo" | "workspace" | "scratch";
             name: string;
             orchestratorAgent?: string;
             path: string;
@@ -1183,10 +1196,21 @@ export interface components {
             line?: number;
             url?: string;
         };
+        SessionPRReviewEntry: {
+            body?: string;
+            isBot?: boolean;
+            reviewUrl?: string;
+            reviewerId: string;
+            /** Format: date-time */
+            submittedAt: string;
+            /** @enum {string} */
+            verdict: "none" | "approved" | "changes_requested" | "review_required";
+        };
         SessionPRReviewSummary: {
             /** @enum {string} */
             decision: "none" | "approved" | "changes_requested" | "review_required";
             hasUnresolvedHumanComments: boolean;
+            reviews?: components["schemas"]["SessionPRReviewEntry"][];
             unresolvedBy: components["schemas"]["SessionPRUnresolvedReviewer"][];
         };
         SessionPRSummary: {
@@ -1290,6 +1314,11 @@ export interface components {
             projectId: string;
             prompt?: string;
         };
+        SpawnSessionResponse: {
+            promptBytes: number;
+            session: components["schemas"]["ControllersSessionView"];
+            systemPromptBytes: number;
+        };
         SubmitReviewInput: {
             /** @description Review body recorded by AO. Required for changes_requested. */
             body?: string;
@@ -1328,6 +1357,10 @@ export interface components {
         UnregisterPushDeviceResponse: {
             deleted: boolean;
             token: string;
+        };
+        UpdateProjectSettingsInput: {
+            config: components["schemas"]["ProjectConfig"];
+            displayName: string;
         };
         WorkspaceFileResponse: {
             additions: number;
@@ -1818,10 +1851,12 @@ export interface operations {
     listNotifications: {
         parameters: {
             query?: {
-                /** @description Notification status filter. V1 supports only unread. */
-                status?: "unread";
-                /** @description Maximum notifications to return. Defaults to 50; capped at 100. */
+                /** @description Notification status filter. Defaults to unread; all includes read history. */
+                status?: "unread" | "all";
+                /** @description Maximum notifications to return. Defaults to 100. */
                 limit?: number;
+                /** @description Opaque cursor returned by the previous page. */
+                cursor?: string;
             };
             header?: never;
             path?: never;
@@ -2278,6 +2313,60 @@ export interface operations {
             };
         };
     };
+    updateProjectSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project identifier (registry key). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateProjectSettingsInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
     removeProject: {
         parameters: {
             query?: never;
@@ -2700,7 +2789,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SessionResponse"];
+                    "application/json": components["schemas"]["SpawnSessionResponse"];
                 };
             };
             /** @description Bad Request */

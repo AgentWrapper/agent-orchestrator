@@ -107,7 +107,6 @@ describe("NewTaskDialog", () => {
 				harness: undefined,
 				issueId: "Fix fallback renderer",
 				prompt: "Restore the fallback renderer after WebGL init fails.",
-				branch: undefined,
 			},
 		});
 		expect(onCreated).toHaveBeenCalledWith("task-1");
@@ -225,6 +224,41 @@ describe("NewTaskDialog", () => {
 
 		expect(await screen.findByText("Title and brief are required.")).toBeInTheDocument();
 		expect(postMock).not.toHaveBeenCalled();
+	});
+
+	it("hides the branch field for scratch projects and omits branch from the spawn request", async () => {
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") {
+				return {
+					data: {
+						supported: [{ id: "claude-code", label: "Claude Code" }],
+						installed: [{ id: "claude-code", label: "Claude Code", authStatus: "authorized" }],
+						authorized: [{ id: "claude-code", label: "Claude Code", authStatus: "authorized" }],
+					},
+					error: undefined,
+				};
+			}
+			return {
+				data: {
+					status: "ok",
+					project: { id: "proj-1", kind: "scratch", config: { worker: { agent: "claude-code" } } },
+				},
+				error: undefined,
+			};
+		});
+
+		renderDialog();
+		const user = userEvent.setup();
+		await waitForAgentCatalog();
+
+		expect(screen.queryByLabelText("Branch")).not.toBeInTheDocument();
+
+		await user.type(screen.getByLabelText("Title"), "Try scratch");
+		await user.type(screen.getByLabelText("Brief"), "Build a quick prototype in scratch.");
+		await user.click(screen.getByRole("button", { name: "Start task" }));
+
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		expect(spawnBody()).not.toHaveProperty("branch");
 	});
 
 	it("submits on Enter and inserts a newline on Shift+Enter in the brief", async () => {

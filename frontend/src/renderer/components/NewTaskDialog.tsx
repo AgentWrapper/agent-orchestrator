@@ -68,6 +68,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 		onSuccess: (next) => queryClient.setQueryData(agentsQueryKey, next),
 	});
 	const defaultWorkerAgent = projectQuery.data?.config?.worker?.agent ?? "";
+	const isScratchProject = projectQuery.data?.kind === "scratch";
 	const agentCatalog = agentsQuery.data;
 
 	useEffect(() => {
@@ -106,16 +107,21 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 		setError(undefined);
 		void captureRendererEvent("ao.renderer.task_create_requested", { project_id: projectId });
 		try {
+			const body: components["schemas"]["SpawnSessionRequest"] = {
+				projectId,
+				kind: "worker",
+				harness: agentTouched && agent ? (agent as AgentProvider) : undefined,
+				issueId: cleanTitle,
+				prompt: cleanPrompt,
+			};
+			if (!isScratchProject && cleanBranch) {
+				body.branch = cleanBranch;
+			}
+			if (attachments.length > 0) {
+				body.attachments = toPayload();
+			}
 			const { data, error: apiError } = await apiClient.POST("/api/v1/sessions", {
-				body: {
-					projectId,
-					kind: "worker",
-					harness: agentTouched && agent ? (agent as AgentProvider) : undefined,
-					issueId: cleanTitle,
-					prompt: cleanPrompt,
-					branch: cleanBranch || undefined,
-					attachments: attachments.length > 0 ? toPayload() : undefined,
-				},
+				body,
 			});
 			if (apiError) throw new Error(apiErrorMessage(apiError, "Unable to start task"));
 			if (!data?.session?.id) throw new Error("Task creation returned no session");
@@ -275,7 +281,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 							<p className="text-caption text-muted-foreground">Enter to start · Shift+Enter for a new line</p>
 						</div>
 
-						<div className="grid gap-3 sm:grid-cols-[1fr_1fr]">
+						<div className={isScratchProject ? "grid gap-3" : "grid gap-3 sm:grid-cols-[1fr_1fr]"}>
 							<div className="space-y-1.5">
 								<RequiredAgentField
 									id={agentId}
@@ -300,17 +306,19 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 									{refreshAgentsMutation.isPending ? "Refreshing agents..." : "Refresh agents"}
 								</button>
 							</div>
-							<div className="space-y-1.5">
-								<Label className="text-xs font-medium text-muted-foreground" htmlFor={branchId}>
-									Branch
-								</Label>
-								<Input
-									id={branchId}
-									placeholder="optional"
-									value={branch}
-									onChange={(event) => setBranch(event.target.value)}
-								/>
-							</div>
+							{!isScratchProject && (
+								<div className="space-y-1.5">
+									<Label className="text-xs font-medium text-muted-foreground" htmlFor={branchId}>
+										Branch
+									</Label>
+									<Input
+										id={branchId}
+										placeholder="optional"
+										value={branch}
+										onChange={(event) => setBranch(event.target.value)}
+									/>
+								</div>
+							)}
 						</div>
 
 						{error && (

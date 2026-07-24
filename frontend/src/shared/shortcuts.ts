@@ -14,8 +14,9 @@ export type ShortcutChord = {
 	alt: boolean;
 };
 
+// prettier-ignore
 export type AppShortcutId =
-	"new-session" | "new-shell-terminal" | "keyboard-shortcuts" | "toggle-sidebar" | "open-project" | "toggle-inspector";
+	"new-session" | "new-shell-terminal" | "keyboard-shortcuts" | "toggle-sidebar" | "open-project" | "toggle-inspector" | "command-palette" | "open-settings" | "previous-session" | "next-session" | "focus-terminal";
 
 export type ShortcutCategory = "General" | "Navigation" | "Session";
 
@@ -25,7 +26,6 @@ export type ShortcutDefinition = {
 	category: ShortcutCategory;
 	mac: readonly string[];
 	windowsLinux: readonly string[];
-	context?: string;
 };
 
 export const SHORTCUT_CATEGORIES: readonly ShortcutCategory[] = ["General", "Navigation", "Session"];
@@ -55,6 +55,20 @@ export const APP_SHORTCUTS: readonly ShortcutDefinition[] = [
 		windowsLinux: ["Ctrl", "/"],
 	},
 	{
+		id: "command-palette",
+		label: "Open command palette",
+		category: "General",
+		mac: ["⌘", "K"],
+		windowsLinux: ["Ctrl", "K"],
+	},
+	{
+		id: "open-settings",
+		label: "Open settings",
+		category: "General",
+		mac: ["⌘", ","],
+		windowsLinux: ["Ctrl", ","],
+	},
+	{
 		id: "toggle-sidebar",
 		label: "Toggle sidebar",
 		category: "General",
@@ -67,7 +81,20 @@ export const APP_SHORTCUTS: readonly ShortcutDefinition[] = [
 		category: "Navigation",
 		mac: ["⌘", "1–9"],
 		windowsLinux: ["Ctrl", "1–9"],
-		context: "When that project exists",
+	},
+	{
+		id: "previous-session",
+		label: "Previous session",
+		category: "Navigation",
+		mac: ["⌘", "Alt", "↑"],
+		windowsLinux: ["Ctrl", "PageUp"],
+	},
+	{
+		id: "next-session",
+		label: "Next session",
+		category: "Navigation",
+		mac: ["⌘", "Alt", "↓"],
+		windowsLinux: ["Ctrl", "PageDown"],
 	},
 	{
 		id: "toggle-inspector",
@@ -75,7 +102,13 @@ export const APP_SHORTCUTS: readonly ShortcutDefinition[] = [
 		category: "Session",
 		mac: ["⌘", "Shift", "B"],
 		windowsLinux: ["Ctrl", "Shift", "B"],
-		context: "Session view",
+	},
+	{
+		id: "focus-terminal",
+		label: "Focus terminal",
+		category: "Session",
+		mac: ["⌘", "Shift", "T"],
+		windowsLinux: ["Ctrl", "Shift", "T"],
 	},
 ];
 
@@ -89,6 +122,10 @@ export function shortcutKeys(shortcut: ShortcutDefinition, isMac: boolean): read
 export const NEW_SESSION_SHORTCUT_CHANNEL = "app:new-session";
 export const KEYBOARD_SHORTCUTS_HELP_CHANNEL = "app:keyboard-shortcuts-help";
 export const NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL = "app:new-shell-terminal";
+export const OPEN_SETTINGS_SHORTCUT_CHANNEL = "app:open-settings";
+export const PREVIOUS_SESSION_SHORTCUT_CHANNEL = "app:previous-session";
+export const NEXT_SESSION_SHORTCUT_CHANNEL = "app:next-session";
+export const FOCUS_TERMINAL_SHORTCUT_CHANNEL = "app:focus-terminal";
 
 // New session: ⌘N on macOS, Ctrl+Shift+N on Windows/Linux. Plain Ctrl+N is a
 // live terminal keystroke (readline/vim "next line"), so the non-mac binding
@@ -131,4 +168,34 @@ export function matchesKeyboardShortcutsHelpShortcut(chord: ShortcutChord, isMac
 	return isMac
 		? chord.meta && !chord.ctrl && !chord.alt && !chord.shift
 		: chord.ctrl && !chord.meta && !chord.alt && !chord.shift;
+}
+
+export function matchesOpenSettingsShortcut(chord: ShortcutChord, isMac: boolean): boolean {
+	if (chord.key !== ",") return false;
+	return isMac
+		? chord.meta && !chord.ctrl && !chord.alt && !chord.shift
+		: chord.ctrl && !chord.meta && !chord.alt && !chord.shift;
+}
+
+export function matchesPreviousSessionShortcut(chord: ShortcutChord, isMac: boolean): boolean {
+	if (isMac) {
+		return (chord.key === "ArrowUp" || chord.key === "Up") && chord.meta && chord.alt && !chord.ctrl && !chord.shift;
+	}
+	return chord.key === "PageUp" && chord.ctrl && !chord.meta && !chord.alt && !chord.shift;
+}
+
+export function matchesNextSessionShortcut(chord: ShortcutChord, isMac: boolean): boolean {
+	if (isMac) {
+		return (
+			(chord.key === "ArrowDown" || chord.key === "Down") && chord.meta && chord.alt && !chord.ctrl && !chord.shift
+		);
+	}
+	return chord.key === "PageDown" && chord.ctrl && !chord.meta && !chord.alt && !chord.shift;
+}
+
+export function matchesFocusTerminalShortcut(chord: ShortcutChord, isMac: boolean): boolean {
+	if (chord.key.toLowerCase() !== "t") return false;
+	return isMac
+		? chord.meta && chord.shift && !chord.ctrl && !chord.alt
+		: chord.ctrl && chord.shift && !chord.meta && !chord.alt;
 }

@@ -295,3 +295,137 @@ func TestReviewRestartMissingSessionIsUsageError(t *testing.T) {
 		t.Fatalf("exit code = %d, want 2 (usage); err=%v", got, err)
 	}
 }
+
+func TestReviewListGetsReviews(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := reviewServer(t, http.StatusOK, `{
+		"reviewerHandleId":"handle-1",
+		"reviews":[{
+			"prUrl":"https://github.com/example/repo/pull/42",
+			"prNumber":42,
+			"title":"Fix session resume",
+			"targetSha":"abc123",
+			"status":"changes_requested",
+			"latestRun":{"id":"run-1","reviewId":"review-1","verdict":"changes_requested"}
+		}]
+	}`)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, aliveDeps(), "review", "ls", "mer-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if capture.method != http.MethodGet || capture.path != "/api/v1/sessions/mer-1/reviews" {
+		t.Fatalf("request = %s %s", capture.method, capture.path)
+	}
+	for _, want := range []string{"PR", "STATUS", "VERDICT", "TITLE", "#42", "changes_requested", "Fix session resume"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("stdout = %q, want %q", out, want)
+		}
+	}
+}
+
+func TestReviewListJSONPreservesResponse(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, _ := reviewServer(t, http.StatusOK, `{
+		"reviewerHandleId":"handle-1",
+		"reviews":[{
+			"prUrl":"https://github.com/example/repo/pull/42",
+			"prNumber":42,
+			"title":"Fix session resume",
+			"targetSha":"abc123",
+			"status":"running",
+			"latestRun":{"id":"run-1","reviewId":"review-1","status":"running"},
+			"previousRun":{"id":"run-0","reviewId":"review-1","status":"completed","verdict":"approved"}
+		}]
+	}`)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, aliveDeps(), "review", "ls", "mer-1", "--json")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	var res listReviewsResponse
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+	if res.ReviewerHandleID != "handle-1" || len(res.Reviews) != 1 {
+		t.Fatalf("response = %+v", res)
+	}
+	if res.Reviews[0].LatestRun == nil || res.Reviews[0].LatestRun.ReviewID != "review-1" {
+		t.Fatalf("latest run = %+v", res.Reviews[0].LatestRun)
+	}
+	if res.Reviews[0].PreviousRun == nil || res.Reviews[0].PreviousRun.ID != "run-0" {
+		t.Fatalf("previous run = %+v", res.Reviews[0].PreviousRun)
+	}
+}
+
+func TestReviewListEmpty(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, _ := reviewServer(t, http.StatusOK, `{"reviewerHandleId":"","reviews":[]}`)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, aliveDeps(), "review", "list", "mer-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if !strings.Contains(out, "No reviews found for mer-1.") {
+		t.Fatalf("stdout = %q", out)
+	}
+}
+
+func TestReviewListRequiresExactlyOneArgument(t *testing.T) {
+	setConfigEnv(t)
+
+	for _, args := range [][]string{
+		{"review", "ls"},
+		{"review", "ls", "mer-1", "mer-2"},
+	} {
+		_, _, err := executeCLI(t, aliveDeps(), args...)
+		if got := ExitCode(err); got != 2 {
+			t.Fatalf("args = %v, exit code = %d, want 2; err=%v", args, got, err)
+		}
+	}
+}
+
+func TestReviewListSurfacesDaemonError(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, _ := reviewServer(t, http.StatusNotFound, `{"message":"session not found","code":"SESSION_NOT_FOUND","requestId":"req-2"}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, aliveDeps(), "review", "ls", "missing")
+	if got := ExitCode(err); got != 1 {
+		t.Fatalf("exit code = %d, want 1; err=%v", got, err)
+	}
+	for _, want := range []string{"session not found", "SESSION_NOT_FOUND", "req-2"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("err = %q, want %q", err, want)
+		}
+	}
+}
+
+func TestReviewActionCommandNames(t *testing.T) {
+	tests := []struct {
+		name string
+		cmd  string
+		path string
+	}{
+		{name: "cancel", cmd: "cancel", path: "/api/v1/sessions/mer-1/reviews/cancel"},
+		{name: "trigger", cmd: "trigger", path: "/api/v1/sessions/mer-1/reviews/trigger"},
+		{name: "execute alias", cmd: "execute", path: "/api/v1/sessions/mer-1/reviews/trigger"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := setConfigEnv(t)
+			srv, capture := reviewServer(t, http.StatusOK, `{}`)
+			writeRunFileFor(t, cfg, srv)
+
+			if _, errOut, err := executeCLI(t, aliveDeps(), "review", tt.cmd, "mer-1"); err != nil {
+				t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+			}
+			if capture.method != http.MethodPost || capture.path != tt.path {
+				t.Fatalf("request = %s %s", capture.method, capture.path)
+			}
+		})
+	}
+}
