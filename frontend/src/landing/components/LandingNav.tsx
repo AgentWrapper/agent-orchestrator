@@ -84,13 +84,21 @@ const navLinks = [
 	{ label: "Docs", href: "/docs/" },
 ];
 
-export function LandingNav() {
+type LandingNavProps = {
+	sectionHrefPrefix?: string;
+};
+
+export function LandingNav({ sectionHrefPrefix = "" }: LandingNavProps = {}) {
 	const [open, setOpen] = useState(false);
 	const navRef = useRef<HTMLDivElement>(null);
 	const innerRef = useRef<HTMLDivElement>(null);
 	const { stars } = useGitHubRepoFacts();
 	const downloadTarget = useDownloadTarget();
 	const downloadHref = downloadTarget?.href ?? RELEASE_URL;
+	const resolvedNavLinks = navLinks.map((item) => ({
+		...item,
+		href: item.href.startsWith("#") ? `${sectionHrefPrefix}${item.href}` : item.href,
+	}));
 
 	useGSAP(() => {
 		// Shrink + hide-on-scroll only on desktop (>=768px). On mobile/tablet the
@@ -152,7 +160,7 @@ export function LandingNav() {
 				</Link>
 
 				<nav className="absolute left-1/2 hidden -translate-x-1/2 items-center gap-7 md:flex" aria-label="Primary">
-					{navLinks.map((item) =>
+					{resolvedNavLinks.map((item) =>
 						item.href.startsWith("/") ? (
 							<Link
 								key={item.label}
@@ -229,7 +237,7 @@ export function LandingNav() {
 					id="mobile-navigation-menu"
 					className="absolute inset-x-0 top-full mt-4 flex flex-col gap-1 rounded-2xl border border-[color:var(--border)] bg-[color:var(--bg)]/95 p-4 mx-4 backdrop-blur-xl shadow-2xl md:hidden"
 				>
-					{navLinks.map((item) =>
+					{resolvedNavLinks.map((item) =>
 						item.href.startsWith("/") ? (
 							<Link
 								key={item.label}

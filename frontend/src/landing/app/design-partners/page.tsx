@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
-import Image from "next/image";
-import Link from "next/link";
 import { LandingFooter } from "../../components/LandingFooter";
+import { LandingNav } from "../../components/LandingNav";
 import { ScrollRevealProvider } from "../../components/ScrollRevealProvider";
 
 export const metadata: Metadata = {
@@ -287,51 +286,11 @@ function ChevronIcon({ className = "" }: IconProps) {
 	);
 }
 
-function PartnersNav() {
-	return (
-		<header className="border-b border-[color:var(--border)]">
-			<div className="container-page flex h-16 items-center justify-between">
-				<Link href="/" className="inline-flex items-center gap-3">
-					<Image
-						src="/ao-logo-transparent.png"
-						alt="Agent Orchestrator"
-						width={32}
-						height={32}
-						className="h-8 w-8 object-contain"
-					/>
-					<span className="text-[15px] font-semibold text-[color:var(--fg)]">Agent Orchestrator</span>
-				</Link>
-				<nav className="flex items-center gap-5">
-					<Link href="/" className="landing-nav-link hidden text-[13px] font-medium sm:inline-block">
-						Home
-					</Link>
-					<a
-						href="https://github.com/AgentWrapper/agent-orchestrator"
-						target="_blank"
-						rel="noreferrer"
-						className="landing-nav-link hidden text-[13px] font-medium sm:inline-block"
-					>
-						GitHub
-					</a>
-					<a
-						href={CAL_URL}
-						target="_blank"
-						rel="noreferrer"
-						className="hero-pressable btn-primary inline-flex h-9 items-center justify-center rounded-[6px] px-4 text-[13px] font-semibold"
-					>
-						Book a discovery call
-					</a>
-				</nav>
-			</div>
-		</header>
-	);
-}
-
 export default function DesignPartnersPage() {
 	return (
 		<ScrollRevealProvider>
 			<div className="landing-page relative z-10 min-h-dvh">
-				<PartnersNav />
+				<LandingNav sectionHrefPrefix="/" />
 
 				{/* Hero */}
 				<section className="relative overflow-hidden pt-[clamp(80px,10vw,140px)] pb-[clamp(64px,8vw,100px)]">
