@@ -1094,6 +1094,51 @@ func TestSpawnOrchestratorNoCleanReturnsExistingWhenActiveExists(t *testing.T) {
 	}
 }
 
+// TestSpawnOrchestratorNoCleanReturnsMostRecentlyActiveAmongDuplicates locks
+// ensure/reuse ranking: when more than one live orchestrator exists, return the
+// one with the most recent agent activity — not the most recently created empty
+// replacement. CreatedAt-first ranking is what made "Open Orchestrator" land on
+// a cold session while history stayed on an older still-live orchestrator.
+func TestSpawnOrchestratorNoCleanReturnsMostRecentlyActiveAmongDuplicates(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	olderActive := time.Date(2026, 1, 3, 12, 0, 0, 0, time.UTC)
+	newerCreated := time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC)
+	st.sessions["mer-3"] = domain.SessionRecord{
+		ID:        "mer-3",
+		ProjectID: "mer",
+		Kind:      domain.KindOrchestrator,
+		CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		UpdatedAt: time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
+		Activity:  domain.Activity{State: domain.ActivityActive, LastActivityAt: olderActive},
+	}
+	st.sessions["mer-4"] = domain.SessionRecord{
+		ID:        "mer-4",
+		ProjectID: "mer",
+		Kind:      domain.KindOrchestrator,
+		CreatedAt: newerCreated,
+		UpdatedAt: newerCreated,
+		Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: newerCreated},
+	}
+
+	fc := &fakeCommander{}
+	svc := &Service{manager: fc, store: st}
+
+	got, err := svc.SpawnOrchestrator(context.Background(), "mer", false)
+	if err != nil {
+		t.Fatalf("SpawnOrchestrator: %v", err)
+	}
+	if got.ID != "mer-3" {
+		t.Fatalf("returned id = %q, want most recently active orchestrator mer-3", got.ID)
+	}
+	if fc.spawned {
+		t.Fatal("manager.Spawn must NOT be called when an active orchestrator already exists")
+	}
+	if len(st.sessions) != 2 {
+		t.Fatalf("session count = %d, want 2 (no extra spawn)", len(st.sessions))
+	}
+}
+
 // TestSpawnOrchestratorNoCleanSpawnsWhenNoneExists: clean=false spawns a new
 // orchestrator when no active one exists for the project.
 func TestSpawnOrchestratorNoCleanSpawnsWhenNoneExists(t *testing.T) {

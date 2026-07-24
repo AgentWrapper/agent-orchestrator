@@ -381,12 +381,20 @@ func newestSession(sessions []domain.Session) domain.Session {
 	return newest
 }
 
+// sessionNewer ranks orchestrators for ensure/reuse: prefer the one that has
+// been used most recently (activity), not merely the most recently created.
+// CreatedAt-first ranking made POST /orchestrators (clean=false) and the UI
+// "Open Orchestrator" control attach to a brand-new empty session when an
+// older still-live orchestrator held the conversation history.
 func sessionNewer(a, b domain.SessionRecord) bool {
-	if !a.CreatedAt.Equal(b.CreatedAt) {
-		return a.CreatedAt.After(b.CreatedAt)
+	if !a.Activity.LastActivityAt.Equal(b.Activity.LastActivityAt) {
+		return a.Activity.LastActivityAt.After(b.Activity.LastActivityAt)
 	}
 	if !a.UpdatedAt.Equal(b.UpdatedAt) {
 		return a.UpdatedAt.After(b.UpdatedAt)
+	}
+	if !a.CreatedAt.Equal(b.CreatedAt) {
+		return a.CreatedAt.After(b.CreatedAt)
 	}
 	return string(a.ID) > string(b.ID)
 }

@@ -261,6 +261,16 @@ export function findProjectOrchestrator(
 	return newestActiveOrchestrator(workspace?.sessions ?? []);
 }
 
+/**
+ * The project's most recently active live orchestrator.
+ *
+ * When multiple orchestrators are still non-terminated (overlap during
+ * replacement, accidental duplicates), prefer the one the user was actually
+ * talking to — most recent agent activity, then updatedAt — over the
+ * most-recently-created row. Ranking by createdAt alone sent "Open
+ * Orchestrator" to a brand-new empty session while history lived on an older
+ * still-live orchestrator (#1362 / empty-history-on-click reports).
+ */
 export function newestActiveOrchestrator(sessions: WorkspaceSession[]): WorkspaceSession | undefined {
 	const active = sessions.filter((session) => isOrchestratorSession(session) && sessionIsActive(session));
 	return active.reduce<WorkspaceSession | undefined>(
@@ -270,12 +280,17 @@ export function newestActiveOrchestrator(sessions: WorkspaceSession[]): Workspac
 }
 
 function sessionNewer(a: WorkspaceSession, b: WorkspaceSession): boolean {
-	const aCreated = timestamp(a.createdAt);
-	const bCreated = timestamp(b.createdAt);
-	if (aCreated !== bCreated) return aCreated > bCreated;
+	// Prefer the orchestrator that has been used most recently (live agent
+	// activity), not merely the one that was spawned last.
+	const aActivity = timestamp(a.activity?.lastActivityAt);
+	const bActivity = timestamp(b.activity?.lastActivityAt);
+	if (aActivity !== bActivity) return aActivity > bActivity;
 	const aUpdated = timestamp(a.updatedAt);
 	const bUpdated = timestamp(b.updatedAt);
 	if (aUpdated !== bUpdated) return aUpdated > bUpdated;
+	const aCreated = timestamp(a.createdAt);
+	const bCreated = timestamp(b.createdAt);
+	if (aCreated !== bCreated) return aCreated > bCreated;
 	return a.id > b.id;
 }
 
@@ -355,7 +370,7 @@ export function orchestratorHealth(workspace: WorkspaceSummary, restarting = fal
 		return {
 			state: "duplicates",
 			message:
-				"Multiple orchestrators are active. The newest one is used; stale ones will be cleaned up on daemon reconcile.",
+				"Multiple orchestrators are active. The most recently active one is used; stale ones will be cleaned up on daemon reconcile.",
 		};
 	}
 	const orchestrator = newestActiveOrchestrator(workspace.sessions);
