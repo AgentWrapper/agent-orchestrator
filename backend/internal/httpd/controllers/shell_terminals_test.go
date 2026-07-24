@@ -17,11 +17,14 @@ import (
 )
 
 type fakeShellTerminalService struct {
-	gotOpenInput shelltermsvc.OpenShellTerminalInput
-	gotCloseID   string
-	opened       shelltermsvc.ShellTerminal
-	listed       []shelltermsvc.ShellTerminal
-	err          error
+	gotOpenInput   shelltermsvc.OpenShellTerminalInput
+	gotCloseID     string
+	gotRenameID    string
+	gotRenameTitle string
+	opened         shelltermsvc.ShellTerminal
+	renamed        shelltermsvc.ShellTerminal
+	listed         []shelltermsvc.ShellTerminal
+	err            error
 }
 
 func (f *fakeShellTerminalService) OpenShellTerminal(_ context.Context, in shelltermsvc.OpenShellTerminalInput) (shelltermsvc.ShellTerminal, error) {
@@ -31,6 +34,12 @@ func (f *fakeShellTerminalService) OpenShellTerminal(_ context.Context, in shell
 
 func (f *fakeShellTerminalService) ListShellTerminalsForCurrentAppRun(context.Context) ([]shelltermsvc.ShellTerminal, error) {
 	return f.listed, f.err
+}
+
+func (f *fakeShellTerminalService) RenameShellTerminal(_ context.Context, handleID, title string) (shelltermsvc.ShellTerminal, error) {
+	f.gotRenameID = handleID
+	f.gotRenameTitle = title
+	return f.renamed, f.err
 }
 
 func (f *fakeShellTerminalService) CloseShellTerminal(_ context.Context, handleID string) error {
@@ -149,6 +158,39 @@ func TestShellTerminalsAPI_CloseUnknownHandleReturnsNotFoundEnvelope(t *testing.
 	}
 }
 
+func TestShellTerminalsAPI_RenameReturnsUpdatedTerminal(t *testing.T) {
+	renamed := sampleShellTerminal()
+	renamed.Title = "deploy"
+	svc := &fakeShellTerminalService{renamed: renamed}
+	srv := newShellTerminalTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "PATCH", "/api/v1/shell-terminals/shellterm-abc123", `{"title":"deploy"}`)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", status, body)
+	}
+	if svc.gotRenameID != "shellterm-abc123" || svc.gotRenameTitle != "deploy" {
+		t.Errorf("rename args = (%q, %q)", svc.gotRenameID, svc.gotRenameTitle)
+	}
+	var resp struct {
+		ShellTerminal struct {
+			Title string `json:"title"`
+		} `json:"shellTerminal"`
+	}
+	mustJSON(t, body, &resp)
+	if resp.ShellTerminal.Title != "deploy" {
+		t.Errorf("response title = %q, want deploy", resp.ShellTerminal.Title)
+	}
+}
+
+func TestShellTerminalsAPI_RenameRejectsMalformedBody(t *testing.T) {
+	srv := newShellTerminalTestServer(t, &fakeShellTerminalService{})
+
+	body, status, _ := doRequest(t, srv, "PATCH", "/api/v1/shell-terminals/shellterm-abc123", "{not json")
+	if status != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", status, body)
+	}
+}
+
 // A daemon built without the service must answer the locked 501 envelope, not
 // panic on a nil interface.
 func TestShellTerminalsAPI_NotImplementedWithoutService(t *testing.T) {
@@ -157,6 +199,7 @@ func TestShellTerminalsAPI_NotImplementedWithoutService(t *testing.T) {
 	for _, tc := range []struct{ method, path string }{
 		{"GET", "/api/v1/shell-terminals"},
 		{"POST", "/api/v1/shell-terminals"},
+		{"PATCH", "/api/v1/shell-terminals/shellterm-abc123"},
 		{"DELETE", "/api/v1/shell-terminals/shellterm-abc123"},
 	} {
 		body, status, _ := doRequest(t, srv, tc.method, tc.path, "")

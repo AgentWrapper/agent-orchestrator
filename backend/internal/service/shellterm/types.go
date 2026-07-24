@@ -27,6 +27,7 @@ import (
 type ShellTerminal struct {
 	HandleID   string           `json:"handleId"`
 	ProjectID  domain.ProjectID `json:"projectId,omitempty"`
+	SessionID  domain.SessionID `json:"sessionId,omitempty"`
 	WorkingDir string           `json:"workingDir"`
 	Title      string           `json:"title"`
 	CreatedAt  time.Time        `json:"createdAt"`
@@ -34,9 +35,12 @@ type ShellTerminal struct {
 
 // OpenShellTerminalInput is the request to open a new shell pane. An empty
 // ProjectID opens the shell in the daemon's data dir instead of a project root,
-// which is what the topbar action does when no project is selected.
+// which is what the topbar action does when no project is selected. SessionID
+// scopes the shell to an agent session so it appears only in that session's tab
+// strip; an empty SessionID makes it a standalone shell on the /terminals screen.
 type OpenShellTerminalInput struct {
 	ProjectID domain.ProjectID `json:"projectId,omitempty"`
+	SessionID domain.SessionID `json:"sessionId,omitempty"`
 }
 
 // shellTerminalTitle labels a tab by the directory the shell started in, which

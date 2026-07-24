@@ -203,6 +203,7 @@ var schemaNames = map[string]string{
 	// httpd/controllers — standalone shell terminal wire envelopes
 	"ControllersShellTerminalHandleIDParam": "ShellTerminalHandleIDParam",
 	"ControllersOpenShellTerminalRequest":   "OpenShellTerminalRequest",
+	"ControllersUpdateShellTerminalRequest": "UpdateShellTerminalRequest",
 	"ControllersShellTerminalResponse":      "ShellTerminalResponse",
 	"ControllersListShellTerminalsResponse": "ListShellTerminalsResponse",
 	"ControllersShellTerminalEnvelope":      "ShellTerminalEnvelope",
@@ -357,6 +358,19 @@ func shellTerminalOperations() []operation {
 			reqBody: controllers.OpenShellTerminalRequest{},
 			resps: []respUnit{
 				{http.StatusCreated, controllers.ShellTerminalEnvelope{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPatch, path: "/api/v1/shell-terminals/{handleId}", id: "renameShellTerminal", tag: "shellTerminals",
+			summary:    "Rename a standalone shell terminal tab",
+			pathParams: []any{controllers.ShellTerminalHandleIDParam{}},
+			reqBody:    controllers.UpdateShellTerminalRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ShellTerminalEnvelope{}},
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},

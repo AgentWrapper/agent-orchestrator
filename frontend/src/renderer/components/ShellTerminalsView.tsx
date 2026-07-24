@@ -1,11 +1,11 @@
-import { ChevronLeft, ChevronRight, Plus, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { useEffect } from "react";
 import { useOverflowScroll } from "../hooks/useOverflowScroll";
-import { useTruncatedText } from "../hooks/useTruncatedText";
-import { useCloseShellTerminal, useShellTerminals, type ShellTerminal } from "../hooks/useShellTerminals";
+import { useCloseShellTerminal, useRenameShellTerminal, useShellTerminals } from "../hooks/useShellTerminals";
 import { useShell } from "../lib/shell-context";
 import { cn } from "../lib/utils";
 import { useResolvedTheme, useUiStore } from "../stores/ui-store";
+import { ShellTerminalTab } from "./ShellTerminalTab";
 import { TerminalPane } from "./TerminalPane";
 
 // The standalone terminals screen: shells with no agent session behind them,
@@ -18,8 +18,11 @@ import { TerminalPane } from "./TerminalPane";
 export function ShellTerminalsView() {
 	const { daemonStatus } = useShell();
 	const theme = useResolvedTheme();
-	const shellTerminals = useShellTerminals().data ?? [];
+	// The standalone screen shows only session-less shells; a session's own
+	// shells belong to that session's tab strip, not this global list.
+	const shellTerminals = (useShellTerminals().data ?? []).filter((s) => !s.sessionId);
 	const closeShellTerminal = useCloseShellTerminal();
+	const renameShellTerminal = useRenameShellTerminal();
 	const requestNewShellTerminal = useUiStore((state) => state.requestNewShellTerminal);
 	const activeHandleId = useUiStore((state) => state.activeShellTerminalHandleId);
 	const setActiveShellTerminal = useUiStore((state) => state.setActiveShellTerminal);
@@ -65,10 +68,11 @@ export function ShellTerminalsView() {
 					{shellTerminals.map((shell) => {
 						const isActive = shell.handleId === active?.handleId;
 						return (
-							<ShellTab
+							<ShellTerminalTab
 								key={shell.handleId}
 								isActive={isActive}
 								onClose={() => closeShellTerminal.mutate(shell.handleId)}
+								onRename={(title) => renameShellTerminal.mutate({ handleId: shell.handleId, title })}
 								onSelect={() => setActiveShellTerminal(shell.handleId)}
 								shell={shell}
 							/>
@@ -118,55 +122,5 @@ export function ShellTerminalsView() {
 				)}
 			</div>
 		</div>
-	);
-}
-
-// Same tab chrome as the session view's strip: the open tab gets the rounded
-// background highlight used by the inspector rail tabs, the full title only
-// becomes the hover tooltip when the strip truncates it, and the close
-// control appears on hover/focus (kept a sibling button - nesting interactive
-// elements is invalid HTML).
-function ShellTab({
-	shell,
-	isActive,
-	onSelect,
-	onClose,
-}: {
-	shell: ShellTerminal;
-	isActive: boolean;
-	onSelect: () => void;
-	onClose: () => void;
-}) {
-	const { ref, isTruncated } = useTruncatedText<HTMLButtonElement>(shell.title);
-	return (
-		<span
-			className={cn(
-				"group inline-flex min-w-shell-tab-min items-center gap-1 rounded-md px-2 py-1 transition-colors",
-				isActive ? "bg-interactive-active" : "hover:bg-interactive-hover/60",
-			)}
-		>
-			<button
-				ref={ref}
-				aria-current={isActive}
-				className={cn(
-					"min-w-flex-min max-w-shell-tab-max truncate font-mono text-control font-semibold transition-colors",
-					isActive ? "text-foreground" : "text-passive hover:text-foreground",
-				)}
-				onClick={onSelect}
-				title={isTruncated ? shell.title : shell.workingDir}
-				type="button"
-			>
-				{shell.title}
-			</button>
-			<button
-				aria-label={`Close terminal ${shell.title}`}
-				className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-passive opacity-0 transition-[background,color,opacity] group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
-				onClick={onClose}
-				title="Close terminal"
-				type="button"
-			>
-				<X aria-hidden="true" className="size-icon-sm" />
-			</button>
-		</span>
 	);
 }
