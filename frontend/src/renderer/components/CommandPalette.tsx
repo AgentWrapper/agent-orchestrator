@@ -297,7 +297,7 @@ export function CommandPalette() {
 						<span>Open</span>
 					</span>
 					<span className="inline-flex items-center gap-1.5">
-						<span>or</span>
+						<span>⌘[ or ⌘]</span>
 						<span>Change Filter</span>
 					</span>
 				</CommandFooter>
