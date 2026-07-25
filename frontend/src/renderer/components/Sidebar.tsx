@@ -336,9 +336,14 @@ export function Sidebar({
 			</SidebarContent>
 
 			{/* Footer — Settings opens the global settings page directly.
-			    Bottom margin matches the framed center-panel inset so the
-			    button and panel share a bottom edge (no top divider). */}
-			<SidebarFooter className="relative mt-auto mb-5 gap-0 overflow-hidden px-2.5 pb-0 pt-1.5 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-16 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pb-0 group-data-[collapsible=icon]:pt-1.5">
+			    Bottom margin clears the framed center-panel inset and sits the
+			    button on the same band as the board Archive row. */}
+			<SidebarFooter
+				className={cn(
+					"relative mt-auto gap-0 overflow-hidden px-2.5 pb-0 pt-1.5 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-16 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pb-0 group-data-[collapsible=icon]:pt-1.5",
+					isMac ? "mb-3" : "mb-5",
+				)}
+			>
 				{/* Always-present daemon status mirror for the smoke suite: no visible
 				    daemon-state copy is guaranteed to be mounted elsewhere. */}
 				{daemonStatus && (

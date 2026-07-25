@@ -220,7 +220,14 @@
 	--size-sidebar-default: 240px;
 	--size-sidebar-mobile: 288px;
 	--size-titlebar-cluster-left: 79px;
-	--size-titlebar-content-offset: 174px;
+	/* TitlebarNav cluster: 3 × --size-control-md buttons + 2 × 4px flex gaps. */
+	--size-titlebar-cluster-width: calc(3 * var(--size-control-md) + 2 * 4px);
+	/* Breathing room between the last arrow and the adjacent in-panel title. */
+	--size-titlebar-content-gap: 12px;
+	/* Clears fixed TitlebarNav (cluster-left + toggle/arrows) when the sidebar is off-canvas. */
+	--size-titlebar-content-offset: calc(
+		var(--size-titlebar-cluster-left) + var(--size-titlebar-cluster-width) + var(--size-titlebar-content-gap)
+	);
 	/* Clears the macOS traffic-light row used by the fixed titlebar controls. */
 	--size-traffic-light-clearance: 36px;
 	--size-traffic-light-clearance-fullscreen: var(--space-2);
@@ -285,6 +292,9 @@
 	--size-center-panel-inset: 12px;
 	--size-center-panel-inline-inset: 8px;
 	--size-center-panel-bottom-inset: 6px;
+	/* macOS frames the panel with one uniform inset on all four sides. It stays
+	 * near-flush so in-panel titles align with the fixed TitlebarNav row. */
+	--size-center-panel-inset-mac: 2px;
 	--radius-center-panel: 17px;
 
 	/* Welcome / import radius alias (CreateProjectFlow rounded-welcome-panel) */

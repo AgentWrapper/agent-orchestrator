@@ -166,6 +166,8 @@
 	--spacing-toolbar: var(--size-toolbar);
 	--spacing-titlebar-content-offset: var(--size-titlebar-content-offset);
 	--spacing-titlebar-cluster-left: var(--size-titlebar-cluster-left);
+	/* Fullscreen has no traffic lights — park the cluster at the panel inset. */
+	--spacing-titlebar-cluster-left-fullscreen: var(--size-center-panel-inset);
 	--spacing-traffic-light-clearance: var(--size-traffic-light-clearance);
 	--spacing-traffic-light-clearance-fullscreen: var(--size-traffic-light-clearance-fullscreen);
 	--spacing-control-xs: var(--size-control-xs);
@@ -395,6 +397,40 @@
  * the shared frame inset while transient hover previews overlay this surface. */
 .sidebar-hidden .center-panel-shell {
 	padding-left: var(--size-center-panel-inline-inset);
+}
+
+/* macOS: one uniform inset on every side (matches the near-flush top that keeps
+ * Board/Terminal titles level with the fixed TitlebarNav). Two classes so it
+ * also wins over the `.sidebar-hidden` left gutter above. */
+.center-panel-shell.center-panel-shell--mac {
+	padding: var(--size-center-panel-inset-mac);
+}
+
+.center-panel-shell.center-panel-shell--mac.center-panel-shell--fullscreen {
+	padding: 0;
+}
+
+.center-panel-titlebar {
+	padding-left: 1.125rem; /* matches former px-4.5 */
+}
+
+.center-panel-shell--mac .center-panel-titlebar {
+	height: var(--size-traffic-light-clearance);
+	min-height: var(--size-traffic-light-clearance);
+}
+
+/* On macOS the titlebar controls stay fixed when the sidebar is off-canvas.
+ * Pad the title past that cluster so it sits next to the buttons. Fullscreen
+ * drops the traffic-light reserve so title sits next to the left-edge buttons. */
+.center-panel-shell--titlebar-clearance .center-panel-titlebar {
+	padding-left: calc(var(--size-titlebar-content-offset) - var(--size-center-panel-inset-mac));
+}
+
+/* Fullscreen: the shell is flush, so measure from the cluster's own left edge. */
+.center-panel-shell--titlebar-clearance-fullscreen .center-panel-titlebar {
+	padding-left: calc(
+		var(--size-center-panel-inset) + var(--size-titlebar-cluster-width) + var(--size-titlebar-content-gap)
+	);
 }
 
 /* Windows: the frameless window's custom titlebar already supplies top chrome,
