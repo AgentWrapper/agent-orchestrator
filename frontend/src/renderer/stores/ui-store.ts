@@ -19,6 +19,10 @@ export type InspectorSessionState = {
 	isOpen: boolean;
 	view: InspectorView;
 	previewKey?: string;
+	// A preview target arrived (ao preview, or a clicked link) while the Browser
+	// tab was not the open/active view. We badge the Browser icon instead of
+	// stealing focus; cleared once the user opens the Browser tab.
+	browserUnseen?: boolean;
 };
 
 // Selection (which project/session is open) now lives in the URL — the router
@@ -63,6 +67,7 @@ type UiState = {
 	toggleInspector: (sessionId: string) => void;
 	setInspectorView: (sessionId: string, view: InspectorView) => void;
 	markInspectorPreviewSeen: (sessionId: string, previewKey: string) => void;
+	setBrowserUnseen: (sessionId: string, unseen: boolean) => void;
 	setCommandPaletteOpen: (open: boolean) => void;
 	setProjectRestarting: (projectId: string, restarting: boolean) => void;
 	setOrchestratorReplacementError: (projectId: string, message: string | null) => void;
@@ -144,10 +149,12 @@ export const useUiStore = create<UiState>((set) => ({
 	setInspectorView: (sessionId, view) =>
 		set((state) => {
 			const current = inspectorState(state.inspectorSessions, sessionId);
+			// Opening the Browser tab consumes any pending preview badge.
+			const browserUnseen = view === "browser" ? false : current.browserUnseen;
 			return {
 				inspectorSessions: {
 					...state.inspectorSessions,
-					[sessionId]: { ...current, view },
+					[sessionId]: { ...current, view, browserUnseen },
 				},
 			};
 		}),
@@ -158,6 +165,17 @@ export const useUiStore = create<UiState>((set) => ({
 				inspectorSessions: {
 					...state.inspectorSessions,
 					[sessionId]: { ...current, previewKey },
+				},
+			};
+		}),
+	setBrowserUnseen: (sessionId, browserUnseen) =>
+		set((state) => {
+			const current = inspectorState(state.inspectorSessions, sessionId);
+			if (Boolean(current.browserUnseen) === browserUnseen) return state;
+			return {
+				inspectorSessions: {
+					...state.inspectorSessions,
+					[sessionId]: { ...current, browserUnseen },
 				},
 			};
 		}),

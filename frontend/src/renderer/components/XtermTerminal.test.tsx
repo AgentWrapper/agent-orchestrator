@@ -740,22 +740,22 @@ describe("XtermTerminal", () => {
 		expect(onInput).toHaveBeenLastCalledWith("\x1b[5~", "wheel");
 	});
 
-	it("opens terminal links externally and reports the clicked URL", () => {
+	it("routes web links to the AO browser and does not open the system browser", () => {
 		const open = vi.spyOn(window, "open").mockReturnValue(null);
 		const onLinkOpen = vi.fn();
 		render(<XtermTerminal onLinkOpen={onLinkOpen} theme="dark" />);
 
-		// The default WebLinksAddon handler opens an empty window first, which the
-		// Electron main process denies; ours must pass the matched URL directly.
+		// A left-click on an http(s) link is reported to the parent (which shows it
+		// in the AO Browser panel); it must NOT spawn a system-browser window.
 		expect(state.linkHandler).toBeTypeOf("function");
 		state.linkHandler!({} as MouseEvent, "https://example.com");
 
-		expect(open).toHaveBeenCalledWith("https://example.com", "_blank", "noopener");
 		expect(onLinkOpen).toHaveBeenCalledWith("https://example.com");
+		expect(open).not.toHaveBeenCalled();
 		open.mockRestore();
 	});
 
-	it("opens OSC 8 links externally and reports the clicked URL", () => {
+	it("routes OSC 8 web links to the AO browser without a system-browser window", () => {
 		const open = vi.spyOn(window, "open").mockReturnValue(null);
 		const onLinkOpen = vi.fn();
 		render(<XtermTerminal onLinkOpen={onLinkOpen} theme="dark" />);
@@ -765,8 +765,21 @@ describe("XtermTerminal", () => {
 
 		oscLinkHandler.activate({} as MouseEvent, "http://localhost:3000");
 
-		expect(open).toHaveBeenCalledWith("http://localhost:3000", "_blank", "noopener");
 		expect(onLinkOpen).toHaveBeenCalledWith("http://localhost:3000");
+		expect(open).not.toHaveBeenCalled();
+		open.mockRestore();
+	});
+
+	it("opens non-web links (mailto:) in the system browser, not the AO browser", () => {
+		const open = vi.spyOn(window, "open").mockReturnValue(null);
+		const onLinkOpen = vi.fn();
+		render(<XtermTerminal onLinkOpen={onLinkOpen} theme="dark" />);
+
+		expect(state.linkHandler).toBeTypeOf("function");
+		state.linkHandler!({} as MouseEvent, "mailto:dev@example.com");
+
+		expect(open).toHaveBeenCalledWith("mailto:dev@example.com", "_blank", "noopener");
+		expect(onLinkOpen).not.toHaveBeenCalled();
 		open.mockRestore();
 	});
 

@@ -199,10 +199,25 @@ describe("terminal link preview", () => {
 		},
 	);
 
-	it("does not mirror an external terminal link into the Browser preview", () => {
+	it("mirrors an external (non-loopback) terminal link into the Browser preview", async () => {
 		const view = renderPane(worker);
 		try {
-			act(() => terminalLinkHandler?.("https://example.com"));
+			act(() => terminalLinkHandler?.("https://example.com/pull/42"));
+			await waitFor(() =>
+				expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/preview", {
+					params: { path: { sessionId: "sess-1" } },
+					body: { url: "https://example.com/pull/42" },
+				}),
+			);
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("does not mirror a non-web (mailto:) link", () => {
+		const view = renderPane(worker);
+		try {
+			act(() => terminalLinkHandler?.("mailto:dev@example.com"));
 			expect(postMock).not.toHaveBeenCalled();
 		} finally {
 			view.restore();

@@ -15,6 +15,7 @@ import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session
 import { aoBridge } from "../lib/bridge";
 import { BrowserPanelView, type BrowserAnnotationQueueModel } from "./BrowserPanel";
 import type { BrowserViewModel } from "../hooks/useBrowserView";
+import { useUiStore } from "../stores/ui-store";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
@@ -148,6 +149,10 @@ export function SessionInspector({
 }) {
 	const [internalView, setInternalView] = useState<InspectorView>("summary");
 	const view = viewProp ?? internalView;
+	// Badge the Browser tab when a preview target arrived without us opening it.
+	const browserUnseen = useUiStore((state) =>
+		session ? Boolean(state.inspectorSessions[session.id]?.browserUnseen) : false,
+	);
 	const setView = (next: InspectorView) => {
 		setInternalView(next);
 		onViewChange?.(next);
@@ -181,7 +186,17 @@ export function SessionInspector({
 						onClick={() => setView(entry.id)}
 						title={entry.label}
 					>
-						<span className="inline-flex shrink-0 [&_svg]:size-icon-md">{entry.icon}</span>
+						<span className="relative inline-flex shrink-0 [&_svg]:size-icon-md">
+							{entry.icon}
+							{entry.id === "browser" && browserUnseen ? (
+								<span aria-hidden="true" className="absolute -right-1 -top-1 inline-flex size-dot-sm">
+									{/* Pinging halo + solid core: a glowing beacon that draws the eye to
+									    a link that arrived in the terminal, cleared once the tab opens. */}
+									<span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
+									<span className="relative inline-flex size-dot-sm rounded-full bg-primary ring-2 ring-background" />
+								</span>
+							) : null}
+						</span>
 						<span className="truncate @max-[350px]/inspector:hidden">{entry.label}</span>
 					</button>
 				))}
