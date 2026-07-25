@@ -318,7 +318,7 @@ describe("shell new-shell-terminal shortcut subscription", () => {
 			expect.anything(),
 		);
 	});
-	
+
 	it("scopes the terminal to the session in scope", async () => {
 		shellMocks.state.routeParams = { sessionId: "sess-1" };
 		await renderShell();
