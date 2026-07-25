@@ -8,7 +8,7 @@ CREATE TABLE review_finding (
     review_run_id    TEXT NOT NULL REFERENCES review_run (id) ON DELETE CASCADE,
     file             TEXT NOT NULL DEFAULT '',
     line             INTEGER NOT NULL DEFAULT 0,
-    severity         TEXT NOT NULL DEFAULT '' CHECK (severity IN ('', 'low', 'medium', 'high', 'critical')),
+    severity         TEXT NOT NULL CHECK (severity IN ('low', 'medium', 'high', 'critical')),
     title            TEXT NOT NULL DEFAULT '',
     claim            TEXT NOT NULL DEFAULT '',
     failure_scenario TEXT NOT NULL DEFAULT '',
@@ -75,8 +75,41 @@ CREATE TABLE fused_verdict (
 );
 -- +goose StatementEnd
 
+-- CDC: fused verdicts change the derived Reviews tab state, but change_log event
+-- types are intentionally stable. Emit the existing session_updated invalidation
+-- event so clients refetch session-scoped views without store-layer manual CDC.
+-- +goose StatementBegin
+CREATE TRIGGER fused_verdict_cdc_insert
+AFTER INSERT ON fused_verdict
+BEGIN
+    INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
+    VALUES ((SELECT project_id FROM sessions WHERE id = NEW.session_id), NEW.session_id, 'session_updated',
+        json_object('id', NEW.session_id),
+        datetime('now'));
+END;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+CREATE TRIGGER fused_verdict_cdc_update
+AFTER UPDATE ON fused_verdict
+WHEN OLD.review_run_id <> NEW.review_run_id
+    OR OLD.test_run_id <> NEW.test_run_id
+    OR OLD.outcome <> NEW.outcome
+    OR OLD.blocking <> NEW.blocking
+    OR OLD.summary <> NEW.summary
+    OR OLD.findings_json <> NEW.findings_json
+BEGIN
+    INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
+    VALUES ((SELECT project_id FROM sessions WHERE id = NEW.session_id), NEW.session_id, 'session_updated',
+        json_object('id', NEW.session_id),
+        datetime('now'));
+END;
+-- +goose StatementEnd
+
 -- +goose Down
 -- +goose StatementBegin
+DROP TRIGGER IF EXISTS fused_verdict_cdc_update;
+DROP TRIGGER IF EXISTS fused_verdict_cdc_insert;
 DROP TABLE fused_verdict;
 -- +goose StatementEnd
 

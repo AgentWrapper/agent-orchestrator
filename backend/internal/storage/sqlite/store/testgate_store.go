@@ -22,30 +22,70 @@ func (s *Store) ReplaceReviewFindings(ctx context.Context, reviewRunID string, f
 		if err := q.DeleteReviewFindingsByRun(ctx, reviewRunID); err != nil {
 			return fmt.Errorf("delete review findings for run %s: %w", reviewRunID, err)
 		}
-		for _, finding := range findings {
-			if finding.RunID == "" {
-				finding.RunID = reviewRunID
-			}
-			if finding.CreatedAt.IsZero() {
-				finding.CreatedAt = createdAt
-			}
-			if err := q.InsertReviewFinding(ctx, gen.InsertReviewFindingParams{
-				ID:              finding.ID,
-				ReviewRunID:     finding.RunID,
-				File:            finding.File,
-				Line:            int64(finding.Line),
-				Severity:        string(finding.Severity),
-				Title:           finding.Title,
-				Claim:           finding.Claim,
-				FailureScenario: finding.FailureScenario,
-				Behavioral:      boolInt(finding.Behavioral),
-				CreatedAt:       finding.CreatedAt,
-			}); err != nil {
-				return fmt.Errorf("insert review finding %s: %w", finding.ID, err)
-			}
+		return insertReviewFindings(ctx, q, reviewRunID, findings, createdAt)
+	})
+}
+
+// UpdateReviewRunResultWithFindings atomically completes a running review run
+// and replaces the structured findings emitted with that same result.
+func (s *Store) UpdateReviewRunResultWithFindings(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string, findings []testgate.ReviewFinding, createdAt time.Time) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	updated := false
+	err := s.inTx(ctx, "update review run result with findings", func(q *gen.Queries) error {
+		n, err := q.UpdateReviewRunResult(ctx, gen.UpdateReviewRunResultParams{
+			Status:         status,
+			Verdict:        verdict,
+			Body:           body,
+			GithubReviewID: githubReviewID,
+			ID:             id,
+		})
+		if err != nil {
+			return fmt.Errorf("update review run result %s: %w", id, err)
 		}
+		if n == 0 {
+			return nil
+		}
+		if err := q.DeleteReviewFindingsByRun(ctx, id); err != nil {
+			return fmt.Errorf("delete review findings for run %s: %w", id, err)
+		}
+		if err := insertReviewFindings(ctx, q, id, findings, createdAt); err != nil {
+			return err
+		}
+		updated = true
 		return nil
 	})
+	if err != nil {
+		return false, err
+	}
+	return updated, nil
+}
+
+func insertReviewFindings(ctx context.Context, q *gen.Queries, reviewRunID string, findings []testgate.ReviewFinding, createdAt time.Time) error {
+	for _, finding := range findings {
+		if finding.RunID == "" {
+			finding.RunID = reviewRunID
+		}
+		if finding.CreatedAt.IsZero() {
+			finding.CreatedAt = createdAt
+		}
+		if err := q.InsertReviewFinding(ctx, gen.InsertReviewFindingParams{
+			ID:              finding.ID,
+			ReviewRunID:     finding.RunID,
+			File:            finding.File,
+			Line:            int64(finding.Line),
+			Severity:        string(finding.Severity),
+			Title:           finding.Title,
+			Claim:           finding.Claim,
+			FailureScenario: finding.FailureScenario,
+			Behavioral:      boolInt(finding.Behavioral),
+			CreatedAt:       finding.CreatedAt,
+		}); err != nil {
+			return fmt.Errorf("insert review finding %s: %w", finding.ID, err)
+		}
+	}
+	return nil
 }
 
 // ListReviewFindingsByRun returns structured findings for one review run, oldest first.

@@ -10,13 +10,14 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	core "github.com/aoagents/agent-orchestrator/backend/internal/testgate"
 )
 
 func TestCommandRunnerUsesFinalVerdictDespiteNonZeroExit(t *testing.T) {
 	runner := helperCommandRunner(t, "verdict")
 
-	got, err := runner.Run(context.Background(), RunRequest{
-		Kind:          RunKindBaseline,
+	got, err := runner.Run(context.Background(), core.RunRequest{
+		Kind:          core.RunKindBaseline,
 		WorkspacePath: t.TempDir(),
 		ReviewRun: domain.ReviewRun{
 			ID:        "review-run-1",
@@ -28,10 +29,10 @@ func TestCommandRunnerUsesFinalVerdictDespiteNonZeroExit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run err = %v", err)
 	}
-	if got.Run.Classification != ClassificationAppFailed || got.Run.Summary != "final" {
+	if got.Run.Classification != core.ClassificationAppFailed || got.Run.Summary != "final" {
 		t.Fatalf("run = %+v", got.Run)
 	}
-	if len(got.Evidence) != 1 || got.Evidence[0].Outcome != EvidenceOutcomeConfirmed {
+	if len(got.Evidence) != 1 || got.Evidence[0].Outcome != core.EvidenceOutcomeConfirmed {
 		t.Fatalf("evidence = %+v", got.Evidence)
 	}
 }
@@ -39,8 +40,8 @@ func TestCommandRunnerUsesFinalVerdictDespiteNonZeroExit(t *testing.T) {
 func TestCommandRunnerSendsRequestOnStdinAndEnv(t *testing.T) {
 	runner := helperCommandRunner(t, "request")
 
-	got, err := runner.Run(context.Background(), RunRequest{
-		Kind:          RunKindTargeted,
+	got, err := runner.Run(context.Background(), core.RunRequest{
+		Kind:          core.RunKindTargeted,
 		WorkspacePath: t.TempDir(),
 		ReviewRun: domain.ReviewRun{
 			ID:        "review-run-2",
@@ -48,12 +49,12 @@ func TestCommandRunnerSendsRequestOnStdinAndEnv(t *testing.T) {
 			PRURL:     "https://example/pr/2",
 			TargetSHA: "sha2",
 		},
-		Findings: []ReviewFinding{{ID: "finding-1", Title: "route fails", Behavioral: true}},
+		Findings: []core.ReviewFinding{{ID: "finding-1", Title: "route fails", Behavioral: true}},
 	})
 	if err != nil {
 		t.Fatalf("Run err = %v", err)
 	}
-	if got.Run.Classification != ClassificationPassed {
+	if got.Run.Classification != core.ClassificationPassed {
 		t.Fatalf("run = %+v", got.Run)
 	}
 }
@@ -61,12 +62,12 @@ func TestCommandRunnerSendsRequestOnStdinAndEnv(t *testing.T) {
 func TestCommandRunnerNoVerdictIsInfra(t *testing.T) {
 	runner := helperCommandRunner(t, "no-verdict")
 
-	got, err := runner.Run(context.Background(), RunRequest{Kind: RunKindBaseline, WorkspacePath: t.TempDir()})
+	got, err := runner.Run(context.Background(), core.RunRequest{Kind: core.RunKindBaseline, WorkspacePath: t.TempDir()})
 	if err != nil {
 		t.Fatalf("Run err = %v", err)
 	}
-	if got.Run.Classification != ClassificationInfra {
-		t.Fatalf("classification = %q, want %q", got.Run.Classification, ClassificationInfra)
+	if got.Run.Classification != core.ClassificationInfra {
+		t.Fatalf("classification = %q, want %q", got.Run.Classification, core.ClassificationInfra)
 	}
 }
 
@@ -95,7 +96,7 @@ func TestCommandRunnerHelper(t *testing.T) {
 	case "request":
 		raw, _ := io.ReadAll(os.Stdin)
 		body := string(raw)
-		if os.Getenv("AO_TEST_GATE_KIND") != string(RunKindTargeted) ||
+		if os.Getenv("AO_TEST_GATE_KIND") != string(core.RunKindTargeted) ||
 			os.Getenv("AO_TEST_GATE_REVIEW_RUN_ID") != "review-run-2" ||
 			os.Getenv("AO_TEST_GATE_SESSION_ID") != "mer-2" ||
 			!strings.Contains(body, `"workspacePath"`) ||

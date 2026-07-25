@@ -1430,7 +1430,7 @@ export interface components {
              * @description Finding severity.
              * @enum {string}
              */
-            severity?: "low" | "medium" | "high" | "critical";
+            severity: "low" | "medium" | "high" | "critical";
             /** @description Short finding title. */
             title?: string;
         };

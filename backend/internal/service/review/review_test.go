@@ -46,6 +46,21 @@ func (f *fakeStore) GetReviewRun(_ context.Context, id string) (domain.ReviewRun
 func (f *fakeStore) UpdateReviewRunResult(_ context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	return f.updateReviewRunResultLocked(id, status, verdict, body, githubReviewID)
+}
+
+func (f *fakeStore) UpdateReviewRunResultWithFindings(_ context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string, findings []testgate.ReviewFinding, _ time.Time) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	updated, err := f.updateReviewRunResultLocked(id, status, verdict, body, githubReviewID)
+	if err != nil || !updated {
+		return updated, err
+	}
+	f.replaceReviewFindingsLocked(id, findings)
+	return true, nil
+}
+
+func (f *fakeStore) updateReviewRunResultLocked(id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string) (bool, error) {
 	for i := range f.batchRuns {
 		if f.batchRuns[i].ID == id {
 			if f.batchRuns[i].Status != domain.ReviewRunRunning {
@@ -112,12 +127,16 @@ func (f *fakeStore) ListPRsBySession(context.Context, domain.SessionID) ([]domai
 func (f *fakeStore) ReplaceReviewFindings(_ context.Context, runID string, findings []testgate.ReviewFinding, _ time.Time) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.replaceReviewFindingsLocked(runID, findings)
+	return nil
+}
+
+func (f *fakeStore) replaceReviewFindingsLocked(runID string, findings []testgate.ReviewFinding) {
 	f.findings = append([]testgate.ReviewFinding(nil), findings...)
 	if f.findingsByRun == nil {
 		f.findingsByRun = make(map[string][]testgate.ReviewFinding)
 	}
 	f.findingsByRun[runID] = append([]testgate.ReviewFinding(nil), findings...)
-	return nil
 }
 
 func (f *fakeStore) GetFusedVerdict(_ context.Context, _ domain.SessionID, prURL, targetSHA string) (testgate.FusedVerdict, bool, error) {
@@ -242,7 +261,7 @@ func (f *fakeTestGate) contextErr() error {
 	return f.ctxErr
 }
 
-func TestSubmitAsyncTestGateReturnsBeforeRuntimeVerification(t *testing.T) {
+func TestSubmitWaitsForTestGateBeforeReturning(t *testing.T) {
 	st := &fakeStore{ok: true, run: domain.ReviewRun{ID: "run-1", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning}}
 	reducer := &fakeReducer{outcome: lifecycle.ReviewDeliverySent, called: make(chan struct{}, 1)}
 	gate := &fakeTestGate{
@@ -258,30 +277,44 @@ func TestSubmitAsyncTestGateReturnsBeforeRuntimeVerification(t *testing.T) {
 	}
 	svc := New(nil, st, WithLifecycleReducer(reducer), WithTestGate(gate), WithAsyncTestGate(), WithBackgroundContext(context.Background()))
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	runs, err := svc.SubmitMany(ctx, "mer-1", []SubmittedReview{{RunID: "run-1", Verdict: domain.VerdictChangesRequested, Body: "fix it"}})
-	if err != nil {
-		t.Fatalf("SubmitMany: %v", err)
+	type submitResult struct {
+		runs []domain.ReviewRun
+		err  error
 	}
-	cancel()
-	if len(runs) != 1 || runs[0].Status != domain.ReviewRunComplete {
-		t.Fatalf("runs = %+v, want completed submit response", runs)
-	}
+	submitted := make(chan submitResult, 1)
+	go func() {
+		runs, err := svc.SubmitMany(ctx, "mer-1", []SubmittedReview{{RunID: "run-1", Verdict: domain.VerdictChangesRequested, Body: "fix it"}})
+		submitted <- submitResult{runs: runs, err: err}
+	}()
 	select {
 	case <-gate.started:
 	case <-time.After(time.Second):
 		t.Fatal("test gate did not start")
 	}
+	cancel()
+	select {
+	case res := <-submitted:
+		t.Fatalf("submit returned before test gate released: runs=%+v err=%v", res.runs, res.err)
+	default:
+	}
 	reducerCalls, _ := reducer.callCounts()
 	if markCalls := st.markCallCount(); reducerCalls != 0 || markCalls != 0 {
-		t.Fatalf("async submit should return before delivery: calls=%d mark=%d", reducerCalls, markCalls)
+		t.Fatalf("submit should not deliver until test gate releases: calls=%d mark=%d", reducerCalls, markCalls)
 	}
 
 	close(gate.release)
 	select {
-	case <-reducer.called:
+	case res := <-submitted:
+		if res.err != nil {
+			t.Fatalf("SubmitMany: %v", res.err)
+		}
+		if len(res.runs) != 1 || res.runs[0].Status != domain.ReviewRunDelivered {
+			t.Fatalf("runs = %+v, want delivered submit response", res.runs)
+		}
 	case <-time.After(time.Second):
-		t.Fatal("async test gate did not deliver fused review")
+		t.Fatal("submit did not return after test gate release")
 	}
 	if err := gate.contextErr(); err != nil {
 		t.Fatalf("test gate context was canceled by request context: %v", err)
@@ -334,6 +367,7 @@ func TestSubmitPersistsStructuredFindingsAndSuppressesRuntimeApprovedDelivery(t 
 		Verdict: domain.VerdictChangesRequested,
 		Body:    "fix it",
 		Findings: []testgate.ReviewFinding{{
+			Severity:   testgate.SeverityHigh,
 			Claim:      "route returns 500",
 			Behavioral: true,
 		}},
@@ -422,8 +456,8 @@ func TestSubmitFusedMixedFindingsDeliversOnlyBlockingFindings(t *testing.T) {
 		Body:           "false alarm\nreal failure",
 		GithubReviewID: "987",
 		Findings: []testgate.ReviewFinding{
-			{ID: "finding-1", Title: "false alarm", Behavioral: true},
-			{ID: "finding-2", Title: "real failure", Behavioral: true},
+			{ID: "finding-1", Severity: testgate.SeverityLow, Title: "false alarm", Behavioral: true},
+			{ID: "finding-2", Severity: testgate.SeverityHigh, Title: "real failure", Behavioral: true},
 		},
 	}}); err != nil {
 		t.Fatalf("SubmitMany: %v", err)
@@ -467,6 +501,27 @@ func TestSubmitRejectsInvalidFindingSeverityBeforePersistence(t *testing.T) {
 	}
 }
 
+func TestSubmitRejectsOmittedFindingSeverityBeforePersistence(t *testing.T) {
+	st := &fakeStore{ok: true, run: domain.ReviewRun{ID: "run-1", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning}}
+	svc := New(nil, st)
+
+	_, err := svc.SubmitMany(context.Background(), "mer-1", []SubmittedReview{{
+		RunID:   "run-1",
+		Verdict: domain.VerdictChangesRequested,
+		Body:    "fix it",
+		Findings: []testgate.ReviewFinding{{
+			Title:      "missing severity",
+			Behavioral: true,
+		}},
+	}})
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("err = %v, want ErrInvalid", err)
+	}
+	if st.updateCalls != 0 || len(st.findings) != 0 {
+		t.Fatalf("invalid finding should not persist review result or findings: updates=%d findings=%+v", st.updateCalls, st.findings)
+	}
+}
+
 func TestSubmitManyNamespacesReviewerFindingIDsByRun(t *testing.T) {
 	st := &fakeStore{
 		ok: true,
@@ -484,6 +539,7 @@ func TestSubmitManyNamespacesReviewerFindingIDsByRun(t *testing.T) {
 			Body:    "fix pr1",
 			Findings: []testgate.ReviewFinding{{
 				ID:         "finding-1",
+				Severity:   testgate.SeverityMedium,
 				Title:      "shared local id",
 				Behavioral: true,
 			}},
@@ -494,6 +550,7 @@ func TestSubmitManyNamespacesReviewerFindingIDsByRun(t *testing.T) {
 			Body:    "fix pr2",
 			Findings: []testgate.ReviewFinding{{
 				ID:         "finding-1",
+				Severity:   testgate.SeverityMedium,
 				Title:      "shared local id",
 				Behavioral: true,
 			}},

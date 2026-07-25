@@ -15,6 +15,7 @@ import (
 	agentregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/registry"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
+	testgateadapter "github.com/aoagents/agent-orchestrator/backend/internal/adapters/testgate"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/gitworktree"
 	workspacerouter "github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/router"
 	scratchworkspace "github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/scratch"
@@ -251,7 +252,6 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		store,
 		reviewsvc.WithLifecycleReducer(lcm),
 		reviewsvc.WithTestGate(testGate),
-		reviewsvc.WithAsyncTestGate(),
 		reviewsvc.WithBackgroundContext(ctx),
 		reviewsvc.WithLogger(log),
 	)
@@ -280,7 +280,7 @@ func testGateRunnerFromEnv(log *slog.Logger) testgate.Runner {
 			log.Warn("testgate command timeout ignored: AO_TEST_GATE_TIMEOUT must be a positive duration", "value", raw)
 		}
 	}
-	return testgate.NewCommandRunner(testgate.CommandRunnerOptions{
+	return testgateadapter.NewCommandRunner(testgateadapter.CommandRunnerOptions{
 		Command: command,
 		Args:    args,
 		Timeout: timeout,

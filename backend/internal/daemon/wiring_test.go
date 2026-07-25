@@ -260,10 +260,7 @@ func TestWiring_StartSessionSpawnsScratchWithoutGitRepo(t *testing.T) {
 		t.Fatalf("scratch branch = %q, want empty", session.Metadata.Branch)
 	}
 	wantWorkspace := filepath.Join(dataDir, "worktrees", "scratch", "workers", string(session.ID))
-	physicalWorkspace, err := filepath.EvalSymlinks(wantWorkspace)
-	if err != nil {
-		t.Fatalf("resolve scratch workspace %q: %v", wantWorkspace, err)
-	}
+	physicalWorkspace := cleanSymlinkedPath(t, wantWorkspace)
 	if runtime.lastCfg.WorkspacePath != physicalWorkspace {
 		t.Fatalf("runtime workspace = %q, want %q", runtime.lastCfg.WorkspacePath, physicalWorkspace)
 	}

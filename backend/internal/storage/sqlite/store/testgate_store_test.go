@@ -95,6 +95,10 @@ func TestTestGateArtifactsRoundTrip(t *testing.T) {
 		t.Fatalf("evidence = %+v", gotEvidence)
 	}
 
+	baseSeq, err := s.LatestSeq(ctx)
+	if err != nil {
+		t.Fatalf("latest seq before fused verdict: %v", err)
+	}
 	fused := testgate.FusedVerdict{
 		ID: "fused-1", SessionID: string(rec.ID), ReviewRunID: "review-run-1", TestRunID: "test-run-1",
 		PRURL: "https://example/pr/1", TargetSHA: "sha1", Outcome: testgate.FusedOutcomeChangesRequested,
@@ -112,5 +116,58 @@ func TestTestGateArtifactsRoundTrip(t *testing.T) {
 	}
 	if !gotFused.Blocking || gotFused.Outcome != testgate.FusedOutcomeChangesRequested || gotFused.Findings[0].RuntimeOutcome != testgate.EvidenceOutcomeConfirmed {
 		t.Fatalf("fused = %+v", gotFused)
+	}
+	events, err := s.EventsAfter(ctx, baseSeq, 10)
+	if err != nil {
+		t.Fatalf("events after fused verdict: %v", err)
+	}
+	if len(events) != 1 || string(events[0].Type) != "session_updated" || events[0].SessionID != string(rec.ID) || events[0].ProjectID != string(rec.ProjectID) {
+		t.Fatalf("fused verdict CDC events = %+v, want one session_updated for session/project", events)
+	}
+}
+
+func TestReviewRunResultWithFindingsRollsBackOnFindingInsertFailure(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	rec, err := s.CreateSession(ctx, sampleRecord("mer"))
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := s.UpsertReview(ctx, domain.Review{
+		ID: "rev-rollback", SessionID: rec.ID, ProjectID: rec.ProjectID,
+		Harness: domain.ReviewerCodex, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("upsert review: %v", err)
+	}
+	if err := s.InsertReviewRun(ctx, domain.ReviewRun{
+		ID: "review-run-rollback", ReviewID: "rev-rollback", SessionID: rec.ID, Harness: domain.ReviewerCodex,
+		PRURL: "https://example/pr/rollback", TargetSHA: "sha-rollback", Status: domain.ReviewRunRunning, CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("insert review run: %v", err)
+	}
+
+	_, err = s.UpdateReviewRunResultWithFindings(ctx, "review-run-rollback", domain.ReviewRunComplete, domain.VerdictChangesRequested, "please fix", "gh-review-rollback", []testgate.ReviewFinding{
+		{ID: "finding-dupe", RunID: "review-run-rollback", Severity: testgate.SeverityHigh, Title: "first finding", CreatedAt: now},
+		{ID: "finding-dupe", RunID: "review-run-rollback", Severity: testgate.SeverityHigh, Title: "duplicate finding", CreatedAt: now},
+	}, now)
+	if err == nil {
+		t.Fatal("update run with duplicate finding IDs succeeded, want rollback error")
+	}
+
+	gotRun, ok, err := s.GetReviewRun(ctx, "review-run-rollback")
+	if err != nil || !ok {
+		t.Fatalf("get review run after rollback: ok=%v err=%v", ok, err)
+	}
+	if gotRun.Status != domain.ReviewRunRunning || gotRun.Verdict != domain.VerdictNone || gotRun.Body != "" || gotRun.GithubReviewID != "" {
+		t.Fatalf("review run result was partially committed: %+v", gotRun)
+	}
+	gotFindings, err := s.ListReviewFindingsByRun(ctx, "review-run-rollback")
+	if err != nil {
+		t.Fatalf("list findings after rollback: %v", err)
+	}
+	if len(gotFindings) != 0 {
+		t.Fatalf("findings were partially committed: %+v", gotFindings)
 	}
 }

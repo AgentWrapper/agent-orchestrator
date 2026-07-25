@@ -44,7 +44,6 @@ type Service struct {
 	clock     func() time.Time
 	logger    *slog.Logger
 	bgCtx     context.Context
-	asyncGate bool
 }
 
 var _ Manager = (*Service)(nil)
@@ -53,9 +52,9 @@ var _ Manager = (*Service)(nil)
 type Store interface {
 	GetReviewRun(ctx context.Context, id string) (domain.ReviewRun, bool, error)
 	UpdateReviewRunResult(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string) (bool, error)
+	UpdateReviewRunResultWithFindings(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string, findings []testgate.ReviewFinding, createdAt time.Time) (bool, error)
 	MarkReviewRunDelivered(ctx context.Context, id string, deliveredAt time.Time) (bool, error)
 	ListPRsBySession(ctx context.Context, id domain.SessionID) ([]domain.PullRequest, error)
-	ReplaceReviewFindings(ctx context.Context, reviewRunID string, findings []testgate.ReviewFinding, createdAt time.Time) error
 	GetFusedVerdict(ctx context.Context, sessionID domain.SessionID, prURL, targetSHA string) (testgate.FusedVerdict, bool, error)
 }
 
@@ -86,10 +85,11 @@ func WithTestGate(g TestGate) Option {
 	return func(s *Service) { s.testGate = g }
 }
 
-// WithAsyncTestGate lets submit return after persistence while runtime
-// verification and worker delivery continue on the service background context.
+// WithAsyncTestGate is kept for older wiring but is intentionally a no-op.
+// Submit now waits for runtime verification so a completed review can be
+// recovered by retry instead of depending on an in-memory goroutine.
 func WithAsyncTestGate() Option {
-	return func(s *Service) { s.asyncGate = true }
+	return func(*Service) {}
 }
 
 // WithBackgroundContext owns asynchronous review work. When unset, async work
@@ -189,13 +189,9 @@ func (s *Service) SubmitMany(ctx context.Context, workerID domain.SessionID, rev
 		}
 		runs = append(runs, run)
 	}
-	if s.testGate != nil && s.asyncGate {
-		s.runSubmittedTestGateAsync(ctx, workerID, runs)
-		return runs, nil
-	}
 	if s.testGate != nil {
 		var err error
-		fusedByRun, err = s.runSubmittedTestGate(ctx, runs)
+		fusedByRun, err = s.runSubmittedTestGate(s.testGateContext(ctx), runs)
 		if err != nil {
 			return nil, err
 		}
@@ -217,24 +213,6 @@ func (s *Service) SubmitMany(ctx context.Context, workerID domain.SessionID, rev
 		}
 	}
 	return runs, nil
-}
-
-func (s *Service) runSubmittedTestGateAsync(ctx context.Context, workerID domain.SessionID, runs []domain.ReviewRun) {
-	bg := s.testGateContext(ctx)
-	runs = append([]domain.ReviewRun(nil), runs...)
-	go func() {
-		fusedByRun, err := s.runSubmittedTestGate(bg, runs)
-		if err != nil {
-			s.logger.Warn("review test gate failed after submit", "workerID", workerID, "err", err)
-			return
-		}
-		if s.lifecycle == nil {
-			return
-		}
-		if _, err := s.deliverSubmitted(bg, workerID, runs, fusedByRun); err != nil {
-			s.logger.Warn("review delivery failed after test gate", "workerID", workerID, "err", err)
-		}
-	}()
 }
 
 func (s *Service) runSubmittedTestGate(ctx context.Context, runs []domain.ReviewRun) (map[string]testgate.FusedVerdict, error) {
@@ -293,7 +271,13 @@ func (s *Service) submitOne(ctx context.Context, workerID domain.SessionID, revi
 
 	switch run.Status {
 	case domain.ReviewRunRunning:
-		updated, err := s.store.UpdateReviewRunResult(ctx, run.ID, domain.ReviewRunComplete, verdict, body, githubReviewID)
+		var updated bool
+		var err error
+		if review.Findings != nil {
+			updated, err = s.store.UpdateReviewRunResultWithFindings(ctx, run.ID, domain.ReviewRunComplete, verdict, body, githubReviewID, findings, s.clock())
+		} else {
+			updated, err = s.store.UpdateReviewRunResult(ctx, run.ID, domain.ReviewRunComplete, verdict, body, githubReviewID)
+		}
 		if err != nil {
 			return domain.ReviewRun{}, err
 		}
@@ -318,11 +302,6 @@ func (s *Service) submitOne(ctx context.Context, workerID domain.SessionID, revi
 		return run, nil
 	default:
 		return domain.ReviewRun{}, fmt.Errorf("%w: review run %q is not running", ErrInvalid, runID)
-	}
-	if review.Findings != nil {
-		if err := s.store.ReplaceReviewFindings(ctx, run.ID, findings, s.clock()); err != nil {
-			return domain.ReviewRun{}, err
-		}
 	}
 	return run, nil
 }

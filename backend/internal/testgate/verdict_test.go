@@ -186,3 +186,29 @@ func TestSynthesizeRuntimeRefutationDowngradesBehavioralFinding(t *testing.T) {
 		t.Fatalf("findings = %+v, want non-blocking runtime-refuted finding", got.Findings)
 	}
 }
+
+func TestSynthesizeTargetedAppFailureBlocksEvenWithRefutedEvidence(t *testing.T) {
+	got := Synthesize(SynthesisInput{
+		Baseline:      TestRun{Classification: ClassificationPassed},
+		Targeted:      TestRun{Classification: ClassificationAppFailed, Summary: "targeted suite found a product failure"},
+		ReviewVerdict: ReviewVerdictChangesRequested,
+		Findings: []ReviewFinding{{
+			ID:         "finding-1",
+			Severity:   SeverityHigh,
+			Title:      "route 500s",
+			Behavioral: true,
+		}},
+		Evidence: []TestEvidence{{
+			FindingID: "finding-1",
+			Outcome:   EvidenceOutcomeRefuted,
+			Summary:   "specific repro returned 200",
+		}},
+	})
+
+	if got.Outcome != FusedOutcomeAppFailed || !got.Blocking {
+		t.Fatalf("outcome = %+v, want blocking app failure", got)
+	}
+	if len(got.Findings) != 2 || !got.Findings[1].Blocking || got.Findings[1].Source != EvidenceSourceTestInfra {
+		t.Fatalf("findings = %+v, want appended blocking runtime failure", got.Findings)
+	}
+}

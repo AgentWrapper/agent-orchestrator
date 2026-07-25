@@ -266,6 +266,53 @@ func TestManagerRunAfterReviewSubmitRunsTargetedAndWritesFusedVerdict(t *testing
 	}
 }
 
+func TestManagerRunAfterReviewSubmitKeepsTargetedAppFailureBlocking(t *testing.T) {
+	st := &fakeManagerStore{
+		hasBaseline: true,
+		baseline:    TestRun{ID: "baseline-1", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Kind: RunKindBaseline, Classification: ClassificationPassed},
+		findings: []ReviewFinding{{
+			ID:         "finding-1",
+			RunID:      "review-run-1",
+			Severity:   SeverityHigh,
+			Title:      "route fails",
+			Claim:      "route returns 500",
+			Behavioral: true,
+		}},
+	}
+	runner := &fakeRunner{result: RunResult{
+		Run: TestRun{Classification: ClassificationAppFailed, Summary: "targeted suite found a product failure"},
+		Evidence: []TestEvidence{{
+			FindingID: "finding-1",
+			Outcome:   EvidenceOutcomeRefuted,
+			Summary:   "specific repro returned 200",
+		}},
+	}}
+	ids := []string{"targeted-run-1", "evidence-1", "fused-1"}
+	m := NewManager(ManagerDeps{
+		Store: st, Runner: runner,
+		NewID: func() string {
+			id := ids[0]
+			ids = ids[1:]
+			return id
+		},
+	})
+	reviewRun := domain.ReviewRun{ID: "review-run-1", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Verdict: domain.VerdictChangesRequested}
+
+	fused, ok, err := m.RunAfterReviewSubmit(context.Background(), reviewRun)
+	if err != nil || !ok {
+		t.Fatalf("RunAfterReviewSubmit ok=%v err=%v", ok, err)
+	}
+	if fused.Outcome != FusedOutcomeAppFailed || !fused.Blocking {
+		t.Fatalf("fused = %+v, want blocking app failure", fused)
+	}
+	if len(st.insertedRuns) != 1 || st.insertedRuns[0].Classification != ClassificationAppFailed {
+		t.Fatalf("inserted runs = %+v, want persisted targeted app failure", st.insertedRuns)
+	}
+	if st.fused.Outcome != FusedOutcomeAppFailed || !st.fused.Blocking {
+		t.Fatalf("stored fused = %+v, want blocking app failure", st.fused)
+	}
+}
+
 func TestManagerRunAfterReviewSubmitIgnoresMalformedEvidence(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	st := &fakeManagerStore{
@@ -275,6 +322,7 @@ func TestManagerRunAfterReviewSubmitIgnoresMalformedEvidence(t *testing.T) {
 		findings: []ReviewFinding{{
 			ID:         "finding-1",
 			RunID:      "review-run-1",
+			Severity:   SeverityHigh,
 			Title:      "route fails",
 			Behavioral: true,
 		}},

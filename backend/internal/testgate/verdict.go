@@ -64,7 +64,7 @@ const (
 // Valid reports whether the severity is one AO accepts.
 func (s Severity) Valid() bool {
 	switch s {
-	case "", SeverityLow, SeverityMedium, SeverityHigh, SeverityCritical:
+	case SeverityLow, SeverityMedium, SeverityHigh, SeverityCritical:
 		return true
 	default:
 		return false
@@ -157,6 +157,7 @@ type TestEvidence struct {
 // SynthesisInput is the data required to fuse reviewer and runtime outcomes.
 type SynthesisInput struct {
 	Baseline      TestRun
+	Targeted      TestRun
 	ReviewVerdict ReviewVerdict
 	Findings      []ReviewFinding
 	Evidence      []TestEvidence
@@ -293,21 +294,15 @@ func (o EvidenceOutcome) Valid() bool {
 func Synthesize(in SynthesisInput) FusedVerdict {
 	switch in.Baseline.Classification {
 	case ClassificationAppFailed:
-		return FusedVerdict{
-			Outcome:  FusedOutcomeAppFailed,
-			Blocking: true,
-			Summary:  in.Baseline.Summary,
-			Findings: []FusedFinding{{
-				Source:   EvidenceSourceTestInfra,
-				Title:    firstNonEmpty(in.Baseline.Summary, "Runtime verification failed"),
-				Summary:  in.Baseline.Summary,
-				Blocking: true,
-			}},
-		}
+		return appFailureVerdict(in.Baseline.Summary)
 	case ClassificationInfra, ClassificationNotConfigured:
 		return FusedVerdict{Outcome: FusedOutcomeNeutral, Summary: in.Baseline.Summary}
 	}
+	targetedAppFailed := in.Targeted.Classification == ClassificationAppFailed
 	if len(in.Findings) == 0 {
+		if targetedAppFailed {
+			return appFailureVerdict(in.Targeted.Summary)
+		}
 		if in.ReviewVerdict == ReviewVerdictApproved {
 			return FusedVerdict{Outcome: FusedOutcomeApproved}
 		}
@@ -356,7 +351,32 @@ func Synthesize(in SynthesisInput) FusedVerdict {
 		}
 		out.Findings = append(out.Findings, fused)
 	}
+	if targetedAppFailed {
+		out.Outcome = FusedOutcomeAppFailed
+		out.Blocking = true
+		out.Summary = in.Targeted.Summary
+		out.Findings = append(out.Findings, FusedFinding{
+			Source:   EvidenceSourceTestInfra,
+			Title:    firstNonEmpty(in.Targeted.Summary, "Targeted runtime verification failed"),
+			Summary:  in.Targeted.Summary,
+			Blocking: true,
+		})
+	}
 	return out
+}
+
+func appFailureVerdict(summary string) FusedVerdict {
+	return FusedVerdict{
+		Outcome:  FusedOutcomeAppFailed,
+		Blocking: true,
+		Summary:  summary,
+		Findings: []FusedFinding{{
+			Source:   EvidenceSourceTestInfra,
+			Title:    firstNonEmpty(summary, "Runtime verification failed"),
+			Summary:  summary,
+			Blocking: true,
+		}},
+	}
 }
 
 func firstNonEmpty(vals ...string) string {

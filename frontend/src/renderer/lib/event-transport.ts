@@ -52,6 +52,7 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 				debounce = setTimeout(() => {
 					void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 					void queryClient.invalidateQueries({ queryKey: sessionScmSummaryQueryKey() });
+					void queryClient.invalidateQueries({ queryKey: ["session-reviews"] });
 				}, INVALIDATE_DEBOUNCE_MS);
 			};
 

@@ -238,6 +238,7 @@ func (m *Manager) runAfterReviewSubmitWithBaseline(ctx context.Context, reviewRu
 
 	evidence := []TestEvidence{}
 	testRunID := baseline.ID
+	targetedRun := TestRun{}
 	behavioral := behavioralFindings(findings)
 	if baseline.Classification == ClassificationPassed && m.runner != nil && len(behavioral) > 0 {
 		req, err := m.runRequest(ctx, RunKindTargeted, reviewRun, baseline, behavioral)
@@ -251,7 +252,7 @@ func (m *Manager) runAfterReviewSubmitWithBaseline(ctx context.Context, reviewRu
 			}
 			res = RunResult{Run: infraRun(fmt.Sprintf("targeted runtime verification could not run: %v", err))}
 		}
-		targetedRun, err := m.normalizeRun(res.Run, reviewRun, RunKindTargeted)
+		targetedRun, err = m.normalizeRun(res.Run, reviewRun, RunKindTargeted)
 		if err != nil {
 			return FusedVerdict{}, err
 		}
@@ -269,6 +270,7 @@ func (m *Manager) runAfterReviewSubmitWithBaseline(ctx context.Context, reviewRu
 
 	fused := Synthesize(SynthesisInput{
 		Baseline:      baseline,
+		Targeted:      targetedRun,
 		ReviewVerdict: ReviewVerdict(reviewRun.Verdict),
 		Findings:      findings,
 		Evidence:      evidence,

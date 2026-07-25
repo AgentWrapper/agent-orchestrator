@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	core "github.com/aoagents/agent-orchestrator/backend/internal/testgate"
 )
 
 const defaultCommandTimeout = 20 * time.Minute
@@ -52,9 +54,9 @@ func NewCommandRunner(opts CommandRunnerOptions) *CommandRunner {
 }
 
 // Run executes the configured command and parses its AO_VERDICT output.
-func (r *CommandRunner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
+func (r *CommandRunner) Run(ctx context.Context, req core.RunRequest) (core.RunResult, error) {
 	if r == nil || r.command == "" {
-		return NotConfiguredRunner{}.Run(ctx, req)
+		return core.NotConfiguredRunner{}.Run(ctx, req)
 	}
 	runCtx := ctx
 	cancel := func() {}
@@ -65,7 +67,7 @@ func (r *CommandRunner) Run(ctx context.Context, req RunRequest) (RunResult, err
 
 	payload, err := json.Marshal(req)
 	if err != nil {
-		return RunResult{}, fmt.Errorf("encode test gate request: %w", err)
+		return core.RunResult{}, fmt.Errorf("encode test gate request: %w", err)
 	}
 	cmd := exec.CommandContext(runCtx, r.command, r.args...)
 	cmd.Stdin = bytes.NewReader(payload)
@@ -79,23 +81,23 @@ func (r *CommandRunner) Run(ctx context.Context, req RunRequest) (RunResult, err
 	out, err := cmd.CombinedOutput()
 	output := string(out)
 	if runCtx.Err() != nil {
-		return RunResult{}, runCtx.Err()
+		return core.RunResult{}, runCtx.Err()
 	}
-	if result, ok, parseErr := ParseRunResultOutput(output); parseErr != nil {
-		return RunResult{}, parseErr
+	if result, ok, parseErr := core.ParseRunResultOutput(output); parseErr != nil {
+		return core.RunResult{}, parseErr
 	} else if ok {
 		return result, nil
 	}
 	if err != nil {
-		return RunResult{}, fmt.Errorf("test gate command failed: %w%s", err, commandOutputSuffix(output))
+		return core.RunResult{}, fmt.Errorf("test gate command failed: %w%s", err, commandOutputSuffix(output))
 	}
-	return RunResult{Run: TestRun{
-		Classification: ClassificationInfra,
+	return core.RunResult{Run: core.TestRun{
+		Classification: core.ClassificationInfra,
 		Summary:        "test gate command completed without AO_VERDICT",
 	}}, nil
 }
 
-func commandEnv(base []string, extra map[string]string, req RunRequest) []string {
+func commandEnv(base []string, extra map[string]string, req core.RunRequest) []string {
 	env := make([]string, 0, len(base)+len(extra)+5)
 	env = append(env, base...)
 	for k, v := range extra {

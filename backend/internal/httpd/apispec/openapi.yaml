@@ -3836,6 +3836,7 @@ components:
           description: Short finding title.
           type: string
       required:
+      - severity
       - behavioral
       type: object
     SubmitReviewInput:
