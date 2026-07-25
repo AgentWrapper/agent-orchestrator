@@ -202,6 +202,26 @@ describe("ShellTopbar orchestrator actions", () => {
 		expect(screen.getByRole("button", { name: "New task" })).toHaveClass("bg-raised");
 		expect(screen.getByRole("button", { name: "New task" })).not.toHaveClass("bg-primary");
 	});
+
+	it("keeps empty project-board header actions quieter than the centered empty-state actions", () => {
+		useWorkspaceQueryMock.mockReturnValue({
+			data: [{ id: "proj-1", name: "my-app", path: "/repo/my-app", sessions: [] }],
+			isError: false,
+			isLoading: false,
+		});
+		paramsMock.projectId = "proj-1";
+		paramsMock.sessionId = undefined;
+
+		render(
+			<QueryClientProvider client={new QueryClient()}>
+				<ShellTopbar />
+			</QueryClientProvider>,
+		);
+
+		expect(screen.getByRole("button", { name: "New task" })).toHaveClass("bg-raised");
+		expect(screen.getByRole("button", { name: "Spawn Orchestrator" })).toHaveClass("bg-raised");
+		expect(screen.getByRole("button", { name: "Spawn Orchestrator" })).not.toHaveClass("bg-primary");
+	});
 });
 
 describe("ShellTopbar inspector state", () => {

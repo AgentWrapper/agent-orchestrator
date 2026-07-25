@@ -70,6 +70,7 @@ export function ShellTopbar() {
 	const project = projectId ? all.find((workspace) => workspace.id === projectId) : undefined;
 	const isBoardEmpty = isProjectBoardRoute && (project?.sessions.filter((s) => s.kind === "worker").length ?? 0) === 0;
 	const projectLabel = project?.name ?? session?.workspaceName ?? (projectId ? "" : "Board");
+	const boardHeaderActionVariant = isBoardEmpty ? "accent" : "primary";
 	const orchestrator = projectId ? findProjectOrchestrator(all, projectId) : undefined;
 	const isProjectRestarting = projectId ? restartingProjectIds.has(projectId) : false;
 
@@ -185,7 +186,7 @@ export function ShellTopbar() {
 							disabled={isSpawning || isProjectRestarting}
 							onClick={() => void openOrchestrator()}
 							style={noDragStyle}
-							variant="primary"
+							variant={boardHeaderActionVariant}
 						>
 							<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
 							{isProjectRestarting
@@ -207,7 +208,7 @@ export function ShellTopbar() {
 									disabled={isProjectRestarting}
 									onClick={openNewTask}
 									style={noDragStyle}
-									variant={isBoardEmpty ? "accent" : "primary"}
+									variant="accent"
 								>
 									<Plus className="size-icon-md" aria-hidden="true" />
 									New task
@@ -242,7 +243,7 @@ export function ShellTopbar() {
 								disabled={isSpawning || isProjectRestarting}
 								onClick={() => void openOrchestrator()}
 								style={noDragStyle}
-								variant={isBoardEmpty ? "accent" : "primary"}
+								variant="primary"
 							>
 								<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
 								{isProjectRestarting ? "Restarting…" : isSpawning ? "Spawning…" : "Orchestrator"}

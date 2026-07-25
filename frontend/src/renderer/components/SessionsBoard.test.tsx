@@ -130,6 +130,31 @@ describe("SessionsBoard", () => {
 		expect(screen.getByText("Board")).toBeInTheDocument();
 	});
 
+	it("uses quieter header actions for empty project boards when actions live in the panel", () => {
+		boardActionsInPanelMock.mockReturnValue(true);
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				{
+					id: "p1",
+					name: "solkit-ui",
+					path: "/tmp/solkit-ui",
+					sessions: [],
+				},
+			],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		expect(screen.getByText("No worker sessions yet")).toBeInTheDocument();
+		const [headerOrchestrator, emptyStateOrchestrator] = screen.getAllByRole("button", { name: "Spawn Orchestrator" });
+		expect(headerOrchestrator).toHaveClass("bg-raised");
+		expect(headerOrchestrator).not.toHaveClass("bg-primary");
+		expect(emptyStateOrchestrator).toHaveClass("bg-primary");
+		expect(emptyStateOrchestrator).not.toHaveClass("bg-raised");
+	});
+
 	it("labels an idle session as Idle, not Working", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
