@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ReportProblemDialog } from "./ReportProblemDialog";
 
 describe("ReportProblemDialog", () => {
-	it("disables primary action when fields are empty, and enables only when both summary and details contain text", async () => {
+	it("disables primary action when fields are empty or whitespace-only, and enables when both summary and details contain non-whitespace text", async () => {
 		await act(async () => {
 			render(<ReportProblemDialog open={true} onOpenChange={vi.fn()} />);
 			await Promise.resolve();
@@ -22,11 +22,16 @@ describe("ReportProblemDialog", () => {
 		fireEvent.change(summaryInput, { target: { value: "Test Summary" } });
 		expect(submitButton).toBeDisabled();
 
-		fireEvent.change(summaryInput, { target: { value: "" } });
+		fireEvent.change(summaryInput, { target: { value: "   " } });
 		fireEvent.change(detailsInput, { target: { value: "Test Details" } });
 		expect(submitButton).toBeDisabled();
 
 		fireEvent.change(summaryInput, { target: { value: "Test Summary" } });
+		fireEvent.change(detailsInput, { target: { value: "   " } });
+		expect(submitButton).toBeDisabled();
+
+		fireEvent.change(summaryInput, { target: { value: "Test Summary" } });
+		fireEvent.change(detailsInput, { target: { value: "Test Details" } });
 		expect(submitButton).toBeEnabled();
 	});
 });
