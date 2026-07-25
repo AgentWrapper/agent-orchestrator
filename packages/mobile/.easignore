@@ -50,6 +50,11 @@ yarn-error.*
 # logs
 *.log
 
-# Re-include the Firebase Android config: gitignored (kept out of the public
-# repo) but required in the EAS build so the app registers with FCM.
+# ⚠️ This re-include does NOT work: EAS's git VCS client still strips
+# google-services.json because it matches a .gitignore rule (verified
+# 2026-07-25 — builds failed "google-services.json is missing" with this line
+# present). Kept only to document the attempt. The working approach is the
+# temp-commit + drop-the-.gitignore-line dance described in .gitignore and
+# docs/android-play-setup.md. TODO: replace with an EAS file environment
+# variable so this file is provided cleanly (see the EAS error's suggestion).
 !google-services.json
