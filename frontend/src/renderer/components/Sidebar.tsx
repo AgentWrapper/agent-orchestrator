@@ -283,7 +283,8 @@ export function Sidebar({
 				</div>
 			</SidebarHeader>
 
-			<SidebarContent className="scrollbar-none gap-0 pl-1.5 pr-1.75 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
+			{/* Keep Search + Projects chrome fixed; only the project tree scrolls. */}
+			<div className="flex shrink-0 flex-col gap-0 pl-1.5 pr-1.75 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
 				{commandPaletteEnabled ? (
 					<SidebarGroup className="p-0 pb-3">
 						<SidebarGroupContent>
@@ -293,18 +294,21 @@ export function Sidebar({
 						</SidebarGroupContent>
 					</SidebarGroup>
 				) : null}
+				{/* Section label (project-sidebar__nav-label) */}
+				<div className="sidebar-expanded-chrome flex shrink-0 items-center justify-between px-1.5 pb-2 group-data-[collapsible=icon]:hidden">
+					<SidebarGroupLabel className="h-auto rounded-none p-0 text-2xs font-semibold uppercase tracking-wide-lg text-passive">
+						Projects
+					</SidebarGroupLabel>
+					<CreateProjectButton
+						hideTrigger={workspaces.length === 0}
+						onCreateProject={onCreateProject}
+						onInitializeProject={onInitializeProject}
+					/>
+				</div>
+			</div>
+
+			<SidebarContent className="scrollbar-none gap-0 pl-1.5 pr-1.75 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
 				<SidebarGroup className="p-0">
-					{/* Section label (project-sidebar__nav-label) */}
-					<div className="sidebar-expanded-chrome flex shrink-0 items-center justify-between px-1.5 pb-2 group-data-[collapsible=icon]:hidden">
-						<SidebarGroupLabel className="h-auto rounded-none p-0 text-2xs font-semibold uppercase tracking-wide-lg text-passive">
-							Projects
-						</SidebarGroupLabel>
-						<CreateProjectButton
-							hideTrigger={workspaces.length === 0}
-							onCreateProject={onCreateProject}
-							onInitializeProject={onInitializeProject}
-						/>
-					</div>
 					{/* Tree (project-sidebar__tree) */}
 					<SidebarGroupContent>
 						{workspaceError ? (
