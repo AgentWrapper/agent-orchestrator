@@ -30,6 +30,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import type { AttachableTerminal, TerminalUserInputSource } from "../hooks/useTerminalSession";
 import { aoBridge } from "../lib/bridge";
 import { TERMINAL_FONT_SIZE_DEFAULT } from "../lib/design-tokens";
+import { isMacPlatform, isWindowsPlatform } from "../lib/platform";
 import { buildTerminalThemes } from "../lib/terminal-themes";
 import type { Theme } from "../stores/ui-store";
 import {
@@ -107,12 +108,6 @@ function isTerminalCopyShortcut(event: KeyboardEvent): boolean {
 	return isWindowsPlatform() && event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey;
 }
 
-function isWindowsPlatform(): boolean {
-	const platform =
-		(navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform;
-	return platform.toLowerCase().startsWith("win");
-}
-
 function isTerminalPasteShortcut(event: KeyboardEvent): boolean {
 	if (event.key === "Insert") return event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey;
 	if (event.key.toLowerCase() !== "v") return false;
@@ -127,7 +122,23 @@ function consumeTerminalShortcut(event: KeyboardEvent): void {
 }
 
 function normalizedTerminalShortcut(event: KeyboardEvent): string | null {
-	if (event.metaKey || event.shiftKey) return null;
+	if (event.shiftKey) return null;
+
+	// Guard with isMacPlatform() so the Windows key (metaKey on Windows) is not
+	// mistakenly treated as the macOS Command modifier.
+	if (event.metaKey && !event.ctrlKey && !event.altKey && isMacPlatform()) {
+		switch (event.key) {
+			case "ArrowLeft":
+				return "\x01";
+			case "ArrowRight":
+				return "\x05";
+			default:
+				return null;
+		}
+	}
+
+	// Non-macOS metaKey: do not handle.
+	if (event.metaKey) return null;
 
 	if (event.altKey && !event.ctrlKey) {
 		switch (event.key) {
@@ -154,6 +165,18 @@ function normalizedTerminalShortcut(event: KeyboardEvent): string | null {
 				return "\x1b\x7f";
 			case "Delete":
 				return "\x1bd";
+			default:
+				return null;
+		}
+	}
+
+	// Windows: Home/End for line start/end (platform-native convention).
+	if (isWindowsPlatform()) {
+		switch (event.key) {
+			case "Home":
+				return "\x01";
+			case "End":
+				return "\x05";
 			default:
 				return null;
 		}
