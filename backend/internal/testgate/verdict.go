@@ -81,6 +81,16 @@ const (
 	ReviewVerdictChangesRequested ReviewVerdict = "changes_requested"
 )
 
+// Valid reports whether the reviewer verdict is one AO accepts.
+func (v ReviewVerdict) Valid() bool {
+	switch v {
+	case ReviewVerdictApproved, ReviewVerdictChangesRequested:
+		return true
+	default:
+		return false
+	}
+}
+
 // FusedOutcome is the combined reviewer and runtime-verification verdict.
 type FusedOutcome string
 
@@ -297,6 +307,9 @@ func Synthesize(in SynthesisInput) FusedVerdict {
 		return appFailureVerdict(in.Baseline.Summary)
 	case ClassificationInfra, ClassificationNotConfigured:
 		return FusedVerdict{Outcome: FusedOutcomeNeutral, Summary: in.Baseline.Summary}
+	case ClassificationPassed:
+	default:
+		return FusedVerdict{Outcome: FusedOutcomeNeutral, Summary: firstNonEmpty(in.Baseline.Summary, "runtime verification returned an unknown classification")}
 	}
 	targetedAppFailed := in.Targeted.Classification == ClassificationAppFailed
 	if len(in.Findings) == 0 {
@@ -318,6 +331,7 @@ func Synthesize(in SynthesisInput) FusedVerdict {
 	}
 
 	out := FusedVerdict{Outcome: FusedOutcomeApproved, Findings: make([]FusedFinding, 0, len(in.Findings))}
+	reviewerFindingBlocks := in.ReviewVerdict != ReviewVerdictApproved
 	for _, finding := range in.Findings {
 		fused := FusedFinding{
 			FindingID: finding.ID,
@@ -328,7 +342,7 @@ func Synthesize(in SynthesisInput) FusedVerdict {
 			Title:     finding.Title,
 			Claim:     finding.Claim,
 			Summary:   finding.FailureScenario,
-			Blocking:  in.ReviewVerdict == ReviewVerdictChangesRequested,
+			Blocking:  reviewerFindingBlocks,
 		}
 		if ev, ok := evidenceByFinding[finding.ID]; ok {
 			fused.Source = EvidenceSourceTestInfra

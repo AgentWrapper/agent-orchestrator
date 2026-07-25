@@ -43,6 +43,7 @@ type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
 type FusedVerdict = components["schemas"]["FusedVerdict"];
 type OpenReviewerTerminal = (target: { handleId: string; harness: string }) => void;
 type ReviewTone = "neutral" | "running" | "success" | "danger";
+type ReviewVerdictKey = "app_failed" | "approved" | "cancelled" | "changes_requested" | "failed" | "not_run" | "running";
 
 export type InspectorView = "summary" | "reviews" | "browser" | "files";
 
@@ -1138,37 +1139,56 @@ function aoReviewCommentUrl(run: PRReviewState["latestRun"]): string | null {
 	return `${run.prUrl}#pullrequestreview-${run.githubReviewId}`;
 }
 
+function reviewVerdictKey(reviewState: PRReviewState): ReviewVerdictKey {
+	if (reviewState.latestRun?.status === "failed") {
+		return "failed";
+	}
+	if (reviewState.latestRun?.status === "cancelled") {
+		return "cancelled";
+	}
+	if (reviewState.fusedVerdict?.outcome === "app_failed") {
+		return "app_failed";
+	}
+	if (reviewState.fusedVerdict?.outcome === "approved") {
+		return "approved";
+	}
+	if (reviewState.fusedVerdict?.outcome === "changes_requested") {
+		return "changes_requested";
+	}
+	switch (reviewState.status) {
+		case "running":
+			return "running";
+		case "up_to_date":
+			return "approved";
+		case "changes_requested":
+			return "changes_requested";
+		case "needs_review":
+		case "ineligible":
+			return "not_run";
+	}
+	return "not_run";
+}
+
 function reviewVerdict(reviewState: PRReviewState): {
 	label: string;
 	tone: ReviewTone;
 } {
-	if (reviewState.latestRun?.status === "failed") {
-		return { label: "Failed", tone: "danger" };
-	}
-	if (reviewState.latestRun?.status === "cancelled") {
-		return { label: "Cancelled", tone: "neutral" };
-	}
-	if (reviewState.fusedVerdict?.outcome === "app_failed") {
-		return { label: "App failed", tone: "danger" };
-	}
-	if (reviewState.fusedVerdict?.outcome === "approved") {
-		return { label: "Approved", tone: "success" };
-	}
-	if (reviewState.fusedVerdict?.outcome === "changes_requested") {
-		return { label: "Changes requested", tone: "danger" };
-	}
-	switch (reviewState.status) {
-		case "running":
-			return { label: "Reviewing...", tone: "running" };
-		case "up_to_date":
+	switch (reviewVerdictKey(reviewState)) {
+		case "app_failed":
+			return { label: "App failed", tone: "danger" };
+		case "approved":
 			return { label: "Approved", tone: "success" };
+		case "cancelled":
+			return { label: "Cancelled", tone: "neutral" };
 		case "changes_requested":
 			return { label: "Changes requested", tone: "danger" };
-		case "needs_review":
-		case "ineligible":
+		case "failed":
+			return { label: "Failed", tone: "danger" };
+		case "running":
+			return { label: "Reviewing...", tone: "running" };
+		case "not_run":
 			return { label: "Not run", tone: "neutral" };
 	}
-	return { label: "Not run", tone: "neutral" };
 }
 
 function previousReviewVerdict(reviewState: PRReviewState): {

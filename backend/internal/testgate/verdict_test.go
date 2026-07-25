@@ -118,6 +118,17 @@ func TestSynthesizeInfraAndNotConfiguredDoNotBlock(t *testing.T) {
 	}
 }
 
+func TestSynthesizeUnknownBaselineClassificationDoesNotApprove(t *testing.T) {
+	got := Synthesize(SynthesisInput{
+		Baseline:      TestRun{Classification: Classification(""), Summary: "baseline result missing"},
+		ReviewVerdict: ReviewVerdictApproved,
+	})
+
+	if got.Outcome != FusedOutcomeNeutral || got.Blocking {
+		t.Fatalf("outcome = %+v, want neutral non-blocking verdict", got)
+	}
+}
+
 func TestSynthesizeChangesRequestedWithoutFindingsIsNeutral(t *testing.T) {
 	got := Synthesize(SynthesisInput{
 		Baseline:      TestRun{Classification: ClassificationPassed},
@@ -126,6 +137,26 @@ func TestSynthesizeChangesRequestedWithoutFindingsIsNeutral(t *testing.T) {
 
 	if got.Outcome != FusedOutcomeNeutral || got.Blocking {
 		t.Fatalf("outcome = %+v, want neutral non-blocking verdict", got)
+	}
+}
+
+func TestSynthesizeUnknownReviewVerdictBlocksSubmittedFindings(t *testing.T) {
+	got := Synthesize(SynthesisInput{
+		Baseline:      TestRun{Classification: ClassificationPassed},
+		ReviewVerdict: ReviewVerdict(""),
+		Findings: []ReviewFinding{{
+			ID:         "finding-1",
+			Severity:   SeverityHigh,
+			Title:      "route 500s",
+			Behavioral: true,
+		}},
+	})
+
+	if got.Outcome != FusedOutcomeChangesRequested || !got.Blocking {
+		t.Fatalf("outcome = %+v, want blocking changes requested", got)
+	}
+	if len(got.Findings) != 1 || !got.Findings[0].Blocking {
+		t.Fatalf("findings = %+v, want unknown verdict to keep finding blocking", got.Findings)
 	}
 }
 
