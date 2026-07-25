@@ -14,7 +14,6 @@ export type ShortcutChord = {
 	alt: boolean;
 };
 
-// prettier-ignore
 export type AppShortcutId =
 	"new-session" | "new-shell-terminal" | "keyboard-shortcuts" | "toggle-sidebar" | "open-project" | "toggle-inspector" | "command-palette" | "open-settings" | "previous-session" | "next-session" | "focus-terminal";
 
