@@ -55,6 +55,7 @@ function setupHost() {
 	const sent: Array<{ channel: string; payload: unknown }> = [];
 	const shellFocus = vi.fn();
 	const shellSend = vi.fn((channel: string, payload?: unknown) => sent.push({ channel, payload }));
+	const shellOpenExternal = vi.fn(async () => undefined);
 	const host = createBrowserViewHost({
 		mainWindow: {
 			contentView: { addChildView: () => undefined, removeChildView: () => undefined },
@@ -76,7 +77,7 @@ function setupHost() {
 			removeHandler: () => undefined,
 			off: () => undefined,
 		} as never,
-		shell: { openExternal: async () => undefined },
+		shell: { openExternal: shellOpenExternal },
 		WebContentsView: function () {
 			return view;
 		} as never,
@@ -123,6 +124,7 @@ function setupHost() {
 		send,
 		sent,
 		shellFocus,
+		shellOpenExternal,
 		shellSend,
 		view,
 		webContents,
@@ -394,6 +396,27 @@ describe("browser annotation IPC", () => {
 		send("browser:annotation:cancel", 99, { reason: "escape" });
 
 		expect(sent.some((entry) => entry.channel === "browser:annotation:canceled")).toBe(false);
+	});
+});
+
+describe("browser modified link IPC", () => {
+	it("opens allowed external links from a managed preview webContents", async () => {
+		const { invoke, send, shellOpenExternal } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		send("browser:openExternalLink", 99, "https://example.com/docs");
+
+		expect(shellOpenExternal).toHaveBeenCalledWith("https://example.com/docs");
+	});
+
+	it("ignores unknown preview senders and unsupported URLs", async () => {
+		const { invoke, send, shellOpenExternal } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		send("browser:openExternalLink", 123, "https://example.com/docs");
+		send("browser:openExternalLink", 99, "file:///tmp/index.html");
+
+		expect(shellOpenExternal).not.toHaveBeenCalled();
 	});
 });
 

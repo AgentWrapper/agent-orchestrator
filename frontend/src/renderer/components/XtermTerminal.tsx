@@ -31,6 +31,7 @@ import type { AttachableTerminal, TerminalUserInputSource } from "../hooks/useTe
 import { aoBridge } from "../lib/bridge";
 import { TERMINAL_FONT_SIZE_DEFAULT } from "../lib/design-tokens";
 import { buildTerminalThemes } from "../lib/terminal-themes";
+import { isSystemBrowserModifierClick } from "../../shared/system-browser-links";
 import type { Theme } from "../stores/ui-store";
 import {
 	DropdownMenu,
@@ -228,7 +229,7 @@ function forceSelectionMode(term: Terminal): void {
 	const selectionService = internal._core?._selectionService;
 	const element = internal._core?.element;
 	if (!selectionService || !element) return;
-	selectionService.shouldForceSelection = () => true;
+	selectionService.shouldForceSelection = (event) => !isSystemBrowserModifierClick(event);
 	selectionService.enable();
 	element.classList.remove("enable-mouse-events");
 }
@@ -289,12 +290,17 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	useEffect(() => {
 		const host = hostRef.current;
 		if (!host) return undefined;
-		const activateLink = (_event: MouseEvent, uri: string) => {
+		const activateLink = (event: MouseEvent, uri: string) => {
 			// Left-click on a web link opens it inside the AO Browser panel (the
 			// parent decides how). Non-web schemes (mailto:, etc.) still go to the OS
-			// via the main process's window-open handler. Right-click to open a web
-			// link in the system browser instead — see the context menu below.
+			// via the main process's window-open handler.
 			if (isWebLink(uri)) {
+				if (isSystemBrowserModifierClick(event)) {
+					void aoBridge.app.openExternal(uri).catch((error) => {
+						console.warn("Unable to open link in system browser", error);
+					});
+					return;
+				}
 				callbacksRef.current.onLinkOpen?.(uri);
 				return;
 			}

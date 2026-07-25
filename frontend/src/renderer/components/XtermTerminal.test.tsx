@@ -150,6 +150,7 @@ describe("XtermTerminal", () => {
 		setNavigatorPlatform("Linux x86_64");
 		window.ao!.clipboard.writeText = vi.fn().mockResolvedValue(undefined);
 		window.ao!.clipboard.readText = vi.fn().mockResolvedValue("");
+		window.ao!.app.openExternal = vi.fn().mockResolvedValue(undefined);
 	});
 
 	it("preserves the agent TUI palette without contrast remapping", () => {
@@ -752,6 +753,21 @@ describe("XtermTerminal", () => {
 
 		expect(onLinkOpen).toHaveBeenCalledWith("https://example.com");
 		expect(open).not.toHaveBeenCalled();
+		expect(window.ao!.app.openExternal).not.toHaveBeenCalled();
+		open.mockRestore();
+	});
+
+	it("opens modified terminal web link clicks in the system browser", () => {
+		const open = vi.spyOn(window, "open").mockReturnValue(null);
+		const onLinkOpen = vi.fn();
+		render(<XtermTerminal onLinkOpen={onLinkOpen} theme="dark" />);
+
+		expect(state.linkHandler).toBeTypeOf("function");
+		state.linkHandler!({ altKey: true, button: 0, defaultPrevented: false } as MouseEvent, "https://example.com");
+
+		expect(window.ao!.app.openExternal).toHaveBeenCalledWith("https://example.com");
+		expect(onLinkOpen).not.toHaveBeenCalled();
+		expect(open).not.toHaveBeenCalled();
 		open.mockRestore();
 	});
 
@@ -767,6 +783,26 @@ describe("XtermTerminal", () => {
 
 		expect(onLinkOpen).toHaveBeenCalledWith("http://localhost:3000");
 		expect(open).not.toHaveBeenCalled();
+		expect(window.ao!.app.openExternal).not.toHaveBeenCalled();
+		open.mockRestore();
+	});
+
+	it("opens modified OSC 8 web links in the system browser", () => {
+		const open = vi.spyOn(window, "open").mockReturnValue(null);
+		const onLinkOpen = vi.fn();
+		render(<XtermTerminal onLinkOpen={onLinkOpen} theme="dark" />);
+		const oscLinkHandler = state.lastTerminal!.options.linkHandler as {
+			activate: (event: MouseEvent, uri: string) => void;
+		};
+
+		oscLinkHandler.activate(
+			{ altKey: true, button: 0, defaultPrevented: false } as MouseEvent,
+			"http://localhost:3000",
+		);
+
+		expect(window.ao!.app.openExternal).toHaveBeenCalledWith("http://localhost:3000");
+		expect(onLinkOpen).not.toHaveBeenCalled();
+		expect(open).not.toHaveBeenCalled();
 		open.mockRestore();
 	});
 
@@ -780,6 +816,7 @@ describe("XtermTerminal", () => {
 
 		expect(open).toHaveBeenCalledWith("mailto:dev@example.com", "_blank", "noopener");
 		expect(onLinkOpen).not.toHaveBeenCalled();
+		expect(window.ao!.app.openExternal).not.toHaveBeenCalled();
 		open.mockRestore();
 	});
 
@@ -790,5 +827,12 @@ describe("XtermTerminal", () => {
 		expect(state.lastTerminal!._core._selectionService.enable).toHaveBeenCalled();
 		expect(state.lastTerminal!._core.element.classList.remove).toHaveBeenCalledWith("enable-mouse-events");
 		expect(state.lastTerminal!._core._selectionService.shouldForceSelection({} as MouseEvent)).toBe(true);
+		expect(
+			state.lastTerminal!._core._selectionService.shouldForceSelection({
+				altKey: true,
+				button: 0,
+				defaultPrevented: false,
+			} as unknown as MouseEvent),
+		).toBe(false);
 	});
 });

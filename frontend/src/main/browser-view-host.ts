@@ -16,6 +16,7 @@ import type {
 	BrowserAnnotationSubmitPayload,
 } from "../shared/browser-annotations";
 import { attachAppShortcuts } from "./app-shortcuts";
+import { openAllowedAppExternalURL } from "./external-open";
 
 export type BrowserRect = Pick<Rectangle, "x" | "y" | "width" | "height">;
 
@@ -398,6 +399,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		options.mainWindow.webContents.send("browser:annotation:canceled", forwarded);
 	};
 
+	const openExternalLink = (event: IpcMainEvent, url: string | undefined): void => {
+		const viewId = viewIdsByWebContentsId.get(event.sender.id);
+		if (!viewId || !entries.has(viewId) || typeof url !== "string") return;
+		void openAllowedAppExternalURL(url, options.shell).catch(() => undefined);
+	};
+
 	const handle = <Args extends unknown[], Result>(
 		channel: string,
 		fn: (event: IpcMainInvokeEvent, ...args: Args) => Result,
@@ -434,6 +441,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	on("browser:annotation:cancel", (event, payload: BrowserAnnotationPageCancelPayload) =>
 		forwardAnnotationCancel(event, payload),
 	);
+	on("browser:openExternalLink", (event, url: string) => openExternalLink(event, url));
 
 	return {
 		dispose: () => {

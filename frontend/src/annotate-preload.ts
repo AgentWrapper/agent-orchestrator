@@ -5,6 +5,7 @@ import {
 	type BrowserAnnotationContext,
 	type BrowserAnnotationPageSubmitPayload,
 } from "./shared/browser-annotations";
+import { systemBrowserHrefFromClick } from "./shared/system-browser-links";
 
 let enabled = false;
 let selectedElement: Element | null = null;
@@ -15,6 +16,19 @@ let shadow: ShadowRoot | null = null;
 ipcRenderer.on("browser:annotation:setMode", (_event, input: { enabled?: boolean }) => {
 	setEnabled(Boolean(input?.enabled), "disabled");
 });
+
+document.addEventListener(
+	"click",
+	(event) => {
+		const href = systemBrowserHrefFromClick(event);
+		if (!href) return;
+		event.preventDefault();
+		event.stopPropagation();
+		event.stopImmediatePropagation();
+		ipcRenderer.send("browser:openExternalLink", href);
+	},
+	true,
+);
 
 window.addEventListener("beforeunload", () => {
 	if (enabled) sendCancel("navigation");
