@@ -368,10 +368,6 @@ function ShellLayout() {
 	}, [themePreference]);
 
 	useEffect(() => {
-		void aoBridge.window.setTrafficLightsInset(!isSidebarOpen);
-	}, [isSidebarOpen]);
-
-	useEffect(() => {
 		if (!isSidebarOpen) return;
 		cancelSidebarPeekClose();
 		setIsSidebarPeekOpen(false);

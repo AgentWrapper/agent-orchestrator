@@ -228,6 +228,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 	const actions = projectId ? (
 		<>
+			{boardOwnsNotificationCenter ? <NotificationCenter /> : null}
 			{visibleSpawnError && !showProjectEmpty && (
 				<TopbarKillError className="max-w-content-max truncate" title={visibleSpawnError}>
 					{visibleSpawnError}
@@ -257,7 +258,6 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 							? "Orchestrator"
 							: "Spawn Orchestrator"}
 			</TopbarButton>
-			{boardOwnsNotificationCenter ? <NotificationCenter /> : null}
 		</>
 	) : boardOwnsNotificationCenter ? (
 		<NotificationCenter />
@@ -271,7 +271,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			    Welcome skips the row — a dangling "Board" above the import
 			    chooser was review feedback on #2432. */}
 			{!showWelcome && boardActionsInPanel && (boardLabel || actions) ? (
-				<div className="flex h-toolbar shrink-0 items-center gap-2 px-4.5" style={dragStyle}>
+				<div className="center-panel-titlebar flex h-toolbar shrink-0 items-center gap-2 pr-4.5" style={dragStyle}>
 					{boardLabel ? <span className={topbarProjectLabelClass}>{boardLabel}</span> : null}
 					<div className="min-w-0 flex-1" />
 					{actions ? (

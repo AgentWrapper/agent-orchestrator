@@ -48,11 +48,14 @@ export function TitlebarNav({
 
 	if (!isMac) return null;
 
-	const topClass = isFullScreen || isSidebarOpen ? "top-0" : "top-3.25";
+	// Stay pinned beside the traffic lights. Nudge down slightly so the
+	// toggle/arrows share a centerline with the native dots (y: 12).
+	const leftClass = isFullScreen ? "left-titlebar-cluster-left-fullscreen" : "left-titlebar-cluster-left";
+	const topClass = isFullScreen ? "top-0" : "top-0.5";
 
 	return (
 		<div
-			className={`fixed left-titlebar-cluster-left z-titlebar flex h-toolbar items-center gap-1 transition-[top] duration-200 ease-in-out motion-reduce:transition-none ${topClass}`}
+			className={`fixed ${topClass} ${leftClass} z-titlebar flex h-traffic-light-clearance items-center gap-1`}
 			style={noDragStyle}
 		>
 			<TitlebarButton
