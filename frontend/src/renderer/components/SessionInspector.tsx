@@ -43,7 +43,8 @@ type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
 type FusedVerdict = components["schemas"]["FusedVerdict"];
 type OpenReviewerTerminal = (target: { handleId: string; harness: string }) => void;
 type ReviewTone = "neutral" | "running" | "success" | "danger";
-type ReviewVerdictKey = "app_failed" | "approved" | "cancelled" | "changes_requested" | "failed" | "not_run" | "running";
+type ReviewVerdictKey =
+	"app_failed" | "approved" | "cancelled" | "changes_requested" | "failed" | "not_run" | "running";
 
 export type InspectorView = "summary" | "reviews" | "browser" | "files";
 
