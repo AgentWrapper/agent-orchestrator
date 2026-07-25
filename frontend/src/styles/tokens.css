@@ -255,6 +255,27 @@
 	--size-dialog-lg: 440px;
 	--size-dialog-orchestrator: 460px;
 	--size-dialog-xl: 560px;
+
+	/* Command palette — Cursor-style dark surface */
+	--color-bg-command-palette: #212121;
+	--color-border-command-palette: #2e2e2e;
+	--color-bg-command-item-active: #3b3b3b;
+	--color-text-command-item: #cccccc;
+	--color-text-command-placeholder: #737373;
+	--color-text-command-muted: #8a8a8a;
+	--radius-command-palette: 12px;
+	--radius-command-item: 6px;
+	--shadow-command-palette: 0 24px 64px rgb(0 0 0 / 0.55), 0 8px 24px rgb(0 0 0 / 0.35);
+	--size-command-palette: 720px;
+	--size-command-palette-top: 14vh;
+	--size-command-palette-list-max: 420px;
+	--size-command-palette-list-vh: 50vh;
+	--size-command-subtitle-max: 45%;
+	--size-command-pad-x: 20px;
+	--size-command-item-inset: 8px;
+	--size-command-item-pad-l: 14px;
+	--font-size-command-input: 16px;
+	--leading-command-item: 22px;
 	--size-branch-chip: 13rem;
 	--size-inspector-min: 280px;
 	--size-textarea-min: 112px;
@@ -506,6 +527,15 @@
 	--elevation-md: 0 1px 0 rgb(0 0 0 / 0.03), 0 12px 30px rgb(20 30 50 / 0.1);
 	--elevation-lg: 0 16px 48px rgb(20 30 50 / 0.16);
 	--elevation-xl: 0 1px 0 rgb(0 0 0 / 0.03), 0 20px 50px rgb(20 30 50 / 0.14);
+
+	/* Command palette */
+	--color-bg-command-palette: #f4f4f5;
+	--color-border-command-palette: #e3e3e5;
+	--color-bg-command-item-active: #d8d8dc;
+	--color-text-command-item: #1a1a1a;
+	--color-text-command-placeholder: #9a9a9a;
+	--color-text-command-muted: #666666;
+	--shadow-command-palette: 0 16px 48px rgb(20 30 50 / 0.14), 0 4px 12px rgb(0 0 0 / 0.06);
 
 	/* Welcome / import radius alias */
 	--color-border-welcome-panel: #d4d4d6;

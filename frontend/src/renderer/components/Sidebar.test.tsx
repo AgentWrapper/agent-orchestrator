@@ -8,15 +8,22 @@ import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
 import { useUiStore } from "../stores/ui-store";
 
-const { getMock, navigateMock, mockParams, renameSessionMock, updateStatusMock } = vi.hoisted(() => ({
-	getMock: vi.fn(),
-	navigateMock: vi.fn(),
-	mockParams: { projectId: undefined as string | undefined },
-	renameSessionMock: vi.fn().mockResolvedValue(undefined),
-	updateStatusMock: vi.fn(),
-}));
+const { getMock, navigateMock, mockParams, renameSessionMock, updateStatusMock, commandPaletteEnabled } = vi.hoisted(
+	() => ({
+		getMock: vi.fn(),
+		navigateMock: vi.fn(),
+		mockParams: { projectId: undefined as string | undefined },
+		renameSessionMock: vi.fn().mockResolvedValue(undefined),
+		updateStatusMock: vi.fn(),
+		commandPaletteEnabled: { current: true },
+	}),
+);
 
 vi.mock("../lib/rename-session", () => ({ renameSession: renameSessionMock }));
+
+vi.mock("../hooks/useCommandPaletteEnabled", () => ({
+	useCommandPaletteEnabled: () => commandPaletteEnabled.current,
+}));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@tanstack/react-router")>();
@@ -188,6 +195,8 @@ async function openCreateProjectDialog(
 beforeEach(() => {
 	window.localStorage.clear();
 	document.documentElement.style.removeProperty("--ao-sidebar-w");
+	commandPaletteEnabled.current = true;
+	useUiStore.setState({ isCommandPaletteOpen: false });
 	getMock.mockReset();
 	getMock.mockResolvedValue({
 		data: {
@@ -707,6 +716,30 @@ describe("Sidebar", () => {
 		renderSidebar();
 		await user.click(screen.getAllByRole("button", { name: "Settings" })[0]);
 		expect(navigateMock).toHaveBeenCalledWith({ to: "/settings" });
+	});
+
+	it("opens the command palette when Search is clicked", async () => {
+		const user = userEvent.setup();
+		renderSidebar();
+		expect(useUiStore.getState().isCommandPaletteOpen).toBe(false);
+		await user.click(screen.getByRole("button", { name: /Search/ }));
+		expect(useUiStore.getState().isCommandPaletteOpen).toBe(true);
+	});
+
+	it("defers opening the palette until the Search click has been dispatched", async () => {
+		renderSidebar();
+		fireEvent.click(screen.getByRole("button", { name: /Search/ }));
+		// Still closed inside the click's task: the palette dialog must not mount
+		// while the pointer sequence that opened it is still being handled.
+		expect(useUiStore.getState().isCommandPaletteOpen).toBe(false);
+		await act(async () => {});
+		expect(useUiStore.getState().isCommandPaletteOpen).toBe(true);
+	});
+
+	it("hides Search when the command palette feature is disabled", () => {
+		commandPaletteEnabled.current = false;
+		renderSidebar();
+		expect(screen.queryByRole("button", { name: /Search/ })).not.toBeInTheDocument();
 	});
 
 	it("shows the project name and context in the ConfirmDialog description", async () => {

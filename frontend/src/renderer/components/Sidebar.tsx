@@ -1,8 +1,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
-import { ChevronRight, LayoutDashboard, MoreVertical, Pencil, Plus, RefreshCw, Settings, Trash2 } from "lucide-react";
+import { ChevronRight, LayoutDashboard, MoreVertical, Pencil, Plus, RefreshCw, Search, Settings, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { UpdateStatus } from "../../main/update-settings";
+import { APP_SHORTCUTS, shortcutKeys } from "../../shared/shortcuts";
 import {
 	newestActiveOrchestrator,
 	type WorkspaceSession,
@@ -11,6 +12,7 @@ import {
 } from "../types/workspace";
 import { getSessionDotView } from "../lib/session-presentation";
 import { aoBridge } from "../lib/bridge";
+import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { renameSession } from "../lib/rename-session";
@@ -138,6 +140,8 @@ export function Sidebar({
 	// Daemon status for the smoke suite's sr-only mirror in the footer. Null when
 	// rendered outside the shell (unit tests) — the mirror simply doesn't render.
 	const daemonStatus = useShellMaybe()?.daemonStatus ?? null;
+	const commandPaletteEnabled = useCommandPaletteEnabled();
+	const setCommandPaletteOpen = useUiStore((s) => s.setCommandPaletteOpen);
 
 	useEffect(() => {
 		if (isCollapsed) {
@@ -223,7 +227,12 @@ export function Sidebar({
 			>
 				{/* Brand (project-sidebar__brand); in the icon rail it becomes the old
             36px board button wrapping the 22px accent mark. */}
-				<div className="flex shrink-0 items-center gap-2.5 px-1.5 pb-3 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:pb-2">
+				<div
+					className={cn(
+						"flex shrink-0 items-center gap-2.5 px-1.5 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:pb-2",
+						commandPaletteEnabled ? "pb-2" : "pb-3",
+					)}
+				>
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<button
@@ -274,16 +283,28 @@ export function Sidebar({
 				</div>
 			</SidebarHeader>
 
-			{/* Section label (project-sidebar__nav-label) */}
-			<div className="sidebar-expanded-chrome flex shrink-0 items-center justify-between px-1.5 pb-2 group-data-[collapsible=icon]:hidden">
-				<SidebarGroupLabel className="h-auto rounded-none p-0 text-2xs font-semibold uppercase tracking-wide-lg text-passive">
-					Projects
-				</SidebarGroupLabel>
-				<CreateProjectButton
-					hideTrigger={workspaces.length === 0}
-					onCreateProject={onCreateProject}
-					onInitializeProject={onInitializeProject}
-				/>
+			{/* Keep Search + Projects chrome fixed; only the project tree scrolls. */}
+			<div className="flex shrink-0 flex-col gap-0 pl-1.5 pr-1.75 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
+				{commandPaletteEnabled ? (
+					<SidebarGroup className="p-0 pb-3">
+						<SidebarGroupContent>
+							<SidebarMenu className="gap-0 group-data-[collapsible=icon]:gap-1">
+								<SidebarSearchButton onOpen={() => setCommandPaletteOpen(true)} />
+							</SidebarMenu>
+						</SidebarGroupContent>
+					</SidebarGroup>
+				) : null}
+				{/* Section label (project-sidebar__nav-label) */}
+				<div className="sidebar-expanded-chrome flex shrink-0 items-center justify-between px-1.5 pb-2 group-data-[collapsible=icon]:hidden">
+					<SidebarGroupLabel className="h-auto rounded-none p-0 text-2xs font-semibold uppercase tracking-wide-lg text-passive">
+						Projects
+					</SidebarGroupLabel>
+					<CreateProjectButton
+						hideTrigger={workspaces.length === 0}
+						onCreateProject={onCreateProject}
+						onInitializeProject={onInitializeProject}
+					/>
+				</div>
 			</div>
 
 			<SidebarContent className="scrollbar-none gap-0 pl-1.5 pr-1.75 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
@@ -767,6 +788,49 @@ function RestartToUpdateRailButton({ status }: { status: UpdateStatus }) {
 				Restart to update{status.version ? ` · v${status.version} ready` : ""}
 			</TooltipContent>
 		</Tooltip>
+	);
+}
+
+function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
+	const paletteShortcut = APP_SHORTCUTS.find((shortcut) => shortcut.id === "command-palette");
+	const shortcutLabel = paletteShortcut
+		? shortcutKeys(paletteShortcut, isMac).join(isMac ? "" : "+")
+		: isMac
+			? "⌘K"
+			: "Ctrl+K";
+	const { state } = useSidebar();
+	const isCollapsed = state === "collapsed";
+	return (
+		<SidebarMenuItem className="group-data-[collapsible=icon]:mb-0">
+			<SidebarMenuButton
+				aria-label={`Search · ${shortcutLabel}`}
+				onClick={() => {
+					// Open on the microtask after this click rather than inside it: mounting
+					// the palette dialog while this button's tooltip layer is still tearing
+					// down from the same pointer sequence dismissed it immediately. The
+					// "defers opening" test pins the deferral so it is not dropped as noise.
+					queueMicrotask(onOpen);
+				}}
+				tooltip={isCollapsed ? `Search · ${shortcutLabel}` : undefined}
+				className={cn(
+					"h-control-form gap-2 rounded-settings-row bg-interactive-hover px-3 py-0 text-control font-medium text-muted-foreground",
+					"hover:bg-interactive-hover hover:text-foreground active:bg-interactive-hover active:text-foreground",
+					"[&>svg]:size-icon-md!",
+					"group-data-[collapsible=icon]:size-control-form! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:p-0!",
+				)}
+			>
+				<Search strokeWidth={1.75} aria-hidden="true" />
+				<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate leading-none group-data-[collapsible=icon]:hidden">
+					Search
+				</span>
+				<span
+					aria-hidden="true"
+					className="sidebar-expanded-chrome shrink-0 text-caption leading-none text-passive group-data-[collapsible=icon]:hidden"
+				>
+					{shortcutLabel}
+				</span>
+			</SidebarMenuButton>
+		</SidebarMenuItem>
 	);
 }
 

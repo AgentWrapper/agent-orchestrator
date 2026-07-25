@@ -279,6 +279,22 @@
 	width: min(var(--size-dialog-orchestrator), calc(100vw - var(--space-8)));
 }
 
+@utility w-command-palette {
+	width: min(var(--size-command-palette), calc(100vw - var(--space-8)));
+}
+
+@utility max-h-command-palette-list {
+	max-height: min(var(--size-command-palette-list-max), var(--size-command-palette-list-vh));
+}
+
+@utility top-command-palette {
+	top: var(--size-command-palette-top);
+}
+
+@utility max-w-command-subtitle {
+	max-width: var(--size-command-subtitle-max);
+}
+
 @utility grid-cols-notification {
 	grid-template-columns: var(--size-notification-icon) minmax(0, 1fr) auto;
 }
