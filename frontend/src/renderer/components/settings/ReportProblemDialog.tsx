@@ -9,7 +9,17 @@ import {
 	type ReportProblemOutput,
 } from "../../lib/report-problem";
 import { aoBridge } from "../../lib/bridge";
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "../ui/dialog";
+import {
+	Dialog,
+	DialogClose,
+	DialogContent,
+	DialogDescription,
+	DialogTitle,
+	settingsDialogBodyClass,
+	settingsDialogContentClass,
+	settingsDialogFooterClass,
+	settingsDialogHeaderClass,
+} from "../ui/dialog";
 
 type ReportProblemDialogProps = {
 	open: boolean;
@@ -129,7 +139,7 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent
 				showCloseButton={false}
-				className="z-overlay flex max-h-[min(680px,calc(100svh-32px))] w-[min(var(--size-settings-dialog),calc(100vw-32px))] max-w-none flex-col gap-0 overflow-hidden rounded-(--radius-settings-dialog-lg) border border-[var(--color-border-settings-dialog)] bg-settings-dialog p-0 text-settings-label shadow-[var(--shadow-settings-dialog)]"
+				className={settingsDialogContentClass}
 				onOpenAutoFocus={(event) => {
 					event.preventDefault();
 					titleRef.current?.focus();
@@ -154,14 +164,14 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 					</button>
 				</DialogClose>
 
-				<div className="flex shrink-0 flex-col gap-1 border-b border-(--color-border-settings-dialog-header) px-6 pt-5 pb-4">
+				<div className={settingsDialogHeaderClass}>
 					<DialogTitle className="settings-dialog-title">Report a problem</DialogTitle>
 					<DialogDescription className="text-control leading-4 text-settings-muted">
 						Found an issue? Tell us what happened.
 					</DialogDescription>
 				</div>
 
-				<div className="flex min-h-0 flex-col gap-4 overflow-y-auto px-6 pt-4 pb-5">
+				<div className={settingsDialogBodyClass}>
 					<div className="flex flex-col gap-1.5">
 						<label className="settings-field-label" htmlFor={titleId}>
 							Title
@@ -222,7 +232,7 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 					)}
 				</div>
 
-				<div className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-[var(--color-border-settings-dialog-header)] px-6 py-3.5">
+				<div className={settingsDialogFooterClass}>
 					<DialogClose asChild>
 						<button type="button" className="settings-footer-button">
 							Cancel

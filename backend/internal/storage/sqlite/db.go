@@ -130,7 +130,11 @@ func migrate(db *sql.DB) error {
 	if err := goose.SetDialect("sqlite3"); err != nil {
 		return fmt.Errorf("set goose dialect: %w", err)
 	}
-	if err := goose.Up(db, "migrations"); err != nil {
+	// Builds can advance a database past a migration that is added or
+	// renumbered later (notably across fast-moving Nightly releases). Apply
+	// those embedded migrations instead of permanently wedging daemon startup
+	// on goose's out-of-order-history guard.
+	if err := goose.Up(db, "migrations", goose.WithAllowMissing()); err != nil {
 		return fmt.Errorf("run migrations: %w", err)
 	}
 	return nil

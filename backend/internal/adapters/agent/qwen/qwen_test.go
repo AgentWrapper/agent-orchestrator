@@ -224,6 +224,68 @@ func TestGetLaunchCommandWorkerRequiresDataDirForRemoteInput(t *testing.T) {
 	}
 }
 
+func TestGetLaunchCommandWorkerAppendsTrimmedConfiguredModel(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "qwen"}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Kind:        domain.KindWorker,
+		DataDir:     t.TempDir(),
+		SessionID:   "sess-123",
+		Config:      domain.AgentConfig{Model: "  qwen-plus  "},
+		Permissions: ports.PermissionModeBypassPermissions,
+		Prompt:      "fix it",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS == "windows" {
+		if !containsSubsequence(cmd, []string{"--model", "qwen-plus"}) {
+			t.Fatalf("command %#v missing trimmed --model qwen-plus", cmd)
+		}
+		return
+	}
+	if len(cmd) != 3 || !strings.Contains(cmd[2], "'--model' 'qwen-plus'") {
+		t.Fatalf("worker command %#v missing trimmed --model qwen-plus", cmd)
+	}
+}
+
+func TestGetLaunchCommandOmitsBlankConfiguredModel(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "qwen"}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config:      domain.AgentConfig{Model: "  "},
+		Permissions: ports.PermissionModeBypassPermissions,
+		Prompt:      "fix it",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contains(cmd, "--model") {
+		t.Fatalf("command %#v contains unexpected --model flag", cmd)
+	}
+}
+
+func TestGetRestoreCommandAppendsConfiguredModel(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "qwen"}
+
+	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Config:      domain.AgentConfig{Model: "qwen-max"},
+		Permissions: ports.PermissionModeAuto,
+		Session: ports.SessionRef{
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "sess-123"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	if !containsSubsequence(cmd, []string{"--model", "qwen-max"}) {
+		t.Fatalf("command %#v missing --model qwen-max", cmd)
+	}
+}
+
 func TestGetPromptDeliveryStrategy(t *testing.T) {
 	plugin := &Plugin{}
 
@@ -244,15 +306,22 @@ func TestGetPromptDeliveryStrategy(t *testing.T) {
 	}
 }
 
-func TestGetConfigSpecHasNoCustomFieldsYet(t *testing.T) {
+func TestGetConfigSpecReportsModelField(t *testing.T) {
 	plugin := &Plugin{}
 
 	spec, err := plugin.GetConfigSpec(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(spec.Fields) != 0 {
-		t.Fatalf("unexpected config fields: %#v", spec.Fields)
+	want := []ports.ConfigField{
+		{
+			Key:         "model",
+			Type:        ports.ConfigFieldString,
+			Description: "Model override passed to `qwen --model`.",
+		},
+	}
+	if !reflect.DeepEqual(spec.Fields, want) {
+		t.Fatalf("config fields\nwant: %#v\n got: %#v", want, spec.Fields)
 	}
 }
 

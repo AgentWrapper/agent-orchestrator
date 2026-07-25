@@ -112,6 +112,8 @@ const api = {
 	window: {
 		setOverlay: (overlay: { color: string; symbolColor: string }) =>
 			ipcRenderer.invoke("window:setOverlay", overlay) as Promise<void>,
+		setTrafficLightsInset: (inset: boolean) =>
+			ipcRenderer.invoke("window:setTrafficLightsInset", inset) as Promise<void>,
 		isFullScreen: () => ipcRenderer.invoke("window:isFullScreen") as Promise<boolean>,
 		onFullScreen: (listener: (fullScreen: boolean) => void) => {
 			const wrapped = (_event: Electron.IpcRendererEvent, fullScreen: boolean) => listener(fullScreen);

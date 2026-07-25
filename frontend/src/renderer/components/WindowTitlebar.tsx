@@ -66,7 +66,11 @@ function TopMenu({
 	);
 }
 
-export function WindowTitlebar() {
+export function WindowTitlebar({
+	onSidebarPreviewEnter,
+}: {
+	onSidebarPreviewEnter?: React.PointerEventHandler<HTMLButtonElement>;
+}) {
 	const navigate = useNavigate();
 	const theme = useResolvedTheme();
 	const { isSidebarOpen, toggleSidebar } = useUiStore();
@@ -106,6 +110,7 @@ export function WindowTitlebar() {
 				aria-label={isSidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
 				className="window-titlebar__toggle"
 				onClick={toggleSidebar}
+				onPointerEnter={onSidebarPreviewEnter}
 				title={`${isSidebarOpen ? "Collapse" : "Expand"} sidebar · Ctrl+B`}
 				type="button"
 			>

@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -18,6 +20,7 @@ func (s *Store) InsertShellTerminal(ctx context.Context, rec shelltermsvc.ShellT
 	_, err := s.qw.InsertShellTerminal(ctx, gen.InsertShellTerminalParams{
 		HandleID:   rec.HandleID,
 		ProjectID:  optionalProjectID(rec.ProjectID),
+		SessionID:  optionalSessionID(rec.SessionID),
 		WorkingDir: rec.WorkingDir,
 		Title:      rec.Title,
 		AppRunID:   rec.AppRunID,
@@ -48,6 +51,21 @@ func (s *Store) SelectShellTerminalsFromPreviousAppRuns(ctx context.Context, app
 		return nil, fmt.Errorf("select orphaned shell terminals: %w", err)
 	}
 	return shellTerminalsFromGen(rows), nil
+}
+
+// UpdateShellTerminalTitle renames one shell terminal, returning the updated row
+// and whether a row existed so the caller can answer 404 for an unknown handle.
+func (s *Store) UpdateShellTerminalTitle(ctx context.Context, handleID, title string) (shelltermsvc.ShellTerminalRecord, bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	row, err := s.qw.UpdateShellTerminalTitle(ctx, gen.UpdateShellTerminalTitleParams{Title: title, HandleID: handleID})
+	if errors.Is(err, sql.ErrNoRows) {
+		return shelltermsvc.ShellTerminalRecord{}, false, nil
+	}
+	if err != nil {
+		return shelltermsvc.ShellTerminalRecord{}, false, fmt.Errorf("rename shell terminal %s: %w", handleID, err)
+	}
+	return shellTerminalFromGen(row), true, nil
 }
 
 // DeleteShellTerminalByHandleID forgets one shell terminal, reporting whether a
@@ -84,6 +102,16 @@ func optionalProjectID(id domain.ProjectID) *domain.ProjectID {
 	return &id
 }
 
+// optionalSessionID maps the service's "no session" empty string onto the
+// nullable column, so a session-less shell stores NULL rather than an empty
+// string that would violate the sessions FK.
+func optionalSessionID(id domain.SessionID) sql.NullString {
+	if id == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: string(id), Valid: true}
+}
+
 func shellTerminalFromGen(row gen.ShellTerminal) shelltermsvc.ShellTerminalRecord {
 	rec := shelltermsvc.ShellTerminalRecord{
 		HandleID:   row.HandleID,
@@ -94,6 +122,9 @@ func shellTerminalFromGen(row gen.ShellTerminal) shelltermsvc.ShellTerminalRecor
 	}
 	if row.ProjectID != nil {
 		rec.ProjectID = *row.ProjectID
+	}
+	if row.SessionID.Valid {
+		rec.SessionID = domain.SessionID(row.SessionID.String)
 	}
 	return rec
 }

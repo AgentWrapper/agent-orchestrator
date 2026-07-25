@@ -37,8 +37,17 @@ function exposedBridge(): AoBridge {
 
 beforeEach(() => {
 	electronMocks.listeners.clear();
+	electronMocks.invoke.mockClear();
 	electronMocks.off.mockClear();
 	electronMocks.on.mockClear();
+});
+
+describe("preload window bridge", () => {
+	it("forwards the macOS traffic-light inset state", async () => {
+		await exposedBridge().window.setTrafficLightsInset(true);
+
+		expect(electronMocks.invoke).toHaveBeenCalledWith("window:setTrafficLightsInset", true);
+	});
 });
 
 describe("preload new-session shortcut bridge", () => {

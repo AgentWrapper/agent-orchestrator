@@ -155,7 +155,7 @@ export function SessionFilesView({
 			className="flex h-full min-h-0 flex-col bg-background text-foreground"
 			aria-label="Session files"
 		>
-			<header className="flex h-13 shrink-0 items-center gap-0.5 border-b border-border bg-surface px-2">
+			<header className="flex h-11 shrink-0 items-center gap-0.5 border-b border-border bg-surface px-1.5">
 				{searchOpen ? (
 					<label className="relative mr-auto min-w-0 flex-1 max-w-[280px]">
 						<Search className="pointer-events-none absolute left-2.5 top-1/2 size-icon-sm -translate-y-1/2 text-passive" />
@@ -254,7 +254,7 @@ export function SessionFilesView({
 			</header>
 
 			<div className="min-h-0 flex-1 overflow-auto bg-background">
-				<div className="mx-auto flex w-full max-w-[1200px] flex-col px-0 py-2">
+				<div className="mx-auto flex w-full max-w-[1200px] flex-col px-0 py-1">
 					<ReviewFileList
 						error={filesQuery.error}
 						expandedPaths={expandedPaths}
@@ -348,7 +348,7 @@ function ReviewFileCard({
 		<article className="session-files-review-row overflow-hidden bg-transparent">
 			<div
 				className={cn(
-					"group/row flex min-h-11 items-center transition-colors",
+					"group/row flex min-h-10 items-center transition-colors",
 					expanded ? "bg-interactive-active/45" : "hover:bg-interactive-hover/50",
 				)}
 			>
@@ -356,7 +356,7 @@ function ReviewFileCard({
 					aria-controls={`workspace-diff-${file.path}`}
 					aria-expanded={expanded}
 					aria-label={`${expanded ? "Collapse" : "Expand"} ${file.path}`}
-					className="flex min-w-0 flex-1 items-center gap-3 px-4 py-2 text-left"
+					className="flex min-w-0 flex-1 items-center gap-2 px-3 py-1.5 text-left"
 					data-file-toggle=""
 					onClick={onToggle}
 					type="button"
@@ -394,7 +394,7 @@ function CopyPathButton({ path }: { path: string }) {
 	return (
 		<Button
 			aria-label={copied ? "Path copied" : `Copy path for ${path}`}
-			className="mr-2 shrink-0 opacity-0 transition-opacity focus-visible:opacity-100 group-hover/row:opacity-100"
+			className="mr-1.5 shrink-0 opacity-0 transition-opacity focus-visible:opacity-100 group-hover/row:opacity-100"
 			onClick={() => {
 				void navigator.clipboard?.writeText(path);
 				setCopied(true);
@@ -621,9 +621,9 @@ function DiffView({
 	wrap: boolean;
 }) {
 	return (
-		<div className="flex min-h-[220px] max-h-[min(620px,calc(100vh-18rem))] flex-col">
+		<div className="flex min-h-[180px] max-h-[min(620px,calc(100vh-18rem))] flex-col">
 			{truncated ? (
-				<div className="shrink-0 border-b border-border bg-warning/10 px-4 py-2 text-xs text-warning">
+				<div className="shrink-0 border-b border-border bg-warning/10 px-3 py-1.5 text-xs text-warning">
 					Diff preview truncated.
 				</div>
 			) : null}
@@ -649,7 +649,7 @@ function DiffView({
 									>
 										{diffMarkerGlyph[row.kind]}
 									</span>
-									<span className={cn("pr-4", wrap ? "whitespace-pre-wrap break-all" : "whitespace-pre")}>
+									<span className={cn("pr-3", wrap ? "whitespace-pre-wrap break-all" : "whitespace-pre")}>
 										{row.segments ? (
 											<DiffLineSegments add={row.kind === "add"} segments={row.segments} />
 										) : (
@@ -668,7 +668,7 @@ function DiffView({
 
 function HunkBand({ row }: { row: DiffRow }) {
 	return (
-		<div className="flex select-none items-baseline gap-3 bg-surface-faint px-3 py-1 text-passive">
+		<div className="flex select-none items-baseline gap-2 bg-surface-faint px-2.5 py-0.75 text-passive">
 			<span className="shrink-0 text-passive/70">{row.text}</span>
 			{row.section ? <span className="min-w-0 truncate text-passive/90">{row.section}</span> : null}
 		</div>
@@ -733,7 +733,7 @@ function SplitSide({ row, side }: { row: DiffRow | null; side: "old" | "new" }) 
 			<span className="w-9 shrink-0 select-none border-r border-border/50 bg-terminal px-1.5 text-right text-passive/70 tabular-nums">
 				{lineNo ?? ""}
 			</span>
-			<span className="min-w-0 whitespace-pre-wrap break-all px-2">
+			<span className="min-w-0 whitespace-pre-wrap break-all px-1.5">
 				{row.segments ? <DiffLineSegments add={row.kind === "add"} segments={row.segments} /> : row.text || " "}
 			</span>
 		</div>

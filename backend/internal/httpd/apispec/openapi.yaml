@@ -1264,6 +1264,57 @@ paths:
       summary: Mark a session terminated and tear down runtime/workspace resources
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/merge-policy:
+    patch:
+      operationId: setSessionMergePolicy
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetSessionMergePolicyRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SetSessionMergePolicyResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Configure whether PR completion terminates the session
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/pr:
     get:
       operationId: listSessionPRs
@@ -1569,6 +1620,51 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Internal Server Error
       summary: Restore a terminated session
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/resume-agent:
+    post:
+      operationId: resumeAgent
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResumeAgentResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Resume an exited agent in its existing session
       tags:
       - sessions
   /api/v1/sessions/{sessionId}/reviews:
@@ -2062,6 +2158,56 @@ paths:
       summary: Close a standalone shell terminal and destroy its PTY
       tags:
       - shellTerminals
+    patch:
+      operationId: renameShellTerminal
+      parameters:
+      - description: Shell terminal runtime handle identifier.
+        in: path
+        name: handleId
+        required: true
+        schema:
+          description: Shell terminal runtime handle identifier.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateShellTerminalRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShellTerminalEnvelope'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Rename a standalone shell terminal tab
+      tags:
+      - shellTerminals
 components:
   schemas:
     APIError:
@@ -2232,6 +2378,17 @@ components:
           items:
             $ref: '#/components/schemas/SessionPRFacts'
           type: array
+        scmStatus:
+          enum:
+          - pr_open
+          - draft
+          - ci_failed
+          - review_pending
+          - changes_requested
+          - approved
+          - mergeable
+          - merged
+          type: string
         status:
           enum:
           - working
@@ -2244,12 +2401,15 @@ components:
           - mergeable
           - merged
           - needs_input
+          - exited
           - idle
           - terminated
           - no_signal
           type: string
         terminalHandleId:
           type: string
+        terminateOnPrMerge:
+          type: boolean
         updatedAt:
           format: date-time
           type: string
@@ -2259,6 +2419,7 @@ components:
       - kind
       - activity
       - isTerminated
+      - terminateOnPrMerge
       - createdAt
       - updatedAt
       - status
@@ -2669,6 +2830,10 @@ components:
           description: Project whose root the shell starts in. Omitted opens the shell
             in the daemon data dir.
           type: string
+        sessionId:
+          description: Agent session the shell is scoped to, so it appears only in
+            that session's tab strip. Omitted makes it a standalone shell.
+          type: string
       type: object
     OrchestratorResponse:
       properties:
@@ -2949,6 +3114,26 @@ components:
       - ok
       - sessionId
       - restoreMode
+      - session
+      type: object
+    ResumeAgentResponse:
+      properties:
+        ok:
+          type: boolean
+        resumeMode:
+          enum:
+          - native
+          - saved_prompt
+          - fresh
+          type: string
+        session:
+          $ref: '#/components/schemas/ControllersSessionView'
+        sessionId:
+          type: string
+      required:
+      - ok
+      - sessionId
+      - resumeMode
       - session
       type: object
     ReviewRun:
@@ -3245,6 +3430,11 @@ components:
         ciObservedAt:
           format: date-time
           type: string
+        createdAt:
+          format: date-time
+          type:
+          - "null"
+          - string
         deletions:
           type: integer
         headSha:
@@ -3278,6 +3468,11 @@ components:
           - merged
           - closed
           type: string
+        stateChangedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
         targetBranch:
           type: string
         title:
@@ -3351,6 +3546,9 @@ components:
         event:
           description: AO hook sub-command that produced this state (e.g. post-tool-use).
           type: string
+        launchId:
+          description: AO process generation that produced the signal.
+          type: string
         state:
           description: Agent activity state reported by an agent hook. Optional for
             metadata-only hooks.
@@ -3388,6 +3586,29 @@ components:
       required:
       - config
       type: object
+    SetSessionMergePolicyRequest:
+      properties:
+        terminateOnPrMerge:
+          type: boolean
+      required:
+      - terminateOnPrMerge
+      type: object
+    SetSessionMergePolicyResponse:
+      properties:
+        ok:
+          type: boolean
+        session:
+          $ref: '#/components/schemas/ControllersSessionView'
+        sessionId:
+          type: string
+        terminateOnPrMerge:
+          type: boolean
+      required:
+      - ok
+      - sessionId
+      - terminateOnPrMerge
+      - session
+      type: object
     SetSessionPreviewRequest:
       properties:
         url:
@@ -3410,6 +3631,8 @@ components:
         handleId:
           type: string
         projectId:
+          type: string
+        sessionId:
           type: string
         title:
           type: string
@@ -3592,6 +3815,14 @@ components:
       required:
       - displayName
       - config
+      type: object
+    UpdateShellTerminalRequest:
+      properties:
+        title:
+          description: New tab title for the shell terminal. Trimmed; must be non-empty.
+          type: string
+      required:
+      - title
       type: object
     WorkspaceFileResponse:
       properties:
