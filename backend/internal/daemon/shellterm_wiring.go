@@ -2,10 +2,12 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	shelltermsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/shellterm"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
@@ -23,12 +25,14 @@ func startShellTerminals(
 	runtime shelltermsvc.ShellRuntime,
 	store *sqlite.Store,
 	projects projectsvc.Manager,
+	sessions sessionGetter,
 	log *slog.Logger,
 ) *shelltermsvc.Service {
 	svc := shelltermsvc.NewService(
 		runtime,
 		store,
 		&projectRootLocator{projects: projects},
+		&sessionWorkspaceLocator{sessions: sessions},
 		cfg.DataDir,
 		cfg.AppRunID,
 		log,
@@ -67,4 +71,38 @@ func (l *projectRootLocator) ProjectRoot(ctx context.Context, id domain.ProjectI
 	default:
 		return "", nil
 	}
+}
+
+// sessionGetter is the slice of the session service the shell terminal wiring
+// needs: a session id in, its full read model out. *sessionsvc.Service
+// satisfies this already.
+type sessionGetter interface {
+	Get(ctx context.Context, id domain.SessionID) (domain.Session, error)
+}
+
+// sessionWorkspaceLocator adapts the session service to the shell terminal
+// service's session-scoping lookup, so a shell opened from a session view
+// starts in that session's own worktree rather than the project root.
+type sessionWorkspaceLocator struct {
+	sessions sessionGetter
+}
+
+// SessionWorkspacePath resolves a session id to its current workspace path.
+// found is false, with a nil error, for an unknown session id — the shell
+// terminal service turns that into a 404 the same way an unknown project does.
+// A found session with no workspace path yet (still spawning) reports "", true
+// so the caller can fall back to project scope instead of erroring.
+func (l *sessionWorkspaceLocator) SessionWorkspacePath(ctx context.Context, id domain.SessionID) (string, bool, error) {
+	if l.sessions == nil {
+		return "", false, nil
+	}
+	sess, err := l.sessions.Get(ctx, id)
+	if err != nil {
+		var apiErr *apierr.Error
+		if errors.As(err, &apiErr) && apiErr.Kind == apierr.KindNotFound {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	return sess.Metadata.WorkspacePath, true, nil
 }

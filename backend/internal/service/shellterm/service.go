@@ -31,6 +31,19 @@ type ProjectRootLocator interface {
 	ProjectRoot(ctx context.Context, id domain.ProjectID) (string, error)
 }
 
+// SessionWorkspaceLocator resolves a session id to the workspace it is
+// currently running in, so a shell opened from a session view lands beside the
+// agent instead of at the project root. The daemon wiring adapts the session
+// service to it.
+//
+// found is false (with a nil error) when no such session exists, letting the
+// caller answer 404 the same way an unknown project does. path may legitimately
+// be "" with found true for a session that has not yet resolved a workspace
+// (e.g. still spawning); the caller falls back to project scope in that case.
+type SessionWorkspaceLocator interface {
+	SessionWorkspacePath(ctx context.Context, id domain.SessionID) (string, bool, error)
+}
+
 // Service opens, lists, and closes standalone shell terminals.
 //
 // appRunID is minted once per desktop-app launch and is the mechanism behind
@@ -43,6 +56,7 @@ type Service struct {
 	runtime  ShellRuntime
 	store    Store
 	projects ProjectRootLocator
+	sessions SessionWorkspaceLocator
 	dataDir  string
 	appRunID string
 	log      *slog.Logger
@@ -56,7 +70,7 @@ type Service struct {
 // NewService builds the shell terminal service. dataDir is the fallback working
 // directory for a shell opened with no project context. A nil logger falls back
 // to slog.Default.
-func NewService(runtime ShellRuntime, store Store, projects ProjectRootLocator, dataDir, appRunID string, log *slog.Logger) *Service {
+func NewService(runtime ShellRuntime, store Store, projects ProjectRootLocator, sessions SessionWorkspaceLocator, dataDir, appRunID string, log *slog.Logger) *Service {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -64,6 +78,7 @@ func NewService(runtime ShellRuntime, store Store, projects ProjectRootLocator, 
 		runtime:     runtime,
 		store:       store,
 		projects:    projects,
+		sessions:    sessions,
 		dataDir:     dataDir,
 		appRunID:    appRunID,
 		log:         log,
@@ -77,7 +92,7 @@ func NewService(runtime ShellRuntime, store Store, projects ProjectRootLocator, 
 // write fails, so a persisted row always names a PTY that actually exists —
 // otherwise a restart would try to re-attach to a handle that was never spawned.
 func (s *Service) OpenShellTerminal(ctx context.Context, in OpenShellTerminalInput) (ShellTerminal, error) {
-	workingDir, err := s.resolveShellTerminalWorkingDir(ctx, in.ProjectID)
+	workingDir, err := s.resolveShellTerminalWorkingDir(ctx, in)
 	if err != nil {
 		return ShellTerminal{}, err
 	}
@@ -240,7 +255,28 @@ func (s *Service) ReapShellTerminalsFromPreviousAppRuns(ctx context.Context) (in
 
 // resolveShellTerminalWorkingDir picks where the shell starts: the project root
 // when a project is named, else the daemon's data dir.
-func (s *Service) resolveShellTerminalWorkingDir(ctx context.Context, projectID domain.ProjectID) (string, error) {
+func (s *Service) resolveShellTerminalWorkingDir(ctx context.Context, in OpenShellTerminalInput) (string, error) {
+	if in.SessionID != "" {
+		if s.sessions == nil {
+			return "", apierr.Internal("SHELL_TERMINAL_NO_SESSION_LOOKUP",
+				"Session lookup is unavailable")
+		}
+		workspace, found, err := s.sessions.SessionWorkspacePath(ctx, in.SessionID)
+		if err != nil {
+			return "", fmt.Errorf("open shell terminal: resolve session %s: %w", in.SessionID, err)
+		}
+		if !found {
+			return "", apierr.NotFound("SHELL_TERMINAL_SESSION_NOT_FOUND",
+				"No such session: "+string(in.SessionID))
+		}
+		if workspace != "" {
+			return workspace, nil
+		}
+	}
+	return s.resolveProjectOrDataDirWorkingDir(ctx, in.ProjectID)
+}
+
+func (s *Service) resolveProjectOrDataDirWorkingDir(ctx context.Context, projectID domain.ProjectID) (string, error) {
 	if projectID == "" {
 		if s.dataDir == "" {
 			return "", apierr.Internal("SHELL_TERMINAL_NO_WORKING_DIR",

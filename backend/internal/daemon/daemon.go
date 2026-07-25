@@ -191,7 +191,7 @@ func Run() error {
 	// behind them. They reuse the same runtime adapter (and therefore the same
 	// terminal mux) as session panes, but keep their own ids, storage, and
 	// lifetime — see internal/service/shellterm.
-	shellTermSvc := startShellTerminals(ctx, cfg, runtimeAdapter, store, projectSvc, log)
+	shellTermSvc := startShellTerminals(ctx, cfg, runtimeAdapter, store, projectSvc, sessionSvc, log)
 	// Push-device registry: persisted phones that receive OS push notifications.
 	// A load failure must not block boot — degrade to no push rather than refusing
 	// to start the daemon. pushRegistry (interface) is assigned only when load

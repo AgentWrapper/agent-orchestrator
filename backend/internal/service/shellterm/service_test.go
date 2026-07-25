@@ -138,10 +138,31 @@ func (f *fakeProjectRootLocator) ProjectRoot(_ context.Context, id domain.Projec
 	return f.roots[id], nil
 }
 
+// fakeSessionWorkspaceLocator answers session-scoped workspace lookups from an
+// in-memory map. A session id absent from workspaces is "unknown" (found =
+// false); present with an empty string models a session that exists but has
+// not resolved a workspace yet (found = true, path = "").
+type fakeSessionWorkspaceLocator struct {
+	workspaces map[domain.SessionID]string
+	err        error
+}
+
+func (f *fakeSessionWorkspaceLocator) SessionWorkspacePath(_ context.Context, id domain.SessionID) (string, bool, error) {
+	if f.err != nil {
+		return "", false, f.err
+	}
+	path, found := f.workspaces[id]
+	return path, found, nil
+}
+
 // newTestService wires a service with deterministic ids so assertions can name
 // exact handles instead of matching on a prefix.
 func newTestService(rt *fakeShellRuntime, st *fakeShellTerminalStore, projects ProjectRootLocator) *Service {
-	svc := NewService(rt, st, projects, "/data/dir", testAppRunID, testLogger())
+	return newTestServiceWithSessions(rt, st, projects, &fakeSessionWorkspaceLocator{})
+}
+
+func newTestServiceWithSessions(rt *fakeShellRuntime, st *fakeShellTerminalStore, projects ProjectRootLocator, sessions SessionWorkspaceLocator) *Service {
+	svc := NewService(rt, st, projects, sessions, "/data/dir", testAppRunID, testLogger())
 	var n int
 	svc.newHandleID = func() (string, error) {
 		n++
@@ -217,7 +238,10 @@ func TestOpenShellTerminalScopesToSession(t *testing.T) {
 	rt := newFakeShellRuntime()
 	st := &fakeShellTerminalStore{}
 	projects := &fakeProjectRootLocator{roots: map[domain.ProjectID]string{"portfolio": "/repos/portfolio"}}
-	svc := newTestService(rt, st, projects)
+	sessions := &fakeSessionWorkspaceLocator{workspaces: map[domain.SessionID]string{
+		"portfolio-3": "/repos/portfolio/.ao/worktrees/portfolio-3",
+	}}
+	svc := newTestServiceWithSessions(rt, st, projects, sessions)
 
 	term, err := svc.OpenShellTerminal(context.Background(), OpenShellTerminalInput{ProjectID: "portfolio", SessionID: "portfolio-3"})
 	if err != nil {
@@ -228,6 +252,78 @@ func TestOpenShellTerminalScopesToSession(t *testing.T) {
 	}
 	if len(st.records) != 1 || st.records[0].SessionID != "portfolio-3" {
 		t.Fatalf("session id not persisted on the record: %+v", st.records)
+	}
+}
+
+func TestOpenShellTerminalStartsInSessionWorkspaceNotProjectRoot(t *testing.T) {
+	rt := newFakeShellRuntime()
+	st := &fakeShellTerminalStore{}
+	projects := &fakeProjectRootLocator{roots: map[domain.ProjectID]string{"portfolio": "/repos/portfolio"}}
+	sessions := &fakeSessionWorkspaceLocator{workspaces: map[domain.SessionID]string{
+		"portfolio-3": "/repos/portfolio/.ao/worktrees/portfolio-3",
+	}}
+	svc := newTestServiceWithSessions(rt, st, projects, sessions)
+
+	term, err := svc.OpenShellTerminal(context.Background(), OpenShellTerminalInput{ProjectID: "portfolio", SessionID: "portfolio-3"})
+	if err != nil {
+		t.Fatalf("OpenShellTerminal: %v", err)
+	}
+	want := "/repos/portfolio/.ao/worktrees/portfolio-3"
+	if term.WorkingDir != want {
+		t.Errorf("working dir = %q, want the session worktree %q", term.WorkingDir, want)
+	}
+	if len(rt.created) != 1 || rt.created[0].WorkspacePath != want {
+		t.Errorf("runtime workspace path = %q, want %q", rt.created[0].WorkspacePath, want)
+	}
+}
+
+func TestOpenShellTerminalFallsBackToProjectRootWhenSessionHasNoWorkspaceYet(t *testing.T) {
+	rt := newFakeShellRuntime()
+	st := &fakeShellTerminalStore{}
+	projects := &fakeProjectRootLocator{roots: map[domain.ProjectID]string{"portfolio": "/repos/portfolio"}}
+	sessions := &fakeSessionWorkspaceLocator{workspaces: map[domain.SessionID]string{"portfolio-3": ""}}
+	svc := newTestServiceWithSessions(rt, st, projects, sessions)
+
+	term, err := svc.OpenShellTerminal(context.Background(), OpenShellTerminalInput{ProjectID: "portfolio", SessionID: "portfolio-3"})
+	if err != nil {
+		t.Fatalf("OpenShellTerminal: %v", err)
+	}
+	if term.WorkingDir != "/repos/portfolio" {
+		t.Errorf("working dir = %q, want the project root fallback", term.WorkingDir)
+	}
+}
+
+func TestOpenShellTerminalReturnsNotFoundForUnknownSession(t *testing.T) {
+	rt := newFakeShellRuntime()
+	st := &fakeShellTerminalStore{}
+	projects := &fakeProjectRootLocator{roots: map[domain.ProjectID]string{"portfolio": "/repos/portfolio"}}
+	sessions := &fakeSessionWorkspaceLocator{workspaces: map[domain.SessionID]string{}}
+	svc := newTestServiceWithSessions(rt, st, projects, sessions)
+
+	_, err := svc.OpenShellTerminal(context.Background(), OpenShellTerminalInput{ProjectID: "portfolio", SessionID: "ghost-session"})
+
+	var apiErr *apierr.Error
+	if !errors.As(err, &apiErr) || apiErr.Kind != apierr.KindNotFound {
+		t.Fatalf("error = %v, want a not-found apierr", err)
+	}
+	if len(rt.created) != 0 {
+		t.Error("a runtime was spawned for an unknown session")
+	}
+}
+
+func TestOpenShellTerminalWithoutSessionIgnoresSessionLocator(t *testing.T) {
+	rt := newFakeShellRuntime()
+	st := &fakeShellTerminalStore{}
+	projects := &fakeProjectRootLocator{roots: map[domain.ProjectID]string{"portfolio": "/repos/portfolio"}}
+	sessions := &fakeSessionWorkspaceLocator{err: errors.New("should never be called")}
+	svc := newTestServiceWithSessions(rt, st, projects, sessions)
+
+	term, err := svc.OpenShellTerminal(context.Background(), OpenShellTerminalInput{ProjectID: "portfolio"})
+	if err != nil {
+		t.Fatalf("OpenShellTerminal: %v", err)
+	}
+	if term.WorkingDir != "/repos/portfolio" {
+		t.Errorf("working dir = %q, want the project root", term.WorkingDir)
 	}
 }
 
@@ -338,7 +434,7 @@ func TestListShellTerminalsForCurrentAppRunReturnsSurvivingTerminals(t *testing.
 
 	// A fresh Service over the SAME store and runtime stands in for the daemon
 	// coming back up within one app run.
-	restarted := NewService(rt, st, &fakeProjectRootLocator{}, "/data/dir", testAppRunID, testLogger())
+	restarted := NewService(rt, st, &fakeProjectRootLocator{}, &fakeSessionWorkspaceLocator{}, "/data/dir", testAppRunID, testLogger())
 	got, err := restarted.ListShellTerminalsForCurrentAppRun(context.Background())
 	if err != nil {
 		t.Fatalf("ListShellTerminalsForCurrentAppRun: %v", err)

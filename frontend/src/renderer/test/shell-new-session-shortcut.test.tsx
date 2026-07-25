@@ -318,6 +318,18 @@ describe("shell new-shell-terminal shortcut subscription", () => {
 			expect.anything(),
 		);
 	});
+	
+	it("scopes the terminal to the session in scope", async () => {
+		shellMocks.state.routeParams = { sessionId: "sess-1" };
+		await renderShell();
+
+		pressNewShellTerminal();
+
+		expect(shellMocks.openShellTerminal).toHaveBeenCalledWith(
+			expect.objectContaining({ sessionId: "sess-1" }),
+			expect.anything(),
+		);
+	});
 
 	it("re-fires on a repeat press so a second terminal can be opened", async () => {
 		await renderShell();
