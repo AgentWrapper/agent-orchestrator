@@ -1185,6 +1185,7 @@ function ArchiveCleanupRow({
 	isCleaningUp: boolean;
 	title: string;
 }) {
+	const retryAriaLabel = cleanup?.retryLabel ? `${cleanup.retryLabel} for ${title}` : undefined;
 	return (
 		<>
 			{cleanup && (
@@ -1197,7 +1198,7 @@ function ArchiveCleanupRow({
 					</span>
 					{cleanup.retryLabel && cleanupAction && (
 						<button
-							aria-label={`${cleanup.retryLabel} for ${title}`}
+							aria-label={retryAriaLabel}
 							className="ml-auto inline-flex h-control-xs shrink-0 items-center justify-center rounded-sm border border-border px-2 text-2xs font-semibold text-foreground transition-colors hover:border-border-strong disabled:cursor-not-allowed disabled:opacity-60"
 							disabled={isCleaningUp}
 							onClick={cleanupAction}

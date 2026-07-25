@@ -72,9 +72,7 @@ export type SessionCleanup = {
 // the network boundary. An unrecognized value falls back to "pending" (the
 // safe "reconciler hasn't converged yet, no action" reading) rather than
 // forwarding a disposition the renderer's switch statements don't handle.
-export function toSessionCleanup(
-	cleanup?: components["schemas"]["SessionCleanupView"],
-): SessionCleanup | undefined {
+export function toSessionCleanup(cleanup?: components["schemas"]["SessionCleanupView"]): SessionCleanup | undefined {
 	if (!cleanup) return undefined;
 	const disposition = cleanupDispositions.has(cleanup.workspaceDisposition as CleanupDisposition)
 		? (cleanup.workspaceDisposition as CleanupDisposition)
