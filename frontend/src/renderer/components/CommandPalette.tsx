@@ -250,7 +250,7 @@ export function CommandPalette() {
 						setQuery(next);
 						setError(null);
 					}}
-					placeholder="Search agents, files, actions…"
+					placeholder="Search projects, sessions, PRs, and commands…"
 				/>
 				<CommandList>
 					<CommandEmpty>No results.</CommandEmpty>

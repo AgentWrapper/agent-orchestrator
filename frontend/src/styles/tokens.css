@@ -531,7 +531,7 @@
 	/* Command palette */
 	--color-bg-command-palette: #f4f4f5;
 	--color-border-command-palette: #e3e3e5;
-	--color-bg-command-item-active: #e8e8ea;
+	--color-bg-command-item-active: #d8d8dc;
 	--color-text-command-item: #1a1a1a;
 	--color-text-command-placeholder: #9a9a9a;
 	--color-text-command-muted: #666666;

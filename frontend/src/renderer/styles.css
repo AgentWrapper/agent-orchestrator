@@ -245,8 +245,8 @@
 	--color-interactive-active: var(--bridge-interactive-active);
 
 	--animate-status-pulse: status-pulse 1.8s ease-in-out infinite;
-	--animate-overlay-in: overlay-in 150ms ease-out forwards;
-	--animate-modal-in: modal-in 150ms ease-out forwards;
+	--animate-overlay-in: overlay-in 150ms ease-out;
+	--animate-modal-in: modal-in 150ms ease-out;
 }
 
 /* Full-viewport modal/sheet scrim — dim + blur everything behind pop panels. */
@@ -908,28 +908,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	[data-slot="command-dialog-content"] {
 		animation: none;
 	}
-}
-
-/* Command palette list: no focus ring, no visible scrollbar (still scrollable). */
-[data-slot="command-list"],
-[data-slot="command-list"]:focus,
-[data-slot="command-list"]:focus-visible,
-[data-slot="command-dialog-content"]:focus,
-[data-slot="command-dialog-content"]:focus-visible,
-[data-slot="command"]:focus,
-[data-slot="command"]:focus-visible {
-	outline: none;
-	box-shadow: none;
-}
-
-[data-slot="command-list"] {
-	scrollbar-width: none;
-}
-
-[data-slot="command-list"]::-webkit-scrollbar {
-	display: none;
-	width: 0;
-	height: 0;
 }
 
 /* ── Shell topbar (agent-orchestrator .dashboard-app-header) ──────────────

@@ -11,7 +11,7 @@ function Command({ className, ...props }: React.ComponentProps<typeof CommandPri
 		<CommandPrimitive
 			data-slot="command"
 			className={cn(
-				"flex w-full flex-col overflow-hidden rounded-[var(--radius-command-palette)] bg-[var(--color-bg-command-palette)] text-[var(--color-text-command-item)] outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0",
+				"flex w-full flex-col overflow-hidden rounded-[var(--radius-command-palette)] bg-[var(--color-bg-command-palette)] text-[var(--color-text-command-item)] outline-none",
 				className,
 			)}
 			{...props}
@@ -21,7 +21,7 @@ function Command({ className, ...props }: React.ComponentProps<typeof CommandPri
 
 function CommandDialog({
 	title = "Command palette",
-	description = "Search agents, files, actions, and commands",
+	description = "Search projects, sessions, PRs, and commands",
 	children,
 	className,
 	commandProps,
@@ -44,7 +44,7 @@ function CommandDialog({
 					data-slot="command-dialog-content"
 					aria-label={title}
 					className={cn(
-						"fixed left-1/2 top-command-palette z-overlay w-command-palette -translate-x-1/2 overflow-hidden rounded-[var(--radius-command-palette)] border border-[var(--color-border-command-palette)] bg-[var(--color-bg-command-palette)] text-[var(--color-text-command-item)] shadow-[var(--shadow-command-palette)] outline-none ring-0 focus:outline-none focus-visible:outline-none focus-visible:ring-0 data-[state=open]:animate-modal-in",
+						"fixed left-1/2 top-command-palette z-overlay w-command-palette -translate-x-1/2 overflow-hidden rounded-[var(--radius-command-palette)] border border-[var(--color-border-command-palette)] bg-[var(--color-bg-command-palette)] text-[var(--color-text-command-item)] shadow-[var(--shadow-command-palette)] outline-none data-[state=open]:animate-modal-in",
 						className,
 					)}
 				>
@@ -89,7 +89,7 @@ function CommandList({ className, ...props }: React.ComponentProps<typeof Comman
 		<CommandPrimitive.List
 			data-slot="command-list"
 			className={cn(
-				"max-h-command-palette-list scrollbar-none scroll-py-1 overflow-y-auto overflow-x-hidden overscroll-contain py-1 outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0",
+				"max-h-command-palette-list scrollbar-none scroll-py-1 overflow-y-auto overflow-x-hidden overscroll-contain py-1 outline-none",
 				className,
 			)}
 			{...props}
@@ -118,7 +118,7 @@ function CommandItem({ className, ...props }: React.ComponentProps<typeof Comman
 		<CommandPrimitive.Item
 			data-slot="command-item"
 			className={cn(
-				"relative mx-[var(--size-command-item-inset)] flex cursor-default select-none items-center gap-2.5 rounded-[var(--radius-command-item)] py-1.5 pr-2.5 pl-[var(--size-command-item-pad-l)] text-[13px] leading-[length:var(--leading-command-item)] text-[var(--color-text-command-item)] outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0",
+				"relative mx-[var(--size-command-item-inset)] flex cursor-default select-none items-center gap-2.5 rounded-[var(--radius-command-item)] py-1.5 pr-2.5 pl-[var(--size-command-item-pad-l)] text-[13px] leading-[length:var(--leading-command-item)] text-[var(--color-text-command-item)] outline-none",
 				"data-[selected=true]:bg-[var(--color-bg-command-item-active)] data-[selected=true]:text-[var(--color-text-command-item)]",
 				"data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50",
 				"[&_svg]:size-3.5 [&_svg]:shrink-0 [&_svg]:text-[var(--color-text-command-item)] data-[selected=true]:[&_svg]:text-[var(--color-text-command-item)]",
@@ -134,7 +134,7 @@ function CommandFooter({ className, ...props }: React.ComponentProps<"div">) {
 		<div
 			data-slot="command-footer"
 			className={cn(
-				"flex items-center gap-4 border-t border-[var(--color-border-command-palette)] px-[var(--size-command-pad-x)] pt-3 pb-3 text-sm text-[var(--color-text-command-placeholder)]",
+				"flex items-center gap-4 border-t border-[var(--color-border-command-palette)] px-[var(--size-command-pad-x)] pt-3 pb-3 text-sm text-[var(--color-text-command-muted)]",
 				className,
 			)}
 			{...props}

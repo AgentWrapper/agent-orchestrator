@@ -726,6 +726,16 @@ describe("Sidebar", () => {
 		expect(useUiStore.getState().isCommandPaletteOpen).toBe(true);
 	});
 
+	it("defers opening the palette until the Search click has been dispatched", async () => {
+		renderSidebar();
+		fireEvent.click(screen.getByRole("button", { name: /Search/ }));
+		// Still closed inside the click's task: the palette dialog must not mount
+		// while the pointer sequence that opened it is still being handled.
+		expect(useUiStore.getState().isCommandPaletteOpen).toBe(false);
+		await act(async () => {});
+		expect(useUiStore.getState().isCommandPaletteOpen).toBe(true);
+	});
+
 	it("hides Search when the command palette feature is disabled", () => {
 		commandPaletteEnabled.current = false;
 		renderSidebar();

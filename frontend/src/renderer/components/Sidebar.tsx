@@ -804,10 +804,11 @@ function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
 		<SidebarMenuItem className="group-data-[collapsible=icon]:mb-0">
 			<SidebarMenuButton
 				aria-label={`Search · ${shortcutLabel}`}
-				onClick={(event) => {
-					// Defer so Tooltip/DismissableLayer from this click settle before the
-					// palette dialog mounts — otherwise the opening pointer can dismiss it.
-					event.preventDefault();
+				onClick={() => {
+					// Open on the microtask after this click rather than inside it: mounting
+					// the palette dialog while this button's tooltip layer is still tearing
+					// down from the same pointer sequence dismissed it immediately. The
+					// "defers opening" test pins the deferral so it is not dropped as noise.
 					queueMicrotask(onOpen);
 				}}
 				tooltip={isCollapsed ? `Search · ${shortcutLabel}` : undefined}

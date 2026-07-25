@@ -221,7 +221,7 @@ describe("result caps", () => {
 		expect(total).toBe(MAX_SEARCH_RESULTS);
 	});
 
-	it("keeps search hits sorted into categories (group order, score within each group)", () => {
+	it("keeps search hits under category headings, best-matching category first", () => {
 		const workspaces: WorkspaceSummary[] = [
 			{
 				id: "alpha",
@@ -235,13 +235,25 @@ describe("result caps", () => {
 		const ids = groups.map((g) => g.id);
 		expect(ids).toContain("attention");
 		expect(ids).toContain("projects");
-		expect(ids.indexOf("attention")).toBeLessThan(ids.indexOf("projects"));
-		expect(groups.find((g) => g.id === "projects")?.items[0]?.id).toBe("project:alpha");
+		// Projects outranks its default position ahead of Needs attention because
+		// "alpha" is an exact project title but only a fuzzy hit on the session.
+		expect(ids.indexOf("projects")).toBeLessThan(ids.indexOf("attention"));
 		expect(groups.find((g) => g.id === "attention")?.items.some((item) => item.id === "attention:s-attn")).toBe(
 			true,
 		);
-		const total = groups.reduce((sum, g) => sum + g.items.length, 0);
-		expect(total).toBeLessThanOrEqual(MAX_SEARCH_RESULTS);
+		// Enter targets the first item in render order, so that must be the top match.
+		const rendered = groups.flatMap((g) => g.items);
+		expect(rendered[0]?.id).toBe("project:alpha");
+		expect(rendered.length).toBeLessThanOrEqual(MAX_SEARCH_RESULTS);
+	});
+
+	it("falls back to the default category order when categories match equally well", () => {
+		// "app" is the project title (1000) and a keyword-only hit (500) on the
+		// attention, session and PR rows, so those three keep their declared order.
+		const ids = displayGroups(buildCommands({ workspaces: workspaces() }), "app").map((g) => g.id);
+		expect(ids[0]).toBe("projects");
+		expect(ids.indexOf("attention")).toBeLessThan(ids.indexOf("sessions"));
+		expect(ids.indexOf("sessions")).toBeLessThan(ids.indexOf("prs"));
 	});
 });
 
