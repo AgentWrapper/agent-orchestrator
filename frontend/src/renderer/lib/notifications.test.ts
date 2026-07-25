@@ -268,6 +268,40 @@ describe("createNotificationsTransport", () => {
 		});
 	});
 
+	it("suppresses the toast when the notification's session is active and the window is visible", () => {
+		vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+		const qc = queryClient();
+		createNotificationsTransport(qc, () => "mer-1").connect();
+		const source = EventSourceStub.instances[0];
+
+		source.dispatch("notification_created", notification());
+
+		expect(getCachedNotifications(qc.getQueryData<NotificationsCache>(unreadNotificationsQueryKey))).toHaveLength(1);
+		expect(showNotificationMock).not.toHaveBeenCalled();
+	});
+
+	it("still shows the toast when the notification's session differs from the active one", () => {
+		vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+		const qc = queryClient();
+		createNotificationsTransport(qc, () => "other-session").connect();
+		const source = EventSourceStub.instances[0];
+
+		source.dispatch("notification_created", notification());
+
+		expect(showNotificationMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("still shows the toast for the active session when the window is not visible", () => {
+		vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+		const qc = queryClient();
+		createNotificationsTransport(qc, () => "mer-1").connect();
+		const source = EventSourceStub.instances[0];
+
+		source.dispatch("notification_created", notification());
+
+		expect(showNotificationMock).toHaveBeenCalledTimes(1);
+	});
+
 	it("reconnects when the API base URL changes", () => {
 		createNotificationsTransport(queryClient()).connect();
 		const onBaseUrlChange = subscribeApiBaseUrlMock.mock.calls[0][0] as () => void;

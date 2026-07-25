@@ -173,7 +173,10 @@ export function keepLatestNotificationsPage(
 	rebaseOversizedFirstPage(queryClient, queryKey);
 }
 
-export function createNotificationsTransport(queryClient: QueryClient) {
+export function createNotificationsTransport(
+	queryClient: QueryClient,
+	getActiveSessionId: () => string | undefined = () => undefined,
+) {
 	return {
 		connect() {
 			let retryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -211,7 +214,9 @@ export function createNotificationsTransport(queryClient: QueryClient) {
 						if (!notification) return;
 						const inserted = mergeUnreadNotification(queryClient, notification);
 						mergeRecentNotification(queryClient, notification);
-						if (inserted) {
+						const isActiveVisibleSession =
+							notification.sessionId === getActiveSessionId() && document.visibilityState === "visible";
+						if (inserted && !isActiveVisibleSession) {
 							void aoBridge.notifications.show({
 								id: notification.id,
 								title: notification.title,

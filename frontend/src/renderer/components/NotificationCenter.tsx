@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useParams } from "@tanstack/react-router";
 import {
 	Bell,
 	BellRing,
@@ -14,7 +14,7 @@ import {
 	SquareTerminal,
 	XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
 	useMarkAllNotificationsReadMutation,
 	useMarkNotificationReadMutation,
@@ -80,8 +80,14 @@ function useNotificationTargetNavigation() {
 export function NotificationRuntime() {
 	const queryClient = useQueryClient();
 	const { openPrimary } = useNotificationTargetNavigation();
+	const params = useParams({ strict: false }) as { sessionId?: string };
+	const activeSessionIdRef = useRef(params.sessionId);
+	activeSessionIdRef.current = params.sessionId;
 
-	useEffect(() => createNotificationsTransport(queryClient).connect(), [queryClient]);
+	useEffect(
+		() => createNotificationsTransport(queryClient, () => activeSessionIdRef.current).connect(),
+		[queryClient],
+	);
 
 	useEffect(() => {
 		return aoBridge.notifications.onClick((id) => {
