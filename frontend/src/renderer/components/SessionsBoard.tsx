@@ -856,23 +856,17 @@ function SecondaryLaneSection({
 	);
 }
 
-// cleanupRetryable reports whether a terminated session's cleanup can be
-// user-retried: a preserved-dirty worktree or an exhausted failure. Gated on the
-// raw isTerminated fact, so a merged (but terminated) session qualifies too.
-function cleanupRetryable(session: WorkspaceSession): boolean {
-	if (!session.isTerminated) return false;
-	const d = session.cleanup?.disposition;
-	return d === "preserved_dirty" || d === "failed";
-}
-
 type CleanupCardView = { label: string; tone: string; retryLabel?: string };
 
 // cleanupCardView renders a terminated session's cleanup state into a compact
-// board label, or null when there is nothing to surface (never terminal, no
-// facts, or an already-clean removed/not_applicable outcome).
+// board label, or null when there is nothing to surface (never terminal, or an
+// already-clean removed/not_applicable outcome). A terminated session with no
+// facts row yet is the boot/newly-terminal case the reconciler has not attempted
+// or persisted — treated the same as an explicit `pending` disposition rather
+// than surfacing nothing.
 function cleanupCardView(session: WorkspaceSession): CleanupCardView | null {
-	if (!session.isTerminated || !session.cleanup) return null;
-	switch (session.cleanup.disposition) {
+	if (!session.isTerminated) return null;
+	switch (session.cleanup?.disposition ?? "pending") {
 		case "pending":
 			return { label: "Cleaning up…", tone: "text-passive" };
 		case "preserved_dirty":
@@ -882,6 +876,13 @@ function cleanupCardView(session: WorkspaceSession): CleanupCardView | null {
 		default:
 			return null; // removed / not_applicable — nothing to act on
 	}
+}
+
+// cleanupRetryable reports whether a terminated session's cleanup can be
+// user-retried. Derived from cleanupCardView so the retry rule can't drift from
+// the label-rendering rule as dispositions evolve.
+function cleanupRetryable(session: WorkspaceSession): boolean {
+	return cleanupCardView(session)?.retryLabel !== undefined;
 }
 
 function SessionCard({

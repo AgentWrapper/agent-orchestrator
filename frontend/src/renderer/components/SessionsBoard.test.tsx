@@ -1288,6 +1288,23 @@ describe("SessionsBoard", () => {
 		expect(screen.queryByRole("button", { name: /cleanup/i })).not.toBeInTheDocument();
 	});
 
+	// A terminated session with no cleanup facts row at all (the reconciler
+	// hasn't attempted or persisted anything for it yet — the boot/newly-terminal
+	// case) must render the same pending indicator as an explicit "pending"
+	// disposition, not disappear entirely.
+	it("shows cleaning-up progress for a terminated session with no cleanup facts yet", async () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([terminatedSession()])],
+			isError: false,
+			isSuccess: true,
+		});
+		renderBoard("p1");
+
+		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		expect(screen.getByText("Cleaning up…")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /cleanup/i })).not.toBeInTheDocument();
+	});
+
 	it("surfaces the cleanup affordance for a MERGED (but terminated) session", async () => {
 		// The gate is the raw isTerminated fact, not status === "terminated": a
 		// merged session is terminated and must still offer cleanup recovery.

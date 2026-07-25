@@ -1,3 +1,4 @@
+import type { components } from "../../api/schema";
 import { attentionZone as presentationAttentionZone } from "../lib/session-presentation";
 
 import type { ReviewerHarnessId } from "../lib/reviewer-harnesses";
@@ -45,6 +46,14 @@ export function toSessionStatus(status?: string, isTerminated = false): SessionS
 // runtime + workspace release, mirroring the backend's workspace_disposition.
 export type CleanupDisposition = "pending" | "removed" | "preserved_dirty" | "failed" | "not_applicable";
 
+const cleanupDispositions = new Set<CleanupDisposition>([
+	"pending",
+	"removed",
+	"preserved_dirty",
+	"failed",
+	"not_applicable",
+]);
+
 // SessionCleanup is the client view of a terminated session's terminal-resource
 // cleanup facts. Present only for a terminated session that has a facts row.
 export type SessionCleanup = {
@@ -56,17 +65,22 @@ export type SessionCleanup = {
 };
 
 // toSessionCleanup maps the API cleanup facts onto the client shape, or undefined
-// when the session has none (a live or not-yet-finalized session).
-export function toSessionCleanup(cleanup?: {
-	workspaceDisposition: string;
-	runtimeReleasedAt?: string | null;
-	attemptCount?: number;
-	nextAttemptAt?: string | null;
-	failureCode?: string;
-}): SessionCleanup | undefined {
+// when the session has none (a live or not-yet-finalized session). Validates
+// workspaceDisposition against the closed value set rather than trusting the
+// wire string outright — the generated type already narrows it, but a stale
+// client talking to a newer daemon could still see an unrecognized value cross
+// the network boundary. An unrecognized value falls back to "pending" (the
+// safe "reconciler hasn't converged yet, no action" reading) rather than
+// forwarding a disposition the renderer's switch statements don't handle.
+export function toSessionCleanup(
+	cleanup?: components["schemas"]["SessionCleanupView"],
+): SessionCleanup | undefined {
 	if (!cleanup) return undefined;
+	const disposition = cleanupDispositions.has(cleanup.workspaceDisposition as CleanupDisposition)
+		? (cleanup.workspaceDisposition as CleanupDisposition)
+		: "pending";
 	return {
-		disposition: cleanup.workspaceDisposition as CleanupDisposition,
+		disposition,
 		runtimeReleasedAt: cleanup.runtimeReleasedAt ?? undefined,
 		attemptCount: cleanup.attemptCount,
 		nextAttemptAt: cleanup.nextAttemptAt ?? undefined,
