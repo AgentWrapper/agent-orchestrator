@@ -324,4 +324,22 @@ describe("TopbarKillButton", () => {
 			expect(onKilledMock).toHaveBeenCalledWith("proj-1", undefined);
 		});
 	});
+
+	it("resets confirmation/pending state when switching to a different session mid-kill", async () => {
+		// Never resolves: keeps the first session's kill mutation "pending" so we
+		// can observe whether that state leaks onto the next session's button.
+		postMock.mockReturnValue(new Promise(() => {}));
+		const { rerenderTopbar } = renderTopbarSessions([worker, secondWorker], worker.id);
+
+		await userEvent.click(screen.getByRole("button", { name: "Kill session" }));
+		await clickKillDialogConfirm();
+		await waitFor(() => expect(screen.getByRole("button", { name: "Killing..." })).toBeInTheDocument());
+
+		paramsMock.sessionId = secondWorker.id;
+		rerenderTopbar();
+
+		expect(screen.getByRole("button", { name: "Kill session" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Killing..." })).not.toBeInTheDocument();
+		expect(screen.queryByRole("dialog", { name: "Kill session?" })).not.toBeInTheDocument();
+	});
 });

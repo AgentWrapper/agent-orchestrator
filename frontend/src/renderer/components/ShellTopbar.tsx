@@ -223,6 +223,7 @@ export function ShellTopbar() {
 						    moved here from the inspector's Summary "Danger zone". */}
 						{!isOrchestrator && session && sessionIsActive(session) ? (
 							<TopbarKillButton
+								key={session.id}
 								session={session}
 								orchestratorId={orchestrator?.id}
 								onKilled={(workspaceId, orchestratorId) => {
