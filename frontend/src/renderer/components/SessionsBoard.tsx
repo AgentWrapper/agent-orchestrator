@@ -228,7 +228,6 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 	const actions = projectId ? (
 		<>
-			{boardOwnsNotificationCenter ? <NotificationCenter /> : null}
 			{visibleSpawnError && !showProjectEmpty && (
 				<TopbarKillError className="max-w-content-max truncate" title={visibleSpawnError}>
 					{visibleSpawnError}
@@ -258,6 +257,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 							? "Orchestrator"
 							: "Spawn Orchestrator"}
 			</TopbarButton>
+			{boardOwnsNotificationCenter ? <NotificationCenter /> : null}
 		</>
 	) : boardOwnsNotificationCenter ? (
 		<NotificationCenter />

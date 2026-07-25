@@ -17,13 +17,11 @@ import { addRendererExceptionStep, captureRendererEvent, captureRendererExceptio
 import { useUiStore } from "../stores/ui-store";
 import { OrchestratorIcon } from "./icons";
 import { getAgentActivityView } from "../lib/session-presentation";
-import { isLinuxPlatform, isMacPlatform, isWindowsPlatform, usesBoardActionsInPanel } from "../lib/platform";
+import { isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { StatusPill } from "./StatusPill";
 import { TopbarButton, TopbarKillError, topbarHeaderClass, topbarProjectLabelClass } from "./TopbarButton";
 
 const isMac = isMacPlatform();
-const isLinux = isLinuxPlatform();
-const isWindows = isWindowsPlatform();
 const boardActionsInPanel = usesBoardActionsInPanel();
 const dragStyle = isMac ? ({ WebkitAppRegion: "drag" } as React.CSSProperties) : undefined;
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
@@ -162,8 +160,6 @@ export function ShellTopbar() {
 			<div className="min-w-0 flex-1" />
 
 			<div className="flex shrink-0 items-center gap-1.5">
-				{/* Native-titlebar platforms keep the bell leading the actions row; the custom titlebar pins it to the far edge. */}
-				{boardActionsInPanel && !isLinux && !isWindows ? <NotificationCenter style={noDragStyle} /> : null}
 				{!boardActionsInPanel && isProjectBoardRoute ? (
 					<>
 						{boardSpawnError ? (
@@ -268,8 +264,8 @@ export function ShellTopbar() {
 						)}
 					</>
 				) : null}
-				{/* Custom-titlebar platforms pin the bell to the far right. */}
-				{!boardActionsInPanel ? <NotificationCenter style={noDragStyle} /> : null}
+				{/* The bell always trails the actions row, on every platform. */}
+				<NotificationCenter style={noDragStyle} />
 			</div>
 		</header>
 	);
