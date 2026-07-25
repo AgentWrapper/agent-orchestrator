@@ -14,6 +14,10 @@ import (
 
 func TestWorkspaceCreatesBranchlessPerSessionDirectories(t *testing.T) {
 	root := t.TempDir()
+	physicalRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatalf("resolve temp root: %v", err)
+	}
 	ws, err := scratch.New(scratch.Options{ManagedRoot: root})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -27,7 +31,7 @@ func TestWorkspaceCreatesBranchlessPerSessionDirectories(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create worker: %v", err)
 	}
-	if want := filepath.Join(root, "scratch", "workers", "scratch-1"); worker.Path != want {
+	if want := filepath.Join(physicalRoot, "scratch", "workers", "scratch-1"); worker.Path != want {
 		t.Fatalf("worker path = %q, want %q", worker.Path, want)
 	}
 	if worker.Branch != "" {
@@ -45,7 +49,7 @@ func TestWorkspaceCreatesBranchlessPerSessionDirectories(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create orchestrator: %v", err)
 	}
-	if want := filepath.Join(root, "scratch", "orchestrators", "scratch-2"); orchestrator.Path != want {
+	if want := filepath.Join(physicalRoot, "scratch", "orchestrators", "scratch-2"); orchestrator.Path != want {
 		t.Fatalf("orchestrator path = %q, want %q", orchestrator.Path, want)
 	}
 	if orchestrator.Branch != "" {

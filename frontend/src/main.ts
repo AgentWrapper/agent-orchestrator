@@ -56,6 +56,7 @@ import { connectSupervisor, type SupervisorLinkHandle } from "./main/supervisor-
 import { keepDaemonAlive, shouldLinkOnAttach } from "./main/daemon-owner";
 import { readMigrationState, updateMigration, writeAppStateMarker, type MigrationState } from "./main/app-state";
 import { isAllowedAppExternalURL, openAllowedAppExternalURL } from "./main/external-open";
+import { buildWindowsAppMenuTemplate } from "./main/menu";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -150,6 +151,47 @@ const DEV_STATE_SUBDIR = "dev"; // ~/.ao/dev/
 // Controls Overlay height passed to BrowserWindow and the .window-titlebar height
 // in styles.css, so the native min/max/close buttons line up with the app's bar.
 const TITLEBAR_HEIGHT = 36;
+const MAC_WINDOW_BUTTON_X = 14;
+const MAC_WINDOW_BUTTON_EXPANDED_Y = 20;
+const MAC_WINDOW_BUTTON_COLLAPSED_Y = 33;
+const MAC_WINDOW_BUTTON_TRANSITION_MS = 200;
+let macWindowButtonY = MAC_WINDOW_BUTTON_EXPANDED_Y;
+let macWindowButtonTransition: ReturnType<typeof setInterval> | undefined;
+
+function stopMacWindowButtonTransition(): void {
+	if (macWindowButtonTransition === undefined) return;
+	clearInterval(macWindowButtonTransition);
+	macWindowButtonTransition = undefined;
+}
+
+function animateMacWindowButtons(inset: boolean): void {
+	const win = mainWindow;
+	if (process.platform !== "darwin" || !win || win.isDestroyed()) return;
+
+	stopMacWindowButtonTransition();
+	const startY = macWindowButtonY;
+	const targetY = inset ? MAC_WINDOW_BUTTON_COLLAPSED_Y : MAC_WINDOW_BUTTON_EXPANDED_Y;
+	if (startY === targetY) return;
+
+	const startedAt = Date.now();
+	const tick = () => {
+		if (win.isDestroyed()) {
+			stopMacWindowButtonTransition();
+			return;
+		}
+		const progress = Math.min(1, (Date.now() - startedAt) / MAC_WINDOW_BUTTON_TRANSITION_MS);
+		const eased = progress < 0.5 ? 4 * progress ** 3 : 1 - (-2 * progress + 2) ** 3 / 2;
+		const nextY = Math.round(startY + (targetY - startY) * eased);
+		if (nextY !== macWindowButtonY) {
+			macWindowButtonY = nextY;
+			win.setWindowButtonPosition({ x: MAC_WINDOW_BUTTON_X, y: nextY });
+		}
+		if (progress === 1) stopMacWindowButtonTransition();
+	};
+
+	macWindowButtonTransition = setInterval(tick, 16);
+	tick();
+}
 
 const RENDERER_SCHEME = "app";
 const RENDERER_HOST = "renderer";
@@ -249,40 +291,12 @@ function appendDaemonOutput(text: string): void {
 // DevTools, zoom, full screen, edit commands) and each acts on the *focused*
 // webContents — including a BrowserView panel — matching native menu behaviour.
 function buildWindowsAppMenu(): Menu {
-	return Menu.buildFromTemplate([
-		{
-			label: "Edit",
-			submenu: [
-				{ role: "undo" },
-				{ role: "redo" },
-				{ type: "separator" },
-				{ role: "cut" },
-				{ role: "copy" },
-				{ role: "paste" },
-				{ role: "selectAll" },
-			],
-		},
-		{
-			label: "View",
-			submenu: [
-				{ role: "reload" },
-				{ role: "toggleDevTools" },
-				{ type: "separator" },
-				{ role: "resetZoom" },
-				{ role: "zoomIn" },
-				{ role: "zoomOut" },
-				{ type: "separator" },
-				{ role: "togglefullscreen" },
-			],
-		},
-		{
-			label: "Window",
-			submenu: [{ role: "minimize" }, { role: "close" }],
-		},
-	]);
+	return Menu.buildFromTemplate(buildWindowsAppMenuTemplate());
 }
 
 function createWindow(): void {
+	stopMacWindowButtonTransition();
+	macWindowButtonY = MAC_WINDOW_BUTTON_EXPANDED_Y;
 	browserViewHost?.dispose();
 	browserViewHost = null;
 	mainWindow = new BrowserWindow({
@@ -308,11 +322,9 @@ function createWindow(): void {
 				}
 			: {
 					titleBarStyle: "hiddenInset" as const,
-					// Lights visually centered at y=28 — the 56px topbar/.titlebar-nav
-					// center line — so lights + nav cluster + header content share one
-					// row. macOS draws the 12pt disc 2pt below the given y (measured:
-					// center = y + 8), hence 20, not 22.
-					trafficLightPosition: { x: 14, y: 20 },
+					// Start in the expanded-sidebar position. The renderer synchronizes
+					// this after hydration and whenever persistent sidebar state changes.
+					trafficLightPosition: { x: MAC_WINDOW_BUTTON_X, y: MAC_WINDOW_BUTTON_EXPANDED_Y },
 				}),
 		webPreferences: {
 			preload: preloadPath(),
@@ -383,6 +395,7 @@ function createWindow(): void {
 	mainWindow.on("leave-full-screen", pushFullScreen);
 
 	mainWindow.on("closed", () => {
+		stopMacWindowButtonTransition();
 		browserViewHost?.dispose();
 		browserViewHost = null;
 		mainWindow = null;
@@ -1116,6 +1129,9 @@ ipcMain.handle("window:setOverlay", (_event, overlay: { color: string; symbolCol
 	}
 });
 
+ipcMain.handle("window:setTrafficLightsInset", (_event, inset: boolean) => {
+	animateMacWindowButtons(inset);
+});
 ipcMain.handle("window:isFullScreen", () => mainWindow?.isFullScreen() ?? false);
 
 // Drive Electron's nativeTheme from the app's theme preference so embedded
