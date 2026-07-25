@@ -16,6 +16,7 @@ const (
 	StatusMergeable        SessionStatus = "mergeable"
 	StatusMerged           SessionStatus = "merged"
 	StatusNeedsInput       SessionStatus = "needs_input"
+	StatusExited           SessionStatus = "exited"
 	StatusIdle             SessionStatus = "idle"
 	StatusTerminated       SessionStatus = "terminated"
 	// StatusNoSignal marks a live session whose agent has never delivered a

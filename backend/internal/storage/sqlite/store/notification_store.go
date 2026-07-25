@@ -5,16 +5,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	moderncsqlite "modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
-	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/gen"
 )
-
-var _ notificationsvc.Store = (*Store)(nil)
 
 // CreateNotification inserts one unread notification. It returns created=false
 // when the unread dedupe index already has a matching row.
@@ -53,13 +51,45 @@ func (s *Store) CreateNotification(ctx context.Context, rec domain.NotificationR
 	return notificationFromGen(row), true, nil
 }
 
-// ListUnreadNotifications returns unread notifications newest-first.
-func (s *Store) ListUnreadNotifications(ctx context.Context, limit int) ([]domain.NotificationRecord, error) {
-	rows, err := s.qr.ListUnreadNotifications(ctx, int64(limit))
+// ListNotifications returns one stable newest-first page of notifications.
+func (s *Store) ListNotifications(
+	ctx context.Context,
+	status domain.NotificationListStatus,
+	beforeCreatedAt time.Time,
+	beforeID string,
+	limit int,
+) ([]domain.NotificationRecord, error) {
+	var (
+		rows []gen.Notification
+		err  error
+	)
+	if status == domain.NotificationListUnread {
+		rows, err = s.qr.ListUnreadNotificationsPage(ctx, gen.ListUnreadNotificationsPageParams{
+			BeforeID:        beforeID,
+			BeforeCreatedAt: beforeCreatedAt,
+			PageLimit:       int64(limit),
+		})
+	} else {
+		rows, err = s.qr.ListNotificationsPage(ctx, gen.ListNotificationsPageParams{
+			BeforeID:        beforeID,
+			BeforeCreatedAt: beforeCreatedAt,
+			PageLimit:       int64(limit),
+		})
+	}
 	if err != nil {
-		return nil, fmt.Errorf("list unread notifications: %w", err)
+		return nil, fmt.Errorf("list notifications: %w", err)
 	}
 	return notificationsFromGen(rows), nil
+}
+
+// CountUnreadNotifications returns the exact unread badge count independently
+// from the bounded history page.
+func (s *Store) CountUnreadNotifications(ctx context.Context) (int64, error) {
+	count, err := s.qr.CountUnreadNotifications(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("count unread notifications: %w", err)
+	}
+	return count, nil
 }
 
 // MarkNotificationRead marks one unread notification read.
@@ -77,14 +107,14 @@ func (s *Store) MarkNotificationRead(ctx context.Context, id string) (domain.Not
 }
 
 // MarkAllNotificationsRead marks every unread notification read.
-func (s *Store) MarkAllNotificationsRead(ctx context.Context) ([]domain.NotificationRecord, error) {
+func (s *Store) MarkAllNotificationsRead(ctx context.Context) (int64, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	rows, err := s.qw.MarkAllNotificationsRead(ctx)
+	count, err := s.qw.MarkAllNotificationsRead(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("mark all notifications read: %w", err)
+		return 0, fmt.Errorf("mark all notifications read: %w", err)
 	}
-	return notificationsFromGen(rows), nil
+	return count, nil
 }
 
 func (s *Store) getUnreadNotificationByDedupe(ctx context.Context, rec domain.NotificationRecord) (domain.NotificationRecord, bool, error) {

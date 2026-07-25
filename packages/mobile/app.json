@@ -21,7 +21,7 @@
 			}
 		},
 		"android": {
-			"package": "aoagents.ao",
+			"package": "aoagents.dev",
 			"googleServicesFile": "./google-services.json",
 			"adaptiveIcon": {
 				"backgroundColor": "#0a0b0d",

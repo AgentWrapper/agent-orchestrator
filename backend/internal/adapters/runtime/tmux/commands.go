@@ -16,6 +16,17 @@ func newSessionArgs(id, cwd, shellPath, launchCmd string) []string {
 	}
 }
 
+// respawnPaneArgs replaces the process in the session's only pane while keeping
+// the tmux session and terminal handle intact.
+func respawnPaneArgs(id, cwd, shellPath, launchCmd string) []string {
+	return []string{
+		"respawn-pane", "-k",
+		"-t", id + ":0.0",
+		"-c", cwd,
+		shellPath, "-c", launchCmd,
+	}
+}
+
 // setStatusOffArgs hides the tmux status bar for the given session.
 // set-option uses pane-targeting syntax which does not accept the `=` prefix,
 // so we pass the session name directly.
@@ -42,6 +53,12 @@ func setMouseOnArgs(id string) []string {
 // (see setStatusOffArgs).
 func setWindowSizeLargestArgs(id string) []string {
 	return []string{"set-option", "-t", id, "window-size", "largest"}
+}
+
+// panePIDArgs returns the pid of tmux's direct pane process. AO walks its
+// descendants to find the exact supervisor for the current launch.
+func panePIDArgs(id string) []string {
+	return []string{"display-message", "-p", "-t", id + ":0.0", "#{pane_pid}"}
 }
 
 // paneCurrentPathArgs prints tmux's cwd for the session's active pane. Create
@@ -105,15 +122,4 @@ func sendInterruptArgs(id string) []string {
 // -p prints to stdout; -S -<n> starts n lines back in history.
 func capturePaneArgs(id string, lines int) []string {
 	return []string{"capture-pane", "-t", id, "-p", "-S", fmt.Sprintf("-%d", lines)}
-}
-
-// exitedOptionArgs builds args for `tmux show-options -q -v -p -t <id>
-// @ao_agent_exited`. The -q flag suppresses the "invalid option" error for
-// unset options so IsAlive can distinguish "option unset (agent alive)" from
-// a genuine tmux command failure (probe error). After the agent command exits,
-// buildLaunchCommand sets @ao_agent_exited=1 on the pane before entering the
-// keep-alive shell. Uses plain session-name targeting (no `=` prefix) because
-// pane-level commands do not accept the exact-match prefix — see setStatusOffArgs.
-func exitedOptionArgs(id string) []string {
-	return []string{"show-options", "-q", "-v", "-p", "-t", id, "@ao_agent_exited"}
 }
