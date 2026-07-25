@@ -182,6 +182,9 @@ func TestCreateReusesRegisteredWorktreeAtExpectedPath(t *testing.T) {
 		t.Fatalf("new: %v", err)
 	}
 	path := filepath.Join(ws.managedRoot, "proj", "orchestrator", "proj-orchestrator")
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatalf("create registered worktree path: %v", err)
+	}
 	cfg := ports.WorkspaceConfig{
 		ProjectID:     "proj",
 		SessionID:     "proj-1",
@@ -208,6 +211,131 @@ func TestCreateReusesRegisteredWorktreeAtExpectedPath(t *testing.T) {
 	}
 	if info.Path != path || info.Branch != "ao/proj-orchestrator" {
 		t.Fatalf("info = %#v, want path %q branch ao/proj-orchestrator", info, path)
+	}
+}
+
+// TestCreatePrunesMissingRegisteredWorktreeBeforeRecreating covers Fix 3
+// (issue #2775): a registration can survive in `git worktree list` after its
+// directory is gone (a prior daemon or an out-of-band `rm -rf`). Create must
+// not hand that dead path to the runtime; it must prune the stale
+// registration and materialize a fresh worktree at the same path.
+func TestCreatePrunesMissingRegisteredWorktreeBeforeRecreating(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	// Deliberately not created on disk: the registration is stale.
+	path := filepath.Join(ws.managedRoot, "proj", "orchestrator", "proj-orchestrator")
+	cfg := ports.WorkspaceConfig{
+		ProjectID:     "proj",
+		SessionID:     "proj-1",
+		Kind:          domain.KindOrchestrator,
+		SessionPrefix: "proj",
+		Branch:        "ao/proj-orchestrator",
+	}
+
+	stale := true
+	var calls []string
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		calls = append(calls, joined)
+		switch {
+		case strings.Contains(joined, "check-ref-format"):
+			return nil, nil
+		case strings.Contains(joined, "worktree list --porcelain"):
+			if stale {
+				return []byte("worktree " + path + "\nbranch refs/heads/ao/proj-orchestrator\n"), nil
+			}
+			return []byte("worktree " + repo + "\nbranch refs/heads/main\n"), nil
+		case strings.Contains(joined, "worktree prune"):
+			stale = false
+			return nil, nil
+		case strings.Contains(joined, "rev-parse --verify --quiet refs/heads/ao/proj-orchestrator"):
+			return nil, nil
+		case strings.Contains(joined, "worktree add "+path+" ao/proj-orchestrator"):
+			return nil, nil
+		default:
+			t.Fatalf("unexpected git invocation: %v", args)
+			return nil, nil
+		}
+	}
+
+	info, err := ws.Create(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if info.Path != path || info.Branch != cfg.Branch {
+		t.Fatalf("info = %#v, want path %q branch %q", info, path, cfg.Branch)
+	}
+	got := strings.Join(calls, "\n")
+	if !strings.Contains(got, "worktree prune") || !strings.Contains(got, "worktree add "+path+" "+cfg.Branch) {
+		t.Fatalf("Create did not prune and recreate missing worktree:\n%s", got)
+	}
+}
+
+// TestRestorePrunesMissingRegisteredWorktreeBeforeRecreating is the Restore
+// counterpart: session_manager.RestoreAll relies on workspace.Restore to
+// re-materialize a worktree whose directory disappeared, but Restore only
+// exercised that path when the git registration was ALSO gone. The observed
+// #2775 case (session agent-orchestrator-78) had a registration and DB row
+// that survived a directory deletion, so Restore returned a handle to a
+// missing directory and the tmux launch command's `cd <path> || exit` guard
+// exited instantly with no diagnostic.
+func TestRestorePrunesMissingRegisteredWorktreeBeforeRecreating(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	path := filepath.Join(ws.managedRoot, "proj", "orchestrator", "proj-orchestrator")
+	cfg := ports.WorkspaceConfig{
+		ProjectID:     "proj",
+		SessionID:     "proj-1",
+		Kind:          domain.KindOrchestrator,
+		SessionPrefix: "proj",
+		Branch:        "ao/proj-orchestrator",
+		Path:          path,
+	}
+
+	stale := true
+	var calls []string
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		calls = append(calls, joined)
+		switch {
+		case strings.Contains(joined, "check-ref-format"):
+			return nil, nil
+		case strings.Contains(joined, "worktree list --porcelain"):
+			if stale {
+				return []byte("worktree " + path + "\nbranch refs/heads/ao/proj-orchestrator\n"), nil
+			}
+			return []byte("worktree " + repo + "\nbranch refs/heads/main\n"), nil
+		case strings.Contains(joined, "worktree prune"):
+			stale = false
+			return nil, nil
+		case strings.Contains(joined, "rev-parse --verify --quiet refs/heads/ao/proj-orchestrator"):
+			return nil, nil
+		case strings.Contains(joined, "worktree add "+path+" ao/proj-orchestrator"):
+			return nil, nil
+		default:
+			t.Fatalf("unexpected git invocation: %v", args)
+			return nil, nil
+		}
+	}
+
+	info, err := ws.Restore(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if info.Path != path || info.Branch != cfg.Branch {
+		t.Fatalf("info = %#v, want path %q branch %q", info, path, cfg.Branch)
+	}
+	got := strings.Join(calls, "\n")
+	if !strings.Contains(got, "worktree prune") || !strings.Contains(got, "worktree add "+path+" "+cfg.Branch) {
+		t.Fatalf("Restore did not prune and recreate missing worktree:\n%s", got)
 	}
 }
 

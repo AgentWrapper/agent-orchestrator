@@ -132,6 +132,16 @@ type execRunner struct{}
 func (execRunner) Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = append(append([]string(nil), os.Environ()...), env...)
+	// Run from a stable directory, not whatever the daemon process's cwd happens
+	// to be. The first tmux CLI call auto-starts tmux's persistent server, which
+	// inherits ITS launching process's cwd and keeps it for the server's entire
+	// lifetime, regardless of what any later `new-session -c <dir>` asks for
+	// (issue #2775). A packaged desktop build can start the daemon with its cwd
+	// inside a Squirrel/ShipIt staging directory that the very next auto-update
+	// deletes, permanently pinning the tmux server to a path that no longer
+	// exists. os.TempDir() outlives app bundle swaps and update staging dirs, so
+	// pinning here keeps the server cwd valid across the app's lifetime.
+	cmd.Dir = os.TempDir()
 	return cmd.CombinedOutput()
 }
 
@@ -283,16 +293,48 @@ func (r *Runtime) Restart(ctx context.Context, handle ports.RuntimeHandle, cfg p
 	return handle, nil
 }
 
+// paneCwdVerifyAttempts and paneCwdVerifyRetryDelay bound how long Create
+// waits for the pane's working directory to settle before giving up.
+// buildLaunchCommand's `cd '<workspace>' || exit;` guard corrects a pane that
+// started in the tmux server's own (possibly poisoned) cwd, but only once the
+// pane's shell actually runs that cd. Measured live on 2026-07-25:
+// #{pane_current_path} sampled immediately after `new-session` was stale, and
+// the same probe sampled 50ms later was already correct. A single-shot check
+// therefore lost that race every time and turned a spawn that was actually
+// going to succeed into a hard failure (issue #2775): retrying gives the cd
+// guard the moment it needs to run.
+const (
+	paneCwdVerifyAttempts   = 5
+	paneCwdVerifyRetryDelay = 50 * time.Millisecond
+)
+
 func (r *Runtime) verifyPaneWorkingDirectory(ctx context.Context, id, want string) error {
-	out, err := r.run(ctx, paneCurrentPathArgs(id)...)
-	if err != nil {
-		return fmt.Errorf("tmux runtime: verify working directory %s: %w", id, err)
+	var lastErr error
+	for attempt := 0; attempt < paneCwdVerifyAttempts; attempt++ {
+		if attempt > 0 {
+			timer := time.NewTimer(paneCwdVerifyRetryDelay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
+		}
+		out, err := r.run(ctx, paneCurrentPathArgs(id)...)
+		if err != nil {
+			lastErr = fmt.Errorf("tmux runtime: verify working directory %s: %w", id, err)
+			continue
+		}
+		got := strings.TrimSpace(string(out))
+		if sameDirectory(got, want) {
+			return nil
+		}
+		lastErr = fmt.Errorf(
+			"%w: session %s started in %q, want %q (the worktree may be missing, or the tmux server may be pinned to a stale directory)",
+			ports.ErrRuntimeWorkspaceCwdMismatch, id, got, want,
+		)
 	}
-	got := strings.TrimSpace(string(out))
-	if sameDirectory(got, want) {
-		return nil
-	}
-	return fmt.Errorf("tmux runtime: session %s started in %q, want %q", id, got, want)
+	return lastErr
 }
 
 // Destroy kills the handle's tmux session and reaps the pane processes it

@@ -348,7 +348,13 @@ func TestBuildLaunchCommandPreservesExplicitNoColor(t *testing.T) {
 
 func TestCreateDestroysAndReturnsErrorWhenPaneCWDDoesNotMatch(t *testing.T) {
 	r, fr := newTestRuntime(0)
-	fr.outputs = [][]byte{nil, []byte("/deleted/shipit\n")}
+	// new-session, then a stale pane cwd on every one of the paneCwdVerifyAttempts
+	// retries: the pane never settles on the workspace, so Create must exhaust
+	// all attempts and fail with the typed mismatch error.
+	fr.outputs = [][]byte{nil}
+	for i := 0; i < paneCwdVerifyAttempts; i++ {
+		fr.outputs = append(fr.outputs, []byte("/deleted/shipit\n"))
+	}
 
 	_, err := r.Create(context.Background(), ports.RuntimeConfig{
 		SessionID:     "sess-1",
@@ -358,14 +364,86 @@ func TestCreateDestroysAndReturnsErrorWhenPaneCWDDoesNotMatch(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `started in "/deleted/shipit", want "/tmp/ws"`) {
 		t.Fatalf("Create err = %v, want pane cwd mismatch", err)
 	}
+	if !errors.Is(err, ports.ErrRuntimeWorkspaceCwdMismatch) {
+		t.Fatalf("Create err = %v, want wrapped ports.ErrRuntimeWorkspaceCwdMismatch", err)
+	}
+	verifyCalls := 0
 	hasKill := false
 	for _, c := range fr.calls {
+		if len(c.args) > 0 && c.args[0] == "display-message" {
+			verifyCalls++
+		}
 		if len(c.args) > 0 && c.args[0] == "kill-session" {
 			hasKill = true
 		}
 	}
+	if verifyCalls != paneCwdVerifyAttempts {
+		t.Fatalf("pane cwd verification attempts = %d, want %d", verifyCalls, paneCwdVerifyAttempts)
+	}
 	if !hasKill {
 		t.Fatal("expected kill-session cleanup call when pane cwd verification fails")
+	}
+}
+
+// TestVerifyPaneWorkingDirectoryRetriesUntilMatch pins the retry behavior Fix 2
+// depends on: buildLaunchCommand's `cd <workspace> || exit;` guard corrects a
+// pane's cwd asynchronously, so the first sample right after `new-session` can
+// still show the tmux server's (possibly poisoned) cwd even though the pane is
+// about to land in the right place. Create must not fail on that stale first
+// sample if a later sample matches.
+func TestVerifyPaneWorkingDirectoryRetriesUntilMatch(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	// new-session, then a stale sample, then a matching sample.
+	fr.outputs = [][]byte{nil, []byte("/deleted/shipit\n"), []byte("/tmp/ws\n"), nil, nil, nil}
+
+	h, err := r.Create(context.Background(), ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"myagent"},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if h.ID != "sess-1" {
+		t.Fatalf("handle ID = %q, want sess-1", h.ID)
+	}
+	verifyCalls := 0
+	for _, c := range fr.calls {
+		if len(c.args) > 0 && c.args[0] == "display-message" {
+			verifyCalls++
+		}
+	}
+	if verifyCalls != 2 {
+		t.Fatalf("pane cwd verification attempts = %d, want 2 (stale then matching)", verifyCalls)
+	}
+}
+
+// TestVerifyPaneWorkingDirectoryHonorsCancellation ensures the retry loop's
+// select on ctx.Done() actually aborts a pending retry instead of always
+// sleeping out the full retry budget.
+func TestVerifyPaneWorkingDirectoryHonorsCancellation(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{[]byte("/deleted/shipit\n")}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := r.verifyPaneWorkingDirectory(ctx, "sess-1", "/tmp/ws")
+	if err == nil {
+		t.Fatal("verifyPaneWorkingDirectory: got nil, want context cancellation error")
+	}
+	// The first attempt runs before the retry-delay select is reached, so one
+	// verification call happens even though ctx is already canceled; the
+	// second attempt's select must observe ctx.Done() rather than waiting out
+	// paneCwdVerifyRetryDelay.
+	verifyCalls := 0
+	for _, c := range fr.calls {
+		if len(c.args) > 0 && c.args[0] == "display-message" {
+			verifyCalls++
+		}
+	}
+	if verifyCalls != 1 {
+		t.Fatalf("pane cwd verification attempts = %d, want 1 (canceled before the first retry)", verifyCalls)
 	}
 }
 
