@@ -72,7 +72,7 @@ func TestServeOpenStreamsAndWritesTerminal(t *testing.T) {
 	pty := newFakePTY()
 	sp := &fakeSpawner{ptys: []*fakePTY{pty}}
 	src := &fakeSource{alive: true, spawner: sp}
-	mgr := NewManager(src, nil, testLogger(), WithHeartbeat(0))
+	mgr := NewManager(src, nil, testLogger(), WithHeartbeat(0), WithInputGraceWindow(0))
 	defer mgr.Close()
 
 	conn := newFakeConn()
@@ -109,7 +109,7 @@ func TestServeBuffersInputUntilAttachReady(t *testing.T) {
 		<-releaseSpawn
 		return pty, nil
 	}}
-	mgr := NewManager(src, nil, testLogger(), WithHeartbeat(0))
+	mgr := NewManager(src, nil, testLogger(), WithHeartbeat(0), WithInputGraceWindow(0))
 	defer mgr.Close()
 
 	conn := newFakeConn()
@@ -452,6 +452,69 @@ func TestManagerCloseKillsLiveAttachments(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("Manager.Close must close live attach PTYs")
 	}
+}
+
+// A pane's very first attach holds typed input until its grace window elapses
+// (see Manager.inputHoldDeadline): tmux forwards bytes to the pane's foreground
+// process the instant attach succeeds, whether or not a full-screen TUI agent
+// has actually entered raw mode yet, so an early keystroke can otherwise land
+// as raw text in the pane's scrollback instead of the agent's input box.
+func TestServeFreshPaneHoldsInputUntilGraceWindowElapses(t *testing.T) {
+	pty := newFakePTY()
+	sp := &fakeSpawner{ptys: []*fakePTY{pty}}
+	src := &fakeSource{alive: true, spawner: sp}
+	mgr := NewManager(src, nil, testLogger(), WithHeartbeat(0), WithInputGraceWindow(200*time.Millisecond))
+	defer mgr.Close()
+
+	conn := newFakeConn()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mgr.Serve(ctx, conn)
+
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen}
+	recv(t, conn, chTerminal, msgOpened, time.Second)
+
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgData, Data: base64.StdEncoding.EncodeToString([]byte("h"))}
+
+	// Give the write a real chance to land early; it must not reach the PTY
+	// before the grace window elapses.
+	time.Sleep(80 * time.Millisecond)
+	if got := string(pty.writtenBytes()); got != "" {
+		t.Fatalf("input reached the PTY before the grace window elapsed: %q", got)
+	}
+
+	eventually(t, time.Second, func() bool { return string(pty.writtenBytes()) == "h" })
+}
+
+// A second open of a pane this Manager has already seen (a reattach, or a
+// second client) must not add another delay: the grace window only protects a
+// pane's genuine first attach, when the agent process is actually still
+// booting.
+func TestServeReattachSkipsInputGraceWindow(t *testing.T) {
+	p1, p2 := newFakePTY(), newFakePTY()
+	sp := &fakeSpawner{ptys: []*fakePTY{p1, p2}}
+	src := &fakeSource{alive: true, spawner: sp}
+	mgr := NewManager(src, nil, testLogger(), WithHeartbeat(0), WithInputGraceWindow(150*time.Millisecond))
+	defer mgr.Close()
+
+	connA := newFakeConn()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mgr.Serve(ctx, connA)
+
+	connA.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen}
+	recv(t, connA, chTerminal, msgOpened, time.Second)
+
+	// Let connA's fresh-open grace window elapse.
+	time.Sleep(200 * time.Millisecond)
+
+	connB := newFakeConn()
+	go mgr.Serve(ctx, connB)
+	connB.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen}
+	recv(t, connB, chTerminal, msgOpened, time.Second)
+
+	connB.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgData, Data: base64.StdEncoding.EncodeToString([]byte("status\n"))}
+	eventually(t, 200*time.Millisecond, func() bool { return string(p2.writtenBytes()) == "status\n" })
 }
 
 func TestEnqueueOverflowCancelsConn(t *testing.T) {

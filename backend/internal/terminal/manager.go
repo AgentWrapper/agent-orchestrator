@@ -32,6 +32,22 @@ type wsConn interface {
 const (
 	defaultHeartbeat   = 15 * time.Second
 	defaultWriteBuffer = 1024
+
+	// defaultInputGraceWindow is how long a freshly launched pane's typed input
+	// is held back after attach succeeds. tmux forwards bytes to the pane's
+	// foreground process the instant attach succeeds, whether or not that
+	// process has actually entered raw mode yet — a full-screen TUI agent
+	// (Claude Code, Codex, ...) can take a moment after launch to do so, during
+	// which fast typing lands as raw, echoed text in the scrollback instead of
+	// the agent's input box. The window only ever applies once, to the very
+	// first attach of a given pane id (see inputHoldDeadline); reattaching to an
+	// already-running pane never adds a delay.
+	defaultInputGraceWindow = 500 * time.Millisecond
+
+	// freshEntryTTL bounds how long a recorded first-seen deadline is kept
+	// around purely so the bookkeeping map doesn't grow unboundedly over a
+	// long-lived daemon; it is unrelated to the grace window itself.
+	freshEntryTTL = time.Minute
 )
 
 // Manager serves WebSocket clients, opening one attach Stream per opened pane
@@ -57,6 +73,14 @@ type Manager struct {
 	// It arbitrates the single PTY's grid across clients (see reconcileLocked).
 	sharedMu sync.Mutex
 	shared   map[string]*sharedTerm
+
+	// inputGraceWindow is how long a fresh pane's input is held (see
+	// defaultInputGraceWindow); zero disables the hold entirely. freshMu guards
+	// freshUntil, the per-id record of when that hold expires — populated the
+	// first time this Manager ever sees an id, reused on every later open.
+	inputGraceWindow time.Duration
+	freshMu          sync.Mutex
+	freshUntil       map[string]time.Time
 }
 
 // sharedTerm tracks every client currently viewing one terminal id (one PTY) so
@@ -85,6 +109,12 @@ type Option func(*Manager)
 // WithHeartbeat overrides the ping interval.
 func WithHeartbeat(d time.Duration) Option { return func(m *Manager) { m.heartbeat = d } }
 
+// WithInputGraceWindow overrides how long a freshly launched pane's input is
+// held after attach (see defaultInputGraceWindow); zero disables it.
+func WithInputGraceWindow(d time.Duration) Option {
+	return func(m *Manager) { m.inputGraceWindow = d }
+}
+
 // NewManager builds a Manager. src opens attach Streams; events feeds the session
 // channel (may be nil to disable it). A nil logger falls back to slog.Default.
 func NewManager(src Source, events EventSource, log *slog.Logger, opts ...Option) *Manager {
@@ -93,14 +123,15 @@ func NewManager(src Source, events EventSource, log *slog.Logger, opts ...Option
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Manager{
-		src:         src,
-		events:      events,
-		log:         log,
-		heartbeat:   defaultHeartbeat,
-		ctx:         ctx,
-		cancel:      cancel,
-		attachments: map[*attachment]struct{}{},
-		shared:      map[string]*sharedTerm{},
+		src:              src,
+		events:           events,
+		log:              log,
+		heartbeat:        defaultHeartbeat,
+		ctx:              ctx,
+		cancel:           cancel,
+		attachments:      map[*attachment]struct{}{},
+		shared:           map[string]*sharedTerm{},
+		inputGraceWindow: defaultInputGraceWindow,
 	}
 	for _, opt := range opts {
 		opt(m)
@@ -146,6 +177,35 @@ func (m *Manager) forget(a *attachment) {
 	m.mu.Lock()
 	delete(m.attachments, a)
 	m.mu.Unlock()
+}
+
+// inputHoldDeadline returns the point in time until which id's input should be
+// held back on its next first-ever attach. The first caller for a given id
+// mints a fresh deadline (now + inputGraceWindow); every later call for the
+// same id — a reattach, a second client, a reopened tab — gets back that same
+// deadline, which by then has usually already passed, so only a pane's true
+// first attach ever actually waits. Disabled entirely when inputGraceWindow<=0.
+func (m *Manager) inputHoldDeadline(id string) time.Time {
+	if m.inputGraceWindow <= 0 {
+		return time.Time{}
+	}
+	now := time.Now()
+	m.freshMu.Lock()
+	defer m.freshMu.Unlock()
+	if m.freshUntil == nil {
+		m.freshUntil = map[string]time.Time{}
+	}
+	for k, v := range m.freshUntil {
+		if now.After(v.Add(freshEntryTTL)) {
+			delete(m.freshUntil, k)
+		}
+	}
+	if deadline, ok := m.freshUntil[id]; ok {
+		return deadline
+	}
+	deadline := now.Add(m.inputGraceWindow)
+	m.freshUntil[id] = deadline
+	return deadline
 }
 
 // joinTerminal registers a client (its connection + attach Stream + requested
@@ -377,6 +437,7 @@ func (c *connState) openTerminal(id string, rows, cols uint16, role string) {
 			c.enqueue(serverMsg{Ch: chTerminal, ID: id, Type: msgExited})
 		},
 		c.mgr.log)
+	a.inputHoldUntil = c.mgr.inputHoldDeadline(id)
 	if err := c.mgr.track(a); err != nil {
 		c.enqueue(serverMsg{Ch: chTerminal, ID: id, Type: msgError, Error: err.Error()})
 		return

@@ -65,6 +65,12 @@ type attachment struct {
 	opened       bool
 	inputReady   bool
 	pendingInput [][]byte
+
+	// inputHoldUntil, when set by the Manager before run() starts, delays
+	// flipping inputReady on this attachment's first successful PTY (see
+	// setPTY) — giving a just-launched agent's TUI time to reach raw mode
+	// before trusting keystrokes to it. Zero value disables the hold.
+	inputHoldUntil time.Time
 }
 
 func newAttachment(id string, handle ports.RuntimeHandle, src Source, onOpen func(), onData func([]byte), onExit func(), log *slog.Logger) *attachment {
@@ -153,7 +159,7 @@ func (a *attachment) run(ctx context.Context) {
 			continue
 		}
 
-		if !a.setPTY(p) {
+		if !a.setPTY(ctx, p) {
 			_ = p.Close()
 			return
 		}
@@ -271,7 +277,7 @@ func (a *attachment) size() (rows, cols uint16) {
 // requested size onto it (see resize) — the attach already started at the size
 // read in run, but a resize frame can land between that read and registration
 // here; the replay (Resize) converges the late case.
-func (a *attachment) setPTY(p ports.Stream) bool {
+func (a *attachment) setPTY(ctx context.Context, p ports.Stream) bool {
 	a.mu.Lock()
 	if a.closed || a.exited {
 		a.mu.Unlock()
@@ -285,12 +291,26 @@ func (a *attachment) setPTY(p ports.Stream) bool {
 		a.opened = true
 	}
 	onOpen := a.onOpen
+	holdUntil := a.inputHoldUntil
 	a.mu.Unlock()
 	if rows > 0 && cols > 0 {
 		_ = p.Resize(rows, cols)
 	}
 	if shouldOpen && onOpen != nil {
 		onOpen()
+	}
+
+	// Only the very first attach of this attachment waits: output already
+	// streams (copyOut starts right after this returns), only accepting typed
+	// input is delayed, and pendingInput below already buffers anything that
+	// arrives during the wait, so nothing typed in this window is lost.
+	if shouldOpen {
+		if wait := time.Until(holdUntil); wait > 0 {
+			select {
+			case <-ctx.Done():
+			case <-time.After(wait):
+			}
+		}
 	}
 
 	for {
