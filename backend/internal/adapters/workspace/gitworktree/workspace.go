@@ -615,8 +615,14 @@ func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (por
 	if err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
+	// recreateBranch is the branch used if we fall through to recreate the
+	// worktree below. It defaults to cfg.Branch (the "no prior registration"
+	// case) but is overridden to the stale registration's own branch when one
+	// is found, so a session sitting on a child branch is not silently
+	// recreated on cfg.Branch (typically the root branch) instead.
+	recreateBranch := cfg.Branch
 	if rec, ok := findWorktree(records, path); ok {
-		missing, err := w.worktreeDirMissing(ctx, repo, path)
+		missing, err := w.pruneIfWorktreeDirMissing(ctx, repo, path)
 		if err != nil {
 			return ports.WorkspaceInfo{}, err
 		}
@@ -629,11 +635,15 @@ func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (por
 		}
 		// The registration outlived its directory (issue #2775: a session's git
 		// worktree registration and DB row survived a deletion that removed only
-		// the directory). worktreeDirMissing already pruned the stale
-		// registration; fall through to recreate the worktree at path below
-		// instead of returning a handle to a directory that does not exist,
-		// which previously made `cd <path> || exit` in the tmux launch command
-		// exit instantly with no diagnostic.
+		// the directory). pruneIfWorktreeDirMissing already pruned the stale
+		// registration; fall through to recreate the worktree at path below,
+		// on the registration's own branch (not cfg.Branch), instead of
+		// returning a handle to a directory that does not exist, which
+		// previously made `cd <path> || exit` in the tmux launch command exit
+		// instantly with no diagnostic.
+		if rec.Branch != "" {
+			recreateBranch = rec.Branch
+		}
 	}
 	if nonEmpty, err := pathExistsNonEmpty(path); err != nil {
 		return ports.WorkspaceInfo{}, err
@@ -645,13 +655,13 @@ func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (por
 			return ports.WorkspaceInfo{}, err
 		}
 	}
-	if err := w.validateBranch(ctx, repo, cfg.Branch); err != nil {
+	if err := w.validateBranch(ctx, repo, recreateBranch); err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
-	if err := w.addWorktree(ctx, repo, path, cfg.Branch, cfg.BaseBranch); err != nil {
+	if err := w.addWorktree(ctx, repo, path, recreateBranch, cfg.BaseBranch); err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
-	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID, RepoPath: repo}, nil
+	return ports.WorkspaceInfo{Path: path, Branch: recreateBranch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID, RepoPath: repo}, nil
 }
 
 func (w *Workspace) existingWorktree(ctx context.Context, repo, path string, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, bool, error) {
@@ -660,12 +670,12 @@ func (w *Workspace) existingWorktree(ctx context.Context, repo, path string, cfg
 		return ports.WorkspaceInfo{}, false, err
 	}
 	if rec, ok := findWorktree(records, path); ok {
-		missing, err := w.worktreeDirMissing(ctx, repo, path)
+		missing, err := w.pruneIfWorktreeDirMissing(ctx, repo, path)
 		if err != nil {
 			return ports.WorkspaceInfo{}, false, err
 		}
 		if missing {
-			// worktreeDirMissing already pruned the stale registration; report
+			// pruneIfWorktreeDirMissing already pruned the stale registration; report
 			// "no existing worktree" so Create falls through to addWorktree and
 			// materializes a fresh one at path.
 			return ports.WorkspaceInfo{}, false, nil
@@ -679,16 +689,29 @@ func (w *Workspace) existingWorktree(ctx context.Context, repo, path string, cfg
 	return ports.WorkspaceInfo{}, false, nil
 }
 
-// worktreeDirMissing reports whether a git-registered worktree's directory no
-// longer exists on disk. A worktree registration (and the session's DB row)
-// can outlive its directory when something removes the path out of band of
-// AO's own teardown (issue #2775: session agent-orchestrator-78 kept its
+// pruneIfWorktreeDirMissing reports whether a git-registered worktree's
+// directory no longer exists on disk, and mutates repo's worktree
+// registrations when it does. A worktree registration (and the session's DB
+// row) can outlive its directory when something removes the path out of band
+// of AO's own teardown (issue #2775: session agent-orchestrator-78 kept its
 // branches and worktree registration but its directory was gone, so handing
 // that path straight to the runtime made the tmux launch command's
 // `cd <path> || exit` guard exit instantly with no diagnostic). When the
 // directory is missing this prunes the stale registration so the caller can
 // materialize a fresh worktree at the same path instead.
-func (w *Workspace) worktreeDirMissing(ctx context.Context, repo, path string) (bool, error) {
+//
+// `git worktree prune` has no per-worktree form: it is scoped to repo, so
+// calling it here can drop the registration of any OTHER worktree of repo
+// whose directory git currently cannot see, e.g. an unmounted volume or a
+// network filesystem hiccup, not just path. That is an accepted tradeoff, not
+// an oversight: this adapter already relies on the same repo-wide
+// `pruneWorktrees` elsewhere (addWorktree and createWorkspaceProjectRepo call
+// it on git's "missing but already registered worktree" error) and the
+// failure mode is self-healing rather than destructive, a pruned registration
+// is exactly the state this function and existingWorktree/Restore already
+// recover from, so the next Create or Restore for that other session
+// recreates its worktree instead of losing it.
+func (w *Workspace) pruneIfWorktreeDirMissing(ctx context.Context, repo, path string) (bool, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {

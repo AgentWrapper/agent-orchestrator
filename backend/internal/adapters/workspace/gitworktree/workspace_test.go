@@ -339,6 +339,79 @@ func TestRestorePrunesMissingRegisteredWorktreeBeforeRecreating(t *testing.T) {
 	}
 }
 
+// TestRestoreRecreatesOnRegisteredBranchNotCfgBranch is the regression test
+// for the real #2775 case: session agent-orchestrator-78 had its worktree
+// registered on a child branch (ao/agent-orchestrator-78/gh-pages-landing),
+// not the root branch AO would pass as cfg.Branch. When the directory is
+// missing and Restore falls through to recreate the worktree, it must
+// recreate it on the registration's OWN branch, not cfg.Branch: otherwise a
+// session on a child branch is silently checked out on root instead, which
+// looks to the agent like its work vanished.
+func TestRestoreRecreatesOnRegisteredBranchNotCfgBranch(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	path := filepath.Join(ws.managedRoot, "proj", "orchestrator", "proj-orchestrator")
+	const registeredBranch = "ao/proj-orchestrator/gh-pages-landing"
+	// cfg.Branch deliberately differs from the stale registration's branch
+	// (and is not a prefix of it, so a substring match on the recorded git
+	// invocations cannot accidentally pass either way), mirroring how AO
+	// passes the session's root branch through Restore while the on-disk
+	// worktree may have been registered on a child branch.
+	cfg := ports.WorkspaceConfig{
+		ProjectID:     "proj",
+		SessionID:     "proj-1",
+		Kind:          domain.KindOrchestrator,
+		SessionPrefix: "proj",
+		Branch:        "ao/proj-orchestrator/root",
+		Path:          path,
+	}
+
+	stale := true
+	var calls []string
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		calls = append(calls, joined)
+		switch {
+		case strings.Contains(joined, "check-ref-format"):
+			return nil, nil
+		case strings.Contains(joined, "worktree list --porcelain"):
+			if stale {
+				return []byte("worktree " + path + "\nbranch refs/heads/" + registeredBranch + "\n"), nil
+			}
+			return []byte("worktree " + repo + "\nbranch refs/heads/main\n"), nil
+		case strings.Contains(joined, "worktree prune"):
+			stale = false
+			return nil, nil
+		case strings.Contains(joined, "rev-parse --verify --quiet refs/heads/"+registeredBranch):
+			return nil, nil
+		case strings.Contains(joined, "worktree add "+path+" "+registeredBranch):
+			return nil, nil
+		default:
+			t.Fatalf("unexpected git invocation: %v", args)
+			return nil, nil
+		}
+	}
+
+	info, err := ws.Restore(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if info.Branch != registeredBranch {
+		t.Fatalf("info.Branch = %q, want the registered branch %q (not cfg.Branch %q)", info.Branch, registeredBranch, cfg.Branch)
+	}
+	got := strings.Join(calls, "\n")
+	if strings.Contains(got, "worktree add "+path+" "+cfg.Branch) {
+		t.Fatalf("Restore recreated the worktree on cfg.Branch instead of the registered branch:\n%s", got)
+	}
+	if !strings.Contains(got, "worktree add "+path+" "+registeredBranch) {
+		t.Fatalf("Restore did not recreate the worktree on the registered branch %q:\n%s", registeredBranch, got)
+	}
+}
+
 func TestCreateWorkspaceProjectRepoPrunesStaleRegisteredWorktree(t *testing.T) {
 	root := t.TempDir()
 	repo := t.TempDir()

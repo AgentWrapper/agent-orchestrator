@@ -3,7 +3,9 @@ package tmux
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -66,6 +68,19 @@ func newTestRuntime(chunkSize int) (*Runtime, *fakeRunner) {
 	return r, fr
 }
 
+// countCalls returns how many of fr's recorded calls invoked the given tmux
+// subcommand (args[0]), e.g. "display-message" for pane cwd verification
+// probes.
+func countCalls(fr *fakeRunner, subcommand string) int {
+	n := 0
+	for _, c := range fr.calls {
+		if len(c.args) > 0 && c.args[0] == subcommand {
+			n++
+		}
+	}
+	return n
+}
+
 // -- Options / New tests --
 
 func TestNewDefaultsToPortableShell(t *testing.T) {
@@ -81,6 +96,39 @@ func TestNewPicksUpShellFromEnv(t *testing.T) {
 	r := New(Options{})
 	if got := r.shell; got != "/bin/zsh" {
 		t.Fatalf("shell = %q, want /bin/zsh", got)
+	}
+}
+
+// TestExecRunnerRunsFromStableDir is the direct regression test for Fix 1:
+// execRunner.Run must pin cmd.Dir to os.TempDir() rather than inheriting
+// whatever the daemon process's own cwd happens to be. The first tmux CLI
+// call auto-starts the persistent tmux server, which then keeps that cwd for
+// its entire lifetime (issue #2775); without this pin a daemon started from a
+// Squirrel/ShipIt staging directory permanently poisons the server once that
+// staging directory is deleted by the next auto-update. This runs the real
+// execRunner (not the fakeRunner test seam every other test in this file
+// uses), so it is the only test that would catch a regression here.
+func TestExecRunnerRunsFromStableDir(t *testing.T) {
+	out, err := (execRunner{}).Run(context.Background(), nil, "sh", "-c", "pwd")
+	if err != nil {
+		t.Fatalf("execRunner.Run: %v", err)
+	}
+	got := strings.TrimSpace(string(out))
+
+	// Resolve symlinks on both sides: macOS reports os.TempDir() under
+	// /var/folders/... but pwd (and everything else) sees the real path under
+	// /private/var/folders/..., so a raw string comparison would spuriously
+	// fail there.
+	gotResolved, err := filepath.EvalSymlinks(got)
+	if err != nil {
+		t.Fatalf("resolve pwd output %q: %v", got, err)
+	}
+	wantResolved, err := filepath.EvalSymlinks(os.TempDir())
+	if err != nil {
+		t.Fatalf("resolve os.TempDir() %q: %v", os.TempDir(), err)
+	}
+	if gotResolved != wantResolved {
+		t.Fatalf("execRunner ran from %q, want os.TempDir() %q", got, os.TempDir())
 	}
 }
 
@@ -367,21 +415,36 @@ func TestCreateDestroysAndReturnsErrorWhenPaneCWDDoesNotMatch(t *testing.T) {
 	if !errors.Is(err, ports.ErrRuntimeWorkspaceCwdMismatch) {
 		t.Fatalf("Create err = %v, want wrapped ports.ErrRuntimeWorkspaceCwdMismatch", err)
 	}
-	verifyCalls := 0
-	hasKill := false
-	for _, c := range fr.calls {
-		if len(c.args) > 0 && c.args[0] == "display-message" {
-			verifyCalls++
-		}
-		if len(c.args) > 0 && c.args[0] == "kill-session" {
-			hasKill = true
-		}
+	if got := countCalls(fr, "display-message"); got != paneCwdVerifyAttempts {
+		t.Fatalf("pane cwd verification attempts = %d, want %d", got, paneCwdVerifyAttempts)
 	}
-	if verifyCalls != paneCwdVerifyAttempts {
-		t.Fatalf("pane cwd verification attempts = %d, want %d", verifyCalls, paneCwdVerifyAttempts)
-	}
-	if !hasKill {
+	if countCalls(fr, "kill-session") == 0 {
 		t.Fatal("expected kill-session cleanup call when pane cwd verification fails")
+	}
+}
+
+// TestVerifyPaneWorkingDirectoryKeepsMismatchErrorAfterLaterProbeFailure pins
+// Fix 2's sticky-sentinel behavior: once an attempt has observed a genuine cwd
+// mismatch, a later attempt that fails to even probe the pane (a transient
+// tmux CLI error, not a mismatch) must not overwrite that classifiable error.
+// Losing it would make the caller fall back to an opaque, unclassifiable
+// error and regress the whole point of Fix 4 (mapping to a typed apierr).
+func TestVerifyPaneWorkingDirectoryKeepsMismatchErrorAfterLaterProbeFailure(t *testing.T) {
+	r, _ := newTestRuntime(0)
+	fr := &fakeRunnerSequence{
+		results: []fakeRunnerResult{
+			{out: []byte("/deleted/shipit\n")},                // attempt 1: mismatch
+			{err: errors.New("tmux: lost server connection")}, // attempt 2: probe failure
+		},
+	}
+	r.runner = fr
+
+	err := r.verifyPaneWorkingDirectory(context.Background(), "sess-1", "/tmp/ws")
+	if err == nil {
+		t.Fatal("verifyPaneWorkingDirectory: got nil, want error")
+	}
+	if !errors.Is(err, ports.ErrRuntimeWorkspaceCwdMismatch) {
+		t.Fatalf("verifyPaneWorkingDirectory err = %v, want wrapped ports.ErrRuntimeWorkspaceCwdMismatch (the mismatch must survive the later probe failure)", err)
 	}
 }
 
@@ -407,14 +470,8 @@ func TestVerifyPaneWorkingDirectoryRetriesUntilMatch(t *testing.T) {
 	if h.ID != "sess-1" {
 		t.Fatalf("handle ID = %q, want sess-1", h.ID)
 	}
-	verifyCalls := 0
-	for _, c := range fr.calls {
-		if len(c.args) > 0 && c.args[0] == "display-message" {
-			verifyCalls++
-		}
-	}
-	if verifyCalls != 2 {
-		t.Fatalf("pane cwd verification attempts = %d, want 2 (stale then matching)", verifyCalls)
+	if got := countCalls(fr, "display-message"); got != 2 {
+		t.Fatalf("pane cwd verification attempts = %d, want 2 (stale then matching)", got)
 	}
 }
 
@@ -436,14 +493,8 @@ func TestVerifyPaneWorkingDirectoryHonorsCancellation(t *testing.T) {
 	// verification call happens even though ctx is already canceled; the
 	// second attempt's select must observe ctx.Done() rather than waiting out
 	// paneCwdVerifyRetryDelay.
-	verifyCalls := 0
-	for _, c := range fr.calls {
-		if len(c.args) > 0 && c.args[0] == "display-message" {
-			verifyCalls++
-		}
-	}
-	if verifyCalls != 1 {
-		t.Fatalf("pane cwd verification attempts = %d, want 1 (canceled before the first retry)", verifyCalls)
+	if got := countCalls(fr, "display-message"); got != 1 {
+		t.Fatalf("pane cwd verification attempts = %d, want 1 (canceled before the first retry)", got)
 	}
 }
 
@@ -512,6 +563,32 @@ func (f *fakeRunnerSelectiveErr) Run(_ context.Context, env []string, name strin
 		return []byte("/tmp/ws\n"), nil
 	}
 	return nil, nil
+}
+
+// fakeRunnerResult is one scripted response for fakeRunnerSequence: either out
+// bytes (success) or err (failure).
+type fakeRunnerResult struct {
+	out []byte
+	err error
+}
+
+// fakeRunnerSequence returns each result in results in order for successive
+// Run calls, repeating the last result once results is exhausted. It ignores
+// which tmux subcommand was invoked, which is enough for tests that only
+// care about a fixed sequence of successes/failures across retries.
+type fakeRunnerSequence struct {
+	calls   []runnerCall
+	results []fakeRunnerResult
+}
+
+func (f *fakeRunnerSequence) Run(_ context.Context, env []string, name string, args ...string) ([]byte, error) {
+	f.calls = append(f.calls, runnerCall{env: append([]string(nil), env...), name: name, args: append([]string(nil), args...)})
+	idx := len(f.calls) - 1
+	if idx >= len(f.results) {
+		idx = len(f.results) - 1
+	}
+	res := f.results[idx]
+	return res.out, res.err
 }
 
 func TestRestartRespawnsExistingPaneAndPreservesHandle(t *testing.T) {

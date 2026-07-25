@@ -312,17 +312,23 @@ func (r *Runtime) verifyPaneWorkingDirectory(ctx context.Context, id, want strin
 	var lastErr error
 	for attempt := 0; attempt < paneCwdVerifyAttempts; attempt++ {
 		if attempt > 0 {
-			timer := time.NewTimer(paneCwdVerifyRetryDelay)
 			select {
 			case <-ctx.Done():
-				timer.Stop()
 				return ctx.Err()
-			case <-timer.C:
+			case <-time.After(paneCwdVerifyRetryDelay):
 			}
 		}
 		out, err := r.run(ctx, paneCurrentPathArgs(id)...)
 		if err != nil {
-			lastErr = fmt.Errorf("tmux runtime: verify working directory %s: %w", id, err)
+			// A later transient probe failure (e.g. a one-off tmux CLI hiccup)
+			// must not overwrite an already-observed cwd mismatch: the mismatch
+			// is the classifiable, actionable error toAPIError maps via
+			// ports.ErrRuntimeWorkspaceCwdMismatch (Fix 4), and losing it here
+			// would silently regress that mapping back to a bare, unclassifiable
+			// 500 whenever the very last attempt happened to hit a probe error.
+			if !errors.Is(lastErr, ports.ErrRuntimeWorkspaceCwdMismatch) {
+				lastErr = fmt.Errorf("tmux runtime: verify working directory %s: %w", id, err)
+			}
 			continue
 		}
 		got := strings.TrimSpace(string(out))
