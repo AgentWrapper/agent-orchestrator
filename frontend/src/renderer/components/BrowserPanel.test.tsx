@@ -219,7 +219,7 @@ describe("BrowserPanel", () => {
 		expect(hookState.setAnnotationMode).toHaveBeenCalledWith(true);
 	});
 
-	it("shows the working indicator only for active agent activity", () => {
+	it("keeps annotation mode available without duplicating agent status", () => {
 		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
 		const first = render(
 			<BrowserPanel
@@ -235,7 +235,7 @@ describe("BrowserPanel", () => {
 		);
 
 		expect(screen.getByRole("button", { name: /annotate/i })).toBeEnabled();
-		expect(screen.getByText("Agent working")).toBeInTheDocument();
+		expect(screen.queryByText("Agent working")).not.toBeInTheDocument();
 
 		first.unmount();
 		render(

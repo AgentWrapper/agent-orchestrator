@@ -12,6 +12,19 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
+const countUnreadNotifications = `-- name: CountUnreadNotifications :one
+SELECT COUNT(*)
+FROM notifications
+WHERE status = 'unread'
+`
+
+func (q *Queries) CountUnreadNotifications(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countUnreadNotifications)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createNotification = `-- name: CreateNotification :one
 INSERT INTO notifications (
     id, session_id, project_id, pr_url, type, title, body, status, created_at
@@ -88,16 +101,26 @@ func (q *Queries) GetUnreadNotificationByDedupe(ctx context.Context, arg GetUnre
 	return i, err
 }
 
-const listUnreadNotifications = `-- name: ListUnreadNotifications :many
+const listNotificationsPage = `-- name: ListNotificationsPage :many
 SELECT id, session_id, project_id, pr_url, type, title, body, status, created_at
 FROM notifications
-WHERE status = 'unread'
-ORDER BY created_at DESC
-LIMIT ?
+WHERE (
+    CAST(?1 AS TEXT) = ''
+    OR created_at < ?2
+    OR (created_at = ?2 AND id < CAST(?1 AS TEXT))
+  )
+ORDER BY created_at DESC, id DESC
+LIMIT ?3
 `
 
-func (q *Queries) ListUnreadNotifications(ctx context.Context, limit int64) ([]Notification, error) {
-	rows, err := q.db.QueryContext(ctx, listUnreadNotifications, limit)
+type ListNotificationsPageParams struct {
+	BeforeID        string
+	BeforeCreatedAt time.Time
+	PageLimit       int64
+}
+
+func (q *Queries) ListNotificationsPage(ctx context.Context, arg ListNotificationsPageParams) ([]Notification, error) {
+	rows, err := q.db.QueryContext(ctx, listNotificationsPage, arg.BeforeID, arg.BeforeCreatedAt, arg.PageLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -129,15 +152,27 @@ func (q *Queries) ListUnreadNotifications(ctx context.Context, limit int64) ([]N
 	return items, nil
 }
 
-const markAllNotificationsRead = `-- name: MarkAllNotificationsRead :many
-UPDATE notifications
-SET status = 'read'
+const listUnreadNotificationsPage = `-- name: ListUnreadNotificationsPage :many
+SELECT id, session_id, project_id, pr_url, type, title, body, status, created_at
+FROM notifications
 WHERE status = 'unread'
-RETURNING id, session_id, project_id, pr_url, type, title, body, status, created_at
+  AND (
+    CAST(?1 AS TEXT) = ''
+    OR created_at < ?2
+    OR (created_at = ?2 AND id < CAST(?1 AS TEXT))
+  )
+ORDER BY created_at DESC, id DESC
+LIMIT ?3
 `
 
-func (q *Queries) MarkAllNotificationsRead(ctx context.Context) ([]Notification, error) {
-	rows, err := q.db.QueryContext(ctx, markAllNotificationsRead)
+type ListUnreadNotificationsPageParams struct {
+	BeforeID        string
+	BeforeCreatedAt time.Time
+	PageLimit       int64
+}
+
+func (q *Queries) ListUnreadNotificationsPage(ctx context.Context, arg ListUnreadNotificationsPageParams) ([]Notification, error) {
+	rows, err := q.db.QueryContext(ctx, listUnreadNotificationsPage, arg.BeforeID, arg.BeforeCreatedAt, arg.PageLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -167,6 +202,20 @@ func (q *Queries) MarkAllNotificationsRead(ctx context.Context) ([]Notification,
 		return nil, err
 	}
 	return items, nil
+}
+
+const markAllNotificationsRead = `-- name: MarkAllNotificationsRead :execrows
+UPDATE notifications
+SET status = 'read'
+WHERE status = 'unread'
+`
+
+func (q *Queries) MarkAllNotificationsRead(ctx context.Context) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markAllNotificationsRead)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const markNotificationRead = `-- name: MarkNotificationRead :one

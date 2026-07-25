@@ -13,6 +13,7 @@ type UpdaterEventHandler = (...args: any[]) => void;
 
 type ImportOptions = {
 	reconcileFeaturePin?: (settings: UpdateSettings) => Promise<{ settings: UpdateSettings; cleared: boolean }>;
+	isPackaged?: boolean;
 };
 
 type AutoUpdaterMock = {
@@ -66,7 +67,7 @@ async function importAutoUpdater(
 	vi.doMock("electron-updater", () => ({ autoUpdater }));
 	vi.doMock("electron", () => ({
 		app: {
-			isPackaged: true,
+			isPackaged: options.isPackaged ?? true,
 			getVersion: () => "1.0.0",
 		},
 		BrowserWindow,
@@ -812,5 +813,64 @@ describe("startAutoUpdates", () => {
 		await module.startAutoUpdates(stateDir);
 
 		expect(unref).toHaveBeenCalledTimes(2);
+	});
+});
+
+describe("returnToHome", () => {
+	const stateDir = "/tmp/ao-state";
+
+	it("clears only the feature pin, preserves home channel/prefs, and checks", async () => {
+		const { module, autoUpdater, updateUpdateSettings } = await importAutoUpdater({
+			enabled: true,
+			channel: "nightly",
+			nightlyAck: true,
+			feature: { pr: 2270 },
+		});
+
+		await module.returnToHome(stateDir, "req-1");
+
+		// The pin is cleared via a single read-modify-write; applying that updater
+		// preserves every field except feature.
+		expect(updateUpdateSettings).toHaveBeenCalledTimes(1);
+		const clear = updateUpdateSettings.mock.calls[0]?.[1] as (c: UpdateSettings) => UpdateSettings;
+		expect(clear({ enabled: true, channel: "nightly", nightlyAck: true, feature: { pr: 2270 } })).toEqual({
+			enabled: true,
+			channel: "nightly",
+			nightlyAck: true,
+			feature: null,
+		});
+		// The feed resolves the home channel (not the pr<N> feed) and a check runs.
+		expect(autoUpdater.channel).toBe("nightly");
+		expect(autoUpdater.allowPrerelease).toBe(true);
+		expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
+	});
+
+	it("checks the home channel even when nothing is pinned", async () => {
+		const { module, autoUpdater, updateUpdateSettings } = await importAutoUpdater({
+			enabled: true,
+			channel: "latest",
+			nightlyAck: false,
+			feature: null,
+		});
+
+		await module.returnToHome(stateDir);
+
+		const clear = updateUpdateSettings.mock.calls[0]?.[1] as (c: UpdateSettings) => UpdateSettings;
+		const current: UpdateSettings = { enabled: true, channel: "latest", nightlyAck: false, feature: null };
+		expect(clear(current)).toBe(current); // no pin -> unchanged
+		expect(autoUpdater.channel).toBe("latest");
+		expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
+	});
+
+	it("reports unsupported in dev (unpackaged) without touching settings", async () => {
+		const { module, autoUpdater, updateUpdateSettings } = await importAutoUpdater(
+			{ enabled: true, channel: "latest", nightlyAck: false, feature: { pr: 2270 } },
+			{ isPackaged: false },
+		);
+
+		await module.returnToHome(stateDir, "req-2");
+
+		expect(updateUpdateSettings).not.toHaveBeenCalled();
+		expect(autoUpdater.checkForUpdates).not.toHaveBeenCalled();
 	});
 });

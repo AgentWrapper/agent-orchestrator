@@ -53,6 +53,7 @@ type Reaper struct {
 	sink     runtimeObservationSink
 	sessions sessionSource
 	runtime  runtimeProber
+	workload ports.SupervisedProcessInspector
 	tick     time.Duration
 	clock    func() time.Time
 	logger   *slog.Logger
@@ -68,6 +69,9 @@ func New(sink runtimeObservationSink, sessions sessionSource, runtime runtimePro
 		tick:     cfg.Tick,
 		clock:    cfg.Clock,
 		logger:   cfg.Logger,
+	}
+	if workload, ok := runtime.(ports.SupervisedProcessInspector); ok {
+		r.workload = workload
 	}
 	if r.tick <= 0 {
 		r.tick = DefaultTickInterval
@@ -148,20 +152,36 @@ func (r *Reaper) probeOne(ctx context.Context, sess domain.SessionRecord, now ti
 		return
 	}
 	alive, probeErr := r.runtime.IsAlive(ctx, handle)
-	facts := ports.RuntimeFacts{ObservedAt: now}
+	facts := ports.RuntimeFacts{ObservedAt: now, LaunchID: sess.Metadata.RuntimeLaunchID, Workload: ports.ProbeFailed}
 	switch {
 	case probeErr != nil:
 		// Failed probe must NOT be collapsed to alive — that would let a
 		// transient tmux outage hide a really-dead session, and a
 		// transient adapter bug terminate a really-alive one. Report failed
 		// and let the LCM arbitrate.
-		facts.Probe = ports.ProbeFailed
+		facts.Runtime = ports.ProbeFailed
 		r.logger.Debug("reaper: probe error reported as failed fact",
 			"session", sess.ID, "err", probeErr)
-	case alive:
-		facts.Probe = ports.ProbeAlive
+	case !alive:
+		facts.Runtime = ports.ProbeDead
 	default:
-		facts.Probe = ports.ProbeDead
+		facts.Runtime = ports.ProbeAlive
+		if facts.LaunchID != "" && r.workload != nil {
+			workloadAlive, workloadErr := r.workload.IsSupervisedProcessAlive(ctx, handle, ports.SupervisedProcessRef{
+				SessionID: sess.ID,
+				LaunchID:  facts.LaunchID,
+			})
+			switch {
+			case workloadErr != nil:
+				facts.Workload = ports.ProbeFailed
+				r.logger.Debug("reaper: workload probe error reported as failed fact",
+					"session", sess.ID, "launch", facts.LaunchID, "err", workloadErr)
+			case workloadAlive:
+				facts.Workload = ports.ProbeAlive
+			default:
+				facts.Workload = ports.ProbeDead
+			}
+		}
 	}
 
 	if err := r.sink.ApplyRuntimeObservation(ctx, sess.ID, facts); err != nil {

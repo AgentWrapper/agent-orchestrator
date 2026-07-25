@@ -72,7 +72,12 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					onFocusTerminalShortcut: unsubscribe,
 				},
 				terminal: { saveDroppedFile: async () => "" },
-				window: { setOverlay: async () => undefined },
+				window: {
+					setOverlay: async () => undefined,
+					setTrafficLightsInset: async () => undefined,
+					isFullScreen: async () => false,
+					onFullScreen: () => () => undefined,
+				},
 				theme: { set: async () => undefined },
 				menu: { action: async () => undefined, notifyShellFocus: () => undefined },
 				clipboard: {
@@ -126,6 +131,7 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 				updates: {
 					getStatus: async () => ({ state: "idle" }),
 					check: async () => undefined,
+					returnHome: async () => undefined,
 					download: async () => undefined,
 					install: async () => undefined,
 					onStatus: unsubscribe,
@@ -426,7 +432,12 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					onFocusTerminalShortcut: unsubscribe,
 				},
 				terminal: { saveDroppedFile: async () => "" },
-				window: { setOverlay: async () => undefined },
+				window: {
+					setOverlay: async () => undefined,
+					setTrafficLightsInset: async () => undefined,
+					isFullScreen: async () => false,
+					onFullScreen: () => () => undefined,
+				},
 				theme: { set: async () => undefined },
 				menu: { action: async () => undefined, notifyShellFocus: () => undefined },
 				clipboard: { writeText: async () => undefined, readText: async () => "" },
@@ -470,6 +481,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 				updates: {
 					getStatus: async () => ({ state: "idle" }),
 					check: async () => undefined,
+					returnHome: async () => undefined,
 					download: async () => undefined,
 					install: async () => undefined,
 					onStatus: unsubscribe,

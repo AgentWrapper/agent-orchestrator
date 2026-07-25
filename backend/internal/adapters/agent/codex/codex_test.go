@@ -37,6 +37,13 @@ func sessionHookFlags() []string {
 	}
 }
 
+func TestExitDetectionUsesAOProcessSupervisor(t *testing.T) {
+	plugin := &Plugin{}
+	if got := plugin.ExitDetectionMode(); got != ports.AgentExitDetectionSupervisor {
+		t.Fatalf("exit detection mode = %q, want %q", got, ports.AgentExitDetectionSupervisor)
+	}
+}
+
 func TestGetLaunchCommandBuildsCrossPlatformArgv(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "codex"}
 	workspace := canonicalTempDir(t)

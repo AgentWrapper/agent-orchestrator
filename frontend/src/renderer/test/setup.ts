@@ -73,6 +73,9 @@ if (typeof window !== "undefined") {
 		},
 		window: {
 			setOverlay: async () => undefined,
+			setTrafficLightsInset: async () => undefined,
+			isFullScreen: async () => false,
+			onFullScreen: () => () => undefined,
 		},
 		theme: {
 			set: async () => undefined,
@@ -175,6 +178,7 @@ if (typeof window !== "undefined") {
 		updates: {
 			getStatus: async () => ({ state: "idle" }),
 			check: async () => undefined,
+			returnHome: async () => undefined,
 			download: async () => undefined,
 			install: async () => undefined,
 			onStatus: () => () => undefined,
