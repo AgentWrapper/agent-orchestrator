@@ -136,6 +136,7 @@ export const aoBridge: AoBridge =
 		updates: {
 			getStatus: async () => ({ state: "idle" }),
 			check: async () => undefined,
+			returnHome: async () => undefined,
 			download: async () => undefined,
 			install: async () => undefined,
 			onStatus: () => () => undefined,
