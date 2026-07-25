@@ -142,8 +142,8 @@ export function ShellTopbar() {
 				) : isSessionRoute ? (
 					<div className="flex min-w-0 items-center gap-3">
 						{session?.branch ? (
-							<div className="inline-flex min-w-0 items-center gap-1 font-mono text-2xs leading-none text-passive">
-								<GitBranch className="size-icon-2xs shrink-0" aria-hidden="true" />
+							<div className="inline-flex min-w-0 items-center gap-1.5 font-mono text-brand leading-none text-foreground">
+								<GitBranch className="size-4 shrink-0" aria-hidden="true" />
 								<span className="truncate">{session.branch}</span>
 							</div>
 						) : null}
@@ -174,7 +174,7 @@ export function ShellTopbar() {
 							style={noDragStyle}
 							variant="accent"
 						>
-							<Plus className="size-icon-md" aria-hidden="true" />
+							<Plus className="size-icon-lg" aria-hidden="true" />
 							New task
 						</TopbarButton>
 						<TopbarButton
@@ -184,7 +184,7 @@ export function ShellTopbar() {
 							style={noDragStyle}
 							variant="primary"
 						>
-							<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
+							<OrchestratorIcon className="size-icon-lg" aria-hidden="true" />
 							{isProjectRestarting
 								? "Restarting…"
 								: isSpawning
@@ -206,11 +206,11 @@ export function ShellTopbar() {
 									style={noDragStyle}
 									variant="accent"
 								>
-									<Plus className="size-icon-md" aria-hidden="true" />
+									<Plus className="size-icon-lg" aria-hidden="true" />
 									New task
 								</TopbarButton>
 								<TopbarButton aria-label="Open Kanban" onClick={openBoard} style={noDragStyle} variant="primary">
-									<LayoutDashboard className="size-icon-md" aria-hidden="true" />
+									<LayoutDashboard className="size-icon-lg" aria-hidden="true" />
 									Kanban
 								</TopbarButton>
 							</>
@@ -241,7 +241,7 @@ export function ShellTopbar() {
 								style={noDragStyle}
 								variant="primary"
 							>
-								<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
+								<OrchestratorIcon className="size-icon-lg" aria-hidden="true" />
 								{isProjectRestarting ? "Restarting…" : isSpawning ? "Spawning…" : "Orchestrator"}
 							</TopbarButton>
 						)}
@@ -256,9 +256,9 @@ export function ShellTopbar() {
 								variant="icon"
 							>
 								{isInspectorOpen ? (
-									<PanelRightClose className="size-icon-lg" aria-hidden="true" />
+									<PanelRightClose className="size-5" aria-hidden="true" />
 								) : (
-									<PanelRightOpen className="size-icon-lg" aria-hidden="true" />
+									<PanelRightOpen className="size-5" aria-hidden="true" />
 								)}
 							</TopbarButton>
 						)}
@@ -306,7 +306,7 @@ export function TopbarKillButton({
 				title="Kill session"
 				variant="kill"
 			>
-				<Trash2 className="size-icon-sm" aria-hidden="true" />
+				<Trash2 className="size-icon-lg" aria-hidden="true" />
 				Kill
 			</TopbarButton>
 			<ConfirmDialog
@@ -330,5 +330,7 @@ export function TopbarKillButton({
 }
 function SessionStatusPill({ session }: { session: WorkspaceSession }) {
 	const { label, tone, breathe } = getAgentActivityView(session.activity);
-	return <StatusPill label={label} tone={tone} breathe={breathe} leading="none" />;
+	return (
+		<StatusPill label={label} tone={tone} breathe={breathe} leading="none" className="px-3.5 py-2 text-sm" />
+	);
 }
