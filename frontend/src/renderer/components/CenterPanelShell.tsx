@@ -13,7 +13,7 @@ const isMac = isMacPlatform();
  * `center-panel-surface`).
  *
  * `titlebarAlign` (default true) pulls Board/Terminal titles into the macOS
- * traffic-light band. Settings opts out so it keeps the large centered layout.
+ * traffic-light band.
  */
 export function CenterPanelShell({
 	className,
