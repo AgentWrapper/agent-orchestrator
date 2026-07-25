@@ -7,6 +7,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
+	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 	shelltermsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/shellterm"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
@@ -23,12 +24,14 @@ func startShellTerminals(
 	runtime shelltermsvc.ShellRuntime,
 	store *sqlite.Store,
 	projects projectsvc.Manager,
+	sessions *sessionsvc.Service,
 	log *slog.Logger,
 ) *shelltermsvc.Service {
 	svc := shelltermsvc.NewService(
 		runtime,
 		store,
 		&projectRootLocator{projects: projects},
+		&sessionWorkspaceLocator{sessions: sessions},
 		cfg.DataDir,
 		cfg.AppRunID,
 		log,
@@ -67,4 +70,26 @@ func (l *projectRootLocator) ProjectRoot(ctx context.Context, id domain.ProjectI
 	default:
 		return "", nil
 	}
+}
+
+// sessionWorkspaceLocator adapts the session service to the narrow lookup the
+// shell terminal service needs: a session id in, its live workspace path and
+// owning project id out.
+type sessionWorkspaceLocator struct {
+	sessions *sessionsvc.Service
+}
+
+// SessionWorkspace returns the session's current workspace path (its
+// worktree) and project id. An unknown session propagates the session
+// service's own NotFound apierr unchanged, so the shell terminal open request
+// answers the same 404 shape an unknown project does.
+func (l *sessionWorkspaceLocator) SessionWorkspace(ctx context.Context, id domain.SessionID) (string, domain.ProjectID, error) {
+	if l.sessions == nil {
+		return "", "", nil
+	}
+	sess, err := l.sessions.Get(ctx, id)
+	if err != nil {
+		return "", "", err
+	}
+	return sess.Metadata.WorkspacePath, sess.ProjectID, nil
 }

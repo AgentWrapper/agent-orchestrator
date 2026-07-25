@@ -319,6 +319,21 @@ describe("shell new-shell-terminal shortcut subscription", () => {
 		);
 	});
 
+	// Regression: a terminal opened from a session view must carry the session
+	// id, not just its owning project's, so the daemon can resolve the
+	// session's own worktree instead of the registered project root.
+	it("scopes the terminal to the session in scope", async () => {
+		shellMocks.state.routeParams = { sessionId: "sess-1" };
+		await renderShell();
+
+		pressNewShellTerminal();
+
+		expect(shellMocks.openShellTerminal).toHaveBeenCalledWith(
+			expect.objectContaining({ projectId: "proj-1", sessionId: "sess-1" }),
+			expect.anything(),
+		);
+	});
+
 	it("re-fires on a repeat press so a second terminal can be opened", async () => {
 		await renderShell();
 

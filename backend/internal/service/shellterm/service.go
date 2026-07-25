@@ -31,6 +31,14 @@ type ProjectRootLocator interface {
 	ProjectRoot(ctx context.Context, id domain.ProjectID) (string, error)
 }
 
+// SessionWorkspaceLocator resolves a session id to the workspace it is
+// currently running in, plus the project it belongs to. The project id lets
+// the caller fall back to the project root when the session has no workspace
+// of its own yet. The daemon wiring adapts the session service to it.
+type SessionWorkspaceLocator interface {
+	SessionWorkspace(ctx context.Context, id domain.SessionID) (workspacePath string, projectID domain.ProjectID, err error)
+}
+
 // Service opens, lists, and closes standalone shell terminals.
 //
 // appRunID is minted once per desktop-app launch and is the mechanism behind
@@ -43,6 +51,7 @@ type Service struct {
 	runtime  ShellRuntime
 	store    Store
 	projects ProjectRootLocator
+	sessions SessionWorkspaceLocator
 	dataDir  string
 	appRunID string
 	log      *slog.Logger
@@ -56,7 +65,7 @@ type Service struct {
 // NewService builds the shell terminal service. dataDir is the fallback working
 // directory for a shell opened with no project context. A nil logger falls back
 // to slog.Default.
-func NewService(runtime ShellRuntime, store Store, projects ProjectRootLocator, dataDir, appRunID string, log *slog.Logger) *Service {
+func NewService(runtime ShellRuntime, store Store, projects ProjectRootLocator, sessions SessionWorkspaceLocator, dataDir, appRunID string, log *slog.Logger) *Service {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -64,6 +73,7 @@ func NewService(runtime ShellRuntime, store Store, projects ProjectRootLocator, 
 		runtime:     runtime,
 		store:       store,
 		projects:    projects,
+		sessions:    sessions,
 		dataDir:     dataDir,
 		appRunID:    appRunID,
 		log:         log,
@@ -77,7 +87,7 @@ func NewService(runtime ShellRuntime, store Store, projects ProjectRootLocator, 
 // write fails, so a persisted row always names a PTY that actually exists —
 // otherwise a restart would try to re-attach to a handle that was never spawned.
 func (s *Service) OpenShellTerminal(ctx context.Context, in OpenShellTerminalInput) (ShellTerminal, error) {
-	workingDir, err := s.resolveShellTerminalWorkingDir(ctx, in.ProjectID)
+	workingDir, err := s.resolveShellTerminalWorkingDir(ctx, in.ProjectID, in.SessionID)
 	if err != nil {
 		return ShellTerminal{}, err
 	}
@@ -238,9 +248,32 @@ func (s *Service) ReapShellTerminalsFromPreviousAppRuns(ctx context.Context) (in
 	return cleared, nil
 }
 
-// resolveShellTerminalWorkingDir picks where the shell starts: the project root
-// when a project is named, else the daemon's data dir.
-func (s *Service) resolveShellTerminalWorkingDir(ctx context.Context, projectID domain.ProjectID) (string, error) {
+// resolveShellTerminalWorkingDir picks where the shell starts. A session id
+// takes precedence: the shell lands in that session's live workspace (its
+// worktree), so it stays colocated with the agent even though that worktree
+// differs from the project's registered root. A session with no workspace yet
+// (or no session id at all) falls back to the project root, then the daemon's
+// data dir.
+func (s *Service) resolveShellTerminalWorkingDir(ctx context.Context, projectID domain.ProjectID, sessionID domain.SessionID) (string, error) {
+	if sessionID != "" {
+		if s.sessions == nil {
+			return "", apierr.Internal("SHELL_TERMINAL_NO_SESSION_LOOKUP", "Session lookup is unavailable")
+		}
+		workspacePath, sessionProjectID, err := s.sessions.SessionWorkspace(ctx, sessionID)
+		if err != nil {
+			return "", fmt.Errorf("open shell terminal: resolve session %s: %w", sessionID, err)
+		}
+		if workspacePath != "" {
+			return workspacePath, nil
+		}
+		projectID = sessionProjectID
+	}
+	return s.resolveProjectRootOrDataDir(ctx, projectID)
+}
+
+// resolveProjectRootOrDataDir picks the project root when a project is named,
+// else the daemon's data dir.
+func (s *Service) resolveProjectRootOrDataDir(ctx context.Context, projectID domain.ProjectID) (string, error) {
 	if projectID == "" {
 		if s.dataDir == "" {
 			return "", apierr.Internal("SHELL_TERMINAL_NO_WORKING_DIR",
