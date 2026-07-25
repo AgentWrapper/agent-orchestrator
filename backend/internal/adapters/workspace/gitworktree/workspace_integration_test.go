@@ -163,6 +163,7 @@ func TestWorkspaceIntegrationCreateInRemotelessRepo(t *testing.T) {
 	tmp := t.TempDir()
 	repo := filepath.Join(tmp, "repo")
 	run(t, git, "init", repo)
+	runGit(t, git, repo, "config", "core.autocrlf", "false")
 	runGit(t, git, repo, "config", "user.email", "ao@example.com")
 	runGit(t, git, repo, "config", "user.name", "Ao Agents")
 	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("seed\n"), 0o644); err != nil {
@@ -206,6 +207,7 @@ func setupOriginClone(t *testing.T, git, tmp string) string {
 	repo := filepath.Join(tmp, "repo")
 	run(t, git, "init", "--bare", origin)
 	run(t, git, "init", seed)
+	runGit(t, git, seed, "config", "core.autocrlf", "false")
 	runGit(t, git, seed, "config", "user.email", "ao@example.com")
 	runGit(t, git, seed, "config", "user.name", "Ao Agents")
 	if err := os.WriteFile(filepath.Join(seed, "README.md"), []byte("seed\n"), 0o644); err != nil {
@@ -217,6 +219,7 @@ func setupOriginClone(t *testing.T, git, tmp string) string {
 	runGit(t, git, seed, "remote", "add", "origin", origin)
 	runGit(t, git, seed, "push", "-u", "origin", "main")
 	run(t, git, "clone", origin, repo)
+	runGit(t, git, repo, "config", "core.autocrlf", "false")
 	// A clone does not copy the seed's local identity, and CI runners have no
 	// global git identity to fall back on, so commit/commit-tree in this repo's
 	// worktrees would fail with "empty ident name". Set it on the clone; worktrees
@@ -224,6 +227,7 @@ func setupOriginClone(t *testing.T, git, tmp string) string {
 	runGit(t, git, repo, "config", "user.email", "ao@example.com")
 	runGit(t, git, repo, "config", "user.name", "Ao Agents")
 	runGit(t, git, repo, "checkout", "main")
+	runGit(t, git, repo, "reset", "--hard", "HEAD")
 	return repo
 }
 
