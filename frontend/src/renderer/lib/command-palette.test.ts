@@ -213,14 +213,15 @@ describe("result caps", () => {
 		expect(grouped.find((g) => g.id === "global")?.items.length).toBeGreaterThan(0);
 	});
 
-	it("renders a typed search as one flat Results group capped to MAX_SEARCH_RESULTS", () => {
+	it("renders a typed search under category headings, capped to MAX_SEARCH_RESULTS overall", () => {
 		const groups = displayGroups(buildCommands({ workspaces: manyProjects(50) }), "project");
-		expect(groups).toHaveLength(1);
-		expect(groups[0]?.id).toBe("results");
-		expect(groups[0]?.items.length).toBe(MAX_SEARCH_RESULTS);
+		expect(groups.every((g) => g.id !== "results")).toBe(true);
+		expect(groups.some((g) => g.id === "projects")).toBe(true);
+		const total = groups.reduce((sum, g) => sum + g.items.length, 0);
+		expect(total).toBe(MAX_SEARCH_RESULTS);
 	});
 
-	it("preserves global rank order across categories (higher score renders first, not by group)", () => {
+	it("keeps search hits sorted into categories (group order, score within each group)", () => {
 		const workspaces: WorkspaceSummary[] = [
 			{
 				id: "alpha",
@@ -231,11 +232,16 @@ describe("result caps", () => {
 			},
 		];
 		const groups = displayGroups(buildCommands({ workspaces }), "alpha");
-		expect(groups).toHaveLength(1);
-		const order = groups[0]?.items.map((item) => item.id) ?? [];
-		expect(order[0]).toBe("project:alpha");
-		expect(order).toContain("attention:s-attn");
-		expect(order.length).toBeLessThanOrEqual(MAX_SEARCH_RESULTS);
+		const ids = groups.map((g) => g.id);
+		expect(ids).toContain("attention");
+		expect(ids).toContain("projects");
+		expect(ids.indexOf("attention")).toBeLessThan(ids.indexOf("projects"));
+		expect(groups.find((g) => g.id === "projects")?.items[0]?.id).toBe("project:alpha");
+		expect(groups.find((g) => g.id === "attention")?.items.some((item) => item.id === "attention:s-attn")).toBe(
+			true,
+		);
+		const total = groups.reduce((sum, g) => sum + g.items.length, 0);
+		expect(total).toBeLessThanOrEqual(MAX_SEARCH_RESULTS);
 	});
 });
 

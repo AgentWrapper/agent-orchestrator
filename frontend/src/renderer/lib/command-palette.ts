@@ -296,9 +296,6 @@ export function visibleForQuery(items: CommandItem[], query: string): CommandIte
 export type DisplayGroup = { id: string; label: string; items: CommandItem[] };
 
 export function displayGroups(items: CommandItem[], query: string): DisplayGroup[] {
-	const visible = visibleForQuery(items, query);
-	if (query.trim()) {
-		return visible.length > 0 ? [{ id: "results", label: "Results", items: visible }] : [];
-	}
-	return groupCommands(visible);
+	// Keep matches under their category headings (Cursor-style), including while typing.
+	return groupCommands(visibleForQuery(items, query));
 }

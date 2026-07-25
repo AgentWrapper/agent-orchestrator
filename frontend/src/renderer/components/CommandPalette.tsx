@@ -11,6 +11,7 @@ import {
 	type CommandItem as CommandItemModel,
 	type NavigateTarget,
 } from "../lib/command-palette";
+import { iconForCommand } from "../lib/command-palette-icons";
 import { isDialogOrMenuOpen } from "../lib/dom-selectors";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { useShell } from "../lib/shell-context";
@@ -263,27 +264,31 @@ export function CommandPalette() {
 					)}
 					{groups.map((group) => (
 						<CommandGroup key={group.id} heading={group.label}>
-							{group.items.map((item) => (
-								<CommandItem
-									key={item.id}
-									value={item.id}
-									disabled={item.disabled || (pendingId !== null && pendingId !== item.id)}
-									onSelect={() => onSelectItem(item)}
-								>
-									<span className="min-w-0 flex-1 truncate">{item.title}</span>
-									{pendingId === item.id ? (
-										<Loader2 className="ml-auto size-3.5 animate-spin text-[var(--color-text-command-muted)]" aria-hidden="true" />
-									) : item.disabled && item.disabledReason ? (
-										<span className="ml-auto text-control text-[var(--color-text-command-muted)]">
-											{item.disabledReason}
-										</span>
-									) : item.subtitle ? (
-										<span className="ml-auto max-w-command-subtitle truncate text-control text-[var(--color-text-command-muted)]">
-											{item.subtitle}
-										</span>
-									) : null}
-								</CommandItem>
-							))}
+							{group.items.map((item) => {
+								const Icon = iconForCommand(item);
+								return (
+									<CommandItem
+										key={item.id}
+										value={item.id}
+										disabled={item.disabled || (pendingId !== null && pendingId !== item.id)}
+										onSelect={() => onSelectItem(item)}
+									>
+										{Icon ? <Icon strokeWidth={1.75} aria-hidden="true" /> : null}
+										<span className="min-w-0 flex-1 truncate">{item.title}</span>
+										{pendingId === item.id ? (
+											<Loader2 className="ml-auto size-3.5 animate-spin text-[var(--color-text-command-muted)]" aria-hidden="true" />
+										) : item.disabled && item.disabledReason ? (
+											<span className="ml-auto text-control text-[var(--color-text-command-muted)]">
+												{item.disabledReason}
+											</span>
+										) : item.subtitle ? (
+											<span className="ml-auto max-w-command-subtitle truncate text-control text-[var(--color-text-command-muted)]">
+												{item.subtitle}
+											</span>
+										) : null}
+									</CommandItem>
+								);
+							})}
 						</CommandGroup>
 					))}
 				</CommandList>
@@ -295,10 +300,6 @@ export function CommandPalette() {
 					<span className="inline-flex items-center gap-1.5">
 						<span>↵</span>
 						<span>Open</span>
-					</span>
-					<span className="inline-flex items-center gap-1.5">
-						<span>⌘[ or ⌘]</span>
-						<span>Change Filter</span>
 					</span>
 				</CommandFooter>
 			</CommandDialog>

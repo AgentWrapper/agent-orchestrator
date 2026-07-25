@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { Command as CommandPrimitive } from "cmdk";
-import { Dialog as DialogPrimitive } from "radix-ui";
+import * as Dialog from "@radix-ui/react-dialog";
 
 import { cn } from "@/lib/utils";
 
@@ -11,7 +11,7 @@ function Command({ className, ...props }: React.ComponentProps<typeof CommandPri
 		<CommandPrimitive
 			data-slot="command"
 			className={cn(
-				"flex h-full w-full flex-col overflow-hidden rounded-[var(--radius-command-palette)] bg-[var(--color-bg-command-palette)] text-[var(--color-text-command-item)]",
+				"flex w-full flex-col overflow-hidden rounded-[var(--radius-command-palette)] bg-[var(--color-bg-command-palette)] text-[var(--color-text-command-item)] outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0",
 				className,
 			)}
 			{...props}
@@ -26,7 +26,7 @@ function CommandDialog({
 	className,
 	commandProps,
 	...props
-}: React.ComponentProps<typeof DialogPrimitive.Root> & {
+}: React.ComponentProps<typeof Dialog.Root> & {
 	title?: string;
 	description?: string;
 	className?: string;
@@ -34,34 +34,34 @@ function CommandDialog({
 }) {
 	const { className: commandClassName, ...restCommandProps } = commandProps ?? {};
 	return (
-		<DialogPrimitive.Root data-slot="command-dialog" {...props}>
-			<DialogPrimitive.Portal>
-				<DialogPrimitive.Overlay
+		<Dialog.Root data-slot="command-dialog" {...props}>
+			<Dialog.Portal>
+				<Dialog.Overlay
 					data-slot="command-dialog-overlay"
-					className="fixed inset-0 z-overlay bg-scrim data-[state=open]:animate-overlay-in"
+					className="dialog-overlay data-[state=open]:animate-overlay-in"
 				/>
-				<DialogPrimitive.Content
+				<Dialog.Content
 					data-slot="command-dialog-content"
 					aria-label={title}
 					className={cn(
-						"fixed left-1/2 top-command-palette z-overlay w-command-palette -translate-x-1/2 overflow-hidden rounded-[var(--radius-command-palette)] border border-[var(--color-border-command-palette)] bg-[var(--color-bg-command-palette)] text-[var(--color-text-command-item)] shadow-[var(--shadow-command-palette)] outline-none focus:outline-none data-[state=open]:animate-modal-in",
+						"fixed left-1/2 top-command-palette z-overlay w-command-palette -translate-x-1/2 overflow-hidden rounded-[var(--radius-command-palette)] border border-[var(--color-border-command-palette)] bg-[var(--color-bg-command-palette)] text-[var(--color-text-command-item)] shadow-[var(--shadow-command-palette)] outline-none ring-0 focus:outline-none focus-visible:outline-none focus-visible:ring-0 data-[state=open]:animate-modal-in",
 						className,
 					)}
 				>
-					<DialogPrimitive.Title className="sr-only">{title}</DialogPrimitive.Title>
-					<DialogPrimitive.Description className="sr-only">{description}</DialogPrimitive.Description>
+					<Dialog.Title className="sr-only">{title}</Dialog.Title>
+					<Dialog.Description className="sr-only">{description}</Dialog.Description>
 					<Command
 						className={cn(
-							"**:[[cmdk-group-heading]]:px-[var(--size-command-pad-x)] **:[[cmdk-group-heading]]:pt-3 **:[[cmdk-group-heading]]:pb-1.5 **:[[cmdk-group-heading]]:text-sm **:[[cmdk-group-heading]]:font-normal **:[[cmdk-group-heading]]:text-[var(--color-text-command-muted)] **:[[cmdk-group]]:px-0",
+							"**:[[cmdk-group-heading]]:px-[var(--size-command-pad-x)] **:[[cmdk-group-heading]]:pt-2.5 **:[[cmdk-group-heading]]:pb-1 **:[[cmdk-group-heading]]:text-[11px] **:[[cmdk-group-heading]]:font-normal **:[[cmdk-group-heading]]:tracking-wide **:[[cmdk-group-heading]]:text-[var(--color-text-command-muted)] **:[[cmdk-group]]:px-0",
 							commandClassName,
 						)}
 						{...restCommandProps}
 					>
 						{children}
 					</Command>
-				</DialogPrimitive.Content>
-			</DialogPrimitive.Portal>
-		</DialogPrimitive.Root>
+				</Dialog.Content>
+			</Dialog.Portal>
+		</Dialog.Root>
 	);
 }
 
@@ -89,7 +89,7 @@ function CommandList({ className, ...props }: React.ComponentProps<typeof Comman
 		<CommandPrimitive.List
 			data-slot="command-list"
 			className={cn(
-				"max-h-command-palette-list scroll-py-1 overflow-y-auto overflow-x-hidden overscroll-contain py-1",
+				"max-h-command-palette-list scrollbar-none scroll-py-1 overflow-y-auto overflow-x-hidden overscroll-contain py-1 outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0",
 				className,
 			)}
 			{...props}
@@ -118,10 +118,10 @@ function CommandItem({ className, ...props }: React.ComponentProps<typeof Comman
 		<CommandPrimitive.Item
 			data-slot="command-item"
 			className={cn(
-				"relative mx-[var(--size-command-item-inset)] flex cursor-default select-none items-center gap-2 rounded-[var(--radius-command-item)] px-3 py-2.5 text-[length:var(--font-size-subtitle)] leading-[length:var(--leading-command-item)] text-[var(--color-text-command-item)] outline-none",
+				"relative mx-[var(--size-command-item-inset)] flex cursor-default select-none items-center gap-2.5 rounded-[var(--radius-command-item)] py-1.5 pr-2.5 pl-[var(--size-command-item-pad-l)] text-[13px] leading-[length:var(--leading-command-item)] text-[var(--color-text-command-item)] outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0",
 				"data-[selected=true]:bg-[var(--color-bg-command-item-active)] data-[selected=true]:text-[var(--color-text-command-item)]",
 				"data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50",
-				"[&_svg]:size-icon-md [&_svg]:shrink-0 [&_svg]:text-[var(--color-text-command-muted)] data-[selected=true]:[&_svg]:text-[var(--color-text-command-item)]",
+				"[&_svg]:size-3.5 [&_svg]:shrink-0 [&_svg]:text-[var(--color-text-command-item)] data-[selected=true]:[&_svg]:text-[var(--color-text-command-item)]",
 				className,
 			)}
 			{...props}

@@ -794,12 +794,19 @@ function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
 		: isMac
 			? "⌘K"
 			: "Ctrl+K";
+	const { state } = useSidebar();
+	const isCollapsed = state === "collapsed";
 	return (
 		<SidebarMenuItem className="group-data-[collapsible=icon]:mb-0">
 			<SidebarMenuButton
 				aria-label={`Search · ${shortcutLabel}`}
-				onClick={onOpen}
-				tooltip={`Search · ${shortcutLabel}`}
+				onClick={(event) => {
+					// Defer so Tooltip/DismissableLayer from this click settle before the
+					// palette dialog mounts — otherwise the opening pointer can dismiss it.
+					event.preventDefault();
+					queueMicrotask(onOpen);
+				}}
+				tooltip={isCollapsed ? `Search · ${shortcutLabel}` : undefined}
 				className={cn(
 					"h-control-form gap-2 rounded-settings-row bg-interactive-hover px-3 py-0 text-control font-medium text-muted-foreground",
 					"hover:bg-interactive-hover hover:text-foreground active:bg-interactive-hover active:text-foreground",
