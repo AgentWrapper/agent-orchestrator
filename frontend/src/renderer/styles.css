@@ -381,6 +381,12 @@
 	padding-left: var(--size-center-panel-inline-inset);
 }
 
+/* Windows: the frameless window's custom titlebar already supplies top chrome,
+ * so drop the framed panel's top inset to give content more height. */
+.platform-windows .center-panel-shell {
+	padding-top: 0;
+}
+
 @utility settings-row-bar {
 	display: flex;
 	height: var(--size-settings-row);
