@@ -289,12 +289,16 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	useEffect(() => {
 		const host = hostRef.current;
 		if (!host) return undefined;
-		const activateLink = (_event: MouseEvent, uri: string) => {
+		const activateLink = (event: MouseEvent, uri: string) => {
 			// Left-click on a web link opens it inside the AO Browser panel (the
 			// parent decides how). Non-web schemes (mailto:, etc.) still go to the OS
 			// via the main process's window-open handler. Right-click to open a web
 			// link in the system browser instead — see the context menu below.
 			if (isWebLink(uri)) {
+				if (event.altKey) {
+					void aoBridge.app.openExternal(uri);
+					return;
+				}
 				callbacksRef.current.onLinkOpen?.(uri);
 				return;
 			}

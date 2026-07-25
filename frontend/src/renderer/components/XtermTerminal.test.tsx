@@ -770,6 +770,22 @@ describe("XtermTerminal", () => {
 		open.mockRestore();
 	});
 
+	it.each(["plain", "OSC 8"])("opens %s web links in the system browser on Option/Alt+Click", (kind) => {
+		const openExternal = vi.fn().mockResolvedValue(undefined);
+		window.ao!.app.openExternal = openExternal;
+		const onLinkOpen = vi.fn();
+		render(<XtermTerminal onLinkOpen={onLinkOpen} theme="dark" />);
+		const handler =
+			kind === "plain"
+				? state.linkHandler!
+				: (state.lastTerminal!.options.linkHandler as { activate: (event: MouseEvent, uri: string) => void }).activate;
+
+		handler({ altKey: true } as MouseEvent, "https://example.com");
+
+		expect(openExternal).toHaveBeenCalledWith("https://example.com");
+		expect(onLinkOpen).not.toHaveBeenCalled();
+	});
+
 	it("opens non-web links (mailto:) in the system browser, not the AO browser", () => {
 		const open = vi.spyOn(window, "open").mockReturnValue(null);
 		const onLinkOpen = vi.fn();
