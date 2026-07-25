@@ -197,7 +197,7 @@ export function UpdatesSection() {
 							</Button>
 						</div>
 						<p className="px-1 text-xs text-settings-muted">
-							Automatic updates, if enabled, will return you to your home channel on the next check.
+							Automatic updates, if enabled, keep tracking PR #{featurePr} until you return home or the build retires.
 						</p>
 					</div>
 				)}

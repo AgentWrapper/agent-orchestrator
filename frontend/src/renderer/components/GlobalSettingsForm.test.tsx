@@ -397,6 +397,13 @@ describe("GlobalSettingsForm", () => {
 		renderForm();
 		// The concealed pin is announced even though the channel option/picker are hidden.
 		expect(await screen.findByText("PR #2270 is pinned but not yet installed.")).toBeInTheDocument();
+		// The fall-home copy must be truthful: automatic updates keep tracking the pin,
+		// they do NOT silently return the user home on the next check.
+		expect(
+			screen.getByText(
+				/Automatic updates, if enabled, keep tracking PR #2270 until you return home or the build retires\./i,
+			),
+		).toBeInTheDocument();
 		// The Feature Releases channel option and its build picker stay hidden.
 		expect(screen.queryByLabelText("Feature build")).not.toBeInTheDocument();
 		await userEvent.click(screen.getByLabelText("Updates channel"));
