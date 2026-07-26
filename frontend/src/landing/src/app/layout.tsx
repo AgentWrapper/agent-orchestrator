@@ -1,0 +1,120 @@
+import { COMPANY } from "@superset/shared/constants";
+import { GeistSans } from "geist/font/sans";
+import type { Metadata } from "next";
+import { IBM_Plex_Mono } from "next/font/google";
+
+import { CookieConsent } from "@/components/CookieConsent";
+import {
+  OrganizationJsonLd,
+  SoftwareApplicationJsonLd,
+  WebsiteJsonLd,
+} from "@/components/JsonLd";
+
+import { CTAButtons } from "./components/CTAButtons";
+import { Footer } from "./components/Footer";
+import { Header } from "./components/Header";
+import "./globals.css";
+import { Providers } from "./providers";
+
+const ibmPlexMono = IBM_Plex_Mono({
+  weight: ["300", "400", "500"],
+  subsets: ["latin"],
+  variable: "--font-ibm-plex-mono",
+  display: "swap",
+});
+
+const siteDescription =
+  "Run a fleet of coding agents without losing track of branches, reviews, or CI failures. Free and open source under Apache 2.0.";
+
+export const metadata: Metadata = {
+  metadataBase: new URL(COMPANY.MARKETING_URL),
+  title: {
+    default: `${COMPANY.SHORT_NAME}: Run coding agents in parallel`,
+    template: `%s | ${COMPANY.SHORT_NAME}`,
+  },
+  description: siteDescription,
+  keywords: [
+    "coding agents",
+    "agent orchestration",
+    "parallel execution",
+    "developer tools",
+    "AI coding",
+    "git worktrees",
+    "code automation",
+    "Claude Code",
+    "Cursor",
+    "Codex",
+    "agent fleet",
+    "PR automation",
+  ],
+  authors: [{ name: `${COMPANY.NAME} Team` }],
+  creator: COMPANY.NAME,
+  openGraph: {
+    type: "website",
+    locale: "en_US",
+    url: COMPANY.MARKETING_URL,
+    siteName: COMPANY.NAME,
+    title: `${COMPANY.SHORT_NAME}: Run coding agents in parallel`,
+    description: siteDescription,
+    images: [
+      {
+        url: "/og-image.png",
+        width: 1200,
+        height: 630,
+        alt: `${COMPANY.SHORT_NAME}: Run coding agents in parallel`,
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: `${COMPANY.SHORT_NAME}: Run coding agents in parallel`,
+    description: siteDescription,
+    images: ["/og-image.png"],
+    creator: "@aoagents",
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-video-preview": -1,
+      "max-image-preview": "large",
+      "max-snippet": -1,
+    },
+  },
+  icons: {
+    icon: [
+      { url: "/favicon.svg", type: "image/svg+xml" },
+    ],
+  },
+  manifest: "/manifest.json",
+};
+
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
+  return (
+    <html
+      lang="en"
+      className={`dark overscroll-none ${ibmPlexMono.variable} ${GeistSans.variable}`}
+      suppressHydrationWarning
+    >
+      <head>
+        <OrganizationJsonLd />
+        <SoftwareApplicationJsonLd />
+        <WebsiteJsonLd />
+      </head>
+      <body className="relative overscroll-none font-sans antialiased">
+        <Providers>
+          <Header ctaButtons={<CTAButtons />} />
+          {children}
+          <Footer />
+          <CookieConsent />
+        </Providers>
+      </body>
+    </html>
+  );
+}
