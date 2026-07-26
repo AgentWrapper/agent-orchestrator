@@ -92,6 +92,16 @@ func (f *fakeShellTerminalStore) SelectShellTerminalsByAppRunID(_ context.Contex
 	return out, nil
 }
 
+func (f *fakeShellTerminalStore) SelectShellTerminalsBySessionID(_ context.Context, sessionID domain.SessionID) ([]ShellTerminalRecord, error) {
+	var out []ShellTerminalRecord
+	for _, rec := range f.records {
+		if rec.SessionID == sessionID {
+			out = append(out, rec)
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeShellTerminalStore) SelectShellTerminalsFromPreviousAppRuns(_ context.Context, appRunID string) ([]ShellTerminalRecord, error) {
 	var out []ShellTerminalRecord
 	for _, rec := range f.records {
@@ -322,6 +332,72 @@ func TestOpenShellTerminalReturnsNotFoundForUnknownSession(t *testing.T) {
 	}
 	if len(rt.created) != 0 {
 		t.Error("a runtime was spawned for an unknown session")
+	}
+}
+
+// CloseShellTerminalsForSession is what Session Manager calls before tearing
+// down a session's worktree (Kill, Cleanup), so a shell terminal scoped to
+// that session never survives pointed at a directory that is about to be
+// removed.
+func TestCloseShellTerminalsForSessionDestroysRuntimeAndDeletesRows(t *testing.T) {
+	rt := newFakeShellRuntime()
+	st := &fakeShellTerminalStore{records: []ShellTerminalRecord{
+		{HandleID: "shellterm-1", SessionID: "portfolio-3", WorkingDir: "/ws/portfolio-3"},
+		{HandleID: "shellterm-2", SessionID: "portfolio-3", WorkingDir: "/ws/portfolio-3"},
+		{HandleID: "shellterm-other", SessionID: "other-session", WorkingDir: "/ws/other"},
+	}}
+	rt.aliveByHandle["shellterm-1"] = true
+	rt.aliveByHandle["shellterm-2"] = true
+	rt.aliveByHandle["shellterm-other"] = true
+	svc := newTestService(rt, st, &fakeProjectRootLocator{})
+
+	if err := svc.CloseShellTerminalsForSession(context.Background(), "portfolio-3"); err != nil {
+		t.Fatalf("CloseShellTerminalsForSession: %v", err)
+	}
+
+	if len(rt.destroyed) != 2 {
+		t.Fatalf("destroyed = %v, want both of the session's shells torn down", rt.destroyed)
+	}
+	if len(st.records) != 1 || st.records[0].HandleID != "shellterm-other" {
+		t.Fatalf("records = %+v, want only the other session's shell left", st.records)
+	}
+}
+
+// A shell whose PTY already exited (destroy fails) must not stop its row, or
+// the other scoped shells, from being cleaned up — the caller (a session
+// teardown) cannot be blocked by one stuck runtime.
+func TestCloseShellTerminalsForSessionContinuesPastDestroyFailure(t *testing.T) {
+	rt := newFakeShellRuntime()
+	rt.destroyErr = errors.New("tmux: no such session")
+	st := &fakeShellTerminalStore{records: []ShellTerminalRecord{
+		{HandleID: "shellterm-1", SessionID: "portfolio-3"},
+		{HandleID: "shellterm-2", SessionID: "portfolio-3"},
+	}}
+	svc := newTestService(rt, st, &fakeProjectRootLocator{})
+
+	if err := svc.CloseShellTerminalsForSession(context.Background(), "portfolio-3"); err != nil {
+		t.Fatalf("CloseShellTerminalsForSession: %v", err)
+	}
+	if len(st.records) != 0 {
+		t.Errorf("records = %+v, want both rows deleted despite the destroy failure", st.records)
+	}
+}
+
+func TestCloseShellTerminalsForSessionNoopWhenSessionHasNoShells(t *testing.T) {
+	rt := newFakeShellRuntime()
+	st := &fakeShellTerminalStore{records: []ShellTerminalRecord{
+		{HandleID: "shellterm-other", SessionID: "other-session"},
+	}}
+	svc := newTestService(rt, st, &fakeProjectRootLocator{})
+
+	if err := svc.CloseShellTerminalsForSession(context.Background(), "portfolio-3"); err != nil {
+		t.Fatalf("CloseShellTerminalsForSession: %v", err)
+	}
+	if len(rt.destroyed) != 0 {
+		t.Errorf("destroyed = %v, want nothing torn down", rt.destroyed)
+	}
+	if len(st.records) != 1 {
+		t.Errorf("records = %+v, want the unrelated shell left alone", st.records)
 	}
 }
 

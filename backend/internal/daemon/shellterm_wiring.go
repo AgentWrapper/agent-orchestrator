@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"log/slog"
+	"os"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -72,17 +73,32 @@ func (l *projectRootLocator) ProjectRoot(ctx context.Context, id domain.ProjectI
 	}
 }
 
+// sessionGetter is the narrow slice of the session service the workspace
+// locator needs. *sessionsvc.Service satisfies it; tests substitute a fake so
+// this adapter's validation logic doesn't need a real session stack.
+type sessionGetter interface {
+	Get(ctx context.Context, id domain.SessionID) (domain.Session, error)
+}
+
 // sessionWorkspaceLocator adapts the session service to the narrow lookup the
 // shell terminal service needs: a session id in, its live workspace path and
 // owning project id out.
 type sessionWorkspaceLocator struct {
-	sessions *sessionsvc.Service
+	sessions sessionGetter
 }
 
 // SessionWorkspace returns the session's current workspace path (its
 // worktree) and project id. An unknown session propagates the session
 // service's own NotFound apierr unchanged, so the shell terminal open request
 // answers the same 404 shape an unknown project does.
+//
+// Kill and Cleanup can remove a session's worktree without clearing its
+// durable Metadata.WorkspacePath — that field doubles as "what to recreate on
+// restore", so it deliberately survives a clean teardown and only a dirty,
+// preserved worktree keeps a directory that still exists. A recorded path
+// that no longer exists on disk is therefore treated as no workspace, so the
+// caller falls back to the project root instead of trying to chdir into a
+// directory that is gone.
 func (l *sessionWorkspaceLocator) SessionWorkspace(ctx context.Context, id domain.SessionID) (string, domain.ProjectID, error) {
 	if l.sessions == nil {
 		return "", "", nil
@@ -91,5 +107,11 @@ func (l *sessionWorkspaceLocator) SessionWorkspace(ctx context.Context, id domai
 	if err != nil {
 		return "", "", err
 	}
-	return sess.Metadata.WorkspacePath, sess.ProjectID, nil
+	path := sess.Metadata.WorkspacePath
+	if path != "" {
+		if _, statErr := os.Stat(path); statErr != nil {
+			path = ""
+		}
+	}
+	return path, sess.ProjectID, nil
 }

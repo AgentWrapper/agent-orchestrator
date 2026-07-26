@@ -93,6 +93,17 @@ type lifecycleRecorder interface {
 	MarkTerminated(ctx context.Context, id domain.SessionID) error
 }
 
+// ShellTerminalCloser closes every standalone shell terminal scoped to a
+// session, so Kill/Cleanup never remove a session's worktree out from under a
+// shell whose cwd still points into it — on Windows an open handle on that
+// directory can even make the removal itself fail. Late-bound via
+// SetShellTerminalCloser: shellterm.Service is built after Session Manager
+// during boot (see daemon.startShellTerminals), mirroring why
+// lifecycle.Manager takes its completion terminator the same way.
+type ShellTerminalCloser interface {
+	CloseShellTerminalsForSession(ctx context.Context, id domain.SessionID) error
+}
+
 type runtimeController interface {
 	Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error)
 	Destroy(ctx context.Context, handle ports.RuntimeHandle) error
@@ -185,6 +196,40 @@ type Manager struct {
 	// sendConfirm* defaults; tests in this package shrink the timings directly.
 	sendConfirm sendConfirmConfig
 	logger      *slog.Logger
+
+	// shellTerminalsMu guards shellTerminals: it is late-bound (see
+	// ShellTerminalCloser) after Manager already exists, so a setter mutates it
+	// under lock rather than through the constructor.
+	shellTerminalsMu sync.Mutex
+	shellTerminals   ShellTerminalCloser
+}
+
+// SetShellTerminalCloser wires worktree teardown (Kill, Cleanup) to close any
+// shell terminal scoped to the session first. Safe to leave unset: a nil
+// closer makes closeShellTerminalsForSession a no-op, which is what every test
+// in this package that does not care about shell terminals relies on.
+func (m *Manager) SetShellTerminalCloser(closer ShellTerminalCloser) {
+	m.shellTerminalsMu.Lock()
+	defer m.shellTerminalsMu.Unlock()
+	m.shellTerminals = closer
+}
+
+// closeShellTerminalsForSession best-effort closes standalone shell terminals
+// scoped to id before its worktree is torn down. Errors are logged, not
+// propagated: a shell that fails to close must not block the session kill or
+// cleanup it is scoped to — worst case a stale shell handle survives until the
+// user closes its tab or the app restarts, which is the pre-existing behavior
+// this only improves on, not a new failure mode.
+func (m *Manager) closeShellTerminalsForSession(ctx context.Context, id domain.SessionID) {
+	m.shellTerminalsMu.Lock()
+	closer := m.shellTerminals
+	m.shellTerminalsMu.Unlock()
+	if closer == nil {
+		return
+	}
+	if err := closer.CloseShellTerminalsForSession(ctx, id); err != nil {
+		m.logger.Warn("close scoped shell terminals failed", "sessionID", id, "error", err)
+	}
 }
 
 // sendConfirmConfig bounds the best-effort activity-confirmation loop run after
@@ -734,6 +779,13 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 		if err := m.runtime.Destroy(ctx, handle); err != nil {
 			return false, fmt.Errorf("kill %s: runtime: %w", id, err)
 		}
+	}
+	// Close any shell terminal scoped to this session BEFORE the worktree goes
+	// away: an open shell whose cwd is that directory can otherwise survive the
+	// removal (and on Windows can even block it — an open handle on a directory
+	// refuses deletion).
+	if ws.Path != "" {
+		m.closeShellTerminalsForSession(ctx, id)
 	}
 	freed := false
 	if workspaceProject {
@@ -1969,6 +2021,9 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 		if h := runtimeHandle(rec.Metadata); h.ID != "" {
 			_ = m.runtime.Destroy(ctx, h) // best effort; usually already gone
 		}
+		// Same ordering as Kill: close any shell terminal scoped to this session
+		// before the worktree it points at is reclaimed.
+		m.closeShellTerminalsForSession(ctx, rec.ID)
 		if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
 			m.logger.Warn("cleanup: workspace rows failed", "sessionID", rec.ID, "error", rowErr)
 			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: "workspace teardown failed"})

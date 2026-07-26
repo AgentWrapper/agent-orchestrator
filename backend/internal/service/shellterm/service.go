@@ -248,6 +248,31 @@ func (s *Service) ReapShellTerminalsFromPreviousAppRuns(ctx context.Context) (in
 	return cleared, nil
 }
 
+// CloseShellTerminalsForSession destroys every shell terminal scoped to a
+// session and forgets its rows. Session Manager calls this before tearing
+// down the session's worktree (Kill, Cleanup), so a shell whose cwd is that
+// worktree never survives its removal. Best-effort per terminal: one runtime
+// that refuses to destroy must not stop the rest from being closed, and the
+// row is deleted regardless so a stuck runtime cannot wedge the session
+// teardown that is waiting on this.
+func (s *Service) CloseShellTerminalsForSession(ctx context.Context, sessionID domain.SessionID) error {
+	recs, err := s.store.SelectShellTerminalsBySessionID(ctx, sessionID)
+	if err != nil {
+		return fmt.Errorf("close shell terminals for session %s: %w", sessionID, err)
+	}
+	for _, rec := range recs {
+		if err := s.runtime.Destroy(ctx, ports.RuntimeHandle{ID: rec.HandleID}); err != nil {
+			s.log.Warn("close shell terminal for session: runtime teardown failed",
+				"sessionID", sessionID, "handleId", rec.HandleID, "error", err)
+		}
+		if _, err := s.store.DeleteShellTerminalByHandleID(ctx, rec.HandleID); err != nil {
+			s.log.Warn("close shell terminal for session: delete row failed",
+				"sessionID", sessionID, "handleId", rec.HandleID, "error", err)
+		}
+	}
+	return nil
+}
+
 // resolveShellTerminalWorkingDir picks where the shell starts. A session id
 // takes precedence: the shell lands in that session's live workspace (its
 // worktree), so it stays colocated with the agent even though that worktree

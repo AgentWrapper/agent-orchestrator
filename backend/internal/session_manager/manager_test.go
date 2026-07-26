@@ -1677,6 +1677,84 @@ func TestKill_TearsDownRuntimeAndWorkspace(t *testing.T) {
 // workspace path is missing is still terminated — the destroy steps are
 // skipped, but the session moves to terminal state so it can be cleaned up
 // from the dashboard.
+// fakeShellTerminalCloser stands in for shellterm.Service in ordering tests:
+// it records which session it was asked to close, and — when sharedLog is set
+// — appends into the same call sequence a fakeWorkspace logs into, so a test
+// can assert shell terminals close BEFORE the worktree they point at is torn
+// down.
+type fakeShellTerminalCloser struct {
+	closed    []domain.SessionID
+	err       error
+	sharedLog *[]string
+}
+
+func (f *fakeShellTerminalCloser) CloseShellTerminalsForSession(_ context.Context, id domain.SessionID) error {
+	f.closed = append(f.closed, id)
+	if f.sharedLog != nil {
+		*f.sharedLog = append(*f.sharedLog, "CloseShellTerminals:"+string(id))
+	}
+	return f.err
+}
+
+// TestKill_ClosesScopedShellTerminalsBeforeWorkspaceTeardown is the regression
+// for the bug where Kill removed a session's worktree while a shell terminal
+// scoped to it was still open, pointed at a directory that no longer existed
+// (and, on Windows, an open handle on that directory could refuse deletion).
+func TestKill_ClosesScopedShellTerminalsBeforeWorkspaceTeardown(t *testing.T) {
+	m, st, _, ws := newManager()
+	var calls []string
+	ws.sharedLog = &calls
+	closer := &fakeShellTerminalCloser{sharedLog: &calls}
+	m.SetShellTerminalCloser(closer)
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer",
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", WorkspaceRepoPath: "/ws/mer-1", RuntimeHandleID: "h1"},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+
+	if _, err := m.Kill(ctx, "mer-1"); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+
+	if len(closer.closed) != 1 || closer.closed[0] != "mer-1" {
+		t.Fatalf("closed = %v, want [mer-1]", closer.closed)
+	}
+	if len(calls) < 2 || calls[0] != "CloseShellTerminals:mer-1" {
+		t.Fatalf("call order = %v, want shell terminals closed before the workspace destroy", calls)
+	}
+}
+
+// A shell terminal that fails to close must not block Kill: worst case a
+// stale handle survives, which is strictly better than today's "always
+// survives" behavior.
+func TestKill_ContinuesWhenClosingShellTerminalsFails(t *testing.T) {
+	m, st, rt, ws := newManager()
+	m.SetShellTerminalCloser(&fakeShellTerminalCloser{err: errors.New("runtime unreachable")})
+	st.sessions["mer-1"] = mkLive("mer-1")
+
+	freed, err := m.Kill(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+	if !freed {
+		t.Error("freed = false, want true: a failed shell close must not block workspace teardown")
+	}
+	if rt.destroyed != 1 || ws.destroyed != 1 {
+		t.Error("kill should still destroy the session's own runtime and workspace")
+	}
+}
+
+// A nil closer (SetShellTerminalCloser never called, e.g. a daemon boot path
+// that skips shellterm) must be a no-op, not a nil-pointer panic.
+func TestKill_NilShellTerminalCloserIsNoop(t *testing.T) {
+	m, st, _, _ := newManager()
+	st.sessions["mer-1"] = mkLive("mer-1")
+
+	if _, err := m.Kill(ctx, "mer-1"); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+}
+
 func TestKill_TerminatesIncompleteHandle(t *testing.T) {
 	m, st, _, _ := newManager()
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityActive}}
@@ -1998,6 +2076,48 @@ func TestCleanup_ReclaimsTerminalWorkspaces(t *testing.T) {
 	}
 	if ws.destroyed != 1 {
 		t.Fatal("live workspace must not be destroyed")
+	}
+}
+
+// TestCleanup_ClosesScopedShellTerminalsBeforeWorkspaceTeardown mirrors the
+// Kill regression: Cleanup must also close a session's scoped shell terminals
+// before reclaiming its worktree.
+func TestCleanup_ClosesScopedShellTerminalsBeforeWorkspaceTeardown(t *testing.T) {
+	m, st, _, ws := newManager()
+	var calls []string
+	ws.sharedLog = &calls
+	closer := &fakeShellTerminalCloser{sharedLog: &calls}
+	m.SetShellTerminalCloser(closer)
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", WorkspaceRepoPath: "/ws/mer-1"})
+
+	if _, err := m.Cleanup(ctx, "mer"); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(closer.closed) != 1 || closer.closed[0] != "mer-1" {
+		t.Fatalf("closed = %v, want [mer-1]", closer.closed)
+	}
+	if len(calls) < 2 || calls[0] != "CloseShellTerminals:mer-1" {
+		t.Fatalf("call order = %v, want shell terminals closed before the workspace destroy", calls)
+	}
+}
+
+// A shell terminal that fails to close must not stop Cleanup from reclaiming
+// the workspace, or from processing the rest of the batch.
+func TestCleanup_ContinuesWhenClosingShellTerminalsFails(t *testing.T) {
+	m, st, _, ws := newManager()
+	m.SetShellTerminalCloser(&fakeShellTerminalCloser{err: errors.New("runtime unreachable")})
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1"})
+
+	res, err := m.Cleanup(ctx, "mer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Cleaned) != 1 || res.Cleaned[0] != "mer-1" {
+		t.Fatalf("cleaned = %v, want [mer-1] despite the failed shell close", res.Cleaned)
+	}
+	if ws.destroyed != 1 {
+		t.Fatal("workspace should still be destroyed")
 	}
 }
 
