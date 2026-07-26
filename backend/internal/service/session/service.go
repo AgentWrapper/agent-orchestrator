@@ -671,6 +671,8 @@ func toAPIError(err error) error {
 		return apierr.Invalid("RUNTIME_PREREQUISITE_MISSING", err.Error(), nil)
 	case errors.Is(err, ports.ErrRuntimeWorkspaceCwdMismatch):
 		return apierr.Conflict("WORKSPACE_CWD_MISMATCH", err.Error(), nil)
+	case errors.Is(err, ports.ErrWorkspaceLocked):
+		return apierr.Conflict("WORKSPACE_LOCKED", err.Error(), nil)
 	default:
 		return err
 	}

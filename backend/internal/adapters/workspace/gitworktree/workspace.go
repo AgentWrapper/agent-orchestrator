@@ -42,6 +42,9 @@ var (
 	ErrBranchCheckedOutElsewhere = ports.ErrWorkspaceBranchCheckedOutElsewhere
 	ErrBranchNotFetched          = ports.ErrWorkspaceBranchNotFetched
 	ErrBranchInvalid             = ports.ErrWorkspaceBranchInvalid
+	// ErrWorktreeLocked is an adapter-local alias of ports.ErrWorkspaceLocked,
+	// following the same aliasing convention as the branch sentinels above.
+	ErrWorktreeLocked = ports.ErrWorkspaceLocked
 )
 
 // RepoResolver maps a project to the absolute path of its source git repo.
@@ -622,7 +625,7 @@ func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (por
 	// recreated on cfg.Branch (typically the root branch) instead.
 	recreateBranch := cfg.Branch
 	if rec, ok := findWorktree(records, path); ok {
-		missing, err := w.pruneIfWorktreeDirMissing(ctx, repo, path)
+		missing, err := w.pruneIfWorktreeDirMissing(ctx, repo, rec)
 		if err != nil {
 			return ports.WorkspaceInfo{}, err
 		}
@@ -670,7 +673,7 @@ func (w *Workspace) existingWorktree(ctx context.Context, repo, path string, cfg
 		return ports.WorkspaceInfo{}, false, err
 	}
 	if rec, ok := findWorktree(records, path); ok {
-		missing, err := w.pruneIfWorktreeDirMissing(ctx, repo, path)
+		missing, err := w.pruneIfWorktreeDirMissing(ctx, repo, rec)
 		if err != nil {
 			return ports.WorkspaceInfo{}, false, err
 		}
@@ -690,40 +693,54 @@ func (w *Workspace) existingWorktree(ctx context.Context, repo, path string, cfg
 }
 
 // pruneIfWorktreeDirMissing reports whether a git-registered worktree's
-// directory no longer exists on disk, and mutates repo's worktree
-// registrations when it does. A worktree registration (and the session's DB
-// row) can outlive its directory when something removes the path out of band
-// of AO's own teardown (issue #2775: session agent-orchestrator-78 kept its
-// branches and worktree registration but its directory was gone, so handing
-// that path straight to the runtime made the tmux launch command's
-// `cd <path> || exit` guard exit instantly with no diagnostic). When the
-// directory is missing this prunes the stale registration so the caller can
-// materialize a fresh worktree at the same path instead.
+// directory no longer exists on disk, and mutates rec's own registration when
+// it does. A worktree registration (and the session's DB row) can outlive its
+// directory when something removes the path out of band of AO's own teardown
+// (issue #2775: session agent-orchestrator-78 kept its branches and worktree
+// registration but its directory was gone, so handing that path straight to
+// the runtime made the tmux launch command's `cd <path> || exit` guard exit
+// instantly with no diagnostic). When the directory is missing and rec is not
+// locked, this removes the stale registration so the caller can materialize a
+// fresh worktree at the same path instead.
 //
-// `git worktree prune` has no per-worktree form: it is scoped to repo, so
-// calling it here can drop the registration of any OTHER worktree of repo
-// whose directory git currently cannot see, e.g. an unmounted volume or a
-// network filesystem hiccup, not just path. That is an accepted tradeoff, not
-// an oversight: this adapter already relies on the same repo-wide
-// `pruneWorktrees` elsewhere (addWorktree and createWorkspaceProjectRepo call
-// it on git's "missing but already registered worktree" error) and the
-// failure mode is self-healing rather than destructive, a pruned registration
-// is exactly the state this function and existingWorktree/Restore already
-// recover from, so the next Create or Restore for that other session
-// recreates its worktree instead of losing it.
-func (w *Workspace) pruneIfWorktreeDirMissing(ctx context.Context, repo, path string) (bool, error) {
-	info, err := os.Stat(path)
+// This deliberately removes only rec's own registration via
+// `git worktree remove --force rec.Path`, NOT the repo-wide
+// `git worktree prune`: prune has no per-worktree form, so it would also drop
+// the registration of any OTHER worktree of repo whose directory git
+// currently cannot see (an unmounted volume, a network filesystem hiccup),
+// not just rec's. Verified against real git: two worktrees with their
+// directories both deleted, one `git worktree prune` removes BOTH
+// registrations, silently reintroducing the exact "recreated on the wrong
+// branch" failure recreateBranch exists to prevent, for a sibling session
+// that never asked to be touched.
+//
+// If rec is locked (`git worktree lock`), this returns ErrWorktreeLocked
+// instead of claiming recovery. `git worktree prune` already leaves a locked
+// registration in place even when its directory is gone (verified against
+// real git), and both `git worktree add` and `git worktree remove --force` at
+// that path fail with an opaque git error ("missing but locked worktree");
+// silently attempting either here would just relay that opaque failure
+// downstream. Locking is an explicit operator signal not to touch a worktree,
+// so recovering it automatically would be wrong even if git allowed it.
+func (w *Workspace) pruneIfWorktreeDirMissing(ctx context.Context, repo string, rec worktreeRecord) (bool, error) {
+	info, err := os.Stat(rec.Path)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
-			return false, fmt.Errorf("gitworktree: stat registered worktree %q: %w", path, err)
+			return false, fmt.Errorf("gitworktree: stat registered worktree %q: %w", rec.Path, err)
 		}
-		if pruneErr := w.pruneWorktrees(ctx, repo); pruneErr != nil {
-			return false, fmt.Errorf("gitworktree: prune stale worktree %q: %w", path, pruneErr)
+		if rec.Locked {
+			return false, fmt.Errorf(
+				"%w: %q (branch %q) is registered but its directory is missing; unlock it (`git worktree unlock %s`) and retry, or remove the registration manually",
+				ErrWorktreeLocked, rec.Path, rec.Branch, rec.Path,
+			)
+		}
+		if _, rmErr := w.run(ctx, w.binary, worktreeForceRemoveArgs(repo, rec.Path)...); rmErr != nil {
+			return false, fmt.Errorf("gitworktree: remove stale worktree registration %q: %w", rec.Path, rmErr)
 		}
 		return true, nil
 	}
 	if !info.IsDir() {
-		return false, fmt.Errorf("gitworktree: registered worktree %q is not a directory", path)
+		return false, fmt.Errorf("gitworktree: registered worktree %q is not a directory", rec.Path)
 	}
 	return false, nil
 }

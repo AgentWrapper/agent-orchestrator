@@ -154,6 +154,134 @@ func TestWorkspaceIntegrationDestroyDirtyWorktree(t *testing.T) {
 	}
 }
 
+// TestWorkspaceIntegrationRestoreRecreatesSiblingsIndependently is the
+// real-git regression test for the sibling-registration-wipe finding on
+// pruneIfWorktreeDirMissing (PR #3098 review, illegalcall): two sessions in
+// the SAME repo each have their worktree directory deleted out of band (their
+// git registrations survive, exactly the #2775 shape). Restoring the first
+// must not touch the second's registration.
+//
+// Verified against real git before the fix: with two worktrees on distinct
+// branches both missing their directories, a single `git worktree prune`
+// removed BOTH stale registrations at once. So restoring session A pruned
+// session B's registration as a side effect, and session B's later Restore
+// then found no record and fell back to whatever branch its caller passed
+// instead of the branch it was actually on: the exact "recreated on the
+// wrong branch" bug recreateBranch exists to prevent, reintroduced for every
+// sibling session that never asked to be touched by A's restore.
+func TestWorkspaceIntegrationRestoreRecreatesSiblingsIndependently(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := setupOriginClone(t, git, tmp)
+	root := filepath.Join(tmp, "managed")
+	ws, err := New(Options{Binary: git, ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	ctx := context.Background()
+
+	infoA, err := ws.Create(ctx, ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess-a", Branch: "child-a"})
+	if err != nil {
+		t.Fatalf("create A: %v", err)
+	}
+	infoB, err := ws.Create(ctx, ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess-b", Branch: "child-b"})
+	if err != nil {
+		t.Fatalf("create B: %v", err)
+	}
+
+	// Simulate the out-of-band deletion #2775 hit: the directory is gone, the
+	// git registration (and, in production, AO's DB row) is not.
+	if err := os.RemoveAll(infoA.Path); err != nil {
+		t.Fatalf("remove A dir: %v", err)
+	}
+	if err := os.RemoveAll(infoB.Path); err != nil {
+		t.Fatalf("remove B dir: %v", err)
+	}
+
+	// cfg.Branch is deliberately wrong for both restores: if either recreates
+	// on cfg.Branch instead of its own registration's branch, this test
+	// catches it (same shape as TestRestoreRecreatesOnRegisteredBranchNotCfgBranch,
+	// but against real git instead of the fake runner, since this bug lives in
+	// git's own prune semantics).
+	restoredA, err := ws.Restore(ctx, ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess-a", Branch: "wrong-branch-a", Path: infoA.Path})
+	if err != nil {
+		t.Fatalf("restore A: %v", err)
+	}
+	if restoredA.Branch != "child-a" {
+		t.Fatalf("restored A branch = %q, want child-a", restoredA.Branch)
+	}
+
+	// The finding's assertion: B's registration must have survived A's restore.
+	restoredB, err := ws.Restore(ctx, ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess-b", Branch: "wrong-branch-b", Path: infoB.Path})
+	if err != nil {
+		t.Fatalf("restore B: %v", err)
+	}
+	if restoredB.Branch != "child-b" {
+		t.Fatalf("restored B branch = %q, want child-b (A's restore must not have wiped B's registration)", restoredB.Branch)
+	}
+
+	if err := ws.Destroy(ctx, restoredA); err != nil {
+		t.Fatalf("destroy A: %v", err)
+	}
+	if err := ws.Destroy(ctx, restoredB); err != nil {
+		t.Fatalf("destroy B: %v", err)
+	}
+}
+
+// TestWorkspaceIntegrationRestoreLockedMissingWorktreeIsTypedError is the
+// real-git regression test for the locked-worktree finding on
+// pruneIfWorktreeDirMissing (PR #3098 review, illegalcall): `git worktree
+// prune` deliberately leaves a locked registration in place even when its
+// directory is gone, and both `git worktree add` and
+// `git worktree remove --force` at that path then fail with an opaque
+// "missing but locked worktree" git error. pruneIfWorktreeDirMissing must
+// detect the lock itself from the registration and fail with the typed
+// ports.ErrWorkspaceLocked before ever calling git to add or remove, rather
+// than relaying that opaque failure downstream.
+func TestWorkspaceIntegrationRestoreLockedMissingWorktreeIsTypedError(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := setupOriginClone(t, git, tmp)
+	root := filepath.Join(tmp, "managed")
+	ws, err := New(Options{Binary: git, ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	ctx := context.Background()
+	info, err := ws.Create(ctx, ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess-locked", Branch: "child-locked"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	runGit(t, git, repo, "worktree", "lock", info.Path)
+	if err := os.RemoveAll(info.Path); err != nil {
+		t.Fatalf("remove dir: %v", err)
+	}
+
+	// Wrap the real runner (still executes real git for every call) to catch
+	// whether Restore ever attempts `worktree add` at the locked path: it must
+	// not, since attempting it is exactly the opaque failure this fix avoids.
+	var attemptedAdd bool
+	ws.run = func(ctx context.Context, binary string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		if strings.Contains(joined, "worktree add") && strings.Contains(joined, info.Path) {
+			attemptedAdd = true
+		}
+		return runCommand(ctx, binary, args...)
+	}
+
+	_, restoreErr := ws.Restore(ctx, ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess-locked", Branch: "child-locked", Path: info.Path})
+	if !errors.Is(restoreErr, ports.ErrWorkspaceLocked) {
+		t.Fatalf("restore locked-missing error = %v, want ports.ErrWorkspaceLocked", restoreErr)
+	}
+	if attemptedAdd {
+		t.Fatal("Restore attempted `git worktree add` at a locked, missing worktree path")
+	}
+
+	// Clean up: unlock so TempDir teardown (and, defensively, any leftover
+	// registration) does not leave a locked path behind.
+	runGit(t, git, repo, "worktree", "unlock", info.Path)
+}
+
 // TestWorkspaceIntegrationCreateInRemotelessRepo guards the BRANCH_NOT_FETCHED
 // regression: a repo with no remote configured must still spawn worktrees for
 // new branches by basing them on the local default-branch head
