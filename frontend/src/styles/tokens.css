@@ -220,6 +220,9 @@
 	--size-sidebar-default: 240px;
 	--size-sidebar-mobile: 288px;
 	--size-titlebar-cluster-left: 79px;
+	/* Linux has no traffic lights: the cluster sits at the sidebar's own left
+	 * inset (TitlebarNav `left-1.5`). */
+	--size-titlebar-cluster-left-linux: 6px;
 	/* TitlebarNav cluster: 3 × --size-control-md buttons + 2 × 4px flex gaps. */
 	--size-titlebar-cluster-width: calc(3 * var(--size-control-md) + 2 * 4px);
 	/* Breathing room between the last arrow and the adjacent in-panel title. */
@@ -227,6 +230,9 @@
 	/* Clears fixed TitlebarNav (cluster-left + toggle/arrows) when the sidebar is off-canvas. */
 	--size-titlebar-content-offset: calc(
 		var(--size-titlebar-cluster-left) + var(--size-titlebar-cluster-width) + var(--size-titlebar-content-gap)
+	);
+	--size-titlebar-content-offset-linux: calc(
+		var(--size-titlebar-cluster-left-linux) + var(--size-titlebar-cluster-width) + var(--size-titlebar-content-gap)
 	);
 	/* Clears the macOS traffic-light row used by the fixed titlebar controls. */
 	--size-traffic-light-clearance: 36px;

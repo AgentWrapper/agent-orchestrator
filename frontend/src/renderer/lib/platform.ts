@@ -31,11 +31,14 @@ export function usesFramedAppTopbar(): boolean {
 }
 
 /**
- * macOS: shell does not mount ShellTopbar (full-height inset panel + drag
- * strip). SessionView mounts the same topbar in-panel for session actions.
+ * macOS + Linux: shell does not mount ShellTopbar (full-height inset panel).
+ * The sidebar toggle + history arrows live in the fixed TitlebarNav cluster and
+ * board/session actions mount in-panel, so both platforms share the framed
+ * chrome. (macOS additionally paints a traffic-light drag strip.) Windows keeps
+ * the ShellTopbar under its custom titlebar.
  */
 export function hidesShellTopbar(): boolean {
-	return isMacPlatform();
+	return isMacPlatform() || isLinuxPlatform();
 }
 
 /**

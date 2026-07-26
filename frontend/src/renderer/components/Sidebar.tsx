@@ -41,7 +41,6 @@ import {
 	SidebarRail,
 	SidebarMenuSub,
 	SidebarMenuSubItem,
-	SidebarTrigger,
 	useSidebar,
 } from "./ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
@@ -52,12 +51,13 @@ import { useUiStore } from "../stores/ui-store";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CreateProjectInput } from "./CreateProjectFlow";
 import { ResizeHandle } from "./ResizeHandle";
-import { isMacPlatform, isWindowsPlatform } from "../lib/platform";
+import { isLinuxPlatform, isMacPlatform } from "../lib/platform";
 
-// On macOS the native traffic lights and fixed TitlebarNav occupy the titlebar
-// above this surface. Win/Linux hang the sidebar under their shell chrome.
+// macOS + Linux paint framed chrome: the fixed TitlebarNav cluster carries the
+// sidebar toggle + history arrows above this surface. Windows hangs the sidebar
+// under its custom titlebar.
 const isMac = isMacPlatform();
-const isWindows = isWindowsPlatform();
+const isLinux = isLinuxPlatform();
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
 // Shared styling for the per-project hover action buttons (dashboard,
@@ -263,24 +263,6 @@ export function Sidebar({
 							nightly
 						</span>
 					)}
-					{!isMac && !isWindows && (
-						<Tooltip>
-							<TooltipTrigger asChild>
-								<SidebarTrigger
-									aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-									className={cn(
-										"shrink-0 text-passive hover:bg-interactive-hover hover:text-foreground",
-										isCollapsed
-											? "grid size-9 rounded-lg [&_svg]:size-4"
-											: "sidebar-expanded-chrome size-icon-xl rounded-sm p-0 [&_svg]:size-icon-lg",
-									)}
-								/>
-							</TooltipTrigger>
-							<TooltipContent side={isCollapsed ? "right" : undefined}>
-								{isCollapsed ? "Expand sidebar · ⌘B" : "Collapse sidebar · ⌘B"}
-							</TooltipContent>
-						</Tooltip>
-					)}
 				</div>
 			</SidebarHeader>
 
@@ -342,7 +324,7 @@ export function Sidebar({
 			<SidebarFooter
 				className={cn(
 					"relative mt-auto gap-0 overflow-hidden px-2.5 pb-0 pt-1.5 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-16 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pb-0 group-data-[collapsible=icon]:pt-1.5",
-					isMac ? "mb-3" : "mb-5",
+					isMac || isLinux ? "mb-3" : "mb-5",
 				)}
 			>
 				{/* Always-present daemon status mirror for the smoke suite: no visible
