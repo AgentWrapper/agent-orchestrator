@@ -17,6 +17,8 @@ export type ShellTerminal = {
 	workingDir: string;
 	title: string;
 	createdAt: string;
+	/** Best-effort harness id sniffed from recent pane output (e.g. "kimi"). */
+	detectedAgent?: string;
 };
 
 export const shellTerminalsQueryKey = ["shell-terminals"] as const;
@@ -30,6 +32,7 @@ function toShellTerminal(t: components["schemas"]["ShellTerminalResponse"]): She
 		workingDir: t.workingDir,
 		title: t.title,
 		createdAt: t.createdAt,
+		detectedAgent: t.detectedAgent,
 	};
 }
 
@@ -52,17 +55,35 @@ async function fetchShellTerminals(): Promise<ShellTerminal[]> {
 	return (data?.shellTerminals ?? []).map(toShellTerminal);
 }
 
-// No refetchInterval: shell terminals only change when this client opens or
-// closes one, and both mutations invalidate the query. Polling would spend a
-// liveness probe per shell per interval for no new information.
+// Light polling so a shell the user is not looking at still picks up the agent
+// they started in it; the daemon reports the pane's foreground process, so this
+// is also what clears the label again once the agent exits.
 export const shellTerminalsQueryOptions = {
 	queryKey: shellTerminalsQueryKey,
 	queryFn: fetchShellTerminals,
 	retry: 1,
+	refetchInterval: 4_000,
 };
 
+// Agents detected from the attached pane's live output stream, keyed by handle.
+// Only the focused shell streams, and its banner arrives long before the next
+// poll, so a live detection outranks the list for that one pane. A live *clear*
+// deliberately does not: it patches the cache for instant feedback and then
+// defers to the daemon, which self-corrects a misread prompt on the next poll.
+const liveDetectedAgents = new Map<string, string>();
+
 export function useShellTerminals() {
-	return useQuery(shellTerminalsQueryOptions);
+	return useQuery({
+		...shellTerminalsQueryOptions,
+		queryFn: async () => {
+			const fresh = await fetchShellTerminals();
+			if (liveDetectedAgents.size === 0) return fresh;
+			return fresh.map((shell) => {
+				const live = liveDetectedAgents.get(shell.handleId);
+				return live ? { ...shell, detectedAgent: live } : shell;
+			});
+		},
+	});
 }
 
 export type OpenShellTerminalInput = { projectId?: string; sessionId?: string };
@@ -146,8 +167,48 @@ export function useRenameShellTerminal() {
 			if (!data) throw new Error("Daemon returned no shell terminal");
 			return toShellTerminal(data.shellTerminal);
 		},
-		onSuccess: () => {
+		onSuccess: (shell) => {
+			queryClient.setQueryData<ShellTerminal[]>(shellTerminalsQueryKey, (current) => {
+				if (!current) return current;
+				return current.map((s) => {
+					if (s.handleId !== shell.handleId) return s;
+					// PATCH responses omit sniffed DetectedAgent — keep any optimistic value.
+					return { ...s, ...shell, detectedAgent: shell.detectedAgent ?? s.detectedAgent };
+				});
+			});
 			void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey });
 		},
 	});
+}
+
+/**
+ * Record what the attached pane's own output says is running in it, and patch
+ * the cache so the tab strip re-renders now instead of at the next poll. Pass
+ * `undefined` when the pane returns to a bare shell prompt.
+ */
+export function setLiveDetectedAgent(
+	queryClient: ReturnType<typeof useQueryClient>,
+	handleId: string,
+	detectedAgent: string | undefined,
+): void {
+	if (detectedAgent) {
+		liveDetectedAgents.set(handleId, detectedAgent);
+	} else {
+		liveDetectedAgents.delete(handleId);
+	}
+	queryClient.setQueryData<ShellTerminal[]>(shellTerminalsQueryKey, (current) => {
+		if (!current) return current;
+		let changed = false;
+		const next = current.map((shell) => {
+			if (shell.handleId !== handleId || shell.detectedAgent === detectedAgent) return shell;
+			changed = true;
+			return { ...shell, detectedAgent };
+		});
+		return changed ? next : current;
+	});
+}
+
+/** Drop a pane's live detection when it detaches, handing the tab back to the daemon. */
+export function forgetLiveDetectedAgent(handleId: string): void {
+	liveDetectedAgents.delete(handleId);
 }

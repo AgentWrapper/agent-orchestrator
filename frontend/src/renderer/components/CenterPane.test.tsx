@@ -28,15 +28,35 @@ describe("CenterPane toolbar session label", () => {
 			createdAt: "2026-07-22T00:00:00Z",
 		}));
 
-	it("shows the session display name for a worker", () => {
+	it("shows the agent logo and session title for a worker", () => {
 		render(<CenterPane session={worker} theme="dark" daemonReady />);
 		expect(screen.getByText("do the thing")).toBeInTheDocument();
 		expect(screen.queryByText("sess-1")).not.toBeInTheDocument();
+		const tab = screen.getByRole("button", { name: /do the thing/i });
+		expect(tab.querySelector("img")).toBeTruthy();
 	});
 
-	it("shows 'Orchestrator' for an orchestrator session", () => {
-		render(<CenterPane session={{ ...worker, id: "sess-orch", kind: "orchestrator" }} theme="dark" daemonReady />);
-		expect(screen.getByText("Orchestrator")).toBeInTheDocument();
+	it("shows the agent brand when the session title is just the workspace name", () => {
+		render(
+			<CenterPane
+				session={{ ...worker, title: "my-app", provider: "codex" }}
+				theme="dark"
+				daemonReady
+			/>,
+		);
+		expect(screen.getByText("codex")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /codex/i }).querySelector("img")).toBeTruthy();
+	});
+
+	it("shows the agent brand for an orchestrator with the default Orchestrator title", () => {
+		render(
+			<CenterPane
+				session={{ ...worker, id: "sess-orch", kind: "orchestrator", title: "Orchestrator" }}
+				theme="dark"
+				daemonReady
+			/>,
+		);
+		expect(screen.getByText("claude")).toBeInTheDocument();
 	});
 
 	it("shows 'No session' when there is no session", () => {

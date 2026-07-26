@@ -1,13 +1,16 @@
 import { ChevronLeft, ChevronRight, Maximize2, Minimize2, Plus, Shield } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type WheelEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent, type WheelEvent } from "react";
 import { useOverflowScroll } from "../hooks/useOverflowScroll";
 import { useTruncatedText } from "../hooks/useTruncatedText";
 import type { ShellTerminal } from "../hooks/useShellTerminals";
+import { agentTabLabel } from "../lib/agent-display";
 import { TERMINAL_FONT_SIZE_DEFAULT, TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from "../lib/design-tokens";
+import { isWindowsPlatform } from "../lib/platform";
 import { cn } from "../lib/utils";
 import type { Theme } from "../stores/ui-store";
 import type { TerminalTarget } from "../types/terminal";
-import { isOrchestratorSession, type WorkspaceSession } from "../types/workspace";
+import { isOrchestratorSession, type AgentProvider, type WorkspaceSession } from "../types/workspace";
+import { AgentLogo } from "./AgentLogo";
 import { ShellTerminalTab } from "./ShellTerminalTab";
 import { TerminalPane } from "./TerminalPane";
 
@@ -23,6 +26,8 @@ type CenterPaneProps = {
 	onSelectShellTerminal?: (handleId: string) => void;
 	onCloseShellTerminal?: (handleId: string) => void;
 	onRenameShellTerminal?: (handleId: string, title: string) => void;
+	/** Renames the session (same as the sidebar double-click rename). */
+	onRenameSession?: (title: string) => void;
 	/** Opens a new standalone shell tab (Superset-style "+" at the end of the tab bar). */
 	onNewShellTerminal?: () => void;
 };
@@ -54,6 +59,7 @@ export function CenterPane({
 	onSelectShellTerminal,
 	onCloseShellTerminal,
 	onRenameShellTerminal,
+	onRenameSession,
 	onNewShellTerminal,
 }: CenterPaneProps) {
 	const paneRef = useRef<HTMLDivElement | null>(null);
@@ -140,18 +146,32 @@ export function CenterPane({
 						<ChevronLeft aria-hidden="true" className="size-icon-md" />
 					</button>
 					{/* The session's own pane is always the first tab; standalone shells
-					    follow it in the order they were opened. With no shells open this
-					    renders as the plain session label it has always been. Tabs shrink
-					    and truncate like browser tabs down to a minimum width; beyond
-					    that the strip scrolls and edge chevrons reveal the overflow. */}
+					    follow it in the order they were opened. The session tab shows the
+					    agent logo + short harness name (editable via the same rename
+					    gesture as shell tabs). Tabs shrink and truncate like browser tabs
+					    down to a minimum width; beyond that the strip scrolls and edge
+					    chevrons reveal the overflow. */}
 					<div
 						ref={tabsOverflow.ref}
 						className="scrollbar-none flex min-w-flex-min flex-1 items-center gap-3 overflow-x-auto"
 					>
 						<SessionPaneTab
 							isActive={target.kind !== "shell"}
-							label={!session ? "No session" : isOrchestratorSession(session) ? "Orchestrator" : session.title}
+							label={
+								!session
+									? "No session"
+									: sessionTabLabel(session)
+							}
+							onRename={onRenameSession}
 							onSelect={onSelectSessionTerminal}
+							provider={session?.provider}
+							tooltip={
+								!session
+									? undefined
+									: isOrchestratorSession(session)
+										? `Orchestrator · ${session.title}`
+										: session.title
+							}
 						/>
 						{shellTerminals.map((shell) => (
 							<ShellTerminalTab
@@ -268,34 +288,137 @@ type SessionPaneTabProps = {
 	label: string;
 	isActive: boolean;
 	onSelect?: () => void;
+	/** Agent harness for the logo; omitted when there is no session. */
+	provider?: AgentProvider;
+	/** Prefer over the visible label when present (session title, etc.). */
+	tooltip?: string;
+	/** Commit a new session display name. Omitted when rename is not wired. */
+	onRename?: (title: string) => void;
 };
 
+const MAX_SESSION_TAB_NAME_LEN = 20;
+
+function sessionTabLabel(session: WorkspaceSession): string {
+	const brand = agentTabLabel(session.provider);
+	const title = session.title.trim();
+	if (!title) return brand;
+	// Prefer the agent brand on the tab (ref-style). A custom display name from
+	// tab/sidebar rename wins — including task titles that aren't the project
+	// folder name or the literal "Orchestrator" default.
+	const workspace = session.workspaceName.trim();
+	if (workspace && title === workspace) return brand;
+	if (isOrchestratorSession(session) && (title === "Orchestrator" || title === brand)) return brand;
+	return title;
+}
+
 // Shared tab chrome: the open tab is highlighted with the same rounded
-// background as the inspector rail tabs (Summary · Reviews · Browser), and
-// the full label only becomes the hover tooltip when the tab strip is
-// crowded enough to truncate it.
-function SessionPaneTab({ label, isActive, onSelect }: SessionPaneTabProps) {
+// background as the inspector rail tabs (Summary · Reviews · Browser). The
+// agent logo + label identify the pane; double-click (right-click on Windows)
+// renames the session like the sidebar row.
+function SessionPaneTab({ label, isActive, onSelect, provider, tooltip, onRename }: SessionPaneTabProps) {
 	const { ref, isTruncated } = useTruncatedText<HTMLButtonElement>(label);
+	const [isEditing, setIsEditing] = useState(false);
+	const [draft, setDraft] = useState(label);
+	const inputRef = useRef<HTMLInputElement | null>(null);
+	const lastClickAtRef = useRef(0);
+	const renameViaRightClick = isWindowsPlatform();
+
+	useEffect(() => {
+		if (isEditing) {
+			inputRef.current?.focus();
+			inputRef.current?.select();
+		}
+	}, [isEditing]);
+
+	const beginEdit = () => {
+		if (!onRename || isEditing || label === "No session") return;
+		setDraft(label);
+		setIsEditing(true);
+	};
+
+	const handleClick = () => {
+		const now = Date.now();
+		const isDoubleClick = now - lastClickAtRef.current < 500;
+		lastClickAtRef.current = isDoubleClick ? 0 : now;
+		if (isDoubleClick) beginEdit();
+	};
+
+	const containerRenameHandlers = isEditing
+		? {}
+		: onRename
+			? renameViaRightClick
+				? {
+						onContextMenu: (event: MouseEvent) => {
+							event.preventDefault();
+							beginEdit();
+						},
+					}
+				: { onClick: handleClick, onDoubleClick: beginEdit }
+			: {};
+
+	const commit = () => {
+		if (!isEditing) return;
+		setIsEditing(false);
+		const next = draft.trim();
+		if (next && next !== label) onRename?.(next.slice(0, MAX_SESSION_TAB_NAME_LEN));
+	};
+
+	const cancel = () => {
+		setIsEditing(false);
+		setDraft(label);
+	};
+
+	const title =
+		tooltip ??
+		(isTruncated
+			? label
+			: onRename
+				? `${label} (${renameViaRightClick ? "right-click" : "double-click"} to rename)`
+				: "Session terminal");
+
 	return (
 		<span
 			className={cn(
 				"inline-flex min-w-shell-tab-min items-center rounded-md px-2 py-1 transition-colors",
 				isActive ? "bg-interactive-active" : "hover:bg-interactive-hover/60",
 			)}
+			{...containerRenameHandlers}
 		>
-			<button
-				ref={ref}
-				aria-current={isActive}
-				className={cn(
-					"min-w-flex-min max-w-shell-tab-max truncate font-mono text-control font-semibold transition-colors",
-					isActive ? "text-foreground" : "text-passive/60 hover:text-passive",
-				)}
-				onClick={onSelect}
-				title={isTruncated ? label : "Session terminal"}
-				type="button"
-			>
-				{label}
-			</button>
+			{isEditing ? (
+				<input
+					aria-label={`Rename session ${label}`}
+					className="min-w-flex-min max-w-shell-tab-max rounded-sm border border-accent bg-background px-1 font-mono text-control font-semibold text-foreground shadow-sm outline-none ring-1 ring-accent"
+					maxLength={MAX_SESSION_TAB_NAME_LEN}
+					onBlur={commit}
+					onChange={(event) => setDraft(event.target.value)}
+					onKeyDown={(event) => {
+						if (event.key === "Enter") {
+							event.preventDefault();
+							commit();
+						} else if (event.key === "Escape") {
+							event.preventDefault();
+							cancel();
+						}
+					}}
+					ref={inputRef}
+					value={draft}
+				/>
+			) : (
+				<button
+					ref={ref}
+					aria-current={isActive}
+					className={cn(
+						"inline-flex min-w-flex-min max-w-shell-tab-max items-center gap-1.5 font-mono text-control font-semibold transition-colors",
+						isActive ? "text-foreground" : "text-passive/60 hover:text-passive",
+					)}
+					onClick={onSelect}
+					title={title}
+					type="button"
+				>
+					{provider ? <AgentLogo className="size-icon-sm shrink-0" provider={provider} /> : null}
+					<span className="min-w-flex-min truncate">{label}</span>
+				</button>
+			)}
 		</span>
 	);
 }

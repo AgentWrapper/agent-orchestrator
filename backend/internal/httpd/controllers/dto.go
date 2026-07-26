@@ -665,6 +665,9 @@ type ShellTerminalResponse struct {
 	WorkingDir string    `json:"workingDir"`
 	Title      string    `json:"title"`
 	CreatedAt  time.Time `json:"createdAt"`
+	// DetectedAgent is a best-effort harness id sniffed from recent pane output
+	// (e.g. "kimi"). Ephemeral — not stored — and omitted when nothing is recognized.
+	DetectedAgent string `json:"detectedAgent,omitempty" description:"Best-effort agent harness id sniffed from the pane's recent output."`
 }
 
 // ListShellTerminalsResponse is the body of GET /api/v1/shell-terminals.

@@ -3628,6 +3628,10 @@ components:
         createdAt:
           format: date-time
           type: string
+        detectedAgent:
+          description: Best-effort agent harness id sniffed from the pane's recent
+            output.
+          type: string
         handleId:
           type: string
         projectId:

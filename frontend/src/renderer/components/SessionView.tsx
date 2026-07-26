@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { PanelImperativeHandle, PanelSize } from "react-resizable-panels";
+import { useQueryClient } from "@tanstack/react-query";
 import { BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
 import { CenterPane } from "./CenterPane";
 import { SessionFilesView } from "./SessionFilesView";
@@ -9,9 +10,10 @@ import { ShellTopbar } from "./ShellTopbar";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resizable";
 import { useResolvedTheme, useUiStore, type InspectorView } from "../stores/ui-store";
 import { useShell } from "../lib/shell-context";
+import { renameSession } from "../lib/rename-session";
 import { useBrowserView } from "../hooks/useBrowserView";
 import { useCloseShellTerminal, useRenameShellTerminal, useShellTerminals } from "../hooks/useShellTerminals";
-import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
+import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { hidesShellTopbar } from "../lib/platform";
 import { isOrchestratorSession, sessionIsActive } from "../types/workspace";
 import type { TerminalTarget } from "../types/terminal";
@@ -53,6 +55,7 @@ type SessionViewProps = {
 // the clipped panel so nothing reflows mid-animation; split width persists.
 export function SessionView({ sessionId }: SessionViewProps) {
 	const workspaceQuery = useWorkspaceQuery();
+	const queryClient = useQueryClient();
 	const workspaces = workspaceQuery.data ?? [];
 	const theme = useResolvedTheme();
 	const isInspectorOpen = useUiStore((state) => state.inspectorSessions[sessionId]?.isOpen ?? true);
@@ -92,6 +95,21 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const renameShellTerminalByHandle = useCallback(
 		(handleId: string, title: string) => renameShellTerminal.mutate({ handleId, title }),
 		[renameShellTerminal],
+	);
+
+	const renameSessionByTitle = useCallback(
+		(title: string) => {
+			if (!session) return;
+			void (async () => {
+				try {
+					await renameSession(session.id, title);
+					await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+				} catch (err) {
+					console.error("Failed to rename session:", err);
+				}
+			})();
+		},
+		[session, queryClient],
 	);
 
 	const selectShellTerminal = useCallback(
@@ -351,6 +369,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 						onCloseShellTerminal={closeShellTerminalByHandle}
 						onNewShellTerminal={requestNewShellTerminal}
 						onRenameShellTerminal={renameShellTerminalByHandle}
+						onRenameSession={renameSessionByTitle}
 						onSelectSessionTerminal={selectSessionTerminal}
 						onSelectShellTerminal={selectShellTerminal}
 						onSelectWorkerTerminal={selectSessionTerminal}

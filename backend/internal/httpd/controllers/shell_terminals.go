@@ -120,11 +120,12 @@ func shellTerminalResponses(in []shelltermsvc.ShellTerminal) []ShellTerminalResp
 
 func shellTerminalResponse(t shelltermsvc.ShellTerminal) ShellTerminalResponse {
 	return ShellTerminalResponse{
-		HandleID:   t.HandleID,
-		ProjectID:  string(t.ProjectID),
-		SessionID:  string(t.SessionID),
-		WorkingDir: t.WorkingDir,
-		Title:      t.Title,
-		CreatedAt:  t.CreatedAt,
+		HandleID:      t.HandleID,
+		ProjectID:     string(t.ProjectID),
+		SessionID:     string(t.SessionID),
+		WorkingDir:    t.WorkingDir,
+		Title:         t.Title,
+		CreatedAt:     t.CreatedAt,
+		DetectedAgent: t.DetectedAgent,
 	}
 }

@@ -477,6 +477,21 @@ func (r *Runtime) GetOutput(ctx context.Context, handle ports.RuntimeHandle, lin
 	return tailLines(trimTrailingBlankLines(string(out)), lines), nil
 }
 
+// PaneCurrentCommand returns the name of the pane's foreground process, e.g.
+// "kimi" while an agent CLI runs and "zsh" once it exits. Callers use it to
+// label a shell pane by what is actually running in it.
+func (r *Runtime) PaneCurrentCommand(ctx context.Context, handle ports.RuntimeHandle) (string, error) {
+	id, err := handleID(handle)
+	if err != nil {
+		return "", err
+	}
+	out, err := r.run(ctx, paneCurrentCommandArgs(id)...)
+	if err != nil {
+		return "", fmt.Errorf("tmux runtime: pane current command %s: %w", id, err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // Attach opens a fresh attach Stream by spawning `tmux attach-session` on a
 // local PTY, sized rows x cols from birth when known. ctx cancellation closes
 // the PTY.

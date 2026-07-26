@@ -5,6 +5,8 @@ import type { TerminalTarget } from "../types/terminal";
 import { sessionIsActive, type WorkspaceSession } from "../types/workspace";
 import { useUiStore, type Theme } from "../stores/ui-store";
 import { useTerminalSession, type AttachableTerminal, type TerminalSessionState } from "../hooks/useTerminalSession";
+import { forgetLiveDetectedAgent, setLiveDetectedAgent } from "../hooks/useShellTerminals";
+import { detectAgentFromText, leftAlternateScreen, looksLikeShellPrompt } from "../lib/agent-display";
 import { apiClient } from "../lib/api-client";
 import { createUrlWatcher, type UrlWatcher } from "../lib/detect-urls";
 import { cn } from "../lib/utils";
@@ -243,8 +245,31 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	// open it — and is skipped while they are already looking at the Browser tab.
 	const watchLinks = Boolean(session?.id && session.kind === "worker" && terminalTarget?.kind !== "shell");
 	const urlWatcherRef = useRef<UrlWatcher | null>(null);
+	// Rolling window of shell output so agent banners split across chunks still match.
+	const shellDetectBufRef = useRef("");
+	const shellDetectedRef = useRef<string | undefined>(undefined);
 	const handleOutput = useCallback(
 		(text: string) => {
+			if (shellTerminalHandleId) {
+				// Back at a prompt (or a full-screen TUI just exited) means whatever
+				// was running is gone: drop the window so its banner cannot keep
+				// labelling the tab, and let the next agent be detected fresh.
+				if (looksLikeShellPrompt(text) || leftAlternateScreen(text)) {
+					shellDetectBufRef.current = "";
+					if (shellDetectedRef.current) {
+						shellDetectedRef.current = undefined;
+						setLiveDetectedAgent(queryClient, shellTerminalHandleId, undefined);
+					}
+					return;
+				}
+				shellDetectBufRef.current = (shellDetectBufRef.current + text).slice(-8_000);
+				const agent = detectAgentFromText(shellDetectBufRef.current);
+				if (agent && agent !== shellDetectedRef.current) {
+					shellDetectedRef.current = agent;
+					setLiveDetectedAgent(queryClient, shellTerminalHandleId, agent);
+				}
+				return;
+			}
 			const sessionId = session?.id;
 			if (!sessionId) return;
 			if (!urlWatcherRef.current) {
@@ -257,12 +282,18 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 			}
 			urlWatcherRef.current.push(text);
 		},
-		[session?.id],
+		[queryClient, session?.id, shellTerminalHandleId],
 	);
+	useEffect(() => {
+		if (!shellTerminalHandleId) return;
+		return () => forgetLiveDetectedAgent(shellTerminalHandleId);
+	}, [shellTerminalHandleId]);
 	const { attach, state, error } = useTerminalSession(attachSession, {
 		daemonReady,
 		shellTerminalHandleId,
-		onOutput: watchLinks ? handleOutput : undefined,
+		// Always listen for shell panes (agent tab branding). Worker panes only
+		// when link-watching is on.
+		onOutput: shellTerminalHandleId || watchLinks ? handleOutput : undefined,
 	});
 	const handleId = shellTerminalHandleId ?? attachSession?.terminalHandleId;
 	const provider = terminalTarget?.kind === "reviewer" ? terminalTarget.harness : session?.provider;

@@ -2,8 +2,10 @@ import { X } from "lucide-react";
 import { type MouseEvent, useEffect, useRef, useState } from "react";
 import { useTruncatedText } from "../hooks/useTruncatedText";
 import type { ShellTerminal } from "../hooks/useShellTerminals";
+import { shellTabPresentation } from "../lib/agent-display";
 import { isWindowsPlatform } from "../lib/platform";
 import { cn } from "../lib/utils";
+import { AgentLogo } from "./AgentLogo";
 
 type ShellTerminalTabProps = {
 	shell: ShellTerminal;
@@ -20,19 +22,27 @@ type ShellTerminalTabProps = {
 // inspector rail tabs; the full title only becomes the hover tooltip when the
 // strip truncates it; the close control appears on hover/focus.
 //
+// While an agent CLI is running in the pane, the tab shows that agent's logo +
+// short name; it reverts to the cwd once the agent exits. A user-renamed title
+// wins over the name (the logo still tracks what is running), so manual names
+// are never overwritten by detection.
+//
 // Renaming happens inline with the platform's native gesture: double-click on
 // macOS/Linux, right-click on Windows. Enter or blur commits, Escape cancels,
 // and an empty or unchanged name is discarded. The close control is a sibling
 // button, not nested inside the tab button - nesting interactive elements is
 // invalid HTML and breaks keyboard traversal.
 export function ShellTerminalTab({ shell, isActive, onSelect, onClose, onRename }: ShellTerminalTabProps) {
-	const { ref, isTruncated } = useTruncatedText<HTMLButtonElement>(shell.title);
+	const presentation = shellTabPresentation({
+		title: shell.title,
+		workingDir: shell.workingDir,
+		detectedAgent: shell.detectedAgent,
+	});
+	const { ref, isTruncated } = useTruncatedText<HTMLButtonElement>(presentation.label);
 	const [isEditing, setIsEditing] = useState(false);
 	const [draft, setDraft] = useState(shell.title);
 	const inputRef = useRef<HTMLInputElement | null>(null);
 	const lastClickAtRef = useRef(0);
-	// Rename gesture per platform: Windows uses right-click (its convention for
-	// tab/file renames); macOS and Linux use double-click.
 	const renameViaRightClick = isWindowsPlatform();
 
 	useEffect(() => {
@@ -44,14 +54,10 @@ export function ShellTerminalTab({ shell, isActive, onSelect, onClose, onRename 
 
 	const beginEdit = () => {
 		if (!onRename || isEditing) return;
-		setDraft(shell.title);
+		setDraft(presentation.label);
 		setIsEditing(true);
 	};
 
-	// Detect a double-click ourselves from two quick clicks rather than relying on
-	// the native dblclick event: some trackpad configurations deliver two taps as
-	// two separate clicks that never synthesize a dblclick, so onDoubleClick would
-	// never fire. Two clicks within 500ms anywhere on the tab start the rename.
 	const handleClick = () => {
 		const now = Date.now();
 		const isDoubleClick = now - lastClickAtRef.current < 500;
@@ -59,9 +65,6 @@ export function ShellTerminalTab({ shell, isActive, onSelect, onClose, onRename 
 		if (isDoubleClick) beginEdit();
 	};
 
-	// The rename gesture lives on the whole tab so it works anywhere on the tab,
-	// not just precisely on the label. Windows uses right-click; macOS/Linux use
-	// the click-timing double-click detector above.
 	const containerRenameHandlers = isEditing
 		? {}
 		: renameViaRightClick
@@ -77,12 +80,12 @@ export function ShellTerminalTab({ shell, isActive, onSelect, onClose, onRename 
 		if (!isEditing) return;
 		setIsEditing(false);
 		const next = draft.trim();
-		if (next && next !== shell.title) onRename?.(next);
+		if (next && next !== presentation.label && next !== shell.title) onRename?.(next);
 	};
 
 	const cancel = () => {
 		setIsEditing(false);
-		setDraft(shell.title);
+		setDraft(presentation.label);
 	};
 
 	return (
@@ -116,18 +119,21 @@ export function ShellTerminalTab({ shell, isActive, onSelect, onClose, onRename 
 					ref={ref}
 					aria-current={isActive}
 					className={cn(
-						"min-w-flex-min max-w-shell-tab-max select-none truncate font-mono text-control font-semibold transition-colors",
+						"inline-flex min-w-flex-min max-w-shell-tab-max select-none items-center gap-1.5 font-mono text-control font-semibold transition-colors",
 						isActive ? "text-foreground" : "text-passive hover:text-foreground",
 					)}
 					onClick={onSelect}
 					title={
 						isTruncated
-							? shell.title
+							? presentation.label
 							: `${shell.workingDir} (${renameViaRightClick ? "right-click" : "double-click"} to rename)`
 					}
 					type="button"
 				>
-					{shell.title}
+					{presentation.provider ? (
+						<AgentLogo className="size-icon-sm shrink-0" provider={presentation.provider} />
+					) : null}
+					<span className="min-w-flex-min truncate">{presentation.label}</span>
 				</button>
 			)}
 			<button

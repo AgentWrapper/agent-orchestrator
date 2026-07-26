@@ -1352,6 +1352,8 @@ export interface components {
         ShellTerminalResponse: {
             /** Format: date-time */
             createdAt: string;
+            /** @description Best-effort agent harness id sniffed from the pane's recent output. */
+            detectedAgent?: string;
             handleId: string;
             projectId?: string;
             sessionId?: string;

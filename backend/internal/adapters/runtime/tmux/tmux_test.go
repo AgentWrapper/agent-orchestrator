@@ -134,6 +134,9 @@ func TestCommandBuilders(t *testing.T) {
 	if got, want := capturePaneArgs("sess-1", 10), []string{"capture-pane", "-t", "sess-1", "-p", "-S", "-10"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("capturePaneArgs = %#v, want %#v", got, want)
 	}
+	if got, want := paneCurrentCommandArgs("sess-1"), []string{"display-message", "-p", "-t", "sess-1", "#{pane_current_command}"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("paneCurrentCommandArgs = %#v, want %#v", got, want)
+	}
 }
 
 // -- session name sanitization --

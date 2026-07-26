@@ -123,3 +123,11 @@ func sendInterruptArgs(id string) []string {
 func capturePaneArgs(id string, lines int) []string {
 	return []string{"capture-pane", "-t", id, "-p", "-S", fmt.Sprintf("-%d", lines)}
 }
+
+// paneCurrentCommandArgs prints the name of the pane's foreground process
+// (`kimi`, `codex`, `zsh`, …). It is the authoritative answer to "what is
+// running in this shell right now", and unlike scrollback it changes the moment
+// the process exits.
+func paneCurrentCommandArgs(id string) []string {
+	return []string{"display-message", "-p", "-t", id, "#{pane_current_command}"}
+}

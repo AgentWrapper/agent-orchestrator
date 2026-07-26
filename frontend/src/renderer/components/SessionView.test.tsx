@@ -1,5 +1,6 @@
-import { StrictMode, type ReactNode, type Ref } from "react";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { StrictMode, type ReactElement, type ReactNode, type Ref } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, fireEvent, render as rtlRender, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { SessionView } from "./SessionView";
 import { useUiStore } from "../stores/ui-store";
@@ -263,6 +264,17 @@ function inspectorOpen(sessionId: string): boolean {
 
 function browserUnseen(sessionId: string): boolean {
 	return Boolean(useUiStore.getState().inspectorSessions[sessionId]?.browserUnseen);
+}
+
+// SessionView invalidates the workspace query after renaming a session, so it
+// needs a client in context even though every data hook here is mocked.
+function render(ui: ReactElement) {
+	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	return rtlRender(ui, {
+		wrapper: ({ children }: { children?: ReactNode }) => (
+			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+		),
+	});
 }
 
 function inspectorButton(): HTMLElement {

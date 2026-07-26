@@ -31,6 +31,10 @@ type ShellTerminal struct {
 	WorkingDir string           `json:"workingDir"`
 	Title      string           `json:"title"`
 	CreatedAt  time.Time        `json:"createdAt"`
+	// DetectedAgent is a best-effort harness id sniffed from the pane's recent
+	// output (e.g. "kimi" when the user launched Kimi Code in this shell). It is
+	// ephemeral — never persisted — and empty when nothing recognizable is running.
+	DetectedAgent string `json:"detectedAgent,omitempty"`
 }
 
 // OpenShellTerminalInput is the request to open a new shell pane. An empty

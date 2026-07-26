@@ -25,6 +25,24 @@ type ShellRuntime interface {
 	IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error)
 }
 
+// paneCommandReader is an optional capability that reports a pane's foreground
+// process name. It is the preferred agent signal because it is exact and clears
+// as soon as the CLI exits (tmux implements it; conpty does not).
+type paneCommandReader interface {
+	PaneCurrentCommand(ctx context.Context, handle ports.RuntimeHandle) (string, error)
+}
+
+// shellOutputReader is the fallback capability: sniff the agent's startup
+// banner out of recent pane output. The daemon wires the full runtime, which
+// implements GetOutput; tests that only stub ShellRuntime skip detection.
+type shellOutputReader interface {
+	GetOutput(ctx context.Context, handle ports.RuntimeHandle, lines int) (string, error)
+}
+
+// agentDetectCaptureLines is how much recent pane output we sniff for an agent
+// banner. Large enough for welcome boxes, small enough to stay cheap on list.
+const agentDetectCaptureLines = 40
+
 // ProjectRootLocator resolves a project id to the directory a shell should
 // start in. The daemon wiring adapts the project service to it.
 type ProjectRootLocator interface {
@@ -194,7 +212,7 @@ func (s *Service) ListShellTerminalsForCurrentAppRun(ctx context.Context) ([]She
 		if err != nil {
 			s.log.Warn("shell terminal liveness probe failed; keeping row",
 				"handleId", rec.HandleID, "error", err)
-			out = append(out, shellTerminalFromRecord(rec))
+			out = append(out, s.enrichShellTerminal(ctx, rec))
 			continue
 		}
 		if !alive {
@@ -203,9 +221,45 @@ func (s *Service) ListShellTerminalsForCurrentAppRun(ctx context.Context) ([]She
 			}
 			continue
 		}
-		out = append(out, shellTerminalFromRecord(rec))
+		out = append(out, s.enrichShellTerminal(ctx, rec))
 	}
 	return out, nil
+}
+
+// enrichShellTerminal attaches a best-effort DetectedAgent describing what is
+// running in the pane RIGHT NOW. The foreground process name is authoritative
+// and is tried first; only runtimes that cannot report it fall back to sniffing
+// the startup banner out of recent output. Probe failures leave DetectedAgent
+// empty — detection must never fail the list.
+func (s *Service) enrichShellTerminal(ctx context.Context, rec ShellTerminalRecord) ShellTerminal {
+	term := shellTerminalFromRecord(rec)
+	handle := ports.RuntimeHandle{ID: rec.HandleID}
+
+	if reader, ok := s.runtime.(paneCommandReader); ok {
+		proc, err := reader.PaneCurrentCommand(ctx, handle)
+		if err != nil {
+			s.log.Debug("shell terminal pane command probe failed", "handleId", rec.HandleID, "error", err)
+		} else if agent := agentFromProcessName(proc); agent != "" {
+			term.DetectedAgent = agent
+			return term
+		} else if isShellProcessName(proc) {
+			// Definitively idle: report no agent instead of letting the banner
+			// fallback resurrect one from scrollback.
+			return term
+		}
+	}
+
+	reader, ok := s.runtime.(shellOutputReader)
+	if !ok {
+		return term
+	}
+	out, err := reader.GetOutput(ctx, handle, agentDetectCaptureLines)
+	if err != nil {
+		s.log.Debug("shell terminal agent sniff failed", "handleId", rec.HandleID, "error", err)
+		return term
+	}
+	term.DetectedAgent = detectAgentFromOutput(out)
+	return term
 }
 
 // ReapShellTerminalsFromPreviousAppRuns destroys shells left behind by an
