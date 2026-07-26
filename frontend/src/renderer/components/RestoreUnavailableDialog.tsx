@@ -1,9 +1,11 @@
 import * as Dialog from "@radix-ui/react-dialog";
+import { useNavigate } from "@tanstack/react-router";
 import { Loader2 } from "lucide-react";
 import { useState } from "react";
 import { Button } from "./ui/button";
+import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
-import { isOrchestratorSession } from "../types/workspace";
+import { hasConfiguredOrchestratorAgent, isOrchestratorSession } from "../types/workspace";
 import type { WorkspaceSession } from "../types/workspace";
 
 type RestoreUnavailableDialogProps = {
@@ -14,11 +16,25 @@ type RestoreUnavailableDialogProps = {
 };
 
 export function RestoreUnavailableDialog({ open, session, onOpenChange, onRecreated }: RestoreUnavailableDialogProps) {
+	const navigate = useNavigate();
+	const workspaceQuery = useWorkspaceQuery();
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | undefined>();
 	const orchestrator = isOrchestratorSession(session);
+	const workspace = workspaceQuery.data?.find((candidate) => candidate.id === session.workspaceId);
+	const hasOrchestratorAgent = hasConfiguredOrchestratorAgent(workspace);
+	const checkingProject = workspaceQuery.isLoading && workspaceQuery.data === undefined;
 
 	const recreate = async () => {
+		if (checkingProject) return;
+		if (!hasOrchestratorAgent) {
+			onOpenChange(false);
+			void navigate({
+				to: "/projects/$projectId/settings",
+				params: { projectId: session.workspaceId },
+			});
+			return;
+		}
 		setBusy(true);
 		setError(undefined);
 		try {
@@ -49,9 +65,13 @@ export function RestoreUnavailableDialog({ open, session, onOpenChange, onRecrea
 							{orchestrator ? "Cancel" : "Close"}
 						</Button>
 						{orchestrator && (
-							<Button onClick={recreate} disabled={busy}>
+							<Button onClick={recreate} disabled={busy || checkingProject}>
 								{busy && <Loader2 className="mr-2 size-icon-base animate-spin" />}
-								Create new orchestrator
+								{checkingProject
+									? "Checking project…"
+									: hasOrchestratorAgent
+										? "Create new orchestrator"
+										: "Configure orchestrator agent"}
 							</Button>
 						)}
 					</div>

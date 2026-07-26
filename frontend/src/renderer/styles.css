@@ -399,9 +399,9 @@
 	padding-left: var(--size-center-panel-inline-inset);
 }
 
-/* macOS: one uniform inset on every side (matches the near-flush top that keeps
- * Board/Terminal titles level with the fixed TitlebarNav). Two classes so it
- * also wins over the `.sidebar-hidden` left gutter above. */
+/* macOS + Linux: one uniform inset on every side (matches the near-flush top
+ * that keeps Board/Terminal titles level with the fixed TitlebarNav). Two
+ * classes so it also wins over the `.sidebar-hidden` left gutter above. */
 .center-panel-shell.center-panel-shell--mac {
 	padding: var(--size-center-panel-inset-mac);
 }
@@ -424,6 +424,11 @@
  * drops the traffic-light reserve so title sits next to the left-edge buttons. */
 .center-panel-shell--titlebar-clearance .center-panel-titlebar {
 	padding-left: calc(var(--size-titlebar-content-offset) - var(--size-center-panel-inset-mac));
+}
+
+/* Linux clears the cluster from its own left edge (no traffic-light row). */
+.center-panel-shell--linux.center-panel-shell--titlebar-clearance .center-panel-titlebar {
+	padding-left: calc(var(--size-titlebar-content-offset-linux) - var(--size-center-panel-inset-mac));
 }
 
 /* Fullscreen: the shell is flush, so measure from the cluster's own left edge. */

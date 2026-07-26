@@ -15,7 +15,7 @@ import { iconForCommand } from "../lib/command-palette-icons";
 import { isDialogOrMenuOpen } from "../lib/dom-selectors";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { useShell } from "../lib/shell-context";
-import { findProjectOrchestrator } from "../types/workspace";
+import { findProjectOrchestrator, hasConfiguredOrchestratorAgent } from "../types/workspace";
 import { useUiStore } from "../stores/ui-store";
 import { CreateProjectFlow } from "./CreateProjectFlow";
 import { NewTaskDialog } from "./NewTaskDialog";
@@ -123,6 +123,14 @@ export function CommandPalette() {
 					params: { projectId, sessionId: orchestrator.id },
 				});
 				closePalette();
+				return;
+			}
+			const workspace = workspaces.find((candidate) => candidate.id === projectId);
+			if (!hasConfiguredOrchestratorAgent(workspace)) {
+				if (workspace) {
+					navigateToTarget({ to: "/projects/$projectId/settings", params: { projectId } });
+					closePalette();
+				}
 				return;
 			}
 			const sessionId = await spawnOrchestrator(projectId, "command_palette");

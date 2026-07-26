@@ -220,6 +220,9 @@
 	--size-sidebar-default: 240px;
 	--size-sidebar-mobile: 288px;
 	--size-titlebar-cluster-left: 79px;
+	/* Linux has no traffic lights: the cluster sits at the sidebar's own left
+	 * inset (TitlebarNav `left-1.5`). */
+	--size-titlebar-cluster-left-linux: 6px;
 	/* TitlebarNav cluster: 3 × --size-control-md buttons + 2 × 4px flex gaps. */
 	--size-titlebar-cluster-width: calc(3 * var(--size-control-md) + 2 * 4px);
 	/* Breathing room between the last arrow and the adjacent in-panel title. */
@@ -227,6 +230,9 @@
 	/* Clears fixed TitlebarNav (cluster-left + toggle/arrows) when the sidebar is off-canvas. */
 	--size-titlebar-content-offset: calc(
 		var(--size-titlebar-cluster-left) + var(--size-titlebar-cluster-width) + var(--size-titlebar-content-gap)
+	);
+	--size-titlebar-content-offset-linux: calc(
+		var(--size-titlebar-cluster-left-linux) + var(--size-titlebar-cluster-width) + var(--size-titlebar-content-gap)
 	);
 	/* Clears the macOS traffic-light row used by the fixed titlebar controls. */
 	--size-traffic-light-clearance: 44px;
@@ -490,7 +496,7 @@
 	--color-bg-tertiary: #ededee;
 	--color-bg-elevated: #e4e4e6;
 	--color-bg-sidebar: #fcfcfc;
-	--color-bg-terminal: #fafafa;
+	--color-bg-terminal: #f5f5f4;
 
 	--color-text-primary: #1a1a1a;
 	--color-text-muted: #666666;
@@ -585,19 +591,19 @@
 	--color-settings-switch-on: #3b82f6;
 
 	--color-term-black: #24292f;
-	--color-term-red: #cf222e;
-	--color-term-green: #1a7f37;
-	--color-term-yellow: #9a6700;
-	--color-term-blue: #0969da;
-	--color-term-magenta: #8250df;
-	--color-term-cyan: #0a7f89;
-	--color-term-white: #6e7781;
-	--color-term-bright-black: #57606a;
-	--color-term-bright-red: #a40e26;
-	--color-term-bright-green: #116329;
-	--color-term-bright-yellow: #7d4e00;
-	--color-term-bright-blue: #0550ae;
-	--color-term-bright-magenta: #6639ba;
-	--color-term-bright-cyan: #096b73;
+	--color-term-red: #a13c37;
+	--color-term-green: #2e6b3e;
+	--color-term-yellow: #87660f;
+	--color-term-blue: #3b5aa6;
+	--color-term-magenta: #7b5799;
+	--color-term-cyan: #3d7a7a;
+	--color-term-white: #666d75;
+	--color-term-bright-black: #4c535b;
+	--color-term-bright-red: #7e3330;
+	--color-term-bright-green: #265231;
+	--color-term-bright-yellow: #6b5108;
+	--color-term-bright-blue: #31487f;
+	--color-term-bright-magenta: #5f4476;
+	--color-term-bright-cyan: #316061;
 	--color-term-bright-white: #24292f;
 }

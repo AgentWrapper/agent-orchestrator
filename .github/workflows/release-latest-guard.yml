@@ -11,6 +11,10 @@ on:
 
 jobs:
   latest-release:
+    # Stable /releases/latest only exists on the canonical repo. Forks copy
+    # this workflow (including the hourly schedule) but have no desktop
+    # release, so the check fails red every hour.
+    if: github.repository == 'AgentWrapper/agent-orchestrator'
     runs-on: ubuntu-latest
     permissions:
       contents: read
