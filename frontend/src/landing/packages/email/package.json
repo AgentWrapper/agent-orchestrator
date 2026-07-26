@@ -1,0 +1,10 @@
+{
+  "name": "@superset/email",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./emails/contact-inquiry": "./src/emails/contact-inquiry.ts",
+    "./emails/enterprise-inquiry": "./src/emails/enterprise-inquiry.ts"
+  }
+}

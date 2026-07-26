@@ -1,5 +1,4 @@
 import { contextBridge, ipcRenderer } from "electron";
-// prettier-ignore
 import { FOCUS_TERMINAL_SHORTCUT_CHANNEL, KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEXT_SESSION_SHORTCUT_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL, NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL, OPEN_SETTINGS_SHORTCUT_CHANNEL, PREVIOUS_SESSION_SHORTCUT_CHANNEL } from "./shared/shortcuts";
 import type { BrowserNavState, BrowserRect } from "./main/browser-view-host";
 import type { DaemonStatus } from "./shared/daemon-status";
@@ -112,8 +111,6 @@ const api = {
 	window: {
 		setOverlay: (overlay: { color: string; symbolColor: string }) =>
 			ipcRenderer.invoke("window:setOverlay", overlay) as Promise<void>,
-		setTrafficLightsInset: (inset: boolean) =>
-			ipcRenderer.invoke("window:setTrafficLightsInset", inset) as Promise<void>,
 		isFullScreen: () => ipcRenderer.invoke("window:isFullScreen") as Promise<boolean>,
 		onFullScreen: (listener: (fullScreen: boolean) => void) => {
 			const wrapped = (_event: Electron.IpcRendererEvent, fullScreen: boolean) => listener(fullScreen);
@@ -212,6 +209,7 @@ const api = {
 	updates: {
 		getStatus: () => ipcRenderer.invoke("updates:getStatus") as Promise<UpdateStatus>,
 		check: (options?: UpdateCheckOptions) => ipcRenderer.invoke("updates:check", options) as Promise<void>,
+		returnHome: (requestId?: string) => ipcRenderer.invoke("updates:returnHome", requestId) as Promise<void>,
 		download: (requestId?: string) => ipcRenderer.invoke("updates:download", requestId) as Promise<void>,
 		install: () => ipcRenderer.invoke("updates:install") as Promise<void>,
 		onStatus: (listener: (status: UpdateStatus) => void) => {

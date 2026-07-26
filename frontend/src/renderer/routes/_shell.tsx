@@ -133,9 +133,6 @@ function ShellLayout() {
 		: routeParams.sessionId
 			? workspaces.find((workspace) => workspace.sessions.some((session) => session.id === routeParams.sessionId))?.id
 			: undefined;
-	const isSessionRoute =
-		Boolean(matchRoute({ to: "/projects/$projectId/sessions/$sessionId", fuzzy: true })) ||
-		Boolean(matchRoute({ to: "/sessions/$sessionId", fuzzy: true }));
 	// First-launch root board only (no projects in scope).
 	const isWelcomeBoard = Boolean(matchRoute({ to: "/" })) && workspaces.length === 0;
 	const isSettingsRoute =
@@ -368,10 +365,6 @@ function ShellLayout() {
 	}, [themePreference]);
 
 	useEffect(() => {
-		void aoBridge.window.setTrafficLightsInset(!isSidebarOpen);
-	}, [isSidebarOpen]);
-
-	useEffect(() => {
 		if (!isSidebarOpen) return;
 		cancelSidebarPeekClose();
 		setIsSidebarPeekOpen(false);
@@ -526,7 +519,7 @@ function ShellLayout() {
 			{/* Shell chrome: Win/Linux hang the sidebar under a topbar. macOS uses a
           titlebar strip above the off-canvas sidebar. Session and board actions
           render inside the center panel when the shell topbar is hidden. */}
-			<div className="flex h-screen min-h-0 flex-col bg-sidebar text-foreground">
+			<div className={cn("flex h-screen min-h-0 flex-col bg-sidebar text-foreground", isWindows && "platform-windows")}>
 				{/* Windows-only custom title bar (sidebar toggle + File/Edit/View/…
             menu); paints the chrome the frameless window drops. Renders null on
             macOS/Linux. */}
@@ -551,15 +544,14 @@ function ShellLayout() {
 						} as CSSProperties
 					}
 				>
-					{/* Hang the fixed sidebar below shell chrome on Win/Linux. macOS
-              keeps a full-height sidebar beneath the fixed titlebar controls. */}
+					{/* macOS + Linux reserve a titlebar band for the fixed TitlebarNav
+              cluster above a full-height sidebar; Windows hangs the sidebar
+              below its custom titlebar. */}
 					<Sidebar
 						hideEdgeBorder={isWelcomeBoard}
 						isOverlay={isSidebarPeekOpen && !isSidebarOpen}
 						onPreviewLeave={scheduleSidebarPeekClose}
-						underTopbar={
-							isMac || isWindows || (!framedAppTopbar && !hideShellTopbar && (isLinux ? isSessionRoute : true))
-						}
+						underTopbar={isMac || isWindows || isLinux}
 						topbarOffset={isWindows ? "titlebar" : "toolbar"}
 						onCreateProject={createProject}
 						onInitializeProject={initializeProjectRepository}

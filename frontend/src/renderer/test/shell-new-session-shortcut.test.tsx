@@ -18,7 +18,6 @@ const shellMocks = vi.hoisted(() => {
 	};
 	return {
 		navigate: vi.fn(),
-		setTrafficLightsInset: vi.fn(async () => undefined),
 		onNewSessionShortcut: vi.fn((listener: () => void) => {
 			state.newSessionListener = listener;
 			return vi.fn();
@@ -82,9 +81,7 @@ vi.mock("../lib/bridge", () => ({
 			onNextSessionShortcut: shellMocks.onNextSessionShortcut,
 			onFocusTerminalShortcut: shellMocks.onFocusTerminalShortcut,
 		},
-		window: {
-			setTrafficLightsInset: shellMocks.setTrafficLightsInset,
-		},
+		window: {},
 	},
 }));
 
@@ -214,7 +211,6 @@ beforeEach(() => {
 	shellMocks.navigate.mockReset();
 	shellMocks.onNewSessionShortcut.mockClear();
 	shellMocks.onKeyboardShortcutsHelp.mockClear();
-	shellMocks.setTrafficLightsInset.mockClear();
 	shellMocks.onNewShellTerminalShortcut.mockClear();
 	shellMocks.openShellTerminal.mockClear();
 	shellMocks.state.newShellTerminalListener = undefined;
@@ -239,20 +235,6 @@ beforeEach(() => {
 });
 
 describe("shell sidebar hover preview", () => {
-	it("moves native traffic lights only with persistent sidebar state", async () => {
-		await renderShell();
-		await waitFor(() => expect(shellMocks.setTrafficLightsInset).toHaveBeenLastCalledWith(false));
-
-		fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
-		await waitFor(() => expect(shellMocks.setTrafficLightsInset).toHaveBeenLastCalledWith(true));
-
-		fireEvent.pointerEnter(screen.getByRole("button", { name: "Expand sidebar" }));
-		expect(shellMocks.setTrafficLightsInset).toHaveBeenCalledTimes(2);
-
-		fireEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
-		await waitFor(() => expect(shellMocks.setTrafficLightsInset).toHaveBeenLastCalledWith(false));
-	});
-
 	it("temporarily overlays a collapsed sidebar from the titlebar toggle and closes after pointer leave", async () => {
 		useUiStore.setState({ isSidebarOpen: false });
 		await renderShell();

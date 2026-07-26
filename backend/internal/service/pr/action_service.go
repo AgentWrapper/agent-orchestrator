@@ -11,23 +11,6 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-// ActionManager is the controller-facing contract for /prs/{id} action routes.
-type ActionManager interface {
-	Merge(ctx context.Context, prID string) (MergeResult, error)
-	ResolveComments(ctx context.Context, prID string, commentIDs []string) (ResolveResult, error)
-}
-
-// MergeResult is the successful outcome of a PR merge.
-type MergeResult struct {
-	PRNumber int
-	Method   string
-}
-
-// ResolveResult is the successful outcome of a resolve-comments operation.
-type ResolveResult struct {
-	Resolved int
-}
-
 // PRStore is the storage dependency ActionService needs to resolve a PR
 // before acting on it.
 type PRStore interface {
@@ -39,7 +22,7 @@ type SCMMerger interface {
 	MergePR(ctx context.Context, owner, repo string, number int, method string) (string, error)
 }
 
-// ActionService implements ActionManager.
+// ActionService implements ActionManager (declared in actions.go).
 type ActionService struct {
 	store PRStore
 	scm   SCMMerger // may be nil if the daemon started without SCM credentials
@@ -48,8 +31,8 @@ type ActionService struct {
 var _ ActionManager = (*ActionService)(nil)
 
 // NewActionService wires the real store/SCM dependencies. scm may be nil
-// (e.g. no GitHub token at startup); Merge reports ErrSCMUnavailable in that
-// case rather than panicking.
+// (e.g. no GitHub token at startup); Merge reports ErrPRPreconditions in
+// that case rather than panicking.
 func NewActionService(store PRStore, scm SCMMerger) *ActionService {
 	return &ActionService{store: store, scm: scm}
 }
