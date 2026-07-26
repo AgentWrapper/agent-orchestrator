@@ -33,7 +33,7 @@ export const metadata: Metadata = {
 };
 
 export default async function ChangelogPage() {
-  const entries = getChangelogEntries();
+  const entries = await getChangelogEntries();
 
   return (
     <main className="relative min-h-screen">
