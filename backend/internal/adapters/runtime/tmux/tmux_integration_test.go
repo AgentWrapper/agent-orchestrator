@@ -2,6 +2,7 @@ package tmux
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"strings"
@@ -121,6 +122,76 @@ func TestRuntimeIntegrationExactSessionParsing(t *testing.T) {
 	if prefixAlive {
 		_ = r.Destroy(ctx, h)
 		t.Fatal("prefix handle reported alive; tmux session matching is not exact")
+	}
+}
+
+type failPostRespawnProbeRunner struct {
+	delegate      runner
+	probeArmed    bool
+	probeFailures int
+}
+
+func (r *failPostRespawnProbeRunner) Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
+	if r.probeArmed && len(args) > 0 && args[0] == "has-session" {
+		r.probeArmed = false
+		r.probeFailures++
+		return nil, errors.New("injected post-respawn probe failure")
+	}
+	out, err := r.delegate.Run(ctx, env, name, args...)
+	if err == nil && len(args) > 0 && args[0] == "respawn-pane" {
+		r.probeArmed = true
+	}
+	return out, err
+}
+
+func TestRuntimeIntegrationRestartPreservesAppliedHandleWhenProbeFails(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux unavailable")
+	}
+
+	ctx := context.Background()
+	id := strings.ReplaceAll(t.Name(), "/", "_")
+	r := New(Options{Timeout: 5 * time.Second})
+	probeRunner := &failPostRespawnProbeRunner{delegate: r.runner}
+	r.runner = probeRunner
+	tmuxID := SessionName(id)
+	workspace := t.TempDir()
+	_ = r.Destroy(ctx, ports.RuntimeHandle{ID: tmuxID})
+	t.Cleanup(func() { _ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: tmuxID}) })
+
+	h, err := r.Create(ctx, ports.RuntimeConfig{
+		SessionID:     domain.SessionID(id),
+		WorkspacePath: workspace,
+		Argv:          []string{"sh", "-c", "echo real-generation-one"},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	waitForOutput(t, r, h, "real-generation-one", 5*time.Second)
+
+	restarted, err := r.Restart(ctx, h, ports.RuntimeConfig{
+		SessionID:     domain.SessionID(id),
+		WorkspacePath: workspace,
+		Argv:          []string{"sh", "-c", "echo real-generation-two"},
+	})
+	if restarted != h {
+		t.Fatalf("restart handle = %+v, want owned handle %+v", restarted, h)
+	}
+	var applied *ports.RestartAppliedUnverifiedError
+	if !errors.As(err, &applied) {
+		t.Fatalf("Restart error = %v, want RestartAppliedUnverifiedError", err)
+	}
+	if probeRunner.probeFailures != 1 {
+		t.Fatalf("injected probe failures = %d, want 1", probeRunner.probeFailures)
+	}
+
+	alive, probeErr := r.IsAlive(ctx, restarted)
+	if probeErr != nil || !alive {
+		t.Fatalf("real restarted tmux session = (%v, %v), want (true, nil)", alive, probeErr)
+	}
+	out := waitForOutput(t, r, restarted, "real-generation-two", 5*time.Second)
+	if !strings.Contains(out, "real-generation-two") {
+		t.Fatalf("restarted output = %q, want real-generation-two", out)
 	}
 }
 

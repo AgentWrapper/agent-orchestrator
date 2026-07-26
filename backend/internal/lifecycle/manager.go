@@ -816,6 +816,41 @@ func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, metadata
 	return m.store.UpdateSession(ctx, rec)
 }
 
+// MarkResumed conditionally commits a replacement agent generation inside an
+// existing live runtime. Unlike MarkSpawned, it never clears termination: the
+// record must still describe the exact live/exited generation that Resume
+// validated before it crossed the runtime side-effect boundary. A false result
+// means another lifecycle action won that race and the caller must not publish
+// this generation as authoritative.
+func (m *Manager) MarkResumed(ctx context.Context, id domain.SessionID, expectedRuntimeLaunchID string, metadata domain.SessionMetadata) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	defer m.finishLaunchLocked(id, strings.TrimSpace(metadata.RuntimeLaunchID))
+
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, fmt.Errorf("lifecycle: MarkResumed for unknown session %q", id)
+	}
+	if rec.IsTerminated ||
+		rec.Activity.State != domain.ActivityExited ||
+		rec.Metadata.RuntimeLaunchID != expectedRuntimeLaunchID {
+		return false, nil
+	}
+
+	now := m.clock()
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
+	rec.FirstSignalAt = time.Time{}
+	rec.Metadata = mergeMetadata(rec.Metadata, metadata)
+	rec.UpdatedAt = now
+	if err := m.store.UpdateSession(ctx, rec); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // MarkTerminated marks a session terminated without tearing down external resources.
 func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error {
 	return m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {

@@ -176,24 +176,36 @@ describe("buildCommands finished sessions", () => {
 				sessions: [
 					session({ id: "w-live", title: "live one", status: "working" }),
 					session({ id: "w-done", title: "archived cleanup", status: "terminated" }),
-					session({ id: "w-merged", title: "old merge", status: "merged" }),
+					session({ id: "w-merged-live", title: "live merge", status: "merged", isTerminated: false }),
+					session({ id: "w-merged-done", title: "archived merge", status: "merged", isTerminated: true }),
 				],
 			},
 		];
 	}
 
-	it("indexes merged/terminated sessions as search-only (hidden until typed, then findable)", () => {
+	it("keeps a live merged session in Needs attention", () => {
+		const items = buildCommands({ workspaces: withFinished() });
+		expect(byId(items).has("attention:w-merged-live")).toBe(true);
+		expect(byId(items).has("session:w-merged-live")).toBe(false);
+	});
+
+	it("indexes terminated and terminated-merged sessions as search-only", () => {
 		const items = buildCommands({ workspaces: withFinished() });
 		const done = byId(items).get("session:w-done");
+		const mergedDone = byId(items).get("session:w-merged-done");
 		expect(done?.searchOnly).toBe(true);
+		expect(mergedDone?.searchOnly).toBe(true);
 		expect(byId(items).get("session:w-live")?.searchOnly).toBeFalsy();
+		expect(byId(items).has("attention:w-merged-done")).toBe(false);
 
 		const suggested = filterCommands(items, "");
 		expect(suggested.some((item) => item.id === "session:w-done")).toBe(false);
+		expect(suggested.some((item) => item.id === "session:w-merged-done")).toBe(false);
 		expect(suggested.some((item) => item.id === "session:w-live")).toBe(true);
 
 		const searched = filterCommands(items, "archived");
 		expect(searched.some((item) => item.id === "session:w-done")).toBe(true);
+		expect(searched.some((item) => item.id === "session:w-merged-done")).toBe(true);
 	});
 });
 

@@ -89,8 +89,38 @@ type Runtime interface {
 // RuntimeRestarter is an optional runtime capability for replacing the process
 // inside an existing terminal session. Implementations should preserve the
 // handle when possible so attached clients do not need a new terminal identity.
+//
+// A restart can cross an ownership boundary before every verification step has
+// completed. Once the replacement command has been applied, an implementation
+// must return the owned handle even if a later probe fails. It reports that
+// partial-success state with RestartAppliedUnverifiedError so callers can
+// durably adopt or explicitly compensate the replacement instead of treating
+// it as though no side effect occurred.
 type RuntimeRestarter interface {
 	Restart(ctx context.Context, handle RuntimeHandle, cfg RuntimeConfig) (RuntimeHandle, error)
+}
+
+// RestartAppliedUnverifiedError means a runtime restart's destructive launch
+// step succeeded, but a later verification probe failed inconclusively. The
+// RuntimeRestarter must return the handle it still owns alongside this error.
+// A definitive observation that the restarted runtime is missing must use an
+// ordinary error instead.
+type RestartAppliedUnverifiedError struct {
+	Cause error
+}
+
+func (e *RestartAppliedUnverifiedError) Error() string {
+	if e == nil || e.Cause == nil {
+		return "runtime restart applied but could not be verified"
+	}
+	return fmt.Sprintf("runtime restart applied but could not be verified: %v", e.Cause)
+}
+
+func (e *RestartAppliedUnverifiedError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
 }
 
 // RuntimeConfig is the spec for launching a session's process in a Runtime.

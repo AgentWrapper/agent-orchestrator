@@ -90,6 +90,7 @@ type lifecycleRecorder interface {
 	PrepareLaunch(id domain.SessionID, launchID string) error
 	CancelLaunch(id domain.SessionID, launchID string)
 	MarkSpawned(ctx context.Context, id domain.SessionID, metadata domain.SessionMetadata) error
+	MarkResumed(ctx context.Context, id domain.SessionID, expectedRuntimeLaunchID string, metadata domain.SessionMetadata) (bool, error)
 	MarkTerminated(ctx context.Context, id domain.SessionID) error
 }
 
@@ -180,6 +181,11 @@ type Manager struct {
 	newLaunchID func() string
 	resumeMu    sync.Mutex
 	resuming    map[domain.SessionID]struct{}
+	// operationLocks serialize resource/lifecycle transitions for one session.
+	// Resume keeps the separate resuming reservation above so a duplicate Resume
+	// can still fail immediately instead of waiting behind the first request.
+	operationMu    sync.Mutex
+	operationLocks map[domain.SessionID]*sessionOperationLock
 	// sendConfirm bounds the best-effort post-send confirmation that the session
 	// actually became active (the agent accepted the prompt). New fills in the
 	// sendConfirm* defaults; tests in this package shrink the timings directly.
@@ -204,12 +210,22 @@ type sendConfirmConfig struct {
 	maxAttempts int
 }
 
+type sessionOperationLock struct {
+	locker sync.Locker
+	users  int
+}
+
 // Production sendConfirm bounds: 3 Enters total (1 from Send + 2 re-sends),
 // each given 2s to flip the session active, polled every 300ms.
 const (
 	sendConfirmPollInterval    = 300 * time.Millisecond
 	sendConfirmAttemptDeadline = 2 * time.Second
 	sendConfirmMaxAttempts     = 3
+	// launchFinalizeTimeout bounds the cancellation-detached phase after a
+	// runtime Create/Restart has crossed its external side-effect boundary.
+	// Durable generation adoption (or compensation) must finish even when the
+	// initiating HTTP request has already gone away.
+	launchFinalizeTimeout = 15 * time.Second
 )
 
 // Deps are the collaborators a Session Manager needs; New wires them together.
@@ -243,17 +259,18 @@ type Deps struct {
 // time.Now when Deps.Clock is nil.
 func New(d Deps) *Manager {
 	m := &Manager{
-		runtime:     d.Runtime,
-		agents:      d.Agents,
-		workspace:   d.Workspace,
-		store:       d.Store,
-		lcm:         d.Lifecycle,
-		dataDir:     d.DataDir,
-		clock:       d.Clock,
-		lookPath:    d.LookPath,
-		executable:  d.Executable,
-		newLaunchID: d.NewLaunchID,
-		resuming:    make(map[domain.SessionID]struct{}),
+		runtime:        d.Runtime,
+		agents:         d.Agents,
+		workspace:      d.Workspace,
+		store:          d.Store,
+		lcm:            d.Lifecycle,
+		dataDir:        d.DataDir,
+		clock:          d.Clock,
+		lookPath:       d.LookPath,
+		executable:     d.Executable,
+		newLaunchID:    d.NewLaunchID,
+		resuming:       make(map[domain.SessionID]struct{}),
+		operationLocks: make(map[domain.SessionID]*sessionOperationLock),
 		sendConfirm: sendConfirmConfig{
 			pollInterval:    sendConfirmPollInterval,
 			attemptDeadline: sendConfirmAttemptDeadline,
@@ -731,6 +748,32 @@ func (m *Manager) RollbackSpawn(ctx context.Context, id domain.SessionID) (delet
 	return m.rollbackSpawn(ctx, id)
 }
 
+func (m *Manager) lockSessionOperation(id domain.SessionID) func() {
+	m.operationMu.Lock()
+	if m.operationLocks == nil {
+		m.operationLocks = make(map[domain.SessionID]*sessionOperationLock)
+	}
+	entry := m.operationLocks[id]
+	if entry == nil {
+		entry = &sessionOperationLock{locker: &sync.Mutex{}}
+		m.operationLocks[id] = entry
+	}
+	entry.users++
+	m.operationMu.Unlock()
+
+	entry.locker.Lock()
+	return func() {
+		entry.locker.Unlock()
+
+		m.operationMu.Lock()
+		defer m.operationMu.Unlock()
+		entry.users--
+		if entry.users == 0 && m.operationLocks[id] == entry {
+			delete(m.operationLocks, id)
+		}
+	}
+}
+
 // Kill tears down the runtime and workspace, then records terminal intent with
 // the LCM. A workspace teardown refused by the worktree-remove safety
 // (uncommitted work) is never forced: Kill succeeds with freed=false,
@@ -742,6 +785,9 @@ func (m *Manager) RollbackSpawn(ctx context.Context, id domain.SessionID) (delet
 // available destroy steps are skipped so it can be cleaned up from the
 // dashboard.
 func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
+	unlock := m.lockSessionOperation(id)
+	defer unlock()
+
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
 		return false, fmt.Errorf("kill %s: %w", id, err)
@@ -822,6 +868,9 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 // This deliberately does not write a session_worktrees row: those rows are
 // boot-restore markers, and a replaced orchestrator must stay terminated.
 func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID) error {
+	unlock := m.lockSessionOperation(id)
+	defer unlock()
+
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
 		return fmt.Errorf("retire replacement %s: %w", id, err)
@@ -921,6 +970,9 @@ func (m *Manager) retireWorkspaceProjectForReplacement(ctx context.Context, rec 
 // runs before any durable session write, so a failure never resurrects the row
 // or destroys the worktree (it may hold the agent's prior work).
 func (m *Manager) RestoreWithMode(ctx context.Context, id domain.SessionID) (RestoreResult, error) {
+	unlock := m.lockSessionOperation(id)
+	defer unlock()
+
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("restore %s: %w", id, err)
@@ -970,6 +1022,9 @@ func (m *Manager) ResumeAgentWithMode(ctx context.Context, id domain.SessionID) 
 	}
 	defer m.endAgentResume(id)
 
+	unlock := m.lockSessionOperation(id)
+	defer unlock()
+
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, err)
@@ -983,14 +1038,15 @@ func (m *Manager) ResumeAgentWithMode(ctx context.Context, id domain.SessionID) 
 	if rec.Activity.State != domain.ActivityExited {
 		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrAgentNotExited)
 	}
-	meta := rec.Metadata
-	if meta.WorkspacePath == "" || meta.Branch == "" || meta.RuntimeHandleID == "" {
-		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrIncompleteHandle)
-	}
-
 	project, err := m.loadProject(ctx, rec.ProjectID)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, err)
+	}
+	meta := rec.Metadata
+	if meta.WorkspacePath == "" ||
+		meta.RuntimeHandleID == "" ||
+		(meta.Branch == "" && project.Kind.WithDefault() != domain.ProjectKindScratch) {
+		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrIncompleteHandle)
 	}
 	ws := ports.WorkspaceInfo{
 		Path:      meta.WorkspacePath,
@@ -1079,6 +1135,9 @@ func (m *Manager) relaunchSession(ctx context.Context, operation string, rec dom
 		m.cleanupSystemPromptDir(rec.ID)
 		return RestoreResult{}, fmt.Errorf("%s %s: runtime: %w", operation, rec.ID, err)
 	}
+	finalizeCtx, cancelFinalize := context.WithTimeout(context.WithoutCancel(ctx), launchFinalizeTimeout)
+	defer cancelFinalize()
+
 	metadata := domain.SessionMetadata{
 		Branch:            ws.Branch,
 		WorkspacePath:     ws.Path,
@@ -1088,8 +1147,23 @@ func (m *Manager) relaunchSession(ctx context.Context, operation string, rec dom
 		AgentSessionID:    rec.Metadata.AgentSessionID,
 		Prompt:            rec.Metadata.Prompt,
 	}
-	if err := m.lcm.MarkSpawned(ctx, rec.ID, metadata); err != nil {
-		_ = m.runtime.Destroy(ctx, handle)
+	if restartHandle == nil {
+		err = m.lcm.MarkSpawned(finalizeCtx, rec.ID, metadata)
+	} else {
+		var committed bool
+		committed, err = m.lcm.MarkResumed(finalizeCtx, rec.ID, rec.Metadata.RuntimeLaunchID, metadata)
+		if err == nil && !committed {
+			err = errors.New("session changed while resume was starting")
+		}
+	}
+	if err != nil {
+		compensateCtx, cancelCompensate := context.WithTimeout(context.WithoutCancel(ctx), launchFinalizeTimeout)
+		destroyErr := m.runtime.Destroy(compensateCtx, handle)
+		cancelCompensate()
+		if destroyErr != nil {
+			m.logger.Warn("relaunch: compensate runtime after durable commit failure",
+				"operation", operation, "sessionID", rec.ID, "handle", handle.ID, "error", destroyErr)
+		}
 		m.cleanupSystemPromptDir(rec.ID)
 		return RestoreResult{}, fmt.Errorf("%s %s: completed: %w", operation, rec.ID, err)
 	}
@@ -1105,14 +1179,16 @@ func (m *Manager) relaunchSession(ctx context.Context, operation string, rec dom
 			Config:           agentConfig,
 			Permissions:      agentConfig.Permissions,
 		}
-		if err := m.deliverAfterStartPrompt(ctx, agent, launchCfg, handle, rec.ID, rec.Metadata.Prompt); err != nil {
-			_ = m.runtime.Destroy(ctx, handle)
-			_ = m.lcm.MarkTerminated(ctx, rec.ID)
+		if err := m.deliverAfterStartPrompt(finalizeCtx, agent, launchCfg, handle, rec.ID, rec.Metadata.Prompt); err != nil {
+			compensateCtx, cancelCompensate := context.WithTimeout(context.WithoutCancel(ctx), launchFinalizeTimeout)
+			_ = m.runtime.Destroy(compensateCtx, handle)
+			_ = m.lcm.MarkTerminated(compensateCtx, rec.ID)
+			cancelCompensate()
 			m.cleanupSystemPromptDir(rec.ID)
 			return RestoreResult{}, fmt.Errorf("%s %s: deliver prompt: %w", operation, rec.ID, err)
 		}
 	}
-	updated, err := m.getRecord(ctx, rec.ID)
+	updated, err := m.getRecord(finalizeCtx, rec.ID)
 	if err != nil {
 		return RestoreResult{}, err
 	}
@@ -1126,7 +1202,20 @@ func (m *Manager) restartRuntime(ctx context.Context, handle ports.RuntimeHandle
 	}
 	if alive {
 		if restarter, ok := m.runtime.(ports.RuntimeRestarter); ok {
-			return restarter.Restart(ctx, handle, cfg)
+			restarted, restartErr := restarter.Restart(ctx, handle, cfg)
+			if restartErr == nil {
+				return restarted, nil
+			}
+			var applied *ports.RestartAppliedUnverifiedError
+			if !errors.As(restartErr, &applied) {
+				return ports.RuntimeHandle{}, restartErr
+			}
+			if restarted.ID == "" {
+				return ports.RuntimeHandle{}, fmt.Errorf("restart reported applied without an owned handle: %w", restartErr)
+			}
+			m.logger.Warn("resume: runtime restart applied but verification was inconclusive",
+				"sessionID", cfg.SessionID, "handle", restarted.ID, "error", applied)
+			return restarted, nil
 		}
 		if err := m.runtime.Destroy(ctx, handle); err != nil {
 			return ports.RuntimeHandle{}, fmt.Errorf("destroy existing runtime: %w", err)

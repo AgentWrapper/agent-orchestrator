@@ -18,6 +18,7 @@ import (
 type fakeRunner struct {
 	calls   []runnerCall
 	outputs [][]byte
+	errs    []error
 	err     error
 }
 
@@ -33,6 +34,13 @@ func (f *fakeRunner) Run(_ context.Context, env []string, name string, args ...s
 	if len(f.outputs) > 0 {
 		out = f.outputs[0]
 		f.outputs = f.outputs[1:]
+	}
+	if len(f.errs) > 0 {
+		err := f.errs[0]
+		f.errs = f.errs[1:]
+		if err != nil {
+			return out, err
+		}
 	}
 	if f.err != nil {
 		return out, f.err
@@ -461,6 +469,54 @@ func TestRestartRespawnsExistingPaneAndPreservesHandle(t *testing.T) {
 	}
 	if args := fr.calls[1].args; !reflect.DeepEqual(args, hasSessionArgs("sess-1")) {
 		t.Fatalf("liveness args = %#v, want %#v", args, hasSessionArgs("sess-1"))
+	}
+}
+
+func TestRestartReturnsOwnedHandleWhenPostRespawnProbeIsInconclusive(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	handle := ports.RuntimeHandle{ID: "sess-1"}
+	probeErr := errors.New("tmux temporarily unavailable")
+	fr.errs = []error{nil, probeErr}
+
+	got, err := r.Restart(context.Background(), handle, ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"codex", "resume", "native-1"},
+	})
+	if got != handle {
+		t.Fatalf("Restart handle = %+v, want owned handle %+v", got, handle)
+	}
+	var applied *ports.RestartAppliedUnverifiedError
+	if !errors.As(err, &applied) {
+		t.Fatalf("Restart error = %v, want RestartAppliedUnverifiedError", err)
+	}
+	if !errors.Is(err, probeErr) {
+		t.Fatalf("Restart error = %v, want wrapped probe error", err)
+	}
+	if len(fr.calls) != 2 || fr.calls[0].args[0] != "respawn-pane" || fr.calls[1].args[0] != "has-session" {
+		t.Fatalf("calls = %#v, want respawn followed by probe", fr.calls)
+	}
+}
+
+func TestRestartTreatsDefinitivelyMissingPostRespawnSessionAsFailure(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{nil, []byte("can't find session: sess-1")}
+	fr.errs = []error{nil, &exec.ExitError{}}
+
+	got, err := r.Restart(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"codex", "resume", "native-1"},
+	})
+	if got.ID != "" {
+		t.Fatalf("Restart handle = %+v, want no owned live handle", got)
+	}
+	if err == nil || !strings.Contains(err.Error(), "exited during restart") {
+		t.Fatalf("Restart error = %v, want definitive missing failure", err)
+	}
+	var applied *ports.RestartAppliedUnverifiedError
+	if errors.As(err, &applied) {
+		t.Fatalf("definitive missing error must not be applied-unverified: %v", err)
 	}
 }
 

@@ -275,7 +275,13 @@ func (r *Runtime) Restart(ctx context.Context, handle ports.RuntimeHandle, cfg p
 	}
 	alive, err := r.IsAlive(ctx, handle)
 	if err != nil {
-		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: verify restarted session %s: %w", id, err)
+		// respawn-pane -k has already killed the old workload and launched the
+		// replacement. Preserve ownership of that applied side effect so the
+		// session manager can durably adopt the new generation even when this
+		// separate probe fails transiently (including caller cancellation).
+		return handle, &ports.RestartAppliedUnverifiedError{
+			Cause: fmt.Errorf("tmux runtime: verify restarted session %s: %w", id, err),
+		}
 	}
 	if !alive {
 		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: session %s exited during restart", id)
