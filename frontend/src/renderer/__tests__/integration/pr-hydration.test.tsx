@@ -20,6 +20,7 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
 });
 
 import { SessionsBoard } from "../../components/SessionsBoard";
+import { TooltipProvider } from "../../components/ui/tooltip";
 
 // One ordinary project with one worker session that has multiple PRs.
 function respondWithProjectAndPRs() {
@@ -197,7 +198,11 @@ function respondWithAttentionPR() {
 
 function renderWithProviders(node: ReactNode) {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-	render(<QueryClientProvider client={queryClient}>{node}</QueryClientProvider>);
+	render(
+		<QueryClientProvider client={queryClient}>
+			<TooltipProvider>{node}</TooltipProvider>
+		</QueryClientProvider>,
+	);
 }
 
 beforeEach(() => {
