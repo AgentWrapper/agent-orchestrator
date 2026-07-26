@@ -125,6 +125,27 @@ function ShellLayout() {
 	const [isSidebarPeekOpen, setIsSidebarPeekOpen] = useState(false);
 	const sidebarPeekCloseTimerRef = useRef<number | undefined>(undefined);
 	const routeParams = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
+	useEffect(() => {
+		const handleLinkClick = (event: MouseEvent) => {
+			const anchor = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a[href]") : null;
+			if (!anchor) return;
+			const url = new URL(anchor.href);
+			if (event.button !== 0 || !["http:", "https:"].includes(url.protocol) || url.origin === window.location.origin) return;
+			if (event.altKey) { event.preventDefault(); event.stopPropagation(); void aoBridge.app.openExternal(url.href); return; }
+			const sessionId = anchor.closest<HTMLElement>("[data-session-id]")?.dataset.sessionId ?? routeParams.sessionId;
+			const workspace = workspaces.find((item) => item.sessions.some((session) => session.id === sessionId));
+			if (!sessionId || !workspace || event.metaKey || event.ctrlKey || event.shiftKey) return;
+			event.preventDefault(); event.stopPropagation();
+			const ui = useUiStore.getState();
+			ui.setInspectorView(sessionId, "browser"); ui.setInspectorOpen(sessionId, true);
+			void apiClient.POST("/api/v1/sessions/{sessionId}/preview", {
+				params: { path: { sessionId } }, body: { url: url.href },
+			}).then(() => queryClient.invalidateQueries({ queryKey: workspaceQueryKey }));
+			if (routeParams.sessionId !== sessionId) void navigate({ to: "/projects/$projectId/sessions/$sessionId", params: { projectId: workspace.id, sessionId } });
+		};
+		document.addEventListener("click", handleLinkClick, true);
+		return () => document.removeEventListener("click", handleLinkClick, true);
+	}, [navigate, queryClient, routeParams.sessionId, workspaces]);
 	// Project in scope for a new-session shortcut: the route's project, or the
 	// workspace owning the open session (so the shortcut works from a worker's
 	// detail view, where the URL carries only a sessionId).

@@ -775,13 +775,9 @@ describe("XtermTerminal", () => {
 		window.ao!.app.openExternal = openExternal;
 		const onLinkOpen = vi.fn();
 		render(<XtermTerminal onLinkOpen={onLinkOpen} theme="dark" />);
-		const handler =
-			kind === "plain"
-				? state.linkHandler!
-				: (state.lastTerminal!.options.linkHandler as { activate: (event: MouseEvent, uri: string) => void }).activate;
-
+		const oscHandler = state.lastTerminal!.options.linkHandler as { activate: (event: MouseEvent, uri: string) => void };
+		const handler = kind === "plain" ? state.linkHandler! : oscHandler.activate;
 		handler({ altKey: true } as MouseEvent, "https://example.com");
-
 		expect(openExternal).toHaveBeenCalledWith("https://example.com");
 		expect(onLinkOpen).not.toHaveBeenCalled();
 	});
