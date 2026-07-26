@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import remarkGfm from "remark-gfm";
 import { docsMdxComponents } from "../components/mdx";
 import { DocsSidebar } from "../components/DocsSidebar";
+import { DocsToc } from "../components/DocsToc";
 import { extractToc, getAllDocSlugs, getDocPage, getDocsNav } from "@/lib/docs";
 
 export function generateStaticParams() {
@@ -42,7 +43,7 @@ export default async function DocsPage({ params }: { params: Promise<{ slug?: st
   return (
     <div className="mx-auto flex max-w-7xl gap-8 px-6">
       {/* Left sidebar */}
-      <aside className="sticky top-14 hidden h-[calc(100vh-3.5rem)] w-56 shrink-0 overflow-y-auto border-r border-border py-8 pr-2 lg:block">
+      <aside className="scrollbar-hide sticky top-14 hidden h-[calc(100vh-3.5rem)] w-56 shrink-0 overflow-y-auto border-r border-border py-8 pr-2 lg:block">
         <DocsSidebar nav={nav} />
       </aside>
 
@@ -57,28 +58,8 @@ export default async function DocsPage({ params }: { params: Promise<{ slug?: st
         />
       </article>
 
-      {/* Right TOC */}
-      {toc.length > 0 && (
-        <aside className="sticky top-14 hidden h-[calc(100vh-3.5rem)] w-52 shrink-0 overflow-y-auto py-10 xl:block">
-          <div className="mb-3 text-xs font-semibold uppercase tracking-[0.5px] text-muted-foreground">
-            On this page
-          </div>
-          <ul className="flex flex-col gap-1.5 border-l border-border">
-            {toc.map((item) => (
-              <li key={item.id}>
-                <a
-                  href={`#${item.id}`}
-                  className={`-ml-px block border-l border-transparent text-sm text-muted-foreground hover:border-foreground hover:text-foreground ${
-                    item.level === 3 ? "pl-6" : "pl-3"
-                  }`}
-                >
-                  {item.text}
-                </a>
-              </li>
-            ))}
-          </ul>
-        </aside>
-      )}
+      {/* Right TOC — scroll-spy highlights the current section */}
+      <DocsToc toc={toc} />
     </div>
   );
 }
