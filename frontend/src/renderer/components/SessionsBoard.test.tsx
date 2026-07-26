@@ -504,7 +504,8 @@ describe("SessionsBoard", () => {
 		expect(terminatedCard).not.toBeNull();
 		expect(within(terminatedCard!).queryByRole("button", { name: "Open dead worker" })).not.toBeInTheDocument();
 		expect(within(terminatedCard!).getByText("Terminated")).toBeInTheDocument();
-		expect(screen.getByText("Claude")).toBeInTheDocument();
+		// Agent shown as its brand logo (title = provider), not a text label.
+		expect(within(terminatedCard!).getByTitle("claude-code")).toBeInTheDocument();
 		expect(screen.getByText("ao/dead-worker")).toBeInTheDocument();
 		expect(screen.getByText("github:INT-17")).toBeInTheDocument();
 		const prStatus = screen.getByLabelText("#42 merged");
