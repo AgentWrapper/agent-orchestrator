@@ -3,6 +3,7 @@ import aiderLogo from "../assets/agents/aider.png";
 import ampLogo from "../assets/agents/amp.svg";
 import clineLogo from "../assets/agents/cline.svg";
 import claudeLogo from "../assets/agents/claude.svg";
+import claudeCodeLogo from "../assets/agents/claude-code.svg";
 import codexLogo from "../assets/agents/codex.svg";
 import continueLogo from "../assets/agents/continue.png";
 import copilotLogo from "../assets/agents/copilot.png";
@@ -25,7 +26,7 @@ import vibeLogo from "../assets/agents/vibe.png";
 // fake).
 const LOGOS: Record<string, string> = {
 	codex: codexLogo,
-	"claude-code": claudeLogo,
+	"claude-code": claudeCodeLogo,
 	claude: claudeLogo,
 	cursor: cursorLogo,
 	opencode: opencodeLogo,
