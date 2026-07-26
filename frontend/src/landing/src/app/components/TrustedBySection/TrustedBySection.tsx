@@ -1,21 +1,74 @@
 "use client";
 
-const SUPPORTED_APP_ICONS = [
-  { name: "Claude", src: "/app-icons/claude.svg" },
-  { name: "Codex", src: "/app-icons/codex.svg" },
-  { name: "OpenCode", src: "/app-icons/opencode.svg" },
-  { name: "Cursor", src: "/app-icons/cursor.svg" },
-  { name: "Copilot", src: "/app-icons/copilot-white.svg" },
-  { name: "Gemini", src: "/app-icons/gemini.svg" },
-  { name: "Amp", src: "/app-icons/amp.svg" },
-  { name: "Mistral Vibe", src: "/app-icons/vibe.svg" },
-  { name: "Kimi Code", src: "/app-icons/kimi.svg" },
-  { name: "Pi Agent", src: "/app-icons/pi-white.svg" },
-  { name: "MastraCode", src: "/app-icons/mastracode-white.svg" },
-  { name: "JetBrains", src: "/app-icons/jetbrains.svg" },
+import { Pause, Play } from "lucide-react";
+import { useState } from "react";
+
+type Agent = { name: string; src: string };
+
+// All 23 supported agents, each with its brand logo. Most come from the app's
+// agent assets; goose/kilocode use whitened marks and agy (Antigravity) /
+// auggie (Augment) / autohand use their own brand favicons so every mark reads
+// on the dark background.
+const AGENTS: Agent[] = [
+  { name: "Claude Code", src: "/app-icons/agents/claude-code.svg" },
+  { name: "Codex", src: "/app-icons/agents/codex.svg" },
+  { name: "Cursor", src: "/app-icons/agents/cursor.svg" },
+  { name: "OpenCode", src: "/app-icons/agents/opencode.svg" },
+  { name: "Copilot", src: "/app-icons/agents/copilot.png" },
+  { name: "Aider", src: "/app-icons/agents/aider.png" },
+  { name: "Grok", src: "/app-icons/agents/grok.png" },
+  { name: "Droid", src: "/app-icons/agents/droid.png" },
+  { name: "Crush", src: "/app-icons/agents/crush.png" },
+  { name: "Qwen", src: "/app-icons/agents/qwen.png" },
+  { name: "Goose", src: "/app-icons/agents/goose.svg" },
+  { name: "Continue", src: "/app-icons/agents/continue.png" },
+  { name: "Devin", src: "/app-icons/agents/devin.png" },
+  { name: "Kimi", src: "/app-icons/agents/kimi.png" },
+  { name: "Kiro", src: "/app-icons/agents/kiro.png" },
+  { name: "Kilo Code", src: "/app-icons/agents/kilocode.svg" },
+  { name: "Mistral Vibe", src: "/app-icons/agents/vibe.png" },
+  { name: "Pi", src: "/app-icons/agents/pi.png" },
+  { name: "Amp", src: "/app-icons/agents/amp.svg" },
+  { name: "Cline", src: "/app-icons/agents/cline.svg" },
+  { name: "Antigravity", src: "/app-icons/agents/agy.png" },
+  { name: "Auggie", src: "/app-icons/agents/auggie.svg" },
+  { name: "Autohand", src: "/app-icons/agents/autohand.svg" },
 ];
 
+function AgentMark({ agent }: { agent: Agent }) {
+  return (
+    <img
+      src={agent.src}
+      alt={agent.name}
+      title={agent.name}
+      className="h-8 w-8 shrink-0 object-contain"
+      draggable="false"
+    />
+  );
+}
+
+// One full pass of the logos as an equal-width group with a trailing gap equal
+// to the inner gap, so two groups tile seamlessly and translateX(-50%) lands
+// exactly on the second group (no reset jump). The duplicate group is
+// aria-hidden so screen readers meet each agent once.
+function AgentGroup({ duplicate = false }: { duplicate?: boolean }) {
+  return (
+    <ul
+      aria-hidden={duplicate || undefined}
+      className="agent-marquee__group flex shrink-0 items-center gap-8 pr-8 sm:gap-10 sm:pr-10"
+    >
+      {AGENTS.map((agent) => (
+        <li key={agent.name}>
+          <AgentMark agent={agent} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function TrustedBySection() {
+  const [paused, setPaused] = useState(false);
+
   return (
     <section className="py-16 sm:py-24 bg-background overflow-hidden">
       <div className="max-w-7xl mx-auto text-center">
@@ -23,19 +76,64 @@ export function TrustedBySection() {
           Use the agents you already trust.
         </h2>
 
-        <div className="mx-auto flex w-full max-w-6xl flex-row flex-wrap items-center justify-center gap-x-6 gap-y-5 px-4 sm:gap-5 sm:px-8">
-          {SUPPORTED_APP_ICONS.map((app) => (
-            <img
-              key={app.name}
-              src={app.src}
-              alt={app.name}
-              className="h-8 w-8 shrink-0 object-contain"
-              loading="lazy"
-              draggable="false"
-            />
-          ))}
+        {/* Animated marquee: ~10 logos visible as they flow. Hidden for
+            reduced-motion users, who get the full static list below. */}
+        <div
+          className="agent-marquee group relative mx-auto w-full max-w-2xl overflow-hidden [mask-image:linear-gradient(to_right,transparent,black_8%,black_92%,transparent)]"
+          data-paused={paused}
+        >
+          <div className="agent-marquee__track flex w-max">
+            <AgentGroup />
+            <AgentGroup duplicate />
+          </div>
         </div>
+
+        {/* Operable pause/play control (WCAG 2.2.2) — keyboard and touch
+            reachable, not just hover. Hidden under reduced motion. */}
+        <div className="agent-marquee-control mt-5 flex justify-center">
+          <button
+            type="button"
+            onClick={() => setPaused((p) => !p)}
+            className="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground transition-colors hover:border-foreground/30 hover:text-foreground"
+          >
+            {paused ? (
+              <Play className="size-3" aria-hidden="true" />
+            ) : (
+              <Pause className="size-3" aria-hidden="true" />
+            )}
+            {paused ? "Play agent logos" : "Pause agent logos"}
+          </button>
+        </div>
+
+        {/* Reduced-motion fallback: every agent, wrapping, fully visible. */}
+        <ul className="agent-static mx-auto hidden w-full max-w-4xl flex-wrap items-center justify-center gap-x-6 gap-y-5 px-4 sm:gap-8">
+          {AGENTS.map((agent) => (
+            <li key={agent.name}>
+              <AgentMark agent={agent} />
+            </li>
+          ))}
+        </ul>
       </div>
+
+      <style>{`
+        @keyframes agent-marquee-scroll {
+          from { transform: translateX(0); }
+          to { transform: translateX(-50%); }
+        }
+        .agent-marquee__track {
+          animation: agent-marquee-scroll 45s linear infinite;
+          will-change: transform;
+        }
+        .agent-marquee:hover .agent-marquee__track,
+        .agent-marquee[data-paused="true"] .agent-marquee__track {
+          animation-play-state: paused;
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .agent-marquee,
+          .agent-marquee-control { display: none; }
+          .agent-static { display: flex; }
+        }
+      `}</style>
     </section>
   );
 }
