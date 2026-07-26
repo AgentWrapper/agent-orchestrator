@@ -230,6 +230,41 @@ afterEach(() => {
 });
 
 describe("Sidebar", () => {
+	it("keeps only the expanded Settings control keyboard-accessible while expanded", () => {
+		renderSidebar();
+
+		const settingsButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('button[aria-label="Settings"]'));
+		const expandedButton = settingsButtons.find((button) => button.textContent?.includes("Settings"));
+		const collapsedButton = settingsButtons.find((button) => !button.textContent?.includes("Settings"));
+
+		expect(settingsButtons).toHaveLength(2);
+		expect(expandedButton).toHaveAttribute("tabindex", "0");
+		expect(expandedButton?.parentElement).not.toHaveAttribute("aria-hidden");
+		expect(collapsedButton).toHaveAttribute("tabindex", "-1");
+		expect(collapsedButton?.closest('[aria-hidden="true"]')).toBeInTheDocument();
+	});
+
+	it("keeps only the collapsed Settings control keyboard-accessible while collapsed", async () => {
+		renderSidebar();
+
+		fireEvent.pointerDown(screen.getByTestId("resize-handle"), { clientX: 240 });
+		fireEvent.pointerMove(window, { clientX: 120 });
+
+		await waitFor(() => {
+			expect(document.querySelector('[data-slot="sidebar"][data-state="collapsed"]')).toBeInTheDocument();
+		});
+
+		const settingsButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('button[aria-label="Settings"]'));
+		const expandedButton = settingsButtons.find((button) => button.textContent?.includes("Settings"));
+		const collapsedButton = settingsButtons.find((button) => !button.textContent?.includes("Settings"));
+
+		expect(settingsButtons).toHaveLength(2);
+		expect(expandedButton).toHaveAttribute("tabindex", "-1");
+		expect(expandedButton?.closest('[aria-hidden="true"]')).toBeInTheDocument();
+		expect(collapsedButton).toHaveAttribute("tabindex", "0");
+		expect(collapsedButton?.closest('[aria-hidden="true"]')).toBeNull();
+	});
+
 	it("keeps sidebar scrolling functional while hiding the visible scrollbar", () => {
 		renderSidebar();
 
