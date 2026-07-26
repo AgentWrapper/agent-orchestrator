@@ -93,15 +93,26 @@ type lifecycleRecorder interface {
 	MarkTerminated(ctx context.Context, id domain.SessionID) error
 }
 
-// ShellTerminalCloser closes every standalone shell terminal scoped to a
-// session, so Kill/Cleanup never remove a session's worktree out from under a
-// shell whose cwd still points into it — on Windows an open handle on that
-// directory can even make the removal itself fail. Late-bound via
-// SetShellTerminalCloser: shellterm.Service is built after Session Manager
-// during boot (see daemon.startShellTerminals), mirroring why
+// ShellTerminalCloser gates a session's scoped shell terminals around every
+// path that releases its worktree (Kill, Cleanup, RetireForReplacement, the
+// reconcile/shutdown save-and-teardown path), so none of them removes a
+// worktree out from under a shell whose cwd still points into it — on Windows
+// an open handle on that directory can even make the removal itself fail.
+//
+// BeginSessionTeardown drains the session's open shells and, on success,
+// blocks any new OpenShellTerminal for that session until EndSessionTeardown
+// is called — the caller MUST call it (typically via defer) once its own
+// worktree work finishes, whatever the outcome. An error from
+// BeginSessionTeardown means some scoped runtime could not be confirmed dead;
+// the caller MUST NOT touch the worktree in that case, and MUST NOT call
+// EndSessionTeardown (the gate already released itself on that error path).
+//
+// Late-bound via SetShellTerminalCloser: shellterm.Service is built after
+// Session Manager during boot (see daemon.startShellTerminals), mirroring why
 // lifecycle.Manager takes its completion terminator the same way.
 type ShellTerminalCloser interface {
-	CloseShellTerminalsForSession(ctx context.Context, id domain.SessionID) error
+	BeginSessionTeardown(ctx context.Context, id domain.SessionID) error
+	EndSessionTeardown(id domain.SessionID)
 }
 
 type runtimeController interface {
@@ -204,32 +215,49 @@ type Manager struct {
 	shellTerminals   ShellTerminalCloser
 }
 
-// SetShellTerminalCloser wires worktree teardown (Kill, Cleanup) to close any
-// shell terminal scoped to the session first. Safe to leave unset: a nil
-// closer makes closeShellTerminalsForSession a no-op, which is what every test
-// in this package that does not care about shell terminals relies on.
+// SetShellTerminalCloser wires every worktree-releasing path to gate the
+// session's scoped shell terminals shut first. Safe to leave unset: a nil
+// closer makes beginShellTerminalTeardown a no-op (hadCloser=false), which is
+// what every test in this package that does not care about shell terminals
+// relies on.
 func (m *Manager) SetShellTerminalCloser(closer ShellTerminalCloser) {
 	m.shellTerminalsMu.Lock()
 	defer m.shellTerminalsMu.Unlock()
 	m.shellTerminals = closer
 }
 
-// closeShellTerminalsForSession best-effort closes standalone shell terminals
-// scoped to id before its worktree is torn down. Errors are logged, not
-// propagated: a shell that fails to close must not block the session kill or
-// cleanup it is scoped to — worst case a stale shell handle survives until the
-// user closes its tab or the app restarts, which is the pre-existing behavior
-// this only improves on, not a new failure mode.
-func (m *Manager) closeShellTerminalsForSession(ctx context.Context, id domain.SessionID) {
+// beginShellTerminalTeardown starts the shell-terminal gate for id ahead of
+// releasing its worktree. hadCloser=false means no closer is wired (nothing to
+// gate; proceed exactly as before this mechanism existed). err!=nil means some
+// scoped shell terminal could not be confirmed closed — the caller MUST NOT
+// touch the worktree and MUST NOT call endShellTerminalTeardown (the gate
+// already released itself). On success (hadCloser=true, err==nil) the caller
+// MUST call endShellTerminalTeardown, typically via defer, once its own
+// worktree work finishes.
+func (m *Manager) beginShellTerminalTeardown(ctx context.Context, id domain.SessionID) (hadCloser bool, err error) {
+	m.shellTerminalsMu.Lock()
+	closer := m.shellTerminals
+	m.shellTerminalsMu.Unlock()
+	if closer == nil {
+		return false, nil
+	}
+	if err := closer.BeginSessionTeardown(ctx, id); err != nil {
+		return true, err
+	}
+	return true, nil
+}
+
+// endShellTerminalTeardown releases the gate a successful
+// beginShellTerminalTeardown took. Call only when that call returned
+// hadCloser=true, err==nil.
+func (m *Manager) endShellTerminalTeardown(id domain.SessionID) {
 	m.shellTerminalsMu.Lock()
 	closer := m.shellTerminals
 	m.shellTerminalsMu.Unlock()
 	if closer == nil {
 		return
 	}
-	if err := closer.CloseShellTerminalsForSession(ctx, id); err != nil {
-		m.logger.Warn("close scoped shell terminals failed", "sessionID", id, "error", err)
-	}
+	closer.EndSessionTeardown(id)
 }
 
 // sendConfirmConfig bounds the best-effort activity-confirmation loop run after
@@ -780,12 +808,25 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 			return false, fmt.Errorf("kill %s: runtime: %w", id, err)
 		}
 	}
-	// Close any shell terminal scoped to this session BEFORE the worktree goes
-	// away: an open shell whose cwd is that directory can otherwise survive the
-	// removal (and on Windows can even block it — an open handle on a directory
-	// refuses deletion).
+	// Gate shut any shell terminal scoped to this session BEFORE the worktree
+	// goes away: an open shell whose cwd is that directory can otherwise
+	// survive the removal (and on Windows can even block it — an open handle
+	// on a directory refuses deletion), or a concurrent Open could land a new
+	// one in the same race window. A runtime that cannot be confirmed dead
+	// stops Kill here — same shape as a dirty-workspace refusal — rather than
+	// letting the worktree disappear out from under it.
 	if ws.Path != "" {
-		m.closeShellTerminalsForSession(ctx, id)
+		hadCloser, err := m.beginShellTerminalTeardown(ctx, id)
+		if err != nil {
+			if err := m.lcm.MarkTerminated(ctx, id); err != nil {
+				return false, fmt.Errorf("kill %s: %w", id, err)
+			}
+			m.cleanupSystemPromptDir(id)
+			return false, nil
+		}
+		if hadCloser {
+			defer m.endShellTerminalTeardown(id)
+		}
 	}
 	freed := false
 	if workspaceProject {
@@ -865,6 +906,20 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 		}
 		return nil
 	}
+	// Gate shut this session's scoped shell terminals before either branch
+	// below force-removes its worktree (or worktrees, for a workspace
+	// project). Unlike Kill there is no dirty-refusal path here — retirement
+	// always force-destroys — so a shell that cannot be confirmed closed fails
+	// the whole retirement instead of silently force-removing ground out from
+	// under it.
+	hadCloser, closeErr := m.beginShellTerminalTeardown(ctx, id)
+	if closeErr != nil {
+		return fmt.Errorf("retire replacement %s: %w", id, closeErr)
+	}
+	if hadCloser {
+		defer m.endShellTerminalTeardown(id)
+	}
+
 	if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
 		return fmt.Errorf("retire replacement %s: workspace rows: %w", id, rowErr)
 	} else if ok {
@@ -1201,6 +1256,18 @@ func (m *Manager) SaveAndTeardownAll(ctx context.Context) error {
 // ForceDestroy; if either capture or the DB write fails, ForceDestroy is
 // not called.
 func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionRecord, destroyRuntime bool) error {
+	// Gate shut this session's scoped shell terminals before either branch
+	// below force-removes its worktree. Both SaveAndTeardownAll and
+	// reconcileLive only reach here for a session with a real workspace, so
+	// there is always a worktree to protect.
+	hadCloser, closeErr := m.beginShellTerminalTeardown(ctx, rec.ID)
+	if closeErr != nil {
+		return fmt.Errorf("save %s: %w", rec.ID, closeErr)
+	}
+	if hadCloser {
+		defer m.endShellTerminalTeardown(rec.ID)
+	}
+
 	if rows, ok, err := m.workspaceProjectRows(ctx, rec); err != nil {
 		return fmt.Errorf("save %s: workspace rows: %w", rec.ID, err)
 	} else if ok {
@@ -2021,9 +2088,20 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 		if h := runtimeHandle(rec.Metadata); h.ID != "" {
 			_ = m.runtime.Destroy(ctx, h) // best effort; usually already gone
 		}
-		// Same ordering as Kill: close any shell terminal scoped to this session
-		// before the worktree it points at is reclaimed.
-		m.closeShellTerminalsForSession(ctx, rec.ID)
+		// Same ordering as Kill: gate shut any shell terminal scoped to this
+		// session before the worktree it points at is reclaimed. A runtime that
+		// cannot be confirmed dead skips this session for this run — Cleanup
+		// can retry it next time — rather than reclaiming ground out from
+		// under a shell still using it.
+		hadCloser, closeErr := m.beginShellTerminalTeardown(ctx, rec.ID)
+		if closeErr != nil {
+			m.logger.Warn("cleanup: shell terminal still open", "sessionID", rec.ID, "error", closeErr)
+			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: "shell terminal still open"})
+			continue
+		}
+		if hadCloser {
+			defer m.endShellTerminalTeardown(rec.ID)
+		}
 		if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
 			m.logger.Warn("cleanup: workspace rows failed", "sessionID", rec.ID, "error", rowErr)
 			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: "workspace teardown failed"})

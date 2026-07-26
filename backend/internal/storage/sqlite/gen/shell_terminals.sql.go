@@ -138,9 +138,6 @@ func (q *Queries) SelectShellTerminalsByAppRunID(ctx context.Context, appRunID s
 	return items, nil
 }
 
-// Hand-authored to match sqlc's own output style pending a real `sqlc
-// generate` run (the sqlc CLI was unavailable in this environment) — replace
-// this block if regeneration produces a different shape.
 const selectShellTerminalsBySessionID = `-- name: SelectShellTerminalsBySessionID :many
 SELECT handle_id, project_id, working_dir, title, app_run_id, created_at, session_id
 FROM shell_terminals

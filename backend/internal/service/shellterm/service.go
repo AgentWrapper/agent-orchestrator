@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -60,6 +62,37 @@ type Service struct {
 	// timestamps without a clock or entropy dependency.
 	now         func() time.Time
 	newHandleID func() (string, error)
+
+	// gatesMu guards gates and held below (the bookkeeping), not the
+	// individual gate mutexes themselves.
+	gatesMu sync.Mutex
+	// gates holds one entry per session ever seen by BeginSessionTeardown or
+	// OpenShellTerminal, for the lifetime of the daemon process. Left
+	// unbounded deliberately: a session count that would make this matter is
+	// not a shape AO's single-user daemon runs at.
+	gates map[domain.SessionID]*sessionGate
+	// held records which sessions currently have their gate mutex locked by an
+	// in-flight, successful BeginSessionTeardown. There is no safe way to ask a
+	// sync.Mutex "are you currently locked", so this is what makes
+	// EndSessionTeardown idempotent: a caller that calls it without a matching
+	// successful Begin (a caller bug, or a Begin that returned an error and
+	// already released its own lock) gets a no-op instead of a double-unlock
+	// panic.
+	held map[domain.SessionID]bool
+}
+
+// sessionGate is the admission/teardown barrier for one session's scoped
+// shell terminals. Its mutex is held for the ENTIRE span from
+// BeginSessionTeardown through the matching EndSessionTeardown — deliberately
+// crossing the call into Session Manager's own worktree teardown in between —
+// so an OpenShellTerminal racing against that window blocks until the window
+// ends, rather than slipping a new shell in against a worktree that is
+// mid-removal. By the time a blocked Open acquires the lock, the teardown it
+// waited on has fully finished (destroyed or preserved), so there is nothing
+// left to check here: resolveShellTerminalWorkingDir's own existence check is
+// what decides whether that Open lands in the worktree or falls back.
+type sessionGate struct {
+	mu sync.Mutex
 }
 
 // NewService builds the shell terminal service. dataDir is the fallback working
@@ -79,14 +112,41 @@ func NewService(runtime ShellRuntime, store Store, projects ProjectRootLocator, 
 		log:         log,
 		now:         time.Now,
 		newHandleID: newShellTerminalHandleID,
+		gates:       map[domain.SessionID]*sessionGate{},
+		held:        map[domain.SessionID]bool{},
 	}
+}
+
+// sessionGateFor returns the gate for id, creating it on first use.
+func (s *Service) sessionGateFor(id domain.SessionID) *sessionGate {
+	s.gatesMu.Lock()
+	defer s.gatesMu.Unlock()
+	g, ok := s.gates[id]
+	if !ok {
+		g = &sessionGate{}
+		s.gates[id] = g
+	}
+	return g
 }
 
 // OpenShellTerminal spawns a shell PTY and records it against the current app
 // run. The runtime is created BEFORE the row is written, and rolled back if the
 // write fails, so a persisted row always names a PTY that actually exists —
 // otherwise a restart would try to re-attach to a handle that was never spawned.
+//
+// A session-scoped open holds that session's gate for the whole call: without
+// this, a shell could be inserted between BeginSessionTeardown's snapshot read
+// and Session Manager's own worktree destroy a moment later, landing a fresh
+// shell in a directory that is about to disappear. Holding the gate here means
+// the open either runs entirely before a teardown starts, or blocks until the
+// teardown (and the gate) releases — at which point resolveShellTerminalWorkingDir's
+// existence check sees the worktree is gone and falls back to the project root.
 func (s *Service) OpenShellTerminal(ctx context.Context, in OpenShellTerminalInput) (ShellTerminal, error) {
+	if in.SessionID != "" {
+		gate := s.sessionGateFor(in.SessionID)
+		gate.mu.Lock()
+		defer gate.mu.Unlock()
+	}
 	workingDir, err := s.resolveShellTerminalWorkingDir(ctx, in.ProjectID, in.SessionID)
 	if err != nil {
 		return ShellTerminal{}, err
@@ -248,29 +308,81 @@ func (s *Service) ReapShellTerminalsFromPreviousAppRuns(ctx context.Context) (in
 	return cleared, nil
 }
 
-// CloseShellTerminalsForSession destroys every shell terminal scoped to a
-// session and forgets its rows. Session Manager calls this before tearing
-// down the session's worktree (Kill, Cleanup), so a shell whose cwd is that
-// worktree never survives its removal. Best-effort per terminal: one runtime
-// that refuses to destroy must not stop the rest from being closed, and the
-// row is deleted regardless so a stuck runtime cannot wedge the session
-// teardown that is waiting on this.
-func (s *Service) CloseShellTerminalsForSession(ctx context.Context, sessionID domain.SessionID) error {
+// BeginSessionTeardown drains every shell terminal scoped to a session and
+// locks out new ones, ahead of Session Manager tearing down the session's
+// worktree (Kill, Cleanup, RetireForReplacement, the reconcile/shutdown
+// save-and-teardown path). It is the write side of the same gate
+// OpenShellTerminal reads: acquiring sessionGate.mu here is what makes a
+// concurrent Open either finish first or block until EndSessionTeardown, so
+// nothing can insert a new shell terminal into a worktree that is about to
+// disappear.
+//
+// A runtime that cannot be confirmed dead is NOT deleted — its row survives so
+// the terminal is still visible/re-attachable — and its error is folded into
+// the returned aggregate. On error the gate is released and the caller MUST
+// NOT touch the worktree: some scoped shell may still be reading or writing
+// under it. On success the gate stays held; the caller MUST call
+// EndSessionTeardown (typically via defer) once its own worktree work
+// finishes, whatever the outcome, or the session's shell terminals stay
+// gated shut forever.
+func (s *Service) BeginSessionTeardown(ctx context.Context, sessionID domain.SessionID) error {
+	gate := s.sessionGateFor(sessionID)
+	gate.mu.Lock()
+
 	recs, err := s.store.SelectShellTerminalsBySessionID(ctx, sessionID)
 	if err != nil {
+		gate.mu.Unlock()
 		return fmt.Errorf("close shell terminals for session %s: %w", sessionID, err)
 	}
+
+	var stillAlive []error
 	for _, rec := range recs {
-		if err := s.runtime.Destroy(ctx, ports.RuntimeHandle{ID: rec.HandleID}); err != nil {
-			s.log.Warn("close shell terminal for session: runtime teardown failed",
-				"sessionID", sessionID, "handleId", rec.HandleID, "error", err)
+		if destroyErr := s.runtime.Destroy(ctx, ports.RuntimeHandle{ID: rec.HandleID}); destroyErr != nil {
+			// A destroy error alone isn't proof the shell survived — some
+			// runtimes error on an already-gone handle. Confirm via IsAlive
+			// before deciding whether the worktree can safely go away.
+			alive, aliveErr := s.runtime.IsAlive(ctx, ports.RuntimeHandle{ID: rec.HandleID})
+			if aliveErr != nil || alive {
+				s.log.Warn("close shell terminal for session: runtime still alive after destroy",
+					"sessionID", sessionID, "handleId", rec.HandleID, "error", destroyErr)
+				stillAlive = append(stillAlive, fmt.Errorf("%s: %w", rec.HandleID, destroyErr))
+				continue
+			}
 		}
-		if _, err := s.store.DeleteShellTerminalByHandleID(ctx, rec.HandleID); err != nil {
+		if _, delErr := s.store.DeleteShellTerminalByHandleID(ctx, rec.HandleID); delErr != nil {
 			s.log.Warn("close shell terminal for session: delete row failed",
-				"sessionID", sessionID, "handleId", rec.HandleID, "error", err)
+				"sessionID", sessionID, "handleId", rec.HandleID, "error", delErr)
 		}
 	}
+
+	if len(stillAlive) > 0 {
+		gate.mu.Unlock()
+		return fmt.Errorf("close shell terminals for session %s: %d still alive: %w",
+			sessionID, len(stillAlive), errors.Join(stillAlive...))
+	}
+	s.gatesMu.Lock()
+	s.held[sessionID] = true
+	s.gatesMu.Unlock()
 	return nil
+}
+
+// EndSessionTeardown releases the gate a successful BeginSessionTeardown
+// took, letting OpenShellTerminal proceed again for this session. Safe to
+// call even without a matching successful Begin (a caller bug, or a Begin
+// that already failed and released its own lock) — it is a no-op unless held
+// says this session's gate is genuinely still locked.
+func (s *Service) EndSessionTeardown(sessionID domain.SessionID) {
+	s.gatesMu.Lock()
+	gate, ok := s.gates[sessionID]
+	wasHeld := s.held[sessionID]
+	if wasHeld {
+		s.held[sessionID] = false
+	}
+	s.gatesMu.Unlock()
+	if !ok || !wasHeld {
+		return
+	}
+	gate.mu.Unlock()
 }
 
 // resolveShellTerminalWorkingDir picks where the shell starts. A session id

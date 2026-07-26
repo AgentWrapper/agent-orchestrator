@@ -47,7 +47,13 @@ func (f *fakeShellRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (p
 
 func (f *fakeShellRuntime) Destroy(_ context.Context, handle ports.RuntimeHandle) error {
 	f.destroyed = append(f.destroyed, handle.ID)
-	delete(f.aliveByHandle, handle.ID)
+	// Only a successful destroy is modeled as actually killing the runtime — a
+	// failed one leaves aliveByHandle as the caller set it up, so tests can
+	// distinguish "destroy errored but it was already dead" (aliveByHandle has
+	// no entry) from "destroy errored and it is still alive" (pre-seeded true).
+	if f.destroyErr == nil {
+		delete(f.aliveByHandle, handle.ID)
+	}
 	return f.destroyErr
 }
 
@@ -335,11 +341,11 @@ func TestOpenShellTerminalReturnsNotFoundForUnknownSession(t *testing.T) {
 	}
 }
 
-// CloseShellTerminalsForSession is what Session Manager calls before tearing
-// down a session's worktree (Kill, Cleanup), so a shell terminal scoped to
-// that session never survives pointed at a directory that is about to be
-// removed.
-func TestCloseShellTerminalsForSessionDestroysRuntimeAndDeletesRows(t *testing.T) {
+// BeginSessionTeardown is what Session Manager calls before releasing a
+// session's worktree (Kill, Cleanup, RetireForReplacement, save-and-teardown),
+// so a shell terminal scoped to that session never survives pointed at a
+// directory that is about to be removed.
+func TestBeginSessionTeardownDestroysRuntimeAndDeletesRows(t *testing.T) {
 	rt := newFakeShellRuntime()
 	st := &fakeShellTerminalStore{records: []ShellTerminalRecord{
 		{HandleID: "shellterm-1", SessionID: "portfolio-3", WorkingDir: "/ws/portfolio-3"},
@@ -351,9 +357,10 @@ func TestCloseShellTerminalsForSessionDestroysRuntimeAndDeletesRows(t *testing.T
 	rt.aliveByHandle["shellterm-other"] = true
 	svc := newTestService(rt, st, &fakeProjectRootLocator{})
 
-	if err := svc.CloseShellTerminalsForSession(context.Background(), "portfolio-3"); err != nil {
-		t.Fatalf("CloseShellTerminalsForSession: %v", err)
+	if err := svc.BeginSessionTeardown(context.Background(), "portfolio-3"); err != nil {
+		t.Fatalf("BeginSessionTeardown: %v", err)
 	}
+	svc.EndSessionTeardown("portfolio-3")
 
 	if len(rt.destroyed) != 2 {
 		t.Fatalf("destroyed = %v, want both of the session's shells torn down", rt.destroyed)
@@ -363,10 +370,10 @@ func TestCloseShellTerminalsForSessionDestroysRuntimeAndDeletesRows(t *testing.T
 	}
 }
 
-// A shell whose PTY already exited (destroy fails) must not stop its row, or
-// the other scoped shells, from being cleaned up — the caller (a session
-// teardown) cannot be blocked by one stuck runtime.
-func TestCloseShellTerminalsForSessionContinuesPastDestroyFailure(t *testing.T) {
+// A destroy error alone is not proof the shell survived — some runtimes error
+// on an already-gone handle. When IsAlive confirms it is in fact dead, the row
+// must still be cleaned up rather than left stranded.
+func TestBeginSessionTeardownContinuesPastDestroyFailureWhenConfirmedDead(t *testing.T) {
 	rt := newFakeShellRuntime()
 	rt.destroyErr = errors.New("tmux: no such session")
 	st := &fakeShellTerminalStore{records: []ShellTerminalRecord{
@@ -374,30 +381,103 @@ func TestCloseShellTerminalsForSessionContinuesPastDestroyFailure(t *testing.T) 
 		{HandleID: "shellterm-2", SessionID: "portfolio-3"},
 	}}
 	svc := newTestService(rt, st, &fakeProjectRootLocator{})
+	// rt.aliveByHandle has no entry for either handle, so IsAlive answers false:
+	// confirmed dead despite the destroy error.
 
-	if err := svc.CloseShellTerminalsForSession(context.Background(), "portfolio-3"); err != nil {
-		t.Fatalf("CloseShellTerminalsForSession: %v", err)
+	if err := svc.BeginSessionTeardown(context.Background(), "portfolio-3"); err != nil {
+		t.Fatalf("BeginSessionTeardown: %v", err)
 	}
+	svc.EndSessionTeardown("portfolio-3")
 	if len(st.records) != 0 {
-		t.Errorf("records = %+v, want both rows deleted despite the destroy failure", st.records)
+		t.Errorf("records = %+v, want both rows deleted once IsAlive confirmed them dead", st.records)
 	}
 }
 
-func TestCloseShellTerminalsForSessionNoopWhenSessionHasNoShells(t *testing.T) {
+// TestBeginSessionTeardownReturnsErrorAndKeepsRowWhenRuntimeStaysAlive is the
+// regression for the bug where a Destroy error was logged and the row deleted
+// anyway: a live PTY that survives Destroy must keep its row (still
+// tracked/re-attachable) and must fail BeginSessionTeardown, so the caller
+// knows not to remove the worktree out from under it.
+func TestBeginSessionTeardownReturnsErrorAndKeepsRowWhenRuntimeStaysAlive(t *testing.T) {
+	rt := newFakeShellRuntime()
+	rt.destroyErr = errors.New("tmux: kill-session refused")
+	st := &fakeShellTerminalStore{records: []ShellTerminalRecord{
+		{HandleID: "shellterm-1", SessionID: "portfolio-3"},
+	}}
+	rt.aliveByHandle["shellterm-1"] = true // still alive despite the destroy error
+	svc := newTestService(rt, st, &fakeProjectRootLocator{})
+
+	err := svc.BeginSessionTeardown(context.Background(), "portfolio-3")
+	if err == nil {
+		t.Fatal("BeginSessionTeardown: want an error, the runtime is still alive")
+	}
+	svc.EndSessionTeardown("portfolio-3") // a failed Begin already released the gate; this must be a no-op
+
+	if len(st.records) != 1 || st.records[0].HandleID != "shellterm-1" {
+		t.Fatalf("records = %+v, want the still-alive shell's row kept", st.records)
+	}
+}
+
+func TestBeginSessionTeardownNoopWhenSessionHasNoShells(t *testing.T) {
 	rt := newFakeShellRuntime()
 	st := &fakeShellTerminalStore{records: []ShellTerminalRecord{
 		{HandleID: "shellterm-other", SessionID: "other-session"},
 	}}
 	svc := newTestService(rt, st, &fakeProjectRootLocator{})
 
-	if err := svc.CloseShellTerminalsForSession(context.Background(), "portfolio-3"); err != nil {
-		t.Fatalf("CloseShellTerminalsForSession: %v", err)
+	if err := svc.BeginSessionTeardown(context.Background(), "portfolio-3"); err != nil {
+		t.Fatalf("BeginSessionTeardown: %v", err)
 	}
+	svc.EndSessionTeardown("portfolio-3")
 	if len(rt.destroyed) != 0 {
 		t.Errorf("destroyed = %v, want nothing torn down", rt.destroyed)
 	}
 	if len(st.records) != 1 {
 		t.Errorf("records = %+v, want the unrelated shell left alone", st.records)
+	}
+}
+
+// TestBeginSessionTeardownBlocksConcurrentOpenUntilEnd is the deterministic
+// interleaving proof for the race the bug shipped with: a snapshot SELECT
+// could miss a shell OpenShellTerminal inserted a moment later, right before
+// the worktree was destroyed. BeginSessionTeardown now holds the session's
+// gate across the whole teardown window, so a concurrent Open cannot
+// interleave — it blocks until EndSessionTeardown releases the gate.
+func TestBeginSessionTeardownBlocksConcurrentOpenUntilEnd(t *testing.T) {
+	rt := newFakeShellRuntime()
+	st := &fakeShellTerminalStore{}
+	projects := &fakeProjectRootLocator{roots: map[domain.ProjectID]string{"portfolio": "/repos/portfolio"}}
+	sessions := &fakeSessionWorkspaceLocator{sessions: map[domain.SessionID]fakeSessionWorkspace{
+		"portfolio-3": {workspacePath: "", projectID: "portfolio"},
+	}}
+	svc := newTestServiceWithSessions(rt, st, projects, sessions)
+
+	if err := svc.BeginSessionTeardown(context.Background(), "portfolio-3"); err != nil {
+		t.Fatalf("BeginSessionTeardown: %v", err)
+	}
+
+	openDone := make(chan error, 1)
+	go func() {
+		_, err := svc.OpenShellTerminal(context.Background(), OpenShellTerminalInput{ProjectID: "portfolio", SessionID: "portfolio-3"})
+		openDone <- err
+	}()
+
+	select {
+	case <-openDone:
+		t.Fatal("OpenShellTerminal returned while the teardown gate was still held")
+	case <-time.After(50 * time.Millisecond):
+		// Still blocked, as required.
+	}
+
+	svc.EndSessionTeardown("portfolio-3")
+
+	select {
+	case err := <-openDone:
+		if err != nil {
+			t.Fatalf("OpenShellTerminal after EndSessionTeardown: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("OpenShellTerminal did not unblock after EndSessionTeardown released the gate")
 	}
 }
 
