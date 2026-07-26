@@ -48,8 +48,8 @@ export default async function DocsPage({ params }: { params: Promise<{ slug?: st
       </aside>
 
       {/* Content */}
-      <article className="prose prose-invert min-w-0 max-w-none flex-1 py-10 prose-headings:font-medium prose-headings:tracking-[-0.5px] prose-h1:text-3xl prose-h1:mb-2 prose-h2:mt-10 prose-h2:text-xl prose-h2:border-b prose-h2:border-border prose-h2:pb-2 prose-h3:mt-6 prose-h3:text-lg prose-p:text-muted-foreground prose-p:leading-relaxed prose-li:text-muted-foreground prose-strong:text-foreground prose-a:text-foreground prose-a:underline prose-a:underline-offset-4 hover:prose-a:text-muted-foreground prose-code:text-foreground prose-code:before:content-none prose-code:after:content-none prose-pre:border prose-pre:border-border prose-hr:border-border">
-        <h1>{doc.title}</h1>
+      <article className="prose prose-invert min-w-0 max-w-none flex-1 pt-8 pb-16 prose-headings:font-medium prose-headings:tracking-[-0.5px] prose-h1:mt-0 prose-h1:text-3xl prose-h1:mb-2 prose-h2:mt-10 prose-h2:text-xl prose-h2:border-b prose-h2:border-border prose-h2:pb-2 prose-h3:mt-6 prose-h3:text-lg prose-p:text-muted-foreground prose-p:leading-relaxed prose-li:text-muted-foreground prose-strong:text-foreground prose-a:text-foreground prose-a:underline prose-a:underline-offset-4 hover:prose-a:text-muted-foreground prose-code:text-foreground prose-code:before:content-none prose-code:after:content-none prose-pre:border prose-pre:border-border prose-hr:border-border">
+        <h1 className="!mt-0">{doc.title}</h1>
         {doc.description && <p className="!mt-0 text-lg text-muted-foreground">{doc.description}</p>}
         <MDXRemote
           source={doc.content}
