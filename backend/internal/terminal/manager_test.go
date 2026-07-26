@@ -455,7 +455,7 @@ func TestManagerCloseKillsLiveAttachments(t *testing.T) {
 }
 
 // A pane's very first attach holds typed input until its grace window elapses
-// (see Manager.inputHoldDeadline): tmux forwards bytes to the pane's foreground
+// (see Manager.inputGateFor): tmux forwards bytes to the pane's foreground
 // process the instant attach succeeds, whether or not a full-screen TUI agent
 // has actually entered raw mode yet, so an early keystroke can otherwise land
 // as raw text in the pane's scrollback instead of the agent's input box.
@@ -514,7 +514,126 @@ func TestServeReattachSkipsInputGraceWindow(t *testing.T) {
 	recv(t, connB, chTerminal, msgOpened, time.Second)
 
 	connB.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgData, Data: base64.StdEncoding.EncodeToString([]byte("status\n"))}
-	eventually(t, 200*time.Millisecond, func() bool { return string(p2.writtenBytes()) == "status\n" })
+	// Tight budget, well under the 150ms window: proves no new delay was added,
+	// not just that one eventually arrived.
+	eventually(t, 50*time.Millisecond, func() bool { return string(p2.writtenBytes()) == "status\n" })
+}
+
+// The grace window must be measured from the pane's first SUCCESSFUL attach,
+// not from the open request that preceded it. A deadline computed at open time
+// would already have expired by the time a slow Attach returns, letting the
+// original early-input race back in.
+func TestServeInputGraceWindowStartsOnFirstSuccessfulAttach(t *testing.T) {
+	pty := newFakePTY()
+	releaseAttach := make(chan struct{})
+	attachStarted := make(chan struct{})
+	src := &fakeSource{alive: true, attachFn: func(context.Context, uint16, uint16) (ports.Stream, error) {
+		close(attachStarted)
+		<-releaseAttach
+		return pty, nil
+	}}
+	window := 150 * time.Millisecond
+	mgr := NewManager(src, nil, testLogger(), WithHeartbeat(0), WithInputGraceWindow(window))
+	defer mgr.Close()
+
+	conn := newFakeConn()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mgr.Serve(ctx, conn)
+
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen}
+	select {
+	case <-attachStarted:
+	case <-time.After(time.Second):
+		t.Fatal("attach was not reached")
+	}
+
+	// Hold Attach in flight for longer than the grace window itself. If the
+	// window were (mis)measured from the open request instead of from the
+	// successful attach, it would already be expired by the time the PTY
+	// publishes, and the input below would reach it immediately.
+	time.Sleep(window + 100*time.Millisecond)
+	close(releaseAttach)
+
+	recv(t, conn, chTerminal, msgOpened, time.Second)
+	attachReturnedAt := time.Now()
+
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgData, Data: base64.StdEncoding.EncodeToString([]byte("x"))}
+
+	time.Sleep(window / 2)
+	if got := string(pty.writtenBytes()); got != "" {
+		t.Fatalf("input reached the PTY before the grace window (measured from attach success) elapsed: %q", got)
+	}
+
+	eventually(t, time.Second, func() bool { return string(pty.writtenBytes()) == "x" })
+	if elapsed := time.Since(attachReturnedAt); elapsed < window {
+		t.Fatalf("input released after only %s since attach success, want at least the %s grace window", elapsed, window)
+	}
+}
+
+// A failed or dead first open must not start (or otherwise consume) the
+// pane's input gate -- only the pane's first SUCCESSFUL attach may arm it.
+func TestServeInputGraceWindowIgnoresFailedFirstAttach(t *testing.T) {
+	pty := newFakePTY()
+	sp := &fakeSpawner{ptys: []*fakePTY{pty}}
+	src := &fakeSource{alive: false, spawner: sp}
+	window := 150 * time.Millisecond
+	mgr := NewManager(src, nil, testLogger(), WithHeartbeat(0), WithInputGraceWindow(window))
+	defer mgr.Close()
+
+	conn := newFakeConn()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mgr.Serve(ctx, conn)
+
+	// First open: the runtime is dead, so it exits without ever attaching.
+	// This must not start the pane's input gate.
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen}
+	recv(t, conn, chTerminal, msgExited, time.Second)
+
+	// Time passes before the retry -- long enough that a wrongly-started gate
+	// would already be open by now.
+	time.Sleep(window + 100*time.Millisecond)
+
+	src.setAlive(true)
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen}
+	recv(t, conn, chTerminal, msgOpened, time.Second)
+
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgData, Data: base64.StdEncoding.EncodeToString([]byte("y"))}
+	time.Sleep(window / 2)
+	if got := string(pty.writtenBytes()); got != "" {
+		t.Fatalf("input reached the PTY before the grace window on the first SUCCESSFUL attach elapsed: %q", got)
+	}
+	eventually(t, time.Second, func() bool { return string(pty.writtenBytes()) == "y" })
+}
+
+// Output must stream to the client immediately, even while input is still
+// held: setPTY publishes the Stream and returns before the hold is applied, so
+// run's copyOut starts reading right away instead of waiting behind it.
+func TestServeOutputDuringHoldReachesClientBeforeInputFlushes(t *testing.T) {
+	pty := newFakePTY()
+	sp := &fakeSpawner{ptys: []*fakePTY{pty}}
+	src := &fakeSource{alive: true, spawner: sp}
+	window := 300 * time.Millisecond
+	mgr := NewManager(src, nil, testLogger(), WithHeartbeat(0), WithInputGraceWindow(window))
+	defer mgr.Close()
+
+	conn := newFakeConn()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mgr.Serve(ctx, conn)
+
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen}
+	recv(t, conn, chTerminal, msgOpened, time.Second)
+
+	// Push boot output immediately, well within the still-open hold window --
+	// it must reach the client right away, not wait behind the input hold.
+	pty.push([]byte("booting..."))
+	data := recv(t, conn, chTerminal, msgData, window/2)
+	got, _ := base64.StdEncoding.DecodeString(data.Data)
+	if string(got) != "booting..." {
+		t.Fatalf("streamed data = %q", got)
+	}
 }
 
 func TestEnqueueOverflowCancelsConn(t *testing.T) {

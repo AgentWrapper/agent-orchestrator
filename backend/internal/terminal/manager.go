@@ -34,20 +34,15 @@ const (
 	defaultWriteBuffer = 1024
 
 	// defaultInputGraceWindow is how long a freshly launched pane's typed input
-	// is held back after attach succeeds. tmux forwards bytes to the pane's
-	// foreground process the instant attach succeeds, whether or not that
-	// process has actually entered raw mode yet — a full-screen TUI agent
+	// is held back after its first successful attach. tmux forwards bytes to
+	// the pane's foreground process the instant attach succeeds, whether or not
+	// that process has actually entered raw mode yet — a full-screen TUI agent
 	// (Claude Code, Codex, ...) can take a moment after launch to do so, during
 	// which fast typing lands as raw, echoed text in the scrollback instead of
-	// the agent's input box. The window only ever applies once, to the very
-	// first attach of a given pane id (see inputHoldDeadline); reattaching to an
+	// the agent's input box. The window only ever starts once, on the pane's
+	// first successful publish (see inputGate); reattaching to an
 	// already-running pane never adds a delay.
 	defaultInputGraceWindow = 500 * time.Millisecond
-
-	// freshEntryTTL bounds how long a recorded first-seen deadline is kept
-	// around purely so the bookkeeping map doesn't grow unboundedly over a
-	// long-lived daemon; it is unrelated to the grace window itself.
-	freshEntryTTL = time.Minute
 )
 
 // Manager serves WebSocket clients, opening one attach Stream per opened pane
@@ -75,12 +70,50 @@ type Manager struct {
 	shared   map[string]*sharedTerm
 
 	// inputGraceWindow is how long a fresh pane's input is held (see
-	// defaultInputGraceWindow); zero disables the hold entirely. freshMu guards
-	// freshUntil, the per-id record of when that hold expires — populated the
-	// first time this Manager ever sees an id, reused on every later open.
+	// defaultInputGraceWindow); zero disables the hold entirely. gatesMu guards
+	// gates, the per-id shared one-shot gate (see inputGate) — populated the
+	// first time this Manager ever sees an id and kept for the Manager's whole
+	// lifetime (deliberately not time-pruned: an id's gate records that the
+	// pane already had its one-time grace period, and a pane can legitimately
+	// stay open far longer than the grace window itself).
 	inputGraceWindow time.Duration
-	freshMu          sync.Mutex
-	freshUntil       map[string]time.Time
+	gatesMu          sync.Mutex
+	gates            map[string]*inputGate
+}
+
+// inputGate is a shared, one-shot "pane is old enough to trust with input"
+// signal: every attachment for a given pane id (across reattaches and
+// multiple clients) waits on the SAME gate, but only the first successful
+// attach actually starts its timer (see start). That means a slow Attach or a
+// failed-then-retried attach never lets the hold expire before the pane is
+// even up, and a reattach or a second client never restarts or re-adds delay.
+type inputGate struct {
+	once sync.Once
+	ch   chan struct{}
+}
+
+func newInputGate() *inputGate {
+	return &inputGate{ch: make(chan struct{})}
+}
+
+// start arms the gate's timer; only the very first call has any effect. d<=0
+// opens the gate immediately (grace window disabled).
+func (g *inputGate) start(d time.Duration) {
+	g.once.Do(func() {
+		if d <= 0 {
+			close(g.ch)
+			return
+		}
+		time.AfterFunc(d, func() { close(g.ch) })
+	})
+}
+
+// wait blocks until the gate opens or ctx ends, whichever comes first.
+func (g *inputGate) wait(ctx context.Context) {
+	select {
+	case <-g.ch:
+	case <-ctx.Done():
+	}
 }
 
 // sharedTerm tracks every client currently viewing one terminal id (one PTY) so
@@ -179,33 +212,23 @@ func (m *Manager) forget(a *attachment) {
 	m.mu.Unlock()
 }
 
-// inputHoldDeadline returns the point in time until which id's input should be
-// held back on its next first-ever attach. The first caller for a given id
-// mints a fresh deadline (now + inputGraceWindow); every later call for the
-// same id — a reattach, a second client, a reopened tab — gets back that same
-// deadline, which by then has usually already passed, so only a pane's true
-// first attach ever actually waits. Disabled entirely when inputGraceWindow<=0.
-func (m *Manager) inputHoldDeadline(id string) time.Time {
-	if m.inputGraceWindow <= 0 {
-		return time.Time{}
+// inputGateFor returns the shared input gate for pane id, creating it on the
+// first call. Every attachment for this id (every reattach, every client)
+// gets the SAME gate back and shares its one-shot timer (see inputGate) —
+// callers still must call gate.start on their own successful attach, since
+// only the pane's first successful publish may actually arm it.
+func (m *Manager) inputGateFor(id string) *inputGate {
+	m.gatesMu.Lock()
+	defer m.gatesMu.Unlock()
+	if m.gates == nil {
+		m.gates = map[string]*inputGate{}
 	}
-	now := time.Now()
-	m.freshMu.Lock()
-	defer m.freshMu.Unlock()
-	if m.freshUntil == nil {
-		m.freshUntil = map[string]time.Time{}
+	g, ok := m.gates[id]
+	if !ok {
+		g = newInputGate()
+		m.gates[id] = g
 	}
-	for k, v := range m.freshUntil {
-		if now.After(v.Add(freshEntryTTL)) {
-			delete(m.freshUntil, k)
-		}
-	}
-	if deadline, ok := m.freshUntil[id]; ok {
-		return deadline
-	}
-	deadline := now.Add(m.inputGraceWindow)
-	m.freshUntil[id] = deadline
-	return deadline
+	return g
 }
 
 // joinTerminal registers a client (its connection + attach Stream + requested
@@ -437,7 +460,8 @@ func (c *connState) openTerminal(id string, rows, cols uint16, role string) {
 			c.enqueue(serverMsg{Ch: chTerminal, ID: id, Type: msgExited})
 		},
 		c.mgr.log)
-	a.inputHoldUntil = c.mgr.inputHoldDeadline(id)
+	a.inputGate = c.mgr.inputGateFor(id)
+	a.inputGraceWindow = c.mgr.inputGraceWindow
 	if err := c.mgr.track(a); err != nil {
 		c.enqueue(serverMsg{Ch: chTerminal, ID: id, Type: msgError, Error: err.Error()})
 		return

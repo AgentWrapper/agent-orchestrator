@@ -66,11 +66,13 @@ type attachment struct {
 	inputReady   bool
 	pendingInput [][]byte
 
-	// inputHoldUntil, when set by the Manager before run() starts, delays
-	// flipping inputReady on this attachment's first successful PTY (see
-	// setPTY) — giving a just-launched agent's TUI time to reach raw mode
-	// before trusting keystrokes to it. Zero value disables the hold.
-	inputHoldUntil time.Time
+	// inputGate, when set by the Manager before run() starts, delays flipping
+	// inputReady until the pane's shared gate opens (see setPTY) — giving a
+	// just-launched agent's TUI time to reach raw mode before trusting
+	// keystrokes to it. nil disables the hold entirely (e.g. attachments built
+	// directly in tests, bypassing Manager).
+	inputGate        *inputGate
+	inputGraceWindow time.Duration
 }
 
 func newAttachment(id string, handle ports.RuntimeHandle, src Source, onOpen func(), onData func([]byte), onExit func(), log *slog.Logger) *attachment {
@@ -277,6 +279,15 @@ func (a *attachment) size() (rows, cols uint16) {
 // requested size onto it (see resize) — the attach already started at the size
 // read in run, but a resize frame can land between that read and registration
 // here; the replay (Resize) converges the late case.
+//
+// It returns as soon as the Stream is published so run's copyOut starts
+// reading output immediately — the pane's boot output (attach handshake,
+// repaint) must never wait on the input hold below. Releasing buffered input
+// happens on a separate goroutine gated on inputGate, which is shared across
+// every attach of this pane (see Manager.inputGateFor): the gate's timer only
+// ever starts on the pane's first successful publish, not on this attempt's
+// open request, so a slow Attach or a failed-then-retried attach never lets
+// the hold expire early or double-count.
 func (a *attachment) setPTY(ctx context.Context, p ports.Stream) bool {
 	a.mu.Lock()
 	if a.closed || a.exited {
@@ -291,7 +302,8 @@ func (a *attachment) setPTY(ctx context.Context, p ports.Stream) bool {
 		a.opened = true
 	}
 	onOpen := a.onOpen
-	holdUntil := a.inputHoldUntil
+	gate := a.inputGate
+	window := a.inputGraceWindow
 	a.mu.Unlock()
 	if rows > 0 && cols > 0 {
 		_ = p.Resize(rows, cols)
@@ -300,34 +312,54 @@ func (a *attachment) setPTY(ctx context.Context, p ports.Stream) bool {
 		onOpen()
 	}
 
-	// Only the very first attach of this attachment waits: output already
-	// streams (copyOut starts right after this returns), only accepting typed
-	// input is delayed, and pendingInput below already buffers anything that
-	// arrives during the wait, so nothing typed in this window is lost.
-	if shouldOpen {
-		if wait := time.Until(holdUntil); wait > 0 {
-			select {
-			case <-ctx.Done():
-			case <-time.After(wait):
-			}
-		}
+	if gate == nil {
+		a.releaseInput(p)
+		return true
 	}
+	gate.start(window)
+	go a.releaseInputWhenGateOpens(ctx, p, gate)
+	return true
+}
 
+// releaseInputWhenGateOpens waits for the pane's shared gate to open (or ctx
+// to end, e.g. daemon shutdown) and then releases input for Stream p — unless
+// p has since been superseded by a later reattach (a.pty != p), in which case
+// this stale waiter abandons silently instead of flushing into a Stream this
+// attachment no longer owns.
+func (a *attachment) releaseInputWhenGateOpens(ctx context.Context, p ports.Stream, gate *inputGate) {
+	gate.wait(ctx)
+	a.mu.Lock()
+	current := a.pty == p && !a.closed && !a.exited
+	a.mu.Unlock()
+	if !current {
+		return
+	}
+	a.releaseInput(p)
+}
+
+// releaseInput drains any input buffered while p was not yet accepting it and
+// marks the attachment ready for direct writes. Called either immediately
+// (grace window disabled) or once the pane's input gate opens.
+func (a *attachment) releaseInput(p ports.Stream) {
 	for {
 		a.mu.Lock()
+		if a.closed || a.exited || a.pty != p {
+			a.mu.Unlock()
+			return
+		}
 		pending := append([][]byte(nil), a.pendingInput...)
 		a.pendingInput = nil
 		if len(pending) == 0 {
 			a.inputReady = true
 			a.mu.Unlock()
-			return true
+			return
 		}
 		a.mu.Unlock()
 
 		for _, chunk := range pending {
 			if _, err := p.Write(chunk); err != nil {
 				a.fail("flush pending input: " + err.Error())
-				return false
+				return
 			}
 		}
 	}
