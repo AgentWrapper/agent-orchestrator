@@ -16,6 +16,7 @@ const ctx = vi.hoisted(() => {
 			name: "app",
 			path: "/repos/app",
 			type: "main",
+			orchestratorAgent: "codex",
 			sessions: [
 				{
 					id: "w-merge",
@@ -72,6 +73,7 @@ const ctx = vi.hoisted(() => {
 			name: "lib",
 			path: "/repos/lib",
 			type: "main",
+			orchestratorAgent: "codex",
 			sessions: [],
 		},
 	];
@@ -147,6 +149,8 @@ const paletteInput = () => screen.queryByPlaceholderText(/search projects/i);
 beforeEach(() => {
 	ctx.params = {};
 	ctx.enabled = true;
+	ctx.workspaces[0].orchestratorAgent = "codex";
+	ctx.workspaces[1].orchestratorAgent = "codex";
 	navigateMock.mockReset();
 	spawnMock.mockReset();
 	choosePathMock.mockReset();
@@ -344,6 +348,22 @@ describe("CommandPalette actions", () => {
 		fireEvent.click(screen.getByText("Open orchestrator"));
 		expect(spawnMock).not.toHaveBeenCalled();
 		expect(navigateMock).not.toHaveBeenCalled();
+	});
+
+	it("opens project settings instead of spawning when no orchestrator agent is configured", async () => {
+		ctx.params = { projectId: "proj-2" };
+		ctx.workspaces[1].orchestratorAgent = undefined;
+		renderPalette();
+		act(() => useUiStore.getState().setCommandPaletteOpen(true));
+		await screen.findByPlaceholderText(/search projects/i);
+		fireEvent.click(screen.getByText("Open orchestrator"));
+
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/settings",
+			params: { projectId: "proj-2" },
+		});
+		expect(spawnMock).not.toHaveBeenCalled();
+		await waitFor(() => expect(paletteInput()).toBeNull());
 	});
 
 	it("navigates and closes when selecting a project", async () => {

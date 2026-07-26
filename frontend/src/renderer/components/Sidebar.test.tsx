@@ -8,18 +8,20 @@ import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
 import { useUiStore } from "../stores/ui-store";
 
-const { getMock, navigateMock, mockParams, renameSessionMock, updateStatusMock, commandPaletteEnabled } = vi.hoisted(
+const { getMock, navigateMock, mockParams, renameSessionMock, spawnMock, updateStatusMock, commandPaletteEnabled } = vi.hoisted(
 	() => ({
 		getMock: vi.fn(),
 		navigateMock: vi.fn(),
 		mockParams: { projectId: undefined as string | undefined },
 		renameSessionMock: vi.fn().mockResolvedValue(undefined),
+		spawnMock: vi.fn(),
 		updateStatusMock: vi.fn(),
 		commandPaletteEnabled: { current: true },
 	}),
 );
 
 vi.mock("../lib/rename-session", () => ({ renameSession: renameSessionMock }));
+vi.mock("../lib/spawn-orchestrator", () => ({ spawnOrchestrator: spawnMock }));
 
 vi.mock("../hooks/useCommandPaletteEnabled", () => ({
 	useCommandPaletteEnabled: () => commandPaletteEnabled.current,
@@ -61,6 +63,7 @@ const workspace: WorkspaceSummary = {
 	id: "proj-1",
 	name: "Project One",
 	path: "/repo/project-one",
+	orchestratorAgent: "claude-code",
 	sessions: [],
 };
 
@@ -217,6 +220,7 @@ beforeEach(() => {
 	});
 	navigateMock.mockReset();
 	renameSessionMock.mockReset().mockResolvedValue(undefined);
+	spawnMock.mockReset();
 	updateStatusMock.mockReset().mockResolvedValue({ state: "idle" });
 	mockParams.projectId = undefined;
 });
@@ -233,6 +237,19 @@ describe("Sidebar", () => {
 		expect(content).toHaveClass("overflow-y-auto");
 		expect(content).toHaveClass("scrollbar-none");
 		expect(content).not.toContainElement(screen.getByText("Projects"));
+	});
+
+	it("opens project settings instead of spawning when no orchestrator agent is configured", async () => {
+		const user = userEvent.setup();
+		renderSidebar({ workspaces: [{ ...workspace, orchestratorAgent: undefined }] });
+
+		await user.click(screen.getByRole("button", { name: "Spawn Project One orchestrator" }));
+
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/settings",
+			params: { projectId: "proj-1" },
+		});
+		expect(spawnMock).not.toHaveBeenCalled();
 	});
 
 	it("shows a ConfirmDialog and calls onRemoveProject when confirmed", async () => {

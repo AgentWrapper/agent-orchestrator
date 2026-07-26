@@ -6,11 +6,12 @@ import { useUiStore } from "../stores/ui-store";
 import type { SessionActivityState, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { ShellTopbar, TopbarKillButton } from "./ShellTopbar";
 
-const { navigateMock, onKilledMock, paramsMock, postMock, useWorkspaceQueryMock } = vi.hoisted(() => ({
+const { navigateMock, onKilledMock, paramsMock, postMock, spawnMock, useWorkspaceQueryMock } = vi.hoisted(() => ({
 	navigateMock: vi.fn(),
 	onKilledMock: vi.fn(),
 	paramsMock: { projectId: undefined as string | undefined, sessionId: undefined as string | undefined },
 	postMock: vi.fn(),
+	spawnMock: vi.fn(),
 	useWorkspaceQueryMock: vi.fn(),
 }));
 
@@ -41,7 +42,7 @@ vi.mock("../lib/api-client", () => ({
 	},
 }));
 
-vi.mock("../lib/spawn-orchestrator", () => ({ spawnOrchestrator: vi.fn() }));
+vi.mock("../lib/spawn-orchestrator", () => ({ spawnOrchestrator: spawnMock }));
 vi.mock("../lib/telemetry", () => ({
 	addRendererExceptionStep: vi.fn(),
 	captureRendererEvent: vi.fn(),
@@ -101,6 +102,7 @@ function renderTopbarSessions(sessions: WorkspaceSession[], sessionId: string) {
 			id: sessions[0].workspaceId,
 			name: sessions[0].workspaceName,
 			path: "/repo/my-app",
+			orchestratorAgent: "claude-code",
 			sessions,
 		},
 	];
@@ -202,6 +204,36 @@ describe("ShellTopbar orchestrator actions", () => {
 		expect(screen.getByRole("button", { name: "Open Kanban" })).toHaveClass("bg-accent-strong");
 		expect(screen.getByRole("button", { name: "New task" })).toHaveClass("bg-raised");
 		expect(screen.getByRole("button", { name: "New task" })).not.toHaveClass("bg-accent-strong");
+	});
+
+	it("opens project settings instead of spawning when no orchestrator agent is configured", async () => {
+		useWorkspaceQueryMock.mockReturnValue({
+			data: [
+				{
+					id: "proj-1",
+					name: "my-app",
+					path: "/repo/my-app",
+					sessions: [worker],
+				},
+			],
+			isError: false,
+			isLoading: false,
+		});
+		paramsMock.projectId = "proj-1";
+		paramsMock.sessionId = "sess-1";
+		render(
+			<QueryClientProvider client={new QueryClient()}>
+				<ShellTopbar />
+			</QueryClientProvider>,
+		);
+
+		await userEvent.click(screen.getByRole("button", { name: "Open orchestrator" }));
+
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/settings",
+			params: { projectId: "proj-1" },
+		});
+		expect(spawnMock).not.toHaveBeenCalled();
 	});
 });
 
