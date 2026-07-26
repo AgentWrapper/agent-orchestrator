@@ -449,16 +449,20 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		Prompt:            prompt,
 	}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
-		_ = m.runtime.Destroy(ctx, handle)
-		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
+		runtimeDestroyed := m.runtime.Destroy(ctx, handle) == nil
+		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject, runtimeDestroyed)
 		m.markSpawnFailedTerminated(ctx, id)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: completed: %w", id, err)
 	}
 	if delivery == ports.PromptDeliveryAfterStart && prompt != "" {
 		if err := m.deliverAfterStartPrompt(ctx, agent, launchCfg, handle, id, prompt); err != nil {
-			_ = m.runtime.Destroy(ctx, handle)
-			m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
-			m.markSpawnFailedTerminatedWithoutWorkspace(ctx, id)
+			runtimeDestroyed := m.runtime.Destroy(ctx, handle) == nil
+			workspaceDestroyed := m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject, runtimeDestroyed)
+			if runtimeDestroyed && workspaceDestroyed {
+				m.markSpawnFailedTerminatedWithoutWorkspace(ctx, id)
+			} else {
+				m.markSpawnFailedTerminated(ctx, id)
+			}
 			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: deliver prompt: %w", id, err)
 		}
 	}
@@ -560,10 +564,13 @@ func (m *Manager) destroySpawnWorkspace(ctx context.Context, ws ports.WorkspaceI
 	return err == nil
 }
 
-func (m *Manager) rollbackPreparedSpawnWorkspace(ctx context.Context, rec domain.SessionRecord, ws ports.WorkspaceInfo, workspaceProject *ports.WorkspaceProjectInfo) {
+func (m *Manager) rollbackPreparedSpawnWorkspace(ctx context.Context, rec domain.SessionRecord, ws ports.WorkspaceInfo, workspaceProject *ports.WorkspaceProjectInfo, runtimeDestroyed bool) bool {
 	if m.destroySpawnWorkspace(ctx, ws, workspaceProject) {
 		m.cleanupAgentWorkspace(ctx, rec, ws.Path)
+		return true
 	}
+	m.preserveFailedSpawnWorkspace(ctx, rec.ID, ws, runtimeDestroyed)
+	return false
 }
 
 func (m *Manager) rollbackSeedSpawnWorkspace(ctx context.Context, rec domain.SessionRecord, ws ports.WorkspaceInfo, workspaceProject *ports.WorkspaceProjectInfo, prepared bool) {
@@ -574,23 +581,29 @@ func (m *Manager) rollbackSeedSpawnWorkspace(ctx context.Context, rec domain.Ses
 		m.rollbackSpawnSeedRow(ctx, rec.ID)
 		return
 	}
-	m.preserveFailedSpawnWorkspace(ctx, rec.ID, ws)
+	m.preserveFailedSpawnWorkspace(ctx, rec.ID, ws, true)
 	m.markSpawnFailedTerminated(ctx, rec.ID)
 }
 
-func (m *Manager) preserveFailedSpawnWorkspace(ctx context.Context, id domain.SessionID, ws ports.WorkspaceInfo) {
+func (m *Manager) preserveFailedSpawnWorkspace(ctx context.Context, id domain.SessionID, ws ports.WorkspaceInfo, runtimeDestroyed bool) {
 	rec, ok, err := m.store.GetSession(ctx, id)
-	if err != nil || !ok {
-		m.logger.Warn("spawn rollback: preserved workspace could not be recorded", "sessionID", id, "workspacePath", ws.Path, "error", err)
+	if err != nil {
+		m.logger.Warn("spawn rollback: failed to load session for preserved workspace", "sessionID", id, "workspacePath", ws.Path, "error", err)
+		return
+	}
+	if !ok {
+		m.logger.Warn("spawn rollback: session missing for preserved workspace", "sessionID", id, "workspacePath", ws.Path)
 		return
 	}
 	rec.Metadata.Branch = ws.Branch
 	rec.Metadata.WorkspacePath = ws.Path
 	rec.Metadata.WorkspaceRepoPath = ws.RepoPath
-	rec.Metadata.RuntimeHandleID = ""
-	rec.Metadata.RuntimeLaunchID = ""
+	if runtimeDestroyed {
+		rec.Metadata.RuntimeHandleID = ""
+		rec.Metadata.RuntimeLaunchID = ""
+	}
 	if err := m.store.UpdateSession(ctx, rec); err != nil {
-		m.logger.Warn("spawn rollback: preserved workspace could not be recorded", "sessionID", id, "workspacePath", ws.Path, "error", err)
+		m.logger.Warn("spawn rollback: failed to record preserved workspace", "sessionID", id, "workspacePath", ws.Path, "error", err)
 	}
 }
 
