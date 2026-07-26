@@ -1,4 +1,0 @@
-{
-	"title": "Notifiers",
-	"pages": ["dashboard", "desktop", "discord", "slack", "webhook", "composio", "openclaw"]
-}
