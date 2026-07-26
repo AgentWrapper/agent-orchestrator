@@ -1,5 +1,8 @@
 import { API_URL, MARKDOWN_HEADERS, MCP_SERVER_URL } from "@/lib/llms";
 
+
+export const dynamic = "force-static";
+
 export function GET() {
   const content = `# Agent Orchestrator agent authentication
 

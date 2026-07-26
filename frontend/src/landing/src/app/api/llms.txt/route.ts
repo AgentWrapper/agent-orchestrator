@@ -5,6 +5,8 @@ import {
 	MCP_SERVER_URL,
 } from "@/lib/llms";
 
+export const dynamic = "force-static";
+
 export function GET() {
 	const lines = [
 		`# ${COMPANY.NAME} API`,

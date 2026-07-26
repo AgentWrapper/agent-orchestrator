@@ -1,6 +1,9 @@
 import { COMPANY } from "@superset/shared/constants";
 import { getChangelogEntries } from "@/lib/changelog";
 
+
+export const dynamic = "force-static";
+
 export async function GET() {
 	const entries = getChangelogEntries();
 	const baseUrl = COMPANY.MARKETING_URL;

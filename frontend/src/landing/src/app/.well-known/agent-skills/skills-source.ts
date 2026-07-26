@@ -1,18 +1,10 @@
-const REPO_RAW = "https://raw.githubusercontent.com/AgentWrapper/agent-orchestrator/main";
+export const SKILL_NAMES = [] as const;
+export type SkillName = string;
 
-export const SKILL_NAMES = ["ao-agents"] as const;
-export type SkillName = (typeof SKILL_NAMES)[number];
-
-export function isSkillName(value: string): value is SkillName {
-  return (SKILL_NAMES as readonly string[]).includes(value);
+export function isSkillName(_value: string): _value is SkillName {
+	return false;
 }
 
-export async function fetchSkill(name: SkillName): Promise<string | null> {
-  const response = await fetch(`${REPO_RAW}/skills/${name}/SKILL.md`, {
-    next: { revalidate: 3600 },
-  });
-  if (!response.ok) {
-    return null;
-  }
-  return response.text();
+export async function fetchSkill(_name: SkillName): Promise<string | null> {
+	return null;
 }

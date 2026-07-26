@@ -1,6 +1,9 @@
 import { COMPANY } from "@superset/shared/constants";
 import { getBlogPosts } from "@/lib/blog";
 
+
+export const dynamic = "force-static";
+
 export async function GET() {
 	const posts = getBlogPosts();
 	const baseUrl = COMPANY.MARKETING_URL;
