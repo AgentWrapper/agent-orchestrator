@@ -59,15 +59,15 @@ export function Logo({ name, size = 20, className }: { name: string; size?: numb
 }
 
 const CALLOUT_TONE: Record<string, string> = {
-  info: "border-l-blue-400/60 bg-blue-400/5",
-  warn: "border-l-amber-400/60 bg-amber-400/5",
-  warning: "border-l-amber-400/60 bg-amber-400/5",
-  error: "border-l-red-400/60 bg-red-400/5",
+  info: "border-border bg-muted/35",
+  warn: "border-border bg-muted/35",
+  warning: "border-border bg-muted/35",
+  error: "border-border bg-muted/35",
 };
 
 export function Callout({ type = "info", title, children }: { type?: string; title?: ReactNode; children: ReactNode }) {
   return (
-    <div className={`my-5 rounded-md border border-border border-l-2 px-4 py-3 ${CALLOUT_TONE[type] ?? CALLOUT_TONE.info}`}>
+    <div className={`my-6 rounded-xl border px-4 py-3 ${CALLOUT_TONE[type] ?? CALLOUT_TONE.info}`}>
       {title && <div className="mb-1 text-sm font-semibold text-foreground">{title}</div>}
       <div className="text-sm text-muted-foreground [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">{children}</div>
     </div>
@@ -80,7 +80,7 @@ export function Accordions({ children }: { children: ReactNode }) {
 
 export function Accordion({ title, children }: { title: ReactNode; children: ReactNode }) {
   return (
-    <details className="group rounded-md border border-border bg-surface/40 px-4 py-3">
+    <details className="group rounded-xl border border-border bg-muted/30 px-4 py-3">
       <summary className="cursor-pointer list-none text-sm font-medium text-foreground marker:hidden">
         {title}
       </summary>
@@ -91,7 +91,7 @@ export function Accordion({ title, children }: { title: ReactNode; children: Rea
 
 export function Steps({ children }: { children: ReactNode }) {
   return (
-    <div className="my-6 ml-3 border-l border-border pl-6 [counter-reset:step] [&>*]:relative [&>*]:mb-6 [&>*]:before:absolute [&>*]:before:-left-[2.1rem] [&>*]:before:grid [&>*]:before:size-6 [&>*]:before:place-items-center [&>*]:before:rounded-full [&>*]:before:bg-surface [&>*]:before:text-xs [&>*]:before:text-muted-foreground [&>*]:before:[counter-increment:step] [&>*]:before:[content:counter(step)]">
+    <div className="my-6 ml-3 border-l border-border/80 pl-6 [counter-reset:step] [&>*]:relative [&>*]:mb-6 [&>*]:before:absolute [&>*]:before:-left-[2.1rem] [&>*]:before:grid [&>*]:before:size-6 [&>*]:before:place-items-center [&>*]:before:rounded-full [&>*]:before:border [&>*]:before:border-border [&>*]:before:bg-background [&>*]:before:text-xs [&>*]:before:text-muted-foreground [&>*]:before:[counter-increment:step] [&>*]:before:[content:counter(step)]">
       {children}
     </div>
   );
@@ -123,7 +123,7 @@ export function Card({
     </>
   );
   const cls =
-    "block rounded-lg border border-border bg-surface/40 p-4 no-underline transition-colors hover:border-foreground/25";
+    "block rounded-xl border border-border bg-muted/30 p-4 no-underline transition-colors hover:bg-muted/45";
   return href ? (
     <Link href={href} className={cls}>
       {body}
@@ -155,9 +155,9 @@ export function PluginCard({
   return (
     <Link
       href={href}
-      className="flex items-start gap-3.5 rounded-lg border border-border bg-surface/40 p-4 no-underline transition-colors hover:border-foreground/25"
+      className="flex items-start gap-3.5 rounded-xl border border-border bg-muted/30 p-4 no-underline transition-colors hover:bg-muted/45"
     >
-      <span className="grid size-9 shrink-0 place-items-center rounded-md bg-surface">
+      <span className="grid size-9 shrink-0 place-items-center rounded-lg border border-border bg-background">
         <Logo name={logo} size={22} />
       </span>
       <span className="flex min-w-0 flex-col gap-1">
@@ -179,7 +179,7 @@ function PlatformCell({ platform, status }: { platform: "macos" | "linux" | "win
   const logoName = platform === "macos" ? "apple" : platform;
   const title = platform === "macos" ? "macOS" : platform === "linux" ? "Linux" : "Windows";
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-border bg-surface/40 px-3 py-2">
+    <div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-border bg-muted/30 px-3 py-2.5">
       <Logo name={logoName} size={18} />
       <div className="flex min-w-0 flex-col">
         <span className="text-[0.8125rem] font-semibold text-foreground">{title}</span>
@@ -219,15 +219,15 @@ const RELEASES_URL = "https://github.com/AgentWrapper/agent-orchestrator/release
 
 export function InstallDownloads() {
   return (
-    <div className="my-6 rounded-lg border border-border bg-surface/40 p-5">
+    <div className="my-6 rounded-xl border border-border bg-muted/30 p-5">
       <div className="mb-3 flex items-center justify-between">
         <div className="text-sm font-semibold text-foreground">Get Agent Orchestrator</div>
-        <a href={RELEASES_URL} className="text-xs text-muted-foreground hover:text-foreground">
+        <a href={RELEASES_URL} className="text-xs text-muted-foreground transition-colors hover:text-foreground">
           View releases →
         </a>
       </div>
       <div className="flex flex-wrap items-center gap-3">
-        <DownloadButton size="md" />
+        <DownloadButton size="md" className="rounded-xl" />
         <span className="text-sm text-muted-foreground">macOS · Linux · Windows</span>
       </div>
     </div>
