@@ -7,35 +7,41 @@ import type { DocsNavItem } from "@/lib/docs";
 function NavLink({ item, depth }: { item: DocsNavItem; depth: number }) {
   const pathname = usePathname();
   const active = item.url === pathname;
-  const pad = depth === 0 ? "" : depth === 1 ? "pl-3" : "pl-6";
+  const hasChildren = Boolean(item.items && item.items.length > 0);
 
+  // Section label ("Getting Started") — the top grouping level.
   if (item.separator) {
     return (
-      <div className="mt-6 mb-2 px-2 text-xs font-semibold uppercase tracking-[0.5px] text-muted-foreground first:mt-0">
+      <div className="mt-7 mb-2 px-2 text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground/70 first:mt-0">
         {item.title}
       </div>
     );
   }
 
+  // A main topic that owns child pages reads as a group header (stronger weight,
+  // foreground colour, extra spacing above); leaf pages read lighter.
+  const groupHeader = hasChildren;
+  const base = "block rounded-md px-2 py-1.5 text-sm transition-colors";
+  const tone = active
+    ? "bg-surface font-medium text-foreground"
+    : groupHeader
+      ? "font-medium text-foreground hover:bg-surface/50"
+      : "text-muted-foreground hover:text-foreground";
+
+  const label = item.url ? (
+    <Link href={item.url} className={`${base} ${tone}`}>
+      {item.title}
+    </Link>
+  ) : (
+    <div className="px-2 py-1.5 text-sm font-medium text-foreground">{item.title}</div>
+  );
+
   return (
-    <div>
-      {item.url ? (
-        <Link
-          href={item.url}
-          className={`block rounded-md px-2 py-1.5 text-sm transition-colors ${pad} ${
-            active
-              ? "bg-surface font-medium text-foreground"
-              : "text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          {item.title}
-        </Link>
-      ) : (
-        <div className={`px-2 py-1.5 text-sm font-medium text-foreground ${pad}`}>{item.title}</div>
-      )}
-      {item.items && item.items.length > 0 && (
-        <div className="mt-0.5">
-          {item.items.map((child) => (
+    <div className={groupHeader && depth > 0 ? "mt-3" : undefined}>
+      {label}
+      {hasChildren && (
+        <div className="mt-0.5 ml-2.5 flex flex-col gap-0.5 border-l border-border pl-2">
+          {item.items?.map((child) => (
             <NavLink key={child.title + (child.url ?? "")} item={child} depth={depth + 1} />
           ))}
         </div>
