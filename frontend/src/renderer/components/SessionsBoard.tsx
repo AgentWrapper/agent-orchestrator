@@ -823,7 +823,7 @@ function SessionCard({
 			) : null}
 			<div {...cardBodyProps}>
 				<div className="flex items-start gap-2.5 px-3.5 pb-2.5 pt-3">
-					<AgentAvatar provider={session.provider} />
+					<AgentAvatar className="mt-0.5" provider={session.provider} />
 					<div className="min-w-0 flex-1">
 						<div
 							className={cn(
