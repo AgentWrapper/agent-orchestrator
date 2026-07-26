@@ -65,7 +65,8 @@ export function TrustedBySection() {
           Use the agents you already trust.
         </h2>
 
-        <div className="agent-marquee group relative w-full overflow-hidden [mask-image:linear-gradient(to_right,transparent,black_8%,black_92%,transparent)]">
+        {/* Narrow viewport so ~10 logos are visible at once as they flow. */}
+        <div className="agent-marquee group relative mx-auto w-full max-w-2xl overflow-hidden [mask-image:linear-gradient(to_right,transparent,black_8%,black_92%,transparent)]">
           <div className="agent-marquee__track flex w-max items-center gap-8 sm:gap-10">
             {loop.map((agent, i) => (
               <AgentMark key={`${agent.name}-${i}`} agent={agent} />
