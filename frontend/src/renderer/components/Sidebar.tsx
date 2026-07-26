@@ -203,7 +203,11 @@ export function Sidebar({
 		// full-height surface behind the titlebar while their content keeps the
 		// same chrome clearance, leaving the titlebar controls unobstructed.
 		<SidebarRoot
-			collapsible="offcanvas"
+			// mac/Windows re-expand a collapsed sidebar from the titlebar toggle, so
+			// they can slide it fully off-canvas. Linux has no titlebar chrome — its
+			// only expand control lives in the sidebar itself, so it must collapse to
+			// the icon rail (keeping that control visible) rather than vanish.
+			collapsible={isMac || isWindows ? "offcanvas" : "icon"}
 			data-expanded-chrome={expandedChromeVisible ? "visible" : "hidden"}
 			onPointerLeave={onPreviewLeave}
 			overlay={isOverlay}
