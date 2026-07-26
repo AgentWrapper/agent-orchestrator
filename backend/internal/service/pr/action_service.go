@@ -11,9 +11,9 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-// PRStore is the storage dependency ActionService needs to resolve a PR
+// Store is the storage dependency ActionService needs to resolve a PR
 // before acting on it.
-type PRStore interface {
+type Store interface {
 	GetPR(ctx context.Context, url string) (domain.PullRequest, bool, error)
 }
 
@@ -24,7 +24,7 @@ type SCMMerger interface {
 
 // ActionService implements ActionManager (declared in actions.go).
 type ActionService struct {
-	store PRStore
+	store Store
 	scm   SCMMerger // may be nil if the daemon started without SCM credentials
 }
 
@@ -33,7 +33,7 @@ var _ ActionManager = (*ActionService)(nil)
 // NewActionService wires the real store/SCM dependencies. scm may be nil
 // (e.g. no GitHub token at startup); Merge reports ErrPRPreconditions in
 // that case rather than panicking.
-func NewActionService(store PRStore, scm SCMMerger) *ActionService {
+func NewActionService(store Store, scm SCMMerger) *ActionService {
 	return &ActionService{store: store, scm: scm}
 }
 
@@ -46,7 +46,7 @@ func (s *ActionService) Merge(ctx context.Context, id string) (MergeResult, erro
 	}
 	url, err := decodePRID(id)
 	if err != nil {
-		return MergeResult{}, fmt.Errorf("%w: %v", ErrPRNotFound, err)
+		return MergeResult{}, fmt.Errorf("%w: %w", ErrPRNotFound, err)
 	}
 	pr, ok, err := s.store.GetPR(ctx, url)
 	if err != nil {
