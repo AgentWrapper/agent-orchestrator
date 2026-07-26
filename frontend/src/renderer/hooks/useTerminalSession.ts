@@ -17,7 +17,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getApiBaseUrl } from "../lib/api-client";
 import { captureRendererEvent } from "../lib/telemetry";
 import { createTerminalMux, muxUrlFromApiBase, type TerminalMux } from "../lib/terminal-mux";
-import type { WorkspaceSession } from "../types/workspace";
+import { sessionIsActive, type WorkspaceSession } from "../types/workspace";
 import { workspaceQueryKey } from "./useWorkspaceQuery";
 
 /**
@@ -55,6 +55,12 @@ export type UseTerminalSessionOptions = {
 	daemonReady: boolean;
 	/** Test seam: build the mux client. Defaults to a fresh socket against the current API base. */
 	createMux?: () => TerminalMux;
+	/**
+	 * Observe decoded pane output (post-write). Callers use it to scan the stream
+	 * for signals like printed URLs; it must be cheap and side-effect-light since
+	 * it runs on every output chunk. Omit to skip decoding entirely.
+	 */
+	onOutput?: (text: string) => void;
 	/**
 	 * Attach to a standalone shell terminal (POST /api/v1/shell-terminals)
 	 * instead of a session's pane. When set it wins over `session`, which
@@ -97,7 +103,8 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 
 	const sessionRef = useRef(session);
 	sessionRef.current = session;
-	const previousSessionStatusRef = useRef(session?.status);
+	const previousSessionActiveRef = useRef(session ? sessionIsActive(session) : false);
+	const previousActivityStateRef = useRef(session?.activity?.state);
 	const optionsRef = useRef(options);
 	optionsRef.current = options;
 	const stateRef = useRef<TerminalSessionState>(state);
@@ -206,10 +213,15 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		const mux = (optionsRef.current.createMux ?? defaultCreateMux)();
 		r.mux = mux;
 
+		// Streaming decoder so a multi-byte sequence split across chunks decodes
+		// correctly for onOutput. Only built when a caller is listening.
+		const outputDecoder = optionsRef.current.onOutput ? new TextDecoder() : null;
+
 		r.disposers.push(
 			mux.onData(handle, (bytes) => {
 				if (!isCurrentAttachment(generation, handle, mux)) return;
 				terminal.write(bytes);
+				if (outputDecoder) optionsRef.current.onOutput?.(outputDecoder.decode(bytes, { stream: true }));
 			}),
 			mux.onOpened(handle, () => {
 				if (!isCurrentAttachment(generation, handle, mux)) return;
@@ -354,9 +366,14 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 	useEffect(() => {
 		const r = runtime.current;
 		const handle = session?.terminalHandleId ?? null;
-		const previousStatus = previousSessionStatusRef.current;
-		previousSessionStatusRef.current = session?.status;
-		if (!handle || previousStatus !== "terminated" || session?.status === "terminated" || r.detached || !r.terminal) {
+		const isActive = session ? sessionIsActive(session) : false;
+		const wasActive = previousSessionActiveRef.current;
+		const previousActivityState = previousActivityStateRef.current;
+		previousSessionActiveRef.current = isActive;
+		previousActivityStateRef.current = session?.activity?.state;
+		const restoredSession = !wasActive && isActive;
+		const resumedAgent = previousActivityState === "exited" && session?.activity?.state !== "exited";
+		if (!handle || (!restoredSession && !resumedAgent) || r.detached || !r.terminal) {
 			return;
 		}
 		if (r.handle !== handle) return;
@@ -367,7 +384,14 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		} else {
 			transition("reattaching");
 		}
-	}, [connect, session?.status, session?.terminalHandleId, transition]);
+	}, [
+		connect,
+		session?.activity?.state,
+		session?.isTerminated,
+		session?.status,
+		session?.terminalHandleId,
+		transition,
+	]);
 
 	// Belt-and-braces: never leak a socket past unmount, even if the owner
 	// forgot to call detach.

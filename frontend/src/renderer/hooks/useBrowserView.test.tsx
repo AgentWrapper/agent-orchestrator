@@ -689,9 +689,9 @@ describe("useBrowserView", () => {
 		expect(bridge.clear).not.toHaveBeenCalled();
 	});
 
-	it("clears the view when the session is terminated, even with an active preview URL", async () => {
+	it("destroys the complete browser target when the session is terminated", async () => {
 		const bridge = setupBridge();
-		const { rerender } = renderHook(
+		const { rerender, result } = renderHook(
 			({ terminated }) =>
 				useBrowserView({
 					sessionId: "sess-1",
@@ -708,8 +708,10 @@ describe("useBrowserView", () => {
 
 		// Terminate the session – the view must be cleared and no re-navigate.
 		rerender({ terminated: true });
-		await waitFor(() => expect(bridge.clear).toHaveBeenCalledWith("42:sess-1"));
+		await waitFor(() => expect(bridge.destroy).toHaveBeenCalledWith("42:sess-1"));
+		expect(bridge.clear).not.toHaveBeenCalled();
 		expect(bridge.navigate).toHaveBeenCalledTimes(1);
+		expect(result.current.viewId).toBe("");
 	});
 
 	it("hides the native view while an element outside the slot is fullscreen, and restores it on exit", async () => {

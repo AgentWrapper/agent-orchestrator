@@ -330,12 +330,13 @@ func (m *Manager) stop(ctx context.Context, sessionID domain.SessionID) (Status,
 	}
 	select {
 	case <-done:
+		// The root may exit before descendants that ignored SIGTERM. Escalate
+		// against the owned process tree even after Wait has completed.
+		_ = forceKillPreviewProcess(cmd)
 	case <-ctx.Done():
 		return m.Status(sessionID), ctx.Err()
 	case <-time.After(5 * time.Second):
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-		}
+		_ = forceKillPreviewProcess(cmd)
 		select {
 		case <-done:
 		case <-ctx.Done():
@@ -385,7 +386,7 @@ func (m *Manager) Status(sessionID domain.SessionID) Status {
 	return m.statusForLocked(run)
 }
 
-// StopSession implements ports.SessionPreviewLifecycle without exposing status
+// StopSession implements session_manager.PreviewLifecycle without exposing status
 // to lifecycle callers that only need best-effort teardown.
 func (m *Manager) StopSession(ctx context.Context, sessionID domain.SessionID) error {
 	_, err := m.Stop(ctx, sessionID)
@@ -448,10 +449,9 @@ func (m *Manager) failAndStop(
 		_ = terminatePreviewProcess(cmd)
 		select {
 		case <-run.done:
+			_ = forceKillPreviewProcess(cmd)
 		case <-time.After(3 * time.Second):
-			if cmd.Process != nil {
-				_ = cmd.Process.Kill()
-			}
+			_ = forceKillPreviewProcess(cmd)
 		}
 	}
 	return m.statusFor(run), serviceError(code, message)
@@ -657,6 +657,16 @@ func resolveTargetURL(raw string, port int) (string, error) {
 
 func selectPort(preferred int, auto bool) (int, error) {
 	if !auto {
+		listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(preferred)))
+		if err != nil {
+			return 0, serviceError(
+				"PREVIEW_PORT_IN_USE",
+				fmt.Sprintf("configured preview port %d is already in use", preferred),
+			)
+		}
+		if err := listener.Close(); err != nil {
+			return 0, fmt.Errorf("release configured preview port: %w", err)
+		}
 		return preferred, nil
 	}
 	address := "127.0.0.1:0"

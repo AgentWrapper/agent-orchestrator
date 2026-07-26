@@ -147,6 +147,7 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 				updates: {
 					getStatus: async () => ({ state: "idle" }),
 					check: async () => undefined,
+					returnHome: async () => undefined,
 					download: async () => undefined,
 					install: async () => undefined,
 					onStatus: unsubscribe,
@@ -512,6 +513,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 				updates: {
 					getStatus: async () => ({ state: "idle" }),
 					check: async () => undefined,
+					returnHome: async () => undefined,
 					download: async () => undefined,
 					install: async () => undefined,
 					onStatus: unsubscribe,

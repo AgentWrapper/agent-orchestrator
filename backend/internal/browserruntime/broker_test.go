@@ -124,6 +124,66 @@ func TestBrokerUnavailableWithoutElectron(t *testing.T) {
 	}
 }
 
+func TestBrokerCancellationSendsCancelFrame(t *testing.T) {
+	broker := New(nil)
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = broker.Serve(ctx, ln) }()
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	enc, dec := json.NewEncoder(conn), json.NewDecoder(conn)
+	_ = enc.Encode(wireMessage{Type: "hello", Version: ProtocolVersion})
+	waitConnected(t, broker)
+
+	requestCtx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := broker.Execute(requestCtx, "session-1", "wait", nil)
+		errCh <- err
+	}()
+	var command wireMessage
+	if err := dec.Decode(&command); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	var cancelMessage wireMessage
+	if err := dec.Decode(&cancelMessage); err != nil {
+		t.Fatal(err)
+	}
+	if cancelMessage.Type != "cancel" || cancelMessage.RequestID != command.RequestID {
+		t.Fatalf("cancel message = %#v, command = %#v", cancelMessage, command)
+	}
+	if err := <-errCh; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Execute error = %v", err)
+	}
+}
+
+func TestBrokerWriteObservesContext(t *testing.T) {
+	broker := New(nil)
+	server, client := net.Pipe()
+	defer func() {
+		_ = server.Close()
+		_ = client.Close()
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	err := broker.write(ctx, client, wireMessage{Type: "command", RequestID: "blocked"})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("write error = %v", err)
+	}
+	if time.Since(started) > time.Second {
+		t.Fatal("context cancellation did not bound browser write")
+	}
+}
+
 func waitConnected(t *testing.T, broker *Broker) {
 	t.Helper()
 	deadline := time.Now().Add(time.Second)

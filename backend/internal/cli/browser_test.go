@@ -12,14 +12,16 @@ import (
 )
 
 type browserRequestCapture struct {
-	path string
-	body browserCommandRequestDTO
+	path       string
+	capability string
+	body       browserCommandRequestDTO
 }
 
 func browserCLIServer(t *testing.T, capture *browserRequestCapture) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capture.path = r.URL.RequestURI()
+		capture.capability = r.Header.Get(browserCapabilityHeader)
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/browser/status" {
 			_, _ = io.WriteString(w, `{"sessionId":"ao-1","connected":true,"transport":"electron-webcontents-debugger"}`)
@@ -53,8 +55,14 @@ func browserCLIServer(t *testing.T, capture *browserRequestCapture) *httptest.Se
 	return srv
 }
 
-func TestBrowserStatusAndSnapshot(t *testing.T) {
+func setBrowserIdentity(t *testing.T) {
+	t.Helper()
 	t.Setenv("AO_SESSION_ID", "ao-1")
+	t.Setenv("AO_BROWSER_CAPABILITY", "capability-1")
+}
+
+func TestBrowserStatusAndSnapshot(t *testing.T) {
+	setBrowserIdentity(t)
 	cfg := setConfigEnv(t)
 	capture := &browserRequestCapture{}
 	srv := browserCLIServer(t, capture)
@@ -68,6 +76,9 @@ func TestBrowserStatusAndSnapshot(t *testing.T) {
 	if capture.path != "/api/v1/browser/status?sessionId=ao-1" {
 		t.Fatalf("status path = %q", capture.path)
 	}
+	if capture.capability != "capability-1" {
+		t.Fatalf("status capability = %q", capture.capability)
+	}
 	out, errOut, err = executeCLI(t, deps, "browser", "snapshot", "--interactive")
 	if err != nil || !strings.Contains(out, "button Save [ref=e1]") {
 		t.Fatalf("snapshot err=%v stderr=%s stdout=%s", err, errOut, out)
@@ -78,7 +89,7 @@ func TestBrowserStatusAndSnapshot(t *testing.T) {
 }
 
 func TestBrowserClickAndWaitArguments(t *testing.T) {
-	t.Setenv("AO_SESSION_ID", "ao-1")
+	setBrowserIdentity(t)
 	cfg := setConfigEnv(t)
 	capture := &browserRequestCapture{}
 	srv := browserCLIServer(t, capture)
@@ -100,7 +111,7 @@ func TestBrowserClickAndWaitArguments(t *testing.T) {
 }
 
 func TestBrowserExpandedWaitArguments(t *testing.T) {
-	t.Setenv("AO_SESSION_ID", "ao-1")
+	setBrowserIdentity(t)
 	cfg := setConfigEnv(t)
 	capture := &browserRequestCapture{}
 	srv := browserCLIServer(t, capture)
@@ -131,7 +142,7 @@ func TestBrowserExpandedWaitArguments(t *testing.T) {
 }
 
 func TestBrowserCoreInteractionArguments(t *testing.T) {
-	t.Setenv("AO_SESSION_ID", "ao-1")
+	setBrowserIdentity(t)
 	cfg := setConfigEnv(t)
 	capture := &browserRequestCapture{}
 	srv := browserCLIServer(t, capture)
@@ -177,7 +188,7 @@ func TestBrowserCoreInteractionArguments(t *testing.T) {
 }
 
 func TestBrowserTabsPrintStableIDsAndActiveTab(t *testing.T) {
-	t.Setenv("AO_SESSION_ID", "ao-1")
+	setBrowserIdentity(t)
 	cfg := setConfigEnv(t)
 	capture := &browserRequestCapture{}
 	srv := browserCLIServer(t, capture)
@@ -193,7 +204,7 @@ func TestBrowserTabsPrintStableIDsAndActiveTab(t *testing.T) {
 }
 
 func TestBrowserNetworkCommandsAreExplicitAndReadable(t *testing.T) {
-	t.Setenv("AO_SESSION_ID", "ao-1")
+	setBrowserIdentity(t)
 	cfg := setConfigEnv(t)
 	capture := &browserRequestCapture{}
 	srv := browserCLIServer(t, capture)
@@ -227,7 +238,7 @@ func TestBrowserNetworkCommandsAreExplicitAndReadable(t *testing.T) {
 }
 
 func TestBrowserScreenshotWritesWithoutOverwrite(t *testing.T) {
-	t.Setenv("AO_SESSION_ID", "ao-1")
+	setBrowserIdentity(t)
 	cfg := setConfigEnv(t)
 	capture := &browserRequestCapture{}
 	srv := browserCLIServer(t, capture)
@@ -254,6 +265,10 @@ func TestBrowserRequiresSessionAndValidWait(t *testing.T) {
 		t.Fatalf("status error = %v code=%d", err, ExitCode(err))
 	}
 	t.Setenv("AO_SESSION_ID", "ao-1")
+	if _, _, err := executeCLI(t, Deps{}, "browser", "status"); ExitCode(err) != 2 {
+		t.Fatalf("missing capability error = %v code=%d", err, ExitCode(err))
+	}
+	t.Setenv("AO_BROWSER_CAPABILITY", "capability-1")
 	if _, _, err := executeCLI(t, Deps{}, "browser", "wait", "--text", "x", "--url", "y"); ExitCode(err) != 2 {
 		t.Fatalf("wait error = %v code=%d", err, ExitCode(err))
 	}
@@ -262,5 +277,26 @@ func TestBrowserRequiresSessionAndValidWait(t *testing.T) {
 	}
 	if _, _, err := executeCLI(t, Deps{}, "browser", "get"); ExitCode(err) != 2 {
 		t.Fatalf("get error = %v code=%d", err, ExitCode(err))
+	}
+}
+
+func TestBrowserPreservesDaemonErrorEnvelopeAndRequestID(t *testing.T) {
+	setBrowserIdentity(t)
+	cfg := setConfigEnv(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = io.WriteString(w, `{"error":"conflict","code":"SESSION_TERMINATED","message":"Session is terminated","requestId":"req-browser-1"}`)
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "browser", "snapshot")
+	if ExitCode(err) != 1 {
+		t.Fatalf("exit code = %d, error = %v", ExitCode(err), err)
+	}
+	if !strings.Contains(err.Error(), "Session is terminated (SESSION_TERMINATED)") ||
+		!strings.Contains(err.Error(), "[request req-browser-1]") {
+		t.Fatalf("error did not preserve daemon envelope: %v", err)
 	}
 }

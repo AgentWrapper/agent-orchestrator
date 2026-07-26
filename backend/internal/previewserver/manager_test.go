@@ -131,6 +131,18 @@ func TestManagerRejectsMissingConfigAndNonLoopbackURL(t *testing.T) {
 	assertPreviewErrorCode(t, err, "PREVIEW_CONFIG_INVALID")
 }
 
+func TestSelectPortRejectsOccupiedFixedPort(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = listener.Close() }()
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	_, err = selectPort(port, false)
+	assertPreviewErrorCode(t, err, "PREVIEW_PORT_IN_USE")
+}
+
 func helperConfiguration(name string, kind TargetKind) Configuration {
 	return Configuration{
 		Name:               name,

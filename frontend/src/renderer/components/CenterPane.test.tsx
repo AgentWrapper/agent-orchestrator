@@ -57,7 +57,7 @@ describe("CenterPane toolbar session label", () => {
 
 		const scrollRegion = document.querySelector(".overflow-x-auto");
 		expect(scrollRegion).toHaveClass("scrollbar-none", "min-w-flex-min", "flex-1");
-		for (const tab of screen.getAllByTitle("/tmp/ws")) {
+		for (const tab of screen.getAllByTitle(/^\/tmp\/ws/)) {
 			expect(tab.parentElement).toHaveClass("min-w-shell-tab-min");
 			expect(tab.parentElement).not.toHaveClass("min-w-16", "shrink-0");
 			expect(tab).toHaveClass("min-w-flex-min");

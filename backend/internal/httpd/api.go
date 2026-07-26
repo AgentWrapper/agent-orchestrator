@@ -35,7 +35,7 @@ type APIDeps struct {
 	Events             cdcSubscriber
 	Telemetry          ports.EventSink
 	Mobile             *controllers.MobileController
-	Browser            controllers.BrowserRuntime
+	Browser            controllers.BrowserService
 	PreviewServer      controllers.ManagedPreviewServer
 }
 
@@ -81,7 +81,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		imports:       &controllers.ImportController{Svc: deps.Import},
 		shellTerms:    &controllers.ShellTerminalsController{Svc: deps.ShellTerminals},
 		dev:           &controllers.DevController{Import: deps.DevImport},
-		browser:       &controllers.BrowserController{Runtime: deps.Browser, Sessions: deps.Sessions},
+		browser:       &controllers.BrowserController{Svc: deps.Browser},
 		events:        &EventsController{Source: deps.CDC, Live: deps.Events},
 	}
 }

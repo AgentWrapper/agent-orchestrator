@@ -14,51 +14,17 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 )
 
-var browserActions = map[string]struct{}{
-	"open":           {},
-	"snapshot":       {},
-	"click":          {},
-	"fill":           {},
-	"type":           {},
-	"press":          {},
-	"hover":          {},
-	"highlight":      {},
-	"unhighlight":    {},
-	"tabs":           {},
-	"tab-new":        {},
-	"tab-select":     {},
-	"tab-close":      {},
-	"scroll":         {},
-	"select":         {},
-	"check":          {},
-	"uncheck":        {},
-	"get":            {},
-	"wait":           {},
-	"screenshot":     {},
-	"network-start":  {},
-	"network-status": {},
-	"network-list":   {},
-	"network-stop":   {},
-	"network-clear":  {},
-	"console":        {},
-	"errors":         {},
-}
+const browserCapabilityHeader = "X-AO-Browser-Capability"
 
-// BrowserRuntime executes session-scoped commands through the Electron bridge.
-type BrowserRuntime interface {
-	Status() browserruntime.Status
-	Execute(ctx context.Context, sessionID domain.SessionID, action string, args map[string]interface{}) (browserruntime.Result, error)
-}
-
-// BrowserSessionReader verifies that a requested browser owner exists.
-type BrowserSessionReader interface {
-	Get(ctx context.Context, id domain.SessionID) (domain.Session, error)
+// BrowserService authorizes and executes session-scoped browser operations.
+type BrowserService interface {
+	Status(ctx context.Context, sessionID domain.SessionID, capability string) (browserruntime.Status, error)
+	Execute(ctx context.Context, sessionID domain.SessionID, capability, action string, args map[string]interface{}) (browserruntime.Result, string, error)
 }
 
 // BrowserController exposes the loopback-only browser command API.
 type BrowserController struct {
-	Runtime  BrowserRuntime
-	Sessions BrowserSessionReader
+	Svc BrowserService
 }
 
 // Register adds browser status and command routes to the API router.
@@ -68,7 +34,7 @@ func (c *BrowserController) Register(r chi.Router) {
 }
 
 func (c *BrowserController) status(w http.ResponseWriter, r *http.Request) {
-	if c.Runtime == nil || c.Sessions == nil {
+	if c.Svc == nil {
 		apispec.NotImplemented(w, r, http.MethodGet, "/api/v1/browser/status")
 		return
 	}
@@ -77,11 +43,11 @@ func (c *BrowserController) status(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "SESSION_ID_REQUIRED", "sessionId is required", nil)
 		return
 	}
-	if _, err := c.Sessions.Get(r.Context(), sessionID); err != nil {
+	status, err := c.Svc.Status(r.Context(), sessionID, r.Header.Get(browserCapabilityHeader))
+	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
 	}
-	status := c.Runtime.Status()
 	envelope.WriteJSON(w, http.StatusOK, BrowserStatusResponse{
 		SessionID:   sessionID,
 		Connected:   status.Connected,
@@ -91,7 +57,7 @@ func (c *BrowserController) status(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *BrowserController) execute(w http.ResponseWriter, r *http.Request) {
-	if c.Runtime == nil || c.Sessions == nil {
+	if c.Svc == nil {
 		apispec.NotImplemented(w, r, http.MethodPost, "/api/v1/browser/commands")
 		return
 	}
@@ -100,20 +66,17 @@ func (c *BrowserController) execute(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
 		return
 	}
-	in.Action = strings.ToLower(strings.TrimSpace(in.Action))
 	if in.SessionID == "" {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "SESSION_ID_REQUIRED", "sessionId is required", nil)
 		return
 	}
-	if _, ok := browserActions[in.Action]; !ok {
-		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "BROWSER_ACTION_UNSUPPORTED", "Unsupported browser action", nil)
-		return
-	}
-	if _, err := c.Sessions.Get(r.Context(), in.SessionID); err != nil {
-		envelope.WriteError(w, r, err)
-		return
-	}
-	result, err := c.Runtime.Execute(r.Context(), in.SessionID, in.Action, in.Args)
+	result, action, err := c.Svc.Execute(
+		r.Context(),
+		in.SessionID,
+		r.Header.Get(browserCapabilityHeader),
+		in.Action,
+		in.Args,
+	)
 	if err != nil {
 		writeBrowserError(w, r, err)
 		return
@@ -121,7 +84,7 @@ func (c *BrowserController) execute(w http.ResponseWriter, r *http.Request) {
 	envelope.WriteJSON(w, http.StatusOK, BrowserCommandResponse{
 		RequestID: result.RequestID,
 		SessionID: in.SessionID,
-		Action:    in.Action,
+		Action:    action,
 		Result:    result.Value,
 	})
 }

@@ -19,7 +19,7 @@ import (
 )
 
 // ProtocolVersion identifies the daemon-to-Electron browser bridge contract.
-const ProtocolVersion = 1
+const ProtocolVersion = 2
 
 // ErrUnavailable indicates that no Electron browser runtime can accept a command.
 var ErrUnavailable = errors.New("browser runtime is unavailable")
@@ -84,7 +84,7 @@ type Broker struct {
 	conn        net.Conn
 	connectedAt time.Time
 	pending     map[string]chan pendingResult
-	writeMu     sync.Mutex
+	writeGate   chan struct{}
 }
 
 // New creates an empty browser command broker.
@@ -92,7 +92,9 @@ func New(log *slog.Logger) *Broker {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Broker{log: log, pending: make(map[string]chan pendingResult)}
+	gate := make(chan struct{}, 1)
+	gate <- struct{}{}
+	return &Broker{log: log, pending: make(map[string]chan pendingResult), writeGate: gate}
 }
 
 // Status returns the current Electron runtime connection state.
@@ -123,8 +125,11 @@ func (b *Broker) Execute(ctx context.Context, sessionID domain.SessionID, action
 		Action:    action,
 		Args:      args,
 	}
-	if err := b.write(conn, msg); err != nil {
+	if err := b.write(ctx, conn, msg); err != nil {
 		b.removePending(requestID)
+		if ctx.Err() != nil {
+			return Result{}, ctx.Err()
+		}
 		b.disconnect(conn, fmt.Errorf("write browser command: %w", err))
 		return Result{}, ErrUnavailable
 	}
@@ -132,6 +137,9 @@ func (b *Broker) Execute(ctx context.Context, sessionID domain.SessionID, action
 	select {
 	case <-ctx.Done():
 		b.removePending(requestID)
+		cancelCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		_ = b.write(cancelCtx, conn, wireMessage{Type: "cancel", RequestID: requestID})
+		cancel()
 		return Result{}, ctx.Err()
 	case result := <-resultCh:
 		if result.err != nil {
@@ -199,10 +207,36 @@ func (b *Broker) serveConn(ctx context.Context, conn net.Conn) {
 	}
 }
 
-func (b *Broker) write(conn net.Conn, msg wireMessage) error {
-	b.writeMu.Lock()
-	defer b.writeMu.Unlock()
-	return json.NewEncoder(conn).Encode(msg)
+func (b *Broker) write(ctx context.Context, conn net.Conn, msg wireMessage) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-b.writeGate:
+	}
+	defer func() { b.writeGate <- struct{}{} }()
+
+	deadline := time.Now().Add(30 * time.Second)
+	if requested, ok := ctx.Deadline(); ok && requested.Before(deadline) {
+		deadline = requested
+	}
+	if err := conn.SetWriteDeadline(deadline); err != nil {
+		return err
+	}
+	stop := context.AfterFunc(ctx, func() {
+		_ = conn.SetWriteDeadline(time.Now())
+	})
+	err := json.NewEncoder(conn).Encode(msg)
+	stop()
+	_ = conn.SetWriteDeadline(time.Time{})
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if err != nil {
+		if requested, ok := ctx.Deadline(); ok && !time.Now().Before(requested) {
+			return context.DeadlineExceeded
+		}
+	}
+	return err
 }
 
 func (b *Broker) resolve(msg wireMessage) {

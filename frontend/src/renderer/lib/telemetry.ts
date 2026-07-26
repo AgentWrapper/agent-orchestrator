@@ -315,6 +315,10 @@ export async function sanitizeRendererProperties(
 				safe.reason = properties.reason;
 			}
 			break;
+		case "ao.renderer.session_state_unknown":
+			if (properties?.field === "status" || properties?.field === "activity") safe.field = properties.field;
+			if (properties?.reason === "missing" || properties?.reason === "unrecognized") safe.reason = properties.reason;
+			break;
 	}
 	return safe;
 }

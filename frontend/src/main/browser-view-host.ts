@@ -134,7 +134,7 @@ export type BrowserViewHost = {
 	dispose: () => void;
 	destroy: (viewId: string) => void;
 	destroyAll: () => void;
-	execute: (sessionId: string, action: string, args?: Record<string, unknown>) => Promise<unknown>;
+	execute: (sessionId: string, action: string, args?: Record<string, unknown>, signal?: AbortSignal) => Promise<unknown>;
 	// webContents of the most recently focused browser panel (or null); the titlebar menu targets it for Edit/Reload/Zoom/DevTools.
 	getLastFocusedPanelContents: () => WebContents | null;
 	// Drop the remembered panel; call when the shell gains focus for a real reason so a stale panel stops absorbing menu actions.
@@ -215,7 +215,9 @@ type BrowserNetworkCapture = {
 	timer?: ReturnType<typeof setTimeout>;
 };
 
-const OFFSCREEN_BOUNDS: BrowserRect = { x: -10_000, y: -10_000, width: 0, height: 0 };
+// Hidden targets still need a real viewport for screenshots, responsive
+// layout, scrolling, and pointer automation before the panel is first shown.
+const OFFSCREEN_BOUNDS: BrowserRect = { x: -10_000, y: -10_000, width: 1280, height: 720 };
 const DEFAULT_NETWORK_CAPTURE_SECONDS = 60;
 const MAX_NETWORK_CAPTURE_SECONDS = 300;
 const MAX_NETWORK_REQUESTS = 200;
@@ -359,14 +361,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		};
 		session.tabs.set(tabId, entry);
 		tabsByWebContentsId.set(view.webContents.id, entry);
-		hardenWebContents(view.webContents, options, entry, (url) => {
-			void openTab(session, url, true, "popup").catch((error) => {
-				pushBrowserLog(entry.errors, {
-					level: "error",
-					message: error instanceof Error ? error.message : "Unable to open browser popup",
-					timestamp: new Date().toISOString(),
-				});
-			});
+		hardenWebContents(view.webContents, options, entry, () => {
+			const popup = createTab(session, true);
+			pushTabsState(options, session, { kind: "popup", tabId: popup.tabId });
+			return popup.view.webContents;
 		});
 		wireNavEvents(
 			view.webContents,
@@ -759,7 +757,8 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	);
 
 	return {
-		execute: async (sessionId, action, args = {}) => {
+		execute: async (sessionId, action, args = {}, signal) => {
+			throwIfAborted(signal);
 			if (!sessionId.trim()) throw browserError("INVALID_ARGUMENT", "sessionId is required");
 			const session = ensureSession(sessionId);
 			const entry = activeEntry(session);
@@ -846,7 +845,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 						typeof args.ref === "string" && args.ref.trim() ? args.ref : undefined,
 					);
 				case "wait":
-					return waitForEntry(entry, args);
+					return waitForEntry(entry, args, signal);
 				case "screenshot":
 					return screenshotEntry(entry);
 				case "network-start":
@@ -905,8 +904,30 @@ function withDefaultScheme(raw: string): string {
 	if (isWindowsAbsolutePath(raw) || isPosixAbsolutePath(raw)) return localPathToFileURL(raw);
 	if (/^https?:\/\//i.test(raw)) return raw;
 	if (isLocalhostLike(raw)) return `http://${raw}`;
-	if (/^[a-zA-Z][a-zA-Z\d+.-]*:/.test(raw)) return raw;
-	return `https://${raw}`;
+	// A single token with no whitespace can be a destination: an explicit scheme
+	// (file:, mailto:, ...) or a bare hostname we default to https. Anything else —
+	// whitespace-containing text, or a lone word that is not a hostname — is a
+	// search query, not a URL (Chrome-style omnibox behavior).
+	if (!/\s/.test(raw)) {
+		if (/^[a-zA-Z][a-zA-Z\d+.-]*:/.test(raw)) return raw;
+		if (looksLikeHost(raw)) return `https://${raw}`;
+	}
+	return searchURL(raw);
+}
+
+// Treat input as a navigable host when the authority (the part before any
+// path/query/fragment) is an IPv6 literal, carries an explicit :port, or has a
+// dot (a domain). Bare words like "hi" fail this and become a search instead.
+function looksLikeHost(raw: string): boolean {
+	const host = raw.split(/[/?#]/, 1)[0];
+	if (host === "") return false;
+	if (host.startsWith("[") && host.includes("]")) return true;
+	if (/:\d+$/.test(host)) return true;
+	return host.includes(".");
+}
+
+function searchURL(query: string): string {
+	return `https://www.google.com/search?q=${encodeURIComponent(query)}`;
 }
 
 function isWindowsAbsolutePath(raw: string): boolean {
@@ -991,13 +1012,16 @@ function hardenWebContents(
 	contents: BrowserWebContents,
 	options: BrowserViewHostOptions,
 	entry: BrowserEntry,
-	onPopup: (url: string) => void,
+	createPopup: () => BrowserWebContents,
 ): void {
 	contents.setWindowOpenHandler(({ url }) => {
-		if (isAllowedBrowserURL(url, options.rendererOrigin)) {
-			onPopup(url);
+		if (!isAllowedBrowserURL(url, options.rendererOrigin)) {
+			return { action: "deny" };
 		}
-		return { action: "deny" };
+		return {
+			action: "allow",
+			createWindow: () => createPopup() as WebContents,
+		};
 	});
 	const blockUnsafeNavigation = (event: Electron.Event, url: string) => {
 		if (!isAllowedBrowserURL(url, options.rendererOrigin)) {
@@ -1826,10 +1850,10 @@ async function resolveRef(entry: BrowserEntry, refName: string): Promise<string>
 	}
 }
 
-async function waitForEntry(entry: BrowserEntry, args: Record<string, unknown>): Promise<unknown> {
+async function waitForEntry(entry: BrowserEntry, args: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
 	const fixedMS = numberArg(args.ms, 0, 60_000);
 	if (fixedMS > 0) {
-		await delay(fixedMS);
+		await delay(fixedMS, signal);
 		return { waitedMs: fixedMS, url: entry.view.webContents.getURL() };
 	}
 	const timeoutMS = numberArg(args.timeoutMs, 1, 60_000) || 10_000;
@@ -1883,8 +1907,9 @@ async function waitForEntry(entry: BrowserEntry, args: Record<string, unknown>):
 	await ensureDebugger(entry);
 	const deadline = Date.now() + timeoutMS;
 	while (Date.now() <= deadline) {
+		throwIfAborted(signal);
 		if (args.load === true && entry.view.webContents.isLoading()) {
-			await delay(100);
+			await delay(100, signal);
 			continue;
 		}
 		let evaluated: {
@@ -1899,7 +1924,7 @@ async function waitForEntry(entry: BrowserEntry, args: Record<string, unknown>):
 		} catch {
 			// Navigations and HMR can briefly replace the execution context. Retry
 			// until the requested condition or timeout rather than failing early.
-			await delay(100);
+			await delay(100, signal);
 			continue;
 		}
 		if (evaluated.exceptionDetails) {
@@ -1911,7 +1936,7 @@ async function waitForEntry(entry: BrowserEntry, args: Record<string, unknown>):
 		if (valueSatisfies(evaluated.result?.value)) {
 			return { condition, url: entry.view.webContents.getURL() };
 		}
-		await delay(100);
+		await delay(100, signal);
 	}
 	throw browserError("WAIT_TIMEOUT", `Timed out after ${timeoutMS}ms waiting for ${condition}`);
 }
@@ -1971,8 +1996,24 @@ function compactText(value: string): string {
 	return value.replace(/\s+/g, " ").replace(/\"/g, '\\"').trim().slice(0, 240);
 }
 
-function delay(ms: number): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, ms));
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+	if (!signal) return new Promise((resolve) => setTimeout(resolve, ms));
+	throwIfAborted(signal);
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => {
+			signal.removeEventListener("abort", onAbort);
+			resolve();
+		}, ms);
+		const onAbort = () => {
+			clearTimeout(timer);
+			reject(browserError("BROWSER_COMMAND_CANCELED", "Browser command was canceled"));
+		};
+		signal.addEventListener("abort", onAbort, { once: true });
+	});
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+	if (signal?.aborted) throw browserError("BROWSER_COMMAND_CANCELED", "Browser command was canceled");
 }
 
 function browserError(code: string, message: string): Error & { code: string } {

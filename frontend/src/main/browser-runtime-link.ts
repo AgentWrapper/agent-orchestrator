@@ -1,6 +1,6 @@
 import net from "node:net";
 
-const PROTOCOL_VERSION = 1;
+const PROTOCOL_VERSION = 2;
 const BACKOFF_INIT_MS = 200;
 const BACKOFF_MAX_MS = 2_000;
 const MAX_COMMAND_BYTES = 1 << 20;
@@ -11,6 +11,11 @@ export type BrowserRuntimeCommand = {
 	sessionId: string;
 	action: string;
 	args?: Record<string, unknown>;
+};
+
+type BrowserRuntimeCancel = {
+	type: "cancel";
+	requestId: string;
 };
 
 export type BrowserRuntimeCommandError = {
@@ -24,7 +29,7 @@ export interface BrowserRuntimeLinkHandle {
 }
 
 type BrowserRuntimeLinkOptions = {
-	execute: (command: BrowserRuntimeCommand) => Promise<unknown>;
+	execute: (command: BrowserRuntimeCommand, signal: AbortSignal) => Promise<unknown>;
 	log?: (message: string) => void;
 };
 
@@ -39,7 +44,15 @@ export function connectBrowserRuntime(
 	let retryTimer: ReturnType<typeof setTimeout> | null = null;
 	let backoff = BACKOFF_INIT_MS;
 	let buffer = "";
-	let commandChain = Promise.resolve();
+	let connectionEpoch = 0;
+	const commandChains = new Map<string, Promise<void>>();
+	const commandControllers = new Map<string, AbortController>();
+
+	const cancelConnectionCommands = () => {
+		for (const controller of commandControllers.values()) controller.abort();
+		commandControllers.clear();
+		commandChains.clear();
+	};
 
 	const clearRetry = () => {
 		if (retryTimer !== null) {
@@ -50,34 +63,53 @@ export function connectBrowserRuntime(
 
 	const destroySocket = () => {
 		if (!socket) return;
+		connectionEpoch += 1;
+		cancelConnectionCommands();
 		socket.removeAllListeners();
 		socket.destroy();
 		socket = null;
 	};
 
-	const send = (message: unknown) => {
-		if (!socket || socket.destroyed) return;
-		socket.write(`${JSON.stringify(message)}\n`);
+	const send = (message: unknown, target: net.Socket, epoch: number) => {
+		if (socket !== target || connectionEpoch !== epoch || target.destroyed) return;
+		target.write(`${JSON.stringify(message)}\n`);
 	};
 
-	const respond = async (command: BrowserRuntimeCommand) => {
+	const respond = async (
+		command: BrowserRuntimeCommand,
+		target: net.Socket,
+		epoch: number,
+		controller: AbortController,
+	) => {
 		try {
-			const result = await options.execute(command);
-			send({ type: "result", requestId: command.requestId, ok: true, result });
+			controller.signal.throwIfAborted();
+			const result = await options.execute(command, controller.signal);
+			controller.signal.throwIfAborted();
+			send({ type: "result", requestId: command.requestId, ok: true, result }, target, epoch);
 		} catch (error) {
+			if (controller.signal.aborted) return;
 			const normalized = normalizeCommandError(error);
-			send({ type: "result", requestId: command.requestId, ok: false, error: normalized });
+			send({ type: "result", requestId: command.requestId, ok: false, error: normalized }, target, epoch);
+		} finally {
+			if (commandControllers.get(command.requestId) === controller) {
+				commandControllers.delete(command.requestId);
+			}
 		}
 	};
 
-	const consumeLine = (line: string) => {
+	const consumeLine = (line: string, target: net.Socket, epoch: number) => {
 		if (!line.trim()) return;
-		let command: BrowserRuntimeCommand;
+		let message: BrowserRuntimeCommand | BrowserRuntimeCancel;
 		try {
-			command = JSON.parse(line) as BrowserRuntimeCommand;
+			message = JSON.parse(line) as BrowserRuntimeCommand | BrowserRuntimeCancel;
 		} catch {
 			return;
 		}
+		if (message.type === "cancel" && typeof message.requestId === "string") {
+			commandControllers.get(message.requestId)?.abort();
+			return;
+		}
+		const command = message as BrowserRuntimeCommand;
 		if (
 			command.type !== "command" ||
 			typeof command.requestId !== "string" ||
@@ -86,10 +118,17 @@ export function connectBrowserRuntime(
 		) {
 			return;
 		}
-		commandChain = commandChain.then(() => respond(command));
+		const controller = new AbortController();
+		commandControllers.set(command.requestId, controller);
+		const previous = commandChains.get(command.sessionId) ?? Promise.resolve();
+		const next = previous.then(() => respond(command, target, epoch, controller));
+		commandChains.set(command.sessionId, next);
+		void next.finally(() => {
+			if (commandChains.get(command.sessionId) === next) commandChains.delete(command.sessionId);
+		});
 	};
 
-	const consume = (chunk: Buffer) => {
+	const consume = (chunk: Buffer, target: net.Socket, epoch: number) => {
 		buffer += chunk.toString("utf8");
 		if (Buffer.byteLength(buffer, "utf8") > MAX_COMMAND_BYTES) {
 			log("browser-runtime-link: oversized command frame; reconnecting");
@@ -101,7 +140,7 @@ export function connectBrowserRuntime(
 			if (newline < 0) return;
 			const line = buffer.slice(0, newline);
 			buffer = buffer.slice(newline + 1);
-			consumeLine(line);
+			consumeLine(line, target, epoch);
 		}
 	};
 
@@ -117,6 +156,7 @@ export function connectBrowserRuntime(
 		if (disposed) return;
 		destroySocket();
 		buffer = "";
+		const epoch = ++connectionEpoch;
 		const next = typeof address === "string" ? net.connect(address) : net.connect(address);
 		socket = next;
 		next.on("connect", () => {
@@ -126,13 +166,17 @@ export function connectBrowserRuntime(
 			}
 			connected = true;
 			backoff = BACKOFF_INIT_MS;
-			send({ type: "hello", version: PROTOCOL_VERSION });
+			send({ type: "hello", version: PROTOCOL_VERSION }, next, epoch);
 			log("browser-runtime-link: connected");
 		});
-		next.on("data", consume);
+		next.on("data", (chunk) => consume(chunk, next, epoch));
 		next.on("error", (error) => log(`browser-runtime-link: error: ${error.message}`));
 		next.on("close", () => {
+			if (socket !== next || connectionEpoch !== epoch) return;
 			connected = false;
+			socket = null;
+			connectionEpoch += 1;
+			cancelConnectionCommands();
 			if (!disposed) scheduleReconnect();
 		});
 	}

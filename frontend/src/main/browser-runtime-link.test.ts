@@ -41,13 +41,18 @@ describe("browser runtime link", () => {
 		const handle = connectBrowserRuntime({ host: address.address, port: address.port }, { execute });
 		handles.push(handle);
 		await vi.waitFor(() => expect(handle.connected).toBe(true));
-		await vi.waitFor(() => expect(messages).toContainEqual({ type: "hello", version: 1 }));
+		await vi.waitFor(() => expect(messages).toContainEqual({ type: "hello", version: 2 }));
 
 		serverSocket!.write(
 			`${JSON.stringify({ type: "command", requestId: "r1", sessionId: "s1", action: "snapshot", args: {} })}\n`,
 		);
 
-		await vi.waitFor(() => expect(execute).toHaveBeenCalledWith(expect.objectContaining({ requestId: "r1" })));
+		await vi.waitFor(() =>
+			expect(execute).toHaveBeenCalledWith(
+				expect.objectContaining({ requestId: "r1" }),
+				expect.any(AbortSignal),
+			),
+		);
 		await vi.waitFor(() =>
 			expect(messages).toContainEqual({
 				type: "result",
@@ -93,5 +98,58 @@ describe("browser runtime link", () => {
 				error: { code: "STALE_REFERENCE", message: "snapshot again" },
 			}),
 		);
+	});
+
+	it("queues per session and cancels work from a closed connection", async () => {
+		let serverSocket: net.Socket | null = null;
+		const messages: Array<Record<string, unknown>> = [];
+		const executed: string[] = [];
+		const server = net.createServer((socket) => {
+			serverSocket = socket;
+			let inbound = "";
+			socket.on("data", (chunk) => {
+				inbound += chunk.toString("utf8");
+				const lines = inbound.split("\n");
+				inbound = lines.pop() ?? "";
+				for (const line of lines) if (line) messages.push(JSON.parse(line));
+			});
+		});
+		servers.push(server);
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const address = server.address() as net.AddressInfo;
+		const handle = connectBrowserRuntime(
+			{ host: address.address, port: address.port },
+			{
+				execute: async (command, signal) => {
+					executed.push(command.requestId);
+					if (command.requestId === "blocked") {
+						await new Promise<void>((_, reject) => {
+							signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+						});
+					}
+					return { requestId: command.requestId };
+				},
+			},
+		);
+		handles.push(handle);
+		await vi.waitFor(() => expect(handle.connected).toBe(true));
+
+		serverSocket!.write(
+			[
+				{ type: "command", requestId: "blocked", sessionId: "s1", action: "wait" },
+				{ type: "command", requestId: "queued", sessionId: "s1", action: "click" },
+				{ type: "command", requestId: "independent", sessionId: "s2", action: "snapshot" },
+			]
+				.map((message) => JSON.stringify(message))
+				.join("\n") + "\n",
+		);
+		await vi.waitFor(() => expect(executed).toContain("independent"));
+		expect(executed).not.toContain("queued");
+
+		serverSocket!.destroy();
+		await vi.waitFor(() => expect(handle.connected).toBe(false));
+		await vi.waitFor(() => expect(handle.connected).toBe(true));
+		expect(executed).not.toContain("queued");
+		expect(messages.some((message) => message.requestId === "blocked" && message.type === "result")).toBe(false);
 	});
 });

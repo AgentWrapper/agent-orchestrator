@@ -46,6 +46,7 @@ type setActivityAPIRequest struct {
 	ToolName       string `json:"toolName,omitempty"`
 	ToolUseID      string `json:"toolUseId,omitempty"`
 	AgentSessionID string `json:"agentSessionId,omitempty"`
+	LaunchID       string `json:"launchId,omitempty"`
 }
 
 // maxActivityMetaLen caps the correlation fields lifted from a native hook
@@ -166,6 +167,7 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 		ToolName:       toolName,
 		ToolUseID:      toolUseID,
 		AgentSessionID: agentSessionID,
+		LaunchID:       validLaunchID(os.Getenv("AO_RUNTIME_LAUNCH_ID")),
 	}
 	if hasActivity {
 		req.State = string(state)
@@ -176,6 +178,14 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 		c.reportHookFailure(agent, event, sessionID, err)
 	}
 	return nil
+}
+
+func validLaunchID(value string) string {
+	value = strings.TrimSpace(value)
+	if !sessionIDPattern.MatchString(value) {
+		return ""
+	}
+	return value
 }
 
 func shouldEmitSessionStartContext(agent, event string) bool {

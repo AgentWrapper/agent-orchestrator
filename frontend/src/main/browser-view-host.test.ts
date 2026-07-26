@@ -171,7 +171,12 @@ function setupTabHost() {
 	let nextID = 100;
 	const makeView = () => {
 		let currentURL = "";
-		let windowOpenHandler: ((details: { url: string }) => { action: string }) | undefined;
+		let windowOpenHandler:
+			| ((details: { url: string }) => {
+					action: string;
+					createWindow?: () => { loadURL: (url: string) => Promise<void> };
+			  })
+			| undefined;
 		const listeners = new Map<string, (...args: never[]) => void>();
 		let debuggerAttached = false;
 		const webContents = {
@@ -224,13 +229,21 @@ function setupTabHost() {
 			on: (event: string, listener: (...args: never[]) => void) => listeners.set(event, listener),
 			reload: () => undefined,
 			send: () => undefined,
-			setWindowOpenHandler: (handler: (details: { url: string }) => { action: string }) => {
+			setWindowOpenHandler: (
+				handler: (details: { url: string }) => {
+					action: string;
+					createWindow?: () => { loadURL: (url: string) => Promise<void> };
+				},
+			) => {
 				windowOpenHandler = handler;
 			},
 			stop: () => undefined,
 			close: vi.fn(),
 			openWindow: (url: string) => {
-				windowOpenHandler?.({ url });
+				const result = windowOpenHandler?.({ url });
+				if (result?.action === "allow") {
+					void result.createWindow?.().loadURL(url);
+				}
 			},
 		};
 		const view = { webContents, setBounds: vi.fn(), setVisible: vi.fn() };
@@ -304,6 +317,18 @@ describe("normalizeBrowserURL", () => {
 
 	it("defaults ordinary bare hosts to https", () => {
 		expect(normalizeBrowserURL("example.com").href).toBe("https://example.com/");
+		expect(normalizeBrowserURL("example.com/path?q=1").href).toBe("https://example.com/path?q=1");
+		expect(normalizeBrowserURL("192.168.1.5:8080").href).toBe("https://192.168.1.5:8080/");
+	});
+
+	it("routes non-URL input to a web search", () => {
+		expect(normalizeBrowserURL("hi").href).toBe("https://www.google.com/search?q=hi");
+		expect(normalizeBrowserURL("how do i center a div").href).toBe(
+			"https://www.google.com/search?q=how%20do%20i%20center%20a%20div",
+		);
+		// A dot-less token with a trailing colon is text, not a scheme, once it
+		// carries whitespace, so it still searches rather than throwing on new URL().
+		expect(normalizeBrowserURL("time: now").href).toBe("https://www.google.com/search?q=time%3A%20now");
 	});
 
 	it("allows file:// preview targets without mangling the scheme", () => {
@@ -668,6 +693,12 @@ describe("agent browser runtime", () => {
 		const created = (await host.execute("sess-1", "tab-new", {
 			url: "http://localhost:4173",
 		})) as { id: string };
+		expect(views[0].setBounds).toHaveBeenCalledWith({
+			x: -10_000,
+			y: -10_000,
+			width: 1280,
+			height: 720,
+		});
 
 		const listed = (await host.execute("sess-1", "tabs")) as {
 			activeTabId: string;

@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Suspense, type ComponentType, type PropsWithChildren } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useUiStore } from "../stores/ui-store";
@@ -81,6 +81,7 @@ vi.mock("../lib/bridge", () => ({
 			onNextSessionShortcut: shellMocks.onNextSessionShortcut,
 			onFocusTerminalShortcut: shellMocks.onFocusTerminalShortcut,
 		},
+		window: {},
 	},
 }));
 
@@ -110,7 +111,23 @@ vi.mock("../components/NotificationCenter", () => ({ NotificationRuntime: () => 
 vi.mock("../components/CommandPalette", () => ({ CommandPalette: () => null }));
 vi.mock("../components/OrchestratorReplacementDialog", () => ({ OrchestratorReplacementDialog: () => null }));
 vi.mock("../components/ShellTopbar", () => ({ ShellTopbar: () => null }));
-vi.mock("../components/TitlebarNav", () => ({ TitlebarNav: () => null }));
+vi.mock("../components/TitlebarNav", async () => {
+	const { useUiStore: useStore } = await vi.importActual<typeof import("../stores/ui-store")>("../stores/ui-store");
+	return {
+		TitlebarNav: ({ onSidebarPreviewEnter }: { onSidebarPreviewEnter?: () => void }) => {
+			const isSidebarOpen = useStore((state) => state.isSidebarOpen);
+			const toggleSidebar = useStore((state) => state.toggleSidebar);
+			return (
+				<button
+					aria-label={isSidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+					onClick={toggleSidebar}
+					onPointerEnter={onSidebarPreviewEnter}
+					type="button"
+				/>
+			);
+		},
+	};
+});
 vi.mock("../components/WindowTitlebar", () => ({ WindowTitlebar: () => null }));
 vi.mock("../components/KeyboardShortcutsDialog", () => ({
 	KeyboardShortcutsDialog: ({ open }: { open: boolean }) => (open ? <div data-testid="keyboard-shortcuts" /> : null),
@@ -119,7 +136,11 @@ vi.mock("../lib/shell-context", () => ({
 	ShellProvider: ({ children }: PropsWithChildren) => children,
 }));
 vi.mock("../components/ui/sidebar", () => ({
-	SidebarProvider: ({ children }: PropsWithChildren) => <div>{children}</div>,
+	SidebarProvider: ({ children, open }: PropsWithChildren<{ open?: boolean }>) => (
+		<div data-open={open ? "true" : "false"} data-testid="sidebar-provider">
+			{children}
+		</div>
+	),
 }));
 
 vi.mock("../components/GlobalNewTaskDialog", async () => {
@@ -135,9 +156,13 @@ vi.mock("../components/GlobalNewTaskDialog", async () => {
 vi.mock("../components/Sidebar", async () => {
 	const { useUiStore: useStore } = await vi.importActual<typeof import("../stores/ui-store")>("../stores/ui-store");
 	return {
-		Sidebar: () => {
+		Sidebar: ({ isOverlay, onPreviewLeave }: { isOverlay?: boolean; onPreviewLeave?: () => void }) => {
 			const nonce = useStore((state) => state.createProjectNonce);
-			return nonce > 0 ? <div data-testid="create-project-flow" /> : null;
+			return (
+				<div data-overlay={isOverlay ? "true" : "false"} data-testid="sidebar" onPointerLeave={onPreviewLeave}>
+					{nonce > 0 ? <div data-testid="create-project-flow" /> : null}
+				</div>
+			);
 		},
 	};
 });
@@ -152,6 +177,7 @@ const workspaces = [
 		sessions: [
 			{ id: "sess-1", status: "working" },
 			{ id: "sess-2", status: "terminated" },
+			{ id: "sess-merged-terminated", status: "merged", isTerminated: true },
 			{ id: "sess-3", status: "idle" },
 		],
 	},
@@ -200,7 +226,48 @@ beforeEach(() => {
 	shellMocks.state.focusTerminalListener = undefined;
 	shellMocks.state.routeParams = {};
 	shellMocks.state.workspaces = workspaces;
-	useUiStore.setState({ createProjectNonce: 0, newTaskRequest: null, newShellTerminalNonce: 0 });
+	useUiStore.setState({
+		createProjectNonce: 0,
+		isSidebarOpen: true,
+		newTaskRequest: null,
+		newShellTerminalNonce: 0,
+	});
+});
+
+describe("shell sidebar hover preview", () => {
+	it("temporarily overlays a collapsed sidebar from the titlebar toggle and closes after pointer leave", async () => {
+		useUiStore.setState({ isSidebarOpen: false });
+		await renderShell();
+
+		const provider = screen.getByTestId("sidebar-provider");
+		const sidebar = screen.getByTestId("sidebar");
+		const previewTrigger = screen.getByRole("button", { name: "Expand sidebar" });
+		expect(screen.queryByRole("button", { name: "Preview sidebar" })).not.toBeInTheDocument();
+
+		expect(provider).toHaveAttribute("data-open", "false");
+		fireEvent.pointerEnter(previewTrigger);
+
+		expect(provider).toHaveAttribute("data-open", "true");
+		expect(sidebar).toHaveAttribute("data-overlay", "true");
+		expect(useUiStore.getState().isSidebarOpen).toBe(false);
+
+		fireEvent.pointerMove(window, { clientX: 500, clientY: 300 });
+		await waitFor(() => expect(provider).toHaveAttribute("data-open", "false"));
+		expect(useUiStore.getState().isSidebarOpen).toBe(false);
+	});
+
+	it("pins the sidebar open when the titlebar toggle is clicked", async () => {
+		useUiStore.setState({ isSidebarOpen: false });
+		await renderShell();
+
+		const previewTrigger = screen.getByRole("button", { name: "Expand sidebar" });
+		fireEvent.pointerEnter(previewTrigger);
+		fireEvent.click(previewTrigger);
+
+		expect(useUiStore.getState().isSidebarOpen).toBe(true);
+		expect(screen.getByTestId("sidebar-provider")).toHaveAttribute("data-open", "true");
+		expect(screen.getByRole("button", { name: "Collapse sidebar" })).toBeInTheDocument();
+	});
 });
 
 describe("shell new-shell-terminal shortcut subscription", () => {
@@ -228,7 +295,10 @@ describe("shell new-shell-terminal shortcut subscription", () => {
 
 		pressNewShellTerminal();
 
-		expect(shellMocks.openShellTerminal).toHaveBeenCalledWith("proj-1", expect.anything());
+		expect(shellMocks.openShellTerminal).toHaveBeenCalledWith(
+			expect.objectContaining({ projectId: "proj-1" }),
+			expect.anything(),
+		);
 	});
 
 	it("re-fires on a repeat press so a second terminal can be opened", async () => {
@@ -293,7 +363,7 @@ describe("shell application shortcut subscriptions", () => {
 		expect(shellMocks.navigate).toHaveBeenCalledWith({ to: "/settings" });
 	});
 
-	it("moves to the next non-terminated session in the current project", async () => {
+	it("moves to the next active session in the current project", async () => {
 		shellMocks.state.routeParams = { sessionId: "sess-1" };
 		await renderShell();
 

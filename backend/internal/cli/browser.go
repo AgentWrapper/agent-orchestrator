@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -34,6 +35,8 @@ type browserCommandResponseDTO struct {
 	Action    string         `json:"action"`
 	Result    map[string]any `json:"result"`
 }
+
+const browserCapabilityHeader = "X-AO-Browser-Capability"
 
 func newBrowserCommand(ctx *commandContext) *cobra.Command {
 	var jsonOutput bool
@@ -416,31 +419,49 @@ func rangeArgs(minimum, maximum int) cobra.PositionalArgs {
 	}
 }
 
-func currentBrowserSessionID() (string, error) {
+func currentBrowserIdentity() (string, string, error) {
 	sessionID := strings.TrimSpace(os.Getenv("AO_SESSION_ID"))
 	if sessionID == "" {
-		return "", usageError{errors.New("ao browser must run inside an AO session (AO_SESSION_ID is not set)")}
+		return "", "", usageError{errors.New("ao browser must run inside an AO session (AO_SESSION_ID is not set)")}
 	}
-	return sessionID, nil
+	capability := strings.TrimSpace(os.Getenv("AO_BROWSER_CAPABILITY"))
+	if capability == "" {
+		return "", "", usageError{errors.New("ao browser requires the owning session capability (AO_BROWSER_CAPABILITY is not set)")}
+	}
+	return sessionID, capability, nil
 }
 
 func (c *commandContext) browserStatus(ctx context.Context) (browserStatusDTO, error) {
-	sessionID, err := currentBrowserSessionID()
+	sessionID, capability, err := currentBrowserIdentity()
 	if err != nil {
 		return browserStatusDTO{}, err
 	}
 	var out browserStatusDTO
-	err = c.getJSON(ctx, "browser/status?sessionId="+url.QueryEscape(sessionID), &out)
+	err = c.doJSONPathWithHeaders(
+		ctx,
+		http.MethodGet,
+		"/api/v1/browser/status?sessionId="+url.QueryEscape(sessionID),
+		nil,
+		&out,
+		map[string]string{browserCapabilityHeader: capability},
+	)
 	return out, err
 }
 
 func (c *commandContext) browserAction(ctx context.Context, action string, args map[string]any) (browserCommandResponseDTO, error) {
-	sessionID, err := currentBrowserSessionID()
+	sessionID, capability, err := currentBrowserIdentity()
 	if err != nil {
 		return browserCommandResponseDTO{}, err
 	}
 	var out browserCommandResponseDTO
-	err = c.postJSON(ctx, "browser/commands", browserCommandRequestDTO{SessionID: sessionID, Action: action, Args: args}, &out)
+	err = c.doJSONPathWithHeaders(
+		ctx,
+		http.MethodPost,
+		"/api/v1/browser/commands",
+		browserCommandRequestDTO{SessionID: sessionID, Action: action, Args: args},
+		&out,
+		map[string]string{browserCapabilityHeader: capability},
+	)
 	return out, err
 }
 

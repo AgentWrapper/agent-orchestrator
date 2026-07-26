@@ -14,6 +14,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 )
 
 type fakeBrowserRuntime struct {
@@ -23,19 +24,29 @@ type fakeBrowserRuntime struct {
 	err    error
 }
 
-func (f *fakeBrowserRuntime) Status() browserruntime.Status { return f.status }
+func (f *fakeBrowserRuntime) Status(_ context.Context, _ domain.SessionID, _ string) (browserruntime.Status, error) {
+	return f.status, nil
+}
 
 func (f *fakeBrowserRuntime) Execute(
 	_ context.Context,
 	_ domain.SessionID,
+	_ string,
 	action string,
 	args map[string]interface{},
-) (browserruntime.Result, error) {
+) (browserruntime.Result, string, error) {
 	f.action, f.args = action, args
-	if f.err != nil {
-		return browserruntime.Result{}, f.err
+	if action == "eval" {
+		return browserruntime.Result{}, action, apierr.Invalid(
+			"BROWSER_ACTION_UNSUPPORTED",
+			"Unsupported browser action",
+			nil,
+		)
 	}
-	return browserruntime.Result{RequestID: "request-1", Value: map[string]interface{}{"text": "button Save [ref=e1]"}}, nil
+	if f.err != nil {
+		return browserruntime.Result{}, action, f.err
+	}
+	return browserruntime.Result{RequestID: "request-1", Value: map[string]interface{}{"text": "button Save [ref=e1]"}}, action, nil
 }
 
 func browserServer(t *testing.T, runtime *fakeBrowserRuntime) *httptest.Server {

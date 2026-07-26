@@ -556,13 +556,6 @@ export function useBrowserView({
 		return withView((id) => window.ao!.browser.clear(id));
 	}, [hasNativeBrowser, withView]);
 
-	// When the session is terminated, clear the view and stop reacting to
-	// daemon-driven preview changes so stale content does not remain visible.
-	useEffect(() => {
-		if (!terminated) return;
-		void clear();
-	}, [clear, terminated]);
-
 	// Drive the view from the daemon-set preview target. Current daemons key
 	// this on previewRevision (bumped on every `ao preview` call); older daemons
 	// did not send it, so fall back to URL changes for compatibility.
@@ -597,7 +590,18 @@ export function useBrowserView({
 		sendHiddenBounds(id);
 		window.ao?.browser.destroy(id);
 		viewIdRef.current = "";
+		setViewId("");
+		setNavState(EMPTY_NAV_STATE);
+		setTabsState(EMPTY_TABS_STATE);
 	}, [sendHiddenBounds, stopMirrorStream]);
+
+	// Termination invalidates the complete session-owned browser, including all
+	// tabs, captures, profile state, and target mappings. `clear` remains the
+	// explicit preview-reset operation.
+	useEffect(() => {
+		if (!terminated || !viewId) return;
+		destroy();
+	}, [destroy, terminated, viewId]);
 
 	return {
 		viewId,
