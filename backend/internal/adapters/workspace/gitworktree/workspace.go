@@ -625,7 +625,7 @@ func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (por
 	// recreated on cfg.Branch (typically the root branch) instead.
 	recreateBranch := cfg.Branch
 	if rec, ok := findWorktree(records, path); ok {
-		missing, err := w.pruneIfWorktreeDirMissing(ctx, repo, rec)
+		missing, err := registeredWorktreeDirMissing(rec)
 		if err != nil {
 			return ports.WorkspaceInfo{}, err
 		}
@@ -638,12 +638,13 @@ func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (por
 		}
 		// The registration outlived its directory (issue #2775: a session's git
 		// worktree registration and DB row survived a deletion that removed only
-		// the directory). pruneIfWorktreeDirMissing already pruned the stale
-		// registration; fall through to recreate the worktree at path below,
+		// the directory). Fall through to recreate the worktree at path below,
 		// on the registration's own branch (not cfg.Branch), instead of
 		// returning a handle to a directory that does not exist, which
 		// previously made `cd <path> || exit` in the tmux launch command exit
-		// instantly with no diagnostic.
+		// instantly with no diagnostic. addWorktree re-registers the stale path
+		// itself via `worktree add --force`; the registration is left in place
+		// until then.
 		if rec.Branch != "" {
 			recreateBranch = rec.Branch
 		}
@@ -673,14 +674,14 @@ func (w *Workspace) existingWorktree(ctx context.Context, repo, path string, cfg
 		return ports.WorkspaceInfo{}, false, err
 	}
 	if rec, ok := findWorktree(records, path); ok {
-		missing, err := w.pruneIfWorktreeDirMissing(ctx, repo, rec)
+		missing, err := registeredWorktreeDirMissing(rec)
 		if err != nil {
 			return ports.WorkspaceInfo{}, false, err
 		}
 		if missing {
-			// pruneIfWorktreeDirMissing already pruned the stale registration; report
-			// "no existing worktree" so Create falls through to addWorktree and
-			// materializes a fresh one at path.
+			// Report "no existing worktree" so Create falls through to
+			// addWorktree, which re-registers this stale path in one step via
+			// `worktree add --force`.
 			return ports.WorkspaceInfo{}, false, nil
 		}
 		branch := rec.Branch
@@ -692,37 +693,40 @@ func (w *Workspace) existingWorktree(ctx context.Context, repo, path string, cfg
 	return ports.WorkspaceInfo{}, false, nil
 }
 
-// pruneIfWorktreeDirMissing reports whether a git-registered worktree's
-// directory no longer exists on disk, and mutates rec's own registration when
-// it does. A worktree registration (and the session's DB row) can outlive its
-// directory when something removes the path out of band of AO's own teardown
-// (issue #2775: session agent-orchestrator-78 kept its branches and worktree
-// registration but its directory was gone, so handing that path straight to
-// the runtime made the tmux launch command's `cd <path> || exit` guard exit
-// instantly with no diagnostic). When the directory is missing and rec is not
-// locked, this removes the stale registration so the caller can materialize a
-// fresh worktree at the same path instead.
+// registeredWorktreeDirMissing reports whether a git-registered worktree's
+// directory no longer exists on disk. A worktree registration (and the
+// session's DB row) can outlive its directory when something removes the path
+// out of band of AO's own teardown (issue #2775: session agent-orchestrator-78
+// kept its branches and worktree registration but its directory was gone, so
+// handing that path straight to the runtime made the tmux launch command's
+// `cd <path> || exit` guard exit instantly with no diagnostic). When it reports
+// true, the caller materializes a fresh worktree at the same path with
+// `git worktree add --force` (see worktreeAddForce), which re-registers the
+// path itself: nothing here removes or prunes a registration first.
 //
-// This deliberately removes only rec's own registration via
-// `git worktree remove --force rec.Path`, NOT the repo-wide
-// `git worktree prune`: prune has no per-worktree form, so it would also drop
-// the registration of any OTHER worktree of repo whose directory git
-// currently cannot see (an unmounted volume, a network filesystem hiccup),
-// not just rec's. Verified against real git: two worktrees with their
-// directories both deleted, one `git worktree prune` removes BOTH
-// registrations, silently reintroducing the exact "recreated on the wrong
-// branch" failure recreateBranch exists to prevent, for a sibling session
-// that never asked to be touched.
+// This is deliberately a pure observation. Recovering by first clearing the
+// stale registration would mean either the repo-wide `git worktree prune`,
+// which also drops the registration of every OTHER worktree of the repo whose
+// directory git currently cannot see (verified against real git: two worktrees
+// with their directories both deleted, one prune removes BOTH registrations,
+// silently reintroducing the "recreated on the wrong branch" failure
+// recreateBranch exists to prevent for a sibling session that never asked to be
+// touched), or the target-specific `git worktree remove --force`, which is
+// check-then-delete against this stat: if anything materializes the worktree
+// between the two, the force-remove deletes a live worktree and any uncommitted
+// agent work in it. `worktree add --force` has neither problem: it touches only
+// this path's registration, and git refuses it outright when the directory
+// exists and is non-empty, so a lost race fails loudly instead of destroying
+// work.
 //
 // If rec is locked (`git worktree lock`), this returns ErrWorktreeLocked
-// instead of claiming recovery. `git worktree prune` already leaves a locked
-// registration in place even when its directory is gone (verified against
-// real git), and both `git worktree add` and `git worktree remove --force` at
-// that path fail with an opaque git error ("missing but locked worktree");
-// silently attempting either here would just relay that opaque failure
+// instead of reporting a recoverable registration. Verified against real git: a
+// single `worktree add --force` refuses a missing-but-locked registration (it
+// demands `-f -f`), and `git worktree prune` leaves such a registration in
+// place too, so attempting recovery here would just relay an opaque git error
 // downstream. Locking is an explicit operator signal not to touch a worktree,
 // so recovering it automatically would be wrong even if git allowed it.
-func (w *Workspace) pruneIfWorktreeDirMissing(ctx context.Context, repo string, rec worktreeRecord) (bool, error) {
+func registeredWorktreeDirMissing(rec worktreeRecord) (bool, error) {
 	info, err := os.Stat(rec.Path)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
@@ -733,9 +737,6 @@ func (w *Workspace) pruneIfWorktreeDirMissing(ctx context.Context, repo string, 
 				"%w: %q (branch %q) is registered but its directory is missing; unlock it (`git worktree unlock %s`) and retry, or remove the registration manually",
 				ErrWorktreeLocked, rec.Path, rec.Branch, rec.Path,
 			)
-		}
-		if _, rmErr := w.run(ctx, w.binary, worktreeForceRemoveArgs(repo, rec.Path)...); rmErr != nil {
-			return false, fmt.Errorf("gitworktree: remove stale worktree registration %q: %w", rec.Path, rmErr)
 		}
 		return true, nil
 	}
@@ -756,13 +757,26 @@ func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch, baseBra
 	if conflict, ok := findWorktreeByBranch(records, branch); ok && filepath.Clean(conflict.Path) != filepath.Clean(path) {
 		return fmt.Errorf("%w: %q is checked out at %q", ErrBranchCheckedOutElsewhere, branch, conflict.Path)
 	}
+	// A registration at path whose directory is gone makes a plain add fail
+	// ("is a missing but already registered worktree; use 'add -f' to
+	// override"), so re-register it in the same add instead of clearing it
+	// first. records is the freshly listed state, so this decision and the add
+	// it feeds are as close together as git allows.
+	force := false
+	if rec, ok := findWorktree(records, path); ok {
+		missing, err := registeredWorktreeDirMissing(rec)
+		if err != nil {
+			return err
+		}
+		force = missing
+	}
 
 	localBranch, err := w.refExists(ctx, repo, "refs/heads/"+branch)
 	if err != nil {
 		return err
 	}
 	if localBranch {
-		if _, err := w.run(ctx, w.binary, worktreeAddBranchArgs(repo, path, branch)...); err != nil {
+		if _, err := w.run(ctx, w.binary, worktreeAddBranchArgs(repo, path, branch, force)...); err != nil {
 			return fmt.Errorf("gitworktree: worktree add existing branch %q: %w", branch, err)
 		}
 		return nil
@@ -781,12 +795,14 @@ func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch, baseBra
 		}
 		return err
 	}
-	if _, err := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo, branch, path, baseRef)...); err != nil {
-		if isMissingRegisteredWorktreeError(err) {
-			if pruneErr := w.pruneWorktrees(ctx, repo); pruneErr != nil {
-				return fmt.Errorf("gitworktree: worktree add branch %q from %q: recover stale registration: %w", branch, baseRef, pruneErr)
-			}
-			if _, retryErr := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo, branch, path, baseRef)...); retryErr == nil {
+	if _, err := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo, branch, path, baseRef, force)...); err != nil {
+		// git can still report the stale registration when the directory
+		// reappeared between the stat above and this add, or vanished after it.
+		// Retry with --force (git's own suggested override) rather than the
+		// repo-wide prune this used to run, which would drop sibling sessions'
+		// registrations too.
+		if !force && isMissingRegisteredWorktreeError(err) {
+			if _, retryErr := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo, branch, path, baseRef, true)...); retryErr == nil {
 				return nil
 			}
 		}
@@ -859,12 +875,12 @@ func (w *Workspace) createWorkspaceProjectRepo(ctx context.Context, repo workspa
 	if err != nil {
 		return "", err
 	}
-	if _, err := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo.repoPath, branch, repo.outputPath, baseRef)...); err != nil {
+	if _, err := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo.repoPath, branch, repo.outputPath, baseRef, false)...); err != nil {
+		// Same stale-registration recovery as addWorktree: retry with git's own
+		// --force override instead of a repo-wide prune that would also drop
+		// sibling sessions' registrations.
 		if isMissingRegisteredWorktreeError(err) {
-			if pruneErr := w.pruneWorktrees(ctx, repo.repoPath); pruneErr != nil {
-				return "", fmt.Errorf("gitworktree: workspace repo %q worktree add branch %q from %q: recover stale registration: %w", repo.name, branch, baseRef, pruneErr)
-			}
-			if _, retryErr := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo.repoPath, branch, repo.outputPath, baseRef)...); retryErr == nil {
+			if _, retryErr := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo.repoPath, branch, repo.outputPath, baseRef, true)...); retryErr == nil {
 				return baseSHA, nil
 			}
 		}

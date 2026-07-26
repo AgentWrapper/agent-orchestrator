@@ -26,8 +26,13 @@ func TestCommandArgs(t *testing.T) {
 	}{
 		{"check ref", checkRefFormatBranchArgs(repo, branch), []string{"-C", repo, "check-ref-format", "--branch", branch}},
 		{"rev parse", revParseVerifyArgs(repo, "origin/main"), []string{"-C", repo, "rev-parse", "--verify", "--quiet", "origin/main"}},
-		{"add existing", worktreeAddBranchArgs(repo, path, branch), []string{"-C", repo, "worktree", "add", path, branch}},
-		{"add new", worktreeAddNewBranchArgs(repo, branch, path, "origin/main"), []string{"-C", repo, "worktree", "add", "-b", branch, path, "origin/main"}},
+		{"add existing", worktreeAddBranchArgs(repo, path, branch, false), []string{"-C", repo, "worktree", "add", path, branch}},
+		{"add new", worktreeAddNewBranchArgs(repo, branch, path, "origin/main", false), []string{"-C", repo, "worktree", "add", "-b", branch, path, "origin/main"}},
+		// --force is git's documented override for a registration whose directory
+		// is gone, and is passed exactly once: `-f -f` would also override an
+		// operator's `git worktree lock`.
+		{"add existing forced", worktreeAddBranchArgs(repo, path, branch, true), []string{"-C", repo, "worktree", "add", "--force", path, branch}},
+		{"add new forced", worktreeAddNewBranchArgs(repo, branch, path, "origin/main", true), []string{"-C", repo, "worktree", "add", "--force", "-b", branch, path, "origin/main"}},
 		// No --force: a dirty worktree must cause `git worktree remove` to fail so
 		// the post-prune safety check surfaces the refusal instead of deleting
 		// uncommitted agent work (review item RA).
@@ -214,12 +219,13 @@ func TestCreateReusesRegisteredWorktreeAtExpectedPath(t *testing.T) {
 	}
 }
 
-// TestCreatePrunesMissingRegisteredWorktreeBeforeRecreating covers Fix 3
+// TestCreateRecreatesMissingRegisteredWorktreeWithForce covers Fix 3
 // (issue #2775): a registration can survive in `git worktree list` after its
 // directory is gone (a prior daemon or an out-of-band `rm -rf`). Create must
-// not hand that dead path to the runtime; it must prune the stale
-// registration and materialize a fresh worktree at the same path.
-func TestCreatePrunesMissingRegisteredWorktreeBeforeRecreating(t *testing.T) {
+// not hand that dead path to the runtime; it must materialize a fresh worktree
+// at the same path via `worktree add --force`, git's own override for a
+// missing-but-registered path, without first removing or pruning anything.
+func TestCreateRecreatesMissingRegisteredWorktreeWithForce(t *testing.T) {
 	root := t.TempDir()
 	repo := t.TempDir()
 	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
@@ -236,7 +242,8 @@ func TestCreatePrunesMissingRegisteredWorktreeBeforeRecreating(t *testing.T) {
 		Branch:        "ao/proj-orchestrator",
 	}
 
-	stale := true
+	// The stale registration is never cleared, so it stays in every listing:
+	// `worktree add --force` re-registers the path itself.
 	var calls []string
 	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
 		joined := strings.Join(args, " ")
@@ -245,16 +252,10 @@ func TestCreatePrunesMissingRegisteredWorktreeBeforeRecreating(t *testing.T) {
 		case strings.Contains(joined, "check-ref-format"):
 			return nil, nil
 		case strings.Contains(joined, "worktree list --porcelain"):
-			if stale {
-				return []byte("worktree " + path + "\nbranch refs/heads/ao/proj-orchestrator\n"), nil
-			}
-			return []byte("worktree " + repo + "\nbranch refs/heads/main\n"), nil
-		case strings.Contains(joined, "worktree remove --force "+path):
-			stale = false
-			return nil, nil
+			return []byte("worktree " + path + "\nbranch refs/heads/ao/proj-orchestrator\n"), nil
 		case strings.Contains(joined, "rev-parse --verify --quiet refs/heads/ao/proj-orchestrator"):
 			return nil, nil
-		case strings.Contains(joined, "worktree add "+path+" ao/proj-orchestrator"):
+		case strings.Contains(joined, "worktree add --force "+path+" ao/proj-orchestrator"):
 			return nil, nil
 		default:
 			t.Fatalf("unexpected git invocation: %v", args)
@@ -270,15 +271,29 @@ func TestCreatePrunesMissingRegisteredWorktreeBeforeRecreating(t *testing.T) {
 		t.Fatalf("info = %#v, want path %q branch %q", info, path, cfg.Branch)
 	}
 	got := strings.Join(calls, "\n")
-	if !strings.Contains(got, "worktree remove --force "+path) || !strings.Contains(got, "worktree add "+path+" "+cfg.Branch) {
-		t.Fatalf("Create did not remove and recreate missing worktree:\n%s", got)
+	if !strings.Contains(got, "worktree add --force "+path+" "+cfg.Branch) {
+		t.Fatalf("Create did not recreate the missing worktree with --force:\n%s", got)
 	}
-	if strings.Contains(got, "worktree prune") {
-		t.Fatalf("Create used repo-wide worktree prune instead of a target-specific remove:\n%s", got)
+	assertNoDestructiveRegistrationCleanup(t, "Create", got)
+}
+
+// assertNoDestructiveRegistrationCleanup pins the two cleanup mechanisms
+// stale-registration recovery must not use (PR #3098 review, illegalcall):
+// the repo-wide `git worktree prune`, which also drops sibling sessions'
+// registrations, and `git worktree remove --force`, which is check-then-delete
+// against an earlier os.Stat and deletes a live worktree, uncommitted agent work
+// included, if the directory reappears in between.
+func assertNoDestructiveRegistrationCleanup(t *testing.T, op, calls string) {
+	t.Helper()
+	if strings.Contains(calls, "worktree prune") {
+		t.Fatalf("%s used repo-wide worktree prune to recover a stale registration:\n%s", op, calls)
+	}
+	if strings.Contains(calls, "worktree remove") {
+		t.Fatalf("%s used worktree remove to recover a stale registration:\n%s", op, calls)
 	}
 }
 
-// TestRestorePrunesMissingRegisteredWorktreeBeforeRecreating is the Restore
+// TestRestoreRecreatesMissingRegisteredWorktreeWithForce is the Restore
 // counterpart: session_manager.RestoreAll relies on workspace.Restore to
 // re-materialize a worktree whose directory disappeared, but Restore only
 // exercised that path when the git registration was ALSO gone. The observed
@@ -286,7 +301,7 @@ func TestCreatePrunesMissingRegisteredWorktreeBeforeRecreating(t *testing.T) {
 // that survived a directory deletion, so Restore returned a handle to a
 // missing directory and the tmux launch command's `cd <path> || exit` guard
 // exited instantly with no diagnostic.
-func TestRestorePrunesMissingRegisteredWorktreeBeforeRecreating(t *testing.T) {
+func TestRestoreRecreatesMissingRegisteredWorktreeWithForce(t *testing.T) {
 	root := t.TempDir()
 	repo := t.TempDir()
 	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
@@ -303,7 +318,6 @@ func TestRestorePrunesMissingRegisteredWorktreeBeforeRecreating(t *testing.T) {
 		Path:          path,
 	}
 
-	stale := true
 	var calls []string
 	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
 		joined := strings.Join(args, " ")
@@ -312,16 +326,10 @@ func TestRestorePrunesMissingRegisteredWorktreeBeforeRecreating(t *testing.T) {
 		case strings.Contains(joined, "check-ref-format"):
 			return nil, nil
 		case strings.Contains(joined, "worktree list --porcelain"):
-			if stale {
-				return []byte("worktree " + path + "\nbranch refs/heads/ao/proj-orchestrator\n"), nil
-			}
-			return []byte("worktree " + repo + "\nbranch refs/heads/main\n"), nil
-		case strings.Contains(joined, "worktree remove --force "+path):
-			stale = false
-			return nil, nil
+			return []byte("worktree " + path + "\nbranch refs/heads/ao/proj-orchestrator\n"), nil
 		case strings.Contains(joined, "rev-parse --verify --quiet refs/heads/ao/proj-orchestrator"):
 			return nil, nil
-		case strings.Contains(joined, "worktree add "+path+" ao/proj-orchestrator"):
+		case strings.Contains(joined, "worktree add --force "+path+" ao/proj-orchestrator"):
 			return nil, nil
 		default:
 			t.Fatalf("unexpected git invocation: %v", args)
@@ -337,12 +345,10 @@ func TestRestorePrunesMissingRegisteredWorktreeBeforeRecreating(t *testing.T) {
 		t.Fatalf("info = %#v, want path %q branch %q", info, path, cfg.Branch)
 	}
 	got := strings.Join(calls, "\n")
-	if !strings.Contains(got, "worktree remove --force "+path) || !strings.Contains(got, "worktree add "+path+" "+cfg.Branch) {
-		t.Fatalf("Restore did not remove and recreate missing worktree:\n%s", got)
+	if !strings.Contains(got, "worktree add --force "+path+" "+cfg.Branch) {
+		t.Fatalf("Restore did not recreate the missing worktree with --force:\n%s", got)
 	}
-	if strings.Contains(got, "worktree prune") {
-		t.Fatalf("Restore used repo-wide worktree prune instead of a target-specific remove:\n%s", got)
-	}
+	assertNoDestructiveRegistrationCleanup(t, "Restore", got)
 }
 
 // TestRestoreRecreatesOnRegisteredBranchNotCfgBranch is the regression test
@@ -376,7 +382,6 @@ func TestRestoreRecreatesOnRegisteredBranchNotCfgBranch(t *testing.T) {
 		Path:          path,
 	}
 
-	stale := true
 	var calls []string
 	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
 		joined := strings.Join(args, " ")
@@ -385,16 +390,10 @@ func TestRestoreRecreatesOnRegisteredBranchNotCfgBranch(t *testing.T) {
 		case strings.Contains(joined, "check-ref-format"):
 			return nil, nil
 		case strings.Contains(joined, "worktree list --porcelain"):
-			if stale {
-				return []byte("worktree " + path + "\nbranch refs/heads/" + registeredBranch + "\n"), nil
-			}
-			return []byte("worktree " + repo + "\nbranch refs/heads/main\n"), nil
-		case strings.Contains(joined, "worktree remove --force "+path):
-			stale = false
-			return nil, nil
+			return []byte("worktree " + path + "\nbranch refs/heads/" + registeredBranch + "\n"), nil
 		case strings.Contains(joined, "rev-parse --verify --quiet refs/heads/"+registeredBranch):
 			return nil, nil
-		case strings.Contains(joined, "worktree add "+path+" "+registeredBranch):
+		case strings.Contains(joined, "worktree add --force "+path+" "+registeredBranch):
 			return nil, nil
 		default:
 			t.Fatalf("unexpected git invocation: %v", args)
@@ -410,15 +409,20 @@ func TestRestoreRecreatesOnRegisteredBranchNotCfgBranch(t *testing.T) {
 		t.Fatalf("info.Branch = %q, want the registered branch %q (not cfg.Branch %q)", info.Branch, registeredBranch, cfg.Branch)
 	}
 	got := strings.Join(calls, "\n")
-	if strings.Contains(got, "worktree add "+path+" "+cfg.Branch) {
+	if strings.Contains(got, "worktree add --force "+path+" "+cfg.Branch) {
 		t.Fatalf("Restore recreated the worktree on cfg.Branch instead of the registered branch:\n%s", got)
 	}
-	if !strings.Contains(got, "worktree add "+path+" "+registeredBranch) {
+	if !strings.Contains(got, "worktree add --force "+path+" "+registeredBranch) {
 		t.Fatalf("Restore did not recreate the worktree on the registered branch %q:\n%s", registeredBranch, got)
 	}
 }
 
-func TestCreateWorkspaceProjectRepoPrunesStaleRegisteredWorktree(t *testing.T) {
+// TestCreateWorkspaceProjectRepoRetriesStaleRegisteredWorktreeWithForce: when
+// git itself reports the path as a missing-but-registered worktree, the retry
+// uses git's own `add --force` override rather than the repo-wide
+// `git worktree prune` this used to run, which would also drop the registration
+// of any sibling session whose directory git currently cannot see.
+func TestCreateWorkspaceProjectRepoRetriesStaleRegisteredWorktreeWithForce(t *testing.T) {
 	root := t.TempDir()
 	repo := t.TempDir()
 	output := filepath.Join(root, "proj", "orchestrator", "proj-orchestrator", "api")
@@ -446,15 +450,13 @@ func TestCreateWorkspaceProjectRepoPrunesStaleRegisteredWorktree(t *testing.T) {
 			return []byte("abc123\n"), nil
 		case strings.Contains(joined, "worktree add -b feature/test "+output+" origin/main"):
 			addAttempts++
-			if addAttempts == 1 {
-				return nil, commandError{
-					args:   append([]string{binary}, args...),
-					output: "Preparing worktree (new branch 'feature/test')\nfatal: '" + output + "' is a missing but already registered worktree;\nuse 'add -f' to override, or 'prune' or 'remove' to clear",
-					err:    errors.New("exit status 128"),
-				}
+			return nil, commandError{
+				args:   append([]string{binary}, args...),
+				output: "Preparing worktree (new branch 'feature/test')\nfatal: '" + output + "' is a missing but already registered worktree;\nuse 'add -f' to override, or 'prune' or 'remove' to clear",
+				err:    errors.New("exit status 128"),
 			}
-			return nil, nil
-		case strings.Contains(joined, "worktree prune"):
+		case strings.Contains(joined, "worktree add --force -b feature/test "+output+" origin/main"):
+			addAttempts++
 			return nil, nil
 		default:
 			t.Fatalf("unexpected git invocation: %v", args)
@@ -477,9 +479,10 @@ func TestCreateWorkspaceProjectRepoPrunesStaleRegisteredWorktree(t *testing.T) {
 		t.Fatalf("add attempts = %d, want 2", addAttempts)
 	}
 	got := strings.Join(calls, "\n")
-	if !strings.Contains(got, "worktree prune") {
-		t.Fatalf("calls missing worktree prune:\n%s", got)
+	if !strings.Contains(got, "worktree add --force -b feature/test "+output+" origin/main") {
+		t.Fatalf("calls missing the --force retry:\n%s", got)
 	}
+	assertNoDestructiveRegistrationCleanup(t, "createWorkspaceProjectRepo", got)
 }
 
 // TestValidateConfigRejectsPathEscapingIDs covers review item RB: filepath.Join

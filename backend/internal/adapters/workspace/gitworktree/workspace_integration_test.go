@@ -282,6 +282,76 @@ func TestWorkspaceIntegrationRestoreLockedMissingWorktreeIsTypedError(t *testing
 	runGit(t, git, repo, "worktree", "unlock", info.Path)
 }
 
+// TestWorkspaceIntegrationRestoreDoesNotDestroyWorktreeRecreatedMidRecovery is
+// the real-git regression test for the concurrent-restore finding on stale
+// registration recovery (PR #3098 review, illegalcall). The "this registration's
+// directory is missing" observation and the recovery that acts on it cannot be
+// one atomic step, and RestoreWithMode has no per-session restore guard, so a
+// second restore of the same session can recreate the worktree in between. The
+// earlier fix recovered with `git worktree remove --force <path>`, which in that
+// window deletes a live worktree and every uncommitted file in it. Recovery now
+// goes through `git worktree add --force`, git's own override for a
+// missing-but-registered path, which git refuses outright when the directory
+// exists and is non-empty: the losing restore fails loudly and the winner's work
+// survives.
+//
+// The interleaving is forced deterministically rather than raced: the hooked
+// runner recreates the worktree and writes an uncommitted sentinel file just
+// before the first registration-mutating git command Restore issues, which is
+// exactly the window the finding describes.
+func TestWorkspaceIntegrationRestoreDoesNotDestroyWorktreeRecreatedMidRecovery(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := setupOriginClone(t, git, tmp)
+	root := filepath.Join(tmp, "managed")
+	ws, err := New(Options{Binary: git, ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	ctx := context.Background()
+	info, err := ws.Create(ctx, ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "child"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// The out-of-band deletion #2775 hit: directory gone, registration intact.
+	if err := os.RemoveAll(info.Path); err != nil {
+		t.Fatalf("remove dir: %v", err)
+	}
+
+	sentinel := filepath.Join(info.Path, "AGENT_WORK.txt")
+	raced := false
+	ws.run = func(ctx context.Context, binary string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		mutatesRegistration := strings.Contains(joined, "worktree add") ||
+			strings.Contains(joined, "worktree remove") ||
+			strings.Contains(joined, "worktree prune")
+		if !raced && mutatesRegistration {
+			raced = true
+			// Stand in for the concurrent restore that wins the race: it
+			// recreates the worktree at the same path, and its agent
+			// immediately has uncommitted work there.
+			runGit(t, git, repo, "worktree", "add", "--force", info.Path, "child")
+			if err := os.WriteFile(sentinel, []byte("uncommitted agent work\n"), 0o644); err != nil {
+				t.Fatalf("write sentinel: %v", err)
+			}
+		}
+		return runCommand(ctx, binary, args...)
+	}
+
+	restored, restoreErr := ws.Restore(ctx, ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "child", Path: info.Path})
+	if !raced {
+		t.Fatal("Restore issued no registration-mutating git command, so the race window was never forced")
+	}
+	if _, err := os.Stat(sentinel); err != nil {
+		t.Fatalf("uncommitted work in the concurrently recreated worktree did not survive stale-registration recovery: %v", err)
+	}
+	// Losing the race must not be reported as success for a worktree this
+	// restore did not materialize.
+	if restoreErr == nil && restored.Path != info.Path {
+		t.Fatalf("restored = %#v, want a handle to the live worktree at %q", restored, info.Path)
+	}
+}
+
 // TestWorkspaceIntegrationCreateInRemotelessRepo guards the BRANCH_NOT_FETCHED
 // regression: a repo with no remote configured must still spawn worktrees for
 // new branches by basing them on the local default-branch head
