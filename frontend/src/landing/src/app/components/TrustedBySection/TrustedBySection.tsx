@@ -44,9 +44,26 @@ function AgentMark({ agent }: { agent: Agent }) {
   );
 }
 
+// One full pass of the logos as an equal-width group with a trailing gap equal
+// to the inner gap, so two groups tile seamlessly and translateX(-50%) lands
+// exactly on the second group (no reset jump). The duplicate group is
+// aria-hidden so screen readers meet each agent once.
+function AgentGroup({ duplicate = false }: { duplicate?: boolean }) {
+  return (
+    <ul
+      aria-hidden={duplicate || undefined}
+      className="agent-marquee__group flex shrink-0 items-center gap-8 pr-8 sm:gap-10 sm:pr-10"
+    >
+      {AGENTS.map((agent) => (
+        <li key={agent.name}>
+          <AgentMark agent={agent} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function TrustedBySection() {
-  // Two copies of the list, translated by -50%, give a seamless infinite loop.
-  const loop = [...AGENTS, ...AGENTS];
   return (
     <section className="py-16 sm:py-24 bg-background overflow-hidden">
       <div className="max-w-7xl mx-auto text-center">
@@ -54,14 +71,23 @@ export function TrustedBySection() {
           Use the agents you already trust.
         </h2>
 
-        {/* Narrow viewport so ~10 logos are visible at once as they flow. */}
+        {/* Animated marquee: ~10 logos visible as they flow. Hidden for
+            reduced-motion users, who get the full static list below. */}
         <div className="agent-marquee group relative mx-auto w-full max-w-2xl overflow-hidden [mask-image:linear-gradient(to_right,transparent,black_8%,black_92%,transparent)]">
-          <div className="agent-marquee__track flex w-max items-center gap-8 sm:gap-10">
-            {loop.map((agent, i) => (
-              <AgentMark key={`${agent.name}-${i}`} agent={agent} />
-            ))}
+          <div className="agent-marquee__track flex w-max">
+            <AgentGroup />
+            <AgentGroup duplicate />
           </div>
         </div>
+
+        {/* Reduced-motion fallback: every agent, wrapping, fully visible. */}
+        <ul className="agent-static mx-auto hidden w-full max-w-4xl flex-wrap items-center justify-center gap-x-6 gap-y-5 px-4 sm:gap-8">
+          {AGENTS.map((agent) => (
+            <li key={agent.name}>
+              <AgentMark agent={agent} />
+            </li>
+          ))}
+        </ul>
       </div>
 
       <style>{`
@@ -73,11 +99,13 @@ export function TrustedBySection() {
           animation: agent-marquee-scroll 45s linear infinite;
           will-change: transform;
         }
-        .agent-marquee:hover .agent-marquee__track {
+        .agent-marquee:hover .agent-marquee__track,
+        .agent-marquee:focus-within .agent-marquee__track {
           animation-play-state: paused;
         }
         @media (prefers-reduced-motion: reduce) {
-          .agent-marquee__track { animation: none; }
+          .agent-marquee { display: none; }
+          .agent-static { display: flex; }
         }
       `}</style>
     </section>
