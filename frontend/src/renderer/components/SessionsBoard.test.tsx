@@ -259,7 +259,7 @@ describe("SessionsBoard", () => {
 		renderBoard("p1");
 
 		const needsYouColumn = screen.getByText("Needs you").closest("section") as HTMLElement;
-		expect(needsYouColumn.firstElementChild).toHaveClass("h-12");
+		expect(needsYouColumn.firstElementChild).toHaveClass("py-2");
 		expect(within(needsYouColumn).getByText("agent-exited-task")).toBeInTheDocument();
 		expect(within(needsYouColumn).getByText("Exited").closest("span")).toHaveClass("text-status-exited");
 	});
@@ -319,16 +319,13 @@ describe("SessionsBoard", () => {
 
 		expect(within(workSummary).getByText("Idle").querySelector("span")).toHaveClass("bg-status-idle");
 		expect(within(workSummary).getByText("Working").querySelector("span")).toHaveClass("bg-status-working");
-		expect(workSummary).toHaveClass("font-mono", "text-2xs", "uppercase");
-		expect(workSummary.parentElement).toHaveClass("h-12");
-		expect(workingRegion.firstElementChild).toHaveClass("py-2.5");
+		expect(workSummary.parentElement).toHaveClass("pb-2.5");
+		expect(workingRegion.firstElementChild).toHaveClass("pb-2.5");
 		expect(within(workLane).getByLabelText("2 idle sessions")).toHaveTextContent("2");
 		expect(within(workLane).getByLabelText("1 working session")).toHaveTextContent("1");
 		expect(screen.queryByRole("button", { name: /idle sessions/i })).not.toBeInTheDocument();
 		expect(idleRegion).toHaveClass("flex-[3]");
-		expect(workingRegion.className).toContain("flex-[2]");
-		expect(workingRegion.className).toContain("border-t");
-		expect(workingRegion.className).not.toContain("rounded-t");
+		expect(workingRegion).toHaveClass("flex-[2]", "rounded-t-(--radius-panel)", "border-t");
 		expect(within(idleRegion).getByText("idle-no-pr-task")).toBeInTheDocument();
 		expect(within(idleRegion).getByText("second-idle-task")).toBeInTheDocument();
 		expect(within(workingRegion).getByText("active-task")).toBeInTheDocument();
@@ -823,9 +820,7 @@ describe("SessionsBoard", () => {
 		expect(within(mergeLane).getByLabelText("1 ready to merge session")).toHaveTextContent("1");
 		expect(within(mergeLane).getByLabelText("1 merged session")).toHaveTextContent("1");
 		expect(readyRegion).toHaveClass("flex-[3]");
-		expect(mergedRegion.className).toContain("flex-[2]");
-		expect(mergedRegion.className).toContain("border-t");
-		expect(mergedRegion.className).not.toContain("rounded-t");
+		expect(mergedRegion).toHaveClass("flex-[2]", "rounded-t-(--radius-panel)", "border-t");
 		expect(within(readyRegion).getByText("ready worker")).toBeInTheDocument();
 		expect(within(mergedRegion).getByText("merged worker")).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: /archive/i })).not.toBeInTheDocument();

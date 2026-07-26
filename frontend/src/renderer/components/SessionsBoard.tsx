@@ -290,10 +290,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			    Welcome skips the row — a dangling "Board" above the import
 			    chooser was review feedback on #2432. */}
 			{!showWelcome && boardActionsInPanel && (boardLabel || actions) ? (
-				<div
-					className="center-panel-titlebar flex h-toolbar shrink-0 items-center gap-2 border-b border-border-strong pr-4.5"
-					style={dragStyle}
-				>
+				<div className="center-panel-titlebar flex h-toolbar shrink-0 items-center gap-2 pr-4.5" style={dragStyle}>
 					{boardLabel ? <span className={topbarProjectLabelClass}>{boardLabel}</span> : null}
 					<div className="min-w-0 flex-1" />
 					{actions ? (
@@ -304,9 +301,9 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				</div>
 			) : null}
 
-			<div className="min-h-0 flex-1 overflow-hidden">
+			<div className={cn("min-h-0 flex-1 overflow-hidden", showWelcome ? "p-0" : "p-3")}>
 				{projectId && health.state !== "ok" ? (
-					<div className="mx-3 my-3 flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-xs text-muted-foreground">
+					<div className="mb-3 flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-xs text-muted-foreground">
 						<AlertTriangle className="size-icon-base shrink-0 text-warning" aria-hidden="true" />
 						<span className="min-w-0 flex-1">{health.message}</span>
 						{health.state === "restart_needed" || health.state === "duplicates" ? (
@@ -331,15 +328,11 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						spawnError={visibleSpawnError}
 					/>
 				) : (
-					<div className="h-full overflow-x-auto overflow-y-hidden">
-						{/* Hairline column grid: vertical divide-x + one absolute header rule so
-						    the horizontal divider stays continuous and level across lanes.
-						    Keep `top-12` aligned with each column header's `h-12`. */}
-						<div className="relative grid h-full min-w-[64rem] grid-cols-4 divide-x divide-border-strong xl:min-w-0">
-							<div
-								aria-hidden="true"
-								className="pointer-events-none absolute inset-x-0 top-12 z-10 border-t border-border-strong"
-							/>
+					<div className="h-full overflow-hidden">
+						{/* The 4 zone columns share the width and shrink to fit — no
+						    horizontal scroll on a narrow window (each column is min-w-0,
+						    cards truncate/wrap). */}
+						<div className="grid h-full grid-cols-4 gap-2">
 							{COLUMNS.map((col) => (
 								<BoardColumn
 									key={`${projectId ?? "all"}:${col.zone}`}
@@ -358,7 +351,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			</div>
 
 			{archived.length > 0 && (
-				<div className="shrink-0 border-t border-border-strong px-3">
+				<div className="shrink-0 border-t border-border px-3">
 					{/* agent-orchestrator's archive bar (Dashboard.tsx + globals.css):
 					    a full-width chevron + label + count toggle row. The button is
 					    37px (not the 35.5px its text-control implies) because the
@@ -368,7 +361,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						<button
 							aria-expanded={archiveExpanded}
 							aria-label={`Archive, ${archived.length} ${archived.length === 1 ? "session" : "sessions"}`}
-							className="group flex min-w-0 items-center gap-2 py-2 text-muted-foreground transition-colors hover:text-foreground"
+							className="group flex min-w-0 flex-1 items-center gap-2 py-2 text-muted-foreground transition-colors hover:text-foreground"
 							onClick={() => setArchiveExpanded((v) => !v)}
 							type="button"
 						>
@@ -386,12 +379,11 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 								<path d="m9 18 6-6-6-6" />
 							</svg>
 							<span className="font-mono text-2xs font-medium uppercase tracking-wide-sm">Archive</span>
-							<span className="ml-1.5 font-mono text-micro text-passive">{archived.length}</span>
 						</button>
 						{archiveExpanded && (
 							<div
 								aria-label="Archive layout"
-								className="ml-auto flex shrink-0 items-center rounded-md border border-border bg-surface-faint p-0.5"
+								className="flex shrink-0 items-center rounded-md border border-border bg-surface-faint p-0.5"
 								role="group"
 							>
 								<ArchiveLayoutButton
@@ -408,6 +400,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 								/>
 							</div>
 						)}
+						<span className="ml-auto shrink-0 font-mono text-micro text-passive">{archived.length}</span>
 					</div>
 					{archiveExpanded && (
 						<div
@@ -489,11 +482,14 @@ function ZoneColumn({
 	return (
 		<section
 			aria-label={`${col.label} sessions`}
-			className="flex min-w-0 flex-col overflow-hidden"
+			className="flex min-w-0 flex-col overflow-hidden rounded-panel"
 			data-testid="board-column"
 			data-column={col.zone}
+			style={{
+				background: `linear-gradient(180deg, ${col.glow}, transparent var(--size-kanban-glow)), var(--color-overlay-subtle)`,
+			}}
 		>
-			<div className="flex h-12 shrink-0 items-center gap-2.5 px-4">
+			<div className="flex shrink-0 items-center gap-2 px-3 py-2">
 				<span
 					className="size-dot-sm rounded-full"
 					style={{
@@ -501,13 +497,13 @@ function ZoneColumn({
 						boxShadow: col.dotGlow ? `0 0 7px color-mix(in srgb, ${col.dot} 60%, transparent)` : undefined,
 					}}
 				/>
-				<span className={cn("font-mono text-2xs font-medium uppercase tracking-wide-sm", col.titleClassName)}>
+				<span className={cn("text-control font-semibold uppercase tracking-wide-md", col.titleClassName)}>
 					{col.label}
 				</span>
-				<span className="ml-auto font-mono text-2xs leading-none text-passive">{sessions.length}</span>
+				<span className="ml-auto font-mono text-sm leading-none text-passive">{sessions.length}</span>
 			</div>
-			<div className="board-scrollbar min-h-0 flex-1 overflow-y-auto px-3 pb-3 pt-3">
-				<div className="flex min-h-full flex-col gap-2.5">
+			<div className="board-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+				<div className="flex min-h-full flex-col gap-2">
 					{sessions.map((session) => (
 						<SessionCard
 							key={session.id}
@@ -649,14 +645,17 @@ function SplitLaneColumn({
 	return (
 		<section
 			aria-label={ariaLabel}
-			className="flex min-w-0 flex-col overflow-hidden"
+			className="flex min-w-0 flex-col overflow-hidden rounded-panel"
 			data-column={zone}
 			data-testid="board-column"
+			style={{
+				background: `linear-gradient(180deg, color-mix(in srgb, ${primaryTone.color} 7%, transparent), transparent var(--size-kanban-glow)), var(--color-overlay-subtle)`,
+			}}
 		>
-			<div className="flex h-12 shrink-0 items-center gap-2.5 px-4">
+			<div className="flex shrink-0 items-center gap-2 px-3 pb-2.5 pt-2.5">
 				<div
 					aria-label={`${primaryTone.label} / ${secondaryTone.label} lane summary`}
-					className="flex min-w-0 items-center gap-2 font-mono text-2xs font-medium uppercase tracking-wide-sm"
+					className="flex min-w-0 items-center gap-1.5 text-caption font-semibold uppercase tracking-wide-md"
 					role="group"
 				>
 					<LaneStatusLabel tone={primaryTone} />
@@ -665,7 +664,7 @@ function SplitLaneColumn({
 					</span>
 					<LaneStatusLabel tone={secondaryTone} />
 				</div>
-				<div className="ml-auto flex shrink-0 items-center gap-2 font-mono text-2xs leading-none text-passive">
+				<div className="ml-auto flex shrink-0 items-center gap-1.5 font-mono text-caption leading-none text-passive">
 					<SessionCount count={primarySessions.length} label={primaryTone.countLabel} />
 					<span aria-hidden="true">/</span>
 					<SessionCount count={secondarySessions.length} label={secondaryTone.countLabel} />
@@ -676,12 +675,12 @@ function SplitLaneColumn({
 					<div
 						aria-label={primaryTone.regionLabel}
 						className={cn(
-							"board-scrollbar min-h-0 overflow-y-auto px-3 pb-3 pt-3",
-							showSecondary ? "flex-[3]" : "flex-1",
+							"board-scrollbar min-h-0 overflow-y-auto px-2",
+							showSecondary ? "flex-[3] pb-2" : "flex-1 pb-2",
 						)}
 						role="region"
 					>
-						<div className="flex min-h-full flex-col gap-2.5">
+						<div className="flex min-h-full flex-col gap-2">
 							{primarySessions.map((session) => (
 								<SessionCard
 									key={session.id}
@@ -709,7 +708,7 @@ function SplitLaneColumn({
 
 function LaneStatusLabel({ tone }: { tone: SplitLaneTone }) {
 	return (
-		<span className={cn("inline-flex shrink-0 items-center gap-2 whitespace-nowrap", tone.titleClassName)}>
+		<span className={cn("inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap", tone.titleClassName)}>
 			<span
 				className={cn("size-dot-sm rounded-full", tone.dotClassName)}
 				style={{ boxShadow: tone.dotGlow ? `0 0 7px color-mix(in srgb, ${tone.color} 60%, transparent)` : undefined }}
@@ -742,18 +741,20 @@ function SecondaryLaneSection({
 			aria-label={tone.regionLabel}
 			className={cn(
 				"min-h-0 overflow-hidden",
-				standalone ? "flex flex-1 flex-col" : "flex flex-[2] flex-col border-t border-border-strong",
+				standalone
+					? "flex flex-1 flex-col bg-surface/35"
+					: "flex flex-[2] flex-col rounded-t-(--radius-panel) border-t border-border bg-surface/35",
 			)}
 			role="region"
 		>
-			<div className="flex shrink-0 items-center gap-2.5 px-4 py-2.5">
-				<div className="font-mono text-2xs font-medium uppercase tracking-wide-sm">
+			<div className="flex shrink-0 items-center gap-2 px-3 pb-2.5 pt-2.5">
+				<div className="text-caption font-semibold uppercase tracking-wide-md">
 					<LaneStatusLabel tone={tone} />
 				</div>
-				<span className="ml-auto font-mono text-2xs leading-none text-passive">{sessions.length}</span>
+				<span className="ml-auto font-mono text-caption leading-none text-passive">{sessions.length}</span>
 			</div>
-			<div className="board-scrollbar min-h-0 flex-1 overflow-y-auto px-3 pb-3 pt-3">
-				<div className="flex min-h-full flex-col gap-2.5">
+			<div className="board-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+				<div className="flex min-h-full flex-col gap-2">
 					{sessions.map((session) => (
 						<SessionCard
 							key={session.id}
