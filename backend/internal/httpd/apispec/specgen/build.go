@@ -365,9 +365,9 @@ func browserOperations() []operation {
 		},
 		{
 			method: http.MethodPost, path: "/api/v1/browser/commands", id: "executeBrowserCommand", tag: "browser",
-			summary: "Execute a target-scoped command in a session's desktop browser",
+			summary:    "Execute a target-scoped command in a session's desktop browser",
 			pathParams: []any{controllers.BrowserCapabilityHeader{}},
-			reqBody: controllers.BrowserCommandRequest{},
+			reqBody:    controllers.BrowserCommandRequest{},
 			resps: []respUnit{
 				{http.StatusOK, controllers.BrowserCommandResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
