@@ -2,6 +2,7 @@ package conpty
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -89,6 +90,40 @@ func TestManagedHostProcessKillAndWaitReleasesPipes(t *testing.T) {
 			return ok && afterFDs <= beforeFDs
 		}, "pipe file descriptors were not released after kill")
 	}
+}
+
+func TestManagedHostProcessSurvivesStartupContextCancellation(t *testing.T) {
+	runManagedProcessHelperIfRequested()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd := exec.Command(os.Args[0], "-test.run=TestManagedHostProcessSurvivesStartupContextCancellation")
+	cmd.Env = append(os.Environ(), "AO_CONPTY_MANAGED_PROCESS_HELPER=sleep")
+	stderr := &boundedBuffer{max: maxCapturedStderr}
+	proc, err := startManagedHostProcess(cmd, stderr)
+	if err != nil {
+		t.Fatalf("startManagedHostProcess: %v", err)
+	}
+
+	scanner := bufio.NewScanner(proc.stdout)
+	if !scanner.Scan() {
+		t.Fatalf("read READY line: %v", scanner.Err())
+	}
+	if got, want := strings.TrimSpace(scanner.Text()), "READY:123 456"; got != want {
+		t.Fatalf("READY line = %q, want %q", got, want)
+	}
+	proc.closeStdout()
+
+	cancel()
+	if ctx.Err() == nil {
+		t.Fatal("startup context was not canceled")
+	}
+	select {
+	case err := <-proc.exitC:
+		t.Fatalf("managed process exited after startup context cancellation: %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	_ = proc.killAndWait()
 }
 
 func TestStripEnvAssignments(t *testing.T) {

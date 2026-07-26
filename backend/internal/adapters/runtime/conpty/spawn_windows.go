@@ -51,7 +51,13 @@ func defaultSpawnHost(ctx context.Context, sessionID, cwd string, argv []string,
 	}
 	merged = append(merged, envAssignments...)
 
-	cmd := exec.CommandContext(ctx, exe, args...)
+	if err := ctx.Err(); err != nil {
+		return "", 0, err
+	}
+	// Do not bind the long-lived pty-host to ctx with exec.CommandContext. The
+	// caller's startup/request context is canceled after the spawn response is
+	// written; after READY, the host must keep running until the session exits.
+	cmd := exec.Command(exe, args...)
 	cmd.Dir = cwd
 	cmd.Env = merged
 
