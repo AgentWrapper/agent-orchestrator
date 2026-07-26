@@ -1,7 +1,19 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { AlertTriangle, Bot, Check, Copy, LayoutGrid, Plus, RotateCcw, RotateCw, Rows3, Trash2 } from "lucide-react";
+import {
+	AlertTriangle,
+	Bot,
+	Check,
+	Copy,
+	GitBranch,
+	LayoutGrid,
+	Plus,
+	RotateCcw,
+	RotateCw,
+	Rows3,
+	Trash2,
+} from "lucide-react";
 import {
 	type WorkspaceSession,
 	canonicalTrackerIssueId,
@@ -272,7 +284,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			    chooser was review feedback on #2432. */}
 			{!showWelcome && boardActionsInPanel && (boardLabel || actions) ? (
 				<div
-					className="center-panel-titlebar flex h-toolbar shrink-0 items-center gap-2 border-b border-border pr-4.5"
+					className="center-panel-titlebar flex h-toolbar shrink-0 items-center gap-2 border-b border-border-strong pr-4.5"
 					style={dragStyle}
 				>
 					{boardLabel ? <span className={topbarProjectLabelClass}>{boardLabel}</span> : null}
@@ -285,9 +297,9 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				</div>
 			) : null}
 
-			<div className={cn("min-h-0 flex-1 overflow-hidden", showWelcome ? "p-0" : "px-3 pb-3")}>
+			<div className="min-h-0 flex-1 overflow-hidden">
 				{projectId && health.state !== "ok" ? (
-					<div className="my-3 flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-xs text-muted-foreground">
+					<div className="mx-3 my-3 flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-xs text-muted-foreground">
 						<AlertTriangle className="size-icon-base shrink-0 text-warning" aria-hidden="true" />
 						<span className="min-w-0 flex-1">{health.message}</span>
 						{health.state === "restart_needed" || health.state === "duplicates" ? (
@@ -316,10 +328,10 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						{/* Hairline column grid: vertical divide-x + one absolute header rule so
 						    the horizontal divider stays continuous and level across lanes.
 						    Keep `top-12` aligned with each column header's `h-12`. */}
-						<div className="relative grid h-full min-w-[64rem] grid-cols-4 divide-x divide-border xl:min-w-0">
+						<div className="relative grid h-full min-w-[64rem] grid-cols-4 divide-x divide-border-strong xl:min-w-0">
 							<div
 								aria-hidden="true"
-								className="pointer-events-none absolute inset-x-0 top-12 z-10 border-t border-border"
+								className="pointer-events-none absolute inset-x-0 top-12 z-10 border-t border-border-strong"
 							/>
 							{COLUMNS.map((col) => (
 								<BoardColumn
@@ -339,7 +351,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			</div>
 
 			{archived.length > 0 && (
-				<div className="shrink-0 border-t border-border px-3">
+				<div className="shrink-0 border-t border-border-strong px-3">
 					{/* agent-orchestrator's archive bar (Dashboard.tsx + globals.css):
 					    a full-width chevron + label + count toggle row. The button is
 					    37px (not the 35.5px its text-control implies) because the
@@ -349,7 +361,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						<button
 							aria-expanded={archiveExpanded}
 							aria-label={`Archive, ${archived.length} ${archived.length === 1 ? "session" : "sessions"}`}
-							className="group flex min-w-0 flex-1 items-center gap-2 py-2 text-muted-foreground transition-colors hover:text-foreground"
+							className="group flex min-w-0 items-center gap-2 py-2 text-muted-foreground transition-colors hover:text-foreground"
 							onClick={() => setArchiveExpanded((v) => !v)}
 							type="button"
 						>
@@ -367,11 +379,12 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 								<path d="m9 18 6-6-6-6" />
 							</svg>
 							<span className="font-mono text-2xs font-medium uppercase tracking-wide-sm">Archive</span>
+							<span className="ml-1.5 font-mono text-micro text-passive">{archived.length}</span>
 						</button>
 						{archiveExpanded && (
 							<div
 								aria-label="Archive layout"
-								className="flex shrink-0 items-center rounded-md border border-border bg-surface-faint p-0.5"
+								className="ml-auto flex shrink-0 items-center rounded-md border border-border bg-surface-faint p-0.5"
 								role="group"
 							>
 								<ArchiveLayoutButton
@@ -388,7 +401,6 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 								/>
 							</div>
 						)}
-						<span className="ml-auto shrink-0 font-mono text-micro text-passive">{archived.length}</span>
 					</div>
 					{archiveExpanded && (
 						<div
@@ -723,7 +735,7 @@ function SecondaryLaneSection({
 			aria-label={tone.regionLabel}
 			className={cn(
 				"min-h-0 overflow-hidden",
-				standalone ? "flex flex-1 flex-col" : "flex flex-[2] flex-col border-t border-border",
+				standalone ? "flex flex-1 flex-col" : "flex flex-[2] flex-col border-t border-border-strong",
 			)}
 			role="region"
 		>
@@ -782,16 +794,6 @@ function SessionCard({
 				tabIndex: 0,
 			}
 		: {};
-	const statusMeta = (
-		<span className="inline-flex min-w-0 items-center gap-1.5 text-caption text-muted-foreground">
-			<span className={cn("size-dot-sm shrink-0 rounded-full bg-current", badge.className)} aria-hidden="true" />
-			<span className="min-w-0 truncate">
-				<span>{badge.label}</span>
-				{showBranch ? <span className="text-passive"> · {branch}</span> : null}
-			</span>
-		</span>
-	);
-
 	return (
 		<div
 			className={cn(
@@ -824,42 +826,70 @@ function SessionCard({
 			<div {...cardBodyProps}>
 				<div
 					className={cn(
-						"px-3 pt-2.5 text-control font-semibold leading-snug tracking-tight text-foreground",
-						"line-clamp-2 overflow-hidden",
+						"flex items-start gap-2 px-3 pt-2.5",
+						showBranch || issueId ? "pb-1" : "pb-2.5",
 						showTerminate && "pr-8",
 					)}
 				>
-					{session.title}
+					<span
+						className="mt-0.5 inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground"
+						title={agentLabel(session.provider)}
+					>
+						<Bot className="size-icon-sm" aria-hidden="true" />
+						<span className="sr-only">{agentLabel(session.provider)}</span>
+					</span>
+					<div
+						className={cn(
+							"min-w-0 flex-1 text-control font-semibold leading-snug tracking-tight text-foreground",
+							"line-clamp-2 overflow-hidden",
+						)}
+					>
+						{session.title}
+					</div>
 				</div>
-				<div className="flex min-w-0 items-center gap-1.5 px-3 pb-2 pt-1">
-					{statusMeta}
-					{issueId ? (
+				{showBranch || issueId ? (
+					<div className="flex min-w-0 items-center gap-1.5 px-3 pb-2.5">
+						{showBranch ? (
+							<>
+								<GitBranch className="size-icon-2xs shrink-0 text-passive" aria-hidden="true" />
+								<span className="min-w-0 truncate font-mono text-2xs text-muted-foreground" title={branch}>
+									{branch}
+								</span>
+								<CopyActionButton label={`branch ${branch}`} value={branch} />
+							</>
+						) : null}
+						{issueId ? (
+							<span
+								className="inline-flex max-w-branch-chip shrink-0 items-center truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent"
+								title={`Intake issue: ${issueId}`}
+							>
+								{issueId}
+							</span>
+						) : null}
+					</div>
+				) : null}
+				<div aria-hidden="true" className="mx-3 h-px bg-border" />
+				<div className="flex min-w-0 items-center justify-between gap-2 px-3 py-2">
+					<span className="inline-flex min-w-0 items-center gap-1.5 text-2xs font-medium">
 						<span
-							className="inline-flex max-w-branch-chip shrink-0 items-center truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent"
-							title={`Intake issue: ${issueId}`}
-						>
-							{issueId}
+							className={cn("size-dot-sm shrink-0 rounded-full bg-current", badge.className)}
+							aria-hidden="true"
+						/>
+						<span className="min-w-0 truncate">
+							<span className={badge.className}>{badge.label}</span>
 						</span>
-					) : null}
-					{showBranch ? <CopyActionButton label={`branch ${branch}`} value={branch} /> : null}
-				</div>
-			</div>
-			<div aria-hidden="true" className="mx-3 my-px h-px bg-border" />
-			<div className="flex min-w-0 items-start justify-between gap-2 px-3 py-1.5 font-mono text-2xs text-passive">
-				<span className="inline-flex min-w-0 items-center gap-1.5">
-					<Bot className="size-icon-2xs shrink-0" aria-hidden="true" />
-					<span className="truncate">{agentLabel(session.provider)}</span>
-				</span>
-				<div className="min-w-0 text-right">
-					{prSummaries.length === 0 ? (
-						"no PR yet"
-					) : (
-						<div className="flex flex-col items-end gap-1">
-							{groupPRsByLifecycle(prSummaries).map((group) => (
-								<BoardPRGroup group={group} key={group.status.label} linksInteractive={interactive} />
-							))}
-						</div>
-					)}
+					</span>
+					<div className="min-w-0 shrink-0 text-right font-mono text-2xs text-muted-foreground">
+						{prSummaries.length === 0 ? (
+							"no PR yet"
+						) : (
+							<div className="flex flex-col items-end gap-1">
+								{groupPRsByLifecycle(prSummaries).map((group) => (
+									<BoardPRGroup group={group} key={group.status.label} linksInteractive={interactive} />
+								))}
+							</div>
+						)}
+					</div>
 				</div>
 			</div>
 		</div>

@@ -179,9 +179,10 @@ describe("SessionsBoard", () => {
 		const terminateButton = within(idleCard).getByRole("button", { name: "Terminate brand-font-pipeline" });
 		expect(terminateButton).toHaveClass("opacity-0", "group-hover:opacity-100", "group-focus-within:opacity-100");
 		expect(terminateButton.querySelector("svg")).toHaveClass("lucide-trash-2");
-		expect(within(idleCard).getByText("brand-font-pipeline")).toHaveClass("pt-2.5");
-		expect(within(idleCard).getByText("Idle").closest("div")).toHaveClass("pb-2", "pt-1");
-		expect(within(idleCard).getByText("no PR yet").parentElement).toHaveClass("py-1.5");
+		expect(within(idleCard).getByText("brand-font-pipeline").parentElement).toHaveClass("pt-2.5");
+		expect(within(idleCard).getByText("ao/radic-5").previousElementSibling).toHaveClass("lucide-git-branch");
+		expect(within(idleCard).getByText("Idle").parentElement?.previousElementSibling).toHaveClass("text-status-idle");
+		expect(within(idleCard).getByText("no PR yet").parentElement).toHaveClass("py-2");
 	});
 
 	it("copies visible branch names and PR URLs without opening the session", async () => {
