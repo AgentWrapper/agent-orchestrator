@@ -4,24 +4,25 @@ import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
 
 /**
- * Encodes a PR URL as a base64url string for the `{id}` path param on
- * POST /api/v1/prs/{id}/merge. A bare PR number isn't globally unique across
- * repos, and the URL contains slashes that can't be used as a raw path
- * segment, so the backend expects this encoding (see #3064).
+ * True when this PR's pipeline is genuinely ready to merge — mirrors
+ * domain.PRPipelineStatus's StatusMergeable branch server-side (the server
+ * re-checks this too; this only drives the button's enabled/disabled state).
  */
-export function encodePRId(url: string): string {
-	return btoa(url).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-/** True when a PR's current mergeability allows a real merge attempt. */
 export function isPRMergeable(pr: SessionPRSummary): boolean {
-	return pr.state === "open" && pr.mergeability.state === "mergeable";
+	if (pr.state !== "open") return false;
+	if (pr.ci.state === "failing") return false;
+	if (pr.review.decision === "changes_requested" || pr.review.hasUnresolvedHumanComments) return false;
+	return pr.mergeability.state === "mergeable";
 }
 
-/** Human-readable reason the merge button is disabled for this PR. */
 export function mergeDisabledReason(pr: SessionPRSummary): string {
 	if (pr.state !== "open") {
 		return pr.state === "draft" ? "Draft PRs can't be merged yet" : `PR is already ${pr.state}`;
+	}
+	if (pr.ci.state === "failing") return "CI is failing";
+	if (pr.ci.state === "pending") return "CI checks are still running";
+	if (pr.review.decision === "changes_requested" || pr.review.hasUnresolvedHumanComments) {
+		return "Has unresolved review feedback";
 	}
 	switch (pr.mergeability.state) {
 		case "conflicting":
@@ -37,18 +38,12 @@ export function mergeDisabledReason(pr: SessionPRSummary): string {
 	}
 }
 
-/**
- * Merges a PR via the daemon's GitHub-backed merge action. Invalidates the
- * workspace query on success so the board picks up the session's new status
- * (e.g. "merged") without a manual refresh.
- */
 export function useMergePR() {
 	const queryClient = useQueryClient();
 	return useMutation({
 		mutationFn: async (pr: SessionPRSummary) => {
-			const id = encodePRId(pr.htmlUrl || pr.url);
 			const { error, response } = await apiClient.POST("/api/v1/prs/{id}/merge", {
-				params: { path: { id } },
+				params: { path: { id: String(pr.number) } },
 			});
 			if (error) {
 				throw new Error(apiErrorMessage(error, `Failed to merge PR (${response?.status ?? "unknown"})`));

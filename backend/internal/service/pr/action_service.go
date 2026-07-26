@@ -2,24 +2,26 @@ package pr
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	scmgithub "github.com/aoagents/agent-orchestrator/backend/internal/adapters/scm/github"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-// Store is the storage dependency ActionService needs to resolve a PR
-// before acting on it.
+// Store is the storage dependency ActionService needs to resolve a PR and
+// its unresolved-comment signal before acting on it.
 type Store interface {
-	GetPR(ctx context.Context, url string) (domain.PullRequest, bool, error)
+	GetPRByNumber(ctx context.Context, number int) (domain.PullRequest, bool, error)
+	GetPRReviewCommentsUnresolved(ctx context.Context, url string) (bool, error)
 }
 
 // SCMMerger is the SCM-provider dependency that performs the real merge.
 type SCMMerger interface {
-	MergePR(ctx context.Context, owner, repo string, number int, method string) (string, error)
+	MergePR(ctx context.Context, owner, repo string, number int, headSHA, method string) (string, error)
+	RepoMergeSettings(ctx context.Context, owner, repo string) (scmgithub.RepoMergeSettings, error)
 }
 
 // ActionService implements ActionManager (declared in actions.go).
@@ -37,19 +39,23 @@ func NewActionService(store Store, scm SCMMerger) *ActionService {
 	return &ActionService{store: store, scm: scm}
 }
 
-// Merge merges the PR identified by id, a base64url-encoded PR URL. Encoding
-// is required because PR URLs contain slashes and cannot be used as a raw
-// chi path segment.
+// Merge merges the PR identified by id, the PR's provider number (matches the
+// documented OpenAPI contract and the `ao pr merge <pr-number>` CLI). Numbers
+// are only unique within one repo; GetPRByNumber reports ErrPRAmbiguous if
+// this AO instance tracks the same number across more than one repo.
 func (s *ActionService) Merge(ctx context.Context, id string) (MergeResult, error) {
 	if s.scm == nil {
 		return MergeResult{}, fmt.Errorf("%w: SCM provider unavailable", ErrPRPreconditions)
 	}
-	url, err := decodePRID(id)
-	if err != nil {
-		return MergeResult{}, fmt.Errorf("%w: %w", ErrPRNotFound, err)
+	number, convErr := strconv.Atoi(strings.TrimSpace(id))
+	if convErr != nil || number <= 0 {
+		return MergeResult{}, fmt.Errorf("%w: invalid PR number %q", ErrPRNotFound, id)
 	}
-	pr, ok, err := s.store.GetPR(ctx, url)
+	pr, ok, err := s.store.GetPRByNumber(ctx, number)
 	if err != nil {
+		if errors.Is(err, domain.ErrPRAmbiguous) {
+			return MergeResult{}, fmt.Errorf("%w: %w", ErrPRPreconditions, err)
+		}
 		return MergeResult{}, err
 	}
 	if !ok {
@@ -58,15 +64,37 @@ func (s *ActionService) Merge(ctx context.Context, id string) (MergeResult, erro
 	if pr.Merged || pr.Closed {
 		return MergeResult{}, ErrPRPreconditions
 	}
-	if pr.Mergeability != domain.MergeMergeable {
+
+	unresolved, err := s.store.GetPRReviewCommentsUnresolved(ctx, pr.URL)
+	if err != nil {
+		return MergeResult{}, err
+	}
+	facts := domain.PRFacts{
+		CI:             pr.CI,
+		Draft:          pr.Draft,
+		Review:         pr.Review,
+		ReviewComments: unresolved,
+		Mergeability:   pr.Mergeability,
+	}
+	if domain.PRPipelineStatus(facts) != domain.StatusMergeable {
 		return MergeResult{}, ErrPRNotMergeable
 	}
+
 	owner, repo, ok := strings.Cut(pr.Repo, "/")
 	if !ok {
 		return MergeResult{}, fmt.Errorf("%w: malformed repo %q", ErrPRPreconditions, pr.Repo)
 	}
-	const method = "squash" // TODO(#3064 follow-up): accept caller-specified method once frontend exposes a picker
-	if _, err := s.scm.MergePR(ctx, owner, repo, pr.Number, method); err != nil {
+
+	settings, err := s.scm.RepoMergeSettings(ctx, owner, repo)
+	if err != nil {
+		return MergeResult{}, err
+	}
+	method, err := pickMergeMethod(settings)
+	if err != nil {
+		return MergeResult{}, err
+	}
+
+	if _, err := s.scm.MergePR(ctx, owner, repo, pr.Number, pr.HeadSHA, method); err != nil {
 		switch {
 		case errors.Is(err, scmgithub.ErrProviderPRNotMergeable):
 			return MergeResult{}, ErrPRNotMergeable
@@ -79,16 +107,26 @@ func (s *ActionService) Merge(ctx context.Context, id string) (MergeResult, erro
 	return MergeResult{PRNumber: pr.Number, Method: method}, nil
 }
 
-// ResolveComments resolves review threads on the PR identified by prID.
-// TODO: implement — resolve review threads via the SCM provider.
-func (s *ActionService) ResolveComments(_ context.Context, _ string, _ []string) (ResolveResult, error) {
-	return ResolveResult{Resolved: 0}, nil
+// pickMergeMethod prefers squash, then merge commit, then rebase — the first
+// one the repo actually allows. Returns ErrPRPreconditions if none are
+// enabled (all three can be disabled in branch/repo settings).
+func pickMergeMethod(s scmgithub.RepoMergeSettings) (string, error) {
+	switch {
+	case s.AllowSquash:
+		return "squash", nil
+	case s.AllowMergeCommit:
+		return "merge", nil
+	case s.AllowRebase:
+		return "rebase", nil
+	default:
+		return "", fmt.Errorf("%w: repository has no merge method enabled", ErrPRPreconditions)
+	}
 }
 
-func decodePRID(id string) (string, error) {
-	b, err := base64.RawURLEncoding.DecodeString(id)
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
+// ResolveComments is intentionally NOT implemented yet — returning a fake
+// success here once PRs is wired would silently do nothing while reporting
+// 200 OK. Keeping ErrNotImplemented preserves the prior 501 behavior for
+// this specific operation until it's genuinely built.
+func (s *ActionService) ResolveComments(_ context.Context, _ string, _ []string) (ResolveResult, error) {
+	return ResolveResult{}, ErrNotImplemented
 }

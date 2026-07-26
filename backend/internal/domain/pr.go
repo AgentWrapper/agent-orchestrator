@@ -21,6 +21,29 @@ type PRFacts struct {
 	UpdatedAt      time.Time
 }
 
+// PRPipelineStatus computes the single-PR pipeline status used both for      ← ADD FROM HERE
+// session status aggregation (service/session) and to gate merge eligibility
+// server-side (service/pr) — a single source of truth so "ready to merge"
+// means the same thing everywhere, per #3064 review.
+func PRPipelineStatus(pr PRFacts) SessionStatus {
+	switch {
+	case pr.CI == CIFailing:
+		return StatusCIFailed
+	case pr.Draft:
+		return StatusDraft
+	case pr.Review == ReviewChangesRequest || pr.ReviewComments:
+		return StatusChangesRequested
+	case pr.Mergeability == MergeMergeable:
+		return StatusMergeable
+	case pr.Review == ReviewApproved:
+		return StatusApproved
+	case pr.Review == ReviewRequired:
+		return StatusReviewPending
+	default:
+		return StatusPROpen
+	}
+}
+
 // PullRequest is the app-level representation of one tracked pull request as
 // persisted by the PR store. It is intentionally separate from the sqlc
 // generated sqlite row type so storage details do not leak outside sqlite.

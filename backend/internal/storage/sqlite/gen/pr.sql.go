@@ -157,6 +157,76 @@ func (q *Queries) GetPR(ctx context.Context, url string) (PR, error) {
 	return i, err
 }
 
+const getPRByNumber = `-- name: GetPRByNumber :many
+SELECT url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, provider, host, repo, source_branch, target_branch, head_sha, title, additions, deletions, changed_files, author, base_sha, merge_commit_sha, is_draft, is_merged, is_closed, provider_state, provider_mergeable, provider_merge_state_status, html_url, created_at_provider, updated_at_provider, merged_at_provider, closed_at_provider, metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at, last_nudge_signature, state_changed_at FROM pr WHERE number = ?
+`
+
+// Numbers are only unique within one repo; :many lets the caller detect and
+// reject the cross-repo collision case explicitly instead of guessing.
+func (q *Queries) GetPRByNumber(ctx context.Context, number int64) ([]PR, error) {
+	rows, err := q.db.QueryContext(ctx, getPRByNumber, number)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PR{}
+	for rows.Next() {
+		var i PR
+		if err := rows.Scan(
+			&i.URL,
+			&i.SessionID,
+			&i.Number,
+			&i.PRState,
+			&i.ReviewDecision,
+			&i.CIState,
+			&i.Mergeability,
+			&i.UpdatedAt,
+			&i.Provider,
+			&i.Host,
+			&i.Repo,
+			&i.SourceBranch,
+			&i.TargetBranch,
+			&i.HeadSha,
+			&i.Title,
+			&i.Additions,
+			&i.Deletions,
+			&i.ChangedFiles,
+			&i.Author,
+			&i.BaseSha,
+			&i.MergeCommitSha,
+			&i.IsDraft,
+			&i.IsMerged,
+			&i.IsClosed,
+			&i.ProviderState,
+			&i.ProviderMergeable,
+			&i.ProviderMergeStateStatus,
+			&i.HtmlURL,
+			&i.CreatedAtProvider,
+			&i.UpdatedAtProvider,
+			&i.MergedAtProvider,
+			&i.ClosedAtProvider,
+			&i.MetadataHash,
+			&i.CIHash,
+			&i.ReviewHash,
+			&i.ObservedAt,
+			&i.CIObservedAt,
+			&i.ReviewObservedAt,
+			&i.LastNudgeSignature,
+			&i.StateChangedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getPRClaimAndOwner = `-- name: GetPRClaimAndOwner :one
 SELECT pr.session_id, sessions.is_terminated
 FROM pr
@@ -187,6 +257,23 @@ func (q *Queries) GetPRLastNudgeSignature(ctx context.Context, url string) (stri
 	var last_nudge_signature string
 	err := row.Scan(&last_nudge_signature)
 	return last_nudge_signature, err
+}
+
+const getPRReviewCommentsUnresolved = `-- name: GetPRReviewCommentsUnresolved :one
+SELECT EXISTS (
+    SELECT 1
+    FROM pr_comment
+    WHERE pr_comment.pr_url = ?
+      AND pr_comment.resolved = 0
+      AND pr_comment.is_bot = 0
+) AS review_comments
+`
+
+func (q *Queries) GetPRReviewCommentsUnresolved(ctx context.Context, prUrl string) (bool, error) {
+	row := q.db.QueryRowContext(ctx, getPRReviewCommentsUnresolved, prUrl)
+	var review_comments bool
+	err := row.Scan(&review_comments)
+	return review_comments, err
 }
 
 const listPRFactsBySession = `-- name: ListPRFactsBySession :many

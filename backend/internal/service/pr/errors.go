@@ -8,4 +8,5 @@ var (
 	ErrPRNotMergeable   = errors.New("pr: not mergeable")
 	ErrPRPreconditions  = errors.New("pr: merge preconditions unmet")
 	ErrNothingToResolve = errors.New("pr: nothing to resolve")
+	ErrNotImplemented   = errors.New("pr: operation not implemented")
 )

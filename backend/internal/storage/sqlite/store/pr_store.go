@@ -241,6 +241,36 @@ func (s *Store) GetPR(ctx context.Context, url string) (domain.PullRequest, bool
 	return prRowFromGen(p), true, nil
 }
 
+// GetPRByNumber resolves a PR by its provider-assigned number. ok=false means
+// no PR with this number is tracked. If more than one repo has a PR with the
+// same number, ok=true and err wraps domain.ErrPRAmbiguous — callers must not
+// pick one arbitrarily.
+func (s *Store) GetPRByNumber(ctx context.Context, number int) (domain.PullRequest, bool, error) {
+	rows, err := s.qr.GetPRByNumber(ctx, int64(number))
+	if err != nil {
+		return domain.PullRequest{}, false, fmt.Errorf("get pr by number %d: %w", number, err)
+	}
+	if len(rows) == 0 {
+		return domain.PullRequest{}, false, nil
+	}
+	if len(rows) > 1 {
+		return domain.PullRequest{}, true, fmt.Errorf("pr number %d: %w", number, domain.ErrPRAmbiguous)
+	}
+	return prRowFromGen(rows[0]), true, nil
+}
+
+// GetPRReviewCommentsUnresolved reports whether prURL has any unresolved,
+// non-bot review comments — the same signal service/session's status
+// aggregator uses via GetDisplayPRFactsBySession/ListPRFactsBySession, exposed
+// standalone here since ActionService resolves a PR by number, not by session.
+func (s *Store) GetPRReviewCommentsUnresolved(ctx context.Context, prURL string) (bool, error) {
+	v, err := s.qr.GetPRReviewCommentsUnresolved(ctx, prURL)
+	if err != nil {
+		return false, fmt.Errorf("get pr review comments unresolved for %s: %w", prURL, err)
+	}
+	return v, nil
+}
+
 // ListPRsBySession returns every PR owned by a session, newest first.
 func (s *Store) ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]domain.PullRequest, error) {
 	rows, err := s.qr.ListPRsBySession(ctx, sessionID)
