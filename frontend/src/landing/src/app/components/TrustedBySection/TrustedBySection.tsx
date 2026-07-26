@@ -1,10 +1,11 @@
 "use client";
 
-type Agent = { name: string; src?: string; mono?: string };
+type Agent = { name: string; src: string };
 
-// All 23 supported agents. Twenty ship a brand logo (copied from the app's agent
-// assets); agy/auggie/autohand have no brand mark yet, so they show a monogram
-// chip in the same footprint.
+// All 23 supported agents, each with its brand logo. Most come from the app's
+// agent assets; goose/kilocode use whitened marks and agy (Antigravity) /
+// auggie (Augment) / autohand use their own brand favicons so every mark reads
+// on the dark background.
 const AGENTS: Agent[] = [
   { name: "Claude Code", src: "/app-icons/agents/claude-code.svg" },
   { name: "Codex", src: "/app-icons/agents/codex.svg" },
@@ -16,42 +17,30 @@ const AGENTS: Agent[] = [
   { name: "Droid", src: "/app-icons/agents/droid.png" },
   { name: "Crush", src: "/app-icons/agents/crush.png" },
   { name: "Qwen", src: "/app-icons/agents/qwen.png" },
-  { name: "Goose", src: "/app-icons/agents/goose.png" },
+  { name: "Goose", src: "/app-icons/agents/goose.svg" },
   { name: "Continue", src: "/app-icons/agents/continue.png" },
   { name: "Devin", src: "/app-icons/agents/devin.png" },
   { name: "Kimi", src: "/app-icons/agents/kimi.png" },
   { name: "Kiro", src: "/app-icons/agents/kiro.png" },
-  { name: "Kilo Code", src: "/app-icons/agents/kilocode.png" },
+  { name: "Kilo Code", src: "/app-icons/agents/kilocode.svg" },
   { name: "Mistral Vibe", src: "/app-icons/agents/vibe.png" },
   { name: "Pi", src: "/app-icons/agents/pi.png" },
   { name: "Amp", src: "/app-icons/agents/amp.svg" },
   { name: "Cline", src: "/app-icons/agents/cline.svg" },
-  { name: "Agy", mono: "ag" },
-  { name: "Auggie", mono: "au" },
-  { name: "Autohand", mono: "ah" },
+  { name: "Antigravity", src: "/app-icons/agents/agy.png" },
+  { name: "Auggie", src: "/app-icons/agents/auggie.svg" },
+  { name: "Autohand", src: "/app-icons/agents/autohand.svg" },
 ];
 
 function AgentMark({ agent }: { agent: Agent }) {
-  if (agent.src) {
-    return (
-      <img
-        src={agent.src}
-        alt={agent.name}
-        title={agent.name}
-        className="h-8 w-8 shrink-0 object-contain"
-        loading="lazy"
-        draggable="false"
-      />
-    );
-  }
   return (
-    <span
+    <img
+      src={agent.src}
+      alt={agent.name}
       title={agent.name}
-      aria-label={agent.name}
-      className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-white/15 text-xs font-semibold uppercase tracking-tight text-white/55"
-    >
-      {agent.mono}
-    </span>
+      className="h-8 w-8 shrink-0 object-contain"
+      draggable="false"
+    />
   );
 }
 
