@@ -68,11 +68,31 @@ type CleanupOutcome struct {
 	Skipped []CleanupSkipped   `json:"skipped"`
 }
 
-// CleanupSkipped is one terminal session whose workspace was preserved by
-// cleanup (never force-deleted), with the user-facing reason.
+// CleanupSkipped is one terminal session whose workspace cleanup was skipped,
+// with enough context for callers to tell preservation from best-effort failure.
 type CleanupSkipped struct {
-	SessionID domain.SessionID `json:"sessionId"`
-	Reason    string           `json:"reason"`
+	SessionID         domain.SessionID `json:"sessionId"`
+	Reason            string           `json:"reason"`
+	Path              string           `json:"path,omitempty"`
+	UserWorkPreserved bool             `json:"userWorkPreserved,omitempty"`
+}
+
+// ProjectTeardownBlocker is one session-level reason project removal cannot
+// safely unregister the project yet.
+type ProjectTeardownBlocker struct {
+	SessionID     domain.SessionID `json:"sessionId"`
+	Phase         string           `json:"phase"`
+	Reason        string           `json:"reason"`
+	Paths         []string         `json:"paths,omitempty"`
+	RecoverySteps []string         `json:"recoverySteps,omitempty"`
+}
+
+// ProjectTeardownDetails is embedded in PROJECT_REMOVE_BLOCKED error details.
+type ProjectTeardownDetails struct {
+	ProjectID domain.ProjectID         `json:"projectId"`
+	Killed    []domain.SessionID       `json:"killed"`
+	Cleaned   []domain.SessionID       `json:"cleaned"`
+	Blockers  []ProjectTeardownBlocker `json:"blockers"`
 }
 
 // RestoreModeView is the API-facing restore-mode enum.
@@ -536,29 +556,88 @@ func (s *Service) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 		out.Cleaned = []domain.SessionID{}
 	}
 	for _, skip := range res.Skipped {
-		out.Skipped = append(out.Skipped, CleanupSkipped{SessionID: skip.SessionID, Reason: skip.Reason})
+		out.Skipped = append(out.Skipped, CleanupSkipped{SessionID: skip.SessionID, Reason: skip.Reason, Path: skip.Path, UserWorkPreserved: skip.UserWorkPreserved})
 	}
 	return out, nil
 }
 
 // TeardownProject stops every live session in a project, then asks the session
 // manager to reclaim terminal workspaces. Dirty worktrees are preserved by Kill
-// and Cleanup; callers only see hard teardown failures.
+// and Cleanup; project removal receives a typed conflict with per-session
+// blockers only for preserved user work. Stale runtime/workspace metadata and
+// other local teardown failures are best effort so legacy projects can still be
+// unregistered.
 func (s *Service) TeardownProject(ctx context.Context, project domain.ProjectID) error {
 	recs, err := s.listRecords(ctx, project)
 	if err != nil {
 		return err
 	}
+	details := ProjectTeardownDetails{
+		ProjectID: project,
+		Killed:    []domain.SessionID{},
+		Cleaned:   []domain.SessionID{},
+		Blockers:  []ProjectTeardownBlocker{},
+	}
 	for _, rec := range recs {
 		if rec.IsTerminated {
 			continue
 		}
-		if _, err := s.Kill(ctx, rec.ID); err != nil {
-			return err
+		freed, err := s.Kill(ctx, rec.ID)
+		if err != nil {
+			continue
+		}
+		if freed {
+			details.Killed = append(details.Killed, rec.ID)
+			continue
+		}
+		after, ok, err := s.store.GetSession(ctx, rec.ID)
+		if err != nil {
+			return fmt.Errorf("load session after teardown %s: %w", rec.ID, err)
+		}
+		if !ok || after.IsTerminated {
+			details.Killed = append(details.Killed, rec.ID)
+			continue
+		}
+		if rec.Metadata.WorkspacePath != "" {
+			details.Blockers = append(details.Blockers, dirtyWorkspaceBlocker(rec.ID, rec.Metadata.WorkspacePath))
 		}
 	}
-	_, err = s.Cleanup(ctx, project)
-	return err
+	cleanup, err := s.Cleanup(ctx, project)
+	if err != nil {
+		return err
+	}
+	details.Cleaned = append(details.Cleaned, cleanup.Cleaned...)
+	for _, skip := range cleanup.Skipped {
+		if skip.UserWorkPreserved {
+			details.Blockers = append(details.Blockers, dirtyWorkspaceBlocker(skip.SessionID, skip.Path))
+		}
+	}
+	if len(details.Blockers) > 0 {
+		return projectRemoveBlocked(details)
+	}
+	return nil
+}
+
+func dirtyWorkspaceBlocker(sessionID domain.SessionID, path string) ProjectTeardownBlocker {
+	blocker := ProjectTeardownBlocker{
+		SessionID:     sessionID,
+		Phase:         string(sessionmanager.TeardownPhaseWorkspace),
+		Reason:        "workspace has uncommitted changes",
+		RecoverySteps: []string{"Commit, stash, or remove the uncommitted changes in the listed workspace path, then retry project removal."},
+	}
+	if path != "" {
+		blocker.Paths = []string{path}
+	}
+	return blocker
+}
+
+func projectRemoveBlocked(details ProjectTeardownDetails) error {
+	return apierr.Conflict("PROJECT_REMOVE_BLOCKED", "Project removal is blocked by session workspaces that could not be removed. Resolve the listed sessions, then retry.", map[string]any{
+		"projectId": string(details.ProjectID),
+		"killed":    details.Killed,
+		"cleaned":   details.Cleaned,
+		"blockers":  details.Blockers,
+	})
 }
 
 // List returns sessions as enriched display models after applying API filters.
