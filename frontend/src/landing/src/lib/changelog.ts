@@ -12,9 +12,9 @@ export {
 
 const CHANGELOG_DIR = path.join(process.cwd(), "content/changelog");
 
-// Releases are pulled from GitHub so the changelog updates itself on each build
-// (the landing redeploys on push to main + a daily schedule). Curated MDX
-// entries in content/changelog still take precedence for the same version.
+// Releases are pulled from GitHub at build time, so the changelog refreshes
+// whenever the landing is redeployed (a push to main, or a manual deploy).
+// Curated MDX entries in content/changelog take precedence for the same version.
 const RELEASES_REPO = "AgentWrapper/agent-orchestrator";
 // Only stable vMAJOR.MINOR.PATCH tags — skips nightlies, per-PR prereleases,
 // and package tags like @composio/ao@x.
@@ -45,6 +45,7 @@ function parseFrontmatter(filePath: string): ChangelogEntry | null {
 			date: dateValue,
 			image: data.image,
 			content,
+			source: "mdx",
 			draft: data.draft === true,
 		};
 	} catch {
@@ -63,15 +64,24 @@ function getMdxEntries(): ChangelogEntry[] {
 		.map((file) => parseFrontmatter(path.join(CHANGELOG_DIR, file)))
 		.filter((entry): entry is ChangelogEntry => entry !== null && !entry.draft);
 }
+function isStableReleaseWithBody(r: GithubRelease): boolean {
+	return !r.draft && !r.prerelease && STABLE_TAG.test(r.tag_name) && (r.body ?? "").trim().length > 0;
+}
 
-// Release bodies are plain GitHub markdown, not MDX. Escape the constructs MDX
-// would otherwise try to evaluate (JSX tags, {expressions}) everywhere except
-// code spans, so an arbitrary release body can never break the build.
-function sanitizeMdx(markdown: string): string {
-	return markdown
-		.split(/(```[\s\S]*?```|`[^`\n]*`)/g)
-		.map((segment, i) => (i % 2 === 1 ? segment : segment.replace(/[<{}]/g, (c) => `\\${c}`)))
-		.join("");
+// A release body is plain GitHub Markdown, kept verbatim and rendered through a
+// Markdown-only path (source: "release") — it never touches the MDX compiler,
+// so arbitrary text (import/export lines, JSX, {expressions}) can't break it.
+function releaseToEntry(r: GithubRelease): ChangelogEntry {
+	const slug = slugify(r.tag_name);
+	return {
+		slug,
+		url: `/changelog/${slug}`,
+		title: r.name?.trim() || r.tag_name,
+		date: normalizeContentDate(r.published_at) as string,
+		content: r.body ?? "",
+		source: "release",
+		draft: false,
+	};
 }
 
 async function getReleaseEntries(): Promise<ChangelogEntry[]> {
@@ -90,21 +100,12 @@ async function getReleaseEntries(): Promise<ChangelogEntry[]> {
 			return [];
 		}
 		const releases = (await res.json()) as GithubRelease[];
-		return releases
-			.filter(
-				(r) => !r.draft && !r.prerelease && STABLE_TAG.test(r.tag_name) && (r.body ?? "").trim().length > 0,
-			)
-			.map((r) => {
-				const slug = slugify(r.tag_name);
-				return {
-					slug,
-					url: `/changelog/${slug}`,
-					title: r.name?.trim() || r.tag_name,
-					date: normalizeContentDate(r.published_at) as string,
-					content: sanitizeMdx(r.body ?? ""),
-					draft: false,
-				} satisfies ChangelogEntry;
-			});
+		// Single pass: filter + map together (no double iteration).
+		const entries: ChangelogEntry[] = [];
+		for (const r of releases) {
+			if (isStableReleaseWithBody(r)) entries.push(releaseToEntry(r));
+		}
+		return entries;
 	} catch {
 		return [];
 	}
