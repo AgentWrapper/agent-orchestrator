@@ -5,7 +5,7 @@ import { getChangelogEntries } from "@/lib/changelog";
 export const dynamic = "force-static";
 
 export async function GET() {
-	const entries = getChangelogEntries();
+	const entries = await getChangelogEntries();
 	const baseUrl = COMPANY.MARKETING_URL;
 
 	const escapeXml = (str: string) =>

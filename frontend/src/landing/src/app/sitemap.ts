@@ -9,7 +9,7 @@ import { getAllPeople } from "@/lib/people";
 
 export const dynamic = "force-static";
 
-export default function sitemap(): MetadataRoute.Sitemap {
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 	const baseUrl = COMPANY.MARKETING_URL;
 
 	const staticPages: MetadataRoute.Sitemap = [
@@ -113,7 +113,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
 		priority: 0.8,
 	}));
 
-	const changelogEntries = getChangelogEntries();
+	const changelogEntries = await getChangelogEntries();
 	const changelogPages: MetadataRoute.Sitemap = changelogEntries.map(
 		(entry) => ({
 			url: `${baseUrl}/changelog/${entry.slug}`,

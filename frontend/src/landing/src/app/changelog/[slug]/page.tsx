@@ -7,8 +7,8 @@ import { getAllChangelogSlugs, getChangelogEntry } from "@/lib/changelog";
 import { ChangelogEntry } from "../components/ChangelogEntry";
 
 // Static export needs every entry enumerated at build time.
-export function generateStaticParams() {
-  return getAllChangelogSlugs().map((slug) => ({ slug }));
+export async function generateStaticParams() {
+  return (await getAllChangelogSlugs()).map((slug) => ({ slug }));
 }
 
 export async function generateMetadata({
@@ -17,7 +17,7 @@ export async function generateMetadata({
   params: Promise<{ slug: string }>;
 }): Promise<Metadata> {
   const { slug } = await params;
-  const entry = getChangelogEntry(slug);
+  const entry = await getChangelogEntry(slug);
   if (!entry) {
     return { title: "Changelog" };
   }
@@ -46,7 +46,7 @@ export default async function ChangelogEntryPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const entry = getChangelogEntry(slug);
+  const entry = await getChangelogEntry(slug);
   if (!entry) {
     notFound();
   }
