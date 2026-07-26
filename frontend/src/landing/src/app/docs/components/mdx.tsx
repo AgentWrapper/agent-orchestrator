@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { isValidElement, type ReactNode } from "react";
+import { DownloadButton } from "@/app/components/DownloadButton";
 import { slugify } from "@/lib/content-utils";
 import { Tab, Tabs } from "./DocsTabs";
 
@@ -225,19 +226,9 @@ export function InstallDownloads() {
           View releases →
         </a>
       </div>
-      <div className="flex flex-wrap gap-2">
-        <Link
-          href="/download"
-          className="rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background no-underline hover:opacity-90"
-        >
-          Download the desktop app
-        </Link>
-        <a
-          href={RELEASES_URL}
-          className="rounded-md border border-border px-4 py-2 text-sm text-foreground no-underline hover:border-foreground/30"
-        >
-          macOS · Linux · Windows
-        </a>
+      <div className="flex flex-wrap items-center gap-3">
+        <DownloadButton size="md" />
+        <span className="text-sm text-muted-foreground">macOS · Linux · Windows</span>
       </div>
     </div>
   );
