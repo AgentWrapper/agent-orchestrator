@@ -99,14 +99,14 @@ const inspectorShellClass = "@container/inspector flex h-full min-h-0 flex-col o
 
 const inspectorBodyClass = "min-h-0 flex-1 overflow-y-auto p-3 pb-4 @max-[300px]/inspector:px-2.5";
 
-const inspectorEmptyClass = "text-xs text-muted-foreground leading-normal";
+const inspectorEmptyClass = "text-xs text-settings-muted leading-normal";
 
 const kvRowClass =
 	"flex items-center gap-2.5 px-1 py-1.5 text-md-sm @max-[300px]/inspector:flex-col @max-[300px]/inspector:items-start @max-[300px]/inspector:gap-1";
 
-const kvKeyClass = "w-kv-label shrink-0 text-muted-foreground @max-[300px]/inspector:w-auto";
+const kvKeyClass = "w-kv-label shrink-0 text-settings-muted @max-[300px]/inspector:w-auto";
 
-const kvValueClass = "min-w-0 truncate text-foreground @max-[300px]/inspector:w-full";
+const kvValueClass = "min-w-0 truncate text-settings-label @max-[300px]/inspector:w-full";
 
 const kvValueMonoClass = "font-mono text-sm-md";
 
@@ -258,37 +258,26 @@ function Section({
 	action,
 	children,
 	className,
-	surface,
 	title,
 }: {
 	action?: ReactNode;
 	children: ReactNode;
 	className?: string;
+	/** Accepted for call-site compatibility; all sections use the settings-row box. */
 	surface?: boolean;
 	title: string;
 }) {
-	// The surface variant mirrors the settings-dialog card: a titled header with
-	// a bottom divider over a generously padded body.
-	if (surface) {
-		return (
-			<section className={cn("mb-6", className)} data-testid="inspector-section">
-				<div className="overflow-hidden rounded-md border border-border bg-surface">
-					<div className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
-						<span className="text-sm-md font-semibold text-foreground">{title}</span>
-						{action ?? null}
-					</div>
-					<div className="px-4 py-3">{children}</div>
-				</div>
-			</section>
-		);
-	}
+	// Boxed sections match the settings page row surface (bg + radius) with the
+	// uppercase muted kicker kept inside the card, as in the inspector refs.
 	return (
-		<section className={cn("mb-4 last:mb-0", className)} data-testid="inspector-section">
-			<div className="mb-1.5 flex items-center justify-between text-2xs font-semibold uppercase tracking-wide-lg text-passive">
-				<span>{title}</span>
-				{action ?? null}
+		<section className={cn("mb-2.5 last:mb-0", className)} data-testid="inspector-section">
+			<div className="overflow-hidden rounded-settings-row bg-settings-row px-3.5 py-3">
+				<div className="mb-2 flex items-center justify-between gap-2 text-2xs font-bold uppercase tracking-settings-section text-settings-muted">
+					<span>{title}</span>
+					{action ?? null}
+				</div>
+				{children}
 			</div>
-			{children}
 		</section>
 	);
 }
@@ -320,7 +309,7 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 				<ResumeAgentControl session={session} />
 			</Section>
 
-			<Section className="border-t border-border pt-3" title="Overview">
+			<Section title="Overview">
 				<dl className="flex flex-col gap-1">
 					<Row k="Agent" v={session.provider} mono />
 					{issueId && <Row k="Issue" v={issueId} mono />}
@@ -364,7 +353,7 @@ function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
 
 	const error = resume.error instanceof Error ? resume.error.message : null;
 	return (
-		<div className="mt-3 border-t border-border pt-3">
+		<div className="mt-3 border-t border-(--color-border-settings-input) pt-3">
 			<Button
 				className="w-full"
 				disabled={resume.isPending}
@@ -428,8 +417,8 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 	return (
 		<Section title="Completion">
 			{canTerminateNow ? (
-				<div className="flex items-center justify-between gap-3 py-1">
-					<span className="min-w-0 text-xs font-medium text-foreground">Terminate</span>
+					<div className="flex items-center justify-between gap-3 py-1">
+					<span className="min-w-0 text-xs font-medium text-settings-label">Terminate</span>
 					<button
 						aria-label="Terminate session"
 						className="inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-colors hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
@@ -445,7 +434,7 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 			) : (
 				<>
 					<div className="flex items-center justify-between gap-3 py-1">
-						<label className="min-w-0 text-xs font-medium text-foreground" htmlFor={`merge-policy-${session.id}`}>
+						<label className="min-w-0 text-xs font-medium text-settings-label" htmlFor={`merge-policy-${session.id}`}>
 							Terminate on merge
 						</label>
 						<Switch
@@ -492,10 +481,10 @@ function updateSessionMergePolicy(
 
 function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 	return (
-		<div className="rounded-md border border-border bg-surface px-2.5 py-1.5">
+		<div className="rounded-lg border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-2.5 py-1.5">
 			<div className="flex items-center gap-2">
-				<GitPullRequest className="size-icon-md shrink-0 text-passive" aria-hidden="true" />
-				<span className="text-md-sm font-medium text-foreground">PR #{pr.number}</span>
+				<GitPullRequest className="size-icon-md shrink-0 text-settings-muted" aria-hidden="true" />
+				<span className="text-md-sm font-medium text-settings-label">PR #{pr.number}</span>
 				<Badge
 					variant="outline"
 					className={cn("h-5 px-1.5 text-[9px] leading-none font-medium", prStateTone[pr.state])}
@@ -512,7 +501,7 @@ function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 					<ArrowUpRight aria-hidden="true" className="size-icon-2xs" strokeWidth={2} />
 				</a>
 			</div>
-			{pr.title ? <div className="mt-1.5 text-xs font-medium leading-snug text-foreground">{pr.title}</div> : null}
+			{pr.title ? <div className="mt-1.5 text-xs font-medium leading-snug text-settings-label">{pr.title}</div> : null}
 			<PRSummaryMeta className="mt-1" pr={pr} />
 			<PRSummaryParts className="mt-1.5" pr={pr} variant="stacked" />
 		</div>
