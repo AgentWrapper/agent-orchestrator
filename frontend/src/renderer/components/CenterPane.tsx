@@ -1,5 +1,4 @@
 import {
-	ChevronDown,
 	ChevronLeft,
 	ChevronRight,
 	Maximize2,
@@ -26,7 +25,6 @@ import {
 	DropdownMenu,
 	DropdownMenuContent,
 	DropdownMenuItem,
-	DropdownMenuLabel,
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
@@ -265,10 +263,14 @@ export function CenterPane({
 								type="button"
 							>
 								<Plus aria-hidden="true" className="size-icon-md" />
-								<ChevronDown aria-hidden="true" className="size-icon-2xs" />
 							</button>
 						</DropdownMenuTrigger>
 						<DropdownMenuContent align="start" className="w-72">
+							<DropdownMenuItem onSelect={onNewShellTerminal}>
+								<TerminalIcon aria-hidden="true" />
+								Terminal
+							</DropdownMenuItem>
+							<DropdownMenuSeparator />
 							{hasMoreSessions ? (
 								<div className="relative px-1 pb-1">
 									<Search
@@ -285,12 +287,6 @@ export function CenterPane({
 									/>
 								</div>
 							) : null}
-							<DropdownMenuItem onSelect={onNewShellTerminal}>
-								<TerminalIcon aria-hidden="true" />
-								Terminal
-							</DropdownMenuItem>
-							<DropdownMenuSeparator />
-							<DropdownMenuLabel className="font-sans normal-case tracking-normal">Sessions</DropdownMenuLabel>
 							<div className={cn(expandedSessionList && "h-52 overflow-y-auto overscroll-contain")}>
 								{visibleSessions.length > 0 ? (
 									visibleSessions.map((candidate) => {

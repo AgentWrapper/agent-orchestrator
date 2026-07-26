@@ -99,7 +99,9 @@ describe("CenterPane toolbar session label", () => {
 		);
 
 		fireEvent.pointerDown(screen.getByRole("button", { name: "Add tab" }), { button: 0, ctrlKey: false });
-		expect(screen.getByRole("textbox", { name: "Search sessions" })).toBeInTheDocument();
+		const search = screen.getByRole("textbox", { name: "Search sessions" });
+		const terminal = screen.getByRole("menuitem", { name: "Terminal" });
+		expect(terminal.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 		expect(screen.getByRole("menuitem", { name: /Worker 5/ })).toBeInTheDocument();
 		expect(screen.queryByRole("menuitem", { name: /Worker 6/ })).not.toBeInTheDocument();
 
