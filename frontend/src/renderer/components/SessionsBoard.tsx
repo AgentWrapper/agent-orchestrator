@@ -328,8 +328,11 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						spawnError={visibleSpawnError}
 					/>
 				) : (
-					<div className="h-full overflow-x-auto overflow-y-hidden">
-						<div className="grid h-full min-w-[64rem] grid-cols-4 gap-2 xl:min-w-0">
+					<div className="h-full overflow-hidden">
+						{/* The 4 zone columns share the width and shrink to fit — no
+						    horizontal scroll on a narrow window (each column is min-w-0,
+						    cards truncate/wrap). */}
+						<div className="grid h-full grid-cols-4 gap-2">
 							{COLUMNS.map((col) => (
 								<BoardColumn
 									key={`${projectId ?? "all"}:${col.zone}`}
