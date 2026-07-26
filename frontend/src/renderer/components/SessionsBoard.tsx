@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { AlertTriangle, Check, Copy, LayoutGrid, Plus, RotateCcw, RotateCw, Rows3, Trash2 } from "lucide-react";
+import { AlertTriangle, Bot, Check, Copy, LayoutGrid, Plus, RotateCcw, RotateCw, Rows3, Trash2 } from "lucide-react";
 import {
 	type WorkspaceSession,
 	canonicalTrackerIssueId,
@@ -271,7 +271,10 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			    Welcome skips the row — a dangling "Board" above the import
 			    chooser was review feedback on #2432. */}
 			{!showWelcome && boardActionsInPanel && (boardLabel || actions) ? (
-				<div className="center-panel-titlebar flex h-toolbar shrink-0 items-center gap-2 pr-4.5" style={dragStyle}>
+				<div
+					className="center-panel-titlebar flex h-toolbar shrink-0 items-center gap-2 border-b border-border pr-4.5"
+					style={dragStyle}
+				>
 					{boardLabel ? <span className={topbarProjectLabelClass}>{boardLabel}</span> : null}
 					<div className="min-w-0 flex-1" />
 					{actions ? (
@@ -282,9 +285,9 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				</div>
 			) : null}
 
-			<div className={cn("min-h-0 flex-1 overflow-hidden", showWelcome ? "p-0" : "p-3")}>
+			<div className={cn("min-h-0 flex-1 overflow-hidden", showWelcome ? "p-0" : "px-3 pb-3")}>
 				{projectId && health.state !== "ok" ? (
-					<div className="mb-3 flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-xs text-muted-foreground">
+					<div className="my-3 flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-xs text-muted-foreground">
 						<AlertTriangle className="size-icon-base shrink-0 text-warning" aria-hidden="true" />
 						<span className="min-w-0 flex-1">{health.message}</span>
 						{health.state === "restart_needed" || health.state === "duplicates" ? (
@@ -310,7 +313,14 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 					/>
 				) : (
 					<div className="h-full overflow-x-auto overflow-y-hidden">
-						<div className="grid h-full min-w-[64rem] grid-cols-4 gap-2 xl:min-w-0">
+						{/* Hairline column grid: vertical divide-x + one absolute header rule so
+						    the horizontal divider stays continuous and level across lanes.
+						    Keep `top-12` aligned with each column header's `h-12`. */}
+						<div className="relative grid h-full min-w-[64rem] grid-cols-4 divide-x divide-border xl:min-w-0">
+							<div
+								aria-hidden="true"
+								className="pointer-events-none absolute inset-x-0 top-12 z-10 border-t border-border"
+							/>
 							{COLUMNS.map((col) => (
 								<BoardColumn
 									key={`${projectId ?? "all"}:${col.zone}`}
@@ -460,14 +470,11 @@ function ZoneColumn({
 	return (
 		<section
 			aria-label={`${col.label} sessions`}
-			className="flex min-w-0 flex-col overflow-hidden rounded-panel"
+			className="flex min-w-0 flex-col overflow-hidden"
 			data-testid="board-column"
 			data-column={col.zone}
-			style={{
-				background: `linear-gradient(180deg, ${col.glow}, transparent var(--size-kanban-glow)), var(--color-overlay-subtle)`,
-			}}
 		>
-			<div className="flex shrink-0 items-center gap-2 px-3 py-2">
+			<div className="flex h-12 shrink-0 items-center gap-2.5 px-4">
 				<span
 					className="size-dot-sm rounded-full"
 					style={{
@@ -475,13 +482,13 @@ function ZoneColumn({
 						boxShadow: col.dotGlow ? `0 0 7px color-mix(in srgb, ${col.dot} 60%, transparent)` : undefined,
 					}}
 				/>
-				<span className={cn("text-control font-semibold uppercase tracking-wide-md", col.titleClassName)}>
+				<span className={cn("font-mono text-2xs font-medium uppercase tracking-wide-sm", col.titleClassName)}>
 					{col.label}
 				</span>
-				<span className="ml-auto font-mono text-sm leading-none text-passive">{sessions.length}</span>
+				<span className="ml-auto font-mono text-2xs leading-none text-passive">{sessions.length}</span>
 			</div>
-			<div className="board-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-				<div className="flex min-h-full flex-col gap-2">
+			<div className="board-scrollbar min-h-0 flex-1 overflow-y-auto px-3 pb-3 pt-3">
+				<div className="flex min-h-full flex-col gap-2.5">
 					{sessions.map((session) => (
 						<SessionCard
 							key={session.id}
@@ -623,17 +630,14 @@ function SplitLaneColumn({
 	return (
 		<section
 			aria-label={ariaLabel}
-			className="flex min-w-0 flex-col overflow-hidden rounded-panel"
+			className="flex min-w-0 flex-col overflow-hidden"
 			data-column={zone}
 			data-testid="board-column"
-			style={{
-				background: `linear-gradient(180deg, color-mix(in srgb, ${primaryTone.color} 7%, transparent), transparent var(--size-kanban-glow)), var(--color-overlay-subtle)`,
-			}}
 		>
-			<div className="flex shrink-0 items-center gap-2 px-3 pb-2.5 pt-2.5">
+			<div className="flex h-12 shrink-0 items-center gap-2.5 px-4">
 				<div
 					aria-label={`${primaryTone.label} / ${secondaryTone.label} lane summary`}
-					className="flex min-w-0 items-center gap-1.5 text-caption font-semibold uppercase tracking-wide-md"
+					className="flex min-w-0 items-center gap-2 font-mono text-2xs font-medium uppercase tracking-wide-sm"
 					role="group"
 				>
 					<LaneStatusLabel tone={primaryTone} />
@@ -642,7 +646,7 @@ function SplitLaneColumn({
 					</span>
 					<LaneStatusLabel tone={secondaryTone} />
 				</div>
-				<div className="ml-auto flex shrink-0 items-center gap-1.5 font-mono text-caption leading-none text-passive">
+				<div className="ml-auto flex shrink-0 items-center gap-2 font-mono text-2xs leading-none text-passive">
 					<SessionCount count={primarySessions.length} label={primaryTone.countLabel} />
 					<span aria-hidden="true">/</span>
 					<SessionCount count={secondarySessions.length} label={secondaryTone.countLabel} />
@@ -653,12 +657,12 @@ function SplitLaneColumn({
 					<div
 						aria-label={primaryTone.regionLabel}
 						className={cn(
-							"board-scrollbar min-h-0 overflow-y-auto px-2",
-							showSecondary ? "flex-[3] pb-2" : "flex-1 pb-2",
+							"board-scrollbar min-h-0 overflow-y-auto px-3 pb-3 pt-3",
+							showSecondary ? "flex-[3]" : "flex-1",
 						)}
 						role="region"
 					>
-						<div className="flex min-h-full flex-col gap-2">
+						<div className="flex min-h-full flex-col gap-2.5">
 							{primarySessions.map((session) => (
 								<SessionCard
 									key={session.id}
@@ -686,7 +690,7 @@ function SplitLaneColumn({
 
 function LaneStatusLabel({ tone }: { tone: SplitLaneTone }) {
 	return (
-		<span className={cn("inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap", tone.titleClassName)}>
+		<span className={cn("inline-flex shrink-0 items-center gap-2 whitespace-nowrap", tone.titleClassName)}>
 			<span
 				className={cn("size-dot-sm rounded-full", tone.dotClassName)}
 				style={{ boxShadow: tone.dotGlow ? `0 0 7px color-mix(in srgb, ${tone.color} 60%, transparent)` : undefined }}
@@ -719,20 +723,18 @@ function SecondaryLaneSection({
 			aria-label={tone.regionLabel}
 			className={cn(
 				"min-h-0 overflow-hidden",
-				standalone
-					? "flex flex-1 flex-col bg-surface/35"
-					: "flex flex-[2] flex-col rounded-t-(--radius-panel) border-t border-border bg-surface/35",
+				standalone ? "flex flex-1 flex-col" : "flex flex-[2] flex-col border-t border-border",
 			)}
 			role="region"
 		>
-			<div className="flex shrink-0 items-center gap-2 px-3 pb-2.5 pt-2.5">
-				<div className="text-caption font-semibold uppercase tracking-wide-md">
+			<div className="flex shrink-0 items-center gap-2.5 px-4 py-2.5">
+				<div className="font-mono text-2xs font-medium uppercase tracking-wide-sm">
 					<LaneStatusLabel tone={tone} />
 				</div>
-				<span className="ml-auto font-mono text-caption leading-none text-passive">{sessions.length}</span>
+				<span className="ml-auto font-mono text-2xs leading-none text-passive">{sessions.length}</span>
 			</div>
-			<div className="board-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-				<div className="flex min-h-full flex-col gap-2">
+			<div className="board-scrollbar min-h-0 flex-1 overflow-y-auto px-3 pb-3 pt-3">
+				<div className="flex min-h-full flex-col gap-2.5">
 					{sessions.map((session) => (
 						<SessionCard
 							key={session.id}
@@ -780,10 +782,20 @@ function SessionCard({
 				tabIndex: 0,
 			}
 		: {};
+	const statusMeta = (
+		<span className="inline-flex min-w-0 items-center gap-1.5 text-caption text-muted-foreground">
+			<span className={cn("size-dot-sm shrink-0 rounded-full bg-current", badge.className)} aria-hidden="true" />
+			<span className="min-w-0 truncate">
+				<span>{badge.label}</span>
+				{showBranch ? <span className="text-passive"> · {branch}</span> : null}
+			</span>
+		</span>
+	);
+
 	return (
 		<div
 			className={cn(
-				"group relative w-full rounded-md border text-left transition-colors",
+				"group relative w-full rounded-lg border text-left transition-colors",
 				badge.cardClassName ?? "border-border bg-surface",
 				interactive && "hover:border-border-strong",
 			)}
@@ -810,55 +822,45 @@ function SessionCard({
 				</button>
 			) : null}
 			<div {...cardBodyProps}>
-				<div className="flex items-center gap-2 px-3 pb-1.5 pt-2">
-					<span className={cn("inline-flex items-center gap-1.5 text-caption font-medium", badge.className)}>
-						<span className={cn("size-dot-sm rounded-full bg-current")} />
-						{badge.label}
-					</span>
-					{issueId && (
-						<span
-							className="inline-flex max-w-branch-chip items-center truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent"
-							title={`Intake issue: ${issueId}`}
-						>
-							{issueId}
-						</span>
-					)}
-					<span
-						className={cn("ml-auto shrink-0 font-mono text-2xs tracking-wide-xs text-passive", showTerminate && "mr-7")}
-					>
-						{agentLabel(session.provider)}
-					</span>
-				</div>
 				<div
 					className={cn(
-						"px-3 text-control font-medium leading-snug tracking-tight text-foreground",
-						showBranch ? "pb-1" : "pb-2",
+						"px-3 pt-2.5 text-control font-semibold leading-snug tracking-tight text-foreground",
 						"line-clamp-2 overflow-hidden",
+						showTerminate && "pr-8",
 					)}
 				>
 					{session.title}
 				</div>
-			</div>
-			{showBranch && (
-				<div
-					className="flex min-w-0 items-center gap-1 px-3 pb-1.5 font-mono text-2xs text-passive"
-					onClick={interactive ? onOpen : undefined}
-				>
-					<span className="truncate">{branch}</span>
-					<CopyActionButton label={`branch ${branch}`} value={branch} />
+				<div className="flex min-w-0 items-center gap-1.5 px-3 pb-2 pt-1">
+					{statusMeta}
+					{issueId ? (
+						<span
+							className="inline-flex max-w-branch-chip shrink-0 items-center truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent"
+							title={`Intake issue: ${issueId}`}
+						>
+							{issueId}
+						</span>
+					) : null}
+					{showBranch ? <CopyActionButton label={`branch ${branch}`} value={branch} /> : null}
 				</div>
-			)}
+			</div>
 			<div aria-hidden="true" className="mx-3 my-px h-px bg-border" />
-			<div className="px-3 py-1.25 font-mono text-2xs text-passive">
-				{prSummaries.length === 0 ? (
-					"no PR yet"
-				) : (
-					<div className="flex flex-col gap-1">
-						{groupPRsByLifecycle(prSummaries).map((group) => (
-							<BoardPRGroup group={group} key={group.status.label} linksInteractive={interactive} />
-						))}
-					</div>
-				)}
+			<div className="flex min-w-0 items-start justify-between gap-2 px-3 py-1.5 font-mono text-2xs text-passive">
+				<span className="inline-flex min-w-0 items-center gap-1.5">
+					<Bot className="size-icon-2xs shrink-0" aria-hidden="true" />
+					<span className="truncate">{agentLabel(session.provider)}</span>
+				</span>
+				<div className="min-w-0 text-right">
+					{prSummaries.length === 0 ? (
+						"no PR yet"
+					) : (
+						<div className="flex flex-col items-end gap-1">
+							{groupPRsByLifecycle(prSummaries).map((group) => (
+								<BoardPRGroup group={group} key={group.status.label} linksInteractive={interactive} />
+							))}
+						</div>
+					)}
+				</div>
 			</div>
 		</div>
 	);

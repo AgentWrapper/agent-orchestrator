@@ -179,9 +179,9 @@ describe("SessionsBoard", () => {
 		const terminateButton = within(idleCard).getByRole("button", { name: "Terminate brand-font-pipeline" });
 		expect(terminateButton).toHaveClass("opacity-0", "group-hover:opacity-100", "group-focus-within:opacity-100");
 		expect(terminateButton.querySelector("svg")).toHaveClass("lucide-trash-2");
-		expect(within(idleCard).getByText("Idle").parentElement).toHaveClass("pb-1.5", "pt-2");
-		expect(within(idleCard).getByText("brand-font-pipeline")).toHaveClass("pb-1");
-		expect(within(idleCard).getByText("no PR yet")).toHaveClass("py-1.25");
+		expect(within(idleCard).getByText("brand-font-pipeline")).toHaveClass("pt-2.5");
+		expect(within(idleCard).getByText("Idle").closest("div")).toHaveClass("pb-2", "pt-1");
+		expect(within(idleCard).getByText("no PR yet").parentElement).toHaveClass("py-1.5");
 	});
 
 	it("copies visible branch names and PR URLs without opening the session", async () => {
@@ -287,9 +287,13 @@ describe("SessionsBoard", () => {
 		const noSignalCard = screen.getByText("no-signal-card-task").closest('[role="button"]') as HTMLElement;
 		const draftCard = screen.getByText("draft-card-task").closest('[role="button"]') as HTMLElement;
 
-		expect(within(idleCard).getByText("Idle").closest("span")).toHaveClass("text-status-idle");
-		expect(within(noSignalCard).getByText("No signal").closest("span")).toHaveClass("text-status-unknown");
-		expect(within(draftCard).getByText("Draft PR").closest("span")).toHaveClass("text-status-in-review");
+		expect(within(idleCard).getByText("Idle").parentElement?.previousElementSibling).toHaveClass("text-status-idle");
+		expect(within(noSignalCard).getByText("No signal").parentElement?.previousElementSibling).toHaveClass(
+			"text-status-unknown",
+		);
+		expect(within(draftCard).getByText("Draft PR").parentElement?.previousElementSibling).toHaveClass(
+			"text-status-in-review",
+		);
 	});
 
 	it("places an exited live session in Needs you with an Exited badge", () => {
@@ -317,9 +321,11 @@ describe("SessionsBoard", () => {
 		renderBoard("p1");
 
 		const needsYouColumn = screen.getByText("Needs you").closest("section") as HTMLElement;
-		expect(needsYouColumn.firstElementChild).toHaveClass("py-2");
+		expect(needsYouColumn.firstElementChild).toHaveClass("h-12");
 		expect(within(needsYouColumn).getByText("agent-exited-task")).toBeInTheDocument();
-		expect(within(needsYouColumn).getByText("Exited").closest("span")).toHaveClass("text-status-exited");
+		expect(within(needsYouColumn).getByText("Exited").parentElement?.previousElementSibling).toHaveClass(
+			"text-status-exited",
+		);
 	});
 
 	it("renders an idle-first work lane with a separate lower working section", () => {
@@ -377,13 +383,16 @@ describe("SessionsBoard", () => {
 
 		expect(within(workSummary).getByText("Idle").querySelector("span")).toHaveClass("bg-status-idle");
 		expect(within(workSummary).getByText("Working").querySelector("span")).toHaveClass("bg-status-working");
-		expect(workSummary.parentElement).toHaveClass("pb-2.5");
-		expect(workingRegion.firstElementChild).toHaveClass("pb-2.5");
+		expect(workSummary).toHaveClass("font-mono", "text-2xs", "uppercase");
+		expect(workSummary.parentElement).toHaveClass("h-12");
+		expect(workingRegion.firstElementChild).toHaveClass("py-2.5");
 		expect(within(workLane).getByLabelText("2 idle sessions")).toHaveTextContent("2");
 		expect(within(workLane).getByLabelText("1 working session")).toHaveTextContent("1");
 		expect(screen.queryByRole("button", { name: /idle sessions/i })).not.toBeInTheDocument();
 		expect(idleRegion).toHaveClass("flex-[3]");
-		expect(workingRegion).toHaveClass("flex-[2]", "rounded-t-(--radius-panel)", "border-t");
+		expect(workingRegion.className).toContain("flex-[2]");
+		expect(workingRegion.className).toContain("border-t");
+		expect(workingRegion.className).not.toContain("rounded-t");
 		expect(within(idleRegion).getByText("idle-no-pr-task")).toBeInTheDocument();
 		expect(within(idleRegion).getByText("second-idle-task")).toBeInTheDocument();
 		expect(within(workingRegion).getByText("active-task")).toBeInTheDocument();
@@ -391,9 +400,9 @@ describe("SessionsBoard", () => {
 		expect(within(workLane).queryByText("idle-with-pr-task")).not.toBeInTheDocument();
 
 		const idleCard = screen.getByText("idle-no-pr-task").closest('[role="button"]') as HTMLElement;
-		const badge = within(idleCard).getByText("Idle").closest("span");
-		expect(badge).toHaveClass("text-status-idle");
-		expect(badge).not.toHaveClass("text-status-working");
+		const badgeDot = within(idleCard).getByText("Idle").parentElement?.previousElementSibling;
+		expect(badgeDot).toHaveClass("text-status-idle");
+		expect(badgeDot).not.toHaveClass("text-status-working");
 	});
 
 	it("lets idle sessions fill the lane when no working sessions exist", () => {
@@ -878,7 +887,9 @@ describe("SessionsBoard", () => {
 		expect(within(mergeLane).getByLabelText("1 ready to merge session")).toHaveTextContent("1");
 		expect(within(mergeLane).getByLabelText("1 merged session")).toHaveTextContent("1");
 		expect(readyRegion).toHaveClass("flex-[3]");
-		expect(mergedRegion).toHaveClass("flex-[2]", "rounded-t-(--radius-panel)", "border-t");
+		expect(mergedRegion.className).toContain("flex-[2]");
+		expect(mergedRegion.className).toContain("border-t");
+		expect(mergedRegion.className).not.toContain("rounded-t");
 		expect(within(readyRegion).getByText("ready worker")).toBeInTheDocument();
 		expect(within(mergedRegion).getByText("merged worker")).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: /archive/i })).not.toBeInTheDocument();
