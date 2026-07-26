@@ -355,7 +355,7 @@ export function Sidebar({
 					<RestartToUpdateRow status={updateStatus} />
 					<button
 						aria-label="Settings"
-						className="flex w-full items-center justify-center gap-2.5 rounded-settings-row bg-interactive-hover px-2.5 py-2.5 text-control font-medium text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-lg [&_svg]:shrink-0 [&_svg]:text-muted-foreground"
+						className="flex w-full items-center justify-center gap-2.5 rounded-settings-row bg-interactive-hover px-2.5 py-2.5 text-control font-medium text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-lg [&_svg]:shrink-0"
 						onClick={() => selection.goGlobalSettings()}
 						type="button"
 					>
