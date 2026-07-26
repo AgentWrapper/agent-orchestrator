@@ -3,6 +3,7 @@ package vibe
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -131,21 +132,59 @@ func TestVibeSessionLogAuthStatusAuthorizedWithAssistantMessage(t *testing.T) {
 }
 
 func TestVibeKeychainAuthStatus(t *testing.T) {
-	status, ok, err := vibeKeychainAuthStatus(context.Background(), "test-env-var")
-	if runtime.GOOS != "darwin" {
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if ok {
-			t.Fatalf("expected ok = false on non-darwin, got true")
-		}
-		if status != ports.AgentAuthStatusUnknown {
-			t.Fatalf("expected status %q, got %q", ports.AgentAuthStatusUnknown, status)
-		}
+	if runtime.GOOS == "darwin" {
+		t.Skip("This test only runs on non-Darwin platforms")
+	}
+
+	// 1. Create a temp directory for the fake security binary
+	tmpDir := t.TempDir()
+
+	// 2. Write a fake `security` script/binary that creates a sentinel file
+	//    when invoked — proving it was called
+	sentinelFile := filepath.Join(tmpDir, "security_was_called")
+
+	var fakeSecurityScript string
+	var scriptContent string
+	if runtime.GOOS == "windows" {
+		fakeSecurityScript = filepath.Join(tmpDir, "security.bat")
+		scriptContent = fmt.Sprintf("echo called > %s\r\n", sentinelFile)
 	} else {
-		if err != nil {
-			t.Fatalf("unexpected error on darwin: %v", err)
-		}
+		fakeSecurityScript = filepath.Join(tmpDir, "security")
+		scriptContent = fmt.Sprintf("#!/bin/sh\ntouch %s\n", sentinelFile)
+	}
+
+	err := os.WriteFile(fakeSecurityScript, []byte(scriptContent), 0o755)
+	if err != nil {
+		t.Fatalf("failed to write fake security executable: %v", err)
+	}
+
+	// 3. Prepend our fake binary dir to PATH
+	originalPath := os.Getenv("PATH")
+	t.Cleanup(func() { os.Setenv("PATH", originalPath) })
+	os.Setenv("PATH", tmpDir+string(os.PathListSeparator)+originalPath)
+
+	// 4. Call the function
+	status, ok, err := vibeKeychainAuthStatus(
+		context.Background(),
+		"test-env-var",
+	)
+
+	// 5. Assert return values
+	if status != ports.AgentAuthStatusUnknown {
+		t.Errorf("status = %q, want %q", status, ports.AgentAuthStatusUnknown)
+	}
+	if ok {
+		t.Errorf("ok = true, want false")
+	}
+	if err != nil {
+		t.Errorf("err = %v, want nil", err)
+	}
+
+	// 6. CRITICAL: Assert sentinel was NOT created
+	//    This proves security was never invoked
+	_, statErr := os.Stat(sentinelFile)
+	if !os.IsNotExist(statErr) {
+		t.Errorf("security binary was invoked but should have been skipped on non-Darwin")
 	}
 }
 
