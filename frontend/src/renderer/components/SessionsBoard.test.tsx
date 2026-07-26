@@ -4,15 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 
-const {
-	clipboardWriteTextMock,
-	navigateMock,
-	notificationShowMock,
-	postMock,
-	workspaceQueryMock,
-	boardActionsInPanelMock,
-} = vi.hoisted(() => ({
-	clipboardWriteTextMock: vi.fn(),
+const { navigateMock, notificationShowMock, postMock, workspaceQueryMock, boardActionsInPanelMock } = vi.hoisted(() => ({
 	navigateMock: vi.fn(),
 	notificationShowMock: vi.fn(),
 	postMock: vi.fn(),
@@ -37,7 +29,7 @@ vi.mock("../lib/api-client", () => ({
 vi.mock("../lib/bridge", () => ({
 	aoBridge: {
 		clipboard: {
-			writeText: (...args: unknown[]) => clipboardWriteTextMock(...args),
+			writeText: vi.fn(),
 		},
 		notifications: {
 			show: (...args: unknown[]) => notificationShowMock(...args),
@@ -74,7 +66,6 @@ function renderBoardWithClient(queryClient: QueryClient, projectId?: string) {
 }
 
 beforeEach(() => {
-	clipboardWriteTextMock.mockReset().mockResolvedValue(undefined);
 	navigateMock.mockReset();
 	notificationShowMock.mockReset().mockResolvedValue(undefined);
 	postMock.mockReset().mockResolvedValue({ data: {} });

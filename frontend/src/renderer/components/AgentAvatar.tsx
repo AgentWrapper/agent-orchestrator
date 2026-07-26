@@ -20,9 +20,9 @@ import piLogo from "../assets/agents/pi.png";
 import qwenLogo from "../assets/agents/qwen.png";
 import vibeLogo from "../assets/agents/vibe.png";
 
-// Real brand logos (the same premium marks the landing site uses), keyed by the
-// harness name AO stores on session.provider. Agents without an asset fall back
-// to a lettered tile (amp, agy, auggie, cline, autohand, fake).
+// Real brand logos keyed by the harness name AO stores on session.provider.
+// Agents without an asset fall back to a lettered tile (agy, auggie, autohand,
+// fake).
 const LOGOS: Record<string, string> = {
 	codex: codexLogo,
 	"claude-code": claudeLogo,

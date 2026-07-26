@@ -794,10 +794,11 @@ function SessionCard({
 		: {};
 	return (
 		<div
+			{...cardBodyProps}
 			className={cn(
 				"group relative w-full rounded-lg border text-left transition-[border-color,box-shadow]",
 				badge.cardClassName ?? "border-border bg-surface",
-				interactive && "hover:border-border-strong hover:shadow-sm",
+				interactive && "cursor-pointer hover:border-border-strong hover:shadow-sm",
 			)}
 			data-testid="board-session-card"
 			data-session-id={session.id}
@@ -821,26 +822,24 @@ function SessionCard({
 					<Trash2 className="size-icon-sm" aria-hidden="true" />
 				</button>
 			) : null}
-			<div {...cardBodyProps}>
-				<div className="flex items-start gap-2.5 px-3.5 pb-2.5 pt-3">
-					<AgentAvatar className="mt-0.5" provider={session.provider} />
-					<div className="min-w-0 flex-1">
-						<div
-							className={cn(
-								"line-clamp-2 overflow-hidden text-sm-md font-semibold leading-tight tracking-tight text-foreground",
-								showTerminate && "pr-6",
-							)}
-							title={session.title}
-						>
-							{session.title}
-						</div>
-						{showBranch && (
-							<div className="mt-1.5 flex min-w-0 items-center gap-1.5 font-mono text-2xs text-passive">
-								<GitBranch aria-hidden="true" className="size-icon-2xs shrink-0" />
-								<span className="truncate">{branch}</span>
-							</div>
+			<div className="flex items-start gap-2.5 px-3.5 pb-2.5 pt-3">
+				<AgentAvatar className="mt-0.5" provider={session.provider} />
+				<div className="min-w-0 flex-1">
+					<div
+						className={cn(
+							"line-clamp-2 overflow-hidden text-sm-md font-semibold leading-tight tracking-tight text-foreground",
+							showTerminate && "pr-6",
 						)}
+						title={session.title}
+					>
+						{session.title}
 					</div>
+					{showBranch && (
+						<div className="mt-1.5 flex min-w-0 items-center gap-1.5 font-mono text-2xs text-passive">
+							<GitBranch aria-hidden="true" className="size-icon-2xs shrink-0" />
+							<span className="truncate">{branch}</span>
+						</div>
+					)}
 				</div>
 			</div>
 			<div aria-hidden="true" className="mx-3.5 my-px h-px bg-border" />
@@ -1081,6 +1080,7 @@ function BoardPRGroup({ group, linksInteractive = true }: { group: BoardPRGroup;
 						<a
 							className="text-passive underline-offset-2 transition-colors hover:text-foreground hover:underline"
 							href={prBrowserUrl(pr)}
+							onClick={(event) => event.stopPropagation()}
 							rel="noreferrer"
 							target="_blank"
 						>
