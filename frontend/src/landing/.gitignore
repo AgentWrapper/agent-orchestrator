@@ -28,8 +28,7 @@ dist-types
 *.sln
 *.sw?
 
-#lockfile
-package-lock.json
+# Alternate lockfiles (npm's package-lock.json is tracked for CI `npm ci`)
 pnpm-lock.yaml
 yarn.lock
 /test-results/

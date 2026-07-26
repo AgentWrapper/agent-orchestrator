@@ -1,5 +1,6 @@
 @import "tailwindcss";
-@import "@superset/ui/globals.css";
+/* Relative path avoids Turbopack resolving workspace CSS from frontend/src. */
+@import "../../packages/ui/src/globals.css";
 @import "@xterm/xterm/css/xterm.css";
 
 /* ===== Dark theme color tokens ===== */
