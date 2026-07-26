@@ -35,6 +35,7 @@ import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSession
 import { useRestoreSession } from "../hooks/useRestoreSession";
 import { useTerminateSession } from "../hooks/useTerminateSession";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { useMergePR, isPRMergeable, mergeDisabledReason } from "../lib/pr-actions";	
 import { NotificationCenter } from "./NotificationCenter";
 import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyStates";
 import { OrchestratorIcon } from "./icons";
@@ -51,6 +52,7 @@ import { useUiStore } from "../stores/ui-store";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { SessionTerminationDialog } from "./SessionTerminationDialog";
+
 
 type SessionsBoardProps = {
 	/** When set, the board shows only this project's sessions. */
@@ -1078,6 +1080,9 @@ type BoardPRLifecycleStatus = { label: "closed" | "open" | "draft" | "merged"; c
 type BoardPRGroup = { status: BoardPRLifecycleStatus; prs: SessionPRSummary[] };
 
 function BoardPRGroup({ group, linksInteractive = true }: { group: BoardPRGroup; linksInteractive?: boolean }) {
+	const mergePR = useMergePR();
+	const showMergeActions = linksInteractive && group.status.label === "open";
+
 	return (
 		<span
 			aria-label={`${group.prs.map((pr) => `#${pr.number}`).join(", ")} ${group.status.label}`}
@@ -1085,7 +1090,7 @@ function BoardPRGroup({ group, linksInteractive = true }: { group: BoardPRGroup;
 		>
 			<span>PR</span>
 			{group.prs.map((pr, index) => (
-				<span className="inline-flex items-center" key={pr.number}>
+				<span className="inline-flex items-center gap-1" key={pr.number}>
 					{linksInteractive ? (
 						<a
 							className="text-passive underline-offset-2 transition-colors hover:text-foreground hover:underline"
@@ -1100,10 +1105,40 @@ function BoardPRGroup({ group, linksInteractive = true }: { group: BoardPRGroup;
 						<span>#{pr.number}</span>
 					)}
 					{index < group.prs.length - 1 ? "," : null}
+					{showMergeActions ? <MergePRButton mutation={mergePR} pr={pr} /> : null}
 				</span>
 			))}
 			<span className={cn("font-medium", group.status.className)}>{group.status.label}</span>
+			{mergePR.isError ? (
+				<span className="basis-full text-2xs text-destructive" role="alert">
+					{mergePR.error instanceof Error ? mergePR.error.message : "Merge failed"}
+				</span>
+			) : null}
 		</span>
+	);
+}
+
+function MergePRButton({ mutation, pr }: { mutation: ReturnType<typeof useMergePR>; pr: SessionPRSummary }) {
+	const eligible = isPRMergeable(pr);
+	const isThisPending = mutation.isPending && mutation.variables?.number === pr.number;
+	return (
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<button
+					aria-label={`Merge PR #${pr.number}`}
+					className="inline-flex items-center rounded-sm px-1 py-0.5 text-2xs font-medium text-accent transition-colors hover:bg-accent/10 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+					disabled={!eligible || mutation.isPending}
+					onClick={(event) => {
+						event.stopPropagation();
+						mutation.mutate(pr);
+					}}
+					type="button"
+				>
+					{isThisPending ? "Merging…" : "Merge"}
+				</button>
+			</TooltipTrigger>
+			<TooltipContent side="top">{eligible ? "Merge this pull request" : mergeDisabledReason(pr)}</TooltipContent>
+		</Tooltip>
 	);
 }
 
