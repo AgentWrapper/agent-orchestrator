@@ -1,5 +1,8 @@
 import { COMPANY } from "@superset/shared/constants";
 
+
+export const dynamic = "force-static";
+
 export function GET() {
 	const baseUrl = COMPANY.MARKETING_URL;
 

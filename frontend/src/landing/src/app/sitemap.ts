@@ -7,6 +7,8 @@ import { getAllLegalSlugs, getLegalPage } from "@/lib/legal";
 import { themeListings } from "@/lib/marketplace";
 import { getAllPeople } from "@/lib/people";
 
+export const dynamic = "force-static";
+
 export default function sitemap(): MetadataRoute.Sitemap {
 	const baseUrl = COMPANY.MARKETING_URL;
 

@@ -4,6 +4,9 @@ import { getComparisonPages } from "@/lib/compare";
 import { stripMdxSyntax } from "@/lib/llms";
 import { FAQ_ITEMS } from "../components/FAQSection/constants";
 
+
+export const dynamic = "force-static";
+
 export async function GET() {
 	const posts = getBlogPosts();
 	const comparisons = getComparisonPages();

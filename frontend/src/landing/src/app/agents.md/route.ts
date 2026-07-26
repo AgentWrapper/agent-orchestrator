@@ -6,6 +6,8 @@ import {
   MCP_SERVER_URL,
 } from "@/lib/llms";
 
+export const dynamic = "force-static";
+
 export function GET() {
   const baseUrl = COMPANY.MARKETING_URL;
   const docsUrl = COMPANY.DOCS_URL;
