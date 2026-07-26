@@ -58,6 +58,10 @@ type AgentAvatarProps = {
  * no tile, border, or background — so each brand's own shape shows (codex,
  * claude, cursor, … carry their own rounded backgrounds). Agents without an
  * asset fall back to a bare initial. Kept small so the title stays the hero.
+ *
+ * The provider is exposed as the accessible name (alt / aria-label), not just a
+ * hover title, so surfaces that show the logo in place of visible agent text —
+ * e.g. the archive cards — still name the agent for screen readers.
  */
 export function AgentAvatar({ provider, className }: AgentAvatarProps) {
 	const logo = LOGOS[provider];
@@ -65,7 +69,7 @@ export function AgentAvatar({ provider, className }: AgentAvatarProps) {
 		return (
 			<img
 				src={logo}
-				alt=""
+				alt={provider}
 				className={cn("size-icon-xl shrink-0 object-contain", className)}
 				draggable={false}
 				title={provider}
@@ -74,6 +78,8 @@ export function AgentAvatar({ provider, className }: AgentAvatarProps) {
 	}
 	return (
 		<span
+			role="img"
+			aria-label={provider}
 			className={cn(
 				"inline-flex size-icon-xl shrink-0 items-center justify-center text-caption font-bold uppercase leading-none text-muted-foreground",
 				className,
