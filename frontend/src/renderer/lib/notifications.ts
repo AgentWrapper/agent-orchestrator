@@ -173,6 +173,24 @@ export function keepLatestNotificationsPage(
 	rebaseOversizedFirstPage(queryClient, queryKey);
 }
 
+/**
+ * A `needs_input` toast is redundant only when the user can already see the
+ * prompt: the notification is for the session on screen, and this window is
+ * both visible and focused. Visibility alone is not enough — on Windows and
+ * Linux an unfocused or fully covered Electron window still reports
+ * `visibilityState === "visible"`, so we would suppress a toast for a user who
+ * has switched to another app.
+ *
+ * Only `needs_input` is suppressed. PR outcomes (`ready_to_merge`,
+ * `pr_merged`, `pr_closed_unmerged`) are not visible in the terminal pane, so
+ * they still deserve a toast even for the session in the foreground.
+ */
+function suppressToastForFocusedSession(notification: NotificationDTO, activeSessionId: string | undefined): boolean {
+	if (notification.type !== "needs_input") return false;
+	if (!notification.sessionId || notification.sessionId !== activeSessionId) return false;
+	return document.visibilityState === "visible" && document.hasFocus();
+}
+
 export function createNotificationsTransport(
 	queryClient: QueryClient,
 	getActiveSessionId: () => string | undefined = () => undefined,
@@ -214,9 +232,7 @@ export function createNotificationsTransport(
 						if (!notification) return;
 						const inserted = mergeUnreadNotification(queryClient, notification);
 						mergeRecentNotification(queryClient, notification);
-						const isActiveVisibleSession =
-							notification.sessionId === getActiveSessionId() && document.visibilityState === "visible";
-						if (inserted && !isActiveVisibleSession) {
+						if (inserted && !suppressToastForFocusedSession(notification, getActiveSessionId())) {
 							void aoBridge.notifications.show({
 								id: notification.id,
 								title: notification.title,

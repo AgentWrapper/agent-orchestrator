@@ -84,10 +84,7 @@ export function NotificationRuntime() {
 	const activeSessionIdRef = useRef(params.sessionId);
 	activeSessionIdRef.current = params.sessionId;
 
-	useEffect(
-		() => createNotificationsTransport(queryClient, () => activeSessionIdRef.current).connect(),
-		[queryClient],
-	);
+	useEffect(() => createNotificationsTransport(queryClient, () => activeSessionIdRef.current).connect(), [queryClient]);
 
 	useEffect(() => {
 		return aoBridge.notifications.onClick((id) => {

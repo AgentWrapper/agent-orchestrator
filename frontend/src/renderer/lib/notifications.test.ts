@@ -96,6 +96,13 @@ function queryClient() {
 	return new QueryClient({ defaultOptions: { queries: { retry: false } } });
 }
 
+// A covered or background Electron window still reports "visible" on Windows
+// and Linux, so visibility and focus have to be stubbed independently.
+function setWindowState({ focused, visible }: { focused: boolean; visible: boolean }) {
+	vi.spyOn(document, "visibilityState", "get").mockReturnValue(visible ? "visible" : "hidden");
+	vi.spyOn(document, "hasFocus").mockReturnValue(focused);
+}
+
 beforeEach(() => {
 	apiGetMock.mockReset();
 	EventSourceStub.instances = [];
@@ -110,6 +117,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	delete (globalThis as unknown as { EventSource?: unknown }).EventSource;
+	vi.restoreAllMocks();
 });
 
 describe("notification cache helpers", () => {
@@ -268,39 +276,47 @@ describe("createNotificationsTransport", () => {
 		});
 	});
 
-	it("suppresses the toast when the notification's session is active and the window is visible", () => {
-		vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+	it("suppresses the needs_input toast for the session the user is already watching", () => {
+		setWindowState({ focused: true, visible: true });
 		const qc = queryClient();
 		createNotificationsTransport(qc, () => "mer-1").connect();
-		const source = EventSourceStub.instances[0];
 
-		source.dispatch("notification_created", notification());
+		EventSourceStub.instances[0].dispatch("notification_created", notification());
 
 		expect(getCachedNotifications(qc.getQueryData<NotificationsCache>(unreadNotificationsQueryKey))).toHaveLength(1);
 		expect(showNotificationMock).not.toHaveBeenCalled();
 	});
 
-	it("still shows the toast when the notification's session differs from the active one", () => {
-		vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
-		const qc = queryClient();
-		createNotificationsTransport(qc, () => "other-session").connect();
-		const source = EventSourceStub.instances[0];
+	it.each([
+		{
+			activeSessionId: "other-session",
+			focused: true,
+			reason: "the notification is for a different session",
+			visible: true,
+		},
+		{ activeSessionId: "mer-1", focused: true, reason: "the window is hidden", visible: false },
+		{ activeSessionId: "mer-1", focused: false, reason: "the window is visible but unfocused", visible: true },
+		{ activeSessionId: undefined, focused: true, reason: "no session is open", visible: true },
+	])("still shows the needs_input toast when $reason", ({ activeSessionId, focused, visible }) => {
+		setWindowState({ focused, visible });
+		createNotificationsTransport(queryClient(), () => activeSessionId).connect();
 
-		source.dispatch("notification_created", notification());
-
-		expect(showNotificationMock).toHaveBeenCalledTimes(1);
-	});
-
-	it("still shows the toast for the active session when the window is not visible", () => {
-		vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
-		const qc = queryClient();
-		createNotificationsTransport(qc, () => "mer-1").connect();
-		const source = EventSourceStub.instances[0];
-
-		source.dispatch("notification_created", notification());
+		EventSourceStub.instances[0].dispatch("notification_created", notification());
 
 		expect(showNotificationMock).toHaveBeenCalledTimes(1);
 	});
+
+	it.each(["ready_to_merge", "pr_merged", "pr_closed_unmerged"] as const)(
+		"still shows the %s toast for the focused active session",
+		(type) => {
+			setWindowState({ focused: true, visible: true });
+			createNotificationsTransport(queryClient(), () => "mer-1").connect();
+
+			EventSourceStub.instances[0].dispatch("notification_created", notification({ type }));
+
+			expect(showNotificationMock).toHaveBeenCalledTimes(1);
+		},
+	);
 
 	it("reconnects when the API base URL changes", () => {
 		createNotificationsTransport(queryClient()).connect();
