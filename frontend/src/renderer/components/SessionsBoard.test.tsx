@@ -504,7 +504,8 @@ describe("SessionsBoard", () => {
 		expect(terminatedCard).not.toBeNull();
 		expect(within(terminatedCard!).queryByRole("button", { name: "Open dead worker" })).not.toBeInTheDocument();
 		expect(within(terminatedCard!).getByText("Terminated")).toBeInTheDocument();
-		expect(screen.getByText("Claude")).toBeInTheDocument();
+		// Agent shown as its brand logo with an accessible name (not a text label).
+		expect(within(terminatedCard!).getByRole("img", { name: "claude-code" })).toBeInTheDocument();
 		expect(screen.getByText("ao/dead-worker")).toBeInTheDocument();
 		expect(screen.getByText("github:INT-17")).toBeInTheDocument();
 		const prStatus = screen.getByLabelText("#42 merged");
@@ -516,6 +517,14 @@ describe("SessionsBoard", () => {
 			screen.getByText("ao/dead-worker").compareDocumentPosition(divider!) & Node.DOCUMENT_POSITION_FOLLOWING,
 		).not.toBe(0);
 		expect(screen.getByRole("button", { name: "Restore dead worker" })).toBeInTheDocument();
+
+		// The row layout renders the same accessible logo (both archive layouts changed).
+		await userEvent.click(screen.getByRole("button", { name: "Rows" }));
+		const rowCard = within(screen.getByRole("list", { name: "Archived sessions" }))
+			.getByText("dead worker")
+			.closest<HTMLElement>("[role='listitem']");
+		expect(rowCard).not.toBeNull();
+		expect(within(rowCard!).getByRole("img", { name: "claude-code" })).toBeInTheDocument();
 	});
 
 	it("switches between rows and columns and remembers the archive layout", async () => {
