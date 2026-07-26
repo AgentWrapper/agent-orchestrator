@@ -59,7 +59,9 @@ export function TitlebarNav({
 		: isFullScreen
 			? "left-titlebar-cluster-left-fullscreen"
 			: "left-titlebar-cluster-left";
-	const topClass = !isMac ? "top-1.5" : isFullScreen ? "top-0" : "top-0.5";
+	// Linux: match the framed board titlebar's y (mac inset 2px + surface border
+	// 1px) so the cluster shares its centerline with the project title.
+	const topClass = !isMac ? "top-0.75" : isFullScreen ? "top-0" : "top-0.5";
 
 	return (
 		<div
