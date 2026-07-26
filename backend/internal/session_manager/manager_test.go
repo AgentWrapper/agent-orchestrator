@@ -5431,3 +5431,36 @@ func TestSpawn_MarkSpawnedFailureDestroysRuntimeWithDetachedContext(t *testing.T
 
 	cancel()
 }
+
+func TestSpawn_CancelledProvisioningStillDestroysWorkspace(t *testing.T) {
+	st := newFakeStore()
+	cfg := testRoleAgents()
+	cfg.PostCreate = []string{"false"}
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: cfg}
+	awareStore := &cancelAwareStore{fakeStore: st}
+	awareLCM := &cancelAwareLCM{fakeLCM: &fakeLCM{store: st}}
+
+	spawnCtx, cancel := context.WithCancel(context.Background())
+	ws := &cancelAwareWorkspace{fakeWorkspace: &fakeWorkspace{}}
+
+	m := New(Deps{
+		Runtime:   &fakeRuntime{},
+		Agents:    fakeAgents{},
+		Workspace: ws,
+		Store:     awareStore,
+		Messenger: &fakeMessenger{},
+		Lifecycle: awareLCM,
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	cancel()
+
+	_, _, _, err := m.Spawn(spawnCtx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err == nil {
+		t.Fatal("Spawn err = nil, want provisioning error on cancelled ctx")
+	}
+
+	if ws.destroyed == 0 {
+		t.Fatal("workspace was not destroyed after cancelled provisioning, want ws.destroyed > 0")
+	}
+}
