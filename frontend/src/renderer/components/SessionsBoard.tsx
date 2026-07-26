@@ -3,7 +3,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {
 	AlertTriangle,
-	Bot,
 	Check,
 	Copy,
 	GitBranch,
@@ -38,6 +37,7 @@ import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery
 import { NotificationCenter } from "./NotificationCenter";
 import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyStates";
 import { OrchestratorIcon } from "./icons";
+import { AgentAvatar } from "./AgentAvatar";
 import { TopbarButton, TopbarKillError, topbarProjectLabelClass } from "./TopbarButton";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
@@ -796,10 +796,11 @@ function SessionCard({
 		: {};
 	return (
 		<div
+			{...cardBodyProps}
 			className={cn(
-				"group relative w-full rounded-lg border text-left transition-colors",
+				"group relative w-full rounded-lg border text-left transition-[border-color,box-shadow]",
 				badge.cardClassName ?? "border-border bg-surface",
-				interactive && "hover:border-border-strong",
+				interactive && "cursor-pointer hover:border-border-strong hover:shadow-sm",
 			)}
 			data-testid="board-session-card"
 			data-session-id={session.id}
@@ -823,74 +824,55 @@ function SessionCard({
 					<Trash2 className="size-icon-sm" aria-hidden="true" />
 				</button>
 			) : null}
-			<div {...cardBodyProps}>
-				<div
-					className={cn(
-						"flex items-start gap-2 px-3 pt-2.5",
-						showBranch || issueId ? "pb-1" : "pb-2.5",
-						showTerminate && "pr-8",
-					)}
-				>
-					<span
-						className="mt-0.5 inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground"
-						title={agentLabel(session.provider)}
-					>
-						<Bot className="size-icon-sm" aria-hidden="true" />
-						<span className="sr-only">{agentLabel(session.provider)}</span>
-					</span>
+			<div className="flex items-start gap-2.5 px-3.5 pb-2.5 pt-3">
+				<AgentAvatar className="mt-0.5" provider={session.provider} />
+				<div className="min-w-0 flex-1">
 					<div
 						className={cn(
-							"min-w-0 flex-1 text-control font-semibold leading-snug tracking-tight text-foreground",
-							"line-clamp-2 overflow-hidden",
+							"line-clamp-2 overflow-hidden text-sm-md font-semibold leading-tight tracking-tight text-foreground",
+							showTerminate && "pr-6",
 						)}
+						title={session.title}
 					>
 						{session.title}
 					</div>
+					{showBranch && (
+						<div className="mt-1.5 flex min-w-0 items-center gap-1.5 font-mono text-2xs text-passive">
+							<GitBranch aria-hidden="true" className="size-icon-2xs shrink-0" />
+							<span className="truncate">{branch}</span>
+						</div>
+					)}
 				</div>
-				{showBranch || issueId ? (
-					<div className="flex min-w-0 items-center gap-1.5 px-3 pb-2.5">
-						{showBranch ? (
-							<>
-								<GitBranch className="size-icon-2xs shrink-0 text-passive" aria-hidden="true" />
-								<span className="min-w-0 truncate font-mono text-2xs text-muted-foreground" title={branch}>
-									{branch}
-								</span>
-								<CopyActionButton label={`branch ${branch}`} value={branch} />
-							</>
-						) : null}
-						{issueId ? (
-							<span
-								className="inline-flex max-w-branch-chip shrink-0 items-center truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent"
-								title={`Intake issue: ${issueId}`}
-							>
-								{issueId}
-							</span>
-						) : null}
-					</div>
-				) : null}
-				<div aria-hidden="true" className="mx-3 h-px bg-border" />
-				<div className="flex min-w-0 items-center justify-between gap-2 px-3 py-2">
-					<span className="inline-flex min-w-0 items-center gap-1.5 text-2xs font-medium">
-						<span
-							className={cn("size-dot-sm shrink-0 rounded-full bg-current", badge.className)}
-							aria-hidden="true"
-						/>
-						<span className="min-w-0 truncate">
-							<span className={badge.className}>{badge.label}</span>
-						</span>
+			</div>
+			<div aria-hidden="true" className="mx-3.5 my-px h-px bg-border" />
+			<div className="flex flex-col gap-1.5 px-3.5 py-2">
+				<div className="flex items-center justify-between gap-2">
+					<span className={cn("inline-flex min-w-0 items-center gap-1.5 truncate text-2xs font-medium", badge.className)}>
+						<span className="size-dot-sm shrink-0 rounded-full bg-current" />
+						{badge.label}
 					</span>
-					<div className="min-w-0 shrink-0 text-right font-mono text-2xs text-muted-foreground">
-						{prSummaries.length === 0 ? (
-							"no PR yet"
-						) : (
-							<div className="flex flex-col items-end gap-1">
-								{groupPRsByLifecycle(prSummaries).map((group) => (
-									<BoardPRGroup group={group} key={group.status.label} linksInteractive={interactive} />
-								))}
-							</div>
-						)}
-					</div>
+					<span
+						className="shrink-0 whitespace-nowrap font-mono text-2xs text-passive"
+						title={`Updated ${session.updatedAt}`}
+					>
+						{formatTimeCompact(session.updatedAt)}
+					</span>
 				</div>
+				{prSummaries.length > 0 && (
+					<div className="flex flex-col gap-1 font-mono text-2xs text-passive">
+						{groupPRsByLifecycle(prSummaries).map((group) => (
+							<BoardPRGroup group={group} key={group.status.label} linksInteractive={interactive} />
+						))}
+					</div>
+				)}
+				{issueId && (
+					<span
+						className="inline-flex max-w-branch-chip items-center self-start truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent"
+						title={`Intake issue: ${issueId}`}
+					>
+						{issueId}
+					</span>
+				)}
 			</div>
 		</div>
 	);
@@ -1096,21 +1078,19 @@ function BoardPRGroup({ group, linksInteractive = true }: { group: BoardPRGroup;
 			<span>PR</span>
 			{group.prs.map((pr, index) => (
 				<span className="inline-flex items-center" key={pr.number}>
-					<span className="inline-flex items-center gap-0.5">
-						{linksInteractive ? (
-							<a
-								className="text-passive underline-offset-2 transition-colors hover:text-foreground hover:underline"
-								href={prBrowserUrl(pr)}
-								rel="noreferrer"
-								target="_blank"
-							>
-								#{pr.number}
-							</a>
-						) : (
-							<span>#{pr.number}</span>
-						)}
-						<CopyActionButton label={`PR #${pr.number} URL`} value={prBrowserUrl(pr)} />
-					</span>
+					{linksInteractive ? (
+						<a
+							className="text-passive underline-offset-2 transition-colors hover:text-foreground hover:underline"
+							href={prBrowserUrl(pr)}
+							onClick={(event) => event.stopPropagation()}
+							rel="noreferrer"
+							target="_blank"
+						>
+							#{pr.number}
+						</a>
+					) : (
+						<span>#{pr.number}</span>
+					)}
 					{index < group.prs.length - 1 ? "," : null}
 				</span>
 			))}

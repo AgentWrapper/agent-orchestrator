@@ -4,15 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 
-const {
-	clipboardWriteTextMock,
-	navigateMock,
-	notificationShowMock,
-	postMock,
-	workspaceQueryMock,
-	boardActionsInPanelMock,
-} = vi.hoisted(() => ({
-	clipboardWriteTextMock: vi.fn(),
+const { navigateMock, notificationShowMock, postMock, workspaceQueryMock, boardActionsInPanelMock } = vi.hoisted(() => ({
 	navigateMock: vi.fn(),
 	notificationShowMock: vi.fn(),
 	postMock: vi.fn(),
@@ -37,7 +29,7 @@ vi.mock("../lib/api-client", () => ({
 vi.mock("../lib/bridge", () => ({
 	aoBridge: {
 		clipboard: {
-			writeText: (...args: unknown[]) => clipboardWriteTextMock(...args),
+			writeText: vi.fn(),
 		},
 		notifications: {
 			show: (...args: unknown[]) => notificationShowMock(...args),
@@ -74,7 +66,6 @@ function renderBoardWithClient(queryClient: QueryClient, projectId?: string) {
 }
 
 beforeEach(() => {
-	clipboardWriteTextMock.mockReset().mockResolvedValue(undefined);
 	navigateMock.mockReset();
 	notificationShowMock.mockReset().mockResolvedValue(undefined);
 	postMock.mockReset().mockResolvedValue({ data: {} });
@@ -179,58 +170,8 @@ describe("SessionsBoard", () => {
 		const terminateButton = within(idleCard).getByRole("button", { name: "Terminate brand-font-pipeline" });
 		expect(terminateButton).toHaveClass("opacity-0", "group-hover:opacity-100", "group-focus-within:opacity-100");
 		expect(terminateButton.querySelector("svg")).toHaveClass("lucide-trash-2");
-		expect(within(idleCard).getByText("brand-font-pipeline").parentElement).toHaveClass("pt-2.5");
-		expect(within(idleCard).getByText("ao/radic-5").previousElementSibling).toHaveClass("lucide-git-branch");
-		expect(within(idleCard).getByText("Idle").parentElement?.previousElementSibling).toHaveClass("text-status-idle");
-		expect(within(idleCard).getByText("no PR yet").parentElement).toHaveClass("py-2");
-	});
-
-	it("copies visible branch names and PR URLs without opening the session", async () => {
-		workspaceQueryMock.mockReturnValue({
-			data: [
-				{
-					id: "p1",
-					name: "radic",
-					path: "/tmp/radic",
-					sessions: [
-						{
-							id: "s1",
-							workspaceId: "p1",
-							workspaceName: "radic",
-							title: "clipboard support",
-							provider: "claude-code",
-							branch: "feat/copy-actions",
-							status: "working",
-							activity: { state: "active", lastActivityAt: "2026-01-01T00:00:00Z" },
-							updatedAt: "2026-01-01T00:00:00Z",
-							prs: [
-								{ number: 45, url: "https://github.com/acme/radic/pull/45", state: "open" },
-								{ number: 46, url: "https://github.com/acme/radic/pull/46", state: "open" },
-							],
-						},
-					],
-				},
-			],
-			isError: false,
-			isSuccess: true,
-		});
-
-		renderBoard("p1");
-
-		await userEvent.click(screen.getByRole("button", { name: "Copy branch feat/copy-actions" }));
-		expect(clipboardWriteTextMock).toHaveBeenLastCalledWith("feat/copy-actions");
-		expect(screen.getByRole("button", { name: "Copied branch feat/copy-actions" })).toBeInTheDocument();
-		expect(navigateMock).not.toHaveBeenCalled();
-
-		await userEvent.click(screen.getByRole("button", { name: "Copy PR #45 URL" }));
-		expect(clipboardWriteTextMock).toHaveBeenLastCalledWith("https://github.com/acme/radic/pull/45");
-		expect(screen.getByRole("button", { name: "Copied PR #45 URL" })).toBeInTheDocument();
-		expect(navigateMock).not.toHaveBeenCalled();
-		const firstPRCopyButton = screen.getByRole("button", { name: "Copied PR #45 URL" });
-		expect(firstPRCopyButton.parentElement?.nextSibling?.textContent).toBe(",");
-		await waitFor(() => expect(screen.getByRole("button", { name: "Copy PR #45 URL" })).toBeInTheDocument(), {
-			timeout: 2_000,
-		});
+		expect(within(idleCard).getByText("Idle").parentElement).toHaveClass("flex", "justify-between");
+		expect(within(idleCard).getByText("brand-font-pipeline")).toHaveClass("font-semibold", "line-clamp-2");
 	});
 
 	it("uses distinct card badge tones for idle, no signal, and draft PR sessions", () => {
@@ -284,17 +225,13 @@ describe("SessionsBoard", () => {
 		});
 
 		renderBoard("p1");
-		const idleCard = screen.getByText("idle-card-task").closest('[role="button"]') as HTMLElement;
-		const noSignalCard = screen.getByText("no-signal-card-task").closest('[role="button"]') as HTMLElement;
-		const draftCard = screen.getByText("draft-card-task").closest('[role="button"]') as HTMLElement;
+		const idleCard = screen.getByText("idle-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
+		const noSignalCard = screen.getByText("no-signal-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
+		const draftCard = screen.getByText("draft-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
 
-		expect(within(idleCard).getByText("Idle").parentElement?.previousElementSibling).toHaveClass("text-status-idle");
-		expect(within(noSignalCard).getByText("No signal").parentElement?.previousElementSibling).toHaveClass(
-			"text-status-unknown",
-		);
-		expect(within(draftCard).getByText("Draft PR").parentElement?.previousElementSibling).toHaveClass(
-			"text-status-in-review",
-		);
+		expect(within(idleCard).getByText("Idle").closest("span")).toHaveClass("text-status-idle");
+		expect(within(noSignalCard).getByText("No signal").closest("span")).toHaveClass("text-status-unknown");
+		expect(within(draftCard).getByText("Draft PR").closest("span")).toHaveClass("text-status-in-review");
 	});
 
 	it("places an exited live session in Needs you with an Exited badge", () => {
@@ -324,9 +261,7 @@ describe("SessionsBoard", () => {
 		const needsYouColumn = screen.getByText("Needs you").closest("section") as HTMLElement;
 		expect(needsYouColumn.firstElementChild).toHaveClass("h-12");
 		expect(within(needsYouColumn).getByText("agent-exited-task")).toBeInTheDocument();
-		expect(within(needsYouColumn).getByText("Exited").parentElement?.previousElementSibling).toHaveClass(
-			"text-status-exited",
-		);
+		expect(within(needsYouColumn).getByText("Exited").closest("span")).toHaveClass("text-status-exited");
 	});
 
 	it("renders an idle-first work lane with a separate lower working section", () => {
@@ -400,10 +335,10 @@ describe("SessionsBoard", () => {
 		expect(within(reviewRegion).getByText("idle-with-pr-task")).toBeInTheDocument();
 		expect(within(workLane).queryByText("idle-with-pr-task")).not.toBeInTheDocument();
 
-		const idleCard = screen.getByText("idle-no-pr-task").closest('[role="button"]') as HTMLElement;
-		const badgeDot = within(idleCard).getByText("Idle").parentElement?.previousElementSibling;
-		expect(badgeDot).toHaveClass("text-status-idle");
-		expect(badgeDot).not.toHaveClass("text-status-working");
+		const idleCard = screen.getByText("idle-no-pr-task").closest('[data-testid="board-session-card"]') as HTMLElement;
+		const badge = within(idleCard).getByText("Idle").closest("span");
+		expect(badge).toHaveClass("text-status-idle");
+		expect(badge).not.toHaveClass("text-status-working");
 	});
 
 	it("lets idle sessions fill the lane when no working sessions exist", () => {
