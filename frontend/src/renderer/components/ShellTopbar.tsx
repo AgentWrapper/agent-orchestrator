@@ -6,6 +6,7 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { NotificationCenter } from "./NotificationCenter";
 import {
 	findProjectOrchestrator,
+	hasConfiguredOrchestratorAgent,
 	isOrchestratorSession,
 	sessionIsActive,
 	type WorkspaceSession,
@@ -99,6 +100,12 @@ export function ShellTopbar() {
 				to: "/projects/$projectId/sessions/$sessionId",
 				params: { projectId, sessionId: orchestrator.id },
 			});
+			return;
+		}
+		if (!hasConfiguredOrchestratorAgent(project)) {
+			if (project) {
+				void navigate({ to: "/projects/$projectId/settings", params: { projectId } });
+			}
 			return;
 		}
 		setIsSpawning(true);

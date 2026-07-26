@@ -16,6 +16,7 @@ import {
 import {
 	type WorkspaceSession,
 	canonicalTrackerIssueId,
+	hasConfiguredOrchestratorAgent,
 	newestActiveOrchestrator,
 	orchestratorHealth,
 	workerSessions,
@@ -204,6 +205,12 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				to: "/projects/$projectId/sessions/$sessionId",
 				params: { projectId, sessionId: orchestrator.id },
 			});
+			return;
+		}
+		if (!hasConfiguredOrchestratorAgent(workspace)) {
+			if (workspace) {
+				void navigate({ to: "/projects/$projectId/settings", params: { projectId } });
+			}
 			return;
 		}
 		setSpawnError(null);

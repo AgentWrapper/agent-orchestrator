@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import type { UpdateStatus } from "../../main/update-settings";
 import { APP_SHORTCUTS, shortcutKeys } from "../../shared/shortcuts";
 import {
+	hasConfiguredOrchestratorAgent,
 	newestActiveOrchestrator,
 	type WorkspaceSession,
 	type WorkspaceSummary,
@@ -436,6 +437,10 @@ function ProjectItem({
 		if (isProjectRestarting) return;
 		if (orchestrator) {
 			selection.goSession(workspace.id, orchestrator.id);
+			return;
+		}
+		if (!hasConfiguredOrchestratorAgent(workspace)) {
+			selection.goSettings(workspace.id);
 			return;
 		}
 		setIsSpawning(true);
