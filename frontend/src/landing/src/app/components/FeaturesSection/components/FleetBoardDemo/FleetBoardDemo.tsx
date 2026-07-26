@@ -60,7 +60,7 @@ export function FleetBoardDemo() {
 			style={featurePreviewTokens}
 		>
 			<LayoutGroup>
-				<div className="grid h-full min-h-0 auto-cols-[85%] grid-flow-col snap-x snap-mandatory divide-x divide-[var(--preview-border-strong)] overflow-x-auto overscroll-x-contain scrollbar-hide sm:auto-cols-[48%] md:grid-flow-row md:grid-cols-4 md:auto-cols-auto md:snap-none md:overflow-hidden">
+				<div className="grid h-full min-h-0 auto-cols-[85%] grid-flow-col snap-x snap-mandatory divide-x divide-[var(--preview-border-strong)] overflow-x-auto overscroll-x-contain scrollbar-hide sm:auto-cols-[48%] md:grid-flow-row md:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)_minmax(0,0.9fr)_minmax(0,1.35fr)] md:auto-cols-auto md:snap-none md:overflow-hidden">
 					{columns.map((column, columnIndex) => {
 						const columnCards = cards.filter((card) => card.column === columnIndex);
 						const count = columnCards.length + (movingColumn === columnIndex ? 1 : 0);
@@ -70,33 +70,35 @@ export function FleetBoardDemo() {
 								<button
 									type="button"
 									onClick={() => setMovingColumn(columnIndex)}
-									className="flex h-9 items-center gap-1.5 border-b border-[var(--preview-border)] px-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--preview-ring)]"
+									className="flex h-8 items-center gap-1 border-b border-[var(--preview-border)] px-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--preview-ring)]"
 								>
 									{column.split ? (
-										<div className="min-w-0 flex-1 whitespace-nowrap text-[9px] font-semibold uppercase tracking-[0.04em]">
-											{column.id === "working" ? (
-												<>
-													<span style={{ color: STATUS.idle }}>Idle</span>
-													<span className="text-[var(--preview-muted-foreground)]"> / </span>
-													<span style={{ color: STATUS.working }}>Working</span>
-												</>
-											) : (
-												<>
-													<span style={{ color: STATUS.ready }}>Ready to merge</span>
-													<span className="text-[var(--preview-muted-foreground)]"> / </span>
-													<span style={{ color: STATUS.merged }}>Merged</span>
-												</>
-											)}
+										<div className="min-w-0 flex-1 overflow-hidden text-[7px] font-semibold uppercase leading-none tracking-normal">
+											<span className="whitespace-nowrap">
+												{column.id === "working" ? (
+													<>
+														<span style={{ color: STATUS.idle }}>Idle</span>
+														<span className="text-[var(--preview-muted-foreground)]"> / </span>
+														<span style={{ color: STATUS.working }}>Working</span>
+													</>
+												) : (
+													<>
+														<span style={{ color: STATUS.ready }}>Ready to merge</span>
+														<span className="text-[var(--preview-muted-foreground)]"> / </span>
+														<span style={{ color: STATUS.merged }}>Merged</span>
+													</>
+												)}
+											</span>
 										</div>
 									) : (
 										<span
-											className="min-w-0 flex-1 whitespace-nowrap text-[9px] font-semibold uppercase tracking-[0.04em]"
+											className="min-w-0 flex-1 overflow-hidden whitespace-nowrap text-[7px] font-semibold uppercase leading-none tracking-normal"
 											style={{ color: column.color }}
 										>
 											{column.label}
 										</span>
 									)}
-									<span className="shrink-0 font-mono text-[9px] tabular-nums text-[var(--preview-muted-foreground)]">
+									<span className="shrink-0 font-mono text-[7px] tabular-nums leading-none text-[var(--preview-muted-foreground)]">
 										{column.split && column.id === "working"
 											? `${movingColumn === columnIndex ? 0 : columnCards.filter((c) => c.status === "Idle").length} / ${movingColumn === columnIndex ? 1 : columnCards.filter((c) => c.status !== "Idle").length}`
 											: column.split

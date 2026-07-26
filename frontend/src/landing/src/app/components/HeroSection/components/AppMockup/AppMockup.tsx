@@ -1535,42 +1535,44 @@ function BoardColumn({
 	return (
 		<section className="flex min-h-0 min-w-0 snap-start flex-col">
 			{id === "working" ? (
-				<div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-[var(--preview-border)] px-2">
-					<div className="min-w-0 flex-1 whitespace-nowrap text-[9px] font-semibold uppercase tracking-[0.04em]">
-						<LaneLabel color={STATUS_COLORS.idle} label="Idle" />
-						<span className="text-[var(--preview-passive)]" aria-hidden="true">
-							{" "}
-							/{" "}
+				<div className="flex h-8 shrink-0 items-center gap-1 border-b border-[var(--preview-border)] px-1.5">
+					<div className="min-w-0 flex-1 overflow-hidden text-[7px] font-semibold uppercase leading-none tracking-normal">
+						<span className="whitespace-nowrap">
+							<LaneLabel color={STATUS_COLORS.idle} label="Idle" />
+							<span className="text-[var(--preview-passive)]" aria-hidden="true">
+								{" / "}
+							</span>
+							<LaneLabel color={STATUS_COLORS.working} label="Working" />
 						</span>
-						<LaneLabel color={STATUS_COLORS.working} label="Working" />
 					</div>
-					<div className="shrink-0 font-mono text-[9px] tabular-nums leading-none text-[var(--preview-passive)]">
+					<div className="shrink-0 font-mono text-[7px] tabular-nums leading-none text-[var(--preview-passive)]">
 						{idleCards.length} / {workingCards.length}
 					</div>
 				</div>
 			) : id === "merge" ? (
-				<div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-[var(--preview-border)] px-2">
-					<div className="min-w-0 flex-1 whitespace-nowrap text-[9px] font-semibold uppercase tracking-[0.04em]">
-						<LaneLabel color={STATUS_COLORS.ready} label="Ready to merge" />
-						<span className="text-[var(--preview-passive)]" aria-hidden="true">
-							{" "}
-							/{" "}
+				<div className="flex h-8 shrink-0 items-center gap-1 border-b border-[var(--preview-border)] px-1.5">
+					<div className="min-w-0 flex-1 overflow-hidden text-[7px] font-semibold uppercase leading-none tracking-normal">
+						<span className="whitespace-nowrap">
+							<LaneLabel color={STATUS_COLORS.ready} label="Ready to merge" />
+							<span className="text-[var(--preview-passive)]" aria-hidden="true">
+								{" / "}
+							</span>
+							<LaneLabel color={STATUS_COLORS.merged} label="Merged" />
 						</span>
-						<LaneLabel color={STATUS_COLORS.merged} label="Merged" />
 					</div>
-					<div className="shrink-0 font-mono text-[9px] tabular-nums leading-none text-[var(--preview-passive)]">
+					<div className="shrink-0 font-mono text-[7px] tabular-nums leading-none text-[var(--preview-passive)]">
 						{count} / 0
 					</div>
 				</div>
 			) : (
-				<div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-[var(--preview-border)] px-2">
+				<div className="flex h-8 shrink-0 items-center gap-1 border-b border-[var(--preview-border)] px-1.5">
 					<div
-						className="min-w-0 flex-1 whitespace-nowrap text-[9px] font-semibold uppercase tracking-[0.04em]"
+						className="min-w-0 flex-1 overflow-hidden whitespace-nowrap text-[7px] font-semibold uppercase leading-none tracking-normal"
 						style={{ color }}
 					>
 						{title}
 					</div>
-					<div className="shrink-0 font-mono text-[9px] tabular-nums leading-none text-[var(--preview-passive)]">
+					<div className="shrink-0 font-mono text-[7px] tabular-nums leading-none text-[var(--preview-passive)]">
 						{count}
 					</div>
 				</div>
@@ -2176,7 +2178,7 @@ export function AppMockup() {
 						<>
 							<div className="min-h-0 flex-1 overflow-hidden border-t border-[var(--preview-border)]">
 								<LayoutGroup key={`${selectedTrack.id}-${boardVersion}`}>
-									<div className="grid h-full min-h-0 auto-cols-[85%] grid-flow-col snap-x snap-mandatory divide-x divide-[var(--preview-border-strong)] overflow-x-auto overscroll-x-contain scrollbar-hide md:auto-cols-[48%] lg:grid-flow-row lg:grid-cols-4 lg:auto-cols-auto lg:snap-none lg:overflow-hidden">
+									<div className="grid h-full min-h-0 auto-cols-[85%] grid-flow-col snap-x snap-mandatory divide-x divide-[var(--preview-border-strong)] overflow-x-auto overscroll-x-contain scrollbar-hide md:auto-cols-[48%] lg:grid-flow-row lg:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)_minmax(0,0.9fr)_minmax(0,1.35fr)] lg:auto-cols-auto lg:snap-none lg:overflow-hidden">
 										{boardColumns.map((column) => (
 											<BoardColumn
 												key={column.title}
