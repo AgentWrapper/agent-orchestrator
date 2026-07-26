@@ -45,27 +45,40 @@ interface TrackItem {
 	summary: string;
 }
 
-const repoName = "AgentWrapper/agent-orchestrator";
 const repoAvatar = "https://github.com/AgentWrapper.png?size=64";
 
 const previewTokenStyle = {
-	"--preview-background": "oklch(0.153 0.006 107.1)",
-	"--preview-foreground": "oklch(0.988 0.003 106.5)",
-	"--preview-card": "oklch(0.228 0.013 107.4)",
-	"--preview-card-foreground": "oklch(0.988 0.003 106.5)",
-	"--preview-primary": "oklch(0.93 0.007 106.5)",
-	"--preview-primary-foreground": "oklch(0.228 0.013 107.4)",
-	"--preview-muted": "oklch(0.286 0.016 107.4)",
-	"--preview-muted-foreground": "oklch(0.737 0.021 106.9)",
-	"--preview-accent": "oklch(0.286 0.016 107.4)",
-	"--preview-border": "oklch(1 0 0 / 10%)",
-	"--preview-input": "oklch(1 0 0 / 15%)",
-	"--preview-ring": "oklch(0.58 0.031 107.3)",
-	"--preview-sidebar": "oklch(0.228 0.013 107.4)",
-	"--preview-sidebar-foreground": "oklch(0.988 0.003 106.5)",
-	"--preview-sidebar-accent": "oklch(0.286 0.016 107.4)",
-	"--preview-sidebar-border": "oklch(1 0 0 / 10%)",
+	"--preview-background": "#0a0b0d",
+	"--preview-foreground": "#f4f5f7",
+	"--preview-card": "#15171b",
+	"--preview-card-foreground": "#f4f5f7",
+	"--preview-primary": "#2e63b8",
+	"--preview-primary-foreground": "#ffffff",
+	"--preview-muted": "#1b1d22",
+	"--preview-muted-foreground": "#9ba1aa",
+	"--preview-accent": "#4d8dff",
+	"--preview-border": "rgb(255 255 255 / 0.06)",
+	"--preview-border-strong": "rgb(255 255 255 / 0.1)",
+	"--preview-input": "rgb(255 255 255 / 0.15)",
+	"--preview-ring": "#4d8dff",
+	"--preview-sidebar": "#17181c",
+	"--preview-sidebar-foreground": "#f4f5f7",
+	"--preview-sidebar-accent": "rgb(255 255 255 / 0.07)",
+	"--preview-sidebar-hover": "rgb(255 255 255 / 0.04)",
+	"--preview-sidebar-border": "rgb(255 255 255 / 0.06)",
+	"--preview-passive": "#646a73",
+	"--preview-raised": "#212329",
 } as CSSProperties;
+
+const STATUS_COLORS = {
+	idle: "#8e96a3",
+	working: "#36c2b4",
+	needsYou: "#f2b84b",
+	inReview: "#5b8def",
+	ready: "#9ad97a",
+	merged: "#3e9b62",
+	unknown: "#a78bfa",
+} as const;
 
 const columns = [
 	{
@@ -75,10 +88,10 @@ const columns = [
 		cards: [
 			{
 				title: "Port Figma board mock into the hero preview",
-				branch: "landing/figma-board-preview",
+				branch: "ao/dev/agent-orchestrator-12/root",
 				agent: "Claude",
 				icon: "/app-icons/coverage-claude-code.svg",
-				activity: "Editing hero preview",
+				activity: "Working",
 				activityState: "running",
 				pr: "PR #318",
 				checks: "checks running",
@@ -89,16 +102,16 @@ const columns = [
 			},
 			{
 				title: "Replace leftover Superset app chrome in preview",
-				branch: "landing/remove-superset-mock",
+				branch: "ao/dev/agent-orchestrator-14/root",
 				agent: "Codex",
 				icon: "/app-icons/coverage-codex.svg",
-				activity: "Running tests",
-				activityState: "running",
+				activity: "Idle",
+				activityState: "passed",
 				pr: "PR #319",
 				checks: "unit tests queued",
 				files: "5 files",
 				time: "18m ago",
-				badge: "spawning",
+				badge: null,
 				tone: "default",
 			},
 		],
@@ -110,10 +123,10 @@ const columns = [
 		cards: [
 			{
 				title: "Pick final titlebar metrics for the preview",
-				branch: "landing/titlebar-metrics",
+				branch: "ao/dev/agent-orchestrator-18/root",
 				agent: "Claude",
 				icon: "/app-icons/coverage-claude-code.svg",
-				activity: "Agent wants input",
+				activity: "No signal",
 				activityState: "waiting",
 				pr: "PR #322",
 				checks: "review comments 4",
@@ -124,10 +137,10 @@ const columns = [
 			},
 			{
 				title: "Confirm whether download labels stay platform-aware",
-				branch: "landing/platform-download-copy",
+				branch: "ao/dev/solkit-ui-6/root",
 				agent: "Cursor",
 				icon: "/app-icons/cursor.svg",
-				activity: "Paused for copy decision",
+				activity: "No signal",
 				activityState: "waiting",
 				pr: "PR #323",
 				checks: "needs product call",
@@ -145,10 +158,10 @@ const columns = [
 		cards: [
 			{
 				title: "Preload GitHub stars before hydration",
-				branch: "landing/preload-stars",
+				branch: "ao/dev/agent-orchestrator-21/root",
 				agent: "Claude",
 				icon: "/app-icons/coverage-claude-code.svg",
-				activity: "Checks passed",
+				activity: "Review pending",
 				activityState: "passed",
 				pr: "PR #324",
 				checks: "checks passed",
@@ -159,10 +172,10 @@ const columns = [
 			},
 			{
 				title: "Ignore local reference snapshots in deploy payloads",
-				branch: "chore/ignore-refs",
+				branch: "ao/dev/agent-orchestrator-22/root",
 				agent: "OpenCode",
 				icon: "/app-icons/opencode.svg",
-				activity: "Reviewer assigned",
+				activity: "Review pending",
 				activityState: "reviewing",
 				pr: "PR #325",
 				checks: "review pending",
@@ -180,24 +193,24 @@ const columns = [
 		cards: [
 			{
 				title: "Ship AO logo in top navigation",
-				branch: "landing/topbar-ao-logo",
+				branch: "ao/dev/agent-orchestrator-8/root",
 				agent: "Claude",
 				icon: "/app-icons/coverage-claude-code.svg",
-				activity: "Approved",
+				activity: "Ready",
 				activityState: "passed",
 				pr: "PR #326",
 				checks: "approved",
 				files: "2 files",
 				time: "3h ago",
-				badge: "Changes requested",
+				badge: "Ready",
 				tone: "ready",
 			},
 			{
 				title: "Stabilize Vercel framework detection",
-				branch: "deploy/vercel-next-config",
+				branch: "ao/dev/agent-orchestrator-9/root",
 				agent: "OpenCode",
 				icon: "/app-icons/opencode.svg",
-				activity: "Ready to land",
+				activity: "Ready",
 				activityState: "passed",
 				pr: "PR #327",
 				checks: "merge queue",
@@ -211,36 +224,36 @@ const columns = [
 ] satisfies PreviewColumn[];
 
 const COLUMN_COLORS: Record<BoardColumnId, string> = {
-	working: "#60a5fa",
-	action: "#fb923c",
-	pending: "#facc15",
-	merge: "#4ade80",
+	working: STATUS_COLORS.working,
+	action: STATUS_COLORS.needsYou,
+	pending: STATUS_COLORS.inReview,
+	merge: STATUS_COLORS.ready,
 };
 
 const projectItems: TrackItem[] = [
 	{
 		id: "landing",
-		label: "Landing preview polish",
+		label: "smooth card",
 		summary: "Refresh the hero board, topbar, and landing sections without losing the AO product language.",
 	},
 	{
 		id: "deploy",
-		label: "Vercel deploy config",
+		label: "vercel",
 		summary: "Keep framework detection and deploy payloads boring so every preview goes live cleanly.",
 	},
 	{
 		id: "stars",
-		label: "Preload stars and layout metrics",
+		label: "preload",
 		summary: "Move remote counts into server-rendered data so hydration does not shift the hero controls.",
 	},
 	{
 		id: "icons",
-		label: "Harness icon cleanup",
+		label: "harness",
 		summary: "Replace placeholder logos with real harness marks and keep the compatibility showcase readable.",
 	},
 	{
 		id: "footer",
-		label: "Footer and video section QA",
+		label: "footer",
 		summary: "Verify footer grids, demo video placement, and section order across the landing page.",
 	},
 ];
@@ -923,7 +936,7 @@ function advanceCard(card: PreviewCard): PreviewCard {
 		return {
 			...card,
 			column: "action",
-			activity: card.agent === "Cursor" ? "Agent wants input" : "Paused for decision",
+			activity: "No signal",
 			activityState: "waiting",
 			badge: "Needs input",
 			tone: "blocked",
@@ -935,7 +948,7 @@ function advanceCard(card: PreviewCard): PreviewCard {
 		return {
 			...card,
 			column: "pending",
-			activity: "Reviewer assigned",
+			activity: "Review pending",
 			activityState: "reviewing",
 			badge: "Awaiting review",
 			tone: "review",
@@ -946,12 +959,24 @@ function advanceCard(card: PreviewCard): PreviewCard {
 	return {
 		...card,
 		column: "merge",
-		activity: "Ready to land",
+		activity: "Ready",
 		activityState: "passed",
 		badge: "Ready",
 		tone: "ready",
 		time: "just now",
 	};
+}
+
+function cardStatusColor(card: PreviewCard): string {
+	if (card.column === "action" || card.tone === "blocked") return STATUS_COLORS.unknown;
+	if (card.column === "pending" || card.tone === "review") return STATUS_COLORS.inReview;
+	if (card.column === "merge" || card.tone === "ready") return STATUS_COLORS.ready;
+	if (card.activityState === "running") return STATUS_COLORS.working;
+	return STATUS_COLORS.idle;
+}
+
+function isIdleCard(card: PreviewCard): boolean {
+	return card.column === "working" && card.activityState !== "running";
 }
 
 function randomDelay() {
@@ -1019,23 +1044,27 @@ function SearchIcon({ className = "" }: { className?: string }) {
 	);
 }
 
-function PinIcon({ className = "" }: { className?: string }) {
+function PanelLeftIcon({ className = "" }: { className?: string }) {
 	return (
-		<svg className={className} viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-			<path d="M10.8 1.9 14.1 5 12.9 6.2l-.8-.4-2.8 2.8.3 2.2-.8.8-2.7-2.7-2.9 2.9-.8-.8 2.9-2.9-2.7-2.7.8-.8 2.2.3 2.8-2.8-.4-.8 1.8-1.4Z" />
+		<svg className={className} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+			<rect x="2.5" y="2.5" width="11" height="11" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
+			<path d="M6.5 3v10" stroke="currentColor" strokeWidth="1.3" />
 		</svg>
 	);
 }
 
-function FolderIcon({ className = "" }: { className?: string }) {
+function ArrowLeftIcon({ className = "" }: { className?: string }) {
 	return (
 		<svg className={className} viewBox="0 0 16 16" fill="none" aria-hidden="true">
-			<path
-				d="M2 4.5h4.2l1 1H14v6.2a1.2 1.2 0 0 1-1.2 1.2H3.2A1.2 1.2 0 0 1 2 11.7V4.5Z"
-				stroke="currentColor"
-				strokeLinejoin="round"
-				strokeWidth="1.2"
-			/>
+			<path d="M10 3.5 5.5 8 10 12.5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.4" />
+		</svg>
+	);
+}
+
+function ArrowRightIcon({ className = "" }: { className?: string }) {
+	return (
+		<svg className={className} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+			<path d="M6 3.5 10.5 8 6 12.5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.4" />
 		</svg>
 	);
 }
@@ -1048,14 +1077,6 @@ function BranchIcon({ className = "" }: { className?: string }) {
 			<circle cx="12" cy="12.5" r="1.5" stroke="currentColor" strokeWidth="1.2" />
 			<path d="M4 5v6M8 3.5h1.5A2.5 2.5 0 0 1 12 6v5" stroke="currentColor" strokeLinecap="round" strokeWidth="1.2" />
 			<path d="m7.5 1.8 1.8 1.7-1.8 1.8" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.2" />
-		</svg>
-	);
-}
-
-function GridIcon({ className = "" }: { className?: string }) {
-	return (
-		<svg className={className} viewBox="0 0 16 16" fill="none" aria-hidden="true">
-			<path d="M3 3h3v3H3zM10 3h3v3h-3zM3 10h3v3H3zM10 10h3v3h-3z" stroke="currentColor" />
 		</svg>
 	);
 }
@@ -1160,95 +1181,18 @@ function SettingsIcon({ className = "" }: { className?: string }) {
 	);
 }
 
-function WindowTitlebar({
-	mergedCount,
-	onNewTask,
-	onTitlebarPointerDown,
-	onViewChange,
-	runningCount,
-	viewMode,
-	waitingCount,
-}: {
-	mergedCount: number;
-	onNewTask: () => void;
-	onTitlebarPointerDown: (clientX: number, clientY: number) => void;
-	onViewChange: (mode: ViewMode) => void;
-	runningCount: number;
-	viewMode: ViewMode;
-	waitingCount: number;
-}) {
-	return (
-		<div
-			className="flex h-10 shrink-0 items-center border-b border-[var(--preview-border)] bg-[var(--preview-background)] px-2 sm:cursor-grab sm:pl-3 sm:pr-1.5 sm:active:cursor-grabbing"
-			onPointerDown={(event) => {
-				if ((event.target as HTMLElement).closest("button")) return;
-				if (!window.matchMedia("(min-width: 640px)").matches) return;
-				event.preventDefault();
-				onTitlebarPointerDown(event.clientX, event.clientY);
-			}}
-		>
-			<div className="relative z-50 flex items-center gap-1.5 sm:gap-2">
-				<span className="h-2.5 w-2.5 rounded-full bg-[#ff5f57] sm:h-3 sm:w-3" />
-				<span className="h-2.5 w-2.5 rounded-full bg-[#ffbd2e] sm:h-3 sm:w-3" />
-				<span className="h-2.5 w-2.5 rounded-full bg-[#28c840] sm:h-3 sm:w-3" />
-			</div>
-			<div className="ml-2 flex min-w-0 items-center gap-2 sm:ml-5">
-				<span className="truncate text-[12px] font-bold tracking-[-0.5px] text-[var(--preview-muted-foreground)]">
-					{repoName}
-				</span>
-				<span className="hidden rounded border border-[var(--preview-border)] px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-[var(--preview-muted-foreground)]/70 md:inline">
-					{mergedCount} PRs merged
-				</span>
-				<span className="hidden rounded border border-[var(--preview-border)] px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-[var(--preview-muted-foreground)]/70 lg:inline">
-					{runningCount} agents running
-				</span>
-				<span className="hidden rounded border border-[var(--preview-border)] px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-[var(--preview-muted-foreground)]/70 lg:inline">
-					{waitingCount} waiting
-				</span>
-			</div>
-			<div className="ml-auto flex items-center gap-1.5">
-				<button
-					type="button"
-					onClick={() => onViewChange(viewMode === "orchestrator" ? "board" : "orchestrator")}
-					className={`hidden h-[28px] items-center gap-2 rounded-[6px] border px-3 text-[12px] font-semibold transition-[background-color,border-color,color,transform] active:scale-[0.96] sm:inline-flex ${
-						viewMode === "orchestrator"
-							? "border-[var(--preview-ring)] bg-[var(--preview-muted)] text-[var(--preview-foreground)]"
-							: "border-[var(--preview-border)] text-[var(--preview-muted-foreground)] hover:bg-[var(--preview-muted)]"
-					}`}
-				>
-					<BeakerIcon className="h-4 w-4" />
-					Orchestrator
-				</button>
-				<button
-					type="button"
-					onClick={onNewTask}
-					className="inline-flex h-[28px] items-center gap-2 rounded-[8px] bg-[var(--preview-primary)] px-2 text-[12px] font-semibold text-[var(--preview-primary-foreground)] transition-transform active:scale-[0.96] sm:px-3"
-				>
-					<PlusIcon className="h-4 w-4" />
-					<span className="hidden sm:inline">New task</span>
-				</button>
-				<button
-					type="button"
-					className="hidden h-[28px] w-[28px] place-items-center rounded-[6px] border border-[var(--preview-border)] text-[var(--preview-muted-foreground)] transition-transform active:scale-[0.96] min-[420px]:grid"
-					aria-label="Notifications"
-				>
-					<BellIcon className="h-5 w-5" />
-				</button>
-			</div>
-		</div>
-	);
-}
-
 function Sidebar({
 	isRepoAvatarReady,
 	onResizeStart,
 	onSelectTrack,
+	onTitlebarPointerDown,
 	selectedTrackId,
 	sidebarRef,
 }: {
 	isRepoAvatarReady: boolean;
 	onResizeStart: (clientX: number) => void;
 	onSelectTrack: (trackId: TrackId) => void;
+	onTitlebarPointerDown: (clientX: number, clientY: number) => void;
 	selectedTrackId: TrackId;
 	sidebarRef: React.RefObject<HTMLElement | null>;
 }) {
@@ -1256,86 +1200,140 @@ function Sidebar({
 		<aside
 			ref={sidebarRef}
 			className="relative hidden shrink-0 flex-col border-r border-[var(--preview-sidebar-border)] bg-[var(--preview-sidebar)] text-[var(--preview-muted-foreground)] sm:flex"
-			style={{ width: 178 }}
+			style={{ width: 220 }}
 		>
-			<div className="flex h-[36px] items-center gap-2 px-3">
+			{/* Traffic lights + sidebar toggle + history — brand sits on the next row. */}
+			<div
+				className="flex cursor-grab items-center gap-1 px-2.5 pb-1.5 pt-3 active:cursor-grabbing"
+				onPointerDown={(event) => {
+					if ((event.target as HTMLElement).closest("button")) return;
+					if (!window.matchMedia("(min-width: 640px)").matches) return;
+					event.preventDefault();
+					onTitlebarPointerDown(event.clientX, event.clientY);
+				}}
+			>
+				<div className="relative z-50 flex items-center gap-1.5 pr-1.5">
+					<span className="h-2.5 w-2.5 rounded-full bg-[#ff5f57]" />
+					<span className="h-2.5 w-2.5 rounded-full bg-[#ffbd2e]" />
+					<span className="h-2.5 w-2.5 rounded-full bg-[#28c840]" />
+				</div>
+				<button
+					type="button"
+					aria-label="Collapse sidebar"
+					className="grid h-6 w-6 place-items-center rounded-md text-[var(--preview-passive)] transition-colors hover:bg-[var(--preview-sidebar-hover)] hover:text-[var(--preview-muted-foreground)]"
+				>
+					<PanelLeftIcon className="h-3.5 w-3.5" />
+				</button>
+				<button
+					type="button"
+					aria-label="Go back"
+					className="grid h-6 w-6 place-items-center rounded-md text-[var(--preview-passive)] opacity-45"
+				>
+					<ArrowLeftIcon className="h-3.5 w-3.5" />
+				</button>
+				<button
+					type="button"
+					aria-label="Go forward"
+					className="grid h-6 w-6 place-items-center rounded-md text-[var(--preview-passive)] opacity-45"
+				>
+					<ArrowRightIcon className="h-3.5 w-3.5" />
+				</button>
+			</div>
+
+			<div className="flex items-center gap-2 px-3 pb-2.5 pt-1">
 				<img
 					src="/ao-logo.svg"
 					alt=""
-					width={18}
-					height={18}
+					width={22}
+					height={22}
 					aria-hidden="true"
-					className="h-[18px] w-[18px]"
+					className="h-[22px] w-[22px] shrink-0 rounded-md"
 					draggable="false"
 				/>
-				<div className="min-w-0 flex-1 truncate text-[12px] font-semibold tracking-[-0.5px] text-[var(--preview-sidebar-foreground)]">
-					AO
+				<div className="min-w-0 text-[13px] font-bold tracking-tight text-[var(--preview-sidebar-foreground)]">
+					Agent Orchestrator
 				</div>
 			</div>
 
-			<div className="px-3 pt-2">
-				<div className="flex h-[18px] items-center gap-1.5 text-[9px] text-[var(--preview-muted-foreground)]/70">
-					<SearchIcon className="h-3 w-3" />
-					<span>Search</span>
+			<div className="px-2.5 pb-3">
+				<div className="flex h-8 items-center gap-2 rounded-2xl border border-[var(--preview-border)] bg-[var(--preview-sidebar-hover)] px-2.5 text-[11px] text-[var(--preview-passive)]">
+					<SearchIcon className="h-3.5 w-3.5 shrink-0" />
+					<span className="min-w-0 flex-1">Search</span>
+					<span className="shrink-0 rounded-md bg-[var(--preview-sidebar-hover)] px-1.5 py-0.5 font-mono text-[9px] text-[var(--preview-muted-foreground)]">
+						⌘K
+					</span>
 				</div>
-				<div className="mt-2 flex h-[18px] items-center gap-1.5 text-[9px] text-[var(--preview-muted-foreground)]/70">
-					<PinIcon className="h-3 w-3" />
-					<span>Pinned</span>
+			</div>
+			<div className="flex items-center justify-between px-3.5 pb-2">
+				<span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--preview-passive)]">
+					PINNED
+				</span>
+				<span
+					aria-hidden="true"
+					className="grid h-4 w-4 place-items-center text-[var(--preview-passive)]"
+				>
+					<PlusIcon className="h-3 w-3" />
+				</span>
+			</div>
+
+			<div className="flex items-center justify-between px-3.5 pb-2">
+				<span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--preview-passive)]">
+					Projects
+				</span>
+				<span
+					aria-hidden="true"
+					className="grid h-4 w-4 place-items-center text-[var(--preview-passive)]"
+				>
+					<PlusIcon className="h-3 w-3" />
+				</span>
+			</div>
+
+			<div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 scrollbar-hide">
+				<div className="flex h-8 items-center gap-1.5 rounded-sm bg-[var(--preview-sidebar-accent)] px-1.5 text-[12px] font-semibold text-[var(--preview-foreground)]">
+					<span className="text-[10px] text-[var(--preview-passive)]">▾</span>
+					<div className="relative h-3.5 w-3.5 shrink-0 overflow-hidden rounded-sm bg-[var(--preview-muted)]">
+						<img
+							src={repoAvatar}
+							alt=""
+							width={14}
+							height={14}
+							aria-hidden="true"
+							loading="eager"
+							decoding="sync"
+							fetchPriority="high"
+							className={`h-3.5 w-3.5 rounded-sm object-cover transition-opacity ${
+								isRepoAvatarReady ? "opacity-100" : "opacity-0"
+							}`}
+							draggable="false"
+						/>
+						{isRepoAvatarReady ? null : (
+							<GitHubIcon className="absolute inset-0 m-auto h-2.5 w-2.5 text-[var(--preview-muted-foreground)]/65" />
+						)}
+					</div>
+					<span className="min-w-0 flex-1 truncate">agent-orchestrator</span>
+					<BranchIcon className="h-3.5 w-3.5 text-[var(--preview-passive)]" />
+				</div>
+				<div className="space-y-0.5 pl-5">
+					{projectItems.map((item) => (
+						<button
+							type="button"
+							key={item.id}
+							onClick={() => onSelectTrack(item.id)}
+							className={`flex h-[26px] w-full items-center gap-2 rounded-sm px-2 text-left text-[11px] leading-[14px] transition-colors ${
+								item.id === selectedTrackId
+									? "bg-[var(--preview-sidebar-hover)] font-semibold text-[var(--preview-sidebar-foreground)]"
+									: "text-[var(--preview-muted-foreground)] hover:bg-[var(--preview-sidebar-hover)] hover:text-[var(--preview-sidebar-foreground)]"
+							}`}
+						>
+							<span className="truncate">{item.label}</span>
+						</button>
+					))}
 				</div>
 			</div>
 
-			<div className="mt-6 space-y-4 px-2.5">
-				<div>
-					<div className="mb-2 flex items-center justify-between px-0.5 text-[9px] font-bold tracking-[-0.5px] text-[var(--preview-muted-foreground)]/70">
-						<span>Projects</span>
-						<span className="text-[13px] font-normal">+</span>
-					</div>
-					<div className="flex h-[18px] items-center gap-1.5 text-[10px] text-[var(--preview-foreground)]">
-						<div className="relative h-3.5 w-3.5 shrink-0 overflow-hidden rounded-sm bg-[var(--preview-muted)]">
-							<img
-								src={repoAvatar}
-								alt=""
-								width={14}
-								height={14}
-								aria-hidden="true"
-								loading="eager"
-								decoding="sync"
-								fetchPriority="high"
-								className={`h-3.5 w-3.5 rounded-sm object-cover transition-opacity ${
-									isRepoAvatarReady ? "opacity-100" : "opacity-0"
-								}`}
-								draggable="false"
-							/>
-							{isRepoAvatarReady ? null : (
-								<GitHubIcon className="absolute inset-0 m-auto h-2.5 w-2.5 text-[var(--preview-muted-foreground)]/65" />
-							)}
-						</div>
-						<span className="min-w-0 flex-1 truncate">{repoName}</span>
-						<GridIcon className="h-3.5 w-3.5 text-[var(--preview-muted-foreground)]" />
-						<BranchIcon className="h-3.5 w-3.5 text-[var(--preview-muted-foreground)]" />
-					</div>
-					<div className="mt-0.5 space-y-0 pl-3">
-						{projectItems.map((item) => (
-							<button
-								type="button"
-								key={item.id}
-								onClick={() => onSelectTrack(item.id)}
-								className={`h-[22px] w-full truncate rounded-[4px] px-2 py-1 text-left text-[10px] leading-[14px] transition-colors ${
-									item.id === selectedTrackId
-										? "bg-[var(--preview-sidebar-accent)] text-[var(--preview-sidebar-foreground)]"
-										: "text-[var(--preview-muted-foreground)] hover:bg-[var(--preview-sidebar-accent)] hover:text-[var(--preview-sidebar-foreground)]"
-								}`}
-							>
-								{item.label}
-							</button>
-						))}
-					</div>
-				</div>
-			</div>
-
-			<div className="mt-auto border-t border-[var(--preview-sidebar-border)] px-3 py-3">
-				<div className="flex items-center gap-1.5 text-[11px] text-[var(--preview-muted-foreground)]">
-					<SettingsIcon className="h-3.5 w-3.5" />
+			<div className="mt-auto px-2.5 pb-3 pt-2">
+				<div className="flex w-full items-center justify-center gap-2.5 rounded-2xl bg-[var(--preview-sidebar-hover)] px-2.5 py-2.5 text-[12px] font-medium text-[var(--preview-muted-foreground)]">
+					<SettingsIcon className="h-4 w-4" />
 					<span>Settings</span>
 				</div>
 			</div>
@@ -1354,29 +1352,48 @@ function Sidebar({
 	);
 }
 
-function Topbar({
-	mergedCount,
-	selectedTrack,
+function BoardChrome({
+	onNewTask,
+	onViewChange,
 	viewMode,
 }: {
-	mergedCount: number;
-	selectedTrack: TrackItem;
+	onNewTask: () => void;
+	onViewChange: (mode: ViewMode) => void;
 	viewMode: ViewMode;
 }) {
 	return (
-		<div className="flex h-[53px] shrink-0 items-center border-b border-[var(--preview-border)] bg-[var(--preview-card)] px-3 sm:px-4">
-			<div className="min-w-0">
-				<div className="truncate text-[12px] font-bold tracking-[-0.5px] text-[var(--preview-muted-foreground)]">
-					{viewMode === "orchestrator" ? "Orchestrator" : "Board"}, {selectedTrack.label.toLowerCase()}
-				</div>
-				<div className="mt-0.5 truncate text-[10px] text-[var(--preview-muted-foreground)]/75 lg:max-w-[420px]">
-					{selectedTrack.summary}
-				</div>
+		<div className="flex h-11 shrink-0 items-center gap-2 px-3 sm:px-4">
+			<div className="min-w-0 truncate text-[12px] font-semibold tracking-tight text-[var(--preview-foreground)]">
+				{viewMode === "orchestrator" ? "Orchestrator" : "AgentWrapper/agent-orchestrator"}
 			</div>
-			<div className="ml-auto hidden grid-cols-2 gap-2 font-mono text-[10px] tabular-nums tracking-[0.5px] text-[var(--preview-muted-foreground)]/75 sm:grid">
-				<span className="rounded border border-[var(--preview-border)] px-2 py-1">CI 2 failed</span>
-				<span className="rounded border border-[var(--preview-border)] px-2 py-1">{mergedCount} Merged</span>
-			</div>
+			<div className="min-w-0 flex-1" />
+			<button
+				type="button"
+				className="grid h-9 w-9 place-items-center rounded-md text-[var(--preview-muted-foreground)] transition-colors hover:bg-[var(--preview-sidebar-hover)] hover:text-[var(--preview-foreground)]"
+				aria-label="Notifications"
+			>
+				<BellIcon className="h-5 w-5" />
+			</button>
+			<button
+				type="button"
+				onClick={onNewTask}
+				className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[var(--preview-border)] bg-[var(--preview-raised)] px-3 text-[12px] font-semibold text-[var(--preview-muted-foreground)] transition-colors hover:bg-[var(--preview-card)] hover:text-[var(--preview-foreground)] active:scale-[0.98]"
+			>
+				<PlusIcon className="h-3.5 w-3.5" />
+				<span className="hidden sm:inline">New task</span>
+			</button>
+			<button
+				type="button"
+				onClick={() => onViewChange(viewMode === "orchestrator" ? "board" : "orchestrator")}
+				className={`hidden h-8 items-center gap-1.5 rounded-md px-3 text-[12px] font-semibold transition-[filter,transform] active:scale-[0.98] sm:inline-flex ${
+					viewMode === "orchestrator"
+						? "bg-[var(--preview-accent)] text-white hover:brightness-110"
+						: "bg-[var(--preview-primary)] text-[var(--preview-primary-foreground)] hover:brightness-110"
+				}`}
+			>
+				<BeakerIcon className="h-3.5 w-3.5" />
+				Orchestrator
+			</button>
 		</div>
 	);
 }
@@ -1391,23 +1408,13 @@ function BoardCard({
 	onOpen: (card: PreviewCard) => void;
 }) {
 	const [canPressScale, setCanPressScale] = useState(true);
-	const prMatch = card.pr.match(/PR\s+#(\d+)/i);
-	const prStatus =
-		card.tone === "ready"
-			? "approved"
-			: card.tone === "review"
-				? "in review"
-				: card.tone === "blocked"
-					? "changes requested"
-					: "open";
-	const prClass =
-		card.tone === "ready"
-			? "text-[#86efac]"
-			: card.tone === "blocked"
-				? "text-[#fdba74]"
-				: card.tone === "review"
-					? "text-[#fcd34d]"
-					: "text-[#9ca3af]";
+	const statusColor = cardStatusColor(card);
+	const statusLabel =
+		card.column === "working"
+			? card.activityState === "running"
+				? "Working"
+				: "Idle"
+			: card.activity;
 
 	return (
 		<motion.div
@@ -1442,88 +1449,74 @@ function BoardCard({
 				ease: [0.22, 1, 0.36, 1],
 				layout: { duration: 0.55, ease: [0.22, 1, 0.36, 1] },
 			}}
-			className="cursor-pointer rounded-[8px] border border-[var(--preview-border)] bg-[var(--preview-card)] p-[15px] shadow-[0_1px_1px_rgba(0,0,0,0.05)] outline-none transition-colors hover:bg-[var(--preview-muted)] focus-visible:ring-2 focus-visible:ring-[var(--preview-ring)]"
+			className="group relative w-full cursor-pointer rounded-lg border border-[var(--preview-border)] bg-[var(--preview-card)] text-left outline-none transition-[border-color,box-shadow] hover:border-[var(--preview-border-strong)] focus-visible:ring-2 focus-visible:ring-[var(--preview-ring)]"
 		>
-			<div className="flex items-start gap-2">
+			<div className="flex items-start gap-2.5 px-3.5 pb-2.5 pt-3">
 				<img
 					src={card.icon}
 					alt=""
 					width={16}
 					height={16}
 					aria-hidden="true"
-					className="mt-0.5 h-4 w-4 shrink-0"
+					className="mt-0.5 h-4 w-4 shrink-0 rounded-[3px]"
 					draggable="false"
 				/>
-				<div className="min-w-0 pr-2 text-[12px] font-medium leading-[16px] text-[var(--preview-card-foreground)]">
-					{card.title}
-				</div>
-			</div>
-			<div className="mt-3 text-[10px] leading-4 text-[var(--preview-muted-foreground)]">
-				<div className="flex items-center gap-1.5 py-1.5">
-					<BranchIcon className="h-3 w-3 shrink-0" />
-					<span className="truncate font-mono">{card.branch}</span>
-				</div>
-				{prMatch ? (
-					<div className={`flex items-center gap-1.5 border-t border-[var(--preview-border)] py-1.5 ${prClass}`}>
-						<GitHubIcon className="h-3 w-3 shrink-0" />
-						<span className="font-mono">#{prMatch[1]}</span>
-						<span className="truncate">{prStatus}</span>
+				<div className="min-w-0 flex-1">
+					<div className="line-clamp-2 overflow-hidden text-[12px] font-semibold leading-tight tracking-tight text-[var(--preview-card-foreground)]">
+						{card.title}
 					</div>
-				) : null}
+					<div className="mt-1.5 flex min-w-0 items-center gap-1.5 font-mono text-[10px] text-[var(--preview-passive)]">
+						<BranchIcon className="h-3 w-3 shrink-0" />
+						<span className="truncate">{card.branch}</span>
+					</div>
+				</div>
 			</div>
-			{card.tone === "ready" ? (
-				<div className="mt-3 flex items-center justify-between gap-2">
+			<div aria-hidden="true" className="mx-3.5 my-px h-px bg-[var(--preview-border)]" />
+			<div className="flex items-center justify-between gap-2 px-3.5 py-2">
+				<span
+					className="inline-flex min-w-0 items-center gap-1.5 truncate text-[10px] font-medium"
+					style={{ color: statusColor }}
+				>
+					<span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: statusColor }} />
+					{statusLabel}
+				</span>
+				{card.tone === "ready" ? (
 					<button
 						type="button"
 						onClick={(event) => {
 							event.stopPropagation();
 							onMerge(card.id);
 						}}
-						className="inline-flex h-7 items-center justify-center whitespace-nowrap rounded-[6px] bg-[var(--preview-primary)] px-2.5 text-[10px] font-semibold text-[var(--preview-primary-foreground)] transition-transform active:scale-[0.96]"
+						className="inline-flex h-6 items-center justify-center whitespace-nowrap rounded-[5px] bg-white px-2 text-[10px] font-semibold text-black transition-transform active:scale-[0.96]"
 					>
-						Review PR
+						Merge
 					</button>
-					<span className="shrink-0 text-[10px] text-[var(--preview-muted-foreground)]">{card.time}</span>
-				</div>
-			) : (
-				<div className="mt-3 flex items-center justify-between">
-					<span
-						className={`inline-flex items-center gap-1.5 text-[10px] ${
-							card.activityState === "passed"
-								? "text-[#86efac]"
-								: card.activityState === "failed"
-									? "text-[#f87171]"
-									: card.activityState === "reviewing"
-										? "text-[#93c5fd]"
-									: card.activityState === "waiting"
-										? "text-[#fcd34d]"
-										: "text-[#9ca3af]"
-						}`}
-					>
-						{card.activityState === "passed" ? (
-							<CheckIcon className="h-3 w-3" />
-						) : card.activityState === "failed" ? (
-							<WarningIcon className="h-3 w-3" />
-						) : card.activityState === "reviewing" ? (
-							<GitHubIcon className="h-3 w-3" />
-						) : card.activityState === "waiting" ? (
-							<WaitingIcon className="h-3 w-3" />
-						) : (
-							<span className="h-3 w-3 animate-spin rounded-full border border-[#4b5563] border-t-[#d1d5db]" />
-						)}
-						{card.activity}
+				) : (
+					<span className="shrink-0 whitespace-nowrap font-mono text-[10px] text-[var(--preview-passive)]">
+						{card.time}
 					</span>
-					<span className="text-[10px] text-[var(--preview-muted-foreground)]">{card.time}</span>
-				</div>
-			)}
+				)}
+			</div>
 		</motion.div>
 	);
+}
+
+function LaneLabel({
+	color,
+	label,
+}: {
+	color: string;
+	glow?: boolean;
+	label: string;
+}) {
+	return <span style={{ color }}>{label}</span>;
 }
 
 function BoardColumn({
 	cards,
 	color,
 	count,
+	id,
 	onMerge,
 	onOpen,
 	title,
@@ -1531,20 +1524,60 @@ function BoardColumn({
 	cards: PreviewCard[];
 	color: string;
 	count: number;
+	id: BoardColumnId;
 	onMerge: (id: string) => void;
 	onOpen: (card: PreviewCard) => void;
 	title: string;
 }) {
+	const idleCards = id === "working" ? cards.filter(isIdleCard) : [];
+	const workingCards = id === "working" ? cards.filter((card) => !isIdleCard(card)) : cards;
+
 	return (
-		<section className="flex min-h-0 min-w-0 snap-start flex-col border-r border-[var(--preview-border)] last:border-r-0">
-			<div className="flex items-center gap-2 border-b border-[var(--preview-border)] px-3 py-2.5">
-				<span className="h-2 w-2 rounded-[2px]" style={{ backgroundColor: color }} />
-				<div className="text-[11px] font-semibold tracking-[-0.5px] text-[var(--preview-muted-foreground)]">{title}</div>
-				<div className="ml-2 text-[10px] tabular-nums text-[var(--preview-muted-foreground)]">{count}</div>
-			</div>
-			<div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2 scrollbar-hide">
+		<section className="flex min-h-0 min-w-0 snap-start flex-col">
+			{id === "working" ? (
+				<div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-[var(--preview-border)] px-2">
+					<div className="min-w-0 flex-1 whitespace-nowrap text-[9px] font-semibold uppercase tracking-[0.04em]">
+						<LaneLabel color={STATUS_COLORS.idle} label="Idle" />
+						<span className="text-[var(--preview-passive)]" aria-hidden="true">
+							{" "}
+							/{" "}
+						</span>
+						<LaneLabel color={STATUS_COLORS.working} label="Working" />
+					</div>
+					<div className="shrink-0 font-mono text-[9px] tabular-nums leading-none text-[var(--preview-passive)]">
+						{idleCards.length} / {workingCards.length}
+					</div>
+				</div>
+			) : id === "merge" ? (
+				<div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-[var(--preview-border)] px-2">
+					<div className="min-w-0 flex-1 whitespace-nowrap text-[9px] font-semibold uppercase tracking-[0.04em]">
+						<LaneLabel color={STATUS_COLORS.ready} label="Ready to merge" />
+						<span className="text-[var(--preview-passive)]" aria-hidden="true">
+							{" "}
+							/{" "}
+						</span>
+						<LaneLabel color={STATUS_COLORS.merged} label="Merged" />
+					</div>
+					<div className="shrink-0 font-mono text-[9px] tabular-nums leading-none text-[var(--preview-passive)]">
+						{count} / 0
+					</div>
+				</div>
+			) : (
+				<div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-[var(--preview-border)] px-2">
+					<div
+						className="min-w-0 flex-1 whitespace-nowrap text-[9px] font-semibold uppercase tracking-[0.04em]"
+						style={{ color }}
+					>
+						{title}
+					</div>
+					<div className="shrink-0 font-mono text-[9px] tabular-nums leading-none text-[var(--preview-passive)]">
+						{count}
+					</div>
+				</div>
+			)}
+			<div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2.5 py-2 scrollbar-hide">
 				<AnimatePresence initial={false}>
-					{cards.map((card) => (
+					{(id === "working" ? [...idleCards, ...workingCards] : cards).map((card) => (
 						<BoardCard
 							key={`${card.id}-${card.column}`}
 							card={card}
@@ -1555,6 +1588,34 @@ function BoardColumn({
 				</AnimatePresence>
 			</div>
 		</section>
+	);
+}
+
+function ArchiveBar({ count }: { count: number }) {
+	return (
+		<div className="flex shrink-0 items-center border-t border-[var(--preview-border)] px-3 pb-3 pt-2">
+			<button
+				type="button"
+				className="group inline-flex items-center gap-1.5 py-2.5 text-[9px] text-[var(--preview-muted-foreground)] transition-colors hover:text-[var(--preview-foreground)]"
+			>
+				<svg
+					aria-hidden="true"
+					className="h-3 w-3 shrink-0 text-[var(--preview-passive)]"
+					viewBox="0 0 16 16"
+					fill="none"
+				>
+					<path
+						d="M6 4l4 4-4 4"
+						stroke="currentColor"
+						strokeLinecap="round"
+						strokeLinejoin="round"
+						strokeWidth="1.5"
+					/>
+				</svg>
+				<span className="font-medium uppercase tracking-[0.04em]">Archive</span>
+				<span className="font-mono tabular-nums text-[var(--preview-passive)]">{count}</span>
+			</button>
+		</div>
 	);
 }
 
@@ -1896,7 +1957,7 @@ export function AppMockup() {
 	});
 	const windowRef = useRef<HTMLDivElement>(null);
 	const sidebarRef = useRef<HTMLElement>(null);
-	const sidebarWidthRef = useRef(178);
+	const sidebarWidthRef = useRef(220);
 	const { startDrag, startResize } = useFloatingWindow(windowRef);
 	const isRepoAvatarReady = useImageReady(repoAvatar);
 	useDecorativeSubtree(windowRef);
@@ -1977,6 +2038,8 @@ export function AppMockup() {
 					...template,
 					badge: "New task",
 					column: "working",
+					activity: "Working",
+					activityState: "running",
 					id: `${trackId}-manual-${Date.now()}-${incomingIndexes.current[trackId]}`,
 					time: "now",
 				},
@@ -2043,6 +2106,8 @@ export function AppMockup() {
 								{
 									...template,
 									column: "working",
+									activity: "Working",
+									activityState: "running",
 									id: `${trackId}-incoming-${incomingIndexes.current[trackId]}`,
 								},
 								...next,
@@ -2061,8 +2126,6 @@ export function AppMockup() {
 		return () => window.clearTimeout(timeoutId);
 	}, [mergeCard, selectedCardId, selectedTrackId, updateTrackCards]);
 
-	const runningCount = cards.filter((card) => card.column === "working").length;
-	const waitingCount = cards.filter((card) => card.column === "action").length;
 	const boardColumns = columns.map((column) => {
 		const columnCards = cards.filter((card) => card.column === column.id);
 		return {
@@ -2076,8 +2139,8 @@ export function AppMockup() {
 		<div
 			ref={windowRef}
 			role="img"
-			aria-label="Preview of the Agent Orchestrator board: agent tasks move across Working, Needs you, In review, and Ready to merge, each card showing its agent, branch, and pull request state."
-			className="absolute z-10 select-none overflow-hidden rounded-xl border border-[var(--preview-border)] bg-[var(--preview-background)] font-sans tracking-[-0.5px] text-[var(--preview-foreground)] antialiased shadow-[0_30px_80px_-24px_rgba(0,0,0,0.75)] [&_.font-mono]:tracking-normal"
+			aria-label="Preview of the Agent Orchestrator board: agent tasks move across Idle, Working, Needs you, In review, and Ready to merge."
+			className="absolute z-10 select-none overflow-hidden rounded-[20px] border border-[var(--preview-border)] bg-[var(--preview-background)] font-sans tracking-tight text-[var(--preview-foreground)] antialiased shadow-[0_30px_80px_-24px_rgba(0,0,0,0.75)] [&_.font-mono]:tracking-normal"
 			style={{
 				...previewTokenStyle,
 				position: "absolute",
@@ -2088,52 +2151,47 @@ export function AppMockup() {
 				transform: "translate(-50%, -50%)",
 			}}
 		>
-			<div className="flex h-full flex-col">
-				<WindowTitlebar
-					mergedCount={mergedCount}
-					onNewTask={spawnRandomTask}
+			<div className="flex h-full min-h-0">
+				<Sidebar
+					isRepoAvatarReady={isRepoAvatarReady}
+					onResizeStart={startSidebarResize}
+					onSelectTrack={selectTrack}
 					onTitlebarPointerDown={startDrag}
-					onViewChange={setViewMode}
-					runningCount={runningCount}
-					viewMode={viewMode}
-					waitingCount={waitingCount}
+					selectedTrackId={selectedTrack.id}
+					sidebarRef={sidebarRef}
 				/>
-				<div className="flex min-h-0 flex-1">
-					<Sidebar
-						isRepoAvatarReady={isRepoAvatarReady}
-						onResizeStart={startSidebarResize}
-						onSelectTrack={selectTrack}
-						selectedTrackId={selectedTrack.id}
-						sidebarRef={sidebarRef}
+				<div className="flex min-w-0 flex-1 flex-col bg-[var(--preview-background)]">
+					<BoardChrome
+						onNewTask={spawnRandomTask}
+						onViewChange={setViewMode}
+						viewMode={viewMode}
 					/>
-					<div className="flex min-w-0 flex-1 flex-col bg-[var(--preview-background)]">
-						<Topbar
-							mergedCount={mergedCount}
+					{viewMode === "orchestrator" ? (
+						<OrchestratorView
+							cards={cards}
+							onNewTask={spawnRandomTask}
 							selectedTrack={selectedTrack}
-							viewMode={viewMode}
 						/>
-						{viewMode === "orchestrator" ? (
-							<OrchestratorView
-								cards={cards}
-								onNewTask={spawnRandomTask}
-								selectedTrack={selectedTrack}
-							/>
-						) : (
-							<LayoutGroup key={`${selectedTrack.id}-${boardVersion}`}>
-								<div className="grid min-h-0 flex-1 auto-cols-[85%] grid-flow-col snap-x snap-mandatory overflow-x-auto overscroll-x-contain scrollbar-hide md:auto-cols-[48%] lg:grid-flow-row lg:grid-cols-4 lg:auto-cols-auto lg:snap-none lg:overflow-hidden">
-									{boardColumns.map((column) => (
-										<BoardColumn
-											key={column.title}
-											{...column}
-											color={COLUMN_COLORS[column.id]}
-											onMerge={mergeCard}
-											onOpen={setSelectedCard}
-										/>
-									))}
-								</div>
-							</LayoutGroup>
-						)}
-					</div>
+					) : (
+						<>
+							<div className="min-h-0 flex-1 overflow-hidden border-t border-[var(--preview-border)]">
+								<LayoutGroup key={`${selectedTrack.id}-${boardVersion}`}>
+									<div className="grid h-full min-h-0 auto-cols-[85%] grid-flow-col snap-x snap-mandatory divide-x divide-[var(--preview-border-strong)] overflow-x-auto overscroll-x-contain scrollbar-hide md:auto-cols-[48%] lg:grid-flow-row lg:grid-cols-4 lg:auto-cols-auto lg:snap-none lg:overflow-hidden">
+										{boardColumns.map((column) => (
+											<BoardColumn
+												key={column.title}
+												{...column}
+												color={COLUMN_COLORS[column.id]}
+												onMerge={mergeCard}
+												onOpen={setSelectedCard}
+											/>
+										))}
+									</div>
+								</LayoutGroup>
+							</div>
+							<ArchiveBar count={mergedCount} />
+						</>
+					)}
 				</div>
 			</div>
 			<AgentStatusModal
