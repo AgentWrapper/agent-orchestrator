@@ -94,6 +94,11 @@ type AgentPromptReadinessProvider interface {
 	PromptReadinessHints(ctx context.Context, cfg LaunchConfig) (PromptReadinessHints, error)
 }
 
+// TerminalActivityDetector derives activity only from authoritative terminal UI markers.
+type TerminalActivityDetector interface {
+	DetectTerminalActivity(output string) (domain.ActivityState, bool)
+}
+
 // PromptReadinessHints describes when an after-start prompt should be sent.
 // Empty hints mean "send immediately" to preserve existing adapter behavior.
 type PromptReadinessHints struct {
