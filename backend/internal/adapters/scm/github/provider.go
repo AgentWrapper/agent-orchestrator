@@ -157,6 +157,43 @@ func scmObserveError(err error) error {
 }
 
 // ---------------------------------------------------------------------------
+// REST: merge action
+// ---------------------------------------------------------------------------
+
+// MergePR merges the pull request via GitHub's REST merge endpoint.
+// method must be one of "merge", "squash", "rebase" per GitHub's API.
+func (p *Provider) MergePR(ctx context.Context, owner, repo string, number int, method string) (mergeCommitSHA string, err error) {
+	resp, err := p.client.doREST(ctx, http.MethodPut,
+		repoPath(owner, repo, "pulls", strconv.Itoa(number), "merge"),
+		nil,
+		map[string]string{"merge_method": method},
+	)
+	switch resp.StatusCode {
+	case http.StatusOK:
+		// falls through to decode below
+	case http.StatusMethodNotAllowed: // 405: not mergeable (checks failing, blocked, etc.)
+		return "", ErrProviderPRNotMergeable
+	case http.StatusConflict: // 409: head SHA changed since caller last observed the PR
+		return "", ErrProviderPRPreconditions
+	default:
+		if err != nil {
+			return "", fmt.Errorf("github scm: merge PR #%d: %w", number, err)
+		}
+	}
+	var out struct {
+		Merged bool   `json:"merged"`
+		SHA    string `json:"sha"`
+	}
+	if decErr := json.Unmarshal(resp.Body, &out); decErr != nil {
+		return "", fmt.Errorf("github scm: decode merge response: %w", decErr)
+	}
+	if !out.Merged {
+		return "", ErrProviderPRNotMergeable
+	}
+	return out.SHA, nil
+}
+
+// ---------------------------------------------------------------------------
 // REST: pull payload
 // ---------------------------------------------------------------------------
 

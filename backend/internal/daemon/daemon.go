@@ -30,6 +30,7 @@ import (
 	devimportsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/devimport"
 	importsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/importer"
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
+	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pr"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	"github.com/aoagents/agent-orchestrator/backend/internal/skillassets"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
@@ -146,7 +147,7 @@ func Run() error {
 	// selected runtime, routed git/scratch workspaces, the per-session agent
 	// resolver (AO_AGENT validated here for compatibility), and the agent
 	// messenger, then mount it on the API.
-	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, log)
+	sessionSvc, reviewSvc, sessMgr, scmProvider, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, log)
 	if err != nil {
 		stop()
 		lcStack.Stop()
@@ -157,6 +158,16 @@ func Run() error {
 	}
 	lcStack.LCM.SetCompletionTerminator(sessMgr)
 	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
+
+	// Typed-nil guard: scmProvider is (*scmgithub.Provider)(nil) when GitHub
+	// credentials are unavailable at startup (see lifecycle_wiring.go's tracker
+	// comment re: issue #2685). Only assign to the pr.SCMMerger interface when
+	// it's a real instance, or ActionService.Merge's nil check won't catch it.
+	var prMerger prsvc.SCMMerger
+	if scmProvider != nil {
+		prMerger = scmProvider
+	}
+
 	projectSvc := projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink})
 	if err := seedScratchProjectOnBoot(ctx, cfg, projectSvc); err != nil {
 		stop()
@@ -223,6 +234,7 @@ func Run() error {
 		Agents:             agentSvc,
 		Sessions:           sessionSvc,
 		Reviews:            reviewSvc,
+		PRs:                prsvc.NewActionService(store, prMerger),
 		Notifications:      notifier,
 		NotificationStream: notificationHub,
 		Push:               pushRegistry,
