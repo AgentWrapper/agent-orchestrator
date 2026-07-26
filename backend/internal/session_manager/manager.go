@@ -518,8 +518,8 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 			State:        "active",
 		}); err != nil {
 			cleanupCtx, cancel := m.cleanupContext(ctx)
-			defer cancel()
 			_ = workspaceProject.DestroyWorkspaceProject(cleanupCtx, info)
+			cancel()
 			return ports.WorkspaceInfo{}, nil, fmt.Errorf("record workspace worktree %q: %w", wt.RepoName, err)
 		}
 	}
