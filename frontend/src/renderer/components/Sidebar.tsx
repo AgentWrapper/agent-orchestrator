@@ -825,7 +825,7 @@ function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
 					"h-control-form gap-2 rounded-settings-row bg-interactive-hover px-3 py-0 text-control font-medium text-muted-foreground",
 					"hover:bg-interactive-hover hover:text-foreground active:bg-interactive-hover active:text-foreground",
 					"[&>svg]:size-icon-md!",
-					"group-data-[collapsible=icon]:size-control-form! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:p-0!",
+					"group-data-[collapsible=icon]:size-control-board! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:p-0!",
 				)}
 			>
 				<Search strokeWidth={1.75} aria-hidden="true" />
@@ -866,7 +866,7 @@ function CreateProjectButton({
 						<button
 							aria-label="New project"
 							className={cn(
-								"grid size-icon-xl place-items-center rounded-sm text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground",
+								"grid size-control-board place-items-center rounded-lg text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground",
 								hideTrigger && "hidden",
 							)}
 							disabled={disabled}
