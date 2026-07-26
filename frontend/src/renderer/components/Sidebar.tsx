@@ -866,7 +866,7 @@ function CreateProjectButton({
 						<button
 							aria-label="New project"
 							className={cn(
-								"grid size-control-board place-items-center rounded-lg text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground",
+								"grid size-icon-xl place-items-center rounded-sm text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground",
 								hideTrigger && "hidden",
 							)}
 							disabled={disabled}
