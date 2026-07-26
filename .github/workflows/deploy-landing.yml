@@ -19,6 +19,9 @@ concurrency:
 
 jobs:
   build:
+    # Pages deploy is canonical-repo only. Forks copy this workflow but cannot
+    # create/enable GitHub Pages with GITHUB_TOKEN, which otherwise fails red.
+    if: github.repository == 'AgentWrapper/agent-orchestrator'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -43,6 +46,7 @@ jobs:
           path: frontend/src/landing/out
 
   deploy:
+    if: github.repository == 'AgentWrapper/agent-orchestrator'
     needs: build
     runs-on: ubuntu-latest
     environment:
