@@ -53,27 +53,33 @@ type AgentAvatarProps = {
 };
 
 /**
- * Round agent badge for board/task cards: the harness's real brand logo on a
- * neutral tile, or its initial when we have no asset. Kept small so the title
- * stays the hero of the card.
+ * Agent mark for board/task cards: the harness's real brand logo rendered bare —
+ * no tile, border, or background — so each brand's own shape shows (codex,
+ * claude, cursor, … carry their own rounded backgrounds). Agents without an
+ * asset fall back to a bare initial. Kept small so the title stays the hero.
  */
 export function AgentAvatar({ provider, className }: AgentAvatarProps) {
 	const logo = LOGOS[provider];
+	if (logo) {
+		return (
+			<img
+				src={logo}
+				alt=""
+				className={cn("size-icon-xl shrink-0 object-contain", className)}
+				draggable={false}
+				title={provider}
+			/>
+		);
+	}
 	return (
 		<span
 			className={cn(
-				"inline-flex size-icon-lg shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-raised",
+				"inline-flex size-icon-xl shrink-0 items-center justify-center text-caption font-bold uppercase leading-none text-muted-foreground",
 				className,
 			)}
 			title={provider}
 		>
-			{logo ? (
-				<img src={logo} alt="" className="size-3.5 object-contain" draggable={false} />
-			) : (
-				<span className="text-2xs font-bold uppercase leading-none text-muted-foreground">
-					{provider.charAt(0) || "?"}
-				</span>
-			)}
+			{provider.charAt(0) || "?"}
 		</span>
 	);
 }
