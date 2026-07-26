@@ -182,7 +182,19 @@ type TerminalContextMenuState = {
 	open: boolean;
 	x: number;
 	y: number;
+	// The web link under the cursor when the menu opened, if any — enables the
+	// "Open in system browser" item (left-click opens it in the AO Browser).
+	link: string | null;
 };
+
+function isWebLink(uri: string): boolean {
+	try {
+		const { protocol } = new URL(uri);
+		return protocol === "http:" || protocol === "https:";
+	} catch {
+		return false;
+	}
+}
 
 type TerminalContextMenuAction = "copy" | "paste" | "selectAll" | "clear";
 
@@ -231,7 +243,12 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		open: false,
 		x: 0,
 		y: 0,
+		link: null,
 	});
+	// The web link currently under the cursor, tracked via the link providers'
+	// hover/leave callbacks so the right-click menu can offer "Open in system
+	// browser" for it.
+	const hoveredLinkRef = useRef<string | null>(null);
 	// Latest callbacks in a ref so the mount effect stays dependency-free — we
 	// never tear down and recreate the terminal because a handler identity
 	// changed between renders.
@@ -273,8 +290,21 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		const host = hostRef.current;
 		if (!host) return undefined;
 		const activateLink = (_event: MouseEvent, uri: string) => {
+			// Left-click on a web link opens it inside the AO Browser panel (the
+			// parent decides how). Non-web schemes (mailto:, etc.) still go to the OS
+			// via the main process's window-open handler. Right-click to open a web
+			// link in the system browser instead — see the context menu below.
+			if (isWebLink(uri)) {
+				callbacksRef.current.onLinkOpen?.(uri);
+				return;
+			}
 			window.open(uri, "_blank", "noopener");
-			callbacksRef.current.onLinkOpen?.(uri);
+		};
+		const trackHover = (_event: MouseEvent, uri: string) => {
+			hoveredLinkRef.current = isWebLink(uri) ? uri : null;
+		};
+		const clearHover = () => {
+			hoveredLinkRef.current = null;
 		};
 
 		let term: Terminal;
@@ -294,14 +324,14 @@ export function XtermTerminal(props: XtermTerminalProps) {
 					'ui-monospace, Menlo, Monaco, "Courier New", monospace',
 				fontSize: props.fontSize ?? TERMINAL_FONT_SIZE_DEFAULT,
 				lineHeight: 1.35,
-				linkHandler: { activate: activateLink },
-				// Agent TUIs leave SGR bold active while using ANSI black for
-				// separators; keep bold weight-only so black stays black.
-				drawBoldTextInBrightColors: false,
-				// Auto-adjust glyph colors that don't clear WCAG AA against their cell
-				// background, the way VS Code's terminal does; without it dim colors
-				// render washed out.
-				minimumContrastRatio: 4.5,
+				linkHandler: { activate: activateLink, hover: trackHover, leave: clearHover },
+				// Preserve standard terminal semantics: many agent TUIs use bold ANSI
+				// colors specifically to select the bright palette.
+				drawBoldTextInBrightColors: true,
+				// Agent TUIs already choose foreground/background pairs. A forced
+				// contrast transform changes their RGB values and makes syntax and diff
+				// colors diverge from the same CLI in a native terminal.
+				minimumContrastRatio: 1,
 				// Alt-buffer panes (tmux attach, mouse-tracking agent TUIs) never feed
 				// this buffer — the alt screen doesn't accumulate scrollback — so this
 				// only matters for normal-buffer panes that print their transcript and
@@ -330,7 +360,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		// passed to it (main.ts setWindowOpenHandler), so the default handlers'
 		// empty open is dropped and clicks silently no-op. Pass the matched URL to
 		// window.open directly so the main process routes it to shell.openExternal.
-		term.loadAddon(new WebLinksAddon(activateLink));
+		term.loadAddon(new WebLinksAddon(activateLink, { hover: trackHover, leave: clearHover }));
 		term.loadAddon(new SearchAddon());
 
 		term.open(host);
@@ -421,6 +451,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				open: true,
 				x: event.clientX,
 				y: event.clientY,
+				link: hoveredLinkRef.current,
 			});
 		};
 		host.addEventListener("contextmenu", openContextMenu);
@@ -767,6 +798,20 @@ export function XtermTerminal(props: XtermTerminalProps) {
 					side="right"
 					sideOffset={2}
 				>
+					{contextMenu.link ? (
+						<>
+							<DropdownMenuItem
+								onSelect={() => {
+									const { link } = contextMenu;
+									setContextMenuOpen(false);
+									if (link) void aoBridge.app.openExternal(link);
+								}}
+							>
+								Open in system browser
+							</DropdownMenuItem>
+							<DropdownMenuSeparator />
+						</>
+					) : null}
 					<DropdownMenuItem disabled={!contextMenu.canCopy} onSelect={() => runContextMenuAction("copy")}>
 						Copy
 					</DropdownMenuItem>

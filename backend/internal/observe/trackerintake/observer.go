@@ -39,7 +39,7 @@ type Store interface {
 
 // Spawner is the session creation surface used by intake.
 type Spawner interface {
-	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, error)
+	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, int, int, error)
 }
 
 // TrackerResolver picks the tracker adapter for a project's configured
@@ -203,7 +203,7 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 		if issueID == "" || seen[issueID] {
 			continue
 		}
-		if _, err := o.spawner.Spawn(ctx, ports.SpawnConfig{
+		if _, _, _, err := o.spawner.Spawn(ctx, ports.SpawnConfig{
 			ProjectID: domain.ProjectID(project.ID),
 			IssueID:   issueID,
 			Kind:      domain.KindWorker,

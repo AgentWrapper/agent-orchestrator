@@ -355,7 +355,7 @@ function HeroDashboardMockup() {
 	const selectedProject = projectsState.find((project) => project.id === activeProject);
 	const visibleCards = selectedProject ? selectedProject.cards : projectsState.flatMap((project) => project.cards);
 	const activeProjectLabel = selectedProject ? selectedProject.name : "All projects";
-	const doneCount = selectedProject ? Math.max(1, Math.floor(selectedProject.cards.length / 2)) : 7;
+	const terminatedCount = selectedProject ? Math.max(1, Math.floor(selectedProject.cards.length / 2)) : 7;
 	const boardColumns = columnOrder.map((columnId) => ({
 		...columnDefinitions[columnId],
 		id: columnId,
@@ -706,10 +706,8 @@ function HeroDashboardMockup() {
 							<div className="shrink-0 border-t border-[rgba(255,255,255,0.06)] px-[18px]">
 								<div className="flex min-h-[51px] items-center gap-2 py-2 text-[#9ba1aa]">
 									<ChevronIcon className="h-3 w-3 text-[#646a73]" />
-									<span className="font-mono text-[10.5px] font-medium uppercase tracking-[0.05em]">
-										Done / Terminated
-									</span>
-									<span className="ml-auto shrink-0 font-mono text-[10px] text-[#646a73]">{doneCount}</span>
+									<span className="font-mono text-[10.5px] font-medium uppercase tracking-[0.05em]">Terminated</span>
+									<span className="ml-auto shrink-0 font-mono text-[10px] text-[#646a73]">{terminatedCount}</span>
 								</div>
 							</div>
 						</div>

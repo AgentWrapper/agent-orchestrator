@@ -72,6 +72,16 @@ func (f *fakeShellTerminalStore) InsertShellTerminal(_ context.Context, rec Shel
 	return nil
 }
 
+func (f *fakeShellTerminalStore) UpdateShellTerminalTitle(_ context.Context, handleID, title string) (ShellTerminalRecord, bool, error) {
+	for i, rec := range f.records {
+		if rec.HandleID == handleID {
+			f.records[i].Title = title
+			return f.records[i], true, nil
+		}
+	}
+	return ShellTerminalRecord{}, false, nil
+}
+
 func (f *fakeShellTerminalStore) SelectShellTerminalsByAppRunID(_ context.Context, appRunID string) ([]ShellTerminalRecord, error) {
 	var out []ShellTerminalRecord
 	for _, rec := range f.records {
@@ -200,6 +210,68 @@ func TestOpenShellTerminalReturnsNotFoundForUnknownProject(t *testing.T) {
 	}
 	if len(rt.created) != 0 {
 		t.Error("a runtime was spawned for an unknown project")
+	}
+}
+
+func TestOpenShellTerminalScopesToSession(t *testing.T) {
+	rt := newFakeShellRuntime()
+	st := &fakeShellTerminalStore{}
+	projects := &fakeProjectRootLocator{roots: map[domain.ProjectID]string{"portfolio": "/repos/portfolio"}}
+	svc := newTestService(rt, st, projects)
+
+	term, err := svc.OpenShellTerminal(context.Background(), OpenShellTerminalInput{ProjectID: "portfolio", SessionID: "portfolio-3"})
+	if err != nil {
+		t.Fatalf("OpenShellTerminal: %v", err)
+	}
+	if term.SessionID != "portfolio-3" {
+		t.Errorf("returned session id = %q, want portfolio-3", term.SessionID)
+	}
+	if len(st.records) != 1 || st.records[0].SessionID != "portfolio-3" {
+		t.Fatalf("session id not persisted on the record: %+v", st.records)
+	}
+}
+
+func TestRenameShellTerminalUpdatesTitle(t *testing.T) {
+	st := &fakeShellTerminalStore{records: []ShellTerminalRecord{
+		{HandleID: "shellterm-1", Title: "portfolio", AppRunID: testAppRunID},
+	}}
+	svc := newTestService(newFakeShellRuntime(), st, &fakeProjectRootLocator{})
+
+	term, err := svc.RenameShellTerminal(context.Background(), "shellterm-1", "  deploy logs  ")
+	if err != nil {
+		t.Fatalf("RenameShellTerminal: %v", err)
+	}
+	if term.Title != "deploy logs" {
+		t.Errorf("returned title = %q, want the trimmed new title", term.Title)
+	}
+	if st.records[0].Title != "deploy logs" {
+		t.Errorf("stored title = %q, want the trimmed new title", st.records[0].Title)
+	}
+}
+
+func TestRenameShellTerminalRejectsEmptyTitle(t *testing.T) {
+	st := &fakeShellTerminalStore{records: []ShellTerminalRecord{{HandleID: "shellterm-1", Title: "portfolio"}}}
+	svc := newTestService(newFakeShellRuntime(), st, &fakeProjectRootLocator{})
+
+	_, err := svc.RenameShellTerminal(context.Background(), "shellterm-1", "   ")
+
+	var apiErr *apierr.Error
+	if !errors.As(err, &apiErr) || apiErr.Kind != apierr.KindInvalid {
+		t.Fatalf("error = %v, want an invalid apierr", err)
+	}
+	if st.records[0].Title != "portfolio" {
+		t.Errorf("title changed to %q on a rejected rename", st.records[0].Title)
+	}
+}
+
+func TestRenameShellTerminalReturnsNotFoundForUnknownHandle(t *testing.T) {
+	svc := newTestService(newFakeShellRuntime(), &fakeShellTerminalStore{}, &fakeProjectRootLocator{})
+
+	_, err := svc.RenameShellTerminal(context.Background(), "shellterm-ghost", "whatever")
+
+	var apiErr *apierr.Error
+	if !errors.As(err, &apiErr) || apiErr.Kind != apierr.KindNotFound {
+		t.Fatalf("error = %v, want a not-found apierr", err)
 	}
 }
 

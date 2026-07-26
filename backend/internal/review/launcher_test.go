@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -54,6 +55,22 @@ func (f *fakeCancellableReviewer) ReviewCancel(context.Context) (ports.ReviewCan
 		mode = ports.ReviewCancelInterrupt
 	}
 	return ports.ReviewCancelSpec{Mode: mode, Interrupts: f.interrupts}, nil
+}
+
+type fakeReviewerForPreflight struct {
+	CommandErr error
+	Argv       []string
+}
+
+func (f *fakeReviewerForPreflight) ReviewCommand(_ context.Context, _ ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
+	if f.CommandErr != nil {
+		return ports.ReviewCommandSpec{}, f.CommandErr
+	}
+	return ports.ReviewCommandSpec{Argv: f.Argv}, nil
+}
+
+func (f *fakeReviewerForPreflight) ReviewMessage(_ context.Context, _ ports.ReviewInvocation) (string, error) {
+	return "", nil
 }
 
 type fakeReviewerResolver struct {
@@ -301,5 +318,60 @@ func TestLauncherSpawnNoAdapter(t *testing.T) {
 	l := NewLauncher(fakeReviewerResolver{ok: false}, &fakeRuntime{}, t.TempDir())
 	if _, err := l.Spawn(context.Background(), launchSpec()); err == nil || !strings.Contains(err.Error(), "no reviewer adapter") {
 		t.Fatalf("err = %v, want no-adapter", err)
+	}
+}
+
+func TestLauncherPreflightResolvesAdapter(t *testing.T) {
+	reviewer := &fakeReviewerForPreflight{Argv: []string{"go"}}
+	l := NewLauncher(fakeReviewerResolver{reviewer: reviewer, ok: true}, &fakeRuntime{}, "")
+	if err := l.Preflight(context.Background(), domain.ReviewerClaudeCode, "/ws/mer-1"); err != nil {
+		t.Fatalf("Preflight: %v", err)
+	}
+}
+
+func TestLauncherPreflightNoAdapter(t *testing.T) {
+	l := NewLauncher(fakeReviewerResolver{ok: false}, &fakeRuntime{}, "")
+	if err := l.Preflight(context.Background(), domain.ReviewerClaudeCode, "/ws/mer-1"); err == nil || !strings.Contains(err.Error(), "no reviewer adapter") {
+		t.Fatalf("err = %v, want 'no reviewer adapter'", err)
+	}
+}
+
+func TestLauncherPreflightReviewCommandError(t *testing.T) {
+	reviewer := &fakeReviewerForPreflight{CommandErr: errors.New("reviewer unavailable")}
+	l := NewLauncher(fakeReviewerResolver{reviewer: reviewer, ok: true}, &fakeRuntime{}, "")
+	if err := l.Preflight(context.Background(), domain.ReviewerClaudeCode, "/ws/mer-1"); err == nil || !strings.Contains(err.Error(), "reviewer unavailable") {
+		t.Fatalf("err = %v, want containing 'reviewer unavailable'", err)
+	}
+}
+
+func TestLauncherPreflightEmptyArgv(t *testing.T) {
+	reviewer := &fakeReviewerForPreflight{}
+	l := NewLauncher(fakeReviewerResolver{reviewer: reviewer, ok: true}, &fakeRuntime{}, "")
+	if err := l.Preflight(context.Background(), domain.ReviewerClaudeCode, "/ws/mer-1"); err == nil || !strings.Contains(err.Error(), "empty command") {
+		t.Fatalf("err = %v, want 'empty command'", err)
+	}
+}
+
+func TestLauncherPreflightBinaryNotFound(t *testing.T) {
+	reviewer := &fakeReviewerForPreflight{Argv: []string{"this-binary-does-not-exist-12345"}}
+	l := NewLauncher(fakeReviewerResolver{reviewer: reviewer, ok: true}, &fakeRuntime{}, "")
+	if err := l.Preflight(context.Background(), domain.ReviewerClaudeCode, "/ws/mer-1"); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("err = %v, want 'not found'", err)
+	}
+}
+
+func TestLauncherPreflightSkipsEnvPrefix(t *testing.T) {
+	reviewer := &fakeReviewerForPreflight{Argv: []string{"env", "OPENCODE_CONFIG_CONTENT=cfg", "go"}}
+	l := NewLauncher(fakeReviewerResolver{reviewer: reviewer, ok: true}, &fakeRuntime{}, "")
+	if err := l.Preflight(context.Background(), domain.ReviewerClaudeCode, "/ws/mer-1"); err != nil {
+		t.Fatalf("Preflight: %v", err)
+	}
+}
+
+func TestLauncherPreflightEnvPrefixWithMissingBinary(t *testing.T) {
+	reviewer := &fakeReviewerForPreflight{Argv: []string{"env", "KEY=val", "nonexistent-binary-999"}}
+	l := NewLauncher(fakeReviewerResolver{reviewer: reviewer, ok: true}, &fakeRuntime{}, "")
+	if err := l.Preflight(context.Background(), domain.ReviewerClaudeCode, "/ws/mer-1"); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("err = %v, want 'not found'", err)
 	}
 }

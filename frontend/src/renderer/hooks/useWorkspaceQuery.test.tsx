@@ -3,7 +3,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
-const { getMock, hasTrustedApiBaseUrlMock } = vi.hoisted(() => ({
+const { captureRendererEventMock, getMock, hasTrustedApiBaseUrlMock } = vi.hoisted(() => ({
+	captureRendererEventMock: vi.fn().mockResolvedValue(undefined),
 	getMock: vi.fn(),
 	hasTrustedApiBaseUrlMock: vi.fn(() => true),
 }));
@@ -12,6 +13,8 @@ vi.mock("../lib/api-client", () => ({
 	apiClient: { GET: getMock },
 	hasTrustedApiBaseUrl: hasTrustedApiBaseUrlMock,
 }));
+
+vi.mock("../lib/telemetry", () => ({ captureRendererEvent: captureRendererEventMock }));
 
 import { useWorkspaceQuery } from "./useWorkspaceQuery";
 
@@ -33,6 +36,7 @@ function respondWith(payload: {
 }
 
 beforeEach(() => {
+	captureRendererEventMock.mockClear();
 	getMock.mockReset();
 	hasTrustedApiBaseUrlMock.mockReset().mockReturnValue(true);
 });
@@ -75,6 +79,7 @@ describe("useWorkspaceQuery", () => {
 							harness: "claude-code",
 							branch: "qa/modal-worker",
 							status: "mergeable",
+							scmStatus: "review_pending",
 							isTerminated: false,
 							activity: { state: "idle", lastActivityAt: "2026-06-10T15:30:00Z" },
 							updatedAt: "2026-06-10T16:15:04Z",
@@ -116,6 +121,7 @@ describe("useWorkspaceQuery", () => {
 			provider: "claude-code",
 			branch: "qa/modal-worker",
 			status: "mergeable",
+			scmStatus: "review_pending",
 			activity: { state: "idle", lastActivityAt: "2026-06-10T15:30:00Z" },
 		});
 		expect(workspace.sessions[1]).toMatchObject({
@@ -124,6 +130,14 @@ describe("useWorkspaceQuery", () => {
 			provider: "codex",
 			status: "unknown",
 			branch: undefined,
+		});
+		expect(captureRendererEventMock).toHaveBeenCalledWith("ao.renderer.session_state_unknown", {
+			field: "status",
+			reason: "unrecognized",
+		});
+		expect(captureRendererEventMock).toHaveBeenCalledWith("ao.renderer.session_state_unknown", {
+			field: "activity",
+			reason: "missing",
 		});
 	});
 
@@ -253,6 +267,7 @@ describe("useWorkspaceQuery", () => {
 		await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
 		expect(result.current.data?.[0].sessions[0].status).toBe("merged");
+		expect(result.current.data?.[0].sessions[0].isTerminated).toBe(true);
 	});
 
 	it("falls back to terminated for terminated sessions without a known backend status", async () => {
@@ -278,6 +293,7 @@ describe("useWorkspaceQuery", () => {
 		await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
 		expect(result.current.data?.[0].sessions[0].status).toBe("terminated");
+		expect(result.current.data?.[0].sessions[0].isTerminated).toBe(true);
 	});
 
 	it("surfaces a projects fetch error", async () => {

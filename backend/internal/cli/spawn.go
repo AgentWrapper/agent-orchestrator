@@ -50,6 +50,8 @@ type spawnResult struct {
 		ID     string `json:"id"`
 		Status string `json:"status"`
 	} `json:"session"`
+	PromptBytes       int `json:"promptBytes,omitempty"`
+	SystemPromptBytes int `json:"systemPromptBytes,omitempty"`
 }
 
 type agentProbeResult struct {
@@ -147,7 +149,11 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 			if claimed != "" {
 				claimLabel = fmt.Sprintf(" (claimed %s)", claimed)
 			}
-			_, err = fmt.Fprintf(out, "spawned session %s (%s)%s\n", res.Session.ID, res.Session.Status, claimLabel)
+			promptSize := ""
+			if res.PromptBytes > 0 || res.SystemPromptBytes > 0 {
+				promptSize = fmt.Sprintf(" [prompt %d B, system %d B]", res.PromptBytes, res.SystemPromptBytes)
+			}
+			_, err = fmt.Fprintf(out, "spawned session %s (%s)%s%s\n", res.Session.ID, res.Session.Status, claimLabel, promptSize)
 			return err
 		},
 	}

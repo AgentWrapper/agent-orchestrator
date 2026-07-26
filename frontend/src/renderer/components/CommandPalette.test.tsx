@@ -278,6 +278,24 @@ describe("CommandPalette search + Enter", () => {
 		await waitFor(() => expect(paletteInput()).toBeNull());
 	});
 
+	it("opens the highest-scoring match, not the first category", async () => {
+		ctx.params = {};
+		renderPalette();
+		act(() => useUiStore.getState().setCommandPaletteOpen(true));
+		const input = await screen.findByPlaceholderText(/search projects/i);
+
+		// "app" is the exact project title but also a keyword hit on the Needs
+		// attention rows, which render above Projects by default.
+		fireEvent.change(input, { target: { value: "app" } });
+		await waitFor(() => {
+			const selected = document.querySelector('[cmdk-item][data-selected="true"]');
+			expect(selected?.getAttribute("data-value")).toBe("project:proj-1");
+		});
+		fireEvent.keyDown(input, { key: "Enter" });
+
+		expect(navigateMock).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "proj-1" } });
+	});
+
 	it("jumps to an archived (terminated) session via search + Enter", async () => {
 		ctx.params = {};
 		renderPalette();

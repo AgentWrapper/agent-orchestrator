@@ -1,17 +1,23 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-	clearUnreadNotifications,
-	fetchUnreadNotifications,
+	fetchNotificationsPage,
+	markAllCachedNotificationsRead,
+	markCachedNotificationRead,
 	markAllNotificationsRead,
 	markNotificationRead,
-	removeUnreadNotification,
+	notificationsQueryKey,
+	recentNotificationsQueryKey,
+	type NotificationListStatus,
 	unreadNotificationsQueryKey,
 } from "../lib/notifications";
 
-export function useNotificationsQuery() {
-	return useQuery({
-		queryKey: unreadNotificationsQueryKey,
-		queryFn: fetchUnreadNotifications,
+export function useNotificationsQuery(status: NotificationListStatus, enabled = true) {
+	return useInfiniteQuery({
+		queryKey: notificationsQueryKey(status),
+		queryFn: ({ pageParam }) => fetchNotificationsPage(status, pageParam),
+		initialPageParam: "",
+		getNextPageParam: (lastPage) => lastPage.nextCursor || undefined,
+		enabled,
 		retry: 1,
 	});
 }
@@ -21,7 +27,7 @@ export function useMarkNotificationReadMutation() {
 	return useMutation({
 		mutationFn: markNotificationRead,
 		onSuccess: (notification) => {
-			removeUnreadNotification(queryClient, notification.id);
+			markCachedNotificationRead(queryClient, notification);
 		},
 	});
 }
@@ -31,7 +37,8 @@ export function useMarkAllNotificationsReadMutation() {
 	return useMutation({
 		mutationFn: markAllNotificationsRead,
 		onSuccess: () => {
-			clearUnreadNotifications(queryClient);
+			markAllCachedNotificationsRead(queryClient);
+			void queryClient.invalidateQueries({ queryKey: recentNotificationsQueryKey });
 			void queryClient.invalidateQueries({ queryKey: unreadNotificationsQueryKey });
 		},
 	});

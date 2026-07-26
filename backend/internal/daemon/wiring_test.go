@@ -252,7 +252,7 @@ func TestWiring_StartSessionSpawnsScratchWithoutGitRepo(t *testing.T) {
 		t.Fatalf("startSession: %v", err)
 	}
 
-	session, err := svc.Spawn(ctx, ports.SpawnConfig{ProjectID: "scratch", Kind: domain.KindWorker, Prompt: "try scratch"})
+	session, _, _, err := svc.Spawn(ctx, ports.SpawnConfig{ProjectID: "scratch", Kind: domain.KindWorker, Prompt: "try scratch"})
 	if err != nil {
 		t.Fatalf("Spawn scratch: %v", err)
 	}
@@ -260,8 +260,12 @@ func TestWiring_StartSessionSpawnsScratchWithoutGitRepo(t *testing.T) {
 		t.Fatalf("scratch branch = %q, want empty", session.Metadata.Branch)
 	}
 	wantWorkspace := filepath.Join(dataDir, "worktrees", "scratch", "workers", string(session.ID))
-	if runtime.lastCfg.WorkspacePath != wantWorkspace {
-		t.Fatalf("runtime workspace = %q, want %q", runtime.lastCfg.WorkspacePath, wantWorkspace)
+	physicalWorkspace, err := filepath.EvalSymlinks(wantWorkspace)
+	if err != nil {
+		t.Fatalf("resolve scratch workspace %q: %v", wantWorkspace, err)
+	}
+	if runtime.lastCfg.WorkspacePath != physicalWorkspace {
+		t.Fatalf("runtime workspace = %q, want %q", runtime.lastCfg.WorkspacePath, physicalWorkspace)
 	}
 	if _, err := os.Stat(wantWorkspace); err != nil {
 		t.Fatalf("scratch workspace not created at %q: %v", wantWorkspace, err)
@@ -306,7 +310,7 @@ func TestStartSession_SpawnDoesNotPanicWhenNoTrackerToken(t *testing.T) {
 	// Spawn reaches withIssueContext (and the tracker guard) before the manager
 	// tries to materialize a workspace. The manager may return an error from the
 	// no-op runtime, but it must not panic — that is the regression.
-	_, _ = svc.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "107"})
+	_, _, _, _ = svc.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "107"})
 }
 
 func TestWiring_SeedScratchProjectOnBootUsesDataDir(t *testing.T) {
@@ -613,6 +617,10 @@ type fakeSessionLifecycle struct {
 	restoreAllCalled bool
 	reconcileErr     error
 	restoreErr       error
+}
+
+func (f *fakeSessionLifecycle) Kill(_ context.Context, _ domain.SessionID) (bool, error) {
+	return false, nil
 }
 
 func (f *fakeSessionLifecycle) Reconcile(_ context.Context) error {

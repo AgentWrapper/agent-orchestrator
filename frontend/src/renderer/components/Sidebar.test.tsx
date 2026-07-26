@@ -8,15 +8,22 @@ import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
 import { useUiStore } from "../stores/ui-store";
 
-const { getMock, navigateMock, mockParams, renameSessionMock, updateStatusMock } = vi.hoisted(() => ({
-	getMock: vi.fn(),
-	navigateMock: vi.fn(),
-	mockParams: { projectId: undefined as string | undefined },
-	renameSessionMock: vi.fn().mockResolvedValue(undefined),
-	updateStatusMock: vi.fn(),
-}));
+const { getMock, navigateMock, mockParams, renameSessionMock, updateStatusMock, commandPaletteEnabled } = vi.hoisted(
+	() => ({
+		getMock: vi.fn(),
+		navigateMock: vi.fn(),
+		mockParams: { projectId: undefined as string | undefined },
+		renameSessionMock: vi.fn().mockResolvedValue(undefined),
+		updateStatusMock: vi.fn(),
+		commandPaletteEnabled: { current: true },
+	}),
+);
 
 vi.mock("../lib/rename-session", () => ({ renameSession: renameSessionMock }));
+
+vi.mock("../hooks/useCommandPaletteEnabled", () => ({
+	useCommandPaletteEnabled: () => commandPaletteEnabled.current,
+}));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@tanstack/react-router")>();
@@ -69,6 +76,20 @@ const session: WorkspaceSession = {
 	updatedAt: "2026-06-30T00:00:00Z",
 	prs: [],
 };
+
+function sidebarPR(overrides: Partial<WorkspaceSession["prs"][number]> = {}): WorkspaceSession["prs"][number] {
+	return {
+		url: "https://github.com/acme/project-one/pull/7",
+		number: 7,
+		state: "open",
+		ci: "unknown",
+		review: "none",
+		mergeability: "unknown",
+		reviewComments: false,
+		updatedAt: "2026-06-30T00:00:00Z",
+		...overrides,
+	};
+}
 
 type CreateProjectInput = {
 	path: string;
@@ -174,6 +195,8 @@ async function openCreateProjectDialog(
 beforeEach(() => {
 	window.localStorage.clear();
 	document.documentElement.style.removeProperty("--ao-sidebar-w");
+	commandPaletteEnabled.current = true;
+	useUiStore.setState({ isCommandPaletteOpen: false });
 	getMock.mockReset();
 	getMock.mockResolvedValue({
 		data: {
@@ -203,6 +226,15 @@ afterEach(() => {
 });
 
 describe("Sidebar", () => {
+	it("keeps sidebar scrolling functional while hiding the visible scrollbar", () => {
+		renderSidebar();
+
+		const content = document.querySelector('[data-sidebar="content"]');
+		expect(content).toHaveClass("overflow-y-auto");
+		expect(content).toHaveClass("scrollbar-none");
+		expect(content).not.toContainElement(screen.getByText("Projects"));
+	});
+
 	it("shows a ConfirmDialog and calls onRemoveProject when confirmed", async () => {
 		const user = userEvent.setup();
 		const onRemoveProject = renderSidebar();
@@ -686,6 +718,30 @@ describe("Sidebar", () => {
 		expect(navigateMock).toHaveBeenCalledWith({ to: "/settings" });
 	});
 
+	it("opens the command palette when Search is clicked", async () => {
+		const user = userEvent.setup();
+		renderSidebar();
+		expect(useUiStore.getState().isCommandPaletteOpen).toBe(false);
+		await user.click(screen.getByRole("button", { name: /Search/ }));
+		expect(useUiStore.getState().isCommandPaletteOpen).toBe(true);
+	});
+
+	it("defers opening the palette until the Search click has been dispatched", async () => {
+		renderSidebar();
+		fireEvent.click(screen.getByRole("button", { name: /Search/ }));
+		// Still closed inside the click's task: the palette dialog must not mount
+		// while the pointer sequence that opened it is still being handled.
+		expect(useUiStore.getState().isCommandPaletteOpen).toBe(false);
+		await act(async () => {});
+		expect(useUiStore.getState().isCommandPaletteOpen).toBe(true);
+	});
+
+	it("hides Search when the command palette feature is disabled", () => {
+		commandPaletteEnabled.current = false;
+		renderSidebar();
+		expect(screen.queryByRole("button", { name: /Search/ })).not.toBeInTheDocument();
+	});
+
 	it("shows the project name and context in the ConfirmDialog description", async () => {
 		const user = userEvent.setup();
 		renderSidebar();
@@ -809,13 +865,19 @@ describe("Sidebar", () => {
 		}
 	});
 
-	it("renders sidebar dots from attention zones without activity overrides", () => {
+	it("animates active sidebar dots using their PR context color", () => {
 		renderSidebar({
 			workspaces: [
 				{
 					...workspace,
 					sessions: [
-						{ ...session, id: "proj-1-idle", title: "idle task", status: "idle" },
+						{
+							...session,
+							id: "proj-1-idle",
+							title: "idle task",
+							status: "idle",
+							activity: { state: "idle", lastActivityAt: "2026-06-30T00:00:00Z" },
+						},
 						{
 							...session,
 							id: "proj-1-work",
@@ -827,29 +889,63 @@ describe("Sidebar", () => {
 							...session,
 							id: "proj-1-ci",
 							title: "ci failed task",
-							status: "ci_failed",
+							status: "working",
+							scmStatus: "ci_failed",
 							activity: { state: "active", lastActivityAt: "2026-06-30T00:00:00Z" },
+							prs: [sidebarPR({ ci: "failing" })],
+						},
+						{
+							...session,
+							id: "proj-1-review",
+							title: "review task",
+							status: "working",
+							scmStatus: "pr_open",
+							activity: { state: "active", lastActivityAt: "2026-06-30T00:00:00Z" },
+							prs: [sidebarPR()],
+						},
+						{
+							...session,
+							id: "proj-1-ready",
+							title: "ready task",
+							status: "working",
+							scmStatus: "mergeable",
+							activity: { state: "active", lastActivityAt: "2026-06-30T00:00:00Z" },
+							prs: [sidebarPR({ mergeability: "mergeable" })],
+						},
+						{
+							...session,
+							id: "proj-1-merged",
+							title: "merged task",
+							status: "working",
+							scmStatus: "merged",
+							activity: { state: "active", lastActivityAt: "2026-06-30T00:00:00Z" },
+							prs: [sidebarPR({ state: "merged" })],
 						},
 					],
 				},
 			],
 		});
 
-		const idleDot = screen.getByLabelText("Open idle task").querySelector('span[aria-hidden="true"]');
-		expect(idleDot).toHaveClass("bg-working");
-		expect(idleDot).not.toHaveClass("animate-status-pulse");
+		const sessionDot = (title: string) =>
+			screen.getByLabelText(`Open ${title}`).querySelector<HTMLElement>("span.rounded-full");
 
-		const workingDot = screen.getByLabelText("Open working task").querySelector('span[aria-hidden="true"]');
-		expect(workingDot).toHaveClass("bg-working");
-		expect(workingDot).not.toHaveClass("animate-status-pulse");
+		expect(sessionDot("idle task")).toHaveClass("bg-status-idle");
+		expect(sessionDot("idle task")).not.toHaveClass("animate-status-pulse");
 
-		const ciFailedDot = screen.getByLabelText("Open ci failed task").querySelector('span[aria-hidden="true"]');
-		expect(ciFailedDot).toHaveClass("bg-warning");
-		expect(ciFailedDot).not.toHaveClass("bg-error");
-		expect(ciFailedDot).not.toHaveClass("animate-status-pulse");
+		const workingDot = sessionDot("working task");
+		expect(workingDot).toHaveClass("bg-status-working");
+		expect(workingDot).toHaveClass("animate-status-pulse");
+
+		const ciFailedDot = sessionDot("ci failed task");
+		expect(ciFailedDot).toHaveClass("bg-status-needs-you");
+		expect(ciFailedDot).toHaveClass("animate-status-pulse");
+
+		expect(sessionDot("review task")).toHaveClass("bg-status-in-review", "animate-status-pulse");
+		expect(sessionDot("ready task")).toHaveClass("bg-status-ready", "animate-status-pulse");
+		expect(sessionDot("merged task")).toHaveClass("bg-status-merged", "animate-status-pulse");
 	});
 
-	it("renders idle activity as quiet while preserving PR status color", () => {
+	it("renders a static gray dot for idle activity across session statuses", () => {
 		renderSidebar({
 			workspaces: [
 				{
@@ -874,13 +970,32 @@ describe("Sidebar", () => {
 			],
 		});
 
-		const idleDot = screen.getByLabelText("Open idle activity task").querySelector('span[aria-hidden="true"]');
-		expect(idleDot).toHaveClass("bg-working");
-		expect(idleDot).not.toHaveClass("animate-status-pulse");
+		const idleActivityDot = screen
+			.getByLabelText("Open idle activity task")
+			.querySelector<HTMLElement>("span.rounded-full");
+		const idleDraftDot = screen.getByLabelText("Open idle draft task").querySelector<HTMLElement>("span.rounded-full");
 
-		const idleDraftDot = screen.getByLabelText("Open idle draft task").querySelector('span[aria-hidden="true"]');
-		expect(idleDraftDot).toHaveClass("bg-accent-dim");
+		expect(idleActivityDot).toHaveClass("bg-status-idle");
+		expect(idleDraftDot).toHaveClass("bg-status-idle");
+		expect(idleActivityDot).not.toHaveClass("animate-status-pulse");
 		expect(idleDraftDot).not.toHaveClass("animate-status-pulse");
+	});
+
+	it("keeps merged sessions in the list until they are terminated", () => {
+		renderSidebar({
+			workspaces: [
+				{
+					...workspace,
+					sessions: [
+						{ ...session, id: "merged-live", title: "merged live task", status: "merged", isTerminated: false },
+						{ ...session, id: "merged-done", title: "merged terminated task", status: "merged", isTerminated: true },
+					],
+				},
+			],
+		});
+
+		expect(screen.getByLabelText("Open merged live task")).toBeInTheDocument();
+		expect(screen.queryByLabelText("Open merged terminated task")).not.toBeInTheDocument();
 	});
 
 	it("does not render the restart-to-update row unless an update is downloaded", async () => {

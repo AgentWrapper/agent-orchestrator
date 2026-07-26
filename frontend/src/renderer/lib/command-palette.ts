@@ -73,7 +73,7 @@ function sessionCommand(
 		group,
 		title: session.title,
 		subtitle: workspace.name,
-		keywords: [workspace.name, session.branch, session.issueId ?? ""],
+		keywords: [workspace.name, session.branch ?? "", session.issueId ?? ""],
 		action: {
 			kind: "navigate",
 			target: {
@@ -141,14 +141,15 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 		});
 	}
 
-	if (currentSession && currentSession.kind !== "orchestrator" && !isSyntheticBranch(currentSession)) {
+	const currentBranch = currentSession?.branch;
+	if (currentSession && currentBranch && currentSession.kind !== "orchestrator" && !isSyntheticBranch(currentSession)) {
 		items.push({
 			id: "current-copy-branch",
 			group: "current",
 			title: "Copy branch name",
-			subtitle: currentSession.branch,
-			keywords: ["branch", "git", currentSession.branch, currentSession.title],
-			action: { kind: "copy-branch", branch: currentSession.branch },
+			subtitle: currentBranch,
+			keywords: ["branch", "git", currentBranch, currentSession.title],
+			action: { kind: "copy-branch", branch: currentBranch },
 		});
 	}
 
@@ -200,7 +201,7 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 						String(pr.number),
 						pr.url,
 						session.title,
-						session.branch,
+						session.branch ?? "",
 						workspace.name,
 						pr.state,
 					],
@@ -295,9 +296,18 @@ export function visibleForQuery(items: CommandItem[], query: string): CommandIte
 export type DisplayGroup = { id: string; label: string; items: CommandItem[] };
 
 export function displayGroups(items: CommandItem[], query: string): DisplayGroup[] {
-	const visible = visibleForQuery(items, query);
-	if (query.trim()) {
-		return visible.length > 0 ? [{ id: "results", label: "Results", items: visible }] : [];
-	}
-	return groupCommands(visible);
+	// Keep matches under their category headings (Cursor-style), including while typing.
+	const groups = groupCommands(visibleForQuery(items, query));
+	if (!query.trim()) return groups;
+	// The palette runs cmdk with shouldFilter:false and selects the first item in DOM
+	// order, so Enter follows category order. Rank categories by their best match to
+	// keep the highest-scoring hit — and therefore the Enter target — first.
+	return groups
+		.map((group, index) => ({
+			group,
+			index,
+			score: Math.max(...group.items.map((item) => matchScore(query, item))),
+		}))
+		.sort((a, b) => b.score - a.score || a.index - b.index)
+		.map((entry) => entry.group);
 }

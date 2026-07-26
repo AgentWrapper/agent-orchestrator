@@ -70,6 +70,7 @@ func (s *Store) ClaimPR(ctx context.Context, pr domain.PullRequest, checks []dom
 		if err := q.ClaimPRForSession(ctx, gen.ClaimPRForSessionParams{
 			URL: pr.URL, SessionID: pr.SessionID, Number: int64(pr.Number), PRState: prState(pr),
 			ReviewDecision: reviewOrDefault(pr.Review), CIState: ciOrDefault(pr.CI), Mergeability: mergeabilityOrDefault(pr.Mergeability), UpdatedAt: pr.UpdatedAt,
+			StateChangedAt: nullTime(initialPRStateChangedAt(pr)),
 		}); err != nil {
 			return err
 		}
@@ -331,6 +332,7 @@ func genPRParams(r domain.PullRequest) gen.UpsertPRParams {
 		CIState:                  ciOrDefault(r.CI),
 		Mergeability:             mergeabilityOrDefault(r.Mergeability),
 		UpdatedAt:                r.UpdatedAt,
+		StateChangedAt:           nullTime(initialPRStateChangedAt(r)),
 		Provider:                 r.Provider,
 		Host:                     r.Host,
 		Repo:                     r.Repo,
@@ -374,6 +376,7 @@ func genLegacyPRParams(r domain.PullRequest) gen.UpsertLegacyPRParams {
 		CIState:        ciOrDefault(r.CI),
 		Mergeability:   mergeabilityOrDefault(r.Mergeability),
 		UpdatedAt:      r.UpdatedAt,
+		StateChangedAt: nullTime(initialPRStateChangedAt(r)),
 		IsDraft:        boolInt(r.Draft),
 		IsMerged:       boolInt(r.Merged),
 		IsClosed:       boolInt(r.Closed),
@@ -401,6 +404,22 @@ func mergeabilityOrDefault(v domain.Mergeability) domain.Mergeability {
 	return v
 }
 
+func initialPRStateChangedAt(r domain.PullRequest) time.Time {
+	if !r.StateChangedAt.IsZero() {
+		return r.StateChangedAt
+	}
+	switch prState(r) {
+	case domain.PRStateMerged:
+		return r.MergedAtProvider
+	case domain.PRStateClosed:
+		return r.ClosedAtProvider
+	case domain.PRStateDraft, domain.PRStateOpen:
+		return r.CreatedAtProvider
+	default:
+		return time.Time{}
+	}
+}
+
 func prRowFromGen(p gen.PR) domain.PullRequest {
 	return domain.PullRequest{
 		URL:                      p.URL,
@@ -413,6 +432,7 @@ func prRowFromGen(p gen.PR) domain.PullRequest {
 		Review:                   p.ReviewDecision,
 		Mergeability:             p.Mergeability,
 		UpdatedAt:                p.UpdatedAt,
+		StateChangedAt:           timeFromNull(p.StateChangedAt),
 		Provider:                 p.Provider,
 		Host:                     p.Host,
 		Repo:                     p.Repo,

@@ -7,10 +7,8 @@ import { useUiStore } from "../stores/ui-store";
 const isMac = isMacPlatform();
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
-// macOS-only sidebar chrome cluster (sidebar toggle + history arrows). Lives
-// in the Sidebar header below the traffic lights. The toggle is pinned in the
-// icon-rail column so it never moves during expand/collapse; history arrows
-// sit absolutely to its right and only fade in when expanded.
+// macOS-only sidebar chrome cluster (sidebar toggle + history arrows). It stays
+// fixed while the sidebar expands, collapses, or appears as a hover preview.
 // The installed router has no useCanGoForward, and deriving one as
 // `__TSR_index < history.length - 1` (the upstream hook's approach) is wrong
 // here: window.history.length also counts entries the router never created —
@@ -34,7 +32,15 @@ function useCanGoForward(): boolean {
 	return canGoForward;
 }
 
-export function TitlebarNav({ historyLocked = false }: { historyLocked?: boolean }) {
+export function TitlebarNav({
+	historyLocked = false,
+	isFullScreen = false,
+	onSidebarPreviewEnter,
+}: {
+	historyLocked?: boolean;
+	isFullScreen?: boolean;
+	onSidebarPreviewEnter?: React.PointerEventHandler<HTMLButtonElement>;
+}) {
 	const { isSidebarOpen, toggleSidebar } = useUiStore();
 	const router = useRouter();
 	const canGoBack = useCanGoBack();
@@ -42,43 +48,40 @@ export function TitlebarNav({ historyLocked = false }: { historyLocked?: boolean
 
 	if (!isMac) return null;
 
-	const historyInactive = !isSidebarOpen;
+	// Stay pinned beside the traffic lights. Nudge down slightly so the
+	// toggle/arrows share a centerline with the native dots (y: 12).
+	const leftClass = isFullScreen ? "left-titlebar-cluster-left-fullscreen" : "left-titlebar-cluster-left";
+	const topClass = isFullScreen ? "top-0" : "top-0.5";
 
 	return (
-		<div className="titlebar-nav" style={noDragStyle}>
-			{/* Fixed-width slot matches --size-sidebar-icon so the toggle stays
-			    put while the sidebar width animates. */}
-			<div className="titlebar-nav__toggle-slot">
-				<TitlebarButton
-					label={isSidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
-					onClick={toggleSidebar}
-					title={`${isSidebarOpen ? "Collapse" : "Expand"} sidebar · ⌘B`}
-				>
-					<PanelLeft className="size-icon-lg" aria-hidden="true" />
-				</TitlebarButton>
-			</div>
-			{/* Absolute: never takes layout space, so showing/hiding arrows
-			    cannot shift the toggle. Fades with expanded chrome. */}
-			<div className="titlebar-nav__history sidebar-expanded-chrome" aria-hidden={historyInactive}>
-				<TitlebarButton
-					disabled={historyInactive || historyLocked || !canGoBack}
-					label="Go back"
-					onClick={() => router.history.back()}
-					tabIndex={historyInactive ? -1 : undefined}
-					title="Go back"
-				>
-					<ArrowLeft className="size-icon-lg" aria-hidden="true" />
-				</TitlebarButton>
-				<TitlebarButton
-					disabled={historyInactive || historyLocked || !canGoForward}
-					label="Go forward"
-					onClick={() => router.history.forward()}
-					tabIndex={historyInactive ? -1 : undefined}
-					title="Go forward"
-				>
-					<ArrowRight className="size-icon-lg" aria-hidden="true" />
-				</TitlebarButton>
-			</div>
+		<div
+			className={`fixed ${topClass} ${leftClass} z-titlebar flex h-traffic-light-clearance items-center gap-1`}
+			style={noDragStyle}
+		>
+			<TitlebarButton
+				label={isSidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+				onClick={toggleSidebar}
+				onPointerEnter={onSidebarPreviewEnter}
+				title={`${isSidebarOpen ? "Collapse" : "Expand"} sidebar · ⌘B`}
+			>
+				<PanelLeft className="size-icon-lg" aria-hidden="true" />
+			</TitlebarButton>
+			<TitlebarButton
+				disabled={historyLocked || !canGoBack}
+				label="Go back"
+				onClick={() => router.history.back()}
+				title="Go back"
+			>
+				<ArrowLeft className="size-icon-lg" aria-hidden="true" />
+			</TitlebarButton>
+			<TitlebarButton
+				disabled={historyLocked || !canGoForward}
+				label="Go forward"
+				onClick={() => router.history.forward()}
+				title="Go forward"
+			>
+				<ArrowRight className="size-icon-lg" aria-hidden="true" />
+			</TitlebarButton>
 		</div>
 	);
 }
@@ -89,6 +92,7 @@ function TitlebarButton({
 	disabled,
 	tabIndex,
 	onClick,
+	onPointerEnter,
 	children,
 }: {
 	label: string;
@@ -96,6 +100,7 @@ function TitlebarButton({
 	disabled?: boolean;
 	tabIndex?: number;
 	onClick: () => void;
+	onPointerEnter?: React.PointerEventHandler<HTMLButtonElement>;
 	children: React.ReactNode;
 }) {
 	return (
@@ -105,6 +110,8 @@ function TitlebarButton({
 			className="grid size-control-md place-items-center rounded-md text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent disabled:hover:text-passive"
 			disabled={disabled}
 			onClick={onClick}
+			onPointerEnter={onPointerEnter}
+			style={noDragStyle}
 			tabIndex={tabIndex}
 			title={title}
 			type="button"
