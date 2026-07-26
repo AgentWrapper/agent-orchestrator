@@ -92,10 +92,12 @@ type Runtime interface {
 //
 // A restart can cross an ownership boundary before every verification step has
 // completed. Once the replacement command has been applied, an implementation
-// must return the owned handle even if a later probe fails. It reports that
-// partial-success state with RestartAppliedUnverifiedError so callers can
-// durably adopt or explicitly compensate the replacement instead of treating
-// it as though no side effect occurred.
+// must return the owned handle even if a later probe fails, using
+// RestartAppliedUnverifiedError so the caller can durably adopt or compensate
+// it. If a timeout after dispatch makes the destructive command's outcome
+// uncertain, the implementation must instead return the owned handle with
+// RestartOutcomeUncertainError so the caller can compensate it without falsely
+// adopting an unproven generation.
 type RuntimeRestarter interface {
 	Restart(ctx context.Context, handle RuntimeHandle, cfg RuntimeConfig) (RuntimeHandle, error)
 }
@@ -117,6 +119,29 @@ func (e *RestartAppliedUnverifiedError) Error() string {
 }
 
 func (e *RestartAppliedUnverifiedError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
+
+// RestartOutcomeUncertainError means the destructive restart command was
+// dispatched, but its client timed out before learning whether the runtime
+// applied it. The RuntimeRestarter must return the possibly affected handle
+// alongside this error. Callers must compensate that handle and must not adopt
+// the unproven generation as durable state.
+type RestartOutcomeUncertainError struct {
+	Cause error
+}
+
+func (e *RestartOutcomeUncertainError) Error() string {
+	if e == nil || e.Cause == nil {
+		return "runtime restart outcome uncertain after dispatch"
+	}
+	return fmt.Sprintf("runtime restart outcome uncertain after dispatch: %v", e.Cause)
+}
+
+func (e *RestartOutcomeUncertainError) Unwrap() error {
 	if e == nil {
 		return nil
 	}

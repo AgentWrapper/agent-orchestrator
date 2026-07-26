@@ -2,10 +2,13 @@ package tmux
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,13 +16,22 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
+func integrationSessionID(t *testing.T) string {
+	t.Helper()
+	var entropy [8]byte
+	if _, err := rand.Read(entropy[:]); err != nil {
+		t.Fatalf("generate tmux integration session id: %v", err)
+	}
+	return "ao-test-" + hex.EncodeToString(entropy[:])
+}
+
 func TestRuntimeIntegration(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux unavailable")
 	}
 
 	ctx := context.Background()
-	id := strings.ReplaceAll(t.Name(), "/", "_")
+	id := integrationSessionID(t)
 	r := New(Options{Timeout: 5 * time.Second})
 
 	// Ensure clean slate: ignore errors (session may not exist).
@@ -88,7 +100,7 @@ func TestRuntimeIntegrationExactSessionParsing(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	base := strings.ReplaceAll(t.Name(), "/", "_")
+	base := integrationSessionID(t)
 	longID := base + "_long"
 	prefixID := base
 
@@ -127,21 +139,110 @@ func TestRuntimeIntegrationExactSessionParsing(t *testing.T) {
 
 type failPostRespawnProbeRunner struct {
 	delegate      runner
-	probeArmed    bool
+	mu            sync.Mutex
+	probeTargets  map[string]int
 	probeFailures int
 }
 
 func (r *failPostRespawnProbeRunner) Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
-	if r.probeArmed && len(args) > 0 && args[0] == "has-session" {
-		r.probeArmed = false
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	target := commandTarget(args)
+	if len(args) > 0 && args[0] == "has-session" && r.probeTargets[target] > 0 {
+		r.probeTargets[target]--
+		if r.probeTargets[target] == 0 {
+			delete(r.probeTargets, target)
+		}
 		r.probeFailures++
 		return nil, errors.New("injected post-respawn probe failure")
 	}
 	out, err := r.delegate.Run(ctx, env, name, args...)
 	if err == nil && len(args) > 0 && args[0] == "respawn-pane" {
-		r.probeArmed = true
+		paneTarget := commandTarget(args)
+		if sessionTarget := strings.TrimSuffix(paneTarget, ":0.0"); sessionTarget != paneTarget {
+			if r.probeTargets == nil {
+				r.probeTargets = make(map[string]int)
+			}
+			r.probeTargets[exactSessionTarget(sessionTarget)]++
+		}
 	}
 	return out, err
+}
+
+func (r *failPostRespawnProbeRunner) ProbeFailures() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.probeFailures
+}
+
+func commandTarget(args []string) string {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "-t" {
+			return args[i+1]
+		}
+	}
+	return ""
+}
+
+func TestFailPostRespawnProbeRunnerIsConcurrentAndTargetSpecific(t *testing.T) {
+	probeRunner := &failPostRespawnProbeRunner{
+		delegate: runnerFunc(func(_ context.Context, _ []string, _ string, _ ...string) ([]byte, error) {
+			return nil, nil
+		}),
+	}
+	if _, err := probeRunner.Run(context.Background(), nil, "tmux", respawnPaneArgs("target", "/tmp/ws", "/bin/sh", "true")...); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := probeRunner.Run(context.Background(), nil, "tmux", hasSessionArgs("other")...); err != nil {
+		t.Fatalf("unrelated probe consumed injected failure: %v", err)
+	}
+
+	const probes = 32
+	results := make(chan error, probes)
+	for i := 0; i < probes; i++ {
+		go func() {
+			_, err := probeRunner.Run(context.Background(), nil, "tmux", hasSessionArgs("target")...)
+			results <- err
+		}()
+	}
+	failures := 0
+	for i := 0; i < probes; i++ {
+		if err := <-results; err != nil {
+			if !strings.Contains(err.Error(), "injected post-respawn probe failure") {
+				t.Fatalf("unexpected probe error: %v", err)
+			}
+			failures++
+		}
+	}
+	if failures != 1 {
+		t.Fatalf("concurrent injected failures = %d, want 1", failures)
+	}
+	if got := probeRunner.ProbeFailures(); got != 1 {
+		t.Fatalf("recorded probe failures = %d, want 1", got)
+	}
+}
+
+func TestFailPostRespawnProbeRunnerTracksInterleavedTargets(t *testing.T) {
+	probeRunner := &failPostRespawnProbeRunner{
+		delegate: runnerFunc(func(_ context.Context, _ []string, _ string, _ ...string) ([]byte, error) {
+			return nil, nil
+		}),
+	}
+	for _, target := range []string{"target-a", "target-b"} {
+		if _, err := probeRunner.Run(context.Background(), nil, "tmux", respawnPaneArgs(target, "/tmp/ws", "/bin/sh", "true")...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, target := range []string{"target-a", "target-b"} {
+		if _, err := probeRunner.Run(context.Background(), nil, "tmux", hasSessionArgs(target)...); err == nil ||
+			!strings.Contains(err.Error(), "injected post-respawn probe failure") {
+			t.Fatalf("target %s probe error = %v, want its own injected failure", target, err)
+		}
+	}
+	if got := probeRunner.ProbeFailures(); got != 2 {
+		t.Fatalf("recorded interleaved probe failures = %d, want 2", got)
+	}
 }
 
 func TestRuntimeIntegrationRestartPreservesAppliedHandleWhenProbeFails(t *testing.T) {
@@ -150,7 +251,7 @@ func TestRuntimeIntegrationRestartPreservesAppliedHandleWhenProbeFails(t *testin
 	}
 
 	ctx := context.Background()
-	id := strings.ReplaceAll(t.Name(), "/", "_")
+	id := integrationSessionID(t)
 	r := New(Options{Timeout: 5 * time.Second})
 	probeRunner := &failPostRespawnProbeRunner{delegate: r.runner}
 	r.runner = probeRunner
@@ -181,8 +282,8 @@ func TestRuntimeIntegrationRestartPreservesAppliedHandleWhenProbeFails(t *testin
 	if !errors.As(err, &applied) {
 		t.Fatalf("Restart error = %v, want RestartAppliedUnverifiedError", err)
 	}
-	if probeRunner.probeFailures != 1 {
-		t.Fatalf("injected probe failures = %d, want 1", probeRunner.probeFailures)
+	if got := probeRunner.ProbeFailures(); got != 1 {
+		t.Fatalf("injected probe failures = %d, want 1", got)
 	}
 
 	alive, probeErr := r.IsAlive(ctx, restarted)
@@ -201,7 +302,7 @@ func TestRuntimeIntegrationSupervisedExitKeepsInteractiveShell(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	id := strings.ReplaceAll(t.Name(), "/", "_")
+	id := integrationSessionID(t)
 	const launchID = "launch-1"
 	r := New(Options{Timeout: 5 * time.Second})
 	tmuxID := SessionName(id)
@@ -311,5 +412,6 @@ func waitForOutput(t *testing.T, r *Runtime, h ports.RuntimeHandle, want string,
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+	t.Fatalf("timed out waiting for %q in tmux output: %q", want, out)
 	return out
 }

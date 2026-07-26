@@ -221,6 +221,10 @@ const (
 	sendConfirmPollInterval    = 300 * time.Millisecond
 	sendConfirmAttemptDeadline = 2 * time.Second
 	sendConfirmMaxAttempts     = 3
+	// runtimeReplacementTimeout bounds the full fallback Destroy/Create
+	// transition for runtimes without an atomic Restart capability. It is
+	// intentionally separate from the subsequent durable-finalization budget.
+	runtimeReplacementTimeout = 30 * time.Second
 	// launchFinalizeTimeout bounds the cancellation-detached phase after a
 	// runtime Create/Restart has crossed its external side-effect boundary.
 	// Durable generation adoption (or compensation) must finish even when the
@@ -1206,6 +1210,22 @@ func (m *Manager) restartRuntime(ctx context.Context, handle ports.RuntimeHandle
 			if restartErr == nil {
 				return restarted, nil
 			}
+			var uncertain *ports.RestartOutcomeUncertainError
+			if errors.As(restartErr, &uncertain) {
+				if restarted.ID == "" {
+					return ports.RuntimeHandle{}, fmt.Errorf("restart reported uncertain outcome without an owned handle: %w", restartErr)
+				}
+				compensateCtx, cancelCompensate := context.WithTimeout(context.WithoutCancel(ctx), launchFinalizeTimeout)
+				destroyErr := m.runtime.Destroy(compensateCtx, restarted)
+				cancelCompensate()
+				if destroyErr != nil {
+					return ports.RuntimeHandle{}, errors.Join(
+						restartErr,
+						fmt.Errorf("compensate outcome-uncertain restart for handle %s: %w", restarted.ID, destroyErr),
+					)
+				}
+				return ports.RuntimeHandle{}, fmt.Errorf("compensated outcome-uncertain restart for handle %s: %w", restarted.ID, restartErr)
+			}
 			var applied *ports.RestartAppliedUnverifiedError
 			if !errors.As(restartErr, &applied) {
 				return ports.RuntimeHandle{}, restartErr
@@ -1217,9 +1237,30 @@ func (m *Manager) restartRuntime(ctx context.Context, handle ports.RuntimeHandle
 				"sessionID", cfg.SessionID, "handle", restarted.ID, "error", applied)
 			return restarted, nil
 		}
-		if err := m.runtime.Destroy(ctx, handle); err != nil {
+		// The fallback is necessarily a destructive two-step transition. Honor
+		// cancellation before crossing that boundary, then detach and bound the
+		// whole Destroy/Create sequence so caller cancellation cannot strand the
+		// durable row between the two operations. The legacy Runtime interface
+		// cannot distinguish a Destroy error returned after an applied side
+		// effect; adapters that can do an atomic replacement should implement
+		// RuntimeRestarter instead.
+		if err := ctx.Err(); err != nil {
+			return ports.RuntimeHandle{}, err
+		}
+		replaceCtx, cancelReplace := context.WithTimeout(context.WithoutCancel(ctx), runtimeReplacementTimeout)
+		defer cancelReplace()
+		if err := m.runtime.Destroy(replaceCtx, handle); err != nil {
 			return ports.RuntimeHandle{}, fmt.Errorf("destroy existing runtime: %w", err)
 		}
+		replacement, createErr := m.runtime.Create(replaceCtx, cfg)
+		if createErr != nil {
+			// Keep the exited generation and its stable handle in the durable
+			// row. The next Resume will probe that handle as dead and can retry
+			// Create; marking it terminated here would invent user intent and
+			// move a transient launch failure into Archive.
+			return ports.RuntimeHandle{}, fmt.Errorf("create replacement runtime after destroying existing runtime: %w", createErr)
+		}
+		return replacement, nil
 	}
 	return m.runtime.Create(ctx, cfg)
 }
@@ -2077,46 +2118,70 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 		return CleanupResult{}, fmt.Errorf("cleanup %s: %w", project, err)
 	}
 	result := CleanupResult{Cleaned: make([]domain.SessionID, 0, len(recs)), Skipped: []CleanupSkip{}}
-	for _, rec := range recs {
-		if !rec.IsTerminated {
+	for _, candidate := range recs {
+		if !candidate.IsTerminated {
 			continue
 		}
-		ws := workspaceInfo(rec)
-		if ws.Path == "" {
-			m.cleanupSystemPromptDir(rec.ID)
-			continue
+		cleaned, skipped, cleanupErr := m.cleanupTerminalSession(ctx, project, candidate.ID)
+		if cleanupErr != nil {
+			return result, fmt.Errorf("cleanup %s session %s: %w", project, candidate.ID, cleanupErr)
 		}
-		if h := runtimeHandle(rec.Metadata); h.ID != "" {
-			_ = m.runtime.Destroy(ctx, h) // best effort; usually already gone
+		if skipped != nil {
+			result.Skipped = append(result.Skipped, *skipped)
 		}
-		if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
-			m.logger.Warn("cleanup: workspace rows failed", "sessionID", rec.ID, "error", rowErr)
-			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: "workspace teardown failed"})
-			continue
-		} else if ok {
-			if _, err := m.destroyWorkspaceProjectRows(ctx, rows); err != nil {
-				if !errors.Is(err, ports.ErrWorkspaceDirty) {
-					m.logger.Warn("cleanup: workspace teardown failed", "sessionID", rec.ID, "path", ws.Path, "error", err)
-				}
-				result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: cleanupSkipReason(err)})
-				continue
-			}
-			m.cleanupAgentWorkspace(ctx, rec, ws.Path)
-		} else if err := m.workspace.Destroy(ctx, ws); err != nil {
-			if !errors.Is(err, ports.ErrWorkspaceDirty) {
-				// The public reason stays a fixed string (the raw error carries
-				// internal filesystem paths); the full cause lands here.
-				m.logger.Warn("cleanup: workspace teardown failed", "sessionID", rec.ID, "path", ws.Path, "error", err)
-			}
-			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: cleanupSkipReason(err)})
-			continue
-		} else {
-			m.cleanupAgentWorkspace(ctx, rec, ws.Path)
+		if cleaned {
+			result.Cleaned = append(result.Cleaned, candidate.ID)
 		}
-		m.cleanupSystemPromptDir(rec.ID)
-		result.Cleaned = append(result.Cleaned, rec.ID)
 	}
 	return result, nil
+}
+
+// cleanupTerminalSession joins the same per-session operation boundary as
+// Restore/Kill/Resume, then re-reads the candidate selected by Cleanup's
+// snapshot. A restore that wins the lock can therefore make the row live before
+// cleanup touches either its newly restored runtime or workspace.
+func (m *Manager) cleanupTerminalSession(ctx context.Context, project domain.ProjectID, id domain.SessionID) (bool, *CleanupSkip, error) {
+	unlock := m.lockSessionOperation(id)
+	defer unlock()
+
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return false, nil, err
+	}
+	if !ok || !rec.IsTerminated || (project != "" && rec.ProjectID != project) {
+		return false, nil, nil
+	}
+	ws := workspaceInfo(rec)
+	if ws.Path == "" {
+		m.cleanupSystemPromptDir(rec.ID)
+		return false, nil, nil
+	}
+	if h := runtimeHandle(rec.Metadata); h.ID != "" {
+		_ = m.runtime.Destroy(ctx, h) // best effort; usually already gone
+	}
+	if rows, workspaceProject, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
+		m.logger.Warn("cleanup: workspace rows failed", "sessionID", rec.ID, "error", rowErr)
+		return false, &CleanupSkip{SessionID: rec.ID, Reason: "workspace teardown failed"}, nil
+	} else if workspaceProject {
+		if _, err := m.destroyWorkspaceProjectRows(ctx, rows); err != nil {
+			if !errors.Is(err, ports.ErrWorkspaceDirty) {
+				m.logger.Warn("cleanup: workspace teardown failed", "sessionID", rec.ID, "path", ws.Path, "error", err)
+			}
+			return false, &CleanupSkip{SessionID: rec.ID, Reason: cleanupSkipReason(err)}, nil
+		}
+		m.cleanupAgentWorkspace(ctx, rec, ws.Path)
+	} else if err := m.workspace.Destroy(ctx, ws); err != nil {
+		if !errors.Is(err, ports.ErrWorkspaceDirty) {
+			// The public reason stays a fixed string (the raw error carries
+			// internal filesystem paths); the full cause lands here.
+			m.logger.Warn("cleanup: workspace teardown failed", "sessionID", rec.ID, "path", ws.Path, "error", err)
+		}
+		return false, &CleanupSkip{SessionID: rec.ID, Reason: cleanupSkipReason(err)}, nil
+	} else {
+		m.cleanupAgentWorkspace(ctx, rec, ws.Path)
+	}
+	m.cleanupSystemPromptDir(rec.ID)
+	return true, nil, nil
 }
 
 // cleanupSkipReason renders a workspace teardown refusal as a short

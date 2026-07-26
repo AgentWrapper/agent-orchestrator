@@ -252,6 +252,54 @@ func (r *blockingDestroyRestartRuntime) Destroy(ctx context.Context, handle port
 	return r.fakeRuntime.Destroy(ctx, handle)
 }
 
+type blockingCreateRuntime struct {
+	*fakeRuntime
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (r *blockingCreateRuntime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
+	close(r.entered)
+	select {
+	case <-r.release:
+	case <-ctx.Done():
+		return ports.RuntimeHandle{}, ctx.Err()
+	}
+	return r.fakeRuntime.Create(ctx, cfg)
+}
+
+type cancelAfterDestroyRuntime struct {
+	*fakeRuntime
+	cancel       context.CancelFunc
+	createCtxErr error
+}
+
+func (r *cancelAfterDestroyRuntime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error {
+	if err := r.fakeRuntime.Destroy(ctx, handle); err != nil {
+		return err
+	}
+	r.cancel()
+	return nil
+}
+
+func (r *cancelAfterDestroyRuntime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
+	r.createCtxErr = ctx.Err()
+	return r.fakeRuntime.Create(ctx, cfg)
+}
+
+type callbackCreateRuntime struct {
+	*fakeRuntime
+	onCreate func(ports.RuntimeHandle)
+}
+
+func (r *callbackCreateRuntime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
+	handle, err := r.fakeRuntime.Create(ctx, cfg)
+	if err == nil && r.onCreate != nil {
+		r.onCreate(handle)
+	}
+	return handle, err
+}
+
 type observedLocker struct {
 	mu        sync.Mutex
 	attempted chan struct{}
@@ -1116,6 +1164,45 @@ func TestResumeAgent_CompensatesAppliedRestartWhenDurableAdoptionIsRejected(t *t
 	}
 }
 
+func TestResumeAgent_CompensatesOutcomeUncertainRestartWithoutAdoptingGeneration(t *testing.T) {
+	baseRuntime := &fakeRuntime{aliveByHandle: map[string]bool{"tmux-mer-1": true}}
+	runtime := &fakeRestartRuntime{
+		fakeRuntime:   baseRuntime,
+		restartErr:    &ports.RestartOutcomeUncertainError{Cause: context.DeadlineExceeded},
+		handleOnError: true,
+	}
+	agent := supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "resume", "agent-x"}}}
+	m, st, _ := newExitedResumeManager(t, runtime, agent)
+	requestCtx, cancelRequest := context.WithCancel(context.Background())
+	runtime.onRestart = cancelRequest
+
+	if _, err := m.ResumeAgentWithMode(requestCtx, "mer-1"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Resume error = %v, want outcome-uncertain deadline", err)
+	}
+	if requestCtx.Err() != context.Canceled {
+		t.Fatalf("request context error = %v, want canceled", requestCtx.Err())
+	}
+	if baseRuntime.destroyed != 1 || !reflect.DeepEqual(baseRuntime.destroyedIDs, []string{"tmux-mer-1"}) {
+		t.Fatalf("uncertain restart compensation = %d ids=%v, want owned handle once",
+			baseRuntime.destroyed, baseRuntime.destroyedIDs)
+	}
+	if baseRuntime.destroyCtxErr != nil {
+		t.Fatalf("uncertain restart compensation inherited caller cancellation: %v", baseRuntime.destroyCtxErr)
+	}
+	got := st.sessions["mer-1"]
+	if got.IsTerminated || got.Activity.State != domain.ActivityExited ||
+		got.Metadata.RuntimeHandleID != "tmux-mer-1" || got.Metadata.RuntimeLaunchID != "launch-old" {
+		t.Fatalf("uncertain restart changed durable generation: %+v", got)
+	}
+	lcm := m.lcm.(*fakeLCM)
+	if lcm.completed != 0 {
+		t.Fatalf("uncertain restart completed durable generation: %d", lcm.completed)
+	}
+	if !reflect.DeepEqual(lcm.cancelled, []string{"mer-1:launch-new"}) {
+		t.Fatalf("uncertain restart launch cleanup = %v, want pending generation released", lcm.cancelled)
+	}
+}
+
 func TestResumeAgent_FallsBackToRuntimeRecreateWithoutRestartCapability(t *testing.T) {
 	runtime := &fakeRuntime{aliveByHandle: map[string]bool{"tmux-mer-1": true}}
 	agent := supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "resume", "agent-x"}}}
@@ -1129,6 +1216,106 @@ func TestResumeAgent_FallsBackToRuntimeRecreateWithoutRestartCapability(t *testi
 	}
 	if got := st.sessions["mer-1"].Metadata.RuntimeHandleID; got != "h1" {
 		t.Fatalf("fallback runtime handle = %q, want h1", got)
+	}
+}
+
+func TestResumeAgent_FallbackReplacementSurvivesCallerCancellationAfterDestroy(t *testing.T) {
+	requestCtx, cancelRequest := context.WithCancel(context.Background())
+	baseRuntime := &fakeRuntime{aliveByHandle: map[string]bool{"tmux-mer-1": true}}
+	runtime := &cancelAfterDestroyRuntime{fakeRuntime: baseRuntime, cancel: cancelRequest}
+	agent := supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "resume", "agent-x"}}}
+	m, st, _ := newExitedResumeManager(t, runtime, agent)
+
+	result, err := m.ResumeAgentWithMode(requestCtx, "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requestCtx.Err() != context.Canceled {
+		t.Fatalf("request context error = %v, want canceled", requestCtx.Err())
+	}
+	if runtime.createCtxErr != nil {
+		t.Fatalf("replacement Create inherited caller cancellation: %v", runtime.createCtxErr)
+	}
+	if baseRuntime.destroyed != 1 || baseRuntime.created != 1 {
+		t.Fatalf("fallback runtime lifecycle: created=%d destroyed=%d, want one each",
+			baseRuntime.created, baseRuntime.destroyed)
+	}
+	got := st.sessions["mer-1"]
+	if got.IsTerminated || got.Activity.State != domain.ActivityIdle ||
+		got.Metadata.RuntimeHandleID != "h1" || got.Metadata.RuntimeLaunchID != "launch-new" {
+		t.Fatalf("cancellation-safe fallback resume = %+v", got)
+	}
+	if result.Session.Metadata.RuntimeHandleID != "h1" {
+		t.Fatalf("returned replacement handle = %q, want h1", result.Session.Metadata.RuntimeHandleID)
+	}
+}
+
+func TestResumeAgent_FallbackCreateFailureRemainsExitedAndRetryable(t *testing.T) {
+	createFailure := errors.New("replacement unavailable")
+	runtime := &fakeRuntime{
+		aliveByHandle: map[string]bool{"tmux-mer-1": true},
+		createErr:     createFailure,
+	}
+	agent := supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "resume", "agent-x"}}}
+	m, st, _ := newExitedResumeManager(t, runtime, agent)
+	lcm := m.lcm.(*fakeLCM)
+
+	if _, err := m.ResumeAgentWithMode(ctx, "mer-1"); !errors.Is(err, createFailure) {
+		t.Fatalf("Resume error = %v, want replacement Create failure", err)
+	}
+	got := st.sessions["mer-1"]
+	if got.IsTerminated || got.Activity.State != domain.ActivityExited ||
+		got.Metadata.RuntimeHandleID != "tmux-mer-1" || got.Metadata.RuntimeLaunchID != "launch-old" {
+		t.Fatalf("failed fallback changed retryable exited generation: %+v", got)
+	}
+	if runtime.destroyed != 1 || runtime.created != 0 {
+		t.Fatalf("failed fallback runtime lifecycle: created=%d destroyed=%d", runtime.created, runtime.destroyed)
+	}
+	if !reflect.DeepEqual(lcm.cancelled, []string{"mer-1:launch-new"}) {
+		t.Fatalf("failed fallback launch cleanup = %v, want pending generation released", lcm.cancelled)
+	}
+
+	// ConPTY removes the destroyed handle from its registry, so the next Resume
+	// observes it as dead and can retry Create without another Destroy.
+	runtime.aliveByHandle["tmux-mer-1"] = false
+	runtime.createErr = nil
+	if _, err := m.ResumeAgentWithMode(ctx, "mer-1"); err != nil {
+		t.Fatalf("retry Resume: %v", err)
+	}
+	got = st.sessions["mer-1"]
+	if got.IsTerminated || got.Activity.State != domain.ActivityIdle ||
+		got.Metadata.RuntimeHandleID != "h1" || got.Metadata.RuntimeLaunchID != "launch-new" {
+		t.Fatalf("retried fallback resume = %+v", got)
+	}
+	if runtime.destroyed != 1 || runtime.created != 1 {
+		t.Fatalf("retry runtime lifecycle: created=%d destroyed=%d, want create without second destroy",
+			runtime.created, runtime.destroyed)
+	}
+}
+
+func TestResumeAgent_FallbackReplacementIsCompensatedWhenCommitIsRejected(t *testing.T) {
+	baseRuntime := &fakeRuntime{aliveByHandle: map[string]bool{"tmux-mer-1": true}}
+	runtime := &callbackCreateRuntime{fakeRuntime: baseRuntime}
+	agent := supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "resume", "agent-x"}}}
+	m, st, _ := newExitedResumeManager(t, runtime, agent)
+	runtime.onCreate = func(ports.RuntimeHandle) {
+		rec := st.sessions["mer-1"]
+		rec.IsTerminated = true
+		st.sessions["mer-1"] = rec
+	}
+
+	if _, err := m.ResumeAgentWithMode(ctx, "mer-1"); err == nil || !strings.Contains(err.Error(), "session changed") {
+		t.Fatalf("Resume error = %v, want rejected durable adoption", err)
+	}
+	if baseRuntime.created != 1 || baseRuntime.destroyed != 2 ||
+		!reflect.DeepEqual(baseRuntime.destroyedIDs, []string{"tmux-mer-1", "h1"}) {
+		t.Fatalf("fallback compensation: created=%d destroyed=%d ids=%v",
+			baseRuntime.created, baseRuntime.destroyed, baseRuntime.destroyedIDs)
+	}
+	got := st.sessions["mer-1"]
+	if !got.IsTerminated || got.Activity.State != domain.ActivityExited ||
+		got.Metadata.RuntimeHandleID != "tmux-mer-1" || got.Metadata.RuntimeLaunchID != "launch-old" {
+		t.Fatalf("rejected fallback adoption changed terminal record: %+v", got)
 	}
 }
 
@@ -1196,6 +1383,25 @@ func TestResumeAgent_RejectsConcurrentRequest(t *testing.T) {
 	close(runtime.release)
 	if err := <-firstDone; err != nil {
 		t.Fatalf("first resume: %v", err)
+	}
+}
+
+func TestSessionOperationLock_DifferentSessionsProceedIndependently(t *testing.T) {
+	m, _, _, _ := newManager()
+	unlockFirst := m.lockSessionOperation("mer-1")
+	defer unlockFirst()
+
+	secondDone := make(chan struct{})
+	go func() {
+		unlockSecond := m.lockSessionOperation("mer-2")
+		unlockSecond()
+		close(secondDone)
+	}()
+
+	select {
+	case <-secondDone:
+	case <-time.After(time.Second):
+		t.Fatal("operation on mer-2 blocked behind unrelated mer-1 operation")
 	}
 }
 
@@ -2323,6 +2529,148 @@ func TestCleanup_ReclaimsTerminalWorkspaces(t *testing.T) {
 	}
 	if ws.destroyed != 1 {
 		t.Fatal("live workspace must not be destroyed")
+	}
+}
+
+func TestCleanupRestoreRace_RestoreWinsAndCleanupSkipsFreshLiveResources(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	seedTerminal(st, "mer-1", domain.SessionMetadata{
+		WorkspacePath:   "/ws/mer-1",
+		Branch:          "ao/mer-1",
+		RuntimeHandleID: "old-handle",
+		AgentSessionID:  "agent-x",
+		RuntimeLaunchID: "launch-old",
+	})
+	baseRuntime := &fakeRuntime{}
+	runtime := &blockingCreateRuntime{
+		fakeRuntime: baseRuntime,
+		entered:     make(chan struct{}),
+		release:     make(chan struct{}),
+	}
+	ws := &fakeWorkspace{}
+	agent := supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "resume", "agent-x"}}}
+	m := New(Deps{
+		Runtime: runtime, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath:    func(string) (string, error) { return "/bin/true", nil },
+		Executable:  func() (string, error) { return "/opt/ao", nil },
+		NewLaunchID: func() string { return "launch-new" },
+	})
+	operationLock := &observedLocker{attempted: make(chan struct{}, 2)}
+	m.operationLocks["mer-1"] = &sessionOperationLock{locker: operationLock}
+
+	restoreDone := make(chan error, 1)
+	go func() {
+		_, err := m.RestoreWithMode(ctx, "mer-1")
+		restoreDone <- err
+	}()
+	<-operationLock.attempted
+	<-runtime.entered
+
+	type cleanupCall struct {
+		result CleanupResult
+		err    error
+	}
+	cleanupDone := make(chan cleanupCall, 1)
+	go func() {
+		result, err := m.Cleanup(ctx, "mer")
+		cleanupDone <- cleanupCall{result: result, err: err}
+	}()
+	// Cleanup took its terminal-session snapshot and reached the shared lock
+	// while Restore still owns it and has not committed the live generation.
+	<-operationLock.attempted
+
+	close(runtime.release)
+	if err := <-restoreDone; err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	cleanup := <-cleanupDone
+	if cleanup.err != nil {
+		t.Fatalf("Cleanup: %v", cleanup.err)
+	}
+	if len(cleanup.result.Cleaned) != 0 || len(cleanup.result.Skipped) != 0 {
+		t.Fatalf("Cleanup result = %+v, want restored session skipped", cleanup.result)
+	}
+	if baseRuntime.destroyed != 0 || ws.destroyed != 0 {
+		t.Fatalf("Cleanup destroyed restored resources: runtime=%d workspace=%d",
+			baseRuntime.destroyed, ws.destroyed)
+	}
+	got := st.sessions["mer-1"]
+	if got.IsTerminated || got.Activity.State != domain.ActivityIdle ||
+		got.Metadata.RuntimeHandleID != "h1" || got.Metadata.RuntimeLaunchID != "launch-new" {
+		t.Fatalf("restored session after overlapping Cleanup = %+v", got)
+	}
+}
+
+func TestCleanupRestoreRace_CleanupWinsBeforeRestoreRecreatesResources(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	seedTerminal(st, "mer-1", domain.SessionMetadata{
+		WorkspacePath:   "/ws/mer-1",
+		Branch:          "ao/mer-1",
+		RuntimeHandleID: "old-handle",
+		AgentSessionID:  "agent-x",
+		RuntimeLaunchID: "launch-old",
+	})
+	baseRuntime := &fakeRuntime{}
+	runtime := &blockingDestroyRestartRuntime{
+		fakeRestartRuntime: &fakeRestartRuntime{fakeRuntime: baseRuntime},
+		entered:            make(chan struct{}),
+		release:            make(chan struct{}),
+	}
+	ws := &fakeWorkspace{}
+	agent := supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "resume", "agent-x"}}}
+	m := New(Deps{
+		Runtime: runtime, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath:    func(string) (string, error) { return "/bin/true", nil },
+		Executable:  func() (string, error) { return "/opt/ao", nil },
+		NewLaunchID: func() string { return "launch-new" },
+	})
+	operationLock := &observedLocker{attempted: make(chan struct{}, 2)}
+	m.operationLocks["mer-1"] = &sessionOperationLock{locker: operationLock}
+
+	type cleanupCall struct {
+		result CleanupResult
+		err    error
+	}
+	cleanupDone := make(chan cleanupCall, 1)
+	go func() {
+		result, err := m.Cleanup(ctx, "mer")
+		cleanupDone <- cleanupCall{result: result, err: err}
+	}()
+	<-operationLock.attempted
+	<-runtime.entered
+
+	restoreDone := make(chan error, 1)
+	go func() {
+		_, err := m.RestoreWithMode(ctx, "mer-1")
+		restoreDone <- err
+	}()
+	// Restore is queued while Cleanup still owns the operation boundary.
+	<-operationLock.attempted
+
+	close(runtime.release)
+	cleanup := <-cleanupDone
+	if cleanup.err != nil {
+		t.Fatalf("Cleanup: %v", cleanup.err)
+	}
+	if !reflect.DeepEqual(cleanup.result.Cleaned, []domain.SessionID{"mer-1"}) ||
+		len(cleanup.result.Skipped) != 0 {
+		t.Fatalf("Cleanup result = %+v, want mer-1 cleaned", cleanup.result)
+	}
+	if err := <-restoreDone; err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if baseRuntime.destroyed != 1 || baseRuntime.created != 1 || ws.destroyed != 1 {
+		t.Fatalf("serialized resource lifecycle: runtime created=%d destroyed=%d workspace destroyed=%d",
+			baseRuntime.created, baseRuntime.destroyed, ws.destroyed)
+	}
+	got := st.sessions["mer-1"]
+	if got.IsTerminated || got.Activity.State != domain.ActivityIdle ||
+		got.Metadata.RuntimeHandleID != "h1" || got.Metadata.RuntimeLaunchID != "launch-new" {
+		t.Fatalf("session after Cleanup then Restore = %+v", got)
 	}
 }
 
