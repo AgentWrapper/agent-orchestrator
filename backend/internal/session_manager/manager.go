@@ -2088,48 +2088,58 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 		if h := runtimeHandle(rec.Metadata); h.ID != "" {
 			_ = m.runtime.Destroy(ctx, h) // best effort; usually already gone
 		}
-		// Same ordering as Kill: gate shut any shell terminal scoped to this
-		// session before the worktree it points at is reclaimed. A runtime that
-		// cannot be confirmed dead skips this session for this run — Cleanup
-		// can retry it next time — rather than reclaiming ground out from
-		// under a shell still using it.
-		hadCloser, closeErr := m.beginShellTerminalTeardown(ctx, rec.ID)
-		if closeErr != nil {
-			m.logger.Warn("cleanup: shell terminal still open", "sessionID", rec.ID, "error", closeErr)
-			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: "shell terminal still open"})
+		if reason := m.cleanupOne(ctx, rec, ws); reason != "" {
+			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: reason})
 			continue
-		}
-		if hadCloser {
-			defer m.endShellTerminalTeardown(rec.ID)
-		}
-		if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
-			m.logger.Warn("cleanup: workspace rows failed", "sessionID", rec.ID, "error", rowErr)
-			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: "workspace teardown failed"})
-			continue
-		} else if ok {
-			if _, err := m.destroyWorkspaceProjectRows(ctx, rows); err != nil {
-				if !errors.Is(err, ports.ErrWorkspaceDirty) {
-					m.logger.Warn("cleanup: workspace teardown failed", "sessionID", rec.ID, "path", ws.Path, "error", err)
-				}
-				result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: cleanupSkipReason(err)})
-				continue
-			}
-			m.cleanupAgentWorkspace(ctx, rec, ws.Path)
-		} else if err := m.workspace.Destroy(ctx, ws); err != nil {
-			if !errors.Is(err, ports.ErrWorkspaceDirty) {
-				// The public reason stays a fixed string (the raw error carries
-				// internal filesystem paths); the full cause lands here.
-				m.logger.Warn("cleanup: workspace teardown failed", "sessionID", rec.ID, "path", ws.Path, "error", err)
-			}
-			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: cleanupSkipReason(err)})
-			continue
-		} else {
-			m.cleanupAgentWorkspace(ctx, rec, ws.Path)
 		}
 		m.cleanupSystemPromptDir(rec.ID)
 		result.Cleaned = append(result.Cleaned, rec.ID)
 	}
 	return result, nil
+}
+
+// cleanupOne reclaims one terminated session's workspace, gating shut any
+// shell terminal scoped to it first (same ordering as Kill). Split out of
+// Cleanup's loop so endShellTerminalTeardown's defer is scoped to one
+// session's call, not deferred across every iteration until Cleanup itself
+// returns. Returns "" when the workspace was reclaimed; a non-empty reason
+// means it was left alone this run (Cleanup records it in Skipped and can
+// retry on a later call) — most commonly because a scoped shell terminal
+// could not be confirmed closed, so reclaiming would pull the ground out
+// from under it.
+func (m *Manager) cleanupOne(ctx context.Context, rec domain.SessionRecord, ws ports.WorkspaceInfo) (skipReason string) {
+	hadCloser, closeErr := m.beginShellTerminalTeardown(ctx, rec.ID)
+	if closeErr != nil {
+		m.logger.Warn("cleanup: shell terminal still open", "sessionID", rec.ID, "error", closeErr)
+		return "shell terminal still open"
+	}
+	if hadCloser {
+		defer m.endShellTerminalTeardown(rec.ID)
+	}
+
+	if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
+		m.logger.Warn("cleanup: workspace rows failed", "sessionID", rec.ID, "error", rowErr)
+		return "workspace teardown failed"
+	} else if ok {
+		if _, err := m.destroyWorkspaceProjectRows(ctx, rows); err != nil {
+			if !errors.Is(err, ports.ErrWorkspaceDirty) {
+				m.logger.Warn("cleanup: workspace teardown failed", "sessionID", rec.ID, "path", ws.Path, "error", err)
+			}
+			return cleanupSkipReason(err)
+		}
+		m.cleanupAgentWorkspace(ctx, rec, ws.Path)
+		return ""
+	}
+	if err := m.workspace.Destroy(ctx, ws); err != nil {
+		if !errors.Is(err, ports.ErrWorkspaceDirty) {
+			// The public reason stays a fixed string (the raw error carries
+			// internal filesystem paths); the full cause lands here.
+			m.logger.Warn("cleanup: workspace teardown failed", "sessionID", rec.ID, "path", ws.Path, "error", err)
+		}
+		return cleanupSkipReason(err)
+	}
+	m.cleanupAgentWorkspace(ctx, rec, ws.Path)
+	return ""
 }
 
 // cleanupSkipReason renders a workspace teardown refusal as a short

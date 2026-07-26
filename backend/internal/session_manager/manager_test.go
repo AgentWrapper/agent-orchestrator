@@ -1750,7 +1750,7 @@ func TestKill_ClosesScopedShellTerminalsBeforeWorkspaceTeardown(t *testing.T) {
 	if beginIdx == -1 || destroyIdx == -1 || endIdx == -1 {
 		t.Fatalf("call log missing expected entries: %v", calls)
 	}
-	if !(beginIdx < destroyIdx && destroyIdx < endIdx) {
+	if beginIdx >= destroyIdx || destroyIdx >= endIdx {
 		t.Fatalf("call order = %v, want begin, then destroy, then end", calls)
 	}
 }
@@ -2153,7 +2153,7 @@ func TestCleanup_ClosesScopedShellTerminalsBeforeWorkspaceTeardown(t *testing.T)
 	if beginIdx == -1 || destroyIdx == -1 || endIdx == -1 {
 		t.Fatalf("call log missing expected entries: %v", calls)
 	}
-	if !(beginIdx < destroyIdx && destroyIdx < endIdx) {
+	if beginIdx >= destroyIdx || destroyIdx >= endIdx {
 		t.Fatalf("call order = %v, want begin, then destroy, then end", calls)
 	}
 }
@@ -4114,7 +4114,7 @@ func TestSaveAndTeardownAll_ClosesScopedShellTerminalsBeforeForceDestroy(t *test
 	if beginIdx == -1 || forceIdx == -1 || endIdx == -1 {
 		t.Fatalf("call log missing expected entries: %v", sharedLog)
 	}
-	if !(beginIdx < forceIdx && forceIdx < endIdx) {
+	if beginIdx >= forceIdx || forceIdx >= endIdx {
 		t.Fatalf("call order = %v, want begin, then force destroy, then end", sharedLog)
 	}
 }
@@ -4245,7 +4245,7 @@ func TestRetireForReplacementClosesScopedShellTerminalsBeforeForceDestroy(t *tes
 	if beginIdx == -1 || forceIdx == -1 || endIdx == -1 {
 		t.Fatalf("call log missing expected entries: %v", sharedLog)
 	}
-	if !(beginIdx < forceIdx && forceIdx < endIdx) {
+	if beginIdx >= forceIdx || forceIdx >= endIdx {
 		t.Fatalf("call order = %v, want begin, then force destroy, then end", sharedLog)
 	}
 }
@@ -4328,7 +4328,7 @@ func TestRetireForReplacementWorkspaceProjectClosesScopedShellTerminalsBeforeFor
 	if beginIdx == -1 || forceIdx == -1 || endIdx == -1 {
 		t.Fatalf("call log missing expected entries: %v", sharedLog)
 	}
-	if !(beginIdx < forceIdx && forceIdx < endIdx) {
+	if beginIdx >= forceIdx || forceIdx >= endIdx {
 		t.Fatalf("call order = %v, want begin, then force destroy, then end", sharedLog)
 	}
 }
@@ -5396,7 +5396,7 @@ func TestReconcileLive_ClosesScopedShellTerminalsBeforeForceDestroy(t *testing.T
 	if beginIdx == -1 || forceIdx == -1 || endIdx == -1 {
 		t.Fatalf("call log missing expected entries: %v", sharedLog)
 	}
-	if !(beginIdx < forceIdx && forceIdx < endIdx) {
+	if beginIdx >= forceIdx || forceIdx >= endIdx {
 		t.Fatalf("call order = %v, want begin, then force destroy, then end", sharedLog)
 	}
 }
