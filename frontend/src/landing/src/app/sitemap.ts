@@ -3,6 +3,7 @@ import type { MetadataRoute } from "next";
 import { getBlogPosts } from "@/lib/blog";
 import { getChangelogEntries } from "@/lib/changelog";
 import { getComparisonPages } from "@/lib/compare";
+import { getAllDocSlugs } from "@/lib/docs";
 import { getAllLegalSlugs, getLegalPage } from "@/lib/legal";
 import { themeListings } from "@/lib/marketplace";
 import { getAllPeople } from "@/lib/people";
@@ -157,8 +158,16 @@ export default function sitemap(): MetadataRoute.Sitemap {
 		priority: 0.6,
 	}));
 
+	const docsPages: MetadataRoute.Sitemap = getAllDocSlugs().map((slug) => ({
+		url: `${baseUrl}/docs${slug.length ? `/${slug.join("/")}` : ""}`,
+		lastModified: new Date(),
+		changeFrequency: "weekly" as const,
+		priority: 0.7,
+	}));
+
 	return [
 		...staticPages,
+		...docsPages,
 		...blogPages,
 		...changelogPages,
 		...teamPages,
