@@ -1690,22 +1690,20 @@ type fakeShellTerminalCloser struct {
 	sharedLog *[]string
 }
 
-func (f *fakeShellTerminalCloser) BeginSessionTeardown(_ context.Context, id domain.SessionID) error {
+func (f *fakeShellTerminalCloser) BeginSessionTeardown(_ context.Context, id domain.SessionID) (func(), error) {
 	f.began = append(f.began, id)
 	if f.err != nil {
-		return f.err
+		return nil, f.err
 	}
 	if f.sharedLog != nil {
 		*f.sharedLog = append(*f.sharedLog, "BeginSessionTeardown:"+string(id))
 	}
-	return nil
-}
-
-func (f *fakeShellTerminalCloser) EndSessionTeardown(id domain.SessionID) {
-	f.ended = append(f.ended, id)
-	if f.sharedLog != nil {
-		*f.sharedLog = append(*f.sharedLog, "EndSessionTeardown:"+string(id))
-	}
+	return func() {
+		f.ended = append(f.ended, id)
+		if f.sharedLog != nil {
+			*f.sharedLog = append(*f.sharedLog, "EndSessionTeardown:"+string(id))
+		}
+	}, nil
 }
 
 // TestKill_ClosesScopedShellTerminalsBeforeWorkspaceTeardown is the regression
