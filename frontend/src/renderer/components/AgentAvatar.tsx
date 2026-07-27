@@ -78,6 +78,8 @@ const MONO_MARKS: Record<string, { paths: string[]; fillRule?: "evenodd" }> = {
 type AgentAvatarProps = {
 	provider: string;
 	className?: string;
+	/** When true, the logo is purely decorative (label is shown beside it). */
+	decorative?: boolean;
 };
 
 /**
@@ -90,19 +92,18 @@ type AgentAvatarProps = {
  * hover title, so surfaces that show the logo in place of visible agent text —
  * e.g. the archive cards — still name the agent for screen readers.
  */
-export function AgentAvatar({ provider, className }: AgentAvatarProps) {
+export function AgentAvatar({ provider, className, decorative = false }: AgentAvatarProps) {
 	const mono = MONO_MARKS[provider];
 	if (mono) {
 		return (
 			<svg
-				role="img"
-				aria-label={provider}
-				viewBox="0 0 24 24"
+				viewBox="-2 -2 28 28"
 				fill="currentColor"
 				fillRule={mono.fillRule ?? "nonzero"}
-				className={cn("size-icon-xl shrink-0 text-foreground", className)}
+				className={cn("size-icon-base shrink-0 text-foreground", className)}
+				{...(decorative ? { "aria-hidden": true } : { role: "img", "aria-label": provider })}
 			>
-				<title>{provider}</title>
+				{decorative ? null : <title>{provider}</title>}
 				{mono.paths.map((d, index) => (
 					<path key={index} d={d} />
 				))}
@@ -114,10 +115,11 @@ export function AgentAvatar({ provider, className }: AgentAvatarProps) {
 		return (
 			<img
 				src={logo}
-				alt={provider}
-				className={cn("size-icon-xl shrink-0 object-contain", className)}
+				alt={decorative ? "" : provider}
+				aria-hidden={decorative || undefined}
+				className={cn("size-icon-base shrink-0 object-contain", className)}
 				draggable={false}
-				title={provider}
+				title={decorative ? undefined : provider}
 			/>
 		);
 	}
@@ -126,7 +128,7 @@ export function AgentAvatar({ provider, className }: AgentAvatarProps) {
 			role="img"
 			aria-label={provider}
 			className={cn(
-				"inline-flex size-icon-xl shrink-0 items-center justify-center text-caption font-bold uppercase leading-none text-muted-foreground",
+				"inline-flex size-icon-base shrink-0 items-center justify-center text-caption font-bold uppercase leading-none text-muted-foreground",
 				className,
 			)}
 			title={provider}
