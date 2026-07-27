@@ -3,8 +3,6 @@
 We love contributions — code, docs, triage, examples, and tests.
 Start on Discord so scope is clear before you invest time.
 
-## Join us on Discord
-
 [![Discord](https://img.shields.io/badge/Discord-join%20the%20community-5865F2?style=for-the-badge&logo=discord&logoColor=white&logoSize=auto)](https://discord.com/invite/UZv7JjxbwG)
 
 **Daily contributor sync:** every day at **10:00 PM IST**
@@ -32,7 +30,14 @@ Non-trivial work? Comment on the issue or ping Discord first. Get a thumbs-up, t
 5. **Open a clear PR** — narrow change, link the issue, user-visible impact, tests
 6. **Iterate** — address review; maintainers merge
 
-Need the product/run overview first? Start with [README.md](README.md) and [docs/architecture.md](docs/architecture.md).
+Need the product/run overview first? Start with [README.md](README.md),
+[docs/architecture.md](docs/architecture.md), and
+[docs/development.md](docs/development.md).
+
+Two onboarding notes matter on current `main`:
+
+- On fresh Linux setups, prefer `cd frontend && npm run package` unless you have also installed distro packaging tools such as `rpm`/`rpmbuild` for `npm run make`.
+- Mobile companion app docs are still being filled in. Do not assume `packages/mobile/README.md` is a complete headless setup guide on this branch.
 
 ### Bugs and features
 
