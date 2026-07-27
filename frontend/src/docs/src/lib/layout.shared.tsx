@@ -1,6 +1,5 @@
-import { BookOpenText } from "lucide-react";
 import type { BaseLayoutProps } from "fumadocs-ui/layouts/shared";
-import { COMPANY } from "@superset/shared/constants";
+import { COMPANY } from "../../../landing/packages/shared/src/constants";
 
 export function baseOptions(): BaseLayoutProps {
   return {
@@ -8,9 +7,14 @@ export function baseOptions(): BaseLayoutProps {
       url: "/docs",
       title: (
         <span className="inline-flex items-center gap-2 text-sm font-medium text-foreground">
-          <span className="inline-flex size-8 items-center justify-center rounded-lg border border-border bg-muted/40 text-foreground">
-            <BookOpenText className="size-4" />
-          </span>
+          <img
+            src={`${COMPANY.MARKETING_URL}/ao-logo.svg`}
+            alt=""
+            width={20}
+            height={20}
+            aria-hidden="true"
+            className="size-5 shrink-0"
+          />
           <span>{COMPANY.NAME} Docs</span>
         </span>
       ),

@@ -1,7 +1,7 @@
 @import "tailwindcss";
-@import "@superset/ui/globals.css";
-@import "@superset/site-theme/tokens.css";
-@import "@superset/site-theme/prose.css";
+@import "../../../landing/packages/ui/src/globals.css";
+@import "../../../site-theme/tokens.css";
+@import "../../../site-theme/prose.css";
 @import "fumadocs-ui/style.css";
 @import "fumadocs-ui/css/shadcn.css";
 
