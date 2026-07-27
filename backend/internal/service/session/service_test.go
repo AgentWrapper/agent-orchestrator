@@ -346,6 +346,66 @@ func TestGetWorkspaceFileReturnsContentAndDiff(t *testing.T) {
 	}
 }
 
+func TestGetWorkspaceFileNewFileDiffLineCounts(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+		diff    string
+	}{
+		{
+			name:    "with trailing newline",
+			content: "hello\nworld\n",
+			diff: strings.Join([]string{
+				"diff --git a/notes.txt b/notes.txt",
+				"new file mode 100644",
+				"--- /dev/null",
+				"+++ b/notes.txt",
+				"@@ -0,0 +1,2 @@",
+				"+hello",
+				"+world",
+				"",
+			}, "\n"),
+		},
+		{
+			name:    "without trailing newline",
+			content: "hello\nworld",
+			diff: strings.Join([]string{
+				"diff --git a/notes.txt b/notes.txt",
+				"new file mode 100644",
+				"--- /dev/null",
+				"+++ b/notes.txt",
+				"@@ -0,0 +1,2 @@",
+				"+hello",
+				"+world",
+				"",
+			}, "\n"),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newWorkspaceRepo(t)
+			writeWorkspaceFile(t, repo, "notes.txt", tc.content)
+			st := newFakeStore()
+			st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+
+			got, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "notes.txt")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Status != WorkspaceFileAdded {
+				t.Fatalf("status = %s, want %s", got.Status, WorkspaceFileAdded)
+			}
+			if got.Additions != 2 || got.Deletions != 0 {
+				t.Fatalf("counts = +%d -%d, want +2 -0", got.Additions, got.Deletions)
+			}
+			if got.Diff != tc.diff {
+				t.Fatalf("diff mismatch:\nwant:\n%s\ngot:\n%s", tc.diff, got.Diff)
+			}
+		})
+	}
+}
+
 func TestListWorkspaceFilesScratchUsesFilesystem(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceFile(t, root, "README.md", "one\ntwo\n")

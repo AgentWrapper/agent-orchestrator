@@ -519,8 +519,8 @@ func gitTracked(ctx context.Context, root, rel string) bool {
 
 func syntheticAddedFileDiff(rel, content string) string {
 	lines := strings.SplitAfter(content, "\n")
-	if len(lines) == 1 && lines[0] == "" {
-		lines = nil
+	if n := len(lines); n > 0 && lines[n-1] == "" {
+		lines = lines[:n-1]
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "diff --git a/%s b/%s\n", rel, rel)
