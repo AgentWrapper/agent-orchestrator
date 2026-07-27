@@ -348,7 +348,7 @@ func TestGetAgentHooksPreservesOtherModelFieldsOnOverride(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(configPath, []byte(`{"models":{"large":{"model":"old-model","provider":"old-provider","max_tokens":4096}}}`), 0o600); err != nil {
+	if err := os.WriteFile(configPath, []byte(`{"models":{"large":{"model":"old-model","provider":"old-provider","max_tokens":4096},"small":{"model":"small-model","provider":"small-provider"}},"providers":{"openai":{"base_url":"https://example.test"}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -360,12 +360,22 @@ func TestGetAgentHooksPreservesOtherModelFieldsOnOverride(t *testing.T) {
 		t.Fatalf("GetAgentHooks err = %v", err)
 	}
 
-	large := readCrushConfigForTest(t, configPath)["models"].(map[string]any)["large"].(map[string]any)
+	cfg := readCrushConfigForTest(t, configPath)
+	models := cfg["models"].(map[string]any)
+	large := models["large"].(map[string]any)
 	if large["provider"] != "openai" || large["model"] != "gpt-5" {
 		t.Fatalf("models.large = %#v, want provider=openai model=gpt-5", large)
 	}
 	if large["max_tokens"] != float64(4096) {
 		t.Fatalf("models.large.max_tokens was dropped: %#v", large)
+	}
+	small := models["small"].(map[string]any)
+	if small["provider"] != "small-provider" || small["model"] != "small-model" {
+		t.Fatalf("models.small = %#v, want existing small model untouched", small)
+	}
+	providers := cfg["providers"].(map[string]any)
+	if _, ok := providers["openai"].(map[string]any); !ok {
+		t.Fatalf("providers were dropped: %#v", providers)
 	}
 }
 
@@ -392,19 +402,64 @@ func TestGetAgentHooksLeavesModelUntouchedWhenNoOverride(t *testing.T) {
 	}
 }
 
-func TestGetAgentHooksRejectsModelWithoutProvider(t *testing.T) {
+func TestGetAgentHooksInfersProviderForBareModel(t *testing.T) {
 	workspace := t.TempDir()
+	configPath := crushConfigFile(workspace)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte(`{"models":{"large":{"model":"old-model","provider":"anthropic","temperature":0.2}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
-	err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
 		WorkspacePath: workspace,
 		SystemPrompt:  "AO standing instructions",
 		Config:        ports.AgentConfig{Model: "claude-sonnet-4-5"},
-	})
-	if err == nil {
-		t.Fatal("GetAgentHooks err = nil, want error for a model without a provider prefix")
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
 	}
-	if !strings.Contains(err.Error(), "provider") {
-		t.Fatalf("error = %v, want it to mention the missing provider", err)
+
+	large := readCrushConfigForTest(t, configPath)["models"].(map[string]any)["large"].(map[string]any)
+	if large["provider"] != "anthropic" || large["model"] != "claude-sonnet-4-5" {
+		t.Fatalf("models.large = %#v, want provider=anthropic model=claude-sonnet-4-5", large)
+	}
+	if large["temperature"] != 0.2 {
+		t.Fatalf("models.large.temperature was dropped: %#v", large)
+	}
+}
+
+func TestGetAgentHooksSkipsBareModelWithoutProvider(t *testing.T) {
+	workspace := t.TempDir()
+
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		SystemPrompt:  "AO standing instructions",
+		Config:        ports.AgentConfig{Model: "claude-sonnet-4-5"},
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	cfg := readCrushConfigForTest(t, crushConfigFile(workspace))
+	if _, ok := cfg["models"]; ok {
+		t.Fatalf("models were written for bare model with no provider to infer: %#v", cfg)
+	}
+}
+
+func TestGetAgentHooksSplitsModelOverrideOnFirstSlash(t *testing.T) {
+	workspace := t.TempDir()
+
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		SystemPrompt:  "AO standing instructions",
+		Config:        ports.AgentConfig{Model: "openrouter/anthropic/claude-x"},
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	large := readCrushConfigForTest(t, crushConfigFile(workspace))["models"].(map[string]any)["large"].(map[string]any)
+	if large["provider"] != "openrouter" || large["model"] != "anthropic/claude-x" {
+		t.Fatalf("models.large = %#v, want provider=openrouter model=anthropic/claude-x", large)
 	}
 }
 
@@ -429,6 +484,16 @@ func TestGetAgentHooksGitignoresManagedCrushFiles(t *testing.T) {
 	}
 	if strings.Contains(text, "/"+crushConfigFileName) {
 		t.Fatalf(".gitignore should not ignore project config %q:\n%s", crushConfigFileName, text)
+	}
+	data, err = os.ReadFile(filepath.Join(workspace, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read workspace gitignore: %v", err)
+	}
+	text = string(data)
+	for _, want := range []string{hookutil.GitignoreSentinel, "/" + crushConfigFileName} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("workspace .gitignore missing %q:\n%s", want, text)
+		}
 	}
 }
 
@@ -466,6 +531,23 @@ func TestGetAgentHooksEmptyPromptIsNoOp(t *testing.T) {
 	}
 	if _, err := os.Stat(crushConfigFile(workspace)); !os.IsNotExist(err) {
 		t.Fatalf("config file stat err = %v, want not exist", err)
+	}
+}
+
+func TestGetAgentHooksAppliesModelOverrideWithEmptyPrompt(t *testing.T) {
+	workspace := t.TempDir()
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		Config:        ports.AgentConfig{Model: "anthropic/claude-sonnet-4-5"},
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+	if _, err := os.Stat(crushSystemPromptFile(workspace)); !os.IsNotExist(err) {
+		t.Fatalf("system prompt file stat err = %v, want not exist", err)
+	}
+	large := readCrushConfigForTest(t, crushConfigFile(workspace))["models"].(map[string]any)["large"].(map[string]any)
+	if large["provider"] != "anthropic" || large["model"] != "claude-sonnet-4-5" {
+		t.Fatalf("models.large = %#v, want provider=anthropic model=claude-sonnet-4-5", large)
 	}
 }
 
