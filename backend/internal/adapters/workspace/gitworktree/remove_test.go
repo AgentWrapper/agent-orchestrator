@@ -1,6 +1,7 @@
 package gitworktree
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -8,14 +9,19 @@ import (
 	"time"
 )
 
-// shrinkRemoveAllRetry makes the retry budget test-fast, restoring the
-// production values afterwards.
+// shrinkRemoveAllRetry makes the retry budget test-fast and forces the retry on
+// regardless of platform, restoring the production values afterwards. Without
+// the enable override every assertion below would silently pass by falling
+// through to a single os.RemoveAll on the non-Windows machines CI runs.
 func shrinkRemoveAllRetry(t *testing.T, attempts int) {
 	t.Helper()
 	origAttempts, origBackoff, origCap := removeAllAttempts, removeAllBackoff, removeAllBackoffCap
+	origEnabled := removeAllRetryEnabled
 	removeAllAttempts, removeAllBackoff, removeAllBackoffCap = attempts, time.Millisecond, time.Millisecond
+	removeAllRetryEnabled = true
 	t.Cleanup(func() {
 		removeAllAttempts, removeAllBackoff, removeAllBackoffCap = origAttempts, origBackoff, origCap
+		removeAllRetryEnabled = origEnabled
 	})
 }
 
@@ -38,7 +44,7 @@ func TestRemoveAllWithRetryRemovesPopulatedDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := removeAllWithRetry(target); err != nil {
+	if err := removeAllWithRetry(context.Background(), target); err != nil {
 		t.Fatalf("removeAllWithRetry: %v", err)
 	}
 	if _, err := os.Stat(target); !os.IsNotExist(err) {
@@ -50,7 +56,7 @@ func TestRemoveAllWithRetryRemovesPopulatedDirectory(t *testing.T) {
 // semantics — teardown must be idempotent.
 func TestRemoveAllWithRetryTreatsMissingPathAsSuccess(t *testing.T) {
 	shrinkRemoveAllRetry(t, 3)
-	if err := removeAllWithRetry(filepath.Join(t.TempDir(), "never-existed")); err != nil {
+	if err := removeAllWithRetry(context.Background(), filepath.Join(t.TempDir(), "never-existed")); err != nil {
 		t.Fatalf("removeAllWithRetry on a missing path: %v", err)
 	}
 }
@@ -72,7 +78,7 @@ func TestRemoveAllWithRetrySucceedsAfterTransientFailure(t *testing.T) {
 		return nil
 	})
 
-	if err := removeAllWithRetry("/managed/worktrees/demo/demo-1"); err != nil {
+	if err := removeAllWithRetry(context.Background(), "/managed/worktrees/demo/demo-1"); err != nil {
 		t.Fatalf("removeAllWithRetry did not recover from a transient lock: %v", err)
 	}
 	if calls != 3 {
@@ -91,7 +97,7 @@ func TestRemoveAllWithRetryGivesUpAndReturnsError(t *testing.T) {
 		return wedged
 	})
 
-	err := removeAllWithRetry("/managed/worktrees/demo/demo-1")
+	err := removeAllWithRetry(context.Background(), "/managed/worktrees/demo/demo-1")
 	if !errors.Is(err, wedged) {
 		t.Fatalf("error = %v, want the underlying removal error", err)
 	}
@@ -110,10 +116,61 @@ func TestRemoveAllWithRetryDoesNotRetryMissingPath(t *testing.T) {
 		return os.ErrNotExist
 	})
 
-	if err := removeAllWithRetry("/managed/worktrees/demo/demo-1"); err != nil {
+	if err := removeAllWithRetry(context.Background(), "/managed/worktrees/demo/demo-1"); err != nil {
 		t.Fatalf("removeAllWithRetry: %v", err)
 	}
 	if calls != 1 {
 		t.Errorf("removeAll calls = %d, want 1 — a missing path must not be retried", calls)
+	}
+}
+
+// TestRemoveAllWithRetrySkipsRetryOffWindows: the sharing violation is a
+// Windows handle-release artifact, so elsewhere a removal failure is real and
+// immediate. Sleeping out the budget there would only make every genuine
+// failure ~7s slower before returning the identical error.
+func TestRemoveAllWithRetrySkipsRetryOffWindows(t *testing.T) {
+	shrinkRemoveAllRetry(t, 5)
+	removeAllRetryEnabled = false // stand in for a non-Windows GOOS
+	wedged := errors.New("EACCES")
+	var calls int
+	stubRemoveAll(t, func(string) error {
+		calls++
+		return wedged
+	})
+
+	err := removeAllWithRetry(context.Background(), "/managed/worktrees/demo/demo-1")
+	if !errors.Is(err, wedged) {
+		t.Fatalf("error = %v, want the underlying removal error", err)
+	}
+	if calls != 1 {
+		t.Errorf("removeAll calls = %d, want 1 — no retry off Windows", calls)
+	}
+}
+
+// TestRemoveAllWithRetryStopsOnContextCancellation: time.Sleep is
+// uninterruptible, so without a ctx check a caller that has already given up
+// still pays out the remaining budget — and Session Manager tears a workspace
+// project's repos down serially, so that cost repeats per repo while the
+// session's shell-terminal gate is held.
+func TestRemoveAllWithRetryStopsOnContextCancellation(t *testing.T) {
+	shrinkRemoveAllRetry(t, 50)
+	removeAllBackoff, removeAllBackoffCap = 20*time.Millisecond, 20*time.Millisecond
+	wedged := errors.New("still locked")
+	ctx, cancel := context.WithCancel(context.Background())
+	var calls int
+	stubRemoveAll(t, func(string) error {
+		calls++
+		if calls == 2 {
+			cancel()
+		}
+		return wedged
+	})
+
+	err := removeAllWithRetry(ctx, "/managed/worktrees/demo/demo-1")
+	if !errors.Is(err, wedged) {
+		t.Fatalf("error = %v, want the underlying removal error, not the ctx error", err)
+	}
+	if calls > 3 {
+		t.Errorf("removeAll calls = %d, want the loop to stop right after cancellation, not run all 50", calls)
 	}
 }
