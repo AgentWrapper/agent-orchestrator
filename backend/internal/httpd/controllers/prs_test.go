@@ -20,7 +20,7 @@ type fakePRService struct {
 	resolveErr    error
 }
 
-func (f *fakePRService) Merge(_ context.Context, _ string) (prsvc.MergeResult, error) {
+func (f *fakePRService) Merge(_ context.Context, _, _ string) (prsvc.MergeResult, error) {
 	return f.mergeResult, f.mergeErr
 }
 

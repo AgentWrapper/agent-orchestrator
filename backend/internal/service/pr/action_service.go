@@ -15,6 +15,7 @@ import (
 // its unresolved-comment signal before acting on it.
 type Store interface {
 	GetPRByNumber(ctx context.Context, number int) (domain.PullRequest, bool, error)
+	GetPRByRepoAndNumber(ctx context.Context, repo string, number int) (domain.PullRequest, bool, error)
 	GetPRReviewCommentsUnresolved(ctx context.Context, url string) (bool, error)
 }
 
@@ -43,7 +44,7 @@ func NewActionService(store Store, scm SCMMerger) *ActionService {
 // documented OpenAPI contract and the `ao pr merge <pr-number>` CLI). Numbers
 // are only unique within one repo; GetPRByNumber reports ErrPRAmbiguous if
 // this AO instance tracks the same number across more than one repo.
-func (s *ActionService) Merge(ctx context.Context, id string) (MergeResult, error) {
+func (s *ActionService) Merge(ctx context.Context, id, repo string) (MergeResult, error) {
 	if s.scm == nil {
 		return MergeResult{}, fmt.Errorf("%w: SCM provider unavailable", ErrPRPreconditions)
 	}
@@ -51,7 +52,15 @@ func (s *ActionService) Merge(ctx context.Context, id string) (MergeResult, erro
 	if convErr != nil || number <= 0 {
 		return MergeResult{}, fmt.Errorf("%w: invalid PR number %q", ErrPRNotFound, id)
 	}
-	pr, ok, err := s.store.GetPRByNumber(ctx, number)
+
+	var pr domain.PullRequest
+	var ok bool
+	var err error
+	if repo = strings.TrimSpace(repo); repo != "" {
+		pr, ok, err = s.store.GetPRByRepoAndNumber(ctx, repo, number)
+	} else {
+		pr, ok, err = s.store.GetPRByNumber(ctx, number)
+	}
 	if err != nil {
 		if errors.Is(err, domain.ErrPRAmbiguous) {
 			return MergeResult{}, fmt.Errorf("%w: %w", ErrPRPreconditions, err)
@@ -80,12 +89,12 @@ func (s *ActionService) Merge(ctx context.Context, id string) (MergeResult, erro
 		return MergeResult{}, ErrPRNotMergeable
 	}
 
-	owner, repo, ok := strings.Cut(pr.Repo, "/")
+	owner, repoName, ok := strings.Cut(pr.Repo, "/")
 	if !ok {
 		return MergeResult{}, fmt.Errorf("%w: malformed repo %q", ErrPRPreconditions, pr.Repo)
 	}
 
-	settings, err := s.scm.RepoMergeSettings(ctx, owner, repo)
+	settings, err := s.scm.RepoMergeSettings(ctx, owner, repoName)
 	if err != nil {
 		return MergeResult{}, err
 	}
@@ -94,7 +103,7 @@ func (s *ActionService) Merge(ctx context.Context, id string) (MergeResult, erro
 		return MergeResult{}, err
 	}
 
-	if _, err := s.scm.MergePR(ctx, owner, repo, pr.Number, pr.HeadSHA, method); err != nil {
+	if _, err := s.scm.MergePR(ctx, owner, repoName, pr.Number, pr.HeadSHA, method); err != nil {
 		switch {
 		case errors.Is(err, scmgithub.ErrProviderPRNotMergeable):
 			return MergeResult{}, ErrPRNotMergeable

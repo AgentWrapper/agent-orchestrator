@@ -713,6 +713,14 @@ type PRIDParam struct {
 	ID string `path:"id" description:"PR number."`
 }
 
+// MergePRQueryParams is the optional ?repo= query param on POST
+// /api/v1/prs/{id}/merge, disambiguating PR numbers that collide across
+// more than one tracked repo. Omit to fall back to the (potentially
+// ambiguous) number-only lookup.
+type MergePRQueryParams struct {
+	Repo string `query:"repo,omitempty" description:"Owner/name of the PR's repo, disambiguating cross-repo number collisions."`
+}
+
 // MergePRResponse is the body of POST /api/v1/prs/{id}/merge (200).
 type MergePRResponse struct {
 	OK       bool   `json:"ok"`

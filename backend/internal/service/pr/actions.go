@@ -6,7 +6,7 @@ import "context"
 // Production currently leaves this dependency nil, so the HTTP surface returns
 // NOT_IMPLEMENTED instead of pretending to merge or resolve comments.
 type ActionManager interface {
-	Merge(ctx context.Context, prID string) (MergeResult, error)
+	Merge(ctx context.Context, prID, repo string) (MergeResult, error)
 	ResolveComments(ctx context.Context, prID string, commentIDs []string) (ResolveResult, error)
 }
 

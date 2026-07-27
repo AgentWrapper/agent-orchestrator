@@ -21,6 +21,10 @@ func (f *fakePRStore) GetPRByNumber(_ context.Context, _ int) (domain.PullReques
 	return f.pr, f.ok, f.err
 }
 
+func (f *fakePRStore) GetPRByRepoAndNumber(_ context.Context, _ string, _ int) (domain.PullRequest, bool, error) {
+	return f.pr, f.ok, f.err
+}
+
 func (f *fakePRStore) GetPRReviewCommentsUnresolved(_ context.Context, _ string) (bool, error) {
 	return f.unresolved, f.unresErr
 }
@@ -40,9 +44,6 @@ func (f *fakeSCMMerger) RepoMergeSettings(_ context.Context, _, _ string) (scmgi
 	return f.settings, f.settErr
 }
 
-// mergeablePR returns a PR fixture that satisfies domain.PRPipelineStatus's
-// StatusMergeable branch: open, not draft, CI passing, no unresolved review
-// blockers, and Mergeability clean.
 func mergeablePR(number int, repo string) domain.PullRequest {
 	return domain.PullRequest{
 		Number:       number,
@@ -63,9 +64,21 @@ func TestMerge_Success(t *testing.T) {
 	scm := &fakeSCMMerger{sha: "abc123", settings: allowSquash()}
 	svc := NewActionService(store, scm)
 
-	// Merge takes the PR's provider number as a plain string id, matching the
-	// `ao pr merge <number>` CLI and the OpenAPI-documented contract.
-	res, err := svc.Merge(context.Background(), "42")
+	res, err := svc.Merge(context.Background(), "42", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.PRNumber != 42 || res.Method != "squash" {
+		t.Fatalf("res = %#v", res)
+	}
+}
+
+func TestMerge_SuccessWithRepoScope(t *testing.T) {
+	store := &fakePRStore{ok: true, pr: mergeablePR(42, "acme/widgets")}
+	scm := &fakeSCMMerger{sha: "abc123", settings: allowSquash()}
+	svc := NewActionService(store, scm)
+
+	res, err := svc.Merge(context.Background(), "42", "acme/widgets")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +90,7 @@ func TestMerge_Success(t *testing.T) {
 func TestMerge_NotFound(t *testing.T) {
 	store := &fakePRStore{ok: false}
 	svc := NewActionService(store, &fakeSCMMerger{settings: allowSquash()})
-	_, err := svc.Merge(context.Background(), "99")
+	_, err := svc.Merge(context.Background(), "99", "")
 	if !errors.Is(err, ErrPRNotFound) {
 		t.Fatalf("err = %v, want ErrPRNotFound", err)
 	}
@@ -88,7 +101,7 @@ func TestMerge_NotMergeable(t *testing.T) {
 	pr.Mergeability = domain.MergeBlocked
 	store := &fakePRStore{ok: true, pr: pr}
 	svc := NewActionService(store, &fakeSCMMerger{settings: allowSquash()})
-	_, err := svc.Merge(context.Background(), "1")
+	_, err := svc.Merge(context.Background(), "1", "")
 	if !errors.Is(err, ErrPRNotMergeable) {
 		t.Fatalf("err = %v, want ErrPRNotMergeable", err)
 	}
@@ -97,7 +110,7 @@ func TestMerge_NotMergeable(t *testing.T) {
 func TestMerge_AlreadyMerged(t *testing.T) {
 	store := &fakePRStore{ok: true, pr: domain.PullRequest{Merged: true}}
 	svc := NewActionService(store, &fakeSCMMerger{settings: allowSquash()})
-	_, err := svc.Merge(context.Background(), "1")
+	_, err := svc.Merge(context.Background(), "1", "")
 	if !errors.Is(err, ErrPRPreconditions) {
 		t.Fatalf("err = %v, want ErrPRPreconditions", err)
 	}
@@ -105,7 +118,7 @@ func TestMerge_AlreadyMerged(t *testing.T) {
 
 func TestMerge_NilSCM(t *testing.T) {
 	svc := NewActionService(&fakePRStore{}, nil)
-	_, err := svc.Merge(context.Background(), "1")
+	_, err := svc.Merge(context.Background(), "1", "")
 	if !errors.Is(err, ErrPRPreconditions) {
 		t.Fatalf("err = %v, want ErrPRPreconditions (SCM unavailable)", err)
 	}
@@ -113,7 +126,7 @@ func TestMerge_NilSCM(t *testing.T) {
 
 func TestMerge_BadID(t *testing.T) {
 	svc := NewActionService(&fakePRStore{}, &fakeSCMMerger{})
-	_, err := svc.Merge(context.Background(), "not-a-number")
+	_, err := svc.Merge(context.Background(), "not-a-number", "")
 	if !errors.Is(err, ErrPRNotFound) {
 		t.Fatalf("err = %v, want ErrPRNotFound", err)
 	}
@@ -123,7 +136,7 @@ func TestMerge_UnresolvedReviewCommentsBlocksMerge(t *testing.T) {
 	pr := mergeablePR(7, "acme/widgets")
 	store := &fakePRStore{ok: true, pr: pr, unresolved: true}
 	svc := NewActionService(store, &fakeSCMMerger{settings: allowSquash()})
-	_, err := svc.Merge(context.Background(), "7")
+	_, err := svc.Merge(context.Background(), "7", "")
 	if !errors.Is(err, ErrPRNotMergeable) {
 		t.Fatalf("err = %v, want ErrPRNotMergeable (unresolved review comments)", err)
 	}
@@ -132,7 +145,7 @@ func TestMerge_UnresolvedReviewCommentsBlocksMerge(t *testing.T) {
 func TestMerge_NoAllowedMergeMethodReturnsPreconditions(t *testing.T) {
 	store := &fakePRStore{ok: true, pr: mergeablePR(9, "acme/widgets")}
 	svc := NewActionService(store, &fakeSCMMerger{settings: scmgithub.RepoMergeSettings{}})
-	_, err := svc.Merge(context.Background(), "9")
+	_, err := svc.Merge(context.Background(), "9", "")
 	if !errors.Is(err, ErrPRPreconditions) {
 		t.Fatalf("err = %v, want ErrPRPreconditions (no merge method enabled)", err)
 	}
@@ -142,7 +155,7 @@ func TestMerge_PrefersSquashThenMergeThenRebase(t *testing.T) {
 	store := &fakePRStore{ok: true, pr: mergeablePR(10, "acme/widgets")}
 	scm := &fakeSCMMerger{sha: "abc", settings: scmgithub.RepoMergeSettings{AllowMergeCommit: true, AllowRebase: true}}
 	svc := NewActionService(store, scm)
-	res, err := svc.Merge(context.Background(), "10")
+	res, err := svc.Merge(context.Background(), "10", "")
 	if err != nil {
 		t.Fatal(err)
 	}

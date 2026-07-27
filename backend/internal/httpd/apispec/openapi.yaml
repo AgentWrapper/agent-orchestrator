@@ -854,6 +854,14 @@ paths:
         schema:
           description: PR number.
           type: string
+      - description: Owner/name of the PR's repo, disambiguating cross-repo number
+          collisions.
+        in: query
+        name: repo
+        schema:
+          description: Owner/name of the PR's repo, disambiguating cross-repo number
+            collisions.
+          type: string
       responses:
         "200":
           content:

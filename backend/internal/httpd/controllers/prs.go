@@ -29,7 +29,8 @@ func (c *PRsController) merge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	prID := chi.URLParam(r, "id")
-	res, err := c.Svc.Merge(r.Context(), prID)
+	repo := r.URL.Query().Get("repo")
+	res, err := c.Svc.Merge(r.Context(), prID, repo)
 	if err != nil {
 		writePRError(w, r, err)
 		return

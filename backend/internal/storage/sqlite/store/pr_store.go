@@ -259,6 +259,21 @@ func (s *Store) GetPRByNumber(ctx context.Context, number int) (domain.PullReque
 	return prRowFromGen(rows[0]), true, nil
 }
 
+// GetPRByRepoAndNumber resolves a PR by repo + number, which unlike a bare
+// number cannot collide across tracked repos. Preferred over GetPRByNumber
+// whenever the caller already knows the repo (e.g. from the session's PR
+// summary), since it can never hit domain.ErrPRAmbiguous.
+func (s *Store) GetPRByRepoAndNumber(ctx context.Context, repo string, number int) (domain.PullRequest, bool, error) {
+	row, err := s.qr.GetPRByRepoAndNumber(ctx, gen.GetPRByRepoAndNumberParams{Repo: repo, Number: int64(number)})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.PullRequest{}, false, nil
+		}
+		return domain.PullRequest{}, false, fmt.Errorf("get pr by repo %q number %d: %w", repo, number, err)
+	}
+	return prRowFromGen(row), true, nil
+}
+
 // GetPRReviewCommentsUnresolved reports whether prURL has any unresolved,
 // non-bot review comments — the same signal service/session's status
 // aggregator uses via GetDisplayPRFactsBySession/ListPRFactsBySession, exposed

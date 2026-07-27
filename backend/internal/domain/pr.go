@@ -33,7 +33,7 @@ func PRPipelineStatus(pr PRFacts) SessionStatus {
 		return StatusDraft
 	case pr.Review == ReviewChangesRequest || pr.ReviewComments:
 		return StatusChangesRequested
-	case pr.Mergeability == MergeMergeable:
+	case pr.Mergeability == MergeMergeable && pr.CI == CIPassing:
 		return StatusMergeable
 	case pr.Review == ReviewApproved:
 		return StatusApproved

@@ -1030,7 +1030,7 @@ func prOperations() []operation {
 		{
 			method: http.MethodPost, path: "/api/v1/prs/{id}/merge", id: "mergePR", tag: "prs",
 			summary:    "Squash-merge a pull request",
-			pathParams: []any{controllers.PRIDParam{}},
+			pathParams: []any{controllers.PRIDParam{}, controllers.MergePRQueryParams{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.MergePRResponse{}},
 				{http.StatusNotFound, envelope.APIError{}},

@@ -175,3 +175,8 @@ SELECT EXISTS (
       AND pr_comment.resolved = 0
       AND pr_comment.is_bot = 0
 ) AS review_comments;
+
+-- name: GetPRByRepoAndNumber :one
+-- Repo-scoped lookup: unlike GetPRByNumber, this can't collide across repos,
+-- since (repo, number) is effectively unique for currently-tracked PRs.
+SELECT * FROM pr WHERE repo = ? AND number = ?;

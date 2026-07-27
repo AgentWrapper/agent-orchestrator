@@ -10,7 +10,7 @@ import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
  */
 export function isPRMergeable(pr: SessionPRSummary): boolean {
 	if (pr.state !== "open") return false;
-	if (pr.ci.state === "failing") return false;
+	if (pr.ci.state !== "passing") return false;
 	if (pr.review.decision === "changes_requested" || pr.review.hasUnresolvedHumanComments) return false;
 	return pr.mergeability.state === "mergeable";
 }
@@ -43,7 +43,7 @@ export function useMergePR() {
 	return useMutation({
 		mutationFn: async (pr: SessionPRSummary) => {
 			const { error, response } = await apiClient.POST("/api/v1/prs/{id}/merge", {
-				params: { path: { id: String(pr.number) } },
+				params: { path: { id: String(pr.number) }, query: { repo: pr.repo } },
 			});
 			if (error) {
 				throw new Error(apiErrorMessage(error, `Failed to merge PR (${response?.status ?? "unknown"})`));
