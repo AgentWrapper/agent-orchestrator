@@ -104,7 +104,7 @@ vi.mock("./CenterPane", () => ({
 		onCloseProjectSession?: (session: WorkspaceSession) => void;
 		onSelectProjectSession?: (session: WorkspaceSession) => void;
 	}) => (
-    <div>
+		<div>
 			terminal center
 			<div data-testid="shell-tabs">{shellTerminals.map((s) => s.title).join(",")}</div>
 			{shellTerminals.map((s) => (
@@ -134,7 +134,7 @@ vi.mock("./CenterPane", () => ({
 					Close {session.title}
 				</button>
 			))}
-    </div>
+		</div>
 	),
 }));
 vi.mock("./BrowserPanel", () => ({

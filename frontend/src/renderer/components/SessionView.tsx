@@ -93,9 +93,8 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 				tabOwnerSession,
 				...storedSessionTabIds
 					.map((tabId) => allSessions.find((candidate) => candidate.id === tabId))
-					.filter(
-						(projectSession): projectSession is WorkspaceSession =>
-							Boolean(projectSession && projectSession.isTerminated !== true && projectSession.id !== tabOwnerSession.id),
+					.filter((projectSession): projectSession is WorkspaceSession =>
+						Boolean(projectSession && projectSession.isTerminated !== true && projectSession.id !== tabOwnerSession.id),
 					),
 			]
 		: [];
@@ -142,7 +141,6 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 	const renameShellTerminal = useRenameShellTerminal();
 	const activeShellTerminalHandleId = useUiStore((state) => state.activeShellTerminalHandleId);
 	const setActiveShellTerminal = useUiStore((state) => state.setActiveShellTerminal);
-	const requestNewShellTerminal = useUiStore((state) => state.requestNewShellTerminal);
 	const setVisibleTerminalKind = useUiStore((state) => state.setVisibleTerminalKind);
 	const clearVisibleTerminalKind = useUiStore((state) => state.clearVisibleTerminalKind);
 	const renameShellTerminalByHandle = useCallback(
@@ -424,9 +422,7 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
             be strings. Numeric sizes here once clamped the inspector to 45px. */}
 				<ResizablePanel defaultSize="72%" id="terminal" minSize="45%">
 					<CenterPane
-						availableProjectSessions={availableSessions.filter(
-							(candidate) => candidate.id !== tabOwnerSession?.id,
-						)}
+						availableProjectSessions={availableSessions.filter((candidate) => candidate.id !== tabOwnerSession?.id)}
 						daemonReady={daemonStatus.state === "ready"}
 						onAddProjectSession={addProjectSession}
 						onCloseProjectSession={closeProjectSession}
