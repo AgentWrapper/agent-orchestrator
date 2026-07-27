@@ -1,33 +1,26 @@
 "use client";
 
-import { Children, isValidElement, type ReactElement, type ReactNode, useState } from "react";
+import { Children, isValidElement, useState, type ReactElement, type ReactNode } from "react";
 
-interface TabProps {
-  value: string;
-  children: ReactNode;
-}
-
-export function Tab({ children }: TabProps) {
+export function Tab({ children }: { value?: string; children: ReactNode }) {
   return <>{children}</>;
 }
 
 export function Tabs({ items, children }: { items?: string[]; children: ReactNode }) {
+  const tabs = Children.toArray(children).filter(isValidElement) as ReactElement<{ value?: string; children?: ReactNode }>[];
   const [active, setActive] = useState(0);
-  const tabs = Children.toArray(children).filter((c): c is ReactElement<TabProps> => isValidElement(c));
-  const labels = items ?? tabs.map((t, i) => t.props.value ?? `Tab ${i + 1}`);
+  const labels = items ?? tabs.map((tab, index) => tab.props.value ?? `Tab ${index + 1}`);
 
   return (
     <div className="my-6 overflow-hidden rounded-xl border border-border bg-muted/25">
       <div className="flex flex-wrap gap-1 border-b border-border bg-background p-1.5">
-        {labels.map((label, i) => (
+        {labels.map((label, index) => (
           <button
             key={label}
             type="button"
-            onClick={() => setActive(i)}
+            onClick={() => setActive(index)}
             className={`rounded-lg px-3 py-1.5 text-sm transition-colors ${
-              i === active
-                ? "bg-muted text-foreground"
-                : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+              index === active ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
             }`}
           >
             {label}

@@ -1,10 +1,9 @@
 import Link from "next/link";
-import { isValidElement, type ReactNode } from "react";
-import { DownloadButton } from "@/app/components/DownloadButton";
-import { slugify } from "@/lib/content-utils";
-import { Tab, Tabs } from "./DocsTabs";
+import defaultMdxComponents from "fumadocs-ui/mdx";
+import { Children, cloneElement, isValidElement, type ComponentPropsWithoutRef, type ReactElement, type ReactNode } from "react";
+import type { MDXComponents } from "mdx/types";
+import { Tab, Tabs } from "./docs-tabs";
 
-// Text of a heading's children, so ids match the TOC's slugify(headingText).
 function textOf(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
   if (Array.isArray(node)) return node.map(textOf).join("");
@@ -12,16 +11,31 @@ function textOf(node: ReactNode): string {
   return "";
 }
 
-function Heading({ level, children }: { level: 2 | 3 | 4; children: ReactNode }) {
-  const id = slugify(textOf(children));
-  if (level === 2) return <h2 id={id}>{children}</h2>;
-  if (level === 3) return <h3 id={id}>{children}</h3>;
-  return <h4 id={id}>{children}</h4>;
+function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\s-]/g, "")
+    .replace(/\s+/g, "-");
 }
 
-// Brands with a real asset under /public/docs/logos/ (others fall back to a monogram).
+function Heading({
+  level,
+  children,
+  ...props
+}: {
+  level: 2 | 3 | 4;
+  children?: ReactNode;
+} & ComponentPropsWithoutRef<"h2"> &
+  ComponentPropsWithoutRef<"h3"> &
+  ComponentPropsWithoutRef<"h4">) {
+  const id = slugify(textOf(children));
+  if (level === 2) return <h2 id={id} {...props}>{children}</h2>;
+  if (level === 3) return <h3 id={id} {...props}>{children}</h3>;
+  return <h4 id={id} {...props}>{children}</h4>;
+}
+
 const FILE_LOGOS: Record<string, string> = {
-  aider: "aider.png",
   "claude-code": "claude-code.svg",
   claude: "claude-code.svg",
   codex: "codex.svg",
@@ -44,14 +58,10 @@ export function Logo({ name, size = 20, className }: { name: string; size?: numb
       />
     );
   }
+
   return (
-    <span
-      aria-hidden="true"
-      className={className}
-      style={{ width: size, height: size }}
-      // biome-ignore lint/style/useNamingConvention: inline style keys
-    >
-      <span className="grid size-full place-items-center rounded-sm bg-surface text-[0.6em] font-bold uppercase text-foreground">
+    <span aria-hidden="true" className={className} style={{ width: size, height: size }}>
+      <span className="grid size-full place-items-center rounded-sm bg-muted text-[0.6em] font-bold uppercase text-foreground">
         {name.charAt(0)}
       </span>
     </span>
@@ -74,13 +84,20 @@ export function Callout({ type = "info", title, children }: { type?: string; tit
   );
 }
 
-export function Accordions({ children }: { children: ReactNode }) {
-  return <div className="my-6 space-y-2">{children}</div>;
+export function Accordions({ children, expandAll = false }: { children: ReactNode; expandAll?: boolean }) {
+  const items = expandAll
+    ? Children.map(children, (child) => {
+        if (!isValidElement(child)) return child;
+        return cloneElement(child as ReactElement<{ open?: boolean }>, { open: true });
+      })
+    : children;
+
+  return <div className="my-6 overflow-hidden rounded-xl border border-border bg-muted/30">{items}</div>;
 }
 
-export function Accordion({ title, children }: { title: ReactNode; children: ReactNode }) {
+export function Accordion({ title, children, open = false }: { title: ReactNode; children: ReactNode; open?: boolean }) {
   return (
-    <details className="group rounded-xl border border-border bg-muted/30 px-4 py-3">
+    <details open={open} className="group border-b border-border/80 px-4 py-3 last:border-b-0">
       <summary className="cursor-pointer list-none text-sm font-medium text-foreground marker:hidden">
         {title}
       </summary>
@@ -122,8 +139,8 @@ export function Card({
       <div className="mt-1 text-sm text-muted-foreground">{description ?? children}</div>
     </>
   );
-  const cls =
-    "block rounded-xl border border-border bg-muted/30 p-4 no-underline transition-colors hover:bg-muted/45";
+  const cls = "block rounded-xl border border-border bg-muted/30 p-4 no-underline transition-colors hover:bg-muted/45";
+
   return href ? (
     <Link href={href} className={cls}>
       {body}
@@ -134,9 +151,7 @@ export function Card({
 }
 
 export function PluginGrid({ children }: { children: ReactNode }) {
-  return (
-    <div className="my-6 grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(260px,1fr))]">{children}</div>
-  );
+  return <div className="my-6 grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(260px,1fr))]">{children}</div>;
 }
 
 export function PluginCard({
@@ -172,12 +187,23 @@ export function PluginCard({
 }
 
 type Status = "full" | "partial" | "none";
-const STATUS_LABEL: Record<Status, string> = { full: "Supported", partial: "Limited", none: "Not supported" };
-const STATUS_DOT: Record<Status, string> = { full: "bg-green-400", partial: "bg-amber-400", none: "bg-muted-foreground" };
+
+const STATUS_LABEL: Record<Status, string> = {
+  full: "Supported",
+  partial: "Limited",
+  none: "Not supported",
+};
+
+const STATUS_DOT: Record<Status, string> = {
+  full: "bg-green-400",
+  partial: "bg-amber-400",
+  none: "bg-muted-foreground",
+};
 
 function PlatformCell({ platform, status }: { platform: "macos" | "linux" | "windows"; status: Status }) {
   const logoName = platform === "macos" ? "apple" : platform;
   const title = platform === "macos" ? "macOS" : platform === "linux" ? "Linux" : "Windows";
+
   return (
     <div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-border bg-muted/30 px-3 py-2.5">
       <Logo name={logoName} size={18} />
@@ -215,42 +241,36 @@ export function PlatformSupport({
   );
 }
 
-const RELEASES_URL = "https://github.com/AgentWrapper/agent-orchestrator/releases";
-
 export function InstallDownloads() {
-  return (
-    <div className="my-6 rounded-xl border border-border bg-muted/30 p-5">
-      <div className="mb-3 flex items-center justify-between">
-        <div className="text-sm font-semibold text-foreground">Get Agent Orchestrator</div>
-        <a href={RELEASES_URL} className="text-xs text-muted-foreground transition-colors hover:text-foreground">
-          View releases →
-        </a>
-      </div>
-      <div className="flex flex-wrap items-center gap-3">
-        <DownloadButton size="md" className="rounded-xl" />
-        <span className="text-sm text-muted-foreground">macOS · Linux · Windows</span>
-      </div>
-    </div>
-  );
+  return null;
 }
 
-// Passed to <MDXRemote components={...}>. Keys must match the JSX tags in the MDX.
-export const docsMdxComponents = {
-  h2: ({ children }: { children: ReactNode }) => <Heading level={2}>{children}</Heading>,
-  h3: ({ children }: { children: ReactNode }) => <Heading level={3}>{children}</Heading>,
-  h4: ({ children }: { children: ReactNode }) => <Heading level={4}>{children}</Heading>,
-  Logo,
-  Callout,
-  Accordion,
-  Accordions,
-  Step,
-  Steps,
-  Tab,
-  Tabs,
-  Card,
-  Cards,
-  PluginCard,
-  PluginGrid,
-  PlatformSupport,
-  InstallDownloads,
-};
+export function getMDXComponents(components?: MDXComponents) {
+  return {
+    ...defaultMdxComponents,
+    h2: (props) => <Heading level={2} {...props} />,
+    h3: (props) => <Heading level={3} {...props} />,
+    h4: (props) => <Heading level={4} {...props} />,
+    Logo,
+    Callout,
+    Accordion,
+    Accordions,
+    Step,
+    Steps,
+    Tab,
+    Tabs,
+    Card,
+    Cards,
+    PluginCard,
+    PluginGrid,
+    PlatformSupport,
+    InstallDownloads,
+    ...components,
+  } satisfies MDXComponents;
+}
+
+export const useMDXComponents = getMDXComponents;
+
+declare global {
+  type MDXProvidedComponents = ReturnType<typeof getMDXComponents>;
+}
