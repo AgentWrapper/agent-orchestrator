@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	APP_SHORTCUTS,
+	matchesAppShortcut,
 	matchesFocusTerminalShortcut,
 	matchesKeyboardShortcutsHelpShortcut,
 	matchesNextSessionShortcut,
@@ -131,5 +132,16 @@ describe("shortcut catalog", () => {
 			expect(shortcutKeys(shortcut, true).length).toBeGreaterThan(0);
 			expect(shortcutKeys(shortcut, false).length).toBeGreaterThan(0);
 		}
+	});
+
+	it("uses a user override instead of the default binding", () => {
+		const overrides = {
+			"focus-terminal": [chord({ key: "j", ctrl: true })],
+		};
+
+		expect(matchesAppShortcut("focus-terminal", chord({ key: "j", ctrl: true }), false, overrides)).toBe(true);
+		expect(matchesAppShortcut("focus-terminal", chord({ key: "t", ctrl: true, shift: true }), false, overrides)).toBe(
+			false,
+		);
 	});
 });

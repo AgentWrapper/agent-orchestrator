@@ -28,6 +28,7 @@ import {
 } from "./main/auto-updater";
 import { listFeatureBuilds, getActiveFeatureBuild } from "./main/feature-builds";
 import { readUpdateSettings, type UpdateSettings, type UpdateStatus } from "./main/update-settings";
+import { readKeybindingOverrides, writeKeybindingOverrides } from "./main/keybinding-settings";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { closeSync, existsSync, openSync } from "node:fs";
@@ -40,7 +41,10 @@ import { type DaemonLaunchSpec, resolveDaemonLaunch } from "./shared/daemon-laun
 import { createListenPortScanner, defaultRunFilePath, parseRunFile } from "./shared/daemon-discovery";
 import type { DaemonStatus } from "./shared/daemon-status";
 import { attachAppShortcuts } from "./main/app-shortcuts";
-import { KEYBOARD_SHORTCUTS_HELP_CHANNEL } from "./shared/shortcuts";
+import {
+	KEYBOARD_SHORTCUTS_HELP_CHANNEL,
+	type KeybindingOverrides,
+} from "./shared/shortcuts";
 import {
 	type DaemonProbe,
 	expectedDaemonPort,
@@ -102,6 +106,7 @@ let daemonStartEpoch = 0;
 let daemonStatus: DaemonStatus = { state: "stopped" };
 let daemonOutput = "";
 let browserViewHost: BrowserViewHost | null = null;
+let keybindingOverrides: KeybindingOverrides = {};
 // Held for the app lifetime. Dropping it (on any exit) triggers daemon self-stop.
 let supervisorLink: SupervisorLinkHandle | null = null;
 
@@ -325,7 +330,7 @@ function createWindow(): void {
 	// contents holds focus — the shell renderer, xterm's helper textarea, or a
 	// browser-preview view (wired per-view in the browser host).
 	const isMac = process.platform === "darwin";
-	attachAppShortcuts(mainWindow.webContents, isMac, mainWindow.webContents);
+	attachAppShortcuts(mainWindow.webContents, isMac, mainWindow.webContents, false, () => keybindingOverrides);
 
 	browserViewHost = createBrowserViewHost({
 		mainWindow,
@@ -335,6 +340,7 @@ function createWindow(): void {
 		annotatePreloadPath: annotatePreloadPath(),
 		rendererOrigin: RENDERER_ORIGIN,
 		isMac,
+		getKeybindingOverrides: () => keybindingOverrides,
 	});
 
 	void mainWindow.loadURL(rendererUrl());
@@ -1374,6 +1380,14 @@ ipcMain.handle("updateSettings:set", async (_event, settings: UpdateSettings) =>
 	await setUpdateSettings(path.dirname(runFile), settings);
 });
 
+ipcMain.handle("keybindings:get", (): KeybindingOverrides => keybindingOverrides);
+ipcMain.handle("keybindings:set", async (_event, overrides: KeybindingOverrides): Promise<KeybindingOverrides> => {
+	const runFile = runFilePath();
+	if (!runFile) return keybindingOverrides;
+	keybindingOverrides = await writeKeybindingOverrides(path.dirname(runFile), overrides);
+	return keybindingOverrides;
+});
+
 ipcMain.handle("featureBuilds:list", () => listFeatureBuilds());
 ipcMain.handle("featureBuilds:getActive", () => getActiveFeatureBuild());
 
@@ -1501,6 +1515,11 @@ app.whenReady().then(async () => {
 		await writeAppStateOnLaunch();
 	} catch (err) {
 		console.error("failed to write app-state marker:", err);
+	}
+
+	const keybindingRunFile = runFilePath();
+	if (keybindingRunFile) {
+		keybindingOverrides = await readKeybindingOverrides(path.dirname(keybindingRunFile));
 	}
 
 	registerRendererProtocol();

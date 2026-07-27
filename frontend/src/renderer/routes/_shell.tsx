@@ -7,6 +7,7 @@ import { DaemonFailureBanner } from "../components/DaemonFailureBanner";
 import { NotificationRuntime } from "../components/NotificationCenter";
 import { GlobalNewTaskDialog } from "../components/GlobalNewTaskDialog";
 import { KeyboardShortcutsDialog } from "../components/KeyboardShortcutsDialog";
+import { KeyboardShortcutsSettingsDialog } from "../components/settings/KeyboardShortcutsSettingsDialog";
 import { ShellTopbar } from "../components/ShellTopbar";
 import { OrchestratorReplacementDialog } from "../components/OrchestratorReplacementDialog";
 import { Sidebar } from "../components/Sidebar";
@@ -35,6 +36,7 @@ import {
 	hidesShellTopbar,
 } from "../lib/platform";
 import { useUiStore } from "../stores/ui-store";
+import { matchesRendererShortcut } from "../stores/keybindings-store";
 import { sessionIsActive, toProjectKind, type WorkspaceSummary } from "../types/workspace";
 import type { components } from "../../api/schema";
 
@@ -122,6 +124,7 @@ function ShellLayout() {
 	// Seeded to the current value so a mount never opens a terminal unasked.
 	const handledShellNonceRef = useRef(newShellTerminalNonce);
 	const [isKeyboardShortcutsOpen, setIsKeyboardShortcutsOpen] = useState(false);
+	const [isKeyboardShortcutsSettingsOpen, setIsKeyboardShortcutsSettingsOpen] = useState(false);
 	const [isSidebarPeekOpen, setIsSidebarPeekOpen] = useState(false);
 	const sidebarPeekCloseTimerRef = useRef<number | undefined>(undefined);
 	const routeParams = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
@@ -420,11 +423,14 @@ function ShellLayout() {
 		return () => mediaQuery.removeEventListener("change", handleChange);
 	}, [themePreference, syncSystemTheme]);
 
-	// ⌘B lives in SidebarProvider (shadcn's built-in shortcut), which routes
-	// through onOpenChange back into the ui-store.
 	useEffect(() => {
 		const handleKeyDown = (event: KeyboardEvent) => {
-			if ((event.metaKey || event.ctrlKey) && /^[1-9]$/.test(event.key)) {
+			if (matchesRendererShortcut("toggle-sidebar", event)) {
+				event.preventDefault();
+				toggleSidebar();
+				return;
+			}
+			if (matchesRendererShortcut("open-project", event)) {
 				const workspace = workspaces[Number(event.key) - 1];
 				if (workspace) {
 					event.preventDefault();
@@ -434,7 +440,7 @@ function ShellLayout() {
 		};
 		window.addEventListener("keydown", handleKeyDown);
 		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [navigate, workspaces]);
+	}, [navigate, toggleSidebar, workspaces]);
 
 	// New session (⌘N / Ctrl+Shift+N) is detected in the main process and
 	// delivered here, so it fires even when focus is inside xterm or a native
@@ -515,7 +521,18 @@ function ShellLayout() {
 		<ShellProvider value={{ daemonStatus, createProject, initializeProjectRepository }}>
 			<NotificationRuntime />
 			<GlobalNewTaskDialog />
-			<KeyboardShortcutsDialog open={isKeyboardShortcutsOpen} onOpenChange={setIsKeyboardShortcutsOpen} />
+			<KeyboardShortcutsDialog
+				open={isKeyboardShortcutsOpen}
+				onOpenChange={setIsKeyboardShortcutsOpen}
+				onCustomize={() => {
+					setIsKeyboardShortcutsOpen(false);
+					setIsKeyboardShortcutsSettingsOpen(true);
+				}}
+			/>
+			<KeyboardShortcutsSettingsDialog
+				open={isKeyboardShortcutsSettingsOpen}
+				onOpenChange={setIsKeyboardShortcutsSettingsOpen}
+			/>
 			{/* Shell chrome: Win/Linux hang the sidebar under a topbar. macOS uses a
           titlebar strip above the off-canvas sidebar. Session and board actions
           render inside the center panel when the shell topbar is hidden. */}
@@ -531,6 +548,7 @@ function ShellLayout() {
             the drag-resizable --ao-sidebar-w set on :root by useResizable. */}
 				<SidebarProvider
 					className="min-h-0 flex-1 overflow-x-hidden"
+					keyboardShortcut={false}
 					onOpenChange={(open) => {
 						cancelSidebarPeekClose();
 						setIsSidebarPeekOpen(false);

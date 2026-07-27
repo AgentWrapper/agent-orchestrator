@@ -15,6 +15,7 @@ import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { hidesShellTopbar } from "../lib/platform";
 import { isOrchestratorSession, sessionIsActive } from "../types/workspace";
 import type { TerminalTarget } from "../types/terminal";
+import { matchesRendererShortcut } from "../stores/keybindings-store";
 
 const INSPECTOR_MIN_PERCENT = 22;
 const INSPECTOR_MAX_PERCENT = 45;
@@ -260,8 +261,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	useEffect(() => {
 		if (!hasInspector) return;
 		const handleKeyDown = (event: KeyboardEvent) => {
-			if (event.key.toLowerCase() !== "b" || !event.shiftKey) return;
-			if (!event.metaKey && !event.ctrlKey) return;
+			if (!matchesRendererShortcut("toggle-inspector", event)) return;
 			event.preventDefault();
 			toggleInspector(sessionId);
 		};
