@@ -12,8 +12,11 @@ const { buildBlockMap } = require("app-builder-lib/out/targets/blockmap/blockmap
 // writeBlockmap creates "<filePath>.blockmap" (gzip sidecar) and returns the
 // file's base64 sha512 + byte size, exactly as electron-updater reads them from
 // the feed yml. We deliberately do NOT surface blockMapSize: omitting it from
-// the yml forces the client onto the sidecar differential path on every
-// platform (verified against MacUpdater / NsisUpdater / AppImage).
+// the yml forces the client onto the sidecar differential path on win/linux
+// (verified against NsisUpdater / AppImage). mac zips skip writeBlockmap
+// entirely (see feed.mjs's hashFile) — no sidecar means MacUpdater's
+// differential attempt fails and falls back to a full zip download instead
+// (see #3034).
 export async function writeBlockmap(filePath) {
 	const { sha512, size } = await buildBlockMap(filePath, "gzip", `${filePath}.blockmap`);
 	return { sha512, size };

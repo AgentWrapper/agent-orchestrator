@@ -37,9 +37,12 @@ export function feedFilename(channel, platform) {
 }
 
 // buildYml serializes one platform's feed. files is [{ url, sha512, size }];
-// for mac the arm64 entry comes first. blockMapSize is never written (forces
-// sidecar differential on win/linux; mac has no sidecar at all — see #3034 —
-// so it always takes electron-updater's full-download path regardless).
+// for mac the arm64 entry comes first. The deprecated top-level path/sha512
+// point at files[0]. blockMapSize is never written (forces sidecar
+// differential on win/linux; mac has no sidecar at all — see #3034 — so it
+// always takes electron-updater's full-download path regardless). When
+// important is true, emits `important: true` after releaseDate so the
+// in-app update prompt is escalated.
 export function buildYml(version, files, releaseDate, important = false) {
 	const lines = [`version: ${version}`, "files:"];
 	for (const f of files) {
@@ -76,6 +79,7 @@ export async function generateFeeds(dir, rawVersion, channel, releaseDate, impor
 		writeFileSync(join(dir, feedFilename(channel, platform)), buildYml(version, files, releaseDate, important));
 	}
 }
+
 // CLI: node scripts/feed.mjs <dir> <version> <channel> [--important]
 if (import.meta.url === `file://${process.argv[1]}`) {
 	const [, , dir, version, channel] = process.argv;
