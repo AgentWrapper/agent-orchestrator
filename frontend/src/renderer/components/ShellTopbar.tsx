@@ -226,6 +226,7 @@ export function ShellTopbar() {
 						    moved here from the inspector's Summary "Danger zone". */}
 						{!isOrchestrator && session && sessionIsActive(session) ? (
 							<TopbarKillButton
+								key={session.id}
 								session={session}
 								orchestratorId={orchestrator?.id}
 								onKilled={(workspaceId, orchestratorId) => {
@@ -293,12 +294,7 @@ export function TopbarKillButton({
 	onKilled: (workspaceId: string, orchestratorId?: string) => void;
 }) {
 	const [confirmOpen, setConfirmOpen] = useState(false);
-	const kill = useTerminateSession({
-		onSuccess: (terminatedSession) => {
-			setConfirmOpen(false);
-			onKilled(terminatedSession.workspaceId, orchestratorId);
-		},
-	});
+	const kill = useTerminateSession();
 	const error = kill.error instanceof Error ? kill.error.message : null;
 
 	return (
@@ -329,7 +325,12 @@ export function TopbarKillButton({
 				error={error}
 				onConfirm={() => {
 					kill.reset();
-					kill.mutate(session);
+					kill.mutate(session, {
+						onSuccess: (_data, terminatedSession) => {
+							setConfirmOpen(false);
+							onKilled(terminatedSession.workspaceId, orchestratorId);
+						},
+					});
 				}}
 			/>
 		</>

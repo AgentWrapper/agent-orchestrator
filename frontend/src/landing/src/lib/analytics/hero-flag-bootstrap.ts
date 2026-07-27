@@ -1,4 +1,4 @@
-import { POSTHOG_COOKIE_NAME } from "@superset/shared/constants";
+import { POSTHOG_COOKIE_NAME } from "@ao/shared/constants";
 import type { PostHogConfig } from "posthog-js";
 
 export const HERO_POSITIONING_FLAG = "landing-hero-positioning";

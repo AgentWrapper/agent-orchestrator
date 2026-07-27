@@ -1,4 +1,4 @@
-import { COMPANY } from "@superset/shared/constants";
+import { COMPANY } from "@ao/shared/constants";
 
 export interface NavLink {
   href: string;
@@ -17,10 +17,9 @@ export const PRODUCT_LINKS: NavLink[] = [
 
 export const RESOURCE_LINKS: NavLink[] = [
   {
-    href: COMPANY.DOCS_URL,
+    href: "/docs",
     label: "Documentation",
     description: "Guides, references, and integrations.",
-    external: true,
   },
   {
     href: COMPANY.GITHUB_URL,

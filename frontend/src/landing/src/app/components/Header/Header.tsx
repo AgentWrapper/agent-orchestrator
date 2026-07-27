@@ -13,7 +13,6 @@ interface HeaderProps {
 
 export function Header({ ctaButtons }: HeaderProps) {
   const pathname = usePathname();
-  if (pathname === "/download") return null;
   const hasTransparentHero =
     pathname === "/" || pathname === "/design-partners";
   const [hasScrolled, setHasScrolled] = useState(false);
@@ -32,6 +31,12 @@ export function Header({ ctaButtons }: HeaderProps) {
     window.addEventListener("scroll", updateScrollState, { passive: true });
     return () => window.removeEventListener("scroll", updateScrollState);
   }, [hasTransparentHero]);
+
+  // Placed after the hooks above so hook order stays stable (Rules of Hooks):
+  // an early return before useState/useEffect breaks the client component, and
+  // its scroll listener never attaches — leaving the hero header stuck
+  // transparent instead of turning solid on scroll.
+  if (pathname === "/download") return null;
 
   return (
     <header
