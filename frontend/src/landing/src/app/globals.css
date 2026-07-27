@@ -1,8 +1,8 @@
 @import "tailwindcss";
 /* Relative path avoids Turbopack resolving workspace CSS from frontend/src. */
 @import "../../packages/ui/src/globals.css";
-@import "@superset/site-theme/tokens.css";
-@import "@superset/site-theme/prose.css";
+@import "../../../site-theme/tokens.css";
+@import "../../../site-theme/prose.css";
 @import "@xterm/xterm/css/xterm.css";
 
 @source "../../packages/ui/src/**/*.{ts,tsx}";

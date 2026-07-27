@@ -1,6 +1,6 @@
 "use client";
 
-import { COMPANY, HERO_SUBHEADLINE, TAGLINE } from "@superset/shared/constants";
+import { COMPANY, HERO_SUBHEADLINE, TAGLINE } from "@ao/shared/constants";
 import { useState } from "react";
 import { FaGithub } from "react-icons/fa";
 import { isMacPlatform, usePlatform } from "../../hooks/useOS";
