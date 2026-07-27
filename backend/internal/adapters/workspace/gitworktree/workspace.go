@@ -762,13 +762,9 @@ func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch, baseBra
 	// override"), so re-register it in the same add instead of clearing it
 	// first. records is the freshly listed state, so this decision and the add
 	// it feeds are as close together as git allows.
-	force := false
-	if rec, ok := findWorktree(records, path); ok {
-		missing, err := registeredWorktreeDirMissing(rec)
-		if err != nil {
-			return err
-		}
-		force = missing
+	force, err := staleRegistrationForPath(records, path)
+	if err != nil {
+		return err
 	}
 
 	localBranch, err := w.refExists(ctx, repo, "refs/heads/"+branch)
@@ -795,18 +791,72 @@ func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch, baseBra
 		}
 		return err
 	}
-	if _, err := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo, branch, path, baseRef, force)...); err != nil {
-		// git can still report the stale registration when the directory
-		// reappeared between the stat above and this add, or vanished after it.
-		// Retry with --force (git's own suggested override) rather than the
-		// repo-wide prune this used to run, which would drop sibling sessions'
-		// registrations too.
-		if !force && isMissingRegisteredWorktreeError(err) {
-			if _, retryErr := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo, branch, path, baseRef, true)...); retryErr == nil {
-				return nil
-			}
-		}
+	if err := w.addNewBranchWorktree(ctx, repo, branch, path, baseRef, force); err != nil {
 		return fmt.Errorf("gitworktree: worktree add branch %q from %q: %w", branch, baseRef, err)
+	}
+	return nil
+}
+
+// staleRegistrationForPath reports whether records carries a registration for
+// path whose directory is gone, i.e. whether an add at path needs git's
+// `--force` override to re-register it. No registration at all is not stale.
+func staleRegistrationForPath(records []worktreeRecord, path string) (bool, error) {
+	rec, ok := findWorktree(records, path)
+	if !ok {
+		return false, nil
+	}
+	return registeredWorktreeDirMissing(rec)
+}
+
+// addNewBranchWorktree runs `git worktree add [--force] -b <branch> <path>
+// <baseRef>` and recovers when git rejects path as a stale registration that
+// the caller's own pre-check did not see (the directory vanished between that
+// check and this add).
+//
+// The retry deliberately does NOT repeat the `-b` form. git creates
+// refs/heads/<branch> BEFORE it validates the target path, so a `-b` attempt
+// that fails on the stale registration still leaves the branch behind:
+// verified against git 2.54, the failed add prints "Preparing worktree (new
+// branch '<branch>')", exits 128, and `show-ref` then finds the branch. A
+// `--force -b` retry therefore never recovers, it fails with "a branch named
+// '<branch>' already exists" (exit 255), which is the bug this addresses.
+// Retrying on the existing-branch form `worktree add --force <path> <branch>`
+// checks out the branch the first attempt just created, at baseRef, which is
+// exactly what the `-b` form would have produced.
+//
+// Both callers reach the `-b` form only after confirming refs/heads/<branch>
+// did not exist (addWorktree via refExists, createWorkspaceProjectRepo via
+// workspaceProjectBranchFree), so a branch present after the failed attempt is
+// the one that attempt created, never a pre-existing branch this would hijack.
+// The ref is re-read rather than assumed, so a future caller that skips that
+// precondition still gets the correct form.
+//
+// A recovery that fails outright leaves the created branch ref behind. That is
+// deliberate: the failure that matters here is "path exists and is non-empty",
+// which means something else materialized the worktree at path first, possibly
+// checked out on this very branch, and deleting the ref would then damage the
+// worktree that won. The leftover ref is harmless and self-correcting: the next
+// addWorktree for it takes the existing-branch path, and workspaceProjectBranch
+// simply picks the next free candidate.
+func (w *Workspace) addNewBranchWorktree(ctx context.Context, repo, branch, path, baseRef string, force bool) error {
+	_, err := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo, branch, path, baseRef, force)...)
+	if err == nil {
+		return nil
+	}
+	// --force was already in play, so the stale registration is not what failed.
+	if force || !isMissingRegisteredWorktreeError(err) {
+		return err
+	}
+	created, refErr := w.refExists(ctx, repo, "refs/heads/"+branch)
+	if refErr != nil {
+		return err
+	}
+	retryArgs := worktreeAddNewBranchArgs(repo, branch, path, baseRef, true)
+	if created {
+		retryArgs = worktreeAddBranchArgs(repo, path, branch, true)
+	}
+	if _, retryErr := w.run(ctx, w.binary, retryArgs...); retryErr != nil {
+		return err
 	}
 	return nil
 }
@@ -875,15 +925,24 @@ func (w *Workspace) createWorkspaceProjectRepo(ctx context.Context, repo workspa
 	if err != nil {
 		return "", err
 	}
-	if _, err := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo.repoPath, branch, repo.outputPath, baseRef, false)...); err != nil {
-		// Same stale-registration recovery as addWorktree: retry with git's own
-		// --force override instead of a repo-wide prune that would also drop
-		// sibling sessions' registrations.
-		if isMissingRegisteredWorktreeError(err) {
-			if _, retryErr := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo.repoPath, branch, repo.outputPath, baseRef, true)...); retryErr == nil {
-				return baseSHA, nil
-			}
-		}
+	// Same up-front stale-registration check addWorktree does, so the ordinary
+	// #2775 shape (registration outlived its directory) is handled by the first
+	// add and never reaches the recovery below. Without it every recovery here
+	// had to go through a failed `-b` attempt, which leaves a stray branch ref
+	// behind even when it succeeds.
+	records, err := w.listRecords(ctx, repo.repoPath)
+	if err != nil {
+		return "", err
+	}
+	force, err := staleRegistrationForPath(records, repo.outputPath)
+	if err != nil {
+		return "", err
+	}
+	// Recovery from a registration that only goes stale after that check is
+	// addNewBranchWorktree's job: git's own --force override, not the repo-wide
+	// prune this used to run, which would also drop sibling sessions'
+	// registrations.
+	if err := w.addNewBranchWorktree(ctx, repo.repoPath, branch, repo.outputPath, baseRef, force); err != nil {
 		return "", fmt.Errorf("gitworktree: workspace repo %q worktree add branch %q from %q: %w", repo.name, branch, baseRef, err)
 	}
 	return baseSHA, nil
