@@ -579,6 +579,69 @@ func TestCreateWorkspaceProjectRepoRecoveryRetriesOnExistingBranchForm(t *testin
 	assertNoDestructiveRegistrationCleanup(t, "createWorkspaceProjectRepo", got)
 }
 
+// TestAddNewBranchWorktreeRecoveryFailureReportsBothErrors pins the diagnostics
+// on the recovery path. When the retry fails, the original error names the
+// condition recovery was FOR ("is a missing but already registered worktree"),
+// not why recovery failed. The failure that matters most is a lost race:
+// another restore materialized the worktree at path first, so git refuses with
+// "already exists" — reporting only the original sends the reader looking for a
+// stale registration that is no longer there.
+func TestAddNewBranchWorktreeRecoveryFailureReportsBothErrors(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	output := filepath.Join(root, "proj", "orchestrator", "proj-orchestrator", "api")
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	// No registration at output, so the first add is plain and the recovery
+	// below is reached only because the path went stale after the pre-check.
+	worktreeList := "worktree " + repo + "\nbranch refs/heads/main\n\n"
+
+	absentErr := exitStatusOne(t)
+	var calls []string
+	branchCreated := false
+	workspaceProjectRepoFake(t, ws, output, worktreeList, &calls, func(joined, binary string, args []string) ([]byte, error, bool) {
+		switch {
+		case strings.Contains(joined, "rev-parse --verify --quiet refs/heads/feature/test"):
+			if !branchCreated {
+				return nil, commandError{args: append([]string{binary}, args...), err: absentErr}, true
+			}
+			return nil, nil, true
+		case strings.Contains(joined, "worktree add -b feature/test "+output+" origin/main"):
+			branchCreated = true
+			return nil, commandError{
+				args:   append([]string{binary}, args...),
+				output: "fatal: '" + output + "' is a missing but already registered worktree;\nuse 'add -f' to override, or 'prune' or 'remove' to clear",
+				err:    errors.New("exit status 128"),
+			}, true
+		case strings.Contains(joined, "worktree add --force "+output+" feature/test"):
+			// A concurrent restore won the race and materialized the worktree.
+			return nil, commandError{
+				args:   append([]string{binary}, args...),
+				output: "fatal: '" + output + "' already exists",
+				err:    errors.New("exit status 128"),
+			}, true
+		}
+		return nil, nil, false
+	})
+
+	_, err = ws.createWorkspaceProjectRepo(context.Background(), workspaceProjectRepo{
+		name:       "api",
+		repoPath:   repo,
+		outputPath: output,
+	}, "feature/test")
+	if err == nil {
+		t.Fatal("createWorkspaceProjectRepo: want error when recovery fails, got nil")
+	}
+	if !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("error does not report why recovery failed:\n%v", err)
+	}
+	if !strings.Contains(err.Error(), "missing but already registered worktree") {
+		t.Fatalf("error dropped the original failure:\n%v", err)
+	}
+}
+
 // TestValidateConfigRejectsPathEscapingIDs covers review item RB: filepath.Join
 // in managedPath cleans `..` segments before validateManagedPath sees them, so a
 // session id of "../other" would stay inside managedRoot while jumping projects.

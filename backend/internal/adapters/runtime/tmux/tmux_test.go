@@ -132,6 +132,27 @@ func TestExecRunnerRunsFromStableDir(t *testing.T) {
 	}
 }
 
+// TestExecRunnerFallsBackWhenTempDirMissing pins the guard on Fix 1's pin.
+// os.TempDir() returns $TMPDIR without checking it exists, so a stale or bogus
+// TMPDIR would otherwise set cmd.Dir to a dead path and fail EVERY tmux command
+// with "chdir <dir>: no such file or directory" — the same dead-cwd failure
+// #2775 was about, just moved. Run must degrade to a directory that exists.
+func TestExecRunnerFallsBackWhenTempDirMissing(t *testing.T) {
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "deleted-by-an-update"))
+	if _, err := os.Stat(os.TempDir()); !os.IsNotExist(err) {
+		t.Fatalf("precondition: os.TempDir() %q should not exist, stat err = %v", os.TempDir(), err)
+	}
+
+	out, err := (execRunner{}).Run(context.Background(), nil, "sh", "-c", "pwd")
+	if err != nil {
+		t.Fatalf("execRunner.Run with a missing TMPDIR: %v", err)
+	}
+	got := strings.TrimSpace(string(out))
+	if info, err := os.Stat(got); err != nil || !info.IsDir() {
+		t.Fatalf("execRunner ran from %q, want an existing directory (stat err = %v)", got, err)
+	}
+}
+
 // -- command builder tests --
 
 func TestCommandBuilders(t *testing.T) {

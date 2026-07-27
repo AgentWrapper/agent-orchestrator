@@ -685,6 +685,14 @@ func (w *Workspace) existingWorktree(ctx context.Context, repo, path string, cfg
 			// Report "no existing worktree" so Create falls through to
 			// addWorktree, which re-registers this stale path in one step via
 			// `worktree add --force`.
+			//
+			// Unlike Restore, Create deliberately recreates on cfg.Branch and
+			// not on rec.Branch. Restore is re-attaching to a live session
+			// whose branch may have moved on past what AO recorded, so the
+			// registration is the better source of truth there; Create is
+			// materializing a NEW session, where a registration at this path is
+			// a leftover from a prior session of the same name and its branch
+			// says nothing about what the caller asked for.
 			return ports.WorkspaceInfo{}, false, nil
 		}
 		branch := rec.Branch
@@ -850,16 +858,24 @@ func (w *Workspace) addNewBranchWorktree(ctx context.Context, repo, branch, path
 	if force || !isMissingRegisteredWorktreeError(err) {
 		return err
 	}
+	// Report the recovery failure alongside the original: on its own, the
+	// original ("is a missing but already registered worktree") names the
+	// condition recovery was FOR, not the reason recovery failed, and the two
+	// are routinely different. The interesting ones are "'<path>' already
+	// exists" (another restore materialized the worktree first, so this one
+	// lost the race and must not be read as a stale registration) and "missing
+	// but locked" (a registration that acquired a lock after the caller's
+	// pre-check). Joining keeps errors.Is working for both.
 	created, refErr := w.refExists(ctx, repo, "refs/heads/"+branch)
 	if refErr != nil {
-		return err
+		return errors.Join(err, refErr)
 	}
 	retryArgs := worktreeAddNewBranchArgs(repo, branch, path, baseRef, true)
 	if created {
 		retryArgs = worktreeAddBranchArgs(repo, path, branch, true)
 	}
 	if _, retryErr := w.run(ctx, w.binary, retryArgs...); retryErr != nil {
-		return err
+		return errors.Join(err, retryErr)
 	}
 	return nil
 }

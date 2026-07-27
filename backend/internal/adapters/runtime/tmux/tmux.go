@@ -141,8 +141,35 @@ func (execRunner) Run(ctx context.Context, env []string, name string, args ...st
 	// deletes, permanently pinning the tmux server to a path that no longer
 	// exists. os.TempDir() outlives app bundle swaps and update staging dirs, so
 	// pinning here keeps the server cwd valid across the app's lifetime.
-	cmd.Dir = os.TempDir()
+	cmd.Dir = stableRunDir()
 	return cmd.CombinedOutput()
+}
+
+// stableRunDir returns the directory execRunner.Run pins the tmux CLI to.
+//
+// os.TempDir() is the preferred answer (see execRunner.Run), but it returns
+// $TMPDIR verbatim without checking that it exists. A stale or bogus TMPDIR
+// would then make exec fail with "chdir <dir>: no such file or directory" on
+// EVERY tmux command, taking the whole runtime down for exactly the reason
+// #2775 did: a cwd that no longer exists. So stat the candidates and degrade
+// rather than hard-fail. The last resort is the empty string, which leaves
+// cmd.Dir unset so the command inherits the daemon's own cwd: that is the
+// pre-fix behavior and merely risks the poisoned-server race the pin avoids,
+// which the retry in verifyPaneWorkingDirectory already tolerates.
+func stableRunDir() string {
+	candidates := []string{os.TempDir()}
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates, home)
+	}
+	for _, dir := range candidates {
+		if dir == "" {
+			continue
+		}
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			return dir
+		}
+	}
+	return ""
 }
 
 // New builds a tmux Runtime, filling unset Options with defaults: binary "tmux"
