@@ -387,7 +387,7 @@ describe("SessionView", () => {
 		expect(handle.expand).not.toHaveBeenCalled();
 		expect(handle.collapse).not.toHaveBeenCalled();
 
-		fireEvent.keyDown(window, { key: "B", metaKey: true, shiftKey: true });
+		fireEvent.keyDown(window, { key: "B", ctrlKey: true, shiftKey: true });
 
 		expect(inspectorOpen("sess-1")).toBe(false);
 		expect(handle.collapse).toHaveBeenCalledTimes(1);
@@ -406,7 +406,7 @@ describe("SessionView", () => {
 		expect(handle.expand).not.toHaveBeenCalled();
 		expect(handle.collapse).not.toHaveBeenCalled();
 
-		fireEvent.keyDown(window, { key: "B", metaKey: true, shiftKey: true });
+		fireEvent.keyDown(window, { key: "B", ctrlKey: true, shiftKey: true });
 
 		expect(inspectorOpen("sess-1")).toBe(true);
 		expect(handle.expand).toHaveBeenCalledTimes(1);
@@ -418,7 +418,7 @@ describe("SessionView", () => {
 		render(<SessionView sessionId="sess-1" />);
 		const handle = panels.get("inspector")!.handle;
 
-		fireEvent.keyDown(window, { key: "B", metaKey: true, shiftKey: true });
+		fireEvent.keyDown(window, { key: "B", ctrlKey: true, shiftKey: true });
 		expect(inspectorOpen("sess-1")).toBe(false);
 		expect(handle.collapse).toHaveBeenCalledTimes(1);
 
@@ -523,7 +523,7 @@ describe("SessionView", () => {
 		expect(panelSizes("inspector")[0]).toBe("0%");
 		expect(handle.collapse).not.toHaveBeenCalled();
 
-		fireEvent.keyDown(window, { key: "B", metaKey: true, shiftKey: true });
+		fireEvent.keyDown(window, { key: "B", ctrlKey: true, shiftKey: true });
 
 		expect(inspectorOpen("sess-2")).toBe(true);
 		expect(handle.expand).toHaveBeenCalledTimes(1);
