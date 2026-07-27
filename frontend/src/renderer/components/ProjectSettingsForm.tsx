@@ -232,10 +232,10 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					value={form.displayName}
 					onChange={(value) => setForm((f) => ({ ...f, displayName: value }))}
 				/>
-				<SettingsValueRow icon={Fingerprint} label="id" value={project.id} mono />
+				<SettingsValueRow icon={Fingerprint} label="id" value={project.id} />
 				<SettingsValueRow icon={Layers} label="kind" value={projectKindLabel(project.kind)} />
-				<SettingsValueRow icon={FolderOpen} label="path" value={project.path} mono />
-				<SettingsValueRow icon={Link} label="repo" value={project.repo || "—"} mono />
+				<SettingsValueRow icon={FolderOpen} label="path" value={project.path} />
+				<SettingsValueRow icon={Link} label="repo" value={project.repo || "—"} />
 			</SettingsSection>
 
 			{project.kind === "workspace" && (
@@ -243,7 +243,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					{project.workspaceRepos?.length ? (
 						project.workspaceRepos.map((repo) => (
 							<SettingsRow key={repo.name} icon={FolderGit2} label={repo.name}>
-								<span className="settings-row-value font-mono tracking-settings-mono">
+								<span className="settings-row-value">
 									{repo.relativePath}
 									{repo.repo ? ` · ${repo.repo}` : ""}
 								</span>
@@ -462,16 +462,14 @@ function SettingsValueRow({
 	icon,
 	label,
 	value,
-	mono = false,
 }: {
 	icon?: LucideIcon;
 	label: string;
 	value: string;
-	mono?: boolean;
 }) {
 	return (
 		<SettingsRow icon={icon} label={label}>
-			<span className={cn("settings-row-value", mono && "font-mono tracking-settings-mono")} title={value}>
+			<span className="settings-row-value" title={value}>
 				{value}
 			</span>
 		</SettingsRow>

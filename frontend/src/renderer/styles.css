@@ -593,6 +593,7 @@ button.settings-row-bar {
 	text-overflow: ellipsis;
 	white-space: nowrap;
 	text-align: right;
+	/* Match settings-option-trigger (Refresh / agent selects) size. */
 	font-size: var(--font-size-base);
 	line-height: 1.25rem;
 	color: var(--color-text-settings-muted);
