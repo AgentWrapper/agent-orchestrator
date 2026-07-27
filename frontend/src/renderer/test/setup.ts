@@ -177,6 +177,7 @@ if (typeof window !== "undefined") {
 		keybindings: {
 			get: async () => ({}),
 			set: async (overrides) => overrides,
+			setRecording: async () => undefined,
 		},
 		updates: {
 			getStatus: async () => ({ state: "idle" }),

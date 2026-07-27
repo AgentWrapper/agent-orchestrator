@@ -15,28 +15,24 @@ describe("coerceKeybindingOverrides", () => {
 		});
 	});
 
-	it("rejects plain typing keys but preserves an explicitly unassigned command", () => {
+	it("falls back to defaults for corrupt non-empty arrays but preserves an intentional unassignment", () => {
 		expect(
 			coerceKeybindingOverrides({
 				"open-settings": [{ key: "s" }],
 				"command-palette": [],
 			}),
 		).toEqual({
-			"open-settings": [],
 			"command-palette": [],
 		});
 	});
 
-	it("allows safe standalone function keys", () => {
+	it("rejects standalone function keys and terminal-critical chords", () => {
 		expect(
 			coerceKeybindingOverrides({
 				"focus-terminal": [{ key: "F6" }],
+				"open-settings": [{ key: "c", ctrl: true }],
 			}),
-		).toEqual({
-			"focus-terminal": [
-				{ key: "F6", ctrl: false, meta: false, shift: false, alt: false },
-			],
-		});
+		).toEqual({});
 	});
 
 	it("does not accept overrides for the fixed indexed project shortcut", () => {
@@ -45,5 +41,12 @@ describe("coerceKeybindingOverrides", () => {
 				"open-project": [{ key: "p", ctrl: true }],
 			}),
 		).toEqual({});
+	});
+
+	it("applies platform-aware reserved shortcut validation", () => {
+		expect(coerceKeybindingOverrides({ "focus-terminal": [{ key: "q", meta: true }] }, true)).toEqual({});
+		expect(coerceKeybindingOverrides({ "focus-terminal": [{ key: "q", meta: true }] }, false)).toEqual({
+			"focus-terminal": [{ key: "q", ctrl: false, meta: true, shift: false, alt: false }],
+		});
 	});
 });

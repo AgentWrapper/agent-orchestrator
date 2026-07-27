@@ -70,9 +70,13 @@ export function attachAppShortcuts(
 	target: ShortcutTargetContents,
 	focusTarget = false,
 	getOverrides: () => KeybindingOverrides = () => ({}),
+	isRecording: () => boolean = () => false,
 ): void {
 	contents.on("before-input-event", (event, input) => {
 		if (input.type !== "keyDown" || input.isAutoRepeat) return;
+		// Let the renderer's capture listener receive application-owned chords
+		// while the user is recording a replacement binding.
+		if (isRecording()) return;
 		const channel = appShortcutChannel(
 			{
 				key: input.key,

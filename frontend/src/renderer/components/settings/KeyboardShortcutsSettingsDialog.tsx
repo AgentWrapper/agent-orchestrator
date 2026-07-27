@@ -5,11 +5,13 @@ import {
 	effectiveShortcutBindings,
 	matchesShortcutBinding,
 	shortcutBindingLabel,
+	shortcutBindingValidationError,
 	type AppShortcutId,
 	type KeybindingOverrides,
 	type ShortcutBinding,
 } from "../../../shared/shortcuts";
 import { isMacPlatform } from "../../lib/platform";
+import { aoBridge } from "../../lib/bridge";
 import { cn } from "../../lib/utils";
 import { useKeybindingsStore } from "../../stores/keybindings-store";
 import {
@@ -24,6 +26,7 @@ import {
 	settingsDialogHeaderClass,
 } from "../ui/dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
+import { ConfirmDialog } from "../ConfirmDialog";
 
 type RecordingState = { id: AppShortcutId; mode: "replace" | "add" };
 type ConflictState = {
@@ -38,12 +41,22 @@ type ToastState = {
 	undo?: () => Promise<void>;
 };
 
-const isMac = isMacPlatform();
-const modifierKeys = new Set(["Alt", "Control", "Meta", "Shift"]);
+const ignoredRecordingKeys = new Set([
+	"Alt",
+	"AltGraph",
+	"CapsLock",
+	"Control",
+	"Dead",
+	"Meta",
+	"NumLock",
+	"Process",
+	"ScrollLock",
+	"Shift",
+	"Unidentified",
+]);
 
 function eventBinding(event: KeyboardEvent): ShortcutBinding | null {
-	if (modifierKeys.has(event.key)) return null;
-	if (!event.ctrlKey && !event.metaKey && !event.altKey && !/^F(?:[1-9]|1\d|2[0-4])$/.test(event.key)) return null;
+	if (ignoredRecordingKeys.has(event.key) || event.getModifierState?.("AltGraph")) return null;
 	return {
 		key: event.key.length === 1 ? event.key.toLowerCase() : event.key,
 		...(event.code === "Backquote" ? { code: event.code } : {}),
@@ -61,20 +74,25 @@ function definition(id: AppShortcutId) {
 export function KeyboardShortcutsSettingsDialog({
 	open,
 	onOpenChange,
+	isMac = isMacPlatform(),
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
+	isMac?: boolean;
 }) {
 	const overrides = useKeybindingsStore((state) => state.overrides);
 	const setOverrides = useKeybindingsStore((state) => state.setOverrides);
 	const resetBinding = useKeybindingsStore((state) => state.resetBinding);
 	const resetAll = useKeybindingsStore((state) => state.resetAll);
 	const [query, setQuery] = useState("");
-	const [recording, setRecording] = useState<RecordingState | null>(null);
+	const [recording, setRecordingState] = useState<RecordingState | null>(null);
 	const [conflict, setConflict] = useState<ConflictState | null>(null);
 	const [confirmResetAll, setConfirmResetAll] = useState(false);
 	const [toast, setToast] = useState<ToastState | null>(null);
 	const toastTimerRef = useRef<number | undefined>(undefined);
+	const openRef = useRef(open);
+	const recordingRequestRef = useRef(0);
+	openRef.current = open;
 
 	const showToast = (next: ToastState) => {
 		if (toastTimerRef.current !== undefined) window.clearTimeout(toastTimerRef.current);
@@ -84,10 +102,53 @@ export function KeyboardShortcutsSettingsDialog({
 
 	useEffect(
 		() => () => {
+			openRef.current = false;
+			recordingRequestRef.current += 1;
 			if (toastTimerRef.current !== undefined) window.clearTimeout(toastTimerRef.current);
+			void aoBridge.keybindings.setRecording(false);
 		},
 		[],
 	);
+
+	useEffect(() => {
+		if (open) return;
+		setRecordingState(null);
+		void aoBridge.keybindings.setRecording(false);
+	}, [open]);
+
+	useEffect(() => {
+		if (!recording) return;
+		const handleBlur = () => {
+			setRecordingState(null);
+			void aoBridge.keybindings.setRecording(false);
+		};
+		window.addEventListener("blur", handleBlur);
+		return () => window.removeEventListener("blur", handleBlur);
+	}, [recording]);
+
+	const beginRecording = async (next: RecordingState) => {
+		const request = recordingRequestRef.current + 1;
+		recordingRequestRef.current = request;
+		try {
+			await aoBridge.keybindings.setRecording(true);
+			if (!openRef.current || request !== recordingRequestRef.current) {
+				await aoBridge.keybindings.setRecording(false);
+				return;
+			}
+			setRecordingState(next);
+		} catch {
+			showToast({
+				title: "Could not record shortcut",
+				body: "Try reopening keyboard shortcut settings.",
+			});
+		}
+	};
+
+	const endRecording = () => {
+		recordingRequestRef.current += 1;
+		setRecordingState(null);
+		void aoBridge.keybindings.setRecording(false);
+	};
 
 	const filteredShortcuts = useMemo(() => {
 		const needle = query.trim().toLowerCase();
@@ -98,7 +159,7 @@ export function KeyboardShortcutsSettingsDialog({
 				.join(" ");
 			return `${shortcut.label} ${shortcut.category} ${labels}`.toLowerCase().includes(needle);
 		});
-	}, [overrides, query]);
+	}, [isMac, overrides, query]);
 
 	const applyBinding = async (
 		targetId: AppShortcutId,
@@ -136,18 +197,17 @@ export function KeyboardShortcutsSettingsDialog({
 			event.preventDefault();
 			event.stopPropagation();
 			if (event.key === "Escape") {
-				setRecording(null);
+				endRecording();
 				return;
 			}
 			if (event.repeat) return;
 			const candidate = eventBinding(event);
 			if (!candidate) {
-				if (!modifierKeys.has(event.key)) {
-					showToast({
-						title: "Add a modifier",
-						body: "Use Ctrl, Alt, Cmd, or a function key such as F6.",
-					});
-				}
+				return;
+			}
+			const validationError = shortcutBindingValidationError(candidate, isMac);
+			if (validationError) {
+				showToast({ title: "Shortcut is reserved", body: validationError });
 				return;
 			}
 			if (
@@ -160,7 +220,7 @@ export function KeyboardShortcutsSettingsDialog({
 					title: "Shortcut already assigned",
 					body: `${shortcutBindingLabel(candidate, isMac)} is already available for this command.`,
 				});
-				setRecording(null);
+				endRecording();
 				return;
 			}
 			const conflicting = APP_SHORTCUTS.find(
@@ -184,17 +244,17 @@ export function KeyboardShortcutsSettingsDialog({
 					binding: candidate,
 					mode: recording.mode,
 				});
-				setRecording(null);
+				endRecording();
 				return;
 			}
 			void applyBinding(recording.id, candidate, recording.mode).catch(() =>
 				showToast({ title: "Could not update shortcut", body: "Your previous binding is still active." }),
 			);
-			setRecording(null);
+			endRecording();
 		};
 		window.addEventListener("keydown", handleKeyDown, true);
 		return () => window.removeEventListener("keydown", handleKeyDown, true);
-	}, [open, overrides, recording]);
+	}, [isMac, open, overrides, recording]);
 
 	const handleResetBinding = async (id: AppShortcutId) => {
 		const before = overrides;
@@ -229,13 +289,21 @@ export function KeyboardShortcutsSettingsDialog({
 			<Dialog
 				open={open}
 				onOpenChange={(next) => {
-					setRecording(null);
+					endRecording();
 					setConflict(null);
 					setConfirmResetAll(false);
 					onOpenChange(next);
 				}}
 			>
-				<DialogContent className={cn(settingsDialogContentClass, "w-[min(760px,calc(100vw-var(--space-8)))]")}>
+				<DialogContent
+					className={cn(settingsDialogContentClass, "relative w-[min(760px,calc(100vw-var(--space-8)))]")}
+					onEscapeKeyDown={(event) => {
+						if (recording) {
+							event.preventDefault();
+							endRecording();
+						}
+					}}
+				>
 					<DialogHeader className={settingsDialogHeaderClass}>
 						<DialogTitle className="settings-dialog-title">Keyboard shortcuts</DialogTitle>
 						<DialogDescription className="text-control leading-4 text-settings-muted">
@@ -323,7 +391,7 @@ export function KeyboardShortcutsSettingsDialog({
 																type="button"
 																className="inline-flex size-8 items-center justify-center rounded-md text-settings-muted hover:bg-settings-menu-selected hover:text-settings-label"
 																aria-label={`Change ${shortcut.label}`}
-																onClick={() => setRecording({ id: shortcut.id, mode: "replace" })}
+																onClick={() => void beginRecording({ id: shortcut.id, mode: "replace" })}
 															>
 																<Pencil className="size-icon-base" aria-hidden="true" />
 															</button>
@@ -337,7 +405,7 @@ export function KeyboardShortcutsSettingsDialog({
 																	type="button"
 																	className="inline-flex size-8 items-center justify-center rounded-md text-settings-muted hover:bg-settings-menu-selected hover:text-settings-label"
 																	aria-label={`Add alternative for ${shortcut.label}`}
-																	onClick={() => setRecording({ id: shortcut.id, mode: "add" })}
+																	onClick={() => void beginRecording({ id: shortcut.id, mode: "add" })}
 																>
 																	<Plus className="size-icon-base" aria-hidden="true" />
 																</button>
@@ -404,83 +472,72 @@ export function KeyboardShortcutsSettingsDialog({
 							</button>
 						)}
 					</div>
+
+					{toast ? (
+						<div
+							className="pointer-events-auto absolute bottom-4 right-4 z-[calc(var(--z-overlay)+2)] flex w-[min(24rem,calc(100%-2rem))] items-start gap-3 rounded-xl border border-(--color-border-settings-dialog) bg-settings-dialog px-4 py-3 shadow-[var(--shadow-settings-dialog)]"
+							role="status"
+							aria-live="polite"
+							aria-atomic="true"
+						>
+							<Check className="mt-0.5 size-icon-base shrink-0 text-success" aria-hidden="true" />
+							<div className="min-w-0 flex-1">
+								<p className="text-sm font-medium text-settings-label">{toast.title}</p>
+								{toast.body ? <p className="mt-0.5 text-caption text-settings-muted">{toast.body}</p> : null}
+							</div>
+							{toast.undo ? (
+								<button
+									type="button"
+									className="text-caption font-medium text-settings-label hover:underline"
+									onClick={() => void toast.undo?.()}
+								>
+									Undo
+								</button>
+							) : null}
+							<button
+								type="button"
+								className="text-settings-muted hover:text-settings-label"
+								aria-label="Dismiss notification"
+								onClick={() => setToast(null)}
+							>
+								<X className="size-icon-base" aria-hidden="true" />
+							</button>
+						</div>
+					) : null}
 				</DialogContent>
 			</Dialog>
 
-			{conflict ? (
-				<div className="fixed inset-0 z-[calc(var(--z-overlay)+1)] grid place-items-center bg-black/45 px-4">
-					<div
-						className="w-full max-w-md rounded-(--radius-settings-dialog-lg) border border-(--color-border-settings-dialog) bg-settings-dialog p-5 shadow-[var(--shadow-settings-dialog)]"
-						role="alertdialog"
-						aria-labelledby="keybinding-conflict-title"
-					>
-						<h2 id="keybinding-conflict-title" className="settings-dialog-title">
-							Shortcut already in use
-						</h2>
-						<p className="mt-2 text-sm text-settings-muted">
-							{shortcutBindingLabel(conflict.binding, isMac)} is assigned to{" "}
-							{definition(conflict.conflictingId)?.label}. Reassign it to {definition(conflict.targetId)?.label}?
-						</p>
-						<div className="mt-5 flex justify-end gap-3">
-							<button type="button" className="settings-footer-button" onClick={() => setConflict(null)}>
-								Cancel
-							</button>
-							<button
-								type="button"
-								className="settings-footer-button border-transparent bg-settings-accent text-white"
-								onClick={() => {
-									const pending = conflict;
-									setConflict(null);
-									void applyBinding(
-										pending.targetId,
-										pending.binding,
-										pending.mode,
-										pending.conflictingId,
-									).catch(() =>
-										showToast({
-											title: "Could not reassign shortcut",
-											body: "Your previous bindings are still active.",
-										}),
-									);
-								}}
-							>
-								Reassign
-							</button>
-						</div>
-					</div>
-				</div>
-			) : null}
-
-			{toast ? (
-				<div
-					className="pointer-events-auto fixed bottom-4 right-4 z-[calc(var(--z-overlay)+2)] flex w-[min(24rem,calc(100vw-2rem))] items-start gap-3 rounded-xl border border-(--color-border-settings-dialog) bg-settings-dialog px-4 py-3 shadow-[var(--shadow-settings-dialog)]"
-					role="status"
-					aria-live="polite"
-				>
-					<Check className="mt-0.5 size-icon-base shrink-0 text-success" aria-hidden="true" />
-					<div className="min-w-0 flex-1">
-						<p className="text-sm font-medium text-settings-label">{toast.title}</p>
-						{toast.body ? <p className="mt-0.5 text-caption text-settings-muted">{toast.body}</p> : null}
-					</div>
-					{toast.undo ? (
-						<button
-							type="button"
-							className="text-caption font-medium text-settings-label hover:underline"
-							onClick={() => void toast.undo?.()}
-						>
-							Undo
-						</button>
-					) : null}
-					<button
-						type="button"
-						className="text-settings-muted hover:text-settings-label"
-						aria-label="Dismiss notification"
-						onClick={() => setToast(null)}
-					>
-						<X className="size-icon-base" aria-hidden="true" />
-					</button>
-				</div>
-			) : null}
+			<ConfirmDialog
+				open={conflict !== null}
+				title="Shortcut already in use"
+				description={
+					conflict
+						? `${shortcutBindingLabel(conflict.binding, isMac)} is assigned to ${
+								definition(conflict.conflictingId)?.label
+							}. Reassign it to ${definition(conflict.targetId)?.label}?`
+						: ""
+				}
+				confirmLabel="Reassign"
+				onOpenChange={(next) => {
+					if (!next) setConflict(null);
+				}}
+				onConfirm={() => {
+					if (!conflict) return;
+					const pending = conflict;
+					setConflict(null);
+					void applyBinding(
+						pending.targetId,
+						pending.binding,
+						pending.mode,
+						pending.conflictingId,
+					).catch(() =>
+						showToast({
+							title: "Could not reassign shortcut",
+							body: "Your previous bindings are still active.",
+						}),
+					);
+				}}
+			/>
 		</>
 	);
 }

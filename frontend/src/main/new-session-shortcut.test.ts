@@ -162,4 +162,20 @@ describe("attachAppShortcuts", () => {
 		expect(target.send).toHaveBeenCalledTimes(2);
 		expect(target.send).toHaveBeenLastCalledWith(FOCUS_TERMINAL_SHORTCUT_CHANNEL);
 	});
+
+	it("does not intercept application shortcuts while a binding is being recorded", () => {
+		const source = fakeSource();
+		const target = fakeTarget();
+		let recording = true;
+		attachAppShortcuts(source, false, target, false, () => ({}), () => recording);
+
+		const recordingEvent = source.emit({ key: "/", control: true });
+		recording = false;
+		const activeEvent = source.emit({ key: "/", control: true });
+
+		expect(recordingEvent.preventDefault).not.toHaveBeenCalled();
+		expect(activeEvent.preventDefault).toHaveBeenCalledTimes(1);
+		expect(target.send).toHaveBeenCalledTimes(1);
+		expect(target.send).toHaveBeenCalledWith(KEYBOARD_SHORTCUTS_HELP_CHANNEL);
+	});
 });

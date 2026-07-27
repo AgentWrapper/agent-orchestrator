@@ -100,6 +100,7 @@ export type BrowserViewHostOptions = {
 	// to the shell. Defaults to non-mac when omitted (tests).
 	isMac?: boolean;
 	getKeybindingOverrides?: () => KeybindingOverrides;
+	isKeybindingRecording?: () => boolean;
 };
 
 export type BrowserViewHost = {
@@ -251,6 +252,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			options.mainWindow.webContents,
 			true,
 			options.getKeybindingOverrides,
+			options.isKeybindingRecording,
 		);
 		view.webContents.on("focus", () => {
 			lastFocusedViewId = viewId;

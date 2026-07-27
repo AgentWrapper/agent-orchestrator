@@ -210,6 +210,7 @@ const api = {
 		get: () => ipcRenderer.invoke("keybindings:get") as Promise<KeybindingOverrides>,
 		set: (overrides: KeybindingOverrides) =>
 			ipcRenderer.invoke("keybindings:set", overrides) as Promise<KeybindingOverrides>,
+		setRecording: (active: boolean) => ipcRenderer.invoke("keybindings:setRecording", active) as Promise<void>,
 	},
 	updates: {
 		getStatus: () => ipcRenderer.invoke("updates:getStatus") as Promise<UpdateStatus>,

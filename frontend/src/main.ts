@@ -107,6 +107,7 @@ let daemonStatus: DaemonStatus = { state: "stopped" };
 let daemonOutput = "";
 let browserViewHost: BrowserViewHost | null = null;
 let keybindingOverrides: KeybindingOverrides = {};
+let keybindingRecordingActive = false;
 // Held for the app lifetime. Dropping it (on any exit) triggers daemon self-stop.
 let supervisorLink: SupervisorLinkHandle | null = null;
 
@@ -330,7 +331,14 @@ function createWindow(): void {
 	// contents holds focus — the shell renderer, xterm's helper textarea, or a
 	// browser-preview view (wired per-view in the browser host).
 	const isMac = process.platform === "darwin";
-	attachAppShortcuts(mainWindow.webContents, isMac, mainWindow.webContents, false, () => keybindingOverrides);
+	attachAppShortcuts(
+		mainWindow.webContents,
+		isMac,
+		mainWindow.webContents,
+		false,
+		() => keybindingOverrides,
+		() => keybindingRecordingActive,
+	);
 
 	browserViewHost = createBrowserViewHost({
 		mainWindow,
@@ -341,6 +349,7 @@ function createWindow(): void {
 		rendererOrigin: RENDERER_ORIGIN,
 		isMac,
 		getKeybindingOverrides: () => keybindingOverrides,
+		isKeybindingRecording: () => keybindingRecordingActive,
 	});
 
 	void mainWindow.loadURL(rendererUrl());
@@ -360,8 +369,15 @@ function createWindow(): void {
 	};
 	mainWindow.on("enter-full-screen", pushFullScreen);
 	mainWindow.on("leave-full-screen", pushFullScreen);
+	mainWindow.on("blur", () => {
+		keybindingRecordingActive = false;
+	});
+	mainWindow.webContents.on("render-process-gone", () => {
+		keybindingRecordingActive = false;
+	});
 
 	mainWindow.on("closed", () => {
+		keybindingRecordingActive = false;
 		browserViewHost?.dispose();
 		browserViewHost = null;
 		mainWindow = null;
@@ -1386,6 +1402,10 @@ ipcMain.handle("keybindings:set", async (_event, overrides: KeybindingOverrides)
 	if (!runFile) return keybindingOverrides;
 	keybindingOverrides = await writeKeybindingOverrides(path.dirname(runFile), overrides);
 	return keybindingOverrides;
+});
+ipcMain.handle("keybindings:setRecording", (event, active: unknown): void => {
+	if (event.sender !== mainWindow?.webContents || typeof active !== "boolean") return;
+	keybindingRecordingActive = active;
 });
 
 ipcMain.handle("featureBuilds:list", () => listFeatureBuilds());

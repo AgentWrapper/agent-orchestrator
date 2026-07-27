@@ -130,6 +130,7 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 				keybindings: {
 					get: async () => ({}),
 					set: async (overrides) => overrides,
+					setRecording: async () => undefined,
 				},
 				updates: {
 					getStatus: async () => ({ state: "idle" }),
@@ -483,6 +484,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 				keybindings: {
 					get: async () => ({}),
 					set: async (overrides) => overrides,
+					setRecording: async () => undefined,
 				},
 				updates: {
 					getStatus: async () => ({ state: "idle" }),

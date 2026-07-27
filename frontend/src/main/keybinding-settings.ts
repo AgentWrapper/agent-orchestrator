@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
 	APP_SHORTCUTS,
+	shortcutBindingValidationError,
 	type AppShortcutId,
 	type KeybindingOverrides,
 	type ShortcutBinding,
@@ -15,7 +16,7 @@ const customizableIds = new Set<AppShortcutId>(
 
 let settingsOperationQueue: Promise<void> = Promise.resolve();
 
-function coerceBinding(raw: unknown): ShortcutBinding | null {
+function coerceBinding(raw: unknown, isMac: boolean): ShortcutBinding | null {
 	if (!raw || typeof raw !== "object") return null;
 	const value = raw as Record<string, unknown>;
 	if (typeof value.key !== "string" || value.key.length === 0 || value.key.length > 32) return null;
@@ -28,12 +29,11 @@ function coerceBinding(raw: unknown): ShortcutBinding | null {
 		shift: value.shift === true,
 		alt: value.alt === true,
 	};
-	// Application-wide shortcuts must not consume ordinary typing.
-	if (!candidate.ctrl && !candidate.meta && !candidate.alt && !/^F(?:[1-9]|1\d|2[0-4])$/.test(candidate.key)) return null;
+	if (shortcutBindingValidationError(candidate, isMac)) return null;
 	return candidate;
 }
 
-export function coerceKeybindingOverrides(raw: unknown): KeybindingOverrides {
+export function coerceKeybindingOverrides(raw: unknown, isMac = process.platform === "darwin"): KeybindingOverrides {
 	if (!raw || typeof raw !== "object") return {};
 	const source = raw as Record<string, unknown>;
 	const overrides: KeybindingOverrides = {};
@@ -42,8 +42,11 @@ export function coerceKeybindingOverrides(raw: unknown): KeybindingOverrides {
 		if (!Array.isArray(rawBindings)) continue;
 		const bindings = rawBindings
 			.slice(0, 2)
-			.map(coerceBinding)
+			.map((binding) => coerceBinding(binding, isMac))
 			.filter((candidate): candidate is ShortcutBinding => candidate !== null);
+		// Preserve an intentional empty array as "unassigned". If a non-empty
+		// persisted value contains no valid bindings, omit it so defaults recover.
+		if (rawBindings.length > 0 && bindings.length === 0) continue;
 		overrides[id] = bindings;
 	}
 	return overrides;

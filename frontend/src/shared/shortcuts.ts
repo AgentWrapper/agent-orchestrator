@@ -34,100 +34,72 @@ export type ShortcutDefinition = {
 	id: AppShortcutId;
 	label: string;
 	category: ShortcutCategory;
-	mac: readonly string[];
-	windowsLinux: readonly string[];
 	/** Indexed project selection is a family of nine bindings, not one command. */
 	customizable?: boolean;
 };
 
 export const SHORTCUT_CATEGORIES: readonly ShortcutCategory[] = ["General", "Navigation", "Session"];
 
-// The user-facing shortcut catalog. Keep bindings here so the help dialog does
-// not duplicate platform labels from the handlers that implement them.
+// The user-facing shortcut catalog. Bindings live exclusively in
+// defaultShortcutBindings so runtime matching and displayed labels cannot drift.
 export const APP_SHORTCUTS: readonly ShortcutDefinition[] = [
 	{
 		id: "new-session",
 		label: "New session",
 		category: "General",
-		mac: ["⌘", "N"],
-		windowsLinux: ["Ctrl", "Shift", "N"],
 	},
 	{
 		id: "new-shell-terminal",
 		label: "New terminal",
 		category: "General",
-		mac: ["Ctrl", "Shift", "`"],
-		windowsLinux: ["Ctrl", "Shift", "`"],
 	},
 	{
 		id: "keyboard-shortcuts",
 		label: "Show keyboard shortcuts",
 		category: "General",
-		mac: ["⌘", "/"],
-		windowsLinux: ["Ctrl", "/"],
 	},
 	{
 		id: "command-palette",
 		label: "Open command palette",
 		category: "General",
-		mac: ["⌘", "K"],
-		windowsLinux: ["Ctrl", "K"],
 	},
 	{
 		id: "open-settings",
 		label: "Open settings",
 		category: "General",
-		mac: ["⌘", ","],
-		windowsLinux: ["Ctrl", ","],
 	},
 	{
 		id: "toggle-sidebar",
 		label: "Toggle sidebar",
 		category: "General",
-		mac: ["⌘", "B"],
-		windowsLinux: ["Ctrl", "B"],
 	},
 	{
 		id: "open-project",
 		label: "Open project 1–9",
 		category: "Navigation",
-		mac: ["⌘", "1–9"],
-		windowsLinux: ["Ctrl", "1–9"],
 		customizable: false,
 	},
 	{
 		id: "previous-session",
 		label: "Previous session",
 		category: "Navigation",
-		mac: ["⌘", "Alt", "↑"],
-		windowsLinux: ["Ctrl", "PageUp"],
 	},
 	{
 		id: "next-session",
 		label: "Next session",
 		category: "Navigation",
-		mac: ["⌘", "Alt", "↓"],
-		windowsLinux: ["Ctrl", "PageDown"],
 	},
 	{
 		id: "toggle-inspector",
 		label: "Toggle inspector",
 		category: "Session",
-		mac: ["⌘", "Shift", "B"],
-		windowsLinux: ["Ctrl", "Shift", "B"],
 	},
 	{
 		id: "focus-terminal",
 		label: "Focus terminal",
 		category: "Session",
-		mac: ["⌘", "Shift", "T"],
-		windowsLinux: ["Ctrl", "Shift", "T"],
 	},
 ];
-
-export function shortcutKeys(shortcut: ShortcutDefinition, isMac: boolean): readonly string[] {
-	return isMac ? shortcut.mac : shortcut.windowsLinux;
-}
 
 const binding = (
 	key: string,
@@ -191,19 +163,59 @@ export function matchesShortcutBinding(chord: ShortcutChord, candidate: Shortcut
 	const keyMatches =
 		candidate.key === "1-9"
 			? /^[1-9]$/.test(chord.key)
-			: candidate.code !== undefined
-				? chord.code !== undefined
-					? candidate.code === chord.code
-					: normalizedKey(candidate.key) === normalizedKey(chord.key) ||
-						normalizedKey(candidate.code) === normalizedKey(chord.key)
-				: normalizedKey(candidate.key) === normalizedKey(chord.key);
+			: normalizedKey(candidate.key) === normalizedKey(chord.key);
+	const codeMatches =
+		candidate.code !== undefined &&
+		(chord.code !== undefined
+			? normalizedKey(candidate.code) === normalizedKey(chord.code)
+			: normalizedKey(candidate.code) === normalizedKey(chord.key));
 	return (
-		keyMatches &&
+		(keyMatches || codeMatches) &&
 		chord.ctrl === candidate.ctrl &&
 		chord.meta === candidate.meta &&
 		chord.shift === candidate.shift &&
 		chord.alt === candidate.alt
 	);
+}
+
+/**
+ * Application shortcuts are intercepted before the focused terminal or text
+ * field sees them. Reject bindings that would consume ordinary input, terminal
+ * control sequences, or common OS editing/window commands.
+ */
+export function shortcutBindingValidationError(binding: ShortcutBinding, isMac: boolean): string | null {
+	if (
+		["alt", "altgraph", "capslock", "control", "dead", "meta", "numlock", "process", "scrolllock", "shift", "unidentified"].includes(
+			normalizedKey(binding.key),
+		)
+	) {
+		return "Press a non-modifier key with Ctrl, Alt, or Cmd.";
+	}
+	if (!binding.ctrl && !binding.meta && !binding.alt) {
+		return "Use Ctrl, Alt, or Cmd with another key.";
+	}
+
+	const key = normalizedKey(binding.key);
+	if (binding.ctrl && !binding.meta && !binding.alt) {
+		if (key === "c" || key === "v") {
+			return "That shortcut is reserved for terminal copy, paste, or interrupt.";
+		}
+		if (!binding.shift && ["d", "z", "\\", "s", "q"].includes(key)) {
+			return "That shortcut is reserved for terminal control.";
+		}
+	}
+
+	if (isMac && binding.meta && !binding.ctrl && !binding.alt) {
+		if (["a", "c", "h", "m", "q", "s", "v", "w", "x", "z"].includes(key)) {
+			return "That shortcut is reserved by macOS or standard editing commands.";
+		}
+	}
+
+	if (!isMac && binding.alt && !binding.ctrl && !binding.meta && key === "f4") {
+		return "That shortcut is reserved for closing the window.";
+	}
+
+	return null;
 }
 
 export function matchesAppShortcut(

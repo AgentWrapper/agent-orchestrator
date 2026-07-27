@@ -135,6 +135,7 @@ export const aoBridge: AoBridge =
 		keybindings: {
 			get: async () => ({}),
 			set: async (overrides) => overrides,
+			setRecording: async () => undefined,
 		},
 		updates: {
 			getStatus: async () => ({ state: "idle" }),
