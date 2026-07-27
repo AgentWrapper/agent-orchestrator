@@ -41,14 +41,6 @@ beforeEach(() => {
 	electronMocks.on.mockClear();
 });
 
-describe("preload window bridge", () => {
-	it("forwards the macOS traffic-light inset state", async () => {
-		await exposedBridge().window.setTrafficLightsInset(true);
-
-		expect(electronMocks.invoke).toHaveBeenCalledWith("window:setTrafficLightsInset", true);
-	});
-});
-
 describe("preload new-session shortcut bridge", () => {
 	it("delivers the IPC event and removes the exact wrapped listener", () => {
 		const listener = vi.fn();

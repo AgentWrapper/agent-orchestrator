@@ -294,6 +294,11 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		m.mu.Unlock()
 		return nil
 	}
+	if !s.ExpectedUpdatedAt.IsZero() &&
+		(rec.Activity.State != domain.ActivityActive || !rec.UpdatedAt.Equal(s.ExpectedUpdatedAt)) {
+		m.mu.Unlock()
+		return nil
+	}
 	// An explicit prompt submission is proof that an agent was relaunched in the
 	// preserved shell. Other same-generation callbacks may have been delayed
 	// behind the process-exit report and cannot resurrect an exited workload.
@@ -337,7 +342,7 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	// first to ARRIVE may match the seeded state — e.g. a turn's "active"
 	// POST is lost and its Stop hook lands idle on the idle-seeded row.
 	if sameState && !rec.FirstSignalAt.IsZero() {
-		if metadataChanged {
+		if metadataChanged || s.Event == "user-prompt-submit" {
 			rec.UpdatedAt = now
 			err := m.store.UpdateSession(ctx, rec)
 			m.mu.Unlock()

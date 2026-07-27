@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -424,10 +425,7 @@ func TestRestoreRecreatesOnRegisteredBranchNotCfgBranch(t *testing.T) {
 // error succeeds. Every recorded call lands in *calls.
 func workspaceProjectRepoFake(t *testing.T, ws *Workspace, output, worktreeList string, calls *[]string, addResponses func(joined string, binary string, args []string) ([]byte, error, bool)) {
 	t.Helper()
-	exitErr := exec.Command("sh", "-c", "exit 1").Run()
-	if exitErr == nil {
-		t.Fatal("expected exit error")
-	}
+	exitErr := exitStatusOne(t)
 	ws.run = func(_ context.Context, binary string, args ...string) ([]byte, error) {
 		joined := strings.Join(args, " ")
 		*calls = append(*calls, joined)
@@ -520,6 +518,9 @@ func TestCreateWorkspaceProjectRepoRecoveryRetriesOnExistingBranchForm(t *testin
 	// The pre-check sees no registration at output, so the first add is plain.
 	worktreeList := "worktree " + repo + "\nbranch refs/heads/main\n\n"
 
+	// What refExists sees for a branch that does not exist yet.
+	absentErr := exitStatusOne(t)
+
 	var calls []string
 	addAttempts := 0
 	branchCreated := false
@@ -527,8 +528,7 @@ func TestCreateWorkspaceProjectRepoRecoveryRetriesOnExistingBranchForm(t *testin
 		switch {
 		case strings.Contains(joined, "rev-parse --verify --quiet refs/heads/feature/test"):
 			if !branchCreated {
-				exitErr := exec.Command("sh", "-c", "exit 1").Run()
-				return nil, commandError{args: append([]string{binary}, args...), err: exitErr}, true
+				return nil, commandError{args: append([]string{binary}, args...), err: absentErr}, true
 			}
 			return nil, nil, true
 		case strings.Contains(joined, "worktree add -b feature/test "+output+" origin/main"):
@@ -911,7 +911,7 @@ func TestAddWorktreeRefusesBranchCheckedOutElsewhere(t *testing.T) {
 	if !errors.Is(err, ports.ErrWorkspaceBranchCheckedOutElsewhere) {
 		t.Fatalf("err = %v, want ports.ErrWorkspaceBranchCheckedOutElsewhere", err)
 	}
-	if !strings.Contains(err.Error(), otherPath) {
+	if !strings.Contains(err.Error(), strconv.Quote(otherPath)) {
 		t.Fatalf("err = %v, want message to include conflicting path %q", err, otherPath)
 	}
 }
@@ -956,10 +956,7 @@ func TestAddWorktreeReportsBranchNotFetched(t *testing.T) {
 		t.Fatalf("new: %v", err)
 	}
 	// Build a real exit-1 error so refExists treats every probe as "absent".
-	exitOne := func() error {
-		cmd := exec.Command("sh", "-c", "exit 1")
-		return cmd.Run()
-	}()
+	exitOne := exitStatusOne(t)
 	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
 		joined := strings.Join(args, " ")
 		switch {
@@ -989,10 +986,7 @@ func TestResolveBaseRefInfersRepoDefaultBranchWhenUnset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new: %v", err)
 	}
-	exitOne := func() error {
-		cmd := exec.Command("sh", "-c", "exit 1")
-		return cmd.Run()
-	}()
+	exitOne := exitStatusOne(t)
 	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
 		joined := strings.Join(args, " ")
 		switch {
@@ -1020,4 +1014,22 @@ func mkdirFile(dir, name string) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(dir, name), []byte("data"), 0o644)
+}
+
+func exitStatusOne(t *testing.T) error {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=TestGitWorktreeExitStatusOneHelper")
+	cmd.Env = append(os.Environ(), "GO_WANT_GITWORKTREE_EXIT_STATUS_ONE=1")
+	err := cmd.Run()
+	if err == nil {
+		t.Fatal("expected exit error")
+	}
+	return err
+}
+
+func TestGitWorktreeExitStatusOneHelper(t *testing.T) {
+	if os.Getenv("GO_WANT_GITWORKTREE_EXIT_STATUS_ONE") != "1" {
+		return
+	}
+	os.Exit(1)
 }
