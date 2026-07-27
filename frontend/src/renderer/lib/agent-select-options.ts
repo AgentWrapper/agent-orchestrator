@@ -10,7 +10,6 @@ export type RankedAgentOption = AgentInfo & {
 	rank: number;
 	status: string;
 	statusTone: AgentStatusTone;
-	warning: boolean;
 };
 
 export function agentLabelCompare(a: AgentInfo, b: AgentInfo): number {
@@ -21,17 +20,17 @@ function agentStatus(
 	installedAgent: AgentInfo | undefined,
 	isAuthorized: boolean,
 	isAuthUnknown: boolean,
-): Pick<RankedAgentOption, "status" | "statusTone" | "warning"> {
+): Pick<RankedAgentOption, "status" | "statusTone"> {
 	if (!installedAgent) {
-		return { status: "Needs install", statusTone: "muted", warning: false };
+		return { status: "Needs install", statusTone: "muted" };
 	}
 	if (isAuthUnknown) {
-		return { status: "Auth unknown", statusTone: "warning", warning: true };
+		return { status: "Auth unknown", statusTone: "warning" };
 	}
 	if (!isAuthorized) {
-		return { status: "Needs auth", statusTone: "warning", warning: false };
+		return { status: "Needs auth", statusTone: "warning" };
 	}
-	return { status: "Authorized", statusTone: "success", warning: false };
+	return { status: "Authorized", statusTone: "success" };
 }
 
 export function buildRankedAgentOptions({

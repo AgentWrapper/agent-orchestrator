@@ -245,6 +245,7 @@
 	--size-notification-max-height: 420px;
 	--size-select-menu-max: 320px; /* agent/select dropdown scroll cap (was max-h-80) */
 	--size-settings-menu-width: 18rem; /* settings option menus — max width cap */
+	--size-settings-agent-menu-min-width: 20rem; /* agent harness picker — wider rows */
 	--size-notification-icon: 26px;
 	/* DaemonFailureBanner floating toast (was w-[min(22rem,…)] / max-h-40). */
 	--size-daemon-failure-toast: 22rem;

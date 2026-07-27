@@ -20,6 +20,7 @@ export function SettingsOptionMenu<T extends string>({
 	renderTrigger,
 	triggerClassName,
 	menuClassName,
+	menuItemClassName,
 	"aria-label": ariaLabel,
 }: {
 	value: T;
@@ -31,6 +32,7 @@ export function SettingsOptionMenu<T extends string>({
 	renderTrigger?: (selected: SettingsOption<T> | undefined, placeholder?: string) => ReactNode;
 	triggerClassName?: string;
 	menuClassName?: string;
+	menuItemClassName?: string;
 	"aria-label": string;
 }) {
 	const selected = options.find((option) => option.value === value);
@@ -77,6 +79,7 @@ export function SettingsOptionMenu<T extends string>({
 							"focus:border-settings-menu focus:bg-settings-menu-selected focus:text-settings-label",
 							"data-highlighted:border-settings-menu data-highlighted:bg-settings-menu-selected data-highlighted:text-settings-label",
 							option.value === value && "border-settings-menu bg-settings-menu-selected",
+							menuItemClassName,
 						)}
 					>
 						{renderMenuItem ? (

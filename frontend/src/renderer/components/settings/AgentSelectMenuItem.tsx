@@ -1,4 +1,4 @@
-import { Check, TriangleAlert } from "lucide-react";
+import { Check } from "lucide-react";
 import type { AgentStatusTone } from "../../lib/agent-select-options";
 import { cn } from "../../lib/utils";
 import { AgentAvatar } from "../AgentAvatar";
@@ -15,7 +15,6 @@ export function AgentSelectMenuItem({
 	selected,
 	status,
 	statusTone,
-	warning = false,
 	disabled = false,
 }: {
 	agentId?: string;
@@ -23,11 +22,10 @@ export function AgentSelectMenuItem({
 	selected: boolean;
 	status?: string;
 	statusTone?: AgentStatusTone;
-	warning?: boolean;
 	disabled?: boolean;
 }) {
 	return (
-		<span className={cn("flex min-w-0 w-full items-center gap-2", disabled && "opacity-45")}>
+		<span className={cn("flex min-w-0 w-full items-center gap-3", disabled && "opacity-45")}>
 			{agentId ? (
 				<AgentAvatar provider={agentId} className="size-icon-lg" decorative />
 			) : (
@@ -35,15 +33,7 @@ export function AgentSelectMenuItem({
 			)}
 			<span className="min-w-0 flex-1 truncate">{label}</span>
 			{status ? (
-				<span
-					className={cn(
-						"inline-flex shrink-0 items-center gap-1 text-caption",
-						STATUS_TONE_CLASS[statusTone ?? "muted"],
-					)}
-				>
-					{warning && <TriangleAlert className="size-3 shrink-0" aria-hidden="true" />}
-					{status}
-				</span>
+				<span className={cn("shrink-0 text-caption", STATUS_TONE_CLASS[statusTone ?? "muted"])}>{status}</span>
 			) : null}
 			{selected ? <Check className="size-3 shrink-0 text-settings-label" aria-hidden="true" /> : null}
 		</span>

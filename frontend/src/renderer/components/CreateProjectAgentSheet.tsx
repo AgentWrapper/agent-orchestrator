@@ -381,7 +381,8 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 					disabled={disabled}
 					onChange={onChange}
 					triggerClassName={invalid ? "text-error" : undefined}
-					menuClassName="min-w-60"
+					menuClassName="settings-agent-menu-surface"
+					menuItemClassName="settings-agent-menu-item"
 					renderTrigger={(selected, triggerPlaceholder) => (
 						<>
 							{selected ? <AgentAvatar provider={selected.value} className="size-icon-lg" /> : null}
@@ -398,7 +399,6 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 								selected={selected}
 								status={agent.status}
 								statusTone={agent.statusTone}
-								warning={agent.warning}
 								disabled={agent.disabled}
 							/>
 						);
@@ -443,7 +443,6 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 								selected={value === agent.id}
 								status={agent.status}
 								statusTone={agent.statusTone}
-								warning={agent.warning}
 								disabled={agent.disabled}
 							/>
 						</SelectItem>

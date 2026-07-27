@@ -540,7 +540,8 @@ function ReviewerSelect({
 			value={selectedValue}
 			options={menuOptions}
 			disabled={disabled}
-			menuClassName="min-w-60"
+			menuClassName="settings-agent-menu-surface"
+			menuItemClassName="settings-agent-menu-item"
 			onChange={(v) => onChange(v === "__default__" ? "" : v)}
 			renderTrigger={(selected) => (
 				<>
@@ -563,7 +564,6 @@ function ReviewerSelect({
 						selected={selected}
 						status={agent.status}
 						statusTone={agent.statusTone}
-						warning={agent.warning}
 						disabled={agent.disabled}
 					/>
 				);
