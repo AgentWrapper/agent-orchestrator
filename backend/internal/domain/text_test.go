@@ -1,6 +1,9 @@
 package domain
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestSanitizeControlChars(t *testing.T) {
 	tests := []struct {
@@ -19,6 +22,31 @@ func TestSanitizeControlChars(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := SanitizeControlChars(tt.in); got != tt.want {
 				t.Fatalf("SanitizeControlChars(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateReviewBody(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		wantErr bool
+	}{
+		{name: "empty allowed", body: "", wantErr: false},
+		{name: "markdown with code and url allowed", body: "Please fix `foo_bar`.\n\n```go\nreturn err\n```\nhttps://github.com/o/r/pull/1", wantErr: false},
+		{name: "single non latin language allowed", body: strings.Repeat("请修复这个测试失败的问题。", 8), wantErr: false},
+		{name: "japanese script mix allowed", body: strings.Repeat("この漢字とカタカナのレビューを確認してください。", 6), wantErr: false},
+		{name: "unsafe control byte rejected", body: "looks ok\x1b[2J", wantErr: true},
+		{name: "oversized body rejected", body: strings.Repeat("a", ReviewBodyMaxRunes+1), wantErr: true},
+		{name: "oversized token rejected", body: strings.Repeat("a", ReviewBodyMaxTokenRunes+1), wantErr: true},
+		{name: "multiscript token salad rejected", body: strings.Repeat("ગુજરાતી русский 中文 հայերեն عربي ", 6), wantErr: true},
+		{name: "short multilingual names allowed", body: "Names in docs mention العربية, русский, 中文, հայերեն, and ગુજરાતી once.", wantErr: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := ValidateReviewBody(tt.body); (err != nil) != tt.wantErr {
+				t.Fatalf("ValidateReviewBody() err = %v, wantErr = %v", err, tt.wantErr)
 			}
 		})
 	}
