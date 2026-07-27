@@ -27,7 +27,7 @@ const (
 	ProtocolVersion = 2
 	// RuntimeTokenEnv is deliberately removed from worker and preview-process
 	// environments. Only the daemon and desktop supervisor need it.
-	RuntimeTokenEnv = "AO_BROWSER_RUNTIME_TOKEN"
+	RuntimeTokenEnv = "AO_BROWSER_RUNTIME_TOKEN" //nolint:gosec // Environment variable name, not a credential.
 	// RuntimeAddressEnv carries the exact listener address into running.json so
 	// Electron never has to duplicate the backend's platform-specific naming.
 	RuntimeAddressEnv    = "AO_BROWSER_RUNTIME_ADDRESS"

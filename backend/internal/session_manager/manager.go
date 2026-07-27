@@ -82,7 +82,7 @@ const (
 	EnvBrowserCapability = "AO_BROWSER_CAPABILITY"
 	// EnvBrowserRuntimeToken must never be inherited by a worker. It authenticates
 	// the privileged Electron runtime, not session-scoped browser callers.
-	EnvBrowserRuntimeToken = "AO_BROWSER_RUNTIME_TOKEN"
+	EnvBrowserRuntimeToken = "AO_BROWSER_RUNTIME_TOKEN" //nolint:gosec // Environment variable name, not a credential.
 )
 
 // hookBinaryName is the executable name the workspace hook commands invoke:
