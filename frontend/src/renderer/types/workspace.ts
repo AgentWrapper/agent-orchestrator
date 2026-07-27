@@ -291,6 +291,12 @@ export type WorkspaceSummary = {
 	sessions: WorkspaceSession[];
 };
 
+export function hasConfiguredOrchestratorAgent(
+	workspace: Pick<WorkspaceSummary, "orchestratorAgent"> | undefined,
+): boolean {
+	return Boolean(workspace?.orchestratorAgent);
+}
+
 export function orchestratorNeedsRestart(workspace: WorkspaceSummary, orchestrator?: WorkspaceSession): boolean {
 	if (!orchestrator || !workspace.orchestratorAgent) return false;
 	return orchestrator.provider !== workspace.orchestratorAgent;

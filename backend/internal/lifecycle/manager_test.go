@@ -305,6 +305,77 @@ func TestActivity_SameStateSignalStillStoresAgentSessionID(t *testing.T) {
 	}
 }
 
+func TestActivity_ReconciledIdleRequiresUnchangedActiveSnapshot(t *testing.T) {
+	m, st, _ := newManager()
+	updatedAt := time.Unix(100, 0).UTC()
+	rec := working("mer-1")
+	rec.Kind = domain.KindWorker
+	rec.FirstSignalAt = updatedAt
+	rec.UpdatedAt = updatedAt
+	st.sessions[rec.ID] = rec
+
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		Valid:             true,
+		State:             domain.ActivityIdle,
+		Event:             "terminal-idle",
+		ExpectedUpdatedAt: updatedAt.Add(-time.Second),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions[rec.ID].Activity.State; got != domain.ActivityActive {
+		t.Fatalf("stale reconciliation changed activity to %q", got)
+	}
+
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		Valid:             true,
+		State:             domain.ActivityIdle,
+		Event:             "terminal-idle",
+		ExpectedUpdatedAt: updatedAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions[rec.ID].Activity.State; got != domain.ActivityIdle {
+		t.Fatalf("current reconciliation left activity %q", got)
+	}
+	if len(st.idleEvents) != 1 {
+		t.Fatalf("worker idle events = %d, want 1", len(st.idleEvents))
+	}
+}
+
+func TestActivity_RepeatedUserPromptFencesTerminalReconciliation(t *testing.T) {
+	m, st, _ := newManager()
+	before := time.Unix(100, 0).UTC()
+	after := time.Unix(200, 0).UTC()
+	m.clock = func() time.Time { return after }
+	rec := working("mer-1")
+	rec.FirstSignalAt = before
+	rec.UpdatedAt = before
+	st.sessions[rec.ID] = rec
+
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		Valid: true,
+		State: domain.ActivityActive,
+		Event: "user-prompt-submit",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions[rec.ID].UpdatedAt; !got.Equal(after) {
+		t.Fatalf("updated at = %v, want %v", got, after)
+	}
+
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		Valid:             true,
+		State:             domain.ActivityIdle,
+		Event:             "terminal-idle",
+		ExpectedUpdatedAt: before,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions[rec.ID].Activity.State; got != domain.ActivityActive {
+		t.Fatalf("fresh prompt was overwritten with %q", got)
+	}
+}
+
 func TestActivity_BlankAgentSessionIDDoesNotOverwriteMetadata(t *testing.T) {
 	m, st, _ := newManager()
 	rec := working("mer-1")
