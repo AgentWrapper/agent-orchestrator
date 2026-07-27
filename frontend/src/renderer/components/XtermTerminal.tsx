@@ -724,7 +724,10 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			get rows() {
 				return term.rows;
 			},
-			write: (data) => term.write(data),
+			// Forward xterm's write callback: it fires once THIS chunk has been
+			// parsed into the buffer, which is what lets the attachment reveal the
+			// pane at the replay's settled scroll position (issue #3160).
+			write: (data, done) => term.write(data, done),
 			writeln: (line) => term.writeln(line),
 			clear: () => term.write(CLEAR_SEQUENCE),
 			onUserInput: (listener) => {
