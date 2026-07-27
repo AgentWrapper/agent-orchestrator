@@ -111,6 +111,14 @@ const RESIZE_REASSERT_MS = 250;
 // rather than back to the walk.
 const REPLAY_QUIET_MS = 60;
 const REPLAY_CAP_MS = 750;
+// Byte ceiling on the buffered burst. Attaching to a pane that is actively
+// streaming (an agent mid-run) means every frame restarts the quiet window, so
+// the time bounds alone would hold the entire burst and then land it as one
+// enormous parse — a main-thread freeze, which is a worse artifact than the
+// scroll this gate exists to remove. At the measured ~44KB/ms parse rate 1MB is
+// ~23ms, under two frames. Real replays are far below this; only a pathological
+// stream trips it, and tripping it just ends the gate early.
+const REPLAY_MAX_BYTES = 1024 * 1024;
 
 function defaultCreateMux(): TerminalMux {
 	// Resolved per connect, not per hook: a daemon restart can change the port.
@@ -142,6 +150,9 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		retryTimer: null as ReturnType<typeof setTimeout> | null,
 		openTimer: null as ReturnType<typeof setTimeout> | null,
 		resizeTimer: null as ReturnType<typeof setTimeout> | null,
+		// Separate from resizeTimer so a deferred re-assert can coexist with a new
+		// debounce without either clobbering the other (see scheduleReassert).
+		reassertTimer: null as ReturnType<typeof setTimeout> | null,
 		attempts: 0,
 		firstAttach: true,
 		generation: 0,
@@ -150,6 +161,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		// Initial-replay gate, reset per connect (see REPLAY_QUIET_MS).
 		replayBuffering: false,
 		replayChunks: [] as Uint8Array[],
+		replayBytes: 0,
 		replayQuietTimer: null as ReturnType<typeof setTimeout> | null,
 		replayCapTimer: null as ReturnType<typeof setTimeout> | null,
 		// A resize re-assert held back until the replay flushes; see the resize
@@ -186,8 +198,20 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		const r = runtime.current;
 		clearReplayTimers();
 		r.replayBuffering = false;
+		// Any bytes still buffered belong to an attachment being discarded. The
+		// fresh attach clears the screen and replays current state anyway, so
+		// dropping them costs nothing on screen; only the onOutput watcher misses
+		// them, and it will see the same content in the new replay.
 		r.replayChunks = [];
+		r.replayBytes = 0;
 		r.replayPendingReassert = null;
+		// Nothing is buffering any more, so nothing should stay covered. connect()
+		// re-arms the gate immediately after calling this, in the same tick, so
+		// the reveal here never flashes. Without it, a teardown that does not
+		// reconnect (open timeout while the daemon is down) strands the pane
+		// behind the cover — the cap no longer covers that case now it is armed
+		// from `opened` rather than from connect().
+		setReplaySettled(true);
 		if (r.retryTimer) {
 			clearTimeout(r.retryTimer);
 			r.retryTimer = null;
@@ -199,6 +223,10 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		if (r.resizeTimer) {
 			clearTimeout(r.resizeTimer);
 			r.resizeTimer = null;
+		}
+		if (r.reassertTimer) {
+			clearTimeout(r.reassertTimer);
+			r.reassertTimer = null;
 		}
 		r.inputReady = false;
 		if (r.mux && r.handle) {
@@ -283,6 +311,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 
 			const chunks = r.replayChunks;
 			r.replayChunks = [];
+			r.replayBytes = 0;
 			const pendingReassert = r.replayPendingReassert;
 			r.replayPendingReassert = null;
 
@@ -317,6 +346,13 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				if (!isCurrentAttachment(generation, handle, mux)) return;
 				if (r.replayBuffering) {
 					r.replayChunks.push(bytes);
+					r.replayBytes += bytes.length;
+					// A stream that never idles would restart the quiet window forever
+					// and grow the buffer without bound; flush on size instead.
+					if (r.replayBytes >= REPLAY_MAX_BYTES) {
+						flushReplay();
+						return;
+					}
 					// Each frame restarts the quiet window: the burst is over only
 					// once the stream actually goes idle.
 					if (r.replayQuietTimer) clearTimeout(r.replayQuietTimer);
@@ -333,6 +369,12 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				r.attempts = 0;
 				setError(undefined);
 				transition("attached");
+				// Bound the gate from here: the daemon fires onOpen from setPTY and
+				// starts copyOut immediately after, so the replay is imminent and
+				// the cap now measures the burst rather than the connect handshake.
+				if (r.replayBuffering && !r.replayCapTimer) {
+					r.replayCapTimer = setTimeout(flushReplay, REPLAY_CAP_MS);
+				}
 			}),
 			mux.onExit(handle, () => {
 				if (!isCurrentAttachment(generation, handle, mux)) return;
@@ -369,15 +411,30 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			if (!isCurrentAttachment(generation, handle, mux) || !r.inputReady) {
 				return;
 			}
+			// Input is accepted from `opened`, which lands before the replay — so a
+			// user can type while the gate still holds the burst, and their echo
+			// would sit in the buffer behind an opaque cover. Someone typing has
+			// stopped caring about a tidy reveal and needs to see the pane now:
+			// end the gate immediately.
+			flushReplay();
 			mux.sendInput(handle, data);
 		});
 		// xterm only fires onResize when the grid actually changed; the debounce
 		// additionally collapses a drag's burst of changes into one PTY resize.
-		// Each settled resize is re-asserted once (see RESIZE_REASSERT_MS); both
-		// stages share resizeTimer so a new burst or teardown cancels either.
+		// Each settled resize is re-asserted once (see RESIZE_REASSERT_MS).
+		//
+		// The re-assert owns a SEPARATE timer slot from the debounce. It used to
+		// share resizeTimer, which was safe only while the two stages were strictly
+		// sequential. Deferring the re-assert past a replay flush breaks that: a new
+		// drag can install a debounce into the shared slot while a deferred
+		// re-assert is still pending, and firing the re-assert then overwrites the
+		// slot without cancelling the debounce — both run, and the PTY gets the
+		// STALE grid after the newer one, costing a SIGWINCH repaint at the wrong
+		// size right as the cover lifts.
 		const scheduleReassert = (cols: number, rows: number) => {
-			r.resizeTimer = setTimeout(() => {
-				r.resizeTimer = null;
+			if (r.reassertTimer) clearTimeout(r.reassertTimer);
+			r.reassertTimer = setTimeout(() => {
+				r.reassertTimer = null;
 				if (!isCurrentAttachment(generation, handle, mux)) return;
 				mux.resize(handle, cols, rows);
 			}, RESIZE_REASSERT_MS);
@@ -385,7 +442,14 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		const resize = terminal.onResize(({ cols, rows }) => {
 			if (!isCurrentAttachment(generation, handle, mux)) return;
 			if (r.resizeTimer) clearTimeout(r.resizeTimer);
+			// A newer grid supersedes any pending re-assert of the old one.
+			if (r.reassertTimer) {
+				clearTimeout(r.reassertTimer);
+				r.reassertTimer = null;
+			}
+			r.replayPendingReassert = null;
 			r.resizeTimer = setTimeout(() => {
+				r.resizeTimer = null;
 				if (!isCurrentAttachment(generation, handle, mux)) return;
 				mux.resize(handle, cols, rows);
 				// The backend answers every resize frame with an explicit SIGWINCH,
@@ -396,7 +460,6 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				// real change. Only deferred once a burst is actually in flight; a
 				// pane replaying nothing keeps the plain timing.
 				if (r.replayBuffering && r.replayChunks.length > 0) {
-					r.resizeTimer = null;
 					r.replayPendingReassert = () => scheduleReassert(cols, rows);
 					return;
 				}
@@ -425,9 +488,19 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		// replay byte and would uncover a pane that has not drawn yet.
 		r.replayBuffering = true;
 		r.replayChunks = [];
+		r.replayBytes = 0;
 		r.replayPendingReassert = null;
 		setReplaySettled(false);
-		r.replayCapTimer = setTimeout(flushReplay, REPLAY_CAP_MS);
+		// The cap is armed from `opened`, NOT from here. A slow attach — the
+		// daemon runs a liveness probe and spawns the runtime client before the
+		// first byte, which is why OPEN_TIMEOUT_MS budgets 3s — would otherwise
+		// burn the whole cap on the handshake, flush an empty buffer, and leave
+		// `replayBuffering` false for the rest of the attachment. The replay
+		// would then land frame-by-frame with the bug fully intact, behind a
+		// pointless blank cover. `opened` fires from setPTY immediately before
+		// copyOut, so anchoring there means the cap only ever measures the burst.
+		// If `opened` never arrives, openTimer tears down and teardownMux lifts
+		// the cover.
 
 		mux.open(handle, terminal.cols, terminal.rows);
 		mux.resize(handle, terminal.cols, terminal.rows);

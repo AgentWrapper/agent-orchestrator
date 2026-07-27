@@ -394,6 +394,107 @@ describe("useTerminalSession", () => {
 			]);
 		});
 
+		it("keeps the gate armed when the server acks slowly, instead of spending the cap on the handshake", () => {
+			const { view, terminal, muxes } = setup();
+
+			// The daemon probes liveness and spawns the runtime client before the
+			// first byte — OPEN_TIMEOUT_MS budgets 3s for it. If the cap ran from
+			// connect() it would expire here, flush nothing, and leave the gate
+			// permanently off, so the replay would land frame-by-frame.
+			act(() => void vi.advanceTimersByTime(1200));
+			act(() => muxes[0].emitOpened("handle-1"));
+
+			act(() => muxes[0].emitData("handle-1", "one "));
+			act(() => muxes[0].emitData("handle-1", "two "));
+			act(() => muxes[0].emitData("handle-1", "three"));
+			expect(terminal.lines).toEqual([]);
+
+			act(() => void vi.advanceTimersByTime(60));
+			expect(terminal.lines).toEqual(["one two three"]);
+			expect(view.result.current.replaySettled).toBe(true);
+		});
+
+		it("ends the gate as soon as the user types, so their echo is not held behind the cover", () => {
+			const { view, terminal, muxes } = setup();
+			act(() => muxes[0].emitOpened("handle-1"));
+			act(() => muxes[0].emitData("handle-1", "prompt$ "));
+			expect(view.result.current.replaySettled).toBe(false);
+
+			act(() => terminal.typeKeys("l"));
+
+			expect(view.result.current.replaySettled).toBe(true);
+			expect(terminal.lines).toEqual(["prompt$ "]);
+			expect(muxes[0].inputs).toEqual([["handle-1", "l"]]);
+			// Subsequent output is live, so the echo shows up immediately.
+			act(() => muxes[0].emitData("handle-1", "l"));
+			expect(terminal.lines).toEqual(["prompt$ ", "l"]);
+		});
+
+		it("does not re-assert a stale grid after a newer resize supersedes a deferred one", () => {
+			const { terminal, muxes } = setup();
+			const initial = muxes[0].resizes.length;
+			act(() => muxes[0].emitOpened("handle-1"));
+
+			// Resize A settles while a burst is in flight, so its re-assert defers.
+			terminal.emitResize(120, 40);
+			for (let elapsed = 0; elapsed < 150; elapsed += 30) {
+				act(() => muxes[0].emitData("handle-1", "x"));
+				act(() => void vi.advanceTimersByTime(30));
+			}
+			expect(muxes[0].resizes.slice(initial)).toEqual([["handle-1", 120, 40]]);
+
+			// The user keeps dragging: B must supersede A's pending re-assert.
+			terminal.emitResize(100, 30);
+			act(() => void vi.advanceTimersByTime(100)); // B settles
+			act(() => void vi.advanceTimersByTime(300)); // flush + B's re-assert
+
+			// A's stale 120x40 must never be sent again — landing it after B would
+			// cost a SIGWINCH repaint at the wrong size just as the cover lifts.
+			expect(muxes[0].resizes.slice(initial)).toEqual([
+				["handle-1", 120, 40],
+				["handle-1", 100, 30],
+				["handle-1", 100, 30],
+			]);
+		});
+
+		it("flushes early once the buffered burst passes the byte cap", () => {
+			const { view, terminal, muxes } = setup();
+			act(() => muxes[0].emitOpened("handle-1"));
+
+			// Attaching to a session that is actively spewing output: frames keep
+			// restarting the quiet window, so time-based bounds alone would hold
+			// everything until the cap and then land it as one multi-MB parse —
+			// a visible main-thread freeze, worse than the scroll being fixed.
+			const chunk = "x".repeat(64 * 1024);
+			for (let i = 0; i < 24; i += 1) {
+				act(() => muxes[0].emitData("handle-1", chunk));
+				act(() => void vi.advanceTimersByTime(5));
+			}
+
+			expect(view.result.current.replaySettled).toBe(true);
+			// Never accumulate an unbounded single write.
+			for (const line of terminal.lines) {
+				expect(line.length).toBeLessThanOrEqual(1024 * 1024 + 64 * 1024);
+			}
+		});
+
+		it("lifts the cover when the attachment is torn down with no reconnect scheduled", () => {
+			const { view, muxes } = setup({ daemonReady: true });
+			expect(view.result.current.replaySettled).toBe(false);
+			expect(muxes).toHaveLength(1);
+
+			// Daemon goes away before the server ever acks the open.
+			view.rerender({ daemonReady: false });
+			act(() => void vi.advanceTimersByTime(3000)); // OPEN_TIMEOUT_MS
+
+			// teardownMux ran and scheduleReattach bailed out (no daemon ready), so
+			// nothing re-arms the gate. The cap timer is what guarantees the cover
+			// still lifts — it is deliberately shorter than OPEN_TIMEOUT_MS, so a
+			// pane whose server never acks is never stranded behind the overlay.
+			expect(view.result.current.state).toBe("reattaching");
+			expect(view.result.current.replaySettled).toBe(true);
+		});
+
 		it("drops a superseded connection's frames instead of folding them into the new replay", () => {
 			const { view, terminal, muxes } = setup();
 			act(() => muxes[0].emitOpened("handle-1"));

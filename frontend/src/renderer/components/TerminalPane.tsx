@@ -446,7 +446,13 @@ function ReplayCover() {
 		return () => window.clearTimeout(timer);
 	}, []);
 	return (
-		<div className="absolute inset-0 grid place-items-center bg-terminal" data-testid="terminal-replay-cover">
+		// pointer-events-none: the cover is purely visual and xterm underneath is
+		// live the whole time, so clicks, selection and wheel must pass through
+		// rather than being swallowed for the length of the gate.
+		<div
+			className="pointer-events-none absolute inset-0 grid place-items-center bg-terminal"
+			data-testid="terminal-replay-cover"
+		>
 			{showLabel && <div className="font-mono text-caption text-terminal-dim">Loading latest output…</div>}
 		</div>
 	);
