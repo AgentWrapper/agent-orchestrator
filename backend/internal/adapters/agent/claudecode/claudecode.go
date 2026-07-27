@@ -623,8 +623,8 @@ func ensureWorkspaceTrusted(configPath, workspacePath string) error {
 // registration cannot race the removal.
 //
 // A missing config file or missing entry is a no-op: nothing was ever trusted
-// under that path, so there is nothing to remove and we deliberately avoid a
-// rewrite so the file's mtime does not move for work that did no work.
+// under that path, so there is nothing to remove. The no-op is implemented
+// without a rewrite so a no-op cleanup does not touch the file's mtime.
 func removeWorkspaceTrustEntry(configPath, workspacePath string) error {
 	claudeTrustMu.Lock()
 	defer claudeTrustMu.Unlock()

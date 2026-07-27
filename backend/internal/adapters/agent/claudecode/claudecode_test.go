@@ -909,12 +909,13 @@ func TestRemoveWorkspaceTrustEntryConcurrencySafety(t *testing.T) {
 	}
 }
 
-// TestSpawnCleanupCycleIsBalanced is the adversarial proof that a full
-// trust-register/cleanup cycle does not leak entries into ~/.claude.json's
-// projects map: after each cycle the projects map size returns to its
-// pre-cycle size, not just stays bounded. A bounded-but-growing map would
-// still be detected by the live daemon's E2BIG failure mode.
-func TestSpawnCleanupCycleIsBalanced(t *testing.T) {
+// TestTrustEntryRegisterCleanupCycleIsBalanced is the adversarial proof that
+// a full trust-register/cleanup cycle does not leak entries into
+// ~/.claude.json's projects map: after each cycle the projects map size
+// returns to its pre-cycle size, not just stays bounded. A
+// bounded-but-growing map would still be detected by the live daemon's E2BIG
+// failure mode.
+func TestTrustEntryRegisterCleanupCycleIsBalanced(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, ".claude.json")
 	pre := map[string]bool{"/keep/me": true}
@@ -925,7 +926,7 @@ func TestSpawnCleanupCycleIsBalanced(t *testing.T) {
 
 	const cycles = 25
 	for i := 0; i < cycles; i++ {
-		work := filepath.Join("/cycle", filepath.Base(dir), "iter-"+itoa(i))
+		work := filepath.Join("/cycle", filepath.Base(dir), "iter-"+strconv.Itoa(i))
 		if err := ensureWorkspaceTrusted(cfgPath, work); err != nil {
 			t.Fatalf("iter %d trust: %v", i, err)
 		}
@@ -944,8 +945,4 @@ func TestSpawnCleanupCycleIsBalanced(t *testing.T) {
 			t.Fatalf("iter %d: projects size = %d, want %d; got %#v", i, len(projects), len(pre), projects)
 		}
 	}
-}
-
-func itoa(i int) string {
-	return strconv.Itoa(i)
 }
