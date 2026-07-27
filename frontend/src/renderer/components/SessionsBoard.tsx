@@ -507,7 +507,6 @@ function ZoneColumn({
 							session={session}
 							onOpen={() => onOpen(session)}
 							onTerminate={() => onTerminate(session)}
-							laneLabel={col.label}
 						/>
 					))}
 				</div>
@@ -553,7 +552,117 @@ function MergeLaneColumn({
 		...sessions.filter((session) => session.status === "merged").sort(newestFirst),
 	];
 
-	return <ZoneColumn col={col} sessions={ordered} onOpen={onOpen} onTerminate={onTerminate} />;
+	return (
+		<SplitLaneColumn
+			ariaLabel="Ready to merge / Merged sessions"
+			zone="merge"
+			primarySessions={readySessions}
+			primaryTone={readyLaneTone}
+			secondarySessions={mergedSessions}
+			secondaryTone={mergedLaneTone}
+			onOpen={onOpen}
+			onTerminate={onTerminate}
+		/>
+	);
+}
+
+function SplitLaneColumn({
+	ariaLabel,
+	zone,
+	primarySessions,
+	primaryTone,
+	secondarySessions,
+	secondaryTone,
+	onOpen,
+	onTerminate,
+}: {
+	ariaLabel: string;
+	zone: Extract<AttentionZone, "working" | "merge">;
+	primarySessions: WorkspaceSession[];
+	primaryTone: SplitLaneTone;
+	secondarySessions: WorkspaceSession[];
+	secondaryTone: SplitLaneTone;
+	onOpen: (s: WorkspaceSession) => void;
+	onTerminate: (s: WorkspaceSession) => void;
+}) {
+	const showPrimary = primarySessions.length > 0;
+	const showSecondary = secondarySessions.length > 0;
+
+	return (
+		<section
+			aria-label={ariaLabel}
+			className="flex min-w-0 flex-col overflow-hidden rounded-panel"
+			data-column={zone}
+			data-testid="board-column"
+			style={{
+				background: `linear-gradient(180deg, color-mix(in srgb, ${primaryTone.color} 7%, transparent), transparent var(--size-kanban-glow)), var(--color-overlay-subtle)`,
+			}}
+		>
+			<div className="flex shrink-0 items-center gap-2 px-3 pb-2.5 pt-2.5">
+				<div
+					aria-label={`${primaryTone.label} / ${secondaryTone.label} lane summary`}
+					className="flex min-w-0 items-center gap-1.5 text-caption font-semibold uppercase tracking-wide-md"
+					role="group"
+				>
+					<LaneStatusLabel tone={primaryTone} />
+					<span className="text-passive" aria-hidden="true">
+						/
+					</span>
+					<LaneStatusLabel tone={secondaryTone} />
+				</div>
+				<div className="ml-auto flex shrink-0 items-center gap-1.5 font-mono text-caption leading-none text-passive">
+					<SessionCount count={primarySessions.length} label={primaryTone.countLabel} />
+					<span aria-hidden="true">/</span>
+					<SessionCount count={secondarySessions.length} label={secondaryTone.countLabel} />
+				</div>
+			</div>
+			<div className="flex min-h-0 flex-1 flex-col">
+				{showPrimary ? (
+					<div
+						aria-label={primaryTone.regionLabel}
+						className={cn(
+							"board-scrollbar min-h-0 overflow-y-auto px-2",
+							showSecondary ? "flex-[3] pb-2" : "flex-1 pb-2",
+						)}
+						role="region"
+					>
+						<div className="flex min-h-full flex-col gap-2">
+							{primarySessions.map((session) => (
+								<SessionCard
+									key={session.id}
+									session={session}
+									onOpen={() => onOpen(session)}
+									onTerminate={() => onTerminate(session)}
+								/>
+							))}
+						</div>
+					</div>
+				) : null}
+				{showSecondary ? (
+					<SecondaryLaneSection
+						sessions={secondarySessions}
+						standalone={!showPrimary}
+						tone={secondaryTone}
+						onOpen={onOpen}
+						onTerminate={onTerminate}
+					/>
+				) : null}
+			</div>
+		</section>
+	);
+}
+
+function LaneStatusLabel({ tone }: { tone: SplitLaneTone }) {
+	return (
+		<span className={cn("inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap", tone.titleClassName)}>
+			<span
+				className={cn("size-dot-sm rounded-full", tone.dotClassName)}
+				style={{ boxShadow: tone.dotGlow ? `0 0 7px color-mix(in srgb, ${tone.color} 60%, transparent)` : undefined }}
+				aria-hidden="true"
+			/>
+			{tone.label}
+		</span>
+	);
 }
 
 function SessionCount({ count, label }: { count: number; label: string }) {
@@ -562,40 +671,43 @@ function SessionCount({ count, label }: { count: number; label: string }) {
 			aria-label={`${count} ${label} ${count === 1 ? "session" : "sessions"}`}
 			className="ml-2 text-xs tabular-nums leading-none text-passive"
 		>
-			{count}
-		</span>
+			<div className="flex shrink-0 items-center gap-2 px-3 pb-2.5 pt-2.5">
+				<div className="text-caption font-semibold uppercase tracking-wide-md">
+					<LaneStatusLabel tone={tone} />
+				</div>
+				<span className="ml-auto font-mono text-caption leading-none text-passive">{sessions.length}</span>
+			</div>
+			<div className="board-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+				<div className="flex min-h-full flex-col gap-2">
+					{sessions.map((session) => (
+						<SessionCard
+							key={session.id}
+							session={session}
+							onOpen={() => onOpen(session)}
+							onTerminate={onTerminate ? () => onTerminate(session) : undefined}
+						/>
+					))}
+				</div>
+			</div>
+		</div>
 	);
-}
-
-// The column header names the broad stage, but "Needs you" and "In review" each
-// group several distinct states (Input needed, CI failed, Changes requested, …).
-// Keep the specific status pill where it refines the header — so the user (and a
-// screen reader) can tell *why* a task needs attention — and drop it only where it
-// merely echoes the column, e.g. "Working" under Working.
-function laneConveysStatus(laneLabel: string | undefined, statusLabel: string): boolean {
-	if (!laneLabel) return false;
-	const normalize = (value: string) => value.toLowerCase().replace(/[^a-z]/g, "");
-	const lane = normalize(laneLabel);
-	const status = normalize(statusLabel);
-	if (!lane || !status) return false;
-	return lane === status || lane.includes(status) || status.includes(lane);
 }
 
 function SessionCard({
 	session,
 	onOpen,
 	onTerminate,
-	laneLabel,
 	interactive = true,
 }: {
 	session: WorkspaceSession;
 	onOpen?: () => void;
 	onTerminate?: () => void;
-	laneLabel?: string;
 	interactive?: boolean;
 }) {
+	// The column header already names the stage (Working / Needs you / In review /
+	// Ready to merge), so the card carries no status pill — only its own identity +
+	// code state: agent, title, branch, PRs, diff, updated time.
 	const badge = getSessionStatusView(session.status);
-	const showStatus = !laneConveysStatus(laneLabel, badge.label);
 	const issueId = canonicalTrackerIssueId(session.issueId);
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
@@ -675,17 +787,6 @@ function SessionCard({
 			</div>
 			<div className="flex items-center gap-2 px-3.5 py-2 font-mono text-2xs text-passive">
 				<div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
-					{showStatus && (
-						<span
-							className={cn(
-								"inline-flex min-w-0 items-center gap-1.5 truncate font-sans font-medium",
-								badge.className,
-							)}
-						>
-							<span className="size-dot-sm shrink-0 rounded-full bg-current" aria-hidden="true" />
-							{badge.label}
-						</span>
-					)}
 					{groupPRsByLifecycle(prSummaries).map((group) => (
 						<BoardPRGroup group={group} key={group.status.label} linksInteractive={interactive} />
 					))}
