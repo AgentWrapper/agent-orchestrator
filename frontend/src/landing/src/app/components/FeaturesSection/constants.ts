@@ -38,7 +38,7 @@ export const FEATURES: Feature[] = [
     tag: "Mobile companion",
     title: "Your fleet goes where you go",
     description:
-      "Pair the AO mobile app with your desktop over LAN or Tailscale. Watch every session, open a terminal, and get notified when an agent needs you—while execution and code stay on your machine.",
+      "Pair the AO mobile app with your desktop over LAN or Tailscale. Watch every session, open a terminal, and get notified when an agent needs you - while execution and code stay on your machine.",
     colors: ["#2563eb", "#1d4ed8", "#1e3a8a", "#1a1a2e"],
   },
 ];

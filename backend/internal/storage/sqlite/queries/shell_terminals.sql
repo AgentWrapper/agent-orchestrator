@@ -15,6 +15,12 @@ FROM shell_terminals
 WHERE app_run_id = ?
 ORDER BY created_at;
 
+-- name: SelectShellTerminalsBySessionID :many
+SELECT *
+FROM shell_terminals
+WHERE session_id = ?
+ORDER BY created_at;
+
 -- name: SelectShellTerminalsFromPreviousAppRuns :many
 SELECT *
 FROM shell_terminals

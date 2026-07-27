@@ -1359,7 +1359,7 @@ function Sidebar({
 					className="h-[22px] w-[22px] shrink-0 rounded-md"
 					draggable="false"
 				/>
-				<div className="min-w-0 text-[13px] font-bold tracking-tight text-[var(--preview-sidebar-foreground)]">
+				<div className="min-w-0 flex-1 truncate text-[12px] font-semibold tracking-[-0.5px] text-[var(--preview-sidebar-foreground)]">
 					Agent Orchestrator
 				</div>
 			</div>
@@ -2054,7 +2054,7 @@ function OrchestratorView({
 					</div>
 					<div className="min-w-0">
 						<div className="text-[13px] font-semibold tracking-[-0.5px] text-[var(--preview-foreground)]">
-							AO Orchestrator
+							Agent Orchestrator
 						</div>
 						<div className="truncate text-[10px] text-[var(--preview-muted-foreground)]">
 							Planning workers for {selectedTrack.label.toLowerCase()}

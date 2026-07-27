@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useParams } from "@tanstack/react-router";
 import {
 	Bell,
 	BellRing,
@@ -14,7 +14,7 @@ import {
 	SquareTerminal,
 	XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
 	useMarkAllNotificationsReadMutation,
 	useMarkNotificationReadMutation,
@@ -32,6 +32,7 @@ import {
 	recentNotificationsQueryKey,
 	unreadNotificationsQueryKey,
 } from "../lib/notifications";
+import { useUiStore } from "../stores/ui-store";
 import { captureRendererEvent } from "../lib/telemetry";
 import { cn } from "../lib/utils";
 import { TopbarButton } from "./TopbarButton";
@@ -80,8 +81,25 @@ function useNotificationTargetNavigation() {
 export function NotificationRuntime() {
 	const queryClient = useQueryClient();
 	const { openPrimary } = useNotificationTargetNavigation();
+	const params = useParams({ strict: false }) as { sessionId?: string };
+	const routeSessionIdRef = useRef(params.sessionId);
+	routeSessionIdRef.current = params.sessionId;
 
-	useEffect(() => createNotificationsTransport(queryClient).connect(), [queryClient]);
+	// Being on the session route is not the same as watching the agent: its pane
+	// renders one terminal at a time, so a shell or reviewer tab hides the agent
+	// while the route is unchanged. Only report the session whose agent terminal
+	// is the one on screen. Read the store imperatively — this feeds a getter for
+	// the long-lived SSE connection, which needs the current value, not a render.
+	const getVisibleAgentSessionId = useCallback(() => {
+		const sessionId = routeSessionIdRef.current;
+		if (!sessionId) return undefined;
+		return useUiStore.getState().visibleTerminalKindBySession[sessionId] === "worker" ? sessionId : undefined;
+	}, []);
+
+	useEffect(
+		() => createNotificationsTransport(queryClient, getVisibleAgentSessionId).connect(),
+		[getVisibleAgentSessionId, queryClient],
+	);
 
 	useEffect(() => {
 		return aoBridge.notifications.onClick((id) => {
