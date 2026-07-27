@@ -1,6 +1,6 @@
 "use client";
 
-import { COMPANY } from "@superset/shared/constants";
+import { COMPANY } from "@ao/shared/constants";
 import { track } from "@/lib/analytics";
 import { isMacPlatform, Platform, usePlatform } from "../../hooks/useOS";
 

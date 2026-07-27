@@ -5,6 +5,12 @@ import { SessionView } from "./SessionView";
 import { useUiStore } from "../stores/ui-store";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 
+const navigateMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@tanstack/react-router", () => ({
+	useNavigate: () => navigateMock,
+}));
+
 type FakePanelHandle = {
 	collapse: Mock;
 	expand: Mock;
@@ -43,8 +49,17 @@ const { workspaces, workspaceQueryState, panels, shellTerminalsState } = vi.hois
 		kind: "orchestrator",
 		title: "orchestrate",
 	} satisfies WorkspaceSession;
+	const crossProjectWorker = {
+		...worker,
+		id: "sess-cross-project",
+		workspaceId: "proj-2",
+		workspaceName: "other-app",
+		title: "cross-project task",
+		branch: "ao/cross-project",
+	} satisfies WorkspaceSession;
 	const workspaces: WorkspaceSummary[] = [
 		{ id: "proj-1", name: "my-app", path: "/p", type: "main", sessions: [worker, secondWorker, orchestrator] },
+		{ id: "proj-2", name: "other-app", path: "/q", type: "main", sessions: [crossProjectWorker] },
 	];
 	const workspaceQueryState: { data: WorkspaceSummary[] | undefined; isLoading: boolean } = {
 		data: workspaces,
@@ -70,10 +85,43 @@ const { workspaces, workspaceQueryState, panels, shellTerminalsState } = vi.hois
 // platform hides the shell topbar, SessionView mounts it in-panel.)
 vi.mock("./ShellTopbar", () => ({ ShellTopbar: () => null }));
 vi.mock("./CenterPane", () => ({
-	CenterPane: ({ shellTerminals = [] }: { shellTerminals?: Array<{ handleId: string; title: string }> }) => (
+	CenterPane: ({
+		shellTerminals = [],
+		projectSessions = [],
+		availableProjectSessions = [],
+		onAddProjectSession,
+		onCloseProjectSession,
+		onSelectProjectSession,
+	}: {
+		shellTerminals?: Array<{ handleId: string; title: string }>;
+		projectSessions?: WorkspaceSession[];
+		availableProjectSessions?: WorkspaceSession[];
+		onAddProjectSession?: (session: WorkspaceSession) => void;
+		onCloseProjectSession?: (session: WorkspaceSession) => void;
+		onSelectProjectSession?: (session: WorkspaceSession) => void;
+	}) => (
 		<div>
 			terminal center
 			<div data-testid="shell-tabs">{shellTerminals.map((s) => s.title).join(",")}</div>
+			<div data-testid="project-tabs">
+				{projectSessions.map((session) => (
+					<button key={session.id} type="button" onClick={() => onSelectProjectSession?.(session)}>
+						{session.title}
+					</button>
+				))}
+			</div>
+			<div data-testid="available-project-tabs">
+				{availableProjectSessions.map((session) => (
+					<button key={session.id} type="button" onClick={() => onAddProjectSession?.(session)}>
+						Add {session.title}
+					</button>
+				))}
+			</div>
+			{projectSessions.slice(1).map((session) => (
+				<button key={session.id} type="button" onClick={() => onCloseProjectSession?.(session)}>
+					Close {session.title}
+				</button>
+			))}
 		</div>
 	),
 }));
@@ -274,7 +322,7 @@ function inspectorButton(): HTMLElement {
 describe("SessionView", () => {
 	beforeEach(() => {
 		window.localStorage.clear();
-		for (const session of workspaces[0].sessions) {
+		for (const session of workspaces.flatMap((workspace) => workspace.sessions)) {
 			delete session.previewUrl;
 			delete session.previewRevision;
 			delete session.isTerminated;
@@ -282,11 +330,12 @@ describe("SessionView", () => {
 		}
 		workspaceQueryState.data = workspaces;
 		workspaceQueryState.isLoading = false;
-		useUiStore.setState({ inspectorSessions: {} });
+		useUiStore.setState({ inspectorSessions: {}, sessionTabsByOwner: {} });
 		panels.clear();
 		browserDestroy.mockReset();
 		browserViewOptions.current = undefined;
 		shellTerminalsState.data = [];
+		navigateMock.mockReset();
 	});
 
 	// Regression: shell terminals are an app-wide list, so without a per-session
@@ -316,6 +365,66 @@ describe("SessionView", () => {
 		expect(tabs).toHaveTextContent("sess-1-shell");
 		expect(tabs).not.toHaveTextContent("sess-2-shell");
 		expect(tabs).not.toHaveTextContent("loose-shell");
+	});
+
+	it("starts with only the owner tab and pins another worker through the add menu", () => {
+		render(<SessionView sessionId="sess-1" />);
+
+		expect(screen.getByTestId("project-tabs")).toHaveTextContent("do the thing");
+		expect(screen.getByTestId("project-tabs")).not.toHaveTextContent("do the other thing");
+		expect(screen.getByTestId("available-project-tabs")).toHaveTextContent("Add do the other thing");
+
+		fireEvent.click(screen.getByRole("button", { name: "Add do the other thing" }));
+		expect(useUiStore.getState().sessionTabsByOwner["sess-1"]).toEqual(["sess-2"]);
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "proj-1", sessionId: "sess-2" },
+			search: { tabOwner: "sess-1" },
+		});
+	});
+
+	it("offers and pins live worker sessions from other projects", () => {
+		render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "Add cross-project task" }));
+		expect(useUiStore.getState().sessionTabsByOwner["sess-1"]).toEqual(["sess-cross-project"]);
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "proj-2", sessionId: "sess-cross-project" },
+			search: { tabOwner: "sess-1" },
+		});
+	});
+
+	it("keeps pinned worker and shell tabs private to their owner session", () => {
+		useUiStore.getState().addSessionTab("sess-1", "sess-2");
+		shellTerminalsState.data = [
+			{
+				handleId: "sh-a",
+				sessionId: "sess-1",
+				title: "owner-shell",
+				workingDir: "/p",
+				createdAt: "2026-07-24T00:00:00Z",
+			},
+			{
+				handleId: "sh-b",
+				sessionId: "sess-2",
+				title: "worker-shell",
+				workingDir: "/q",
+				createdAt: "2026-07-24T00:00:00Z",
+			},
+		];
+		const { rerender } = render(<SessionView sessionId="sess-2" tabOwnerSessionId="sess-1" />);
+
+		expect(screen.getByTestId("project-tabs")).toHaveTextContent("do the thing");
+		expect(screen.getByTestId("project-tabs")).toHaveTextContent("do the other thing");
+		expect(screen.getByTestId("shell-tabs")).toHaveTextContent("owner-shell");
+		expect(screen.getByTestId("shell-tabs")).not.toHaveTextContent("worker-shell");
+
+		rerender(<SessionView sessionId="sess-2" />);
+		expect(screen.getByTestId("project-tabs")).not.toHaveTextContent("do the thing");
+		expect(screen.getByTestId("project-tabs")).toHaveTextContent("do the other thing");
+		expect(screen.getByTestId("shell-tabs")).not.toHaveTextContent("owner-shell");
+		expect(screen.getByTestId("shell-tabs")).toHaveTextContent("worker-shell");
 	});
 
 	// Regression: react-resizable-panels v4 treats bare numeric sizes as PIXELS

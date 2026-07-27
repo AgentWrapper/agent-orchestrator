@@ -1,4 +1,4 @@
-import { COMPANY } from "@superset/shared/constants";
+import { COMPANY } from "@ao/shared/constants";
 
 function serializeJsonLd(schema: unknown): string {
 	const json = JSON.stringify(schema);
@@ -54,7 +54,7 @@ export function OrganizationJsonLd() {
 		},
 		sameAs: [
 			COMPANY.GITHUB_URL,
-			"https://github.com/superset-sh",
+			"https://github.com/AgentWrapper",
 			COMPANY.X_URL,
 			COMPANY.LINKEDIN_URL,
 			COMPANY.YOUTUBE_URL,
