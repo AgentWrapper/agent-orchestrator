@@ -105,11 +105,11 @@ export function MobileAppDemo() {
   return (
     <div className="flex h-[280px] w-full items-center justify-center sm:h-[360px] lg:h-[390px]">
       <div
-        className="relative h-full aspect-[0.54] overflow-hidden rounded-[34px] border-[3px] border-[#30333a] bg-[#050608] p-[5px] shadow-[0_28px_60px_rgba(0,0,0,0.55)]"
+        className="relative h-full aspect-[0.48] overflow-hidden rounded-[32px] border-[3px] border-[#30333a] bg-[#050608] p-[5px] shadow-[0_28px_60px_rgba(0,0,0,0.55)]"
         style={{ color: mobileTheme.textPrimary }}
       >
         <div
-          className="relative flex h-full flex-col overflow-hidden rounded-[27px] font-sans antialiased"
+          className="relative flex h-full flex-col overflow-hidden rounded-[25px] font-sans antialiased"
           style={{ backgroundColor: mobileTheme.bgBase }}
         >
           <PhoneStatusBar />
@@ -151,7 +151,7 @@ export function MobileAppDemo() {
 function PhoneStatusBar() {
   return (
     <div className="relative flex h-7 shrink-0 items-center justify-between px-5 pt-1">
-      <span className="font-mono text-[7px] font-semibold tabular-nums">
+      <span className="font-mono text-[6px] font-semibold tabular-nums">
         7:56
       </span>
       <span className="absolute left-1/2 top-1 h-3 w-14 -translate-x-1/2 rounded-full bg-black" />
@@ -193,23 +193,23 @@ function KanbanScreen({
 
   return (
     <div className="relative flex h-full min-h-0 flex-col">
-      <div className="flex items-start justify-between px-4 pb-2 pt-1">
+      <div className="flex items-start justify-between px-2.5 pb-2 pt-1">
         <div>
           <div className="flex items-center gap-1.5">
-            <h4 className="text-[15px] font-extrabold tracking-[-0.5px]">
+            <h4 className="text-[13px] font-extrabold tracking-[-0.4px]">
               Kanban
             </h4>
-            <img src="/ao-logo.svg" alt="" className="size-3.5" />
+            <img src="/ao-logo.svg" alt="" className="size-3" />
           </div>
           <p
-            className="mt-0.5 font-mono text-[6px]"
+            className="mt-0.5 font-mono text-[5px]"
             style={{ color: mobileTheme.textTertiary }}
           >
             192.168.88.3
           </p>
         </div>
         <div
-          className="mt-1 flex items-center gap-1 text-[6px] font-semibold"
+          className="mt-1 flex items-center gap-1 text-[5px] font-semibold"
           style={{ color: mobileTheme.textTertiary }}
         >
           <span
@@ -220,7 +220,7 @@ function KanbanScreen({
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-1.5 px-4">
+      <div className="grid grid-cols-3 gap-1 px-2.5">
         <Stat value={counts.working} label="working" color={mobileTheme.orange} />
         <Stat value={counts.needsYou} label="need you" color={mobileTheme.amber} />
         <Stat
@@ -230,7 +230,7 @@ function KanbanScreen({
         />
       </div>
 
-      <div className="mt-2 flex shrink-0 gap-1 overflow-hidden px-4 pb-1">
+      <div className="mt-2 flex shrink-0 gap-1 overflow-hidden px-2.5 pb-1">
         {projects.map((item) => {
           const active = item === project;
           return (
@@ -238,7 +238,7 @@ function KanbanScreen({
               key={item}
               type="button"
               onClick={() => onProjectChange(item)}
-              className="min-h-6 shrink-0 rounded-full border px-2 text-[6px] font-semibold outline-none transition-[background-color,border-color,color,scale] duration-150 active:scale-[0.96] focus-visible:ring-1"
+              className="min-h-5 shrink-0 rounded-full border px-2 text-[5px] font-semibold outline-none transition-[background-color,border-color,color,scale] duration-150 active:scale-[0.96] focus-visible:ring-1"
               style={{
                 backgroundColor: active
                   ? "rgba(77,141,255,0.14)"
@@ -271,19 +271,19 @@ function KanbanScreen({
 
           return (
             <section key={section}>
-              <div className="flex items-center gap-1.5 px-4 pb-1 pt-2">
+              <div className="flex items-center gap-1.5 px-2.5 pb-1 pt-2">
                 <span
                   className="h-2.5 w-[2px] rounded-full"
                   style={{ backgroundColor: color }}
                 />
                 <span
-                  className="flex-1 text-[6px] font-bold uppercase tracking-[1px]"
+                  className="flex-1 text-[5px] font-bold uppercase tracking-[0.9px]"
                   style={{ color: mobileTheme.textSecondary }}
                 >
                   {section}
                 </span>
                 <span
-                  className="font-mono text-[6px] font-bold tabular-nums"
+                  className="font-mono text-[5px] font-bold tabular-nums"
                   style={{ color: mobileTheme.textTertiary }}
                 >
                   {sectionSessions.length}
@@ -335,13 +335,13 @@ function Stat({
       }}
     >
       <p
-        className="font-mono text-[12px] font-extrabold leading-none tabular-nums"
+        className="font-mono text-[10px] font-extrabold leading-none tabular-nums"
         style={{ color: value > 0 ? color : mobileTheme.textFaint }}
       >
         {value}
       </p>
       <p
-        className="mt-1 text-[6px] font-semibold"
+        className="mt-1 text-[5px] font-semibold"
         style={{ color: mobileTheme.textTertiary }}
       >
         {label}
@@ -365,7 +365,7 @@ function SessionCard({
     <button
       type="button"
       onClick={onClick}
-      className="mx-3 my-1 block min-h-11 w-[calc(100%-1.5rem)] rounded-lg border px-2.5 py-2 text-left outline-none transition-[background-color,border-color,scale] duration-150 active:scale-[0.96] focus-visible:ring-1"
+      className="mx-2 my-1 block min-h-11 w-[calc(100%-1rem)] rounded-lg border px-2 py-2 text-left outline-none transition-[background-color,border-color,scale] duration-150 active:scale-[0.96] focus-visible:ring-1"
       style={{
         backgroundColor: selected
           ? mobileTheme.bgElevatedHover
@@ -389,29 +389,29 @@ function SessionCard({
           />
         </span>
         <span
-          className="text-[6px] font-semibold"
+          className="text-[5px] font-semibold"
           style={{ color: session.color }}
         >
           {session.status}
         </span>
         <span
-          className="ml-auto max-w-[48px] truncate font-mono text-[5.5px]"
+          className="ml-auto max-w-[44px] truncate font-mono text-[4.5px]"
           style={{ color: mobileTheme.textTertiary }}
         >
           {session.project}
         </span>
         <span
-          className="font-mono text-[5.5px]"
+          className="font-mono text-[4.5px]"
           style={{ color: mobileTheme.textTertiary }}
         >
           #{session.id}
         </span>
       </span>
-      <span className="mt-1 block truncate text-[8px] font-medium">
+      <span className="mt-1 block truncate text-[7px] font-medium">
         {session.title}
       </span>
       <span
-        className="mt-1 flex items-center gap-1 font-mono text-[5.5px]"
+        className="mt-1 flex items-center gap-1 font-mono text-[4.5px]"
         style={{ color: mobileTheme.textTertiary }}
       >
         <GitBranch className="size-2" />
@@ -445,11 +445,11 @@ function SecondaryScreen({ tab }: { tab: Exclude<Tab, "Kanban"> }) {
   }[tab];
 
   return (
-    <div className="flex h-full flex-col p-4">
+    <div className="flex h-full flex-col px-2.5 py-3">
       <div className="flex items-center justify-between">
-        <h4 className="text-[15px] font-extrabold tracking-[-0.5px]">{tab}</h4>
+        <h4 className="text-[13px] font-extrabold tracking-[-0.4px]">{tab}</h4>
         <span
-          className="flex items-center gap-1 text-[6px] font-semibold"
+          className="flex items-center gap-1 text-[5px] font-semibold"
           style={{ color: mobileTheme.textTertiary }}
         >
           <i
@@ -467,21 +467,21 @@ function SecondaryScreen({ tab }: { tab: Exclude<Tab, "Kanban"> }) {
         }}
       >
         <p
-          className="font-mono text-[6px] uppercase tracking-[1px]"
+          className="font-mono text-[5px] uppercase tracking-[0.9px]"
           style={{ color: mobileTheme.blue }}
         >
           {content.eyebrow}
         </p>
-        <p className="mt-2 text-[11px] font-bold">{content.title}</p>
+        <p className="mt-2 text-[9px] font-bold">{content.title}</p>
         <p
-          className="mt-2 text-pretty text-[7px] leading-[1.6]"
+          className="mt-2 text-pretty text-[6px] leading-[1.6]"
           style={{ color: mobileTheme.textSecondary }}
         >
           {content.body}
         </p>
         <button
           type="button"
-          className="mt-4 min-h-8 w-full rounded-lg text-[7px] font-bold outline-none transition-transform duration-150 active:scale-[0.96] focus-visible:ring-2"
+          className="mt-4 min-h-8 w-full rounded-lg text-[6px] font-bold outline-none transition-transform duration-150 active:scale-[0.96] focus-visible:ring-2"
           style={{
             backgroundColor: mobileTheme.blue,
             color: "#06101f",
@@ -522,7 +522,7 @@ function BottomTabs({
             }}
           >
             <Icon className="size-3" strokeWidth={1.8} />
-            <span className="text-[5.5px] font-semibold">{label}</span>
+            <span className="text-[4.5px] font-semibold">{label}</span>
           </button>
         );
       })}
