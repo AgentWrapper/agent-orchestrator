@@ -32,7 +32,13 @@ const mobileTheme = {
 /**
  * Design size of the phone. The frame is rendered at exactly this size on every
  * breakpoint and scaled to fit its slot, so the scale factors below are just
- * (slot height / PHONE_HEIGHT): 280/390 and 360/390.
+ * (slot height / PHONE_HEIGHT): 335/390 and 360/390. Keep the two in step —
+ * changing a slot height without its scale factor is what made the mock
+ * overflow its own screen in the first place.
+ *
+ * The base slot is 335px rather than something smaller because the scale
+ * applies to the controls too: below 0.858 the 28px FAB drops under the 24px
+ * WCAG 2.2 minimum target size.
  */
 const PHONE_HEIGHT = 390;
 const PHONE_WIDTH = Math.round(PHONE_HEIGHT * 0.48);
@@ -111,7 +117,7 @@ export function MobileAppDemo() {
   );
 
   return (
-    <div className="flex h-[280px] w-full items-center justify-center sm:h-[360px] lg:h-[390px]">
+    <div className="flex h-[335px] w-full items-center justify-center sm:h-[360px] lg:h-[390px]">
       {/*
         The screen is authored at one fixed size (PHONE_WIDTH x PHONE_HEIGHT) because
         everything inside it is absolute — 5px labels, a 28px status bar, a 44px tab bar.
@@ -119,7 +125,7 @@ export function MobileAppDemo() {
         narrower screen, so scale the whole phone instead and keep its proportions.
       */}
       <div
-        className="shrink-0 origin-center scale-[0.718] sm:scale-[0.923] lg:scale-100"
+        className="shrink-0 origin-center scale-[0.859] sm:scale-[0.923] lg:scale-100"
         style={{ width: PHONE_WIDTH, height: PHONE_HEIGHT }}
       >
         <div
