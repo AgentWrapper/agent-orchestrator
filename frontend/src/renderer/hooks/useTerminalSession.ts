@@ -29,7 +29,12 @@ export type TerminalUserInputSource = "keyboard" | "paste" | "composition" | "sh
 export type AttachableTerminal = {
 	cols: number;
 	rows: number;
-	write: (data: Uint8Array) => void;
+	/**
+	 * `done` fires once this exact chunk has been parsed into the buffer (xterm's
+	 * own write callback). The attachment uses it to reveal the pane at the
+	 * replay's final scroll position instead of guessing with a timer.
+	 */
+	write: (data: Uint8Array, done?: () => void) => void;
 	writeln: (line: string) => void;
 	/**
 	 * Erase screen + scrollback and home the cursor, preserving terminal modes.
@@ -90,6 +95,22 @@ const RESIZE_DEBOUNCE_MS = 100;
 // explicit SIGWINCH (pty_unix.go), so this re-assert makes the client re-read
 // and re-report its grid; when everything is already in sync it's a no-op.
 const RESIZE_REASSERT_MS = 250;
+// Initial-replay gate (issue #3160). On attach the runtime replays the pane's
+// state, and the daemon pumps it in 32KB reads (attachment.go copyOut) — so the
+// renderer gets N WebSocket frames, N `write()` calls, and N separate event-loop
+// turns. xterm parses each write atomically but the browser paints BETWEEN
+// turns, so every frame boundary is a painted, further-scrolled state: the
+// terminal visibly walks from mid-session down to the tail. Measured on a
+// 1000-line replay: 25 frames at 16ms spacing paint 25 distinct scroll
+// positions; the same bytes as ONE write paint exactly 1, for ~2ms of parse.
+//
+// So the replay burst is buffered and written once, with the pane covered until
+// that write is parsed. QUIET_MS is the no-data gap that ends the burst; CAP_MS
+// bounds the cover if the replay never goes quiet. Hitting the cap still writes
+// what has arrived as a single chunk, so the worst case degrades to one jump
+// rather than back to the walk.
+const REPLAY_QUIET_MS = 60;
+const REPLAY_CAP_MS = 750;
 
 function defaultCreateMux(): TerminalMux {
 	// Resolved per connect, not per hook: a daemon restart can change the port.
@@ -100,6 +121,9 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 	const queryClient = useQueryClient();
 	const [state, setState] = useState<TerminalSessionState>("idle");
 	const [error, setError] = useState<string | undefined>(undefined);
+	// False only while the initial replay is being buffered — the pane keeps a
+	// cover over xterm until the burst has been written and parsed.
+	const [replaySettled, setReplaySettled] = useState(true);
 
 	const sessionRef = useRef(session);
 	sessionRef.current = session;
@@ -123,6 +147,14 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		generation: 0,
 		inputReady: false,
 		detached: true,
+		// Initial-replay gate, reset per connect (see REPLAY_QUIET_MS).
+		replayBuffering: false,
+		replayChunks: [] as Uint8Array[],
+		replayQuietTimer: null as ReturnType<typeof setTimeout> | null,
+		replayCapTimer: null as ReturnType<typeof setTimeout> | null,
+		// A resize re-assert held back until the replay flushes; see the resize
+		// handler for why it cannot fire during the burst.
+		replayPendingReassert: null as (() => void) | null,
 	});
 
 	const transition = useCallback((next: TerminalSessionState) => {
@@ -138,8 +170,24 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 	}, [queryClient]);
 
+	const clearReplayTimers = useCallback(() => {
+		const r = runtime.current;
+		if (r.replayQuietTimer) {
+			clearTimeout(r.replayQuietTimer);
+			r.replayQuietTimer = null;
+		}
+		if (r.replayCapTimer) {
+			clearTimeout(r.replayCapTimer);
+			r.replayCapTimer = null;
+		}
+	}, []);
+
 	const teardownMux = useCallback(() => {
 		const r = runtime.current;
+		clearReplayTimers();
+		r.replayBuffering = false;
+		r.replayChunks = [];
+		r.replayPendingReassert = null;
 		if (r.retryTimer) {
 			clearTimeout(r.retryTimer);
 			r.retryTimer = null;
@@ -160,7 +208,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		r.disposers = [];
 		r.mux?.dispose();
 		r.mux = null;
-	}, []);
+	}, [clearReplayTimers]);
 
 	const isCurrentAttachment = useCallback((generation: number, handle: string, mux: TerminalMux) => {
 		const r = runtime.current;
@@ -217,11 +265,66 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		// correctly for onOutput. Only built when a caller is listening.
 		const outputDecoder = optionsRef.current.onOutput ? new TextDecoder() : null;
 
+		const emitOutput = (bytes: Uint8Array) => {
+			if (outputDecoder) optionsRef.current.onOutput?.(outputDecoder.decode(bytes, { stream: true }));
+		};
+
+		// End the initial-replay burst: concatenate everything buffered so far
+		// into one write so xterm parses it in a single pass (no intermediate
+		// paints), and uncover the pane once that write is parsed.
+		//
+		// Safe to call from anywhere — a second call is a no-op, and a call from
+		// a superseded attachment is dropped.
+		const flushReplay = () => {
+			if (!r.replayBuffering) return;
+			if (!isCurrentAttachment(generation, handle, mux)) return;
+			r.replayBuffering = false;
+			clearReplayTimers();
+
+			const chunks = r.replayChunks;
+			r.replayChunks = [];
+			const pendingReassert = r.replayPendingReassert;
+			r.replayPendingReassert = null;
+
+			if (chunks.length === 0) {
+				// Nothing replayed (a pane with no output yet): reveal immediately
+				// rather than holding the cover for the full cap.
+				setReplaySettled(true);
+				pendingReassert?.();
+				return;
+			}
+
+			let total = 0;
+			for (const chunk of chunks) total += chunk.length;
+			const replay = new Uint8Array(total);
+			let offset = 0;
+			for (const chunk of chunks) {
+				replay.set(chunk, offset);
+				offset += chunk.length;
+			}
+			// Observers (the URL watcher) must still see the replay text, and see
+			// it once, in order — decode the joined buffer, not the pieces.
+			emitOutput(replay);
+			terminal.write(replay, () => {
+				if (!isCurrentAttachment(generation, handle, mux)) return;
+				setReplaySettled(true);
+			});
+			pendingReassert?.();
+		};
+
 		r.disposers.push(
 			mux.onData(handle, (bytes) => {
 				if (!isCurrentAttachment(generation, handle, mux)) return;
+				if (r.replayBuffering) {
+					r.replayChunks.push(bytes);
+					// Each frame restarts the quiet window: the burst is over only
+					// once the stream actually goes idle.
+					if (r.replayQuietTimer) clearTimeout(r.replayQuietTimer);
+					r.replayQuietTimer = setTimeout(flushReplay, REPLAY_QUIET_MS);
+					return;
+				}
 				terminal.write(bytes);
-				if (outputDecoder) optionsRef.current.onOutput?.(outputDecoder.decode(bytes, { stream: true }));
+				emitOutput(bytes);
 			}),
 			mux.onOpened(handle, () => {
 				if (!isCurrentAttachment(generation, handle, mux)) return;
@@ -235,6 +338,9 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				if (!isCurrentAttachment(generation, handle, mux)) return;
 				clearOpenTimer(generation);
 				r.inputReady = false;
+				// Land whatever was buffered before the notice, and lift the cover:
+				// a pane that exits mid-replay must never be left behind it.
+				flushReplay();
 				terminal.writeln("\r\n\x1b[2m[process exited]\x1b[0m");
 				transition("exited");
 				invalidateWorkspaces();
@@ -243,6 +349,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				if (!isCurrentAttachment(generation, handle, mux)) return;
 				clearOpenTimer(generation);
 				r.inputReady = false;
+				flushReplay();
 				terminal.writeln(`\r\n\x1b[2m[terminal error] ${message}\x1b[0m`);
 				setError(message);
 				transition("error");
@@ -268,17 +375,32 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		// additionally collapses a drag's burst of changes into one PTY resize.
 		// Each settled resize is re-asserted once (see RESIZE_REASSERT_MS); both
 		// stages share resizeTimer so a new burst or teardown cancels either.
+		const scheduleReassert = (cols: number, rows: number) => {
+			r.resizeTimer = setTimeout(() => {
+				r.resizeTimer = null;
+				if (!isCurrentAttachment(generation, handle, mux)) return;
+				mux.resize(handle, cols, rows);
+			}, RESIZE_REASSERT_MS);
+		};
 		const resize = terminal.onResize(({ cols, rows }) => {
 			if (!isCurrentAttachment(generation, handle, mux)) return;
 			if (r.resizeTimer) clearTimeout(r.resizeTimer);
 			r.resizeTimer = setTimeout(() => {
 				if (!isCurrentAttachment(generation, handle, mux)) return;
 				mux.resize(handle, cols, rows);
-				r.resizeTimer = setTimeout(() => {
+				// The backend answers every resize frame with an explicit SIGWINCH,
+				// so the re-assert costs a full application repaint ~250ms later.
+				// Mid-replay that repaint would land just after the cover lifts and
+				// flash. Hold it until the flush — never drop it, since losing the
+				// re-assert leaves the pane laid out for the old grid until the next
+				// real change. Only deferred once a burst is actually in flight; a
+				// pane replaying nothing keeps the plain timing.
+				if (r.replayBuffering && r.replayChunks.length > 0) {
 					r.resizeTimer = null;
-					if (!isCurrentAttachment(generation, handle, mux)) return;
-					mux.resize(handle, cols, rows);
-				}, RESIZE_REASSERT_MS);
+					r.replayPendingReassert = () => scheduleReassert(cols, rows);
+					return;
+				}
+				scheduleReassert(cols, rows);
 			}, RESIZE_DEBOUNCE_MS);
 		});
 		r.disposers.push(
@@ -297,6 +419,16 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		}
 		r.firstAttach = false;
 
+		// Open the replay gate before the pane can produce any output. It cannot
+		// wait for `opened`: the daemon fires onOpen from setPTY and only then
+		// starts copyOut (attachment.go), so `attached` arrives before the first
+		// replay byte and would uncover a pane that has not drawn yet.
+		r.replayBuffering = true;
+		r.replayChunks = [];
+		r.replayPendingReassert = null;
+		setReplaySettled(false);
+		r.replayCapTimer = setTimeout(flushReplay, REPLAY_CAP_MS);
+
 		mux.open(handle, terminal.cols, terminal.rows);
 		mux.resize(handle, terminal.cols, terminal.rows);
 		r.openTimer = setTimeout(() => {
@@ -311,7 +443,15 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			teardownMux();
 			scheduleReattach();
 		}, OPEN_TIMEOUT_MS);
-	}, [clearOpenTimer, invalidateWorkspaces, isCurrentAttachment, scheduleReattach, teardownMux, transition]);
+	}, [
+		clearOpenTimer,
+		clearReplayTimers,
+		invalidateWorkspaces,
+		isCurrentAttachment,
+		scheduleReattach,
+		teardownMux,
+		transition,
+	]);
 	connectRef.current = connect;
 
 	/**
@@ -346,6 +486,9 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				r.handle = null;
 				r.inputReady = false;
 				setError(undefined);
+				// Detaching ends any pending replay: never leave the next mount of
+				// this hook believing a burst is still in flight.
+				setReplaySettled(true);
 				transition("idle");
 			};
 		},
@@ -406,5 +549,5 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		[teardownMux],
 	);
 
-	return { attach, state, error };
+	return { attach, state, error, replaySettled };
 }
