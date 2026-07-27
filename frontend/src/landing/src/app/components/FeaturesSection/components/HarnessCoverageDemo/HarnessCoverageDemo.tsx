@@ -2,6 +2,7 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import { Bot, Check, ChevronDown, Network, RefreshCw } from "lucide-react";
+import Image from "next/image";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { FeaturePreviewShell, previewStatus } from "../FeaturePreviewShell";
 
@@ -44,14 +45,19 @@ const harnesses = [
 
 type Field = "worker" | "orchestrator";
 type Harness = (typeof harnesses)[number];
+type SelectableEntry = { harness: Harness; index: number };
 
 function isSelectable(status: Harness["status"]) {
 	return status === "Authorized";
 }
 
-const SELECTABLE = harnesses
-	.map((harness, index) => ({ harness, index }))
-	.filter(({ harness }) => isSelectable(harness.status));
+const SELECTABLE: SelectableEntry[] = [];
+for (let index = 0; index < harnesses.length; index++) {
+	const harness = harnesses[index];
+	if (harness && isSelectable(harness.status)) {
+		SELECTABLE.push({ harness, index });
+	}
+}
 
 const DEFAULT_INDEX = SELECTABLE[0]?.index ?? 0;
 
@@ -65,6 +71,19 @@ function otherField(field: Field): Field {
 	return field === "worker" ? "orchestrator" : "worker";
 }
 
+function HarnessIcon({ src }: { src: string }) {
+	return (
+		<Image
+			src={src}
+			alt=""
+			width={16}
+			height={16}
+			className="size-4 shrink-0"
+			draggable={false}
+		/>
+	);
+}
+
 export function HarnessCoverageDemo() {
 	const rootRef = useRef<HTMLDivElement>(null);
 	const [openField, setOpenField] = useState<Field | null>("orchestrator");
@@ -72,16 +91,24 @@ export function HarnessCoverageDemo() {
 	const [orchestrator, setOrchestrator] = useState(DEFAULT_INDEX);
 	const [refreshing, setRefreshing] = useState(false);
 
-	const openFieldRef = useRef<Field | null>(openField);
-	const workerRef = useRef(worker);
-	const orchestratorRef = useRef(orchestrator);
+	const openFieldRef = useRef<Field | null>("orchestrator");
+	const workerRef = useRef(DEFAULT_INDEX);
+	const orchestratorRef = useRef(DEFAULT_INDEX);
 	const interactingRef = useRef(false);
 	const inViewRef = useRef(true);
 	const refreshTimerRef = useRef(0);
 
-	openFieldRef.current = openField;
-	workerRef.current = worker;
-	orchestratorRef.current = orchestrator;
+	useEffect(() => {
+		openFieldRef.current = openField;
+	}, [openField]);
+
+	useEffect(() => {
+		workerRef.current = worker;
+	}, [worker]);
+
+	useEffect(() => {
+		orchestratorRef.current = orchestrator;
+	}, [orchestrator]);
 
 	useEffect(() => {
 		const node = rootRef.current;
@@ -100,81 +127,71 @@ export function HarnessCoverageDemo() {
 	useEffect(() => {
 		let cancelled = false;
 		let timeoutId = 0;
-
-		const wait = (ms: number) =>
-			new Promise<void>((resolve) => {
-				timeoutId = window.setTimeout(resolve, ms);
-			});
+		let current: Field = openFieldRef.current ?? "orchestrator";
+		let phase: "open" | "closed" = "open";
+		let remaining = OPEN_MS;
 
 		const isPaused = () => interactingRef.current || !inViewRef.current;
 
-		/** Counts down only while idle and on-screen; freezes otherwise. */
-		const waitWhileIdle = async (ms: number) => {
-			let remaining = ms;
-			while (!cancelled && remaining > 0) {
-				if (isPaused()) {
-					await wait(POLL_MS);
-					continue;
-				}
-				const slice = Math.min(POLL_MS, remaining);
-				await wait(slice);
-				remaining -= slice;
+		const openNext = (field: Field) => {
+			if (field === "worker") {
+				setWorker(nextSelectable(workerRef.current));
+			} else {
+				setOrchestrator(nextSelectable(orchestratorRef.current));
 			}
+			setOpenField(field);
+			current = field;
+			phase = "open";
+			remaining = OPEN_MS;
 		};
 
-		const waitUntilIdle = async () => {
-			while (!cancelled && isPaused()) {
-				await wait(POLL_MS);
+		const tick = () => {
+			if (cancelled) return;
+
+			if (isPaused()) {
+				timeoutId = window.setTimeout(tick, POLL_MS);
+				return;
 			}
-		};
 
-		void (async () => {
-			let current: Field = openFieldRef.current ?? "orchestrator";
-
-			while (!cancelled) {
-				// If the user left the menu closed, reopen the next field in the cycle.
+			// Resync if the user opened/closed a menu while we were paused.
+			if (phase === "open") {
 				if (openFieldRef.current === null) {
-					await waitUntilIdle();
-					if (cancelled) break;
-					current = otherField(current);
-					if (current === "worker") {
-						setWorker(nextSelectable(workerRef.current));
-					} else {
-						setOrchestrator(nextSelectable(orchestratorRef.current));
-					}
-					setOpenField(current);
-				} else {
+					openNext(otherField(current));
+					timeoutId = window.setTimeout(tick, POLL_MS);
+					return;
+				}
+				if (openFieldRef.current !== current) {
 					current = openFieldRef.current;
+					remaining = OPEN_MS;
+					timeoutId = window.setTimeout(tick, POLL_MS);
+					return;
 				}
-
-				await waitWhileIdle(OPEN_MS);
-				if (cancelled) break;
-
-				// User took over mid-open — resync and restart the open phase.
-				if (isPaused() || openFieldRef.current !== current) {
-					await waitUntilIdle();
-					continue;
-				}
-
-				setOpenField(null);
-
-				await waitWhileIdle(CLOSED_MS);
-				if (cancelled) break;
-
-				if (isPaused() || openFieldRef.current !== null) {
-					await waitUntilIdle();
-					continue;
-				}
-
-				current = otherField(current);
-				if (current === "worker") {
-					setWorker(nextSelectable(workerRef.current));
-				} else {
-					setOrchestrator(nextSelectable(orchestratorRef.current));
-				}
-				setOpenField(current);
+			} else if (openFieldRef.current !== null) {
+				current = openFieldRef.current;
+				phase = "open";
+				remaining = OPEN_MS;
+				timeoutId = window.setTimeout(tick, POLL_MS);
+				return;
 			}
-		})();
+
+			remaining -= POLL_MS;
+			if (remaining > 0) {
+				timeoutId = window.setTimeout(tick, POLL_MS);
+				return;
+			}
+
+			if (phase === "open") {
+				setOpenField(null);
+				phase = "closed";
+				remaining = CLOSED_MS;
+			} else {
+				openNext(otherField(current));
+			}
+
+			timeoutId = window.setTimeout(tick, POLL_MS);
+		};
+
+		timeoutId = window.setTimeout(tick, POLL_MS);
 
 		return () => {
 			cancelled = true;
@@ -303,7 +320,7 @@ export function HarnessCoverageDemo() {
 													: "hover:bg-[color-mix(in_oklab,var(--preview-foreground)_8%,transparent)]"
 											} ${disabled ? "opacity-45" : ""}`}
 										>
-											<img src={harness.icon} alt="" className="size-4 shrink-0" draggable="false" />
+											<HarnessIcon src={harness.icon} />
 											<span
 												className={`min-w-0 flex-1 truncate text-[12px] ${
 													disabled
@@ -389,7 +406,7 @@ function HarnessTrigger({
 			onClick={onClick}
 			className="inline-flex max-w-full min-w-0 items-center gap-1.5 rounded-2xl px-1 py-0.5 text-left text-[11px] text-[var(--preview-muted-foreground)] outline-none transition-colors hover:text-[var(--preview-foreground)] focus-visible:ring-2 focus-visible:ring-[var(--preview-ring)]"
 		>
-			<img src={harness.icon} alt="" className="size-4 shrink-0" draggable="false" />
+			<HarnessIcon src={harness.icon} />
 			<span className="min-w-0 truncate">{harness.label}</span>
 			<ChevronDown
 				className={`size-3 shrink-0 opacity-70 transition-transform duration-150 ${open ? "rotate-180" : ""}`}
