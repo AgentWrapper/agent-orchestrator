@@ -1,7 +1,19 @@
 // @vitest-environment node
-import { describe, it, expect } from "vitest";
-import { selectInstallers, feedFilename, buildYml } from "./feed.mjs";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createHash } from "node:crypto";
 
+vi.mock("./blockmap.mjs", () => ({
+	writeBlockmap: vi.fn(async (filePath) => {
+		writeFileSync(`${filePath}.blockmap`, "fake-blockmap");
+		return { sha512: "MOCKED_BLOCKMAP_SHA512", size: 999 };
+	}),
+}));
+
+import { selectInstallers, feedFilename, buildYml, hashFile, generateFeeds } from "./feed.mjs";
+import { writeBlockmap } from "./blockmap.mjs";
 const V = "0.10.4";
 const NAMES = [
 	"Agent.Orchestrator.Setup.0.10.4.exe", // win versioned
@@ -123,5 +135,78 @@ describe("buildYml", () => {
 		// must still have all existing fields
 		expect(yml).toContain("version: 0.10.4");
 		expect(yml).toContain("releaseDate:");
+	});
+});
+
+describe("hashFile", () => {
+	it("computes sha512 (base64) and byte size of a real file, matching node:crypto directly", () => {
+		const dir = mkdtempSync(join(tmpdir(), "feed-test-"));
+		const filePath = join(dir, "sample.zip");
+		const content = "fake zip contents for hashing";
+		writeFileSync(filePath, content);
+
+		const { sha512, size } = hashFile(filePath);
+
+		const want = createHash("sha512").update(Buffer.from(content)).digest("base64");
+		expect(sha512).toBe(want);
+		expect(size).toBe(Buffer.byteLength(content));
+
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	it("does not write any sidecar file, unlike writeBlockmap", () => {
+		const dir = mkdtempSync(join(tmpdir(), "feed-test-"));
+		const filePath = join(dir, "sample.zip");
+		writeFileSync(filePath, "content");
+
+		hashFile(filePath);
+
+		expect(existsSync(`${filePath}.blockmap`)).toBe(false);
+
+		rmSync(dir, { recursive: true, force: true });
+	});
+});
+
+// Regression coverage for #3034: mac zips must never produce a .blockmap
+// sidecar, since Squirrel.Mac's ShipIt `ditto` install step fails against
+// the AppleDouble-less format @electron-forge/maker-zip produces, and a
+// sidecar-driven differential update against it is the likely corruption
+// path. win/linux keep the existing blockmap sidecar behavior unchanged.
+describe("generateFeeds mac blockmap exclusion (#3034)", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it("does not call writeBlockmap or write a .blockmap sidecar for mac zips", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "feed-test-"));
+		const macZip = "Agent.Orchestrator-darwin-arm64-0.10.4.zip";
+		writeFileSync(join(dir, macZip), "fake mac zip");
+
+		await generateFeeds(dir, "0.10.4", "nightly", "2026-06-27T12:00:00.000Z");
+
+		expect(writeBlockmap).not.toHaveBeenCalled();
+		expect(existsSync(join(dir, `${macZip}.blockmap`))).toBe(false);
+
+		const yml = readFileSync(join(dir, "nightly-mac.yml"), "utf8");
+		expect(yml).not.toContain("blockMapSize");
+		expect(yml).toContain(`url: ${macZip}`);
+
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	it("still calls writeBlockmap for win and linux installers", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "feed-test-"));
+		const winExe = "Agent.Orchestrator.Setup.0.10.4.exe";
+		const linuxAppImage = "Agent.Orchestrator-0.10.4.AppImage";
+		writeFileSync(join(dir, winExe), "fake win installer");
+		writeFileSync(join(dir, linuxAppImage), "fake linux installer");
+
+		await generateFeeds(dir, "0.10.4", "nightly", "2026-06-27T12:00:00.000Z");
+
+		expect(writeBlockmap).toHaveBeenCalledTimes(2);
+		expect(writeBlockmap).toHaveBeenCalledWith(join(dir, winExe));
+		expect(writeBlockmap).toHaveBeenCalledWith(join(dir, linuxAppImage));
+
+		rmSync(dir, { recursive: true, force: true });
 	});
 });
