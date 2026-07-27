@@ -122,9 +122,16 @@ func parseClaude(source domain.UsageSourceContext, records []jsonlRecord, now ti
 				Confidence: domain.CostConfidenceNone,
 			},
 			TokenConfidence: domain.TokenConfidenceParsed,
-			SourceEventKey:  fmt.Sprintf("%d:claude:%s", source.Source.ID, keyID),
-			ParserVersion:   source.Source.ParserVersion,
-			CreatedAt:       now,
+			SourceEventKey: stableSourceEventKey(
+				"claude",
+				source.NativeRootID,
+				string(source.Source.Kind),
+				source.Source.NativeSessionID,
+				source.Source.SubagentID,
+				keyID,
+			),
+			ParserVersion: source.Source.ParserVersion,
+			CreatedAt:     now,
 		}
 		event.SourceUsageHash = usageHash(event)
 		result.Events = append(result.Events, event)
@@ -168,12 +175,12 @@ func parseCodex(source domain.UsageSourceContext, records []jsonlRecord, now tim
 				result.Cursor.CurrentModelID = firstNonEmpty(payload.Model, result.Cursor.CurrentModelID)
 			}
 		case "event_msg":
-			parseCodexEvent(source, record, envelope, now, result)
+			parseCodexEvent(source, envelope, now, result)
 		}
 	}
 }
 
-func parseCodexEvent(source domain.UsageSourceContext, record jsonlRecord, envelope codexEnvelope, now time.Time, result *parseResult) {
+func parseCodexEvent(source domain.UsageSourceContext, envelope codexEnvelope, now time.Time, result *parseResult) {
 	var payload struct {
 		Type string `json:"type"`
 		Info *struct {
@@ -234,12 +241,16 @@ func parseCodexEvent(source domain.UsageSourceContext, record jsonlRecord, envel
 			Confidence: domain.CostConfidenceNone,
 		},
 		TokenConfidence: domain.TokenConfidenceParsed,
-		SourceEventKey: fmt.Sprintf(
-			"%d:codex:%d:%d:%d",
-			source.Source.ID,
-			record.Offset,
-			total.InputTokens,
-			total.OutputTokens,
+		SourceEventKey: stableSourceEventKey(
+			"codex",
+			source.NativeRootID,
+			source.Source.NativeSessionID,
+			envelope.Timestamp,
+			strconv.FormatInt(total.InputTokens, 10),
+			strconv.FormatInt(total.CachedInputTokens, 10),
+			strconv.FormatInt(total.CacheWriteInputTokens, 10),
+			strconv.FormatInt(total.OutputTokens, 10),
+			strconv.FormatInt(total.ReasoningOutputTokens, 10),
 		),
 		ParserVersion: source.Source.ParserVersion,
 		CreatedAt:     now,
@@ -282,6 +293,15 @@ func usageHash(event domain.ModelUsageEvent) string {
 		event.Tokens.ReasoningTokens,
 	})
 	return fmt.Sprintf("sha256:%x", sha256.Sum256(data))
+}
+
+func stableSourceEventKey(prefix string, parts ...string) string {
+	hash := sha256.New()
+	for _, part := range parts {
+		_, _ = fmt.Fprintf(hash, "%d:", len(part))
+		_, _ = hash.Write([]byte(part))
+	}
+	return fmt.Sprintf("%s:sha256:%x", prefix, hash.Sum(nil))
 }
 
 func parseTimestamp(value string, fallback time.Time) time.Time {

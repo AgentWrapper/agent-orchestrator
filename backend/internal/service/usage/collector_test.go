@@ -135,6 +135,333 @@ func TestCollectorBackfillsOnlyNonTerminatedSupportedSessions(t *testing.T) {
 	}
 }
 
+func TestCollectorReconcilesCodexSourceCreatedAfterDaemonStart(t *testing.T) {
+	store := collectorTestStore(t)
+	session := collectorTestSession(t, store, domain.HarnessCodex, "native-late", false)
+	root := filepath.Join(t.TempDir(), "sessions")
+	collector := NewCollector(store, SourceRoots{CodexSessions: root}, nil)
+
+	if err := collector.BackfillActive(context.Background()); err != nil {
+		t.Fatalf("initial backfill: %v", err)
+	}
+	bindings, err := store.ListUsageBindingsForSession(context.Background(), session.ID)
+	if err != nil || len(bindings) != 1 || bindings[0].State != domain.UsageBindingDiscovering {
+		t.Fatalf("initial bindings=%+v err=%v", bindings, err)
+	}
+
+	path := filepath.Join(root, "2026", "07", "28", "rollout-native-late.jsonl")
+	writeUsageFixture(t, path, `{"type":"session_meta"}`+"\n")
+	if err := collector.ReconcileSources(context.Background(), 8); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	bindings, _ = store.ListUsageBindingsForSession(context.Background(), session.ID)
+	sources, err := store.ListUsageSourcesForBinding(context.Background(), bindings[0].ID)
+	if err != nil || len(sources) != 1 {
+		t.Fatalf("sources=%+v err=%v", sources, err)
+	}
+	resolvedPath, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bindings[0].State != domain.UsageBindingActive || sources[0].ArtifactPath != resolvedPath {
+		t.Fatalf("binding/source=%+v/%+v", bindings[0], sources[0])
+	}
+}
+
+func TestCollectorDiscoversFinalizingCodexSourceAndArchivedRelocation(t *testing.T) {
+	store := collectorTestStore(t)
+	session := collectorTestSessionWithActivity(t, store, domain.HarnessCodex, "native-exit", false, domain.ActivityExited)
+	sessionsRoot := filepath.Join(t.TempDir(), "sessions")
+	archiveRoot := filepath.Join(t.TempDir(), "archived_sessions")
+	collector := NewCollector(store, SourceRoots{CodexSessions: sessionsRoot, CodexArchived: archiveRoot}, nil)
+
+	if err := collector.BackfillActive(context.Background()); err != nil {
+		t.Fatalf("backfill finalizing: %v", err)
+	}
+	bindings, err := store.ListUsageBindingsForSession(context.Background(), session.ID)
+	if err != nil || len(bindings) != 1 || bindings[0].State != domain.UsageBindingFinalizing {
+		t.Fatalf("bindings=%+v err=%v", bindings, err)
+	}
+
+	activePath := filepath.Join(sessionsRoot, "2026", "07", "28", "rollout-native-exit.jsonl")
+	writeUsageFixture(t, activePath, `{"type":"session_meta"}`+"\n")
+	if err := collector.ReconcileSources(context.Background(), 8); err != nil {
+		t.Fatalf("discover active path: %v", err)
+	}
+	sources, err := store.ListUsageSourcesForBinding(context.Background(), bindings[0].ID)
+	if err != nil || len(sources) != 1 {
+		t.Fatalf("active sources=%+v err=%v", sources, err)
+	}
+
+	archivedPath := filepath.Join(archiveRoot, filepath.Base(activePath))
+	if err := os.MkdirAll(filepath.Dir(archivedPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(activePath, archivedPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := collector.ReconcileSources(context.Background(), 8); err != nil {
+		t.Fatalf("discover archived path: %v", err)
+	}
+	sources, err = store.ListUsageSourcesForBinding(context.Background(), bindings[0].ID)
+	if err != nil || len(sources) != 2 {
+		t.Fatalf("relocated sources=%+v err=%v", sources, err)
+	}
+	resolvedArchivedPath, err := filepath.EvalSymlinks(archivedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sources[0].State != domain.UsageSourceComplete || sources[1].ArtifactPath != resolvedArchivedPath ||
+		sources[1].ByteOffset != sources[0].ByteOffset {
+		t.Fatalf("relocated sources=%+v", sources)
+	}
+}
+
+func TestCollectorBackfillPreservesCompletedExitedBinding(t *testing.T) {
+	store := collectorTestStore(t)
+	session := collectorTestSessionWithActivity(t, store, domain.HarnessCodex, "native-complete", false, domain.ActivityExited)
+	root := filepath.Join(t.TempDir(), "sessions")
+	path := filepath.Join(root, "2026", "07", "28", "rollout-native-complete.jsonl")
+	writeUsageFixture(t, path, `{"type":"session_meta"}`+"\n")
+	now := time.Now().UTC()
+	binding, err := store.UpsertUsageBinding(context.Background(), domain.UsageBindingRecord{
+		SessionID:    session.ID,
+		Harness:      session.Harness,
+		NativeRootID: "native-complete",
+		State:        domain.UsageBindingComplete,
+		FirstSeenAt:  now,
+		LastSeenAt:   now,
+		UpdatedAt:    now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := SourceIdentity(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := store.InsertUsageSource(context.Background(), domain.UsageSourceRecord{
+		BindingID:     binding.ID,
+		Kind:          domain.UsageSourceCodexRollout,
+		ArtifactPath:  path,
+		FileIdentity:  identity,
+		ParserVersion: CodexRolloutParserVersion,
+		State:         domain.UsageSourceComplete,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	collector := NewCollector(store, SourceRoots{CodexSessions: root}, nil)
+	if err := collector.BackfillActive(context.Background()); err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+	gotBinding, _, err := store.GetUsageBinding(context.Background(), session.ID, session.Harness, "native-complete")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotSource, ok, err := store.GetUsageSourceForIngestion(context.Background(), source.ID)
+	if err != nil || !ok {
+		t.Fatalf("source ok=%v err=%v", ok, err)
+	}
+	if gotBinding.State != domain.UsageBindingComplete || gotSource.Source.State != domain.UsageSourceComplete {
+		t.Fatalf("backfill reopened completed usage: binding=%s source=%s", gotBinding.State, gotSource.Source.State)
+	}
+}
+
+func TestCollectorBackfillDiscoversClaudeSubagentSources(t *testing.T) {
+	store := collectorTestStore(t)
+	session := collectorTestSession(t, store, domain.HarnessClaudeCode, "claude-root", false)
+	root := filepath.Join(t.TempDir(), "projects")
+	mainPath := filepath.Join(root, "workspace", "claude-root.jsonl")
+	subagentPath := filepath.Join(root, "workspace", "claude-root", "subagents", "agent-sub-7.jsonl")
+	writeUsageFixture(t, mainPath, `{"type":"assistant"}`+"\n")
+	writeUsageFixture(t, subagentPath, `{"type":"assistant"}`+"\n")
+
+	collector := NewCollector(store, SourceRoots{ClaudeProjects: root}, nil)
+	if err := collector.BackfillActive(context.Background()); err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+	bindings, _ := store.ListUsageBindingsForSession(context.Background(), session.ID)
+	sources, err := store.ListUsageSourcesForBinding(context.Background(), bindings[0].ID)
+	if err != nil || len(sources) != 2 {
+		t.Fatalf("sources=%+v err=%v", sources, err)
+	}
+	if sources[0].Kind != domain.UsageSourceClaudeMain ||
+		sources[1].Kind != domain.UsageSourceClaudeSubagent ||
+		sources[1].SubagentID != "sub-7" {
+		t.Fatalf("sources=%+v", sources)
+	}
+}
+
+func TestCollectorDiscoveryLimitRotatesPendingBindings(t *testing.T) {
+	store := collectorTestStore(t)
+	first := collectorTestSession(t, store, domain.HarnessCodex, "native-first", false)
+	second := collectorTestSession(t, store, domain.HarnessCodex, "native-second", false)
+	root := filepath.Join(t.TempDir(), "sessions")
+	collector := NewCollector(store, SourceRoots{CodexSessions: root}, nil)
+	now := time.Unix(1700000000, 0).UTC()
+	collector.now = func() time.Time {
+		now = now.Add(time.Second)
+		return now
+	}
+	if err := collector.BackfillActive(context.Background()); err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+
+	secondPath := filepath.Join(root, "2026", "07", "28", "rollout-native-second.jsonl")
+	writeUsageFixture(t, secondPath, `{"type":"session_meta"}`+"\n")
+	if err := collector.ReconcileSources(context.Background(), 1); err != nil {
+		t.Fatalf("first reconcile: %v", err)
+	}
+	if err := collector.ReconcileSources(context.Background(), 1); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	firstBindings, _ := store.ListUsageBindingsForSession(context.Background(), first.ID)
+	secondBindings, _ := store.ListUsageBindingsForSession(context.Background(), second.ID)
+	firstSources, _ := store.ListUsageSourcesForBinding(context.Background(), firstBindings[0].ID)
+	secondSources, _ := store.ListUsageSourcesForBinding(context.Background(), secondBindings[0].ID)
+	if len(firstSources) != 0 || len(secondSources) != 1 {
+		t.Fatalf("first/second sources=%+v/%+v", firstSources, secondSources)
+	}
+}
+
+func TestCollectorResumeReactivatesOnlyLatestMainSource(t *testing.T) {
+	store := collectorTestStore(t)
+	session := collectorTestSession(t, store, domain.HarnessCodex, "native-resume", false)
+	now := time.Now().UTC()
+	binding, err := store.UpsertUsageBinding(context.Background(), domain.UsageBindingRecord{
+		SessionID:    session.ID,
+		Harness:      session.Harness,
+		NativeRootID: "native-resume",
+		State:        domain.UsageBindingComplete,
+		FirstSeenAt:  now,
+		LastSeenAt:   now,
+		UpdatedAt:    now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldSource, err := store.InsertUsageSource(context.Background(), domain.UsageSourceRecord{
+		BindingID:     binding.ID,
+		Kind:          domain.UsageSourceCodexRollout,
+		ArtifactPath:  "/tmp/usage-old.jsonl",
+		FileIdentity:  "old",
+		Generation:    0,
+		ParserVersion: CodexRolloutParserVersion,
+		State:         domain.UsageSourceComplete,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	latestSource, err := store.InsertUsageSource(context.Background(), domain.UsageSourceRecord{
+		BindingID:     binding.ID,
+		Kind:          domain.UsageSourceCodexRollout,
+		ArtifactPath:  "/tmp/usage-latest.jsonl",
+		FileIdentity:  "latest",
+		Generation:    1,
+		ParserVersion: CodexRolloutParserVersion,
+		State:         domain.UsageSourceComplete,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	collector := NewCollector(store, SourceRoots{}, nil)
+	if err := collector.RecordHook(context.Background(), session.ID, HookSignal{
+		Event:           "session-start",
+		NativeSessionID: "native-resume",
+	}); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	oldContext, _, _ := store.GetUsageSourceForIngestion(context.Background(), oldSource.ID)
+	latestContext, _, _ := store.GetUsageSourceForIngestion(context.Background(), latestSource.ID)
+	if oldContext.Source.State != domain.UsageSourceComplete || latestContext.Source.State != domain.UsageSourceActive {
+		t.Fatalf("old/latest states=%s/%s", oldContext.Source.State, latestContext.Source.State)
+	}
+}
+
+func TestCollectorResumeKeepsDiscoveringAfterOnlyArchivedRolloutMatches(t *testing.T) {
+	store := collectorTestStore(t)
+	session := collectorTestSession(t, store, domain.HarnessCodex, "native-resume-late", false)
+	sessionsRoot := filepath.Join(t.TempDir(), "sessions")
+	archiveRoot := filepath.Join(t.TempDir(), "archived_sessions")
+	archivedPath := filepath.Join(archiveRoot, "rollout-native-resume-late.jsonl")
+	content := `{"type":"session_meta"}` + "\n"
+	writeUsageFixture(t, archivedPath, content)
+	now := time.Now().UTC()
+	binding, err := store.UpsertUsageBinding(context.Background(), domain.UsageBindingRecord{
+		SessionID:    session.ID,
+		Harness:      session.Harness,
+		NativeRootID: "native-resume-late",
+		State:        domain.UsageBindingComplete,
+		FirstSeenAt:  now,
+		LastSeenAt:   now,
+		UpdatedAt:    now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := SourceIdentity(archivedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolvedArchivedPath, err := filepath.EvalSymlinks(archivedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archivedSource, err := store.InsertUsageSource(context.Background(), domain.UsageSourceRecord{
+		BindingID:     binding.ID,
+		Kind:          domain.UsageSourceCodexRollout,
+		ArtifactPath:  resolvedArchivedPath,
+		FileIdentity:  identity,
+		ParserVersion: CodexRolloutParserVersion,
+		State:         domain.UsageSourceComplete,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	collector := NewCollector(store, SourceRoots{CodexSessions: sessionsRoot, CodexArchived: archiveRoot}, nil)
+	if err := collector.RecordHook(context.Background(), session.ID, HookSignal{
+		Event:           "session-start",
+		NativeSessionID: "native-resume-late",
+	}); err != nil {
+		t.Fatalf("resume start: %v", err)
+	}
+	resumedBinding, _, err := store.GetUsageBinding(context.Background(), session.ID, session.Harness, "native-resume-late")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumedBinding.State != domain.UsageBindingActive ||
+		resumedBinding.LastErrorCode != domain.UsageErrorSourceDiscoveryPending {
+		t.Fatalf("resumed binding=%+v", resumedBinding)
+	}
+
+	activePath := filepath.Join(sessionsRoot, "2026", "07", "28", "rollout-native-resume-late.jsonl")
+	writeUsageFixture(t, activePath, content)
+	if err := collector.ReconcileSources(context.Background(), 8); err != nil {
+		t.Fatalf("reconcile active rollout: %v", err)
+	}
+	resumedBinding, _, _ = store.GetUsageBinding(context.Background(), session.ID, session.Harness, "native-resume-late")
+	sources, err := store.ListUsageSourcesForBinding(context.Background(), binding.ID)
+	if err != nil || len(sources) != 2 {
+		t.Fatalf("sources=%+v err=%v", sources, err)
+	}
+	oldContext, _, _ := store.GetUsageSourceForIngestion(context.Background(), archivedSource.ID)
+	if resumedBinding.LastErrorCode != "" || oldContext.Source.State != domain.UsageSourceComplete {
+		t.Fatalf("binding/old source=%+v/%+v", resumedBinding, oldContext.Source)
+	}
+}
+
 func collectorTestStore(t *testing.T) *sqlite.Store {
 	t.Helper()
 	store, err := sqlite.Open(t.TempDir())
@@ -153,13 +480,24 @@ func collectorTestStore(t *testing.T) *sqlite.Store {
 }
 
 func collectorTestSession(t *testing.T, store *sqlite.Store, harness domain.AgentHarness, nativeID string, terminated bool) domain.SessionRecord {
+	return collectorTestSessionWithActivity(t, store, harness, nativeID, terminated, domain.ActivityIdle)
+}
+
+func collectorTestSessionWithActivity(
+	t *testing.T,
+	store *sqlite.Store,
+	harness domain.AgentHarness,
+	nativeID string,
+	terminated bool,
+	activity domain.ActivityState,
+) domain.SessionRecord {
 	t.Helper()
 	now := time.Now().UTC()
 	session, err := store.CreateSession(context.Background(), domain.SessionRecord{
 		ProjectID:    "usage-test",
 		Kind:         domain.KindWorker,
 		Harness:      harness,
-		Activity:     domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
+		Activity:     domain.Activity{State: activity, LastActivityAt: now},
 		IsTerminated: terminated,
 		Metadata: domain.SessionMetadata{
 			AgentSessionID: nativeID,
@@ -171,4 +509,14 @@ func collectorTestSession(t *testing.T, store *sqlite.Store, harness domain.Agen
 		t.Fatal(err)
 	}
 	return session
+}
+
+func writeUsageFixture(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }

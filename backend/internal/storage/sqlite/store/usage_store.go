@@ -122,12 +122,12 @@ func (s *Store) ListObserverReadyUsageSources(ctx context.Context, now time.Time
 	return out, nil
 }
 
-// ListUnresolvedCodexUsageBindings returns pathless Codex bindings whose
-// rollout files still need discovery.
-func (s *Store) ListUnresolvedCodexUsageBindings(ctx context.Context, limit int64) ([]domain.UsageBindingRecord, error) {
-	rows, err := s.qr.ListUnresolvedCodexBindings(ctx, limit)
+// ListUsageDiscoveryBindings returns live-session bindings that may need a
+// main source, a relocated source, or newly-created subagent sources.
+func (s *Store) ListUsageDiscoveryBindings(ctx context.Context, limit int64) ([]domain.UsageBindingRecord, error) {
+	rows, err := s.qr.ListUsageDiscoveryBindings(ctx, limit)
 	if err != nil {
-		return nil, fmt.Errorf("list unresolved codex usage bindings: %w", err)
+		return nil, fmt.Errorf("list usage discovery bindings: %w", err)
 	}
 	out := make([]domain.UsageBindingRecord, 0, len(rows))
 	for _, row := range rows {

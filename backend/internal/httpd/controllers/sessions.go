@@ -925,7 +925,8 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if c.Usage != nil && (in.Usage != nil || in.Event == "session-end" || in.Event == "process-exited") {
+	if c.Usage != nil &&
+		(in.Usage != nil || in.Event == "session-start" || in.Event == "session-end" || in.Event == "process-exited") {
 		usageSignal := usagesvc.HookSignal{Event: in.Event, NativeSessionID: agentSessionID}
 		if in.Usage != nil {
 			usageSignal.Harness = in.Usage.Harness

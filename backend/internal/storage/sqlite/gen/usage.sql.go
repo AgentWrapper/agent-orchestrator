@@ -543,23 +543,15 @@ func (q *Queries) ListObserverReadyUsageSources(ctx context.Context, arg ListObs
 	return items, nil
 }
 
-const listUnresolvedCodexBindings = `-- name: ListUnresolvedCodexBindings :many
+const listUsageBindingsForSession = `-- name: ListUsageBindingsForSession :many
 SELECT id, session_id, harness, native_root_id, initial_model_id, source_cli_version, state, last_error_code, first_seen_at, last_seen_at, updated_at
 FROM usage_bindings
-WHERE harness = 'codex'
-  AND state IN ('discovering', 'active')
-  AND NOT EXISTS (
-      SELECT 1
-      FROM usage_sources
-      WHERE usage_sources.binding_id = usage_bindings.id
-        AND usage_sources.kind = 'codex_rollout'
-  )
+WHERE session_id = ?
 ORDER BY first_seen_at, id
-LIMIT ?
 `
 
-func (q *Queries) ListUnresolvedCodexBindings(ctx context.Context, limit int64) ([]UsageBinding, error) {
-	rows, err := q.db.QueryContext(ctx, listUnresolvedCodexBindings, limit)
+func (q *Queries) ListUsageBindingsForSession(ctx context.Context, sessionID domain.SessionID) ([]UsageBinding, error) {
+	rows, err := q.db.QueryContext(ctx, listUsageBindingsForSession, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -593,15 +585,39 @@ func (q *Queries) ListUnresolvedCodexBindings(ctx context.Context, limit int64) 
 	return items, nil
 }
 
-const listUsageBindingsForSession = `-- name: ListUsageBindingsForSession :many
-SELECT id, session_id, harness, native_root_id, initial_model_id, source_cli_version, state, last_error_code, first_seen_at, last_seen_at, updated_at
-FROM usage_bindings
-WHERE session_id = ?
-ORDER BY first_seen_at, id
+const listUsageDiscoveryBindings = `-- name: ListUsageDiscoveryBindings :many
+SELECT ub.id, ub.session_id, ub.harness, ub.native_root_id, ub.initial_model_id, ub.source_cli_version, ub.state, ub.last_error_code, ub.first_seen_at, ub.last_seen_at, ub.updated_at
+FROM usage_bindings ub
+JOIN sessions s ON s.id = ub.session_id
+WHERE s.is_terminated = 0
+  AND ub.harness IN ('claude-code', 'codex')
+  AND ub.state IN ('discovering', 'active', 'finalizing')
+  AND (
+      ub.harness = 'claude-code'
+      OR ub.state = 'discovering'
+      OR ub.state = 'finalizing'
+      OR ub.last_error_code = 'source_discovery_pending'
+      OR NOT EXISTS (
+          SELECT 1
+          FROM usage_sources us
+          WHERE us.binding_id = ub.id
+            AND us.kind = 'codex_rollout'
+      )
+      OR EXISTS (
+          SELECT 1
+          FROM usage_sources us
+          WHERE us.binding_id = ub.id
+            AND us.kind = 'codex_rollout'
+            AND us.state = 'error'
+            AND us.last_error_code IN ('artifact_missing', 'source_read_failed')
+      )
+  )
+ORDER BY ub.updated_at, ub.id
+LIMIT ?
 `
 
-func (q *Queries) ListUsageBindingsForSession(ctx context.Context, sessionID domain.SessionID) ([]UsageBinding, error) {
-	rows, err := q.db.QueryContext(ctx, listUsageBindingsForSession, sessionID)
+func (q *Queries) ListUsageDiscoveryBindings(ctx context.Context, limit int64) ([]UsageBinding, error) {
+	rows, err := q.db.QueryContext(ctx, listUsageDiscoveryBindings, limit)
 	if err != nil {
 		return nil, err
 	}

@@ -96,6 +96,107 @@ func TestParseCodexCounterResetNeverEmitsNegativeUsage(t *testing.T) {
 	}
 }
 
+func TestParserEventKeysSurvivePhysicalSourceReplacement(t *testing.T) {
+	now := time.Unix(1700000000, 0).UTC()
+	claudeRecord := jsonlRecord{
+		Offset: 120,
+		Data: []byte(
+			`{"type":"assistant","uuid":"native-message","message":{"id":"msg-1","model":"claude-x","stop_reason":"end_turn","usage":{"input_tokens":8,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":2}}}`,
+		),
+	}
+	firstClaude := usageSource(domain.UsageSourceClaudeMain)
+	firstClaude.NativeRootID = "claude-root"
+	firstClaude.Source.NativeSessionID = "claude-root"
+	secondClaude := firstClaude
+	secondClaude.Source.ID = 99
+
+	firstClaudeResult := parseRecords(firstClaude, []jsonlRecord{claudeRecord}, 400, now)
+	secondClaudeResult := parseRecords(secondClaude, []jsonlRecord{claudeRecord}, 400, now)
+	if len(firstClaudeResult.Events) != 1 || len(secondClaudeResult.Events) != 1 ||
+		firstClaudeResult.Events[0].SourceEventKey != secondClaudeResult.Events[0].SourceEventKey {
+		t.Fatalf("claude keys=%+v/%+v", firstClaudeResult.Events, secondClaudeResult.Events)
+	}
+
+	codexRecords := []jsonlRecord{
+		{Offset: 0, Data: []byte(`{"type":"turn_context","payload":{"model":"gpt-5.6"}}`)},
+		{Offset: 100, Data: codexTokenLine("2026-07-28T10:00:00Z", 100, 60, 0, 20, 5)},
+	}
+	firstCodex := usageSource(domain.UsageSourceCodexRollout)
+	firstCodex.NativeRootID = "codex-root"
+	firstCodex.Source.NativeSessionID = "codex-root"
+	secondCodex := firstCodex
+	secondCodex.Source.ID = 100
+	firstCodexResult := parseRecords(firstCodex, codexRecords, 300, now)
+	secondCodexResult := parseRecords(secondCodex, codexRecords, 300, now)
+	if len(firstCodexResult.Events) != 1 || len(secondCodexResult.Events) != 1 ||
+		firstCodexResult.Events[0].SourceEventKey != secondCodexResult.Events[0].SourceEventKey {
+		t.Fatalf("codex keys=%+v/%+v", firstCodexResult.Events, secondCodexResult.Events)
+	}
+}
+
+func TestParserEventKeysSeparateSubagentsAndCounterResetEpochs(t *testing.T) {
+	now := time.Unix(1700000000, 0).UTC()
+	record := jsonlRecord{
+		Offset: 20,
+		Data: []byte(
+			`{"type":"assistant","uuid":"native-message","message":{"id":"msg-1","model":"claude-x","stop_reason":"end_turn","usage":{"input_tokens":8,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":2}}}`,
+		),
+	}
+	firstSubagent := usageSource(domain.UsageSourceClaudeSubagent)
+	firstSubagent.NativeRootID = "claude-root"
+	firstSubagent.Source.NativeSessionID = "claude-root"
+	firstSubagent.Source.SubagentID = "sub-1"
+	secondSubagent := firstSubagent
+	secondSubagent.Source.ID = 9
+	secondSubagent.Source.SubagentID = "sub-2"
+	firstResult := parseRecords(firstSubagent, []jsonlRecord{record}, 300, now)
+	secondResult := parseRecords(secondSubagent, []jsonlRecord{record}, 300, now)
+	if firstResult.Events[0].SourceEventKey == secondResult.Events[0].SourceEventKey {
+		t.Fatalf("distinct subagents shared key %q", firstResult.Events[0].SourceEventKey)
+	}
+
+	codex := usageSource(domain.UsageSourceCodexRollout)
+	codex.NativeRootID = "codex-root"
+	firstEpoch := parseRecords(codex, []jsonlRecord{
+		{Data: []byte(`{"type":"turn_context","payload":{"model":"gpt-5.6"}}`)},
+		{Data: codexTokenLine("2026-07-28T10:00:00Z", 10, 5, 0, 2, 1)},
+	}, 200, now)
+	secondEpoch := parseRecords(codex, []jsonlRecord{
+		{Data: []byte(`{"type":"turn_context","payload":{"model":"gpt-5.6"}}`)},
+		{Data: codexTokenLine("2026-07-28T11:00:00Z", 10, 5, 0, 2, 1)},
+	}, 200, now)
+	if firstEpoch.Events[0].SourceEventKey == secondEpoch.Events[0].SourceEventKey {
+		t.Fatalf("distinct Codex epochs shared key %q", firstEpoch.Events[0].SourceEventKey)
+	}
+}
+
+func TestParsersTrackProviderModelChanges(t *testing.T) {
+	now := time.Unix(1700000000, 0).UTC()
+	claude := usageSource(domain.UsageSourceClaudeMain)
+	claudeResult := parseRecords(claude, []jsonlRecord{
+		{Data: []byte(`{"type":"assistant","uuid":"one","message":{"id":"msg-1","model":"claude-a","stop_reason":"end_turn","usage":{"input_tokens":8,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":2}}}`)},
+		{Data: []byte(`{"type":"assistant","uuid":"two","message":{"id":"msg-2","model":"claude-b","stop_reason":"end_turn","usage":{"input_tokens":9,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":3}}}`)},
+	}, 500, now)
+	if len(claudeResult.Events) != 2 ||
+		claudeResult.Events[0].ModelID != "claude-a" ||
+		claudeResult.Events[1].ModelID != "claude-b" {
+		t.Fatalf("claude events=%+v", claudeResult.Events)
+	}
+
+	codex := usageSource(domain.UsageSourceCodexRollout)
+	codexResult := parseRecords(codex, []jsonlRecord{
+		{Data: []byte(`{"type":"turn_context","payload":{"model":"gpt-a"}}`)},
+		{Data: codexTokenLine("2026-07-28T10:00:00Z", 10, 5, 0, 2, 1)},
+		{Data: []byte(`{"type":"turn_context","payload":{"model":"gpt-b"}}`)},
+		{Data: codexTokenLine("2026-07-28T10:01:00Z", 20, 10, 0, 4, 2)},
+	}, 500, now)
+	if len(codexResult.Events) != 2 ||
+		codexResult.Events[0].ModelID != "gpt-a" ||
+		codexResult.Events[1].ModelID != "gpt-b" {
+		t.Fatalf("codex events=%+v", codexResult.Events)
+	}
+}
+
 func TestReadJSONLChunkRetainsPartialTailAndSkipsOversizedRecord(t *testing.T) {
 	path := t.TempDir() + "/rollout.jsonl"
 	if err := osWrite(path, `{"a":1}`+"\n"+`{"b":`); err != nil {
