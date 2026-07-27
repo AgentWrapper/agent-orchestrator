@@ -85,29 +85,33 @@
 	   ═══════════════════════════════════════════════════════════════ */
 
 	--font-family-base:
-		-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Fira Sans", "Helvetica Neue",
-		sans-serif;
+		"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Fira Sans",
+		"Helvetica Neue", sans-serif;
 	--font-family-mono:
-		"JetBrainsMono Nerd Font Mono", "JetBrainsMono Nerd Font", "FiraCode Nerd Font Mono", "FiraCode Nerd Font",
-		"MesloLGS NF", "CaskaydiaCove Nerd Font Mono", "CaskaydiaCove Nerd Font", "Hack Nerd Font Mono", "Hack Nerd Font",
-		"Symbols Nerd Font Mono", "Symbols Nerd Font", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+		"JetBrains Mono", "JetBrainsMono Nerd Font Mono", "JetBrainsMono Nerd Font", "FiraCode Nerd Font Mono",
+		"FiraCode Nerd Font", "MesloLGS NF", "CaskaydiaCove Nerd Font Mono", "CaskaydiaCove Nerd Font", "Hack Nerd Font Mono",
+		"Hack Nerd Font", "Symbols Nerd Font Mono", "Symbols Nerd Font", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
 		"Liberation Mono", "Courier New", monospace;
 
-	/* Scale — dense UI chrome uses half-steps between base sizes */
-	--font-size-2xs: 10.5px; /* uppercase meta, board footers */
-	--font-size-xs: 10px; /* micro labels, tight pills */
-	--font-size-caption: 11px; /* badges, kanban labels */
-	--font-size-sm-md: 11.5px; /* inspector tabs, status pills */
-	--font-size-sm: 12px; /* secondary chrome / Tailwind text-xs */
-	--font-size-md-sm: 12.5px; /* kv rows, PR summaries */
-	--font-size-base: 13px; /* dense controls (board buttons) */
-	--font-size-brand: 16px; /* titlebar / board project name */
+	/* Scale - consolidated IDE-grade ramp (VS Code density: 13px chrome, 14px body). */
+	--font-size-micro: 10px; /* badges, micro labels, tight pills */
+	--font-size-caption: 11px; /* meta, kanban labels, status pills */
+	--font-size-xs: 12px; /* secondary chrome, kv rows / Tailwind text-xs */
+	--font-size-sm: 13px; /* base UI chrome, dense controls */
 	--font-size-md: 14px; /* body / Tailwind text-sm */
-	--font-size-subtitle: 15px; /* dialog titles, stat values */
-	--font-size-heading-sm: 17px; /* empty-state headings */
-	--font-size-heading: 21px; /* dashboard subhead */
-	--font-size-heading-lg: 22px; /* preview mock headings */
+	--font-size-lg: 15px; /* dialog titles, stat values, titlebar */
+	--font-size-heading: 17px; /* section / empty-state headings */
+	--font-size-title: 20px; /* dashboard subhead, page titles */
 
+	/* Backward-compatible aliases for existing component classes. */
+	--font-size-2xs: var(--font-size-caption);
+	--font-size-sm-md: var(--font-size-caption);
+	--font-size-md-sm: var(--font-size-xs);
+	--font-size-base: var(--font-size-sm);
+	--font-size-brand: var(--font-size-lg);
+	--font-size-subtitle: var(--font-size-lg);
+	--font-size-heading-sm: var(--font-size-heading);
+	--font-size-heading-lg: var(--font-size-title);
 	--font-weight-medium: 500;
 	--font-weight-semibold: 600;
 
@@ -287,7 +291,7 @@
 	--size-command-pad-x: 20px;
 	--size-command-item-inset: 8px;
 	--size-command-item-pad-l: 14px;
-	--font-size-command-input: 16px;
+	--font-size-command-input: var(--font-size-lg);
 	--leading-command-item: 22px;
 	--size-branch-chip: 13rem;
 	--size-inspector-min: 280px;
@@ -333,7 +337,7 @@
 	--color-text-settings-row: rgb(236 236 236);
 	--color-border-settings: var(--color-border-welcome-panel);
 	--color-border-settings-menu: rgb(66 66 66 / 0.78);
-	--font-size-settings-title: 28px;
+	--font-size-settings-title: var(--font-size-title);
 	--tracking-settings-title: -0.015em;
 	--tracking-settings-section: 0.06em;
 	--tracking-settings-mono: 0.08em;

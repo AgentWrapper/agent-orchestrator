@@ -1,0 +1,8 @@
+The fonts in this directory are redistributed under the SIL Open Font License 1.1:
+
+- Inter (inter-latin-*.woff2) — https://rsms.me/inter/ — Copyright (c) 2016-2020 The Inter Project Authors.
+- JetBrains Mono (jetbrains-mono-latin-*.woff2) — https://www.jetbrains.com/lp/mono/ — Copyright 2020 The JetBrains Mono Project Authors.
+
+Files are the latin-subset woff2 builds published by the Fontsource project
+(https://fontsource.org), which repackages the upstream OFL releases unmodified
+per weight. Full OFL text: https://openfontlicense.org
