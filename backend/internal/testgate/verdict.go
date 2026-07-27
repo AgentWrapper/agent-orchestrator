@@ -10,6 +10,7 @@ import (
 )
 
 const verdictPrefix = "AO_VERDICT "
+const eventPrefix = "AO_EVT "
 
 // Classification describes the outcome of a runtime verification run.
 type Classification string
@@ -118,6 +119,15 @@ type TestRun struct {
 	Artifacts      []string       `json:"artifacts,omitempty"`
 	PodHandleID    string         `json:"podHandleId,omitempty"`
 	CreatedAt      time.Time      `json:"createdAt,omitempty"`
+}
+
+// RunEvent is one structured event emitted by a runtime-verification runner.
+type RunEvent struct {
+	Seq       int64  `json:"seq"`
+	Type      string `json:"type"`
+	Message   string `json:"message,omitempty"`
+	Test      string `json:"test,omitempty"`
+	FindingID string `json:"findingId,omitempty"`
 }
 
 type verdictPayload struct {
@@ -256,18 +266,73 @@ func ParseRunResultLine(line string) (RunResult, bool, error) {
 	return RunResult{Run: run, Evidence: payload.Evidence}, true, nil
 }
 
+// ParseRunEventLine extracts one structured AO_EVT payload from runner output.
+func ParseRunEventLine(line string) (RunEvent, bool, error) {
+	idx := strings.Index(line, eventPrefix)
+	if idx < 0 {
+		return RunEvent{}, false, nil
+	}
+	raw := strings.TrimSpace(line[idx+len(eventPrefix):])
+	if raw == "" {
+		return RunEvent{}, true, fmt.Errorf("testgate: empty AO_EVT payload")
+	}
+	var event RunEvent
+	if err := json.Unmarshal([]byte(raw), &event); err != nil {
+		return RunEvent{}, true, fmt.Errorf("testgate: decode AO_EVT: %w", err)
+	}
+	if event.Seq <= 0 {
+		return RunEvent{}, true, fmt.Errorf("testgate: AO_EVT seq must be positive")
+	}
+	if strings.TrimSpace(event.Type) == "" {
+		return RunEvent{}, true, fmt.Errorf("testgate: AO_EVT type is required")
+	}
+	return event, true, nil
+}
+
 // ParseRunResultOutput extracts the last AO_VERDICT payload from command output.
 func ParseRunResultOutput(output string) (RunResult, bool, error) {
 	var last string
+	var events []RunEvent
+	var eventErr error
 	for _, line := range strings.Split(output, "\n") {
+		if event, ok, err := ParseRunEventLine(line); err != nil {
+			eventErr = err
+		} else if ok {
+			events = append(events, event)
+		}
 		if strings.Contains(line, verdictPrefix) {
 			last = line
 		}
 	}
 	if last == "" {
+		if eventErr != nil {
+			return RunResult{}, true, eventErr
+		}
 		return RunResult{}, false, nil
 	}
-	return ParseRunResultLine(last)
+	result, ok, err := ParseRunResultLine(last)
+	if err != nil || !ok {
+		return result, ok, err
+	}
+	result.Events = events
+	if eventErr != nil && result.Run.Classification == ClassificationPassed {
+		return RunResult{}, true, eventErr
+	}
+	if gapErr := validateRunEventSequence(events); gapErr != nil && result.Run.Classification == ClassificationPassed {
+		return RunResult{}, true, gapErr
+	}
+	return result, true, nil
+}
+
+func validateRunEventSequence(events []RunEvent) error {
+	var want int64 = 1
+	for _, event := range events {
+		if event.Seq != want {
+			return fmt.Errorf("testgate: AO_EVT sequence gap: got %d, want %d", event.Seq, want)
+		}
+		want++
+	}
+	return nil
 }
 
 // Valid reports whether the classification is one AO accepts.

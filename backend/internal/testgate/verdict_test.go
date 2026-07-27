@@ -58,6 +58,60 @@ func TestParseRunResultOutputUsesFinalVerdictAndEvidence(t *testing.T) {
 	}
 }
 
+func TestParseRunEventLineAcceptsStructuredAOEvent(t *testing.T) {
+	got, ok, err := ParseRunEventLine(`AO_EVT {"seq":1,"type":"test","message":"pytest started","test":"api smoke"}`)
+	if err != nil {
+		t.Fatalf("ParseRunEventLine err = %v", err)
+	}
+	if !ok {
+		t.Fatal("ParseRunEventLine ok = false, want true")
+	}
+	if got.Seq != 1 || got.Type != "test" || got.Message != "pytest started" || got.Test != "api smoke" {
+		t.Fatalf("event = %+v", got)
+	}
+}
+
+func TestParseRunEventLineRejectsMalformedEvent(t *testing.T) {
+	_, ok, err := ParseRunEventLine(`AO_EVT {"seq":0,"type":"test"}`)
+	if err == nil {
+		t.Fatal("ParseRunEventLine err = nil, want invalid seq")
+	}
+	if !ok {
+		t.Fatal("ParseRunEventLine ok = false, want true for malformed event payload")
+	}
+}
+
+func TestParseRunResultOutputRejectsGreenVerdictWhenEventStreamHasGap(t *testing.T) {
+	_, ok, err := ParseRunResultOutput(strings.Join([]string{
+		`AO_EVT {"seq":1,"type":"start","message":"boot"}`,
+		`AO_EVT {"seq":3,"type":"test","message":"smoke passed"}`,
+		`AO_VERDICT {"classification":"passed","summary":"green but incomplete stream"}`,
+	}, "\n"))
+	if err == nil {
+		t.Fatal("ParseRunResultOutput err = nil, want event sequence gap")
+	}
+	if !ok {
+		t.Fatal("ParseRunResultOutput ok = false, want true for verdict with malformed event stream")
+	}
+}
+
+func TestParseRunResultOutputKeepsNeutralVerdictWhenEventStreamHasGap(t *testing.T) {
+	got, ok, err := ParseRunResultOutput(strings.Join([]string{
+		`AO_EVT {"seq":1,"type":"start","message":"boot"}`,
+		`AO_EVT {"seq":3,"type":"infra","message":"lost logs"}`,
+		`AO_VERDICT {"classification":"infra","summary":"runner lost event output"}`,
+	}, "\n"))
+	if err != nil {
+		t.Fatalf("ParseRunResultOutput err = %v", err)
+	}
+	if !ok {
+		t.Fatal("ParseRunResultOutput ok = false, want true")
+	}
+	if got.Run.Classification != ClassificationInfra {
+		t.Fatalf("classification = %q, want %q", got.Run.Classification, ClassificationInfra)
+	}
+}
+
 func TestParseRunResultOutputRejectsInvalidEvidenceOutcome(t *testing.T) {
 	_, ok, err := ParseRunResultOutput(`AO_VERDICT {"classification":"passed","evidence":[{"findingId":"finding-1","outcome":"bogus"}]}`)
 	if err == nil {

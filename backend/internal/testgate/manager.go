@@ -40,6 +40,7 @@ type RunRequest struct {
 type RunResult struct {
 	Run      TestRun
 	Evidence []TestEvidence
+	Events   []RunEvent
 }
 
 // ManagerDeps configures a Manager.
