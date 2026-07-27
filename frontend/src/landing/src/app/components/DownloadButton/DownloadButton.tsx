@@ -1,6 +1,6 @@
 "use client";
 
-import { COMPANY } from "@superset/shared/constants";
+import Link from "next/link";
 import { track } from "@/lib/analytics";
 import { isMacPlatform, Platform, usePlatform } from "../../hooks/useOS";
 
@@ -8,8 +8,6 @@ interface DownloadButtonProps {
   size?: "sm" | "md";
   className?: string;
 }
-
-const RELEASES_URL = `${COMPANY.GITHUB_URL}/releases/latest`;
 
 type DownloadPlatform = "apple" | "windows" | "linux";
 
@@ -94,15 +92,14 @@ export function DownloadButton({
 
   const buttonClasses = `bg-foreground text-background ${sizeClasses} rounded-2xl tracking-[-0.5px] font-semibold hover:opacity-90 transition-opacity flex items-center gap-2 whitespace-nowrap shrink-0 ${className}`;
 
-  const openLatestRelease = () => {
-    track("download_clicked");
-    window.open(RELEASES_URL, "_blank", "noopener,noreferrer");
-  };
-
   return (
-    <button type="button" className={buttonClasses} onClick={openLatestRelease}>
+    <Link
+      href="/download"
+      className={buttonClasses}
+      onClick={() => track("download_clicked")}
+    >
       <PlatformIcon platform={downloadPlatform} />
       {label}
-    </button>
+    </Link>
   );
 }

@@ -1,4 +1,4 @@
-import { COMPANY } from "@superset/shared/constants";
+import { COMPANY } from "@ao/shared/constants";
 import { GeistSans } from "geist/font/sans";
 import type { Metadata } from "next";
 import { IBM_Plex_Mono } from "next/font/google";

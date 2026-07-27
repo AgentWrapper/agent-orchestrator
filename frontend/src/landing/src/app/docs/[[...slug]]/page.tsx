@@ -41,25 +41,44 @@ export default async function DocsPage({ params }: { params: Promise<{ slug?: st
   const toc = extractToc(doc.content);
 
   return (
-    <div className="mx-auto flex max-w-7xl gap-8 px-6">
-      {/* Left sidebar */}
-      <aside className="scrollbar-hide sticky top-14 hidden h-[calc(100vh-3.5rem)] w-56 shrink-0 overflow-y-auto border-r border-border py-8 pr-2 lg:block">
-        <DocsSidebar nav={nav} />
-      </aside>
+    <main className="min-h-screen bg-background">
+      <header>
+        <div className="mx-auto max-w-7xl px-6 xl:pl-[18rem] 2xl:pl-[19rem]">
+          <div className="max-w-3xl pt-16 pb-10 md:pt-20 md:pb-12">
+            <p className="text-sm text-muted-foreground">Documentation</p>
+            <h1 className="mt-4 text-balance text-3xl font-medium tracking-[-0.5px] text-foreground md:text-4xl">
+              {doc.title}
+            </h1>
+            {doc.description ? (
+              <p className="mt-3 max-w-2xl text-pretty text-muted-foreground">{doc.description}</p>
+            ) : (
+              <p className="mt-3 max-w-2xl text-pretty text-muted-foreground">
+                Product docs for running, extending, and operating Agent Orchestrator.
+              </p>
+            )}
+          </div>
+        </div>
+      </header>
 
-      {/* Content */}
-      <article className="prose prose-invert min-w-0 max-w-none flex-1 pt-8 pb-16 prose-headings:font-medium prose-headings:tracking-[-0.5px] prose-h1:mt-0 prose-h1:text-3xl prose-h1:mb-2 prose-h2:mt-10 prose-h2:text-xl prose-h2:border-b prose-h2:border-border prose-h2:pb-2 prose-h3:mt-6 prose-h3:text-lg prose-p:text-muted-foreground prose-p:leading-relaxed prose-li:text-muted-foreground prose-strong:text-foreground prose-a:text-foreground prose-a:underline prose-a:underline-offset-4 hover:prose-a:text-muted-foreground prose-code:text-foreground prose-code:before:content-none prose-code:after:content-none prose-pre:border prose-pre:border-border prose-hr:border-border">
-        <h1 className="!mt-0">{doc.title}</h1>
-        {doc.description && <p className="!mt-0 text-lg text-muted-foreground">{doc.description}</p>}
-        <MDXRemote
-          source={doc.content}
-          components={docsMdxComponents}
-          options={{ mdxOptions: { remarkPlugins: [remarkGfm] } }}
-        />
-      </article>
+      <div className="mx-auto max-w-7xl px-6 pb-16 xl:pl-[18rem] 2xl:pl-[19rem]">
+        <aside className="hidden xl:block">
+          <div className="scrollbar-hide fixed top-20 bottom-6 w-56 overflow-y-auto pr-6 left-[max(1rem,calc((100vw-80rem)/2+1.125rem))]">
+            <DocsSidebar nav={nav} />
+          </div>
+        </aside>
 
-      {/* Right TOC — scroll-spy highlights the current section */}
-      <DocsToc toc={toc} />
-    </div>
+        <div className="flex gap-10">
+          <article className="prose prose-invert min-w-0 max-w-3xl flex-1 pt-10 pb-4 text-foreground prose-headings:text-balance prose-headings:font-medium prose-headings:tracking-[-0.5px] prose-headings:text-foreground prose-h1:mt-0 prose-h1:text-3xl prose-h1:mb-2 prose-h2:mt-10 prose-h2:text-2xl prose-h2:pb-0 prose-h3:mt-7 prose-h3:text-xl prose-p:text-pretty prose-p:text-muted-foreground prose-p:leading-relaxed prose-li:text-muted-foreground prose-ul:text-muted-foreground prose-ol:text-muted-foreground prose-blockquote:text-muted-foreground prose-strong:text-foreground prose-a:text-foreground prose-a:decoration-border prose-a:underline prose-a:underline-offset-4 hover:prose-a:text-foreground prose-code:text-foreground prose-code:before:content-none prose-code:after:content-none prose-pre:border prose-pre:border-border prose-pre:bg-muted/35 prose-hr:my-8 prose-hr:border-border prose-th:text-foreground prose-td:text-muted-foreground">
+            <MDXRemote
+              source={doc.content}
+              components={docsMdxComponents}
+              options={{ mdxOptions: { remarkPlugins: [remarkGfm] } }}
+            />
+          </article>
+
+          <DocsToc toc={toc} />
+        </div>
+      </div>
+    </main>
   );
 }

@@ -149,8 +149,8 @@ export function ShellTopbar() {
 				) : isSessionRoute ? (
 					<div className="flex min-w-0 items-center gap-3">
 						{session?.branch ? (
-							<div className="inline-flex min-w-0 items-center gap-1.5 font-mono text-sm leading-none text-foreground">
-								<GitBranch className="size-icon-md shrink-0" aria-hidden="true" />
+							<div className="inline-flex min-w-0 items-center gap-1 font-mono text-2xs leading-none text-passive">
+								<GitBranch className="size-icon-2xs shrink-0" aria-hidden="true" />
 								<span className="truncate">{session.branch}</span>
 							</div>
 						) : null}
