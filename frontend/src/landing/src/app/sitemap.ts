@@ -1,15 +1,16 @@
-import { COMPANY } from "@superset/shared/constants";
+import { COMPANY } from "@ao/shared/constants";
 import type { MetadataRoute } from "next";
 import { getBlogPosts } from "@/lib/blog";
 import { getChangelogEntries } from "@/lib/changelog";
 import { getComparisonPages } from "@/lib/compare";
+import { getAllDocSlugs } from "@/lib/docs";
 import { getAllLegalSlugs, getLegalPage } from "@/lib/legal";
 import { themeListings } from "@/lib/marketplace";
 import { getAllPeople } from "@/lib/people";
 
 export const dynamic = "force-static";
 
-export default function sitemap(): MetadataRoute.Sitemap {
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 	const baseUrl = COMPANY.MARKETING_URL;
 
 	const staticPages: MetadataRoute.Sitemap = [
@@ -113,7 +114,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
 		priority: 0.8,
 	}));
 
-	const changelogEntries = getChangelogEntries();
+	const changelogEntries = await getChangelogEntries();
 	const changelogPages: MetadataRoute.Sitemap = changelogEntries.map(
 		(entry) => ({
 			url: `${baseUrl}/changelog/${entry.slug}`,
@@ -157,8 +158,16 @@ export default function sitemap(): MetadataRoute.Sitemap {
 		priority: 0.6,
 	}));
 
+	const docsPages: MetadataRoute.Sitemap = getAllDocSlugs().map((slug) => ({
+		url: `${baseUrl}/docs${slug.length ? `/${slug.join("/")}` : ""}`,
+		lastModified: new Date(),
+		changeFrequency: "weekly" as const,
+		priority: 0.7,
+	}));
+
 	return [
 		...staticPages,
+		...docsPages,
 		...blogPages,
 		...changelogPages,
 		...teamPages,

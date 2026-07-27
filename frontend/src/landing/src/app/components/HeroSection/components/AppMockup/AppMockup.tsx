@@ -123,12 +123,12 @@ const columns = [
 				tone: "default",
 			},
 			{
-				title: "Replace leftover Superset app chrome in preview",
-				branch: "ao/dev/agent-orchestrator-14/root",
+				title: "Polish the landing preview app chrome",
+				branch: "landing/preview-chrome",
 				agent: previewAgents.codex.agent,
 				icon: previewAgents.codex.icon,
-				activity: "Idle",
-				activityState: "passed",
+				activity: "Running tests",
+				activityState: "running",
 				pr: "PR #319",
 				checks: "unit tests queued",
 				files: "5 files",
@@ -721,6 +721,10 @@ function useFloatingWindow(
 	outerRef: React.RefObject<HTMLElement | null>,
 ) {
 	const stateRef = useRef<WindowState | null>(null);
+	// The geometry the user asked for, kept unclamped by container size. Narrow
+	// containers squash the rendered state into the corner; replaying from this
+	// instead lets a return to a wide viewport restore the original placement.
+	const desiredStateRef = useRef<WindowState | null>(null);
 	const containerSizeRef = useRef({ width: 0, height: 0 });
 	const interactionRef = useRef<{
 		type: "drag" | "resize";
@@ -747,15 +751,16 @@ function useFloatingWindow(
 		if (!parent) return;
 		const rect = parent.getBoundingClientRect();
 		containerSizeRef.current = { width: rect.width, height: rect.height };
-		if (stateRef.current) {
-			stateRef.current = clampWindowState(
-				stateRef.current,
-				rect.width,
-				rect.height,
-			);
-		} else {
-			stateRef.current = createInitialWindowState(rect.width, rect.height);
-		}
+		// Until the user drags or resizes, the window is laid out by the container,
+		// so re-derive it on every container change instead of clamping the last
+		// render. Clamping alone pins x/y to the margin at narrow widths and never
+		// recovers the centered position when the container grows back.
+		stateRef.current = clampWindowState(
+			desiredStateRef.current ??
+				createInitialWindowState(rect.width, rect.height),
+			rect.width,
+			rect.height,
+		);
 		applyState();
 	}, [applyState, outerRef]);
 
@@ -836,6 +841,7 @@ function useFloatingWindow(
 			}
 
 			next = clampWindowState(next, containerWidth, containerHeight);
+			desiredStateRef.current = next;
 			stateRef.current = next;
 			applyState();
 		};

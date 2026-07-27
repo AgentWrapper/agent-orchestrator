@@ -1,4 +1,4 @@
-import { createFileRoute, Outlet, useMatchRoute, useNavigate, useParams } from "@tanstack/react-router";
+import { createFileRoute, Outlet, useMatchRoute, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 import { CommandPalette } from "../components/CommandPalette";
@@ -125,6 +125,11 @@ function ShellLayout() {
 	const [isSidebarPeekOpen, setIsSidebarPeekOpen] = useState(false);
 	const sidebarPeekCloseTimerRef = useRef<number | undefined>(undefined);
 	const routeParams = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
+	const routeSearch = useSearch({ strict: false }) as { tabOwner?: string };
+	const tabOwnerSession = routeSearch.tabOwner
+		? workspaces.flatMap((workspace) => workspace.sessions).find((session) => session.id === routeSearch.tabOwner)
+		: undefined;
+	const tabOwnerSessionId = tabOwnerSession?.id;
 	// Project in scope for a new-session shortcut: the route's project, or the
 	// workspace owning the open session (so the shortcut works from a worker's
 	// detail view, where the URL carries only a sessionId).
@@ -473,7 +478,10 @@ function ShellLayout() {
 		if (handledShellNonceRef.current === newShellTerminalNonce) return;
 		handledShellNonceRef.current = newShellTerminalNonce;
 		openShellTerminal.mutate(
-			{ projectId: scopedProjectId, sessionId: routeParams.sessionId },
+			{
+				projectId: tabOwnerSession?.workspaceId ?? scopedProjectId,
+				sessionId: tabOwnerSessionId ?? routeParams.sessionId,
+			},
 			{
 				onSuccess: (shell) => {
 					setActiveShellTerminal(shell.handleId);
@@ -488,6 +496,8 @@ function ShellLayout() {
 		openShellTerminal,
 		scopedProjectId,
 		routeParams.sessionId,
+		tabOwnerSession?.workspaceId,
+		tabOwnerSessionId,
 		navigate,
 		setActiveShellTerminal,
 	]);

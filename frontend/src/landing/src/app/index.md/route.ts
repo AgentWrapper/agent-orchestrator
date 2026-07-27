@@ -1,4 +1,4 @@
-import { COMPANY } from "@superset/shared/constants";
+import { COMPANY } from "@ao/shared/constants";
 import { FAQ_ITEMS } from "@/app/components/FAQSection/constants";
 import {
   buildDeveloperResourcesSection,
