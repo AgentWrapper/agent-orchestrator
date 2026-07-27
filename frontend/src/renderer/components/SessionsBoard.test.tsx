@@ -184,7 +184,7 @@ describe("SessionsBoard", () => {
 		expect(within(idleCard).getByText("brand-font-pipeline")).toHaveClass("font-semibold", "line-clamp-2");
 	});
 
-	it("keeps refining statuses but drops the pill where it echoes the lane", () => {
+	it("omits the status pill on cards since the column names the stage", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
 				{
@@ -239,12 +239,11 @@ describe("SessionsBoard", () => {
 		const noSignalCard = screen.getByText("no-signal-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
 		const draftCard = screen.getByText("draft-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
 
-		// Idle echoes its Idle lane, so its pill is dropped. No signal and Draft PR
-		// refine their mixed columns, so they keep the pill (with their own tone) so
-		// the user can tell why the task needs attention.
+		// The column header names the stage, so no card repeats a status pill —
+		// idle, no signal and draft alike carry no status word.
 		expect(within(idleCard).queryByText("Idle")).toBeNull();
-		expect(within(noSignalCard).getByText("No signal").closest("span")).toHaveClass("text-status-unknown");
-		expect(within(draftCard).getByText("Draft PR").closest("span")).toHaveClass("text-status-in-review");
+		expect(within(noSignalCard).queryByText("No signal")).toBeNull();
+		expect(within(draftCard).queryByText("Draft PR")).toBeNull();
 	});
 
 	it("shows the diff totals from the SCM PR summary (production shape, no changedFiles)", () => {
@@ -318,7 +317,7 @@ describe("SessionsBoard", () => {
 		expect(within(card).getByText("−47")).toBeInTheDocument();
 	});
 
-	it("places an exited live session in Needs you with an Exited badge", () => {
+	it("places an exited live session in Needs you", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
 				workspaceWithSessions([
@@ -345,7 +344,7 @@ describe("SessionsBoard", () => {
 		const needsYouColumn = screen.getByText("Needs you").closest("section") as HTMLElement;
 		expect(needsYouColumn.firstElementChild).toHaveClass("py-2");
 		expect(within(needsYouColumn).getByText("agent-exited-task")).toBeInTheDocument();
-		expect(within(needsYouColumn).getByText("Exited").closest("span")).toHaveClass("text-status-exited");
+		expect(within(needsYouColumn).queryByText("Exited")).toBeNull();
 	});
 
 	it("renders an idle-first work lane with a separate lower working section", () => {

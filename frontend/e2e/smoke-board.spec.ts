@@ -26,7 +26,7 @@ test("renderer: card moves columns when its status changes @T0 @BRD", async ({ p
 
 	await expect(page.locator(columnCard("action", "mover"))).toBeVisible();
 	await expect(page.locator(columnCard("working", "mover"))).toHaveCount(0);
-	await expect(page.locator(columnCard("action", "mover"))).toContainText("Input needed");
+	await expect(page.locator(columnCard("action", "mover"))).toContainText("Wandering worker");
 });
 
 // #2483 BRD-006.
