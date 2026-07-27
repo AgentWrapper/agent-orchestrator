@@ -622,6 +622,34 @@ func TestDestroyReapsDiscoveredPaneSessions(t *testing.T) {
 	}
 }
 
+func TestDestroyWithProofReturnsZeroRunningDescendants(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{[]byte("4242\n"), nil}
+	var reaped []int
+	r.proveSessions = func(_ context.Context, panePIDs []int, _ time.Duration) ([]int, int, error) {
+		reaped = append([]int(nil), panePIDs...)
+		return []int{4243, 4244}, 0, nil
+	}
+
+	proof, err := r.DestroyWithProof(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
+	if err != nil {
+		t.Fatalf("DestroyWithProof: %v", err)
+	}
+	if got, want := reaped, []int{4242}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("reaped pane sessions = %#v, want %#v", got, want)
+	}
+	if proof.ProcessID != "4242" ||
+		!reflect.DeepEqual(proof.DescendantIDs, []string{"4243", "4244"}) ||
+		proof.DescendantsRunning != 0 {
+		t.Fatalf("proof = %#v, want process 4242 and zero running descendants", proof)
+	}
+	if len(fr.calls) != 2 ||
+		fr.calls[0].args[0] != "list-panes" ||
+		fr.calls[1].args[0] != "kill-session" {
+		t.Fatalf("tmux calls = %#v, want list-panes before kill-session", fr.calls)
+	}
+}
+
 // -- IsAlive tests --
 
 func TestIsAliveReturnsTrueOnExitZero(t *testing.T) {

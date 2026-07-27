@@ -53,18 +53,20 @@ type Options struct {
 // Runtime runs agent sessions inside tmux sessions, driving them via the tmux
 // CLI. It implements ports.Runtime.
 type Runtime struct {
-	binary       string
-	shell        string
-	timeout      time.Duration
-	chunkSize    int
-	enterDelay   time.Duration
-	reapGrace    time.Duration
-	runner       runner
-	reapSessions func(ctx context.Context, pids []int, grace time.Duration)
+	binary        string
+	shell         string
+	timeout       time.Duration
+	chunkSize     int
+	enterDelay    time.Duration
+	reapGrace     time.Duration
+	runner        runner
+	reapSessions  func(ctx context.Context, pids []int, grace time.Duration)
+	proveSessions func(ctx context.Context, panePIDs []int, grace time.Duration) ([]int, int, error)
 }
 
 var _ ports.Runtime = (*Runtime)(nil)
 var _ ports.Attacher = (*Runtime)(nil)
+var _ ports.RuntimeStopProver = (*Runtime)(nil)
 
 type runner interface {
 	Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error)
@@ -171,14 +173,15 @@ func New(opts Options) *Runtime {
 		reapGrace = defaultReapGrace
 	}
 	return &Runtime{
-		binary:       binary,
-		shell:        shellPath,
-		timeout:      timeout,
-		chunkSize:    chunkSize,
-		enterDelay:   enterDelay,
-		reapGrace:    reapGrace,
-		runner:       execRunner{},
-		reapSessions: killSessionsByPID,
+		binary:        binary,
+		shell:         shellPath,
+		timeout:       timeout,
+		chunkSize:     chunkSize,
+		enterDelay:    enterDelay,
+		reapGrace:     reapGrace,
+		runner:        execRunner{},
+		reapSessions:  killSessionsByPID,
+		proveSessions: reapAndProveSessions,
 	}
 }
 
@@ -346,6 +349,193 @@ func (r *Runtime) paneSessionIDs(ctx context.Context, id string) []int {
 		}
 		ids = append(ids, pid)
 	}
+	return ids
+}
+
+// DestroyWithProof destroys an AO-owned tmux session and proves that no
+// process remains in the pane's native process session. Candidate runs require
+// this stronger boundary; ordinary AO sessions continue to use Destroy.
+func (r *Runtime) DestroyWithProof(ctx context.Context, handle ports.RuntimeHandle) (ports.RuntimeStopProof, error) {
+	id, err := handleID(handle)
+	if err != nil {
+		return ports.RuntimeStopProof{}, err
+	}
+	panePIDs, err := r.candidatePaneSessionIDs(ctx, id)
+	if err != nil {
+		return ports.RuntimeStopProof{}, err
+	}
+	if len(panePIDs) != 1 {
+		return ports.RuntimeStopProof{}, fmt.Errorf(
+			"tmux runtime: candidate session %s has %d panes; exactly one is required for a singular process proof",
+			id,
+			len(panePIDs),
+		)
+	}
+
+	out, destroyErr := r.run(ctx, killSessionArgs(id)...)
+	descendantPIDs, running, reapErr := r.proveSessions(ctx, panePIDs, r.reapGrace)
+	if destroyErr != nil {
+		var exitErr *exec.ExitError
+		if !errors.As(destroyErr, &exitErr) || !killSessionMissingOutput(string(out)) {
+			return ports.RuntimeStopProof{}, fmt.Errorf("tmux runtime: destroy session %s: %w", id, destroyErr)
+		}
+	}
+	if reapErr != nil {
+		return ports.RuntimeStopProof{}, fmt.Errorf("tmux runtime: prove descendants stopped for %s: %w", id, reapErr)
+	}
+	if running != 0 {
+		return ports.RuntimeStopProof{}, fmt.Errorf(
+			"tmux runtime: prove descendants stopped for %s: %d processes remain",
+			id,
+			running,
+		)
+	}
+	descendantIDs := make([]string, len(descendantPIDs))
+	for i, pid := range descendantPIDs {
+		descendantIDs[i] = strconv.Itoa(pid)
+	}
+	return ports.RuntimeStopProof{
+		ProcessID:          strconv.Itoa(panePIDs[0]),
+		DescendantIDs:      descendantIDs,
+		DescendantsRunning: running,
+	}, nil
+}
+
+func (r *Runtime) candidatePaneSessionIDs(ctx context.Context, id string) ([]int, error) {
+	out, err := r.run(ctx, listPanePIDsArgs(id)...)
+	if err != nil {
+		return nil, fmt.Errorf("tmux runtime: list panes for %s: %w", id, err)
+	}
+	var ids []int
+	seen := make(map[int]struct{})
+	for _, line := range strings.Split(string(out), "\n") {
+		value := strings.TrimSpace(line)
+		if value == "" {
+			continue
+		}
+		pid, convErr := strconv.Atoi(value)
+		if convErr != nil || pid <= 1 {
+			return nil, fmt.Errorf("tmux runtime: invalid pane pid %q for %s", value, id)
+		}
+		if _, ok := seen[pid]; ok {
+			return nil, fmt.Errorf("tmux runtime: duplicate pane pid %d for %s", pid, id)
+		}
+		seen[pid] = struct{}{}
+		ids = append(ids, pid)
+	}
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("tmux runtime: no pane pid for %s", id)
+	}
+	return ids, nil
+}
+
+// reapAndProveSessions terminates any process left in the tmux pane sessions
+// after kill-session and returns every descendant observed plus the final
+// survivor count. pgrep/pkill failures are evidence failures, not proof of
+// absence.
+func reapAndProveSessions(ctx context.Context, panePIDs []int, grace time.Duration) ([]int, int, error) {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), grace+5*time.Second)
+	defer cancel()
+
+	observed := make(map[int]struct{})
+	survivors, err := sessionProcesses(cleanupCtx, panePIDs)
+	if err != nil {
+		return nil, 0, err
+	}
+	recordDescendants(observed, survivors, panePIDs)
+	if len(survivors) > 0 {
+		if err := signalSessionsStrict(cleanupCtx, panePIDs, "-TERM"); err != nil {
+			return sortedProcessIDs(observed), len(survivors), err
+		}
+	}
+
+	deadline := time.NewTimer(grace)
+	defer deadline.Stop()
+	deadlineC := deadline.C
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for len(survivors) > 0 {
+		select {
+		case <-cleanupCtx.Done():
+			return sortedProcessIDs(observed), len(survivors), cleanupCtx.Err()
+		case <-deadlineC:
+			if err := signalSessionsStrict(cleanupCtx, panePIDs, "-KILL"); err != nil {
+				return sortedProcessIDs(observed), len(survivors), err
+			}
+			// Give SIGKILL delivery a bounded settling interval rather than
+			// treating an immediate pgrep race as a surviving descendant.
+			deadlineC = nil
+		case <-ticker.C:
+			survivors, err = sessionProcesses(cleanupCtx, panePIDs)
+			if err != nil {
+				return sortedProcessIDs(observed), 0, err
+			}
+			recordDescendants(observed, survivors, panePIDs)
+		}
+	}
+	return sortedProcessIDs(observed), 0, nil
+}
+
+func sessionProcesses(ctx context.Context, panePIDs []int) ([]int, error) {
+	seen := make(map[int]struct{})
+	for _, panePID := range panePIDs {
+		cmd := exec.CommandContext(ctx, "pgrep", "-s", strconv.Itoa(panePID))
+		out, err := cmd.Output()
+		if err != nil {
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+				continue
+			}
+			return nil, fmt.Errorf("pgrep session %d: %w", panePID, err)
+		}
+		for _, line := range strings.Split(string(out), "\n") {
+			value := strings.TrimSpace(line)
+			if value == "" {
+				continue
+			}
+			pid, convErr := strconv.Atoi(value)
+			if convErr != nil || pid <= 1 {
+				return nil, fmt.Errorf("pgrep session %d returned invalid pid %q", panePID, value)
+			}
+			seen[pid] = struct{}{}
+		}
+	}
+	return sortedProcessIDs(seen), nil
+}
+
+func signalSessionsStrict(ctx context.Context, panePIDs []int, signal string) error {
+	for _, panePID := range panePIDs {
+		err := exec.CommandContext(ctx, "pkill", signal, "-s", strconv.Itoa(panePID)).Run()
+		if err == nil {
+			continue
+		}
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			continue
+		}
+		return fmt.Errorf("pkill %s session %d: %w", signal, panePID, err)
+	}
+	return nil
+}
+
+func recordDescendants(observed map[int]struct{}, processes, panePIDs []int) {
+	roots := make(map[int]struct{}, len(panePIDs))
+	for _, pid := range panePIDs {
+		roots[pid] = struct{}{}
+	}
+	for _, pid := range processes {
+		if _, isRoot := roots[pid]; !isRoot {
+			observed[pid] = struct{}{}
+		}
+	}
+}
+
+func sortedProcessIDs(processes map[int]struct{}) []int {
+	ids := make([]int, 0, len(processes))
+	for pid := range processes {
+		ids = append(ids, pid)
+	}
+	sort.Ints(ids)
 	return ids
 }
 
