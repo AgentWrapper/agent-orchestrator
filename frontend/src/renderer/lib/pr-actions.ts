@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, apiErrorMessage } from "./api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
-import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
+import { sessionScmSummaryQueryKey, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 
 /**
  * True when this PR's pipeline is genuinely ready to merge — mirrors
@@ -38,10 +38,17 @@ export function mergeDisabledReason(pr: SessionPRSummary): string {
 	}
 }
 
+/**
+ * Input to a merge mutation: the PR plus the session it belongs to, so
+ * onSuccess can invalidate that session's cached PR summary directly instead
+ * of leaving a stale board until the next SCM poll (#3064 review).
+ */
+export type MergePRInput = { pr: SessionPRSummary; sessionId: string };
+
 export function useMergePR() {
 	const queryClient = useQueryClient();
 	return useMutation({
-		mutationFn: async (pr: SessionPRSummary) => {
+		mutationFn: async ({ pr }: MergePRInput) => {
 			const { error, response } = await apiClient.POST("/api/v1/prs/{id}/merge", {
 				params: { path: { id: String(pr.number) }, query: { repo: pr.repo } },
 			});
@@ -49,8 +56,9 @@ export function useMergePR() {
 				throw new Error(apiErrorMessage(error, `Failed to merge PR (${response?.status ?? "unknown"})`));
 			}
 		},
-		onSuccess: () => {
+		onSuccess: (_data, { sessionId }) => {
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			void queryClient.invalidateQueries({ queryKey: sessionScmSummaryQueryKey(sessionId) });
 		},
 	});
 }

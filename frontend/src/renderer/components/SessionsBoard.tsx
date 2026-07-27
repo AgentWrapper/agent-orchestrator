@@ -871,10 +871,10 @@ function SessionCard({
 				{prSummaries.length > 0 && (
 					<div className="flex flex-col gap-1 font-mono text-2xs text-passive">
 						{groupPRsByLifecycle(prSummaries).map((group) => (
-							<BoardPRGroup group={group} key={group.status.label} linksInteractive={interactive} />
-						))}
-					</div>
-				)}
+							<BoardPRGroup group={group} key={group.status.label} linksInteractive={interactive} sessionId={session.id} />
+							))}
+							</div>
+						)}
 				{issueId && (
 					<span
 						className="inline-flex max-w-branch-chip items-center self-start truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent"
@@ -907,11 +907,11 @@ function ArchiveSessionItem({
 	const issueId = canonicalTrackerIssueId(session.issueId);
 	const prSummaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
 	const branch = session.branch || "";
-	const prMetadata =
+	const prMetadata = 
 		prSummaries.length > 0 ? (
 			<div className="flex flex-col gap-1">
 				{groupPRsByLifecycle(prSummaries).map((group) => (
-					<BoardPRGroup group={group} key={group.status.label} linksInteractive={false} />
+					<BoardPRGroup group={group} key={group.status.label} linksInteractive={false} sessionId={session.id} />
 				))}
 			</div>
 		) : (
@@ -1079,7 +1079,15 @@ function ArchiveLayoutButton({
 type BoardPRLifecycleStatus = { label: "closed" | "open" | "draft" | "merged"; className: string };
 type BoardPRGroup = { status: BoardPRLifecycleStatus; prs: SessionPRSummary[] };
 
-function BoardPRGroup({ group, linksInteractive = true }: { group: BoardPRGroup; linksInteractive?: boolean }) {
+function BoardPRGroup({
+	group,
+	linksInteractive = true,
+	sessionId,
+}: {
+	group: BoardPRGroup;
+	linksInteractive?: boolean;
+	sessionId: string;
+}) {
 	const mergePR = useMergePR();
 	const showMergeActions = linksInteractive && group.status.label === "open";
 
@@ -1100,12 +1108,12 @@ function BoardPRGroup({ group, linksInteractive = true }: { group: BoardPRGroup;
 							target="_blank"
 						>
 							#{pr.number}
-						</a>
-					) : (
-						<span>#{pr.number}</span>
-					)}
+							</a>
+							) : (
+							<span>#{pr.number}</span>
+							)}
 					{index < group.prs.length - 1 ? "," : null}
-					{showMergeActions ? <MergePRButton mutation={mergePR} pr={pr} /> : null}
+					{showMergeActions ? <MergePRButton mutation={mergePR} pr={pr} sessionId={sessionId} /> : null}
 				</span>
 			))}
 			<span className={cn("font-medium", group.status.className)}>{group.status.label}</span>
@@ -1118,9 +1126,17 @@ function BoardPRGroup({ group, linksInteractive = true }: { group: BoardPRGroup;
 	);
 }
 
-function MergePRButton({ mutation, pr }: { mutation: ReturnType<typeof useMergePR>; pr: SessionPRSummary }) {
+function MergePRButton({
+	mutation,
+	pr,
+	sessionId,
+}: {
+	mutation: ReturnType<typeof useMergePR>;
+	pr: SessionPRSummary;
+	sessionId: string;
+}) {
 	const eligible = isPRMergeable(pr);
-	const isThisPending = mutation.isPending && mutation.variables?.number === pr.number;
+	const isThisPending = mutation.isPending && mutation.variables?.pr.number === pr.number;
 	return (
 		<Tooltip>
 			<TooltipTrigger asChild>
@@ -1130,7 +1146,7 @@ function MergePRButton({ mutation, pr }: { mutation: ReturnType<typeof useMergeP
 					disabled={!eligible || mutation.isPending}
 					onClick={(event) => {
 						event.stopPropagation();
-						mutation.mutate(pr);
+						mutation.mutate({ pr, sessionId });
 					}}
 					type="button"
 				>

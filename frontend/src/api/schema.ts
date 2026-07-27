@@ -2591,7 +2591,10 @@ export interface operations {
     };
     mergePR: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Owner/name of the PR's repo, disambiguating cross-repo number collisions. */
+                repo?: string;
+            };
             header?: never;
             path: {
                 /** @description PR number. */
