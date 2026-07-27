@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -223,6 +224,22 @@ func (l *fakeLifecycle) ApplySCMObservation(_ context.Context, _ domain.SessionI
 	}
 	l.observed = append(l.observed, obs)
 	return nil
+}
+
+type fakeCandidateRunObserver struct {
+	sessionIDs   []domain.SessionID
+	observations []ports.SCMObservation
+	err          error
+}
+
+func (o *fakeCandidateRunObserver) RecordPullRequest(
+	_ context.Context,
+	sessionID domain.SessionID,
+	obs ports.SCMObservation,
+) error {
+	o.sessionIDs = append(o.sessionIDs, sessionID)
+	o.observations = append(o.observations, obs)
+	return o.err
 }
 
 func newTestObserver(store *fakeStore, provider *fakeProvider, lc Lifecycle, now time.Time) *Observer {
@@ -1303,6 +1320,75 @@ func TestPoll_LifecycleFailureHoldsBackHashesForDurableRetry(t *testing.T) {
 	}
 	if last.CIHash != ciSemanticHash(changed.CI) {
 		t.Fatalf("CI hash not acknowledged after lifecycle success: got %q want %q", last.CIHash, ciSemanticHash(changed.CI))
+	}
+}
+
+func TestPoll_CandidateRunRejectsOffTargetPRBeforeLifecycleAcknowledgement(t *testing.T) {
+	store := testStoreWithSession()
+	local := knownPR(1)
+	local.MetadataHash = "old-metadata"
+	local.CIHash = "old-ci"
+	store.prs["p-1"] = []domain.PullRequest{local}
+	changed := testObs(1)
+	changed.PR.Title = "changed title"
+	provider := &fakeProvider{
+		repoGuards:   map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo2"}},
+		checkGuards:  map[string]ports.SCMGuardResult{commitKey(testRepo, "sha1"): {ETag: "ci2"}},
+		observations: map[string]ports.SCMObservation{prKey(testRepo, 1): changed},
+	}
+	lc := &fakeLifecycle{}
+	candidate := &fakeCandidateRunObserver{err: errors.New("prepared target rejected")}
+	obs := New(provider, store, lc, Config{
+		Clock:        func() time.Time { return time.Unix(500, 0).UTC() },
+		Tick:         time.Hour,
+		Logger:       quietSlog(),
+		CacheMax:     128,
+		CandidateRun: candidate,
+	})
+	obs.Cache.RepoPRListETag[prKey(testRepo, 0)] = "repo1"
+	obs.Cache.CommitChecksETag[commitKey(testRepo, "sha1")] = "ci1"
+
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(candidate.sessionIDs, []domain.SessionID{"p-1"}) {
+		t.Fatalf("candidate observations used sessions %#v, want p-1", candidate.sessionIDs)
+	}
+	if len(lc.observed) != 0 {
+		t.Fatalf("lifecycle received %d observations after candidate rejection, want zero", len(lc.observed))
+	}
+	if len(store.writes) != 1 ||
+		store.writes[0].pr.MetadataHash != local.MetadataHash ||
+		store.writes[0].pr.CIHash != local.CIHash {
+		t.Fatalf("candidate rejection must retain pending hashes, writes=%#v", store.writes)
+	}
+	if got := obs.Cache.RepoPRListETag[prKey(testRepo, 0)]; got != "repo1" {
+		t.Fatalf("repo ETag advanced after candidate rejection: got %q want repo1", got)
+	}
+	if got := obs.Cache.CommitChecksETag[commitKey(testRepo, "sha1")]; got != "ci1" {
+		t.Fatalf("commit ETag advanced after candidate rejection: got %q want ci1", got)
+	}
+
+	candidate.err = nil
+	store.prs["p-1"] = []domain.PullRequest{store.writes[0].pr}
+	restarted := New(provider, store, lc, Config{
+		Clock:        func() time.Time { return time.Unix(501, 0).UTC() },
+		Tick:         time.Hour,
+		Logger:       quietSlog(),
+		CacheMax:     128,
+		CandidateRun: candidate,
+	})
+	if err := restarted.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(candidate.observations) != 2 {
+		t.Fatalf("candidate observation retries = %d, want 2", len(candidate.observations))
+	}
+	if len(lc.observed) != 1 {
+		t.Fatalf("lifecycle observations after candidate acceptance = %d, want 1", len(lc.observed))
+	}
+	if len(store.writes) != 3 {
+		t.Fatalf("candidate retry should write pending facts then acknowledge hashes, got writes=%d", len(store.writes))
 	}
 }
 

@@ -25,6 +25,13 @@ const (
 type AgentConfig struct {
 	// Model overrides the agent's default model (e.g. claude-opus-4-5).
 	Model string `json:"model,omitempty"`
+	// Effort pins the agent's native reasoning-effort setting for one resolved
+	// launch. It is runtime-only: candidate bindings, not project/API config,
+	// are authoritative for this value.
+	Effort string `json:"-"`
+	// Sandbox pins the agent's native filesystem/process sandbox mode for one
+	// resolved launch. It is runtime-only for the same reason as Effort.
+	Sandbox string `json:"-"`
 	// Permissions sets the agent's starting permission mode. Empty is treated
 	// like the adapter's default mode.
 	Permissions PermissionMode `json:"permissions,omitempty"`

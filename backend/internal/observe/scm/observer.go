@@ -71,6 +71,10 @@ type Lifecycle interface {
 	ApplySCMObservation(ctx context.Context, sessionID domain.SessionID, obs ports.SCMObservation) error
 }
 
+type candidateRunObserver interface {
+	RecordPullRequest(ctx context.Context, sessionID domain.SessionID, obs ports.SCMObservation) error
+}
+
 type credentialChecker interface {
 	SCMCredentialsAvailable(ctx context.Context) (bool, error)
 }
@@ -87,6 +91,10 @@ type Config struct {
 	Logger *slog.Logger
 	// CacheMax bounds each in-memory ETag/review cache. Zero uses DefaultCacheMax.
 	CacheMax int
+	// CandidateRun is the optional AO-owned observer boundary. It receives a
+	// target-bound PR observation after persistence and before lifecycle
+	// acknowledgement; rejection retains the pending semantic hashes for retry.
+	CandidateRun candidateRunObserver
 }
 
 // ObserverCache stores provider ETags and review polling timestamps in memory.
@@ -140,6 +148,9 @@ type Observer struct {
 	store Store
 	// lifecycle is notified after successful persistence of meaningful changes.
 	lifecycle Lifecycle
+	// candidateRun validates candidate PR target binding before lifecycle state
+	// can advance.
+	candidateRun candidateRunObserver
 	// tick is the active PR/CI polling cadence.
 	tick time.Duration
 	// reviewInterval is the minimum duration between review-thread fetches per PR.
@@ -159,7 +170,7 @@ type Observer struct {
 // New constructs an Observer with default cadence/cache settings for zero
 // values in cfg.
 func New(provider Provider, store Store, lifecycle Lifecycle, cfg Config) *Observer {
-	o := &Observer{provider: provider, store: store, lifecycle: lifecycle, tick: cfg.Tick, reviewInterval: cfg.ReviewInterval, clock: cfg.Clock, logger: cfg.Logger, Cache: newCache(cfg.CacheMax)}
+	o := &Observer{provider: provider, store: store, lifecycle: lifecycle, candidateRun: cfg.CandidateRun, tick: cfg.Tick, reviewInterval: cfg.ReviewInterval, clock: cfg.Clock, logger: cfg.Logger, Cache: newCache(cfg.CacheMax)}
 	if o.tick <= 0 {
 		o.tick = DefaultTickInterval
 	}
@@ -373,7 +384,8 @@ func (o *Observer) Poll(ctx context.Context) error {
 		// changed hashes at their local values until lifecycle succeeds; if the
 		// daemon restarts after a lifecycle failure, the stale hashes force the
 		// same observation to be fetched and delivered again.
-		if o.lifecycle != nil {
+		needsAcknowledgement := o.candidateRun != nil || o.lifecycle != nil
+		if needsAcknowledgement {
 			pendingOpts := opts
 			if prepared.Changed.Metadata {
 				pendingOpts.preserveLocalMetadataHash = true
@@ -391,14 +403,23 @@ func (o *Observer) Poll(ctx context.Context) error {
 			markRepoRefreshFailed(subj.repo)
 			continue
 		}
+		if o.candidateRun != nil {
+			if err := o.candidateRun.RecordPullRequest(ctx, subj.session.ID, prepared); err != nil {
+				o.logger.Error("scm observer: candidate run PR observation failed", "session", subj.session.ID, "pr", firstNonEmpty(prepared.PR.URL, prepared.PR.HTMLURL, local.URL), "err", err)
+				markRepoRefreshFailed(subj.repo)
+				continue
+			}
+		}
 		if o.lifecycle != nil {
 			if err := o.lifecycle.ApplySCMObservation(ctx, subj.session.ID, prepared); err != nil {
 				o.logger.Error("scm observer: lifecycle notification failed", "session", subj.session.ID, "pr", firstNonEmpty(prepared.PR.URL, prepared.PR.HTMLURL, local.URL), "err", err)
 				markRepoRefreshFailed(subj.repo)
 				continue
 			}
+		}
+		if needsAcknowledgement {
 			if err := o.store.WriteSCMObservation(ctx, finalPR, finalChecks, nil, nil, nil, ports.ReviewWritePreserve); err != nil {
-				o.logger.Error("scm observer: DB lifecycle acknowledgement failed", "session", subj.session.ID, "pr", finalPR.URL, "err", err)
+				o.logger.Error("scm observer: DB observation acknowledgement failed", "session", subj.session.ID, "pr", finalPR.URL, "err", err)
 				markRepoRefreshFailed(subj.repo)
 				continue
 			}

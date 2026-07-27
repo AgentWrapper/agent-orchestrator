@@ -10,7 +10,7 @@ import (
 func TestLoadDefaults(t *testing.T) {
 	// Clear every recognised var so we observe pure defaults regardless of the
 	// surrounding environment.
-	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR", "AO_AGENT", "AO_ALLOWED_ORIGINS", "AO_TELEMETRY_EVENTS", "AO_TELEMETRY_METRICS", "AO_TELEMETRY_REMOTE", "AO_TELEMETRY_POSTHOG_KEY", "AO_TELEMETRY_POSTHOG_HOST"} {
+	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR", "AO_AGENT", "AO_CANDIDATE_RUN_CONFIG", "AO_ALLOWED_ORIGINS", "AO_TELEMETRY_EVENTS", "AO_TELEMETRY_METRICS", "AO_TELEMETRY_REMOTE", "AO_TELEMETRY_POSTHOG_KEY", "AO_TELEMETRY_POSTHOG_HOST"} {
 		t.Setenv(k, "")
 	}
 
@@ -118,6 +118,22 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if cfg.Telemetry.Remote != TelemetryRemotePostHog || cfg.Telemetry.PostHogKey != "phc_test" || cfg.Telemetry.PostHogHost != "https://eu.i.posthog.com" {
 		t.Fatalf("Telemetry remote = %+v", cfg.Telemetry)
+	}
+}
+
+func TestLoadCandidateRunConfigRequiresAbsolutePath(t *testing.T) {
+	t.Setenv("AO_CANDIDATE_RUN_CONFIG", "/private/tmp/ao-candidate-run.json")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.CandidateRunConfigPath != "/private/tmp/ao-candidate-run.json" {
+		t.Fatalf("CandidateRunConfigPath = %q, want exact configured path", cfg.CandidateRunConfigPath)
+	}
+
+	t.Setenv("AO_CANDIDATE_RUN_CONFIG", "relative/candidate-run.json")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load with relative AO_CANDIDATE_RUN_CONFIG error = nil, want rejection")
 	}
 }
 

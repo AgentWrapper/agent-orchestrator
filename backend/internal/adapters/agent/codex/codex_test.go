@@ -258,6 +258,37 @@ func TestGetLaunchCommandMapsApprovalModes(t *testing.T) {
 	}
 }
 
+func TestGetLaunchCommandBindsCandidateExecutionProfile(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "codex"}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config: ports.AgentConfig{
+			Model:   "gpt-5.6-codex",
+			Effort:  "high",
+			Sandbox: "workspace-write",
+		},
+		Permissions: ports.PermissionModeAcceptEdits,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"--model", "gpt-5.6-codex",
+		"-c", `model_reasoning_effort="high"`,
+		"--sandbox", "workspace-write",
+	}
+	if !containsSubsequence(cmd, want) {
+		t.Fatalf("command %#v does not contain the exact execution profile %#v", cmd, want)
+	}
+	if !containsSubsequence(cmd, []string{"--ask-for-approval", "on-request"}) {
+		t.Fatalf("command %#v does not enforce on-request approval", cmd)
+	}
+	if contains(cmd, "--dangerously-bypass-approvals-and-sandbox") {
+		t.Fatalf("command %#v bypasses the candidate sandbox", cmd)
+	}
+}
+
 func TestAppendWorkspaceTrustFlagCoversLiteralAndResolvedPaths(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink creation needs extra privileges on Windows")
@@ -572,6 +603,43 @@ func TestGetRestoreCommandAppendsConfiguredModel(t *testing.T) {
 	}
 	if !containsSubsequence(cmd, []string{"--model", "gpt-5.4-mini"}) {
 		t.Fatalf("restore command %#v missing trimmed --model flag", cmd)
+	}
+}
+
+func TestGetRestoreCommandBindsCandidateExecutionProfile(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "codex"}
+
+	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Config: ports.AgentConfig{
+			Model:   "gpt-5.6-codex",
+			Effort:  "high",
+			Sandbox: "workspace-write",
+		},
+		Permissions: ports.PermissionModeAcceptEdits,
+		Session: ports.SessionRef{
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "thread-123"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+
+	want := []string{
+		"--model", "gpt-5.6-codex",
+		"-c", `model_reasoning_effort="high"`,
+		"--sandbox", "workspace-write",
+	}
+	if !containsSubsequence(cmd, want) {
+		t.Fatalf("restore command %#v does not contain the exact execution profile %#v", cmd, want)
+	}
+	if !containsSubsequence(cmd, []string{"--ask-for-approval", "on-request"}) {
+		t.Fatalf("restore command %#v does not enforce on-request approval", cmd)
+	}
+	if contains(cmd, "--dangerously-bypass-approvals-and-sandbox") {
+		t.Fatalf("restore command %#v bypasses the candidate sandbox", cmd)
 	}
 }
 

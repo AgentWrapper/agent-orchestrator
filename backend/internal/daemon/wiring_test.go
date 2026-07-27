@@ -186,7 +186,7 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildAgentResolver: %v", err)
 	}
-	svc, reviewSvc, lc, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, log)
+	svc, reviewSvc, lc, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -247,7 +247,7 @@ func TestWiring_StartSessionSpawnsScratchWithoutGitRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildAgentResolver: %v", err)
 	}
-	svc, _, _, err := startSession(cfg, runtime, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, log)
+	svc, _, _, err := startSession(cfg, runtime, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -302,7 +302,7 @@ func TestStartSession_SpawnDoesNotPanicWhenNoTrackerToken(t *testing.T) {
 	if agentsErr != nil {
 		t.Fatalf("buildAgentResolver: %v", agentsErr)
 	}
-	svc, _, _, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, log)
+	svc, _, _, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -339,6 +339,49 @@ func TestWiring_SeedScratchProjectOnBootUsesDataDir(t *testing.T) {
 	}
 }
 
+type candidateRunStub struct {
+	ports.CandidateRunStarter
+}
+
+func TestWiring_StartSessionInjectsCandidateObserverBoundary(t *testing.T) {
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	lcm := lifecycle.New(store, nil)
+	cfg := config.Config{DataDir: t.TempDir()}
+	rt := runtimeselect.New(nil)
+	messenger := newSessionMessenger(store, rt, log)
+	agents, err := buildAgentResolver(config.DefaultAgent, log)
+	if err != nil {
+		t.Fatalf("buildAgentResolver: %v", err)
+	}
+	candidateRun := &candidateRunStub{}
+	_, _, lc, err := startSession(
+		cfg,
+		rt,
+		store,
+		lcm,
+		messenger,
+		telemetryadapter.NoopSink{},
+		agents,
+		candidateRun,
+		log,
+	)
+	if err != nil {
+		t.Fatalf("startSession: %v", err)
+	}
+	if err := lc.RestoreAll(context.Background()); !errors.Is(err, sessionmanager.ErrCandidateRunResumeUnsupported) {
+		t.Fatalf("RestoreAll error = %v, want candidate observer resume rejection", err)
+	}
+	if err := lc.Reconcile(context.Background()); !errors.Is(err, sessionmanager.ErrCandidateRunResumeUnsupported) {
+		t.Fatalf("Reconcile error = %v, want candidate observer resume rejection", err)
+	}
+}
+
 // TestStartTrackerIntake_RunsEvenWithoutEnabledProjects is a regression test:
 // startTrackerIntake used to scan projects once at call time and skip starting
 // the observer loop entirely when none had intake enabled yet. Poll() itself
@@ -361,7 +404,7 @@ func TestStartTrackerIntake_RunsEvenWithoutEnabledProjects(t *testing.T) {
 	if agentsErr != nil {
 		t.Fatalf("buildAgentResolver: %v", agentsErr)
 	}
-	svc, _, _, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, log)
+	svc, _, _, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}

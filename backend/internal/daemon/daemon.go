@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/candidaterun"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/daemon/supervisor"
@@ -100,6 +101,20 @@ func Run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	var candidateRun ports.CandidateRunStarter
+	if cfg.CandidateRunConfigPath != "" {
+		client, openErr := candidaterun.Open(context.WithoutCancel(ctx), cfg.CandidateRunConfigPath, log)
+		if openErr != nil {
+			return fmt.Errorf("open candidate run observer: %w", openErr)
+		}
+		candidateRun = client
+		defer func() {
+			if closeErr := client.Close(); closeErr != nil {
+				log.Error("close candidate run observer", "err", closeErr)
+			}
+		}()
+	}
+
 	cdcPipe, err := startCDC(ctx, store, log)
 	if err != nil {
 		return err
@@ -146,7 +161,7 @@ func Run() error {
 	// selected runtime, routed git/scratch workspaces, the per-session agent
 	// resolver (AO_AGENT validated here for compatibility), and the agent
 	// messenger, then mount it on the API.
-	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, log)
+	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, candidateRun, log)
 	if err != nil {
 		stop()
 		lcStack.Stop()
@@ -156,7 +171,11 @@ func Run() error {
 		return fmt.Errorf("wire session service: %w", err)
 	}
 	lcStack.LCM.SetCompletionTerminator(sessMgr)
-	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
+	if candidateRun != nil {
+		lcStack.scmDone = startCandidateSCMObserver(ctx, store, lcStack.LCM, candidateRun, log)
+	} else {
+		lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
+	}
 	projectSvc := projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink})
 	if err := seedScratchProjectOnBoot(ctx, cfg, projectSvc); err != nil {
 		stop()

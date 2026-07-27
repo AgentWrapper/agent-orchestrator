@@ -114,7 +114,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	appendSessionHookFlags(&cmd)
 	appendTerminalCompatibilityFlags(&cmd)
 	appendWorkspaceTrustFlag(&cmd, cfg.WorkspacePath)
-	appendModelFlag(&cmd, cfg.Config)
+	appendExecutionProfileFlags(&cmd, cfg.Config)
 
 	if cfg.SystemPrompt != "" {
 		cmd = append(cmd, "-c", "developer_instructions="+codexTOMLConfigString(cfg.SystemPrompt))
@@ -156,7 +156,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	appendSessionHookFlags(&cmd)
 	appendTerminalCompatibilityFlags(&cmd)
 	appendWorkspaceTrustFlag(&cmd, cfg.Session.WorkspacePath)
-	appendModelFlag(&cmd, cfg.Config)
+	appendExecutionProfileFlags(&cmd, cfg.Config)
 	if cfg.SystemPrompt != "" {
 		cmd = append(cmd, "-c", "developer_instructions="+codexTOMLConfigString(cfg.SystemPrompt))
 	} else if cfg.SystemPromptFile != "" {
@@ -374,12 +374,6 @@ func appendTerminalCompatibilityFlags(cmd *[]string) {
 	}
 }
 
-func appendModelFlag(cmd *[]string, cfg ports.AgentConfig) {
-	if model := strings.TrimSpace(cfg.Model); model != "" {
-		*cmd = append(*cmd, "--model", model)
-	}
-}
-
 func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
 	switch ports.NormalizePermissionMode(permissions) {
 	case ports.PermissionModeDefault:
@@ -393,6 +387,18 @@ func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
 		*cmd = append(*cmd, "--ask-for-approval", "on-request", "-c", `approvals_reviewer="auto_review"`)
 	case ports.PermissionModeBypassPermissions:
 		*cmd = append(*cmd, "--dangerously-bypass-approvals-and-sandbox")
+	}
+}
+
+func appendExecutionProfileFlags(cmd *[]string, cfg ports.AgentConfig) {
+	if model := strings.TrimSpace(cfg.Model); model != "" {
+		*cmd = append(*cmd, "--model", model)
+	}
+	if effort := strings.TrimSpace(cfg.Effort); effort != "" {
+		*cmd = append(*cmd, "-c", "model_reasoning_effort="+codexTOMLBasicString(effort))
+	}
+	if sandbox := strings.TrimSpace(cfg.Sandbox); sandbox != "" {
+		*cmd = append(*cmd, "--sandbox", sandbox)
 	}
 }
 

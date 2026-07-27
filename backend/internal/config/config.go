@@ -7,6 +7,7 @@ package config
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -91,6 +92,9 @@ type Config struct {
 	// Agent is the compatibility agent adapter id selected by AO_AGENT;
 	// startSession fails fast if no adapter with this id is registered.
 	Agent string
+	// CandidateRunConfigPath enables the candidate-owned observer sidecar when
+	// set to one exact absolute, non-secret activation binding.
+	CandidateRunConfigPath string
 	// AppRunID identifies one desktop-app launch. The Electron supervisor mints
 	// it and passes it down (AO_APP_RUN_ID), holding it constant across daemon
 	// restarts it performs, so standalone shell terminals can survive a daemon
@@ -129,6 +133,7 @@ func (c Config) Addr() string {
 //	AO_RUN_FILE          running.json path   (default ~/.ao/running.json)
 //	AO_DATA_DIR          durable state dir   (default ~/.ao/data)
 //	AO_AGENT             compatibility agent id (default claude-code)
+//	AO_CANDIDATE_RUN_CONFIG absolute observer binding path (default disabled)
 //	AO_APP_RUN_ID        desktop-app launch id, set by the Electron supervisor
 //	                     (default: a fresh id minted per daemon boot)
 //	AO_ALLOWED_ORIGINS   CORS origins, comma-separated (default DefaultAllowedOrigins)
@@ -182,6 +187,12 @@ func Load() (Config, error) {
 
 	if raw := os.Getenv("AO_AGENT"); raw != "" {
 		cfg.Agent = raw
+	}
+	if raw := strings.TrimSpace(os.Getenv("AO_CANDIDATE_RUN_CONFIG")); raw != "" {
+		if !filepath.IsAbs(raw) {
+			return Config{}, errors.New("AO_CANDIDATE_RUN_CONFIG must be an absolute path")
+		}
+		cfg.CandidateRunConfigPath = raw
 	}
 
 	// A missing AO_APP_RUN_ID means nothing is supervising this daemon, so this

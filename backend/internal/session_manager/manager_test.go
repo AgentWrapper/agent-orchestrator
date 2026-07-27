@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +36,7 @@ type fakeStore struct {
 	// sharedLog, when non-nil, receives an ordered call entry for each
 	// UpsertSessionWorktree invocation so ordering tests can compare across fakes.
 	sharedLog *[]string
+	order     *[]string
 }
 
 func newFakeStore() *fakeStore {
@@ -54,6 +56,9 @@ func (f *fakeStore) ListWorkspaceRepos(_ context.Context, projectID string) ([]d
 	return f.workspaceRepo[projectID], nil
 }
 func (f *fakeStore) CreateSession(_ context.Context, rec domain.SessionRecord) (domain.SessionRecord, error) {
+	if f.order != nil {
+		*f.order = append(*f.order, "create-session")
+	}
 	f.num++
 	rec.ID = domain.SessionID(fmt.Sprintf("%s-%d", rec.ProjectID, f.num))
 	f.sessions[rec.ID] = rec
@@ -174,6 +179,7 @@ type fakeRuntime struct {
 	createErr          error
 	destroyErr         error
 	created, destroyed int
+	provedStops        int
 	lastCfg            ports.RuntimeConfig
 	outputs            []string
 	outputCalls        int
@@ -182,6 +188,8 @@ type fakeRuntime struct {
 	aliveByHandle map[string]bool
 	aliveErr      error
 	destroyedIDs  []string
+	order         *[]string
+	stopProof     ports.RuntimeStopProof
 }
 
 type fakeRestartRuntime struct {
@@ -219,6 +227,9 @@ func (r *blockingRestartRuntime) Restart(_ context.Context, handle ports.Runtime
 }
 
 func (r *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
+	if r.order != nil {
+		*r.order = append(*r.order, "create-runtime")
+	}
 	if r.createErr != nil {
 		return ports.RuntimeHandle{}, r.createErr
 	}
@@ -227,9 +238,22 @@ func (r *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.
 	return ports.RuntimeHandle{ID: "h1"}, nil
 }
 func (r *fakeRuntime) Destroy(_ context.Context, handle ports.RuntimeHandle) error {
+	if r.order != nil {
+		*r.order = append(*r.order, "destroy-runtime")
+	}
 	r.destroyed++
 	r.destroyedIDs = append(r.destroyedIDs, handle.ID)
 	return r.destroyErr
+}
+func (r *fakeRuntime) DestroyWithProof(ctx context.Context, handle ports.RuntimeHandle) (ports.RuntimeStopProof, error) {
+	r.provedStops++
+	if err := r.Destroy(ctx, handle); err != nil {
+		return ports.RuntimeStopProof{}, err
+	}
+	if r.stopProof.ProcessID == "" {
+		return ports.RuntimeStopProof{ProcessID: "fake-process", DescendantsRunning: 0}, nil
+	}
+	return r.stopProof, nil
 }
 func (r *fakeRuntime) IsAlive(_ context.Context, handle ports.RuntimeHandle) (bool, error) {
 	if r.aliveErr != nil {
@@ -527,9 +551,13 @@ type fakeWorkspace struct {
 	// sharedLog, when non-nil, receives entries alongside calls so ordering
 	// tests can compare workspace calls against store calls in one sequence.
 	sharedLog *[]string
+	order     *[]string
 }
 
 func (w *fakeWorkspace) Create(_ context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
+	if w.order != nil {
+		*w.order = append(*w.order, "create-workspace")
+	}
 	if w.createErr != nil {
 		return ports.WorkspaceInfo{}, w.createErr
 	}
@@ -582,6 +610,9 @@ func (w *fakeWorkspace) CreateWorkspaceProject(_ context.Context, cfg ports.Work
 }
 func (w *fakeWorkspace) Destroy(_ context.Context, info ports.WorkspaceInfo) error {
 	w.lastDestroyInfo = info
+	if w.order != nil {
+		*w.order = append(*w.order, "destroy-workspace")
+	}
 	if info.RepoPath != "" {
 		entry := "Destroy:" + fakeWorkspaceRepoName(info)
 		w.calls = append(w.calls, entry)
@@ -671,6 +702,86 @@ func fakeWorkspaceRepoName(info ports.WorkspaceInfo) string {
 type fakeMessenger struct {
 	msgs []string
 	err  error
+}
+
+type fakeCandidateRun struct {
+	order           *[]string
+	claimErr        error
+	allocationErr   error
+	startRequestErr error
+	startedErr      error
+	stopErr         error
+	lastStopID      domain.SessionID
+	lastStopReason  string
+	lastStopProof   ports.RuntimeStopProof
+}
+
+func (f *fakeCandidateRun) ExecutionProfile() ports.CandidateRunExecutionProfile {
+	return ports.CandidateRunExecutionProfile{
+		Harness:        domain.HarnessCodex,
+		Model:          "gpt-5.6-codex",
+		Effort:         "high",
+		Sandbox:        "workspace-write",
+		ApprovalPolicy: "on-request",
+	}
+}
+
+func (f *fakeCandidateRun) Claim(context.Context, ports.CandidateRunClaimRequest) (ports.CandidateRunClaim, error) {
+	if f.order != nil {
+		*f.order = append(*f.order, "claim")
+	}
+	if f.claimErr != nil {
+		return ports.CandidateRunClaim{}, f.claimErr
+	}
+	return ports.CandidateRunClaim{
+		Slot:                 "A",
+		ClaimID:              "agent-orchestrator:run:A:process",
+		ControllerInstanceID: "agent-orchestrator:process",
+		Repository:           "taymoork2/tenetfold-orchestration-fixture",
+		IssueNumber:          21,
+		Branch:               "fixture/agent-orchestrator/s1",
+		AllocationKey:        "agent-orchestrator:run:A",
+		IdempotencyKey:       "agent-orchestrator:run:A",
+		SourceWriterMode:     "agent-orchestrator-session",
+	}, nil
+}
+
+func (f *fakeCandidateRun) RecordAllocation(context.Context, ports.CandidateRunClaim, domain.SessionID, string) error {
+	if f.order != nil {
+		*f.order = append(*f.order, "record-allocation")
+	}
+	return f.allocationErr
+}
+
+func (f *fakeCandidateRun) RecordSessionStartRequested(context.Context, domain.SessionID) error {
+	if f.order != nil {
+		*f.order = append(*f.order, "record-start-request")
+	}
+	return f.startRequestErr
+}
+
+func (f *fakeCandidateRun) RecordSessionStarted(context.Context, domain.SessionID) error {
+	if f.order != nil {
+		*f.order = append(*f.order, "record-started")
+	}
+	return f.startedErr
+}
+
+func (f *fakeCandidateRun) RecordPullRequest(context.Context, domain.SessionID, ports.SCMObservation) error {
+	if f.order != nil {
+		*f.order = append(*f.order, "record-pr")
+	}
+	return nil
+}
+
+func (f *fakeCandidateRun) RecordStopped(_ context.Context, id domain.SessionID, reason string, proof ports.RuntimeStopProof) error {
+	if f.order != nil {
+		*f.order = append(*f.order, "record-stopped")
+	}
+	f.lastStopID = id
+	f.lastStopReason = reason
+	f.lastStopProof = proof
+	return f.stopErr
 }
 
 func (m *fakeMessenger) Send(_ context.Context, _ domain.SessionID, msg string) error {
@@ -1035,6 +1146,254 @@ func TestResumeAgent_RejectsConcurrentRequest(t *testing.T) {
 	close(runtime.release)
 	if err := <-firstDone; err != nil {
 		t.Fatalf("first resume: %v", err)
+	}
+}
+
+func TestSpawn_CandidateRunOrdersNativeClaimAllocationAndRuntime(t *testing.T) {
+	var order []string
+	st := newFakeStore()
+	st.order = &order
+	st.projects["fixture"] = domain.ProjectRecord{
+		ID: "fixture",
+		Config: domain.ProjectConfig{
+			Worker: domain.RoleOverride{Harness: domain.HarnessCodex},
+		},
+	}
+	rt := &fakeRuntime{order: &order}
+	ws := &fakeWorkspace{order: &order}
+	agent := &recordingAgent{}
+	candidateRun := &fakeCandidateRun{order: &order}
+	m := New(Deps{
+		Runtime:      rt,
+		Agents:       singleAgent{agent: agent},
+		Workspace:    ws,
+		Store:        st,
+		Messenger:    &fakeMessenger{},
+		Lifecycle:    &fakeLCM{store: st},
+		CandidateRun: candidateRun,
+		LookPath:     func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "fixture",
+		IssueID:   "github:taymoork2/tenetfold-orchestration-fixture#21",
+		Kind:      domain.KindWorker,
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+
+	wantOrder := []string{
+		"claim",
+		"create-session",
+		"create-workspace",
+		"record-allocation",
+		"record-start-request",
+		"create-runtime",
+		"record-started",
+	}
+	if !reflect.DeepEqual(order, wantOrder) {
+		t.Fatalf("candidate run order = %#v, want %#v", order, wantOrder)
+	}
+	if rec.Metadata.Branch != "fixture/agent-orchestrator/s1" {
+		t.Fatalf("spawned branch = %q, want prepared branch", rec.Metadata.Branch)
+	}
+	if got := agent.lastConfig; got.Model != "gpt-5.6-codex" ||
+		got.Effort != "high" ||
+		got.Sandbox != "workspace-write" ||
+		got.Permissions != domain.PermissionModeAcceptEdits {
+		t.Fatalf("agent config = %#v, want exact candidate execution profile", got)
+	}
+}
+
+func TestSpawn_CandidateRunAllocationRejectionReleasesOnlyNativeWorkspace(t *testing.T) {
+	var order []string
+	st := newFakeStore()
+	st.order = &order
+	st.projects["fixture"] = domain.ProjectRecord{
+		ID: "fixture",
+		Config: domain.ProjectConfig{
+			Worker: domain.RoleOverride{Harness: domain.HarnessCodex},
+		},
+	}
+	rt := &fakeRuntime{order: &order}
+	ws := &fakeWorkspace{order: &order}
+	candidateRun := &fakeCandidateRun{
+		order:         &order,
+		allocationErr: errors.New("observer rejected allocation"),
+	}
+	m := New(Deps{
+		Runtime:      rt,
+		Agents:       singleAgent{agent: &recordingAgent{}},
+		Workspace:    ws,
+		Store:        st,
+		Messenger:    &fakeMessenger{},
+		Lifecycle:    &fakeLCM{store: st},
+		CandidateRun: candidateRun,
+		LookPath:     func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "fixture",
+		IssueID:   "github:taymoork2/tenetfold-orchestration-fixture#21",
+		Kind:      domain.KindWorker,
+	})
+	if err == nil || !strings.Contains(err.Error(), "candidate run allocation") {
+		t.Fatalf("Spawn error = %v, want allocation rejection", err)
+	}
+	wantOrder := []string{
+		"claim",
+		"create-session",
+		"create-workspace",
+		"record-allocation",
+		"destroy-workspace",
+	}
+	if !reflect.DeepEqual(order, wantOrder) {
+		t.Fatalf("candidate allocation compensation order = %#v, want %#v", order, wantOrder)
+	}
+	if rt.created != 0 || len(st.sessions) != 0 {
+		t.Fatalf("allocation rejection created runtime=%d sessions=%d, want neither", rt.created, len(st.sessions))
+	}
+}
+
+func TestSpawn_CandidateRunStartedRejectionProvesTeardownBeforeWorkspaceRelease(t *testing.T) {
+	var order []string
+	st := newFakeStore()
+	st.order = &order
+	st.projects["fixture"] = domain.ProjectRecord{
+		ID: "fixture",
+		Config: domain.ProjectConfig{
+			Worker: domain.RoleOverride{Harness: domain.HarnessCodex},
+		},
+	}
+	rt := &fakeRuntime{order: &order}
+	ws := &fakeWorkspace{order: &order}
+	candidateRun := &fakeCandidateRun{
+		order:      &order,
+		startedErr: errors.New("observer rejected started event"),
+	}
+	m := New(Deps{
+		Runtime:      rt,
+		Agents:       singleAgent{agent: &recordingAgent{}},
+		Workspace:    ws,
+		Store:        st,
+		Messenger:    &fakeMessenger{},
+		Lifecycle:    &fakeLCM{store: st},
+		CandidateRun: candidateRun,
+		LookPath:     func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "fixture",
+		IssueID:   "github:taymoork2/tenetfold-orchestration-fixture#21",
+		Kind:      domain.KindWorker,
+	})
+	if err == nil || !strings.Contains(err.Error(), "candidate run started") {
+		t.Fatalf("Spawn error = %v, want started-event rejection", err)
+	}
+	if rt.provedStops != 1 {
+		t.Fatalf("proof-capable runtime teardowns = %d, want 1", rt.provedStops)
+	}
+	destroyRuntime := slices.Index(order, "destroy-runtime")
+	destroyWorkspace := slices.Index(order, "destroy-workspace")
+	if destroyRuntime < 0 || destroyWorkspace < 0 || destroyRuntime > destroyWorkspace {
+		t.Fatalf("candidate started compensation order = %#v, want runtime proof before workspace release", order)
+	}
+	if len(st.sessions) != 0 {
+		t.Fatalf("started rejection left %d session rows, want seed row removed", len(st.sessions))
+	}
+}
+
+func TestKill_CandidateRunRecordsZeroDescendantsBeforeWorkspaceTeardown(t *testing.T) {
+	var order []string
+	st := newFakeStore()
+	st.projects["fixture"] = domain.ProjectRecord{
+		ID: "fixture",
+		Config: domain.ProjectConfig{
+			Worker: domain.RoleOverride{Harness: domain.HarnessCodex},
+		},
+	}
+	rt := &fakeRuntime{
+		order: &order,
+		stopProof: ports.RuntimeStopProof{
+			ProcessID:          "4242",
+			DescendantIDs:      []string{"4243"},
+			DescendantsRunning: 0,
+		},
+	}
+	ws := &fakeWorkspace{order: &order}
+	candidateRun := &fakeCandidateRun{order: &order}
+	m := New(Deps{
+		Runtime:      rt,
+		Agents:       singleAgent{agent: &recordingAgent{}},
+		Workspace:    ws,
+		Store:        st,
+		Messenger:    &fakeMessenger{},
+		Lifecycle:    &fakeLCM{store: st},
+		CandidateRun: candidateRun,
+		LookPath:     func(string) (string, error) { return "/bin/true", nil },
+	})
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "fixture",
+		IssueID:   "github:taymoork2/tenetfold-orchestration-fixture#21",
+		Kind:      domain.KindWorker,
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	order = nil
+
+	freed, err := m.Kill(ctx, rec.ID)
+	if err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+	if !freed {
+		t.Fatal("Kill freed = false, want workspace released")
+	}
+	wantOrder := []string{"destroy-runtime", "record-stopped", "destroy-workspace"}
+	if !reflect.DeepEqual(order, wantOrder) {
+		t.Fatalf("candidate stop order = %#v, want %#v", order, wantOrder)
+	}
+	if candidateRun.lastStopID != rec.ID ||
+		candidateRun.lastStopReason != "session killed" ||
+		!reflect.DeepEqual(candidateRun.lastStopProof.DescendantIDs, []string{"4243"}) ||
+		candidateRun.lastStopProof.DescendantsRunning != 0 {
+		t.Fatalf("candidate stop evidence = id %q reason %q proof %#v", candidateRun.lastStopID, candidateRun.lastStopReason, candidateRun.lastStopProof)
+	}
+}
+
+func TestRestore_CandidateRunRejectsUnobservedResumeBeforeWorkspace(t *testing.T) {
+	st := newFakeStore()
+	st.projects["fixture"] = domain.ProjectRecord{
+		ID: "fixture",
+		Config: domain.ProjectConfig{
+			Worker: domain.RoleOverride{Harness: domain.HarnessCodex},
+		},
+	}
+	seedTerminal(st, "fixture-1", domain.SessionMetadata{
+		WorkspacePath:  "/ws/fixture-1",
+		Branch:         "fixture/agent-orchestrator/s1",
+		AgentSessionID: "codex-session",
+	})
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
+	m := New(Deps{
+		Runtime:      rt,
+		Agents:       singleAgent{agent: &recordingAgent{}},
+		Workspace:    ws,
+		Store:        st,
+		Messenger:    &fakeMessenger{},
+		Lifecycle:    &fakeLCM{store: st},
+		CandidateRun: &fakeCandidateRun{},
+		LookPath:     func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	_, err := m.RestoreWithMode(ctx, "fixture-1")
+	if err == nil || !strings.Contains(err.Error(), "candidate run observer does not authorize resume") {
+		t.Fatalf("Restore error = %v, want candidate observer resume rejection", err)
+	}
+	if rt.created != 0 || len(ws.calls) != 0 {
+		t.Fatalf("candidate restore created runtime=%d workspace calls=%#v, want no effects", rt.created, ws.calls)
 	}
 }
 

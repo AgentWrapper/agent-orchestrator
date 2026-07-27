@@ -48,6 +48,10 @@ var (
 	// ErrScratchBranchUnsupported means a caller tried to force git branch
 	// semantics onto a scratch project.
 	ErrScratchBranchUnsupported = errors.New("session: scratch projects do not support branches")
+	// ErrCandidateRunResumeUnsupported prevents AO from relaunching a session
+	// without a candidate-run resume observation. The observer boundary records
+	// native claim/start/stop facts but owns no resume transition.
+	ErrCandidateRunResumeUnsupported = errors.New("session: candidate run observer does not authorize resume")
 	// ErrNotResumable means a terminated session cannot be relaunched: its adapter
 	// cannot natively resume it AND it has no prompt to fresh-launch from, and it is
 	// not an orchestrator (orchestrators are promptless by design and relaunch fresh
@@ -165,10 +169,11 @@ type Manager struct {
 	// each call site re-deriving the check. Send/confirmActive use Deliver for
 	// its Outcome; Spawn/Restore use the interface-level Send for
 	// initial-prompt delivery, where a blocked session is impossible.
-	messenger *sessionguard.Guard
-	lcm       lifecycleRecorder
-	dataDir   string
-	clock     func() time.Time
+	messenger    *sessionguard.Guard
+	lcm          lifecycleRecorder
+	candidateRun ports.CandidateRunStarter
+	dataDir      string
+	clock        func() time.Time
 	// lookPath is exec.LookPath in production; tests substitute a stub so
 	// they don't need real binaries on PATH. Returns ports.ErrAgentBinaryNotFound
 	// when the binary is missing so the sentinel propagates through toAPIError.
@@ -220,6 +225,10 @@ type Deps struct {
 	Store     Store
 	Messenger ports.AgentMessenger
 	Lifecycle lifecycleRecorder
+	// CandidateRun is the optional observer-only evaluation boundary. When set,
+	// every claim/allocation/start transition is synchronously acknowledged
+	// before AO advances its native lifecycle.
+	CandidateRun ports.CandidateRunStarter
 	// DataDir is exported to spawned agents as AO_DATA_DIR so their hook
 	// commands can open the same store.
 	DataDir string
@@ -243,17 +252,18 @@ type Deps struct {
 // time.Now when Deps.Clock is nil.
 func New(d Deps) *Manager {
 	m := &Manager{
-		runtime:     d.Runtime,
-		agents:      d.Agents,
-		workspace:   d.Workspace,
-		store:       d.Store,
-		lcm:         d.Lifecycle,
-		dataDir:     d.DataDir,
-		clock:       d.Clock,
-		lookPath:    d.LookPath,
-		executable:  d.Executable,
-		newLaunchID: d.NewLaunchID,
-		resuming:    make(map[domain.SessionID]struct{}),
+		runtime:      d.Runtime,
+		agents:       d.Agents,
+		workspace:    d.Workspace,
+		store:        d.Store,
+		lcm:          d.Lifecycle,
+		candidateRun: d.CandidateRun,
+		dataDir:      d.DataDir,
+		clock:        d.Clock,
+		lookPath:     d.LookPath,
+		executable:   d.Executable,
+		newLaunchID:  d.NewLaunchID,
+		resuming:     make(map[domain.SessionID]struct{}),
 		sendConfirm: sendConfirmConfig{
 			pollInterval:    sendConfirmPollInterval,
 			attemptDeadline: sendConfirmAttemptDeadline,
@@ -323,6 +333,35 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	promptBytes := len(prompt)
 	systemPromptBytes := len(systemPrompt)
 
+	var candidateClaim *ports.CandidateRunClaim
+	var candidateProfile ports.CandidateRunExecutionProfile
+	if m.candidateRun != nil {
+		candidateProfile = m.candidateRun.ExecutionProfile()
+		if candidateProfile.Harness != cfg.Harness {
+			return domain.SessionRecord{}, 0, 0, fmt.Errorf(
+				"spawn: candidate run requires harness %q, got %q",
+				candidateProfile.Harness,
+				cfg.Harness,
+			)
+		}
+		if strings.TrimSpace(candidateProfile.Model) == "" ||
+			strings.TrimSpace(candidateProfile.Effort) == "" ||
+			candidateProfile.Sandbox != "workspace-write" ||
+			candidateProfile.ApprovalPolicy != "on-request" {
+			return domain.SessionRecord{}, 0, 0, errors.New("spawn: candidate run execution profile is incomplete or unsafe")
+		}
+		claim, err := m.candidateRun.Claim(ctx, ports.CandidateRunClaimRequest{
+			ProjectID:       cfg.ProjectID,
+			IssueID:         cfg.IssueID,
+			RequestedBranch: cfg.Branch,
+		})
+		if err != nil {
+			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: candidate run claim: %w", err)
+		}
+		cfg.Branch = claim.Branch
+		candidateClaim = &claim
+	}
+
 	rec, err := m.store.CreateSession(ctx, seedRecord(cfg, m.clock()))
 	if err != nil {
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: create: %w", err)
@@ -345,6 +384,12 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		// in session lists (e.g. when gitworktree refuses the branch).
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: workspace: %w", id, err)
+	}
+	if candidateClaim != nil {
+		if err := m.candidateRun.RecordAllocation(ctx, *candidateClaim, id, ws.Path); err != nil {
+			m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
+			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: candidate run allocation: %w", id, err)
+		}
 	}
 
 	// Per-project workspace provisioning: symlink shared files, then run any
@@ -379,6 +424,12 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: no agent adapter for harness %q", id, cfg.Harness)
 	}
 	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config)
+	if candidateClaim != nil {
+		agentConfig.Model = candidateProfile.Model
+		agentConfig.Effort = candidateProfile.Effort
+		agentConfig.Sandbox = candidateProfile.Sandbox
+		agentConfig.Permissions = ports.PermissionModeAcceptEdits
+	}
 	env := m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, project.Config.Env)
 	m.augmentAgentRuntimeEnv(agent, env)
 	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
@@ -429,6 +480,12 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: prepare launch: %w", id, err)
 	}
 	defer m.lcm.CancelLaunch(id, launchID)
+	if candidateClaim != nil {
+		if err := m.candidateRun.RecordSessionStartRequested(ctx, id); err != nil {
+			m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
+			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: candidate run start intent: %w", id, err)
+		}
+	}
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     id,
 		WorkspacePath: ws.Path,
@@ -438,6 +495,20 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if err != nil {
 		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: runtime: %w", id, err)
+	}
+	if candidateClaim != nil {
+		if err := m.candidateRun.RecordSessionStarted(ctx, id); err != nil {
+			if cleanupErr := m.destroySpawnRuntime(ctx, id, handle, "start observation rejected", false); cleanupErr != nil {
+				return domain.SessionRecord{}, 0, 0, fmt.Errorf(
+					"spawn %s: candidate run started: %w; runtime cleanup: %w",
+					id,
+					err,
+					cleanupErr,
+				)
+			}
+			m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
+			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: candidate run started: %w", id, err)
+		}
 	}
 
 	metadata := domain.SessionMetadata{
@@ -449,14 +520,40 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		Prompt:            prompt,
 	}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
-		runtimeDestroyed := m.runtime.Destroy(ctx, handle) == nil
+		runtimeDestroyed := false
+		if candidateClaim != nil {
+			if cleanupErr := m.destroySpawnRuntime(ctx, id, handle, "session lifecycle rejected", true); cleanupErr != nil {
+				return domain.SessionRecord{}, 0, 0, fmt.Errorf(
+					"spawn %s: completed: %w; runtime cleanup: %w",
+					id,
+					err,
+					cleanupErr,
+				)
+			}
+			runtimeDestroyed = true
+		} else {
+			runtimeDestroyed = m.runtime.Destroy(ctx, handle) == nil
+		}
 		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject, runtimeDestroyed)
 		m.markSpawnFailedTerminated(ctx, id)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: completed: %w", id, err)
 	}
 	if delivery == ports.PromptDeliveryAfterStart && prompt != "" {
 		if err := m.deliverAfterStartPrompt(ctx, agent, launchCfg, handle, id, prompt); err != nil {
-			runtimeDestroyed := m.runtime.Destroy(ctx, handle) == nil
+			runtimeDestroyed := false
+			if candidateClaim != nil {
+				if cleanupErr := m.destroySpawnRuntime(ctx, id, handle, "initial prompt delivery failed", true); cleanupErr != nil {
+					return domain.SessionRecord{}, 0, 0, fmt.Errorf(
+						"spawn %s: deliver prompt: %w; runtime cleanup: %w",
+						id,
+						err,
+						cleanupErr,
+					)
+				}
+				runtimeDestroyed = true
+			} else {
+				runtimeDestroyed = m.runtime.Destroy(ctx, handle) == nil
+			}
 			workspaceDestroyed := m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject, runtimeDestroyed)
 			if runtimeDestroyed && workspaceDestroyed {
 				m.markSpawnFailedTerminatedWithoutWorkspace(ctx, id)
@@ -471,6 +568,32 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, 0, 0, err
 	}
 	return rec, promptBytes, systemPromptBytes, nil
+}
+
+func (m *Manager) destroySpawnRuntime(
+	ctx context.Context,
+	id domain.SessionID,
+	handle ports.RuntimeHandle,
+	reason string,
+	recordCandidateStop bool,
+) error {
+	if m.candidateRun == nil {
+		return m.runtime.Destroy(ctx, handle)
+	}
+	prover, ok := m.runtime.(ports.RuntimeStopProver)
+	if !ok {
+		return errors.New("candidate run runtime cannot prove descendant shutdown")
+	}
+	proof, err := prover.DestroyWithProof(ctx, handle)
+	if err != nil {
+		return err
+	}
+	if recordCandidateStop {
+		if err := m.candidateRun.RecordStopped(ctx, id, reason, proof); err != nil {
+			return fmt.Errorf("candidate run stop evidence: %w", err)
+		}
+	}
+	return nil
 }
 
 // loadProject loads the project record so spawn can resolve its per-project
@@ -762,9 +885,23 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	}
 
 	if handle.ID != "" {
-		if err := m.runtime.Destroy(ctx, handle); err != nil {
+		if m.candidateRun != nil {
+			prover, ok := m.runtime.(ports.RuntimeStopProver)
+			if !ok {
+				return false, fmt.Errorf("kill %s: candidate run runtime cannot prove descendant shutdown", id)
+			}
+			proof, err := prover.DestroyWithProof(ctx, handle)
+			if err != nil {
+				return false, fmt.Errorf("kill %s: runtime: %w", id, err)
+			}
+			if err := m.candidateRun.RecordStopped(ctx, id, "session killed", proof); err != nil {
+				return false, fmt.Errorf("kill %s: candidate run stop evidence: %w", id, err)
+			}
+		} else if err := m.runtime.Destroy(ctx, handle); err != nil {
 			return false, fmt.Errorf("kill %s: runtime: %w", id, err)
 		}
+	} else if m.candidateRun != nil {
+		return false, fmt.Errorf("kill %s: candidate run runtime handle is missing", id)
 	}
 	freed := false
 	if workspaceProject {
@@ -921,6 +1058,9 @@ func (m *Manager) retireWorkspaceProjectForReplacement(ctx context.Context, rec 
 // runs before any durable session write, so a failure never resurrects the row
 // or destroys the worktree (it may hold the agent's prior work).
 func (m *Manager) RestoreWithMode(ctx context.Context, id domain.SessionID) (RestoreResult, error) {
+	if m.candidateRun != nil {
+		return RestoreResult{}, fmt.Errorf("restore %s: %w", id, ErrCandidateRunResumeUnsupported)
+	}
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("restore %s: %w", id, err)
@@ -1312,6 +1452,9 @@ func (m *Manager) reconcileReap(ctx context.Context, rec domain.SessionRecord) e
 // Best-effort throughout: a per-session failure is logged and never aborts the
 // pass or blocks boot.
 func (m *Manager) Reconcile(ctx context.Context) error {
+	if m.candidateRun != nil {
+		return ErrCandidateRunResumeUnsupported
+	}
 	recs, err := m.store.ListAllSessions(ctx)
 	if err != nil {
 		return fmt.Errorf("reconcile: list sessions: %w", err)
@@ -1348,6 +1491,9 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 //
 // Failures on individual sessions are logged and do not abort the loop.
 func (m *Manager) RestoreAll(ctx context.Context) error {
+	if m.candidateRun != nil {
+		return ErrCandidateRunResumeUnsupported
+	}
 	recs, err := m.store.ListAllSessions(ctx)
 	if err != nil {
 		return fmt.Errorf("restore-all: list sessions: %w", err)
