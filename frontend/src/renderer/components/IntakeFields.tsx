@@ -1,7 +1,9 @@
-import { Info } from "lucide-react";
+import { FolderGit2, Inbox, Info, TriangleAlert, UserRound } from "lucide-react";
 import type { components } from "../../api/schema";
 import { cn } from "../lib/utils";
 import { Label } from "./ui/label";
+import { SettingsRow } from "./settings/SettingsRow";
+import { Switch } from "./ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
@@ -85,6 +87,7 @@ export function IntakeFields({
 	compact = false,
 	controlClassName,
 	labelClassName,
+	variant = "default",
 }: {
 	form: IntakeForm;
 	onChange: (patch: Partial<IntakeForm>) => void;
@@ -94,8 +97,55 @@ export function IntakeFields({
 	compact?: boolean;
 	controlClassName?: string;
 	labelClassName?: string;
+	variant?: "default" | "settings";
 }) {
 	const needsRule = intakeNeedsRule(form);
+	if (variant === "settings") {
+		return (
+			<div className="flex flex-col gap-1.5">
+				<SettingsRow icon={Inbox} label="Enable issue intake">
+					<Switch
+						aria-label="Enable issue intake"
+						checked={form.enabled}
+						onCheckedChange={(enabled) => onChange({ enabled })}
+					/>
+				</SettingsRow>
+				{form.enabled && (
+					<>
+						{repoPreview && (
+							<SettingsRow icon={FolderGit2} label="Repository">
+								{repoPreview.value ? (
+									<a
+										href={`https://github.com/${repoPreview.value}`}
+										target="_blank"
+										rel="noopener noreferrer"
+										className="settings-row-value text-settings-accent hover:underline"
+									>
+										{repoPreview.value}
+									</a>
+								) : (
+									<span className="settings-row-value">
+										Could not detect a GitHub repo from this project's git origin.
+									</span>
+								)}
+							</SettingsRow>
+						)}
+						<SettingsRow icon={UserRound} label="Assignee">
+							<input
+								id="intakeAssignee"
+								aria-label="Assignee"
+								className="settings-inline-input"
+								value={form.assignee}
+								onChange={(e) => onChange({ assignee: e.target.value })}
+								placeholder="type username or * for any"
+							/>
+						</SettingsRow>
+						{needsRule && <IntakeAssigneeError />}
+					</>
+				)}
+			</div>
+		);
+	}
 	return (
 		<div className="flex flex-col gap-4">
 			{!compact && (
@@ -162,12 +212,19 @@ export function IntakeFields({
 							placeholder="type username or * for any"
 						/>
 					</IntakeField>
-					{!compact && needsRule && (
-						<p className="text-xs leading-row text-error">Enabling intake requires an assignee.</p>
-					)}
+					{!compact && needsRule && <IntakeAssigneeError />}
 				</>
 			)}
 		</div>
+	);
+}
+
+function IntakeAssigneeError() {
+	return (
+		<p className="flex items-center gap-1.5 px-1 text-xs leading-row text-error">
+			<TriangleAlert className="size-3 shrink-0 text-error" aria-hidden="true" />
+			Enabling intake requires an assignee.
+		</p>
 	);
 }
 
