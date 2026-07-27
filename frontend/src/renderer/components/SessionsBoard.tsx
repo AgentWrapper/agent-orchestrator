@@ -507,6 +507,7 @@ function ZoneColumn({
 							session={session}
 							onOpen={() => onOpen(session)}
 							onTerminate={() => onTerminate(session)}
+							laneLabel={col.label}
 						/>
 					))}
 				</div>
@@ -566,29 +567,45 @@ function SessionCount({ count, label }: { count: number; label: string }) {
 	);
 }
 
+// The column header names the broad stage, but "Needs you" and "In review" each
+// group several distinct states (Input needed, CI failed, Changes requested, …).
+// Keep the specific status pill where it refines the header — so the user (and a
+// screen reader) can tell *why* a task needs attention — and drop it only where it
+// merely echoes the column, e.g. "Working" under Working.
+function laneConveysStatus(laneLabel: string | undefined, statusLabel: string): boolean {
+	if (!laneLabel) return false;
+	const normalize = (value: string) => value.toLowerCase().replace(/[^a-z]/g, "");
+	const lane = normalize(laneLabel);
+	const status = normalize(statusLabel);
+	if (!lane || !status) return false;
+	return lane === status || lane.includes(status) || status.includes(lane);
+}
+
 function SessionCard({
 	session,
 	onOpen,
 	onTerminate,
+	laneLabel,
 	interactive = true,
 }: {
 	session: WorkspaceSession;
 	onOpen?: () => void;
 	onTerminate?: () => void;
+	laneLabel?: string;
 	interactive?: boolean;
 }) {
-	// The column header already names the stage (Working / Needs you / In review /
-	// Ready to merge), so the card never repeats a status pill. It carries only its
-	// own identity + code state: agent, title, branch, PRs, diff, updated time.
 	const badge = getSessionStatusView(session.status);
+	const showStatus = !laneConveysStatus(laneLabel, badge.label);
 	const issueId = canonicalTrackerIssueId(session.issueId);
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
-	const changed = session.changedFiles ?? [];
-	const additions = changed.reduce((total, file) => total + file.additions, 0);
-	const deletions = changed.reduce((total, file) => total + file.deletions, 0);
-	const showDiff = changed.length > 0 && additions + deletions > 0;
+	// Diff totals come from the PR summaries (populated by the SCM API in the real
+	// app). session.changedFiles only exists in mock data, so using it would show
+	// nothing in the packaged app.
+	const additions = prSummaries.reduce((total, pr) => total + pr.additions, 0);
+	const deletions = prSummaries.reduce((total, pr) => total + pr.deletions, 0);
+	const showDiff = additions + deletions > 0;
 	const showTerminate = interactive && session.isTerminated !== true && onTerminate;
 	const keepTerminateVisible = session.status === "merged";
 	const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -658,6 +675,17 @@ function SessionCard({
 			</div>
 			<div className="flex items-center gap-2 px-3.5 py-2 font-mono text-2xs text-passive">
 				<div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+					{showStatus && (
+						<span
+							className={cn(
+								"inline-flex min-w-0 items-center gap-1.5 truncate font-sans font-medium",
+								badge.className,
+							)}
+						>
+							<span className="size-dot-sm shrink-0 rounded-full bg-current" aria-hidden="true" />
+							{badge.label}
+						</span>
+					)}
 					{groupPRsByLifecycle(prSummaries).map((group) => (
 						<BoardPRGroup group={group} key={group.status.label} linksInteractive={interactive} />
 					))}
@@ -681,7 +709,7 @@ function SessionCard({
 				</div>
 				<span className="shrink-0 whitespace-nowrap" title={`Updated ${session.updatedAt}`}>
 					{formatTimeCompact(session.updatedAt)}
-				</
+				</span>
 			</div>
 		</div>
 	);

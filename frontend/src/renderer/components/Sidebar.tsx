@@ -1045,13 +1045,13 @@ function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
 					// "defers opening" test pins the deferral so it is not dropped as noise.
 					queueMicrotask(onOpen);
 				}}
-tooltip={isCollapsed ? "Search" : undefined}
-			className={cn(
-				"h-8 gap-2 rounded-lg bg-muted/30 px-2.5 text-sm font-normal text-muted-foreground",
-				"border border-muted/40",
-				"transition-[background-color,border-color,color] duration-150 hover:bg-muted/60 hover:border-muted/70 hover:text-foreground [&_svg]:size-icon-sm!",
-				"group-data-[collapsible=icon]:size-control-form! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:border-transparent group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:hover:bg-interactive-hover",
-			)}
+				tooltip={isCollapsed ? "Search" : undefined}
+				className={cn(
+					"h-8 gap-2 rounded-lg bg-muted/30 px-2.5 text-sm font-normal text-muted-foreground",
+					"border border-muted/40",
+					"transition-[background-color,border-color,color] duration-150 hover:bg-muted/60 hover:border-muted/70 hover:text-foreground [&_svg]:size-icon-sm!",
+					"group-data-[collapsible=icon]:size-control-form! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:border-transparent group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:hover:bg-interactive-hover",
+				)}
 			>
 				<Search strokeWidth={1.75} aria-hidden="true" />
 				<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate text-left leading-none group-data-[collapsible=icon]:hidden">
