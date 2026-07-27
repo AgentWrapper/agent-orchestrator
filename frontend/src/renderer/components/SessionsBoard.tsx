@@ -777,6 +777,10 @@ function SessionCard({
 					>
 						{session.title}
 					</div>
+					{/* Status is not shown visually (the column names the stage), but the
+					    "Needs you" lane mixes several reasons the PR line can't convey, so
+					    keep the specific status in the accessible name for screen readers. */}
+					<span className="sr-only">Status: {badge.label}</span>
 					{showBranch && (
 						<div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-2xs text-passive">
 							<GitBranch aria-hidden="true" className="size-icon-2xs shrink-0" />
