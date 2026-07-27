@@ -88,7 +88,9 @@ func TestClineProviderAuthStatusUnauthorizedWithExpiredOAuth(t *testing.T) {
 }
 
 func TestClineProviderAuthStatusUnknownWhenMissing(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	status, ok, err := clineProviderAuthStatus(context.Background())
 	if err != nil {
@@ -103,6 +105,7 @@ func writeClineProvidersFile(t *testing.T, content string) {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	settingsDir := filepath.Join(home, ".cline", "data", "settings")
 	if err := os.MkdirAll(settingsDir, 0o700); err != nil {
 		t.Fatal(err)
