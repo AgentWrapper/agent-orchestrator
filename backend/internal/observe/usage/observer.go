@@ -39,6 +39,7 @@ type Config struct {
 	SourceLimit int64
 	ChunkBytes  int64
 	RecordBytes int
+	Reconcile   func(context.Context, int64) error
 	Clock       func() time.Time
 	Logger      *slog.Logger
 }
@@ -50,6 +51,7 @@ type Observer struct {
 	sourceLimit int64
 	chunkBytes  int64
 	recordBytes int
+	reconcile   func(context.Context, int64) error
 	now         func() time.Time
 	logger      *slog.Logger
 	wake        chan struct{}
@@ -81,6 +83,7 @@ func New(store observerStore, cfg Config) *Observer {
 		sourceLimit: cfg.SourceLimit,
 		chunkBytes:  cfg.ChunkBytes,
 		recordBytes: cfg.RecordBytes,
+		reconcile:   cfg.Reconcile,
 		now:         cfg.Clock,
 		logger:      cfg.Logger,
 		wake:        make(chan struct{}, 1),
@@ -127,11 +130,17 @@ func (o *Observer) pollAndLog(ctx context.Context) {
 // Poll processes one bounded batch of registered sources.
 func (o *Observer) Poll(ctx context.Context) error {
 	now := o.now().UTC()
+	var errs []error
+	if o.reconcile != nil {
+		if err := o.reconcile(ctx, o.sourceLimit); err != nil {
+			errs = append(errs, fmt.Errorf("reconcile usage sources: %w", err))
+		}
+	}
 	sources, err := o.store.ListObserverReadyUsageSources(ctx, now, o.sourceLimit)
 	if err != nil {
-		return err
+		errs = append(errs, err)
+		return errors.Join(errs...)
 	}
-	var errs []error
 	for _, source := range sources {
 		if err := o.processSource(ctx, source.ID, now); err != nil {
 			errs = append(errs, err)
@@ -170,6 +179,22 @@ func (o *Observer) processSource(ctx context.Context, sourceID int64, now time.T
 		parsed.Cursor.State = domain.UsageSourceComplete
 	}
 	if _, err := o.store.ApplyUsageChunk(ctx, source.Source.ID, source.Source.ByteOffset, parsed.Cursor, parsed.Events); err != nil {
+		if errors.Is(err, domain.ErrUsageSourceEventConflict) {
+			if _, markErr := o.store.MarkUsageSourceState(
+				ctx,
+				source.Source.ID,
+				domain.UsageSourceComplete,
+				domain.UsageErrorSourceEventConflict,
+				nil,
+				now,
+			); markErr != nil {
+				return errors.Join(err, markErr)
+			}
+			if source.BindingState == domain.UsageBindingFinalizing {
+				return o.completeBinding(ctx, source.Source.BindingID, now)
+			}
+			return nil
+		}
 		return fmt.Errorf("apply usage source %d: %w", source.Source.ID, err)
 	}
 	if parsed.Cursor.State == domain.UsageSourceComplete {

@@ -78,18 +78,34 @@ WHERE state IN ('pending', 'active', 'error')
 ORDER BY updated_at, id
 LIMIT ?;
 
--- name: ListUnresolvedCodexBindings :many
-SELECT *
-FROM usage_bindings
-WHERE harness = 'codex'
-  AND state IN ('discovering', 'active')
-  AND NOT EXISTS (
-      SELECT 1
-      FROM usage_sources
-      WHERE usage_sources.binding_id = usage_bindings.id
-        AND usage_sources.kind = 'codex_rollout'
+-- name: ListUsageDiscoveryBindings :many
+SELECT ub.*
+FROM usage_bindings ub
+JOIN sessions s ON s.id = ub.session_id
+WHERE s.is_terminated = 0
+  AND ub.harness IN ('claude-code', 'codex')
+  AND ub.state IN ('discovering', 'active', 'finalizing')
+  AND (
+      ub.harness = 'claude-code'
+      OR ub.state = 'discovering'
+      OR ub.state = 'finalizing'
+      OR ub.last_error_code = 'source_discovery_pending'
+      OR NOT EXISTS (
+          SELECT 1
+          FROM usage_sources us
+          WHERE us.binding_id = ub.id
+            AND us.kind = 'codex_rollout'
+      )
+      OR EXISTS (
+          SELECT 1
+          FROM usage_sources us
+          WHERE us.binding_id = ub.id
+            AND us.kind = 'codex_rollout'
+            AND us.state = 'error'
+            AND us.last_error_code IN ('artifact_missing', 'source_read_failed')
+      )
   )
-ORDER BY first_seen_at, id
+ORDER BY ub.updated_at, ub.id
 LIMIT ?;
 
 -- name: GetUsageSourceWithBindingAndSession :one

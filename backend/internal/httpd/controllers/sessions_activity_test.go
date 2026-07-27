@@ -86,6 +86,55 @@ func TestSessionsAPI_ActivityForwardsUsageMetadataWithoutChangingActivity(t *tes
 	}
 }
 
+func TestSessionsAPI_ActivityForwardsMetadataOnlySessionStartToUsage(t *testing.T) {
+	usage := &fakeUsageHookRecorder{}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(httpd.NewRouterWithControl(
+		config.Config{},
+		log,
+		nil,
+		httpd.APIDeps{UsageHooks: usage},
+		httpd.ControlDeps{},
+	))
+	t.Cleanup(srv.Close)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity",
+		`{"event":"session-start","agentSessionId":"codex-native-1"}`)
+	if status != http.StatusOK {
+		t.Fatalf("activity = %d, want 200; body=%s", status, body)
+	}
+	if usage.calls != 1 || usage.gotID != "ao-1" {
+		t.Fatalf("usage calls=%d id=%q", usage.calls, usage.gotID)
+	}
+	if usage.gotSignal.Event != "session-start" ||
+		usage.gotSignal.NativeSessionID != "codex-native-1" ||
+		usage.gotSignal.Harness != "" {
+		t.Fatalf("usage signal = %+v", usage.gotSignal)
+	}
+}
+
+func TestSessionsAPI_ActivityDoesNotForwardUnrelatedMetadataOnlyEventToUsage(t *testing.T) {
+	usage := &fakeUsageHookRecorder{}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(httpd.NewRouterWithControl(
+		config.Config{},
+		log,
+		nil,
+		httpd.APIDeps{UsageHooks: usage},
+		httpd.ControlDeps{},
+	))
+	t.Cleanup(srv.Close)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity",
+		`{"event":"stop","agentSessionId":"codex-native-1"}`)
+	if status != http.StatusOK {
+		t.Fatalf("activity = %d, want 200; body=%s", status, body)
+	}
+	if usage.calls != 0 {
+		t.Fatalf("usage calls=%d, want 0", usage.calls)
+	}
+}
+
 func TestSessionsAPI_ActivityAppliesSignal(t *testing.T) {
 	rec := &fakeActivityRecorder{}
 	srv := newActivityTestServer(t, rec)

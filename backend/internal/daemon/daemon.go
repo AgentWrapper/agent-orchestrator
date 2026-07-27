@@ -201,8 +201,15 @@ func Run() error {
 	if roots, rootsErr := usagesvc.DefaultSourceRoots(); rootsErr != nil {
 		log.Warn("usage collection disabled", "err", rootsErr)
 	} else {
-		usageObserver = usageobserver.New(store, usageobserver.Config{Logger: log})
-		usageCollector = usagesvc.NewCollector(store, roots, usageObserver.Wake)
+		usageCollector = usagesvc.NewCollector(store, roots, func() {
+			if usageObserver != nil {
+				usageObserver.Wake()
+			}
+		})
+		usageObserver = usageobserver.New(store, usageobserver.Config{
+			Logger:    log,
+			Reconcile: usageCollector.ReconcileSources,
+		})
 	}
 	// Push-device registry: persisted phones that receive OS push notifications.
 	// A load failure must not block boot — degrade to no push rather than refusing
