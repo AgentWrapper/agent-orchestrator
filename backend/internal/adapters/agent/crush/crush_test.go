@@ -235,15 +235,18 @@ func TestManifest(t *testing.T) {
 	}
 }
 
-func TestGetConfigSpecReturnsEmpty(t *testing.T) {
+func TestGetConfigSpecReportsModelField(t *testing.T) {
 	plugin := &Plugin{}
 
 	spec, err := plugin.GetConfigSpec(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(spec.Fields) != 0 {
-		t.Fatalf("unexpected config spec fields: got %d, want 0", len(spec.Fields))
+	if len(spec.Fields) != 1 {
+		t.Fatalf("unexpected config spec fields: got %d, want 1", len(spec.Fields))
+	}
+	if spec.Fields[0].Key != "model" {
+		t.Fatalf("unexpected config spec field key: got %q, want %q", spec.Fields[0].Key, "model")
 	}
 }
 
@@ -316,6 +319,92 @@ func TestGetAgentHooksMergesExistingCrushConfig(t *testing.T) {
 	}
 	if countJSONStrings(paths, crushSystemPromptPath) != 1 {
 		t.Fatalf("context_paths duplicated AO path: %#v", paths)
+	}
+}
+
+func TestGetAgentHooksWritesModelOverride(t *testing.T) {
+	workspace := t.TempDir()
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		SystemPrompt:  "AO standing instructions",
+		Config:        ports.AgentConfig{Model: "anthropic/claude-sonnet-4-5"},
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	cfg := readCrushConfigForTest(t, crushConfigFile(workspace))
+	large := cfg["models"].(map[string]any)["large"].(map[string]any)
+	if large["provider"] != "anthropic" {
+		t.Fatalf("models.large.provider = %#v, want %q", large["provider"], "anthropic")
+	}
+	if large["model"] != "claude-sonnet-4-5" {
+		t.Fatalf("models.large.model = %#v, want %q", large["model"], "claude-sonnet-4-5")
+	}
+}
+
+func TestGetAgentHooksPreservesOtherModelFieldsOnOverride(t *testing.T) {
+	workspace := t.TempDir()
+	configPath := crushConfigFile(workspace)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte(`{"models":{"large":{"model":"old-model","provider":"old-provider","max_tokens":4096}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		SystemPrompt:  "AO standing instructions",
+		Config:        ports.AgentConfig{Model: "openai/gpt-5"},
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	large := readCrushConfigForTest(t, configPath)["models"].(map[string]any)["large"].(map[string]any)
+	if large["provider"] != "openai" || large["model"] != "gpt-5" {
+		t.Fatalf("models.large = %#v, want provider=openai model=gpt-5", large)
+	}
+	if large["max_tokens"] != float64(4096) {
+		t.Fatalf("models.large.max_tokens was dropped: %#v", large)
+	}
+}
+
+func TestGetAgentHooksLeavesModelUntouchedWhenNoOverride(t *testing.T) {
+	workspace := t.TempDir()
+	configPath := crushConfigFile(workspace)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte(`{"models":{"large":{"model":"user-picked-model","provider":"user-provider"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		SystemPrompt:  "AO standing instructions",
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	large := readCrushConfigForTest(t, configPath)["models"].(map[string]any)["large"].(map[string]any)
+	if large["provider"] != "user-provider" || large["model"] != "user-picked-model" {
+		t.Fatalf("models.large = %#v, want the user's existing selection untouched", large)
+	}
+}
+
+func TestGetAgentHooksRejectsModelWithoutProvider(t *testing.T) {
+	workspace := t.TempDir()
+
+	err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		SystemPrompt:  "AO standing instructions",
+		Config:        ports.AgentConfig{Model: "claude-sonnet-4-5"},
+	})
+	if err == nil {
+		t.Fatal("GetAgentHooks err = nil, want error for a model without a provider prefix")
+	}
+	if !strings.Contains(err.Error(), "provider") {
+		t.Fatalf("error = %v, want it to mention the missing provider", err)
 	}
 }
 
