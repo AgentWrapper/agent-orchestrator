@@ -8,15 +8,24 @@ import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
 import { useUiStore } from "../stores/ui-store";
 
-const { getMock, navigateMock, mockParams, renameSessionMock, updateStatusMock } = vi.hoisted(() => ({
-	getMock: vi.fn(),
-	navigateMock: vi.fn(),
-	mockParams: { projectId: undefined as string | undefined },
-	renameSessionMock: vi.fn().mockResolvedValue(undefined),
-	updateStatusMock: vi.fn(),
-}));
+const { getMock, navigateMock, mockParams, renameSessionMock, spawnMock, updateStatusMock, commandPaletteEnabled } = vi.hoisted(
+	() => ({
+		getMock: vi.fn(),
+		navigateMock: vi.fn(),
+		mockParams: { projectId: undefined as string | undefined },
+		renameSessionMock: vi.fn().mockResolvedValue(undefined),
+		spawnMock: vi.fn(),
+		updateStatusMock: vi.fn(),
+		commandPaletteEnabled: { current: true },
+	}),
+);
 
 vi.mock("../lib/rename-session", () => ({ renameSession: renameSessionMock }));
+vi.mock("../lib/spawn-orchestrator", () => ({ spawnOrchestrator: spawnMock }));
+
+vi.mock("../hooks/useCommandPaletteEnabled", () => ({
+	useCommandPaletteEnabled: () => commandPaletteEnabled.current,
+}));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@tanstack/react-router")>();
@@ -54,6 +63,7 @@ const workspace: WorkspaceSummary = {
 	id: "proj-1",
 	name: "Project One",
 	path: "/repo/project-one",
+	orchestratorAgent: "claude-code",
 	sessions: [],
 };
 
@@ -188,6 +198,8 @@ async function openCreateProjectDialog(
 beforeEach(() => {
 	window.localStorage.clear();
 	document.documentElement.style.removeProperty("--ao-sidebar-w");
+	commandPaletteEnabled.current = true;
+	useUiStore.setState({ isCommandPaletteOpen: false });
 	getMock.mockReset();
 	getMock.mockResolvedValue({
 		data: {
@@ -208,6 +220,7 @@ beforeEach(() => {
 	});
 	navigateMock.mockReset();
 	renameSessionMock.mockReset().mockResolvedValue(undefined);
+	spawnMock.mockReset();
 	updateStatusMock.mockReset().mockResolvedValue({ state: "idle" });
 	mockParams.projectId = undefined;
 });
@@ -217,6 +230,41 @@ afterEach(() => {
 });
 
 describe("Sidebar", () => {
+	it("keeps only the expanded Settings control keyboard-accessible while expanded", () => {
+		renderSidebar();
+
+		const settingsButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('button[aria-label="Settings"]'));
+		const expandedButton = settingsButtons.find((button) => button.textContent?.includes("Settings"));
+		const collapsedButton = settingsButtons.find((button) => !button.textContent?.includes("Settings"));
+
+		expect(settingsButtons).toHaveLength(2);
+		expect(expandedButton).toHaveAttribute("tabindex", "0");
+		expect(expandedButton?.parentElement).not.toHaveAttribute("aria-hidden");
+		expect(collapsedButton).toHaveAttribute("tabindex", "-1");
+		expect(collapsedButton?.closest('[aria-hidden="true"]')).toBeInTheDocument();
+	});
+
+	it("keeps only the collapsed Settings control keyboard-accessible while collapsed", async () => {
+		renderSidebar();
+
+		fireEvent.pointerDown(screen.getByTestId("resize-handle"), { clientX: 240 });
+		fireEvent.pointerMove(window, { clientX: 120 });
+
+		await waitFor(() => {
+			expect(document.querySelector('[data-slot="sidebar"][data-state="collapsed"]')).toBeInTheDocument();
+		});
+
+		const settingsButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('button[aria-label="Settings"]'));
+		const expandedButton = settingsButtons.find((button) => button.textContent?.includes("Settings"));
+		const collapsedButton = settingsButtons.find((button) => !button.textContent?.includes("Settings"));
+
+		expect(settingsButtons).toHaveLength(2);
+		expect(expandedButton).toHaveAttribute("tabindex", "-1");
+		expect(expandedButton?.closest('[aria-hidden="true"]')).toBeInTheDocument();
+		expect(collapsedButton).toHaveAttribute("tabindex", "0");
+		expect(collapsedButton?.closest('[aria-hidden="true"]')).toBeNull();
+	});
+
 	it("keeps sidebar scrolling functional while hiding the visible scrollbar", () => {
 		renderSidebar();
 
@@ -224,6 +272,19 @@ describe("Sidebar", () => {
 		expect(content).toHaveClass("overflow-y-auto");
 		expect(content).toHaveClass("scrollbar-none");
 		expect(content).not.toContainElement(screen.getByText("Projects"));
+	});
+
+	it("opens project settings instead of spawning when no orchestrator agent is configured", async () => {
+		const user = userEvent.setup();
+		renderSidebar({ workspaces: [{ ...workspace, orchestratorAgent: undefined }] });
+
+		await user.click(screen.getByRole("button", { name: "Spawn Project One orchestrator" }));
+
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/settings",
+			params: { projectId: "proj-1" },
+		});
+		expect(spawnMock).not.toHaveBeenCalled();
 	});
 
 	it("shows a ConfirmDialog and calls onRemoveProject when confirmed", async () => {
@@ -707,6 +768,30 @@ describe("Sidebar", () => {
 		renderSidebar();
 		await user.click(screen.getAllByRole("button", { name: "Settings" })[0]);
 		expect(navigateMock).toHaveBeenCalledWith({ to: "/settings" });
+	});
+
+	it("opens the command palette when Search is clicked", async () => {
+		const user = userEvent.setup();
+		renderSidebar();
+		expect(useUiStore.getState().isCommandPaletteOpen).toBe(false);
+		await user.click(screen.getByRole("button", { name: /Search/ }));
+		expect(useUiStore.getState().isCommandPaletteOpen).toBe(true);
+	});
+
+	it("defers opening the palette until the Search click has been dispatched", async () => {
+		renderSidebar();
+		fireEvent.click(screen.getByRole("button", { name: /Search/ }));
+		// Still closed inside the click's task: the palette dialog must not mount
+		// while the pointer sequence that opened it is still being handled.
+		expect(useUiStore.getState().isCommandPaletteOpen).toBe(false);
+		await act(async () => {});
+		expect(useUiStore.getState().isCommandPaletteOpen).toBe(true);
+	});
+
+	it("hides Search when the command palette feature is disabled", () => {
+		commandPaletteEnabled.current = false;
+		renderSidebar();
+		expect(screen.queryByRole("button", { name: /Search/ })).not.toBeInTheDocument();
 	});
 
 	it("shows the project name and context in the ConfirmDialog description", async () => {

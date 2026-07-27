@@ -1,0 +1,312 @@
+@import "tailwindcss";
+/* Relative path avoids Turbopack resolving workspace CSS from frontend/src. */
+@import "../../packages/ui/src/globals.css";
+@import "@xterm/xterm/css/xterm.css";
+
+/* ===== Dark theme color tokens ===== */
+/* These must be defined at :root so Tailwind v4 utilities
+   like border-border, bg-background, text-foreground etc.
+   work correctly across the landing page. */
+
+:root {
+  /* Base */
+  --background: oklch(0.153 0.006 107.1);
+  --foreground: oklch(0.988 0.003 106.5);
+  /* Card */
+  --card: oklch(0.228 0.013 107.4);
+  --card-foreground: oklch(0.988 0.003 106.5);
+  /* Popover */
+  --popover: oklch(0.228 0.013 107.4);
+  --popover-foreground: oklch(0.988 0.003 106.5);
+  /* Primary */
+  --primary: oklch(0.93 0.007 106.5);
+  --primary-foreground: oklch(0.228 0.013 107.4);
+  /* Secondary */
+  --secondary: oklch(0.286 0.016 107.4);
+  --secondary-foreground: oklch(0.988 0.003 106.5);
+  /* Muted */
+  --muted: oklch(0.286 0.016 107.4);
+  --muted-foreground: oklch(0.737 0.021 106.9);
+  /* Accent */
+  --accent: oklch(0.286 0.016 107.4);
+  --accent-foreground: oklch(0.988 0.003 106.5);
+  /* Destructive */
+  --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: oklch(0.971 0.013 17.38);
+  /* Border & Input & Ring */
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.58 0.031 107.3);
+  /* Chart */
+  --chart-1: oklch(0.88 0.011 106.6);
+  --chart-2: oklch(0.58 0.031 107.3);
+  --chart-3: oklch(0.466 0.025 107.3);
+  --chart-4: oklch(0.394 0.023 107.4);
+  --chart-5: oklch(0.286 0.016 107.4);
+  /* Sidebar */
+  --sidebar: oklch(0.228 0.013 107.4);
+  --sidebar-background: var(--sidebar);
+  --sidebar-foreground: oklch(0.988 0.003 106.5);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.988 0.003 106.5);
+  --sidebar-accent: oklch(0.286 0.016 107.4);
+  --sidebar-accent-foreground: oklch(0.988 0.003 106.5);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.58 0.031 107.3);
+
+  /* Brand tokens */
+  --brand: #d25611;
+  --brand-light: #e8804a;
+  --brand-dark: #9e400a;
+}
+
+@source "../../packages/ui/src/**/*.{ts,tsx}";
+
+@theme {
+	--font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+	--font-serif: Georgia, "Times New Roman", Times, serif;
+	--font-mono: var(--font-ibm-plex-mono), ui-monospace, monospace;
+}
+
+@theme inline {
+	--color-brand: var(--brand);
+	--color-brand-light: var(--brand-light);
+	--color-brand-dark: var(--brand-dark);
+	--color-background: var(--background);
+	--color-foreground: var(--foreground);
+	--color-card: var(--card);
+	--color-card-foreground: var(--card-foreground);
+	--color-popover: var(--popover);
+	--color-popover-foreground: var(--popover-foreground);
+	--color-primary: var(--primary);
+	--color-primary-foreground: var(--primary-foreground);
+	--color-secondary: var(--secondary);
+	--color-secondary-foreground: var(--secondary-foreground);
+	--color-muted: var(--muted);
+	--color-muted-foreground: var(--muted-foreground);
+	--color-accent: var(--accent);
+	--color-accent-foreground: var(--accent-foreground);
+	--color-destructive: var(--destructive);
+	--color-destructive-foreground: var(--destructive-foreground);
+	--color-border: var(--border);
+	--color-input: var(--input);
+	--color-ring: var(--ring);
+	--color-sidebar: var(--sidebar);
+	--color-sidebar-background: var(--sidebar-background);
+	--color-sidebar-foreground: var(--sidebar-foreground);
+	--color-sidebar-primary: var(--sidebar-primary);
+	--color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+	--color-sidebar-accent: var(--sidebar-accent);
+	--color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+	--color-sidebar-border: var(--sidebar-border);
+	--color-sidebar-ring: var(--sidebar-ring);
+}
+
+
+@layer base {
+	html,
+	body {
+		-ms-overflow-style: none;
+		scrollbar-width: none;
+	}
+
+	html::-webkit-scrollbar,
+	body::-webkit-scrollbar {
+		display: none;
+	}
+
+	body {
+		font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+		font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+		letter-spacing: -0.5px;
+	}
+
+	code,
+	pre,
+	kbd,
+	samp,
+	.font-mono,
+	.font-serif {
+		letter-spacing: normal;
+	}
+
+	button:not(:disabled),
+	[role="button"]:not([aria-disabled="true"]) {
+		cursor: pointer;
+	}
+
+	button,
+	[role="button"] {
+		user-select: none;
+		-webkit-user-select: none;
+	}
+}
+
+@utility scrollbar-hide {
+	-ms-overflow-style: none;
+	scrollbar-width: none;
+	&::-webkit-scrollbar {
+		display: none;
+	}
+}
+
+/* Blog prose styles */
+.prose {
+	--tw-prose-body: rgb(255 255 255 / 0.7);
+	--tw-prose-headings: rgb(255 255 255);
+	--tw-prose-links: rgb(96 165 250);
+	--tw-prose-bold: rgb(255 255 255);
+	--tw-prose-counters: rgb(255 255 255 / 0.5);
+	--tw-prose-bullets: rgb(255 255 255 / 0.4);
+	--tw-prose-hr: rgb(255 255 255 / 0.1);
+	--tw-prose-quotes: rgb(255 255 255 / 0.6);
+	--tw-prose-quote-borders: rgb(255 255 255 / 0.2);
+	--tw-prose-code: rgb(255 255 255 / 0.9);
+	--tw-prose-pre-bg: rgb(255 255 255 / 0.03);
+	--tw-prose-pre-code: rgb(255 255 255 / 0.8);
+}
+
+.prose h1 {
+	font-size: 2rem;
+	font-weight: 700;
+	margin-top: 3rem;
+	margin-bottom: 1.25rem;
+	scroll-margin-top: 6rem;
+}
+
+.prose h2 {
+	font-size: 1.5rem;
+	font-weight: 600;
+	margin-top: 2.5rem;
+	margin-bottom: 1rem;
+	scroll-margin-top: 6rem;
+}
+
+.prose h3 {
+	font-size: 1.25rem;
+	font-weight: 600;
+	margin-top: 2rem;
+	margin-bottom: 0.75rem;
+	scroll-margin-top: 6rem;
+}
+
+.prose p {
+	margin-top: 1.25rem;
+	margin-bottom: 1.25rem;
+	line-height: 1.75;
+}
+
+.prose ul,
+.prose ol {
+	margin-top: 1.25rem;
+	margin-bottom: 1.25rem;
+	padding-left: 1.5rem;
+}
+
+.prose li {
+	margin-top: 0.5rem;
+	margin-bottom: 0.5rem;
+}
+
+.prose a {
+	text-decoration: underline;
+	text-decoration-color: rgb(255 255 255 / 0.3);
+	text-underline-offset: 2px;
+	transition: text-decoration-color 0.15s;
+}
+
+.prose a:hover {
+	text-decoration-color: rgb(255 255 255 / 0.6);
+}
+
+.prose code:not(pre code) {
+	background: rgb(255 255 255 / 0.05);
+	padding: 0.2em 0.4em;
+	border-radius: 0.25rem;
+	font-size: 0.875em;
+	color: rgb(255 255 255 / 0.9);
+	font-family: var(--font-mono);
+}
+
+.prose code::before,
+.prose code::after {
+	content: none;
+}
+
+.prose pre {
+	background: rgb(255 255 255 / 0.05);
+	border: 1px solid rgb(255 255 255 / 0.1);
+	border-radius: 0.5rem;
+	padding: 1rem;
+	overflow-x: auto;
+	color: rgb(255 255 255 / 0.85);
+	font-family: var(--font-mono);
+	font-size: 0.875rem;
+	line-height: 1.7;
+}
+
+.prose pre code {
+	background: transparent;
+	padding: 0;
+	border-radius: 0;
+	font-size: inherit;
+	color: inherit;
+	font-family: inherit;
+}
+
+.prose table {
+	width: 100%;
+	margin-top: 1.5rem;
+	margin-bottom: 1.5rem;
+	border-collapse: collapse;
+	font-size: 0.875rem;
+	line-height: 1.5;
+}
+
+.prose thead {
+	border-bottom: 1px solid rgb(255 255 255 / 0.15);
+}
+
+.prose th {
+	padding: 0.5rem 0.75rem;
+	text-align: left;
+	font-weight: 600;
+	color: rgb(255 255 255);
+}
+
+.prose td {
+	padding: 0.5rem 0.75rem;
+	color: rgb(255 255 255 / 0.7);
+	border-top: 1px solid rgb(255 255 255 / 0.08);
+}
+
+.prose tbody tr:first-child td {
+	border-top: none;
+}
+
+.prose blockquote {
+	font-style: normal;
+	border-left-color: rgb(255 255 255 / 0.2);
+}
+
+/*
+ * Blog code blocks - force dark theme
+ * Note: !important is required to override Shiki's inline styles
+ */
+.blog-code-block > div {
+	background: #282c34;
+	border-color: #3e4451;
+}
+
+.blog-code-block pre {
+	background: #282c34;
+}
+
+/* Hide light theme, show dark theme */
+.blog-code-block .dark\:hidden {
+	display: none;
+}
+
+.blog-code-block .hidden.dark\:block {
+	display: block;
+}

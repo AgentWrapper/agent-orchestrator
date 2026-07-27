@@ -3,9 +3,6 @@ title: Authoring a plugin
 description: Write a custom runtime, agent, workspace, tracker, SCM, notifier, or terminal plugin for AO.
 ---
 
-import { Callout } from "fumadocs-ui/components/callout";
-import { Step, Steps } from "fumadocs-ui/components/steps";
-import { Card, Cards } from "fumadocs-ui/components/card";
 
 AO's seven user-pluggable slots (Runtime, Agent, Workspace, Tracker, SCM, Notifier, Terminal) are all resolved at startup from the plugin registry. Each slot is backed by a TypeScript interface defined in `packages/core/src/types.ts`. Adding a new tracker, notifier, or any other integration is a matter of publishing an npm package — or pointing to a local path — that exports a manifest, a `create()` factory, and an optional `detect()` probe as its default export.
 

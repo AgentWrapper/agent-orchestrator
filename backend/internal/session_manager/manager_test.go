@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/scratch"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -356,6 +357,71 @@ func (a promptStrategyErrorAgent) GetPromptDeliveryStrategy(context.Context, por
 type singleAgent struct{ agent ports.Agent }
 
 func (s singleAgent) Agent(domain.AgentHarness) (ports.Agent, bool) { return s.agent, true }
+
+type scratchHookAgent struct {
+	fakeAgent
+}
+
+func (a *scratchHookAgent) GetAgentHooks(_ context.Context, cfg ports.WorkspaceHookConfig) error {
+	dir := filepath.Join(cfg.WorkspacePath, ".claude")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, "settings.local.json"), []byte("{}"), 0o600)
+}
+
+func (a *scratchHookAgent) GetLaunchCommand(context.Context, ports.LaunchConfig) ([]string, error) {
+	return []string{"missing-agent"}, nil
+}
+
+type scratchHookAfterStartAgent struct {
+	scratchHookAgent
+}
+
+func (a *scratchHookAfterStartAgent) GetLaunchCommand(context.Context, ports.LaunchConfig) ([]string, error) {
+	return []string{"agent"}, nil
+}
+
+func (a *scratchHookAfterStartAgent) GetPromptDeliveryStrategy(context.Context, ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
+	return ports.PromptDeliveryAfterStart, nil
+}
+
+type nonEmptyWorkspace struct {
+	ports.Workspace
+}
+
+func (w *nonEmptyWorkspace) Create(ctx context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
+	info, err := w.Workspace.Create(ctx, cfg)
+	if err != nil {
+		return ports.WorkspaceInfo{}, err
+	}
+	if err := os.WriteFile(filepath.Join(info.Path, "provisioned.txt"), []byte("preserve"), 0o600); err != nil {
+		return ports.WorkspaceInfo{}, err
+	}
+	return info, nil
+}
+
+type maxSessionNumStore struct {
+	*fakeStore
+}
+
+func (s *maxSessionNumStore) CreateSession(_ context.Context, rec domain.SessionRecord) (domain.SessionRecord, error) {
+	next := 1
+	prefix := string(rec.ProjectID) + "-"
+	for id := range s.sessions {
+		if !strings.HasPrefix(string(id), prefix) {
+			continue
+		}
+		raw := strings.TrimPrefix(string(id), prefix)
+		var num int
+		if _, err := fmt.Sscanf(raw, "%d", &num); err == nil && num >= next {
+			next = num + 1
+		}
+	}
+	rec.ID = domain.SessionID(fmt.Sprintf("%s-%d", rec.ProjectID, next))
+	s.sessions[rec.ID] = rec
+	return rec, nil
+}
 
 type cleaningAgent struct {
 	fakeAgent
@@ -3549,6 +3615,162 @@ func TestSpawn_RejectsMissingAgentBinary(t *testing.T) {
 		t.Fatalf("seed row must be deleted before a runtime handle is live, got %+v", rec)
 	}
 	requireNoPromptDir(t, dataDir, "mer-1")
+}
+
+func TestSpawn_MissingBinaryPreservesNonEmptyScratchWorkspaceForRetry(t *testing.T) {
+	st := newFakeStore()
+	st.projects["scratch"] = domain.ProjectRecord{
+		ID:     "scratch",
+		Kind:   domain.ProjectKindScratch,
+		Config: testRoleAgents(),
+	}
+	store := &maxSessionNumStore{fakeStore: st}
+	workspace, err := scratch.New(scratch.Options{ManagedRoot: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	notFound := func(name string) (string, error) {
+		if name == "tmux" {
+			return "/bin/tmux", nil
+		}
+		return "", fmt.Errorf("exec: %q: not found", name)
+	}
+	m := New(Deps{
+		Runtime:   &fakeRuntime{},
+		Agents:    singleAgent{agent: &scratchHookAgent{}},
+		Workspace: workspace,
+		Store:     store,
+		Messenger: &fakeMessenger{},
+		Lifecycle: &fakeLCM{store: st},
+		DataDir:   t.TempDir(),
+		LookPath:  notFound,
+	})
+
+	_, _, _, err = m.Spawn(ctx, ports.SpawnConfig{ProjectID: "scratch", Kind: domain.KindOrchestrator})
+	if !errors.Is(err, ports.ErrAgentBinaryNotFound) {
+		t.Fatalf("first spawn err = %v, want ErrAgentBinaryNotFound", err)
+	}
+	failed, ok := st.sessions["scratch-1"]
+	if !ok {
+		t.Fatal("failed scratch spawn row was deleted")
+	}
+	if !failed.IsTerminated {
+		t.Fatal("failed scratch spawn row must be terminated")
+	}
+	if failed.Metadata.WorkspacePath == "" {
+		t.Fatal("failed scratch spawn must retain its preserved workspace path")
+	}
+	if _, err := os.Stat(filepath.Join(failed.Metadata.WorkspacePath, ".claude", "settings.local.json")); err != nil {
+		t.Fatalf("preserved hook file: %v", err)
+	}
+
+	_, _, _, err = m.Spawn(ctx, ports.SpawnConfig{ProjectID: "scratch", Kind: domain.KindOrchestrator})
+	if !errors.Is(err, ports.ErrAgentBinaryNotFound) {
+		t.Fatalf("retry err = %v, want ErrAgentBinaryNotFound", err)
+	}
+	if errors.Is(err, ports.ErrWorkspaceDirty) {
+		t.Fatalf("retry reused preserved workspace: %v", err)
+	}
+	if _, ok := st.sessions["scratch-2"]; !ok {
+		t.Fatal("retry did not allocate a fresh scratch session")
+	}
+}
+
+func TestSpawn_EarlyFailurePreservesNonEmptyScratchWorkspace(t *testing.T) {
+	st := newFakeStore()
+	config := testRoleAgents()
+	config.Symlinks = []string{"../invalid"}
+	st.projects["scratch"] = domain.ProjectRecord{
+		ID:     "scratch",
+		Kind:   domain.ProjectKindScratch,
+		Config: config,
+	}
+	store := &maxSessionNumStore{fakeStore: st}
+	baseWorkspace, err := scratch.New(scratch.Options{ManagedRoot: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := &nonEmptyWorkspace{Workspace: baseWorkspace}
+	m := New(Deps{
+		Runtime:   &fakeRuntime{},
+		Agents:    fakeAgents{},
+		Workspace: workspace,
+		Store:     store,
+		Messenger: &fakeMessenger{},
+		Lifecycle: &fakeLCM{store: st},
+		DataDir:   t.TempDir(),
+	})
+
+	_, _, _, err = m.Spawn(ctx, ports.SpawnConfig{ProjectID: "scratch", Kind: domain.KindOrchestrator})
+	if err == nil || !strings.Contains(err.Error(), "provision") {
+		t.Fatalf("Spawn err = %v, want provisioning failure", err)
+	}
+	failed, ok := st.sessions["scratch-1"]
+	if !ok {
+		t.Fatal("failed early scratch spawn row was deleted")
+	}
+	if !failed.IsTerminated {
+		t.Fatal("failed early scratch spawn row must be terminated")
+	}
+	if failed.Metadata.WorkspacePath == "" {
+		t.Fatal("failed early scratch spawn must retain its preserved workspace path")
+	}
+	if _, err := os.Stat(filepath.Join(failed.Metadata.WorkspacePath, "provisioned.txt")); err != nil {
+		t.Fatalf("preserved workspace file: %v", err)
+	}
+}
+
+func TestSpawn_AfterStartFailurePreservesNonEmptyScratchWorkspace(t *testing.T) {
+	st := newFakeStore()
+	st.projects["scratch"] = domain.ProjectRecord{
+		ID:     "scratch",
+		Kind:   domain.ProjectKindScratch,
+		Config: testRoleAgents(),
+	}
+	store := &maxSessionNumStore{fakeStore: st}
+	workspace, err := scratch.New(scratch.Options{ManagedRoot: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := &fakeRuntime{}
+	m := New(Deps{
+		Runtime:   runtime,
+		Agents:    singleAgent{agent: &scratchHookAfterStartAgent{}},
+		Workspace: workspace,
+		Store:     store,
+		Messenger: &fakeMessenger{err: errors.New("pane unavailable")},
+		Lifecycle: &fakeLCM{store: st},
+		DataDir:   t.TempDir(),
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	_, _, _, err = m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "scratch",
+		Kind:      domain.KindOrchestrator,
+		Prompt:    "continue",
+	})
+	if err == nil || !strings.Contains(err.Error(), "deliver prompt") {
+		t.Fatalf("Spawn err = %v, want prompt delivery failure", err)
+	}
+	failed, ok := st.sessions["scratch-1"]
+	if !ok {
+		t.Fatal("failed after-start scratch spawn row was deleted")
+	}
+	if !failed.IsTerminated {
+		t.Fatal("failed after-start scratch spawn row must be terminated")
+	}
+	if failed.Metadata.WorkspacePath == "" {
+		t.Fatal("failed after-start scratch spawn must retain its preserved workspace path")
+	}
+	if failed.Metadata.RuntimeHandleID != "" || failed.Metadata.RuntimeLaunchID != "" {
+		t.Fatalf("destroyed runtime metadata was retained: %#v", failed.Metadata)
+	}
+	if runtime.created != 1 || runtime.destroyed != 1 {
+		t.Fatalf("runtime created=%d destroyed=%d, want 1/1", runtime.created, runtime.destroyed)
+	}
+	if _, err := os.Stat(filepath.Join(failed.Metadata.WorkspacePath, ".claude", "settings.local.json")); err != nil {
+		t.Fatalf("preserved hook file: %v", err)
+	}
 }
 
 func TestSpawn_ValidatesBinaryAfterEnvPrefix(t *testing.T) {

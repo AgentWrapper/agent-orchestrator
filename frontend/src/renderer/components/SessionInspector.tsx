@@ -1,7 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
-import { ArrowUpRight, Files as FilesIcon, GitPullRequest, Play, Shield, Terminal, Trash2, X } from "lucide-react";
+import {
+	ArrowUpRight,
+	ChevronDown,
+	ChevronRight,
+	Files as FilesIcon,
+	GitPullRequest,
+	Play,
+	Shield,
+	Terminal,
+	Trash2,
+	X,
+} from "lucide-react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
@@ -21,11 +32,13 @@ import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
 import { PRSummaryMeta, PRSummaryParts } from "./PRSummaryDisplay";
 import { StatusPill } from "./StatusPill";
+import { CodexIcon } from "./icons";
 import { SessionTerminationDialog } from "./SessionTerminationDialog";
 import { Switch } from "./ui/switch";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
+type SessionPRReviewEntry = components["schemas"]["SessionPRReviewEntry"];
 type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
 type OpenReviewerTerminal = (target: { handleId: string; harness: string }) => void;
 
@@ -86,30 +99,16 @@ const inspectorShellClass = "@container/inspector flex h-full min-h-0 flex-col o
 
 const inspectorBodyClass = "min-h-0 flex-1 overflow-y-auto p-3 pb-4 @max-[300px]/inspector:px-2.5";
 
-const inspectorEmptyClass = "text-xs text-muted-foreground leading-normal";
+const inspectorEmptyClass = "text-xs text-settings-muted leading-normal";
 
 const kvRowClass =
 	"flex items-center gap-2.5 px-1 py-1.5 text-md-sm @max-[300px]/inspector:flex-col @max-[300px]/inspector:items-start @max-[300px]/inspector:gap-1";
 
-const kvKeyClass = "w-kv-label shrink-0 text-muted-foreground @max-[300px]/inspector:w-auto";
+const kvKeyClass = "w-kv-label shrink-0 text-settings-muted @max-[300px]/inspector:w-auto";
 
-const kvValueClass = "min-w-0 truncate text-foreground @max-[300px]/inspector:w-full";
+const kvValueClass = "min-w-0 truncate text-settings-label @max-[300px]/inspector:w-full";
 
 const kvValueMonoClass = "font-mono text-sm-md";
-
-const reviewerStatusTone: Record<"neutral" | "running" | "success" | "danger", string> = {
-	neutral: "bg-raised text-muted-foreground",
-	running: "bg-working/12 text-working",
-	success: "bg-success/14 text-success",
-	danger: "bg-error/14 text-error",
-};
-
-const reviewerDotTone: Record<"neutral" | "running" | "success" | "danger", string> = {
-	neutral: "bg-passive",
-	running: "bg-working",
-	success: "bg-success",
-	danger: "bg-error",
-};
 
 const reviewerVerdictTone: Record<"neutral" | "running" | "success" | "danger", string> = {
 	neutral: "text-muted-foreground",
@@ -117,6 +116,29 @@ const reviewerVerdictTone: Record<"neutral" | "running" | "success" | "danger", 
 	success: "text-success",
 	danger: "text-error",
 };
+
+function VerdictBadge({ label, tone }: { label: string; tone: "neutral" | "running" | "success" | "danger" }) {
+	return (
+		<span
+			className={cn(
+				"inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-2xs font-medium",
+				reviewerVerdictTone[tone],
+			)}
+		>
+			<span className="size-1.5 shrink-0 rounded-full bg-current" />
+			{label}
+		</span>
+	);
+}
+
+// The AO reviewer runs on a configurable harness; show its own mark where we
+// have one (codex today) and fall back to the generic shield otherwise.
+function ReviewerHarnessIcon({ harness, className }: { harness: string; className?: string }) {
+	if (harness === "codex") {
+		return <CodexIcon aria-hidden="true" className={className} />;
+	}
+	return <Shield aria-hidden="true" className={className} />;
+}
 
 /**
  * Tabbed inspector rail beside the terminal (Summary · Reviews · Browser).
@@ -241,15 +263,21 @@ function Section({
 	action?: ReactNode;
 	children: ReactNode;
 	className?: string;
+	/** Accepted for call-site compatibility; all sections use the settings-row box. */
+	surface?: boolean;
 	title: string;
 }) {
+	// Boxed sections match the settings page row surface (bg + radius) with the
+	// uppercase muted kicker kept inside the card, as in the inspector refs.
 	return (
-		<section className={cn("mb-4 last:mb-0", className)} data-testid="inspector-section">
-			<div className="mb-1.5 flex items-center justify-between text-2xs font-semibold uppercase tracking-wide-lg text-passive">
-				<span>{title}</span>
-				{action ?? null}
+		<section className={cn("mb-2.5 last:mb-0", className)} data-testid="inspector-section">
+			<div className="overflow-hidden rounded-settings-row bg-settings-row px-3.5 py-3">
+				<div className="mb-2 flex items-center justify-between gap-2 text-2xs font-bold uppercase tracking-settings-section text-settings-muted">
+					<span>{title}</span>
+					{action ?? null}
+				</div>
+				{children}
 			</div>
-			{children}
 		</section>
 	);
 }
@@ -281,7 +309,7 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 				<ResumeAgentControl session={session} />
 			</Section>
 
-			<Section className="border-t border-border pt-3" title="Overview">
+			<Section title="Overview">
 				<dl className="flex flex-col gap-1">
 					<Row k="Agent" v={session.provider} mono />
 					{issueId && <Row k="Issue" v={issueId} mono />}
@@ -325,7 +353,7 @@ function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
 
 	const error = resume.error instanceof Error ? resume.error.message : null;
 	return (
-		<div className="mt-3 border-t border-border pt-3">
+		<div className="mt-3 border-t border-(--color-border-settings-input) pt-3">
 			<Button
 				className="w-full"
 				disabled={resume.isPending}
@@ -389,8 +417,8 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 	return (
 		<Section title="Completion">
 			{canTerminateNow ? (
-				<div className="flex items-center justify-between gap-3 py-1">
-					<span className="min-w-0 text-xs font-medium text-foreground">Terminate</span>
+					<div className="flex items-center justify-between gap-3 py-1">
+					<span className="min-w-0 text-xs font-medium text-settings-label">Terminate</span>
 					<button
 						aria-label="Terminate session"
 						className="inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-colors hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
@@ -406,7 +434,7 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 			) : (
 				<>
 					<div className="flex items-center justify-between gap-3 py-1">
-						<label className="min-w-0 text-xs font-medium text-foreground" htmlFor={`merge-policy-${session.id}`}>
+						<label className="min-w-0 text-xs font-medium text-settings-label" htmlFor={`merge-policy-${session.id}`}>
 							Terminate on merge
 						</label>
 						<Switch
@@ -453,10 +481,10 @@ function updateSessionMergePolicy(
 
 function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 	return (
-		<div className="rounded-md border border-border bg-surface px-2.5 py-1.5">
+		<div className="rounded-lg border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-2.5 py-1.5">
 			<div className="flex items-center gap-2">
-				<GitPullRequest className="size-icon-md shrink-0 text-passive" aria-hidden="true" />
-				<span className="text-md-sm font-medium text-foreground">PR #{pr.number}</span>
+				<GitPullRequest className="size-icon-md shrink-0 text-settings-muted" aria-hidden="true" />
+				<span className="text-md-sm font-medium text-settings-label">PR #{pr.number}</span>
 				<Badge
 					variant="outline"
 					className={cn("h-5 px-1.5 text-[9px] leading-none font-medium", prStateTone[pr.state])}
@@ -473,7 +501,7 @@ function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 					<ArrowUpRight aria-hidden="true" className="size-icon-2xs" strokeWidth={2} />
 				</a>
 			</div>
-			{pr.title ? <div className="mt-1.5 text-xs font-medium leading-snug text-foreground">{pr.title}</div> : null}
+			{pr.title ? <div className="mt-1.5 text-xs font-medium leading-snug text-settings-label">{pr.title}</div> : null}
 			<PRSummaryMeta className="mt-1" pr={pr} />
 			<PRSummaryParts className="mt-1.5" pr={pr} variant="stacked" />
 		</div>
@@ -740,10 +768,15 @@ function ReviewsView({
 		},
 	});
 	const reviewStates = reviewsQuery.data?.reviews ?? [];
+	const scmSummary = useSessionScmSummary(hasPr ? session.id : undefined);
+	const prReviewSummaries = sessionPRDisplaySummaries(session, scmSummary.data).filter(
+		(pr) => pr.state === "open" && (pr.review.reviews?.length ?? 0) > 0,
+	);
 
 	return (
 		<div role="tabpanel">
-			<Section title="Reviews">
+			{/* AO code reviews lead: the flow is run AO review first, then raise the PR for others. */}
+			<Section surface title="AO code reviews">
 				<ReviewPanel
 					config={projectConfigQuery.data}
 					error={reviewsQuery.error ?? triggerReview.error ?? cancelReview.error}
@@ -759,8 +792,109 @@ function ReviewsView({
 					session={session}
 				/>
 			</Section>
+			{prReviewSummaries.length > 0 ? <PullRequestReviewsSection prs={prReviewSummaries} /> : null}
 		</div>
 	);
+}
+
+function PullRequestReviewsSection({ prs }: { prs: SessionPRSummary[] }) {
+	return (
+		<Section surface title="Pull request reviews">
+			<div className="flex flex-col divide-y divide-border">
+				{prs.map((pr, index) => (
+					<ReviewDisclosure
+						key={pr.url}
+						defaultOpen={index === 0}
+						meta={`#${pr.number} · ${formatTimeCompact(pr.updatedAt)}`}
+						title={pr.title?.trim() || `PR #${pr.number}`}
+					>
+						{(pr.review.reviews ?? []).map((entry, entryIndex) => (
+							<PullRequestReviewRow entry={entry} key={`${entry.reviewerId}-${entryIndex}`} />
+						))}
+					</ReviewDisclosure>
+				))}
+			</div>
+		</Section>
+	);
+}
+
+/**
+ * One expandable PR row shared by both reviews sections. The header carries PR
+ * identity + update context only; verdicts live in the expanded rows below.
+ */
+function ReviewDisclosure({
+	title,
+	meta,
+	defaultOpen,
+	children,
+}: {
+	title: string;
+	meta: string;
+	defaultOpen: boolean;
+	children: ReactNode;
+}) {
+	const [open, setOpen] = useState(defaultOpen);
+	return (
+		<div className="py-2 first:pt-0.5 last:pb-0.5">
+			<button
+				aria-expanded={open}
+				className="-mx-1.5 flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1.5 text-left transition-colors hover:bg-interactive-hover/30"
+				onClick={() => setOpen((current) => !current)}
+				type="button"
+			>
+				{open ? (
+					<ChevronDown className="size-icon-sm shrink-0 text-passive" aria-hidden="true" />
+				) : (
+					<ChevronRight className="size-icon-sm shrink-0 text-passive" aria-hidden="true" />
+				)}
+				<span className="min-w-0 flex-1 truncate text-sm-md font-semibold text-foreground">{title}</span>
+				<span className="shrink-0 font-mono text-2xs text-passive">{meta}</span>
+			</button>
+			{open ? <div className="ml-2 mt-2.5 flex flex-col gap-4 border-l border-border/60 pl-3.5">{children}</div> : null}
+		</div>
+	);
+}
+
+function PullRequestReviewRow({ entry }: { entry: SessionPRReviewEntry }) {
+	const verdict = prReviewVerdict(entry.verdict);
+	const body = entry.body?.trim();
+	const name = entry.isBot ? `${entry.reviewerId} · bot` : entry.reviewerId;
+	return (
+		<div className="min-w-0">
+			<div className="flex items-center gap-2">
+				{entry.reviewUrl ? (
+					<a
+						className="min-w-0 truncate text-xs font-medium text-foreground no-underline hover:underline"
+						href={entry.reviewUrl}
+						target="_blank"
+						rel="noopener noreferrer"
+					>
+						{name}
+					</a>
+				) : (
+					<span className="min-w-0 truncate text-xs font-medium text-foreground">{name}</span>
+				)}
+				<VerdictBadge label={verdict.label} tone={verdict.tone} />
+			</div>
+			{body ? <p className="mt-1 line-clamp-1 text-2xs leading-relaxed text-passive">{body}</p> : null}
+		</div>
+	);
+}
+
+function prReviewVerdict(verdict: SessionPRReviewEntry["verdict"]): {
+	label: string;
+	tone: "neutral" | "success" | "danger";
+} {
+	switch (verdict) {
+		case "approved":
+			return { label: "Approved", tone: "success" };
+		case "changes_requested":
+			return { label: "Changes requested", tone: "danger" };
+		case "review_required":
+			return { label: "Review required", tone: "neutral" };
+		default:
+			return { label: "Commented", tone: "neutral" };
+	}
 }
 
 function projectConfig(project: components["schemas"]["ProjectOrDegraded"] | undefined): ProjectConfig | undefined {
@@ -881,8 +1015,10 @@ function ReviewPanel({
 	const latest = openReviewStates.find((review) => review.latestRun)?.latestRun;
 	const harness = latest?.harness || config?.reviewers?.[0]?.harness || "claude-code";
 	const terminalEnabled = Boolean(reviewerHandleId && onOpenTerminal);
-	const aggregateVerdict = sessionReviewVerdict(openReviewStates);
 	const reviewRunning = openReviewStates.some((reviewState) => reviewState.status === "running");
+	// The reviewer terminal only exists once a review has actually run (or is
+	// running), so keep the button out of the footer until then.
+	const reviewHasRun = reviewRunning || Boolean(latest);
 	const runAction = reviewSessionRunAction(openReviewStates, isTriggering);
 	const openReviewerTerminal = () => {
 		if (!terminalEnabled) return;
@@ -905,120 +1041,95 @@ function ReviewPanel({
 					{notice}
 				</p>
 			) : null}
-			<div className="inline-flex min-w-0 items-center gap-1.5 font-mono text-control font-semibold text-foreground">
-				<Shield aria-hidden="true" className="size-icon-lg shrink-0 text-passive" />
-				<span className="min-w-0 truncate">{harness}</span>
-				<span className="font-sans text-sm-md font-medium text-passive">reviewer</span>
+			<p className={cn(inspectorEmptyClass, "inline-flex min-w-0 items-center gap-1.5")}>
+				<ReviewerHarnessIcon className="size-icon-sm shrink-0 text-passive" harness={harness} />
+				<span className="truncate font-mono font-medium text-foreground">{harness}</span>
+				<span className="shrink-0">reviewer</span>
+			</p>
+			<div className="flex flex-col divide-y divide-border">
+				{openReviewStates.length === 0 ? (
+					<p className={cn(inspectorEmptyClass, "py-1")}>No open pull requests to review.</p>
+				) : (
+					openReviewStates.map((reviewState, index) => (
+						<ReviewDisclosure
+							key={`${reviewState.prUrl}:${reviewState.targetSha}`}
+							defaultOpen={index === 0}
+							meta={
+								reviewState.latestRun?.createdAt
+									? `#${reviewState.prNumber} · ${formatTimeCompact(reviewState.latestRun.createdAt)}`
+									: `#${reviewState.prNumber}`
+							}
+							title={reviewState.title?.trim() || `PR #${reviewState.prNumber}`}
+						>
+							<AoReviewRow reviewState={reviewState} />
+						</ReviewDisclosure>
+					))
+				)}
 			</div>
-			<div className="flex flex-col gap-2 overflow-hidden rounded-lg border border-border bg-surface p-2.5 @max-[300px]/inspector:overflow-hidden">
-				<div className="flex min-w-0 items-center justify-between gap-2 @max-[300px]/inspector:flex-col @max-[300px]/inspector:items-start">
-					<span className="min-w-0 truncate text-xs font-semibold text-muted-foreground">Pull requests</span>
-					<span
-						className={cn(
-							"inline-flex h-control-xs max-w-inspector-status-chip shrink-0 items-center gap-1 overflow-hidden truncate rounded-md px-2 text-2xs font-semibold leading-none @max-[300px]/inspector:max-w-full",
-							reviewerStatusTone[aggregateVerdict.tone],
-						)}
-					>
-						{aggregateVerdict.label}
-					</span>
-				</div>
-				<div className="flex flex-col gap-0 overflow-hidden rounded-md border border-border bg-surface-faint">
-					{openReviewStates.length === 0 ? (
-						<p className={cn(inspectorEmptyClass, "p-3")}>No open pull requests to review.</p>
-					) : null}
-					{openReviewStates.map((reviewState) => (
-						<ReviewStateRow key={`${reviewState.prUrl}:${reviewState.targetSha}`} reviewState={reviewState} />
-					))}
-				</div>
-				<div className="grid grid-cols-2 gap-2 has-[:only-child]:grid-cols-1 @max-[300px]/inspector:grid-cols-1">
-					<button
-						className={cn(
-							"inline-flex h-control-xl min-w-0 items-center justify-center gap-2 overflow-hidden truncate rounded-md border px-2.5 text-xs font-semibold transition-[background,border-color,color] duration-fast hover:bg-interactive-hover hover:text-foreground disabled:cursor-not-allowed disabled:opacity-45 [&_svg]:size-icon-md [&_svg]:shrink-0",
-							reviewRunning
-								? "border-error/42 bg-error/10 text-error"
-								: "border-success/42 bg-success/10 text-success-bright",
-						)}
-						disabled={reviewRunning ? isCancelling : runDisabled}
-						onClick={reviewRunning ? onCancel : onTrigger}
-						type="button"
-					>
-						{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
-						{reviewRunning ? (isCancelling ? "Cancelling..." : "Cancel review") : runAction}
-					</button>
-					<button
-						className="inline-flex h-control-xl min-w-0 items-center justify-center gap-2 overflow-hidden truncate rounded-md border border-border bg-raised px-2.5 text-xs font-semibold text-muted-foreground transition-[background,border-color,color] duration-fast hover:bg-interactive-hover hover:text-foreground disabled:cursor-not-allowed disabled:opacity-45 [&_svg]:size-icon-md [&_svg]:shrink-0"
+			<div className="-mx-4 -mb-3 mt-3 flex items-center justify-center gap-1 border-t border-border px-4 pb-3 pt-3">
+				<Button
+					className={cn("gap-1.5 [&_svg]:size-icon-sm", reviewRunning ? "text-error" : "text-success")}
+					disabled={reviewRunning ? isCancelling : runDisabled}
+					onClick={reviewRunning ? onCancel : onTrigger}
+					size="sm"
+					type="button"
+					variant="ghost"
+				>
+					{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
+					{reviewRunning ? (isCancelling ? "Cancelling..." : "Cancel review") : runAction}
+				</Button>
+				{reviewHasRun ? (
+					<Button
+						className="gap-1.5 [&_svg]:size-icon-sm"
 						disabled={!terminalEnabled}
 						onClick={openReviewerTerminal}
+						size="sm"
 						type="button"
+						variant="ghost"
 					>
 						<Terminal aria-hidden="true" />
 						Open terminal
-					</button>
-				</div>
-			</div>
-		</div>
-	);
-}
-
-function ReviewStateRow({ reviewState }: { reviewState: PRReviewState }) {
-	const verdict = reviewVerdict(reviewState);
-	const previousVerdict = previousReviewVerdict(reviewState);
-	const title = reviewState.title?.trim() || `PR #${reviewState.prNumber}`;
-	return (
-		<div
-			className={cn(
-				"grid min-h-row-md grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-0 border-b border-border bg-transparent p-2 last:border-b-0",
-				reviewState.status === "ineligible" && "opacity-70",
-			)}
-		>
-			<div className="inline-flex min-w-0 items-center gap-2">
-				<span className={cn("size-dot-sm shrink-0 rounded-full", reviewerDotTone[verdict.tone])} />
-				<div className="grid min-w-0 grid-cols-[auto_auto] items-baseline gap-x-1.5 gap-y-1 text-xs font-semibold text-foreground [&_svg]:hidden">
-					<GitPullRequest aria-hidden="true" />
-					<a
-						className="col-span-full min-w-0 truncate no-underline hover:underline"
-						href={reviewState.prUrl}
-						target="_blank"
-						rel="noopener noreferrer"
-					>
-						{title}
-					</a>
-					<span className="col-start-1 font-mono text-caption text-passive">#{reviewState.prNumber}</span>
-				</div>
-			</div>
-			<div className="flex flex-col items-end gap-1 whitespace-nowrap">
-				<span className={cn("text-caption font-semibold", reviewerVerdictTone[verdict.tone])}>{verdict.label}</span>
-				{previousVerdict ? (
-					<span className={cn("text-2xs font-medium", reviewerVerdictTone[previousVerdict.tone])}>
-						Previous: {previousVerdict.label}
-					</span>
+					</Button>
 				) : null}
 			</div>
 		</div>
 	);
 }
 
-function sessionReviewVerdict(reviewStates: PRReviewState[]): {
-	label: string;
-	tone: "neutral" | "running" | "success" | "danger";
-} {
-	if (reviewStates.some((reviewState) => reviewState.status === "running")) {
-		return { label: "Reviewing...", tone: "running" };
-	}
-	if (reviewStates.some((reviewState) => reviewState.latestRun?.status === "failed")) {
-		return { label: "Failed", tone: "danger" };
-	}
-	if (reviewStates.some((reviewState) => reviewState.latestRun?.status === "cancelled")) {
-		return { label: "Cancelled", tone: "neutral" };
-	}
-	if (reviewStates.some((reviewState) => reviewState.status === "changes_requested")) {
-		return { label: "Changes requested", tone: "danger" };
-	}
-	const eligibleReviews = reviewStates.filter((reviewState) => reviewState.status !== "ineligible");
-	if (eligibleReviews.length > 0 && eligibleReviews.every((reviewState) => reviewState.status === "up_to_date")) {
-		return { label: "Approved", tone: "success" };
-	}
-	return { label: "Not run", tone: "neutral" };
+function AoReviewRow({ reviewState }: { reviewState: PRReviewState }) {
+	const verdict = reviewVerdict(reviewState);
+	const previousVerdict = previousReviewVerdict(reviewState);
+	const summary = reviewState.latestRun?.body?.trim();
+	const reviewUrl = aoReviewCommentUrl(reviewState.latestRun);
+	return (
+		<div className={cn("flex min-w-0 flex-col gap-2", reviewState.status === "ineligible" && "opacity-70")}>
+			<VerdictBadge label={verdict.label} tone={verdict.tone} />
+			{summary ? <p className="line-clamp-2 text-2xs leading-relaxed text-passive">{summary}</p> : null}
+			{previousVerdict ? (
+				<p className={cn("text-2xs font-medium", reviewerVerdictTone[previousVerdict.tone])}>
+					Previous: {previousVerdict.label}
+				</p>
+			) : null}
+			{reviewUrl ? (
+				<a
+					className="inline-flex items-center gap-0.5 self-start text-2xs font-medium text-passive no-underline transition-colors hover:text-foreground"
+					href={reviewUrl}
+					target="_blank"
+					rel="noopener noreferrer"
+				>
+					View review
+					<ArrowUpRight aria-hidden="true" className="size-3 shrink-0" />
+				</a>
+			) : null}
+		</div>
+	);
+}
+
+// GitHub anchors a posted review at #pullrequestreview-<id> on the PR page; we
+// only have that link once the run has been delivered to GitHub.
+function aoReviewCommentUrl(run: PRReviewState["latestRun"]): string | null {
+	if (!run?.prUrl || !run.githubReviewId) return null;
+	return `${run.prUrl}#pullrequestreview-${run.githubReviewId}`;
 }
 
 function reviewVerdict(reviewState: PRReviewState): {
