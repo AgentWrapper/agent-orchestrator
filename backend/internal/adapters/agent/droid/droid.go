@@ -11,11 +11,13 @@
 //
 // Launch uses the interactive `droid [prompt]` command (the prompt is a
 // positional argument). Droid's interactive TUI exposes no per-launch permission
-// flag (--auto / --skip-permissions-unsafe live only on `droid exec`), so AO's
-// graduated permission modes are delivered by writing a process-scoped runtime
-// settings file (sessionDefaultSettings.autonomyLevel) and passing it via the
-// root `--settings <path>` flag. Restore prefers the hook-captured native
-// session id via `-r <id>`.
+// flag (--auto / --skip-permissions-unsafe live only on `droid exec`) and no
+// interactive --model flag either, so AO's graduated permission modes and any
+// role-specific model override are both delivered by writing a process-scoped
+// runtime settings file (sessionDefaultSettings.autonomyLevel and a top-level
+// "model" key) and passing it via the root `--settings <path>` flag. The
+// settings file is written whenever either value is set. Restore prefers the
+// hook-captured native session id via `-r <id>`.
 package droid
 
 import (
@@ -63,6 +65,21 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.ConfigSpec{}, err
+	}
+	return ports.ConfigSpec{
+		Fields: []ports.ConfigField{
+			{
+				Key:         "model",
+				Type:        ports.ConfigFieldString,
+				Description: "Model override written to Droid's runtime settings file.",
+			},
+		},
+	}, nil
+}
+
 // GetLaunchCommand builds the argv to start a new interactive Droid session:
 //
 //	droid [--settings <path>] [--append-system-prompt[-file] <x>] [prompt]
@@ -81,7 +98,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	cmd = make([]string, 0, 6)
 	cmd = append(cmd, binary)
 
-	settingsArgs, err := permissionSettingsArgs(cfg.SessionID, cfg.Permissions)
+	settingsArgs, err := permissionSettingsArgs(cfg.SessionID, cfg.Permissions, cfg.Config.Model)
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +139,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 
 	cmd = make([]string, 0, 5)
 	cmd = append(cmd, binary)
-	settingsArgs, err := permissionSettingsArgs(cfg.Session.ID, cfg.Permissions)
+	settingsArgs, err := permissionSettingsArgs(cfg.Session.ID, cfg.Permissions, cfg.Config.Model)
 	if err != nil {
 		return nil, false, err
 	}
@@ -177,15 +194,22 @@ func droidAutonomyLevel(mode ports.PermissionMode) string {
 // --skip-permissions-unsafe exist only on `droid exec`), so autonomy must be
 // delivered through settings. The file is written under the OS temp dir, keyed
 // by session id, rather than into the worktree so it never lands in a commit.
-func permissionSettingsArgs(sessionID string, mode ports.PermissionMode) ([]string, error) {
+func permissionSettingsArgs(sessionID string, mode ports.PermissionMode, model string) ([]string, error) {
 	level := droidAutonomyLevel(mode)
-	if level == "" {
+	model = strings.TrimSpace(model)
+	if level == "" && model == "" {
 		return nil, nil
 	}
 
-	blob, err := json.Marshal(map[string]any{
-		"sessionDefaultSettings": map[string]any{"autonomyLevel": level},
-	})
+	settings := map[string]any{}
+	if level != "" {
+		settings["sessionDefaultSettings"] = map[string]any{"autonomyLevel": level}
+	}
+	if model != "" {
+		settings["model"] = model
+	}
+
+	blob, err := json.Marshal(settings)
 	if err != nil {
 		return nil, fmt.Errorf("droid: encode runtime settings: %w", err)
 	}
