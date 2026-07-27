@@ -65,6 +65,9 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
+// GetConfigSpec reports the per-project agent config keys Droid understands.
+// Model is honored via the runtime --settings file (see permissionSettingsArgs)
+// rather than an argv flag, since interactive droid has no --model flag.
 func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 	if err := ctx.Err(); err != nil {
 		return ports.ConfigSpec{}, err
