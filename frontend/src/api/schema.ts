@@ -977,6 +977,15 @@ export interface components {
             data: string;
             mimeType?: string;
         };
+        ControllersUsageHookMetadata: {
+            /** @enum {string} */
+            harness: "claude-code" | "codex";
+            modelId?: string;
+            sourceCliVersion?: string;
+            subagentId?: string;
+            subagentTranscriptPath?: string;
+            transcriptPath?: string;
+        };
         DegradedProject: {
             id: string;
             /** @enum {string} */
@@ -1432,6 +1441,8 @@ export interface components {
             toolName?: string;
             /** @description Native tool-use id, for tool-use hook events. */
             toolUseId?: string;
+            /** @description Provider transcript metadata used by the local usage observer. */
+            usage?: components["schemas"]["ControllersUsageHookMetadata"];
         };
         SetActivityResponse: {
             ok: boolean;

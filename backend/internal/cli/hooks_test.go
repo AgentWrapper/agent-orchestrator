@@ -55,6 +55,40 @@ func capturedState(t *testing.T, capture *activityCapture) string {
 	return req.State
 }
 
+func TestHooks_ReportsUsageTranscriptMetadata(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true,"sessionId":"ao-7","state":""}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		In: strings.NewReader(`{
+			"session_id":"native-7",
+			"transcript_path":"/home/user/.claude/projects/p/native-7.jsonl",
+			"model":"claude-sonnet",
+			"agent_id":"sub-2",
+			"agent_transcript_path":"/home/user/.claude/projects/p/agent-sub-2.jsonl"
+		}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "claude-code", "subagent-stop")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	var req setActivityAPIRequest
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if req.AgentSessionID != "native-7" || req.Usage == nil {
+		t.Fatalf("request = %+v", req)
+	}
+	if req.Usage.Harness != "claude-code" ||
+		req.Usage.TranscriptPath != "/home/user/.claude/projects/p/native-7.jsonl" ||
+		req.Usage.SubagentID != "sub-2" ||
+		req.Usage.SubagentTranscriptPath != "/home/user/.claude/projects/p/agent-sub-2.jsonl" {
+		t.Fatalf("usage metadata = %+v", req.Usage)
+	}
+}
+
 func TestHooks_NotificationReportsBlocked(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "ao-7")
 	cfg := setConfigEnv(t)

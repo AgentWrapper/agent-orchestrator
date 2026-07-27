@@ -2857,6 +2857,26 @@ components:
       required:
       - data
       type: object
+    ControllersUsageHookMetadata:
+      properties:
+        harness:
+          enum:
+          - claude-code
+          - codex
+          type: string
+        modelId:
+          type: string
+        sourceCliVersion:
+          type: string
+        subagentId:
+          type: string
+        subagentTranscriptPath:
+          type: string
+        transcriptPath:
+          type: string
+      required:
+      - harness
+      type: object
     DegradedProject:
       properties:
         id:
@@ -4025,6 +4045,9 @@ components:
         toolUseId:
           description: Native tool-use id, for tool-use hook events.
           type: string
+        usage:
+          $ref: '#/components/schemas/ControllersUsageHookMetadata'
+          description: Provider transcript metadata used by the local usage observer.
       type: object
     SetActivityResponse:
       properties:

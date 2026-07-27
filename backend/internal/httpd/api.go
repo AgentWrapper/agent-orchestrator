@@ -23,6 +23,7 @@ type APIDeps struct {
 	Projects            projectsvc.Manager
 	Sessions            controllers.SessionService
 	Activity            controllers.ActivityRecorder
+	UsageHooks          controllers.UsageHookRecorder
 	PRs                 prsvc.ActionManager
 	Reviews             reviewsvc.Manager
 	Notifications       controllers.NotificationService
@@ -73,6 +74,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		sessions: &controllers.SessionsController{
 			Svc:           deps.Sessions,
 			Activity:      deps.Activity,
+			Usage:         deps.UsageHooks,
 			PreviewServer: deps.PreviewServer,
 			Capabilities:  deps.SessionCapabilities,
 		},

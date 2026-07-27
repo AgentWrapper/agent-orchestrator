@@ -183,6 +183,8 @@ SELECT
     us.baseline_cache_write_tokens,
     us.baseline_output_tokens,
     us.baseline_reasoning_tokens,
+    us.current_model_id,
+    us.current_provider,
     us.parser_version,
     us.state AS source_state,
     us.failure_count,
@@ -195,7 +197,9 @@ SELECT
     ub.session_id,
     ub.harness,
     ub.native_root_id,
+    ub.initial_model_id,
     ub.source_cli_version,
+    ub.state AS binding_state,
     s.project_id
 FROM usage_sources us
 JOIN usage_bindings ub ON ub.id = us.binding_id
@@ -218,6 +222,8 @@ type GetUsageSourceWithBindingAndSessionRow struct {
 	BaselineCacheWriteTokens  int64
 	BaselineOutputTokens      int64
 	BaselineReasoningTokens   int64
+	CurrentModelID            string
+	CurrentProvider           string
 	ParserVersion             string
 	SourceState               domain.UsageSourceState
 	FailureCount              int64
@@ -230,7 +236,9 @@ type GetUsageSourceWithBindingAndSessionRow struct {
 	SessionID                 domain.SessionID
 	Harness                   domain.AgentHarness
 	NativeRootID              string
+	InitialModelID            string
 	SourceCliVersion          string
+	BindingState              domain.UsageBindingState
 	ProjectID                 domain.ProjectID
 }
 
@@ -252,6 +260,8 @@ func (q *Queries) GetUsageSourceWithBindingAndSession(ctx context.Context, id in
 		&i.BaselineCacheWriteTokens,
 		&i.BaselineOutputTokens,
 		&i.BaselineReasoningTokens,
+		&i.CurrentModelID,
+		&i.CurrentProvider,
 		&i.ParserVersion,
 		&i.SourceState,
 		&i.FailureCount,
@@ -264,7 +274,9 @@ func (q *Queries) GetUsageSourceWithBindingAndSession(ctx context.Context, id in
 		&i.SessionID,
 		&i.Harness,
 		&i.NativeRootID,
+		&i.InitialModelID,
 		&i.SourceCliVersion,
+		&i.BindingState,
 		&i.ProjectID,
 	)
 	return i, err
@@ -352,10 +364,11 @@ INSERT INTO usage_sources (
     binding_id, kind, native_session_id, subagent_id, artifact_path,
     file_identity, generation, byte_offset, baseline_input_tokens,
     baseline_cached_input_tokens, baseline_cache_write_tokens,
-    baseline_output_tokens, baseline_reasoning_tokens, parser_version,
+    baseline_output_tokens, baseline_reasoning_tokens, current_model_id,
+    current_provider, parser_version,
     state, failure_count, anomaly_count, next_retry_at, last_error_code,
     last_observed_at, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (binding_id, artifact_path, generation) DO UPDATE SET
     native_session_id = CASE
         WHEN excluded.native_session_id <> '' THEN excluded.native_session_id
@@ -369,9 +382,17 @@ ON CONFLICT (binding_id, artifact_path, generation) DO UPDATE SET
         WHEN excluded.file_identity <> '' THEN excluded.file_identity
         ELSE usage_sources.file_identity
     END,
+    current_model_id = CASE
+        WHEN excluded.current_model_id <> '' THEN excluded.current_model_id
+        ELSE usage_sources.current_model_id
+    END,
+    current_provider = CASE
+        WHEN excluded.current_provider <> '' THEN excluded.current_provider
+        ELSE usage_sources.current_provider
+    END,
     parser_version = excluded.parser_version,
     updated_at = excluded.updated_at
-RETURNING id, binding_id, kind, native_session_id, subagent_id, artifact_path, file_identity, generation, byte_offset, baseline_input_tokens, baseline_cached_input_tokens, baseline_cache_write_tokens, baseline_output_tokens, baseline_reasoning_tokens, parser_version, state, failure_count, anomaly_count, next_retry_at, last_error_code, last_observed_at, created_at, updated_at
+RETURNING id, binding_id, kind, native_session_id, subagent_id, artifact_path, file_identity, generation, byte_offset, baseline_input_tokens, baseline_cached_input_tokens, baseline_cache_write_tokens, baseline_output_tokens, baseline_reasoning_tokens, parser_version, state, failure_count, anomaly_count, next_retry_at, last_error_code, last_observed_at, created_at, updated_at, current_model_id, current_provider
 `
 
 type InsertUsageSourceParams struct {
@@ -388,6 +409,8 @@ type InsertUsageSourceParams struct {
 	BaselineCacheWriteTokens  int64
 	BaselineOutputTokens      int64
 	BaselineReasoningTokens   int64
+	CurrentModelID            string
+	CurrentProvider           string
 	ParserVersion             string
 	State                     domain.UsageSourceState
 	FailureCount              int64
@@ -414,6 +437,8 @@ func (q *Queries) InsertUsageSource(ctx context.Context, arg InsertUsageSourcePa
 		arg.BaselineCacheWriteTokens,
 		arg.BaselineOutputTokens,
 		arg.BaselineReasoningTokens,
+		arg.CurrentModelID,
+		arg.CurrentProvider,
 		arg.ParserVersion,
 		arg.State,
 		arg.FailureCount,
@@ -449,12 +474,14 @@ func (q *Queries) InsertUsageSource(ctx context.Context, arg InsertUsageSourcePa
 		&i.LastObservedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CurrentModelID,
+		&i.CurrentProvider,
 	)
 	return i, err
 }
 
 const listObserverReadyUsageSources = `-- name: ListObserverReadyUsageSources :many
-SELECT id, binding_id, kind, native_session_id, subagent_id, artifact_path, file_identity, generation, byte_offset, baseline_input_tokens, baseline_cached_input_tokens, baseline_cache_write_tokens, baseline_output_tokens, baseline_reasoning_tokens, parser_version, state, failure_count, anomaly_count, next_retry_at, last_error_code, last_observed_at, created_at, updated_at
+SELECT id, binding_id, kind, native_session_id, subagent_id, artifact_path, file_identity, generation, byte_offset, baseline_input_tokens, baseline_cached_input_tokens, baseline_cache_write_tokens, baseline_output_tokens, baseline_reasoning_tokens, parser_version, state, failure_count, anomaly_count, next_retry_at, last_error_code, last_observed_at, created_at, updated_at, current_model_id, current_provider
 FROM usage_sources
 WHERE state IN ('pending', 'active', 'error')
   AND (next_retry_at IS NULL OR next_retry_at <= ?)
@@ -500,6 +527,8 @@ func (q *Queries) ListObserverReadyUsageSources(ctx context.Context, arg ListObs
 			&i.LastObservedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.CurrentModelID,
+			&i.CurrentProvider,
 		); err != nil {
 			return nil, err
 		}
@@ -606,6 +635,94 @@ func (q *Queries) ListUsageBindingsForSession(ctx context.Context, sessionID dom
 	return items, nil
 }
 
+const listUsageSourcesForBinding = `-- name: ListUsageSourcesForBinding :many
+SELECT id, binding_id, kind, native_session_id, subagent_id, artifact_path, file_identity, generation, byte_offset, baseline_input_tokens, baseline_cached_input_tokens, baseline_cache_write_tokens, baseline_output_tokens, baseline_reasoning_tokens, parser_version, state, failure_count, anomaly_count, next_retry_at, last_error_code, last_observed_at, created_at, updated_at, current_model_id, current_provider
+FROM usage_sources
+WHERE binding_id = ?
+ORDER BY generation, id
+`
+
+func (q *Queries) ListUsageSourcesForBinding(ctx context.Context, bindingID int64) ([]UsageSource, error) {
+	rows, err := q.db.QueryContext(ctx, listUsageSourcesForBinding, bindingID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []UsageSource{}
+	for rows.Next() {
+		var i UsageSource
+		if err := rows.Scan(
+			&i.ID,
+			&i.BindingID,
+			&i.Kind,
+			&i.NativeSessionID,
+			&i.SubagentID,
+			&i.ArtifactPath,
+			&i.FileIdentity,
+			&i.Generation,
+			&i.ByteOffset,
+			&i.BaselineInputTokens,
+			&i.BaselineCachedInputTokens,
+			&i.BaselineCacheWriteTokens,
+			&i.BaselineOutputTokens,
+			&i.BaselineReasoningTokens,
+			&i.ParserVersion,
+			&i.State,
+			&i.FailureCount,
+			&i.AnomalyCount,
+			&i.NextRetryAt,
+			&i.LastErrorCode,
+			&i.LastObservedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.CurrentModelID,
+			&i.CurrentProvider,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const markUsageSourceFailure = `-- name: MarkUsageSourceFailure :execrows
+UPDATE usage_sources SET
+    state = 'error',
+    failure_count = ?,
+    last_error_code = ?,
+    next_retry_at = ?,
+    updated_at = ?
+WHERE id = ?
+`
+
+type MarkUsageSourceFailureParams struct {
+	FailureCount  int64
+	LastErrorCode string
+	NextRetryAt   sql.NullTime
+	UpdatedAt     time.Time
+	ID            int64
+}
+
+func (q *Queries) MarkUsageSourceFailure(ctx context.Context, arg MarkUsageSourceFailureParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markUsageSourceFailure,
+		arg.FailureCount,
+		arg.LastErrorCode,
+		arg.NextRetryAt,
+		arg.UpdatedAt,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const markUsageSourceState = `-- name: MarkUsageSourceState :execrows
 UPDATE usage_sources SET
     state = ?,
@@ -631,6 +748,29 @@ func (q *Queries) MarkUsageSourceState(ctx context.Context, arg MarkUsageSourceS
 		arg.UpdatedAt,
 		arg.ID,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const reactivateUsageSource = `-- name: ReactivateUsageSource :execrows
+UPDATE usage_sources SET
+    state = 'active',
+    failure_count = 0,
+    next_retry_at = NULL,
+    last_error_code = '',
+    updated_at = ?
+WHERE id = ?
+`
+
+type ReactivateUsageSourceParams struct {
+	UpdatedAt time.Time
+	ID        int64
+}
+
+func (q *Queries) ReactivateUsageSource(ctx context.Context, arg ReactivateUsageSourceParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, reactivateUsageSource, arg.UpdatedAt, arg.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -676,6 +816,8 @@ UPDATE usage_sources SET
     baseline_cache_write_tokens = ?,
     baseline_output_tokens = ?,
     baseline_reasoning_tokens = ?,
+    current_model_id = ?,
+    current_provider = ?,
     state = ?,
     failure_count = ?,
     anomaly_count = ?,
@@ -693,6 +835,8 @@ type UpdateUsageSourceCursorParams struct {
 	BaselineCacheWriteTokens  int64
 	BaselineOutputTokens      int64
 	BaselineReasoningTokens   int64
+	CurrentModelID            string
+	CurrentProvider           string
 	State                     domain.UsageSourceState
 	FailureCount              int64
 	AnomalyCount              int64
@@ -711,6 +855,8 @@ func (q *Queries) UpdateUsageSourceCursor(ctx context.Context, arg UpdateUsageSo
 		arg.BaselineCacheWriteTokens,
 		arg.BaselineOutputTokens,
 		arg.BaselineReasoningTokens,
+		arg.CurrentModelID,
+		arg.CurrentProvider,
 		arg.State,
 		arg.FailureCount,
 		arg.AnomalyCount,

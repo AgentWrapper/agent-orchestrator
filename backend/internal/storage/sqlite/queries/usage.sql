@@ -34,10 +34,11 @@ INSERT INTO usage_sources (
     binding_id, kind, native_session_id, subagent_id, artifact_path,
     file_identity, generation, byte_offset, baseline_input_tokens,
     baseline_cached_input_tokens, baseline_cache_write_tokens,
-    baseline_output_tokens, baseline_reasoning_tokens, parser_version,
+    baseline_output_tokens, baseline_reasoning_tokens, current_model_id,
+    current_provider, parser_version,
     state, failure_count, anomaly_count, next_retry_at, last_error_code,
     last_observed_at, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (binding_id, artifact_path, generation) DO UPDATE SET
     native_session_id = CASE
         WHEN excluded.native_session_id <> '' THEN excluded.native_session_id
@@ -51,9 +52,23 @@ ON CONFLICT (binding_id, artifact_path, generation) DO UPDATE SET
         WHEN excluded.file_identity <> '' THEN excluded.file_identity
         ELSE usage_sources.file_identity
     END,
+    current_model_id = CASE
+        WHEN excluded.current_model_id <> '' THEN excluded.current_model_id
+        ELSE usage_sources.current_model_id
+    END,
+    current_provider = CASE
+        WHEN excluded.current_provider <> '' THEN excluded.current_provider
+        ELSE usage_sources.current_provider
+    END,
     parser_version = excluded.parser_version,
     updated_at = excluded.updated_at
 RETURNING *;
+
+-- name: ListUsageSourcesForBinding :many
+SELECT *
+FROM usage_sources
+WHERE binding_id = ?
+ORDER BY generation, id;
 
 -- name: ListObserverReadyUsageSources :many
 SELECT *
@@ -93,6 +108,8 @@ SELECT
     us.baseline_cache_write_tokens,
     us.baseline_output_tokens,
     us.baseline_reasoning_tokens,
+    us.current_model_id,
+    us.current_provider,
     us.parser_version,
     us.state AS source_state,
     us.failure_count,
@@ -105,7 +122,9 @@ SELECT
     ub.session_id,
     ub.harness,
     ub.native_root_id,
+    ub.initial_model_id,
     ub.source_cli_version,
+    ub.state AS binding_state,
     s.project_id
 FROM usage_sources us
 JOIN usage_bindings ub ON ub.id = us.binding_id
@@ -120,6 +139,8 @@ UPDATE usage_sources SET
     baseline_cache_write_tokens = ?,
     baseline_output_tokens = ?,
     baseline_reasoning_tokens = ?,
+    current_model_id = ?,
+    current_provider = ?,
     state = ?,
     failure_count = ?,
     anomaly_count = ?,
@@ -132,6 +153,24 @@ WHERE id = ?;
 -- name: MarkUsageSourceState :execrows
 UPDATE usage_sources SET
     state = ?,
+    last_error_code = ?,
+    next_retry_at = ?,
+    updated_at = ?
+WHERE id = ?;
+
+-- name: ReactivateUsageSource :execrows
+UPDATE usage_sources SET
+    state = 'active',
+    failure_count = 0,
+    next_retry_at = NULL,
+    last_error_code = '',
+    updated_at = ?
+WHERE id = ?;
+
+-- name: MarkUsageSourceFailure :execrows
+UPDATE usage_sources SET
+    state = 'error',
+    failure_count = ?,
     last_error_code = ?,
     next_retry_at = ?,
     updated_at = ?

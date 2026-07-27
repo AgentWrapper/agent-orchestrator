@@ -24,6 +24,7 @@ import (
 	previewutil "github.com/aoagents/agent-orchestrator/backend/internal/preview"
 	"github.com/aoagents/agent-orchestrator/backend/internal/previewserver"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
+	usagesvc "github.com/aoagents/agent-orchestrator/backend/internal/service/usage"
 )
 
 const (
@@ -106,11 +107,18 @@ type SessionCapabilityValidator interface {
 	Valid(sessionID domain.SessionID, token string) bool
 }
 
+// UsageHookRecorder consumes transcript metadata from the same native hook
+// callback without changing activity-state semantics.
+type UsageHookRecorder interface {
+	RecordHook(ctx context.Context, id domain.SessionID, signal usagesvc.HookSignal) error
+}
+
 // SessionsController owns the session routes. Nil keeps routes registered but
 // returns OpenAPI-backed 501s.
 type SessionsController struct {
 	Svc           SessionService
 	Activity      ActivityRecorder
+	Usage         UsageHookRecorder
 	PreviewServer ManagedPreviewServer
 	Capabilities  SessionCapabilityValidator
 }
@@ -870,7 +878,7 @@ func (c *SessionsController) send(w http.ResponseWriter, r *http.Request) {
 // lifecycle.Manager so the reaper and hooks never race on the session's
 // activity/termination columns.
 func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
-	if c.Activity == nil {
+	if c.Activity == nil && c.Usage == nil {
 		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/activity")
 		return
 	}
@@ -889,7 +897,7 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	agentSessionID := capActivityMeta(domain.SanitizeControlChars(strings.TrimSpace(in.AgentSessionID)))
-	if state == "" && agentSessionID == "" {
+	if state == "" && agentSessionID == "" && in.Usage == nil {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "ACTIVITY_OR_SESSION_ID_REQUIRED", "Activity state or agent session ID is required", nil)
 		return
 	}
@@ -907,13 +915,30 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 		AgentSessionID: agentSessionID,
 		LaunchID:       capActivityMeta(domain.SanitizeControlChars(strings.TrimSpace(in.LaunchID))),
 	}
-	if err := c.Activity.ApplyActivitySignal(r.Context(), sessionID(r), sig); err != nil {
-		if errors.Is(err, ports.ErrSessionNotFound) {
-			envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "SESSION_NOT_FOUND", "Unknown session", nil)
+	if c.Activity != nil && (sig.Valid || sig.AgentSessionID != "") {
+		if err := c.Activity.ApplyActivitySignal(r.Context(), sessionID(r), sig); err != nil {
+			if errors.Is(err, ports.ErrSessionNotFound) {
+				envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "SESSION_NOT_FOUND", "Unknown session", nil)
+				return
+			}
+			envelope.WriteError(w, r, err)
 			return
 		}
-		envelope.WriteError(w, r, err)
-		return
+	}
+	if c.Usage != nil && (in.Usage != nil || in.Event == "session-end" || in.Event == "process-exited") {
+		usageSignal := usagesvc.HookSignal{Event: in.Event, NativeSessionID: agentSessionID}
+		if in.Usage != nil {
+			usageSignal.Harness = in.Usage.Harness
+			usageSignal.TranscriptPath = in.Usage.TranscriptPath
+			usageSignal.ModelID = in.Usage.ModelID
+			usageSignal.SubagentID = in.Usage.SubagentID
+			usageSignal.SubagentTranscriptPath = in.Usage.SubagentTranscriptPath
+			usageSignal.SourceCLIVersion = in.Usage.SourceCLIVersion
+		}
+		if err := c.Usage.RecordHook(r.Context(), sessionID(r), usageSignal); err != nil {
+			envelope.WriteError(w, r, err)
+			return
+		}
 	}
 	envelope.WriteJSON(w, http.StatusOK, SetActivityResponse{OK: true, SessionID: sessionID(r), State: in.State})
 }

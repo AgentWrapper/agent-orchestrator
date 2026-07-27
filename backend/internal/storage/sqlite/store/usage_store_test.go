@@ -126,6 +126,8 @@ func TestApplyUsageChunkAtomicReplayAndAggregates(t *testing.T) {
 		BaselineCacheWriteTokens:  10,
 		BaselineOutputTokens:      20,
 		BaselineReasoningTokens:   3,
+		CurrentModelID:            "gpt-5.6",
+		CurrentProvider:           "openai",
 		LastObservedAt:            &now,
 		UpdatedAt:                 now,
 	}, []domain.ModelUsageEvent{event})
@@ -144,6 +146,8 @@ func TestApplyUsageChunkAtomicReplayAndAggregates(t *testing.T) {
 		BaselineCacheWriteTokens:  10,
 		BaselineOutputTokens:      20,
 		BaselineReasoningTokens:   3,
+		CurrentModelID:            "gpt-5.6",
+		CurrentProvider:           "openai",
 		LastObservedAt:            &now,
 		UpdatedAt:                 now.Add(time.Second),
 	}, []domain.ModelUsageEvent{event})
@@ -184,7 +188,9 @@ func TestApplyUsageChunkAtomicReplayAndAggregates(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("get source context: ok=%v err=%v", ok, err)
 	}
-	if ctxRow.Source.ByteOffset != 120 || ctxRow.ProjectID != sess.ProjectID || ctxRow.NativeRootID != "root-thread" {
+	if ctxRow.Source.ByteOffset != 120 || ctxRow.ProjectID != sess.ProjectID || ctxRow.NativeRootID != "root-thread" ||
+		ctxRow.Source.CurrentModelID != "gpt-5.6" || ctxRow.Source.CurrentProvider != "openai" ||
+		ctxRow.InitialModelID != "gpt-5" || ctxRow.BindingState != domain.UsageBindingActive {
 		t.Fatalf("source context = %+v", ctxRow)
 	}
 }
@@ -281,6 +287,7 @@ func seedUsageSource(t *testing.T, s *sqlite.Store, sess domain.SessionRecord, n
 		SessionID:        sess.ID,
 		Harness:          sess.Harness,
 		NativeRootID:     "root-thread",
+		InitialModelID:   "gpt-5",
 		SourceCLIVersion: "0.145.0",
 		State:            domain.UsageBindingActive,
 		FirstSeenAt:      now,

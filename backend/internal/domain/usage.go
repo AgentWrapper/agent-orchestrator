@@ -148,6 +148,8 @@ type UsageSourceRecord struct {
 	BaselineCacheWriteTokens  int64
 	BaselineOutputTokens      int64
 	BaselineReasoningTokens   int64
+	CurrentModelID            string
+	CurrentProvider           string
 	ParserVersion             string
 	State                     UsageSourceState
 	FailureCount              int64
@@ -167,7 +169,9 @@ type UsageSourceContext struct {
 	ProjectID        ProjectID
 	Harness          AgentHarness
 	NativeRootID     string
+	InitialModelID   string
 	SourceCLIVersion string
+	BindingState     UsageBindingState
 }
 
 // UsageTokenMetrics is the normalized token vector stored on every usage event
@@ -312,6 +316,8 @@ type SourceCursorState struct {
 	BaselineCacheWriteTokens  int64
 	BaselineOutputTokens      int64
 	BaselineReasoningTokens   int64
+	CurrentModelID            string
+	CurrentProvider           string
 	FailureCount              int64
 	AnomalyCount              int64
 	NextRetryAt               *time.Time
