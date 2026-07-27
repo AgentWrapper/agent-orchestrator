@@ -1045,7 +1045,7 @@ function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
 					// "defers opening" test pins the deferral so it is not dropped as noise.
 					queueMicrotask(onOpen);
 				}}
-				tooltip={isCollapsed ? "Search" : undefined}
+tooltip={isCollapsed ? "Search" : undefined}
 			className={cn(
 				"h-8 gap-2 rounded-lg bg-muted/30 px-2.5 text-sm font-normal text-muted-foreground",
 				"border border-muted/40",
