@@ -210,7 +210,7 @@ const columns = [
 	},
 	{
 		id: "merge",
-		title: "Merge",
+		title: "Mergeable",
 		count: 3,
 		cards: [
 			{
@@ -1701,7 +1701,7 @@ function BoardColumnHeader({
 			<div className="flex items-center gap-2 px-3 py-2.5">
 				<div className={`flex min-w-0 flex-1 items-center gap-1 overflow-hidden ${columnHeaderTitleClass}`}>
 					<SplitLaneHeader
-						left={{ color: STATUS_COLORS.ready, label: "Merge" }}
+						left={{ color: STATUS_COLORS.ready, label: "Mergeable" }}
 						right={{ color: STATUS_COLORS.merged, label: "Merged" }}
 					/>
 				</div>
