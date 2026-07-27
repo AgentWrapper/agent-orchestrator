@@ -69,6 +69,16 @@ export function createCandidateRunKernel({
   if (activationProfile.schemaVersion !== 2) {
     throw new Error("test kernel requires activation profile schema v2");
   }
+  if (
+    typeof activationProfile.adapterArtifact !== "string" ||
+    activationProfile.adapterArtifact.trim() === "" ||
+    typeof activationProfile.modelProvider !== "string" ||
+    activationProfile.modelProvider.trim() === ""
+  ) {
+    throw new Error(
+      "test kernel requires schema-v2 adapter artifact and model provider",
+    );
+  }
   if (prepared.controllerOwner !== controllerId) {
     throw new Error("test kernel controller mismatch");
   }

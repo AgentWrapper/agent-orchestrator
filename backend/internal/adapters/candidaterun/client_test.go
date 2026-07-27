@@ -407,6 +407,7 @@ func writeTestConfig(t *testing.T) string {
 		"candidateVersion": "0.10.3",
 		"adapterRevision":  "c89414ddb8cf4dc35e77417907e1ea663b79cf6b",
 		"adapterDigest":    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"adapterArtifact":  "backend/internal/adapters/candidaterun/observer.mjs",
 		"workerRuntime":    "Codex CLI",
 		"modelProvider":    "OpenAI",
 		"modelAuthRoute":   "enterprise Codex subscription",
