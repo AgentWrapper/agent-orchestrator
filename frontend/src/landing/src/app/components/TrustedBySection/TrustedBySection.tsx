@@ -1,8 +1,3 @@
-"use client";
-
-import { Pause, Play } from "lucide-react";
-import { useState } from "react";
-
 type Agent = { name: string; src: string };
 
 // All 23 supported agents, each with its brand logo. Most come from the app's
@@ -67,8 +62,6 @@ function AgentGroup({ duplicate = false }: { duplicate?: boolean }) {
 }
 
 export function TrustedBySection() {
-  const [paused, setPaused] = useState(false);
-
   return (
     <section className="py-16 sm:py-24 bg-background overflow-hidden">
       <div className="max-w-7xl mx-auto text-center">
@@ -76,33 +69,13 @@ export function TrustedBySection() {
           Use the agents you already trust.
         </h2>
 
-        {/* Animated marquee: ~10 logos visible as they flow. Hidden for
-            reduced-motion users, who get the full static list below. */}
-        <div
-          className="agent-marquee group relative mx-auto w-full max-w-2xl overflow-hidden [mask-image:linear-gradient(to_right,transparent,black_8%,black_92%,transparent)]"
-          data-paused={paused}
-        >
+        {/* Animated marquee: ~10 logos visible as they flow. Pauses on hover;
+            reduced-motion users get the full static list below. */}
+        <div className="agent-marquee group relative mx-auto w-full max-w-2xl overflow-hidden [mask-image:linear-gradient(to_right,transparent,black_8%,black_92%,transparent)]">
           <div className="agent-marquee__track flex w-max">
             <AgentGroup />
             <AgentGroup duplicate />
           </div>
-        </div>
-
-        {/* Operable pause/play control (WCAG 2.2.2) — keyboard and touch
-            reachable, not just hover. Hidden under reduced motion. */}
-        <div className="agent-marquee-control mt-5 flex justify-center">
-          <button
-            type="button"
-            onClick={() => setPaused((p) => !p)}
-            className="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground transition-colors hover:border-foreground/30 hover:text-foreground"
-          >
-            {paused ? (
-              <Play className="size-3" aria-hidden="true" />
-            ) : (
-              <Pause className="size-3" aria-hidden="true" />
-            )}
-            {paused ? "Play agent logos" : "Pause agent logos"}
-          </button>
         </div>
 
         {/* Reduced-motion fallback: every agent, wrapping, fully visible. */}
@@ -124,13 +97,11 @@ export function TrustedBySection() {
           animation: agent-marquee-scroll 45s linear infinite;
           will-change: transform;
         }
-        .agent-marquee:hover .agent-marquee__track,
-        .agent-marquee[data-paused="true"] .agent-marquee__track {
+        .agent-marquee:hover .agent-marquee__track {
           animation-play-state: paused;
         }
         @media (prefers-reduced-motion: reduce) {
-          .agent-marquee,
-          .agent-marquee-control { display: none; }
+          .agent-marquee { display: none; }
           .agent-static { display: flex; }
         }
       `}</style>
