@@ -93,9 +93,8 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 				tabOwnerSession,
 				...storedSessionTabIds
 					.map((tabId) => allSessions.find((candidate) => candidate.id === tabId))
-					.filter(
-						(projectSession): projectSession is WorkspaceSession =>
-							Boolean(projectSession && projectSession.isTerminated !== true && projectSession.id !== tabOwnerSession.id),
+					.filter((projectSession): projectSession is WorkspaceSession =>
+						Boolean(projectSession && projectSession.isTerminated !== true && projectSession.id !== tabOwnerSession.id),
 					),
 			]
 		: [];
@@ -142,7 +141,8 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 	const renameShellTerminal = useRenameShellTerminal();
 	const activeShellTerminalHandleId = useUiStore((state) => state.activeShellTerminalHandleId);
 	const setActiveShellTerminal = useUiStore((state) => state.setActiveShellTerminal);
-
+	const setVisibleTerminalKind = useUiStore((state) => state.setVisibleTerminalKind);
+	const clearVisibleTerminalKind = useUiStore((state) => state.clearVisibleTerminalKind);
 	const renameShellTerminalByHandle = useCallback(
 		(handleId: string, title: string) => renameShellTerminal.mutate({ handleId, title }),
 		[renameShellTerminal],
@@ -239,6 +239,15 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 		setBrowserPoppedOut(false);
 		setFilesPoppedOut(false);
 	}, [sessionId]);
+
+	// The pane shows one terminal at a time, so selecting a shell or the reviewer
+	// takes the agent's terminal off screen while the route still points here.
+	// Publish which one is showing: the notification runtime lives outside this
+	// subtree and must not treat "on the session route" as "watching the agent".
+	useEffect(() => {
+		setVisibleTerminalKind(sessionId, terminalTarget.kind);
+		return () => clearVisibleTerminalKind(sessionId);
+	}, [clearVisibleTerminalKind, sessionId, setVisibleTerminalKind, terminalTarget.kind]);
 
 	const handleOpenFiles = useCallback(() => {
 		setBrowserPoppedOut(false);
@@ -413,9 +422,7 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
             be strings. Numeric sizes here once clamped the inspector to 45px. */}
 				<ResizablePanel defaultSize="72%" id="terminal" minSize="45%">
 					<CenterPane
-						availableProjectSessions={availableSessions.filter(
-							(candidate) => candidate.id !== tabOwnerSession?.id,
-						)}
+						availableProjectSessions={availableSessions.filter((candidate) => candidate.id !== tabOwnerSession?.id)}
 						daemonReady={daemonStatus.state === "ready"}
 						onAddProjectSession={addProjectSession}
 						onCloseProjectSession={closeProjectSession}
