@@ -334,26 +334,34 @@ export function Sidebar({
 						daemon {daemonStatus.state}
 					</span>
 				)}
-				<div className="sidebar-expanded-chrome relative flex w-full min-w-46.5 flex-col gap-1 transition-[opacity,transform] duration-150 ease-out group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:-translate-x-2 group-data-[collapsible=icon]:opacity-0">
-					<RestartToUpdateRow status={updateStatus} />
+				<div
+					aria-hidden={isCollapsed || undefined}
+					className="sidebar-expanded-chrome relative flex w-full min-w-46.5 flex-col gap-1 transition-[opacity,transform] duration-150 ease-out group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:-translate-x-2 group-data-[collapsible=icon]:opacity-0"
+				>
+					<RestartToUpdateRow status={updateStatus} tabIndex={isCollapsed ? -1 : 0} />
 					<button
 						aria-label="Settings"
 						className="flex w-full items-center justify-center gap-2.5 rounded-settings-row bg-interactive-hover px-2.5 py-2.5 text-control font-medium text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-lg [&_svg]:shrink-0"
 						onClick={() => selection.goGlobalSettings()}
+						tabIndex={isCollapsed ? -1 : 0}
 						type="button"
 					>
 						<Settings aria-hidden="true" />
 						<span className="tracking-tight">Settings</span>
 					</button>
 				</div>
-				<div className="pointer-events-none absolute inset-x-1.5 bottom-0 top-auto flex min-h-row-md flex-col items-center justify-end gap-1 opacity-0 transition-opacity duration-150 ease-out group-data-[collapsible=icon]:pointer-events-auto group-data-[collapsible=icon]:opacity-100">
-					<RestartToUpdateRailButton status={updateStatus} />
+				<div
+					aria-hidden={!isCollapsed || undefined}
+					className="pointer-events-none absolute inset-x-1.5 bottom-0 top-auto flex min-h-row-md flex-col items-center justify-end gap-1 opacity-0 transition-opacity duration-150 ease-out group-data-[collapsible=icon]:pointer-events-auto group-data-[collapsible=icon]:opacity-100"
+				>
+					<RestartToUpdateRailButton status={updateStatus} tabIndex={isCollapsed ? 0 : -1} />
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<button
 								aria-label="Settings"
 								className="grid size-control-board place-items-center rounded-settings-row bg-interactive-hover text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-base"
 								onClick={() => selection.goGlobalSettings()}
+								tabIndex={isCollapsed ? 0 : -1}
 								type="button"
 							>
 								<Settings aria-hidden="true" />
@@ -722,7 +730,7 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 // the main-process evaluator flags it escalated. Clicking installs immediately;
 // the row itself is the prompt, so no confirmation dialog. Renders nothing in
 // every other update state.
-function RestartToUpdateRow({ status }: { status: UpdateStatus }) {
+function RestartToUpdateRow({ status, tabIndex }: { status: UpdateStatus; tabIndex: number }) {
 	if (status.state !== "downloaded") return null;
 	const escalated = status.escalated === true;
 	return (
@@ -735,6 +743,7 @@ function RestartToUpdateRow({ status }: { status: UpdateStatus }) {
 					: "text-passive hover:bg-interactive-hover hover:text-foreground [&_svg]:text-passive",
 			)}
 			onClick={() => void aoBridge.updates.install()}
+			tabIndex={tabIndex}
 			type="button"
 		>
 			<RefreshCw aria-hidden="true" className="size-icon-lg shrink-0" />
@@ -756,7 +765,7 @@ function RestartToUpdateRow({ status }: { status: UpdateStatus }) {
 
 // Icon-rail variant of RestartToUpdateRow for the collapsed sidebar: icon-only
 // with the two-line copy in the tooltip.
-function RestartToUpdateRailButton({ status }: { status: UpdateStatus }) {
+function RestartToUpdateRailButton({ status, tabIndex }: { status: UpdateStatus; tabIndex: number }) {
 	if (status.state !== "downloaded") return null;
 	const escalated = status.escalated === true;
 	return (
@@ -771,6 +780,7 @@ function RestartToUpdateRailButton({ status }: { status: UpdateStatus }) {
 							: "text-passive hover:bg-interactive-hover hover:text-foreground",
 					)}
 					onClick={() => void aoBridge.updates.install()}
+					tabIndex={tabIndex}
 					type="button"
 				>
 					<RefreshCw aria-hidden="true" />
