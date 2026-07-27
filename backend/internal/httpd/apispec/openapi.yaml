@@ -2529,6 +2529,11 @@ components:
       - state
       - lastActivityAt
       type: object
+    DomainContainerReapConfig:
+      properties:
+        disabled:
+          type: boolean
+      type: object
     DomainReviewerConfig:
       properties:
         harness:
@@ -2931,6 +2936,8 @@ components:
           type: string
         agentRulesFile:
           type: string
+        containerReap:
+          $ref: '#/components/schemas/DomainContainerReapConfig'
         defaultBranch:
           type: string
         env:

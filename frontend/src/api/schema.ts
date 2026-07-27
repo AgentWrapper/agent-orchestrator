@@ -919,6 +919,9 @@ export interface components {
             lastActivityAt: string;
             state: string;
         };
+        DomainContainerReapConfig: {
+            disabled?: boolean;
+        };
         DomainReviewerConfig: {
             harness: string;
         };
@@ -1075,6 +1078,7 @@ export interface components {
             agentConfig?: components["schemas"]["AgentConfig"];
             agentRules?: string;
             agentRulesFile?: string;
+            containerReap?: components["schemas"]["DomainContainerReapConfig"];
             defaultBranch?: string;
             env?: {
                 [key: string]: string;

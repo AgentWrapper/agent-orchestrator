@@ -69,7 +69,12 @@ var (
 	ErrAwaitingDecision = errors.New("session: awaiting a user decision")
 )
 
-// Env vars a spawned process reads to learn who it is.
+// Env vars a spawned process reads to learn who it is. A worker that starts
+// its own Docker containers (a database, a queue, any ad-hoc service) should
+// label them `--label ao.session=$AO_SESSION_ID` so AO's container reaper
+// (dockerreap) removes them on session kill/terminal state — see #2652. Add
+// `--label ao.spare=true` to a deliberately shared container that must
+// survive past this session.
 const (
 	EnvSessionID = "AO_SESSION_ID"
 	EnvProjectID = "AO_PROJECT_ID"
@@ -156,10 +161,11 @@ type Store interface {
 // Manager coordinates internal session spawn, restore, kill, and cleanup over
 // the outbound ports. User-facing read-model assembly lives in the service package.
 type Manager struct {
-	runtime   runtimeController
-	agents    ports.AgentResolver
-	workspace ports.Workspace
-	store     Store
+	runtime    runtimeController
+	agents     ports.AgentResolver
+	containers ports.ContainerReaper
+	workspace  ports.Workspace
+	store      Store
 	// messenger is a sessionguard.Guard wrapping the raw messenger, so every
 	// pane write is guarded (re-read state, refuse a blocked session) without
 	// each call site re-deriving the check. Send/confirmActive use Deliver for
@@ -220,6 +226,10 @@ type Deps struct {
 	Store     Store
 	Messenger ports.AgentMessenger
 	Lifecycle lifecycleRecorder
+	// Containers optionally reaps a worker session's Docker containers on
+	// Kill (the container leg of #2652). Nil means container reaping is
+	// skipped entirely — most AO installs run without Docker.
+	Containers ports.ContainerReaper
 	// DataDir is exported to spawned agents as AO_DATA_DIR so their hook
 	// commands can open the same store.
 	DataDir string
@@ -248,6 +258,7 @@ func New(d Deps) *Manager {
 		workspace:   d.Workspace,
 		store:       d.Store,
 		lcm:         d.Lifecycle,
+		containers:  d.Containers,
 		dataDir:     d.DataDir,
 		clock:       d.Clock,
 		lookPath:    d.LookPath,
@@ -766,6 +777,7 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 			return false, fmt.Errorf("kill %s: runtime: %w", id, err)
 		}
 	}
+	m.reapSessionContainers(ctx, rec)
 	freed := false
 	if workspaceProject {
 		cleaned, err := m.destroyWorkspaceProjectRows(ctx, workspaceProjectRows)
@@ -2663,6 +2675,28 @@ func (m *Manager) cleanupAgentWorkspace(ctx context.Context, rec domain.SessionR
 		WorkspacePath: workspacePath,
 	}); err != nil {
 		m.logger.Warn("workspace cleanup: agent cleanup failed", "sessionID", rec.ID, "workspacePath", workspacePath, "error", err)
+	}
+}
+
+// reapSessionContainers force-removes the Docker containers a worker session
+// started (the container leg of #2652), keyed by the ao.session label. This
+// mirrors cleanupAgentWorkspace's contract exactly: best-effort, logged on
+// failure, never returned to the caller — a container-reap failure must not
+// block or fail a session kill.
+func (m *Manager) reapSessionContainers(ctx context.Context, rec domain.SessionRecord) {
+	if m.containers == nil {
+		return
+	}
+	if project, err := m.loadProject(ctx, rec.ProjectID); err == nil && project.Config.ContainerReap.Disabled {
+		return
+	}
+	removed, err := m.containers.ReapSessionContainers(ctx, rec.ID)
+	if err != nil {
+		m.logger.Warn("kill: container reap failed", "sessionID", rec.ID, "error", err)
+		return
+	}
+	if removed > 0 {
+		m.logger.Info("kill: reaped session containers", "sessionID", rec.ID, "removed", removed)
 	}
 }
 

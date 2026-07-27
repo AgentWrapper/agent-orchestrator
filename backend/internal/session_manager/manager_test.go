@@ -5751,3 +5751,95 @@ func (m *flipOnNudgeMessenger) Send(_ context.Context, _ domain.SessionID, msg s
 	}
 	return nil
 }
+
+// fakeContainerReaper is a minimal ports.ContainerReaper test double. err, when
+// set, is returned on every call; sessions records every session id it was
+// asked to reap, in call order.
+type fakeContainerReaper struct {
+	sessions []domain.SessionID
+	removed  int
+	err      error
+}
+
+func (f *fakeContainerReaper) ReapSessionContainers(_ context.Context, id domain.SessionID) (int, error) {
+	f.sessions = append(f.sessions, id)
+	return f.removed, f.err
+}
+
+func newManagerWithContainers(cr ports.ContainerReaper) (*Manager, *fakeStore, *fakeRuntime, *fakeWorkspace) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath, Containers: cr})
+	return m, st, rt, ws
+}
+
+// TestKill_ReapsSessionContainers is the #2652 regression: Kill must invoke
+// the container reaper for the killed session, alongside runtime/workspace
+// teardown.
+func TestKill_ReapsSessionContainers(t *testing.T) {
+	cr := &fakeContainerReaper{removed: 2}
+	m, st, _, _ := newManagerWithContainers(cr)
+	st.sessions["mer-1"] = mkLive("mer-1")
+
+	freed, err := m.Kill(ctx, "mer-1")
+	if err != nil || !freed {
+		t.Fatalf("freed=%v err=%v", freed, err)
+	}
+	if len(cr.sessions) != 1 || cr.sessions[0] != "mer-1" {
+		t.Fatalf("expected container reap for mer-1, got %v", cr.sessions)
+	}
+}
+
+// TestKill_ContainerReapFailureDoesNotBlockKill asserts the best-effort
+// contract: a container reaper error must never fail or block Kill, matching
+// cleanupAgentWorkspace's existing best-effort teardown pattern.
+func TestKill_ContainerReapFailureDoesNotBlockKill(t *testing.T) {
+	cr := &fakeContainerReaper{err: errors.New("docker rm: permission denied")}
+	m, st, rt, ws := newManagerWithContainers(cr)
+	st.sessions["mer-1"] = mkLive("mer-1")
+
+	freed, err := m.Kill(ctx, "mer-1")
+	if err != nil || !freed {
+		t.Fatalf("a container reap failure must not fail Kill: freed=%v err=%v", freed, err)
+	}
+	if rt.destroyed != 1 || ws.destroyed != 1 {
+		t.Fatal("runtime and workspace teardown must still complete despite container reap failure")
+	}
+	if len(cr.sessions) != 1 {
+		t.Fatalf("expected container reap to still be attempted, got %v", cr.sessions)
+	}
+}
+
+// TestKill_SkipsContainerReapWhenNilAndWhenDisabled covers both "no reaper
+// wired" (nil Containers dep — most AO installs) and "project opted out"
+// (ContainerReap.Disabled) skipping the reap call without affecting Kill.
+func TestKill_SkipsContainerReapWhenNilAndWhenDisabled(t *testing.T) {
+	t.Run("nil reaper", func(t *testing.T) {
+		m, st, _, _ := newManager() // newManager wires Containers: nil
+		st.sessions["mer-1"] = mkLive("mer-1")
+		if freed, err := m.Kill(ctx, "mer-1"); err != nil || !freed {
+			t.Fatalf("freed=%v err=%v", freed, err)
+		}
+	})
+
+	t.Run("project disabled", func(t *testing.T) {
+		cr := &fakeContainerReaper{}
+		m, st, _, _ := newManagerWithContainers(cr)
+		st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: func() domain.ProjectConfig {
+			c := testRoleAgents()
+			c.ContainerReap.Disabled = true
+			return c
+		}()}
+		st.sessions["mer-1"] = mkLive("mer-1")
+
+		if freed, err := m.Kill(ctx, "mer-1"); err != nil || !freed {
+			t.Fatalf("freed=%v err=%v", freed, err)
+		}
+		if len(cr.sessions) != 0 {
+			t.Fatalf("expected no reap call when project disables container reap, got %v", cr.sessions)
+		}
+	})
+}
