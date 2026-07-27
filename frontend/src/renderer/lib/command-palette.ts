@@ -5,9 +5,16 @@ import {
 	sessionIsActive,
 	sessionNeedsAttention,
 	workerSessions,
+	type PullRequestFacts,
 	type WorkspaceSession,
 	type WorkspaceSummary,
 } from "../types/workspace";
+import {
+	openReviewStatesFor,
+	reviewIsRunning,
+	reviewSessionRunAction,
+	type PRReviewState,
+} from "./session-reviews";
 
 export type CommandGroupId = "current" | "attention" | "projects" | "sessions" | "prs" | "global";
 
@@ -23,6 +30,9 @@ export type CommandAction =
 	| { kind: "open-new-project" }
 	| { kind: "open-orchestrator"; projectId: string }
 	| { kind: "copy-branch"; branch: string }
+	| { kind: "open-pr"; url: string }
+	| { kind: "copy-pr-url"; url: string }
+	| { kind: "trigger-review"; sessionId: string }
 	| { kind: "toggle-theme" };
 
 export type CommandItem = {
@@ -42,6 +52,8 @@ export type CommandPaletteContext = {
 	currentProjectId?: string;
 	currentSessionId?: string;
 	restartingProjectIds?: ReadonlySet<string>;
+	/** Live review states per session, injected by the palette's queries; absent sessions render enabled (the daemon validates on trigger). */
+	reviewStatesBySessionId?: ReadonlyMap<string, PRReviewState[]>;
 };
 
 export const commandGroupOrder: CommandGroupId[] = ["current", "attention", "projects", "sessions", "prs", "global"];
@@ -93,7 +105,7 @@ function findSession(workspaces: WorkspaceSummary[], sessionId: string): Workspa
 }
 
 export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
-	const { workspaces, currentProjectId, currentSessionId, restartingProjectIds } = ctx;
+	const { workspaces, currentProjectId, currentSessionId, restartingProjectIds, reviewStatesBySessionId } = ctx;
 	const items: CommandItem[] = [];
 
 	const currentProject = currentProjectId
@@ -148,7 +160,7 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 			group: "current",
 			title: "Copy branch name",
 			subtitle: currentBranch,
-			keywords: ["branch", "git", currentBranch, currentSession.title],
+			keywords: ["branch", "git", "copy", currentBranch, currentSession.title],
 			action: { kind: "copy-branch", branch: currentBranch },
 		});
 	}
@@ -190,21 +202,26 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 
 	for (const workspace of workspaces) {
 		for (const session of workerSessions(workspace.sessions)) {
+			const sessionReviewStates = reviewStatesBySessionId?.get(session.id);
+			const openReviewStates = sessionReviewStates ? openReviewStatesFor(session, sessionReviewStates) : undefined;
+			const sessionReviewRunning = openReviewStates ? reviewIsRunning(openReviewStates) : false;
 			for (const pr of openPRs(session)) {
+				const subtitle = `${session.title} · ${workspace.name}`;
+				const prKeywords = [
+					`#${pr.number}`,
+					String(pr.number),
+					pr.url,
+					session.title,
+					session.branch ?? "",
+					workspace.name,
+					pr.state,
+				];
 				items.push({
 					id: `pr:${session.id}:${pr.number}`,
 					group: "prs",
 					title: `#${pr.number}`,
-					subtitle: `${session.title} · ${workspace.name}`,
-					keywords: [
-						`#${pr.number}`,
-						String(pr.number),
-						pr.url,
-						session.title,
-						session.branch ?? "",
-						workspace.name,
-						pr.state,
-					],
+					subtitle,
+					keywords: prKeywords,
 					action: {
 						kind: "navigate",
 						target: {
@@ -213,6 +230,25 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 						},
 					},
 				});
+				items.push({
+					id: `pr-open:${session.id}:${pr.number}`,
+					group: "prs",
+					title: `Open PR #${pr.number}`,
+					subtitle,
+					keywords: [...prKeywords, "open", "open pr", "github", "browser"],
+					searchOnly: true,
+					action: { kind: "open-pr", url: pr.url },
+				});
+				items.push({
+					id: `pr-copy:${session.id}:${pr.number}`,
+					group: "prs",
+					title: `Copy PR URL #${pr.number}`,
+					subtitle,
+					keywords: [...prKeywords, "copy", "copy pr", "url", "link", "share"],
+					searchOnly: true,
+					action: { kind: "copy-pr-url", url: pr.url },
+				});
+				items.push(prReviewCommand(session, pr, openReviewStates, sessionReviewRunning, subtitle, prKeywords));
 			}
 		}
 	}
@@ -240,6 +276,43 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 	});
 
 	return items;
+}
+
+/**
+ * Per-PR review command. The trigger endpoint is session-scoped (one run covers
+ * all of the session's eligible open PRs, same as the Reviews tab button), so
+ * the disabled state mirrors the shared ReviewPanel eligibility logic. When
+ * review data has not loaded (or failed), the command stays enabled and the
+ * daemon's response decides — its error surfaces via the palette error banner.
+ */
+function prReviewCommand(
+	session: WorkspaceSession,
+	pr: PullRequestFacts,
+	openReviewStates: PRReviewState[] | undefined,
+	sessionReviewRunning: boolean,
+	subtitle: string,
+	keywords: string[],
+): CommandItem {
+	const prReviewState = openReviewStates?.find((reviewState) => reviewState.prUrl === pr.url);
+	const ineligible = openReviewStates !== undefined && (!prReviewState || prReviewState.status === "ineligible");
+	const disabled = sessionReviewRunning || ineligible;
+	const disabledReason = sessionReviewRunning
+		? "Review already running"
+		: ineligible
+			? "Not eligible for review"
+			: undefined;
+	const runLabel = prReviewState ? reviewSessionRunAction([prReviewState], false) : "Run review";
+	return {
+		id: `pr-review:${session.id}:${pr.number}`,
+		group: "prs",
+		title: `${runLabel} #${pr.number}`,
+		subtitle,
+		keywords: [...keywords, "review", "run review", "re-run review", "ao review"],
+		searchOnly: true,
+		disabled,
+		disabledReason,
+		action: { kind: "trigger-review", sessionId: session.id },
+	};
 }
 
 function isSubsequence(query: string, haystack: string): boolean {

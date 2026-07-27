@@ -20,6 +20,13 @@ import { formatTimeCompact } from "../lib/format-time";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { useTerminateSession } from "../hooks/useTerminateSession";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
+import {
+	openReviewStatesFor,
+	reviewIsRunning,
+	reviewRunDisabled,
+	reviewSessionRunAction,
+	sessionReviewsQueryOptions,
+} from "../lib/session-reviews";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { canonicalTrackerIssueId, sortedPRs } from "../types/workspace";
 import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session-presentation";
@@ -39,7 +46,6 @@ import { Switch } from "./ui/switch";
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
 type SessionPRReviewEntry = components["schemas"]["SessionPRReviewEntry"];
-type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
 type OpenReviewerTerminal = (target: { handleId: string; harness: string }) => void;
 
 export type InspectorView = "summary" | "reviews" | "browser" | "files";
@@ -700,23 +706,7 @@ function ReviewsView({
 	const hasPr = sortedPRs(session).length > 0;
 	const queryClient = useQueryClient();
 	const [reviewNotice, setReviewNotice] = useState<string | null>(null);
-	const reviewsQuery = useQuery({
-		queryKey: ["session-reviews", session.id],
-		enabled: hasPr,
-		refetchInterval: (query) => {
-			const data = query.state.data as ReviewsResponse | undefined;
-			const reviews = data?.reviews ?? [];
-			return reviews.some((review) => review.status === "running") ? 2500 : false;
-		},
-		queryFn: async () => {
-			if (usePreviewData) return mockReviewsResponse(session);
-			const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/reviews", {
-				params: { path: { sessionId: session.id } },
-			});
-			if (error) throw new Error(apiErrorMessage(error, "Unable to load reviews"));
-			return data ?? ({ reviewerHandleId: "", reviews: [] } satisfies ReviewsResponse);
-		},
-	});
+	const reviewsQuery = useQuery(sessionReviewsQueryOptions(session, hasPr));
 	const projectConfigQuery = useQuery({
 		queryKey: ["project-config", session.workspaceId],
 		enabled: hasPr,
@@ -910,68 +900,6 @@ function mockProjectConfig(): ProjectConfig {
 	};
 }
 
-function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
-	return {
-		reviewerHandleId: `${session.id}-reviewer`,
-		reviews: sortedPRs(session).map((pr, index) => {
-			const targetSha = `demo${pr.number}${index}`;
-			const reviewedAt = new Date(Date.now() - (index + 1) * 11 * 60 * 1000).toISOString();
-			const latestRun =
-				pr.review === "approved" || pr.review === "changes_requested"
-					? {
-							batchId: `demo-batch-${session.id}`,
-							body:
-								pr.review === "approved"
-									? "Demo review approved. The implementation is ready for the README screenshot flow."
-									: "Demo review found polish feedback for the terminal presentation.",
-							createdAt: reviewedAt,
-							githubReviewId: `${pr.number}01`,
-							harness: "codex",
-							id: `demo-review-run-${pr.number}`,
-							prUrl: pr.url,
-							reviewId: `demo-review-${pr.number}`,
-							sessionId: session.id,
-							status: "delivered",
-							targetSha,
-							verdict: pr.review === "approved" ? "approved" : "changes_requested",
-						}
-					: undefined;
-			return {
-				latestRun,
-				prNumber: pr.number,
-				prUrl: pr.url,
-				status:
-					pr.review === "approved"
-						? "up_to_date"
-						: pr.review === "changes_requested"
-							? "changes_requested"
-							: pr.state === "draft"
-								? "ineligible"
-								: "needs_review",
-				targetSha,
-				title: mockReviewTitle(pr.number),
-			};
-		}),
-	};
-}
-
-function mockReviewTitle(prNumber: number): string {
-	switch (prNumber) {
-		case 319:
-			return "Browser preview rail renders inside AO";
-		case 320:
-			return "Review tab keeps stacked PR rows visible";
-		case 321:
-			return "Draft child PR waits for parent review";
-		case 318:
-			return "Terminal polish feedback";
-		case 323:
-			return "README screenshot assets ready";
-		default:
-			return `Demo pull request ${prNumber}`;
-	}
-}
-
 function ReviewPanel({
 	session,
 	config,
@@ -1006,16 +934,11 @@ function ReviewPanel({
 		return <p className={inspectorEmptyClass}>Loading reviews...</p>;
 	}
 
-	const openPRURLs = new Set(
-		sortedPRs(session)
-			.filter((pr) => pr.state === "open")
-			.map((pr) => pr.url),
-	);
-	const openReviewStates = reviewStates.filter((reviewState) => openPRURLs.has(reviewState.prUrl));
+	const openReviewStates = openReviewStatesFor(session, reviewStates);
 	const latest = openReviewStates.find((review) => review.latestRun)?.latestRun;
 	const harness = latest?.harness || config?.reviewers?.[0]?.harness || "claude-code";
 	const terminalEnabled = Boolean(reviewerHandleId && onOpenTerminal);
-	const reviewRunning = openReviewStates.some((reviewState) => reviewState.status === "running");
+	const reviewRunning = reviewIsRunning(openReviewStates);
 	// The reviewer terminal only exists once a review has actually run (or is
 	// running), so keep the button out of the footer until then.
 	const reviewHasRun = reviewRunning || Boolean(latest);
@@ -1024,10 +947,7 @@ function ReviewPanel({
 		if (!terminalEnabled) return;
 		onOpenTerminal?.({ handleId: reviewerHandleId, harness });
 	};
-	const runDisabled =
-		isTriggering ||
-		openReviewStates.length === 0 ||
-		openReviewStates.every((reviewState) => reviewState.status === "ineligible");
+	const runDisabled = reviewRunDisabled(openReviewStates, isTriggering);
 
 	return (
 		<div className="flex flex-col gap-3">
@@ -1169,16 +1089,6 @@ function previousReviewVerdict(reviewState: PRReviewState): {
 		default:
 			return null;
 	}
-}
-
-function reviewSessionRunAction(reviewStates: PRReviewState[], isTriggering: boolean): string {
-	if (isTriggering || reviewStates.some((reviewState) => reviewState.status === "running")) {
-		return "Reviewing...";
-	}
-	if (reviewStates.some((reviewState) => reviewState.status === "changes_requested" || reviewState.latestRun)) {
-		return "Re-run review";
-	}
-	return "Run review";
 }
 
 function BrowserView({

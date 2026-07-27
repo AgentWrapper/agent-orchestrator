@@ -1,9 +1,10 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { Loader2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { aoBridge } from "../lib/bridge";
 import {
 	buildCommands,
@@ -13,9 +14,10 @@ import {
 } from "../lib/command-palette";
 import { iconForCommand } from "../lib/command-palette-icons";
 import { isDialogOrMenuOpen } from "../lib/dom-selectors";
+import { sessionReviewsQueryOptions, type PRReviewState } from "../lib/session-reviews";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { useShell } from "../lib/shell-context";
-import { findProjectOrchestrator, hasConfiguredOrchestratorAgent } from "../types/workspace";
+import { findProjectOrchestrator, hasConfiguredOrchestratorAgent, openPRs, workerSessions } from "../types/workspace";
 import { useUiStore } from "../stores/ui-store";
 import { CreateProjectFlow } from "./CreateProjectFlow";
 import { NewTaskDialog } from "./NewTaskDialog";
@@ -58,6 +60,27 @@ export function CommandPalette() {
 		: undefined;
 	const currentProjectId = currentSession?.workspaceId ?? params.projectId;
 
+	const sessionsWithOpenPRs = useMemo(
+		() =>
+			workspaces.flatMap((workspace) =>
+				workerSessions(workspace.sessions).filter((session) => openPRs(session).length > 0),
+			),
+		[workspaces],
+	);
+	// Review states are fetched only while the palette is open; the shared query
+	// key means sessions already viewed in the inspector reuse the cached data.
+	const reviewQueries = useQueries({
+		queries: sessionsWithOpenPRs.map((session) => sessionReviewsQueryOptions(session, isOpen)),
+	});
+	const reviewStatesBySessionId = useMemo(() => {
+		const map = new Map<string, PRReviewState[]>();
+		sessionsWithOpenPRs.forEach((session, index) => {
+			const data = reviewQueries[index]?.data;
+			if (data) map.set(session.id, data.reviews ?? []);
+		});
+		return map;
+	}, [sessionsWithOpenPRs, reviewQueries]);
+
 	const items = useMemo(
 		() =>
 			buildCommands({
@@ -65,8 +88,9 @@ export function CommandPalette() {
 				currentProjectId,
 				currentSessionId: params.sessionId,
 				restartingProjectIds,
+				reviewStatesBySessionId,
 			}),
-		[workspaces, currentProjectId, params.sessionId, restartingProjectIds],
+		[workspaces, currentProjectId, params.sessionId, restartingProjectIds, reviewStatesBySessionId],
 	);
 	const groups = useMemo(() => displayGroups(items, query), [items, query]);
 
@@ -162,6 +186,24 @@ export function CommandPalette() {
 						await aoBridge.clipboard.writeText(action.branch);
 						closePalette();
 						break;
+					case "open-pr":
+						await aoBridge.app.openExternal(action.url);
+						closePalette();
+						break;
+					case "copy-pr-url":
+						await aoBridge.clipboard.writeText(action.url);
+						closePalette();
+						break;
+					case "trigger-review": {
+						const { error: triggerError } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/trigger", {
+							params: { path: { sessionId: action.sessionId } },
+						});
+						if (triggerError) throw new Error(apiErrorMessage(triggerError, "Unable to start review"));
+						await queryClient.invalidateQueries({ queryKey: ["session-reviews", action.sessionId] });
+						await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+						closePalette();
+						break;
+					}
 					case "open-new-task":
 						if (blockedByRestart(action.projectId)) break;
 						setNewTaskProjectId(action.projectId);
@@ -183,7 +225,7 @@ export function CommandPalette() {
 				setPendingId(null);
 			}
 		},
-		[navigateToTarget, closePalette, toggleTheme, openOrchestrator, blockedByRestart],
+		[navigateToTarget, closePalette, toggleTheme, openOrchestrator, blockedByRestart, queryClient],
 	);
 
 	const onSelectItem = useCallback(
