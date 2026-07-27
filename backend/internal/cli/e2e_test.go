@@ -18,6 +18,7 @@ package cli_test
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -63,6 +64,20 @@ type env struct {
 func newEnv(t *testing.T) env {
 	t.Helper()
 	dir := t.TempDir()
+	return env{
+		runFile: filepath.Join(dir, "running.json"),
+		dataDir: filepath.Join(dir, "data"),
+		port:    freePort(t),
+	}
+}
+
+func newShortSocketEnv(t *testing.T) env {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "ao-e2e-")
+	if err != nil {
+		return newEnv(t)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	return env{
 		runFile: filepath.Join(dir, "running.json"),
 		dataDir: filepath.Join(dir, "data"),
@@ -162,6 +177,11 @@ func (e env) startDaemon(t *testing.T) {
 		<-waitDone
 	})
 
+	e.waitReady(t)
+}
+
+func (e env) waitReady(t *testing.T) {
+	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		out, _ := e.run(t, "status", "--json")
@@ -270,6 +290,78 @@ func TestE2E_Lifecycle(t *testing.T) {
 	}
 	if _, err := os.Stat(e.runFile); !os.IsNotExist(err) {
 		t.Fatal("run-file should be removed after stop")
+	}
+}
+
+func TestE2E_DaemonSurvivesClosedLogPipeAndCleansRunFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("SIGPIPE is POSIX-only")
+	}
+
+	e := newShortSocketEnv(t)
+	logRead, logWrite, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+
+	cmd := exec.Command(aoBin, "daemon")
+	cmd.Env = e.environ("")
+	cmd.Stdout = logWrite
+	cmd.Stderr = logWrite
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("spawn ao daemon: %v", err)
+	}
+	_ = logWrite.Close()
+
+	waitDone := make(chan error, 1)
+	processDone := make(chan struct{})
+	go func() {
+		waitDone <- cmd.Wait()
+		close(processDone)
+	}()
+	t.Cleanup(func() {
+		select {
+		case <-processDone:
+			return
+		default:
+		}
+		_ = cmd.Process.Kill()
+		<-processDone
+	})
+
+	drainDone := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(io.Discard, logRead)
+		close(drainDone)
+	}()
+
+	e.waitReady(t)
+
+	supervisorConn, err := net.DialTimeout("unix", filepath.Join(filepath.Dir(e.runFile), "supervise.sock"), 5*time.Second)
+	if err != nil {
+		t.Fatalf("connect supervisor socket: %v", err)
+	}
+
+	// Simulate the desktop supervisor's stdout/stderr reader going away while
+	// its watchdog connection drops. The following health request forces an
+	// access-log write to the closed pipe before supervisor-grace shutdown.
+	_ = logRead.Close()
+	<-drainDone
+	_ = supervisorConn.Close()
+
+	body := httpGet(t, e.port, "/healthz")
+	mustContain(t, body, "agent-orchestrator-daemon")
+
+	select {
+	case err := <-waitDone:
+		if err != nil {
+			t.Fatalf("daemon exited after closed log pipe: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("daemon did not self-stop after supervisor disconnect")
+	}
+	if _, err := os.Stat(e.runFile); !os.IsNotExist(err) {
+		t.Fatal("run-file should be removed after supervisor-disconnect shutdown")
 	}
 }
 

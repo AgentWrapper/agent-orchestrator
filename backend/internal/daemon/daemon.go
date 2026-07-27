@@ -39,6 +39,8 @@ import (
 // Run starts the daemon and blocks until it exits. SIGINT/SIGTERM drive
 // graceful shutdown through the HTTP server and background workers.
 func Run() error {
+	ignoreBrokenPipeSignal()
+
 	cfg, err := config.Load()
 	if err != nil {
 		return err
