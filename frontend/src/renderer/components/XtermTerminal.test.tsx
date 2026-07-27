@@ -511,6 +511,115 @@ describe("XtermTerminal", () => {
 		expect(onInput).toHaveBeenCalledWith(expected, "shortcut");
 	});
 
+	it.each([
+		["Cmd+Left (macOS) → line start", "ArrowLeft", "\x01"],
+		["Cmd+Right (macOS) → line end", "ArrowRight", "\x05"],
+	])("normalizes %s into terminal input on macOS", (_name, key, expected) => {
+		setNavigatorPlatform("macOS");
+		const onInput = vi.fn();
+		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+
+		const event = {
+			key,
+			metaKey: true,
+			ctrlKey: false,
+			shiftKey: false,
+			altKey: false,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as KeyboardEvent;
+		const allowed = state.lastTerminal!.keyHandler!(event);
+
+		expect(allowed).toBe(false);
+		expect(event.preventDefault).toHaveBeenCalled();
+		expect(event.stopPropagation).toHaveBeenCalled();
+		expect(onInput).toHaveBeenCalledWith(expected, "shortcut");
+	});
+
+	it.each([
+		["Home → line start", "Home", "\x01"],
+		["End → line end", "End", "\x05"],
+	])("normalizes %s into terminal input on Windows", (_name, key, expected) => {
+		setNavigatorPlatform("Win32");
+		const onInput = vi.fn();
+		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+
+		const event = {
+			key,
+			metaKey: false,
+			ctrlKey: false,
+			shiftKey: false,
+			altKey: false,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as KeyboardEvent;
+		const allowed = state.lastTerminal!.keyHandler!(event);
+
+		expect(allowed).toBe(false);
+		expect(event.preventDefault).toHaveBeenCalled();
+		expect(event.stopPropagation).toHaveBeenCalled();
+		expect(onInput).toHaveBeenCalledWith(expected, "shortcut");
+	});
+
+	it("does not treat Cmd+Left/Right as line-boundary on Windows (Windows key is not macOS Cmd)", () => {
+		setNavigatorPlatform("Win32");
+		const onInput = vi.fn();
+		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+
+		for (const key of ["ArrowLeft", "ArrowRight"]) {
+			const event = {
+				key,
+				metaKey: true,
+				ctrlKey: false,
+				shiftKey: false,
+				altKey: false,
+				preventDefault: vi.fn(),
+				stopPropagation: vi.fn(),
+			} as unknown as KeyboardEvent;
+			expect(state.lastTerminal!.keyHandler!(event)).toBe(true);
+			expect(event.preventDefault).not.toHaveBeenCalled();
+		}
+		expect(onInput).not.toHaveBeenCalled();
+	});
+
+	it("keeps Ctrl+Left/Right as word-navigation shortcuts on Windows (not repurposed as line-boundary)", () => {
+		setNavigatorPlatform("Win32");
+		const onInput = vi.fn();
+		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+
+		const base = { metaKey: false, ctrlKey: true, shiftKey: false, altKey: false, preventDefault: vi.fn(), stopPropagation: vi.fn() };
+
+		state.lastTerminal!.keyHandler!({ ...base, key: "ArrowLeft" } as unknown as KeyboardEvent);
+		expect(onInput).toHaveBeenCalledWith("\x1b[1;5D", "shortcut");
+
+		onInput.mockClear();
+		state.lastTerminal!.keyHandler!({ ...base, key: "ArrowRight" } as unknown as KeyboardEvent);
+		expect(onInput).toHaveBeenCalledWith("\x1b[1;5C", "shortcut");
+	});
+
+	it("does not re-fire Cmd+Left line-start on the keyup that follows its keydown (macOS)", () => {
+		setNavigatorPlatform("macOS");
+		const onInput = vi.fn();
+		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+
+		const keyDown = {
+			type: "keydown",
+			key: "ArrowLeft",
+			metaKey: true,
+			ctrlKey: false,
+			shiftKey: false,
+			altKey: false,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as KeyboardEvent;
+		expect(state.lastTerminal!.keyHandler!(keyDown)).toBe(false);
+		expect(onInput).toHaveBeenCalledTimes(1);
+
+		const keyUp = { ...keyDown, type: "keyup" } as unknown as KeyboardEvent;
+		expect(state.lastTerminal!.keyHandler!(keyUp)).toBe(true);
+		expect(onInput).toHaveBeenCalledTimes(1);
+	});
+
 	it("does not re-fire a shortcut on the keyup that follows its keydown", () => {
 		// xterm.js invokes attachCustomKeyEventHandler on keydown, keyup, AND
 		// keypress for the same physical key press. Without gating on event.type,
