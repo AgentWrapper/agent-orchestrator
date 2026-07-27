@@ -277,15 +277,15 @@ export default function DesignPartnersPage() {
           </div>
 
           <div className="mt-12 grid overflow-hidden rounded-xl border border-border lg:grid-cols-2">
-            <div className="p-6 sm:p-8 lg:border-r lg:border-border">
-              <p className="pb-4 text-base font-medium tracking-[-0.5px] text-foreground">
+            <div className="lg:border-r lg:border-border">
+              <p className="px-6 pb-2 pt-6 text-base font-medium tracking-[-0.5px] text-foreground sm:px-8 sm:pt-8">
                 You get
               </p>
               <ul>
                 {partnerGets.map((item) => (
                   <li
                     key={item.title}
-                    className="border-t border-border py-4 text-sm leading-7 text-muted-foreground"
+                    className="px-6 py-3 text-sm leading-7 text-muted-foreground last:pb-6 sm:px-8 sm:last:pb-8"
                   >
                     <p className="font-medium text-foreground">{item.title}</p>
                     <p className="mt-1">{item.body}</p>
@@ -293,15 +293,15 @@ export default function DesignPartnersPage() {
                 ))}
               </ul>
             </div>
-            <div className="border-t border-border p-6 sm:p-8 lg:border-t-0">
-              <p className="pb-4 text-base font-medium tracking-[-0.5px] text-foreground">
+            <div className="border-t border-border lg:border-t-0">
+              <p className="px-6 pb-2 pt-6 text-base font-medium tracking-[-0.5px] text-foreground sm:px-8 sm:pt-8">
                 We ask
               </p>
               <ul>
                 {partnerAsks.map((item) => (
                   <li
                     key={item.title}
-                    className="border-t border-border py-4 text-sm leading-7 text-muted-foreground"
+                    className="px-6 py-3 text-sm leading-7 text-muted-foreground last:pb-6 sm:px-8 sm:last:pb-8"
                   >
                     <p className="font-medium text-foreground">{item.title}</p>
                     <p className="mt-1">{item.body}</p>
