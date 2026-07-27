@@ -293,7 +293,7 @@ func (w *Workspace) Destroy(ctx context.Context, info ports.WorkspaceInfo) error
 		}
 		return fmt.Errorf("gitworktree: refusing to remove %q: path is still registered after git worktree prune", path)
 	}
-	if err := os.RemoveAll(path); err != nil {
+	if err := removeAllWithRetry(path); err != nil {
 		return fmt.Errorf("gitworktree: remove unregistered path %q: %w", path, err)
 	}
 	return nil
@@ -328,7 +328,7 @@ func (w *Workspace) ForceDestroy(ctx context.Context, info ports.WorkspaceInfo) 
 	// os.RemoveAll as a backstop: cleans up filesystem residue left behind if
 	// git worktree remove --force still left the directory (e.g. files outside
 	// git tracking).
-	if err := os.RemoveAll(path); err != nil {
+	if err := removeAllWithRetry(path); err != nil {
 		return fmt.Errorf("gitworktree: force remove path %q: %w", path, err)
 	}
 	return nil
@@ -789,7 +789,7 @@ func (w *Workspace) forceDestroyPath(ctx context.Context, repo, path string) err
 	if err := w.pruneWorktrees(ctx, repo); err != nil {
 		return err
 	}
-	if err := os.RemoveAll(path); err != nil {
+	if err := removeAllWithRetry(path); err != nil {
 		return fmt.Errorf("gitworktree: force remove path %q: %w", path, err)
 	}
 	return nil

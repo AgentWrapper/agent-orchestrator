@@ -113,6 +113,46 @@ func TestInsertShellTerminalWithProjectRoundTrips(t *testing.T) {
 	}
 }
 
+// TestSelectShellTerminalByHandleID: CloseShellTerminal uses this to learn a
+// shell's session id before taking that session's teardown gate.
+func TestSelectShellTerminalByHandleID(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "portfolio")
+	sess, err := s.CreateSession(ctx, sampleRecord("portfolio"))
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	rec := shellTerminalRecord("shellterm-a", "run-1")
+	rec.SessionID = sess.ID
+	if err := s.InsertShellTerminal(ctx, rec); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	got, found, err := s.SelectShellTerminalByHandleID(ctx, "shellterm-a")
+	if err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	if !found {
+		t.Fatal("found = false, want true for an existing row")
+	}
+	if got.SessionID != sess.ID {
+		t.Errorf("session id = %q, want %q", got.SessionID, sess.ID)
+	}
+}
+
+func TestSelectShellTerminalByHandleIDReportsMissingRow(t *testing.T) {
+	s := newTestStore(t)
+
+	_, found, err := s.SelectShellTerminalByHandleID(context.Background(), "shellterm-missing")
+	if err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	if found {
+		t.Error("found = true, want false for an unknown handle")
+	}
+}
+
 func TestDeleteShellTerminalByHandleIDReportsWhetherRowExisted(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

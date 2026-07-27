@@ -32,6 +32,21 @@ func (s *Store) InsertShellTerminal(ctx context.Context, rec shelltermsvc.ShellT
 	return nil
 }
 
+// SelectShellTerminalByHandleID looks up one shell terminal's row, reporting
+// whether it existed so the caller can answer 404 for an unknown handle.
+// CloseShellTerminal uses this to learn the row's session id BEFORE
+// destroying it, so it can take that session's teardown gate first.
+func (s *Store) SelectShellTerminalByHandleID(ctx context.Context, handleID string) (shelltermsvc.ShellTerminalRecord, bool, error) {
+	row, err := s.qr.SelectShellTerminalByHandleID(ctx, handleID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return shelltermsvc.ShellTerminalRecord{}, false, nil
+	}
+	if err != nil {
+		return shelltermsvc.ShellTerminalRecord{}, false, fmt.Errorf("select shell terminal %s: %w", handleID, err)
+	}
+	return shellTerminalFromGen(row), true, nil
+}
+
 // SelectShellTerminalsByAppRunID returns the shell terminals owned by one app
 // run, oldest first so the UI renders tabs in the order they were opened.
 func (s *Store) SelectShellTerminalsByAppRunID(ctx context.Context, appRunID string) ([]shelltermsvc.ShellTerminalRecord, error) {

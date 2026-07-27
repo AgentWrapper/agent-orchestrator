@@ -88,6 +88,15 @@ func (f *fakeShellTerminalStore) UpdateShellTerminalTitle(_ context.Context, han
 	return ShellTerminalRecord{}, false, nil
 }
 
+func (f *fakeShellTerminalStore) SelectShellTerminalByHandleID(_ context.Context, handleID string) (ShellTerminalRecord, bool, error) {
+	for _, rec := range f.records {
+		if rec.HandleID == handleID {
+			return rec, true, nil
+		}
+	}
+	return ShellTerminalRecord{}, false, nil
+}
+
 func (f *fakeShellTerminalStore) SelectShellTerminalsByAppRunID(_ context.Context, appRunID string) ([]ShellTerminalRecord, error) {
 	var out []ShellTerminalRecord
 	for _, rec := range f.records {
@@ -691,6 +700,86 @@ func TestCloseShellTerminalKeepsRowWhenRuntimeStaysAlive(t *testing.T) {
 	}
 	if len(st.records) != 1 || st.records[0].HandleID != term.HandleID {
 		t.Fatalf("records = %+v, want the still-alive shell's row kept", st.records)
+	}
+}
+
+// TestCloseShellTerminalBlocksUntilSessionTeardownReleases is the regression
+// for the bug where CloseShellTerminal never took the session gate at all: it
+// deleted a session-scoped shell's row directly, so a BeginSessionTeardown
+// racing the same close could run its SELECT before the delete landed, see
+// nothing to drain, and let Session Manager remove the worktree while the
+// close's own Destroy call was still in flight or had failed. Close must now
+// serialize against a teardown for the same session exactly like Open does.
+func TestCloseShellTerminalBlocksUntilSessionTeardownReleases(t *testing.T) {
+	rt := newFakeShellRuntime()
+	st := &fakeShellTerminalStore{}
+	svc := newTestService(rt, st, &fakeProjectRootLocator{})
+
+	// Nothing scoped to the session yet, so Begin's own drain finds nothing and
+	// succeeds trivially — it still holds the gate via the returned release.
+	release, err := svc.BeginSessionTeardown(context.Background(), "portfolio-3")
+	if err != nil {
+		t.Fatalf("BeginSessionTeardown: %v", err)
+	}
+
+	// The row Close will target appears only now — standing in for a shell
+	// that showed up while the session's gate was already held, which is
+	// exactly the interleaving the gate exists to serialize against.
+	st.records = append(st.records, ShellTerminalRecord{HandleID: "shellterm-1", SessionID: "portfolio-3"})
+	rt.aliveByHandle["shellterm-1"] = true
+
+	reachedGate := make(chan struct{})
+	svc.onSessionGateWait = func(id domain.SessionID) {
+		if id == "portfolio-3" {
+			close(reachedGate)
+		}
+	}
+
+	closeDone := make(chan error, 1)
+	go func() {
+		closeDone <- svc.CloseShellTerminal(context.Background(), "shellterm-1")
+	}()
+
+	select {
+	case <-reachedGate:
+	case <-time.After(2 * time.Second):
+		t.Fatal("CloseShellTerminal never reached the gate acquisition point")
+	}
+
+	select {
+	case <-closeDone:
+		t.Fatal("CloseShellTerminal returned while the teardown gate was still held")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	release()
+
+	select {
+	case err := <-closeDone:
+		if err != nil {
+			t.Fatalf("CloseShellTerminal after release: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("CloseShellTerminal did not unblock after release")
+	}
+}
+
+// A shell with no session (opened from the topbar or /terminals) has no
+// worktree teardown to race, so closing it must never touch the gate at all.
+func TestCloseShellTerminalDoesNotGateStandaloneShells(t *testing.T) {
+	rt := newFakeShellRuntime()
+	st := &fakeShellTerminalStore{}
+	svc := newTestService(rt, st, &fakeProjectRootLocator{})
+
+	term, err := svc.OpenShellTerminal(context.Background(), OpenShellTerminalInput{})
+	if err != nil {
+		t.Fatalf("OpenShellTerminal: %v", err)
+	}
+	if err := svc.CloseShellTerminal(context.Background(), term.HandleID); err != nil {
+		t.Fatalf("CloseShellTerminal: %v", err)
+	}
+	if len(svc.gates) != 0 {
+		t.Errorf("gates = %+v, want no gate allocated for a session-less shell", svc.gates)
 	}
 }
 

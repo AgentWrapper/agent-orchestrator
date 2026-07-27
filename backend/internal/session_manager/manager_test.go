@@ -1762,6 +1762,9 @@ func TestKill_RefusesWorkspaceTeardownWhenShellTerminalsWontClose(t *testing.T) 
 	m, st, rt, ws := newManager()
 	m.SetShellTerminalCloser(&fakeShellTerminalCloser{err: errors.New("shellterm-1: still alive")})
 	st.sessions["mer-1"] = mkLive("mer-1")
+	st.worktrees["mer-1"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-1", RepoName: domain.RootWorkspaceRepoName, WorktreePath: "/ws/mer-1"},
+	}
 
 	freed, err := m.Kill(ctx, "mer-1")
 	if err != nil {
@@ -1778,6 +1781,13 @@ func TestKill_RefusesWorkspaceTeardownWhenShellTerminalsWontClose(t *testing.T) 
 	}
 	if !st.sessions["mer-1"].IsTerminated {
 		t.Error("session should still be marked terminated")
+	}
+	// Same guard the plain dirty-workspace refusal applies (#2319): the restore
+	// marker must not survive a user kill, or the next boot's RestoreAll could
+	// resurrect a session the user explicitly terminated — even though the
+	// worktree itself was left alone because a shell wouldn't confirm closed.
+	if rows := st.worktrees["mer-1"]; len(rows) != 0 {
+		t.Errorf("restore marker = %+v, want cleared", rows)
 	}
 }
 

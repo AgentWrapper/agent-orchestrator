@@ -26,6 +26,7 @@ type ShellTerminalRecord struct {
 type Store interface {
 	InsertShellTerminal(ctx context.Context, rec ShellTerminalRecord) error
 	UpdateShellTerminalTitle(ctx context.Context, handleID, title string) (ShellTerminalRecord, bool, error)
+	SelectShellTerminalByHandleID(ctx context.Context, handleID string) (ShellTerminalRecord, bool, error)
 	SelectShellTerminalsByAppRunID(ctx context.Context, appRunID string) ([]ShellTerminalRecord, error)
 	SelectShellTerminalsBySessionID(ctx context.Context, sessionID domain.SessionID) ([]ShellTerminalRecord, error)
 	SelectShellTerminalsFromPreviousAppRuns(ctx context.Context, appRunID string) ([]ShellTerminalRecord, error)

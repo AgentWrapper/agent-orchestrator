@@ -74,11 +74,12 @@ type Service struct {
 	gates map[domain.SessionID]*sessionGate
 
 	// onSessionGateWait, when set, is called the instant a session-scoped
-	// OpenShellTerminal is about to attempt gate.mu.Lock() — before the
-	// (possibly blocking) call, so it fires whether or not the lock is free.
-	// Nil in production; tests use it to know an Open has genuinely reached the
-	// acquisition point before asserting it's blocked there, rather than
-	// inferring "still blocked" from a goroutine that simply hasn't run yet.
+	// OpenShellTerminal or CloseShellTerminal is about to attempt gate.mu.Lock()
+	// — before the (possibly blocking) call, so it fires whether or not the
+	// lock is free. Nil in production; tests use it to know a call has
+	// genuinely reached the acquisition point before asserting it's blocked
+	// there, rather than inferring "still blocked" from a goroutine that simply
+	// hasn't run yet.
 	onSessionGateWait func(domain.SessionID)
 }
 
@@ -247,14 +248,37 @@ func (s *Service) RenameShellTerminal(ctx context.Context, handleID, title strin
 // keeps its row, so it stays visible/re-attachable instead of vanishing from
 // tracking while still running against a directory a later session teardown
 // might remove.
+//
+// A session-scoped shell is closed under that session's gate — the same one
+// BeginSessionTeardown takes — so this can't race a concurrent worktree
+// teardown for the same session: whichever gets the gate first runs to
+// completion before the other's SELECT (here, an unconditional destroy;
+// there, SelectShellTerminalsBySessionID) can observe a half-finished state.
+// Without this, a close whose row deletion raced BeginSessionTeardown's scan
+// could vanish from that scan and leave a still-alive shell invisible to it
+// while the worktree it's rooted in gets removed anyway.
 func (s *Service) CloseShellTerminal(ctx context.Context, handleID string) error {
 	if handleID == "" {
 		return apierr.Invalid("SHELL_TERMINAL_ID_REQUIRED", "A shell terminal id is required", nil)
 	}
-	stillAlive, existed, destroyErr := s.destroyConfirmed(ctx, handleID)
-	if !existed {
+	rec, found, err := s.store.SelectShellTerminalByHandleID(ctx, handleID)
+	if err != nil {
+		return fmt.Errorf("close shell terminal %s: %w", handleID, err)
+	}
+	if !found {
 		return apierr.NotFound("SHELL_TERMINAL_NOT_FOUND", "No such shell terminal: "+handleID)
 	}
+
+	if rec.SessionID != "" {
+		gate := s.sessionGateFor(rec.SessionID)
+		if s.onSessionGateWait != nil {
+			s.onSessionGateWait(rec.SessionID)
+		}
+		gate.mu.Lock()
+		defer gate.mu.Unlock()
+	}
+
+	stillAlive, destroyErr := s.destroyConfirmed(ctx, handleID)
 	if stillAlive {
 		s.log.Warn("close shell terminal: runtime still alive after destroy", "handleId", handleID, "error", destroyErr)
 		return apierr.Conflict("SHELL_TERMINAL_STILL_RUNNING",
@@ -314,7 +338,7 @@ func (s *Service) ReapShellTerminalsFromPreviousAppRuns(ctx context.Context) (in
 	}
 	var cleared int64
 	for _, rec := range orphans {
-		stillAlive, _, destroyErr := s.destroyConfirmed(ctx, rec.HandleID)
+		stillAlive, destroyErr := s.destroyConfirmed(ctx, rec.HandleID)
 		if stillAlive {
 			s.log.Warn("reaping orphaned shell terminal: runtime still alive after destroy",
 				"handleId", rec.HandleID, "appRunId", rec.AppRunID, "error", destroyErr)
@@ -339,25 +363,22 @@ func (s *Service) ReapShellTerminalsFromPreviousAppRuns(ctx context.Context) (in
 //     treated the same as "alive" (unknown state must never let a live shell's
 //     row vanish) — only an explicit "not alive" counts as confirmed dead.
 //
-// Returns stillAlive=true when the row was deliberately kept (death could not
-// be confirmed); existed reports whether a row for handleID was found at all,
-// so callers needing 404 semantics (CloseShellTerminal) don't need a separate
-// lookup — an unknown handle only reaches "not found" once its destroy/alive
-// check resolves to confirmed-dead, so a fabricated id can't be reported as
-// still running.
-func (s *Service) destroyConfirmed(ctx context.Context, handleID string) (stillAlive, existed bool, destroyErr error) {
+// Returns stillAlive=true when the row was deliberately kept because death
+// could not be confirmed. Callers that need 404-for-unknown-handle semantics
+// (CloseShellTerminal) look the row up themselves beforehand — by the time
+// destroyConfirmed runs, the handle is already known to exist.
+func (s *Service) destroyConfirmed(ctx context.Context, handleID string) (stillAlive bool, destroyErr error) {
 	destroyErr = s.runtime.Destroy(ctx, ports.RuntimeHandle{ID: handleID})
 	if destroyErr != nil {
 		alive, aliveErr := s.runtime.IsAlive(ctx, ports.RuntimeHandle{ID: handleID})
 		if aliveErr != nil || alive {
-			return true, true, destroyErr
+			return true, destroyErr
 		}
 	}
-	deleted, err := s.store.DeleteShellTerminalByHandleID(ctx, handleID)
-	if err != nil {
+	if _, err := s.store.DeleteShellTerminalByHandleID(ctx, handleID); err != nil {
 		s.log.Warn("shell terminal: delete row after destroy failed", "handleId", handleID, "error", err)
 	}
-	return false, deleted, nil
+	return false, nil
 }
 
 // BeginSessionTeardown drains every shell terminal scoped to a session and
@@ -395,7 +416,7 @@ func (s *Service) BeginSessionTeardown(ctx context.Context, sessionID domain.Ses
 
 	var stillAlive []error
 	for _, rec := range recs {
-		alive, _, destroyErr := s.destroyConfirmed(ctx, rec.HandleID)
+		alive, destroyErr := s.destroyConfirmed(ctx, rec.HandleID)
 		if alive {
 			s.log.Warn("close shell terminal for session: runtime still alive after destroy",
 				"sessionID", sessionID, "handleId", rec.HandleID, "error", destroyErr)
