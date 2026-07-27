@@ -20,6 +20,7 @@
 
 	/* Typography — token-named half-steps (text-control = dense 13px chrome) */
 	--text-micro: var(--font-size-xs);
+	--text-nano: var(--font-size-nano);
 	--text-2xs: var(--font-size-2xs);
 	--text-caption: var(--font-size-caption);
 	--text-sm-md: var(--font-size-sm-md);

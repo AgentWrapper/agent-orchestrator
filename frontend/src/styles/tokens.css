@@ -96,6 +96,7 @@
 	/* Scale — dense UI chrome uses half-steps between base sizes */
 	--font-size-2xs: 10.5px; /* uppercase meta, board footers */
 	--font-size-xs: 10px; /* micro labels, tight pills */
+	--font-size-nano: 8px; /* smallest chrome text — sidebar search label */
 	--font-size-caption: 11px; /* badges, kanban labels */
 	--font-size-sm-md: 11.5px; /* inspector tabs, status pills */
 	--font-size-sm: 12px; /* secondary chrome / Tailwind text-xs */

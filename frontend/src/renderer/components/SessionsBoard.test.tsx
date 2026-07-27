@@ -4,13 +4,15 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 
-const { navigateMock, notificationShowMock, postMock, workspaceQueryMock, boardActionsInPanelMock } = vi.hoisted(() => ({
-	navigateMock: vi.fn(),
-	notificationShowMock: vi.fn(),
-	postMock: vi.fn(),
-	workspaceQueryMock: vi.fn(),
-	boardActionsInPanelMock: vi.fn(() => false),
-}));
+const { navigateMock, notificationShowMock, postMock, workspaceQueryMock, boardActionsInPanelMock, scmSummaryMock } =
+	vi.hoisted(() => ({
+		navigateMock: vi.fn(),
+		notificationShowMock: vi.fn(),
+		postMock: vi.fn(),
+		workspaceQueryMock: vi.fn(),
+		boardActionsInPanelMock: vi.fn(() => false),
+		scmSummaryMock: vi.fn((): { data: unknown } => ({ data: undefined })),
+	}));
 
 vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => navigateMock,
@@ -19,6 +21,10 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("../hooks/useWorkspaceQuery", () => ({
 	workspaceQueryKey: ["workspaces"],
 	useWorkspaceQuery: workspaceQueryMock,
+}));
+
+vi.mock("../hooks/useSessionScmSummary", () => ({
+	useSessionScmSummary: scmSummaryMock,
 }));
 
 vi.mock("../lib/api-client", () => ({
@@ -70,6 +76,7 @@ beforeEach(() => {
 	notificationShowMock.mockReset().mockResolvedValue(undefined);
 	postMock.mockReset().mockResolvedValue({ data: {} });
 	workspaceQueryMock.mockReset().mockReturnValue({ data: [], isError: false });
+	scmSummaryMock.mockReset().mockReturnValue({ data: undefined });
 	window.localStorage.removeItem("ao.board.archive.layout");
 	boardActionsInPanelMock.mockReset().mockReturnValue(false);
 });
@@ -177,7 +184,7 @@ describe("SessionsBoard", () => {
 		expect(within(idleCard).getByText("brand-font-pipeline")).toHaveClass("font-semibold", "line-clamp-2");
 	});
 
-	it("omits the status pill on cards since the column names the stage", () => {
+	it("keeps refining statuses but drops the pill where it echoes the lane", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
 				{
@@ -232,14 +239,86 @@ describe("SessionsBoard", () => {
 		const noSignalCard = screen.getByText("no-signal-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
 		const draftCard = screen.getByText("draft-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
 
-		// The column header names the stage, so cards never repeat a status pill —
-		// idle, no-signal and draft alike carry no status word.
+		// Idle echoes its Idle lane, so its pill is dropped. No signal and Draft PR
+		// refine their mixed columns, so they keep the pill (with their own tone) so
+		// the user can tell why the task needs attention.
 		expect(within(idleCard).queryByText("Idle")).toBeNull();
-		expect(within(noSignalCard).queryByText("No signal")).toBeNull();
-		expect(within(draftCard).queryByText("Draft PR")).toBeNull();
+		expect(within(noSignalCard).getByText("No signal").closest("span")).toHaveClass("text-status-unknown");
+		expect(within(draftCard).getByText("Draft PR").closest("span")).toHaveClass("text-status-in-review");
 	});
 
-	it("places an exited live session in Needs you", () => {
+	it("shows the diff totals from the SCM PR summary (production shape, no changedFiles)", () => {
+		// Production sessions carry no `changedFiles`; the diff must be derived from
+		// the PR summaries the SCM hook returns, or the packaged app shows nothing.
+		scmSummaryMock.mockReturnValue({
+			data: [
+				{
+					url: "https://github.com/acme/radic/pull/512",
+					htmlUrl: "https://github.com/acme/radic/pull/512",
+					number: 512,
+					title: "diff-summary-task",
+					state: "open",
+					provider: "github",
+					repo: "acme/radic",
+					author: "agent",
+					sourceBranch: "ao/s-diff",
+					targetBranch: "main",
+					headSha: "abc123",
+					additions: 128,
+					deletions: 47,
+					changedFiles: 6,
+					ci: { state: "passing", failingChecks: [] },
+					review: { decision: "none", hasUnresolvedHumanComments: false, unresolvedBy: [] },
+					mergeability: {
+						state: "mergeable",
+						reasons: [],
+						prUrl: "https://github.com/acme/radic/pull/512",
+						conflictFiles: [],
+					},
+					createdAt: "2026-01-01T00:00:00Z",
+					stateChangedAt: "2026-01-01T00:00:00Z",
+					updatedAt: "2026-01-01T00:00:00Z",
+					observedAt: "2026-01-01T00:00:00Z",
+					ciObservedAt: "2026-01-01T00:00:00Z",
+					reviewObservedAt: "2026-01-01T00:00:00Z",
+				},
+			],
+		});
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					boardSession({
+						id: "s-diff",
+						title: "diff-summary-task",
+						status: "pr_open",
+						activity: { state: "idle", lastActivityAt: "2026-01-01T00:00:00Z" },
+						// No changedFiles — exactly what fetchWorkspaces() returns in production.
+						prs: [
+							{
+								number: 512,
+								url: "https://github.com/acme/radic/pull/512",
+								state: "open",
+								ci: "passing",
+								review: "none",
+								mergeability: "mergeable",
+								reviewComments: false,
+								updatedAt: "2026-01-01T00:00:00Z",
+							},
+						],
+					}),
+				]),
+			],
+			isError: false,
+		});
+
+		renderBoard("p1");
+
+		const card = screen.getByText("diff-summary-task").closest('[data-testid="board-session-card"]') as HTMLElement;
+		expect(within(card).getByText("+128")).toBeInTheDocument();
+		expect(within(card).getByText("−47")).toBeInTheDocument();
+	});
+
+	it("places an exited live session in Needs you with an Exited badge", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
 				workspaceWithSessions([
@@ -266,7 +345,7 @@ describe("SessionsBoard", () => {
 		const needsYouColumn = screen.getByText("Needs you").closest("section") as HTMLElement;
 		expect(needsYouColumn.firstElementChild).toHaveClass("py-2");
 		expect(within(needsYouColumn).getByText("agent-exited-task")).toBeInTheDocument();
-		expect(within(needsYouColumn).queryByText("Exited")).toBeNull();
+		expect(within(needsYouColumn).getByText("Exited").closest("span")).toHaveClass("text-status-exited");
 	});
 
 	it("renders an idle-first work lane with a separate lower working section", () => {
