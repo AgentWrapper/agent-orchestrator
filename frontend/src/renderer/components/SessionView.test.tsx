@@ -70,10 +70,26 @@ const { workspaces, workspaceQueryState, panels, shellTerminalsState } = vi.hois
 // platform hides the shell topbar, SessionView mounts it in-panel.)
 vi.mock("./ShellTopbar", () => ({ ShellTopbar: () => null }));
 vi.mock("./CenterPane", () => ({
-	CenterPane: ({ shellTerminals = [] }: { shellTerminals?: Array<{ handleId: string; title: string }> }) => (
+	CenterPane: ({
+		shellTerminals = [],
+		onSelectShellTerminal,
+		onSelectSessionTerminal,
+	}: {
+		shellTerminals?: Array<{ handleId: string; title: string }>;
+		onSelectShellTerminal?: (handleId: string) => void;
+		onSelectSessionTerminal?: () => void;
+	}) => (
 		<div>
 			terminal center
 			<div data-testid="shell-tabs">{shellTerminals.map((s) => s.title).join(",")}</div>
+			{shellTerminals.map((s) => (
+				<button key={s.handleId} type="button" onClick={() => onSelectShellTerminal?.(s.handleId)}>
+					select {s.title}
+				</button>
+			))}
+			<button type="button" onClick={() => onSelectSessionTerminal?.()}>
+				select agent tab
+			</button>
 		</div>
 	),
 }));
@@ -282,7 +298,7 @@ describe("SessionView", () => {
 		}
 		workspaceQueryState.data = workspaces;
 		workspaceQueryState.isLoading = false;
-		useUiStore.setState({ inspectorSessions: {} });
+		useUiStore.setState({ inspectorSessions: {}, visibleTerminalKindBySession: {} });
 		panels.clear();
 		browserDestroy.mockReset();
 		browserViewOptions.current = undefined;
@@ -316,6 +332,35 @@ describe("SessionView", () => {
 		expect(tabs).toHaveTextContent("sess-1-shell");
 		expect(tabs).not.toHaveTextContent("sess-2-shell");
 		expect(tabs).not.toHaveTextContent("loose-shell");
+	});
+
+	// The pane shows one terminal at a time, so selecting a shell takes the
+	// agent's terminal off screen while the route still points at this session.
+	// The notification runtime lives outside this subtree and reads the published
+	// kind to decide whether the user can actually see a needs_input prompt.
+	it("publishes which terminal the session pane is showing", () => {
+		shellTerminalsState.data = [
+			{
+				handleId: "sh-a",
+				sessionId: "sess-1",
+				title: "sess-1-shell",
+				workingDir: "/p",
+				createdAt: "2026-07-24T00:00:00Z",
+			},
+		];
+		const view = render(<SessionView sessionId="sess-1" />);
+		expect(useUiStore.getState().visibleTerminalKindBySession["sess-1"]).toBe("worker");
+
+		fireEvent.click(screen.getByRole("button", { name: "select sess-1-shell" }));
+		expect(useUiStore.getState().visibleTerminalKindBySession["sess-1"]).toBe("shell");
+
+		fireEvent.click(screen.getByRole("button", { name: "select agent tab" }));
+		expect(useUiStore.getState().visibleTerminalKindBySession["sess-1"]).toBe("worker");
+
+		// Leaving the session drops the entry rather than leaving a stale "worker"
+		// behind for a pane that is no longer mounted.
+		view.unmount();
+		expect(useUiStore.getState().visibleTerminalKindBySession["sess-1"]).toBeUndefined();
 	});
 
 	// Regression: react-resizable-panels v4 treats bare numeric sizes as PIXELS

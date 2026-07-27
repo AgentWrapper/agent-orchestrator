@@ -88,6 +88,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const activeShellTerminalHandleId = useUiStore((state) => state.activeShellTerminalHandleId);
 	const setActiveShellTerminal = useUiStore((state) => state.setActiveShellTerminal);
 	const requestNewShellTerminal = useUiStore((state) => state.requestNewShellTerminal);
+	const setVisibleTerminalKind = useUiStore((state) => state.setVisibleTerminalKind);
+	const clearVisibleTerminalKind = useUiStore((state) => state.clearVisibleTerminalKind);
 
 	const renameShellTerminalByHandle = useCallback(
 		(handleId: string, title: string) => renameShellTerminal.mutate({ handleId, title }),
@@ -173,6 +175,15 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		setBrowserPoppedOut(false);
 		setFilesPoppedOut(false);
 	}, [sessionId]);
+
+	// The pane shows one terminal at a time, so selecting a shell or the reviewer
+	// takes the agent's terminal off screen while the route still points here.
+	// Publish which one is showing: the notification runtime lives outside this
+	// subtree and must not treat "on the session route" as "watching the agent".
+	useEffect(() => {
+		setVisibleTerminalKind(sessionId, terminalTarget.kind);
+		return () => clearVisibleTerminalKind(sessionId);
+	}, [clearVisibleTerminalKind, sessionId, setVisibleTerminalKind, terminalTarget.kind]);
 
 	const handleOpenFiles = useCallback(() => {
 		setBrowserPoppedOut(false);
