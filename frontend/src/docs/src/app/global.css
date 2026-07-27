@@ -1,0 +1,64 @@
+@import "tailwindcss";
+@import "@superset/ui/globals.css";
+@import "@superset/site-theme/tokens.css";
+@import "@superset/site-theme/prose.css";
+@import "fumadocs-ui/style.css";
+@import "fumadocs-ui/css/shadcn.css";
+
+@layer base {
+  html,
+  body,
+  #nd-docs-layout,
+  #nd-sidebar {
+    overscroll-behavior: none;
+  }
+
+  .fd-root,
+  .fd-docs,
+  .fd-page {
+    background: var(--background);
+    color: var(--foreground);
+  }
+
+  .prose .shiki pre {
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    padding: 0;
+  }
+
+  .prose .shiki code:not(pre code) {
+    background: transparent;
+    padding: 0;
+    border-radius: 0;
+  }
+
+  .prose figure.shiki {
+    background: rgb(255 255 255 / 0.04) !important;
+    border: 1px solid rgb(255 255 255 / 0.04) !important;
+    box-shadow: none !important;
+    padding: 0;
+  }
+
+  .prose figure.shiki > div[role="region"] {
+    background: transparent !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    outline: none !important;
+    padding: 0 !important;
+  }
+
+  .prose figure.shiki > div[role="region"]:focus-visible {
+    box-shadow: none !important;
+    outline: none !important;
+  }
+
+  .prose figure.shiki pre {
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    margin: 0;
+    padding: 1rem;
+  }
+}

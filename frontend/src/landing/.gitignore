@@ -53,6 +53,7 @@ mise.toml
 .next
 out
 next-env.d.ts
+.source
 
 # Superset (track scripts/config; ignore generated workspace artifacts)
 .superset/ports.json
