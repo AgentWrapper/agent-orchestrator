@@ -201,8 +201,27 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 
 	launchCmd := buildLaunchCommand(cfg)
 	args := newSessionArgs(id, cfg.WorkspacePath, r.shell, launchCmd)
-	if _, err := r.run(ctx, args...); err != nil {
+	// new-session is the creation ownership boundary. Honor cancellation before
+	// dispatch, then let the local tmux client finish on its bounded detached
+	// context. If that client times out after dispatch, destroy the exact session
+	// name before returning so a possibly-created process cannot run without a
+	// durable owner.
+	if err := ctx.Err(); err != nil {
 		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: create session %s: %w", id, err)
+	}
+	if outcomeUncertain, err := r.runCommitted(ctx, args...); err != nil {
+		cause := fmt.Errorf("tmux runtime: create session %s: %w", id, err)
+		if !outcomeUncertain {
+			return ports.RuntimeHandle{}, cause
+		}
+		handle := ports.RuntimeHandle{ID: id}
+		if destroyErr := r.Destroy(context.WithoutCancel(ctx), handle); destroyErr != nil {
+			return ports.RuntimeHandle{}, errors.Join(
+				cause,
+				fmt.Errorf("tmux runtime: compensate outcome-uncertain create session %s: %w", id, destroyErr),
+			)
+		}
+		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: compensated outcome-uncertain create session %s: %w", id, err)
 	}
 	if err := r.verifyPaneWorkingDirectory(ctx, id, cfg.WorkspacePath); err != nil {
 		_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id})
@@ -270,12 +289,38 @@ func (r *Runtime) Restart(ctx context.Context, handle ports.RuntimeHandle, cfg p
 	}
 
 	launchCmd := buildLaunchCommand(cfg)
-	if _, err := r.run(ctx, respawnPaneArgs(id, cfg.WorkspacePath, r.shell, launchCmd)...); err != nil {
+	// respawn-pane -k is destructive: once tmux begins it, cancelling the
+	// client can leave us unable to tell whether the server killed the old
+	// workload and launched the replacement. Define the cancellation boundary
+	// immediately before that command and let an accepted operation finish on
+	// its own bounded context. Verification is likewise detached and bounded so
+	// caller cancellation cannot discard a useful definitive result after the
+	// destructive boundary.
+	if err := ctx.Err(); err != nil {
 		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: restart session %s: %w", id, err)
 	}
-	alive, err := r.IsAlive(ctx, handle)
+	if outcomeUncertain, err := r.runCommitted(ctx, respawnPaneArgs(id, cfg.WorkspacePath, r.shell, launchCmd)...); err != nil {
+		cause := fmt.Errorf("tmux runtime: restart session %s: %w", id, err)
+		if outcomeUncertain {
+			// The tmux client timed out after dispatch. The server may already
+			// have applied respawn-pane, so conservatively preserve ownership
+			// and require the session manager to compensate it rather than
+			// adopting a generation that may never have started.
+			return handle, &ports.RestartOutcomeUncertainError{Cause: cause}
+		}
+		return ports.RuntimeHandle{}, cause
+	}
+	verifyCtx, cancelVerify := context.WithTimeout(context.WithoutCancel(ctx), r.timeout)
+	defer cancelVerify()
+	alive, err := r.IsAlive(verifyCtx, handle)
 	if err != nil {
-		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: verify restarted session %s: %w", id, err)
+		// respawn-pane -k has already killed the old workload and launched the
+		// replacement. Preserve ownership of that applied side effect so the
+		// session manager can durably adopt the new generation even when this
+		// separate probe fails transiently.
+		return handle, &ports.RestartAppliedUnverifiedError{
+			Cause: fmt.Errorf("tmux runtime: verify restarted session %s: %w", id, err),
+		}
 	}
 	if !alive {
 		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: session %s exited during restart", id)
@@ -543,6 +588,29 @@ func attachEnv(base []string) []string {
 // run wraps runner.Run with a per-call timeout context.
 func (r *Runtime) run(ctx context.Context, args ...string) ([]byte, error) {
 	return r.runCommand(ctx, r.binary, args...)
+}
+
+// runCommitted runs a destructive tmux command after its caller has accepted
+// the cancellation boundary. The command is isolated from caller cancellation
+// but remains bounded by the runtime timeout. A nil runner error wins a
+// simultaneous timeout race because it is definitive evidence that the tmux
+// client completed successfully.
+//
+// A runner error at the internal timeout remains inherently ambiguous: the
+// local tmux client may have timed out before or after the server applied the
+// command. outcomeUncertain tells the caller to retain ownership until it can
+// compensate the possible side effect.
+func (r *Runtime) runCommitted(ctx context.Context, args ...string) (outcomeUncertain bool, err error) {
+	cmdCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), r.timeout)
+	defer cancel()
+	out, err := r.runner.Run(cmdCtx, nil, r.binary, args...)
+	if err == nil {
+		return false, nil
+	}
+	if cmdCtx.Err() != nil {
+		return true, cmdCtx.Err()
+	}
+	return false, commandError{err: err, output: strings.TrimSpace(string(out))}
 }
 
 func (r *Runtime) runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {

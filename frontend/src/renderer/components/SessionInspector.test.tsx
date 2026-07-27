@@ -304,11 +304,12 @@ describe("SessionInspector Activity section", () => {
 	const activitySection = () =>
 		within(screen.getByText("Activity").closest("[data-testid='inspector-section']") as HTMLElement);
 
-	it("offers a managed resume only for an exited, nonterminated agent", async () => {
+	it("offers managed resume for an exited, nonterminated branchless agent", async () => {
 		renderWithQuery(
 			<SessionInspector
 				session={session([], {
 					status: "exited",
+					branch: undefined,
 					activity: { state: "exited", lastActivityAt: "2026-06-15T10:00:00Z" },
 				})}
 			/>,
@@ -595,34 +596,70 @@ describe("SessionInspector Activity section", () => {
 		expect(within(doneRow).getByText("30m ago")).toBeInTheDocument();
 	});
 
-	it("renders the current state before reverse-chronological historical milestones", () => {
-		vi.useFakeTimers();
-		vi.setSystemTime(new Date("2026-06-15T12:00:00Z"));
+	it("sorts valid history by time with deterministic equal, missing, and invalid fallbacks", async () => {
+		const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60 * 1000).toISOString();
+		const summaries = [
+			prSummary(42, "draft", {
+				createdAt: minutesAgo(10),
+				stateChangedAt: minutesAgo(10),
+			}),
+			prSummary(41, "open", {
+				createdAt: minutesAgo(30),
+			}),
+			prSummary(43, "open", {
+				createdAt: "not-a-timestamp",
+			}),
+			prSummary(44, "open"),
+			prSummary(40, "merged", {
+				createdAt: minutesAgo(180),
+				stateChangedAt: minutesAgo(20),
+			}),
+		];
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/sessions/{sessionId}/pr") {
+				return { data: { sessionId: "sess-1", prs: summaries }, error: undefined };
+			}
+			return { data: { reviewerHandleId: "", reviews: [] }, error: undefined };
+		});
 
 		renderWithQuery(
 			<SessionInspector
-				session={session([pr(42, "draft"), pr(41, "open"), pr(40, "merged")], {
+				session={session([pr(42, "draft"), pr(41, "open"), pr(43, "open"), pr(44, "open"), pr(40, "merged")], {
 					status: "merged",
-					createdAt: "2026-06-15T09:00:00Z",
-					updatedAt: "2026-06-15T11:55:00Z",
-					activity: { state: "idle", lastActivityAt: "2026-06-15T10:00:00Z" },
+					createdAt: minutesAgo(300),
+					updatedAt: minutesAgo(5),
+					activity: { state: "idle", lastActivityAt: minutesAgo(120) },
 				})}
 			/>,
 		);
 
 		const section = screen.getByText("Activity").closest("[data-testid='inspector-section']") as HTMLElement;
-		const rows = Array.from(section.querySelectorAll("[data-testid='inspector-timeline-event']"), (row) =>
-			row.textContent?.replace(/\s+/g, " ").trim(),
-		);
-		expect(rows).toEqual([
+		const timelineRows = () =>
+			Array.from(section.querySelectorAll("[data-testid='inspector-timeline-event']"), (row) => {
+				const link = row.querySelector("a[aria-label]");
+				if (link) return link.getAttribute("aria-label");
+				if (row.textContent?.includes("Idle")) return "Idle";
+				if (row.textContent?.includes("Done")) return "Done";
+				if (row.textContent?.includes("Created workspace")) return "Created workspace";
+				return row.textContent?.replace(/\s+/g, " ").trim();
+			});
+		const expectedRows = [
 			"Idle",
+			"Draft PR #42",
 			"Done",
 			"Merged PR #40",
-			"Opened PR #40",
 			"Opened PR #41",
-			"Draft PR #42",
-			"Created workspace3h ago",
-		]);
+			"Opened PR #40",
+			"Created workspace",
+			"Opened PR #44",
+			"Opened PR #43",
+		];
+		await waitFor(() => expect(timelineRows()).toEqual(expectedRows));
+
+		const invalidTimestampRow = screen
+			.getByRole("link", { name: "Opened PR #43" })
+			.closest("[data-testid='inspector-timeline-event']") as HTMLElement;
+		expect(within(invalidTimestampRow).queryByText("just now")).not.toBeInTheDocument();
 
 		const eventRows = section.querySelectorAll("[data-testid='inspector-timeline-event']");
 		expect(section.querySelectorAll("[data-testid='inspector-timeline-connector']")).toHaveLength(eventRows.length - 1);

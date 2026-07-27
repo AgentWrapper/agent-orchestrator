@@ -89,8 +89,63 @@ type Runtime interface {
 // RuntimeRestarter is an optional runtime capability for replacing the process
 // inside an existing terminal session. Implementations should preserve the
 // handle when possible so attached clients do not need a new terminal identity.
+//
+// A restart can cross an ownership boundary before every verification step has
+// completed. Once the replacement command has been applied, an implementation
+// must return the owned handle even if a later probe fails, using
+// RestartAppliedUnverifiedError so the caller can durably adopt or compensate
+// it. If a timeout after dispatch makes the destructive command's outcome
+// uncertain, the implementation must instead return the owned handle with
+// RestartOutcomeUncertainError so the caller can compensate it without falsely
+// adopting an unproven generation.
 type RuntimeRestarter interface {
 	Restart(ctx context.Context, handle RuntimeHandle, cfg RuntimeConfig) (RuntimeHandle, error)
+}
+
+// RestartAppliedUnverifiedError means a runtime restart's destructive launch
+// step succeeded, but a later verification probe failed inconclusively. The
+// RuntimeRestarter must return the handle it still owns alongside this error.
+// A definitive observation that the restarted runtime is missing must use an
+// ordinary error instead.
+type RestartAppliedUnverifiedError struct {
+	Cause error
+}
+
+func (e *RestartAppliedUnverifiedError) Error() string {
+	if e == nil || e.Cause == nil {
+		return "runtime restart applied but could not be verified"
+	}
+	return fmt.Sprintf("runtime restart applied but could not be verified: %v", e.Cause)
+}
+
+func (e *RestartAppliedUnverifiedError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
+
+// RestartOutcomeUncertainError means the destructive restart command was
+// dispatched, but its client timed out before learning whether the runtime
+// applied it. The RuntimeRestarter must return the possibly affected handle
+// alongside this error. Callers must compensate that handle and must not adopt
+// the unproven generation as durable state.
+type RestartOutcomeUncertainError struct {
+	Cause error
+}
+
+func (e *RestartOutcomeUncertainError) Error() string {
+	if e == nil || e.Cause == nil {
+		return "runtime restart outcome uncertain after dispatch"
+	}
+	return fmt.Sprintf("runtime restart outcome uncertain after dispatch: %v", e.Cause)
+}
+
+func (e *RestartOutcomeUncertainError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
 }
 
 // RuntimeConfig is the spec for launching a session's process in a Runtime.

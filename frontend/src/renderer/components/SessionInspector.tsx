@@ -510,6 +510,13 @@ function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 
 type TimelineTone = "now" | "good" | "warn" | "neutral";
 
+type HistoricalTimelineEvent = {
+	tone: TimelineTone;
+	node: ReactNode;
+	timestamp: string | null;
+	order: number;
+};
+
 const timelineNodeTone: Record<TimelineTone, string> = {
 	neutral: "bg-passive shadow-timeline-dot",
 	now: "bg-working shadow-timeline-dot-now",
@@ -518,43 +525,46 @@ const timelineNodeTone: Record<TimelineTone, string> = {
 };
 
 function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: WorkspaceSession }) {
-	const history: { tone: TimelineTone; node: ReactNode; ts: string | null }[] = [];
+	const history: HistoricalTimelineEvent[] = [];
+	const addHistoricalEvent = (event: Omit<HistoricalTimelineEvent, "order">) => {
+		history.push({ ...event, order: history.length });
+	};
 
-	history.push({
+	addHistoricalEvent({
 		tone: "neutral",
 		node: <>Created workspace</>,
-		ts: formatTimeCompact(session.createdAt ?? session.updatedAt),
+		timestamp: session.createdAt ?? session.updatedAt,
 	});
 
 	for (const pr of prs.filter((pr) => pr.state === "draft")) {
-		history.push({
+		addHistoricalEvent({
 			tone: "neutral",
 			node: <PRTimelineLink pr={pr} verb="Draft" />,
-			ts: prStateTime(pr),
+			timestamp: pr.stateChangedAt ?? null,
 		});
 	}
 
 	for (const pr of prs.filter((pr) => pr.state !== "draft")) {
-		history.push({
+		addHistoricalEvent({
 			tone: "neutral",
 			node: <PRTimelineLink pr={pr} verb="Opened" />,
-			ts: prCreatedTime(pr),
+			timestamp: pr.createdAt ?? null,
 		});
 	}
 
 	for (const pr of prs.filter((pr) => pr.state === "merged")) {
-		history.push({
+		addHistoricalEvent({
 			tone: "good",
 			node: <PRTimelineLink pr={pr} verb="Merged" />,
-			ts: prStateTime(pr),
+			timestamp: pr.stateChangedAt ?? null,
 		});
 	}
 
 	if (session.status === "merged") {
-		history.push({
+		addHistoricalEvent({
 			tone: "good",
 			node: <>Done</>,
-			ts: latestMergedTime(prs),
+			timestamp: latestMergedTimestamp(prs),
 		});
 	}
 
@@ -580,9 +590,9 @@ function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: 
 				))}
 			</span>
 		),
-		ts: null,
-	} satisfies { tone: TimelineTone; node: ReactNode; ts: null };
-	const events = [current, ...history.reverse()];
+		timestamp: null,
+	} satisfies { tone: TimelineTone; node: ReactNode; timestamp: null };
+	const events = [current, ...history.sort(compareHistoricalTimelineEvents)];
 
 	return (
 		<div className="relative pl-5">
@@ -609,7 +619,9 @@ function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: 
 						/>
 						<div className="text-xs leading-normal text-foreground [&_b]:font-semibold">{event.node}</div>
 					</div>
-					{event.ts ? <div className="mt-1 font-mono text-2xs text-passive">{event.ts}</div> : null}
+					{event.timestamp && timelineTimestamp(event.timestamp) !== null ? (
+						<div className="mt-1 font-mono text-2xs text-passive">{formatTimeCompact(event.timestamp)}</div>
+					) : null}
 				</div>
 			))}
 		</div>
@@ -632,15 +644,25 @@ function PRTimelineLink({ pr, verb }: { pr: SessionPRSummary; verb: "Draft" | "O
 	);
 }
 
-function prStateTime(pr: SessionPRSummary): string | null {
-	return pr.stateChangedAt ? formatTimeCompact(pr.stateChangedAt) : null;
+function compareHistoricalTimelineEvents(a: HistoricalTimelineEvent, b: HistoricalTimelineEvent): number {
+	const aTime = timelineTimestamp(a.timestamp);
+	const bTime = timelineTimestamp(b.timestamp);
+	if (aTime !== null && bTime !== null && aTime !== bTime) return bTime - aTime;
+	if (aTime !== null && bTime === null) return -1;
+	if (aTime === null && bTime !== null) return 1;
+	// Later construction order preserves the established semantic precedence
+	// for equal times (for example, Done before its matching Merged milestone)
+	// and gives missing or invalid timestamps a deterministic fallback.
+	return b.order - a.order;
 }
 
-function prCreatedTime(pr: SessionPRSummary): string | null {
-	return pr.createdAt ? formatTimeCompact(pr.createdAt) : null;
+function timelineTimestamp(timestamp: string | null): number | null {
+	if (!timestamp) return null;
+	const milliseconds = Date.parse(timestamp);
+	return Number.isFinite(milliseconds) ? milliseconds : null;
 }
 
-function latestMergedTime(prs: SessionPRSummary[]): string | null {
+function latestMergedTimestamp(prs: SessionPRSummary[]): string | null {
 	let latest: { timestamp: string; milliseconds: number } | undefined;
 	for (const pr of prs) {
 		if (pr.state !== "merged" || !pr.stateChangedAt) continue;
@@ -650,7 +672,7 @@ function latestMergedTime(prs: SessionPRSummary[]): string | null {
 			latest = { timestamp: pr.stateChangedAt, milliseconds };
 		}
 	}
-	return latest ? formatTimeCompact(latest.timestamp) : null;
+	return latest?.timestamp ?? null;
 }
 
 type ScmTimelineState = "ci_failed" | "changes_requested" | "conflict";

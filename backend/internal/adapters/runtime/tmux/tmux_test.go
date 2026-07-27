@@ -18,6 +18,7 @@ import (
 type fakeRunner struct {
 	calls   []runnerCall
 	outputs [][]byte
+	errs    []error
 	err     error
 }
 
@@ -27,12 +28,25 @@ type runnerCall struct {
 	args []string
 }
 
+type runnerFunc func(ctx context.Context, env []string, name string, args ...string) ([]byte, error)
+
+func (f runnerFunc) Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
+	return f(ctx, env, name, args...)
+}
+
 func (f *fakeRunner) Run(_ context.Context, env []string, name string, args ...string) ([]byte, error) {
 	f.calls = append(f.calls, runnerCall{env: append([]string(nil), env...), name: name, args: append([]string(nil), args...)})
 	var out []byte
 	if len(f.outputs) > 0 {
 		out = f.outputs[0]
 		f.outputs = f.outputs[1:]
+	}
+	if len(f.errs) > 0 {
+		err := f.errs[0]
+		f.errs = f.errs[1:]
+		if err != nil {
+			return out, err
+		}
 	}
 	if f.err != nil {
 		return out, f.err
@@ -414,6 +428,35 @@ func TestCreateDestroysAndReturnsErrorWhenNotAlive(t *testing.T) {
 	}
 }
 
+func TestCreateCompensatesOutcomeUncertainNewSession(t *testing.T) {
+	r, _ := newTestRuntime(0)
+	r.timeout = 10 * time.Millisecond
+	var calls []string
+	r.runner = runnerFunc(func(runCtx context.Context, _ []string, _ string, args ...string) ([]byte, error) {
+		calls = append(calls, args[0])
+		if args[0] == "new-session" {
+			<-runCtx.Done()
+			return nil, runCtx.Err()
+		}
+		return nil, nil
+	})
+
+	got, err := r.Create(context.Background(), ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"codex"},
+	})
+	if got.ID != "" {
+		t.Fatalf("Create handle = %+v, want compensated empty handle", got)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Create error = %v, want context.DeadlineExceeded", err)
+	}
+	if want := []string{"new-session", "list-panes", "kill-session"}; !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %#v, want uncertain create followed by exact cleanup %#v", calls, want)
+	}
+}
+
 // fakeRunnerSelectiveErr returns an exec.ExitError (carrying errOutput) for the
 // call whose tmux subcommand is exitErrOn, and succeeds for every other call.
 // Matching on the subcommand rather than a call index is deliberate: Create's
@@ -461,6 +504,212 @@ func TestRestartRespawnsExistingPaneAndPreservesHandle(t *testing.T) {
 	}
 	if args := fr.calls[1].args; !reflect.DeepEqual(args, hasSessionArgs("sess-1")) {
 		t.Fatalf("liveness args = %#v, want %#v", args, hasSessionArgs("sess-1"))
+	}
+}
+
+func TestRestartReturnsOwnedHandleWhenPostRespawnProbeIsInconclusive(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	handle := ports.RuntimeHandle{ID: "sess-1"}
+	probeErr := errors.New("tmux temporarily unavailable")
+	fr.errs = []error{nil, probeErr}
+
+	got, err := r.Restart(context.Background(), handle, ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"codex", "resume", "native-1"},
+	})
+	if got != handle {
+		t.Fatalf("Restart handle = %+v, want owned handle %+v", got, handle)
+	}
+	var applied *ports.RestartAppliedUnverifiedError
+	if !errors.As(err, &applied) {
+		t.Fatalf("Restart error = %v, want RestartAppliedUnverifiedError", err)
+	}
+	if !errors.Is(err, probeErr) {
+		t.Fatalf("Restart error = %v, want wrapped probe error", err)
+	}
+	if len(fr.calls) != 2 || fr.calls[0].args[0] != "respawn-pane" || fr.calls[1].args[0] != "has-session" {
+		t.Fatalf("calls = %#v, want respawn followed by probe", fr.calls)
+	}
+}
+
+func TestRestartDefinitiveRespawnErrorDoesNotClaimOwnership(t *testing.T) {
+	r := New(Options{Binary: "tmux-test", Timeout: time.Second, Shell: "/bin/sh"})
+	r.reapSessions = (&recordingReaper{}).reap
+	respawnErr := errors.New("tmux rejected respawn")
+	r.runner = runnerFunc(func(_ context.Context, _ []string, _ string, args ...string) ([]byte, error) {
+		if args[0] != "respawn-pane" {
+			t.Fatalf("unexpected command after definitive respawn failure: %v", args)
+		}
+		return []byte("bad target"), respawnErr
+	})
+
+	got, err := r.Restart(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"codex"},
+	})
+	if got.ID != "" {
+		t.Fatalf("Restart handle = %+v, want no claimed ownership", got)
+	}
+	if !errors.Is(err, respawnErr) || !strings.Contains(err.Error(), "bad target") {
+		t.Fatalf("Restart error = %v, want definitive command error and output", err)
+	}
+	var applied *ports.RestartAppliedUnverifiedError
+	var uncertain *ports.RestartOutcomeUncertainError
+	if errors.As(err, &applied) || errors.As(err, &uncertain) {
+		t.Fatalf("definitive respawn error was classified as partial ownership: %v", err)
+	}
+}
+
+func TestRestartRejectsCancellationBeforeDestructiveBoundary(t *testing.T) {
+	r, _ := newTestRuntime(0)
+	called := false
+	r.runner = runnerFunc(func(_ context.Context, _ []string, _ string, _ ...string) ([]byte, error) {
+		called = true
+		return nil, nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	got, err := r.Restart(ctx, ports.RuntimeHandle{ID: "sess-1"}, ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"codex", "resume", "native-1"},
+	})
+	if got.ID != "" {
+		t.Fatalf("Restart handle = %+v, want no applied handle", got)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Restart error = %v, want context.Canceled", err)
+	}
+	if called {
+		t.Fatal("runner called after cancellation before destructive boundary")
+	}
+}
+
+func TestRestartCallerCancellationDoesNotInterruptAcceptedTransition(t *testing.T) {
+	r, _ := newTestRuntime(0)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var calls []string
+	var respawnContextErr error
+	var probeContextErr error
+	r.runner = runnerFunc(func(runCtx context.Context, _ []string, _ string, args ...string) ([]byte, error) {
+		calls = append(calls, args[0])
+		switch args[0] {
+		case "respawn-pane":
+			cancel()
+			respawnContextErr = runCtx.Err()
+			return nil, nil
+		case "has-session":
+			probeContextErr = runCtx.Err()
+			return nil, nil
+		default:
+			return nil, nil
+		}
+	})
+	handle := ports.RuntimeHandle{ID: "sess-1"}
+
+	got, err := r.Restart(ctx, handle, ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"codex", "resume", "native-1"},
+	})
+	if got != handle {
+		t.Fatalf("Restart handle = %+v, want owned handle %+v", got, handle)
+	}
+	if err != nil {
+		t.Fatalf("Restart: %v", err)
+	}
+	if respawnContextErr != nil {
+		t.Fatalf("respawn context was cancelled by caller: %v", respawnContextErr)
+	}
+	if probeContextErr != nil {
+		t.Fatalf("verification context was cancelled by caller: %v", probeContextErr)
+	}
+	if want := []string{"respawn-pane", "has-session"}; !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %#v, want %#v", calls, want)
+	}
+}
+
+func TestRestartSuccessfulRespawnWinsInternalDeadlineRace(t *testing.T) {
+	r, _ := newTestRuntime(0)
+	r.timeout = 10 * time.Millisecond
+	r.runner = runnerFunc(func(runCtx context.Context, _ []string, _ string, args ...string) ([]byte, error) {
+		if args[0] == "respawn-pane" {
+			<-runCtx.Done()
+			// A successful runner result is definitive even if the deadline
+			// became observable at the same instant.
+			return nil, nil
+		}
+		return nil, nil
+	})
+	handle := ports.RuntimeHandle{ID: "sess-1"}
+
+	got, err := r.Restart(context.Background(), handle, ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"codex", "resume", "native-1"},
+	})
+	if err != nil {
+		t.Fatalf("Restart: %v", err)
+	}
+	if got != handle {
+		t.Fatalf("Restart handle = %+v, want %+v", got, handle)
+	}
+}
+
+func TestRestartInternalTimeoutPreservesOutcomeUncertainOwnership(t *testing.T) {
+	r, _ := newTestRuntime(0)
+	r.timeout = 10 * time.Millisecond
+	calls := 0
+	r.runner = runnerFunc(func(runCtx context.Context, _ []string, _ string, _ ...string) ([]byte, error) {
+		calls++
+		<-runCtx.Done()
+		return nil, runCtx.Err()
+	})
+
+	got, err := r.Restart(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"codex", "resume", "native-1"},
+	})
+	wantHandle := ports.RuntimeHandle{ID: "sess-1"}
+	if got != wantHandle {
+		t.Fatalf("Restart handle = %+v, want conservatively owned handle %+v", got, wantHandle)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Restart error = %v, want context.DeadlineExceeded", err)
+	}
+	var uncertain *ports.RestartOutcomeUncertainError
+	if !errors.As(err, &uncertain) {
+		t.Fatalf("ambiguous timeout error = %v, want RestartOutcomeUncertainError", err)
+	}
+	if calls != 1 {
+		t.Fatalf("runner calls = %d, want only the respawn attempt", calls)
+	}
+}
+
+func TestRestartTreatsDefinitivelyMissingPostRespawnSessionAsFailure(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{nil, []byte("can't find session: sess-1")}
+	fr.errs = []error{nil, &exec.ExitError{}}
+
+	got, err := r.Restart(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"codex", "resume", "native-1"},
+	})
+	if got.ID != "" {
+		t.Fatalf("Restart handle = %+v, want no owned live handle", got)
+	}
+	if err == nil || !strings.Contains(err.Error(), "exited during restart") {
+		t.Fatalf("Restart error = %v, want definitive missing failure", err)
+	}
+	var applied *ports.RestartAppliedUnverifiedError
+	if errors.As(err, &applied) {
+		t.Fatalf("definitive missing error must not be applied-unverified: %v", err)
 	}
 }
 

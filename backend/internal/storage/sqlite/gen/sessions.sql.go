@@ -337,33 +337,32 @@ UPDATE sessions SET
     activity_state = ?, activity_last_at = ?, first_signal_at = ?, is_terminated = ?,
     branch = ?, workspace_path = ?, workspace_repo_path = ?, runtime_handle_id = ?,
     runtime_launch_id = ?, agent_session_id = ?, prompt = ?,
-    preview_url = ?, preview_revision = ?, terminate_on_pr_merge = ?,
-    cleanup_generation = ?, updated_at = ?
+    preview_url = ?, preview_revision = ?, cleanup_generation = ?,
+    updated_at = ?
 WHERE id = ?
 `
 
 type UpdateSessionParams struct {
-	IssueID            domain.IssueID
-	Kind               domain.SessionKind
-	Harness            domain.AgentHarness
-	DisplayName        string
-	ActivityState      domain.ActivityState
-	ActivityLastAt     time.Time
-	FirstSignalAt      sql.NullTime
-	IsTerminated       bool
-	Branch             string
-	WorkspacePath      string
-	WorkspaceRepoPath  string
-	RuntimeHandleID    string
-	RuntimeLaunchID    string
-	AgentSessionID     string
-	Prompt             string
-	PreviewURL         string
-	PreviewRevision    int64
-	TerminateOnPRMerge bool
-	CleanupGeneration  int64
-	UpdatedAt          time.Time
-	ID                 domain.SessionID
+	IssueID           domain.IssueID
+	Kind              domain.SessionKind
+	Harness           domain.AgentHarness
+	DisplayName       string
+	ActivityState     domain.ActivityState
+	ActivityLastAt    time.Time
+	FirstSignalAt     sql.NullTime
+	IsTerminated      bool
+	Branch            string
+	WorkspacePath     string
+	WorkspaceRepoPath string
+	RuntimeHandleID   string
+	RuntimeLaunchID   string
+	AgentSessionID    string
+	Prompt            string
+	PreviewURL        string
+	PreviewRevision   int64
+	CleanupGeneration int64
+	UpdatedAt         time.Time
+	ID                domain.SessionID
 }
 
 func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) error {
@@ -385,7 +384,6 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) er
 		arg.Prompt,
 		arg.PreviewURL,
 		arg.PreviewRevision,
-		arg.TerminateOnPRMerge,
 		arg.CleanupGeneration,
 		arg.UpdatedAt,
 		arg.ID,

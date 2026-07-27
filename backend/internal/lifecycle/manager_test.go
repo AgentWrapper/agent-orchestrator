@@ -617,6 +617,134 @@ func TestMarkSpawnedStoresRuntimeMetadata(t *testing.T) {
 	}
 }
 
+func TestMarkResumedCommitsOnlyExpectedLiveExitedGeneration(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*domain.SessionRecord)
+	}{
+		{
+			name: "terminated",
+			mutate: func(rec *domain.SessionRecord) {
+				rec.IsTerminated = true
+			},
+		},
+		{
+			name: "agent no longer exited",
+			mutate: func(rec *domain.SessionRecord) {
+				rec.Activity.State = domain.ActivityIdle
+			},
+		},
+		{
+			name: "generation changed",
+			mutate: func(rec *domain.SessionRecord) {
+				rec.Metadata.RuntimeLaunchID = "launch-other"
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, st, _ := newManager()
+			rec := domain.SessionRecord{
+				ID:        "mer-1",
+				ProjectID: "mer",
+				Activity:  domain.Activity{State: domain.ActivityExited},
+				Metadata: domain.SessionMetadata{
+					RuntimeHandleID: "h1",
+					RuntimeLaunchID: "launch-old",
+				},
+			}
+			tt.mutate(&rec)
+			st.sessions[rec.ID] = rec
+
+			committed, err := m.MarkResumed(ctx, rec.ID, "launch-old", domain.SessionMetadata{
+				RuntimeHandleID: "h1",
+				RuntimeLaunchID: "launch-new",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if committed {
+				t.Fatal("MarkResumed committed after its expected state changed")
+			}
+			if got := st.sessions[rec.ID]; got != rec {
+				t.Fatalf("rejected resume mutated record:\n got %+v\nwant %+v", got, rec)
+			}
+		})
+	}
+}
+
+func TestMarkResumedCommitsExpectedGenerationAndReleasesLaunchFence(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Activity:  domain.Activity{State: domain.ActivityExited},
+		Metadata: domain.SessionMetadata{
+			RuntimeHandleID: "h1",
+			RuntimeLaunchID: "launch-old",
+		},
+	}
+	if err := m.PrepareLaunch("mer-1", "launch-new"); err != nil {
+		t.Fatal(err)
+	}
+
+	committed, err := m.MarkResumed(ctx, "mer-1", "launch-old", domain.SessionMetadata{
+		RuntimeHandleID: "h1",
+		RuntimeLaunchID: "launch-new",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !committed {
+		t.Fatal("MarkResumed rejected unchanged live/exited generation")
+	}
+	got := st.sessions["mer-1"]
+	if got.IsTerminated || got.Activity.State != domain.ActivityIdle || got.Metadata.RuntimeLaunchID != "launch-new" {
+		t.Fatalf("resumed record = %+v", got)
+	}
+	if _, pending := m.pendingLaunches["mer-1"]; pending {
+		t.Fatal("committed resume left launch fence pending")
+	}
+}
+
+func TestMarkResumedRejectsAcceptedTerminalIntentAndReleasesLaunchFence(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Activity:  domain.Activity{State: domain.ActivityExited},
+		Metadata: domain.SessionMetadata{
+			RuntimeHandleID: "h1",
+			RuntimeLaunchID: "launch-old",
+		},
+	}
+	if err := m.PrepareLaunch("mer-1", "launch-new"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.MarkTerminated(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	committed, err := m.MarkResumed(ctx, "mer-1", "launch-old", domain.SessionMetadata{
+		RuntimeHandleID: "h1",
+		RuntimeLaunchID: "launch-new",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if committed {
+		t.Fatal("MarkResumed cleared accepted terminal intent")
+	}
+	got := st.sessions["mer-1"]
+	if !got.IsTerminated || got.Activity.State != domain.ActivityExited || got.Metadata.RuntimeLaunchID != "launch-old" {
+		t.Fatalf("terminal record changed by rejected resume: %+v", got)
+	}
+	if _, pending := m.pendingLaunches["mer-1"]; pending {
+		t.Fatal("rejected resume left launch fence pending")
+	}
+}
+
 // TestMarkSpawned_StampsUTCActivity locks the lifecycle clock to UTC so
 // activity-driven timestamps match the session manager's spawn timestamps. A
 // local clock here left `ao session get` showing created in UTC but updated in

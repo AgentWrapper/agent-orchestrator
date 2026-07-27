@@ -380,6 +380,82 @@ func TestSessionTerminateOnPRMergePolicyRoundTripAndCDC(t *testing.T) {
 	}
 }
 
+func TestSessionLifecycleWritesPreserveTerminateOnPRMergePolicy(t *testing.T) {
+	writers := []struct {
+		name  string
+		write func(context.Context, *sqlite.Store, domain.SessionRecord) error
+	}{
+		{
+			name: "UpdateSession",
+			write: func(ctx context.Context, s *sqlite.Store, stale domain.SessionRecord) error {
+				return s.UpdateSession(ctx, stale)
+			},
+		},
+		{
+			name: "RecordWorkerIdle",
+			write: func(ctx context.Context, s *sqlite.Store, stale domain.SessionRecord) error {
+				return s.RecordWorkerIdle(ctx, stale, domain.WorkerIdleEvent{
+					ID:           "wie_stale",
+					ProjectID:    stale.ProjectID,
+					WorkerID:     stale.ID,
+					TransitionAt: stale.UpdatedAt,
+					CreatedAt:    stale.UpdatedAt,
+				})
+			},
+		},
+	}
+	directions := []struct {
+		name        string
+		stalePolicy bool
+		newPolicy   bool
+	}{
+		{name: "false_to_true", stalePolicy: false, newPolicy: true},
+		{name: "true_to_false", stalePolicy: true, newPolicy: false},
+	}
+
+	for _, writer := range writers {
+		for _, direction := range directions {
+			t.Run(writer.name+"/"+direction.name, func(t *testing.T) {
+				s := newTestStore(t)
+				ctx := context.Background()
+				seedProject(t, s, "mer")
+				rec := sampleRecord("mer")
+				rec.TerminateOnPRMerge = direction.stalePolicy
+				stale, err := s.CreateSession(ctx, rec)
+				if err != nil {
+					t.Fatalf("create session: %v", err)
+				}
+
+				policyAt := stale.UpdatedAt.Add(time.Minute)
+				ok, err := s.SetSessionTerminateOnPRMerge(ctx, stale.ID, direction.newPolicy, policyAt)
+				if err != nil || !ok {
+					t.Fatalf("set policy to %v: ok=%v err=%v", direction.newPolicy, ok, err)
+				}
+
+				// This record was read before the narrow policy update, but its
+				// lifecycle change finishes afterward. Persisting the stale copy
+				// must land the activity change without reverting the user policy.
+				stale.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: policyAt.Add(time.Minute)}
+				stale.UpdatedAt = policyAt.Add(time.Minute)
+				if err := writer.write(ctx, s, stale); err != nil {
+					t.Fatalf("%s stale write: %v", writer.name, err)
+				}
+
+				got, found, err := s.GetSession(ctx, stale.ID)
+				if err != nil || !found {
+					t.Fatalf("get session: found=%v err=%v", found, err)
+				}
+				if got.TerminateOnPRMerge != direction.newPolicy {
+					t.Fatalf("policy = %v after stale %s, want %v", got.TerminateOnPRMerge, writer.name, direction.newPolicy)
+				}
+				if got.Activity.State != domain.ActivityIdle {
+					t.Fatalf("activity = %q after stale %s, want idle", got.Activity.State, writer.name)
+				}
+			})
+		}
+	}
+}
+
 func TestSessionRuntimeLaunchIDRoundTrip(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
