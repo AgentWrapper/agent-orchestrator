@@ -317,6 +317,69 @@ func TestObserverSidecarRejectsKernelDigestDrift(t *testing.T) {
 	}
 }
 
+func TestLoadBindingRequiresActivationProfileDigest(t *testing.T) {
+	configPath := writeTestConfig(t)
+	mutateTestConfig(t, configPath, func(config map[string]any) {
+		delete(config["prepared"].(map[string]any), "activationProfileDigest")
+	})
+
+	_, err := loadBinding(configPath)
+	if err == nil || !strings.Contains(err.Error(), "activation profile digest") {
+		t.Fatalf("loadBinding error = %v, want missing activation profile digest rejection", err)
+	}
+}
+
+func TestObserverSidecarRejectsActivationProfileDigestDrift(t *testing.T) {
+	configPath := writeTestConfig(t)
+	mutateTestConfig(t, configPath, func(config map[string]any) {
+		config["prepared"].(map[string]any)["activationProfileDigest"] =
+			"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+	})
+
+	client, err := Open(context.Background(), configPath, nil)
+	if err == nil {
+		_ = client.Close()
+		t.Fatal("Open error = nil, want canonical activation profile digest rejection")
+	}
+	if !strings.Contains(err.Error(), "activation profile digest drifted") {
+		t.Fatalf("Open error = %v, want canonical activation profile digest rejection", err)
+	}
+}
+
+func TestLoadBindingRequiresZeroBasedSchedulingOrder(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(task map[string]any)
+	}{
+		{
+			name: "missing",
+			mutate: func(task map[string]any) {
+				delete(task, "schedulingOrder")
+			},
+		},
+		{
+			name: "drifted",
+			mutate: func(task map[string]any) {
+				task["schedulingOrder"] = 1
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			configPath := writeTestConfig(t)
+			mutateTestConfig(t, configPath, func(config map[string]any) {
+				task := config["prepared"].(map[string]any)["tasks"].([]any)[0].(map[string]any)
+				test.mutate(task)
+			})
+
+			_, err := loadBinding(configPath)
+			if err == nil || !strings.Contains(err.Error(), "scheduling order") {
+				t.Fatalf("loadBinding error = %v, want %s scheduling order rejection", err, test.name)
+			}
+		})
+	}
+}
+
 func writeTestConfig(t *testing.T) string {
 	t.Helper()
 	nodeBinary, err := exec.LookPath("node")
@@ -338,6 +401,25 @@ func writeTestConfig(t *testing.T) string {
 	moduleDigest := sha256.Sum256(moduleBytes)
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "candidate-run.json")
+	activationProfile := map[string]any{
+		"schemaVersion":    2,
+		"candidateSlug":    "agent-orchestrator",
+		"candidateVersion": "0.10.3",
+		"adapterRevision":  "c89414ddb8cf4dc35e77417907e1ea663b79cf6b",
+		"adapterDigest":    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"workerRuntime":    "Codex CLI",
+		"modelProvider":    "OpenAI",
+		"modelAuthRoute":   "enterprise Codex subscription",
+		"authStatus":       "available",
+		"authStateScope":   "shared",
+		"model":            "gpt-5.6-codex",
+		"effort":           "high",
+		"sandbox":          "workspace-write",
+		"privacyPosture":   "enterprise policy",
+		"meteringPosture":  "subscription quota",
+		"lastVerifiedAt":   "2026-07-26T20:00:00.000Z",
+		"nextAuthAction":   "none",
+	}
 	config := map[string]any{
 		"schemaVersion":    1,
 		"nodeBinary":       nodeBinary,
@@ -355,25 +437,7 @@ func writeTestConfig(t *testing.T) string {
 			"harness":        "codex",
 			"approvalPolicy": "on-request",
 		},
-		"activationProfile": map[string]any{
-			"schemaVersion":    2,
-			"candidateSlug":    "agent-orchestrator",
-			"candidateVersion": "0.10.3",
-			"adapterRevision":  "c89414ddb8cf4dc35e77417907e1ea663b79cf6b",
-			"adapterDigest":    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			"workerRuntime":    "Codex CLI",
-			"modelProvider":    "OpenAI",
-			"modelAuthRoute":   "enterprise Codex subscription",
-			"authStatus":       "available",
-			"authStateScope":   "shared",
-			"model":            "gpt-5.6-codex",
-			"effort":           "high",
-			"sandbox":          "workspace-write",
-			"privacyPosture":   "enterprise policy",
-			"meteringPosture":  "subscription quota",
-			"lastVerifiedAt":   "2026-07-26T20:00:00.000Z",
-			"nextAuthAction":   "none",
-		},
+		"activationProfile": activationProfile,
 		"prepared": map[string]any{
 			"candidateSlug":      "agent-orchestrator",
 			"runId":              "AO-S1-001",
@@ -385,9 +449,13 @@ func writeTestConfig(t *testing.T) string {
 			"workspaceAllocator": "agent-orchestrator-worktree",
 			"initiationMode":     "automatic",
 			"workerLimit":        1,
+			"activationProfileDigest": canonicalDigest(
+				activationProfile,
+			),
 			"tasks": []map[string]any{{
 				"slot":             "A",
 				"issueNumber":      21,
+				"schedulingOrder":  0,
 				"idempotencyKey":   "agent-orchestrator:AO-S1-001:S1:A",
 				"allocationKey":    "agent-orchestrator:AO-S1-001:S1:A",
 				"workspaceMode":    "native-after-claim",
@@ -407,6 +475,26 @@ func writeTestConfig(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return configPath
+}
+
+func mutateTestConfig(t *testing.T, configPath string, mutate func(map[string]any)) {
+	t.Helper()
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config map[string]any
+	if err := json.Unmarshal(raw, &config); err != nil {
+		t.Fatal(err)
+	}
+	mutate(config)
+	raw, err = json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func readTestJournal(t *testing.T, dir string) []map[string]any {

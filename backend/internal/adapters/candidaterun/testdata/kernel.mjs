@@ -1,6 +1,25 @@
+import { createHash } from "node:crypto";
 import { closeSync, openSync } from "node:fs";
 import { appendFile, readFile } from "node:fs/promises";
 import path from "node:path";
+
+function canonicalize(value) {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, canonicalize(value[key])]),
+    );
+  }
+  return value;
+}
+
+function activationProfileDigest(profile) {
+  return createHash("sha256")
+    .update(JSON.stringify(canonicalize(profile)))
+    .digest("hex");
+}
 
 export function createRuntimeJournal({ directory, runId, controllerId }) {
   const ownerPath = path.join(directory, "fake-runtime-owner");
@@ -53,6 +72,17 @@ export function createCandidateRunKernel({
   if (prepared.controllerOwner !== controllerId) {
     throw new Error("test kernel controller mismatch");
   }
+  if (
+    prepared.activationProfileDigest !==
+    activationProfileDigest(activationProfile)
+  ) {
+    throw new Error("test kernel activation profile digest drifted");
+  }
+  prepared.tasks.forEach((task, schedulingOrder) => {
+    if (task.schedulingOrder !== schedulingOrder) {
+      throw new Error("test kernel scheduling order drifted");
+    }
+  });
 
   return {
     configure(request) {

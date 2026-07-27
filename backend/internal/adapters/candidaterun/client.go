@@ -75,18 +75,20 @@ type activationProfile struct {
 }
 
 type preparedRun struct {
-	CandidateSlug   string         `json:"candidateSlug"`
-	RunID           string         `json:"runId"`
-	Scenario        string         `json:"scenario"`
-	Repository      string         `json:"repository"`
-	ControllerOwner string         `json:"controllerOwner"`
-	Dispatcher      string         `json:"dispatcher"`
-	Tasks           []preparedTask `json:"tasks"`
+	CandidateSlug           string         `json:"candidateSlug"`
+	RunID                   string         `json:"runId"`
+	Scenario                string         `json:"scenario"`
+	Repository              string         `json:"repository"`
+	ControllerOwner         string         `json:"controllerOwner"`
+	Dispatcher              string         `json:"dispatcher"`
+	ActivationProfileDigest string         `json:"activationProfileDigest"`
+	Tasks                   []preparedTask `json:"tasks"`
 }
 
 type preparedTask struct {
 	Slot             string `json:"slot"`
 	IssueNumber      int    `json:"issueNumber"`
+	SchedulingOrder  *int   `json:"schedulingOrder"`
 	IdempotencyKey   string `json:"idempotencyKey"`
 	AllocationKey    string `json:"allocationKey"`
 	SourceWriterMode string `json:"sourceWriterMode"`
@@ -637,6 +639,15 @@ func loadBinding(configPath string) (binding, error) {
 	}
 	if cfg.prepared.RunID == "" || cfg.prepared.Repository == "" || cfg.prepared.ControllerOwner == "" || cfg.prepared.Dispatcher == "" || len(cfg.prepared.Tasks) == 0 {
 		return binding{}, errors.New("candidate run prepared binding is incomplete")
+	}
+	if !sha256Pattern.MatchString(cfg.prepared.ActivationProfileDigest) {
+		return binding{}, errors.New("candidate run prepared activation profile digest is invalid")
+	}
+	for i := range cfg.prepared.Tasks {
+		order := cfg.prepared.Tasks[i].SchedulingOrder
+		if order == nil || *order != i {
+			return binding{}, fmt.Errorf("candidate run prepared task %d scheduling order must be %d", i+1, i)
+		}
 	}
 	if cfg.ControllerClaim.EventID == "" || cfg.ControllerClaim.ClaimID == "" {
 		return binding{}, errors.New("candidate run controller claim is incomplete")
