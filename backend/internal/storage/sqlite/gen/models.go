@@ -302,6 +302,8 @@ type UsageSource struct {
 	LastObservedAt            sql.NullTime
 	CreatedAt                 time.Time
 	UpdatedAt                 time.Time
+	CurrentModelID            string
+	CurrentProvider           string
 }
 
 type WorkerIdleEvent struct {

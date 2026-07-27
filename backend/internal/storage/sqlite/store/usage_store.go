@@ -92,6 +92,20 @@ func (s *Store) InsertUsageSource(ctx context.Context, rec domain.UsageSourceRec
 	return usageSourceFromGen(row), nil
 }
 
+// ListUsageSourcesForBinding returns all source generations for one native
+// session binding.
+func (s *Store) ListUsageSourcesForBinding(ctx context.Context, bindingID int64) ([]domain.UsageSourceRecord, error) {
+	rows, err := s.qr.ListUsageSourcesForBinding(ctx, bindingID)
+	if err != nil {
+		return nil, fmt.Errorf("list usage sources for binding %d: %w", bindingID, err)
+	}
+	out := make([]domain.UsageSourceRecord, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, usageSourceFromGen(row))
+	}
+	return out, nil
+}
+
 // ListObserverReadyUsageSources returns sources eligible for observer work.
 func (s *Store) ListObserverReadyUsageSources(ctx context.Context, now time.Time, limit int64) ([]domain.UsageSourceRecord, error) {
 	rows, err := s.qr.ListObserverReadyUsageSources(ctx, gen.ListObserverReadyUsageSourcesParams{
@@ -152,6 +166,39 @@ func (s *Store) MarkUsageSourceState(ctx context.Context, id int64, state domain
 	return n > 0, nil
 }
 
+// ReactivateUsageSource makes a completed or failed source eligible for an
+// immediate resumed-session poll and clears transient retry state.
+func (s *Store) ReactivateUsageSource(ctx context.Context, id int64, updatedAt time.Time) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	n, err := s.qw.ReactivateUsageSource(ctx, gen.ReactivateUsageSourceParams{
+		ID:        id,
+		UpdatedAt: timeOrNow(updatedAt),
+	})
+	if err != nil {
+		return false, fmt.Errorf("reactivate usage source %d: %w", id, err)
+	}
+	return n > 0, nil
+}
+
+// MarkUsageSourceFailure records a failed observer attempt and its bounded
+// retry schedule.
+func (s *Store) MarkUsageSourceFailure(ctx context.Context, id, failureCount int64, lastErrorCode string, nextRetryAt, updatedAt time.Time) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	n, err := s.qw.MarkUsageSourceFailure(ctx, gen.MarkUsageSourceFailureParams{
+		ID:            id,
+		FailureCount:  failureCount,
+		LastErrorCode: lastErrorCode,
+		NextRetryAt:   sql.NullTime{Time: nextRetryAt.UTC(), Valid: true},
+		UpdatedAt:     timeOrNow(updatedAt),
+	})
+	if err != nil {
+		return false, fmt.Errorf("mark usage source %d failure: %w", id, err)
+	}
+	return n > 0, nil
+}
+
 // ApplyUsageChunk atomically writes parsed usage events and advances the source
 // cursor/baselines. The cursor never moves unless all event writes commit.
 func (s *Store) ApplyUsageChunk(ctx context.Context, sourceID, expectedOffset int64, nextState domain.SourceCursorState, events []domain.ModelUsageEvent) (domain.ApplyUsageChunkResult, error) {
@@ -198,6 +245,8 @@ func (s *Store) ApplyUsageChunk(ctx context.Context, sourceID, expectedOffset in
 			BaselineCacheWriteTokens:  nextState.BaselineCacheWriteTokens,
 			BaselineOutputTokens:      nextState.BaselineOutputTokens,
 			BaselineReasoningTokens:   nextState.BaselineReasoningTokens,
+			CurrentModelID:            nextState.CurrentModelID,
+			CurrentProvider:           nextState.CurrentProvider,
 			State:                     usageSourceStateOrDefault(nextState.State),
 			FailureCount:              nextState.FailureCount,
 			AnomalyCount:              nextState.AnomalyCount,
@@ -279,6 +328,8 @@ func usageSourceFromGen(row gen.UsageSource) domain.UsageSourceRecord {
 		BaselineCacheWriteTokens:  row.BaselineCacheWriteTokens,
 		BaselineOutputTokens:      row.BaselineOutputTokens,
 		BaselineReasoningTokens:   row.BaselineReasoningTokens,
+		CurrentModelID:            row.CurrentModelID,
+		CurrentProvider:           row.CurrentProvider,
 		ParserVersion:             row.ParserVersion,
 		State:                     row.State,
 		FailureCount:              row.FailureCount,
@@ -308,6 +359,8 @@ func usageSourceContextFromGen(row gen.GetUsageSourceWithBindingAndSessionRow) d
 			BaselineCacheWriteTokens:  row.BaselineCacheWriteTokens,
 			BaselineOutputTokens:      row.BaselineOutputTokens,
 			BaselineReasoningTokens:   row.BaselineReasoningTokens,
+			CurrentModelID:            row.CurrentModelID,
+			CurrentProvider:           row.CurrentProvider,
 			ParserVersion:             row.ParserVersion,
 			State:                     row.SourceState,
 			FailureCount:              row.FailureCount,
@@ -322,7 +375,9 @@ func usageSourceContextFromGen(row gen.GetUsageSourceWithBindingAndSessionRow) d
 		ProjectID:        row.ProjectID,
 		Harness:          row.Harness,
 		NativeRootID:     row.NativeRootID,
+		InitialModelID:   row.InitialModelID,
 		SourceCLIVersion: row.SourceCliVersion,
+		BindingState:     row.BindingState,
 	}
 }
 
@@ -341,6 +396,8 @@ func usageSourceInsertParams(rec domain.UsageSourceRecord) gen.InsertUsageSource
 		BaselineCacheWriteTokens:  rec.BaselineCacheWriteTokens,
 		BaselineOutputTokens:      rec.BaselineOutputTokens,
 		BaselineReasoningTokens:   rec.BaselineReasoningTokens,
+		CurrentModelID:            rec.CurrentModelID,
+		CurrentProvider:           rec.CurrentProvider,
 		ParserVersion:             rec.ParserVersion,
 		State:                     usageSourceStateOrDefault(rec.State),
 		FailureCount:              rec.FailureCount,

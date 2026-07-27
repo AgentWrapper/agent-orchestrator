@@ -22,6 +22,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/mobilebridge"
 	"github.com/aoagents/agent-orchestrator/backend/internal/notify"
+	usageobserver "github.com/aoagents/agent-orchestrator/backend/internal/observe/usage"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/preview"
 	"github.com/aoagents/agent-orchestrator/backend/internal/push"
@@ -31,6 +32,7 @@ import (
 	importsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/importer"
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
+	usagesvc "github.com/aoagents/agent-orchestrator/backend/internal/service/usage"
 	"github.com/aoagents/agent-orchestrator/backend/internal/skillassets"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
@@ -192,6 +194,16 @@ func Run() error {
 	// terminal mux) as session panes, but keep their own ids, storage, and
 	// lifetime — see internal/service/shellterm.
 	shellTermSvc := startShellTerminals(ctx, cfg, runtimeAdapter, store, projectSvc, log)
+	var (
+		usageCollector *usagesvc.Collector
+		usageObserver  *usageobserver.Observer
+	)
+	if roots, rootsErr := usagesvc.DefaultSourceRoots(); rootsErr != nil {
+		log.Warn("usage collection disabled", "err", rootsErr)
+	} else {
+		usageObserver = usageobserver.New(store, usageobserver.Config{Logger: log})
+		usageCollector = usagesvc.NewCollector(store, roots, usageObserver.Wake)
+	}
 	// Push-device registry: persisted phones that receive OS push notifications.
 	// A load failure must not block boot — degrade to no push rather than refusing
 	// to start the daemon. pushRegistry (interface) is assigned only when load
@@ -231,6 +243,7 @@ func Run() error {
 		CDC:                store,
 		Events:             cdcPipe.Broadcaster,
 		Activity:           lcStack.LCM,
+		UsageHooks:         usageCollector,
 		Telemetry:          telemetrySink,
 		Mobile:             mc,
 		DevImport: devimportsvc.New(devimportsvc.Deps{
@@ -250,6 +263,10 @@ func Run() error {
 		return err
 	}
 	previewDone := preview.NewPoller(store, sessionSvc, "http://"+srv.Addr().String(), preview.PollerConfig{Logger: log}).Start(ctx)
+	var usageDone <-chan struct{}
+	if usageObserver != nil {
+		usageDone = usageObserver.Start(ctx)
+	}
 
 	// Late-bind: the LAN listener shares the exact loopback router instance so
 	// the LAN surface and loopback surface never drift apart.
@@ -273,6 +290,11 @@ func Run() error {
 	}
 	if reconcileErr := lcStack.ReconcileRuntime(ctx); reconcileErr != nil {
 		log.Error("reconcile agent processes on boot failed", "err", reconcileErr)
+	}
+	if usageCollector != nil {
+		if backfillErr := usageCollector.BackfillActive(ctx); backfillErr != nil {
+			log.Warn("backfill active usage sources failed", "err", backfillErr)
+		}
 	}
 
 	// Redeliver any worker_idle events left pending across the restart, now that
@@ -312,6 +334,9 @@ func Run() error {
 	// runs before the cancel: a non-signal exit path would hang otherwise.
 	stop()
 	<-previewDone
+	if usageDone != nil {
+		<-usageDone
+	}
 	lcStack.Stop()
 	lanStopCtx, lanCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer lanCancel()

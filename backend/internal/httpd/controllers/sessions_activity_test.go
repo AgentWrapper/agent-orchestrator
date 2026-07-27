@@ -14,6 +14,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	usagesvc "github.com/aoagents/agent-orchestrator/backend/internal/service/usage"
 )
 
 type fakeActivityRecorder struct {
@@ -21,6 +22,19 @@ type fakeActivityRecorder struct {
 	gotSignal ports.ActivitySignal
 	calls     int
 	err       error
+}
+
+type fakeUsageHookRecorder struct {
+	gotID     domain.SessionID
+	gotSignal usagesvc.HookSignal
+	calls     int
+}
+
+func (f *fakeUsageHookRecorder) RecordHook(_ context.Context, id domain.SessionID, signal usagesvc.HookSignal) error {
+	f.calls++
+	f.gotID = id
+	f.gotSignal = signal
+	return nil
 }
 
 func (f *fakeActivityRecorder) ApplyActivitySignal(_ context.Context, id domain.SessionID, s ports.ActivitySignal) error {
@@ -40,6 +54,36 @@ func newActivityTestServer(t *testing.T, rec *fakeActivityRecorder) *httptest.Se
 	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, deps, httpd.ControlDeps{}))
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+func TestSessionsAPI_ActivityForwardsUsageMetadataWithoutChangingActivity(t *testing.T) {
+	usage := &fakeUsageHookRecorder{}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{UsageHooks: usage}, httpd.ControlDeps{}))
+	t.Cleanup(srv.Close)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity", `{
+		"event":"subagent-stop",
+		"agentSessionId":"native-1",
+		"usage":{
+			"harness":"claude-code",
+			"transcriptPath":"/tmp/main.jsonl",
+			"modelId":"claude-sonnet",
+			"subagentId":"sub-1",
+			"subagentTranscriptPath":"/tmp/sub.jsonl"
+		}
+	}`)
+	if status != http.StatusOK {
+		t.Fatalf("activity = %d, want 200; body=%s", status, body)
+	}
+	if usage.calls != 1 || usage.gotID != "ao-1" {
+		t.Fatalf("usage calls=%d id=%q", usage.calls, usage.gotID)
+	}
+	if usage.gotSignal.NativeSessionID != "native-1" ||
+		usage.gotSignal.Harness != domain.HarnessClaudeCode ||
+		usage.gotSignal.SubagentTranscriptPath != "/tmp/sub.jsonl" {
+		t.Fatalf("usage signal = %+v", usage.gotSignal)
+	}
 }
 
 func TestSessionsAPI_ActivityAppliesSignal(t *testing.T) {
