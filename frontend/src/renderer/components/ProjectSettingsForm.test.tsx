@@ -406,10 +406,10 @@ describe("ProjectSettingsForm", () => {
 		await userEvent.click(workerAgent);
 		const options = await screen.findAllByRole("menuitem");
 		expect(options.map((option) => option.textContent)).toEqual([
-			"Claude CodeAuthorized",
-			"CodexAuthorized",
-			"OpenCodeAuthorized",
-			"GooseAuthorized",
+			"Claude Code",
+			"Codex",
+			"OpenCode",
+			"Goose",
 			"KiroAuth unknown",
 		]);
 		expect(options[4]).not.toHaveAttribute("aria-disabled", "true");

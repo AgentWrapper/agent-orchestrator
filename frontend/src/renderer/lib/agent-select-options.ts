@@ -30,7 +30,8 @@ function agentStatus(
 	if (!isAuthorized) {
 		return { status: "Needs auth", statusTone: "warning" };
 	}
-	return { status: "Authorized", statusTone: "success" };
+	// Authorized agents stay clean — only surface problem statuses in the menu.
+	return { status: "", statusTone: "success" };
 }
 
 export function buildRankedAgentOptions({
