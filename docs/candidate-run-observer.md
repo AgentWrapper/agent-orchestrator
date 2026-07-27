@@ -16,6 +16,10 @@ or copied user configuration. Authentication is established separately before
 activation and represented here only by non-secret status and policy
 attestations in the schema-v2 activation profile.
 
+This sample tracks the fixture candidate-run kernel contract at
+`617bf9b6793932a4bbc7d84e999684d8cb1d043a`; activation must separately pin
+the reviewed kernel module bytes with `kernel.sha256`.
+
 ```json
 {
   "schemaVersion": 1,
@@ -40,6 +44,7 @@ attestations in the schema-v2 activation profile.
     "candidateVersion": "<exact-version>",
     "adapterRevision": "<exact-source-revision>",
     "adapterDigest": "<artifact-sha256>",
+    "adapterArtifact": "<reviewed-adapter-artifact>",
     "workerRuntime": "Codex CLI",
     "modelProvider": "OpenAI",
     "modelAuthRoute": "<approved-enterprise-route>",
@@ -90,8 +95,9 @@ profile, a non-Codex harness, any approval policy other than `on-request`, or a
 profile without an exact model, effort, and `workspace-write` sandbox. AO also
 requires a lowercase SHA-256 activation-profile digest and requires every task
 to carry its zero-based array position as `schedulingOrder`. The digest value is
-produced and compared with the canonical activation profile by the external
-fixture kernel; AO does not implement a competing digest authority.
+produced and compared with the full canonical schema-v2 activation profile by
+the external fixture kernel, including `adapterArtifact` and `modelProvider`;
+AO does not implement a competing digest authority.
 
 The sidecar is one long-lived Node process owned by the AO daemon. Its protocol
 is newline-framed JSON over stdio. Only `configure` and `observe` are accepted;
