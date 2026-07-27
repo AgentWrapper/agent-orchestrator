@@ -18,8 +18,12 @@ import (
 // lives under a /var -> /private/var symlink).
 func canonicalTempDir(t *testing.T) string {
 	t.Helper()
-	dir, err := filepath.EvalSymlinks(t.TempDir())
+	raw := t.TempDir()
+	dir, err := filepath.EvalSymlinks(raw)
 	if err != nil {
+		if os.IsPermission(err) {
+			return raw
+		}
 		t.Fatal(err)
 	}
 	return dir

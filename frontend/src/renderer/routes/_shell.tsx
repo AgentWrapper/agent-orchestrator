@@ -1,4 +1,4 @@
-import { createFileRoute, Outlet, useMatchRoute, useNavigate, useParams } from "@tanstack/react-router";
+import { createFileRoute, Outlet, useMatchRoute, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 import { CommandPalette } from "../components/CommandPalette";
@@ -125,23 +125,49 @@ function ShellLayout() {
 	const [isSidebarPeekOpen, setIsSidebarPeekOpen] = useState(false);
 	const sidebarPeekCloseTimerRef = useRef<number | undefined>(undefined);
 	const routeParams = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
+	const routeSearch = useSearch({ strict: false }) as { tabOwner?: string };
+	const tabOwnerSession = routeSearch.tabOwner
+		? workspaces.flatMap((workspace) => workspace.sessions).find((session) => session.id === routeSearch.tabOwner)
+		: undefined;
+	const tabOwnerSessionId = tabOwnerSession?.id;
 	useEffect(() => {
 		const handleLinkClick = (event: MouseEvent) => {
 			const anchor = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a[href]") : null;
 			if (!anchor) return;
 			const url = new URL(anchor.href);
-			if (event.button !== 0 || !["http:", "https:"].includes(url.protocol) || url.origin === window.location.origin) return;
-			if (event.altKey) { event.preventDefault(); event.stopPropagation(); void aoBridge.app.openExternal(url.href); return; }
-			const sessionId = anchor.closest<HTMLElement>("[data-session-id]")?.dataset.sessionId ?? routeParams.sessionId;
+			if (
+				event.button !== 0 ||
+				!["http:", "https:"].includes(url.protocol) ||
+				url.origin === window.location.origin
+			)
+				return;
+			if (event.altKey) {
+				event.preventDefault();
+				event.stopPropagation();
+				void aoBridge.app.openExternal(url.href);
+				return;
+			}
+			const sessionId =
+				anchor.closest<HTMLElement>("[data-session-id]")?.dataset.sessionId ?? routeParams.sessionId;
 			const workspace = workspaces.find((item) => item.sessions.some((session) => session.id === sessionId));
 			if (!sessionId || !workspace || event.metaKey || event.ctrlKey || event.shiftKey) return;
-			event.preventDefault(); event.stopPropagation();
+			event.preventDefault();
+			event.stopPropagation();
 			const ui = useUiStore.getState();
-			ui.setInspectorView(sessionId, "browser"); ui.setInspectorOpen(sessionId, true);
-			void apiClient.POST("/api/v1/sessions/{sessionId}/preview", {
-				params: { path: { sessionId } }, body: { url: url.href },
-			}).then(() => queryClient.invalidateQueries({ queryKey: workspaceQueryKey }));
-			if (routeParams.sessionId !== sessionId) void navigate({ to: "/projects/$projectId/sessions/$sessionId", params: { projectId: workspace.id, sessionId } });
+			ui.setInspectorView(sessionId, "browser");
+			ui.setInspectorOpen(sessionId, true);
+			void apiClient
+				.POST("/api/v1/sessions/{sessionId}/preview", {
+					params: { path: { sessionId } },
+					body: { url: url.href },
+				})
+				.then(() => queryClient.invalidateQueries({ queryKey: workspaceQueryKey }));
+			if (routeParams.sessionId !== sessionId) {
+				void navigate({
+					to: "/projects/$projectId/sessions/$sessionId",
+					params: { projectId: workspace.id, sessionId },
+				});
+			}
 		};
 		document.addEventListener("click", handleLinkClick, true);
 		return () => document.removeEventListener("click", handleLinkClick, true);
@@ -154,9 +180,6 @@ function ShellLayout() {
 		: routeParams.sessionId
 			? workspaces.find((workspace) => workspace.sessions.some((session) => session.id === routeParams.sessionId))?.id
 			: undefined;
-	const isSessionRoute =
-		Boolean(matchRoute({ to: "/projects/$projectId/sessions/$sessionId", fuzzy: true })) ||
-		Boolean(matchRoute({ to: "/sessions/$sessionId", fuzzy: true }));
 	// First-launch root board only (no projects in scope).
 	const isWelcomeBoard = Boolean(matchRoute({ to: "/" })) && workspaces.length === 0;
 	const isSettingsRoute =
@@ -389,10 +412,6 @@ function ShellLayout() {
 	}, [themePreference]);
 
 	useEffect(() => {
-		void aoBridge.window.setTrafficLightsInset(!isSidebarOpen);
-	}, [isSidebarOpen]);
-
-	useEffect(() => {
 		if (!isSidebarOpen) return;
 		cancelSidebarPeekClose();
 		setIsSidebarPeekOpen(false);
@@ -501,7 +520,10 @@ function ShellLayout() {
 		if (handledShellNonceRef.current === newShellTerminalNonce) return;
 		handledShellNonceRef.current = newShellTerminalNonce;
 		openShellTerminal.mutate(
-			{ projectId: scopedProjectId, sessionId: routeParams.sessionId },
+			{
+				projectId: tabOwnerSession?.workspaceId ?? scopedProjectId,
+				sessionId: tabOwnerSessionId ?? routeParams.sessionId,
+			},
 			{
 				onSuccess: (shell) => {
 					setActiveShellTerminal(shell.handleId);
@@ -516,6 +538,8 @@ function ShellLayout() {
 		openShellTerminal,
 		scopedProjectId,
 		routeParams.sessionId,
+		tabOwnerSession?.workspaceId,
+		tabOwnerSessionId,
 		navigate,
 		setActiveShellTerminal,
 	]);
@@ -572,15 +596,14 @@ function ShellLayout() {
 						} as CSSProperties
 					}
 				>
-					{/* Hang the fixed sidebar below shell chrome on Win/Linux. macOS
-              keeps a full-height sidebar beneath the fixed titlebar controls. */}
+					{/* macOS + Linux reserve a titlebar band for the fixed TitlebarNav
+              cluster above a full-height sidebar; Windows hangs the sidebar
+              below its custom titlebar. */}
 					<Sidebar
 						hideEdgeBorder={isWelcomeBoard}
 						isOverlay={isSidebarPeekOpen && !isSidebarOpen}
 						onPreviewLeave={scheduleSidebarPeekClose}
-						underTopbar={
-							isMac || isWindows || (!framedAppTopbar && !hideShellTopbar && (isLinux ? isSessionRoute : true))
-						}
+						underTopbar={isMac || isWindows || isLinux}
 						topbarOffset={isWindows ? "titlebar" : "toolbar"}
 						onCreateProject={createProject}
 						onInitializeProject={initializeProjectRepository}
