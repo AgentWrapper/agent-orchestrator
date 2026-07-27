@@ -352,6 +352,74 @@ func TestWorkspaceIntegrationRestoreDoesNotDestroyWorktreeRecreatedMidRecovery(t
 	}
 }
 
+// TestWorkspaceIntegrationAddNewBranchRecoversStaleRegistration is the real-git
+// regression test for the branch-already-created finding (PR #3098 review,
+// illegalcall): `git worktree add -b <branch> <path> <base>` creates
+// refs/heads/<branch> BEFORE it validates <path>, so an attempt that fails on a
+// stale registration still leaves the branch behind. Retrying the same `-b`
+// form with --force therefore never recovered, it failed with "a branch named
+// ... already exists", leaving the stray ref and no worktree.
+//
+// The fake runner could not catch this: it modelled the failed `-b` invocation
+// as side-effect-free, so the `--force -b` retry "succeeded" there while real
+// git refused it. This drives real git instead, at the same entry point both
+// callers use (force=false against a path git already has a registration for:
+// createWorkspaceProjectRepo's shape before its pre-check existed, and
+// addWorktree's shape when the registration goes stale after its pre-check).
+//
+// Verified to fail on the previous commit with
+// `fatal: a branch named 'child-new' already exists`.
+func TestWorkspaceIntegrationAddNewBranchRecoversStaleRegistration(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := setupOriginClone(t, git, tmp)
+	root := filepath.Join(tmp, "managed")
+	ws, err := New(Options{Binary: git, ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	ctx := context.Background()
+
+	// A registration whose directory is gone: the #2775 shape.
+	info, err := ws.Create(ctx, ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "child-old"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := os.RemoveAll(info.Path); err != nil {
+		t.Fatalf("remove dir: %v", err)
+	}
+
+	// force=false is what a caller passes when its own pre-check did not see the
+	// registration go stale, so this exercises the recovery, not the pre-check.
+	if err := ws.addNewBranchWorktree(ctx, repo, "child-new", info.Path, "origin/main", false); err != nil {
+		t.Fatalf("addNewBranchWorktree over a stale registration: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(info.Path, "README.md")); err != nil {
+		t.Fatalf("recovered worktree was not materialized: %v", err)
+	}
+	out, err := exec.Command(git, "-C", info.Path, "rev-parse", "--abbrev-ref", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("rev-parse recovered worktree: %v", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "child-new" {
+		t.Fatalf("recovered worktree branch = %q, want child-new", got)
+	}
+	// The branch must sit on the requested base, i.e. the retry produced what
+	// the `-b` form would have, not some other ref.
+	head, err := exec.Command(git, "-C", repo, "rev-parse", "refs/heads/child-new").Output()
+	if err != nil {
+		t.Fatalf("rev-parse child-new: %v", err)
+	}
+	base, err := exec.Command(git, "-C", repo, "rev-parse", "origin/main").Output()
+	if err != nil {
+		t.Fatalf("rev-parse origin/main: %v", err)
+	}
+	if strings.TrimSpace(string(head)) != strings.TrimSpace(string(base)) {
+		t.Fatalf("child-new = %s, want origin/main %s", head, base)
+	}
+}
+
 // TestWorkspaceIntegrationCreateInRemotelessRepo guards the BRANCH_NOT_FETCHED
 // regression: a repo with no remote configured must still spawn worktrees for
 // new branches by basing them on the local default-branch head

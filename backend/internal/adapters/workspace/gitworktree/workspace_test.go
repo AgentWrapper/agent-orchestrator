@@ -417,29 +417,26 @@ func TestRestoreRecreatesOnRegisteredBranchNotCfgBranch(t *testing.T) {
 	}
 }
 
-// TestCreateWorkspaceProjectRepoRetriesStaleRegisteredWorktreeWithForce: when
-// git itself reports the path as a missing-but-registered worktree, the retry
-// uses git's own `add --force` override rather than the repo-wide
-// `git worktree prune` this used to run, which would also drop the registration
-// of any sibling session whose directory git currently cannot see.
-func TestCreateWorkspaceProjectRepoRetriesStaleRegisteredWorktreeWithForce(t *testing.T) {
-	root := t.TempDir()
-	repo := t.TempDir()
-	output := filepath.Join(root, "proj", "orchestrator", "proj-orchestrator", "api")
-	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
-	if err != nil {
-		t.Fatalf("new: %v", err)
-	}
+// workspaceProjectRepoFake wires the git calls createWorkspaceProjectRepo makes
+// for branch "feature/test" based on origin/main. worktreeList is the porcelain
+// `worktree list` output the pre-check reads, and addResponses answers the
+// `worktree add` invocations: the first matching key wins, an entry with a nil
+// error succeeds. Every recorded call lands in *calls.
+func workspaceProjectRepoFake(t *testing.T, ws *Workspace, output, worktreeList string, calls *[]string, addResponses func(joined string, binary string, args []string) ([]byte, error, bool)) {
+	t.Helper()
 	exitErr := exec.Command("sh", "-c", "exit 1").Run()
 	if exitErr == nil {
 		t.Fatal("expected exit error")
 	}
-	var calls []string
-	addAttempts := 0
 	ws.run = func(_ context.Context, binary string, args ...string) ([]byte, error) {
 		joined := strings.Join(args, " ")
-		calls = append(calls, joined)
+		*calls = append(*calls, joined)
+		if out, err, ok := addResponses(joined, binary, args); ok {
+			return out, err
+		}
 		switch {
+		case strings.Contains(joined, "worktree list --porcelain"):
+			return []byte(worktreeList), nil
 		case strings.Contains(joined, "symbolic-ref --quiet --short refs/remotes/origin/HEAD"):
 			return []byte("origin/main\n"), nil
 		case strings.Contains(joined, "rev-parse --verify --quiet origin/feature/test"):
@@ -448,21 +445,115 @@ func TestCreateWorkspaceProjectRepoRetriesStaleRegisteredWorktreeWithForce(t *te
 			return nil, nil
 		case strings.Contains(joined, "rev-parse --verify origin/main"):
 			return []byte("abc123\n"), nil
-		case strings.Contains(joined, "worktree add -b feature/test "+output+" origin/main"):
-			addAttempts++
-			return nil, commandError{
-				args:   append([]string{binary}, args...),
-				output: "Preparing worktree (new branch 'feature/test')\nfatal: '" + output + "' is a missing but already registered worktree;\nuse 'add -f' to override, or 'prune' or 'remove' to clear",
-				err:    errors.New("exit status 128"),
-			}
-		case strings.Contains(joined, "worktree add --force -b feature/test "+output+" origin/main"):
-			addAttempts++
-			return nil, nil
 		default:
 			t.Fatalf("unexpected git invocation: %v", args)
 			return nil, nil
 		}
 	}
+}
+
+// TestCreateWorkspaceProjectRepoAddsWithForceWhenRegistrationIsStale: the
+// ordinary #2775 shape (a registration at the output path whose directory is
+// gone) is recognised from the `worktree list` pre-check, so the very first add
+// carries git's own `--force` override. Nothing repo-wide (`worktree prune`)
+// and nothing destructive (`worktree remove`) is used to clear the registration
+// first, so a sibling session's registration cannot be collateral.
+func TestCreateWorkspaceProjectRepoAddsWithForceWhenRegistrationIsStale(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	output := filepath.Join(root, "proj", "orchestrator", "proj-orchestrator", "api")
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	// output is registered but was never created on disk: the stale shape.
+	worktreeList := "worktree " + repo + "\nbranch refs/heads/main\n\nworktree " + output + "\nbranch refs/heads/stale\n\n"
+
+	var calls []string
+	addAttempts := 0
+	workspaceProjectRepoFake(t, ws, output, worktreeList, &calls, func(joined, _ string, _ []string) ([]byte, error, bool) {
+		if strings.Contains(joined, "worktree add --force -b feature/test "+output+" origin/main") {
+			addAttempts++
+			return nil, nil, true
+		}
+		return nil, nil, false
+	})
+
+	baseSHA, err := ws.createWorkspaceProjectRepo(context.Background(), workspaceProjectRepo{
+		name:       "api",
+		repoPath:   repo,
+		outputPath: output,
+	}, "feature/test")
+	if err != nil {
+		t.Fatalf("createWorkspaceProjectRepo: %v", err)
+	}
+	if baseSHA != "abc123" {
+		t.Fatalf("baseSHA = %q, want abc123", baseSHA)
+	}
+	if addAttempts != 1 {
+		t.Fatalf("add attempts = %d, want 1 (the stale registration is known before the add)", addAttempts)
+	}
+	assertNoDestructiveRegistrationCleanup(t, "createWorkspaceProjectRepo", strings.Join(calls, "\n"))
+}
+
+// TestCreateWorkspaceProjectRepoRecoveryRetriesOnExistingBranchForm covers the
+// branch-already-created finding (PR #3098 review, illegalcall). When the
+// registration goes stale only AFTER the pre-check, git rejects the plain
+// `add -b` — but it has already created refs/heads/feature/test by then,
+// because git creates the branch before it validates the target path. This fake
+// models that side effect (the previous one modelled the failed `-b` as
+// side-effect-free, which is why the bug slipped through): after the failed
+// attempt, `rev-parse --verify --quiet refs/heads/feature/test` resolves.
+//
+// The recovery must therefore retry on the existing-branch form
+// `worktree add --force <path> <branch>`. Repeating the `-b` form with --force
+// fails against real git with "a branch named 'feature/test' already exists"
+// (exit 255), so this test fails on the previous commit.
+func TestCreateWorkspaceProjectRepoRecoveryRetriesOnExistingBranchForm(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	output := filepath.Join(root, "proj", "orchestrator", "proj-orchestrator", "api")
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	// The pre-check sees no registration at output, so the first add is plain.
+	worktreeList := "worktree " + repo + "\nbranch refs/heads/main\n\n"
+
+	var calls []string
+	addAttempts := 0
+	branchCreated := false
+	workspaceProjectRepoFake(t, ws, output, worktreeList, &calls, func(joined, binary string, args []string) ([]byte, error, bool) {
+		switch {
+		case strings.Contains(joined, "rev-parse --verify --quiet refs/heads/feature/test"):
+			if !branchCreated {
+				exitErr := exec.Command("sh", "-c", "exit 1").Run()
+				return nil, commandError{args: append([]string{binary}, args...), err: exitErr}, true
+			}
+			return nil, nil, true
+		case strings.Contains(joined, "worktree add -b feature/test "+output+" origin/main"):
+			addAttempts++
+			// git creates the branch, THEN rejects the path.
+			branchCreated = true
+			return nil, commandError{
+				args:   append([]string{binary}, args...),
+				output: "Preparing worktree (new branch 'feature/test')\nfatal: '" + output + "' is a missing but already registered worktree;\nuse 'add -f' to override, or 'prune' or 'remove' to clear",
+				err:    errors.New("exit status 128"),
+			}, true
+		case strings.Contains(joined, "worktree add --force -b feature/test "+output+" origin/main"):
+			addAttempts++
+			// The form real git refuses once the branch exists.
+			return nil, commandError{
+				args:   append([]string{binary}, args...),
+				output: "Preparing worktree (new branch 'feature/test')\nfatal: a branch named 'feature/test' already exists",
+				err:    errors.New("exit status 255"),
+			}, true
+		case strings.Contains(joined, "worktree add --force "+output+" feature/test"):
+			addAttempts++
+			return nil, nil, true
+		}
+		return nil, nil, false
+	})
 
 	baseSHA, err := ws.createWorkspaceProjectRepo(context.Background(), workspaceProjectRepo{
 		name:       "api",
@@ -479,8 +570,11 @@ func TestCreateWorkspaceProjectRepoRetriesStaleRegisteredWorktreeWithForce(t *te
 		t.Fatalf("add attempts = %d, want 2", addAttempts)
 	}
 	got := strings.Join(calls, "\n")
-	if !strings.Contains(got, "worktree add --force -b feature/test "+output+" origin/main") {
-		t.Fatalf("calls missing the --force retry:\n%s", got)
+	if !strings.Contains(got, "worktree add --force "+output+" feature/test") {
+		t.Fatalf("recovery did not retry on the existing-branch form:\n%s", got)
+	}
+	if strings.Contains(got, "worktree add --force -b feature/test") {
+		t.Fatalf("recovery repeated the -b form, which real git refuses once the branch exists:\n%s", got)
 	}
 	assertNoDestructiveRegistrationCleanup(t, "createWorkspaceProjectRepo", got)
 }
