@@ -246,6 +246,30 @@ describe("SessionsBoard", () => {
 		expect(within(draftCard).queryByText("Draft PR")).toBeNull();
 	});
 
+	it("keeps the status in the card's accessible name (sr-only) though the pill is hidden", () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					boardSession({
+						id: "s-cr",
+						title: "changes-task",
+						status: "changes_requested",
+						activity: { state: "waiting_input", lastActivityAt: "2026-01-01T00:00:00Z" },
+					}),
+				]),
+			],
+			isError: false,
+		});
+
+		renderBoard("p1");
+
+		const card = screen.getByText("changes-task").closest('[data-testid="board-session-card"]') as HTMLElement;
+		// No visible status pill…
+		expect(within(card).queryByText("Changes requested")).toBeNull();
+		// …but a screen reader still hears why the task needs attention.
+		expect(within(card).getByText("Status: Changes requested")).toHaveClass("sr-only");
+	});
+
 	it("shows the diff totals from the SCM PR summary (production shape, no changedFiles)", () => {
 		// Production sessions carry no `changedFiles`; the diff must be derived from
 		// the PR summaries the SCM hook returns, or the packaged app shows nothing.
