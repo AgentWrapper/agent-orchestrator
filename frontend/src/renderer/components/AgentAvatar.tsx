@@ -97,10 +97,10 @@ export function AgentAvatar({ provider, className, decorative = false }: AgentAv
 	if (mono) {
 		return (
 			<svg
-				viewBox="0 0 24 24"
+				viewBox="-2 -2 28 28"
 				fill="currentColor"
 				fillRule={mono.fillRule ?? "nonzero"}
-				className={cn("size-icon-xl shrink-0 text-foreground", className)}
+				className={cn("size-icon-base shrink-0 text-foreground", className)}
 				{...(decorative ? { "aria-hidden": true } : { role: "img", "aria-label": provider })}
 			>
 				{decorative ? null : <title>{provider}</title>}
@@ -117,7 +117,7 @@ export function AgentAvatar({ provider, className, decorative = false }: AgentAv
 				src={logo}
 				alt={decorative ? "" : provider}
 				aria-hidden={decorative || undefined}
-				className={cn("size-icon-xl shrink-0 object-contain", className)}
+				className={cn("size-icon-base shrink-0 object-contain", className)}
 				draggable={false}
 				title={decorative ? undefined : provider}
 			/>
@@ -128,7 +128,7 @@ export function AgentAvatar({ provider, className, decorative = false }: AgentAv
 			role="img"
 			aria-label={provider}
 			className={cn(
-				"inline-flex size-icon-xl shrink-0 items-center justify-center text-caption font-bold uppercase leading-none text-muted-foreground",
+				"inline-flex size-icon-base shrink-0 items-center justify-center text-caption font-bold uppercase leading-none text-muted-foreground",
 				className,
 			)}
 			title={provider}
