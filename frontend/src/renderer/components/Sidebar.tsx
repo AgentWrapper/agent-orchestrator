@@ -815,7 +815,7 @@ function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
 				}}
 				tooltip={isCollapsed ? `Search · ${shortcutLabel}` : undefined}
 				className={cn(
-					"h-control-form gap-2 rounded-lg bg-interactive-hover px-3 py-0 text-control font-medium text-muted-foreground",
+					"h-control-form gap-2 rounded-lg bg-interactive-hover px-3 py-0 text-xs font-medium text-muted-foreground",
 					"hover:bg-interactive-hover hover:text-foreground active:bg-interactive-hover active:text-foreground",
 					"[&>svg]:size-icon-md!",
 					"group-data-[collapsible=icon]:size-control-form! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:p-0!",
