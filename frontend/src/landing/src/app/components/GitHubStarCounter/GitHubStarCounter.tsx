@@ -1,11 +1,11 @@
-import { COMPANY } from "@superset/shared/constants";
+import { COMPANY } from "@ao/shared/constants";
 
 interface GitHubRepoResponse {
 	stargazers_count: number;
 }
 
 function getGitHubApiUrl(): string {
-	// Extract owner/repo from COMPANY.GITHUB_URL (e.g., "https://github.com/superset-sh/superset")
+	// Extract owner/repo from COMPANY.GITHUB_URL (e.g., "https://github.com/AgentWrapper/agent-orchestrator")
 	const match = COMPANY.GITHUB_URL.match(/github\.com\/([^/]+\/[^/]+)/);
 	if (!match) {
 		throw new Error("Invalid GitHub URL format");

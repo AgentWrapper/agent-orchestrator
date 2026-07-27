@@ -48,7 +48,7 @@ type CenterPaneProps = {
 	onSelectShellTerminal?: (handleId: string) => void;
 	onCloseShellTerminal?: (handleId: string) => void;
 	onRenameShellTerminal?: (handleId: string, title: string) => void;
-	/** Opens a new standalone shell tab (Superset-style "+" at the end of the tab bar). */
+	/** Opens a new standalone shell tab (the "+" at the end of the tab bar). */
 	onNewShellTerminal?: () => void;
 };
 
