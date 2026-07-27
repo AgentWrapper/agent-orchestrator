@@ -167,6 +167,9 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		// A resize re-assert held back until the replay flushes; see the resize
 		// handler for why it cannot fire during the burst.
 		replayPendingReassert: null as (() => void) | null,
+		// The current attachment's flush, published so teardown can land buffered
+		// bytes instead of discarding them (the closure lives inside connect).
+		flushReplay: null as (() => void) | null,
 	});
 
 	const transition = useCallback((next: TerminalSessionState) => {
@@ -196,12 +199,15 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 
 	const teardownMux = useCallback(() => {
 		const r = runtime.current;
+		// Land anything still buffered before the attachment goes away. Dropping
+		// it would lose output that had already arrived — invisible on screen
+		// (the next attach clears and replays), but the onOutput watcher would
+		// never see it, so a URL printed in that window would never badge the
+		// Browser tab. No-ops when the gate is closed or already superseded.
+		r.flushReplay?.();
+		r.flushReplay = null;
 		clearReplayTimers();
 		r.replayBuffering = false;
-		// Any bytes still buffered belong to an attachment being discarded. The
-		// fresh attach clears the screen and replays current state anyway, so
-		// dropping them costs nothing on screen; only the onOutput watcher misses
-		// them, and it will see the same content in the new replay.
 		r.replayChunks = [];
 		r.replayBytes = 0;
 		r.replayPendingReassert = null;
@@ -281,6 +287,9 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		if (!terminal || !handle || r.detached) {
 			return;
 		}
+		// Flush the outgoing attachment BEFORE bumping the generation: past that
+		// point its own guard rejects the flush and its buffered bytes are lost.
+		r.flushReplay?.();
 		const generation = r.generation + 1;
 		r.generation = generation;
 		r.inputReady = false;
@@ -340,6 +349,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			});
 			pendingReassert?.();
 		};
+		r.flushReplay = flushReplay;
 
 		r.disposers.push(
 			mux.onData(handle, (bytes) => {
@@ -401,6 +411,14 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			mux.onConnectionChange((connectionState) => {
 				if (!isCurrentAttachment(generation, handle, mux)) return;
 				if (connectionState === "closed") {
+					// End the gate: no replay is coming over a dead socket. This is
+					// the ONLY settle path when the socket dies before `opened` —
+					// clearOpenTimer below drops the open timeout, and
+					// scheduleReattach schedules nothing while the daemon is down,
+					// so without this the pane is stranded behind the cover with no
+					// timer left to lift it (and stays there for a whole reconnect
+					// storm). The cap cannot cover this: it is armed from `opened`.
+					flushReplay();
 					clearOpenTimer(generation);
 					r.inputReady = false;
 					scheduleReattach();
@@ -552,6 +570,10 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				transition("idle");
 			}
 			return () => {
+				// Before the generation bump — past it the flush's own guard rejects
+				// it and the buffered bytes (and any URL in them) are lost. This is
+				// the session-switch path, so it is the one that matters most.
+				r.flushReplay?.();
 				r.generation += 1;
 				r.detached = true;
 				teardownMux();
@@ -614,6 +636,8 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 	useEffect(
 		() => () => {
 			const r = runtime.current;
+			// Same ordering rule as the detach path above.
+			r.flushReplay?.();
 			r.generation += 1;
 			r.detached = true;
 			r.inputReady = false;

@@ -495,6 +495,83 @@ describe("useTerminalSession", () => {
 			expect(view.result.current.replaySettled).toBe(true);
 		});
 
+		it("lifts the cover when the socket dies before the server ever acks", () => {
+			const { view, muxes } = setup();
+			expect(view.result.current.replaySettled).toBe(false);
+
+			// The cap is armed from `opened`, so it never started. The `closed`
+			// handler clears the open timeout and scheduleReattach declines to
+			// retry while the daemon is down — leaving no timer to lift the cover.
+			view.rerender({ daemonReady: false });
+			act(() => muxes[0].emitConnection("closed"));
+			act(() => void vi.advanceTimersByTime(120_000));
+
+			expect(view.result.current.state).toBe("reattaching");
+			expect(view.result.current.replaySettled).toBe(true);
+		});
+
+		it("does not hold the cover down across a reconnect storm", () => {
+			const { view, muxes } = setup();
+			for (let cycle = 0; cycle < 6; cycle += 1) {
+				const latest = muxes[muxes.length - 1];
+				act(() => latest.emitConnection("closed"));
+				expect(view.result.current.replaySettled).toBe(true);
+				act(() => void vi.advanceTimersByTime(10_000)); // outlast the backoff
+			}
+			expect(muxes.length).toBeGreaterThan(1);
+		});
+
+		it("lands buffered bytes when the pane is detached mid-replay", () => {
+			const outputs: string[] = [];
+			const muxes: FakeMux[] = [];
+			const createMux = () => {
+				const fake = createFakeMux();
+				muxes.push(fake);
+				return fake.mux;
+			};
+			const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+			const wrapper = ({ children }: { children: ReactNode }) => (
+				<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+			);
+			const view = renderHook(
+				() =>
+					useTerminalSession(session, {
+						daemonReady: true,
+						createMux,
+						onOutput: (text) => outputs.push(text),
+					}),
+				{ wrapper },
+			);
+			const terminal = createFakeTerminal();
+			let detach: () => void = () => undefined;
+			act(() => {
+				detach = view.result.current.attach(terminal);
+			});
+
+			act(() => muxes[0].emitOpened("handle-1"));
+			act(() => muxes[0].emitData("handle-1", "https://example.com/pr/9"));
+			// Session switch while the gate still holds the burst: the URL watcher
+			// must still see those bytes, or a printed PR link never badges the tab.
+			act(() => detach());
+
+			expect(outputs.join("")).toContain("https://example.com/pr/9");
+		});
+
+		it("lands buffered bytes on teardown rather than discarding them", () => {
+			const { terminal, muxes } = setup();
+			act(() => muxes[0].emitOpened("handle-1"));
+			act(() => muxes[0].emitData("handle-1", "https://example.com/pr/1"));
+
+			// Socket drops mid-burst and the backoff reconnects. The bytes already
+			// received must still reach the terminal and the onOutput watcher —
+			// silently dropping them loses a URL that would have badged the pane.
+			act(() => muxes[0].emitConnection("closed"));
+			act(() => void vi.advanceTimersByTime(500));
+
+			expect(muxes).toHaveLength(2);
+			expect(terminal.lines).toContain("https://example.com/pr/1");
+		});
+
 		it("drops a superseded connection's frames instead of folding them into the new replay", () => {
 			const { view, terminal, muxes } = setup();
 			act(() => muxes[0].emitOpened("handle-1"));

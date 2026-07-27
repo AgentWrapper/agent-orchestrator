@@ -368,7 +368,13 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	// (issue #3160). Deliberately NOT the empty state above: that renders a
 	// centered "Starting session" card, and flashing it on every session switch
 	// would be worse than the scroll it replaces.
-	const showReplayCover = Boolean(handleId) && !replaySettled;
+	// Only while a replay is actually imminent. Gating on the state as well as
+	// the gate keeps the cover from reappearing over a pane that is visibly
+	// disconnected: an open timeout lifts it, the backoff reconnect would
+	// otherwise pull it straight back down, and the "reattaching" banner already
+	// explains that window better than a blank overlay does.
+	const showReplayCover =
+		Boolean(handleId) && !replaySettled && (state === "connecting" || state === "attached");
 	const showEndedState = state === "exited" || canRestoreSession;
 	const emptyStateTitle = session ? "Starting session" : "Agent Orchestrator";
 	const emptyStateMessage = session
