@@ -166,15 +166,18 @@ describe("SessionsBoard", () => {
 		const idleCard = screen
 			.getByText("brand-font-pipeline")
 			.closest('[data-testid="board-session-card"]') as HTMLElement;
-		expect(within(idleCard).getByText("Idle")).toBeInTheDocument();
+		// The Idle lane header already names the stage, so the card omits a redundant
+		// "Idle" pill — and must never mislabel the idle session as Working.
+		expect(within(idleCard).queryByText("Idle")).toBeNull();
+		expect(within(idleCard).queryByText("Working")).toBeNull();
+		expect(screen.getByRole("region", { name: "Idle sessions" })).toContainElement(idleCard);
 		const terminateButton = within(idleCard).getByRole("button", { name: "Terminate brand-font-pipeline" });
 		expect(terminateButton).toHaveClass("opacity-0", "group-hover:opacity-100", "group-focus-within:opacity-100");
 		expect(terminateButton.querySelector("svg")).toHaveClass("lucide-trash-2");
-		expect(within(idleCard).getByText("Idle").parentElement).toHaveClass("flex", "justify-between");
 		expect(within(idleCard).getByText("brand-font-pipeline")).toHaveClass("font-semibold", "line-clamp-2");
 	});
 
-	it("uses distinct card badge tones for idle, no signal, and draft PR sessions", () => {
+	it("omits the status pill on cards since the column names the stage", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
 				{
@@ -229,12 +232,14 @@ describe("SessionsBoard", () => {
 		const noSignalCard = screen.getByText("no-signal-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
 		const draftCard = screen.getByText("draft-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
 
-		expect(within(idleCard).getByText("Idle").closest("span")).toHaveClass("text-status-idle");
-		expect(within(noSignalCard).getByText("No signal").closest("span")).toHaveClass("text-status-unknown");
-		expect(within(draftCard).getByText("Draft PR").closest("span")).toHaveClass("text-status-in-review");
+		// The column header names the stage, so cards never repeat a status pill —
+		// idle, no-signal and draft alike carry no status word.
+		expect(within(idleCard).queryByText("Idle")).toBeNull();
+		expect(within(noSignalCard).queryByText("No signal")).toBeNull();
+		expect(within(draftCard).queryByText("Draft PR")).toBeNull();
 	});
 
-	it("places an exited live session in Needs you with an Exited badge", () => {
+	it("places an exited live session in Needs you", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
 				workspaceWithSessions([
@@ -261,7 +266,7 @@ describe("SessionsBoard", () => {
 		const needsYouColumn = screen.getByText("Needs you").closest("section") as HTMLElement;
 		expect(needsYouColumn.firstElementChild).toHaveClass("py-2");
 		expect(within(needsYouColumn).getByText("agent-exited-task")).toBeInTheDocument();
-		expect(within(needsYouColumn).getByText("Exited").closest("span")).toHaveClass("text-status-exited");
+		expect(within(needsYouColumn).queryByText("Exited")).toBeNull();
 	});
 
 	it("renders an idle-first work lane with a separate lower working section", () => {
@@ -333,9 +338,10 @@ describe("SessionsBoard", () => {
 		expect(within(workLane).queryByText("idle-with-pr-task")).not.toBeInTheDocument();
 
 		const idleCard = screen.getByText("idle-no-pr-task").closest('[data-testid="board-session-card"]') as HTMLElement;
-		const badge = within(idleCard).getByText("Idle").closest("span");
-		expect(badge).toHaveClass("text-status-idle");
-		expect(badge).not.toHaveClass("text-status-working");
+		// Under the Idle lane the card drops its redundant status pill and must not
+		// fall back to a Working label.
+		expect(within(idleCard).queryByText("Idle")).toBeNull();
+		expect(within(idleCard).queryByText("Working")).toBeNull();
 	});
 
 	it("lets idle sessions fill the lane when no working sessions exist", () => {
