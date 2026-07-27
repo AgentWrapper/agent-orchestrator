@@ -28,8 +28,8 @@ func SanitizeControlChars(s string) string {
 }
 
 const (
-	ReviewBodyMaxRunes        = 20000
-	ReviewBodyMaxTokenRunes   = 512
+	reviewBodyMaxRunes        = 20000
+	reviewBodyMaxTokenRunes   = 512
 	reviewBodyMinMixedRunes   = 40
 	reviewBodyMaxMixedScripts = 3
 )
@@ -52,8 +52,8 @@ func ValidateReviewBody(body string) error {
 	scripts := map[string]struct{}{}
 	for _, r := range body {
 		runeCount++
-		if runeCount > ReviewBodyMaxRunes {
-			return errorsNewInvalidReviewBody(fmt.Sprintf("body exceeds %d characters", ReviewBodyMaxRunes))
+		if runeCount > reviewBodyMaxRunes {
+			return errorsNewInvalidReviewBody(fmt.Sprintf("body exceeds %d characters", reviewBodyMaxRunes))
 		}
 		if unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t' {
 			return errorsNewInvalidReviewBody("body contains unsafe control characters")
@@ -62,8 +62,8 @@ func ValidateReviewBody(body string) error {
 			tokenRunes = 0
 		} else {
 			tokenRunes++
-			if tokenRunes > ReviewBodyMaxTokenRunes {
-				return errorsNewInvalidReviewBody(fmt.Sprintf("body contains a token longer than %d characters", ReviewBodyMaxTokenRunes))
+			if tokenRunes > reviewBodyMaxTokenRunes {
+				return errorsNewInvalidReviewBody(fmt.Sprintf("body contains a token longer than %d characters", reviewBodyMaxTokenRunes))
 			}
 		}
 		if !unicode.IsLetter(r) {

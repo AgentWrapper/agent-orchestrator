@@ -38,8 +38,8 @@ func TestValidateReviewBody(t *testing.T) {
 		{name: "single non latin language allowed", body: strings.Repeat("请修复这个测试失败的问题。", 8), wantErr: false},
 		{name: "japanese script mix allowed", body: strings.Repeat("この漢字とカタカナのレビューを確認してください。", 6), wantErr: false},
 		{name: "unsafe control byte rejected", body: "looks ok\x1b[2J", wantErr: true},
-		{name: "oversized body rejected", body: strings.Repeat("a", ReviewBodyMaxRunes+1), wantErr: true},
-		{name: "oversized token rejected", body: strings.Repeat("a", ReviewBodyMaxTokenRunes+1), wantErr: true},
+		{name: "oversized body rejected", body: strings.Repeat("a", reviewBodyMaxRunes+1), wantErr: true},
+		{name: "oversized token rejected", body: strings.Repeat("a", reviewBodyMaxTokenRunes+1), wantErr: true},
 		{name: "multiscript token salad rejected", body: strings.Repeat("ગુજરાતી русский 中文 հայերեն عربي ", 6), wantErr: true},
 		{name: "short multilingual names allowed", body: "Names in docs mention العربية, русский, 中文, հայերեն, and ગુજરાતી once.", wantErr: false},
 	}
