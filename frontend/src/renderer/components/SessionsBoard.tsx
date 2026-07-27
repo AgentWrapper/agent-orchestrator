@@ -780,18 +780,11 @@ function SessionCard({
 	onTerminate?: () => void;
 	interactive?: boolean;
 }) {
-	// The column header already names the stage (Working / Needs you / In review /
-	// Ready to merge), so the card never repeats a status pill. It carries only its
-	// own identity + code state: agent, title, branch, PRs, diff, updated time.
 	const badge = getSessionStatusView(session.status);
 	const issueId = canonicalTrackerIssueId(session.issueId);
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
-	const changed = session.changedFiles ?? [];
-	const additions = changed.reduce((total, file) => total + file.additions, 0);
-	const deletions = changed.reduce((total, file) => total + file.deletions, 0);
-	const showDiff = changed.length > 0 && additions + deletions > 0;
 	const showTerminate = interactive && session.isTerminated !== true && onTerminate;
 	const keepTerminateVisible = session.status === "merged";
 	const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -860,32 +853,34 @@ function SessionCard({
 				</div>
 			</div>
 			<div aria-hidden="true" className="mx-3.5 my-px h-px bg-border" />
-			<div className="flex items-center gap-2 px-3.5 py-2 font-mono text-2xs text-passive">
-				<div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
-					{groupPRsByLifecycle(prSummaries).map((group) => (
-						<BoardPRGroup group={group} key={group.status.label} linksInteractive={interactive} />
-					))}
-					{showDiff && (
-						<span
-							className="inline-flex items-center gap-1 whitespace-nowrap"
-							title={`${additions} added, ${deletions} removed`}
-						>
-							<span className="text-success">+{additions}</span>
-							<span className="text-error">−{deletions}</span>
-						</span>
-					)}
-					{issueId && (
-						<span
-							className="max-w-branch-chip truncate rounded-sm bg-accent/12 px-1.5 py-0.5 text-micro text-accent"
-							title={`Intake issue: ${issueId}`}
-						>
-							{issueId}
-						</span>
-					)}
+			<div className="flex flex-col gap-1.5 px-3.5 py-2">
+				<div className="flex items-center justify-between gap-2">
+					<span className={cn("inline-flex min-w-0 items-center gap-1.5 truncate text-2xs font-medium", badge.className)}>
+						<span className="size-dot-sm shrink-0 rounded-full bg-current" />
+						{badge.label}
+					</span>
+					<span
+						className="shrink-0 whitespace-nowrap font-mono text-2xs text-passive"
+						title={`Updated ${session.updatedAt}`}
+					>
+						{formatTimeCompact(session.updatedAt)}
+					</span>
 				</div>
-				<span className="shrink-0 whitespace-nowrap" title={`Updated ${session.updatedAt}`}>
-					{formatTimeCompact(session.updatedAt)}
-				</span>
+				{prSummaries.length > 0 && (
+					<div className="flex flex-col gap-1 font-mono text-2xs text-passive">
+						{groupPRsByLifecycle(prSummaries).map((group) => (
+							<BoardPRGroup group={group} key={group.status.label} linksInteractive={interactive} />
+						))}
+					</div>
+				)}
+				{issueId && (
+					<span
+						className="inline-flex max-w-branch-chip items-center self-start truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent"
+						title={`Intake issue: ${issueId}`}
+					>
+						{issueId}
+					</span>
+				)}
 			</div>
 		</div>
 	);
