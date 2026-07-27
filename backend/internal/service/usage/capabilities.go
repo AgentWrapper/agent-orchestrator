@@ -51,11 +51,11 @@ var capabilities = map[domain.AgentHarness]Capability{
 		Fields: FieldCapabilities{
 			Tokens:          domain.UsageCoverageComplete,
 			ReasoningTokens: domain.UsageCoverageUnavailable,
-			Cost:            domain.UsageCoveragePartial,
+			Cost:            domain.UsageCoverageUnavailable,
 		},
 		IncludesSubagents: true,
 		TokenConfidence:   domain.TokenConfidenceParsed,
-		CostConfidence:    domain.CostConfidenceEstimate,
+		CostConfidence:    domain.CostConfidenceNone,
 		VersionPolicy:     VersionPolicyFeatureDetected,
 	},
 	domain.HarnessCodex: {
@@ -68,11 +68,11 @@ var capabilities = map[domain.AgentHarness]Capability{
 		Fields: FieldCapabilities{
 			Tokens:          domain.UsageCoverageComplete,
 			ReasoningTokens: domain.UsageCoverageComplete,
-			Cost:            domain.UsageCoveragePartial,
+			Cost:            domain.UsageCoverageUnavailable,
 		},
 		IncludesSubagents: true,
 		TokenConfidence:   domain.TokenConfidenceParsed,
-		CostConfidence:    domain.CostConfidenceEstimate,
+		CostConfidence:    domain.CostConfidenceNone,
 		VersionPolicy:     VersionPolicyFeatureDetected,
 	},
 }
