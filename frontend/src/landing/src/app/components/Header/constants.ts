@@ -13,6 +13,11 @@ export const PRODUCT_LINKS: NavLink[] = [
     label: "Demo",
     description: "Watch AO run a fleet of agents end to end.",
   },
+  {
+    href: "/design-partners",
+    label: "Design Partners",
+    description: "Build the future of multi-agent development with AO.",
+  },
 ];
 
 export const RESOURCE_LINKS: NavLink[] = [
