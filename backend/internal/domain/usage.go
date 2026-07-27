@@ -264,6 +264,32 @@ type UsageRowCounts struct {
 	EventCount   int64
 }
 
+// UsageSessionAggregate is the storage-level batch row used to derive compact
+// dashboard usage without issuing one query per session card.
+type UsageSessionAggregate struct {
+	SessionID            SessionID
+	Harness              AgentHarness
+	BindingCount         int64
+	CompleteBindingCount int64
+	PartialBindingCount  int64
+	SourceCount          int64
+	CompleteSourceCount  int64
+	ErrorSourceCount     int64
+	AnomalousSourceCount int64
+	EventCount           int64
+	TotalTokens          int64
+	LastObservedAt       *time.Time
+}
+
+// CompactSessionUsage is the token-only dashboard read model.
+type CompactSessionUsage struct {
+	SessionID       SessionID
+	TotalTokens     int64
+	CollectionState UsageCollectionState
+	Coverage        UsageCoverage
+	LastObservedAt  *time.Time
+}
+
 // UsageMetricTotals is the aggregate metric block used by session, harness,
 // and model summaries.
 type UsageMetricTotals struct {

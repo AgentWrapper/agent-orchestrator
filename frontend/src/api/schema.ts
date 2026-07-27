@@ -797,6 +797,23 @@ export interface paths {
         patch: operations["renameShellTerminal"];
         trace?: never;
     };
+    "/api/v1/usage/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List compact token usage for session cards */
+        get: operations["listCompactSessionUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -853,6 +870,17 @@ export interface components {
         CleanupSkippedSession: {
             reason: string;
             sessionId: string;
+        };
+        CompactSessionUsageResponse: {
+            /** @enum {string} */
+            collectionState: "waiting" | "collecting" | "complete" | "partial" | "unavailable";
+            /** @enum {string} */
+            coverage: "complete" | "partial" | "unavailable";
+            /** Format: date-time */
+            lastObservedAt?: null | string;
+            sessionId: string;
+            /** Format: int64 */
+            totalTokens: number;
         };
         ControllersSessionView: {
             activity: components["schemas"]["DomainActivity"];
@@ -962,6 +990,9 @@ export interface components {
             installed: components["schemas"]["AgentInfo"][];
             /** @description Agents supported by this daemon build. */
             supported: components["schemas"]["AgentInfo"][];
+        };
+        ListCompactSessionUsageResponse: {
+            sessions: components["schemas"]["CompactSessionUsageResponse"][];
         };
         ListNotificationsResponse: {
             nextCursor?: string;
@@ -4307,6 +4338,47 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    listCompactSessionUsage: {
+        parameters: {
+            query?: {
+                /** @description Optional project id filter for dashboard cards. */
+                projectId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListCompactSessionUsageResponse"];
                 };
             };
             /** @description Internal Server Error */

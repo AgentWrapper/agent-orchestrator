@@ -480,6 +480,82 @@ func (q *Queries) InsertUsageSource(ctx context.Context, arg InsertUsageSourcePa
 	return i, err
 }
 
+const listCompactSessionUsage = `-- name: ListCompactSessionUsage :many
+SELECT
+    s.id AS session_id,
+    s.harness,
+    COUNT(DISTINCT ub.id) AS binding_count,
+    COUNT(DISTINCT CASE WHEN ub.state = 'complete' THEN ub.id END) AS complete_binding_count,
+    COUNT(DISTINCT CASE WHEN ub.state = 'partial' THEN ub.id END) AS partial_binding_count,
+    COUNT(DISTINCT us.id) AS source_count,
+    COUNT(DISTINCT CASE WHEN us.state = 'complete' THEN us.id END) AS complete_source_count,
+    COUNT(DISTINCT CASE WHEN us.state = 'error' THEN us.id END) AS error_source_count,
+    COUNT(DISTINCT CASE
+        WHEN us.anomaly_count > 0 OR us.last_error_code <> '' THEN us.id
+    END) AS anomalous_source_count,
+    COUNT(DISTINCT mue.id) AS event_count,
+    CAST(COALESCE(SUM(mue.input_tokens + mue.output_tokens), 0) AS INTEGER) AS total_tokens,
+    COALESCE(CAST(MAX(mue.observed_at) AS TEXT), '') AS last_observed_at
+FROM sessions s
+LEFT JOIN usage_bindings ub ON ub.session_id = s.id
+LEFT JOIN usage_sources us ON us.binding_id = ub.id
+LEFT JOIN model_usage_events mue ON mue.usage_source_id = us.id
+WHERE (?1 = '' OR s.project_id = ?1)
+GROUP BY s.id, s.harness
+ORDER BY s.project_id, s.num
+`
+
+type ListCompactSessionUsageRow struct {
+	SessionID            domain.SessionID
+	Harness              domain.AgentHarness
+	BindingCount         int64
+	CompleteBindingCount int64
+	PartialBindingCount  int64
+	SourceCount          int64
+	CompleteSourceCount  int64
+	ErrorSourceCount     int64
+	AnomalousSourceCount int64
+	EventCount           int64
+	TotalTokens          int64
+	LastObservedAt       interface{}
+}
+
+func (q *Queries) ListCompactSessionUsage(ctx context.Context, projectID interface{}) ([]ListCompactSessionUsageRow, error) {
+	rows, err := q.db.QueryContext(ctx, listCompactSessionUsage, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCompactSessionUsageRow{}
+	for rows.Next() {
+		var i ListCompactSessionUsageRow
+		if err := rows.Scan(
+			&i.SessionID,
+			&i.Harness,
+			&i.BindingCount,
+			&i.CompleteBindingCount,
+			&i.PartialBindingCount,
+			&i.SourceCount,
+			&i.CompleteSourceCount,
+			&i.ErrorSourceCount,
+			&i.AnomalousSourceCount,
+			&i.EventCount,
+			&i.TotalTokens,
+			&i.LastObservedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listObserverReadyUsageSources = `-- name: ListObserverReadyUsageSources :many
 SELECT id, binding_id, kind, native_session_id, subagent_id, artifact_path, file_identity, generation, byte_offset, baseline_input_tokens, baseline_cached_input_tokens, baseline_cache_write_tokens, baseline_output_tokens, baseline_reasoning_tokens, parser_version, state, failure_count, anomaly_count, next_retry_at, last_error_code, last_observed_at, created_at, updated_at, current_model_id, current_provider
 FROM usage_sources

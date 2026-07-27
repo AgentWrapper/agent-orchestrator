@@ -596,6 +596,26 @@ type ProbeAgentResponse = agentsvc.ProbeResult
 // AgentInfo is one supported or installed agent entry.
 type AgentInfo = agentsvc.Info
 
+// ListUsageSessionsQuery is the query string accepted by GET
+// /api/v1/usage/sessions.
+type ListUsageSessionsQuery struct {
+	ProjectID domain.ProjectID `query:"projectId,omitempty" description:"Optional project id filter for dashboard cards."`
+}
+
+// CompactSessionUsageResponse is one session card's token-only usage summary.
+type CompactSessionUsageResponse struct {
+	SessionID       domain.SessionID `json:"sessionId"`
+	TotalTokens     int64            `json:"totalTokens" minimum:"0"`
+	CollectionState string           `json:"collectionState" enum:"waiting,collecting,complete,partial,unavailable"`
+	Coverage        string           `json:"coverage" enum:"complete,partial,unavailable"`
+	LastObservedAt  *time.Time       `json:"lastObservedAt,omitempty"`
+}
+
+// ListCompactSessionUsageResponse is the batch dashboard usage response.
+type ListCompactSessionUsageResponse struct {
+	Sessions []CompactSessionUsageResponse `json:"sessions"`
+}
+
 // ListNotificationsQuery is the query string accepted by GET /api/v1/notifications.
 type ListNotificationsQuery struct {
 	Status string `query:"status,omitempty" enum:"unread,all" description:"Notification status filter. Defaults to unread; all includes read history."`

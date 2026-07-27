@@ -253,3 +253,27 @@ SELECT
      JOIN usage_bindings ub ON ub.id = us.binding_id
      WHERE ub.session_id = sqlc.arg(session_id)) AS source_count,
     (SELECT COUNT(*) FROM model_usage_events WHERE model_usage_events.session_id = sqlc.arg(session_id)) AS event_count;
+
+-- name: ListCompactSessionUsage :many
+SELECT
+    s.id AS session_id,
+    s.harness,
+    COUNT(DISTINCT ub.id) AS binding_count,
+    COUNT(DISTINCT CASE WHEN ub.state = 'complete' THEN ub.id END) AS complete_binding_count,
+    COUNT(DISTINCT CASE WHEN ub.state = 'partial' THEN ub.id END) AS partial_binding_count,
+    COUNT(DISTINCT us.id) AS source_count,
+    COUNT(DISTINCT CASE WHEN us.state = 'complete' THEN us.id END) AS complete_source_count,
+    COUNT(DISTINCT CASE WHEN us.state = 'error' THEN us.id END) AS error_source_count,
+    COUNT(DISTINCT CASE
+        WHEN us.anomaly_count > 0 OR us.last_error_code <> '' THEN us.id
+    END) AS anomalous_source_count,
+    COUNT(DISTINCT mue.id) AS event_count,
+    CAST(COALESCE(SUM(mue.input_tokens + mue.output_tokens), 0) AS INTEGER) AS total_tokens,
+    COALESCE(CAST(MAX(mue.observed_at) AS TEXT), '') AS last_observed_at
+FROM sessions s
+LEFT JOIN usage_bindings ub ON ub.session_id = s.id
+LEFT JOIN usage_sources us ON us.binding_id = ub.id
+LEFT JOIN model_usage_events mue ON mue.usage_source_id = us.id
+WHERE (sqlc.arg(project_id) = '' OR s.project_id = sqlc.arg(project_id))
+GROUP BY s.id, s.harness
+ORDER BY s.project_id, s.num;
