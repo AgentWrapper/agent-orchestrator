@@ -84,18 +84,63 @@ type Service struct {
 }
 
 // sessionGate is the admission/teardown barrier for one session's scoped
-// shell terminals. Its mutex is held for the ENTIRE span from
-// BeginSessionTeardown through the release function it returns on success —
-// deliberately crossing the call into Session Manager's own worktree teardown
-// in between — so an OpenShellTerminal racing against that window blocks
-// until the window ends, rather than slipping a new shell in against a
-// worktree that is mid-removal. By the time a blocked Open acquires the lock,
-// the teardown it waited on has fully finished (destroyed or preserved), so
-// there is nothing left to check here: resolveShellTerminalWorkingDir's own
-// existence check is what decides whether that Open lands in the worktree or
-// falls back.
+// shell terminals. It is held for the ENTIRE span from BeginSessionTeardown
+// through the release function it returns on success — deliberately crossing
+// the call into Session Manager's own worktree teardown in between — so an
+// OpenShellTerminal racing against that window waits until the window ends,
+// rather than slipping a new shell in against a worktree that is mid-removal.
+// By the time a waiter acquires the gate, the teardown it waited on has fully
+// finished (destroyed or preserved), so there is nothing left to check here:
+// resolveShellTerminalWorkingDir's own existence check is what decides whether
+// that Open lands in the worktree or falls back.
+//
+// The gate is a capacity-1 channel rather than a sync.Mutex because
+// sync.Mutex.Lock is uninterruptible: a teardown whose workspace.Destroy
+// stalls (hung git subprocess, a Windows directory handle that never releases)
+// would park every waiter forever, and an HTTP handler blocked in Lock cannot
+// observe its client disconnecting or its context deadline. A channel send is
+// selectable, so acquire can honour both.
 type sessionGate struct {
-	mu sync.Mutex
+	ch chan struct{}
+}
+
+func newSessionGate() *sessionGate {
+	return &sessionGate{ch: make(chan struct{}, 1)}
+}
+
+// sessionGateWaitTimeout bounds how long a contended acquire waits before
+// giving up. A teardown holding the gate is doing real filesystem work
+// (worktree removal), so the budget is generous — but finite, so a wedged
+// teardown surfaces as a retryable 409 instead of a request that never
+// returns. A var so tests need not wait it out.
+var sessionGateWaitTimeout = 30 * time.Second
+
+// acquire takes the gate, returning a release function tied to THIS
+// acquisition (calling it more than once is a no-op, and it can never release
+// a different acquisition's hold). It gives up when ctx is done or the wait
+// budget expires, so no caller parks indefinitely behind a stalled teardown.
+func (g *sessionGate) acquire(ctx context.Context, id domain.SessionID) (release func(), err error) {
+	var once sync.Once
+	releaseFn := func() { once.Do(func() { <-g.ch }) }
+
+	// Fast path: uncontended, no timer allocation.
+	select {
+	case g.ch <- struct{}{}:
+		return releaseFn, nil
+	default:
+	}
+
+	timer := time.NewTimer(sessionGateWaitTimeout)
+	defer timer.Stop()
+	select {
+	case g.ch <- struct{}{}:
+		return releaseFn, nil
+	case <-ctx.Done():
+		return nil, fmt.Errorf("shell terminal gate for session %s: %w", id, ctx.Err())
+	case <-timer.C:
+		return nil, apierr.Conflict("SHELL_TERMINAL_SESSION_BUSY",
+			"This session's shell terminals are being torn down; try again in a moment", nil)
+	}
 }
 
 // NewService builds the shell terminal service. dataDir is the fallback working
@@ -125,10 +170,20 @@ func (s *Service) sessionGateFor(id domain.SessionID) *sessionGate {
 	defer s.gatesMu.Unlock()
 	g, ok := s.gates[id]
 	if !ok {
-		g = &sessionGate{}
+		g = newSessionGate()
 		s.gates[id] = g
 	}
 	return g
+}
+
+// acquireSessionGate resolves and takes a session's gate in one step, firing
+// the test hook at the moment the wait begins.
+func (s *Service) acquireSessionGate(ctx context.Context, id domain.SessionID) (release func(), err error) {
+	gate := s.sessionGateFor(id)
+	if s.onSessionGateWait != nil {
+		s.onSessionGateWait(id)
+	}
+	return gate.acquire(ctx, id)
 }
 
 // OpenShellTerminal spawns a shell PTY and records it against the current app
@@ -158,14 +213,13 @@ func (s *Service) OpenShellTerminal(ctx context.Context, in OpenShellTerminalInp
 		if _, _, err := s.sessions.SessionWorkspace(ctx, in.SessionID); err != nil {
 			return ShellTerminal{}, fmt.Errorf("open shell terminal: resolve session %s: %w", in.SessionID, err)
 		}
-		gate := s.sessionGateFor(in.SessionID)
-		if s.onSessionGateWait != nil {
-			s.onSessionGateWait(in.SessionID)
+		release, err := s.acquireSessionGate(ctx, in.SessionID)
+		if err != nil {
+			return ShellTerminal{}, err
 		}
-		gate.mu.Lock()
-		defer gate.mu.Unlock()
+		defer release()
 	}
-	workingDir, err := s.resolveShellTerminalWorkingDir(ctx, in.ProjectID, in.SessionID)
+	workingDir, projectID, err := s.resolveShellTerminalWorkingDir(ctx, in.ProjectID, in.SessionID)
 	if err != nil {
 		return ShellTerminal{}, err
 	}
@@ -192,8 +246,11 @@ func (s *Service) OpenShellTerminal(ctx context.Context, in OpenShellTerminalInp
 	}
 
 	rec := ShellTerminalRecord{
-		HandleID:   handle.ID,
-		ProjectID:  in.ProjectID,
+		HandleID: handle.ID,
+		// The resolved project, not the requested one: a session-scoped open
+		// that named no project still belongs to the session's project, and
+		// persisting "" there would leave the row unattributable on the board.
+		ProjectID:  projectID,
 		SessionID:  in.SessionID,
 		WorkingDir: workingDir,
 		Title:      shellTerminalTitle(workingDir),
@@ -270,12 +327,11 @@ func (s *Service) CloseShellTerminal(ctx context.Context, handleID string) error
 	}
 
 	if rec.SessionID != "" {
-		gate := s.sessionGateFor(rec.SessionID)
-		if s.onSessionGateWait != nil {
-			s.onSessionGateWait(rec.SessionID)
+		release, err := s.acquireSessionGate(ctx, rec.SessionID)
+		if err != nil {
+			return err
 		}
-		gate.mu.Lock()
-		defer gate.mu.Unlock()
+		defer release()
 	}
 
 	stillAlive, destroyErr := s.destroyConfirmed(ctx, handleID)
@@ -385,10 +441,9 @@ func (s *Service) destroyConfirmed(ctx context.Context, handleID string) (stillA
 // locks out new ones, ahead of Session Manager tearing down the session's
 // worktree (Kill, Cleanup, RetireForReplacement, the reconcile/shutdown
 // save-and-teardown path). It is the write side of the same gate
-// OpenShellTerminal reads: acquiring sessionGate.mu here is what makes a
-// concurrent Open either finish first or block until the gate releases, so
-// nothing can insert a new shell terminal into a worktree that is about to
-// disappear.
+// OpenShellTerminal reads: taking the gate here is what makes a concurrent
+// Open either finish first or wait until the gate releases, so nothing can
+// insert a new shell terminal into a worktree that is about to disappear.
 //
 // A runtime that cannot be confirmed dead (see destroyConfirmed) is NOT
 // deleted — its row survives so the terminal is still visible/re-attachable —
@@ -405,12 +460,14 @@ func (s *Service) destroyConfirmed(ctx context.Context, handleID string) (stillA
 // that was the earlier design, and it let an unmatched release for session X
 // unlock a DIFFERENT, still in-flight teardown for the same X.
 func (s *Service) BeginSessionTeardown(ctx context.Context, sessionID domain.SessionID) (release func(), err error) {
-	gate := s.sessionGateFor(sessionID)
-	gate.mu.Lock()
+	release, err = s.acquireSessionGate(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
 
 	recs, err := s.store.SelectShellTerminalsBySessionID(ctx, sessionID)
 	if err != nil {
-		gate.mu.Unlock()
+		release()
 		return nil, fmt.Errorf("close shell terminals for session %s: %w", sessionID, err)
 	}
 
@@ -425,12 +482,11 @@ func (s *Service) BeginSessionTeardown(ctx context.Context, sessionID domain.Ses
 	}
 
 	if len(stillAlive) > 0 {
-		gate.mu.Unlock()
+		release()
 		return nil, fmt.Errorf("close shell terminals for session %s: %d still alive: %w",
 			sessionID, len(stillAlive), errors.Join(stillAlive...))
 	}
-	var once sync.Once
-	return func() { once.Do(gate.mu.Unlock) }, nil
+	return release, nil
 }
 
 // resolveShellTerminalWorkingDir picks where the shell starts. A session id
@@ -439,21 +495,30 @@ func (s *Service) BeginSessionTeardown(ctx context.Context, sessionID domain.Ses
 // differs from the project's registered root. A session with no workspace yet
 // (or no session id at all) falls back to the project root, then the daemon's
 // data dir.
-func (s *Service) resolveShellTerminalWorkingDir(ctx context.Context, projectID domain.ProjectID, sessionID domain.SessionID) (string, error) {
+// It also returns the project the shell ended up attributed to, which is not
+// always the requested one: a session-scoped open may carry no project id, and
+// the session's own project is what the persisted row should record.
+func (s *Service) resolveShellTerminalWorkingDir(ctx context.Context, projectID domain.ProjectID, sessionID domain.SessionID) (workingDir string, resolvedProjectID domain.ProjectID, err error) {
 	if sessionID != "" {
 		if s.sessions == nil {
-			return "", apierr.Internal("SHELL_TERMINAL_NO_SESSION_LOOKUP", "Session lookup is unavailable")
+			return "", "", apierr.Internal("SHELL_TERMINAL_NO_SESSION_LOOKUP", "Session lookup is unavailable")
 		}
 		workspacePath, sessionProjectID, err := s.sessions.SessionWorkspace(ctx, sessionID)
 		if err != nil {
-			return "", fmt.Errorf("open shell terminal: resolve session %s: %w", sessionID, err)
+			return "", "", fmt.Errorf("open shell terminal: resolve session %s: %w", sessionID, err)
+		}
+		if sessionProjectID != "" {
+			projectID = sessionProjectID
 		}
 		if workspacePath != "" {
-			return workspacePath, nil
+			return workspacePath, projectID, nil
 		}
-		projectID = sessionProjectID
 	}
-	return s.resolveProjectRootOrDataDir(ctx, projectID)
+	dir, err := s.resolveProjectRootOrDataDir(ctx, projectID)
+	if err != nil {
+		return "", "", err
+	}
+	return dir, projectID, nil
 }
 
 // resolveProjectRootOrDataDir picks the project root when a project is named,

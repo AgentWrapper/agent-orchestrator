@@ -495,20 +495,174 @@ func TestBeginSessionTeardownReleaseIsAcquisitionSpecific(t *testing.T) {
 	}
 
 	// A stray repeat of the FIRST acquisition's release must not touch the
-	// second, still in-flight acquisition's lock.
+	// second, still in-flight acquisition's hold.
 	release1()
 
 	gate := svc.sessionGateFor("portfolio-3")
-	if gate.mu.TryLock() {
-		gate.mu.Unlock()
-		t.Fatal("a stray release from an old acquisition unlocked a different, still-open acquisition's gate")
+	if gateIsFree(gate) {
+		t.Fatal("a stray release from an old acquisition freed a different, still-open acquisition's gate")
 	}
 
 	release2()
-	if !gate.mu.TryLock() {
-		t.Fatal("the correct acquisition's release did not unlock the gate")
+	if !gateIsFree(gate) {
+		t.Fatal("the correct acquisition's release did not free the gate")
 	}
-	gate.mu.Unlock()
+}
+
+// gateIsFree reports whether the gate can be taken right now, leaving it as it
+// found it.
+func gateIsFree(g *sessionGate) bool {
+	select {
+	case g.ch <- struct{}{}:
+		<-g.ch
+		return true
+	default:
+		return false
+	}
+}
+
+// shrinkSessionGateWait makes a contended acquire give up quickly so tests
+// need not wait out the production budget.
+func shrinkSessionGateWait(t *testing.T, d time.Duration) {
+	t.Helper()
+	orig := sessionGateWaitTimeout
+	sessionGateWaitTimeout = d
+	t.Cleanup(func() { sessionGateWaitTimeout = orig })
+}
+
+// TestOpenShellTerminalAbortsWhenContextCancelledWaitingForGate: sync.Mutex.Lock
+// is uninterruptible, so a teardown whose workspace.Destroy stalls used to park
+// every waiter forever — an HTTP handler blocked there could not notice its
+// client disconnecting or its deadline passing. A waiter must now abort on
+// context cancellation instead of hanging.
+func TestOpenShellTerminalAbortsWhenContextCancelledWaitingForGate(t *testing.T) {
+	shrinkSessionGateWait(t, 10*time.Second) // long: cancellation must win, not the budget
+	rt := newFakeShellRuntime()
+	projects := &fakeProjectRootLocator{roots: map[domain.ProjectID]string{"portfolio": "/repos/portfolio"}}
+	sessions := &fakeSessionWorkspaceLocator{sessions: map[domain.SessionID]fakeSessionWorkspace{
+		"portfolio-3": {workspacePath: "", projectID: "portfolio"},
+	}}
+	svc := newTestServiceWithSessions(rt, &fakeShellTerminalStore{}, projects, sessions)
+
+	release, err := svc.BeginSessionTeardown(context.Background(), "portfolio-3")
+	if err != nil {
+		t.Fatalf("BeginSessionTeardown: %v", err)
+	}
+	defer release()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	reachedGate := make(chan struct{})
+	svc.onSessionGateWait = func(domain.SessionID) { close(reachedGate) }
+
+	openDone := make(chan error, 1)
+	go func() {
+		_, err := svc.OpenShellTerminal(ctx, OpenShellTerminalInput{ProjectID: "portfolio", SessionID: "portfolio-3"})
+		openDone <- err
+	}()
+
+	select {
+	case <-reachedGate:
+	case <-time.After(2 * time.Second):
+		t.Fatal("OpenShellTerminal never reached the gate")
+	}
+	cancel()
+
+	select {
+	case err := <-openDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("error = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("OpenShellTerminal did not abort after its context was cancelled")
+	}
+}
+
+// A gate held by a wedged teardown must eventually surface a retryable error
+// rather than blocking the request forever.
+func TestOpenShellTerminalGivesUpWaitingForAWedgedGate(t *testing.T) {
+	shrinkSessionGateWait(t, 30*time.Millisecond)
+	rt := newFakeShellRuntime()
+	projects := &fakeProjectRootLocator{roots: map[domain.ProjectID]string{"portfolio": "/repos/portfolio"}}
+	sessions := &fakeSessionWorkspaceLocator{sessions: map[domain.SessionID]fakeSessionWorkspace{
+		"portfolio-3": {workspacePath: "", projectID: "portfolio"},
+	}}
+	svc := newTestServiceWithSessions(rt, &fakeShellTerminalStore{}, projects, sessions)
+
+	release, err := svc.BeginSessionTeardown(context.Background(), "portfolio-3")
+	if err != nil {
+		t.Fatalf("BeginSessionTeardown: %v", err)
+	}
+	defer release() // never released before the open below gives up
+
+	_, err = svc.OpenShellTerminal(context.Background(), OpenShellTerminalInput{ProjectID: "portfolio", SessionID: "portfolio-3"})
+
+	var apiErr *apierr.Error
+	if !errors.As(err, &apiErr) || apiErr.Kind != apierr.KindConflict {
+		t.Fatalf("error = %v, want a conflict apierr the client can retry", err)
+	}
+}
+
+func TestCloseShellTerminalAbortsWhenContextCancelledWaitingForGate(t *testing.T) {
+	shrinkSessionGateWait(t, 10*time.Second)
+	rt := newFakeShellRuntime()
+	st := &fakeShellTerminalStore{}
+	svc := newTestService(rt, st, &fakeProjectRootLocator{})
+
+	release, err := svc.BeginSessionTeardown(context.Background(), "portfolio-3")
+	if err != nil {
+		t.Fatalf("BeginSessionTeardown: %v", err)
+	}
+	defer release()
+
+	st.records = append(st.records, ShellTerminalRecord{HandleID: "shellterm-1", SessionID: "portfolio-3"})
+	ctx, cancel := context.WithCancel(context.Background())
+	reachedGate := make(chan struct{})
+	svc.onSessionGateWait = func(domain.SessionID) { close(reachedGate) }
+
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- svc.CloseShellTerminal(ctx, "shellterm-1") }()
+
+	select {
+	case <-reachedGate:
+	case <-time.After(2 * time.Second):
+		t.Fatal("CloseShellTerminal never reached the gate")
+	}
+	cancel()
+
+	select {
+	case err := <-closeDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("error = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("CloseShellTerminal did not abort after its context was cancelled")
+	}
+}
+
+// TestOpenShellTerminalPersistsSessionProjectWhenRequestOmitsIt: a
+// session-scoped open that names no project still belongs to that session's
+// project. Persisting the request's empty ProjectID verbatim would leave the
+// row unattributable even though the working dir resolved through that very
+// project.
+func TestOpenShellTerminalPersistsSessionProjectWhenRequestOmitsIt(t *testing.T) {
+	rt := newFakeShellRuntime()
+	st := &fakeShellTerminalStore{}
+	projects := &fakeProjectRootLocator{roots: map[domain.ProjectID]string{"portfolio": "/repos/portfolio"}}
+	sessions := &fakeSessionWorkspaceLocator{sessions: map[domain.SessionID]fakeSessionWorkspace{
+		"portfolio-3": {workspacePath: "/worktrees/portfolio-3", projectID: "portfolio"},
+	}}
+	svc := newTestServiceWithSessions(rt, st, projects, sessions)
+
+	term, err := svc.OpenShellTerminal(context.Background(), OpenShellTerminalInput{SessionID: "portfolio-3"})
+	if err != nil {
+		t.Fatalf("OpenShellTerminal: %v", err)
+	}
+	if term.ProjectID != "portfolio" {
+		t.Errorf("returned project id = %q, want the session's project", term.ProjectID)
+	}
+	if len(st.records) != 1 || st.records[0].ProjectID != "portfolio" {
+		t.Fatalf("persisted project id = %+v, want the session's project", st.records)
+	}
 }
 
 // TestBeginSessionTeardownBlocksConcurrentOpenUntilEnd is the deterministic

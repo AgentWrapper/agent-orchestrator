@@ -12,9 +12,11 @@ import (
 // production values afterwards.
 func shrinkRemoveAllRetry(t *testing.T, attempts int) {
 	t.Helper()
-	origAttempts, origBackoff := removeAllAttempts, removeAllBackoff
-	removeAllAttempts, removeAllBackoff = attempts, time.Millisecond
-	t.Cleanup(func() { removeAllAttempts, removeAllBackoff = origAttempts, origBackoff })
+	origAttempts, origBackoff, origCap := removeAllAttempts, removeAllBackoff, removeAllBackoffCap
+	removeAllAttempts, removeAllBackoff, removeAllBackoffCap = attempts, time.Millisecond, time.Millisecond
+	t.Cleanup(func() {
+		removeAllAttempts, removeAllBackoff, removeAllBackoffCap = origAttempts, origBackoff, origCap
+	})
 }
 
 // stubRemoveAll replaces the real os.RemoveAll for the duration of a test.

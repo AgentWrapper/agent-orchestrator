@@ -337,15 +337,6 @@ describe("shell new-shell-terminal shortcut subscription", () => {
 			expect.anything(),
 		);
 	});
-		await renderShell();
-
-		pressNewShellTerminal();
-
-		expect(shellMocks.openShellTerminal).toHaveBeenCalledWith(
-			expect.objectContaining({ projectId: "proj-1", sessionId: "sess-1" }),
-			expect.anything(),
-		);
-	});
 
 	it("re-fires on a repeat press so a second terminal can be opened", async () => {
 		await renderShell();
