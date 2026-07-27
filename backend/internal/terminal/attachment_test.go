@@ -2,6 +2,7 @@ package terminal
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"sync"
@@ -369,6 +370,95 @@ func (p *closeOrderPTY) Close() error {
 		}
 	})
 	return p.fakePTY.Close()
+}
+
+// A Stream swap racing the input-release drain must never let a chunk queued
+// behind an in-flight write land on the Stream this attachment has already
+// moved on from: the release loop re-reads the current Stream before every
+// single write, so a chunk that was still queued when ownership changed goes
+// to the NEW Stream, in order, rather than to the one this attachment no
+// longer owns.
+func TestAttachmentReleaseInputHandsRemainderToSwappedInPTY(t *testing.T) {
+	p1, p2 := newFakePTY(), newFakePTY()
+	p1.writeBlock = make(chan struct{})
+
+	a := newTestAttachment(&fakeSource{alive: true}, nil, nil)
+	a.inputGate = newInputGate()
+	a.inputGate.start(0) // already open: release proceeds without waiting
+
+	if err := a.write([]byte("A")); err != nil {
+		t.Fatalf("queue A: %v", err)
+	}
+	if err := a.write([]byte("B")); err != nil {
+		t.Fatalf("queue B: %v", err)
+	}
+
+	ctx := context.Background()
+	if !a.setPTY(ctx, p1) {
+		t.Fatal("setPTY(p1) reported failure")
+	}
+	// The release goroutine is now blocked inside p1.Write([]byte("A")).
+	eventually(t, time.Second, func() bool {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		return a.draining
+	})
+
+	// A reattach races the in-flight write: p2 replaces p1 as the live Stream.
+	if !a.setPTY(ctx, p2) {
+		t.Fatal("setPTY(p2) reported failure")
+	}
+
+	close(p1.writeBlock) // let the blocked write to p1 complete
+
+	eventually(t, time.Second, func() bool { return string(p2.writtenBytes()) == "B" })
+	if got := string(p1.writtenBytes()); got != "A" {
+		t.Fatalf("p1 got %q, want exactly %q (B must not reach the superseded Stream)", got, "A")
+	}
+}
+
+// An async flush failure (the pending-input Write itself errors) must not just
+// mark the attachment exited — it must close the Stream so run's blocked
+// copyOut unblocks, and the attach loop must actually return instead of
+// treating the dead Stream as an ordinary drop-and-reattach case.
+func TestAttachmentAsyncFlushFailureClosesStreamAndEndsRun(t *testing.T) {
+	pty := newFakePTY()
+	pty.writeErr = errors.New("boom")
+	sp := &fakeSpawner{ptys: []*fakePTY{pty}}
+	src := &fakeSource{alive: true, spawner: sp}
+
+	exited := make(chan struct{})
+	a := newTestAttachment(src, nil, func() { close(exited) })
+	a.inputGate = newInputGate()
+	a.inputGate.start(0) // already open
+
+	if err := a.write([]byte("x")); err != nil {
+		t.Fatalf("queue input before attach: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runDone := make(chan struct{})
+	go func() {
+		a.run(ctx)
+		close(runDone)
+	}()
+
+	select {
+	case <-exited:
+	case <-time.After(time.Second):
+		t.Fatal("expected onExit after an async flush failure")
+	}
+	select {
+	case <-pty.closed:
+	case <-time.After(time.Second):
+		t.Fatal("a flush failure must close its Stream so copyOut unblocks")
+	}
+	select {
+	case <-runDone:
+	case <-time.After(time.Second):
+		t.Fatal("run must return after an async flush failure, not keep re-attaching")
+	}
 }
 
 func TestAttachmentCloseClosesPTYBeforeCancel(t *testing.T) {

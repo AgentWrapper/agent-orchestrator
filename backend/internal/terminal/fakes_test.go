@@ -64,6 +64,13 @@ type fakePTY struct {
 	mu      sync.Mutex
 	written []byte
 	resizes [][2]uint16
+	// writeErr, when set, makes every Write fail with this error instead of
+	// recording the bytes.
+	writeErr error
+	// writeBlock, when non-nil, makes Write wait for it to be closed before
+	// recording the bytes -- lets a test force an in-flight Write to straddle
+	// some other event (a PTY swap, a Close) deterministically.
+	writeBlock chan struct{}
 }
 
 func newFakePTY() *fakePTY {
@@ -82,8 +89,14 @@ func (p *fakePTY) Read(b []byte) (int, error) {
 }
 
 func (p *fakePTY) Write(b []byte) (int, error) {
+	if p.writeBlock != nil {
+		<-p.writeBlock
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.writeErr != nil {
+		return 0, p.writeErr
+	}
 	p.written = append(p.written, b...)
 	return len(b), nil
 }

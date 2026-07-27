@@ -108,11 +108,17 @@ func (g *inputGate) start(d time.Duration) {
 	})
 }
 
-// wait blocks until the gate opens or ctx ends, whichever comes first.
-func (g *inputGate) wait(ctx context.Context) {
+// wait blocks until the gate opens or ctx ends, whichever comes first, and
+// reports which one happened: true only means the gate itself opened. A
+// caller must treat false (ctx ended first) as "abandon" — never as "proceed
+// anyway" — since cancellation during this wait means shutdown (or this
+// attachment closing) started before the pane was ever trusted with input.
+func (g *inputGate) wait(ctx context.Context) bool {
 	select {
 	case <-g.ch:
+		return true
 	case <-ctx.Done():
+		return false
 	}
 }
 
@@ -229,6 +235,21 @@ func (m *Manager) inputGateFor(id string) *inputGate {
 		m.gates[id] = g
 	}
 	return g
+}
+
+// ResetInputGate drops id's shared input gate so its NEXT attach mints and
+// arms a fresh one. Call this when a genuinely new agent process starts on an
+// already-known pane id — a resume or restart that reuses the same runtime
+// handle (see ports.RuntimeRestarter) — because the existing gate, if already
+// open, would otherwise let the replacement TUI's early keystrokes through
+// before it has had any chance to reach raw mode, reproducing the original
+// race on every resume. Reattaching to the SAME still-running process must
+// never call this: doing so would needlessly re-delay input for a pane that
+// was never actually restarted.
+func (m *Manager) ResetInputGate(id string) {
+	m.gatesMu.Lock()
+	delete(m.gates, id)
+	m.gatesMu.Unlock()
 }
 
 // joinTerminal registers a client (its connection + attach Stream + requested

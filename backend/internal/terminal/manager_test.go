@@ -636,6 +636,86 @@ func TestServeOutputDuringHoldReachesClientBeforeInputFlushes(t *testing.T) {
 	}
 }
 
+// Manager.Close cancels its own context before it marks each attachment
+// closed, so a waiter mid-hold must abandon on that cancellation rather than
+// proceeding just because the attachment doesn't LOOK closed yet: no buffered
+// keystroke may reach the PTY once shutdown has started, and Close itself must
+// not be stalled by a hold that has not elapsed.
+func TestServeCloseDuringHoldAbandonsBufferedInput(t *testing.T) {
+	pty := newFakePTY()
+	sp := &fakeSpawner{ptys: []*fakePTY{pty}}
+	src := &fakeSource{alive: true, spawner: sp}
+	// A window much longer than this test so Close always lands mid-hold.
+	mgr := NewManager(src, nil, testLogger(), WithHeartbeat(0), WithInputGraceWindow(10*time.Second))
+
+	conn := newFakeConn()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mgr.Serve(ctx, conn)
+
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen}
+	recv(t, conn, chTerminal, msgOpened, time.Second)
+
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgData, Data: base64.StdEncoding.EncodeToString([]byte("never"))}
+	time.Sleep(20 * time.Millisecond) // let it actually reach pendingInput
+
+	closed := make(chan struct{})
+	go func() {
+		mgr.Close()
+		close(closed)
+	}()
+
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("Manager.Close must return promptly even mid-hold, not wait out the grace window")
+	}
+
+	if got := string(pty.writtenBytes()); got != "" {
+		t.Fatalf("input reached the PTY during shutdown: %q", got)
+	}
+}
+
+// A resume/restart that reuses the same runtime handle (ports.RuntimeRestarter)
+// must get a FRESH hold for the replacement agent process: without an explicit
+// reset, the pane's gate — already open from the process that just exited —
+// would let the new TUI's early keystrokes straight through, reproducing the
+// original race on every resume instead of just on first launch.
+func TestServeResetInputGateReArmsHoldForNextAttach(t *testing.T) {
+	p1, p2 := newFakePTY(), newFakePTY()
+	sp := &fakeSpawner{ptys: []*fakePTY{p1, p2}}
+	src := &fakeSource{alive: true, spawner: sp}
+	window := 150 * time.Millisecond
+	mgr := NewManager(src, nil, testLogger(), WithHeartbeat(0), WithInputGraceWindow(window))
+	defer mgr.Close()
+
+	conn := newFakeConn()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mgr.Serve(ctx, conn)
+
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen}
+	recv(t, conn, chTerminal, msgOpened, time.Second)
+	// Let the pane's first grace window fully elapse.
+	time.Sleep(window + 50*time.Millisecond)
+
+	// The agent process is replaced on the SAME handle (what a resume/restart
+	// does): session_manager calls this through terminal.Manager via
+	// InputGateResetter once the replacement process is launched.
+	mgr.ResetInputGate("t1")
+
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgClose}
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen}
+	recv(t, conn, chTerminal, msgOpened, time.Second)
+
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgData, Data: base64.StdEncoding.EncodeToString([]byte("h"))}
+	time.Sleep(window / 2)
+	if got := string(p2.writtenBytes()); got != "" {
+		t.Fatalf("input reached the replacement TUI's PTY before its own grace window elapsed: %q", got)
+	}
+	eventually(t, time.Second, func() bool { return string(p2.writtenBytes()) == "h" })
+}
+
 func TestEnqueueOverflowCancelsConn(t *testing.T) {
 	cancelled := make(chan struct{})
 	c := &connState{

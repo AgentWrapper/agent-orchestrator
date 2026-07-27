@@ -185,6 +185,49 @@ type Manager struct {
 	// sendConfirm* defaults; tests in this package shrink the timings directly.
 	sendConfirm sendConfirmConfig
 	logger      *slog.Logger
+
+	// inputGatesMu guards inputGates. It is late-bound (set after New via
+	// SetInputGateResetter) rather than threaded through every constructor
+	// call site, matching how this package already wires other optional
+	// cross-cutting collaborators post-construction (e.g. SetCompletionTerminator
+	// on the LCM in daemon wiring). nil is a valid, tested no-op.
+	inputGatesMu sync.Mutex
+	inputGates   InputGateResetter
+}
+
+// InputGateResetter drops a pane's remembered "already past its input grace
+// period" state. terminal.Manager satisfies it; the interface lives here (the
+// consumer) rather than in package terminal so this package does not import
+// the terminal package for one method.
+type InputGateResetter interface {
+	ResetInputGate(id string)
+}
+
+// SetInputGateResetter wires relaunchSession to reset a pane's input gate on
+// every genuine (re)launch of its agent process — see resetInputGate. Safe to
+// leave unset: a nil resetter makes resetInputGate a no-op, matching every
+// existing test in this package that does not construct one.
+func (m *Manager) SetInputGateResetter(r InputGateResetter) {
+	m.inputGatesMu.Lock()
+	defer m.inputGatesMu.Unlock()
+	m.inputGates = r
+}
+
+// resetInputGate tells the terminal layer that handleID's pane is about to run
+// a brand new agent process, not merely being reattached to. Without this, a
+// resume or restart that reuses the same runtime handle (ports.RuntimeRestarter)
+// would find the pane's gate already open from the process that just exited,
+// and the replacement TUI's early keystrokes would race raw-mode entry all
+// over again — the exact bug this gate exists to prevent, just triggered by
+// resume instead of a fresh spawn.
+func (m *Manager) resetInputGate(handleID string) {
+	m.inputGatesMu.Lock()
+	r := m.inputGates
+	m.inputGatesMu.Unlock()
+	if r == nil {
+		return
+	}
+	r.ResetInputGate(handleID)
 }
 
 // sendConfirmConfig bounds the best-effort activity-confirmation loop run after
@@ -1048,6 +1091,11 @@ func (m *Manager) relaunchSession(ctx context.Context, operation string, rec dom
 		m.cleanupSystemPromptDir(rec.ID)
 		return RestoreResult{}, fmt.Errorf("%s %s: runtime: %w", operation, rec.ID, err)
 	}
+	// A brand new agent process is about to run on handle.ID, whether that
+	// meant a fresh Create or a Restart that reused the runtime handle — either
+	// way the pane's remembered input-grace-period state (if any) belongs to
+	// the process that just exited, not this one, and must not carry over.
+	m.resetInputGate(handle.ID)
 	metadata := domain.SessionMetadata{
 		Branch:            ws.Branch,
 		WorkspacePath:     ws.Path,

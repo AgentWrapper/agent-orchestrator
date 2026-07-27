@@ -65,6 +65,12 @@ type attachment struct {
 	opened       bool
 	inputReady   bool
 	pendingInput [][]byte
+	// draining is true while a releaseInput loop is actively dequeuing and
+	// writing pendingInput. A second caller (e.g. a reattach's own setPTY)
+	// finds it true and does not start a competing loop — the active loop
+	// already re-reads a.pty fresh before every write, so it naturally hands
+	// remaining input to whatever Stream ends up current.
+	draining bool
 
 	// inputGate, when set by the Manager before run() starts, delays flipping
 	// inputReady until the pane's shared gate opens (see setPTY) — giving a
@@ -313,55 +319,93 @@ func (a *attachment) setPTY(ctx context.Context, p ports.Stream) bool {
 	}
 
 	if gate == nil {
-		a.releaseInput(p)
+		a.releaseInput(ctx)
 		return true
 	}
 	gate.start(window)
-	go a.releaseInputWhenGateOpens(ctx, p, gate)
+	go a.releaseInputWhenGateOpens(ctx, gate)
 	return true
 }
 
-// releaseInputWhenGateOpens waits for the pane's shared gate to open (or ctx
-// to end, e.g. daemon shutdown) and then releases input for Stream p — unless
-// p has since been superseded by a later reattach (a.pty != p), in which case
-// this stale waiter abandons silently instead of flushing into a Stream this
-// attachment no longer owns.
-func (a *attachment) releaseInputWhenGateOpens(ctx context.Context, p ports.Stream, gate *inputGate) {
-	gate.wait(ctx)
-	a.mu.Lock()
-	current := a.pty == p && !a.closed && !a.exited
-	a.mu.Unlock()
-	if !current {
+// releaseInputWhenGateOpens waits for the pane's shared gate to open. If ctx
+// ends first (daemon shutdown, attachment closed) — wait reports which one
+// actually happened — buffered input is abandoned rather than flushed: a
+// waiter racing Manager.Close must never forward keystrokes after shutdown
+// has started, even though Close cancels the context before it marks every
+// attachment closed.
+func (a *attachment) releaseInputWhenGateOpens(ctx context.Context, gate *inputGate) {
+	if !gate.wait(ctx) {
 		return
 	}
-	a.releaseInput(p)
+	a.releaseInput(ctx)
 }
 
-// releaseInput drains any input buffered while p was not yet accepting it and
-// marks the attachment ready for direct writes. Called either immediately
-// (grace window disabled) or once the pane's input gate opens.
-func (a *attachment) releaseInput(p ports.Stream) {
+// releaseInput drains pendingInput to whatever Stream is currently attached,
+// re-reading a.pty fresh before every single write rather than holding one
+// Stream reference for the whole drain. That is what makes a Stream swap
+// mid-drain (a reattach racing this release) safe: a chunk that fails against
+// a Stream this attachment has since moved on from is requeued — not lost, not
+// misdelivered — for whichever Stream is current on the next iteration, and a
+// genuine write failure against the STILL-current Stream closes it so run's
+// blocked copyOut unblocks and the attach loop actually exits instead of
+// hanging on a pane this drain has already given up on.
+//
+// draining (see the field doc) ensures only one such loop runs per attachment
+// at a time; a second caller (a fresh setPTY racing this drain) simply returns
+// and trusts the active loop to deliver to whatever Stream ends up current.
+func (a *attachment) releaseInput(ctx context.Context) {
 	for {
+		if ctx.Err() != nil {
+			return
+		}
 		a.mu.Lock()
-		if a.closed || a.exited || a.pty != p {
+		if a.closed || a.exited || a.draining {
 			a.mu.Unlock()
 			return
 		}
-		pending := append([][]byte(nil), a.pendingInput...)
-		a.pendingInput = nil
-		if len(pending) == 0 {
+		pty := a.pty
+		if pty == nil {
+			a.mu.Unlock()
+			return
+		}
+		if len(a.pendingInput) == 0 {
 			a.inputReady = true
 			a.mu.Unlock()
 			return
 		}
+		chunk := a.pendingInput[0]
+		a.pendingInput = a.pendingInput[1:]
+		a.draining = true
 		a.mu.Unlock()
 
-		for _, chunk := range pending {
-			if _, err := p.Write(chunk); err != nil {
-				a.fail("flush pending input: " + err.Error())
-				return
+		_, err := pty.Write(chunk)
+
+		a.mu.Lock()
+		a.draining = false
+		stillCurrent := a.pty == pty
+		cancel := a.cancel
+		if err != nil && stillCurrent {
+			a.mu.Unlock()
+			a.fail("flush pending input: " + err.Error())
+			// Cancel run's own loop BEFORE closing the Stream: closing is what
+			// wakes copyOut's blocked Read, and run only stops there if ctx is
+			// already done by then (shouldStop) — markExited alone only fires
+			// onExit, it does not stop run's loop, so without the cancel it
+			// would treat this like an ordinary dropped-but-reattachable Stream
+			// and try again.
+			if cancel != nil {
+				cancel()
 			}
+			_ = pty.Close()
+			return
 		}
+		if err != nil {
+			// pty was swapped out from under this write (a reattach raced the
+			// drain): the chunk never reached the new Stream, so hand it back
+			// to the front of the queue for whichever Stream is current now.
+			a.pendingInput = append([][]byte{chunk}, a.pendingInput...)
+		}
+		a.mu.Unlock()
 	}
 }
 

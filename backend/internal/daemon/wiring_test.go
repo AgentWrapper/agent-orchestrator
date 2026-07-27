@@ -619,6 +619,8 @@ type fakeSessionLifecycle struct {
 	restoreErr       error
 }
 
+func (f *fakeSessionLifecycle) SetInputGateResetter(_ sessionmanager.InputGateResetter) {}
+
 func (f *fakeSessionLifecycle) Kill(_ context.Context, _ domain.SessionID) (bool, error) {
 	return false, nil
 }
