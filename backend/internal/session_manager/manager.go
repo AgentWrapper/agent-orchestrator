@@ -520,7 +520,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		Prompt:            prompt,
 	}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
-		runtimeDestroyed := false
+		var runtimeDestroyed bool
 		if candidateClaim != nil {
 			if cleanupErr := m.destroySpawnRuntime(ctx, id, handle, "session lifecycle rejected", true); cleanupErr != nil {
 				return domain.SessionRecord{}, 0, 0, fmt.Errorf(
@@ -540,7 +540,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	}
 	if delivery == ports.PromptDeliveryAfterStart && prompt != "" {
 		if err := m.deliverAfterStartPrompt(ctx, agent, launchCfg, handle, id, prompt); err != nil {
-			runtimeDestroyed := false
+			var runtimeDestroyed bool
 			if candidateClaim != nil {
 				if cleanupErr := m.destroySpawnRuntime(ctx, id, handle, "initial prompt delivery failed", true); cleanupErr != nil {
 					return domain.SessionRecord{}, 0, 0, fmt.Errorf(
