@@ -124,6 +124,51 @@ func TestBrokerUnavailableWithoutElectron(t *testing.T) {
 	}
 }
 
+func TestBrokerRejectsInvalidRuntimeToken(t *testing.T) {
+	broker := New(nil, "expected-token")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = broker.Serve(ctx, ln) }()
+
+	invalid, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.NewEncoder(invalid).Encode(wireMessage{
+		Type:    "hello",
+		Version: ProtocolVersion,
+		Token:   "wrong-token",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = invalid.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := invalid.Read(make([]byte, 1)); err == nil {
+		t.Fatal("invalid runtime connection remained open")
+	}
+	_ = invalid.Close()
+	if broker.Status().Connected {
+		t.Fatal("broker accepted an invalid runtime token")
+	}
+
+	valid, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = valid.Close() }()
+	if err := json.NewEncoder(valid).Encode(wireMessage{
+		Type:    "hello",
+		Version: ProtocolVersion,
+		Token:   "expected-token",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitConnected(t, broker)
+}
+
 func TestBrokerCancellationSendsCancelFrame(t *testing.T) {
 	broker := New(nil)
 	ctx, stop := context.WithCancel(context.Background())

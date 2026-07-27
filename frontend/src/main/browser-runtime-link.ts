@@ -1,9 +1,11 @@
 import net from "node:net";
+import { StringDecoder } from "node:string_decoder";
 
 const PROTOCOL_VERSION = 2;
 const BACKOFF_INIT_MS = 200;
 const BACKOFF_MAX_MS = 2_000;
 const MAX_COMMAND_BYTES = 1 << 20;
+const MAX_RESULT_BYTES = 8 << 20;
 
 export type BrowserRuntimeCommand = {
 	type: "command";
@@ -30,6 +32,7 @@ export interface BrowserRuntimeLinkHandle {
 
 type BrowserRuntimeLinkOptions = {
 	execute: (command: BrowserRuntimeCommand, signal: AbortSignal) => Promise<unknown>;
+	token?: string;
 	log?: (message: string) => void;
 };
 
@@ -44,6 +47,7 @@ export function connectBrowserRuntime(
 	let retryTimer: ReturnType<typeof setTimeout> | null = null;
 	let backoff = BACKOFF_INIT_MS;
 	let buffer = "";
+	let decoder = new StringDecoder("utf8");
 	let connectionEpoch = 0;
 	const commandChains = new Map<string, Promise<void>>();
 	const commandControllers = new Map<string, AbortController>();
@@ -70,9 +74,26 @@ export function connectBrowserRuntime(
 		socket = null;
 	};
 
-	const send = (message: unknown, target: net.Socket, epoch: number) => {
+	const send = async (message: unknown, target: net.Socket, epoch: number): Promise<void> => {
 		if (socket !== target || connectionEpoch !== epoch || target.destroyed) return;
-		target.write(`${JSON.stringify(message)}\n`);
+		const frame = `${JSON.stringify(message)}\n`;
+		if (Buffer.byteLength(frame, "utf8") > MAX_RESULT_BYTES) {
+			throw Object.assign(new Error(`Browser result exceeds ${MAX_RESULT_BYTES} bytes`), {
+				code: "BROWSER_RESULT_TOO_LARGE",
+			});
+		}
+		await new Promise<void>((resolve, reject) => {
+			const onError = (error: Error) => {
+				target.off("error", onError);
+				reject(error);
+			};
+			target.once("error", onError);
+			target.write(frame, (error) => {
+				target.off("error", onError);
+				if (error) reject(error);
+				else resolve();
+			});
+		});
 	};
 
 	const respond = async (
@@ -85,11 +106,16 @@ export function connectBrowserRuntime(
 			controller.signal.throwIfAborted();
 			const result = await options.execute(command, controller.signal);
 			controller.signal.throwIfAborted();
-			send({ type: "result", requestId: command.requestId, ok: true, result }, target, epoch);
+			await send({ type: "result", requestId: command.requestId, ok: true, result }, target, epoch);
 		} catch (error) {
 			if (controller.signal.aborted) return;
 			const normalized = normalizeCommandError(error);
-			send({ type: "result", requestId: command.requestId, ok: false, error: normalized }, target, epoch);
+			try {
+				await send({ type: "result", requestId: command.requestId, ok: false, error: normalized }, target, epoch);
+			} catch (sendError) {
+				log(`browser-runtime-link: response failed: ${String(sendError)}`);
+				target.destroy();
+			}
 		} finally {
 			if (commandControllers.get(command.requestId) === controller) {
 				commandControllers.delete(command.requestId);
@@ -129,17 +155,24 @@ export function connectBrowserRuntime(
 	};
 
 	const consume = (chunk: Buffer, target: net.Socket, epoch: number) => {
-		buffer += chunk.toString("utf8");
-		if (Buffer.byteLength(buffer, "utf8") > MAX_COMMAND_BYTES) {
-			log("browser-runtime-link: oversized command frame; reconnecting");
-			socket?.destroy();
-			return;
-		}
+		if (socket !== target || connectionEpoch !== epoch) return;
+		buffer += decoder.write(chunk);
 		for (;;) {
 			const newline = buffer.indexOf("\n");
-			if (newline < 0) return;
+			if (newline < 0) {
+				if (Buffer.byteLength(buffer, "utf8") > MAX_COMMAND_BYTES) {
+					log("browser-runtime-link: oversized command frame; reconnecting");
+					target.destroy();
+				}
+				return;
+			}
 			const line = buffer.slice(0, newline);
 			buffer = buffer.slice(newline + 1);
+			if (Buffer.byteLength(line, "utf8") > MAX_COMMAND_BYTES) {
+				log("browser-runtime-link: oversized command frame; reconnecting");
+				target.destroy();
+				return;
+			}
 			consumeLine(line, target, epoch);
 		}
 	};
@@ -156,6 +189,7 @@ export function connectBrowserRuntime(
 		if (disposed) return;
 		destroySocket();
 		buffer = "";
+		decoder = new StringDecoder("utf8");
 		const epoch = ++connectionEpoch;
 		const next = typeof address === "string" ? net.connect(address) : net.connect(address);
 		socket = next;
@@ -166,7 +200,10 @@ export function connectBrowserRuntime(
 			}
 			connected = true;
 			backoff = BACKOFF_INIT_MS;
-			send({ type: "hello", version: PROTOCOL_VERSION }, next, epoch);
+			void send({ type: "hello", version: PROTOCOL_VERSION, token: options.token }, next, epoch).catch((error) => {
+				log(`browser-runtime-link: hello failed: ${String(error)}`);
+				next.destroy();
+			});
 			log("browser-runtime-link: connected");
 		});
 		next.on("data", (chunk) => consume(chunk, next, epoch));

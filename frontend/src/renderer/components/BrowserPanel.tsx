@@ -382,7 +382,9 @@ export function BrowserPanelView({
 						{annotationStatusLabel}
 					</span>
 				) : agentBrowserActive ? (
-					<span className="browser-panel__annotation-status">Agent using browser</span>
+					<span className="browser-panel__annotation-status" role="status" aria-live="polite">
+						Agent using browser
+					</span>
 				) : null}
 				<div className="relative min-w-0 flex-1">
 					<Globe2

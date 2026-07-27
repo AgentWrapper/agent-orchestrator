@@ -3767,7 +3767,10 @@ export interface operations {
     getSessionPreviewServer: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Opaque browser capability injected into the owning AO worker. */
+                "X-AO-Browser-Capability"?: string;
+            };
             path: {
                 /** @description Session identifier, e.g. project-1. */
                 sessionId: string;
@@ -3785,8 +3788,26 @@ export interface operations {
                     "application/json": components["schemas"]["PreviewServerStatusResponse"];
                 };
             };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3817,7 +3838,10 @@ export interface operations {
     startSessionPreviewServer: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Opaque browser capability injected into the owning AO worker. */
+                "X-AO-Browser-Capability"?: string;
+            };
             path: {
                 /** @description Session identifier, e.g. project-1. */
                 sessionId: string;
@@ -3841,6 +3865,15 @@ export interface operations {
             };
             /** @description Bad Request */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3916,7 +3949,10 @@ export interface operations {
     stopSessionPreviewServer: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Opaque browser capability injected into the owning AO worker. */
+                "X-AO-Browser-Capability"?: string;
+            };
             path: {
                 /** @description Session identifier, e.g. project-1. */
                 sessionId: string;
@@ -3934,8 +3970,26 @@ export interface operations {
                     "application/json": components["schemas"]["PreviewServerStatusResponse"];
                 };
             };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

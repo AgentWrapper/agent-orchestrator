@@ -26,7 +26,11 @@ func pipeNameFromRunFile(runFilePath string) string {
 // Listen creates the local daemon-to-Electron browser bridge listener.
 func Listen(runFilePath string) (net.Listener, string, error) {
 	name := pipeNameFromRunFile(runFilePath)
-	ln, err := winio.ListenPipe(name, nil)
+	ln, err := winio.ListenPipe(name, &winio.PipeConfig{
+		// Protected DACL: the creating owner and LocalSystem only. This prevents
+		// another local account from connecting to or squatting the runtime pipe.
+		SecurityDescriptor: "D:P(A;;GA;;;SY)(A;;GA;;;OW)",
+	})
 	if err != nil {
 		return nil, "", err
 	}

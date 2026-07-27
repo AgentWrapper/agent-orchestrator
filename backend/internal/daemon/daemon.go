@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -54,11 +55,21 @@ func Run() error {
 	}
 
 	log := newLogger()
+	browserRuntimeToken := strings.TrimSpace(os.Getenv(browserruntime.RuntimeTokenEnv))
+	if browserRuntimeToken == "" {
+		browserRuntimeToken, err = browserruntime.NewToken()
+		if err != nil {
+			return err
+		}
+		if err := os.Setenv(browserruntime.RuntimeTokenEnv, browserRuntimeToken); err != nil {
+			return fmt.Errorf("set browser runtime token: %w", err)
+		}
+	}
 	browserAuthority, err := browsersvc.LoadAuthority(cfg.DataDir)
 	if err != nil {
 		return fmt.Errorf("load browser capability authority: %w", err)
 	}
-	browserBroker := browserruntime.New(log)
+	browserBroker := browserruntime.New(log, browserRuntimeToken)
 
 	// Fail fast only if a daemon is genuinely still serving the recorded port.
 	// CheckStale confirms the run-file's PID is alive, but that alone is not
@@ -118,7 +129,7 @@ func Run() error {
 	// is handed to httpd, which mounts it at /mux. Raw PTY bytes never flow
 	// through the CDC change_log -- only session-state events do.
 	runtimeAdapter := runtimeselect.New(log)
-	managedPreview := previewserver.New(log)
+	managedPreview := previewserver.New(log, cfg.DataDir)
 	termMgr := terminal.NewManager(runtimeAdapter, cdcPipe.Broadcaster, log)
 	defer termMgr.Close()
 
@@ -155,7 +166,7 @@ func Run() error {
 	// selected runtime, routed git/scratch workspaces, the per-session agent
 	// resolver (AO_AGENT validated here for compatibility), and the agent
 	// messenger, then mount it on the API.
-	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, managedPreview, browserAuthority, log)
+	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, managedPreview, browserBroker, browserAuthority, log)
 	if err != nil {
 		stop()
 		lcStack.Stop()
@@ -250,8 +261,9 @@ func Run() error {
 				return sqlite.OpenReadOnly(ctx, dataDir)
 			},
 		}),
-		Browser:       browserService,
-		PreviewServer: managedPreview,
+		Browser:             browserService,
+		PreviewServer:       managedPreview,
+		SessionCapabilities: browserAuthority,
 	})
 	if err != nil {
 		stop()
@@ -262,9 +274,14 @@ func Run() error {
 		return err
 	}
 	previewDone := preview.NewPoller(store, sessionSvc, "http://"+srv.Addr().String(), preview.PollerConfig{Logger: log}).Start(ctx)
+	_ = os.Unsetenv(browserruntime.RuntimeAddressEnv)
 	if ln, addr, err := browserruntime.Listen(cfg.RunFilePath); err != nil {
 		log.Warn("browser runtime: listener unavailable; agent browser control disabled", "err", err)
 	} else {
+		if err := os.Setenv(browserruntime.RuntimeAddressEnv, addr); err != nil {
+			_ = ln.Close()
+			return fmt.Errorf("publish browser runtime address: %w", err)
+		}
 		log.Info("browser runtime: listening", "addr", addr)
 		go func() {
 			if err := browserBroker.Serve(ctx, ln); err != nil {

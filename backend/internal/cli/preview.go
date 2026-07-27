@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -171,7 +172,18 @@ func (c *commandContext) startPreviewServer(
 		return previewServerStatusDTO{}, err
 	}
 	var out previewServerStatusDTO
-	err = c.postJSON(ctx, path, previewServerStartRequest{Configuration: configuration}, &out)
+	headers, err := previewServerHeaders()
+	if err != nil {
+		return previewServerStatusDTO{}, err
+	}
+	err = c.doJSONPathWithHeaders(
+		ctx,
+		http.MethodPost,
+		"/api/v1/"+path,
+		previewServerStartRequest{Configuration: configuration},
+		&out,
+		headers,
+	)
 	return out, err
 }
 
@@ -181,7 +193,11 @@ func (c *commandContext) previewServerStatus(ctx context.Context) (previewServer
 		return previewServerStatusDTO{}, err
 	}
 	var out previewServerStatusDTO
-	err = c.getJSON(ctx, path, &out)
+	headers, err := previewServerHeaders()
+	if err != nil {
+		return previewServerStatusDTO{}, err
+	}
+	err = c.doJSONPathWithHeaders(ctx, http.MethodGet, "/api/v1/"+path, nil, &out, headers)
 	return out, err
 }
 
@@ -191,8 +207,20 @@ func (c *commandContext) stopPreviewServer(ctx context.Context) (previewServerSt
 		return previewServerStatusDTO{}, err
 	}
 	var out previewServerStatusDTO
-	err = c.deleteJSON(ctx, path, &out)
+	headers, err := previewServerHeaders()
+	if err != nil {
+		return previewServerStatusDTO{}, err
+	}
+	err = c.doJSONPathWithHeaders(ctx, http.MethodDelete, "/api/v1/"+path, nil, &out, headers)
 	return out, err
+}
+
+func previewServerHeaders() (map[string]string, error) {
+	capability := strings.TrimSpace(os.Getenv("AO_BROWSER_CAPABILITY"))
+	if capability == "" {
+		return nil, usageError{errors.New("ao preview server commands require the owning session capability (AO_BROWSER_CAPABILITY is not set)")}
+	}
+	return map[string]string{browserCapabilityHeader: capability}, nil
 }
 
 func writePreviewServerStatus(out io.Writer, status previewServerStatusDTO, jsonOutput bool) error {

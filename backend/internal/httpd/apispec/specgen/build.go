@@ -862,10 +862,12 @@ func sessionOperations() []operation {
 		{
 			method: http.MethodGet, path: "/api/v1/sessions/{sessionId}/preview/server", id: "getSessionPreviewServer", tag: "sessions",
 			summary:    "Get the managed preview server status for a session",
-			pathParams: []any{controllers.SessionIDParam{}},
+			pathParams: []any{controllers.SessionIDParam{}, controllers.BrowserCapabilityHeader{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.PreviewServerStatusResponse{}},
+				{http.StatusForbidden, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},
@@ -873,11 +875,12 @@ func sessionOperations() []operation {
 		{
 			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/preview/server", id: "startSessionPreviewServer", tag: "sessions",
 			summary:    "Start a session-owned server from .ao/launch.json and open its application preview",
-			pathParams: []any{controllers.SessionIDParam{}},
+			pathParams: []any{controllers.SessionIDParam{}, controllers.BrowserCapabilityHeader{}},
 			reqBody:    controllers.StartPreviewServerRequest{},
 			resps: []respUnit{
 				{http.StatusOK, controllers.PreviewServerStatusResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusForbidden, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusRequestTimeout, envelope.APIError{}},
@@ -890,10 +893,12 @@ func sessionOperations() []operation {
 		{
 			method: http.MethodDelete, path: "/api/v1/sessions/{sessionId}/preview/server", id: "stopSessionPreviewServer", tag: "sessions",
 			summary:    "Stop the managed preview server for a session",
-			pathParams: []any{controllers.SessionIDParam{}},
+			pathParams: []any{controllers.SessionIDParam{}, controllers.BrowserCapabilityHeader{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.PreviewServerStatusResponse{}},
+				{http.StatusForbidden, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},

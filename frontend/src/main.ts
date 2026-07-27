@@ -29,8 +29,8 @@ import {
 import { listFeatureBuilds, getActiveFeatureBuild } from "./main/feature-builds";
 import { readUpdateSettings, type UpdateSettings, type UpdateStatus } from "./main/update-settings";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { closeSync, existsSync, openSync } from "node:fs";
+import { randomBytes, randomUUID } from "node:crypto";
+import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -338,7 +338,7 @@ function createWindow(): void {
 		shell,
 		WebContentsView,
 		annotatePreloadPath: annotatePreloadPath(),
-		rendererOrigin: RENDERER_ORIGIN,
+		rendererOrigin: new URL(rendererUrl()).origin,
 		isMac,
 	});
 	if (daemonStatus.state === "ready") establishBrowserRuntimeLink();
@@ -466,6 +466,7 @@ function ensureShellEnv(): Promise<void> {
 // (including supervisor restarts) reports the same run. An explicit
 // AO_APP_RUN_ID in the environment wins, which lets a test or a wrapper pin it.
 const appRunId = process.env.AO_APP_RUN_ID ?? `apprun-${randomUUID()}`;
+const browserRuntimeToken = randomBytes(32).toString("base64url");
 
 function daemonEnv(): NodeJS.ProcessEnv {
 	// AO_OWNER is the daemon's durable spawn-mode record: the daemon writes it
@@ -481,7 +482,11 @@ function daemonEnv(): NodeJS.ProcessEnv {
 	// is how the daemon recognises the previous run's shells as orphans and
 	// destroys them (see internal/service/shellterm).
 	const AO_OWNER = keepDaemonAlive(process.env) ? "persistent" : "app";
-	const ownerTag = { AO_OWNER, AO_APP_RUN_ID: appRunId };
+	const ownerTag = {
+		AO_OWNER,
+		AO_APP_RUN_ID: appRunId,
+		AO_BROWSER_RUNTIME_TOKEN: browserRuntimeToken,
+	};
 	// In dev mode, inject isolation defaults so the dev daemon never collides with
 	// the installed app. User-set env vars take priority (checked first).
 	const devExtras: Record<string, string> = {};
@@ -583,27 +588,28 @@ function supervisorPipeFromRunFile(rfp: string | null): string {
 	return "\\\\.\\pipe\\ao-supervise-" + dir.replace(/[^a-zA-Z0-9-]/g, "-");
 }
 
-function browserRuntimePipeFromRunFile(rfp: string | null): string {
-	if (!rfp) return "\\\\.\\pipe\\ao-browser";
-	const dir = path.basename(path.dirname(rfp));
-	if (dir === ".ao" || dir === "." || dir === "") return "\\\\.\\pipe\\ao-browser";
-	return "\\\\.\\pipe\\ao-browser-" + dir.replace(/[^a-zA-Z0-9-]/g, "-");
-}
-
 function establishBrowserRuntimeLink(): void {
 	if (!browserViewHost || browserRuntimeLink) return;
 	const rfp = runFilePath();
-	const address =
-		process.platform === "win32"
-			? browserRuntimePipeFromRunFile(rfp)
-			: rfp
-				? path.join(path.dirname(rfp), "browser.sock")
-				: null;
-	if (!address) {
+	if (!rfp) {
 		console.warn("AO: browser runtime link skipped; run-file path unavailable");
 		return;
 	}
+	let runInfo: ReturnType<typeof parseRunFile> = null;
+	try {
+		runInfo = parseRunFile(readFileSync(rfp, "utf8"));
+	} catch {
+		// Daemon readiness will retry this after running.json becomes readable.
+	}
+	const address = runInfo?.browserRuntimeAddress;
+	if (!address) {
+		console.warn("AO: browser runtime link skipped; daemon did not publish an address");
+		return;
+	}
+	let token = browserRuntimeToken;
+	token = runInfo?.browserRuntimeToken ?? token;
 	browserRuntimeLink = connectBrowserRuntime(address, {
+		token,
 		execute: (command, signal) => {
 			const host = browserViewHost;
 			if (!host) {

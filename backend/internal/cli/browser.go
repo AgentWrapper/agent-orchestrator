@@ -37,6 +37,7 @@ type browserCommandResponseDTO struct {
 }
 
 const browserCapabilityHeader = "X-AO-Browser-Capability"
+const maxBrowserWaitMillis = 55_000
 
 func newBrowserCommand(ctx *commandContext) *cobra.Command {
 	var jsonOutput bool
@@ -287,6 +288,15 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 				return usageError{errors.New(
 					"choose exactly one of --text, --text-gone, --selector, --selector-gone, --url, --load, --dom-stable, or --ms",
 				)}
+			}
+			if timeoutMS < 1 || timeoutMS > maxBrowserWaitMillis {
+				return usageError{fmt.Errorf("--timeout must be between 1 and %d milliseconds", maxBrowserWaitMillis)}
+			}
+			if waitMS > maxBrowserWaitMillis {
+				return usageError{fmt.Errorf("--ms must not exceed %d milliseconds", maxBrowserWaitMillis)}
+			}
+			if waitStableMS > maxBrowserWaitMillis {
+				return usageError{fmt.Errorf("--dom-stable must not exceed %d milliseconds", maxBrowserWaitMillis)}
 			}
 			if waitStableMS > timeoutMS {
 				return usageError{errors.New("--timeout must be at least as long as --dom-stable")}

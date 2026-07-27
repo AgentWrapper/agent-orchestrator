@@ -188,6 +188,16 @@ type fakePreviewLifecycle struct {
 	err     error
 }
 
+type fakeBrowserLifecycle struct {
+	destroyed []domain.SessionID
+	err       error
+}
+
+func (f *fakeBrowserLifecycle) DestroySession(_ context.Context, id domain.SessionID) error {
+	f.destroyed = append(f.destroyed, id)
+	return f.err
+}
+
 func (f *fakePreviewLifecycle) StopSession(_ context.Context, id domain.SessionID) error {
 	f.stopped = append(f.stopped, id)
 	return f.err
@@ -1668,7 +1678,9 @@ func TestSpawn_WorkspaceProjectRollsBackWhenWorktreeRowsFail(t *testing.T) {
 func TestKill_TearsDownRuntimeAndWorkspace(t *testing.T) {
 	m, st, rt, ws := newManager()
 	preview := &fakePreviewLifecycle{}
+	browser := &fakeBrowserLifecycle{}
 	m.preview = preview
+	m.browser = browser
 	dataDir := t.TempDir()
 	m.dataDir = dataDir
 	st.sessions["mer-1"] = mkLive("mer-1")
@@ -1684,6 +1696,9 @@ func TestKill_TearsDownRuntimeAndWorkspace(t *testing.T) {
 	}
 	if !reflect.DeepEqual(preview.stopped, []domain.SessionID{"mer-1"}) {
 		t.Fatalf("preview stops = %v, want [mer-1]", preview.stopped)
+	}
+	if !reflect.DeepEqual(browser.destroyed, []domain.SessionID{"mer-1"}) {
+		t.Fatalf("browser destroys = %v, want [mer-1]", browser.destroyed)
 	}
 	requireNoPromptDir(t, dataDir, "mer-1")
 }
@@ -3952,6 +3967,8 @@ func TestSaveAndTeardownAll_SkipsScratchSessions(t *testing.T) {
 
 func TestRetireForReplacementCapturesAndReleasesWorkspace(t *testing.T) {
 	m, st, rt, ws := newLifecycleManager()
+	browser := &fakeBrowserLifecycle{}
+	m.browser = browser
 	var sharedLog []string
 	st.sharedLog = &sharedLog
 	ws.sharedLog = &sharedLog
@@ -4001,6 +4018,9 @@ func TestRetireForReplacementCapturesAndReleasesWorkspace(t *testing.T) {
 	}
 	if stashIdx >= forceIdx || forceIdx >= deleteIdx {
 		t.Fatalf("replacement retire must capture, force release, then clear restore marker; log=%v", sharedLog)
+	}
+	if len(browser.destroyed) != 1 || browser.destroyed[0] != "mer-orch" {
+		t.Fatalf("browser targets destroyed = %v, want mer-orch", browser.destroyed)
 	}
 }
 

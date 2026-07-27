@@ -46,7 +46,16 @@ type fakeManagedPreviewServer struct {
 	startName      string
 	startWorkspace string
 	stopCalls      int
+	onStop         func()
 }
+
+type allowSessionCapability struct{}
+
+func (allowSessionCapability) Valid(domain.SessionID, string) bool { return true }
+
+type denySessionCapability struct{}
+
+func (denySessionCapability) Valid(domain.SessionID, string) bool { return false }
 
 func (f *fakeManagedPreviewServer) Start(
 	_ context.Context,
@@ -68,6 +77,9 @@ func (f *fakeManagedPreviewServer) Stop(
 	sessionID domain.SessionID,
 ) (previewserver.Status, error) {
 	f.stopCalls++
+	if f.onStop != nil {
+		f.onStop()
+	}
 	f.status.SessionID = sessionID
 	f.status.State = previewserver.StateStopped
 	return f.status, nil
@@ -329,6 +341,7 @@ func newSessionTestServerWithPreview(
 	deps := httpd.APIDeps{Sessions: svc}
 	if managed != nil {
 		deps.PreviewServer = managed
+		deps.SessionCapabilities = allowSessionCapability{}
 	}
 	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, deps, httpd.ControlDeps{}))
 	t.Cleanup(srv.Close)
@@ -1175,6 +1188,25 @@ func TestSessionsAPI_ManagedPreviewStartsExactApplicationAndPersistsTarget(t *te
 	}
 }
 
+func TestSessionsAPI_ManagedPreviewRequiresOwningCapability(t *testing.T) {
+	svc := newFakeSessionService()
+	managed := &fakeManagedPreviewServer{}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	deps := httpd.APIDeps{
+		Sessions:            svc,
+		PreviewServer:       managed,
+		SessionCapabilities: denySessionCapability{},
+	}
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, deps, httpd.ControlDeps{}))
+	t.Cleanup(srv.Close)
+
+	body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/sessions/ao-1/preview/server", `{}`)
+	assertErrorCode(t, body, status, http.StatusForbidden, "PREVIEW_CAPABILITY_INVALID")
+	if managed.startName != "" {
+		t.Fatal("preview process started without a valid capability")
+	}
+}
+
 func TestSessionsAPI_APIManagedPreviewDoesNotTakeOverBrowser(t *testing.T) {
 	svc := newFakeSessionService()
 	session := svc.sessions["ao-1"]
@@ -1219,6 +1251,33 @@ func TestSessionsAPI_StopManagedPreviewPreservesExplicitFileTarget(t *testing.T)
 	}
 	if got := svc.sessions["ao-1"].Metadata.PreviewURL; got != session.Metadata.PreviewURL {
 		t.Fatalf("explicit file target was cleared: %q", got)
+	}
+}
+
+func TestSessionsAPI_StopManagedPreviewPreservesTargetChangedDuringStop(t *testing.T) {
+	svc := newFakeSessionService()
+	session := svc.sessions["ao-1"]
+	session.Metadata.PreviewURL = "http://127.0.0.1:4173/"
+	svc.sessions["ao-1"] = session
+	managed := &fakeManagedPreviewServer{status: previewserver.Status{
+		State:      previewserver.StateReady,
+		TargetKind: previewserver.TargetApp,
+		URL:        session.Metadata.PreviewURL,
+		Logs:       []string{},
+	}}
+	managed.onStop = func() {
+		current := svc.sessions["ao-1"]
+		current.Metadata.PreviewURL = "http://127.0.0.1:5173/"
+		svc.sessions["ao-1"] = current
+	}
+	srv := newSessionTestServerWithPreview(t, svc, managed)
+
+	body, status, _ := doRequest(t, srv, http.MethodDelete, "/api/v1/sessions/ao-1/preview/server", "")
+	if status != http.StatusOK || !containsAll(body, `"state":"stopped"`) {
+		t.Fatalf("stop managed preview = %d body=%s", status, body)
+	}
+	if got := svc.sessions["ao-1"].Metadata.PreviewURL; got != "http://127.0.0.1:5173/" {
+		t.Fatalf("target changed during stop was cleared: %q", got)
 	}
 }
 

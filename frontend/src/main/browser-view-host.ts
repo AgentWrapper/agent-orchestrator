@@ -92,6 +92,7 @@ type BrowserWebContents = Pick<
 	| "stop"
 > & {
 	close?: () => void;
+	session?: Pick<Session, "setPermissionCheckHandler" | "setPermissionRequestHandler">;
 };
 
 type BrowserViewLike = View & {
@@ -221,7 +222,14 @@ const OFFSCREEN_BOUNDS: BrowserRect = { x: -10_000, y: -10_000, width: 1280, hei
 const DEFAULT_NETWORK_CAPTURE_SECONDS = 60;
 const MAX_NETWORK_CAPTURE_SECONDS = 300;
 const MAX_NETWORK_REQUESTS = 200;
-// ponytail: file:// allowed unsanitized; preview targets are agent-trusted for now
+const MAX_BROWSER_TABS = 16;
+const MAX_EXTERNAL_TEXT_BYTES = 1 << 20;
+const MAX_SNAPSHOT_LINES = 1_000;
+const MAX_LOG_MESSAGE_CHARS = 16_384;
+const UNTRUSTED_BEGIN = "<<<BEGIN UNTRUSTED EXTERNAL CONTENT>>>";
+const UNTRUSTED_END = "<<<END UNTRUSTED EXTERNAL CONTENT>>>";
+// The human-facing address bar may open local preview files. Agent commands use
+// normalizeAgentBrowserURL below, which permits only explicit HTTP(S) targets.
 const ALLOWED_PROTOCOLS = new Set(["http:", "https:", "file:"]);
 
 export function normalizeBrowserURL(input: string): URL {
@@ -333,6 +341,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	}
 
 	const createTab = (session: BrowserSessionEntry, activate: boolean): BrowserEntry => {
+		if (session.tabs.size >= MAX_BROWSER_TABS) {
+			throw browserError("BROWSER_TAB_LIMIT", `Browser tab limit of ${MAX_BROWSER_TABS} reached`);
+		}
 		const view = new options.WebContentsView({
 			webPreferences: {
 				contextIsolation: true,
@@ -345,6 +356,8 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		view.setBounds(OFFSCREEN_BOUNDS);
 		view.setVisible?.(false);
 		options.mainWindow.contentView.addChildView(view);
+		view.webContents.session?.setPermissionCheckHandler?.(() => false);
+		view.webContents.session?.setPermissionRequestHandler?.((_contents, _permission, callback) => callback(false));
 
 		const tabId = `t${session.nextTabNumber++}`;
 		const state: BrowserNavState = emptyNavState(session.viewId);
@@ -365,7 +378,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			const popup = createTab(session, true);
 			pushTabsState(options, session, { kind: "popup", tabId: popup.tabId });
 			return popup.view.webContents;
-		});
+		}, () => session.tabs.size < MAX_BROWSER_TABS);
 		wireNavEvents(
 			view.webContents,
 			options,
@@ -760,6 +773,11 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		execute: async (sessionId, action, args = {}, signal) => {
 			throwIfAborted(signal);
 			if (!sessionId.trim()) throw browserError("INVALID_ARGUMENT", "sessionId is required");
+			if (action === "__destroy-session") {
+				const viewId = viewIdsBySessionId.get(sessionId);
+				if (viewId) destroy(viewId);
+				return { destroyed: Boolean(viewId) };
+			}
 			const session = ensureSession(sessionId);
 			const entry = activeEntry(session);
 			setAgentBrowserActivity(session, action, true);
@@ -767,7 +785,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				switch (action) {
 				case "open": {
 					const url = stringArg(args, "url", "URL_REQUIRED", "url is required");
-					const state = await navigate({ viewId: entry.state.viewId, url });
+					const state = await navigate({ viewId: entry.state.viewId, url: normalizeAgentBrowserURL(url) });
 					if (state.error) throw browserError("NAVIGATION_FAILED", state.error);
 					return state;
 				}
@@ -798,7 +816,8 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				case "tabs":
 					return listTabs(session);
 				case "tab-new": {
-					const url = typeof args.url === "string" && args.url.trim() ? args.url : undefined;
+					const url =
+						typeof args.url === "string" && args.url.trim() ? normalizeAgentBrowserURL(args.url) : undefined;
 					const tab = await openTab(session, url, true);
 					return tabResult(tab, true);
 				}
@@ -863,9 +882,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				case "network-clear":
 					return clearNetworkCapture(networkEntryFor(session));
 				case "console":
-					return { messages: [...entry.consoleMessages] };
+					return { messages: markLogMessages(entry.consoleMessages), untrustedExternalContent: true };
 				case "errors":
-					return { messages: [...entry.errors] };
+					return { messages: markLogMessages(entry.errors), untrustedExternalContent: true };
 				default:
 					throw browserError("INVALID_ARGUMENT", `Unsupported browser action: ${action}`);
 				}
@@ -1013,9 +1032,10 @@ function hardenWebContents(
 	options: BrowserViewHostOptions,
 	entry: BrowserEntry,
 	createPopup: () => BrowserWebContents,
+	canCreatePopup: () => boolean,
 ): void {
 	contents.setWindowOpenHandler(({ url }) => {
-		if (!isAllowedBrowserURL(url, options.rendererOrigin)) {
+		if (!isAllowedBrowserURL(url, options.rendererOrigin) || !canCreatePopup()) {
 			return { action: "deny" };
 		}
 		return {
@@ -1185,7 +1205,11 @@ function wireAutomationEvents(contents: BrowserWebContents, entry: BrowserEntry)
 }
 
 function pushBrowserLog(target: BrowserLogEntry[], entry: BrowserLogEntry): void {
-	target.push(entry);
+	target.push({
+		...entry,
+		message: entry.message.slice(0, MAX_LOG_MESSAGE_CHARS),
+		source: entry.source?.slice(0, 2_048),
+	});
 	if (target.length > 200) target.splice(0, target.length - 200);
 }
 
@@ -1280,6 +1304,7 @@ function networkCaptureResult(entry: BrowserEntry): Record<string, unknown> {
 	return {
 		...networkCaptureStatus(entry),
 		requests: (entry.networkCapture?.requests ?? []).map(publicNetworkRequest),
+		untrustedExternalContent: true,
 	};
 }
 
@@ -1493,21 +1518,26 @@ async function snapshotEntry(entry: BrowserEntry, interactiveOnly: boolean): Pro
 	const lines: string[] = [];
 	const elements: Array<{ ref: string; role: string; name: string }> = [];
 	let refIndex = 0;
-	for (const node of nodes.slice(0, 1_000)) {
+	let truncated = false;
+	for (const node of nodes) {
 		if (node.ignored) continue;
 		const role = stringValue(node.role) || "generic";
 		const name = stringValue(node.name);
 		const value = stringValue(node.value);
 		const interactive =
 			INTERACTIVE_ROLES.has(role) || node.properties?.some((property) => property.name === "focusable");
+		if (interactiveOnly && !interactive) continue;
+		if (!interactive && !name && !value) continue;
+		if (lines.length >= MAX_SNAPSHOT_LINES) {
+			truncated = true;
+			continue;
+		}
 		let ref = "";
 		if (interactive && node.backendDOMNodeId) {
 			ref = `e${++refIndex}`;
 			entry.refs.set(ref, { backendNodeId: node.backendDOMNodeId, generation });
 			elements.push({ ref, role, name });
 		}
-		if (interactiveOnly && !ref) continue;
-		if (!ref && !name && !value) continue;
 		const parentDepth = node.parentId ? (depths.get(node.parentId) ?? -1) : -1;
 		const depth = Math.max(0, parentDepth + 1);
 		depths.set(node.nodeId, depth);
@@ -1516,24 +1546,40 @@ async function snapshotEntry(entry: BrowserEntry, interactiveOnly: boolean): Pro
 		const reference = ref ? ` [ref=${ref}]` : "";
 		lines.push(`${"  ".repeat(Math.min(depth, 8))}${role}${label}${currentValue}${reference}`);
 	}
+	const snapshotText = lines.join("\n") || "(empty accessibility snapshot)";
+	const truncationNotice = truncated
+		? `\n[Snapshot truncated: showing ${lines.length} lines from ${nodes.length} accessibility nodes]`
+		: "";
 	return {
 		url: entry.view.webContents.getURL(),
 		title: entry.view.webContents.getTitle(),
 		generation,
-		text: lines.join("\n") || "(empty accessibility snapshot)",
+		text: markUntrusted(snapshotText + truncationNotice),
 		elements,
+		totalNodes: nodes.length,
+		truncated,
+		untrustedExternalContent: true,
 	};
 }
 
 async function clickEntry(entry: BrowserEntry, refName: string): Promise<unknown> {
 	const objectId = await resolveRef(entry, refName);
-	await entry.view.webContents.debugger.sendCommand("Runtime.callFunctionOn", {
-		objectId,
-		functionDeclaration:
-			"function(){ this.scrollIntoView({block:'center',inline:'center'}); this.focus(); this.click(); }",
-		awaitPromise: true,
+	const point = await pointerPoint(entry, objectId, refName);
+	await entry.view.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
+		type: "mousePressed",
+		x: point.x,
+		y: point.y,
+		button: "left",
+		clickCount: 1,
 	});
-	return { ref: refName, url: entry.view.webContents.getURL() };
+	await entry.view.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
+		type: "mouseReleased",
+		x: point.x,
+		y: point.y,
+		button: "left",
+		clickCount: 1,
+	});
+	return { ref: refName, x: point.x, y: point.y, url: entry.view.webContents.getURL() };
 }
 
 async function fillEntry(entry: BrowserEntry, refName: string, text: string): Promise<unknown> {
@@ -1672,13 +1718,7 @@ async function pressEntry(entry: BrowserEntry, input: string): Promise<unknown> 
 
 async function hoverEntry(entry: BrowserEntry, refName: string): Promise<unknown> {
 	const objectId = await resolveRef(entry, refName);
-	const response = (await entry.view.webContents.debugger.sendCommand("DOM.getBoxModel", { objectId })) as {
-		model?: { border?: number[]; content?: number[] };
-	};
-	const point = quadCenter(response.model?.border ?? response.model?.content);
-	if (!point) {
-		throw browserError("ELEMENT_NOT_VISIBLE", `Element ${refName} has no visible box`);
-	}
+	const point = await pointerPoint(entry, objectId, refName);
 	await entry.view.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
 		type: "mouseMoved",
 		x: point.x,
@@ -1808,7 +1848,11 @@ async function getEntry(entry: BrowserEntry, property: string, refName?: string)
 			expression: "document.body ? document.body.innerText : ''",
 			returnByValue: true,
 		})) as { result?: { value?: unknown } };
-		return { property: normalized, value: response.result?.value ?? "" };
+		return {
+			property: normalized,
+			value: markUntrusted(externalText(response.result?.value)),
+			untrustedExternalContent: true,
+		};
 	}
 	if (!["text", "value", "checked"].includes(normalized)) {
 		throw browserError("INVALID_ARGUMENT", "element property must be text, value, or checked");
@@ -1824,11 +1868,14 @@ async function getEntry(entry: BrowserEntry, property: string, refName?: string)
 		arguments: [{ value: normalized }],
 		returnByValue: true,
 	})) as { result?: { value?: unknown } };
+	const value =
+		normalized === "text" ? markUntrusted(externalText(response.result?.value)) : response.result?.value;
 	return {
 		ref: refName,
 		property: normalized,
-		value: response.result?.value,
+		value,
 		url: entry.view.webContents.getURL(),
+		...(normalized === "text" ? { untrustedExternalContent: true } : {}),
 	};
 }
 
@@ -1856,7 +1903,7 @@ async function waitForEntry(entry: BrowserEntry, args: Record<string, unknown>, 
 		await delay(fixedMS, signal);
 		return { waitedMs: fixedMS, url: entry.view.webContents.getURL() };
 	}
-	const timeoutMS = numberArg(args.timeoutMs, 1, 60_000) || 10_000;
+	const timeoutMS = numberArg(args.timeoutMs, 1, 55_000) || 10_000;
 	const stableMS = numberArg(args.stableMs, 1, 10_000);
 	let expression = "";
 	let condition = "";
@@ -1906,39 +1953,56 @@ async function waitForEntry(entry: BrowserEntry, args: Record<string, unknown>, 
 	}
 	await ensureDebugger(entry);
 	const deadline = Date.now() + timeoutMS;
-	while (Date.now() <= deadline) {
-		throwIfAborted(signal);
-		if (args.load === true && entry.view.webContents.isLoading()) {
+	try {
+		while (Date.now() <= deadline) {
+			throwIfAborted(signal);
+			if (args.load === true && entry.view.webContents.isLoading()) {
+				await delay(100, signal);
+				continue;
+			}
+			let evaluated: {
+				result?: { value?: unknown };
+				exceptionDetails?: { text?: string };
+			};
+			try {
+				evaluated = (await entry.view.webContents.debugger.sendCommand("Runtime.evaluate", {
+					expression,
+					returnByValue: true,
+				})) as typeof evaluated;
+			} catch {
+				// Navigations and HMR can briefly replace the execution context. Retry
+				// until the requested condition or timeout rather than failing early.
+				await delay(100, signal);
+				continue;
+			}
+			if (evaluated.exceptionDetails) {
+				throw browserError(
+					"INVALID_ARGUMENT",
+					evaluated.exceptionDetails.text ?? `Unable to evaluate wait condition ${condition}`,
+				);
+			}
+			if (valueSatisfies(evaluated.result?.value)) {
+				return { condition, url: entry.view.webContents.getURL() };
+			}
 			await delay(100, signal);
-			continue;
 		}
-		let evaluated: {
-			result?: { value?: unknown };
-			exceptionDetails?: { text?: string };
-		};
-		try {
-			evaluated = (await entry.view.webContents.debugger.sendCommand("Runtime.evaluate", {
-				expression,
-				returnByValue: true,
-			})) as typeof evaluated;
-		} catch {
-			// Navigations and HMR can briefly replace the execution context. Retry
-			// until the requested condition or timeout rather than failing early.
-			await delay(100, signal);
-			continue;
+		throw browserError("WAIT_TIMEOUT", `Timed out after ${timeoutMS}ms waiting for ${condition}`);
+	} finally {
+		if (stableMS > 0) {
+			try {
+				await entry.view.webContents.debugger.sendCommand("Runtime.evaluate", {
+					expression: `(() => {
+						const key = "__ao_browser_dom_stability__";
+						const state = globalThis[key];
+						state?.observer?.disconnect();
+						delete globalThis[key];
+					})()`,
+				});
+			} catch {
+				// Navigation may have already destroyed the observed document.
+			}
 		}
-		if (evaluated.exceptionDetails) {
-			throw browserError(
-				"INVALID_ARGUMENT",
-				evaluated.exceptionDetails.text ?? `Unable to evaluate wait condition ${condition}`,
-			);
-		}
-		if (valueSatisfies(evaluated.result?.value)) {
-			return { condition, url: entry.view.webContents.getURL() };
-		}
-		await delay(100, signal);
 	}
-	throw browserError("WAIT_TIMEOUT", `Timed out after ${timeoutMS}ms waiting for ${condition}`);
 }
 
 async function screenshotEntry(entry: BrowserEntry): Promise<unknown> {
@@ -1951,6 +2015,7 @@ async function screenshotEntry(entry: BrowserEntry): Promise<unknown> {
 		width: size.width,
 		height: size.height,
 		url: entry.view.webContents.getURL(),
+		untrustedExternalContent: true,
 	};
 }
 
@@ -1994,6 +2059,73 @@ function stringValue(value: AXValue | undefined): string {
 
 function compactText(value: string): string {
 	return value.replace(/\s+/g, " ").replace(/\"/g, '\\"').trim().slice(0, 240);
+}
+
+function normalizeAgentBrowserURL(input: string): string {
+	const raw = input.trim();
+	if (!raw) throw browserError("URL_REQUIRED", "url is required");
+	if (isWindowsAbsolutePath(raw) || isPosixAbsolutePath(raw) || /^file:/i.test(raw)) {
+		throw browserError("BROWSER_URL_FORBIDDEN", "Agent browser commands cannot open local files");
+	}
+	if (!/^https?:\/\//i.test(raw) && !isLocalhostLike(raw) && !looksLikeHost(raw)) {
+		throw browserError("INVALID_URL", "ao browser open requires an explicit http(s) URL or hostname");
+	}
+	const normalized = normalizeBrowserURL(raw);
+	if (normalized.protocol !== "http:" && normalized.protocol !== "https:") {
+		throw browserError("BROWSER_URL_FORBIDDEN", "Agent browser commands support only http(s) URLs");
+	}
+	return normalized.href;
+}
+
+async function pointerPoint(
+	entry: BrowserEntry,
+	objectId: string,
+	refName: string,
+): Promise<{ x: number; y: number }> {
+	await entry.view.webContents.debugger.sendCommand("Runtime.callFunctionOn", {
+		objectId,
+		functionDeclaration: "function(){ this.scrollIntoView({block:'center',inline:'center'}); this.focus(); }",
+	});
+	const response = (await entry.view.webContents.debugger.sendCommand("DOM.getBoxModel", { objectId })) as {
+		model?: { border?: number[]; content?: number[] };
+	};
+	const pagePoint = quadCenter(response.model?.border ?? response.model?.content);
+	if (!pagePoint) throw browserError("ELEMENT_NOT_VISIBLE", `Element ${refName} has no visible box`);
+	const metrics = (await entry.view.webContents.debugger.sendCommand("Page.getLayoutMetrics")) as {
+		cssVisualViewport?: { pageX?: number; pageY?: number };
+		visualViewport?: { pageX?: number; pageY?: number };
+	};
+	const viewport = metrics.cssVisualViewport ?? metrics.visualViewport ?? {};
+	const point = {
+		x: pagePoint.x - (viewport.pageX ?? 0),
+		y: pagePoint.y - (viewport.pageY ?? 0),
+	};
+	const hit = (await entry.view.webContents.debugger.sendCommand("Runtime.callFunctionOn", {
+		objectId,
+		functionDeclaration:
+			"function(x,y){ const hit=document.elementFromPoint(x,y); return Boolean(hit && (hit===this || this.contains(hit))); }",
+		arguments: [{ value: point.x }, { value: point.y }],
+		returnByValue: true,
+	})) as { result?: { value?: boolean } };
+	if (!hit.result?.value) {
+		throw browserError("ELEMENT_NOT_INTERACTABLE", `Element ${refName} is covered or not pointer-interactable`);
+	}
+	return point;
+}
+
+function externalText(value: unknown): string {
+	const raw = value == null ? "" : String(value);
+	const bytes = Buffer.from(raw, "utf8");
+	if (bytes.length <= MAX_EXTERNAL_TEXT_BYTES) return raw;
+	return `${bytes.subarray(0, MAX_EXTERNAL_TEXT_BYTES).toString("utf8")}\n[Content truncated at ${MAX_EXTERNAL_TEXT_BYTES} bytes]`;
+}
+
+function markUntrusted(value: string): string {
+	return `${UNTRUSTED_BEGIN}\n${value}\n${UNTRUSTED_END}`;
+}
+
+function markLogMessages(messages: BrowserLogEntry[]): BrowserLogEntry[] {
+	return messages.map((message) => ({ ...message, message: markUntrusted(externalText(message.message)) }));
 }
 
 function delay(ms: number, signal?: AbortSignal): Promise<void> {

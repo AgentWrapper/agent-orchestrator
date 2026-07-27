@@ -37,6 +37,8 @@ const (
 	statusLogLines          = 40
 	maxBufferedLogLines     = 200
 	maxBufferedPartialBytes = 16 * 1024
+	failedStatusRetention   = 5 * time.Minute
+	processRegistryFile     = "preview-processes.json"
 )
 
 // State is the lifecycle state of a managed preview process.
@@ -115,6 +117,18 @@ type serverRun struct {
 	stopping bool
 }
 
+type sessionOperation struct {
+	mu   sync.Mutex
+	refs int
+}
+
+type persistedProcess struct {
+	SessionID domain.SessionID `json:"sessionId"`
+	PID       int              `json:"pid"`
+	Port      int              `json:"port"`
+	StartedAt time.Time        `json:"startedAt"`
+}
+
 // Manager supervises at most one managed preview server per AO session.
 type Manager struct {
 	log    *slog.Logger
@@ -124,11 +138,12 @@ type Manager struct {
 	runs map[domain.SessionID]*serverRun
 
 	operationsMu sync.Mutex
-	operations   map[domain.SessionID]*sync.Mutex
+	operations   map[domain.SessionID]*sessionOperation
+	registryPath string
 }
 
 // New creates a managed preview-server supervisor.
-func New(log *slog.Logger) *Manager {
+func New(log *slog.Logger, dataDir ...string) *Manager {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -140,7 +155,11 @@ func New(log *slog.Logger) *Manager {
 	manager := &Manager{
 		log:        log,
 		runs:       make(map[domain.SessionID]*serverRun),
-		operations: make(map[domain.SessionID]*sync.Mutex),
+		operations: make(map[domain.SessionID]*sessionOperation),
+	}
+	if len(dataDir) > 0 && strings.TrimSpace(dataDir[0]) != "" {
+		manager.registryPath = filepath.Join(dataDir[0], processRegistryFile)
+		manager.reapPersistedProcesses()
 	}
 	manager.client = &http.Client{
 		Transport: transport,
@@ -166,12 +185,11 @@ func (m *Manager) Start(
 	workspacePath string,
 	configurationName string,
 ) (Status, error) {
-	operation := m.operationLock(sessionID)
-	operation.Lock()
+	releaseOperation := m.acquireOperation(sessionID)
 	operationLocked := true
 	defer func() {
 		if operationLocked {
-			operation.Unlock()
+			releaseOperation()
 		}
 	}()
 
@@ -179,18 +197,34 @@ func (m *Manager) Start(
 	if err != nil {
 		return stoppedStatus(sessionID), err
 	}
-	if _, err := m.stop(context.Background(), sessionID); err != nil {
-		return stoppedStatus(sessionID), err
-	}
-
-	port, err := selectPort(cfg.Port, cfg.AutoPort)
-	if err != nil {
-		return stoppedStatus(sessionID), serviceError("PREVIEW_PORT_UNAVAILABLE", err.Error())
-	}
 	workingDir, err := resolveWorkingDirectory(workspacePath, cfg.Cwd)
 	if err != nil {
 		return stoppedStatus(sessionID), err
 	}
+	validationPort := cfg.Port
+	if validationPort == 0 {
+		validationPort = 1
+	}
+	if _, err := resolveTargetURL(cfg.URL, validationPort); err != nil {
+		return stoppedStatus(sessionID), err
+	}
+	if _, err := m.stop(context.Background(), sessionID); err != nil {
+		return stoppedStatus(sessionID), err
+	}
+
+	port, reservation, err := reservePort(cfg.Port, cfg.AutoPort)
+	if err != nil {
+		var previewErr Error
+		if errors.As(err, &previewErr) {
+			return stoppedStatus(sessionID), previewErr
+		}
+		return stoppedStatus(sessionID), serviceError("PREVIEW_PORT_UNAVAILABLE", err.Error())
+	}
+	defer func() {
+		if reservation != nil {
+			_ = reservation.Close()
+		}
+	}()
 	targetURL, err := resolveTargetURL(cfg.URL, port)
 	if err != nil {
 		return stoppedStatus(sessionID), err
@@ -226,21 +260,26 @@ func (m *Manager) Start(
 		done: make(chan struct{}),
 		logs: logs,
 	}
+	// Arbitrary project servers cannot inherit a generic pre-bound socket. Keep
+	// the selected port reserved through command construction, then release it
+	// at the last possible moment before launch to minimize the bind race.
+	if err := reservation.Close(); err != nil {
+		return stoppedStatus(sessionID), serviceError("PREVIEW_PORT_UNAVAILABLE", fmt.Sprintf("release selected preview port: %v", err))
+	}
+	reservation = nil
 	if err := cmd.Start(); err != nil {
 		run.cmd = nil
 		run.status.State = StateFailed
 		run.status.Error = fmt.Sprintf("start preview server: %v", err)
-		m.mu.Lock()
-		m.runs[sessionID] = run
-		m.mu.Unlock()
 		return m.statusFor(run), serviceError("PREVIEW_START_FAILED", run.status.Error)
 	}
 
 	m.mu.Lock()
 	m.runs[sessionID] = run
+	m.persistProcessesLocked()
 	m.mu.Unlock()
 	go m.waitForExit(sessionID, run)
-	operation.Unlock()
+	releaseOperation()
 	operationLocked = false
 
 	timeout := readyTimeout(cfg.ReadyTimeoutMillis)
@@ -299,9 +338,8 @@ func (m *Manager) Start(
 
 // Stop terminates the exact process tree AO launched for the session.
 func (m *Manager) Stop(ctx context.Context, sessionID domain.SessionID) (Status, error) {
-	operation := m.operationLock(sessionID)
-	operation.Lock()
-	defer operation.Unlock()
+	releaseOperation := m.acquireOperation(sessionID)
+	defer releaseOperation()
 	return m.stop(ctx, sessionID)
 }
 
@@ -316,6 +354,8 @@ func (m *Manager) stop(ctx context.Context, sessionID domain.SessionID) (Status,
 		run.status.State = StateStopped
 		run.status.Error = ""
 		status := m.statusForLocked(run)
+		delete(m.runs, sessionID)
+		m.persistProcessesLocked()
 		m.mu.Unlock()
 		return status, nil
 	}
@@ -334,12 +374,14 @@ func (m *Manager) stop(ctx context.Context, sessionID domain.SessionID) (Status,
 		// against the owned process tree even after Wait has completed.
 		_ = forceKillPreviewProcess(cmd)
 	case <-ctx.Done():
+		go m.forceStopAfterGrace(sessionID, run, cmd, done)
 		return m.Status(sessionID), ctx.Err()
 	case <-time.After(5 * time.Second):
 		_ = forceKillPreviewProcess(cmd)
 		select {
 		case <-done:
 		case <-ctx.Done():
+			go m.forceStopAfterGrace(sessionID, run, cmd, done)
 			return m.Status(sessionID), ctx.Err()
 		case <-time.After(time.Second):
 			message := "preview server process did not exit after it was killed"
@@ -360,19 +402,34 @@ func (m *Manager) stop(ctx context.Context, sessionID domain.SessionID) (Status,
 		run.status.Error = ""
 	}
 	status := m.statusForLocked(run)
+	delete(m.runs, sessionID)
+	m.persistProcessesLocked()
 	m.mu.Unlock()
 	return status, nil
 }
 
-func (m *Manager) operationLock(sessionID domain.SessionID) *sync.Mutex {
+func (m *Manager) acquireOperation(sessionID domain.SessionID) func() {
 	m.operationsMu.Lock()
-	defer m.operationsMu.Unlock()
 	operation := m.operations[sessionID]
 	if operation == nil {
-		operation = &sync.Mutex{}
+		operation = &sessionOperation{}
 		m.operations[sessionID] = operation
 	}
-	return operation
+	operation.refs++
+	m.operationsMu.Unlock()
+	operation.mu.Lock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			operation.mu.Unlock()
+			m.operationsMu.Lock()
+			operation.refs--
+			if operation.refs == 0 {
+				delete(m.operations, sessionID)
+			}
+			m.operationsMu.Unlock()
+		})
+	}
 }
 
 // Status returns the latest managed preview state for a session.
@@ -411,6 +468,12 @@ func (m *Manager) Close() {
 func (m *Manager) waitForExit(sessionID domain.SessionID, run *serverRun) {
 	err := run.cmd.Wait()
 	m.mu.Lock()
+	unexpectedExit := !run.stopping
+	m.mu.Unlock()
+	if unexpectedExit {
+		_ = forceKillPreviewProcess(run.cmd)
+	}
+	m.mu.Lock()
 	if m.runs[sessionID] == run {
 		run.cmd = nil
 		if run.stopping {
@@ -427,8 +490,17 @@ func (m *Manager) waitForExit(sessionID domain.SessionID, run *serverRun) {
 			}
 		}
 	}
+	m.persistProcessesLocked()
 	m.mu.Unlock()
 	close(run.done)
+	time.AfterFunc(failedStatusRetention, func() {
+		m.mu.Lock()
+		if m.runs[sessionID] == run && run.cmd == nil {
+			delete(m.runs, sessionID)
+			m.persistProcessesLocked()
+		}
+		m.mu.Unlock()
+	})
 }
 
 func (m *Manager) failAndStop(
@@ -646,8 +718,8 @@ func resolveTargetURL(raw string, port int) (string, error) {
 		raw = "http://127.0.0.1:${PORT}/"
 	}
 	parsed, err := url.Parse(interpolatePort(raw, port))
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
-		return "", serviceError("PREVIEW_CONFIG_INVALID", "preview url must be an http(s) loopback URL")
+	if err != nil || parsed.Scheme != "http" || parsed.Host == "" {
+		return "", serviceError("PREVIEW_CONFIG_INVALID", "preview url must be an http loopback URL; TLS previews are not supported")
 	}
 	if !isLoopbackHost(parsed.Hostname()) {
 		return "", serviceError("PREVIEW_CONFIG_INVALID", "preview url must use localhost or a loopback address")
@@ -655,19 +727,16 @@ func resolveTargetURL(raw string, port int) (string, error) {
 	return parsed.String(), nil
 }
 
-func selectPort(preferred int, auto bool) (int, error) {
+func reservePort(preferred int, auto bool) (int, net.Listener, error) {
 	if !auto {
 		listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(preferred)))
 		if err != nil {
-			return 0, serviceError(
+			return 0, nil, serviceError(
 				"PREVIEW_PORT_IN_USE",
 				fmt.Sprintf("configured preview port %d is already in use", preferred),
 			)
 		}
-		if err := listener.Close(); err != nil {
-			return 0, fmt.Errorf("release configured preview port: %w", err)
-		}
-		return preferred, nil
+		return preferred, listener, nil
 	}
 	address := "127.0.0.1:0"
 	if preferred > 0 {
@@ -678,18 +747,14 @@ func selectPort(preferred int, auto bool) (int, error) {
 		listener, err = net.Listen("tcp", "127.0.0.1:0")
 	}
 	if err != nil {
-		return 0, fmt.Errorf("select preview port: %w", err)
+		return 0, nil, fmt.Errorf("select preview port: %w", err)
 	}
 	tcpAddress, ok := listener.Addr().(*net.TCPAddr)
 	if !ok {
 		_ = listener.Close()
-		return 0, errors.New("selected preview listener did not return a TCP address")
+		return 0, nil, errors.New("selected preview listener did not return a TCP address")
 	}
-	port := tcpAddress.Port
-	if err := listener.Close(); err != nil {
-		return 0, fmt.Errorf("release selected preview port: %w", err)
-	}
-	return port, nil
+	return tcpAddress.Port, listener, nil
 }
 
 func previewEnvironment(
@@ -698,7 +763,18 @@ func previewEnvironment(
 	sessionID domain.SessionID,
 	port int,
 ) []string {
-	env := append([]string{}, base...)
+	allowed := map[string]struct{}{
+		"PATH": {}, "HOME": {}, "USERPROFILE": {}, "SYSTEMROOT": {}, "COMSPEC": {},
+		"PATHEXT": {}, "TEMP": {}, "TMP": {}, "TMPDIR": {}, "SHELL": {}, "LANG": {},
+		"LC_ALL": {}, "APPDATA": {}, "LOCALAPPDATA": {},
+	}
+	env := make([]string, 0, len(allowed)+len(configured)+3)
+	for _, item := range base {
+		key, _, ok := strings.Cut(item, "=")
+		if _, keep := allowed[strings.ToUpper(key)]; ok && keep {
+			env = append(env, item)
+		}
+	}
 	for key, value := range configured {
 		env = append(env, key+"="+interpolatePort(value, port))
 	}
@@ -708,6 +784,90 @@ func previewEnvironment(
 		"AO_SESSION_ID="+string(sessionID),
 	)
 	return env
+}
+
+func (m *Manager) forceStopAfterGrace(
+	sessionID domain.SessionID,
+	run *serverRun,
+	cmd *exec.Cmd,
+	done <-chan struct{},
+) {
+	select {
+	case <-done:
+		_ = forceKillPreviewProcess(cmd)
+	case <-time.After(5 * time.Second):
+		_ = forceKillPreviewProcess(cmd)
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+		}
+	}
+	m.mu.Lock()
+	if m.runs[sessionID] == run && run.cmd == nil {
+		delete(m.runs, sessionID)
+		m.persistProcessesLocked()
+	}
+	m.mu.Unlock()
+}
+
+func (m *Manager) reapPersistedProcesses() {
+	data, err := os.ReadFile(m.registryPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	if err != nil {
+		m.log.Warn("read preview process registry", "err", err)
+		return
+	}
+	var processes []persistedProcess
+	if err := json.Unmarshal(data, &processes); err != nil {
+		m.log.Warn("decode preview process registry", "err", err)
+		return
+	}
+	for _, process := range processes {
+		if process.PID > 0 {
+			if err := forceKillPreviewPID(process.PID); err != nil {
+				m.log.Warn("reap orphaned preview process", "session", process.SessionID, "pid", process.PID, "err", err)
+			}
+		}
+	}
+	if err := os.Remove(m.registryPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		m.log.Warn("remove stale preview process registry", "err", err)
+	}
+}
+
+func (m *Manager) persistProcessesLocked() {
+	if m.registryPath == "" {
+		return
+	}
+	processes := make([]persistedProcess, 0, len(m.runs))
+	for id, run := range m.runs {
+		if run.cmd == nil || run.cmd.Process == nil {
+			continue
+		}
+		processes = append(processes, persistedProcess{
+			SessionID: id,
+			PID:       run.cmd.Process.Pid,
+			Port:      run.status.Port,
+			StartedAt: run.status.StartedAt,
+		})
+	}
+	if len(processes) == 0 {
+		_ = os.Remove(m.registryPath)
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(m.registryPath), 0o700); err != nil {
+		m.log.Warn("create preview process registry directory", "err", err)
+		return
+	}
+	data, err := json.MarshalIndent(processes, "", "  ")
+	if err != nil {
+		m.log.Warn("encode preview process registry", "err", err)
+		return
+	}
+	if err := os.WriteFile(m.registryPath, append(data, '\n'), 0o600); err != nil {
+		m.log.Warn("write preview process registry", "err", err)
+	}
 }
 
 func interpolatePort(value string, port int) string {

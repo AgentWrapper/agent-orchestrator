@@ -139,8 +139,54 @@ func TestSelectPortRejectsOccupiedFixedPort(t *testing.T) {
 	defer func() { _ = listener.Close() }()
 	port := listener.Addr().(*net.TCPAddr).Port
 
-	_, err = selectPort(port, false)
+	_, reservation, err := reservePort(port, false)
+	if reservation != nil {
+		_ = reservation.Close()
+	}
 	assertPreviewErrorCode(t, err, "PREVIEW_PORT_IN_USE")
+}
+
+func TestReservePortHoldsSelectionUntilLaunch(t *testing.T) {
+	port, reservation, err := reservePort(0, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	if competing, err := net.Listen("tcp", address); err == nil {
+		_ = competing.Close()
+		t.Fatalf("selected port %d was not reserved", port)
+	}
+	if err := reservation.Close(); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		t.Fatalf("released port %d remained unavailable: %v", port, err)
+	}
+	_ = listener.Close()
+}
+
+func TestPreviewEnvironmentDoesNotInheritDaemonCredentials(t *testing.T) {
+	env := previewEnvironment(
+		[]string{
+			"PATH=/usr/bin",
+			"HOME=/home/test",
+			"GITHUB_TOKEN=secret",
+			"AO_BROWSER_RUNTIME_TOKEN=runtime-secret",
+		},
+		map[string]string{"PUBLIC_FLAG": "enabled"},
+		"session-1",
+		4173,
+	)
+	joined := strings.Join(env, "\n")
+	if strings.Contains(joined, "GITHUB_TOKEN") || strings.Contains(joined, "AO_BROWSER_RUNTIME_TOKEN") {
+		t.Fatalf("preview inherited daemon credentials: %v", env)
+	}
+	for _, want := range []string{"PATH=/usr/bin", "HOME=/home/test", "PUBLIC_FLAG=enabled", "AO_SESSION_ID=session-1"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("preview env missing %q: %v", want, env)
+		}
+	}
 }
 
 func helperConfiguration(name string, kind TargetKind) Configuration {

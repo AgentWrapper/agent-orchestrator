@@ -77,6 +77,9 @@ surface (`npm run sqlc`, `npm run api`).
   have isolated cookies and web storage. The toolbar activity signal is scoped
   to actual agent browser commands; annotation progress is separate and its
   successful-delivery confirmation clears automatically.
+- Preview targets are explicit: `ao preview`, `ao preview <target>`, or
+  `ao preview start` selects what the panel shows. The desktop poller no longer
+  auto-discovers a static entry point merely because a fresh worker exists.
 - Real daemon wiring via the generated `openapi-fetch` typed client
   (`src/api/schema.ts`); mock data only in `VITE_NO_ELECTRON` web-preview mode.
 - Electron main handles daemon discovery, launch, and status reporting.

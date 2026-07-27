@@ -3,7 +3,11 @@
 package browserruntime
 
 import (
+	"bufio"
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,8 +22,18 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-// ProtocolVersion identifies the daemon-to-Electron browser bridge contract.
-const ProtocolVersion = 2
+const (
+	// ProtocolVersion identifies the daemon-to-Electron browser bridge contract.
+	ProtocolVersion = 2
+	// RuntimeTokenEnv is deliberately removed from worker and preview-process
+	// environments. Only the daemon and desktop supervisor need it.
+	RuntimeTokenEnv = "AO_BROWSER_RUNTIME_TOKEN"
+	// RuntimeAddressEnv carries the exact listener address into running.json so
+	// Electron never has to duplicate the backend's platform-specific naming.
+	RuntimeAddressEnv    = "AO_BROWSER_RUNTIME_ADDRESS"
+	helloTimeout         = 5 * time.Second
+	maxRuntimeFrameBytes = 8 << 20
+)
 
 // ErrUnavailable indicates that no Electron browser runtime can accept a command.
 var ErrUnavailable = errors.New("browser runtime is unavailable")
@@ -60,6 +74,7 @@ type Result struct {
 type wireMessage struct {
 	Type      string                 `json:"type"`
 	Version   int                    `json:"version,omitempty"`
+	Token     string                 `json:"token,omitempty"`
 	RequestID string                 `json:"requestId,omitempty"`
 	SessionID domain.SessionID       `json:"sessionId,omitempty"`
 	Action    string                 `json:"action,omitempty"`
@@ -85,16 +100,31 @@ type Broker struct {
 	connectedAt time.Time
 	pending     map[string]chan pendingResult
 	writeGate   chan struct{}
+	token       string
 }
 
 // New creates an empty browser command broker.
-func New(log *slog.Logger) *Broker {
+func New(log *slog.Logger, token ...string) *Broker {
 	if log == nil {
 		log = slog.Default()
 	}
 	gate := make(chan struct{}, 1)
 	gate <- struct{}{}
-	return &Broker{log: log, pending: make(map[string]chan pendingResult), writeGate: gate}
+	runtimeToken := ""
+	if len(token) > 0 {
+		runtimeToken = token[0]
+	}
+	return &Broker{log: log, pending: make(map[string]chan pendingResult), writeGate: gate, token: runtimeToken}
+}
+
+// NewToken returns a per-daemon-launch secret used to authenticate the desktop
+// browser runtime before it can replace the active bridge connection.
+func NewToken() (string, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("generate browser runtime token: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
 // Status returns the current Electron runtime connection state.
@@ -149,6 +179,17 @@ func (b *Broker) Execute(ctx context.Context, sessionID domain.SessionID, action
 	}
 }
 
+// DestroySession implements sessionmanager.BrowserLifecycle. It bypasses the
+// public browser action allowlist but still uses the authenticated runtime
+// transport, so session teardown does not depend on a mounted renderer panel.
+func (b *Broker) DestroySession(ctx context.Context, sessionID domain.SessionID) error {
+	_, err := b.Execute(ctx, sessionID, "__destroy-session", nil)
+	if errors.Is(err, ErrUnavailable) {
+		return nil
+	}
+	return err
+}
+
 // Serve accepts Electron runtime connections until ctx is cancelled. A new
 // valid runtime replaces an older connection and fails its in-flight commands;
 // this makes renderer reload/restart recovery deterministic.
@@ -170,12 +211,19 @@ func (b *Broker) Serve(ctx context.Context, ln net.Listener) error {
 }
 
 func (b *Broker) serveConn(ctx context.Context, conn net.Conn) {
-	dec := json.NewDecoder(conn)
+	_ = conn.SetReadDeadline(time.Now().Add(helloTimeout))
+	scanner := bufio.NewScanner(conn)
+	scanner.Buffer(make([]byte, 64*1024), maxRuntimeFrameBytes)
 	var hello wireMessage
-	if err := dec.Decode(&hello); err != nil || hello.Type != "hello" || hello.Version != ProtocolVersion {
+	if !scanner.Scan() ||
+		json.Unmarshal(scanner.Bytes(), &hello) != nil ||
+		hello.Type != "hello" ||
+		hello.Version != ProtocolVersion ||
+		!validRuntimeToken(b.token, hello.Token) {
 		_ = conn.Close()
 		return
 	}
+	_ = conn.SetReadDeadline(time.Time{})
 
 	b.mu.Lock()
 	old := b.conn
@@ -194,17 +242,17 @@ func (b *Broker) serveConn(ctx context.Context, conn net.Conn) {
 		_ = conn.Close()
 	}()
 
-	for {
+	for scanner.Scan() {
 		var msg wireMessage
-		if err := dec.Decode(&msg); err != nil {
-			b.disconnect(conn, err)
-			return
+		if err := json.Unmarshal(scanner.Bytes(), &msg); err != nil {
+			continue
 		}
 		if msg.Type != "result" || msg.RequestID == "" {
 			continue
 		}
 		b.resolve(msg)
 	}
+	b.disconnect(conn, scanner.Err())
 }
 
 func (b *Broker) write(ctx context.Context, conn net.Conn, msg wireMessage) error {
@@ -225,7 +273,22 @@ func (b *Broker) write(ctx context.Context, conn net.Conn, msg wireMessage) erro
 	stop := context.AfterFunc(ctx, func() {
 		_ = conn.SetWriteDeadline(time.Now())
 	})
-	err := json.NewEncoder(conn).Encode(msg)
+	frame, err := json.Marshal(msg)
+	if err == nil && len(frame)+1 > maxRuntimeFrameBytes {
+		err = fmt.Errorf("browser runtime frame exceeds %d bytes", maxRuntimeFrameBytes)
+	}
+	if err == nil {
+		frame = append(frame, '\n')
+		for len(frame) > 0 && err == nil {
+			var written int
+			written, err = conn.Write(frame)
+			if written == 0 && err == nil {
+				err = io.ErrShortWrite
+				break
+			}
+			frame = frame[written:]
+		}
+	}
 	stop()
 	_ = conn.SetWriteDeadline(time.Time{})
 	if ctx.Err() != nil {
@@ -237,6 +300,13 @@ func (b *Broker) write(ctx context.Context, conn net.Conn, msg wireMessage) erro
 		}
 	}
 	return err
+}
+
+func validRuntimeToken(expected, actual string) bool {
+	if expected == "" {
+		return actual == ""
+	}
+	return hmac.Equal([]byte(expected), []byte(actual))
 }
 
 func (b *Broker) resolve(msg wireMessage) {

@@ -26,6 +26,8 @@ function setupHost() {
 		if (method === "Runtime.evaluate") return { result: { value: true } };
 		return {};
 	});
+	const setPermissionCheckHandler = vi.fn();
+	const setPermissionRequestHandler = vi.fn();
 	const webContents = {
 		id: 99,
 		mainFrame: { frameToken: "preview-frame" },
@@ -64,7 +66,11 @@ function setupHost() {
 		send: vi.fn(),
 		setWindowOpenHandler: () => undefined,
 		stop: () => undefined,
-		close: () => undefined,
+		close: vi.fn(),
+		session: {
+			setPermissionCheckHandler,
+			setPermissionRequestHandler,
+		},
 	};
 	const view = {
 		webContents,
@@ -143,6 +149,8 @@ function setupHost() {
 		rendererFrame,
 		send,
 		sent,
+		setPermissionCheckHandler,
+		setPermissionRequestHandler,
 		shellFocus,
 		shellSend,
 		view,
@@ -393,6 +401,47 @@ describe("browser:capture", () => {
 });
 
 describe("agent browser runtime", () => {
+	it("denies browser-partition permissions by default", async () => {
+		const { host, setPermissionCheckHandler, setPermissionRequestHandler } = setupHost();
+		await host.execute("sess-1", "tabs");
+
+		expect(setPermissionCheckHandler).toHaveBeenCalledWith(expect.any(Function));
+		expect(setPermissionCheckHandler.mock.calls[0][0]()).toBe(false);
+		const callback = vi.fn();
+		setPermissionRequestHandler.mock.calls[0][0]({}, "camera", callback);
+		expect(callback).toHaveBeenCalledWith(false);
+	});
+
+	it("rejects local files and implicit searches from agent-originated navigation", async () => {
+		const { host, webContents } = setupHost();
+
+		await expect(host.execute("sess-1", "open", { url: "file:///tmp/secret" })).rejects.toMatchObject({
+			code: "BROWSER_URL_FORBIDDEN",
+		});
+		await expect(host.execute("sess-1", "open", { url: "search these words" })).rejects.toMatchObject({
+			code: "INVALID_URL",
+		});
+		expect(webContents.loadURL).not.toHaveBeenCalled();
+	});
+
+	it("destroys a headless session target through the daemon lifecycle command", async () => {
+		const { host, webContents } = setupHost();
+		await host.execute("sess-1", "tabs");
+
+		await expect(host.execute("sess-1", "__destroy-session")).resolves.toEqual({ destroyed: true });
+		expect(webContents.close).toHaveBeenCalledTimes(1);
+		await expect(host.execute("sess-1", "__destroy-session")).resolves.toEqual({ destroyed: false });
+	});
+
+	it("caps session tabs", async () => {
+		const { host } = setupHost();
+		await host.execute("sess-1", "tabs");
+		for (let i = 1; i < 16; i += 1) {
+			await host.execute("sess-1", "tab-new");
+		}
+		await expect(host.execute("sess-1", "tab-new")).rejects.toMatchObject({ code: "BROWSER_TAB_LIMIT" });
+	});
+
 	it("creates one hidden target per session and reuses it when the panel mounts", async () => {
 		const { host, invoke, view } = setupHost();
 		await host.execute("sess-1", "open", { url: "http://localhost:4173" });
@@ -401,6 +450,31 @@ describe("agent browser runtime", () => {
 
 		expect(state.viewId).toBe("0:sess-1");
 		expect(view.webContents.loadURL).toHaveBeenCalledTimes(1);
+	});
+
+	it("reports snapshot truncation after filtering instead of silently slicing raw AX nodes", async () => {
+		const { debuggerSendCommand, host } = setupHost();
+		debuggerSendCommand.mockImplementation(async (method: string) => {
+			if (method === "Accessibility.getFullAXTree") {
+				return {
+					nodes: Array.from({ length: 1_005 }, (_, index) => ({
+						nodeId: String(index + 1),
+						role: { value: "text" },
+						name: { value: `node-${index + 1}` },
+					})),
+				};
+			}
+			return {};
+		});
+
+		const snapshot = (await host.execute("sess-1", "snapshot")) as {
+			text: string;
+			totalNodes: number;
+			truncated: boolean;
+		};
+		expect(snapshot.totalNodes).toBe(1_005);
+		expect(snapshot.truncated).toBe(true);
+		expect(snapshot.text).toContain("Snapshot truncated");
 	});
 
 	it("returns compact refs and targets only the referenced WebContents node", async () => {
@@ -421,6 +495,13 @@ describe("agent browser runtime", () => {
 				};
 			}
 			if (method === "DOM.resolveNode") return { object: { objectId: "save-button" } };
+			if (method === "DOM.getBoxModel") {
+				return { model: { border: [10, 20, 30, 20, 30, 40, 10, 40] } };
+			}
+			if (method === "Page.getLayoutMetrics") {
+				return { cssVisualViewport: { pageX: 0, pageY: 0 } };
+			}
+			if (method === "Runtime.callFunctionOn") return { result: { value: true } };
 			return {};
 		});
 
@@ -493,9 +574,15 @@ describe("agent browser runtime", () => {
 			if (method === "DOM.getBoxModel") {
 				return { model: { border: [10, 20, 30, 20, 30, 40, 10, 40] } };
 			}
+			if (method === "Page.getLayoutMetrics") {
+				return { cssVisualViewport: { pageX: 0, pageY: 0 } };
+			}
 			if (method === "Runtime.evaluate") return { result: { value: { x: 400, y: 300 } } };
 			if (method === "Runtime.callFunctionOn") {
 				const declaration = String(params?.functionDeclaration ?? "");
+				if (declaration.includes("elementFromPoint")) {
+					return { result: { value: true } };
+				}
 				if (declaration.includes("HTMLSelectElement")) {
 					return { result: { value: { supported: true, matched: true, value: "large" } } };
 				}
@@ -645,7 +732,9 @@ describe("agent browser runtime", () => {
 		const errors = (await host.execute("sess-1", "errors")) as { messages: Array<{ message: string }> };
 		expect(screenshot.data).toBe(Buffer.from("png-snapshot").toString("base64"));
 		expect(screenshot.width).toBe(640);
-		expect(errors.messages.map((entry) => entry.message)).toEqual(["boom"]);
+		expect(errors.messages).toHaveLength(1);
+		expect(errors.messages[0].message).toContain("BEGIN UNTRUSTED EXTERNAL CONTENT");
+		expect(errors.messages[0].message).toContain("boom");
 	});
 
 	it("reports agent activity only while a browser command is executing", async () => {

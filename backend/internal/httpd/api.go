@@ -19,24 +19,25 @@ import (
 
 // APIDeps bundles every service the API layer's controllers depend on.
 type APIDeps struct {
-	Agents             controllers.AgentCatalog
-	Projects           projectsvc.Manager
-	Sessions           controllers.SessionService
-	Activity           controllers.ActivityRecorder
-	PRs                prsvc.ActionManager
-	Reviews            reviewsvc.Manager
-	Notifications      controllers.NotificationService
-	NotificationStream controllers.NotificationStream
-	Push               controllers.PushRegistry
-	Import             controllers.ImportService
-	ShellTerminals     controllers.ShellTerminalService
-	DevImport          controllers.DevImportService
-	CDC                cdc.Source
-	Events             cdcSubscriber
-	Telemetry          ports.EventSink
-	Mobile             *controllers.MobileController
-	Browser            controllers.BrowserService
-	PreviewServer      controllers.ManagedPreviewServer
+	Agents              controllers.AgentCatalog
+	Projects            projectsvc.Manager
+	Sessions            controllers.SessionService
+	Activity            controllers.ActivityRecorder
+	PRs                 prsvc.ActionManager
+	Reviews             reviewsvc.Manager
+	Notifications       controllers.NotificationService
+	NotificationStream  controllers.NotificationStream
+	Push                controllers.PushRegistry
+	Import              controllers.ImportService
+	ShellTerminals      controllers.ShellTerminalService
+	DevImport           controllers.DevImportService
+	CDC                 cdc.Source
+	Events              cdcSubscriber
+	Telemetry           ports.EventSink
+	Mobile              *controllers.MobileController
+	Browser             controllers.BrowserService
+	PreviewServer       controllers.ManagedPreviewServer
+	SessionCapabilities controllers.SessionCapabilityValidator
 }
 
 // API owns one controller per resource and is the single Register call the
@@ -73,6 +74,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 			Svc:           deps.Sessions,
 			Activity:      deps.Activity,
 			PreviewServer: deps.PreviewServer,
+			Capabilities:  deps.SessionCapabilities,
 		},
 		prs:           &controllers.PRsController{Svc: deps.PRs},
 		reviews:       &controllers.ReviewsController{Svc: deps.Reviews},

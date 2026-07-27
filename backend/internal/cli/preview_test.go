@@ -50,6 +50,7 @@ func previewServer(t *testing.T, status int, respBody string) (*httptest.Server,
 
 func previewLifecycleServer(t *testing.T, status int, respBody string) (*httptest.Server, *previewCapture) {
 	t.Helper()
+	t.Setenv("AO_BROWSER_CAPABILITY", "preview-capability")
 	capture := &previewCapture{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/sessions/aa-47/preview/server" {

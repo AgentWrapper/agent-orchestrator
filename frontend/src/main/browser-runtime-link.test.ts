@@ -100,6 +100,42 @@ describe("browser runtime link", () => {
 		);
 	});
 
+	it("preserves UTF-8 code points split across socket chunks", async () => {
+		let serverSocket: net.Socket | null = null;
+		const execute = vi.fn(async () => ({}));
+		const server = net.createServer((socket) => {
+			serverSocket = socket;
+		});
+		servers.push(server);
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const address = server.address() as net.AddressInfo;
+		const handle = connectBrowserRuntime({ host: address.address, port: address.port }, { execute });
+		handles.push(handle);
+		await vi.waitFor(() => expect(handle.connected).toBe(true));
+
+		const frame = Buffer.from(
+			`${JSON.stringify({
+				type: "command",
+				requestId: "utf8",
+				sessionId: "s1",
+				action: "fill",
+				args: { text: "café 🎉" },
+			})}\n`,
+			"utf8",
+		);
+		const emojiStart = frame.indexOf(Buffer.from("🎉", "utf8"));
+		serverSocket!.write(frame.subarray(0, emojiStart + 1));
+		serverSocket!.write(frame.subarray(emojiStart + 1));
+
+		await vi.waitFor(() =>
+			expect(execute).toHaveBeenCalledWith(
+				expect.objectContaining({ args: { text: "café 🎉" } }),
+				expect.any(AbortSignal),
+			),
+		);
+		serverSocket!.destroy();
+	});
+
 	it("queues per session and cancels work from a closed connection", async () => {
 		let serverSocket: net.Socket | null = null;
 		const messages: Array<Record<string, unknown>> = [];

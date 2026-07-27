@@ -61,7 +61,17 @@ func quoteWindowsBatchArg(value string) string {
 }
 
 func terminatePreviewProcess(cmd *exec.Cmd) error {
-	return forceKillPreviewProcess(cmd)
+	if cmd == nil || cmd.Process == nil {
+		return nil
+	}
+	return aoprocess.Command("taskkill", "/PID", strconv.Itoa(cmd.Process.Pid), "/T").Run()
+}
+
+func forceKillPreviewPID(pid int) error {
+	if pid <= 0 {
+		return nil
+	}
+	return aoprocess.Command("taskkill", "/PID", strconv.Itoa(pid), "/T", "/F").Run()
 }
 
 func forceKillPreviewProcess(cmd *exec.Cmd) error {
