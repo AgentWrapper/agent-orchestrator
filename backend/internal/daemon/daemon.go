@@ -276,6 +276,7 @@ func Run() error {
 		Events:             cdcPipe.Broadcaster,
 		Activity:           lcStack.LCM,
 		UsageHooks:         usageCollector,
+		UsageSummary:       usagesvc.NewSummaryReader(store),
 		Telemetry:          telemetrySink,
 		Mobile:             mc,
 		DevImport: devimportsvc.New(devimportsvc.Deps{

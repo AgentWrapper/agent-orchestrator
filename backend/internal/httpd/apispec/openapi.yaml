@@ -2577,6 +2577,38 @@ paths:
       summary: Rename a standalone shell terminal tab
       tags:
       - shellTerminals
+  /api/v1/usage/sessions:
+    get:
+      operationId: listCompactSessionUsage
+      parameters:
+      - description: Optional project id filter for dashboard cards.
+        in: query
+        name: projectId
+        schema:
+          description: Optional project id filter for dashboard cards.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListCompactSessionUsageResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List compact token usage for session cards
+      tags:
+      - usage
 components:
   schemas:
     APIError:
@@ -2758,6 +2790,39 @@ components:
       required:
       - sessionId
       - reason
+      type: object
+    CompactSessionUsageResponse:
+      properties:
+        collectionState:
+          enum:
+          - waiting
+          - collecting
+          - complete
+          - partial
+          - unavailable
+          type: string
+        coverage:
+          enum:
+          - complete
+          - partial
+          - unavailable
+          type: string
+        lastObservedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        sessionId:
+          type: string
+        totalTokens:
+          format: int64
+          minimum: 0
+          type: integer
+      required:
+      - sessionId
+      - totalTokens
+      - collectionState
+      - coverage
       type: object
     CompleteOrchestratorResponse:
       properties:
@@ -3063,6 +3128,15 @@ components:
       - supported
       - installed
       - authorized
+      type: object
+    ListCompactSessionUsageResponse:
+      properties:
+        sessions:
+          items:
+            $ref: '#/components/schemas/CompactSessionUsageResponse'
+          type: array
+      required:
+      - sessions
       type: object
     ListNotificationsResponse:
       properties:
@@ -4416,6 +4490,8 @@ tags:
   name: reviews
 - description: Durable dashboard notifications
   name: notifications
+- description: Compact token usage summaries for dashboard session cards
+  name: usage
 - description: Mobile push-device registration for OS push notifications
   name: push
 - description: Server-sent CDC event stream with durable replay

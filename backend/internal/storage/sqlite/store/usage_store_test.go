@@ -267,6 +267,65 @@ func TestUsageRowsCascadeWhenSeedSessionDeleted(t *testing.T) {
 	}
 }
 
+func TestListCompactSessionUsageAggregatesAndFiltersByProject(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	now := time.Unix(1700000000, 0).UTC()
+	seedProject(t, s, "usage")
+	seedProject(t, s, "other")
+
+	usageRec := sampleRecord("usage")
+	usageRec.Harness = domain.HarnessCodex
+	usageSession, err := s.CreateSession(ctx, usageRec)
+	if err != nil {
+		t.Fatalf("create usage session: %v", err)
+	}
+	otherSession, err := s.CreateSession(ctx, sampleRecord("other"))
+	if err != nil {
+		t.Fatalf("create other session: %v", err)
+	}
+	source := seedUsageSource(t, s, usageSession, now)
+	if _, err := s.ApplyUsageChunk(ctx, source.ID, 0, domain.SourceCursorState{
+		ByteOffset:     10,
+		State:          domain.UsageSourceComplete,
+		LastObservedAt: &now,
+		UpdatedAt:      now,
+	}, []domain.ModelUsageEvent{
+		usageEvent("event-1", "hash-1", now, domain.UsageTokenMetrics{InputTokens: 100, UncachedInputTokens: 100, OutputTokens: 20}, nil),
+		usageEvent("event-2", "hash-2", now.Add(time.Second), domain.UsageTokenMetrics{InputTokens: 50, UncachedInputTokens: 50, OutputTokens: 10}, nil),
+	}); err != nil {
+		t.Fatalf("apply usage events: %v", err)
+	}
+	if _, err := s.UpdateUsageBindingState(ctx, source.BindingID, domain.UsageBindingComplete, "", now); err != nil {
+		t.Fatalf("complete binding: %v", err)
+	}
+
+	got, err := s.ListCompactSessionUsage(ctx, "usage")
+	if err != nil {
+		t.Fatalf("list compact usage: %v", err)
+	}
+	if len(got) != 1 || got[0].SessionID != usageSession.ID {
+		t.Fatalf("filtered rows = %+v, want only %s (not %s)", got, usageSession.ID, otherSession.ID)
+	}
+	row := got[0]
+	if row.TotalTokens != 180 || row.EventCount != 2 ||
+		row.BindingCount != 1 || row.CompleteBindingCount != 1 ||
+		row.SourceCount != 1 || row.CompleteSourceCount != 1 {
+		t.Fatalf("aggregate = %+v", row)
+	}
+	if row.LastObservedAt == nil || !row.LastObservedAt.Equal(now.Add(time.Second)) {
+		t.Fatalf("last observed = %v, want %v", row.LastObservedAt, now.Add(time.Second))
+	}
+
+	all, err := s.ListCompactSessionUsage(ctx, "")
+	if err != nil {
+		t.Fatalf("list all compact usage: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("all rows = %d, want 2", len(all))
+	}
+}
+
 func seedUsageSession(t *testing.T, s *sqlite.Store, harness domain.AgentHarness) domain.SessionRecord {
 	t.Helper()
 	ctx := context.Background()

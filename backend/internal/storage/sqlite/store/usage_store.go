@@ -296,6 +296,37 @@ func (s *Store) CountUsageRowsForSession(ctx context.Context, sessionID domain.S
 	return domain.UsageRowCounts{BindingCount: row.BindingCount, SourceCount: row.SourceCount, EventCount: row.EventCount}, nil
 }
 
+// ListCompactSessionUsage returns every session's usage facts in one grouped
+// read. projectID optionally limits the rows to one dashboard board.
+func (s *Store) ListCompactSessionUsage(ctx context.Context, projectID domain.ProjectID) ([]domain.UsageSessionAggregate, error) {
+	rows, err := s.qr.ListCompactSessionUsage(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("list compact session usage for project %s: %w", projectID, err)
+	}
+	out := make([]domain.UsageSessionAggregate, 0, len(rows))
+	for _, row := range rows {
+		var lastObservedAt *time.Time
+		if parsed, ok := timeFromSQLiteValue(row.LastObservedAt); ok {
+			lastObservedAt = &parsed
+		}
+		out = append(out, domain.UsageSessionAggregate{
+			SessionID:            row.SessionID,
+			Harness:              row.Harness,
+			BindingCount:         row.BindingCount,
+			CompleteBindingCount: row.CompleteBindingCount,
+			PartialBindingCount:  row.PartialBindingCount,
+			SourceCount:          row.SourceCount,
+			CompleteSourceCount:  row.CompleteSourceCount,
+			ErrorSourceCount:     row.ErrorSourceCount,
+			AnomalousSourceCount: row.AnomalousSourceCount,
+			EventCount:           row.EventCount,
+			TotalTokens:          row.TotalTokens,
+			LastObservedAt:       lastObservedAt,
+		})
+	}
+	return out, nil
+}
+
 func usageBindingFromGen(row gen.UsageBinding) domain.UsageBindingRecord {
 	return domain.UsageBindingRecord{
 		ID:               row.ID,
