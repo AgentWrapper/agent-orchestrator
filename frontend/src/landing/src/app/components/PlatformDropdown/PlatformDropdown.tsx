@@ -5,7 +5,7 @@ import {
 	DropdownMenuContent,
 	DropdownMenuItem,
 	DropdownMenuTrigger,
-} from "@superset/ui/dropdown-menu";
+} from "@ao/ui/dropdown-menu";
 import type { ReactNode } from "react";
 
 export interface DropdownItem {

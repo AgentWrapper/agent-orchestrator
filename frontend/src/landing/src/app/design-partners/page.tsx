@@ -1,4 +1,4 @@
-import { COMPANY } from "@superset/shared/constants";
+import { COMPANY } from "@ao/shared/constants";
 import type { Metadata } from "next";
 
 const CONTACT_EMAIL = "prateek@untrivial.ai";

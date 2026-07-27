@@ -88,8 +88,8 @@ const columns = [
 				tone: "default",
 			},
 			{
-				title: "Replace leftover Superset app chrome in preview",
-				branch: "landing/remove-superset-mock",
+				title: "Polish the landing preview app chrome",
+				branch: "landing/preview-chrome",
 				agent: "Codex",
 				icon: "/app-icons/coverage-codex.svg",
 				activity: "Running tests",
