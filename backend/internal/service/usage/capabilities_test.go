@@ -33,10 +33,12 @@ func TestCapabilityForSupportedHarnesses(t *testing.T) {
 			if !c.Supported || c.Harness != tt.harness || c.ParserVersion != tt.parserVersion {
 				t.Fatalf("capability = %+v", c)
 			}
-			if c.TokenConfidence != domain.TokenConfidenceParsed || c.CostConfidence != domain.CostConfidenceEstimate {
-				t.Fatalf("confidence = %s/%s, want parsed_jsonl/api_pricing_estimate", c.TokenConfidence, c.CostConfidence)
+			if c.TokenConfidence != domain.TokenConfidenceParsed || c.CostConfidence != domain.CostConfidenceNone {
+				t.Fatalf("confidence = %s/%s, want parsed_jsonl/unavailable", c.TokenConfidence, c.CostConfidence)
 			}
-			if c.Fields.Tokens != domain.UsageCoverageComplete || c.Fields.ReasoningTokens != tt.reasoning {
+			if c.Fields.Tokens != domain.UsageCoverageComplete ||
+				c.Fields.ReasoningTokens != tt.reasoning ||
+				c.Fields.Cost != domain.UsageCoverageUnavailable {
 				t.Fatalf("fields = %+v", c.Fields)
 			}
 			if len(c.SourceKinds) != len(tt.sourceKinds) {
