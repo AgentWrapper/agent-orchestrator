@@ -3,7 +3,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Sidebar } from "./Sidebar";
+import {
+	Sidebar,
+	SIDEBAR_COLLAPSE_THRESHOLD,
+	SIDEBAR_DEFAULT_WIDTH,
+	SIDEBAR_MIN_WIDTH,
+} from "./Sidebar";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
 import { useUiStore } from "../stores/ui-store";
@@ -247,8 +252,8 @@ describe("Sidebar", () => {
 	it("keeps only the collapsed Settings control keyboard-accessible while collapsed", async () => {
 		renderSidebar();
 
-		fireEvent.pointerDown(screen.getByTestId("resize-handle"), { clientX: 240 });
-		fireEvent.pointerMove(window, { clientX: 120 });
+		fireEvent.pointerDown(screen.getByTestId("resize-handle"), { clientX: SIDEBAR_DEFAULT_WIDTH });
+		fireEvent.pointerMove(window, { clientX: SIDEBAR_COLLAPSE_THRESHOLD - 1 });
 
 		await waitFor(() => {
 			expect(document.querySelector('[data-slot="sidebar"][data-state="collapsed"]')).toBeInTheDocument();
@@ -861,28 +866,30 @@ describe("Sidebar", () => {
 
 		expect(document.querySelector('[data-slot="sidebar"][data-state="expanded"]')).toBeInTheDocument();
 
-		fireEvent.pointerDown(resizeHandle, { clientX: 240 });
-		fireEvent.pointerMove(window, { clientX: 120 });
+		fireEvent.pointerDown(resizeHandle, { clientX: SIDEBAR_DEFAULT_WIDTH });
+		fireEvent.pointerMove(window, { clientX: SIDEBAR_COLLAPSE_THRESHOLD - 1 });
 
 		await waitFor(() => {
 			expect(document.querySelector('[data-slot="sidebar"][data-state="collapsed"]')).toBeInTheDocument();
 		});
 		expect(document.cookie).toContain("sidebar_state=false");
-		expect(window.localStorage.getItem("ao-sidebar-w")).toBe("240");
-		expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe("240px");
+		expect(window.localStorage.getItem("ao-sidebar-w")).toBe(String(SIDEBAR_DEFAULT_WIDTH));
+		expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe(`${SIDEBAR_DEFAULT_WIDTH}px`);
 		expect(document.body).not.toHaveClass("is-resizing-x");
 
 		const expandRail = document.querySelector('[data-sidebar="rail"]');
 		if (!(expandRail instanceof HTMLElement)) throw new Error("Sidebar rail not found");
-		fireEvent.pointerDown(expandRail, { clientX: 48 });
-		fireEvent.pointerMove(window, { clientX: 128 });
+		const expandedWidth = SIDEBAR_DEFAULT_WIDTH + (SIDEBAR_DEFAULT_WIDTH - SIDEBAR_MIN_WIDTH);
+		const expandDistance = expandedWidth - SIDEBAR_MIN_WIDTH;
+		fireEvent.pointerDown(expandRail, { clientX: 0 });
+		fireEvent.pointerMove(window, { clientX: expandDistance });
 		fireEvent.pointerUp(window);
 
 		await waitFor(() => {
 			expect(document.querySelector('[data-slot="sidebar"][data-state="expanded"]')).toBeInTheDocument();
 		});
-		expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe("280px");
-		expect(window.localStorage.getItem("ao-sidebar-w")).toBe("280");
+		expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe(`${expandedWidth}px`);
+		expect(window.localStorage.getItem("ao-sidebar-w")).toBe(String(expandedWidth));
 	});
 
 	it("discards a queued narrow resize frame when collapsing", async () => {
@@ -898,19 +905,19 @@ describe("Sidebar", () => {
 
 			const resizeHandle = screen.getByTestId("resize-handle");
 
-			fireEvent.pointerDown(resizeHandle, { clientX: 240 });
-			fireEvent.pointerMove(window, { clientX: 205 });
-			fireEvent.pointerMove(window, { clientX: 120 });
+			fireEvent.pointerDown(resizeHandle, { clientX: SIDEBAR_DEFAULT_WIDTH });
+			fireEvent.pointerMove(window, { clientX: SIDEBAR_MIN_WIDTH + 5 });
+			fireEvent.pointerMove(window, { clientX: SIDEBAR_COLLAPSE_THRESHOLD - 1 });
 
 			await waitFor(() => {
 				expect(document.querySelector('[data-slot="sidebar"][data-state="collapsed"]')).toBeInTheDocument();
 			});
 			expect(cancelAnimationFrameSpy).toHaveBeenCalledWith(1);
-			expect(window.localStorage.getItem("ao-sidebar-w")).toBe("240");
-			expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe("240px");
+			expect(window.localStorage.getItem("ao-sidebar-w")).toBe(String(SIDEBAR_DEFAULT_WIDTH));
+			expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe(`${SIDEBAR_DEFAULT_WIDTH}px`);
 
 			queuedFrame?.(performance.now());
-			expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe("240px");
+			expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe(`${SIDEBAR_DEFAULT_WIDTH}px`);
 		} finally {
 			requestAnimationFrameSpy.mockRestore();
 			cancelAnimationFrameSpy.mockRestore();
