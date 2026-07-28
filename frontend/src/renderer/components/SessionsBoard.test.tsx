@@ -115,6 +115,46 @@ describe("SessionsBoard", () => {
 		expect(screen.getByRole("button", { name: "New task" })).toBeInTheDocument();
 	});
 
+	it.each([
+		["active", "Working", "bg-status-working", true],
+		["idle", "Idle", "bg-status-idle", false],
+	] as const)("shows %s orchestrator activity in the in-panel board toolbar", (state, label, tone, pulses) => {
+		boardActionsInPanelMock.mockReturnValue(true);
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				{
+					id: "p1",
+					name: "solkit-ui",
+					path: "/tmp/solkit-ui",
+					sessions: [
+						{
+							id: "orch-1",
+							workspaceId: "p1",
+							workspaceName: "solkit-ui",
+							title: "orchestrator",
+							provider: "codex",
+							kind: "orchestrator",
+							branch: "main",
+							status: "working",
+							activity: { state, lastActivityAt: "2026-01-01T00:00:00Z" },
+							updatedAt: "2026-01-01T00:00:00Z",
+							prs: [],
+						},
+					],
+				},
+			],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		const indicator = screen.getByRole("status", { name: `Orchestrator activity: ${label}` });
+		expect(indicator).toHaveClass(tone);
+		expect(indicator).toHaveClass(pulses ? "animate-status-pulse" : "size-dot-sm");
+		if (!pulses) expect(indicator).not.toHaveClass("animate-status-pulse");
+	});
+
 	it("shows the Board crumb on the root board when actions live in the panel", () => {
 		boardActionsInPanelMock.mockReturnValue(true);
 		workspaceQueryMock.mockReturnValue({
