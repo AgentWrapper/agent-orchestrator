@@ -488,8 +488,9 @@
 	--color-preview-terminal-fg: #cbd5e1;
 
 	/* Mock project accent swatches (sidebar dots) */
-	--color-project-accent-mint: var(--chart-1);
+--color-project-accent-mint: var(--chart-1);
 	--color-project-accent-sky: var(--chart-2);
+	--color-project-accent-violet: #c4b5fd;
 
 	/* Terminal ANSI palette. Keep this independent from product status colors:
 	   agent TUIs own the semantic meaning of these slots. */
