@@ -37,7 +37,7 @@ export function RoadmapSlideshow({
                 onClick={() => setActiveIndex(index)}
                 aria-expanded={isActive}
                 aria-controls={panelId}
-                className="group min-h-14 w-full px-0 py-5 text-left transition-[background-color] duration-150 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring lg:px-6"
+                className="group min-h-14 w-full px-4 py-5 text-left transition-[background-color] duration-150 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring lg:px-6"
               >
                 <span className="flex items-start gap-4">
                   <span className="mt-1 w-6 shrink-0 text-xs font-medium text-muted-foreground">
@@ -91,7 +91,7 @@ export function RoadmapSlideshow({
                       }
                       className="block overflow-hidden"
                     >
-                      <span className="block h-[26rem] pl-10 pr-4 pt-5 sm:h-[20rem] lg:h-[17rem]">
+                      <span className="block pl-10 pt-5 lg:h-[17rem] lg:pr-4">
                         <span className="block max-w-lg text-sm leading-7 text-muted-foreground">
                           {phase.theme}
                         </span>

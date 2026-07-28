@@ -29,6 +29,14 @@ const mobileTheme = {
   green: "#74b98a",
 } as const;
 
+/**
+ * Design size of the phone. The frame is rendered at exactly this size on every
+ * breakpoint and scaled to fit its slot, so the scale factors below are just
+ * (slot height / PHONE_HEIGHT): 280/390 and 360/390.
+ */
+const PHONE_HEIGHT = 390;
+const PHONE_WIDTH = Math.round(PHONE_HEIGHT * 0.48);
+
 type Project = "All" | "agent-orchestrator-mo" | "meetyou" | "adorable";
 type Tab = "Kanban" | "Orchestrator" | "PRs" | "Settings";
 
@@ -104,44 +112,55 @@ export function MobileAppDemo() {
 
   return (
     <div className="flex h-[280px] w-full items-center justify-center sm:h-[360px] lg:h-[390px]">
+      {/*
+        The screen is authored at one fixed size (PHONE_WIDTH x PHONE_HEIGHT) because
+        everything inside it is absolute — 5px labels, a 28px status bar, a 44px tab bar.
+        Resizing the frame per breakpoint would leave those at 100% and overflow the
+        narrower screen, so scale the whole phone instead and keep its proportions.
+      */}
       <div
-        className="relative h-full aspect-[0.48] overflow-hidden rounded-[32px] border-[3px] border-[#30333a] bg-[#050608] p-[5px] shadow-[0_28px_60px_rgba(0,0,0,0.55)]"
-        style={{ color: mobileTheme.textPrimary }}
+        className="shrink-0 origin-center scale-[0.718] sm:scale-[0.923] lg:scale-100"
+        style={{ width: PHONE_WIDTH, height: PHONE_HEIGHT }}
       >
         <div
-          className="relative flex h-full flex-col overflow-hidden rounded-[25px] font-sans antialiased"
-          style={{ backgroundColor: mobileTheme.bgBase }}
+          className="relative h-full w-full overflow-hidden rounded-[32px] border-[3px] border-[#30333a] bg-[#050608] p-[5px] shadow-[0_28px_60px_rgba(0,0,0,0.55)]"
+          style={{ color: mobileTheme.textPrimary }}
         >
-          <PhoneStatusBar />
+          <div
+            className="relative flex h-full flex-col overflow-hidden rounded-[25px] font-sans antialiased"
+            style={{ backgroundColor: mobileTheme.bgBase }}
+          >
+            <PhoneStatusBar />
 
-          <AnimatePresence initial={false} mode="wait">
-            <motion.div
-              key={tab}
-              initial={{ opacity: 0, y: 8, filter: "blur(4px)" }}
-              animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-              exit={{ opacity: 0, y: -5, filter: "blur(3px)" }}
-              transition={{
-                type: "spring",
-                duration: 0.3,
-                bounce: 0,
-              }}
-              className="min-h-0 flex-1 overflow-hidden"
-            >
-              {tab === "Kanban" ? (
-                <KanbanScreen
-                  project={project}
-                  visibleSessions={visibleSessions}
-                  selectedSession={selectedSession}
-                  onProjectChange={setProject}
-                  onSelectSession={setSelectedSession}
-                />
-              ) : (
-                <SecondaryScreen tab={tab} />
-              )}
-            </motion.div>
-          </AnimatePresence>
+            <AnimatePresence initial={false} mode="wait">
+              <motion.div
+                key={tab}
+                initial={{ opacity: 0, y: 8, filter: "blur(4px)" }}
+                animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+                exit={{ opacity: 0, y: -5, filter: "blur(3px)" }}
+                transition={{
+                  type: "spring",
+                  duration: 0.3,
+                  bounce: 0,
+                }}
+                className="min-h-0 flex-1 overflow-hidden"
+              >
+                {tab === "Kanban" ? (
+                  <KanbanScreen
+                    project={project}
+                    visibleSessions={visibleSessions}
+                    selectedSession={selectedSession}
+                    onProjectChange={setProject}
+                    onSelectSession={setSelectedSession}
+                  />
+                ) : (
+                  <SecondaryScreen tab={tab} />
+                )}
+              </motion.div>
+            </AnimatePresence>
 
-          <BottomTabs activeTab={tab} onTabChange={setTab} />
+            <BottomTabs activeTab={tab} onTabChange={setTab} />
+          </div>
         </div>
       </div>
     </div>
