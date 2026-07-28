@@ -132,7 +132,15 @@ function createFakeTerminal(): FakeTerminal {
 	return terminal;
 }
 
-function setup({ daemonReady = true, attachedSession = session as WorkspaceSession | undefined } = {}) {
+function setup({
+	daemonReady = true,
+	attachedSession = session as WorkspaceSession | undefined,
+	onOutput,
+}: {
+	daemonReady?: boolean;
+	attachedSession?: WorkspaceSession;
+	onOutput?: (text: string, phase: "replay" | "live") => void;
+} = {}) {
 	const muxes: FakeMux[] = [];
 	const createMux = () => {
 		const fake = createFakeMux();
@@ -145,7 +153,7 @@ function setup({ daemonReady = true, attachedSession = session as WorkspaceSessi
 		<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
 	);
 	const view = renderHook(
-		({ daemonReady: ready }) => useTerminalSession(attachedSession, { daemonReady: ready, createMux }),
+		({ daemonReady: ready }) => useTerminalSession(attachedSession, { daemonReady: ready, createMux, onOutput }),
 		{ initialProps: { daemonReady }, wrapper },
 	);
 	const terminal = createFakeTerminal();
@@ -296,6 +304,20 @@ describe("useTerminalSession", () => {
 			expect(terminal.lines).toEqual(["replay", "live-1"]);
 			act(() => muxes[0].emitData("handle-1", "live-2"));
 			expect(terminal.lines).toEqual(["replay", "live-1", "live-2"]);
+		});
+
+		it("labels replay and live output for passive versus active consumers", () => {
+			const onOutput = vi.fn();
+			const { muxes } = setup({ onOutput });
+			act(() => muxes[0].emitOpened("handle-1"));
+			act(() => muxes[0].emitData("handle-1", "old output"));
+			act(() => void vi.advanceTimersByTime(60));
+			act(() => muxes[0].emitData("handle-1", "new output"));
+
+			expect(onOutput.mock.calls).toEqual([
+				["old output", "replay"],
+				["new output", "live"],
+			]);
 		});
 
 		it("reveals a pane that replays nothing instead of holding the cover to the cap", () => {

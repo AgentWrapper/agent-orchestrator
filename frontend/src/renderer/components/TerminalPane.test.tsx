@@ -3,6 +3,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession } from "../types/workspace";
+import { useUiStore } from "../stores/ui-store";
 import { TerminalPane, providerScrollsByKeyboard } from "./TerminalPane";
 
 const { postMock, terminalError, terminalState, replaySettled } = vi.hoisted(() => ({
@@ -12,6 +13,7 @@ const { postMock, terminalError, terminalState, replaySettled } = vi.hoisted(() 
 	replaySettled: { value: true },
 }));
 let terminalLinkHandler: ((uri: string) => void) | undefined;
+let terminalOutputHandler: ((text: string, phase: "replay" | "live") => void) | undefined;
 
 vi.mock("../lib/api-client", () => ({
 	apiClient: { POST: (...args: unknown[]) => postMock(...args) },
@@ -26,12 +28,18 @@ vi.mock("./XtermTerminal", () => ({
 }));
 
 vi.mock("../hooks/useTerminalSession", () => ({
-	useTerminalSession: () => ({
-		attach: vi.fn(),
-		state: terminalState.value,
-		error: terminalError.value,
-		replaySettled: replaySettled.value,
-	}),
+	useTerminalSession: (
+		_session: WorkspaceSession | undefined,
+		options: { onOutput?: (text: string, phase: "replay" | "live") => void },
+	) => {
+		terminalOutputHandler = options.onOutput;
+		return {
+			attach: vi.fn(),
+			state: terminalState.value,
+			error: terminalError.value,
+			replaySettled: replaySettled.value,
+		};
+	},
 }));
 
 const worker = {
@@ -61,6 +69,8 @@ beforeEach(() => {
 	terminalState.value = "idle";
 	replaySettled.value = true;
 	terminalLinkHandler = undefined;
+	terminalOutputHandler = undefined;
+	useUiStore.setState({ inspectorSessions: {} });
 });
 
 function renderPane(session?: WorkspaceSession) {
@@ -232,6 +242,47 @@ describe("providerScrollsByKeyboard", () => {
 });
 
 describe("terminal link preview", () => {
+	it("opens a live loopback output URL in the Browser inspector without a click", async () => {
+		const view = renderPane(worker);
+		try {
+			expect(terminalOutputHandler).toBeTypeOf("function");
+			act(() => terminalOutputHandler?.("ready at http://localhost:3000/app\n", "live"));
+
+			await waitFor(() =>
+				expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/preview", {
+					params: { path: { sessionId: "sess-1" } },
+					body: { url: "http://localhost:3000/app" },
+				}),
+			);
+			expect(useUiStore.getState().inspectorSessions["sess-1"]).toMatchObject({
+				isOpen: true,
+				view: "browser",
+			});
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("does not auto-open a loopback URL found in attachment replay", () => {
+		const view = renderPane(worker);
+		try {
+			act(() => terminalOutputHandler?.("old http://localhost:3000/app\n", "replay"));
+			expect(postMock).not.toHaveBeenCalled();
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("does not auto-open an external URL printed in live output", () => {
+		const view = renderPane(worker);
+		try {
+			act(() => terminalOutputHandler?.("PR https://github.com/org/repo/pull/42\n", "live"));
+			expect(postMock).not.toHaveBeenCalled();
+		} finally {
+			view.restore();
+		}
+	});
+
 	it.each(["http://localhost:3000/simple", "https://app.localhost:5173", "http://127.0.0.1:8080", "http://[::1]:4173"])(
 		"mirrors worker loopback link %s into the session Browser preview",
 		async (url) => {
