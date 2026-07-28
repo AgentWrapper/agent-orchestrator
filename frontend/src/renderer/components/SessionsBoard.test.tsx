@@ -149,7 +149,9 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		const indicator = screen.getByRole("status", { name: `Orchestrator activity: ${label}` });
+		const button = screen.getByRole("button", { name: `Orchestrator, ${label}` });
+		const indicator = button.querySelector("span.size-dot-sm") as HTMLElement;
+		expect(indicator).toHaveAttribute("aria-hidden", "true");
 		expect(indicator).toHaveClass(tone);
 		expect(indicator).toHaveClass(pulses ? "animate-status-pulse" : "size-dot-sm");
 		if (!pulses) expect(indicator).not.toHaveClass("animate-status-pulse");
