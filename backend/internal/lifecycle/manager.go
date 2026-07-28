@@ -304,6 +304,17 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		m.mu.Unlock()
 		return nil
 	}
+	// A new instruction submitted to a worker starts a new completion
+	// generation: its next active->idle is a genuine completion of newly
+	// assigned work, so reopen reporting. Re-arming keys on new work arriving
+	// (user-prompt-submit) — the issue's "completion-generation" — rather than
+	// on incidental needs-input transitions, which are unrelated to whether new
+	// work was assigned (a mid-run permission dialog must not decide it). Placed
+	// before the staleness guards so it lands regardless of same-state early
+	// returns; clearing at worst allows one extra nudge, never a lost one.
+	if rec.Kind == domain.KindWorker && s.Event == "user-prompt-submit" {
+		delete(m.reportedIdle, id)
+	}
 	if s.LaunchID != "" && s.LaunchID != rec.Metadata.RuntimeLaunchID {
 		m.mu.Unlock()
 		return nil
@@ -381,14 +392,11 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	// A worker's active->idle transition creates a durable worker_idle event in
 	// the same write as the activity change, so a crash can't persist the idle
 	// state while losing the pending delivery. It is enqueued at most once per
-	// attention episode (see reportedIdle): re-idles and poke-induced idles are
-	// suppressed, and a worker entering a real needs-input state reopens
-	// reporting for its next completion.
+	// completion generation (see reportedIdle): re-idles and poke-induced idles
+	// within the same generation are suppressed, and a new instruction
+	// (user-prompt-submit, handled above) reopens reporting for the next one.
 	var idleEvent *domain.WorkerIdleEvent
-	switch {
-	case next.Kind == domain.KindWorker && !prevState.NeedsInput() && next.Activity.State.NeedsInput():
-		delete(m.reportedIdle, id)
-	case crossedToIdle(prevState, next):
+	if crossedToIdle(prevState, next) {
 		if _, reported := m.reportedIdle[id]; !reported {
 			idleEvent = &domain.WorkerIdleEvent{
 				ID:           uuid.NewString(),
@@ -513,33 +521,41 @@ func (m *Manager) DispatchPendingWorkerIdleEvents(ctx context.Context, project d
 		slog.Default().Error("lifecycle: list pending worker events", "project", project, "err", err)
 		return
 	}
-	if len(events) == 0 {
-		return
-	}
-	ev := events[0]
-	// Re-check the worker at delivery time, not just at enqueue. A completion
-	// enqueued minutes ago is stale if the worker has since been killed (no one
-	// to inspect) or opened a PR (its work is already in review and visible to
-	// the orchestrator). In both cases the nudge is noise, so drain the event
-	// without sending rather than leave it pending to retry forever.
-	if worker, ok, err := m.store.GetSession(ctx, ev.WorkerID); err != nil {
-		slog.Default().Error("lifecycle: read worker for idle delivery", "worker", ev.WorkerID, "err", err)
-		return
-	} else if !ok || worker.IsTerminated || m.workerHasOpenPR(ctx, ev.WorkerID) {
+	// Walk the pending events: drain stale ones (their worker was killed, so
+	// there is nothing to inspect) without sending, and deliver the first live
+	// one. Draining does not change the orchestrator's state, so — unlike a
+	// delivery — it produces no re-trigger; continuing the walk here clears a
+	// backlog of stale events in a single pass instead of one per 2-minute
+	// sweep. Only ONE live event is delivered per pass: the nudge moves the
+	// orchestrator out of idle asynchronously via its activity hook, so sending
+	// more now would dump the backlog into one turn before that state settles.
+	for _, ev := range events {
+		worker, found, err := m.store.GetSession(ctx, ev.WorkerID)
+		if err != nil {
+			slog.Default().Error("lifecycle: read worker for idle delivery", "worker", ev.WorkerID, "err", err)
+			return
+		}
+		// A killed worker's completion is stale: the nudge says "inspect it",
+		// and there is nothing to inspect. Drain and move on. An open PR is
+		// intentionally NOT drained — "report its status and any PR to the
+		// human" is exactly what a just-opened-a-PR completion is for.
+		if !found || worker.IsTerminated {
+			if err := m.store.MarkWorkerIdleEventDelivered(ctx, ev.ID, m.clock()); err != nil {
+				slog.Default().Error("lifecycle: drain stale worker idle", "event", ev.ID, "err", err)
+			}
+			continue
+		}
+		outcome, err := m.guard.NudgeCoordination(ctx, orch.ID, m.workerIdleNudgeMessage(ctx, ev.WorkerID), m.steerActive)
+		if err != nil {
+			slog.Default().Error("lifecycle: deliver worker idle", "worker", ev.WorkerID, "orchestrator", orch.ID, "err", err)
+		}
+		if outcome != sessionguard.Sent {
+			return
+		}
 		if err := m.store.MarkWorkerIdleEventDelivered(ctx, ev.ID, m.clock()); err != nil {
-			slog.Default().Error("lifecycle: drain stale worker idle", "event", ev.ID, "err", err)
+			slog.Default().Error("lifecycle: mark worker idle delivered", "event", ev.ID, "err", err)
 		}
 		return
-	}
-	outcome, err := m.guard.NudgeCoordination(ctx, orch.ID, m.workerIdleNudgeMessage(ctx, ev.WorkerID), m.steerActive)
-	if err != nil {
-		slog.Default().Error("lifecycle: deliver worker idle", "worker", ev.WorkerID, "orchestrator", orch.ID, "err", err)
-	}
-	if outcome != sessionguard.Sent {
-		return
-	}
-	if err := m.store.MarkWorkerIdleEventDelivered(ctx, ev.ID, m.clock()); err != nil {
-		slog.Default().Error("lifecycle: mark worker idle delivered", "event", ev.ID, "err", err)
 	}
 }
 
@@ -604,25 +620,6 @@ func (m *Manager) liveOrchestrator(ctx context.Context, project domain.ProjectID
 		}
 	}
 	return domain.SessionRecord{}, false, nil
-}
-
-// workerHasOpenPR reports whether the worker owns a pull request that is
-// neither merged nor closed. Such a worker's output is already in review and
-// visible to the orchestrator, so an "it went idle" nudge adds nothing. A read
-// error is treated as "no open PR" — failing open here only risks one extra
-// nudge, never a suppressed real signal.
-func (m *Manager) workerHasOpenPR(ctx context.Context, worker domain.SessionID) bool {
-	prs, err := m.store.ListPRsBySession(ctx, worker)
-	if err != nil {
-		slog.Default().Warn("lifecycle: list worker PRs for idle delivery", "worker", worker, "err", err)
-		return false
-	}
-	for _, pr := range prs {
-		if !pr.Merged && !pr.Closed {
-			return true
-		}
-	}
-	return false
 }
 
 // workerIdleNudgeMessage tells the orchestrator to inspect the worker with a

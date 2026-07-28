@@ -2305,7 +2305,7 @@ func TestActivity_WorkerReportedOncePerEpisode(t *testing.T) {
 	}
 }
 
-func TestActivity_WorkerReReportsAfterNeedsInput(t *testing.T) {
+func TestActivity_WorkerReReportsAfterNewPrompt(t *testing.T) {
 	m, st, msg := newManager()
 	now := time.Now()
 	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
@@ -2315,20 +2315,42 @@ func TestActivity_WorkerReReportsAfterNeedsInput(t *testing.T) {
 	if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle, Timestamp: now}); err != nil {
 		t.Fatal(err)
 	}
-	// The worker enters a real needs-input state: a fresh episode that reopens
-	// reporting for its next completion.
-	if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityWaitingInput, Timestamp: now.Add(time.Minute)}); err != nil {
+	// New work is submitted to the worker: this begins a new completion
+	// generation (the issue's key), so its next completion is reportable again.
+	if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityActive, Event: "user-prompt-submit", Timestamp: now.Add(time.Minute)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityActive, Timestamp: now.Add(2 * time.Minute)}); err != nil {
-		t.Fatal(err)
-	}
-	// Completion #2 is reportable again.
-	if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle, Timestamp: now.Add(3 * time.Minute)}); err != nil {
+	// Completion #2 of the newly assigned work.
+	if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle, Timestamp: now.Add(2 * time.Minute)}); err != nil {
 		t.Fatal(err)
 	}
 	if len(msg.msgs) != 2 {
-		t.Fatalf("nudges = %d, want 2 (re-armed after needs-input)", len(msg.msgs))
+		t.Fatalf("nudges = %d, want 2 (re-armed after new instruction)", len(msg.msgs))
+	}
+}
+
+// A permission dialog (blocked) mid-run is not new work and must NOT reopen
+// reporting: whether the orchestrator hears about a completion cannot depend on
+// whether a harness happened to emit a needs-input transition.
+func TestActivity_WorkerBlockedMidRunDoesNotReReport(t *testing.T) {
+	m, st, msg := newManager()
+	now := time.Now()
+	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
+	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
+
+	// Completion #1 reported.
+	if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle, Timestamp: now}); err != nil {
+		t.Fatal(err)
+	}
+	// Worker continues the SAME task: hits a permission dialog, resolves it, and
+	// finishes again — no new instruction arrived.
+	for i, st2 := range []domain.ActivityState{domain.ActivityActive, domain.ActivityBlocked, domain.ActivityActive, domain.ActivityIdle} {
+		if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: st2, Timestamp: now.Add(time.Duration(i+1) * time.Minute)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("nudges = %d, want 1 (a mid-run permission dialog is not new work)", len(msg.msgs))
 	}
 }
 
@@ -2351,16 +2373,35 @@ func TestDispatch_DrainsTerminatedWorkerWithoutNudge(t *testing.T) {
 	}
 }
 
-func TestDispatch_OpenPRDrainsMergedPRStillNudges(t *testing.T) {
+// A worker whose last act was opening a PR must STILL be reported: the nudge's
+// whole job is "report its status and any PR to the human". Only a terminated
+// worker is drained; an open PR is not.
+func TestDispatch_OpenPRWorkerStillNudges(t *testing.T) {
 	st := newFakeStore()
 	now := time.Now()
 	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
-	// mer-8 has an open PR (work already in review): nudge is noise, drain it.
 	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
 	st.prs["mer-8"] = []domain.PullRequest{{URL: "pr-open"}}
-	// mer-9's only PR is merged: its idle is still a real completion to report.
+	st.idleEvents = []domain.WorkerIdleEvent{{ID: "wie_8", ProjectID: "mer", WorkerID: "mer-8", TransitionAt: now, CreatedAt: now}}
+	msg := &fakeMessenger{}
+	m := New(st, msg)
+
+	m.DispatchPendingWorkerIdleEvents(ctx, "mer")
+	if len(msg.msgs) != 1 || !strings.Contains(msg.msgs[0], "mer-8") {
+		t.Fatalf("open-PR worker not nudged: msgs = %v", msg.msgs)
+	}
+}
+
+// A drain must advance to the next pending event in the SAME pass, not wait for
+// the 2-minute recovery sweep: a terminated worker's event is drained and a
+// live worker's event is delivered in one dispatch.
+func TestDispatch_DrainAdvancesToNextPendingEvent(t *testing.T) {
+	st := newFakeStore()
+	now := time.Now()
+	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
+	// mer-8 was killed (stale event); mer-9 is live and its completion matters.
+	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, IsTerminated: true, Activity: domain.Activity{State: domain.ActivityExited, LastActivityAt: now}}
 	st.sessions["mer-9"] = domain.SessionRecord{ID: "mer-9", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
-	st.prs["mer-9"] = []domain.PullRequest{{URL: "pr-merged", Merged: true}}
 	st.idleEvents = []domain.WorkerIdleEvent{
 		{ID: "wie_8", ProjectID: "mer", WorkerID: "mer-8", TransitionAt: now, CreatedAt: now},
 		{ID: "wie_9", ProjectID: "mer", WorkerID: "mer-9", TransitionAt: now.Add(time.Second), CreatedAt: now.Add(time.Second)},
@@ -2368,18 +2409,13 @@ func TestDispatch_OpenPRDrainsMergedPRStillNudges(t *testing.T) {
 	msg := &fakeMessenger{}
 	m := New(st, msg)
 
-	// Cycle 1 drains the open-PR worker without sending.
-	m.DispatchPendingWorkerIdleEvents(ctx, "mer")
-	if len(msg.msgs) != 0 {
-		t.Fatalf("nudged for an open-PR worker: %d, want 0", len(msg.msgs))
-	}
-	// Cycle 2 delivers the merged-PR worker's completion.
+	// One pass: drains the stale event AND delivers the live one.
 	m.DispatchPendingWorkerIdleEvents(ctx, "mer")
 	if len(msg.msgs) != 1 || !strings.Contains(msg.msgs[0], "mer-9") {
-		t.Fatalf("merged-PR worker not nudged: msgs = %v", msg.msgs)
+		t.Fatalf("live worker not nudged in same pass: msgs = %v", msg.msgs)
 	}
 	if pending, _ := st.ListPendingWorkerIdleEvents(ctx); len(pending) != 0 {
-		t.Fatalf("events not fully processed: pending = %d, want 0", len(pending))
+		t.Fatalf("stale event not drained in same pass: pending = %d, want 0", len(pending))
 	}
 }
 
