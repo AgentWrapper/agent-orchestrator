@@ -1004,7 +1004,10 @@ describe("Sidebar", () => {
 		expect(sessionDot("merged task")).toHaveClass("bg-status-merged", "animate-status-pulse");
 	});
 
-	it("renders a static gray dot for idle activity across session statuses", () => {
+	// Issue #3099: an idle agent only reads as gray when the session has no
+	// attention signal; sessions parked in a board attention zone keep that
+	// zone's color so the sidebar mirrors the board.
+	it("colors idle sessions from their board attention zone, not agent activity", () => {
 		renderSidebar({
 			workspaces: [
 				{
@@ -1024,20 +1027,35 @@ describe("Sidebar", () => {
 							status: "draft",
 							activity: { state: "idle", lastActivityAt: "2026-06-30T00:00:00Z" },
 						},
+						{
+							...session,
+							id: "proj-1-idle-ready",
+							title: "idle ready task",
+							status: "mergeable",
+							activity: { state: "idle", lastActivityAt: "2026-06-30T00:00:00Z" },
+						},
+						{
+							...session,
+							id: "proj-1-idle-changes",
+							title: "idle changes task",
+							status: "changes_requested",
+							activity: { state: "idle", lastActivityAt: "2026-06-30T00:00:00Z" },
+						},
 					],
 				},
 			],
 		});
 
-		const idleActivityDot = screen
-			.getByLabelText("Open idle activity task")
-			.querySelector<HTMLElement>("span.rounded-full");
-		const idleDraftDot = screen.getByLabelText("Open idle draft task").querySelector<HTMLElement>("span.rounded-full");
+		const sessionDot = (title: string) =>
+			screen.getByLabelText(`Open ${title}`).querySelector<HTMLElement>("span.rounded-full");
 
-		expect(idleActivityDot).toHaveClass("bg-status-idle");
-		expect(idleDraftDot).toHaveClass("bg-status-idle");
-		expect(idleActivityDot).not.toHaveClass("animate-status-pulse");
-		expect(idleDraftDot).not.toHaveClass("animate-status-pulse");
+		expect(sessionDot("idle activity task")).toHaveClass("bg-status-idle");
+		expect(sessionDot("idle draft task")).toHaveClass("bg-status-in-review");
+		expect(sessionDot("idle ready task")).toHaveClass("bg-status-ready");
+		expect(sessionDot("idle changes task")).toHaveClass("bg-status-needs-you");
+		for (const title of ["idle activity task", "idle draft task", "idle ready task", "idle changes task"]) {
+			expect(sessionDot(title)).not.toHaveClass("animate-status-pulse");
+		}
 	});
 
 	it("keeps merged sessions in the list until they are terminated", () => {

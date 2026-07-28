@@ -254,15 +254,30 @@ function fallbackSCMStatus(prs: PullRequestFacts[]): SessionStatus | undefined {
 	return prs.some((pr) => pr.state === "merged") ? "merged" : undefined;
 }
 
-export function getSessionDotView(session: Pick<WorkspaceSession, "activity" | "scmStatus" | "prs">): {
+export function getSessionDotView(session: Pick<WorkspaceSession, "status" | "activity" | "scmStatus" | "prs">): {
 	className: string;
 } {
 	const activity = getAgentActivityView(session.activity);
-	if (activity.state !== "active") return { className: activity.dotClassName };
+	const zone = attentionZone(session.status);
 
-	const contextStatus = session.scmStatus ?? fallbackSCMStatus(session.prs) ?? "working";
+	// The working zone carries no PR/attention signal, so agent runtime is the
+	// story — mirroring the board's split Idle/Working lane: an active agent
+	// pulses with its live PR context tint, everything else keeps its raw
+	// activity tone (idle gray, waiting/blocked needs-you, ...).
+	if (zone === "working") {
+		if (activity.state !== "active") return { className: activity.dotClassName };
+		const contextStatus = session.scmStatus ?? fallbackSCMStatus(session.prs) ?? "working";
+		return {
+			className: `${activeSessionDotClassNames[contextStatus] ?? "bg-status-working"} animate-status-pulse`,
+		};
+	}
+
+	// Every other zone mirrors the board column color so needs-you / in-review /
+	// ready-to-merge sessions never read as idle gray; merged keeps the board's
+	// merged-lane tone. Activity still controls motion.
+	const dotClassName = session.status === "merged" ? "bg-status-merged" : attentionZoneViews[zone].dotClassName;
 	return {
-		className: `${activeSessionDotClassNames[contextStatus] ?? "bg-status-working"} animate-status-pulse`,
+		className: activity.state === "active" ? `${dotClassName} animate-status-pulse` : dotClassName,
 	};
 }
 

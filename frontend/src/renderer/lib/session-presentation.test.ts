@@ -3,6 +3,7 @@ import {
 	attentionZone,
 	getAgentActivityView,
 	getAttentionZoneView,
+	getAttentionZoneViewForZone,
 	getSessionDotView,
 	getSessionStatusView,
 	getSessionTimelinePillView,
@@ -164,13 +165,11 @@ describe("session presentation", () => {
 		expect(dot?.className).not.toContain("bg-status-needs-you");
 	});
 
-	it("keeps a static gray sidebar dot while the agent is idle", () => {
+	it("keeps a static gray sidebar dot while an agent without attention signals is idle", () => {
 		const dot = getSessionDotView(
 			sessionWith({
-				status: "draft",
-				scmStatus: "draft",
+				status: "idle",
 				activity: { state: "idle", lastActivityAt: "" },
-				prs: [{ ...openPr, state: "draft" }],
 			}),
 		);
 
@@ -178,19 +177,71 @@ describe("session presentation", () => {
 		expect(dot.className).not.toContain("animate-status-pulse");
 	});
 
+	// The issue-#3099 regression: sessions sitting in In Review / Ready to Merge
+	// rendered idle gray in the sidebar while their board cards showed color.
+	it.each([
+		["needs_input", "bg-status-needs-you"],
+		["exited", "bg-status-needs-you"],
+		["no_signal", "bg-status-needs-you"],
+		["ci_failed", "bg-status-needs-you"],
+		["changes_requested", "bg-status-needs-you"],
+		["unknown", "bg-status-needs-you"],
+		["review_pending", "bg-status-in-review"],
+		["pr_open", "bg-status-in-review"],
+		["draft", "bg-status-in-review"],
+		["approved", "bg-status-ready"],
+		["mergeable", "bg-status-ready"],
+		["merged", "bg-status-merged"],
+		["terminated", "bg-status-terminated"],
+	] as const)("colors an idle session with %s status like its board attention zone", (status, expectedClass) => {
+		const dot = getSessionDotView(
+			sessionWith({
+				status,
+				activity: { state: "idle", lastActivityAt: "" },
+			}),
+		);
+
+		expect(dot.className).toBe(expectedClass);
+		if (status !== "merged") {
+			expect(expectedClass).toBe(getAttentionZoneViewForZone(attentionZone(status)).dotClassName);
+		}
+	});
+
+	it("colors sessions with no activity payload from their attention zone too", () => {
+		expect(getSessionDotView(sessionWith({ status: "mergeable" })).className).toBe("bg-status-ready");
+		expect(getSessionDotView(sessionWith({ status: "pr_open", prs: [openPr] })).className).toBe(
+			"bg-status-in-review",
+		);
+	});
+
+	it("pulses the attention-zone color while the agent is actively running", () => {
+		const dot = getSessionDotView(
+			sessionWith({
+				status: "changes_requested",
+				activity: { state: "active", lastActivityAt: "" },
+				prs: [{ ...openPr, review: "changes_requested" }],
+			}),
+		);
+
+		expect(dot.className).toBe("bg-status-needs-you animate-status-pulse");
+	});
+
 	it.each([
 		["waiting_input", "bg-status-needs-you"],
 		["blocked", "bg-status-needs-you"],
 		["exited", "bg-status-exited"],
 		["unknown", "bg-status-unknown"],
-	] as const)("keeps the raw %s activity tone when the agent is not active", (state, expectedClass) => {
-		expect(getSessionDotView(sessionWith({ activity: { state, lastActivityAt: "" }, prs: [openPr] }))?.className).toBe(
-			expectedClass,
-		);
-		expect(
-			getSessionDotView(sessionWith({ activity: { state, lastActivityAt: "" }, prs: [openPr] }))?.className,
-		).not.toContain("animate-status-pulse");
-	});
+	] as const)(
+		"keeps the raw %s activity tone when a working-zone agent is not active",
+		(state, expectedClass) => {
+			expect(getSessionDotView(sessionWith({ activity: { state, lastActivityAt: "" } }))?.className).toBe(
+				expectedClass,
+			);
+			expect(getSessionDotView(sessionWith({ activity: { state, lastActivityAt: "" } }))?.className).not.toContain(
+				"animate-status-pulse",
+			);
+		},
+	);
 
 	it("uses a muted accent treatment for In Review instead of idle gray", () => {
 		expect(getAttentionZoneView("review_pending")).toMatchObject({
