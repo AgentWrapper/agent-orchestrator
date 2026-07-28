@@ -894,86 +894,8 @@ describe("SessionInspector reviews tab", () => {
 		expect(screen.getAllByText("Changes requested")).not.toHaveLength(0);
 	});
 
-	function prSummaryWithReviews(reviews: unknown[]) {
-		return {
-			url: "https://example.com/pr/3",
-			htmlUrl: "https://example.com/pr/3",
-			number: 3,
-			title: "Fix the dashboard",
-			state: "open",
-			provider: "github",
-			repo: "o/r",
-			author: "dev",
-			sourceBranch: "feat",
-			targetBranch: "main",
-			headSha: "abc123",
-			additions: 1,
-			deletions: 0,
-			changedFiles: 1,
-			ci: { state: "passing", failingChecks: [] },
-			review: { decision: "changes_requested", hasUnresolvedHumanComments: false, unresolvedBy: [], reviews },
-			mergeability: { state: "mergeable", reasons: [], prUrl: "https://example.com/pr/3" },
-			updatedAt: "2026-06-15T00:00:00Z",
-			observedAt: "2026-06-15T00:00:00Z",
-			ciObservedAt: "2026-06-15T00:00:00Z",
-			reviewObservedAt: "2026-06-15T00:00:00Z",
-		};
-	}
-
-	const mockReviewsTabGets = (prs: unknown[]) => {
-		getMock.mockImplementation(async (path: string) => {
-			if (path === "/api/v1/sessions/{sessionId}/reviews") return { data: { reviewerHandleId: "", reviews: [] } };
-			if (path === "/api/v1/projects/{id}") {
-				return { data: { status: "ok", project: { id: "ws-1", config: { reviewers: [{ harness: "codex" }] } } } };
-			}
-			if (path === "/api/v1/sessions/{sessionId}/pr") return { data: { sessionId: "sess-1", prs } };
-			return { data: undefined };
-		});
-	};
-
-	it("renders GitHub review summaries under a Pull request reviews section", async () => {
-		mockReviewsTabGets([
-			prSummaryWithReviews([
-				{
-					reviewerId: "alice",
-					verdict: "changes_requested",
-					body: "please fix the nil check\nand verify the fallback path",
-					reviewUrl: "https://example.com/pr/3#pullrequestreview-101",
-					submittedAt: "2026-06-15T00:00:00Z",
-					isBot: false,
-				},
-				{
-					reviewerId: "review-bot",
-					verdict: "approved",
-					body: "automated approval",
-					reviewUrl: "https://example.com/pr/3#pullrequestreview-102",
-					submittedAt: "2026-06-15T00:00:00Z",
-					isBot: true,
-				},
-			]),
-		]);
-
-		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
-		await openReviewsTab();
-
-		expect(await screen.findByText("Pull request reviews")).toBeInTheDocument();
-		expect(screen.getByText(/please fix the nil check/)).not.toHaveClass("line-clamp-1");
-		expect(screen.getByText(/please fix the nil check/)).toHaveClass("whitespace-pre-wrap", "break-words");
-		expect(screen.getByText("automated approval")).toBeInTheDocument();
-		expect(screen.getByRole("link", { name: "alice" })).toHaveAttribute(
-			"href",
-			"https://example.com/pr/3#pullrequestreview-101",
-		);
-		expect(screen.getAllByRole("link", { name: "View review" }).map((link) => link.getAttribute("href"))).toEqual([
-			"https://example.com/pr/3#pullrequestreview-101",
-			"https://example.com/pr/3#pullrequestreview-102",
-		]);
-		expect(screen.getByText("review-bot · bot")).toBeInTheDocument();
-		expect(screen.getByText("AO code reviews")).toBeInTheDocument();
-	});
-
-	it("omits the Pull request reviews section when no PR has review summaries", async () => {
-		mockReviewsTabGets([prSummaryWithReviews([])]);
+	it("omits pull request review summaries from the Reviews tab", async () => {
+		mockCommonGets([], "", [reviewState(3, "needs_review", "abc123")]);
 
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsTab();

@@ -38,7 +38,6 @@ import { Switch } from "./ui/switch";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
-type SessionPRReviewEntry = components["schemas"]["SessionPRReviewEntry"];
 type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
 type OpenReviewerTerminal = (target: { handleId: string; harness: string }) => void;
 
@@ -768,10 +767,6 @@ function ReviewsView({
 		},
 	});
 	const reviewStates = reviewsQuery.data?.reviews ?? [];
-	const scmSummary = useSessionScmSummary(hasPr ? session.id : undefined);
-	const prReviewSummaries = sessionPRDisplaySummaries(session, scmSummary.data).filter(
-		(pr) => pr.state === "open" && (pr.review.reviews?.length ?? 0) > 0,
-	);
 
 	return (
 		<div role="tabpanel">
@@ -792,36 +787,12 @@ function ReviewsView({
 					session={session}
 				/>
 			</Section>
-			{prReviewSummaries.length > 0 ? <PullRequestReviewsSection prs={prReviewSummaries} /> : null}
 		</div>
 	);
 }
 
-function PullRequestReviewsSection({ prs }: { prs: SessionPRSummary[] }) {
-	return (
-		<Section surface title="Pull request reviews">
-			<div className="flex flex-col divide-y divide-border">
-				{prs.map((pr, index) => (
-					<ReviewDisclosure
-						key={pr.url}
-						defaultOpen={index === 0}
-						meta={`#${pr.number} · ${formatTimeCompact(pr.updatedAt)}`}
-						title={pr.title?.trim() || `PR #${pr.number}`}
-					>
-						{(pr.review.reviews ?? []).map((entry, entryIndex) => (
-							<PullRequestReviewRow entry={entry} key={`${entry.reviewerId}-${entryIndex}`} />
-						))}
-					</ReviewDisclosure>
-				))}
-			</div>
-		</Section>
-	);
-}
-
-/**
- * One expandable PR row shared by both reviews sections. The header carries PR
- * identity + update context only; verdicts live in the expanded rows below.
- */
+// One expandable PR row for AO review state. The header carries PR identity and
+// update context; verdicts live in the expanded row below.
 function ReviewDisclosure({
 	title,
 	meta,
@@ -853,59 +824,6 @@ function ReviewDisclosure({
 			{open ? <div className="ml-2 mt-2.5 flex flex-col gap-4 border-l border-border/60 pl-3.5">{children}</div> : null}
 		</div>
 	);
-}
-
-function PullRequestReviewRow({ entry }: { entry: SessionPRReviewEntry }) {
-	const verdict = prReviewVerdict(entry.verdict);
-	const body = entry.body?.trim();
-	const name = entry.isBot ? `${entry.reviewerId} · bot` : entry.reviewerId;
-	return (
-		<div className="min-w-0">
-			<div className="flex items-center gap-2">
-				{entry.reviewUrl ? (
-					<a
-						className="min-w-0 truncate text-xs font-medium text-foreground no-underline hover:underline"
-						href={entry.reviewUrl}
-						target="_blank"
-						rel="noopener noreferrer"
-					>
-						{name}
-					</a>
-				) : (
-					<span className="min-w-0 truncate text-xs font-medium text-foreground">{name}</span>
-				)}
-				<VerdictBadge label={verdict.label} tone={verdict.tone} />
-			</div>
-			{body ? <p className="mt-1 whitespace-pre-wrap break-words text-2xs leading-relaxed text-passive">{body}</p> : null}
-			{entry.reviewUrl ? (
-				<a
-					className="mt-1 inline-flex items-center gap-0.5 text-2xs font-medium text-passive no-underline transition-colors hover:text-foreground"
-					href={entry.reviewUrl}
-					target="_blank"
-					rel="noopener noreferrer"
-				>
-					View review
-					<ArrowUpRight aria-hidden="true" className="size-3 shrink-0" />
-				</a>
-			) : null}
-		</div>
-	);
-}
-
-function prReviewVerdict(verdict: SessionPRReviewEntry["verdict"]): {
-	label: string;
-	tone: "neutral" | "success" | "danger";
-} {
-	switch (verdict) {
-		case "approved":
-			return { label: "Approved", tone: "success" };
-		case "changes_requested":
-			return { label: "Changes requested", tone: "danger" };
-		case "review_required":
-			return { label: "Review required", tone: "neutral" };
-		default:
-			return { label: "Commented", tone: "neutral" };
-	}
 }
 
 function projectConfig(project: components["schemas"]["ProjectOrDegraded"] | undefined): ProjectConfig | undefined {
