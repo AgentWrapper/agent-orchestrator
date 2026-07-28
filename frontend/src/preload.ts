@@ -41,6 +41,7 @@ export type ImportRepoScan = {
 export type ImportFolderScan = {
 	path: string;
 	repos: ImportRepoScan[];
+	setupWarning?: string;
 };
 
 const api = {

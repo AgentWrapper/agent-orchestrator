@@ -19,6 +19,7 @@ export type GitRepoScanResult = {
 export type ImportFolderScanResult = {
 	path: string;
 	repos: GitRepoScanResult[];
+	setupWarning?: string;
 };
 
 const IMPORT_SCAN_CONCURRENCY = 8;
@@ -73,6 +74,18 @@ function projectSetupSafetyReason(repoPath: string, options: ScanOptions = {}): 
 	const aoState = path.join(home, ".ao");
 	if (isDescendantPath(repoPath, aoState)) {
 		return "Selected folder is inside AO's internal data directory. Select a project folder outside ~/.ao.";
+	}
+	return undefined;
+}
+
+async function ancestorRepositorySetupWarning(repoPath: string, options: ScanOptions = {}): Promise<string | undefined> {
+	try {
+		const top = normalizeGitReportedPath(repoPath, await gitOutput(repoPath, ["rev-parse", "--show-toplevel"], options));
+		if (top && !samePath(top, repoPath)) {
+			return `Selected folder is inside an existing Git repository at ${top}. AO will initialize this folder as a separate repository.`;
+		}
+	} catch {
+		// No ancestor repository.
 	}
 	return undefined;
 }
@@ -141,26 +154,6 @@ async function scanGitRepo(
 			}
 		} catch {
 			// Not a git repository.
-		}
-		try {
-			const top = normalizeGitReportedPath(
-				repoPath,
-				await gitOutput(repoPath, ["rev-parse", "--show-toplevel"], options),
-			);
-			if (top && !samePath(top, repoPath)) {
-				return {
-					name,
-					path: repoPath,
-					relativePath,
-					branch: "HEAD",
-					remote: "",
-					hasRemote: false,
-					status: "error",
-					reason: `Selected folder is inside a Git repository. Select the repository root instead: ${top}`,
-				};
-			}
-		} catch {
-			// Plain folder outside a Git repository.
 		}
 		return null;
 	}
@@ -245,7 +238,12 @@ export async function scanImportFolder(
 			};
 		}
 		const repo = await scanGitRepo(rootPath, rootPath, options);
-		return { path: rootPath, repos: repo ? [repo] : [] };
+		if (repo) return { path: rootPath, repos: [repo] };
+		return {
+			path: rootPath,
+			repos: [],
+			setupWarning: await ancestorRepositorySetupWarning(rootPath, options),
+		};
 	}
 
 	const entries = (await readdir(rootPath, { withFileTypes: true }))

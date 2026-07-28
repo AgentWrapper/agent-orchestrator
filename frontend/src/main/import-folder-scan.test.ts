@@ -48,7 +48,7 @@ afterEach(async () => {
 });
 
 describe("scanImportFolder", () => {
-	it("reports a plain project folder nested inside a parent repo instead of treating it as setup-ready", async () => {
+	it("leaves a plain project folder nested inside a parent repo setup-ready with a warning", async () => {
 		const root = await tempDir();
 		const parent = path.join(root, "parent");
 		await committedRepo(parent);
@@ -57,15 +57,10 @@ describe("scanImportFolder", () => {
 
 		const scan = await scanImportFolder(nested, "project");
 
-		expect(scan.repos).toHaveLength(1);
-		expect(scan.repos[0]).toMatchObject({
-			path: nested,
-			relativePath: ".",
-			status: "error",
-			hasRemote: false,
-		});
-		expect(scan.repos[0]?.reason).toContain("Selected folder is inside a Git repository");
-		expect(scan.repos[0]?.reason).toContain(parent);
+		expect(scan.path).toBe(nested);
+		expect(scan.repos).toEqual([]);
+		expect(scan.setupWarning).toContain("Selected folder is inside an existing Git repository at ");
+		expect(scan.setupWarning).toContain("AO will initialize this folder as a separate repository.");
 	});
 
 	it("reports a true project repository root as importable", async () => {
