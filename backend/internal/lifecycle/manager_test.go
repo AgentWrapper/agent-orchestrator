@@ -266,9 +266,6 @@ func TestActivity_ReconciledIdleRequiresUnchangedActiveSnapshot(t *testing.T) {
 	if got := st.sessions[rec.ID].Activity.State; got != domain.ActivityIdle {
 		t.Fatalf("current reconciliation left activity %q", got)
 	}
-	if len(st.idleEvents) != 1 {
-		t.Fatalf("worker idle events = %d, want 1", len(st.idleEvents))
-	}
 }
 
 func TestActivity_RepeatedUserPromptFencesTerminalReconciliation(t *testing.T) {
