@@ -814,6 +814,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/usage/sessions/{sessionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get detailed usage and optional cost telemetry for one session */
+        get: operations["getSessionUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1348,6 +1365,16 @@ export interface components {
         SessionResponse: {
             session: components["schemas"]["ControllersSessionView"];
         };
+        SessionUsageResponse: {
+            /** @enum {string} */
+            collectionState: "waiting" | "collecting" | "complete" | "partial" | "unavailable";
+            harnesses: components["schemas"]["UsageHarnessResponse"][];
+            /** Format: date-time */
+            lastObservedAt?: null | string;
+            sessionId: string;
+            totals: components["schemas"]["UsageTotalsResponse"];
+            warnings: string[];
+        };
         SetActivityRequest: {
             /** @description Native agent session identifier used to resume its transcript. */
             agentSessionId?: string;
@@ -1364,7 +1391,7 @@ export interface components {
             toolName?: string;
             /** @description Native tool-use id, for tool-use hook events. */
             toolUseId?: string;
-            /** @description Provider transcript metadata used by the local usage observer. */
+            /** @description Provider transcript metadata used by the local usage pipeline. */
             usage?: components["schemas"]["ControllersUsageHookMetadata"];
         };
         SetActivityResponse: {
@@ -1470,6 +1497,41 @@ export interface components {
         UpdateShellTerminalRequest: {
             /** @description New tab title for the shell terminal. Trimmed; must be non-empty. */
             title: string;
+        };
+        UsageCostMetricResponse: {
+            /** @enum {string} */
+            confidence: "provider_reported" | "api_pricing_estimate" | "unavailable";
+            /** @enum {string} */
+            coverage: "complete" | "partial" | "unavailable";
+            /** @enum {string} */
+            currency: "USD";
+            pricingVersion?: string;
+            valueNanos: null | number;
+        };
+        UsageHarnessResponse: {
+            harness: string;
+            models: components["schemas"]["UsageModelResponse"][];
+            provider: string;
+            totals: components["schemas"]["UsageTotalsResponse"];
+        };
+        UsageMetricResponse: {
+            /** @enum {string} */
+            coverage: "complete" | "partial" | "unavailable";
+            value: null | number;
+        };
+        UsageModelResponse: {
+            modelId: string;
+            provider: string;
+            totals: components["schemas"]["UsageTotalsResponse"];
+        };
+        UsageTotalsResponse: {
+            cacheReadTokens: components["schemas"]["UsageMetricResponse"];
+            cacheWriteTokens: components["schemas"]["UsageMetricResponse"];
+            estimatedCost: components["schemas"]["UsageCostMetricResponse"];
+            inputTokens: components["schemas"]["UsageMetricResponse"];
+            outputTokens: components["schemas"]["UsageMetricResponse"];
+            reasoningTokens: components["schemas"]["UsageMetricResponse"];
+            uncachedInputTokens: components["schemas"]["UsageMetricResponse"];
         };
         WorkspaceFileResponse: {
             additions: number;
@@ -4379,6 +4441,56 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ListCompactSessionUsageResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getSessionUsage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionUsageResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Internal Server Error */

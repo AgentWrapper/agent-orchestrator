@@ -93,8 +93,8 @@ const (
 	CostBasisUnavailable      CostBasis = "unavailable"
 )
 
-// Usage error code constants are safe storage/display identifiers for observer
-// and ingestion failures.
+// Usage error code constants are safe storage/display identifiers for
+// transcript discovery and ingestion failures.
 const (
 	UsageErrorSourceDiscoveryPending      = "source_discovery_pending"
 	UsageErrorArtifactPathRejected        = "artifact_path_rejected"
@@ -162,7 +162,7 @@ type UsageSourceRecord struct {
 }
 
 // UsageSourceContext is the source row plus immutable binding/session facts the
-// observer needs while normalizing parser output.
+// ingestor needs while normalizing parser output.
 type UsageSourceContext struct {
 	Source           UsageSourceRecord
 	SessionID        SessionID
@@ -209,7 +209,6 @@ type ModelUsageEvent struct {
 	ModelID          string
 	ObservedAt       time.Time
 	Tokens           UsageTokenMetrics
-	DurationMS       *int64
 	Cost             UsageCostMetrics
 	TokenConfidence  TokenConfidence
 	SourceEventKey   string
@@ -247,21 +246,6 @@ type UsageModelAggregate struct {
 	EstimatedCostEventCount int64
 	EstimatedCostNanos      int64
 	LastObservedAt          *time.Time
-}
-
-// UsageCoverageCounts contains event counts needed to derive coverage for a
-// session-level aggregate.
-type UsageCoverageCounts struct {
-	EventCount              int64
-	ReasoningEventCount     int64
-	EstimatedCostEventCount int64
-}
-
-// UsageRowCounts is a cheap storage-level count for binding/source/event rows.
-type UsageRowCounts struct {
-	BindingCount int64
-	SourceCount  int64
-	EventCount   int64
 }
 
 // UsageSessionAggregate is the storage-level batch row used to derive compact

@@ -17,12 +17,22 @@ import (
 type fakeUsageSummaryService struct {
 	projectID domain.ProjectID
 	items     []domain.CompactSessionUsage
+	sessionID domain.SessionID
+	detail    domain.SessionUsageSummary
 	err       error
 }
 
 func (f *fakeUsageSummaryService) ListCompact(_ context.Context, projectID domain.ProjectID) ([]domain.CompactSessionUsage, error) {
 	f.projectID = projectID
 	return f.items, f.err
+}
+
+func (f *fakeUsageSummaryService) Get(
+	_ context.Context,
+	sessionID domain.SessionID,
+) (domain.SessionUsageSummary, error) {
+	f.sessionID = sessionID
+	return f.detail, f.err
 }
 
 func newUsageTestServer(t *testing.T, svc *fakeUsageSummaryService) *httptest.Server {
@@ -65,6 +75,70 @@ func TestUsageAPIListsCompactProjectUsage(t *testing.T) {
 		got.Sessions[0].TotalTokens != 12400 || got.Sessions[0].CollectionState != "collecting" ||
 		got.Sessions[0].Coverage != "partial" || got.Sessions[0].LastObservedAt == nil ||
 		!got.Sessions[0].LastObservedAt.Equal(now) {
+		t.Fatalf("response = %+v", got)
+	}
+}
+
+func TestUsageAPIShowsDetailedSessionTelemetry(t *testing.T) {
+	now := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
+	input := int64(1000)
+	output := int64(200)
+	cacheRead := int64(400)
+	svc := &fakeUsageSummaryService{detail: domain.SessionUsageSummary{
+		SessionID: "reverb-12",
+		Collection: domain.UsageCollectionSummary{
+			State:          domain.UsageCollectionCollecting,
+			LastObservedAt: &now,
+		},
+		Totals: domain.UsageMetricTotals{
+			InputTokens:     domain.UsageMetricCoverage{Value: &input, Coverage: domain.UsageCoveragePartial},
+			CacheReadTokens: domain.UsageMetricCoverage{Value: &cacheRead, Coverage: domain.UsageCoveragePartial},
+			OutputTokens:    domain.UsageMetricCoverage{Value: &output, Coverage: domain.UsageCoveragePartial},
+			EstimatedCostNanos: domain.UsageCostCoverage{
+				Coverage:   domain.UsageCoverageUnavailable,
+				Confidence: domain.CostConfidenceNone,
+			},
+		},
+		Harnesses: []domain.HarnessUsageSummary{{
+			Harness:  domain.HarnessCodex,
+			Provider: "openai",
+			Models:   []domain.ModelUsageSummary{{ModelID: "gpt-5.6", Provider: "openai"}},
+		}},
+	}}
+	srv := newUsageTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, http.MethodGet, "/api/v1/usage/sessions/reverb-12", "")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", status, body)
+	}
+	if svc.sessionID != "reverb-12" {
+		t.Fatalf("session id = %q", svc.sessionID)
+	}
+	var got struct {
+		SessionID       string `json:"sessionId"`
+		CollectionState string `json:"collectionState"`
+		Totals          struct {
+			InputTokens struct {
+				Value int64 `json:"value"`
+			} `json:"inputTokens"`
+			EstimatedCost struct {
+				ValueNanos *int64 `json:"valueNanos"`
+				Coverage   string `json:"coverage"`
+			} `json:"estimatedCost"`
+		} `json:"totals"`
+		Harnesses []struct {
+			Models []struct {
+				ModelID string `json:"modelId"`
+			} `json:"models"`
+		} `json:"harnesses"`
+	}
+	mustJSON(t, body, &got)
+	if got.SessionID != "reverb-12" || got.CollectionState != "collecting" ||
+		got.Totals.InputTokens.Value != 1000 ||
+		got.Totals.EstimatedCost.ValueNanos != nil ||
+		got.Totals.EstimatedCost.Coverage != "unavailable" ||
+		len(got.Harnesses) != 1 || len(got.Harnesses[0].Models) != 1 ||
+		got.Harnesses[0].Models[0].ModelID != "gpt-5.6" {
 		t.Fatalf("response = %+v", got)
 	}
 }

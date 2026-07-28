@@ -18,8 +18,10 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
+import { useSessionUsage, type SessionUsage } from "../hooks/useSessionUsage";
 import { useTerminateSession } from "../hooks/useTerminateSession";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
+import { formatTokenCount } from "../lib/format-token-count";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { canonicalTrackerIssueId, sortedPRs } from "../types/workspace";
 import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session-presentation";
@@ -284,6 +286,7 @@ function Section({
 
 function SummaryView({ session }: { session: WorkspaceSession }) {
 	const query = useSessionScmSummary(session.id);
+	const usageQuery = useSessionUsage(session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, query.data);
 	const prSectionTitle = prSummaries.length > 1 ? `Pull requests (${prSummaries.length})` : "Pull request";
 	const issueId = canonicalTrackerIssueId(session.issueId);
@@ -309,6 +312,23 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 				<ResumeAgentControl session={session} />
 			</Section>
 
+			<Section
+				action={
+					usageQuery.data ? (
+						<span className="font-medium normal-case tracking-normal text-settings-muted">
+							{usageCollectionLabel(usageQuery.data.collectionState)}
+						</span>
+					) : null
+				}
+				title="Usage & cost"
+			>
+				<UsageCostTelemetry
+					error={usageQuery.isError}
+					loading={usageQuery.isLoading}
+					usage={usageQuery.data}
+				/>
+			</Section>
+
 			<Section title="Overview">
 				<dl className="flex flex-col gap-1">
 					<Row k="Agent" v={session.provider} mono />
@@ -320,6 +340,267 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 			</Section>
 		</div>
 	);
+}
+
+function UsageCostTelemetry({
+	error,
+	loading,
+	usage,
+}: {
+	error: boolean;
+	loading: boolean;
+	usage?: SessionUsage;
+}) {
+	const [breakdownOpen, setBreakdownOpen] = useState(false);
+	const [expandedHarness, setExpandedHarness] = useState<number | null>(null);
+
+	if (loading) {
+		return <p className={inspectorEmptyClass}>Loading telemetry…</p>;
+	}
+	if (error || !usage) {
+		return <p className={inspectorEmptyClass}>Usage telemetry is unavailable.</p>;
+	}
+
+	const totalTokens = usageTokenTotal(usage.totals);
+	const models = Array.from(
+		new Set(
+			usage.harnesses.flatMap((harness) =>
+				harness.models
+					.filter((model) => model.modelId || model.provider)
+					.map((model) => `${model.provider}:${model.modelId || model.provider}`),
+			),
+		),
+	);
+	const agentCount = usage.harnesses.length;
+
+	return (
+		<div>
+			<div className="flex items-start justify-between gap-4 @max-[300px]/inspector:flex-col @max-[300px]/inspector:gap-2">
+				<div className="min-w-0">
+					<p className="text-2xs text-settings-muted">Total tokens</p>
+					<p
+						className="mt-0.5 truncate font-mono text-md-sm font-medium text-settings-label"
+						title={totalTokens === null ? undefined : `${totalTokens.toLocaleString("en-US")} tokens`}
+					>
+						{totalTokens === null ? "No usage yet" : formatTokenCount(totalTokens)}
+					</p>
+				</div>
+				<div className="min-w-0 text-right @max-[300px]/inspector:text-left">
+					<p className="text-2xs text-settings-muted">Estimated cost</p>
+					<p
+						className="mt-0.5 truncate font-mono text-md-sm font-medium text-settings-label"
+						title={
+							usage.totals.estimatedCost.valueNanos === null
+								? "No reliable pricing coverage is available for this session."
+								: undefined
+						}
+					>
+						{formatEstimatedCost(usage.totals.estimatedCost.valueNanos)}
+					</p>
+				</div>
+			</div>
+
+			<button
+				aria-expanded={breakdownOpen}
+				aria-label={breakdownOpen ? "Hide breakdown" : "Breakdown"}
+				className="group mt-3 flex w-full items-center justify-between gap-3 border-t border-(--color-border-settings-input) pt-3 text-left"
+				onClick={() => {
+					setBreakdownOpen((open) => !open);
+					if (breakdownOpen) setExpandedHarness(null);
+				}}
+				type="button"
+			>
+				<span className="text-2xs text-settings-muted">
+					{formatCount(agentCount, "agent")} · {formatCount(models.length, "model")}
+				</span>
+				<span className="flex shrink-0 items-center gap-1 text-2xs text-settings-label transition-colors group-hover:text-foreground">
+					{breakdownOpen ? "Hide" : "Breakdown"}
+					{breakdownOpen ? (
+						<ChevronDown className="size-icon-xs" aria-hidden="true" />
+					) : (
+						<ChevronRight className="size-icon-xs" aria-hidden="true" />
+					)}
+				</span>
+			</button>
+
+			{breakdownOpen ? (
+				<div className="mt-2 border-t border-(--color-border-settings-input)">
+					{usage.harnesses.map((harness, index) => {
+						const isExpanded = expandedHarness === index;
+						const harnessTokens = usageTokenTotal(harness.totals);
+						const harnessName = formatHarnessName(harness.harness);
+						return (
+							<div
+								className="border-b border-(--color-border-settings-input) last:border-b-0"
+								key={`${harness.harness}:${harness.provider}:${index}`}
+							>
+								<button
+									aria-expanded={isExpanded}
+									aria-label={`${harnessName} usage`}
+									className="group flex w-full items-center justify-between gap-3 py-2.5 text-left"
+									onClick={() => setExpandedHarness(isExpanded ? null : index)}
+									type="button"
+								>
+									<span className="min-w-0">
+										<span className="block truncate text-sm-md text-settings-label">{harnessName}</span>
+										<span className="block text-2xs text-settings-muted">
+											{formatCount(harness.models.length, "model")}
+										</span>
+									</span>
+									<span className="flex shrink-0 items-center gap-2">
+										<span className="text-right font-mono text-2xs text-settings-label">
+											<span
+												className="block"
+												title={
+													harnessTokens === null
+														? undefined
+														: `${harnessTokens.toLocaleString("en-US")} tokens`
+												}
+											>
+												{harnessTokens === null ? "—" : formatTokenCount(harnessTokens)}
+											</span>
+											<span className="block text-settings-muted">
+												{formatEstimatedCost(harness.totals.estimatedCost.valueNanos)}
+											</span>
+										</span>
+										{isExpanded ? (
+											<ChevronDown className="size-icon-xs text-settings-muted" aria-hidden="true" />
+										) : (
+											<ChevronRight className="size-icon-xs text-settings-muted" aria-hidden="true" />
+										)}
+									</span>
+								</button>
+
+								{isExpanded ? <HarnessUsageDetails harness={harness} /> : null}
+							</div>
+						);
+					})}
+
+					{usage.lastObservedAt ? (
+						<p className="pt-2 text-right text-2xs text-settings-muted">
+							Updated {formatTimeCompact(usage.lastObservedAt)}
+						</p>
+					) : null}
+				</div>
+			) : null}
+		</div>
+	);
+}
+
+function HarnessUsageDetails({ harness }: { harness: SessionUsage["harnesses"][number] }) {
+	return (
+		<div className="pb-3">
+			<dl className="grid grid-cols-2 gap-x-4 gap-y-2 @max-[300px]/inspector:grid-cols-1">
+				<UsageMetric label="Input" metric={harness.totals.inputTokens} />
+				<UsageMetric label="Output" metric={harness.totals.outputTokens} />
+				<UsageMetric label="Cache read" metric={harness.totals.cacheReadTokens} />
+				<UsageMetric label="Cache write" metric={harness.totals.cacheWriteTokens} />
+				<UsageMetric label="Reasoning" metric={harness.totals.reasoningTokens} />
+				<UsageMetric label="Uncached input" metric={harness.totals.uncachedInputTokens} />
+			</dl>
+
+			{harness.models.length > 0 ? (
+				<div className="mt-3 border-t border-(--color-border-settings-input) pt-2">
+					<p className="mb-1.5 text-2xs text-settings-muted">Models</p>
+					{harness.models.map((model, index) => {
+						const modelTokens = usageTokenTotal(model.totals);
+						return (
+							<div
+								className="flex items-center justify-between gap-3 py-1 text-2xs"
+								key={`${model.provider}:${model.modelId}:${index}`}
+							>
+								<span className="min-w-0 truncate font-mono text-settings-label">
+									{model.modelId || model.provider}
+								</span>
+								<span className="flex shrink-0 items-center gap-2 font-mono text-settings-muted">
+									<span title={modelTokens === null ? undefined : `${modelTokens.toLocaleString("en-US")} tokens`}>
+										{modelTokens === null ? "—" : formatTokenCount(modelTokens)}
+									</span>
+									<span>{formatEstimatedCost(model.totals.estimatedCost.valueNanos)}</span>
+								</span>
+							</div>
+						);
+					})}
+				</div>
+			) : null}
+		</div>
+	);
+}
+
+function UsageMetric({
+	label,
+	metric,
+}: {
+	label: string;
+	metric: SessionUsage["totals"]["inputTokens"];
+}) {
+	return (
+		<div className="min-w-0">
+			<dt className="truncate text-2xs text-settings-muted">{label}</dt>
+			<dd
+				className="mt-0.5 truncate font-mono text-sm-md text-settings-label"
+				title={
+					metric.value === null
+						? `${label} telemetry unavailable`
+						: `${metric.value.toLocaleString("en-US")} tokens · ${metric.coverage} coverage`
+				}
+			>
+				{metric.value === null ? "—" : formatTokenCount(metric.value)}
+			</dd>
+		</div>
+	);
+}
+
+function usageTokenTotal(totals: SessionUsage["totals"]): number | null {
+	if (totals.inputTokens.value === null && totals.outputTokens.value === null) return null;
+	return (totals.inputTokens.value ?? 0) + (totals.outputTokens.value ?? 0);
+}
+
+function formatCount(value: number, noun: string): string {
+	return `${value} ${noun}${value === 1 ? "" : "s"}`;
+}
+
+function formatHarnessName(harness: string): string {
+	const knownNames: Record<string, string> = {
+		"claude-code": "Claude",
+		claude: "Claude",
+		codex: "Codex",
+		glm: "GLM",
+		kimi: "Kimi",
+	};
+	if (knownNames[harness]) return knownNames[harness];
+	return harness
+		.split(/[-_]/)
+		.filter(Boolean)
+		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+		.join(" ");
+}
+
+function usageCollectionLabel(state: SessionUsage["collectionState"]): string {
+	switch (state) {
+		case "waiting":
+			return "Waiting";
+		case "collecting":
+			return "Collecting";
+		case "complete":
+			return "Complete";
+		case "partial":
+			return "Partial";
+		default:
+			return "Unavailable";
+	}
+}
+
+function formatEstimatedCost(valueNanos: number | null): string {
+	if (valueNanos === null) return "Unavailable";
+	const dollars = valueNanos / 1_000_000_000;
+	if (dollars > 0 && dollars < 0.01) return "<$0.01";
+	return dollars.toLocaleString("en-US", {
+		style: "currency",
+		currency: "USD",
+		minimumFractionDigits: 2,
+		maximumFractionDigits: dollars < 1 ? 4 : 2,
+	});
 }
 
 function ResumeAgentControl({ session }: { session: WorkspaceSession }) {

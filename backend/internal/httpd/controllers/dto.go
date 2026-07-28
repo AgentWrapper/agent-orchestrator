@@ -539,7 +539,7 @@ type SetActivityRequest struct {
 	ToolUseID      string             `json:"toolUseId,omitempty" description:"Native tool-use id, for tool-use hook events."`
 	AgentSessionID string             `json:"agentSessionId,omitempty" description:"Native agent session identifier used to resume its transcript."`
 	LaunchID       string             `json:"launchId,omitempty" description:"AO process generation that produced the signal."`
-	Usage          *UsageHookMetadata `json:"usage,omitempty" description:"Provider transcript metadata used by the local usage observer."`
+	Usage          *UsageHookMetadata `json:"usage,omitempty" description:"Provider transcript metadata used by the local usage pipeline."`
 }
 
 // UsageHookMetadata is the transcript metadata carried by supported Claude
@@ -614,6 +614,57 @@ type CompactSessionUsageResponse struct {
 // ListCompactSessionUsageResponse is the batch dashboard usage response.
 type ListCompactSessionUsageResponse struct {
 	Sessions []CompactSessionUsageResponse `json:"sessions"`
+}
+
+// UsageMetricResponse is one token metric plus its collection coverage.
+type UsageMetricResponse struct {
+	Value    *int64 `json:"value"`
+	Coverage string `json:"coverage" enum:"complete,partial,unavailable"`
+}
+
+// UsageCostMetricResponse is an optional USD cost expressed in nano-dollars.
+type UsageCostMetricResponse struct {
+	ValueNanos     *int64 `json:"valueNanos"`
+	Currency       string `json:"currency" enum:"USD"`
+	Coverage       string `json:"coverage" enum:"complete,partial,unavailable"`
+	Confidence     string `json:"confidence" enum:"provider_reported,api_pricing_estimate,unavailable"`
+	PricingVersion string `json:"pricingVersion,omitempty"`
+}
+
+// UsageTotalsResponse is the normalized telemetry aggregate for one scope.
+type UsageTotalsResponse struct {
+	InputTokens         UsageMetricResponse     `json:"inputTokens"`
+	UncachedInputTokens UsageMetricResponse     `json:"uncachedInputTokens"`
+	CacheReadTokens     UsageMetricResponse     `json:"cacheReadTokens"`
+	CacheWriteTokens    UsageMetricResponse     `json:"cacheWriteTokens"`
+	OutputTokens        UsageMetricResponse     `json:"outputTokens"`
+	ReasoningTokens     UsageMetricResponse     `json:"reasoningTokens"`
+	EstimatedCost       UsageCostMetricResponse `json:"estimatedCost"`
+}
+
+// UsageModelResponse is telemetry grouped by exact provider model id.
+type UsageModelResponse struct {
+	ModelID  string              `json:"modelId"`
+	Provider string              `json:"provider"`
+	Totals   UsageTotalsResponse `json:"totals"`
+}
+
+// UsageHarnessResponse groups model telemetry under one AO harness.
+type UsageHarnessResponse struct {
+	Harness  string               `json:"harness"`
+	Provider string               `json:"provider"`
+	Totals   UsageTotalsResponse  `json:"totals"`
+	Models   []UsageModelResponse `json:"models"`
+}
+
+// SessionUsageResponse is detailed telemetry for the session inspector.
+type SessionUsageResponse struct {
+	SessionID       domain.SessionID       `json:"sessionId"`
+	CollectionState string                 `json:"collectionState" enum:"waiting,collecting,complete,partial,unavailable"`
+	LastObservedAt  *time.Time             `json:"lastObservedAt,omitempty"`
+	Warnings        []string               `json:"warnings"`
+	Totals          UsageTotalsResponse    `json:"totals"`
+	Harnesses       []UsageHarnessResponse `json:"harnesses"`
 }
 
 // ListNotificationsQuery is the query string accepted by GET /api/v1/notifications.

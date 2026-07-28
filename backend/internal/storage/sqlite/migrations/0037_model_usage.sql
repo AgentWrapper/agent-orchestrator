@@ -36,6 +36,8 @@ CREATE TABLE usage_sources (
     baseline_cache_write_tokens   INTEGER NOT NULL DEFAULT 0 CHECK (baseline_cache_write_tokens >= 0),
     baseline_output_tokens        INTEGER NOT NULL DEFAULT 0 CHECK (baseline_output_tokens >= 0),
     baseline_reasoning_tokens     INTEGER NOT NULL DEFAULT 0 CHECK (baseline_reasoning_tokens >= 0),
+    current_model_id              TEXT NOT NULL DEFAULT '',
+    current_provider              TEXT NOT NULL DEFAULT '',
     parser_version                TEXT NOT NULL CHECK (trim(parser_version) <> ''),
     state                         TEXT NOT NULL
         CHECK (state IN ('pending', 'active', 'complete', 'error')),
@@ -71,7 +73,6 @@ CREATE TABLE model_usage_events (
     cache_write_1h_tokens   INTEGER CHECK (cache_write_1h_tokens IS NULL OR (cache_write_1h_tokens >= 0 AND cache_write_1h_tokens <= cache_write_tokens)),
     output_tokens           INTEGER NOT NULL CHECK (output_tokens >= 0),
     reasoning_tokens        INTEGER CHECK (reasoning_tokens IS NULL OR (reasoning_tokens >= 0 AND reasoning_tokens <= output_tokens)),
-    duration_ms             INTEGER CHECK (duration_ms IS NULL OR duration_ms >= 0),
     reported_cost_nanos     INTEGER CHECK (reported_cost_nanos IS NULL OR reported_cost_nanos >= 0),
     estimated_cost_nanos    INTEGER CHECK (estimated_cost_nanos IS NULL OR estimated_cost_nanos >= 0),
     pricing_version         TEXT NOT NULL DEFAULT '',

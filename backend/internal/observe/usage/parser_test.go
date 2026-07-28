@@ -96,6 +96,49 @@ func TestParseCodexCounterResetNeverEmitsNegativeUsage(t *testing.T) {
 	}
 }
 
+func TestParsersRejectInvalidTokenVectorsAndAdvanceCursor(t *testing.T) {
+	now := time.Unix(1700000000, 0).UTC()
+	tests := []struct {
+		name   string
+		source domain.UsageSourceContext
+		record []byte
+	}{
+		{
+			name:   "claude negative cache input",
+			source: usageSource(domain.UsageSourceClaudeMain),
+			record: []byte(`{"type":"assistant","uuid":"bad","message":{"id":"bad","model":"claude-x","stop_reason":"end_turn","usage":{"input_tokens":8,"cache_creation_input_tokens":-1,"cache_read_input_tokens":0,"output_tokens":2}}}`),
+		},
+		{
+			name:   "claude cache subtype exceeds cache write",
+			source: usageSource(domain.UsageSourceClaudeMain),
+			record: []byte(`{"type":"assistant","uuid":"bad","message":{"id":"bad","model":"claude-x","stop_reason":"end_turn","usage":{"input_tokens":8,"cache_creation_input_tokens":2,"cache_read_input_tokens":0,"output_tokens":2,"cache_creation":{"ephemeral_5m_input_tokens":2,"ephemeral_1h_input_tokens":1}}}}`),
+		},
+		{
+			name:   "codex cached input exceeds input",
+			source: usageSource(domain.UsageSourceCodexRollout),
+			record: codexTokenLine("2026-07-01T10:00:00Z", 10, 11, 0, 2, 1),
+		},
+		{
+			name:   "codex reasoning exceeds output",
+			source: usageSource(domain.UsageSourceCodexRollout),
+			record: codexTokenLine("2026-07-01T10:00:00Z", 10, 5, 0, 2, 3),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := parseRecords(test.source, []jsonlRecord{{Data: test.record}}, 777, now)
+			if len(result.Events) != 0 {
+				t.Fatalf("events = %+v, want none", result.Events)
+			}
+			if result.Cursor.ByteOffset != 777 || result.Cursor.AnomalyCount != 1 ||
+				result.Cursor.LastErrorCode != domain.UsageErrorMalformedJSONL {
+				t.Fatalf("cursor = %+v", result.Cursor)
+			}
+		})
+	}
+}
+
 func TestParserEventKeysSurvivePhysicalSourceReplacement(t *testing.T) {
 	now := time.Unix(1700000000, 0).UTC()
 	claudeRecord := jsonlRecord{
@@ -206,7 +249,9 @@ func TestReadJSONLChunkRetainsPartialTailAndSkipsOversizedRecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.records) != 1 || first.atEOF || first.nextOffset != int64(len(`{"a":1}`+"\n")) {
+	if len(first.records) != 1 || first.atEOF || !first.readToEOF ||
+		string(first.trailing) != `{"b":` ||
+		first.nextOffset != int64(len(`{"a":1}`+"\n")) {
 		t.Fatalf("first chunk = %+v", first)
 	}
 	if err := osAppend(path, `2}`+"\n"); err != nil {

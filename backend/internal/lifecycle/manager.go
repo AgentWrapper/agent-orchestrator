@@ -52,6 +52,10 @@ type sessionTerminator interface {
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 }
 
+type sessionUsageFinalizer interface {
+	FinalizeSession(ctx context.Context, id domain.SessionID) error
+}
+
 type pendingLaunch struct {
 	launchID string
 	ready    chan struct{}
@@ -93,6 +97,10 @@ type Manager struct {
 	// completionTerminator is late-bound because Session Manager itself depends
 	// on this lifecycle reducer. It is required before the SCM observer starts.
 	completionTerminator sessionTerminator
+	// usageFinalizer is late-bound because the usage pipeline is optional. It
+	// receives terminal intent before is_terminated makes the session ineligible
+	// for normal source discovery.
+	usageFinalizer sessionUsageFinalizer
 
 	mu        sync.Mutex
 	window    time.Duration
@@ -150,6 +158,14 @@ func (m *Manager) SetCompletionTerminator(terminator sessionTerminator) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.completionTerminator = terminator
+}
+
+// SetUsageFinalizer wires termination to usage collection. Finalization is
+// best-effort and never blocks the lifecycle transition.
+func (m *Manager) SetUsageFinalizer(finalizer sessionUsageFinalizer) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.usageFinalizer = finalizer
 }
 
 // PrepareLaunch registers a supervised generation before the runtime starts.
@@ -818,6 +834,18 @@ func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, metadata
 
 // MarkTerminated marks a session terminated without tearing down external resources.
 func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error {
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil || !ok || rec.IsTerminated {
+		return err
+	}
+	m.mu.Lock()
+	finalizer := m.usageFinalizer
+	m.mu.Unlock()
+	if finalizer != nil {
+		if err := finalizer.FinalizeSession(ctx, id); err != nil {
+			slog.Default().Warn("lifecycle: finalize session usage before termination", "session", id, "err", err)
+		}
+	}
 	return m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
 		if cur.IsTerminated {
 			return cur, false

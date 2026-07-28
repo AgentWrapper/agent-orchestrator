@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionInspector } from "./SessionInspector";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
+import type { SessionUsage } from "../hooks/useSessionUsage";
 import type { PRState, PullRequestFacts, WorkspaceSession } from "../types/workspace";
 
 const { getMock, navigateMock, patchMock, postMock } = vi.hoisted(() => ({
@@ -93,6 +94,68 @@ const prSummary = (
 	};
 };
 
+const usageTelemetry = (overrides: Partial<SessionUsage> = {}): SessionUsage => ({
+	sessionId: "sess-1",
+	collectionState: "collecting",
+	lastObservedAt: "2026-06-15T12:00:00Z",
+	warnings: [],
+	totals: {
+		inputTokens: { value: 1000, coverage: "partial" },
+		uncachedInputTokens: { value: 600, coverage: "partial" },
+		cacheReadTokens: { value: 400, coverage: "partial" },
+		cacheWriteTokens: { value: 0, coverage: "partial" },
+		outputTokens: { value: 200, coverage: "partial" },
+		reasoningTokens: { value: 40, coverage: "partial" },
+		estimatedCost: {
+			valueNanos: null,
+			currency: "USD",
+			coverage: "unavailable",
+			confidence: "unavailable",
+		},
+	},
+	harnesses: [
+		{
+			harness: "codex",
+			provider: "openai",
+			totals: {
+				inputTokens: { value: 1000, coverage: "partial" },
+				uncachedInputTokens: { value: 600, coverage: "partial" },
+				cacheReadTokens: { value: 400, coverage: "partial" },
+				cacheWriteTokens: { value: 0, coverage: "partial" },
+				outputTokens: { value: 200, coverage: "partial" },
+				reasoningTokens: { value: 40, coverage: "partial" },
+				estimatedCost: {
+					valueNanos: null,
+					currency: "USD",
+					coverage: "unavailable",
+					confidence: "unavailable",
+				},
+			},
+			models: [
+				{
+					modelId: "gpt-5.6",
+					provider: "openai",
+					totals: {
+						inputTokens: { value: 1000, coverage: "partial" },
+						uncachedInputTokens: { value: 600, coverage: "partial" },
+						cacheReadTokens: { value: 400, coverage: "partial" },
+						cacheWriteTokens: { value: 0, coverage: "partial" },
+						outputTokens: { value: 200, coverage: "partial" },
+						reasoningTokens: { value: 40, coverage: "partial" },
+						estimatedCost: {
+							valueNanos: null,
+							currency: "USD",
+							coverage: "unavailable",
+							confidence: "unavailable",
+						},
+					},
+				},
+			],
+		},
+	],
+	...overrides,
+});
+
 function renderWithQuery(children: ReactNode) {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -102,6 +165,9 @@ function renderWithQuery(children: ReactNode) {
 
 function mockCommonGets(_unusedRuns: unknown[] = [], reviewerHandleId = "", reviews: unknown[] = []) {
 	getMock.mockImplementation(async (path: string) => {
+		if (path === "/api/v1/usage/sessions/{sessionId}") {
+			return { data: usageTelemetry(), error: undefined };
+		}
 		if (path === "/api/v1/sessions/{sessionId}/reviews") {
 			return { data: { reviewerHandleId, reviews } };
 		}
@@ -161,7 +227,12 @@ beforeEach(() => {
 	navigateMock.mockReset();
 	patchMock.mockReset();
 	postMock.mockReset();
-	getMock.mockResolvedValue({ data: { reviewerHandleId: "", reviews: [] }, error: undefined });
+	getMock.mockImplementation(async (path: string) => {
+		if (path === "/api/v1/usage/sessions/{sessionId}") {
+			return { data: usageTelemetry(), error: undefined };
+		}
+		return { data: { reviewerHandleId: "", reviews: [] }, error: undefined };
+	});
 	patchMock.mockResolvedValue({ data: { ok: true }, error: undefined, response: { status: 200 } });
 	postMock.mockResolvedValue({ data: { ok: true, sessionId: "sess-1" }, error: undefined });
 });
@@ -551,6 +622,9 @@ describe("SessionInspector Activity section", () => {
 			}),
 		];
 		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/usage/sessions/{sessionId}") {
+				return { data: usageTelemetry(), error: undefined };
+			}
 			if (path === "/api/v1/sessions/{sessionId}/pr") {
 				return { data: { sessionId: "sess-1", prs: summaries }, error: undefined };
 			}
@@ -632,6 +706,87 @@ describe("SessionInspector Activity section", () => {
 	});
 });
 
+describe("SessionInspector Usage & cost section", () => {
+	it("keeps telemetry compact until the user opens an agent breakdown", async () => {
+		renderWithQuery(<SessionInspector session={session([])} />);
+
+		const usageSection = screen
+			.getByText("Usage & cost")
+			.closest("[data-testid='inspector-section']") as HTMLElement;
+		await waitFor(() => expect(within(usageSection).getByText("1.2K tok")).toBeInTheDocument());
+
+		expect(within(usageSection).getByText("Collecting")).toBeInTheDocument();
+		expect(within(usageSection).getByText("Estimated cost")).toBeInTheDocument();
+		expect(within(usageSection).getByText("Unavailable")).toBeInTheDocument();
+		expect(within(usageSection).getByText("1 agent · 1 model")).toBeInTheDocument();
+		expect(within(usageSection).queryByText("Input")).not.toBeInTheDocument();
+		expect(within(usageSection).queryByText("gpt-5.6")).not.toBeInTheDocument();
+
+		await userEvent.click(within(usageSection).getByRole("button", { name: "Breakdown" }));
+		expect(within(usageSection).getByRole("button", { name: "Codex usage" })).toBeInTheDocument();
+		expect(within(usageSection).queryByText("Input")).not.toBeInTheDocument();
+
+		await userEvent.click(within(usageSection).getByRole("button", { name: "Codex usage" }));
+		expect(within(usageSection).getByText("Input")).toBeInTheDocument();
+		expect(within(usageSection).getByText("Output")).toBeInTheDocument();
+		expect(within(usageSection).getByText("Cache read")).toBeInTheDocument();
+		expect(within(usageSection).getByText("Reasoning")).toBeInTheDocument();
+		expect(within(usageSection).getByText("gpt-5.6")).toBeInTheDocument();
+
+		const sectionTitles = Array.from(
+			document.querySelectorAll("[data-testid='inspector-section']"),
+			(section) => section.querySelector("span")?.textContent,
+		);
+		expect(sectionTitles.indexOf("Usage & cost")).toBe(sectionTitles.indexOf("Activity") + 1);
+		expect(getMock).toHaveBeenCalledWith("/api/v1/usage/sessions/{sessionId}", {
+			params: { path: { sessionId: "sess-1" } },
+		});
+	});
+
+	it("shows multiple agents without expanding more than one agent at a time", async () => {
+		const codex = usageTelemetry().harnesses[0];
+		if (!codex) throw new Error("missing Codex usage fixture");
+		const claude = {
+			...codex,
+			harness: "claude-code",
+			provider: "anthropic",
+			models: codex.models.map((model) => ({
+				...model,
+				modelId: "claude-opus-4.1",
+				provider: "anthropic",
+			})),
+		};
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/usage/sessions/{sessionId}") {
+				return { data: usageTelemetry({ harnesses: [codex, claude] }), error: undefined };
+			}
+			return { data: { reviewerHandleId: "", reviews: [] }, error: undefined };
+		});
+
+		renderWithQuery(<SessionInspector session={session([])} />);
+		const usageSection = screen
+			.getByText("Usage & cost")
+			.closest("[data-testid='inspector-section']") as HTMLElement;
+
+		await waitFor(() => expect(within(usageSection).getByText("2 agents · 2 models")).toBeInTheDocument());
+		expect(within(usageSection).queryByRole("button", { name: "Codex usage" })).not.toBeInTheDocument();
+
+		await userEvent.click(within(usageSection).getByRole("button", { name: "Breakdown" }));
+		const codexButton = within(usageSection).getByRole("button", { name: "Codex usage" });
+		const claudeButton = within(usageSection).getByRole("button", { name: "Claude usage" });
+
+		await userEvent.click(codexButton);
+		expect(codexButton).toHaveAttribute("aria-expanded", "true");
+		expect(claudeButton).toHaveAttribute("aria-expanded", "false");
+
+		await userEvent.click(claudeButton);
+		expect(codexButton).toHaveAttribute("aria-expanded", "false");
+		expect(claudeButton).toHaveAttribute("aria-expanded", "true");
+		expect(within(usageSection).getByText("claude-opus-4.1")).toBeInTheDocument();
+		expect(within(usageSection).queryByText("gpt-5.6")).not.toBeInTheDocument();
+	});
+});
+
 describe("SessionInspector tabs", () => {
 	it("exposes Summary, Reviews, Browser, and Files as inspector tabs", () => {
 		renderWithQuery(<SessionInspector session={session([pr(1, "open")])} />);
@@ -686,6 +841,9 @@ describe("SessionInspector reviews tab", () => {
 
 	it("shows claude-code as the default reviewer before a run exists", async () => {
 		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/usage/sessions/{sessionId}") {
+				return { data: usageTelemetry(), error: undefined };
+			}
 			if (path === "/api/v1/sessions/{sessionId}/reviews") {
 				return { data: { reviewerHandleId: "", reviews: [] } };
 			}
@@ -896,6 +1054,9 @@ describe("SessionInspector reviews tab", () => {
 
 	const mockReviewsTabGets = (prs: unknown[]) => {
 		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/usage/sessions/{sessionId}") {
+				return { data: usageTelemetry(), error: undefined };
+			}
 			if (path === "/api/v1/sessions/{sessionId}/reviews") return { data: { reviewerHandleId: "", reviews: [] } };
 			if (path === "/api/v1/projects/{id}") {
 				return { data: { status: "ok", project: { id: "ws-1", config: { reviewers: [{ harness: "codex" }] } } } };
