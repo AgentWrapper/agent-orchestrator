@@ -55,7 +55,7 @@ export type XtermTerminalProps = {
 	paneScrollsByKeyboard?: boolean;
 	/** Terminal construction failed; the owner decides how to surface it. */
 	onError?: (error: unknown) => void;
-	/** Called after a terminal hyperlink is opened in the OS browser. */
+	/** Called when a terminal web link should open in AO's Browser panel. */
 	onLinkOpen?: (uri: string) => void;
 	/**
 	 * The terminal is open in the DOM and ready to be attached to a PTY. The
@@ -808,14 +808,38 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				>
 					{contextMenu.link ? (
 						<>
+							{props.onLinkOpen ? (
+								<DropdownMenuItem
+									onSelect={() => {
+										const { link } = contextMenu;
+										setContextMenuOpen(false);
+										if (link) callbacksRef.current.onLinkOpen?.(link);
+									}}
+								>
+									Open in AO Browser
+								</DropdownMenuItem>
+							) : null}
 							<DropdownMenuItem
 								onSelect={() => {
 									const { link } = contextMenu;
 									setContextMenuOpen(false);
-									if (link) void aoBridge.app.openExternal(link);
+									if (link) void openLinkInSystemBrowser(link);
 								}}
 							>
 								Open in system browser
+							</DropdownMenuItem>
+							<DropdownMenuItem
+								onSelect={() => {
+									const { link } = contextMenu;
+									setContextMenuOpen(false);
+									if (link) {
+										void aoBridge.clipboard
+											.writeText(link)
+											.catch((error) => console.warn("Unable to copy terminal link", error));
+									}
+								}}
+							>
+								Copy link
 							</DropdownMenuItem>
 							<DropdownMenuSeparator />
 						</>

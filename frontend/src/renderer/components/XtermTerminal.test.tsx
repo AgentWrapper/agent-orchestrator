@@ -224,6 +224,32 @@ describe("XtermTerminal", () => {
 		expect(trigger.style.top).toBe("88px");
 	});
 
+	it("offers AO Browser, system browser, and copy actions for a web link", async () => {
+		const onLinkOpen = vi.fn();
+		const openExternal = vi.fn().mockResolvedValue(undefined);
+		window.ao!.app.openExternal = openExternal;
+		const { container } = render(<XtermTerminal onLinkOpen={onLinkOpen} theme="dark" />);
+		const host = container.firstElementChild!;
+		const linkHandler = state.lastTerminal!.options.linkHandler as {
+			hover: (event: MouseEvent, uri: string) => void;
+		};
+		const link = "https://example.com/docs";
+
+		linkHandler.hover({} as MouseEvent, link);
+		fireEvent.contextMenu(host);
+		fireEvent.click(await screen.findByText("Open in AO Browser"));
+		expect(onLinkOpen).toHaveBeenCalledWith(link);
+		expect(openExternal).not.toHaveBeenCalled();
+
+		fireEvent.contextMenu(host);
+		fireEvent.click(await screen.findByText("Open in system browser"));
+		await waitFor(() => expect(openExternal).toHaveBeenCalledWith(link));
+
+		fireEvent.contextMenu(host);
+		fireEvent.click(await screen.findByText("Copy link"));
+		await waitFor(() => expect(window.ao!.clipboard.writeText).toHaveBeenCalledWith(link));
+	});
+
 	it("runs context menu copy, select all, and clear against the xterm instance", async () => {
 		const { container } = render(<XtermTerminal theme="dark" />);
 		const host = container.firstElementChild!;
