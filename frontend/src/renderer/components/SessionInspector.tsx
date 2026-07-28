@@ -37,6 +37,7 @@ import { StatusPill } from "./StatusPill";
 import { CodexIcon } from "./icons";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { Switch } from "./ui/switch";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
@@ -285,7 +286,8 @@ function Section({
 
 function SummaryView({ session }: { session: WorkspaceSession }) {
 	const query = useSessionScmSummary(session.id);
-	const usageQuery = useSessionUsage(session.id);
+	const developerMode = useUiStore((state) => state.developerMode);
+	const usageQuery = useSessionUsage(session.id, developerMode);
 	const prSummaries = sessionPRDisplaySummaries(session, query.data);
 	const prSectionTitle = prSummaries.length > 1 ? `Pull requests (${prSummaries.length})` : "Pull request";
 	const issueId = canonicalTrackerIssueId(session.issueId);
@@ -311,22 +313,15 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 				<ResumeAgentControl session={session} />
 			</Section>
 
-			<Section
-				action={
-					usageQuery.data ? (
-						<span className="font-medium normal-case tracking-normal text-settings-muted">
-							{usageCollectionLabel(usageQuery.data.collectionState)}
-						</span>
-					) : null
-				}
-				title="Usage & cost"
-			>
-				<UsageCostTelemetry
-					error={usageQuery.isError}
-					loading={usageQuery.isLoading}
-					usage={usageQuery.data}
-				/>
-			</Section>
+			{developerMode ? (
+				<Section title="Usage & cost">
+					<UsageCostTelemetry
+						error={usageQuery.isError}
+						loading={usageQuery.isLoading}
+						usage={usageQuery.data}
+					/>
+				</Section>
+			) : null}
 
 			<Section title="Overview">
 				<dl className="flex flex-col gap-1">
@@ -350,9 +345,6 @@ function UsageCostTelemetry({
 	loading: boolean;
 	usage?: SessionUsage;
 }) {
-	const [breakdownOpen, setBreakdownOpen] = useState(false);
-	const [expandedHarness, setExpandedHarness] = useState<number | null>(null);
-
 	if (loading) {
 		return <p className={inspectorEmptyClass}>Loading telemetry…</p>;
 	}
@@ -361,168 +353,221 @@ function UsageCostTelemetry({
 	}
 
 	const totalTokens = usageTokenTotal(usage.totals);
-	const models = Array.from(
-		new Set(
-			usage.harnesses.flatMap((harness) =>
-				harness.models
-					.filter((model) => model.modelId || model.provider)
-					.map((model) => `${model.provider}:${model.modelId || model.provider}`),
-			),
-		),
-	);
-	const agentCount = usage.harnesses.length;
+	const costNanos = usage.totals.estimatedCost.valueNanos;
 
 	return (
 		<div>
-			<div className="flex items-start justify-between gap-4 @max-[300px]/inspector:flex-col @max-[300px]/inspector:gap-2">
+			<div className="grid grid-cols-2 gap-4">
 				<div className="min-w-0">
 					<p className="text-2xs text-settings-muted">Total tokens</p>
 					<p
 						className="mt-0.5 truncate font-mono text-md-sm font-medium text-settings-label"
 						title={totalTokens === null ? undefined : `${totalTokens.toLocaleString("en-US")} tokens`}
 					>
-						{totalTokens === null ? "No usage yet" : formatTokenCount(totalTokens)}
+						{totalTokens === null ? "No usage yet" : formatTelemetryTokenValue(totalTokens)}
 					</p>
 				</div>
-				<div className="min-w-0 text-right @max-[300px]/inspector:text-left">
-					<p className="text-2xs text-settings-muted">Estimated cost</p>
-					<p
-						className="mt-0.5 truncate font-mono text-md-sm font-medium text-settings-label"
-						title={
-							usage.totals.estimatedCost.valueNanos === null
-								? "No reliable pricing coverage is available for this session."
-								: undefined
-						}
-					>
-						{formatEstimatedCost(usage.totals.estimatedCost.valueNanos)}
-					</p>
+				<div className="min-w-0 text-right">
+					<p className="text-2xs text-settings-muted">Total cost</p>
+					{costNanos === null ? (
+						<Badge
+							className="mt-0.5 bg-success/10 px-1.5 py-0.5 text-[9px] leading-none"
+							title="Dollar cost support is coming soon."
+							variant="success"
+						>
+							Coming soon
+						</Badge>
+					) : (
+						<span className="font-mono text-sm-md font-medium text-settings-label">
+							{formatEstimatedCost(costNanos)}
+						</span>
+					)}
 				</div>
 			</div>
 
-			<button
-				aria-expanded={breakdownOpen}
-				aria-label={breakdownOpen ? "Hide breakdown" : "Breakdown"}
-				className="group mt-3 flex w-full items-center justify-between gap-3 border-t border-(--color-border-settings-input) pt-3 text-left"
-				onClick={() => {
-					setBreakdownOpen((open) => !open);
-					if (breakdownOpen) setExpandedHarness(null);
-				}}
-				type="button"
-			>
-				<span className="text-2xs text-settings-muted">
-					{formatCount(agentCount, "agent")} · {formatCount(models.length, "model")}
-				</span>
-				<span className="flex shrink-0 items-center gap-1 text-2xs text-settings-label transition-colors group-hover:text-foreground">
-					{breakdownOpen ? "Hide" : "Breakdown"}
-					{breakdownOpen ? (
-						<ChevronDown className="size-icon-xs" aria-hidden="true" />
-					) : (
-						<ChevronRight className="size-icon-xs" aria-hidden="true" />
-					)}
-				</span>
-			</button>
+			<div className="mt-3">
+				<div
+					className="rounded-lg border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-2.5 py-2.5"
+					data-testid="session-usage-metrics"
+				>
+					<UsageMetrics totals={usage.totals} />
+				</div>
+			</div>
 
-			{breakdownOpen ? (
-				<div className="mt-2 border-t border-(--color-border-settings-input)">
-					{usage.harnesses.map((harness, index) => {
-						const isExpanded = expandedHarness === index;
-						const harnessTokens = usageTokenTotal(harness.totals);
-						const harnessName = formatHarnessName(harness.harness);
-						return (
-							<div
-								className="border-b border-(--color-border-settings-input) last:border-b-0"
-								key={`${harness.harness}:${harness.provider}:${index}`}
-							>
-								<button
-									aria-expanded={isExpanded}
-									aria-label={`${harnessName} usage`}
-									className="group flex w-full items-center justify-between gap-3 py-2.5 text-left"
-									onClick={() => setExpandedHarness(isExpanded ? null : index)}
-									type="button"
-								>
-									<span className="min-w-0">
-										<span className="block truncate text-sm-md text-settings-label">{harnessName}</span>
-										<span className="block text-2xs text-settings-muted">
-											{formatCount(harness.models.length, "model")}
-										</span>
-									</span>
-									<span className="flex shrink-0 items-center gap-2">
-										<span className="text-right font-mono text-2xs text-settings-label">
-											<span
-												className="block"
-												title={
-													harnessTokens === null
-														? undefined
-														: `${harnessTokens.toLocaleString("en-US")} tokens`
-												}
-											>
-												{harnessTokens === null ? "—" : formatTokenCount(harnessTokens)}
-											</span>
-											<span className="block text-settings-muted">
-												{formatEstimatedCost(harness.totals.estimatedCost.valueNanos)}
-											</span>
-										</span>
-										{isExpanded ? (
-											<ChevronDown className="size-icon-xs text-settings-muted" aria-hidden="true" />
-										) : (
-											<ChevronRight className="size-icon-xs text-settings-muted" aria-hidden="true" />
-										)}
-									</span>
-								</button>
-
-								{isExpanded ? <HarnessUsageDetails harness={harness} /> : null}
-							</div>
-						);
-					})}
-
-					{usage.lastObservedAt ? (
-						<p className="pt-2 text-right text-2xs text-settings-muted">
-							Updated {formatTimeCompact(usage.lastObservedAt)}
-						</p>
-					) : null}
+			{usage.harnesses.length > 0 ? (
+				<div className="mt-3 border-t border-(--color-border-settings-input) pt-2">
+					<div className="grid grid-cols-[minmax(0,1fr)_4.5rem_3rem] items-center gap-2 px-1 pb-1 text-2xs text-settings-muted">
+						<span>Agent</span>
+						<span className="text-right">Tokens</span>
+						<span className="text-right">Cost</span>
+					</div>
+					{usage.harnesses.map((harness, index) => (
+						<UsageProviderRow
+							harness={harness}
+							key={`${harness.harness}:${harness.provider}:${index}`}
+						/>
+					))}
 				</div>
 			) : null}
+
+			<p className="mt-2 border-t border-(--color-border-settings-input) pt-2 text-right text-2xs text-settings-muted">
+				{usageCollectionLabel(usage.collectionState)}
+				{usage.lastObservedAt ? ` · Updated ${formatTimeCompact(usage.lastObservedAt)}` : ""}
+			</p>
 		</div>
 	);
 }
 
-function HarnessUsageDetails({ harness }: { harness: SessionUsage["harnesses"][number] }) {
-	return (
-		<div className="pb-3">
-			<dl className="grid grid-cols-2 gap-x-4 gap-y-2 @max-[300px]/inspector:grid-cols-1">
-				<UsageMetric label="Input" metric={harness.totals.inputTokens} />
-				<UsageMetric label="Output" metric={harness.totals.outputTokens} />
-				<UsageMetric label="Cache read" metric={harness.totals.cacheReadTokens} />
-				<UsageMetric label="Cache write" metric={harness.totals.cacheWriteTokens} />
-				<UsageMetric label="Reasoning" metric={harness.totals.reasoningTokens} />
-				<UsageMetric label="Uncached input" metric={harness.totals.uncachedInputTokens} />
-			</dl>
+function UsageProviderRow({ harness }: { harness: SessionUsage["harnesses"][number] }) {
+	const harnessName = formatHarnessName(harness.harness);
+	const totalTokens = usageTokenTotal(harness.totals);
+	const costNanos = harness.totals.estimatedCost.valueNanos;
 
-			{harness.models.length > 0 ? (
-				<div className="mt-3 border-t border-(--color-border-settings-input) pt-2">
-					<p className="mb-1.5 text-2xs text-settings-muted">Models</p>
-					{harness.models.map((model, index) => {
-						const modelTokens = usageTokenTotal(model.totals);
-						return (
-							<div
-								className="flex items-center justify-between gap-3 py-1 text-2xs"
-								key={`${model.provider}:${model.modelId}:${index}`}
-							>
-								<span className="min-w-0 truncate font-mono text-settings-label">
-									{model.modelId || model.provider}
-								</span>
-								<span className="flex shrink-0 items-center gap-2 font-mono text-settings-muted">
-									<span title={modelTokens === null ? undefined : `${modelTokens.toLocaleString("en-US")} tokens`}>
-										{modelTokens === null ? "—" : formatTokenCount(modelTokens)}
-									</span>
-									<span>{formatEstimatedCost(model.totals.estimatedCost.valueNanos)}</span>
-								</span>
-							</div>
-						);
-					})}
+	return (
+		<HoverCard closeDelay={120} openDelay={220}>
+			<HoverCardTrigger asChild>
+				<div
+					aria-label={`${harnessName} usage details`}
+					className="grid cursor-default grid-cols-[minmax(0,1fr)_4.5rem_3rem] items-center gap-2 rounded-md px-1 py-2 outline-none transition-colors hover:bg-interactive-hover focus-visible:bg-interactive-hover focus-visible:ring-1 focus-visible:ring-ring"
+					tabIndex={0}
+				>
+					<span className="min-w-0">
+						<span className="block truncate text-sm-md text-settings-label">{harnessName}</span>
+						<span className="block truncate text-2xs text-settings-muted">{formatProviderName(harness.provider)}</span>
+					</span>
+					<span
+						className="text-right font-mono text-2xs text-settings-label"
+						title={totalTokens === null ? undefined : `${totalTokens.toLocaleString("en-US")} tokens`}
+					>
+						{totalTokens === null ? "—" : formatTelemetryTokenValue(totalTokens)}
+					</span>
+					<span
+						className="text-right font-mono text-2xs text-settings-muted"
+						title={costNanos === null ? "Estimated cost coming soon" : undefined}
+					>
+						{costNanos === null ? "—" : formatEstimatedCost(costNanos)}
+					</span>
 				</div>
-			) : null}
+			</HoverCardTrigger>
+			<HoverCardContent
+				align="end"
+				aria-label={`${harnessName} usage peek`}
+				role="region"
+				side="left"
+			>
+				<ProviderUsagePeek harness={harness} />
+			</HoverCardContent>
+		</HoverCard>
+	);
+}
+
+function ProviderUsagePeek({ harness }: { harness: SessionUsage["harnesses"][number] }) {
+	const harnessName = formatHarnessName(harness.harness);
+	const totalTokens = usageTokenTotal(harness.totals);
+	const costNanos = harness.totals.estimatedCost.valueNanos;
+
+	return (
+		<div>
+			<div className="flex items-start justify-between gap-4">
+				<div className="min-w-0">
+					<p className="truncate text-sm-md font-semibold text-settings-label">{harnessName}</p>
+					<p className="truncate text-2xs text-settings-muted">{formatProviderName(harness.provider)}</p>
+				</div>
+				<div className="shrink-0 text-right font-mono text-2xs">
+					<p className="text-settings-label">
+						{totalTokens === null ? "—" : formatTelemetryTokenValue(totalTokens)}
+					</p>
+					<p className="text-settings-muted">{costNanos === null ? "—" : formatEstimatedCost(costNanos)}</p>
+				</div>
+			</div>
+
+			<div className="mt-3 border-t border-border pt-3">
+				<UsageMetrics totals={harness.totals} />
+			</div>
+
+			<div className="mt-3 border-t border-border pt-2">
+				<div className="grid grid-cols-[minmax(0,1fr)_4.5rem_3rem] items-center gap-2 px-1 pb-1 text-2xs text-settings-muted">
+					<span>{formatCount(harness.models.length, "model")}</span>
+					<span className="text-right">Tokens</span>
+					<span className="text-right">Cost</span>
+				</div>
+				{harness.models.length > 0 ? (
+					harness.models.map((model, index) => (
+						<UsageModelRow key={`${model.provider}:${model.modelId}:${index}`} model={model} />
+					))
+				) : (
+					<p className="px-1 py-2 text-2xs text-settings-muted">No model telemetry available.</p>
+				)}
+			</div>
 		</div>
+	);
+}
+
+function UsageModelRow({ model }: { model: SessionUsage["harnesses"][number]["models"][number] }) {
+	const modelName = model.modelId || formatProviderName(model.provider);
+	const totalTokens = usageTokenTotal(model.totals);
+	const costNanos = model.totals.estimatedCost.valueNanos;
+
+	return (
+		<HoverCard closeDelay={120} openDelay={180}>
+			<HoverCardTrigger asChild>
+				<div
+					aria-label={`${modelName} usage details`}
+					className="grid cursor-default grid-cols-[minmax(0,1fr)_4.5rem_3rem] items-center gap-2 rounded-md px-1 py-2 outline-none transition-colors hover:bg-interactive-hover focus-visible:bg-interactive-hover focus-visible:ring-1 focus-visible:ring-ring"
+					tabIndex={0}
+				>
+					<span className="min-w-0 truncate font-mono text-2xs text-settings-label">{modelName}</span>
+					<span
+						className="text-right font-mono text-2xs text-settings-label"
+						title={totalTokens === null ? undefined : `${totalTokens.toLocaleString("en-US")} tokens`}
+					>
+						{totalTokens === null ? "—" : formatTelemetryTokenValue(totalTokens)}
+					</span>
+					<span
+						className="text-right font-mono text-2xs text-settings-muted"
+						title={costNanos === null ? "Estimated cost coming soon" : undefined}
+					>
+						{costNanos === null ? "—" : formatEstimatedCost(costNanos)}
+					</span>
+				</div>
+			</HoverCardTrigger>
+			<HoverCardContent
+				align="start"
+				aria-label={`${modelName} usage peek`}
+				className="w-72"
+				role="region"
+				side="left"
+			>
+				<div className="mb-3 flex items-start justify-between gap-4">
+					<div className="min-w-0">
+						<p className="truncate font-mono text-sm-md font-semibold text-settings-label">{modelName}</p>
+						<p className="truncate text-2xs text-settings-muted">{formatProviderName(model.provider)}</p>
+					</div>
+					<div className="shrink-0 text-right font-mono text-2xs">
+						<p className="text-settings-label">
+							{totalTokens === null ? "—" : formatTelemetryTokenValue(totalTokens)}
+						</p>
+						<p className="text-settings-muted">{costNanos === null ? "—" : formatEstimatedCost(costNanos)}</p>
+					</div>
+				</div>
+				<div className="border-t border-border pt-3">
+					<UsageMetrics totals={model.totals} />
+				</div>
+			</HoverCardContent>
+		</HoverCard>
+	);
+}
+
+function UsageMetrics({ totals }: { totals: SessionUsage["totals"] }) {
+	return (
+		<dl className="grid grid-cols-2 gap-x-4 gap-y-2 @max-[300px]/inspector:grid-cols-1">
+			<UsageMetric label="Input tokens" metric={totals.inputTokens} />
+			<UsageMetric label="Output tokens" metric={totals.outputTokens} />
+			<UsageMetric label="Cache read tokens" metric={totals.cacheReadTokens} />
+			<UsageMetric label="Cache write tokens" metric={totals.cacheWriteTokens} />
+			<UsageMetric label="Reasoning tokens" metric={totals.reasoningTokens} />
+			<UsageMetric label="Uncached input tokens" metric={totals.uncachedInputTokens} />
+		</dl>
 	);
 }
 
@@ -544,10 +589,14 @@ function UsageMetric({
 						: `${metric.value.toLocaleString("en-US")} tokens · ${metric.coverage} coverage`
 				}
 			>
-				{metric.value === null ? "—" : formatTokenCount(metric.value)}
+				{metric.value === null ? "—" : formatTelemetryTokenValue(metric.value)}
 			</dd>
 		</div>
 	);
+}
+
+function formatTelemetryTokenValue(totalTokens: number): string {
+	return formatTokenCount(totalTokens).replace(/ tok$/, "");
 }
 
 function usageTokenTotal(totals: SessionUsage["totals"]): number | null {
@@ -575,6 +624,16 @@ function formatHarnessName(harness: string): string {
 		.join(" ");
 }
 
+function formatProviderName(provider: string): string {
+	const knownNames: Record<string, string> = {
+		anthropic: "Anthropic",
+		openai: "OpenAI",
+	};
+	if (!provider) return "Unknown provider";
+	if (knownNames[provider]) return knownNames[provider];
+	return formatHarnessName(provider);
+}
+
 function usageCollectionLabel(state: SessionUsage["collectionState"]): string {
 	switch (state) {
 		case "waiting":
@@ -591,7 +650,7 @@ function usageCollectionLabel(state: SessionUsage["collectionState"]): string {
 }
 
 function formatEstimatedCost(valueNanos: number | null): string {
-	if (valueNanos === null) return "Unavailable";
+	if (valueNanos === null) return "Coming soon";
 	const dollars = valueNanos / 1_000_000_000;
 	if (dollars > 0 && dollars < 0.01) return "<$0.01";
 	return dollars.toLocaleString("en-US", {

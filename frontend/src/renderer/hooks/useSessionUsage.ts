@@ -15,11 +15,12 @@ export async function fetchSessionUsage(sessionId: string): Promise<SessionUsage
 	return data;
 }
 
-export function useSessionUsage(sessionId: string) {
+export function useSessionUsage(sessionId: string, enabled = true) {
 	return useQuery({
 		queryKey: sessionUsageDetailQueryKey(sessionId),
 		queryFn: () => fetchSessionUsage(sessionId),
+		enabled: enabled && Boolean(sessionId),
 		retry: 1,
-		refetchInterval: sessionUsageRefreshIntervalMs,
+		refetchInterval: enabled ? sessionUsageRefreshIntervalMs : false,
 	});
 }
