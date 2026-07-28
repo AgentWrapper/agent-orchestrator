@@ -465,11 +465,17 @@ func (s *Supervisor) createSandbox(ctx context.Context, client SandboxProvider, 
 		snapshot = s.cfg.Snapshot
 	}
 	s.logf("provisioning %s sandbox (snapshot=%s, baked=%v)…", recipe.ID, snapshot, recipe.Snapshot != "")
-	autoDelete := 240 // minutes; leak backstop (sessions live inside, so generous)
+	// Never idle-stop: agent sessions run as long-lived processes INSIDE the
+	// sandbox, so Daytona's default idle auto-stop (~15m) would kill them out
+	// from under us. 0 disables auto-stop; the sandbox lives until AO explicitly
+	// tears it down (or the delete backstop fires if it somehow gets stopped).
+	noAutoStop := 0
+	autoDelete := 240 // minutes; leak backstop, only counts once stopped
 	box, err := client.Create(ctx, CreateSandboxRequest{
 		Snapshot:           snapshot,
 		Labels:             map[string]string{"app": "ao-agent-host", "harness": recipe.ID},
 		DomainAllowList:    s.egressAllowList(recipe),
+		AutoStopInterval:   &noAutoStop,
 		AutoDeleteInterval: &autoDelete,
 	})
 	if err != nil {
