@@ -101,6 +101,7 @@ app.setPath("userData", path.join(os.homedir(), ".ao", "electron"));
 let mainWindow: BrowserWindow | null = null;
 let daemonProcess: ChildProcess | null = null;
 let daemonStoppingProcess: ChildProcess | null = null;
+let daemonRestartAfterExitProcess: ChildProcess | null = null;
 let daemonStartPromise: Promise<DaemonStatus> | null = null;
 let daemonStartEpoch = 0;
 let daemonStatus: DaemonStatus = { state: "stopped" };
@@ -351,9 +352,11 @@ function createWindow(): void {
 }
 
 // How long the supervisor waits for the daemon to confirm its bound port (via
-// the listen log line or running.json) before reporting the configured port as
-// a best-effort fallback.
-const PORT_DISCOVERY_TIMEOUT_MS = 15_000;
+// the listen log line or running.json). A daemon that cannot confirm startup in
+// this window is reported with its captured output instead of being treated as
+// ready on an assumed port.
+const PORT_DISCOVERY_TIMEOUT_MS = 30_000;
+const DAEMON_RESTART_STOP_TIMEOUT_MS = 5_000;
 const RUN_FILE_POLL_MS = 300;
 // Accept run-files stamped slightly before our spawn timestamp: the daemon's
 // clock reading and ours race within normal scheduling jitter.
@@ -972,16 +975,29 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		}, RUN_FILE_POLL_MS);
 	}
 
-	// Last resort: neither source confirmed (e.g. an older daemon build). Report
-	// the configured port so the renderer is not stuck on "starting" forever.
+	// Neither source confirmed startup. Surface the captured process output so
+	// the renderer can explain why boot stalled instead of spinning forever or
+	// attempting workspace requests against an assumed port.
 	fallbackTimer = setTimeout(() => {
 		if (portConfirmed || daemonProcess !== child || daemonStoppingProcess === child) return;
-		stopDiscovery();
+		// Keep running.json polling alive after surfacing the timeout. In
+		// keep-daemon mode there are no stdout/stderr scanners, so the run file is
+		// the only way a slow-but-successful boot can still recover to ready.
+		fallbackTimer = undefined;
 		setDaemonStatus({
-			state: "ready",
-			port: resolvedDaemonPort(),
-			message: "Daemon port not confirmed from logs or running.json; assuming the configured port.",
-			code: "port_unconfirmed",
+			state: "error",
+			message: "AO daemon did not finish starting within 30 seconds.",
+			details:
+				daemonOutput.trim() ||
+				[
+					"No startup output was captured.",
+					`Executable: ${launch.command}`,
+					`Working directory: ${launch.cwd}`,
+					`Expected port confirmation from: ${handshakePath ?? "running.json"}`,
+				].join("\n"),
+			code: "not_ready",
+			executablePath: launch.command,
+			workingDirectory: launch.cwd,
 		});
 	}, PORT_DISCOVERY_TIMEOUT_MS);
 
@@ -1009,6 +1025,11 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		// failures. Preserve the clean stopped status instead.
 		if (daemonStoppingProcess === child) {
 			daemonStoppingProcess = null;
+			if (daemonRestartAfterExitProcess === child) {
+				daemonRestartAfterExitProcess = null;
+				void startDaemonForRestart();
+				return;
+			}
 			setDaemonStatus({ state: "stopped" });
 			return;
 		}
@@ -1041,6 +1062,9 @@ function killDaemon(child: ChildProcess): void {
 function stopDaemon(): DaemonStatus {
 	daemonStartEpoch += 1;
 	daemonStartPromise = null;
+	// An explicit stop (or a newer restart request) cancels any deferred restart
+	// left waiting for a previously slow child to exit.
+	daemonRestartAfterExitProcess = null;
 	if (!daemonProcess) {
 		setDaemonStatus({ state: "stopped" });
 		return daemonStatus;
@@ -1057,9 +1081,72 @@ function stopDaemon(): DaemonStatus {
 	return daemonStatus;
 }
 
+function reportDaemonRestartFailure(error: unknown): DaemonStatus {
+	setDaemonStatus({
+		state: "error",
+		message: `Could not restart the AO daemon: ${error instanceof Error ? error.message : String(error)}`,
+		details: daemonOutput.trim() || undefined,
+		code: "spawn_failed",
+	});
+	return daemonStatus;
+}
+
+async function startDaemonForRestart(): Promise<DaemonStatus> {
+	try {
+		return await startDaemon();
+	} catch (error) {
+		return reportDaemonRestartFailure(error);
+	}
+}
+
+async function restartDaemon(): Promise<DaemonStatus> {
+	const child = daemonProcess;
+	if (!child) return startDaemonForRestart();
+
+	const exited = new Promise<boolean>((resolve) => {
+		let settled = false;
+		const finish = (didExit: boolean) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			child.off("exit", onExit);
+			resolve(didExit);
+		};
+		const onExit = () => finish(true);
+		const timer = setTimeout(() => finish(false), DAEMON_RESTART_STOP_TIMEOUT_MS);
+		child.once("exit", onExit);
+	});
+
+	stopDaemon();
+	// Register the deferred intent immediately after signaling the child. The
+	// exit can race the five-second UI timeout, so waiting until after the
+	// timeout to set this would occasionally miss the only exit event.
+	daemonRestartAfterExitProcess = child;
+	if (!(await exited)) {
+		// The process may still honor SIGTERM after the UI timeout. Keep the
+		// restart intent attached to that exact child so its eventual exit starts
+		// a replacement instead of collapsing back to a code-less stopped state.
+		setDaemonStatus({
+			state: "error",
+			message: "AO daemon is still stopping. It will restart automatically when shutdown completes.",
+			details: daemonOutput.trim() || undefined,
+			code: "not_ready",
+		});
+		return daemonStatus;
+	}
+	return startDaemonForRestart();
+}
+
 ipcMain.handle("daemon:getStatus", () => refreshDaemonStatus());
 ipcMain.handle("daemon:start", () => startDaemon());
 ipcMain.handle("daemon:stop", () => stopDaemon());
+ipcMain.handle("daemon:restart", async () => {
+	try {
+		return await restartDaemon();
+	} catch (error) {
+		return reportDaemonRestartFailure(error);
+	}
+});
 ipcMain.handle("app:getVersion", () => app.getVersion());
 ipcMain.handle("app:openExternal", async (_event, url: string) => {
 	await openAllowedAppExternalURL(url, shell);

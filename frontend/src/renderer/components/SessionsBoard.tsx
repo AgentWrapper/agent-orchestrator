@@ -45,12 +45,15 @@ import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { formatTimeCompact } from "../lib/format-time";
 import { aoBridge } from "../lib/bridge";
+import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import { cn } from "../lib/utils";
 import { isLinuxPlatform, isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { useUiStore } from "../stores/ui-store";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { SessionTerminationDialog } from "./SessionTerminationDialog";
+import { DaemonStartupLoader } from "./DaemonStartupLoader";
+import { useShellMaybe } from "../lib/shell-context";
 
 type SessionsBoardProps = {
 	/** When set, the board shows only this project's sessions. */
@@ -75,6 +78,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const queryClient = useQueryClient();
 	const restoreSessionById = useRestoreSession();
 	const workspaceQuery = useWorkspaceQuery();
+	const shell = useShellMaybe();
 	// Evaluated at render so platform mocks in tests can flip the in-panel chrome.
 	const boardActionsInPanel = usesBoardActionsInPanel();
 	/** Bell lives in the board action row when the shell topbar does not host it. */
@@ -129,7 +133,14 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	// query has resolved, so the welcome never flashes over real data): the
 	// global board teaches the app before any project exists, and a fresh
 	// project board invites the first task instead of showing four zeros.
-	const isLoaded = workspaceQuery.isSuccess;
+	const isDaemonReady = usesPreviewWorkspaceData || (shell ? shell.daemonStatus.state === "ready" : true);
+	const daemonHasFailed = Boolean(shell?.daemonStatus.code);
+	const workspaceStartupState = shell?.workspaceStartupState ?? "ready";
+	const isLoaded = isDaemonReady && workspaceStartupState === "ready" && workspaceQuery.isSuccess;
+	const showStartup =
+		shell !== null &&
+		!daemonHasFailed &&
+		(!isDaemonReady || workspaceStartupState === "loading" || (!workspaceQuery.isSuccess && !workspaceQuery.isError));
 	const showWelcome = !projectId && isLoaded && all.length === 0;
 	const showProjectEmpty = projectId !== undefined && isLoaded && workspaces.length > 0 && sessions.length === 0;
 	// Archived sessions cost one quiet line under the board until expanded.
@@ -279,7 +290,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			    Win/Linux keep the crumb and actions in the framed ShellTopbar.
 			    Welcome skips the row — a dangling "Board" above the import
 			    chooser was review feedback on #2432. */}
-			{!showWelcome && boardActionsInPanel && (boardLabel || actions) ? (
+			{!showWelcome && !showStartup && boardActionsInPanel && (boardLabel || actions) ? (
 				<div
 					className="center-panel-titlebar flex h-toolbar shrink-0 items-center gap-2 border-b border-border-strong pr-4.5"
 					style={dragStyle}
@@ -307,7 +318,9 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						) : null}
 					</div>
 				) : null}
-				{workspaceQuery.isError ? (
+				{showStartup ? (
+					<DaemonStartupLoader />
+				) : workspaceStartupState === "error" || workspaceQuery.isError ? (
 					<p className="py-10 text-center text-xs text-passive">Could not load sessions.</p>
 				) : showWelcome ? (
 					<BoardWelcome />
