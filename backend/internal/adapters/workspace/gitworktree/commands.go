@@ -10,12 +10,33 @@ func revParseVerifyArgs(repo, ref string) []string {
 	return []string{"-C", repo, "rev-parse", "--verify", "--quiet", ref}
 }
 
-func worktreeAddBranchArgs(repo, path, branch string) []string {
-	return []string{"-C", repo, "worktree", "add", path, branch}
+// worktreeAddForce is git's documented override for "<path> is a missing but
+// already registered worktree" (git's own hint for that failure is "use
+// 'add -f' to override"). It re-registers a path whose registration outlived
+// its directory in one step, so recovering a stale registration never needs a
+// destructive `worktree remove --force` or a repo-wide `worktree prune` first.
+//
+// Verified against git 2.54: `worktree add --force` still refuses a path that
+// exists and is non-empty ("fatal: '<path>' already exists"), so it can never
+// clobber a live worktree or an agent's uncommitted work, and a single --force
+// still refuses a missing-but-LOCKED registration (that needs `-f -f`), which
+// is what keeps a lock an effective "do not touch" signal. Never pass it twice.
+const worktreeAddForce = "--force"
+
+func worktreeAddBranchArgs(repo, path, branch string, force bool) []string {
+	args := []string{"-C", repo, "worktree", "add"}
+	if force {
+		args = append(args, worktreeAddForce)
+	}
+	return append(args, path, branch)
 }
 
-func worktreeAddNewBranchArgs(repo, branch, path, baseRef string) []string {
-	return []string{"-C", repo, "worktree", "add", "-b", branch, path, baseRef}
+func worktreeAddNewBranchArgs(repo, branch, path, baseRef string, force bool) []string {
+	args := []string{"-C", repo, "worktree", "add"}
+	if force {
+		args = append(args, worktreeAddForce)
+	}
+	return append(args, "-b", branch, path, baseRef)
 }
 
 // worktreeRemoveArgs intentionally omits --force: a dirty worktree (uncommitted

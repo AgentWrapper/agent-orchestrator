@@ -13,17 +13,15 @@ import {
 } from "../lib/command-palette";
 import { iconForCommand } from "../lib/command-palette-icons";
 import { isDialogOrMenuOpen } from "../lib/dom-selectors";
+import { isMacPlatform } from "../lib/platform";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { useShell } from "../lib/shell-context";
 import { findProjectOrchestrator, hasConfiguredOrchestratorAgent } from "../types/workspace";
 import { useUiStore } from "../stores/ui-store";
+import { matchesRendererShortcut } from "../stores/keybindings-store";
 import { CreateProjectFlow } from "./CreateProjectFlow";
 import { NewTaskDialog } from "./NewTaskDialog";
 import { CommandDialog, CommandEmpty, CommandFooter, CommandGroup, CommandInput, CommandItem, CommandList } from "./ui/command";
-
-function isMacPlatform(): boolean {
-	return typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
-}
 
 function terminalHasFocus(): boolean {
 	if (typeof document === "undefined") return false;
@@ -216,19 +214,26 @@ export function CommandPalette() {
 				return;
 			}
 
-			if (event.altKey || event.shiftKey || event.key.toLowerCase() !== "k") return;
-
-			const isMac = isMacPlatform();
-			const paletteModifier = isMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
-			if (!paletteModifier) return;
+			if (!matchesRendererShortcut("command-palette", event)) return;
 
 			if (isOpen) {
 				event.preventDefault();
 				closePalette();
 				return;
 			}
-			// Returns without preventDefault so a focused terminal keeps Ctrl+K for readline's kill-to-end-of-line.
-			if (!isMac && terminalHasFocus()) return;
+			// Preserve the default Ctrl+K readline command in terminals. A user
+			// who deliberately assigns a different palette binding expects it to
+			// work there too.
+			if (
+				!isMacPlatform() &&
+				terminalHasFocus() &&
+				event.key.toLowerCase() === "k" &&
+				event.ctrlKey &&
+				!event.metaKey &&
+				!event.altKey &&
+				!event.shiftKey
+			)
+				return;
 			if (isDialogOrMenuOpen()) return;
 			event.preventDefault();
 			setOpen(true);

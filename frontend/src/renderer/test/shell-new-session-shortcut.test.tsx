@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Suspense, type ComponentType, type PropsWithChildren } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { KeybindingOverrides } from "../../shared/shortcuts";
 import { useUiStore } from "../stores/ui-store";
 import type { WorkspaceSummary } from "../types/workspace";
 
@@ -48,6 +49,9 @@ const shellMocks = vi.hoisted(() => {
 			state.focusTerminalListener = listener;
 			return vi.fn();
 		}),
+		getKeybindings: vi.fn(async () => ({})),
+		setKeybindings: vi.fn(async (overrides: KeybindingOverrides) => overrides),
+		setKeybindingRecording: vi.fn(async () => undefined),
 		queryClient: {
 			ensureQueryData: vi.fn(),
 			fetchQuery: vi.fn(),
@@ -82,6 +86,11 @@ vi.mock("../lib/bridge", () => ({
 			onPreviousSessionShortcut: shellMocks.onPreviousSessionShortcut,
 			onNextSessionShortcut: shellMocks.onNextSessionShortcut,
 			onFocusTerminalShortcut: shellMocks.onFocusTerminalShortcut,
+		},
+		keybindings: {
+			get: shellMocks.getKeybindings,
+			set: shellMocks.setKeybindings,
+			setRecording: shellMocks.setKeybindingRecording,
 		},
 		window: {},
 	},
@@ -306,6 +315,21 @@ describe("shell new-shell-terminal shortcut subscription", () => {
 
 		expect(shellMocks.openShellTerminal).toHaveBeenCalledWith(
 			expect.objectContaining({ projectId: "proj-1" }),
+			expect.anything(),
+		);
+	});
+
+	// Regression: a terminal opened from a session view must carry the session
+	// id, not just its owning project's, so the daemon can resolve the
+	// session's own worktree instead of the registered project root.
+	it("scopes the terminal to the session in scope", async () => {
+		shellMocks.state.routeParams = { sessionId: "sess-1" };
+		await renderShell();
+
+		pressNewShellTerminal();
+
+		expect(shellMocks.openShellTerminal).toHaveBeenCalledWith(
+			expect.objectContaining({ projectId: "proj-1", sessionId: "sess-1" }),
 			expect.anything(),
 		);
 	});

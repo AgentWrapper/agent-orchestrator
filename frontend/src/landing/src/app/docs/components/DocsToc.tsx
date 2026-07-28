@@ -25,17 +25,17 @@ export function DocsToc({ toc }: { toc: TocItem[] }) {
   if (toc.length === 0) return null;
 
   return (
-    <aside className="scrollbar-hide sticky top-14 hidden h-[calc(100vh-3.5rem)] w-52 shrink-0 overflow-y-auto py-10 xl:block">
-      <div className="mb-3 text-xs font-semibold uppercase tracking-[0.5px] text-muted-foreground">On this page</div>
-      <ul className="flex flex-col gap-1.5 border-l border-border">
+    <aside className="scrollbar-hide sticky top-20 hidden h-[calc(100vh-6rem)] w-52 shrink-0 overflow-y-auto py-10 2xl:block">
+      <div className="mb-3 text-sm font-medium text-muted-foreground">On this page</div>
+      <ul className="flex flex-col gap-1.5 border-l border-border/60">
         {toc.map((item) => (
           <li key={item.id}>
             <a
               href={`#${item.id}`}
               className={`-ml-px block border-l text-sm transition-colors ${item.level === 3 ? "pl-6" : "pl-3"} ${
                 active === item.id
-                  ? "border-foreground text-foreground"
-                  : "border-transparent text-muted-foreground hover:border-foreground hover:text-foreground"
+                  ? "border-foreground/70 text-foreground"
+                  : "border-transparent text-muted-foreground hover:border-foreground/30 hover:text-foreground"
               }`}
             >
               {item.text}
