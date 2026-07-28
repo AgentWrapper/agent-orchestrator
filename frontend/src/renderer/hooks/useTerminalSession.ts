@@ -119,6 +119,20 @@ const REPLAY_CAP_MS = 750;
 // ~23ms, under two frames. Real replays are far below this; only a pathological
 // stream trips it, and tripping it just ends the gate early.
 const REPLAY_MAX_BYTES = 1024 * 1024;
+// Cover-only grace on the first replay byte. A pane that has produced NOTHING
+// has no walk to hide, so holding the cover to the cap just shows a blank
+// overlay — and past the pane's label delay (REPLAY_COVER_LABEL_MS in
+// TerminalPane.tsx) a "Loading latest output…" label with nothing to load.
+// Uncovering on this timer keeps that window short.
+//
+// It lifts the cover WITHOUT ending the gate: flushing here instead would clear
+// `replayBuffering`, and a replay that then arrives late would go to xterm frame
+// by frame — the exact walk this gate removes, with no cover left over it. So
+// the burst stays coalesced either way and a late one lands as a single paint.
+// Longer than the quiet window on purpose: `opened` fires from setPTY before
+// copyOut, so the first byte is imminent but not instant, and a value near
+// QUIET_MS would uncover panes that were about to draw.
+const REPLAY_FIRST_BYTE_MS = 250;
 
 function defaultCreateMux(): TerminalMux {
 	// Resolved per connect, not per hook: a daemon restart can change the port.
@@ -164,6 +178,9 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		replayBytes: 0,
 		replayQuietTimer: null as ReturnType<typeof setTimeout> | null,
 		replayCapTimer: null as ReturnType<typeof setTimeout> | null,
+		// Uncovers a pane that never produced a first byte; see
+		// REPLAY_FIRST_BYTE_MS. Does not end the gate, so it is not a flush timer.
+		replayFirstByteTimer: null as ReturnType<typeof setTimeout> | null,
 		// A resize re-assert held back until the replay flushes; see the resize
 		// handler for why it cannot fire during the burst.
 		replayPendingReassert: null as (() => void) | null,
@@ -194,6 +211,10 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		if (r.replayCapTimer) {
 			clearTimeout(r.replayCapTimer);
 			r.replayCapTimer = null;
+		}
+		if (r.replayFirstByteTimer) {
+			clearTimeout(r.replayFirstByteTimer);
+			r.replayFirstByteTimer = null;
 		}
 	}, []);
 
@@ -325,8 +346,11 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			r.replayPendingReassert = null;
 
 			if (chunks.length === 0) {
-				// Nothing replayed (a pane with no output yet): reveal immediately
-				// rather than holding the cover for the full cap.
+				// Nothing buffered, so there is nothing to reveal at a settled
+				// position — just make sure the cover is off. Reaching here means an
+				// exit, error, dead socket or the cap; a pane that is merely slow to
+				// draw was already uncovered by REPLAY_FIRST_BYTE_MS without ending
+				// the gate.
 				setReplaySettled(true);
 				pendingReassert?.();
 				return;
@@ -384,6 +408,19 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				// the cap now measures the burst rather than the connect handshake.
 				if (r.replayBuffering && !r.replayCapTimer) {
 					r.replayCapTimer = setTimeout(flushReplay, REPLAY_CAP_MS);
+				}
+				// Same anchor, different job: uncover a pane that turns out to have
+				// nothing to replay (see REPLAY_FIRST_BYTE_MS). Deliberately not a
+				// flush — the gate stays armed so a late burst is still coalesced.
+				if (r.replayBuffering && !r.replayFirstByteTimer) {
+					r.replayFirstByteTimer = setTimeout(() => {
+						r.replayFirstByteTimer = null;
+						if (!isCurrentAttachment(generation, handle, mux)) return;
+						// Bytes arrived, or the burst already flushed: the flush owns
+						// the reveal in both cases, at the settled scroll position.
+						if (!r.replayBuffering || r.replayChunks.length > 0) return;
+						setReplaySettled(true);
+					}, REPLAY_FIRST_BYTE_MS);
 				}
 			}),
 			mux.onExit(handle, () => {
@@ -472,11 +509,20 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				mux.resize(handle, cols, rows);
 				// The backend answers every resize frame with an explicit SIGWINCH,
 				// so the re-assert costs a full application repaint ~250ms later.
-				// Mid-replay that repaint would land just after the cover lifts and
-				// flash. Hold it until the flush — never drop it, since losing the
-				// re-assert leaves the pane laid out for the old grid until the next
-				// real change. Only deferred once a burst is actually in flight; a
-				// pane replaying nothing keeps the plain timing.
+				// Firing it mid-burst would push those repaint bytes into the
+				// buffer, and every added frame restarts the quiet window — so the
+				// cover stays down longer for output the user cannot see yet. Hold
+				// it until the flush so the burst can go quiet on its own.
+				//
+				// Note this does NOT hide the repaint: deferring lands it ~250ms
+				// after the reveal, whereas firing mid-burst would have folded it
+				// into the single write. The trade is a shorter cover for one
+				// post-reveal repaint at the correct size.
+				//
+				// Never dropped — losing the re-assert leaves the pane laid out for
+				// the old grid until the next real change. Only deferred once a
+				// burst is actually in flight; a pane replaying nothing keeps the
+				// plain timing.
 				if (r.replayBuffering && r.replayChunks.length > 0) {
 					r.replayPendingReassert = () => scheduleReassert(cols, rows);
 					return;

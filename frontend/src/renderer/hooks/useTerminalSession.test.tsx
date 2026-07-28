@@ -301,8 +301,35 @@ describe("useTerminalSession", () => {
 		it("reveals a pane that replays nothing instead of holding the cover to the cap", () => {
 			const { view, muxes } = setup();
 			act(() => muxes[0].emitOpened("handle-1"));
-			act(() => void vi.advanceTimersByTime(750));
+
+			// A pane that has produced nothing has no walk to hide, so the cover
+			// must come off on the first-byte grace rather than the full cap —
+			// otherwise the pane sits blank behind a "Loading latest output…"
+			// label with nothing to load.
+			act(() => void vi.advanceTimersByTime(250));
 			expect(view.result.current.replaySettled).toBe(true);
+
+			act(() => void vi.advanceTimersByTime(500));
+			expect(view.result.current.replaySettled).toBe(true);
+		});
+
+		it("keeps coalescing after an empty-replay reveal, so a late burst still lands as one write", () => {
+			const { terminal, muxes } = setup();
+			act(() => muxes[0].emitOpened("handle-1"));
+
+			// Uncovering early must NOT end the gate. Flushing an empty buffer here
+			// would clear replayBuffering and leave every later frame to go straight
+			// to xterm one at a time — the frame-by-frame walk this gate exists to
+			// remove, now with no cover over it either.
+			act(() => void vi.advanceTimersByTime(250));
+
+			act(() => muxes[0].emitData("handle-1", "late one "));
+			act(() => muxes[0].emitData("handle-1", "late two "));
+			act(() => muxes[0].emitData("handle-1", "late three"));
+			expect(terminal.lines).toEqual([]);
+
+			act(() => void vi.advanceTimersByTime(60));
+			expect(terminal.lines).toEqual(["late one late two late three"]);
 		});
 
 		it("flushes what arrived and reveals when the burst never goes quiet", () => {
@@ -485,12 +512,21 @@ describe("useTerminalSession", () => {
 
 			// Daemon goes away before the server ever acks the open.
 			view.rerender({ daemonReady: false });
-			act(() => void vi.advanceTimersByTime(3000)); // OPEN_TIMEOUT_MS
 
-			// teardownMux ran and scheduleReattach bailed out (no daemon ready), so
-			// nothing re-arms the gate. The cap timer is what guarantees the cover
-			// still lifts — it is deliberately shorter than OPEN_TIMEOUT_MS, so a
-			// pane whose server never acks is never stranded behind the overlay.
+			// Well past REPLAY_CAP_MS and REPLAY_FIRST_BYTE_MS, and still covered:
+			// both are armed from `opened`, so neither is running. This is what
+			// fails if either one is ever moved back to connect().
+			act(() => void vi.advanceTimersByTime(2_999));
+			expect(view.result.current.replaySettled).toBe(false);
+
+			act(() => void vi.advanceTimersByTime(1)); // OPEN_TIMEOUT_MS
+
+			// The cap plays no part here: it is armed from `opened`, which never
+			// fired, so no replay timer ever existed. What lifts the cover is
+			// teardownMux, which settles unconditionally — and since
+			// scheduleReattach bailed out (no daemon ready), nothing re-arms the
+			// gate afterwards. That is the whole guarantee for a pane whose server
+			// never acks, so pin the timing rather than just the end state.
 			expect(view.result.current.state).toBe("reattaching");
 			expect(view.result.current.replaySettled).toBe(true);
 		});
