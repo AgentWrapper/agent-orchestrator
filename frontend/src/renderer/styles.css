@@ -1014,9 +1014,10 @@ select {
 }
 
 .ao-startup-screen {
-	position: fixed;
-	z-index: calc(var(--z-overlay) - 1);
-	inset: 0;
+	position: relative;
+	flex: 1 1 0%;
+	min-width: 0;
+	min-height: 0;
 }
 
 .ao-startup-logo {

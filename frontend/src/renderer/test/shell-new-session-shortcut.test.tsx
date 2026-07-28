@@ -23,7 +23,11 @@ const shellMocks = vi.hoisted(() => {
 			isError: false,
 			isSuccess: true,
 		},
-		daemonStatus: { state: "stopped" } as { state: "ready" | "starting" | "stopped"; port?: number },
+		daemonStatus: { state: "stopped" } as {
+			state: "ready" | "starting" | "stopped" | "error";
+			port?: number;
+			code?: "not_ready";
+		},
 		shellValue: undefined as { workspaceStartupState?: string } | undefined,
 	};
 	return {
@@ -264,7 +268,7 @@ beforeEach(() => {
 		isError: false,
 		isSuccess: true,
 	};
-	shellMocks.state.daemonStatus = { state: "stopped" };
+	shellMocks.state.daemonStatus = { state: "error", code: "not_ready" };
 	shellMocks.state.shellValue = undefined;
 	shellMocks.queryClient.fetchQuery.mockReset();
 	shellMocks.queryClient.getQueryState.mockReset().mockReturnValue({ dataUpdatedAt: 0 });
@@ -279,6 +283,7 @@ beforeEach(() => {
 describe("shell workspace startup", () => {
 	it("stays loading until React observes the newer workspace result", async () => {
 		let resolveFetch: ((value: WorkspaceSummary[]) => void) | undefined;
+		useUiStore.setState({ isSidebarOpen: false });
 		shellMocks.state.daemonStatus = { state: "ready", port: 4777 };
 		shellMocks.state.workspaceQuery = {
 			data: [],
@@ -295,6 +300,7 @@ describe("shell workspace startup", () => {
 
 		const view = await renderShell();
 		expect(shellMocks.state.shellValue?.workspaceStartupState).toBe("loading");
+		expect(screen.getByTestId("sidebar-provider")).toHaveAttribute("data-open", "false");
 
 		await act(async () => resolveFetch?.(workspaces));
 		expect(shellMocks.state.shellValue?.workspaceStartupState).toBe("loading");
@@ -312,6 +318,8 @@ describe("shell workspace startup", () => {
 		);
 
 		await waitFor(() => expect(shellMocks.state.shellValue?.workspaceStartupState).toBe("ready"));
+		await waitFor(() => expect(screen.getByTestId("sidebar-provider")).toHaveAttribute("data-open", "true"));
+		expect(useUiStore.getState().isSidebarOpen).toBe(true);
 	});
 
 	it("recovers after a newer workspace query succeeds", async () => {

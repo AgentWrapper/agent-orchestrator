@@ -385,9 +385,10 @@ function createWindow(): void {
 }
 
 // How long the supervisor waits for the daemon to confirm its bound port (via
-// the listen log line or running.json) before reporting the configured port as
-// a best-effort fallback.
-const PORT_DISCOVERY_TIMEOUT_MS = 15_000;
+// the listen log line or running.json). A daemon that cannot confirm startup in
+// this window is reported with its captured output instead of being treated as
+// ready on an assumed port.
+const PORT_DISCOVERY_TIMEOUT_MS = 30_000;
 const RUN_FILE_POLL_MS = 300;
 // Accept run-files stamped slightly before our spawn timestamp: the daemon's
 // clock reading and ours race within normal scheduling jitter.
@@ -1006,16 +1007,26 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		}, RUN_FILE_POLL_MS);
 	}
 
-	// Last resort: neither source confirmed (e.g. an older daemon build). Report
-	// the configured port so the renderer is not stuck on "starting" forever.
+	// Neither source confirmed startup. Surface the captured process output so
+	// the renderer can explain why boot stalled instead of spinning forever or
+	// attempting workspace requests against an assumed port.
 	fallbackTimer = setTimeout(() => {
 		if (portConfirmed || daemonProcess !== child || daemonStoppingProcess === child) return;
 		stopDiscovery();
 		setDaemonStatus({
-			state: "ready",
-			port: resolvedDaemonPort(),
-			message: "Daemon port not confirmed from logs or running.json; assuming the configured port.",
-			code: "port_unconfirmed",
+			state: "error",
+			message: "AO daemon did not finish starting within 30 seconds.",
+			details:
+				daemonOutput.trim() ||
+				[
+					"No startup output was captured.",
+					`Executable: ${launch.command}`,
+					`Working directory: ${launch.cwd}`,
+					`Expected port confirmation from: ${handshakePath ?? "running.json"}`,
+				].join("\n"),
+			code: "not_ready",
+			executablePath: launch.command,
+			workingDirectory: launch.cwd,
 		});
 	}, PORT_DISCOVERY_TIMEOUT_MS);
 
