@@ -92,6 +92,25 @@ func TestShellTerminalsAPI_OpenReturnsHandleForMuxAttach(t *testing.T) {
 	}
 }
 
+// The bug this guards: a shell opened from a session view must reach the
+// service with the session id intact, not just the project id, since only the
+// session id can resolve to the session's own worktree.
+func TestShellTerminalsAPI_OpenPassesSessionScopeThrough(t *testing.T) {
+	svc := &fakeShellTerminalService{opened: sampleShellTerminal()}
+	srv := newShellTerminalTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/shell-terminals", `{"projectId":"portfolio","sessionId":"portfolio-3"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body=%s", status, body)
+	}
+	if svc.gotOpenInput.ProjectID != "portfolio" {
+		t.Errorf("project id = %q, want portfolio", svc.gotOpenInput.ProjectID)
+	}
+	if svc.gotOpenInput.SessionID != "portfolio-3" {
+		t.Errorf("session id = %q, want portfolio-3", svc.gotOpenInput.SessionID)
+	}
+}
+
 // The topbar action fires with no project selected and sends no body; that must
 // open a shell rather than 400.
 func TestShellTerminalsAPI_OpenAcceptsEmptyBody(t *testing.T) {

@@ -26,11 +26,13 @@ const postHogBufferSize = 128
 
 var remotePayloadAllowlist = map[string]map[string]struct{}{
 	"ao.app.active": {
+		"actor_type":   {},
 		"channel":      {},
 		"command":      {},
 		"command_path": {},
 	},
 	"ao.cli.invoked": {
+		"actor_type":   {},
 		"command":      {},
 		"command_path": {},
 	},
