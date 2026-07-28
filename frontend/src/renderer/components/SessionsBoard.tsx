@@ -6,11 +6,9 @@ import {
 	Check,
 	Copy,
 	GitBranch,
-	LayoutGrid,
 	Plus,
 	RotateCcw,
 	RotateCw,
-	Rows3,
 	Trash2,
 } from "lucide-react";
 import {
@@ -63,13 +61,6 @@ type SessionsBoardProps = {
 // when its SCM outcome remains `merged`.
 type Column = AttentionZoneView;
 const COLUMNS: Column[] = boardAttentionZoneOrder.map((zone) => getAttentionZoneViewForZone(zone));
-type ArchiveLayout = "rows" | "grid";
-const archiveLayoutStorageKey = "ao.board.archive.layout";
-
-function initialArchiveLayout(): ArchiveLayout {
-	if (typeof window === "undefined") return "grid";
-	return window.localStorage?.getItem(archiveLayoutStorageKey) === "rows" ? "rows" : "grid";
-}
 
 function isArchivedSession(session: WorkspaceSession): boolean {
 	return session.isTerminated === true || session.status === "terminated";
@@ -143,7 +134,6 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const showProjectEmpty = projectId !== undefined && isLoaded && workspaces.length > 0 && sessions.length === 0;
 	// Archived sessions cost one quiet line under the board until expanded.
 	const [archiveExpanded, setArchiveExpanded] = useState(false);
-	const [archiveLayout, setArchiveLayout] = useState<ArchiveLayout>(initialArchiveLayout);
 	const [restoringSessionId, setRestoringSessionId] = useState<string | undefined>();
 	const [restoreErrors, setRestoreErrors] = useState<Record<string, string>>({});
 	const [restoreUnavailableSession, setRestoreUnavailableSession] = useState<WorkspaceSession | undefined>();
@@ -163,10 +153,6 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			to: "/projects/$projectId/sessions/$sessionId",
 			params: { projectId: session.workspaceId, sessionId: session.id },
 		});
-	const chooseArchiveLayout = (layout: ArchiveLayout) => {
-		window.localStorage?.setItem(archiveLayoutStorageKey, layout);
-		setArchiveLayout(layout);
-	};
 
 	const restoreArchivedSession = async (event: MouseEvent<HTMLButtonElement>, session: WorkspaceSession) => {
 		event.stopPropagation();
@@ -392,40 +378,16 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 							<span className="font-mono text-2xs font-medium uppercase tracking-wide-sm">Archive</span>
 							<span className="ml-1.5 font-mono text-micro text-passive">{archived.length}</span>
 						</button>
-						{archiveExpanded && (
-							<div
-								aria-label="Archive layout"
-								className="ml-auto flex shrink-0 items-center rounded-md border border-border bg-surface-faint p-0.5"
-								role="group"
-							>
-								<ArchiveLayoutButton
-									active={archiveLayout === "rows"}
-									icon={Rows3}
-									label="Rows"
-									onClick={() => chooseArchiveLayout("rows")}
-								/>
-								<ArchiveLayoutButton
-									active={archiveLayout === "grid"}
-									icon={LayoutGrid}
-									label="Columns"
-									onClick={() => chooseArchiveLayout("grid")}
-								/>
-							</div>
-						)}
 					</div>
 					{archiveExpanded && (
 						<div
 							aria-label="Archived sessions"
-							className={cn(
-								"board-scrollbar max-h-[45vh] overflow-y-auto pb-3",
-								archiveLayout === "grid" && "grid grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-2",
-							)}
+							className="board-scrollbar grid max-h-[45vh] grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-2 overflow-y-auto pb-3"
 							role="list"
 						>
 							{archived.map((s) => (
 								<ArchiveSessionItem
 									key={s.id}
-									layout={archiveLayout}
 									session={s}
 									restoreAction={(event) => void restoreArchivedSession(event, s)}
 									restoreError={restoreErrors[s.id]}
@@ -891,14 +853,12 @@ function SessionCard({
 
 function ArchiveSessionItem({
 	session,
-	layout,
 	restoreAction,
 	restoreError,
 	isRestoring,
 	isRestoreDisabled,
 }: {
 	session: WorkspaceSession;
-	layout: ArchiveLayout;
 	restoreAction: (event: MouseEvent<HTMLButtonElement>) => void;
 	restoreError?: string;
 	isRestoring: boolean;
@@ -927,73 +887,34 @@ function ArchiveSessionItem({
 		/>
 	);
 
-	if (layout === "grid") {
-		return (
-			<div
-				className="flex min-h-28 flex-col overflow-hidden rounded-md border border-border bg-surface"
-				role="listitem"
-			>
-				<div className="flex min-w-0 items-center gap-2 px-3 pt-2">
-					<ArchiveStatus badge={badge} />
-					<span className="ml-auto shrink-0 font-mono text-2xs text-passive">
-						{formatTimeCompact(session.updatedAt)}
-					</span>
-					{restoreButton}
-				</div>
-				<div className="min-h-0 flex-1 px-3 pb-2 pt-1.5 text-left">
-					<div className="line-clamp-2 text-control font-medium leading-snug text-foreground">{session.title}</div>
-					<div className="mt-1 flex min-w-0 items-center gap-2">
-						<AgentAvatar provider={session.provider} />
-						{issueId && (
-							<span className="max-w-branch-chip truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent">
-								{issueId}
-							</span>
-						)}
-					</div>
-					{branch && (
-						<div className="mt-2 flex min-w-0 items-center gap-1 font-mono text-2xs text-passive">
-							<span className="truncate">{branch}</span>
-							<CopyActionButton label={`branch ${branch}`} value={branch} />
-						</div>
-					)}
-				</div>
-				<div aria-hidden="true" className="mx-3 my-px h-px bg-border" />
-				<div className="px-3 py-1.5 font-mono text-2xs text-passive">{prMetadata}</div>
-				<ArchiveRestoreError message={restoreError} />
-			</div>
-		);
-	}
-
 	return (
-		<div className="border-t border-border first:border-t-0" role="listitem">
-			<div className="flex min-h-row-lg items-center">
-				<div className="min-w-0 flex-1 px-2 py-2 text-left">
-					<div className="flex min-w-0 items-center gap-2">
-						<ArchiveStatus badge={badge} />
-						<span className="min-w-0 truncate text-control font-medium text-foreground">{session.title}</span>
-						{issueId && (
-							<span className="hidden max-w-branch-chip shrink-0 truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent sm:inline">
-								{issueId}
-							</span>
-						)}
-						<span className="ml-auto hidden shrink-0 md:inline-flex">
-							<AgentAvatar provider={session.provider} />
-						</span>
-						<span className="w-15 shrink-0 text-right font-mono text-2xs text-passive">
-							{formatTimeCompact(session.updatedAt)}
-						</span>
-					</div>
-					{branch && (
-						<div className="mt-1 flex min-w-0 items-center gap-1 font-mono text-2xs text-passive">
-							<span className="truncate">{branch}</span>
-							<CopyActionButton label={`branch ${branch}`} value={branch} />
-						</div>
-					)}
-					<div aria-hidden="true" className="my-1 h-px bg-border" />
-					<div className="font-mono text-2xs text-passive">{prMetadata}</div>
-				</div>
-				<div className="mx-1.5">{restoreButton}</div>
+		<div className="flex min-h-28 flex-col overflow-hidden rounded-md border border-border bg-surface" role="listitem">
+			<div className="flex min-w-0 items-center gap-2 px-3 pt-2">
+				<ArchiveStatus badge={badge} />
+				<span className="ml-auto shrink-0 font-mono text-2xs text-passive">
+					{formatTimeCompact(session.updatedAt)}
+				</span>
+				{restoreButton}
 			</div>
+			<div className="min-h-0 flex-1 px-3 pb-2 pt-1.5 text-left">
+				<div className="line-clamp-2 text-control font-medium leading-snug text-foreground">{session.title}</div>
+				<div className="mt-1 flex min-w-0 items-center gap-2">
+					<AgentAvatar provider={session.provider} />
+					{issueId && (
+						<span className="max-w-branch-chip truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent">
+							{issueId}
+						</span>
+					)}
+				</div>
+				{branch && (
+					<div className="mt-2 flex min-w-0 items-center gap-1 font-mono text-2xs text-passive">
+						<span className="truncate">{branch}</span>
+						<CopyActionButton label={`branch ${branch}`} value={branch} />
+					</div>
+				)}
+			</div>
+			<div aria-hidden="true" className="mx-3 my-px h-px bg-border" />
+			<div className="px-3 py-1.5 font-mono text-2xs text-passive">{prMetadata}</div>
 			<ArchiveRestoreError message={restoreError} />
 		</div>
 	);
@@ -1043,38 +964,6 @@ function ArchiveRestoreError({ message }: { message?: string }) {
 			{message}
 		</div>
 	) : null;
-}
-
-function ArchiveLayoutButton({
-	active,
-	icon: Icon,
-	label,
-	onClick,
-}: {
-	active: boolean;
-	icon: typeof Rows3;
-	label: string;
-	onClick: () => void;
-}) {
-	return (
-		<Tooltip>
-			<TooltipTrigger asChild>
-				<button
-					aria-label={label}
-					aria-pressed={active}
-					className={cn(
-						"grid size-control-sm place-items-center rounded-sm text-passive transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
-						active && "bg-interactive-active text-foreground",
-					)}
-					onClick={onClick}
-					type="button"
-				>
-					<Icon className="size-icon-sm" aria-hidden="true" />
-				</button>
-			</TooltipTrigger>
-			<TooltipContent side="top">{label}</TooltipContent>
-		</Tooltip>
-	);
 }
 
 type BoardPRLifecycleStatus = { label: "closed" | "open" | "draft" | "merged"; className: string };
