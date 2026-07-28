@@ -51,7 +51,9 @@ func TestGrokLocalAuthStatusUnauthorizedWithEmptyAuthFile(t *testing.T) {
 }
 
 func TestGrokLocalAuthStatusUnknownWhenMissing(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	status, ok, err := grokLocalAuthStatus(context.Background())
 	if err != nil {
@@ -66,6 +68,7 @@ func writeGrokAuthFile(t *testing.T, content string) {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	grokDir := filepath.Join(home, ".grok")
 	if err := os.MkdirAll(grokDir, 0o700); err != nil {
 		t.Fatal(err)

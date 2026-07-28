@@ -24,7 +24,6 @@ export const aoBridge: AoBridge =
 		},
 		window: {
 			setOverlay: async () => undefined,
-			setTrafficLightsInset: async () => undefined,
 			isFullScreen: async () => false,
 			onFullScreen: () => () => undefined,
 		},
@@ -132,6 +131,11 @@ export const aoBridge: AoBridge =
 		updateSettings: {
 			get: async () => ({ enabled: false, channel: "latest", nightlyAck: false, feature: null }),
 			set: async () => undefined,
+		},
+		keybindings: {
+			get: async () => ({}),
+			set: async (overrides) => overrides,
+			setRecording: async () => undefined,
 		},
 		updates: {
 			getStatus: async () => ({ state: "idle" }),

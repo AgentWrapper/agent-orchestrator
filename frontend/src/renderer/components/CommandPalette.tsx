@@ -11,18 +11,17 @@ import {
 	type CommandItem as CommandItemModel,
 	type NavigateTarget,
 } from "../lib/command-palette";
+import { iconForCommand } from "../lib/command-palette-icons";
 import { isDialogOrMenuOpen } from "../lib/dom-selectors";
+import { isMacPlatform } from "../lib/platform";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { useShell } from "../lib/shell-context";
-import { findProjectOrchestrator } from "../types/workspace";
+import { findProjectOrchestrator, hasConfiguredOrchestratorAgent } from "../types/workspace";
 import { useUiStore } from "../stores/ui-store";
+import { matchesRendererShortcut } from "../stores/keybindings-store";
 import { CreateProjectFlow } from "./CreateProjectFlow";
 import { NewTaskDialog } from "./NewTaskDialog";
-import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "./ui/command";
-
-function isMacPlatform(): boolean {
-	return typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
-}
+import { CommandDialog, CommandEmpty, CommandFooter, CommandGroup, CommandInput, CommandItem, CommandList } from "./ui/command";
 
 function terminalHasFocus(): boolean {
 	if (typeof document === "undefined") return false;
@@ -124,6 +123,14 @@ export function CommandPalette() {
 				closePalette();
 				return;
 			}
+			const workspace = workspaces.find((candidate) => candidate.id === projectId);
+			if (!hasConfiguredOrchestratorAgent(workspace)) {
+				if (workspace) {
+					navigateToTarget({ to: "/projects/$projectId/settings", params: { projectId } });
+					closePalette();
+				}
+				return;
+			}
 			const sessionId = await spawnOrchestrator(projectId, "command_palette");
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 			navigateToTarget({ to: "/projects/$projectId/sessions/$sessionId", params: { projectId, sessionId } });
@@ -207,19 +214,26 @@ export function CommandPalette() {
 				return;
 			}
 
-			if (event.altKey || event.shiftKey || event.key.toLowerCase() !== "k") return;
-
-			const isMac = isMacPlatform();
-			const paletteModifier = isMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
-			if (!paletteModifier) return;
+			if (!matchesRendererShortcut("command-palette", event)) return;
 
 			if (isOpen) {
 				event.preventDefault();
 				closePalette();
 				return;
 			}
-			// Returns without preventDefault so a focused terminal keeps Ctrl+K for readline's kill-to-end-of-line.
-			if (!isMac && terminalHasFocus()) return;
+			// Preserve the default Ctrl+K readline command in terminals. A user
+			// who deliberately assigns a different palette binding expects it to
+			// work there too.
+			if (
+				!isMacPlatform() &&
+				terminalHasFocus() &&
+				event.key.toLowerCase() === "k" &&
+				event.ctrlKey &&
+				!event.metaKey &&
+				!event.altKey &&
+				!event.shiftKey
+			)
+				return;
 			if (isDialogOrMenuOpen()) return;
 			event.preventDefault();
 			setOpen(true);
@@ -256,33 +270,51 @@ export function CommandPalette() {
 					{error && (
 						<div
 							role="alert"
-							className="mx-1 mb-1 overflow-hidden rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs wrap-break-word text-destructive"
+							className="mx-2 mb-1 overflow-hidden rounded-[var(--radius-command-item)] border border-destructive/40 bg-destructive/10 px-5 py-2 text-xs wrap-break-word text-destructive"
 						>
 							{error}
 						</div>
 					)}
 					{groups.map((group) => (
 						<CommandGroup key={group.id} heading={group.label}>
-							{group.items.map((item) => (
-								<CommandItem
-									key={item.id}
-									value={item.id}
-									disabled={item.disabled || (pendingId !== null && pendingId !== item.id)}
-									onSelect={() => onSelectItem(item)}
-								>
-									<span className="min-w-0 flex-1 truncate">{item.title}</span>
-									{pendingId === item.id ? (
-										<Loader2 className="ml-auto size-3.5 animate-spin text-passive" aria-hidden="true" />
-									) : item.disabled && item.disabledReason ? (
-										<span className="ml-auto text-2xs text-passive">{item.disabledReason}</span>
-									) : item.subtitle ? (
-										<span className="ml-auto max-w-[45%] truncate text-2xs text-passive">{item.subtitle}</span>
-									) : null}
-								</CommandItem>
-							))}
+							{group.items.map((item) => {
+								const Icon = iconForCommand(item);
+								return (
+									<CommandItem
+										key={item.id}
+										value={item.id}
+										disabled={item.disabled || (pendingId !== null && pendingId !== item.id)}
+										onSelect={() => onSelectItem(item)}
+									>
+										{Icon ? <Icon strokeWidth={1.75} aria-hidden="true" /> : null}
+										<span className="min-w-0 flex-1 truncate">{item.title}</span>
+										{pendingId === item.id ? (
+											<Loader2 className="ml-auto size-3.5 animate-spin text-[var(--color-text-command-muted)]" aria-hidden="true" />
+										) : item.disabled && item.disabledReason ? (
+											<span className="ml-auto text-control text-[var(--color-text-command-muted)]">
+												{item.disabledReason}
+											</span>
+										) : item.subtitle ? (
+											<span className="ml-auto max-w-command-subtitle truncate text-control text-[var(--color-text-command-muted)]">
+												{item.subtitle}
+											</span>
+										) : null}
+									</CommandItem>
+								);
+							})}
 						</CommandGroup>
 					))}
 				</CommandList>
+				<CommandFooter aria-hidden="true">
+					<span className="inline-flex items-center gap-1.5">
+						<span>↑↓</span>
+						<span>Select</span>
+					</span>
+					<span className="inline-flex items-center gap-1.5">
+						<span>↵</span>
+						<span>Open</span>
+					</span>
+				</CommandFooter>
 			</CommandDialog>
 
 			<NewTaskDialog

@@ -4,15 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 
-const {
-	clipboardWriteTextMock,
-	navigateMock,
-	notificationShowMock,
-	postMock,
-	workspaceQueryMock,
-	boardActionsInPanelMock,
-} = vi.hoisted(() => ({
-	clipboardWriteTextMock: vi.fn(),
+const { navigateMock, notificationShowMock, postMock, workspaceQueryMock, boardActionsInPanelMock } = vi.hoisted(() => ({
 	navigateMock: vi.fn(),
 	notificationShowMock: vi.fn(),
 	postMock: vi.fn(),
@@ -37,7 +29,7 @@ vi.mock("../lib/api-client", () => ({
 vi.mock("../lib/bridge", () => ({
 	aoBridge: {
 		clipboard: {
-			writeText: (...args: unknown[]) => clipboardWriteTextMock(...args),
+			writeText: vi.fn(),
 		},
 		notifications: {
 			show: (...args: unknown[]) => notificationShowMock(...args),
@@ -74,7 +66,6 @@ function renderBoardWithClient(queryClient: QueryClient, projectId?: string) {
 }
 
 beforeEach(() => {
-	clipboardWriteTextMock.mockReset().mockResolvedValue(undefined);
 	navigateMock.mockReset();
 	notificationShowMock.mockReset().mockResolvedValue(undefined);
 	postMock.mockReset().mockResolvedValue({ data: {} });
@@ -122,6 +113,48 @@ describe("SessionsBoard", () => {
 
 		expect(screen.getByText("solkit-ui")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "New task" })).toBeInTheDocument();
+	});
+
+	it.each([
+		["active", "Working", "bg-status-working", true],
+		["idle", "Idle", "bg-status-idle", false],
+	] as const)("shows %s orchestrator activity in the in-panel board toolbar", (state, label, tone, pulses) => {
+		boardActionsInPanelMock.mockReturnValue(true);
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				{
+					id: "p1",
+					name: "solkit-ui",
+					path: "/tmp/solkit-ui",
+					sessions: [
+						{
+							id: "orch-1",
+							workspaceId: "p1",
+							workspaceName: "solkit-ui",
+							title: "orchestrator",
+							provider: "codex",
+							kind: "orchestrator",
+							branch: "main",
+							status: "working",
+							activity: { state, lastActivityAt: "2026-01-01T00:00:00Z" },
+							updatedAt: "2026-01-01T00:00:00Z",
+							prs: [],
+						},
+					],
+				},
+			],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		const button = screen.getByRole("button", { name: `Orchestrator, ${label}` });
+		const indicator = button.querySelector("span.size-dot-sm") as HTMLElement;
+		expect(indicator).toHaveAttribute("aria-hidden", "true");
+		expect(indicator).toHaveClass(tone);
+		expect(indicator).toHaveClass(pulses ? "animate-status-pulse" : "size-dot-sm");
+		if (!pulses) expect(indicator).not.toHaveClass("animate-status-pulse");
 	});
 
 	it("shows the Board crumb on the root board when actions live in the panel", () => {
@@ -179,57 +212,8 @@ describe("SessionsBoard", () => {
 		const terminateButton = within(idleCard).getByRole("button", { name: "Terminate brand-font-pipeline" });
 		expect(terminateButton).toHaveClass("opacity-0", "group-hover:opacity-100", "group-focus-within:opacity-100");
 		expect(terminateButton.querySelector("svg")).toHaveClass("lucide-trash-2");
-		expect(within(idleCard).getByText("Idle").parentElement).toHaveClass("pb-1.5", "pt-2");
-		expect(within(idleCard).getByText("brand-font-pipeline")).toHaveClass("pb-1");
-		expect(within(idleCard).getByText("no PR yet")).toHaveClass("py-1.25");
-	});
-
-	it("copies visible branch names and PR URLs without opening the session", async () => {
-		workspaceQueryMock.mockReturnValue({
-			data: [
-				{
-					id: "p1",
-					name: "radic",
-					path: "/tmp/radic",
-					sessions: [
-						{
-							id: "s1",
-							workspaceId: "p1",
-							workspaceName: "radic",
-							title: "clipboard support",
-							provider: "claude-code",
-							branch: "feat/copy-actions",
-							status: "working",
-							activity: { state: "active", lastActivityAt: "2026-01-01T00:00:00Z" },
-							updatedAt: "2026-01-01T00:00:00Z",
-							prs: [
-								{ number: 45, url: "https://github.com/acme/radic/pull/45", state: "open" },
-								{ number: 46, url: "https://github.com/acme/radic/pull/46", state: "open" },
-							],
-						},
-					],
-				},
-			],
-			isError: false,
-			isSuccess: true,
-		});
-
-		renderBoard("p1");
-
-		await userEvent.click(screen.getByRole("button", { name: "Copy branch feat/copy-actions" }));
-		expect(clipboardWriteTextMock).toHaveBeenLastCalledWith("feat/copy-actions");
-		expect(screen.getByRole("button", { name: "Copied branch feat/copy-actions" })).toBeInTheDocument();
-		expect(navigateMock).not.toHaveBeenCalled();
-
-		await userEvent.click(screen.getByRole("button", { name: "Copy PR #45 URL" }));
-		expect(clipboardWriteTextMock).toHaveBeenLastCalledWith("https://github.com/acme/radic/pull/45");
-		expect(screen.getByRole("button", { name: "Copied PR #45 URL" })).toBeInTheDocument();
-		expect(navigateMock).not.toHaveBeenCalled();
-		const firstPRCopyButton = screen.getByRole("button", { name: "Copied PR #45 URL" });
-		expect(firstPRCopyButton.parentElement?.nextSibling?.textContent).toBe(",");
-		await waitFor(() => expect(screen.getByRole("button", { name: "Copy PR #45 URL" })).toBeInTheDocument(), {
-			timeout: 2_000,
-		});
+		expect(within(idleCard).getByText("Idle").parentElement).toHaveClass("flex", "justify-between");
+		expect(within(idleCard).getByText("brand-font-pipeline")).toHaveClass("font-semibold", "line-clamp-2");
 	});
 
 	it("uses distinct card badge tones for idle, no signal, and draft PR sessions", () => {
@@ -283,9 +267,9 @@ describe("SessionsBoard", () => {
 		});
 
 		renderBoard("p1");
-		const idleCard = screen.getByText("idle-card-task").closest('[role="button"]') as HTMLElement;
-		const noSignalCard = screen.getByText("no-signal-card-task").closest('[role="button"]') as HTMLElement;
-		const draftCard = screen.getByText("draft-card-task").closest('[role="button"]') as HTMLElement;
+		const idleCard = screen.getByText("idle-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
+		const noSignalCard = screen.getByText("no-signal-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
+		const draftCard = screen.getByText("draft-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
 
 		expect(within(idleCard).getByText("Idle").closest("span")).toHaveClass("text-status-idle");
 		expect(within(noSignalCard).getByText("No signal").closest("span")).toHaveClass("text-status-unknown");
@@ -317,7 +301,7 @@ describe("SessionsBoard", () => {
 		renderBoard("p1");
 
 		const needsYouColumn = screen.getByText("Needs you").closest("section") as HTMLElement;
-		expect(needsYouColumn.firstElementChild).toHaveClass("py-2");
+		expect(needsYouColumn.firstElementChild).toHaveClass("h-12");
 		expect(within(needsYouColumn).getByText("agent-exited-task")).toBeInTheDocument();
 		expect(within(needsYouColumn).getByText("Exited").closest("span")).toHaveClass("text-status-exited");
 	});
@@ -377,20 +361,23 @@ describe("SessionsBoard", () => {
 
 		expect(within(workSummary).getByText("Idle").querySelector("span")).toHaveClass("bg-status-idle");
 		expect(within(workSummary).getByText("Working").querySelector("span")).toHaveClass("bg-status-working");
-		expect(workSummary.parentElement).toHaveClass("pb-2.5");
-		expect(workingRegion.firstElementChild).toHaveClass("pb-2.5");
+		expect(workSummary).toHaveClass("font-mono", "text-2xs", "uppercase");
+		expect(workSummary.parentElement).toHaveClass("h-12");
+		expect(workingRegion.firstElementChild).toHaveClass("py-2.5");
 		expect(within(workLane).getByLabelText("2 idle sessions")).toHaveTextContent("2");
 		expect(within(workLane).getByLabelText("1 working session")).toHaveTextContent("1");
 		expect(screen.queryByRole("button", { name: /idle sessions/i })).not.toBeInTheDocument();
 		expect(idleRegion).toHaveClass("flex-[3]");
-		expect(workingRegion).toHaveClass("flex-[2]", "rounded-t-(--radius-panel)", "border-t");
+		expect(workingRegion.className).toContain("flex-[2]");
+		expect(workingRegion.className).toContain("border-t");
+		expect(workingRegion.className).not.toContain("rounded-t");
 		expect(within(idleRegion).getByText("idle-no-pr-task")).toBeInTheDocument();
 		expect(within(idleRegion).getByText("second-idle-task")).toBeInTheDocument();
 		expect(within(workingRegion).getByText("active-task")).toBeInTheDocument();
 		expect(within(reviewRegion).getByText("idle-with-pr-task")).toBeInTheDocument();
 		expect(within(workLane).queryByText("idle-with-pr-task")).not.toBeInTheDocument();
 
-		const idleCard = screen.getByText("idle-no-pr-task").closest('[role="button"]') as HTMLElement;
+		const idleCard = screen.getByText("idle-no-pr-task").closest('[data-testid="board-session-card"]') as HTMLElement;
 		const badge = within(idleCard).getByText("Idle").closest("span");
 		expect(badge).toHaveClass("text-status-idle");
 		expect(badge).not.toHaveClass("text-status-working");
@@ -562,7 +549,8 @@ describe("SessionsBoard", () => {
 		expect(terminatedCard).not.toBeNull();
 		expect(within(terminatedCard!).queryByRole("button", { name: "Open dead worker" })).not.toBeInTheDocument();
 		expect(within(terminatedCard!).getByText("Terminated")).toBeInTheDocument();
-		expect(screen.getByText("Claude")).toBeInTheDocument();
+		// Agent shown as its brand logo with an accessible name (not a text label).
+		expect(within(terminatedCard!).getByRole("img", { name: "claude-code" })).toBeInTheDocument();
 		expect(screen.getByText("ao/dead-worker")).toBeInTheDocument();
 		expect(screen.getByText("github:INT-17")).toBeInTheDocument();
 		const prStatus = screen.getByLabelText("#42 merged");
@@ -574,35 +562,26 @@ describe("SessionsBoard", () => {
 			screen.getByText("ao/dead-worker").compareDocumentPosition(divider!) & Node.DOCUMENT_POSITION_FOLLOWING,
 		).not.toBe(0);
 		expect(screen.getByRole("button", { name: "Restore dead worker" })).toBeInTheDocument();
+
+		expect(screen.queryByRole("group", { name: "Archive layout" })).not.toBeInTheDocument();
 	});
 
-	it("switches between rows and columns and remembers the archive layout", async () => {
+	it("renders archived sessions as a grid even when rows were previously saved", async () => {
+		window.localStorage.setItem("ao.board.archive.layout", "rows");
 		workspaceQueryMock.mockReturnValue({
 			data: [workspaceWithSessions([terminatedSession()])],
 			isError: false,
 			isSuccess: true,
 		});
-		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-		const view = renderBoardWithClient(queryClient, "p1");
+		renderBoard("p1");
 
 		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
-		const layout = screen.getByRole("group", { name: "Archive layout" });
-		expect(within(layout).getByRole("button", { name: "Columns" })).toHaveAttribute("aria-pressed", "true");
-		expect(screen.getByRole("list", { name: "Archived sessions" })).toHaveClass("grid");
+		expect(screen.queryByRole("group", { name: "Archive layout" })).not.toBeInTheDocument();
+		const archive = screen.getByRole("list", { name: "Archived sessions" });
+		expect(archive).toHaveClass("grid");
 		const restore = screen.getByRole("button", { name: "Restore dead worker" });
 		expect(restore.parentElement).toContainElement(screen.getByText("Terminated"));
-
-		await userEvent.click(within(layout).getByRole("button", { name: "Rows" }));
-		expect(within(layout).getByRole("button", { name: "Rows" })).toHaveAttribute("aria-pressed", "true");
-		expect(screen.getByRole("list", { name: "Archived sessions" })).not.toHaveClass("grid");
 		expect(screen.queryByRole("button", { name: "Open dead worker" })).not.toBeInTheDocument();
-		expect(window.localStorage.getItem("ao.board.archive.layout")).toBe("rows");
-
-		view.unmount();
-		renderBoard("p1");
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
-		expect(screen.getByRole("button", { name: "Rows" })).toHaveAttribute("aria-pressed", "true");
-		expect(screen.getByRole("list", { name: "Archived sessions" })).not.toHaveClass("grid");
 	});
 
 	it("restores a terminated session, refreshes workspace data, and opens the restored terminal", async () => {
@@ -878,7 +857,9 @@ describe("SessionsBoard", () => {
 		expect(within(mergeLane).getByLabelText("1 ready to merge session")).toHaveTextContent("1");
 		expect(within(mergeLane).getByLabelText("1 merged session")).toHaveTextContent("1");
 		expect(readyRegion).toHaveClass("flex-[3]");
-		expect(mergedRegion).toHaveClass("flex-[2]", "rounded-t-(--radius-panel)", "border-t");
+		expect(mergedRegion.className).toContain("flex-[2]");
+		expect(mergedRegion.className).toContain("border-t");
+		expect(mergedRegion.className).not.toContain("rounded-t");
 		expect(within(readyRegion).getByText("ready worker")).toBeInTheDocument();
 		expect(within(mergedRegion).getByText("merged worker")).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: /archive/i })).not.toBeInTheDocument();

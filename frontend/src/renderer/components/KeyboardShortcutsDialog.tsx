@@ -1,10 +1,17 @@
-import { APP_SHORTCUTS, SHORTCUT_CATEGORIES, shortcutKeys } from "../../shared/shortcuts";
+import {
+	APP_SHORTCUTS,
+	effectiveShortcutBindings,
+	SHORTCUT_CATEGORIES,
+	shortcutBindingKeys,
+} from "../../shared/shortcuts";
 import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
+import { useKeybindingsStore } from "../stores/keybindings-store";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
 
 type KeyboardShortcutsDialogProps = {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
+	onCustomize?: () => void;
 	isMac?: boolean;
 };
 
@@ -15,8 +22,14 @@ function isMacPlatform(): boolean {
 	return platform.toLowerCase().includes("mac");
 }
 
-export function KeyboardShortcutsDialog({ open, onOpenChange, isMac = isMacPlatform() }: KeyboardShortcutsDialogProps) {
+export function KeyboardShortcutsDialog({
+	open,
+	onOpenChange,
+	onCustomize,
+	isMac = isMacPlatform(),
+}: KeyboardShortcutsDialogProps) {
 	const isCommandPaletteEnabled = useCommandPaletteEnabled();
+	const overrides = useKeybindingsStore((state) => state.overrides);
 	const availableShortcuts = APP_SHORTCUTS.filter(
 		(shortcut) => shortcut.id !== "command-palette" || isCommandPaletteEnabled,
 	);
@@ -44,18 +57,26 @@ export function KeyboardShortcutsDialog({ open, onOpenChange, isMac = isMacPlatf
 									{shortcuts.map((shortcut) => (
 										<div className="flex min-h-11 items-center justify-between gap-5 py-1.5" key={shortcut.id}>
 											<p className="min-w-0 text-control font-medium text-foreground">{shortcut.label}</p>
-											<div
-												className="flex shrink-0 items-center gap-1"
-												aria-label={shortcutKeys(shortcut, isMac).join("+")}
-											>
-												{shortcutKeys(shortcut, isMac).map((key) => (
-													<kbd
-														className="inline-flex min-w-7 items-center justify-center rounded-sm border border-border-strong bg-surface px-1.5 py-1 font-mono text-caption font-medium text-muted-foreground shadow-sm"
-														key={key}
-													>
-														{key}
-													</kbd>
-												))}
+											<div className="flex shrink-0 flex-col items-end gap-1">
+												{effectiveShortcutBindings(shortcut.id, isMac, overrides).map((binding, bindingIndex) => {
+													const keys = shortcutBindingKeys(binding, isMac);
+													return (
+														<div
+															className="flex items-center gap-1"
+															aria-label={keys.join("+")}
+															key={`${binding.key}-${bindingIndex}`}
+														>
+															{keys.map((key) => (
+																<kbd
+																	className="inline-flex min-w-7 items-center justify-center rounded-sm border border-border-strong bg-surface px-1.5 py-1 font-mono text-caption font-medium text-muted-foreground shadow-sm"
+																	key={key}
+																>
+																	{key}
+																</kbd>
+															))}
+														</div>
+													);
+												})}
 											</div>
 										</div>
 									))}
@@ -64,6 +85,17 @@ export function KeyboardShortcutsDialog({ open, onOpenChange, isMac = isMacPlatf
 						);
 					})}
 				</div>
+				{onCustomize ? (
+					<div className="flex justify-end border-t border-border px-5 py-3">
+						<button
+							type="button"
+							className="rounded-md bg-accent px-3 py-2 text-control font-medium text-accent-foreground transition-opacity hover:opacity-90"
+							onClick={onCustomize}
+						>
+							Customize
+						</button>
+					</div>
+				) : null}
 			</DialogContent>
 		</Dialog>
 	);

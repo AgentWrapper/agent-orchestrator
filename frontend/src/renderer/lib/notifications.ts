@@ -173,7 +173,36 @@ export function keepLatestNotificationsPage(
 	rebaseOversizedFirstPage(queryClient, queryKey);
 }
 
-export function createNotificationsTransport(queryClient: QueryClient) {
+/**
+ * A `needs_input` toast is redundant only when the user can already see the
+ * prompt, which takes three things: the agent's terminal for that session is
+ * the one on screen, this window is visible, and this window has focus.
+ *
+ * Each check covers a way "looks visible" lies. Visibility alone is not enough
+ * — on Windows and Linux an unfocused or fully covered Electron window still
+ * reports `visibilityState === "visible"`. The route alone is not enough
+ * either: the session pane renders one terminal at a time, so an open shell or
+ * reviewer tab hides the agent while the URL still names that session. The
+ * caller resolves that, passing the session only while its agent pane shows.
+ *
+ * Only `needs_input` is suppressed. PR outcomes (`ready_to_merge`,
+ * `pr_merged`, `pr_closed_unmerged`) are not visible in the terminal pane, so
+ * they still deserve a toast even for the session in the foreground.
+ */
+function suppressToastForWatchedSession(
+	notification: NotificationDTO,
+	visibleAgentSessionId: string | undefined,
+): boolean {
+	if (notification.type !== "needs_input") return false;
+	if (!notification.sessionId || notification.sessionId !== visibleAgentSessionId) return false;
+	return document.visibilityState === "visible" && document.hasFocus();
+}
+
+export function createNotificationsTransport(
+	queryClient: QueryClient,
+	/** The session whose agent terminal is currently on screen, if any. */
+	getVisibleAgentSessionId: () => string | undefined = () => undefined,
+) {
 	return {
 		connect() {
 			let retryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -211,7 +240,7 @@ export function createNotificationsTransport(queryClient: QueryClient) {
 						if (!notification) return;
 						const inserted = mergeUnreadNotification(queryClient, notification);
 						mergeRecentNotification(queryClient, notification);
-						if (inserted) {
+						if (inserted && !suppressToastForWatchedSession(notification, getVisibleAgentSessionId())) {
 							void aoBridge.notifications.show({
 								id: notification.id,
 								title: notification.title,

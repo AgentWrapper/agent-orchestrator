@@ -6,6 +6,7 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { NotificationCenter } from "./NotificationCenter";
 import {
 	findProjectOrchestrator,
+	hasConfiguredOrchestratorAgent,
 	isOrchestratorSession,
 	sessionIsActive,
 	type WorkspaceSession,
@@ -16,6 +17,7 @@ import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { useUiStore } from "../stores/ui-store";
 import { OrchestratorIcon } from "./icons";
+import { OrchestratorActivityIndicator } from "./OrchestratorActivityIndicator";
 import { getAgentActivityView } from "../lib/session-presentation";
 import { isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { StatusPill } from "./StatusPill";
@@ -69,6 +71,7 @@ export function ShellTopbar() {
 	const project = projectId ? all.find((workspace) => workspace.id === projectId) : undefined;
 	const projectLabel = project?.name ?? session?.workspaceName ?? (projectId ? "" : "Board");
 	const orchestrator = projectId ? findProjectOrchestrator(all, projectId) : undefined;
+	const orchestratorActivityLabel = orchestrator ? getAgentActivityView(orchestrator.activity).label : undefined;
 	const isProjectRestarting = projectId ? restartingProjectIds.has(projectId) : false;
 
 	const openBoard = () =>
@@ -99,6 +102,12 @@ export function ShellTopbar() {
 				to: "/projects/$projectId/sessions/$sessionId",
 				params: { projectId, sessionId: orchestrator.id },
 			});
+			return;
+		}
+		if (!hasConfiguredOrchestratorAgent(project)) {
+			if (project) {
+				void navigate({ to: "/projects/$projectId/settings", params: { projectId } });
+			}
 			return;
 		}
 		setIsSpawning(true);
@@ -174,17 +183,18 @@ export function ShellTopbar() {
 							style={noDragStyle}
 							variant="accent"
 						>
-							<Plus className="size-icon-md" aria-hidden="true" />
+							<Plus className="size-icon-lg" aria-hidden="true" />
 							New task
 						</TopbarButton>
 						<TopbarButton
-							aria-label={orchestrator ? "Orchestrator" : "Spawn Orchestrator"}
+							aria-label={orchestratorActivityLabel ? `Orchestrator, ${orchestratorActivityLabel}` : "Spawn Orchestrator"}
 							disabled={isSpawning || isProjectRestarting}
 							onClick={() => void openOrchestrator()}
 							style={noDragStyle}
 							variant="primary"
 						>
-							<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
+							<OrchestratorIcon className="size-icon-lg" aria-hidden="true" />
+							{orchestrator ? <OrchestratorActivityIndicator session={orchestrator} /> : null}
 							{isProjectRestarting
 								? "Restarting…"
 								: isSpawning
@@ -206,11 +216,11 @@ export function ShellTopbar() {
 									style={noDragStyle}
 									variant="accent"
 								>
-									<Plus className="size-icon-md" aria-hidden="true" />
+									<Plus className="size-icon-lg" aria-hidden="true" />
 									New task
 								</TopbarButton>
 								<TopbarButton aria-label="Open Kanban" onClick={openBoard} style={noDragStyle} variant="primary">
-									<LayoutDashboard className="size-icon-md" aria-hidden="true" />
+									<LayoutDashboard className="size-icon-lg" aria-hidden="true" />
 									Kanban
 								</TopbarButton>
 							</>
@@ -219,6 +229,7 @@ export function ShellTopbar() {
 						    moved here from the inspector's Summary "Danger zone". */}
 						{!isOrchestrator && session && sessionIsActive(session) ? (
 							<TopbarKillButton
+								key={session.id}
 								session={session}
 								orchestratorId={orchestrator?.id}
 								onKilled={(workspaceId, orchestratorId) => {
@@ -241,7 +252,7 @@ export function ShellTopbar() {
 								style={noDragStyle}
 								variant="primary"
 							>
-								<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
+								<OrchestratorIcon className="size-icon-lg" aria-hidden="true" />
 								{isProjectRestarting ? "Restarting…" : isSpawning ? "Spawning…" : "Orchestrator"}
 							</TopbarButton>
 						)}
@@ -256,9 +267,9 @@ export function ShellTopbar() {
 								variant="icon"
 							>
 								{isInspectorOpen ? (
-									<PanelRightClose className="size-icon-lg" aria-hidden="true" />
+									<PanelRightClose className="size-5" aria-hidden="true" />
 								) : (
-									<PanelRightOpen className="size-icon-lg" aria-hidden="true" />
+									<PanelRightOpen className="size-5" aria-hidden="true" />
 								)}
 							</TopbarButton>
 						)}
@@ -286,12 +297,7 @@ export function TopbarKillButton({
 	onKilled: (workspaceId: string, orchestratorId?: string) => void;
 }) {
 	const [confirmOpen, setConfirmOpen] = useState(false);
-	const kill = useTerminateSession({
-		onSuccess: (terminatedSession) => {
-			setConfirmOpen(false);
-			onKilled(terminatedSession.workspaceId, orchestratorId);
-		},
-	});
+	const kill = useTerminateSession();
 	const error = kill.error instanceof Error ? kill.error.message : null;
 
 	return (
@@ -306,7 +312,7 @@ export function TopbarKillButton({
 				title="Kill session"
 				variant="kill"
 			>
-				<Trash2 className="size-icon-sm" aria-hidden="true" />
+				<Trash2 className="size-icon-lg" aria-hidden="true" />
 				Kill
 			</TopbarButton>
 			<ConfirmDialog
@@ -322,7 +328,12 @@ export function TopbarKillButton({
 				error={error}
 				onConfirm={() => {
 					kill.reset();
-					kill.mutate(session);
+					kill.mutate(session, {
+						onSuccess: (_data, terminatedSession) => {
+							setConfirmOpen(false);
+							onKilled(terminatedSession.workspaceId, orchestratorId);
+						},
+					});
 				}}
 			/>
 		</>
@@ -330,5 +341,7 @@ export function TopbarKillButton({
 }
 function SessionStatusPill({ session }: { session: WorkspaceSession }) {
 	const { label, tone, breathe } = getAgentActivityView(session.activity);
-	return <StatusPill label={label} tone={tone} breathe={breathe} leading="none" />;
+	return (
+		<StatusPill label={label} tone={tone} breathe={breathe} leading="none" className="px-3.5 py-2 text-sm" />
+	);
 }

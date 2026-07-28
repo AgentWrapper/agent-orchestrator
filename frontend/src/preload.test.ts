@@ -41,14 +41,6 @@ beforeEach(() => {
 	electronMocks.on.mockClear();
 });
 
-describe("preload window bridge", () => {
-	it("forwards the macOS traffic-light inset state", async () => {
-		await exposedBridge().window.setTrafficLightsInset(true);
-
-		expect(electronMocks.invoke).toHaveBeenCalledWith("window:setTrafficLightsInset", true);
-	});
-});
-
 describe("preload new-session shortcut bridge", () => {
 	it("delivers the IPC event and removes the exact wrapped listener", () => {
 		const listener = vi.fn();
@@ -98,5 +90,15 @@ describe("preload application shortcut bridges", () => {
 
 		dispose();
 		expect(electronMocks.off).toHaveBeenCalledWith(channel, wrapped);
+	});
+});
+
+describe("preload keybinding recording bridge", () => {
+	it("tells the main process when shortcut capture starts and stops", async () => {
+		await exposedBridge().keybindings.setRecording(true);
+		await exposedBridge().keybindings.setRecording(false);
+
+		expect(electronMocks.invoke).toHaveBeenNthCalledWith(1, "keybindings:setRecording", true);
+		expect(electronMocks.invoke).toHaveBeenNthCalledWith(2, "keybindings:setRecording", false);
 	});
 });

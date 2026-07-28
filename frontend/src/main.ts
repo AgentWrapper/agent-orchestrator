@@ -28,6 +28,7 @@ import {
 } from "./main/auto-updater";
 import { listFeatureBuilds, getActiveFeatureBuild } from "./main/feature-builds";
 import { readUpdateSettings, type UpdateSettings, type UpdateStatus } from "./main/update-settings";
+import { readKeybindingOverrides, writeKeybindingOverrides } from "./main/keybinding-settings";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { closeSync, existsSync, openSync } from "node:fs";
@@ -40,7 +41,10 @@ import { type DaemonLaunchSpec, resolveDaemonLaunch } from "./shared/daemon-laun
 import { createListenPortScanner, defaultRunFilePath, parseRunFile } from "./shared/daemon-discovery";
 import type { DaemonStatus } from "./shared/daemon-status";
 import { attachAppShortcuts } from "./main/app-shortcuts";
-import { KEYBOARD_SHORTCUTS_HELP_CHANNEL } from "./shared/shortcuts";
+import {
+	KEYBOARD_SHORTCUTS_HELP_CHANNEL,
+	type KeybindingOverrides,
+} from "./shared/shortcuts";
 import {
 	type DaemonProbe,
 	expectedDaemonPort,
@@ -102,6 +106,8 @@ let daemonStartEpoch = 0;
 let daemonStatus: DaemonStatus = { state: "stopped" };
 let daemonOutput = "";
 let browserViewHost: BrowserViewHost | null = null;
+let keybindingOverrides: KeybindingOverrides = {};
+let keybindingRecordingActive = false;
 // Held for the app lifetime. Dropping it (on any exit) triggers daemon self-stop.
 let supervisorLink: SupervisorLinkHandle | null = null;
 
@@ -152,47 +158,10 @@ const DEV_STATE_SUBDIR = "dev"; // ~/.ao/dev/
 // Controls Overlay height passed to BrowserWindow and the .window-titlebar height
 // in styles.css, so the native min/max/close buttons line up with the app's bar.
 const TITLEBAR_HEIGHT = 36;
+// Traffic lights stay fixed across sidebar expand/collapse. Y matches the
+// natural macOS titlebar band (TitlebarNav is h-traffic-light-clearance).
 const MAC_WINDOW_BUTTON_X = 14;
-const MAC_WINDOW_BUTTON_EXPANDED_Y = 20;
-const MAC_WINDOW_BUTTON_COLLAPSED_Y = 33;
-const MAC_WINDOW_BUTTON_TRANSITION_MS = 200;
-let macWindowButtonY = MAC_WINDOW_BUTTON_EXPANDED_Y;
-let macWindowButtonTransition: ReturnType<typeof setInterval> | undefined;
-
-function stopMacWindowButtonTransition(): void {
-	if (macWindowButtonTransition === undefined) return;
-	clearInterval(macWindowButtonTransition);
-	macWindowButtonTransition = undefined;
-}
-
-function animateMacWindowButtons(inset: boolean): void {
-	const win = mainWindow;
-	if (process.platform !== "darwin" || !win || win.isDestroyed()) return;
-
-	stopMacWindowButtonTransition();
-	const startY = macWindowButtonY;
-	const targetY = inset ? MAC_WINDOW_BUTTON_COLLAPSED_Y : MAC_WINDOW_BUTTON_EXPANDED_Y;
-	if (startY === targetY) return;
-
-	const startedAt = Date.now();
-	const tick = () => {
-		if (win.isDestroyed()) {
-			stopMacWindowButtonTransition();
-			return;
-		}
-		const progress = Math.min(1, (Date.now() - startedAt) / MAC_WINDOW_BUTTON_TRANSITION_MS);
-		const eased = progress < 0.5 ? 4 * progress ** 3 : 1 - (-2 * progress + 2) ** 3 / 2;
-		const nextY = Math.round(startY + (targetY - startY) * eased);
-		if (nextY !== macWindowButtonY) {
-			macWindowButtonY = nextY;
-			win.setWindowButtonPosition({ x: MAC_WINDOW_BUTTON_X, y: nextY });
-		}
-		if (progress === 1) stopMacWindowButtonTransition();
-	};
-
-	macWindowButtonTransition = setInterval(tick, 16);
-	tick();
-}
+const MAC_WINDOW_BUTTON_Y = 12;
 
 const RENDERER_SCHEME = "app";
 const RENDERER_HOST = "renderer";
@@ -296,8 +265,6 @@ function buildWindowsAppMenu(): Menu {
 }
 
 function createWindow(): void {
-	stopMacWindowButtonTransition();
-	macWindowButtonY = MAC_WINDOW_BUTTON_EXPANDED_Y;
 	browserViewHost?.dispose();
 	browserViewHost = null;
 	mainWindow = new BrowserWindow({
@@ -323,9 +290,8 @@ function createWindow(): void {
 				}
 			: {
 					titleBarStyle: "hiddenInset" as const,
-					// Start in the expanded-sidebar position. The renderer synchronizes
-					// this after hydration and whenever persistent sidebar state changes.
-					trafficLightPosition: { x: MAC_WINDOW_BUTTON_X, y: MAC_WINDOW_BUTTON_EXPANDED_Y },
+					// Fixed natural titlebar position — never moved on sidebar toggle.
+					trafficLightPosition: { x: MAC_WINDOW_BUTTON_X, y: MAC_WINDOW_BUTTON_Y },
 				}),
 		webPreferences: {
 			preload: preloadPath(),
@@ -365,7 +331,14 @@ function createWindow(): void {
 	// contents holds focus — the shell renderer, xterm's helper textarea, or a
 	// browser-preview view (wired per-view in the browser host).
 	const isMac = process.platform === "darwin";
-	attachAppShortcuts(mainWindow.webContents, isMac, mainWindow.webContents);
+	attachAppShortcuts(
+		mainWindow.webContents,
+		isMac,
+		mainWindow.webContents,
+		false,
+		() => keybindingOverrides,
+		() => keybindingRecordingActive,
+	);
 
 	browserViewHost = createBrowserViewHost({
 		mainWindow,
@@ -375,6 +348,8 @@ function createWindow(): void {
 		annotatePreloadPath: annotatePreloadPath(),
 		rendererOrigin: RENDERER_ORIGIN,
 		isMac,
+		getKeybindingOverrides: () => keybindingOverrides,
+		isKeybindingRecording: () => keybindingRecordingActive,
 	});
 
 	void mainWindow.loadURL(rendererUrl());
@@ -394,9 +369,15 @@ function createWindow(): void {
 	};
 	mainWindow.on("enter-full-screen", pushFullScreen);
 	mainWindow.on("leave-full-screen", pushFullScreen);
+	mainWindow.on("blur", () => {
+		keybindingRecordingActive = false;
+	});
+	mainWindow.webContents.on("render-process-gone", () => {
+		keybindingRecordingActive = false;
+	});
 
 	mainWindow.on("closed", () => {
-		stopMacWindowButtonTransition();
+		keybindingRecordingActive = false;
 		browserViewHost?.dispose();
 		browserViewHost = null;
 		mainWindow = null;
@@ -1130,9 +1111,6 @@ ipcMain.handle("window:setOverlay", (_event, overlay: { color: string; symbolCol
 	}
 });
 
-ipcMain.handle("window:setTrafficLightsInset", (_event, inset: boolean) => {
-	animateMacWindowButtons(inset);
-});
 ipcMain.handle("window:isFullScreen", () => mainWindow?.isFullScreen() ?? false);
 
 // Drive Electron's nativeTheme from the app's theme preference so embedded
@@ -1418,6 +1396,18 @@ ipcMain.handle("updateSettings:set", async (_event, settings: UpdateSettings) =>
 	await setUpdateSettings(path.dirname(runFile), settings);
 });
 
+ipcMain.handle("keybindings:get", (): KeybindingOverrides => keybindingOverrides);
+ipcMain.handle("keybindings:set", async (_event, overrides: KeybindingOverrides): Promise<KeybindingOverrides> => {
+	const runFile = runFilePath();
+	if (!runFile) return keybindingOverrides;
+	keybindingOverrides = await writeKeybindingOverrides(path.dirname(runFile), overrides);
+	return keybindingOverrides;
+});
+ipcMain.handle("keybindings:setRecording", (event, active: unknown): void => {
+	if (event.sender !== mainWindow?.webContents || typeof active !== "boolean") return;
+	keybindingRecordingActive = active;
+});
+
 ipcMain.handle("featureBuilds:list", () => listFeatureBuilds());
 ipcMain.handle("featureBuilds:getActive", () => getActiveFeatureBuild());
 
@@ -1545,6 +1535,11 @@ app.whenReady().then(async () => {
 		await writeAppStateOnLaunch();
 	} catch (err) {
 		console.error("failed to write app-state marker:", err);
+	}
+
+	const keybindingRunFile = runFilePath();
+	if (keybindingRunFile) {
+		keybindingOverrides = await readKeybindingOverrides(path.dirname(keybindingRunFile));
 	}
 
 	registerRendererProtocol();

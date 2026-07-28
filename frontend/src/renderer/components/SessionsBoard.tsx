@@ -1,10 +1,20 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { AlertTriangle, Check, Copy, LayoutGrid, Plus, RotateCcw, RotateCw, Rows3, Trash2 } from "lucide-react";
+import {
+	AlertTriangle,
+	Check,
+	Copy,
+	GitBranch,
+	Plus,
+	RotateCcw,
+	RotateCw,
+	Trash2,
+} from "lucide-react";
 import {
 	type WorkspaceSession,
 	canonicalTrackerIssueId,
+	hasConfiguredOrchestratorAgent,
 	newestActiveOrchestrator,
 	orchestratorHealth,
 	workerSessions,
@@ -12,6 +22,7 @@ import {
 import {
 	attentionZone,
 	boardAttentionZoneOrder,
+	getAgentActivityView,
 	getAttentionZoneViewForZone,
 	getSessionStatusView,
 	isSessionIdle,
@@ -26,6 +37,8 @@ import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery
 import { NotificationCenter } from "./NotificationCenter";
 import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyStates";
 import { OrchestratorIcon } from "./icons";
+import { OrchestratorActivityIndicator } from "./OrchestratorActivityIndicator";
+import { AgentAvatar } from "./AgentAvatar";
 import { TopbarButton, TopbarKillError, topbarProjectLabelClass } from "./TopbarButton";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
@@ -48,13 +61,6 @@ type SessionsBoardProps = {
 // when its SCM outcome remains `merged`.
 type Column = AttentionZoneView;
 const COLUMNS: Column[] = boardAttentionZoneOrder.map((zone) => getAttentionZoneViewForZone(zone));
-type ArchiveLayout = "rows" | "grid";
-const archiveLayoutStorageKey = "ao.board.archive.layout";
-
-function initialArchiveLayout(): ArchiveLayout {
-	if (typeof window === "undefined") return "grid";
-	return window.localStorage?.getItem(archiveLayoutStorageKey) === "rows" ? "rows" : "grid";
-}
 
 function isArchivedSession(session: WorkspaceSession): boolean {
 	return session.isTerminated === true || session.status === "terminated";
@@ -80,6 +86,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const boardLabel = workspace?.name ?? (projectId ? "" : "Board");
 	const sessions = workspaces.flatMap((w) => workerSessions(w.sessions));
 	const orchestrator = projectId ? newestActiveOrchestrator(workspaces[0]?.sessions ?? []) : undefined;
+	const orchestratorActivityLabel = orchestrator ? getAgentActivityView(orchestrator.activity).label : undefined;
 	const [isSpawning, setIsSpawning] = useState(false);
 	const [spawnError, setSpawnError] = useState<string | null>(null);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
@@ -127,7 +134,6 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const showProjectEmpty = projectId !== undefined && isLoaded && workspaces.length > 0 && sessions.length === 0;
 	// Archived sessions cost one quiet line under the board until expanded.
 	const [archiveExpanded, setArchiveExpanded] = useState(false);
-	const [archiveLayout, setArchiveLayout] = useState<ArchiveLayout>(initialArchiveLayout);
 	const [restoringSessionId, setRestoringSessionId] = useState<string | undefined>();
 	const [restoreErrors, setRestoreErrors] = useState<Record<string, string>>({});
 	const [restoreUnavailableSession, setRestoreUnavailableSession] = useState<WorkspaceSession | undefined>();
@@ -147,10 +153,6 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			to: "/projects/$projectId/sessions/$sessionId",
 			params: { projectId: session.workspaceId, sessionId: session.id },
 		});
-	const chooseArchiveLayout = (layout: ArchiveLayout) => {
-		window.localStorage?.setItem(archiveLayoutStorageKey, layout);
-		setArchiveLayout(layout);
-	};
 
 	const restoreArchivedSession = async (event: MouseEvent<HTMLButtonElement>, session: WorkspaceSession) => {
 		event.stopPropagation();
@@ -194,6 +196,12 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			});
 			return;
 		}
+		if (!hasConfiguredOrchestratorAgent(workspace)) {
+			if (workspace) {
+				void navigate({ to: "/projects/$projectId/settings", params: { projectId } });
+			}
+			return;
+		}
 		setSpawnError(null);
 		setOrchestratorStartupError(projectId, null);
 		setIsSpawning(true);
@@ -228,6 +236,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 	const actions = projectId ? (
 		<>
+			{boardOwnsNotificationCenter ? <NotificationCenter /> : null}
 			{visibleSpawnError && !showProjectEmpty && (
 				<TopbarKillError className="max-w-content-max truncate" title={visibleSpawnError}>
 					{visibleSpawnError}
@@ -243,12 +252,13 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				New task
 			</TopbarButton>
 			<TopbarButton
-				aria-label={orchestrator ? "Orchestrator" : "Spawn Orchestrator"}
+				aria-label={orchestratorActivityLabel ? `Orchestrator, ${orchestratorActivityLabel}` : "Spawn Orchestrator"}
 				disabled={isSpawning || isProjectRestarting}
 				onClick={() => void openOrchestrator()}
 				variant="primary"
 			>
 				<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
+				{orchestrator ? <OrchestratorActivityIndicator session={orchestrator} /> : null}
 				{isProjectRestarting
 					? "Restarting..."
 					: isSpawning
@@ -257,7 +267,6 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 							? "Orchestrator"
 							: "Spawn Orchestrator"}
 			</TopbarButton>
-			{boardOwnsNotificationCenter ? <NotificationCenter /> : null}
 		</>
 	) : boardOwnsNotificationCenter ? (
 		<NotificationCenter />
@@ -271,7 +280,10 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			    Welcome skips the row — a dangling "Board" above the import
 			    chooser was review feedback on #2432. */}
 			{!showWelcome && boardActionsInPanel && (boardLabel || actions) ? (
-				<div className="flex h-toolbar shrink-0 items-center gap-2 px-4.5" style={dragStyle}>
+				<div
+					className="center-panel-titlebar flex h-toolbar shrink-0 items-center gap-2 border-b border-border-strong pr-4.5"
+					style={dragStyle}
+				>
 					{boardLabel ? <span className={topbarProjectLabelClass}>{boardLabel}</span> : null}
 					<div className="min-w-0 flex-1" />
 					{actions ? (
@@ -282,9 +294,9 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				</div>
 			) : null}
 
-			<div className={cn("min-h-0 flex-1 overflow-hidden", showWelcome ? "p-0" : "p-3")}>
+			<div className="min-h-0 flex-1 overflow-hidden">
 				{projectId && health.state !== "ok" ? (
-					<div className="mb-3 flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-xs text-muted-foreground">
+					<div className="mx-3 my-3 flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-xs text-muted-foreground">
 						<AlertTriangle className="size-icon-base shrink-0 text-warning" aria-hidden="true" />
 						<span className="min-w-0 flex-1">{health.message}</span>
 						{health.state === "restart_needed" || health.state === "duplicates" ? (
@@ -310,7 +322,14 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 					/>
 				) : (
 					<div className="h-full overflow-x-auto overflow-y-hidden">
-						<div className="grid h-full min-w-[64rem] grid-cols-4 gap-2 xl:min-w-0">
+						{/* Hairline column grid: vertical divide-x + one absolute header rule so
+						    the horizontal divider stays continuous and level across lanes.
+						    Keep `top-12` aligned with each column header's `h-12`. */}
+						<div className="relative grid h-full min-w-[64rem] grid-cols-4 divide-x divide-border-strong xl:min-w-0">
+							<div
+								aria-hidden="true"
+								className="pointer-events-none absolute inset-x-0 top-12 z-10 border-t border-border-strong"
+							/>
 							{COLUMNS.map((col) => (
 								<BoardColumn
 									key={`${projectId ?? "all"}:${col.zone}`}
@@ -329,7 +348,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			</div>
 
 			{archived.length > 0 && (
-				<div className="shrink-0 border-t border-border px-3">
+				<div className="shrink-0 border-t border-border-strong px-3">
 					{/* agent-orchestrator's archive bar (Dashboard.tsx + globals.css):
 					    a full-width chevron + label + count toggle row. The button is
 					    37px (not the 35.5px its text-control implies) because the
@@ -339,7 +358,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						<button
 							aria-expanded={archiveExpanded}
 							aria-label={`Archive, ${archived.length} ${archived.length === 1 ? "session" : "sessions"}`}
-							className="group flex min-w-0 flex-1 items-center gap-2 py-2 text-muted-foreground transition-colors hover:text-foreground"
+							className="group flex min-w-0 items-center gap-2 py-2 text-muted-foreground transition-colors hover:text-foreground"
 							onClick={() => setArchiveExpanded((v) => !v)}
 							type="button"
 						>
@@ -357,42 +376,18 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 								<path d="m9 18 6-6-6-6" />
 							</svg>
 							<span className="font-mono text-2xs font-medium uppercase tracking-wide-sm">Archive</span>
+							<span className="ml-1.5 font-mono text-micro text-passive">{archived.length}</span>
 						</button>
-						{archiveExpanded && (
-							<div
-								aria-label="Archive layout"
-								className="flex shrink-0 items-center rounded-md border border-border bg-surface-faint p-0.5"
-								role="group"
-							>
-								<ArchiveLayoutButton
-									active={archiveLayout === "rows"}
-									icon={Rows3}
-									label="Rows"
-									onClick={() => chooseArchiveLayout("rows")}
-								/>
-								<ArchiveLayoutButton
-									active={archiveLayout === "grid"}
-									icon={LayoutGrid}
-									label="Columns"
-									onClick={() => chooseArchiveLayout("grid")}
-								/>
-							</div>
-						)}
-						<span className="ml-auto shrink-0 font-mono text-micro text-passive">{archived.length}</span>
 					</div>
 					{archiveExpanded && (
 						<div
 							aria-label="Archived sessions"
-							className={cn(
-								"board-scrollbar max-h-[45vh] overflow-y-auto pb-3",
-								archiveLayout === "grid" && "grid grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-2",
-							)}
+							className="board-scrollbar grid max-h-[45vh] grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-2 overflow-y-auto pb-3"
 							role="list"
 						>
 							{archived.map((s) => (
 								<ArchiveSessionItem
 									key={s.id}
-									layout={archiveLayout}
 									session={s}
 									restoreAction={(event) => void restoreArchivedSession(event, s)}
 									restoreError={restoreErrors[s.id]}
@@ -460,14 +455,11 @@ function ZoneColumn({
 	return (
 		<section
 			aria-label={`${col.label} sessions`}
-			className="flex min-w-0 flex-col overflow-hidden rounded-panel"
+			className="flex min-w-0 flex-col overflow-hidden"
 			data-testid="board-column"
 			data-column={col.zone}
-			style={{
-				background: `linear-gradient(180deg, ${col.glow}, transparent var(--size-kanban-glow)), var(--color-overlay-subtle)`,
-			}}
 		>
-			<div className="flex shrink-0 items-center gap-2 px-3 py-2">
+			<div className="flex h-12 shrink-0 items-center gap-2.5 px-4">
 				<span
 					className="size-dot-sm rounded-full"
 					style={{
@@ -475,13 +467,13 @@ function ZoneColumn({
 						boxShadow: col.dotGlow ? `0 0 7px color-mix(in srgb, ${col.dot} 60%, transparent)` : undefined,
 					}}
 				/>
-				<span className={cn("text-control font-semibold uppercase tracking-wide-md", col.titleClassName)}>
+				<span className={cn("font-mono text-2xs font-medium uppercase tracking-wide-sm", col.titleClassName)}>
 					{col.label}
 				</span>
-				<span className="ml-auto font-mono text-sm leading-none text-passive">{sessions.length}</span>
+				<span className="ml-auto font-mono text-2xs leading-none text-passive">{sessions.length}</span>
 			</div>
-			<div className="board-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-				<div className="flex min-h-full flex-col gap-2">
+			<div className="board-scrollbar min-h-0 flex-1 overflow-y-auto px-3 pb-3 pt-3">
+				<div className="flex min-h-full flex-col gap-2.5">
 					{sessions.map((session) => (
 						<SessionCard
 							key={session.id}
@@ -623,17 +615,14 @@ function SplitLaneColumn({
 	return (
 		<section
 			aria-label={ariaLabel}
-			className="flex min-w-0 flex-col overflow-hidden rounded-panel"
+			className="flex min-w-0 flex-col overflow-hidden"
 			data-column={zone}
 			data-testid="board-column"
-			style={{
-				background: `linear-gradient(180deg, color-mix(in srgb, ${primaryTone.color} 7%, transparent), transparent var(--size-kanban-glow)), var(--color-overlay-subtle)`,
-			}}
 		>
-			<div className="flex shrink-0 items-center gap-2 px-3 pb-2.5 pt-2.5">
+			<div className="flex h-12 shrink-0 items-center gap-2.5 px-4">
 				<div
 					aria-label={`${primaryTone.label} / ${secondaryTone.label} lane summary`}
-					className="flex min-w-0 items-center gap-1.5 text-caption font-semibold uppercase tracking-wide-md"
+					className="flex min-w-0 items-center gap-2 font-mono text-2xs font-medium uppercase tracking-wide-sm"
 					role="group"
 				>
 					<LaneStatusLabel tone={primaryTone} />
@@ -642,7 +631,7 @@ function SplitLaneColumn({
 					</span>
 					<LaneStatusLabel tone={secondaryTone} />
 				</div>
-				<div className="ml-auto flex shrink-0 items-center gap-1.5 font-mono text-caption leading-none text-passive">
+				<div className="ml-auto flex shrink-0 items-center gap-2 font-mono text-2xs leading-none text-passive">
 					<SessionCount count={primarySessions.length} label={primaryTone.countLabel} />
 					<span aria-hidden="true">/</span>
 					<SessionCount count={secondarySessions.length} label={secondaryTone.countLabel} />
@@ -653,12 +642,12 @@ function SplitLaneColumn({
 					<div
 						aria-label={primaryTone.regionLabel}
 						className={cn(
-							"board-scrollbar min-h-0 overflow-y-auto px-2",
-							showSecondary ? "flex-[3] pb-2" : "flex-1 pb-2",
+							"board-scrollbar min-h-0 overflow-y-auto px-3 pb-3 pt-3",
+							showSecondary ? "flex-[3]" : "flex-1",
 						)}
 						role="region"
 					>
-						<div className="flex min-h-full flex-col gap-2">
+						<div className="flex min-h-full flex-col gap-2.5">
 							{primarySessions.map((session) => (
 								<SessionCard
 									key={session.id}
@@ -686,7 +675,7 @@ function SplitLaneColumn({
 
 function LaneStatusLabel({ tone }: { tone: SplitLaneTone }) {
 	return (
-		<span className={cn("inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap", tone.titleClassName)}>
+		<span className={cn("inline-flex shrink-0 items-center gap-2 whitespace-nowrap", tone.titleClassName)}>
 			<span
 				className={cn("size-dot-sm rounded-full", tone.dotClassName)}
 				style={{ boxShadow: tone.dotGlow ? `0 0 7px color-mix(in srgb, ${tone.color} 60%, transparent)` : undefined }}
@@ -719,20 +708,18 @@ function SecondaryLaneSection({
 			aria-label={tone.regionLabel}
 			className={cn(
 				"min-h-0 overflow-hidden",
-				standalone
-					? "flex flex-1 flex-col bg-surface/35"
-					: "flex flex-[2] flex-col rounded-t-(--radius-panel) border-t border-border bg-surface/35",
+				standalone ? "flex flex-1 flex-col" : "flex flex-[2] flex-col border-t border-border-strong",
 			)}
 			role="region"
 		>
-			<div className="flex shrink-0 items-center gap-2 px-3 pb-2.5 pt-2.5">
-				<div className="text-caption font-semibold uppercase tracking-wide-md">
+			<div className="flex shrink-0 items-center gap-2.5 px-4 py-2.5">
+				<div className="font-mono text-2xs font-medium uppercase tracking-wide-sm">
 					<LaneStatusLabel tone={tone} />
 				</div>
-				<span className="ml-auto font-mono text-caption leading-none text-passive">{sessions.length}</span>
+				<span className="ml-auto font-mono text-2xs leading-none text-passive">{sessions.length}</span>
 			</div>
-			<div className="board-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-				<div className="flex min-h-full flex-col gap-2">
+			<div className="board-scrollbar min-h-0 flex-1 overflow-y-auto px-3 pb-3 pt-3">
+				<div className="flex min-h-full flex-col gap-2.5">
 					{sessions.map((session) => (
 						<SessionCard
 							key={session.id}
@@ -782,10 +769,11 @@ function SessionCard({
 		: {};
 	return (
 		<div
+			{...cardBodyProps}
 			className={cn(
-				"group relative w-full rounded-md border text-left transition-colors",
+				"group relative w-full rounded-lg border text-left transition-[border-color,box-shadow]",
 				badge.cardClassName ?? "border-border bg-surface",
-				interactive && "hover:border-border-strong",
+				interactive && "cursor-pointer hover:border-border-strong hover:shadow-sm",
 			)}
 			data-testid="board-session-card"
 			data-session-id={session.id}
@@ -809,55 +797,54 @@ function SessionCard({
 					<Trash2 className="size-icon-sm" aria-hidden="true" />
 				</button>
 			) : null}
-			<div {...cardBodyProps}>
-				<div className="flex items-center gap-2 px-3 pb-1.5 pt-2">
-					<span className={cn("inline-flex items-center gap-1.5 text-caption font-medium", badge.className)}>
-						<span className={cn("size-dot-sm rounded-full bg-current")} />
-						{badge.label}
-					</span>
-					{issueId && (
-						<span
-							className="inline-flex max-w-branch-chip items-center truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent"
-							title={`Intake issue: ${issueId}`}
-						>
-							{issueId}
-						</span>
-					)}
-					<span
-						className={cn("ml-auto shrink-0 font-mono text-2xs tracking-wide-xs text-passive", showTerminate && "mr-7")}
+			<div className="flex items-start gap-2.5 px-3.5 pb-2.5 pt-3">
+				<AgentAvatar className="mt-0.5" provider={session.provider} />
+				<div className="min-w-0 flex-1">
+					<div
+						className={cn(
+							"line-clamp-2 overflow-hidden text-sm-md font-semibold leading-tight tracking-tight text-foreground",
+							showTerminate && "pr-6",
+						)}
+						title={session.title}
 					>
-						{agentLabel(session.provider)}
-					</span>
-				</div>
-				<div
-					className={cn(
-						"px-3 text-control font-medium leading-snug tracking-tight text-foreground",
-						showBranch ? "pb-1" : "pb-2",
-						"line-clamp-2 overflow-hidden",
+						{session.title}
+					</div>
+					{showBranch && (
+						<div className="mt-1.5 flex min-w-0 items-center gap-1.5 font-mono text-2xs text-passive">
+							<GitBranch aria-hidden="true" className="size-icon-2xs shrink-0" />
+							<span className="truncate">{branch}</span>
+						</div>
 					)}
-				>
-					{session.title}
 				</div>
 			</div>
-			{showBranch && (
-				<div
-					className="flex min-w-0 items-center gap-1 px-3 pb-1.5 font-mono text-2xs text-passive"
-					onClick={interactive ? onOpen : undefined}
-				>
-					<span className="truncate">{branch}</span>
-					<CopyActionButton label={`branch ${branch}`} value={branch} />
+			<div aria-hidden="true" className="mx-3.5 my-px h-px bg-border" />
+			<div className="flex flex-col gap-1.5 px-3.5 py-2">
+				<div className="flex items-center justify-between gap-2">
+					<span className={cn("inline-flex min-w-0 items-center gap-1.5 truncate text-2xs font-medium", badge.className)}>
+						<span className="size-dot-sm shrink-0 rounded-full bg-current" />
+						{badge.label}
+					</span>
+					<span
+						className="shrink-0 whitespace-nowrap font-mono text-2xs text-passive"
+						title={`Updated ${session.updatedAt}`}
+					>
+						{formatTimeCompact(session.updatedAt)}
+					</span>
 				</div>
-			)}
-			<div aria-hidden="true" className="mx-3 my-px h-px bg-border" />
-			<div className="px-3 py-1.25 font-mono text-2xs text-passive">
-				{prSummaries.length === 0 ? (
-					"no PR yet"
-				) : (
-					<div className="flex flex-col gap-1">
+				{prSummaries.length > 0 && (
+					<div className="flex flex-col gap-1 font-mono text-2xs text-passive">
 						{groupPRsByLifecycle(prSummaries).map((group) => (
 							<BoardPRGroup group={group} key={group.status.label} linksInteractive={interactive} />
 						))}
 					</div>
+				)}
+				{issueId && (
+					<span
+						className="inline-flex max-w-branch-chip items-center self-start truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent"
+						title={`Intake issue: ${issueId}`}
+					>
+						{issueId}
+					</span>
 				)}
 			</div>
 		</div>
@@ -866,14 +853,12 @@ function SessionCard({
 
 function ArchiveSessionItem({
 	session,
-	layout,
 	restoreAction,
 	restoreError,
 	isRestoring,
 	isRestoreDisabled,
 }: {
 	session: WorkspaceSession;
-	layout: ArchiveLayout;
 	restoreAction: (event: MouseEvent<HTMLButtonElement>) => void;
 	restoreError?: string;
 	isRestoring: boolean;
@@ -902,73 +887,34 @@ function ArchiveSessionItem({
 		/>
 	);
 
-	if (layout === "grid") {
-		return (
-			<div
-				className="flex min-h-28 flex-col overflow-hidden rounded-md border border-border bg-surface"
-				role="listitem"
-			>
-				<div className="flex min-w-0 items-center gap-2 px-3 pt-2">
-					<ArchiveStatus badge={badge} />
-					<span className="ml-auto shrink-0 font-mono text-2xs text-passive">
-						{formatTimeCompact(session.updatedAt)}
-					</span>
-					{restoreButton}
-				</div>
-				<div className="min-h-0 flex-1 px-3 pb-2 pt-1.5 text-left">
-					<div className="line-clamp-2 text-control font-medium leading-snug text-foreground">{session.title}</div>
-					<div className="mt-1 flex min-w-0 items-center gap-2">
-						<span className="shrink-0 font-mono text-2xs text-passive">{agentLabel(session.provider)}</span>
-						{issueId && (
-							<span className="max-w-branch-chip truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent">
-								{issueId}
-							</span>
-						)}
-					</div>
-					{branch && (
-						<div className="mt-2 flex min-w-0 items-center gap-1 font-mono text-2xs text-passive">
-							<span className="truncate">{branch}</span>
-							<CopyActionButton label={`branch ${branch}`} value={branch} />
-						</div>
-					)}
-				</div>
-				<div aria-hidden="true" className="mx-3 my-px h-px bg-border" />
-				<div className="px-3 py-1.5 font-mono text-2xs text-passive">{prMetadata}</div>
-				<ArchiveRestoreError message={restoreError} />
-			</div>
-		);
-	}
-
 	return (
-		<div className="border-t border-border first:border-t-0" role="listitem">
-			<div className="flex min-h-row-lg items-center">
-				<div className="min-w-0 flex-1 px-2 py-2 text-left">
-					<div className="flex min-w-0 items-center gap-2">
-						<ArchiveStatus badge={badge} />
-						<span className="min-w-0 truncate text-control font-medium text-foreground">{session.title}</span>
-						{issueId && (
-							<span className="hidden max-w-branch-chip shrink-0 truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent sm:inline">
-								{issueId}
-							</span>
-						)}
-						<span className="ml-auto hidden shrink-0 font-mono text-2xs text-passive md:inline">
-							{agentLabel(session.provider)}
-						</span>
-						<span className="w-15 shrink-0 text-right font-mono text-2xs text-passive">
-							{formatTimeCompact(session.updatedAt)}
-						</span>
-					</div>
-					{branch && (
-						<div className="mt-1 flex min-w-0 items-center gap-1 font-mono text-2xs text-passive">
-							<span className="truncate">{branch}</span>
-							<CopyActionButton label={`branch ${branch}`} value={branch} />
-						</div>
-					)}
-					<div aria-hidden="true" className="my-1 h-px bg-border" />
-					<div className="font-mono text-2xs text-passive">{prMetadata}</div>
-				</div>
-				<div className="mx-1.5">{restoreButton}</div>
+		<div className="flex min-h-28 flex-col overflow-hidden rounded-md border border-border bg-surface" role="listitem">
+			<div className="flex min-w-0 items-center gap-2 px-3 pt-2">
+				<ArchiveStatus badge={badge} />
+				<span className="ml-auto shrink-0 font-mono text-2xs text-passive">
+					{formatTimeCompact(session.updatedAt)}
+				</span>
+				{restoreButton}
 			</div>
+			<div className="min-h-0 flex-1 px-3 pb-2 pt-1.5 text-left">
+				<div className="line-clamp-2 text-control font-medium leading-snug text-foreground">{session.title}</div>
+				<div className="mt-1 flex min-w-0 items-center gap-2">
+					<AgentAvatar provider={session.provider} />
+					{issueId && (
+						<span className="max-w-branch-chip truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent">
+							{issueId}
+						</span>
+					)}
+				</div>
+				{branch && (
+					<div className="mt-2 flex min-w-0 items-center gap-1 font-mono text-2xs text-passive">
+						<span className="truncate">{branch}</span>
+						<CopyActionButton label={`branch ${branch}`} value={branch} />
+					</div>
+				)}
+			</div>
+			<div aria-hidden="true" className="mx-3 my-px h-px bg-border" />
+			<div className="px-3 py-1.5 font-mono text-2xs text-passive">{prMetadata}</div>
 			<ArchiveRestoreError message={restoreError} />
 		</div>
 	);
@@ -1020,38 +966,6 @@ function ArchiveRestoreError({ message }: { message?: string }) {
 	) : null;
 }
 
-function ArchiveLayoutButton({
-	active,
-	icon: Icon,
-	label,
-	onClick,
-}: {
-	active: boolean;
-	icon: typeof Rows3;
-	label: string;
-	onClick: () => void;
-}) {
-	return (
-		<Tooltip>
-			<TooltipTrigger asChild>
-				<button
-					aria-label={label}
-					aria-pressed={active}
-					className={cn(
-						"grid size-control-sm place-items-center rounded-sm text-passive transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
-						active && "bg-interactive-active text-foreground",
-					)}
-					onClick={onClick}
-					type="button"
-				>
-					<Icon className="size-icon-sm" aria-hidden="true" />
-				</button>
-			</TooltipTrigger>
-			<TooltipContent side="top">{label}</TooltipContent>
-		</Tooltip>
-	);
-}
-
 type BoardPRLifecycleStatus = { label: "closed" | "open" | "draft" | "merged"; className: string };
 type BoardPRGroup = { status: BoardPRLifecycleStatus; prs: SessionPRSummary[] };
 
@@ -1064,21 +978,19 @@ function BoardPRGroup({ group, linksInteractive = true }: { group: BoardPRGroup;
 			<span>PR</span>
 			{group.prs.map((pr, index) => (
 				<span className="inline-flex items-center" key={pr.number}>
-					<span className="inline-flex items-center gap-0.5">
-						{linksInteractive ? (
-							<a
-								className="text-passive underline-offset-2 transition-colors hover:text-foreground hover:underline"
-								href={prBrowserUrl(pr)}
-								rel="noreferrer"
-								target="_blank"
-							>
-								#{pr.number}
-							</a>
-						) : (
-							<span>#{pr.number}</span>
-						)}
-						<CopyActionButton label={`PR #${pr.number} URL`} value={prBrowserUrl(pr)} />
-					</span>
+					{linksInteractive ? (
+						<a
+							className="text-passive underline-offset-2 transition-colors hover:text-foreground hover:underline"
+							href={prBrowserUrl(pr)}
+							onClick={(event) => event.stopPropagation()}
+							rel="noreferrer"
+							target="_blank"
+						>
+							#{pr.number}
+						</a>
+					) : (
+						<span>#{pr.number}</span>
+					)}
 					{index < group.prs.length - 1 ? "," : null}
 				</span>
 			))}
@@ -1156,15 +1068,4 @@ function sameLabel(a: string, b: string): boolean {
 			.replace(/^(feat|fix|chore|refactor|session)\//, "")
 			.replace(/[^a-z0-9]+/g, "");
 	return normalize(a) === normalize(b);
-}
-
-function agentLabel(provider: WorkspaceSession["provider"]): string {
-	switch (provider) {
-		case "claude-code":
-			return "Claude";
-		case "opencode":
-			return "OpenCode";
-		default:
-			return provider;
-	}
 }

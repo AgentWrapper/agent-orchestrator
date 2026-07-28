@@ -73,7 +73,6 @@ if (typeof window !== "undefined") {
 		},
 		window: {
 			setOverlay: async () => undefined,
-			setTrafficLightsInset: async () => undefined,
 			isFullScreen: async () => false,
 			onFullScreen: () => () => undefined,
 		},
@@ -174,6 +173,11 @@ if (typeof window !== "undefined") {
 		updateSettings: {
 			get: async () => ({ enabled: false, channel: "latest", nightlyAck: false, feature: null }),
 			set: async () => undefined,
+		},
+		keybindings: {
+			get: async () => ({}),
+			set: async (overrides) => overrides,
+			setRecording: async () => undefined,
 		},
 		updates: {
 			getStatus: async () => ({ state: "idle" }),

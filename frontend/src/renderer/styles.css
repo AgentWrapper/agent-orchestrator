@@ -4,9 +4,8 @@
 @custom-media --layout-narrow (width <= 680px); /* --breakpoint-layout-narrow */
 
 /*
- * Design system — see DESIGN_TOKENS.md. emdash-matched: flat near-black
- * neutral ramp, hairline borders, system font, refined-blue accent (not emdash's
- * jade). Dark is primary (:root); light is the supported override
+ * Design system — see DESIGN_TOKENS.md. Flat near-black neutral ramp, hairline
+ * borders, system font, refined-blue accent. Dark is primary (:root); light is the supported override
  * (:root[data-theme="light"]). apply-initial-theme runs before CSS load; the
  * Zustand theme toggle updates data-theme on <html>.
  */
@@ -166,6 +165,8 @@
 	--spacing-toolbar: var(--size-toolbar);
 	--spacing-titlebar-content-offset: var(--size-titlebar-content-offset);
 	--spacing-titlebar-cluster-left: var(--size-titlebar-cluster-left);
+	/* Fullscreen has no traffic lights — park the cluster at the panel inset. */
+	--spacing-titlebar-cluster-left-fullscreen: var(--size-center-panel-inset);
 	--spacing-traffic-light-clearance: var(--size-traffic-light-clearance);
 	--spacing-traffic-light-clearance-fullscreen: var(--size-traffic-light-clearance-fullscreen);
 	--spacing-control-xs: var(--size-control-xs);
@@ -279,6 +280,22 @@
 	width: min(var(--size-dialog-orchestrator), calc(100vw - var(--space-8)));
 }
 
+@utility w-command-palette {
+	width: min(var(--size-command-palette), calc(100vw - var(--space-8)));
+}
+
+@utility max-h-command-palette-list {
+	max-height: min(var(--size-command-palette-list-max), var(--size-command-palette-list-vh));
+}
+
+@utility top-command-palette {
+	top: var(--size-command-palette-top);
+}
+
+@utility max-w-command-subtitle {
+	max-width: var(--size-command-subtitle-max);
+}
+
 @utility grid-cols-notification {
 	grid-template-columns: var(--size-notification-icon) minmax(0, 1fr) auto;
 }
@@ -324,6 +341,10 @@
 
 @utility bg-settings-accent {
 	background-color: var(--color-settings-accent);
+}
+
+@utility text-settings-accent {
+	color: var(--color-settings-accent);
 }
 
 @utility bg-settings-switch-on {
@@ -381,6 +402,45 @@
 	padding-left: var(--size-center-panel-inline-inset);
 }
 
+/* macOS + Linux: one uniform inset on every side (matches the near-flush top
+ * that keeps Board/Terminal titles level with the fixed TitlebarNav). Two
+ * classes so it also wins over the `.sidebar-hidden` left gutter above. */
+.center-panel-shell.center-panel-shell--mac {
+	padding: var(--size-center-panel-inset-mac);
+}
+
+.center-panel-shell.center-panel-shell--mac.center-panel-shell--fullscreen {
+	padding: 0;
+}
+
+.center-panel-titlebar {
+	padding-left: 1.125rem; /* matches former px-4.5 */
+}
+
+.center-panel-shell--mac .center-panel-titlebar {
+	height: var(--size-traffic-light-clearance);
+	min-height: var(--size-traffic-light-clearance);
+}
+
+/* On macOS the titlebar controls stay fixed when the sidebar is off-canvas.
+ * Pad the title past that cluster so it sits next to the buttons. Fullscreen
+ * drops the traffic-light reserve so title sits next to the left-edge buttons. */
+.center-panel-shell--titlebar-clearance .center-panel-titlebar {
+	padding-left: calc(var(--size-titlebar-content-offset) - var(--size-center-panel-inset-mac));
+}
+
+/* Linux clears the cluster from its own left edge (no traffic-light row). */
+.center-panel-shell--linux.center-panel-shell--titlebar-clearance .center-panel-titlebar {
+	padding-left: calc(var(--size-titlebar-content-offset-linux) - var(--size-center-panel-inset-mac));
+}
+
+/* Fullscreen: the shell is flush, so measure from the cluster's own left edge. */
+.center-panel-shell--titlebar-clearance-fullscreen .center-panel-titlebar {
+	padding-left: calc(
+		var(--size-center-panel-inset) + var(--size-titlebar-cluster-width) + var(--size-titlebar-content-gap)
+	);
+}
+
 /* Windows: the frameless window's custom titlebar already supplies top chrome,
  * so drop the framed panel's top inset to give content more height. */
 .platform-windows .center-panel-shell {
@@ -434,16 +494,30 @@ button.settings-row-bar {
 
 @utility settings-menu-surface {
 	display: flex;
-	min-width: 11rem;
-	width: max-content;
-	max-width: min(18rem, calc(100vw - 2rem));
+	width: min(var(--size-settings-menu-width), calc(100vw - 2rem));
+	min-width: var(--size-settings-menu-min-width);
+	max-height: var(--size-select-menu-max);
 	flex-direction: column;
+	overflow-x: hidden;
+	overflow-y: auto;
+	overscroll-behavior: contain;
 	border-radius: var(--radius-settings-panel);
 	border: 1px solid var(--color-border-settings-menu);
 	background-color: var(--color-bg-settings-menu);
 	padding: var(--space-2);
 	gap: var(--space-1_5);
 	box-shadow: var(--elevation-md);
+}
+
+@utility settings-agent-menu-surface {
+	min-width: var(--size-settings-agent-menu-min-width);
+	padding: var(--space-3);
+	gap: var(--space-2);
+}
+
+@utility settings-agent-menu-item {
+	padding-inline: var(--space-4);
+	padding-block: var(--space-3);
 }
 
 @utility settings-field-label {
@@ -476,6 +550,55 @@ button.settings-row-bar {
 	}
 }
 
+@utility settings-inline-input {
+	width: auto;
+	max-width: min(var(--size-settings-inline-input-max), var(--size-settings-inline-input-max-percent));
+	min-width: var(--size-settings-inline-input-min);
+	flex: 0 1 auto;
+	height: var(--size-settings-inline-input-height);
+	border: 1px solid var(--color-border-settings-input);
+	border-radius: var(--radius-lg);
+	background-color: var(--color-bg-settings-input);
+	padding-inline: calc(var(--spacing) * 2.5);
+	font-size: var(--font-size-base);
+	line-height: 1.25rem;
+	color: var(--color-text-settings-input);
+	text-align: right;
+	outline: none;
+	box-shadow: none;
+	transition-property: border-color, box-shadow, color;
+	transition-duration: var(--duration-normal);
+
+	&::placeholder {
+		color: var(--color-text-settings-placeholder);
+	}
+
+	&:hover {
+		color: var(--color-text-settings-row);
+	}
+
+	&:focus-visible {
+		border-color: var(--bridge-accent);
+		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+		color: var(--color-text-settings-row);
+		outline: none;
+	}
+}
+
+@utility settings-row-value {
+	min-width: 0;
+	max-width: min(var(--size-settings-row-value-max), var(--size-settings-row-value-max-percent));
+	flex: 0 1 auto;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	text-align: right;
+	/* Match settings-option-trigger (Refresh / agent selects) size. */
+	font-size: var(--font-size-base);
+	line-height: 1.25rem;
+	color: var(--color-text-settings-muted);
+}
+
 @utility settings-footer-button {
 	display: inline-flex;
 	height: var(--size-settings-action-height);
@@ -501,6 +624,24 @@ button.settings-row-bar {
 
 	&:focus-visible {
 		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+	}
+}
+
+@utility settings-footer-button-primary {
+	border-color: transparent;
+	background-color: var(--color-settings-accent);
+	padding-inline: var(--size-settings-footer-button-padding-x);
+	color: var(--color-settings-footer-button-primary-fg);
+	transition-property: opacity;
+	transition-duration: var(--duration-normal);
+
+	&:hover {
+		opacity: 0.9;
+	}
+
+	&:disabled {
+		cursor: not-allowed;
+		opacity: 0.5;
 	}
 }
 
