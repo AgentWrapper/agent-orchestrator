@@ -62,7 +62,11 @@ type env struct {
 
 func newEnv(t *testing.T) env {
 	t.Helper()
-	dir := t.TempDir()
+	dir, err := os.MkdirTemp("", "ao-e2e-*")
+	if err != nil {
+		t.Fatalf("create e2e temp dir: %v", err)
+	}
+	t.Cleanup(func() { removeAllEventually(t, dir) })
 	return env{
 		runFile: filepath.Join(dir, "running.json"),
 		dataDir: filepath.Join(dir, "data"),
@@ -149,17 +153,21 @@ func (e env) startDaemon(t *testing.T) {
 	go func() { waitDone <- cmd.Wait() }()
 	t.Cleanup(func() {
 		e.run(t, "stop")
+		exited := false
 		select {
 		case <-waitDone:
-			return
+			exited = true
 		case <-time.After(5 * time.Second):
 		}
-		// The daemon did not exit on `ao stop` within the timeout: a shutdown
-		// regression is hiding behind a green test. Fail, force-kill, and wait
-		// for the child to be reaped so it cannot survive the test.
-		t.Errorf("daemon process did not exit within 5s of `ao stop`; forcing kill")
-		_ = cmd.Process.Kill()
-		<-waitDone
+		if !exited {
+			// The daemon did not exit on `ao stop` within the timeout: a shutdown
+			// regression is hiding behind a green test. Fail, force-kill, and wait
+			// for the child to be reaped so it cannot survive the test.
+			t.Errorf("daemon process did not exit within 5s of `ao stop`; forcing kill")
+			_ = cmd.Process.Kill()
+			<-waitDone
+		}
+		removeAllEventually(t, e.dataDir)
 	})
 
 	deadline := time.Now().Add(10 * time.Second)
@@ -170,6 +178,22 @@ func (e env) startDaemon(t *testing.T) {
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("daemon did not become ready within 10s; last status:\n%s", out)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func removeAllEventually(t *testing.T, path string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		err := os.RemoveAll(path)
+		if err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Logf("remove %s after daemon exit: %v", path, err)
+			return
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -268,9 +292,7 @@ func TestE2E_Lifecycle(t *testing.T) {
 	if out, code := e.run(t, "stop"); code != 0 || !strings.Contains(out, "stopped") {
 		t.Fatalf("stop: exit %d, out %s", code, out)
 	}
-	if _, err := os.Stat(e.runFile); !os.IsNotExist(err) {
-		t.Fatal("run-file should be removed after stop")
-	}
+	waitForPathRemoved(t, e.runFile, 5*time.Second)
 }
 
 func TestE2E_ShutdownGuard(t *testing.T) {
@@ -307,9 +329,7 @@ func TestE2E_StaleRunFile(t *testing.T) {
 	if out, code := e.run(t, "stop"); code != 0 || !strings.Contains(out, "stopped") {
 		t.Fatalf("stop stale: exit %d, out %s", code, out)
 	}
-	if _, err := os.Stat(e.runFile); !os.IsNotExist(err) {
-		t.Fatal("stale run-file should be removed")
-	}
+	waitForPathRemoved(t, e.runFile, 5*time.Second)
 }
 
 func TestE2E_ExitCodes(t *testing.T) {
@@ -371,4 +391,18 @@ func postShutdown(t *testing.T, port int, mutate func(*http.Request)) int {
 	}
 	defer resp.Body.Close()
 	return resp.StatusCode
+}
+
+func waitForPathRemoved(t *testing.T, path string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s should be removed after stop", path)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }

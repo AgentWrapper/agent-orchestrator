@@ -40,16 +40,23 @@ class EventSourceStub {
 	onerror: (() => void) | null = null;
 	onmessage: (() => void) | null = null;
 	listeners: string[] = [];
+	listenerHandlers = new Map<string, Array<() => void>>();
 	constructor(url: string) {
 		this.url = url;
 		EventSourceStub.instances.push(this);
 	}
-	addEventListener(type: string) {
+	addEventListener(type: string, handler: () => void) {
 		this.listeners.push(type);
+		this.listenerHandlers.set(type, [...(this.listenerHandlers.get(type) ?? []), handler]);
 	}
 	close() {
 		this.closed = true;
 		this.readyState = 2; // CLOSED
+	}
+	emit(type: string) {
+		for (const handler of this.listenerHandlers.get(type) ?? []) {
+			handler();
+		}
 	}
 }
 
@@ -119,7 +126,7 @@ describe("createEventTransport", () => {
 		expect(getEventsConnectionState()).toBe("disconnected");
 	});
 
-	it("debounces workspace and SCM summary invalidation after a status change", () => {
+	it("debounces workspace, SCM summary, and reviews invalidation after a status change", () => {
 		vi.useFakeTimers();
 		try {
 			const queryClient = fakeQueryClient();
@@ -131,6 +138,26 @@ describe("createEventTransport", () => {
 			vi.advanceTimersByTime(200);
 			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["workspaces"] });
 			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-scm-summary"] });
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-reviews"] });
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("invalidates session reviews when a delayed test-gate CDC event arrives", () => {
+		vi.useFakeTimers();
+		try {
+			const queryClient = fakeQueryClient();
+			createEventTransport(queryClient).connect();
+			const source = EventSourceStub.instances[0];
+
+			source.emit("session_updated");
+			expect(queryClient.invalidateQueries).not.toHaveBeenCalled();
+			vi.advanceTimersByTime(200);
+
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["workspaces"] });
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-scm-summary"] });
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-reviews"] });
 		} finally {
 			vi.useRealTimers();
 		}

@@ -4,6 +4,7 @@ import (
 	"sort"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/testgate"
 )
 
 // StateStatus is the per-PR review planning state.
@@ -24,13 +25,14 @@ const (
 
 // PRReviewState is one PR-scoped review decision for a worker session.
 type PRReviewState struct {
-	PRURL       string            `json:"prUrl"`
-	PRNumber    int               `json:"prNumber"`
-	Title       string            `json:"title"`
-	TargetSHA   string            `json:"targetSha"`
-	Status      StateStatus       `json:"status" enum:"needs_review,running,up_to_date,changes_requested,ineligible"`
-	LatestRun   *domain.ReviewRun `json:"latestRun,omitempty"`
-	PreviousRun *domain.ReviewRun `json:"previousRun,omitempty"`
+	PRURL        string                 `json:"prUrl"`
+	PRNumber     int                    `json:"prNumber"`
+	Title        string                 `json:"title"`
+	TargetSHA    string                 `json:"targetSha"`
+	Status       StateStatus            `json:"status" enum:"needs_review,running,up_to_date,changes_requested,ineligible"`
+	LatestRun    *domain.ReviewRun      `json:"latestRun,omitempty"`
+	PreviousRun  *domain.ReviewRun      `json:"previousRun,omitempty"`
+	FusedVerdict *testgate.FusedVerdict `json:"fusedVerdict,omitempty"`
 }
 
 // Plan computes per-PR review work from the currently observed PRs and existing

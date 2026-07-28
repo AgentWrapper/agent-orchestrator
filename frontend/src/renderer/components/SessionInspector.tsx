@@ -40,7 +40,11 @@ type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
 type SessionPRReviewEntry = components["schemas"]["SessionPRReviewEntry"];
 type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
+type FusedVerdict = components["schemas"]["FusedVerdict"];
 type OpenReviewerTerminal = (target: { handleId: string; harness: string }) => void;
+type ReviewTone = "neutral" | "running" | "success" | "danger";
+type ReviewVerdictKey =
+	"app_failed" | "approved" | "cancelled" | "changes_requested" | "failed" | "not_run" | "running";
 
 export type InspectorView = "summary" | "reviews" | "browser" | "files";
 
@@ -110,7 +114,7 @@ const kvValueClass = "min-w-0 truncate text-settings-label @max-[300px]/inspecto
 
 const kvValueMonoClass = "font-mono text-sm-md";
 
-const reviewerVerdictTone: Record<"neutral" | "running" | "success" | "danger", string> = {
+const reviewerVerdictTone: Record<ReviewTone, string> = {
 	neutral: "text-muted-foreground",
 	running: "text-working",
 	success: "text-success",
@@ -1099,11 +1103,15 @@ function ReviewPanel({
 function AoReviewRow({ reviewState }: { reviewState: PRReviewState }) {
 	const verdict = reviewVerdict(reviewState);
 	const previousVerdict = previousReviewVerdict(reviewState);
+	const gate = testGateVerdict(reviewState.fusedVerdict);
 	const summary = reviewState.latestRun?.body?.trim();
 	const reviewUrl = aoReviewCommentUrl(reviewState.latestRun);
 	return (
 		<div className={cn("flex min-w-0 flex-col gap-2", reviewState.status === "ineligible" && "opacity-70")}>
 			<VerdictBadge label={verdict.label} tone={verdict.tone} />
+			{gate ? (
+				<p className={cn("text-2xs font-medium", reviewerVerdictTone[gate.tone])}>Test gate: {gate.label}</p>
+			) : null}
 			{summary ? <p className="line-clamp-2 text-2xs leading-relaxed text-passive">{summary}</p> : null}
 			{previousVerdict ? (
 				<p className={cn("text-2xs font-medium", reviewerVerdictTone[previousVerdict.tone])}>
@@ -1132,28 +1140,56 @@ function aoReviewCommentUrl(run: PRReviewState["latestRun"]): string | null {
 	return `${run.prUrl}#pullrequestreview-${run.githubReviewId}`;
 }
 
-function reviewVerdict(reviewState: PRReviewState): {
-	label: string;
-	tone: "neutral" | "running" | "success" | "danger";
-} {
+function reviewVerdictKey(reviewState: PRReviewState): ReviewVerdictKey {
 	if (reviewState.latestRun?.status === "failed") {
-		return { label: "Failed", tone: "danger" };
+		return "failed";
 	}
 	if (reviewState.latestRun?.status === "cancelled") {
-		return { label: "Cancelled", tone: "neutral" };
+		return "cancelled";
+	}
+	if (reviewState.fusedVerdict?.outcome === "app_failed") {
+		return "app_failed";
+	}
+	if (reviewState.fusedVerdict?.outcome === "approved") {
+		return "approved";
+	}
+	if (reviewState.fusedVerdict?.outcome === "changes_requested") {
+		return "changes_requested";
 	}
 	switch (reviewState.status) {
 		case "running":
-			return { label: "Reviewing...", tone: "running" };
+			return "running";
 		case "up_to_date":
-			return { label: "Approved", tone: "success" };
+			return "approved";
 		case "changes_requested":
-			return { label: "Changes requested", tone: "danger" };
+			return "changes_requested";
 		case "needs_review":
 		case "ineligible":
+			return "not_run";
+	}
+	return "not_run";
+}
+
+function reviewVerdict(reviewState: PRReviewState): {
+	label: string;
+	tone: ReviewTone;
+} {
+	switch (reviewVerdictKey(reviewState)) {
+		case "app_failed":
+			return { label: "App failed", tone: "danger" };
+		case "approved":
+			return { label: "Approved", tone: "success" };
+		case "cancelled":
+			return { label: "Cancelled", tone: "neutral" };
+		case "changes_requested":
+			return { label: "Changes requested", tone: "danger" };
+		case "failed":
+			return { label: "Failed", tone: "danger" };
+		case "running":
+			return { label: "Reviewing...", tone: "running" };
+		case "not_run":
 			return { label: "Not run", tone: "neutral" };
 	}
-	return { label: "Not run", tone: "neutral" };
 }
 
 function previousReviewVerdict(reviewState: PRReviewState): {
@@ -1166,6 +1202,22 @@ function previousReviewVerdict(reviewState: PRReviewState): {
 			return { label: "Approved", tone: "success" };
 		case "changes_requested":
 			return { label: "Changes requested", tone: "danger" };
+		default:
+			return null;
+	}
+}
+
+function testGateVerdict(fused: FusedVerdict | undefined): { label: string; tone: ReviewTone } | null {
+	if (!fused) return null;
+	switch (fused.outcome) {
+		case "approved":
+			return { label: "Approved", tone: "success" };
+		case "changes_requested":
+			return { label: "Changes requested", tone: "danger" };
+		case "app_failed":
+			return { label: "App failed", tone: "danger" };
+		case "neutral":
+			return { label: "Neutral", tone: "neutral" };
 		default:
 			return null;
 	}
