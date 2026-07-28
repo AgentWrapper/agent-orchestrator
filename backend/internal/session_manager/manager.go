@@ -288,6 +288,7 @@ func (m *Manager) beginShellTerminalTeardown(ctx context.Context, id domain.Sess
 	}
 	return closer.BeginSessionTeardown(ctx, id)
 }
+
 // sendConfirmConfig bounds the best-effort activity-confirmation loop run after
 // Send. AO has no delivery ack: ao send returns 200 the moment tmux send-keys
 // exits 0, and for a large multiline paste the single Enter may not submit the
