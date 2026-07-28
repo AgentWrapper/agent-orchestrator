@@ -206,6 +206,48 @@ func TestPollerShowsMarkdownCreatedAfterEmptyWorkspaceBaseline(t *testing.T) {
 	})
 }
 
+func TestPollerShowsHTMLCreatedAfterExistingMarkdownBaseline(t *testing.T) {
+	workspace := t.TempDir()
+	writeFile(t, filepath.Join(workspace, "README.md"), "# Existing documentation")
+	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "")}}
+	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
+
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("baseline Poll: %v", err)
+	}
+	writeFile(t, filepath.Join(workspace, "index.html"), "<main>New UI</main>")
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("creation Poll: %v", err)
+	}
+
+	assertSets(t, svc.sets, previewSet{
+		id:  "ao-1",
+		url: mustFileURL(t, "http://127.0.0.1:3001", "ao-1", "index.html"),
+	})
+}
+
+func TestPollerFingerprintsAssetsOnlyForActiveStaticPreview(t *testing.T) {
+	workspace := t.TempDir()
+	writeFile(t, filepath.Join(workspace, "README.md"), "# Existing documentation")
+	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "")}}
+	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
+
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("hidden markdown Poll: %v", err)
+	}
+	if got := poller.seen["ao-1"].signature; got != 0 {
+		t.Fatalf("hidden markdown signature = %d, want no asset fingerprint", got)
+	}
+
+	svc.sessions[0].Metadata.PreviewURL = "http://localhost:5173"
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("external preview Poll: %v", err)
+	}
+	if got := poller.seen["ao-1"].signature; got != 0 {
+		t.Fatalf("external preview signature = %d, want no asset fingerprint", got)
+	}
+}
+
 func TestPollerDoesNotShowUnchangedMarkdownWhenSiblingAssetChanges(t *testing.T) {
 	workspace := t.TempDir()
 	writeFile(t, filepath.Join(workspace, "report.md"), "# Existing report")

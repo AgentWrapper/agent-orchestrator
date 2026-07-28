@@ -242,6 +242,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	const isSessionActive = session ? sessionIsActive(session) : false;
 	const setInspectorViewForSession = useUiStore((state) => state.setInspectorView);
 	const setInspectorOpenForSession = useUiStore((state) => state.setInspectorOpen);
+	const previewRequestChainRef = useRef<Promise<void>>(Promise.resolve());
 	const openLinkInBrowser = useCallback(
 		(uri: string) => {
 			if (!session?.id || session.kind !== "worker" || !isSessionActive) return;
@@ -254,7 +255,10 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 			const linkSessionId = session.id;
 			setInspectorViewForSession(linkSessionId, "browser");
 			setInspectorOpenForSession(linkSessionId, true);
-			void (async () => {
+			// Preserve terminal order when one output chunk contains multiple
+			// loopback URLs. The last printed URL deterministically becomes the
+			// final Browser target instead of racing concurrent preview writes.
+			previewRequestChainRef.current = previewRequestChainRef.current.then(async () => {
 				try {
 					const { error: previewError } = await apiClient.POST("/api/v1/sessions/{sessionId}/preview", {
 						params: { path: { sessionId: linkSessionId } },
@@ -268,7 +272,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 				} catch (error) {
 					console.warn("Unable to open terminal link in Browser preview", error);
 				}
-			})();
+			});
 		},
 		[isSessionActive, queryClient, session?.id, session?.kind, setInspectorOpenForSession, setInspectorViewForSession],
 	);

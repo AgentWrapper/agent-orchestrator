@@ -263,6 +263,42 @@ describe("terminal link preview", () => {
 		}
 	});
 
+	it("serializes multiple live loopback URLs in terminal order", async () => {
+		let resolveFirst!: (value: { data: Record<string, never> }) => void;
+		postMock
+			.mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						resolveFirst = resolve;
+					}),
+			)
+			.mockResolvedValueOnce({ data: {} });
+		const view = renderPane(worker);
+		try {
+			act(() =>
+				terminalOutputHandler?.(
+					"UI http://localhost:3000 API http://localhost:4000\n",
+					"live",
+				),
+			);
+
+			await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+			expect(postMock).toHaveBeenNthCalledWith(1, "/api/v1/sessions/{sessionId}/preview", {
+				params: { path: { sessionId: "sess-1" } },
+				body: { url: "http://localhost:3000" },
+			});
+
+			resolveFirst({ data: {} });
+			await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
+			expect(postMock).toHaveBeenNthCalledWith(2, "/api/v1/sessions/{sessionId}/preview", {
+				params: { path: { sessionId: "sess-1" } },
+				body: { url: "http://localhost:4000" },
+			});
+		} finally {
+			view.restore();
+		}
+	});
+
 	it("does not auto-open a loopback URL found in attachment replay", () => {
 		const view = renderPane(worker);
 		try {

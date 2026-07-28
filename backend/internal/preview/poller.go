@@ -137,15 +137,19 @@ func (p *Poller) Poll(ctx context.Context) error {
 			}
 			continue
 		}
-		state := stateFor(entry)
-		previous, seenBefore := p.seen[sess.ID]
-		if seenBefore && previous == state {
-			continue
-		}
 		target, err := FileURL(p.baseURL, sess.ID, entry.Path)
 		if err != nil {
 			p.logger.Error("preview poller: cannot build isolated preview URL", "session", sess.ID, "err", err)
-			p.seen[sess.ID] = state
+			p.seen[sess.ID] = stateFor(entry, false)
+			continue
+		}
+		current := strings.TrimSpace(sess.Metadata.PreviewURL)
+		// Recursively fingerprint assets only while this exact workspace-owned
+		// static preview is active. Hidden entries and external dev servers do
+		// not need a full workspace walk on every poll.
+		state := stateFor(entry, workspaceOwned && current == target)
+		previous, seenBefore := p.seen[sess.ID]
+		if seenBefore && previous == state {
 			continue
 		}
 		entryChanged := seenBefore &&
@@ -159,7 +163,9 @@ func (p *Poller) Poll(ctx context.Context) error {
 		if _, err := p.setter.SetPreview(ctx, sess.ID, target); err != nil {
 			return fmt.Errorf("preview poller set preview %s: %w", sess.ID, err)
 		}
-		p.seen[sess.ID] = state
+		// The preview is active after a successful set, so baseline its served
+		// tree now and avoid a redundant refresh on the next poll.
+		p.seen[sess.ID] = stateFor(entry, true)
 	}
 	for id := range p.seen {
 		if _, ok := activeIDs[id]; !ok {
@@ -179,11 +185,14 @@ func (p *Poller) shouldRefresh(
 ) bool {
 	current := strings.TrimSpace(sess.Metadata.PreviewURL)
 	if current == "" {
-		if IsMarkdownPath(entry.Path) {
-			return seenBefore && entryChanged
-		}
 		if !seenBefore {
+			if IsMarkdownPath(entry.Path) {
+				return false
+			}
 			return sess.Metadata.PreviewRevision == 0
+		}
+		if entryChanged {
+			return true
 		}
 		previous := p.seen[sess.ID]
 		return previous.cleared || previous.missing
@@ -194,11 +203,14 @@ func (p *Poller) shouldRefresh(
 	return workspaceOwned
 }
 
-func stateFor(entry Entry) entryState {
-	return entryState{
+func stateFor(entry Entry, includeAssets bool) entryState {
+	state := entryState{
 		path:         entry.Path,
-		signature:    staticTreeSignature(entry),
 		entryModUnix: entry.ModTime.UnixNano(),
 		entrySize:    entry.Size,
 	}
+	if includeAssets {
+		state.signature = staticTreeSignature(entry)
+	}
+	return state
 }
