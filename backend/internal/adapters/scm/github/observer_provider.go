@@ -557,12 +557,12 @@ func buildReviewThreadsQuery(ref ports.SCMPRRef, beforeCursor string, includeRev
 	}
 	reviewSelection := ""
 	if includeReviews {
-		reviewSelection = fmt.Sprintf(" reviewSummaries: reviews(last:%d, states:[APPROVED,CHANGES_REQUESTED]){ nodes{ id databaseId state url submittedAt body author{ login __typename } } }", githubReviewSummaryLimit)
+		reviewSelection = fmt.Sprintf(" reviewSummaries: reviews(last:%d, states:[APPROVED,CHANGES_REQUESTED]){ nodes{ id state url submittedAt body author{ login __typename } } }", githubReviewSummaryLimit)
 	}
 	return fmt.Sprintf(`query{
 repo: repository(owner:%s,name:%s){ pullRequest(number:%d){ reviewDecision%s reviewThreads(last:%d, before:%s){ nodes{
   id isResolved path line
-  comments(first:%d){ nodes{ id body url pullRequestReview{ id databaseId } author{ login __typename } } }
+  comments(first:%d){ nodes{ id body url pullRequestReview{ id } author{ login __typename } } }
 } pageInfo{ hasPreviousPage startCursor } } } }
 }`, graphQLString(ref.Repo.Owner), graphQLString(ref.Repo.Name), ref.Number, reviewSelection, githubReviewThreadPageSize, before, githubReviewCommentLimitPerThread)
 }
@@ -570,7 +570,7 @@ repo: repository(owner:%s,name:%s){ pullRequest(number:%d){ reviewDecision%s rev
 func scmReviewSummaryFromGraphQL(review map[string]any) ports.SCMReviewSummaryObservation {
 	author, _ := review["author"].(map[string]any)
 	return ports.SCMReviewSummaryObservation{
-		ID:          firstNonEmpty(databaseIDString(review["databaseId"]), str(review["id"])),
+		ID:          str(review["id"]),
 		Author:      str(author["login"]),
 		State:       string(reviewStateFromGraphQL(review["state"])),
 		URL:         str(review["url"]),
@@ -611,7 +611,7 @@ func scmThreadFromGraphQL(th map[string]any) ports.SCMReviewThreadObservation {
 		}
 		out.Comments = append(out.Comments, ports.SCMReviewCommentObservation{
 			ID:       str(cn["id"]),
-			ReviewID: reviewDatabaseID(cn),
+			ReviewID: strMapValue(cn, "pullRequestReview", "id"),
 			Author:   str(author["login"]),
 			Body:     str(cn["body"]),
 			URL:      str(cn["url"]),
@@ -622,17 +622,9 @@ func scmThreadFromGraphQL(th map[string]any) ports.SCMReviewThreadObservation {
 	return out
 }
 
-func reviewDatabaseID(comment map[string]any) string {
-	review, _ := comment["pullRequestReview"].(map[string]any)
-	return firstNonEmpty(databaseIDString(review["databaseId"]), str(review["id"]))
-}
-
-func databaseIDString(v any) string {
-	id := int64(num(v))
-	if id <= 0 {
-		return ""
-	}
-	return fmt.Sprint(id)
+func strMapValue(m map[string]any, key, nestedKey string) string {
+	nested, _ := m[key].(map[string]any)
+	return str(nested[nestedKey])
 }
 
 func parseGitHubRepo(remote string) (ports.SCMRepo, bool) {
