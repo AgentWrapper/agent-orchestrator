@@ -42,6 +42,9 @@ type entryState struct {
 	path    string
 	modUnix int64
 	size    int64
+	// pollerOwned is true when the poller created the current workspace preview
+	// automatically, as opposed to the user explicitly choosing it via ao preview.
+	pollerOwned bool
 	// cleared is set when the poller itself cleared the preview URL because the
 	// workspace entry was missing. When the file reappears, shouldRefresh uses
 	// this to re-discover even though the revision was bumped by the clear.
@@ -113,22 +116,23 @@ func (p *Poller) Poll(ctx context.Context) error {
 			continue
 		}
 		storedEntry, workspaceOwned := StoredWorkspaceEntry(sess.Metadata.PreviewURL, sess.ID)
+		previous, seenBefore := p.seen[sess.ID]
+		pollerOwned := seenBefore && previous.pollerOwned && workspaceOwned && storedEntry == previous.path
 		entry, ok := Entry{}, false
 		if workspaceOwned {
 			entry, ok = EntryAtPath(sess.Metadata.WorkspacePath, storedEntry)
 		}
 		if !ok {
-			// A session the user has never explicitly previewed
-			// (workspaceOwned == false) is only auto-previewed when it has a
-			// real static-frontend entrypoint (index.html variants). The
-			// mostRecentPreviewable .md/.html fallback is intentionally NOT
-			// applied here, otherwise every new session in a Markdown-rich repo
-			// auto-opens its browser to an arbitrary repo doc. Once a session
-			// has been explicitly previewed (workspaceOwned == true), full
-			// DiscoverEntry — including the document fallback — keeps the
-			// preview fresh. See issue #2859.
+			// Never-previewed sessions and previews auto-created by this poller
+			// only rediscover real static-frontend entrypoints. Explicit
+			// workspace previews keep the full document fallback so user-chosen
+			// Markdown/report previews can stay fresh. See issue #2859.
 			if workspaceOwned {
-				entry, ok = DiscoverEntry(sess.Metadata.WorkspacePath)
+				if pollerOwned {
+					entry, ok = DiscoverWebEntrypoint(sess.Metadata.WorkspacePath)
+				} else {
+					entry, ok = DiscoverEntry(sess.Metadata.WorkspacePath)
+				}
 			} else {
 				entry, ok = DiscoverWebEntrypoint(sess.Metadata.WorkspacePath)
 			}
@@ -144,7 +148,7 @@ func (p *Poller) Poll(ctx context.Context) error {
 			continue
 		}
 		state := stateFor(entry)
-		previous, seenBefore := p.seen[sess.ID]
+		state.pollerOwned = pollerOwned
 		if seenBefore && previous == state {
 			continue
 		}
@@ -161,6 +165,7 @@ func (p *Poller) Poll(ctx context.Context) error {
 		if _, err := p.setter.SetPreview(ctx, sess.ID, target); err != nil {
 			return fmt.Errorf("preview poller set preview %s: %w", sess.ID, err)
 		}
+		state.pollerOwned = state.pollerOwned || !workspaceOwned
 		p.seen[sess.ID] = state
 	}
 	for id := range p.seen {

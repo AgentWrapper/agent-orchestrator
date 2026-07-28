@@ -263,6 +263,37 @@ func TestPollerDoesNotAutoPreviewMarkdownOnlyNewSession(t *testing.T) {
 	}
 }
 
+func TestPollerDoesNotFallbackToMarkdownAfterAutoPreviewedEntrypointDeleted(t *testing.T) {
+	workspace := t.TempDir()
+	entry := filepath.Join(workspace, "index.html")
+	writeFile(t, entry, "<main>app</main>")
+	writeFile(t, filepath.Join(workspace, "README.md"), "# project")
+	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "")}}
+	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
+
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("first Poll: %v", err)
+	}
+	assertSets(t, svc.sets, previewSet{
+		id:  "ao-1",
+		url: mustFileURL(t, "http://127.0.0.1:3001", "ao-1", "index.html"),
+	})
+
+	if err := os.Remove(entry); err != nil {
+		t.Fatalf("remove index.html: %v", err)
+	}
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("second Poll: %v", err)
+	}
+	assertSets(t, svc.sets,
+		previewSet{
+			id:  "ao-1",
+			url: mustFileURL(t, "http://127.0.0.1:3001", "ao-1", "index.html"),
+		},
+		previewSet{id: "ao-1", url: ""},
+	)
+}
+
 func TestPollerKeepsMarkdownPreviewFreshOnceExplicitlySet(t *testing.T) {
 	// Once a session has been explicitly previewed against a workspace Markdown
 	// file (workspaceOwned), the poller must still keep that preview fresh — the
@@ -279,6 +310,21 @@ func TestPollerKeepsMarkdownPreviewFreshOnceExplicitlySet(t *testing.T) {
 	assertSets(t, svc.sets, previewSet{
 		id:  "ao-1",
 		url: mustFileURL(t, "http://127.0.0.1:3001", "ao-1", relative),
+	})
+}
+
+func TestPollerKeepsDocumentFallbackForDeletedExplicitPreview(t *testing.T) {
+	workspace := t.TempDir()
+	writeFile(t, filepath.Join(workspace, "README.md"), "# project")
+	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "docs/report.md")}}
+	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
+
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+	assertSets(t, svc.sets, previewSet{
+		id:  "ao-1",
+		url: mustFileURL(t, "http://127.0.0.1:3001", "ao-1", "README.md"),
 	})
 }
 
