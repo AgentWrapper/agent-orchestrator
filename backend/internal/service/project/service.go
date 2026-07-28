@@ -235,6 +235,9 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 		return p, nil
 	}
 	if !isGitRepo(path) {
+		if root, ok := gitRepositoryRoot(ctx, path); ok && !samePath(root, comparablePath(path)) {
+			return Project{}, projectPathNotRepoRootError(path, root)
+		}
 		return Project{}, apierr.Invalid("NOT_A_GIT_REPO", "AO needs a Git repository with an initial commit before it can create agent workspaces.", nil)
 	}
 	if !repoHasCommit(ctx, path) {
@@ -329,15 +332,10 @@ func classifyRepositorySetupTarget(ctx context.Context, path string) (repository
 		return repositorySetupUnbornRepo, nil
 	}
 
-	if top, err := gitOutput(ctx, path, "rev-parse", "--show-toplevel"); err == nil {
-		root := normalizeGitReportedPath(path, strings.TrimSpace(top))
+	if root, ok := gitRepositoryRoot(ctx, path); ok {
 		selected := comparablePath(path)
 		if !samePath(root, selected) {
-			return repositorySetupPlainFolder, apierr.Invalid("PROJECT_PATH_NOT_REPO_ROOT", "Selected folder is inside a Git repository. Select the repository root instead.", map[string]any{
-				"path":         path,
-				"repoRoot":     root,
-				"suggestedFix": "Select the repository root folder, then try again.",
-			})
+			return repositorySetupPlainFolder, projectPathNotRepoRootError(path, root)
 		}
 		return repositorySetupPlainFolder, apierr.Invalid("UNSUPPORTED_GIT_REPO", "Selected folder contains an unsupported Git repository layout.", map[string]any{"path": path})
 	}
@@ -350,6 +348,22 @@ func classifyRepositorySetupTarget(ctx context.Context, path string) (repository
 	}
 
 	return repositorySetupPlainFolder, nil
+}
+
+func gitRepositoryRoot(ctx context.Context, path string) (string, bool) {
+	top, err := gitOutput(ctx, path, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", false
+	}
+	return normalizeGitReportedPath(path, strings.TrimSpace(top)), true
+}
+
+func projectPathNotRepoRootError(path, root string) error {
+	return apierr.Invalid("PROJECT_PATH_NOT_REPO_ROOT", "Selected folder is inside a Git repository. Select the repository root instead.", map[string]any{
+		"path":         path,
+		"repoRoot":     root,
+		"suggestedFix": "Select the repository root folder, then try again.",
+	})
 }
 
 func validateRepositorySetupPathSafety(path string) error {

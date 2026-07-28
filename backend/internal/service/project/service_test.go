@@ -702,6 +702,22 @@ func TestManager_InitializeRepositoryRecovery(t *testing.T) {
 		}
 	})
 
+	t.Run("plain folder nested in parent repo is rejected before init", func(t *testing.T) {
+		configureCommitter(t)
+		parent := filepath.Join(t.TempDir(), "parent")
+		gitRepoWithCommitNoOrigin(t, parent)
+		dir := filepath.Join(parent, "universe")
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := m.InitializeRepository(ctx, project.InitializeRepositoryInput{Path: dir})
+		wantCode(t, err, "PROJECT_PATH_NOT_REPO_ROOT")
+		if _, statErr := os.Lstat(filepath.Join(dir, ".git")); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("unexpected nested .git after rejected init: %v", statErr)
+		}
+	})
+
 	t.Run("unborn git repo", func(t *testing.T) {
 		dir := t.TempDir()
 		if out, err := exec.Command("git", "init", "-b", "main", dir).CombinedOutput(); err != nil {
@@ -785,6 +801,22 @@ func TestManager_InitializeRepositoryRecovery(t *testing.T) {
 		}
 	})
 
+	t.Run("folder inside AO-managed worktrees is rejected before init", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("USERPROFILE", home)
+		dir := filepath.Join(home, ".ao", "data", "worktrees", "project", "session")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := m.InitializeRepository(ctx, project.InitializeRepositoryInput{Path: dir})
+		wantCode(t, err, "PROJECT_SETUP_PATH_UNSAFE")
+		if _, statErr := os.Lstat(filepath.Join(dir, ".git")); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("unexpected .git after rejected AO worktree setup: %v", statErr)
+		}
+	})
+
 	t.Run("plain folder rolls back git init when staging fails", func(t *testing.T) {
 		dir := isolatedPlainFolder(t)
 		gitignore := []byte("node_modules/\n")
@@ -851,6 +883,16 @@ func TestManager_AddValidationAndConflicts(t *testing.T) {
 
 	_, err = m.Add(ctx, project.AddInput{Path: t.TempDir()}) // exists but not a git repo
 	wantCode(t, err, "NOT_A_GIT_REPO")
+
+	configureCommitter(t)
+	parent := filepath.Join(t.TempDir(), "parent")
+	gitRepoWithCommitNoOrigin(t, parent)
+	nestedPlain := filepath.Join(parent, "universe")
+	if err := os.Mkdir(nestedPlain, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err = m.Add(ctx, project.AddInput{Path: nestedPlain})
+	wantCode(t, err, "PROJECT_PATH_NOT_REPO_ROOT")
 
 	unborn := t.TempDir()
 	if out, err := exec.Command("git", "init", "-b", "main", unborn).CombinedOutput(); err != nil {

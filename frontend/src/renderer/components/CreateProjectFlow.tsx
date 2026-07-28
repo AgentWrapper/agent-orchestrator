@@ -68,8 +68,15 @@ export function CreateProjectFlow({
 				kind === "workspace" ? "Choose a workspace folder" : "Choose a project repository",
 			);
 			if (path && kind === "single_repo") {
-				const setupCode = await repositorySetupRequired(path);
-				setRepositorySetup(setupCode);
+				const preflight = await projectRepositoryPreflight(path);
+				if (preflight.blockingError) {
+					setError(preflight.blockingError);
+					setValidationScan(preflight.scan);
+					setModePickerOpen(false);
+					setFolderPickerOpen(true);
+					return;
+				}
+				setRepositorySetup(preflight.setupCode);
 			}
 			if (path) {
 				setModePickerOpen(false);
@@ -238,14 +245,48 @@ function isRepositorySetupRecoveryCode(code: string | undefined): code is "NOT_A
 	return code === "NOT_A_GIT_REPO" || code === "PROJECT_UNBORN";
 }
 
-async function repositorySetupRequired(path: string): Promise<"NOT_A_GIT_REPO" | "PROJECT_UNBORN" | null> {
+type RepositorySetupCode = "NOT_A_GIT_REPO" | "PROJECT_UNBORN";
+
+type ProjectRepositoryPreflight = {
+	blockingError: string | null;
+	scan: ImportFolderScan | null;
+	setupCode: RepositorySetupCode | null;
+};
+
+async function projectRepositoryPreflight(path: string): Promise<ProjectRepositoryPreflight> {
 	try {
 		const scan = await aoBridge.app.scanImportFolder({ path, mode: "project" });
-		if (scan.repos.length === 0) return "NOT_A_GIT_REPO";
-		return scan.repos[0]?.reason === "Repository must have at least one commit." ? "PROJECT_UNBORN" : null;
+		const reason = scan.repos[0]?.reason ?? "";
+		if (isProjectPreflightBlockingReason(reason)) {
+			return {
+				blockingError: projectPreflightBlockingMessage(reason),
+				scan,
+				setupCode: null,
+			};
+		}
+		if (scan.repos.length === 0) return { blockingError: null, scan, setupCode: "NOT_A_GIT_REPO" };
+		return {
+			blockingError: null,
+			scan,
+			setupCode: reason === "Repository must have at least one commit." ? "PROJECT_UNBORN" : null,
+		};
 	} catch {
-		return null;
+		return { blockingError: null, scan: null, setupCode: null };
 	}
+}
+
+function isProjectPreflightBlockingReason(reason: string): boolean {
+	return (
+		reason.startsWith("Selected folder is inside a Git repository.") ||
+		reason.startsWith("Selected folder is inside AO's internal data directory.")
+	);
+}
+
+function projectPreflightBlockingMessage(reason: string): string {
+	if (reason.startsWith("Selected folder is inside AO's internal data directory.")) {
+		return "Selected folder is inside AO's internal data directory. Select a project folder outside ~/.ao.";
+	}
+	return "Selected folder is inside a Git repository. Select the repository root instead.";
 }
 
 function shouldScanCreateFailure(message: string): boolean {
