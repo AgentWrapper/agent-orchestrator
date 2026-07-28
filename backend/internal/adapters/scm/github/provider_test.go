@@ -1172,7 +1172,7 @@ func TestSCMThreadFromGraphQLMarksThreadBotOnlyWhenAllCommentsAreBots(t *testing
 		"line":       float64(12),
 		"isResolved": false,
 		"comments": map[string]any{"nodes": []any{
-			map[string]any{"id": "C-human", "body": "please fix", "pullRequestReview": map[string]any{"id": "review-human"}, "author": map[string]any{"login": "alice", "__typename": "User"}},
+			map[string]any{"id": "C-human", "body": "please fix", "pullRequestReview": map[string]any{"id": "review-human", "databaseId": float64(98765)}, "author": map[string]any{"login": "alice", "__typename": "User"}},
 			map[string]any{"id": "C-bot", "body": "automated note", "author": map[string]any{"login": "review-bot", "__typename": "Bot"}},
 		}},
 	})
@@ -1182,7 +1182,7 @@ func TestSCMThreadFromGraphQLMarksThreadBotOnlyWhenAllCommentsAreBots(t *testing
 	if len(mixed.Comments) != 2 || mixed.Comments[0].IsBot || !mixed.Comments[1].IsBot {
 		t.Fatalf("comment bot flags not preserved on mixed thread: %+v", mixed.Comments)
 	}
-	if mixed.Comments[0].ReviewID != "review-human" {
+	if mixed.Comments[0].ReviewID != "98765" {
 		t.Fatalf("comment review id not preserved: %+v", mixed.Comments[0])
 	}
 
@@ -1198,6 +1198,22 @@ func TestSCMThreadFromGraphQLMarksThreadBotOnlyWhenAllCommentsAreBots(t *testing
 	})
 	if !allBot.IsBot {
 		t.Fatalf("all-bot thread not marked as bot: %+v", allBot)
+	}
+}
+
+func TestSCMReviewSummaryFromGraphQLUsesNumericDatabaseID(t *testing.T) {
+	review := scmReviewSummaryFromGraphQL(map[string]any{
+		"id":          "PRR_kwDOExample",
+		"databaseId":  float64(98765),
+		"state":       "CHANGES_REQUESTED",
+		"url":         "https://github.com/o/r/pull/1#pullrequestreview-98765",
+		"submittedAt": "2026-06-15T00:00:00Z",
+		"body":        "fix this",
+		"author":      map[string]any{"login": "alice", "__typename": "User"},
+	})
+
+	if review.ID != "98765" {
+		t.Fatalf("review ID = %q, want REST/database id", review.ID)
 	}
 }
 
@@ -1384,7 +1400,10 @@ func TestFetchReviewThreadsUsesLatestWindowWithoutFallbackWhenOldestResolved(t *
 		if !strings.Contains(string(body), "comments(first:5)") {
 			t.Fatalf("review query should cap comments per thread, body=%s", body)
 		}
-		if !strings.Contains(string(body), "pullRequestReview{ id }") {
+		if !strings.Contains(string(body), "reviews(last:20, states:[APPROVED,CHANGES_REQUESTED]){ nodes{ id databaseId") {
+			t.Fatalf("review query should request numeric review summary ids, body=%s", body)
+		}
+		if !strings.Contains(string(body), "pullRequestReview{ id databaseId }") {
 			t.Fatalf("review query should request comment review identity, body=%s", body)
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -1393,6 +1412,7 @@ func TestFetchReviewThreadsUsesLatestWindowWithoutFallbackWhenOldestResolved(t *
 				"reviewDecision": "CHANGES_REQUESTED",
 				"reviewSummaries": map[string]any{"nodes": []any{map[string]any{
 					"id":          "review-1",
+					"databaseId":  float64(101),
 					"state":       "CHANGES_REQUESTED",
 					"url":         "https://github.com/o/r/pull/1#pullrequestreview-1",
 					"submittedAt": "2026-06-15T00:00:00Z",
@@ -1401,7 +1421,7 @@ func TestFetchReviewThreadsUsesLatestWindowWithoutFallbackWhenOldestResolved(t *
 				}}},
 				"reviewThreads": map[string]any{
 					"nodes": []any{map[string]any{"id": "latest-resolved", "path": "main.go", "line": 1, "isResolved": true, "comments": map[string]any{"nodes": []any{map[string]any{
-						"id": "comment-1", "body": "fix", "url": "https://github.com/o/r/pull/1#discussion_r1", "pullRequestReview": map[string]any{"id": "review-1"}, "author": map[string]any{"login": "alice", "__typename": "User"},
+						"id": "comment-1", "body": "fix", "url": "https://github.com/o/r/pull/1#discussion_r1", "pullRequestReview": map[string]any{"id": "review-1", "databaseId": float64(101)}, "author": map[string]any{"login": "alice", "__typename": "User"},
 					}}}}},
 					"pageInfo": map[string]any{"hasPreviousPage": true, "startCursor": "latest-start"},
 				},
