@@ -27,6 +27,94 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+const agentProviders = new Set([
+	"codex",
+	"claude-code",
+	"opencode",
+	"aider",
+	"grok",
+	"droid",
+	"amp",
+	"agy",
+	"crush",
+	"cursor",
+	"qwen",
+	"copilot",
+	"goose",
+	"auggie",
+	"continue",
+	"devin",
+	"cline",
+	"kimi",
+	"kiro",
+	"kilocode",
+	"vibe",
+	"pi",
+	"autohand",
+	"fake",
+]);
+const sessionStatuses = new Set([
+	"working",
+	"pr_open",
+	"draft",
+	"ci_failed",
+	"review_pending",
+	"changes_requested",
+	"approved",
+	"mergeable",
+	"merged",
+	"needs_input",
+	"exited",
+	"no_signal",
+	"idle",
+	"terminated",
+	"unknown",
+]);
+const activityStates = new Set(["active", "idle", "waiting_input", "blocked", "exited", "unknown"]);
+const prStates = new Set(["open", "draft", "merged", "closed"]);
+
+function isOptional(value: unknown, validate: (candidate: unknown) => boolean): boolean {
+	return value === undefined || validate(value);
+}
+
+function isFiniteNumber(value: unknown): value is number {
+	return typeof value === "number" && Number.isFinite(value);
+}
+
+function isPullRequest(value: unknown): boolean {
+	if (!isRecord(value)) return false;
+	return (
+		typeof value.url === "string" &&
+		isFiniteNumber(value.number) &&
+		typeof value.state === "string" &&
+		prStates.has(value.state) &&
+		typeof value.ci === "string" &&
+		typeof value.review === "string" &&
+		typeof value.mergeability === "string" &&
+		typeof value.reviewComments === "boolean" &&
+		typeof value.updatedAt === "string"
+	);
+}
+
+function isSessionActivity(value: unknown): boolean {
+	return (
+		isRecord(value) &&
+		typeof value.state === "string" &&
+		activityStates.has(value.state) &&
+		typeof value.lastActivityAt === "string"
+	);
+}
+
+function isChangedFile(value: unknown): boolean {
+	return (
+		isRecord(value) &&
+		typeof value.path === "string" &&
+		isFiniteNumber(value.additions) &&
+		isFiniteNumber(value.deletions) &&
+		isOptional(value.staged, (candidate) => typeof candidate === "boolean")
+	);
+}
+
 function isWorkspaceSession(value: unknown): value is WorkspaceSession {
 	if (!isRecord(value)) return false;
 	return (
@@ -35,9 +123,40 @@ function isWorkspaceSession(value: unknown): value is WorkspaceSession {
 		typeof value.workspaceName === "string" &&
 		typeof value.title === "string" &&
 		typeof value.provider === "string" &&
+		agentProviders.has(value.provider) &&
 		typeof value.status === "string" &&
+		sessionStatuses.has(value.status) &&
 		typeof value.updatedAt === "string" &&
-		Array.isArray(value.prs)
+		isOptional(value.terminalHandleId, (candidate) => typeof candidate === "string") &&
+		isOptional(value.issueId, (candidate) => typeof candidate === "string") &&
+		isOptional(value.kind, (candidate) => candidate === "worker" || candidate === "orchestrator") &&
+		isOptional(value.branch, (candidate) => typeof candidate === "string") &&
+		isOptional(
+			value.scmStatus,
+			(candidate) => typeof candidate === "string" && sessionStatuses.has(candidate),
+		) &&
+		isOptional(value.isTerminated, (candidate) => typeof candidate === "boolean") &&
+		isOptional(value.terminateOnPrMerge, (candidate) => typeof candidate === "boolean") &&
+		isOptional(value.createdAt, (candidate) => typeof candidate === "string") &&
+		isOptional(value.activity, isSessionActivity) &&
+		isOptional(value.previewUrl, (candidate) => typeof candidate === "string") &&
+		isOptional(value.previewRevision, isFiniteNumber) &&
+		isOptional(
+			value.changedFiles,
+			(candidate) => Array.isArray(candidate) && candidate.every(isChangedFile),
+		) &&
+		isOptional(value.commitMessage, (candidate) => typeof candidate === "string") &&
+		Array.isArray(value.prs) &&
+		value.prs.every(isPullRequest)
+	);
+}
+
+function isWorkspaceRepo(value: unknown): boolean {
+	return (
+		isRecord(value) &&
+		typeof value.name === "string" &&
+		typeof value.relativePath === "string" &&
+		typeof value.repo === "string"
 	);
 }
 
@@ -47,6 +166,27 @@ function isWorkspaceSummary(value: unknown): value is WorkspaceSummary {
 		typeof value.id === "string" &&
 		typeof value.name === "string" &&
 		typeof value.path === "string" &&
+		isOptional(
+			value.kind,
+			(candidate) => candidate === "single_repo" || candidate === "workspace" || candidate === "scratch",
+		) &&
+		isOptional(
+			value.workspaceRepos,
+			(candidate) => Array.isArray(candidate) && candidate.every(isWorkspaceRepo),
+		) &&
+		isOptional(value.type, (candidate) => candidate === "main" || candidate === "worktree") &&
+		isOptional(
+			value.orchestratorAgent,
+			(candidate) => typeof candidate === "string" && agentProviders.has(candidate),
+		) &&
+		isOptional(value.accentColor, (candidate) => typeof candidate === "string") &&
+		isOptional(
+			value.diff,
+			(candidate) =>
+				isRecord(candidate) &&
+				isFiniteNumber(candidate.additions) &&
+				isFiniteNumber(candidate.deletions),
+		) &&
 		Array.isArray(value.sessions) &&
 		value.sessions.every(isWorkspaceSession)
 	);

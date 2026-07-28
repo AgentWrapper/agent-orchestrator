@@ -35,6 +35,7 @@ import { StatusPill } from "./StatusPill";
 import { CodexIcon } from "./icons";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { Switch } from "./ui/switch";
+import { useShellMaybe } from "../lib/shell-context";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
@@ -323,6 +324,7 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 
 function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
 	const queryClient = useQueryClient();
+	const mutationsEnabled = useShellMaybe()?.workspaceLive ?? true;
 	const resume = useMutation({
 		mutationFn: async () => {
 			if (usePreviewData) return;
@@ -355,8 +357,8 @@ function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
 		<div className="mt-3 border-t border-(--color-border-settings-input) pt-3">
 			<Button
 				className="w-full"
-				disabled={resume.isPending}
-				onClick={() => resume.mutate()}
+				disabled={!mutationsEnabled || resume.isPending}
+				onClick={() => mutationsEnabled && resume.mutate()}
 				size="sm"
 				type="button"
 				variant="outline"
@@ -376,6 +378,7 @@ function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
 function CompletionControls({ session }: { session: WorkspaceSession }) {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
+	const mutationsEnabled = useShellMaybe()?.workspaceLive ?? true;
 	const [confirmOpen, setConfirmOpen] = useState(false);
 	const terminate = useTerminateSession();
 	const policy = useMutation({
@@ -428,7 +431,9 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 				<div className="flex items-center justify-between gap-3 py-1">
 					<span className="min-w-0 text-xs font-medium text-settings-label">Terminate</span>
 					<SessionTerminationPopover
-						onConfirm={confirmTermination}
+						onConfirm={() => {
+							if (mutationsEnabled) confirmTermination();
+						}}
 						onOpenChange={setConfirmOpen}
 						open={confirmOpen}
 						session={session}
@@ -436,7 +441,10 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 							<button
 								aria-label="Terminate session"
 								className="inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-colors hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-								onClick={() => clearTerminateSessionState(queryClient, session.id)}
+								disabled={!mutationsEnabled}
+								onClick={() => {
+									if (mutationsEnabled) clearTerminateSessionState(queryClient, session.id);
+								}}
 								type="button"
 							>
 								<Trash2 className="size-icon-sm" aria-hidden="true" />
@@ -453,9 +461,9 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 						<Switch
 							aria-label="Terminate session when pull requests merge"
 							checked={Boolean(session.terminateOnPrMerge)}
-							disabled={policy.isPending}
+							disabled={!mutationsEnabled || policy.isPending}
 							id={`merge-policy-${session.id}`}
-							onCheckedChange={(checked) => policy.mutate(checked)}
+							onCheckedChange={(checked) => mutationsEnabled && policy.mutate(checked)}
 						/>
 					</div>
 					{policyError ? (
@@ -702,6 +710,7 @@ function ReviewsView({
 }) {
 	const hasPr = sortedPRs(session).length > 0;
 	const queryClient = useQueryClient();
+	const mutationsEnabled = useShellMaybe()?.workspaceLive ?? true;
 	const [reviewNotice, setReviewNotice] = useState<string | null>(null);
 	const reviewsQuery = useQuery({
 		queryKey: ["session-reviews", session.id],
@@ -782,9 +791,10 @@ function ReviewsView({
 					isLoading={reviewsQuery.isLoading}
 					isCancelling={cancelReview.isPending}
 					isTriggering={triggerReview.isPending}
+					mutationsEnabled={mutationsEnabled}
 					onOpenTerminal={onOpenReviewerTerminal}
-					onCancel={() => cancelReview.mutate()}
-					onTrigger={() => triggerReview.mutate()}
+					onCancel={() => mutationsEnabled && cancelReview.mutate()}
+					onTrigger={() => mutationsEnabled && triggerReview.mutate()}
 					reviewerHandleId={reviewsQuery.data?.reviewerHandleId ?? ""}
 					reviewStates={reviewStates}
 					notice={reviewNotice}
@@ -918,6 +928,7 @@ function ReviewPanel({
 	onTrigger,
 	onCancel,
 	onOpenTerminal,
+	mutationsEnabled,
 }: {
 	session: WorkspaceSession;
 	config?: ProjectConfig;
@@ -931,6 +942,7 @@ function ReviewPanel({
 	onTrigger: () => void;
 	onCancel: () => void;
 	onOpenTerminal?: OpenReviewerTerminal;
+	mutationsEnabled: boolean;
 }) {
 	if (sortedPRs(session).length === 0) {
 		return <p className={inspectorEmptyClass}>No pull request opened yet.</p>;
@@ -947,7 +959,7 @@ function ReviewPanel({
 	const openReviewStates = reviewStates.filter((reviewState) => openPRURLs.has(reviewState.prUrl));
 	const latest = openReviewStates.find((review) => review.latestRun)?.latestRun;
 	const harness = latest?.harness || config?.reviewers?.[0]?.harness || "claude-code";
-	const terminalEnabled = Boolean(reviewerHandleId && onOpenTerminal);
+	const terminalEnabled = mutationsEnabled && Boolean(reviewerHandleId && onOpenTerminal);
 	const reviewRunning = openReviewStates.some((reviewState) => reviewState.status === "running");
 	const reviewHasRun = reviewRunning || Boolean(latest);
 	const runAction = reviewSessionRunAction(openReviewStates, isTriggering);
@@ -995,7 +1007,7 @@ function ReviewPanel({
 			<div className="-mx-4 -mb-3 mt-3 flex items-center justify-center gap-1 border-t border-border px-4 pb-3 pt-3">
 				<Button
 					className={cn("gap-1.5 [&_svg]:size-icon-sm", reviewRunning ? "text-error" : "text-success")}
-					disabled={reviewRunning ? isCancelling : runDisabled}
+					disabled={!mutationsEnabled || (reviewRunning ? isCancelling : runDisabled)}
 					onClick={reviewRunning ? onCancel : onTrigger}
 					size="sm"
 					type="button"

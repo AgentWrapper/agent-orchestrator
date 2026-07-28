@@ -82,6 +82,24 @@ describe("CenterPane toolbar session label", () => {
 		expect(onNewShellTerminal).toHaveBeenCalledOnce();
 	});
 
+	it("keeps terminal creation disabled until daemon workspace hydration completes", () => {
+		const onNewShellTerminal = vi.fn();
+		render(
+			<CenterPane
+				session={worker}
+				onNewShellTerminal={onNewShellTerminal}
+				theme="dark"
+				daemonReady={false}
+			/>,
+		);
+
+		fireEvent.pointerDown(screen.getByRole("button", { name: "Add tab" }), { button: 0, ctrlKey: false });
+		const terminal = screen.getByRole("menuitem", { name: "Terminal" });
+		expect(terminal).toHaveAttribute("aria-disabled", "true");
+		fireEvent.click(terminal);
+		expect(onNewShellTerminal).not.toHaveBeenCalled();
+	});
+
 	it("limits a large session list, then expands it into a searchable scroll area", () => {
 		const sessions = Array.from({ length: 7 }, (_, index) => ({
 			...secondWorker,

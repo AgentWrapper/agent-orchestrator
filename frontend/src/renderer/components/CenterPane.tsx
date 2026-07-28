@@ -266,7 +266,10 @@ export function CenterPane({
 							</button>
 						</DropdownMenuTrigger>
 						<DropdownMenuContent align="start" className="w-72">
-							<DropdownMenuItem onSelect={onNewShellTerminal}>
+							<DropdownMenuItem
+								disabled={!daemonReady || !onNewShellTerminal}
+								onSelect={daemonReady ? onNewShellTerminal : undefined}
+							>
 								<TerminalIcon aria-hidden="true" />
 								Terminal
 							</DropdownMenuItem>

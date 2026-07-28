@@ -17,6 +17,7 @@ type CreateProjectFlowMode = ProjectKind | "choose";
 // the same picker inline. Both still share the Git setup recovery path.
 export function CreateProjectFlow({
 	children,
+	disabled = false,
 	embedded = false,
 	idleLabel = "New project",
 	mode = "single_repo",
@@ -25,6 +26,7 @@ export function CreateProjectFlow({
 	openSignal,
 }: {
 	children?: (state: { choosePath: () => void; disabled: boolean; error: string | null; label: string }) => ReactNode;
+	disabled?: boolean;
 	// When true, render the Workspace/Project chooser inline (start page) instead
 	// of behind a trigger + dialog. Folder validation + agent sheet stay modal.
 	embedded?: boolean;
@@ -50,7 +52,7 @@ export function CreateProjectFlow({
 	const [repositorySetupWarning, setRepositorySetupWarning] = useState<string | null>(null);
 
 	const hasModePicker = mode === "choose";
-	const isBusy = isChoosingPath || isCreating || isInitializing;
+	const isBusy = disabled || isChoosingPath || isCreating || isInitializing;
 
 	const openFolderStep = (kind: ProjectKind) => {
 		// Keep the selector mounted behind the native picker. Closing it first
@@ -59,6 +61,7 @@ export function CreateProjectFlow({
 	};
 
 	const chooseDirectory = async (kind: ProjectKind) => {
+		if (disabled) return;
 		setError(null);
 		setValidationScan(null);
 		setRepositorySetup(null);
@@ -94,6 +97,7 @@ export function CreateProjectFlow({
 	};
 
 	const startFlow = () => {
+		if (disabled) return;
 		if (hasModePicker) {
 			setError(null);
 			setModePickerOpen(true);

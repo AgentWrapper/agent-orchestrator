@@ -75,6 +75,43 @@ describe("workspace snapshot cache", () => {
 		expect(readWorkspaceSnapshot(storage)).toBeNull();
 	});
 
+	it("rejects malformed nested session state", () => {
+		for (const invalidSession of [
+			{ ...workspaces[0]!.sessions[0]!, prs: [null] },
+			{ ...workspaces[0]!.sessions[0]!, provider: "not-an-agent" },
+			{ ...workspaces[0]!.sessions[0]!, status: "running" },
+			{
+				...workspaces[0]!.sessions[0]!,
+				activity: { state: "working", lastActivityAt: "2026-07-28T08:00:00Z" },
+			},
+			{
+				...workspaces[0]!.sessions[0]!,
+				prs: [
+					{
+						url: "https://github.com/acme/ao/pull/1",
+						number: 1,
+						state: "unknown",
+						ci: "pending",
+						review: "none",
+						mergeability: "unknown",
+						reviewComments: false,
+						updatedAt: "2026-07-28T08:00:00Z",
+					},
+				],
+			},
+		]) {
+			storage.setItem(
+				WORKSPACE_SNAPSHOT_STORAGE_KEY,
+				JSON.stringify({
+					version: 1,
+					savedAt: 1234,
+					workspaces: [{ ...workspaces[0], sessions: [invalidSession] }],
+				}),
+			);
+			expect(readWorkspaceSnapshot(storage)).toBeNull();
+		}
+	});
+
 	it("restores cached workspaces with their original save time", () => {
 		writeWorkspaceSnapshot(workspaces, storage, 1234);
 		const queryClient = new QueryClient();

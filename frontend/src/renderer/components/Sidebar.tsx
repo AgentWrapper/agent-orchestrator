@@ -141,8 +141,9 @@ export function Sidebar({
 	const updateStatus = useUpdateStatus();
 	// Daemon status for the smoke suite's sr-only mirror in the footer. Null when
 	// rendered outside the shell (unit tests) — the mirror simply doesn't render.
-	const daemonStatus = useShellMaybe()?.daemonStatus ?? null;
-	const daemonReady = daemonStatus ? daemonStatus.state === "ready" : true;
+	const shell = useShellMaybe();
+	const daemonStatus = shell?.daemonStatus ?? null;
+	const daemonReady = shell ? shell.workspaceLive : true;
 	const commandPaletteEnabled = useCommandPaletteEnabled();
 	const setCommandPaletteOpen = useUiStore((s) => s.setCommandPaletteOpen);
 
@@ -880,6 +881,7 @@ function CreateProjectButton({
 	const createProjectNonce = useUiStore((state) => state.createProjectNonce);
 	return (
 		<CreateProjectFlow
+			disabled={!daemonReady}
 			mode="choose"
 			onCreateProject={onCreateProject}
 			onInitializeProject={onInitializeProject}

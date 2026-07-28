@@ -35,7 +35,7 @@ export function CommandPalette() {
 	const queryClient = useQueryClient();
 	const params = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
 	const workspaces = useWorkspaceQuery().data ?? [];
-	const { createProject, initializeProjectRepository } = useShell();
+	const { createProject, initializeProjectRepository, workspaceLive } = useShell();
 	const resolvedTheme = useUiStore((s) => s.resolvedTheme);
 	const setThemePreference = useUiStore((s) => s.setThemePreference);
 	const isOpen = useUiStore((s) => s.isCommandPaletteOpen);
@@ -63,8 +63,9 @@ export function CommandPalette() {
 				currentProjectId,
 				currentSessionId: params.sessionId,
 				restartingProjectIds,
+				mutationsEnabled: workspaceLive,
 			}),
-		[workspaces, currentProjectId, params.sessionId, restartingProjectIds],
+		[workspaces, currentProjectId, params.sessionId, restartingProjectIds, workspaceLive],
 	);
 	const groups = useMemo(() => displayGroups(items, query), [items, query]);
 
@@ -144,6 +145,15 @@ export function CommandPalette() {
 			const action = item.action;
 			if (!action) return;
 			setError(null);
+			if (
+				!workspaceLive &&
+				(action.kind === "open-new-task" ||
+					action.kind === "open-new-project" ||
+					action.kind === "open-orchestrator")
+			) {
+				setError("AO is still loading the current workspace state.");
+				return;
+			}
 			pendingRef.current = true;
 			setPendingId(item.id);
 			try {
@@ -181,7 +191,7 @@ export function CommandPalette() {
 				setPendingId(null);
 			}
 		},
-		[navigateToTarget, closePalette, toggleTheme, openOrchestrator, blockedByRestart],
+		[navigateToTarget, closePalette, toggleTheme, openOrchestrator, blockedByRestart, workspaceLive],
 	);
 
 	const onSelectItem = useCallback(
@@ -318,13 +328,14 @@ export function CommandPalette() {
 			</CommandDialog>
 
 			<NewTaskDialog
-				open={isNewTaskOpen}
+				open={isNewTaskOpen && workspaceLive}
 				projectId={newTaskProjectId}
 				onCreated={(sessionId) => void handleTaskCreated(sessionId)}
 				onOpenChange={setIsNewTaskOpen}
 			/>
 
 			<CreateProjectFlow
+				disabled={!workspaceLive}
 				mode="choose"
 				onCreateProject={createProject}
 				onInitializeProject={initializeProjectRepository}

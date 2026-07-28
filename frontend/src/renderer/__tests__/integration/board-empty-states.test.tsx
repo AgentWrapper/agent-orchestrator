@@ -91,6 +91,7 @@ function renderBoard(ui: ReactNode) {
 	lastShell = {
 		daemonStatus: { state: "ready" } as ShellContextValue["daemonStatus"],
 		workspaceStartupState: "ready",
+		workspaceLive: true,
 		createProject: createProjectMock,
 		initializeProjectRepository: initializeProjectRepositoryMock,
 	};
@@ -144,6 +145,7 @@ describe("global board first launch", () => {
 		lastShell = {
 			daemonStatus: { state: "starting" } as ShellContextValue["daemonStatus"],
 			workspaceStartupState: "loading",
+			workspaceLive: false,
 			createProject: createProjectMock,
 			initializeProjectRepository: initializeProjectRepositoryMock,
 		};
@@ -165,12 +167,39 @@ describe("global board first launch", () => {
 		expect(screen.queryByRole("button", { name: "Terminate fix the bug" })).not.toBeInTheDocument();
 	});
 
+	it("keeps an empty cached welcome read-only while the daemon starts", async () => {
+		lastQueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		lastQueryClient.setQueryData(["workspaces"], []);
+		lastShell = {
+			daemonStatus: { state: "starting" } as ShellContextValue["daemonStatus"],
+			workspaceStartupState: "loading",
+			workspaceLive: false,
+			createProject: createProjectMock,
+			initializeProjectRepository: initializeProjectRepositoryMock,
+		};
+
+		render(
+			<QueryClientProvider client={lastQueryClient}>
+				<ShellProvider value={lastShell}>
+					<SessionsBoard />
+				</ShellProvider>
+			</QueryClientProvider>,
+		);
+
+		expect(await screen.findByText("Import to Agent Orchestrator")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Workspace" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Project" })).toBeDisabled();
+		await userEvent.click(screen.getByRole("button", { name: "Project" }));
+		expect(chooseDirectoryMock).not.toHaveBeenCalled();
+	});
+
 	it("shows the startup loader instead of import while the daemon is booting", async () => {
 		respondWith([], []);
 		lastQueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 		lastShell = {
 			daemonStatus: { state: "starting" } as ShellContextValue["daemonStatus"],
 			workspaceStartupState: "loading",
+			workspaceLive: false,
 			createProject: createProjectMock,
 			initializeProjectRepository: initializeProjectRepositoryMock,
 		};

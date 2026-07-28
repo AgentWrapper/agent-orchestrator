@@ -24,12 +24,21 @@ const shellMocks = vi.hoisted(() => {
 			isError: false,
 			isSuccess: true,
 		},
-		daemonStatus: { state: "stopped" } as {
+		daemonStatus: { state: "ready", port: 7777 } as {
 			state: "ready" | "starting" | "stopped" | "error";
 			port?: number;
 			code?: "not_ready";
 		},
-		shellValue: undefined as { workspaceStartupState?: string } | undefined,
+		workspaceLiveFromProvider: false,
+		shellValue: undefined as { workspaceLive?: boolean; workspaceStartupState?: string } | undefined,
+		workspaceQuerySubscriber: undefined as
+			| ((event: {
+					query: {
+						queryKey: readonly unknown[];
+						state: { status: string; dataUpdatedAt: number };
+					};
+			  }) => void)
+			| undefined,
 	};
 	return {
 		navigate: vi.fn(),
@@ -68,7 +77,15 @@ const shellMocks = vi.hoisted(() => {
 		queryClient: {
 			ensureQueryData: vi.fn(),
 			fetchQuery: vi.fn(),
-			getQueryState: vi.fn(),
+			getQueryState: vi.fn(() => ({ dataUpdatedAt: 0 })),
+			getQueryCache: vi.fn(() => ({
+				subscribe: (
+					subscriber: NonNullable<typeof state.workspaceQuerySubscriber>,
+				) => {
+					state.workspaceQuerySubscriber = subscriber;
+					return vi.fn();
+				},
+			})),
 			invalidateQueries: vi.fn(),
 			setQueryData: vi.fn(),
 		},
@@ -114,7 +131,7 @@ vi.mock("../lib/bridge", () => ({
 vi.mock("../hooks/useWorkspaceQuery", () => ({
 	useWorkspaceQuery: () => shellMocks.state.workspaceQuery,
 	workspaceQueryKey: ["workspaces"],
-	workspaceQueryOptions: {},
+	workspaceQueryOptions: { queryKey: ["workspaces"] },
 }));
 
 vi.mock("../hooks/useDaemonStatus", () => ({
@@ -159,7 +176,11 @@ vi.mock("../components/KeyboardShortcutsDialog", () => ({
 	KeyboardShortcutsDialog: ({ open }: { open: boolean }) => (open ? <div data-testid="keyboard-shortcuts" /> : null),
 }));
 vi.mock("../lib/shell-context", () => ({
-	ShellProvider: ({ children, value }: PropsWithChildren<{ value?: { workspaceStartupState?: string } }>) => {
+	ShellProvider: ({
+		children,
+		value,
+	}: PropsWithChildren<{ value: { workspaceLive: boolean; workspaceStartupState: string } }>) => {
+		shellMocks.state.workspaceLiveFromProvider = value.workspaceLive;
 		shellMocks.state.shellValue = value;
 		return children;
 	},
@@ -219,7 +240,7 @@ const workspaces = [
 	},
 ] as unknown as WorkspaceSummary[];
 
-async function renderShell() {
+async function renderShell({ waitForWorkspaceLive = true } = {}) {
 	let view: ReturnType<typeof render> | undefined;
 	await act(async () => {
 		view = render(
@@ -228,13 +249,17 @@ async function renderShell() {
 			</Suspense>,
 		);
 	});
-	await waitFor(() => expect(shellMocks.onNewSessionShortcut).toHaveBeenCalledTimes(1), { timeout: 30_000 });
-	await waitFor(() => expect(shellMocks.onKeyboardShortcutsHelp).toHaveBeenCalledTimes(1));
-	await waitFor(() => expect(shellMocks.onNewShellTerminalShortcut).toHaveBeenCalledTimes(1));
-	await waitFor(() => expect(shellMocks.onOpenSettingsShortcut).toHaveBeenCalledTimes(1));
-	await waitFor(() => expect(shellMocks.onPreviousSessionShortcut).toHaveBeenCalledTimes(1));
-	await waitFor(() => expect(shellMocks.onNextSessionShortcut).toHaveBeenCalledTimes(1));
-	await waitFor(() => expect(shellMocks.onFocusTerminalShortcut).toHaveBeenCalledTimes(1));
+	const waitOptions = { timeout: 5_000 };
+	await waitFor(() => expect(shellMocks.onNewSessionShortcut).toHaveBeenCalledTimes(1), waitOptions);
+	await waitFor(() => expect(shellMocks.onKeyboardShortcutsHelp).toHaveBeenCalledTimes(1), waitOptions);
+	await waitFor(() => expect(shellMocks.onNewShellTerminalShortcut).toHaveBeenCalledTimes(1), waitOptions);
+	await waitFor(() => expect(shellMocks.onOpenSettingsShortcut).toHaveBeenCalledTimes(1), waitOptions);
+	await waitFor(() => expect(shellMocks.onPreviousSessionShortcut).toHaveBeenCalledTimes(1), waitOptions);
+	await waitFor(() => expect(shellMocks.onNextSessionShortcut).toHaveBeenCalledTimes(1), waitOptions);
+	await waitFor(() => expect(shellMocks.onFocusTerminalShortcut).toHaveBeenCalledTimes(1), waitOptions);
+	if (waitForWorkspaceLive && shellMocks.state.daemonStatus.state === "ready") {
+		await waitFor(() => expect(shellMocks.state.workspaceLiveFromProvider).toBe(true), waitOptions);
+	}
 	return view!;
 }
 
@@ -255,6 +280,8 @@ beforeEach(() => {
 	shellMocks.onPreviousSessionShortcut.mockClear();
 	shellMocks.onNextSessionShortcut.mockClear();
 	shellMocks.onFocusTerminalShortcut.mockClear();
+	shellMocks.queryClient.fetchQuery.mockReset().mockResolvedValue([]);
+	shellMocks.queryClient.invalidateQueries.mockReset();
 	shellMocks.state.newSessionListener = undefined;
 	shellMocks.state.keyboardShortcutsListener = undefined;
 	shellMocks.state.openSettingsListener = undefined;
@@ -270,9 +297,10 @@ beforeEach(() => {
 		isError: false,
 		isSuccess: true,
 	};
-	shellMocks.state.daemonStatus = { state: "error", code: "not_ready" };
+	shellMocks.state.daemonStatus = { state: "ready", port: 7777 };
+	shellMocks.state.workspaceLiveFromProvider = false;
 	shellMocks.state.shellValue = undefined;
-	shellMocks.queryClient.fetchQuery.mockReset();
+	shellMocks.state.workspaceQuerySubscriber = undefined;
 	shellMocks.queryClient.getQueryState.mockReset().mockReturnValue({ dataUpdatedAt: 0 });
 	useUiStore.setState({
 		createProjectNonce: 0,
@@ -434,6 +462,64 @@ describe("shell new-shell-terminal shortcut subscription", () => {
 
 		expect(useUiStore.getState().newShellTerminalNonce).toBe(1);
 		expect(shellMocks.openShellTerminal).toHaveBeenCalledTimes(1);
+	});
+
+	it("blocks session and terminal shortcuts until the workspace fetch succeeds", async () => {
+		shellMocks.queryClient.fetchQuery.mockImplementation(
+			(options: { staleTime?: number }) =>
+				options.staleTime === 0 ? new Promise<never>(() => {}) : Promise.resolve([]),
+		);
+		shellMocks.state.routeParams = { projectId: "proj-1" };
+		await renderShell({ waitForWorkspaceLive: false });
+
+		emitShortcut();
+		pressNewShellTerminal();
+
+		expect(useUiStore.getState().newTaskRequest).toBeNull();
+		expect(useUiStore.getState().newShellTerminalNonce).toBe(0);
+		expect(shellMocks.openShellTerminal).not.toHaveBeenCalled();
+	});
+
+	it("stays read-only when the workspace fetch fails", async () => {
+		shellMocks.queryClient.fetchQuery.mockImplementation((options: { staleTime?: number }) =>
+			options.staleTime === 0 ? Promise.reject(new Error("daemon unavailable")) : Promise.resolve([]),
+		);
+		shellMocks.state.routeParams = { projectId: "proj-1" };
+		await renderShell({ waitForWorkspaceLive: false });
+		await waitFor(() =>
+			expect(shellMocks.queryClient.fetchQuery).toHaveBeenCalledWith(
+				expect.objectContaining({ queryKey: ["workspaces"], staleTime: 0 }),
+			),
+		);
+
+		emitShortcut();
+		pressNewShellTerminal();
+
+		expect(useUiStore.getState().newTaskRequest).toBeNull();
+		expect(useUiStore.getState().newShellTerminalNonce).toBe(0);
+		expect(shellMocks.openShellTerminal).not.toHaveBeenCalled();
+	});
+
+	it("enables mutations after a later workspace refetch succeeds", async () => {
+		shellMocks.queryClient.fetchQuery.mockImplementation((options: { staleTime?: number }) =>
+			options.staleTime === 0 ? Promise.reject(new Error("daemon unavailable")) : Promise.resolve([]),
+		);
+		shellMocks.state.routeParams = { projectId: "proj-1" };
+		await renderShell({ waitForWorkspaceLive: false });
+		expect(shellMocks.state.workspaceLiveFromProvider).toBe(false);
+
+		act(() => {
+			shellMocks.state.workspaceQuerySubscriber?.({
+				query: {
+					queryKey: ["workspaces"],
+					state: { status: "success", dataUpdatedAt: 1 },
+				},
+			});
+		});
+		await waitFor(() => expect(shellMocks.state.workspaceLiveFromProvider).toBe(true));
+
+		emitShortcut();
+		expect(useUiStore.getState().newTaskRequest?.projectId).toBe("proj-1");
 	});
 
 	it("scopes the terminal to the project in scope", async () => {

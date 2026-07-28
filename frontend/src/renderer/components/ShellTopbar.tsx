@@ -61,7 +61,7 @@ export function ShellTopbar() {
 	const [boardSpawnError, setBoardSpawnError] = useState<string | null>(null);
 	const all = useWorkspaceQuery().data ?? [];
 	const shell = useShellMaybe();
-	const daemonReady = shell ? shell.daemonStatus.state === "ready" : true;
+	const daemonReady = shell ? shell.workspaceLive : true;
 
 	const session = params.sessionId
 		? all.flatMap((workspace) => workspace.sessions).find((s) => s.id === params.sessionId)

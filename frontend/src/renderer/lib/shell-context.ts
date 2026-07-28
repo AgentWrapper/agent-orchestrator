@@ -8,6 +8,8 @@ import type { useDaemonStatus } from "../hooks/useDaemonStatus";
 export type ShellContextValue = {
 	daemonStatus: ReturnType<typeof useDaemonStatus>;
 	workspaceStartupState: "loading" | "ready" | "error";
+	/** True only after the current daemon instance returns a workspace snapshot. */
+	workspaceLive: boolean;
 	createProject: (input: {
 		path: string;
 		workerAgent: string;

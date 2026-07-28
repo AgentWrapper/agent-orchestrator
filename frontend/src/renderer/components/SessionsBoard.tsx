@@ -84,7 +84,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const restoreSessionById = useRestoreSession();
 	const workspaceQuery = useWorkspaceQuery();
 	const shell = useShellMaybe();
-	const daemonReady = shell ? shell.daemonStatus.state === "ready" : true;
+	const workspaceLive = shell ? shell.workspaceLive : true;
 	// Evaluated at render so platform mocks in tests can flip the in-panel chrome.
 	const boardActionsInPanel = usesBoardActionsInPanel();
 	/** Bell lives in the board action row when the shell topbar does not host it. */
@@ -142,10 +142,11 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const isDaemonReady = usesPreviewWorkspaceData || (shell ? shell.daemonStatus.state === "ready" : true);
 	const daemonHasFailed = Boolean(shell?.daemonStatus.code);
 	const workspaceStartupState = shell?.workspaceStartupState ?? "ready";
-	const isLoaded = isDaemonReady && workspaceStartupState === "ready" && workspaceQuery.isSuccess;
+	const isLoaded = workspaceQuery.isSuccess || (shell !== null && workspaceQuery.data !== undefined);
 	const showStartup =
 		shell !== null &&
 		!daemonHasFailed &&
+		workspaceQuery.data === undefined &&
 		(!isDaemonReady || workspaceStartupState === "loading" || (!workspaceQuery.isSuccess && !workspaceQuery.isError));
 	const showWelcome = !projectId && isLoaded && all.length === 0;
 	const showProjectEmpty = projectId !== undefined && isLoaded && workspaces.length > 0 && sessions.length === 0;
@@ -171,7 +172,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 	const restoreArchivedSession = async (event: MouseEvent<HTMLButtonElement>, session: WorkspaceSession) => {
 		event.stopPropagation();
-		if (!daemonReady || restoringSessionId) return;
+		if (!workspaceLive || restoringSessionId) return;
 		const restoreProjectId = projectId;
 		const isStillActiveProject = () => !restoreProjectId || activeProjectIdRef.current === restoreProjectId;
 		setRestoringSessionId(session.id);
@@ -203,7 +204,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	};
 
 	const openOrchestrator = async () => {
-		if (!daemonReady || !projectId || isProjectRestarting) return;
+		if (!workspaceLive || !projectId || isProjectRestarting) return;
 		if (orchestrator) {
 			void navigate({
 				to: "/projects/$projectId/sessions/$sessionId",
@@ -239,7 +240,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	};
 
 	const restartOrchestrator = async () => {
-		if (!daemonReady || !projectId) return;
+		if (!workspaceLive || !projectId) return;
 		await restartProjectOrchestrator({
 			projectId,
 			queryClient,
@@ -259,7 +260,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			)}
 			<TopbarButton
 				aria-label="New task"
-				disabled={!daemonReady || isProjectRestarting}
+				disabled={!workspaceLive || isProjectRestarting}
 				onClick={() => projectId && requestNewTask(projectId)}
 				variant="accent"
 			>
@@ -268,7 +269,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			</TopbarButton>
 			<TopbarButton
 				aria-label={orchestratorActivityLabel ? `Orchestrator, ${orchestratorActivityLabel}` : "Spawn Orchestrator"}
-				disabled={!daemonReady || isSpawning || isProjectRestarting}
+				disabled={!workspaceLive || isSpawning || isProjectRestarting}
 				onClick={() => void openOrchestrator()}
 				variant="primary"
 			>
@@ -309,14 +310,16 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				</div>
 			) : null}
 
-			{!daemonReady && workspaceQuery.data !== undefined ? (
+			{!workspaceLive && workspaceQuery.data !== undefined ? (
 				<div
 					aria-live="polite"
 					className="shrink-0 border-b border-border-strong bg-surface px-3 py-1.5 text-center font-mono text-caption text-muted-foreground"
 					data-testid="cached-workspace-state"
 					role="status"
 				>
-					Showing the last saved state while AO starts…
+					{workspaceQuery.isError
+						? "Showing the last saved state because AO could not refresh."
+						: "Showing the last saved state while AO starts…"}
 				</div>
 			) : null}
 
@@ -327,7 +330,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						<span className="min-w-0 flex-1">{health.message}</span>
 						{health.state === "restart_needed" || health.state === "duplicates" ? (
 							<TopbarButton
-								disabled={!daemonReady || isProjectRestarting}
+								disabled={!workspaceLive || isProjectRestarting}
 								onClick={() => void restartOrchestrator()}
 								variant="primary"
 							>
@@ -339,16 +342,17 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				) : null}
 				{showStartup ? (
 					<DaemonStartupLoader />
-				) : workspaceStartupState === "error" || workspaceQuery.isError ? (
+				) : (workspaceStartupState === "error" || workspaceQuery.isError) &&
+					workspaceQuery.data === undefined ? (
 					<p className="py-10 text-center text-xs text-passive">Could not load sessions.</p>
 				) : showWelcome ? (
-					<BoardWelcome />
+					<BoardWelcome disabled={!workspaceLive} />
 				) : showProjectEmpty ? (
 					<ProjectBoardEmpty
 						hasOrchestrator={orchestrator !== undefined}
 						isSpawning={isSpawning}
 						isProjectRestarting={isProjectRestarting}
-						daemonReady={daemonReady}
+						daemonReady={workspaceLive}
 						onNewTask={() => projectId && requestNewTask(projectId)}
 						onOpenOrchestrator={() => void openOrchestrator()}
 						spawnError={visibleSpawnError}
@@ -369,7 +373,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 									col={col}
 									sessions={byZone.get(col.zone) ?? []}
 									onOpen={openSession}
-									onTerminate={daemonReady ? (session) => terminateSession.mutate(session) : undefined}
+									onTerminate={workspaceLive ? (session) => terminateSession.mutate(session) : undefined}
 								/>
 							))}
 						</div>
@@ -422,7 +426,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 									restoreAction={(event) => void restoreArchivedSession(event, s)}
 									restoreError={restoreErrors[s.id]}
 									isRestoring={restoringSessionId === s.id}
-									isRestoreDisabled={!daemonReady || restoringSessionId !== undefined}
+									isRestoreDisabled={!workspaceLive || restoringSessionId !== undefined}
 								/>
 							))}
 						</div>

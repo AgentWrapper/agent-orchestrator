@@ -7,7 +7,7 @@ import { OrchestratorIcon } from "./icons";
 
 // Board empty states: first-launch welcome (`BoardWelcome`) and project board
 // with no worker sessions yet (`ProjectBoardEmpty`).
-export function BoardWelcome() {
+export function BoardWelcome({ disabled = false }: { disabled?: boolean }) {
 	const { createProject, initializeProjectRepository } = useShell();
 	return (
 		<WelcomePanel>
@@ -16,6 +16,7 @@ export function BoardWelcome() {
 				data-testid="board-welcome"
 			>
 				<CreateProjectFlow
+					disabled={disabled}
 					embedded
 					mode="choose"
 					onCreateProject={createProject}
