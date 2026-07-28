@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -31,6 +32,11 @@ const (
 // connected — not durable history. A reconnecting daemon / restored sandbox
 // re-registers, so the registry is authoritative for "right now".
 type SessionLocation struct {
+	// SessionID is the GLOBALLY-UNIQUE routing key a caller addresses. For a
+	// sandbox-hosted session it is the sandboxId (each sandbox namespaces its own
+	// in-sandbox session ids like "proj-1", which collide across sandboxes — so
+	// the sandboxId is what's unique across a tenant's fleet). For a daemon
+	// session it is the daemon's session id.
 	SessionID string
 	TenantID  string
 	ProjectID string
@@ -38,12 +44,23 @@ type SessionLocation struct {
 	Type      LocationType
 
 	// Set when Type == LocationSandbox.
-	SandboxID  string
-	PreviewURL string
+	SandboxID string
+	// InSandboxSessionID is the session id INSIDE the sandbox (e.g. "proj-1"),
+	// used to build the relay URL (/api/v1/sessions/{InSandboxSessionID}/…). It is
+	// distinct from the routing key (SessionID == SandboxID) precisely because
+	// in-sandbox ids are not unique across sandboxes.
+	InSandboxSessionID string
+	PreviewURL         string
 
 	// Set when Type == LocationDaemon — the id of the connected daemon that owns
 	// this session (maps to a live channel in Turn 2).
 	DaemonID string
+
+	// OrchestratorID is the routing key of the orchestrator that owns this session
+	// (a delegated worker); empty otherwise. Used to authorize cross-location bus
+	// traffic from a scoped bus token (a caller may reach only itself, its
+	// orchestrator, or a worker it owns).
+	OrchestratorID string
 
 	UpdatedAt time.Time
 }
@@ -95,7 +112,35 @@ func (r *memLocationRegistry) Register(loc SessionLocation) {
 		sessions = make(map[string]SessionLocation)
 		r.byTenant[loc.TenantID] = sessions
 	}
+	// Ownership guard (audit #1/#4): never let one host silently steal another's
+	// routing entry. If a routing key is already owned by a DIFFERENT host, refuse
+	// the overwrite. A shared org tenant means many daemons/sandboxes write into
+	// one namespace; without this, any bus-authed caller could POST /bus/register
+	// with sessions=[{sessionId:<victim's routing key>}] and hijack/blackhole it.
+	// Same-owner re-registration (reconnect, Restore, refresh) is always allowed.
+	if existing, ok := sessions[loc.SessionID]; ok && !sameOwner(existing, loc) {
+		slog.Default().Warn("locations: refusing to overwrite session owned by another host",
+			"tenant", loc.TenantID, "sessionId", loc.SessionID,
+			"existingType", existing.Type, "incomingType", loc.Type)
+		return
+	}
 	sessions[loc.SessionID] = loc
+}
+
+// sameOwner reports whether two locations for the same routing key belong to the
+// same underlying host (so re-registration is a refresh, not a hijack).
+func sameOwner(a, b SessionLocation) bool {
+	if a.Type != b.Type {
+		return false
+	}
+	switch a.Type {
+	case LocationSandbox:
+		return a.SandboxID == b.SandboxID
+	case LocationDaemon:
+		return a.DaemonID == b.DaemonID
+	default:
+		return false
+	}
 }
 
 func (r *memLocationRegistry) Remove(tenantID, sessionID string) {

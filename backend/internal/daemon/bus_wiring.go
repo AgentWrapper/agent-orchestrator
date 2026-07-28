@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"path/filepath"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/busclient"
 	"github.com/aoagents/agent-orchestrator/backend/internal/busproto"
@@ -12,6 +13,11 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 )
+
+// busCredentialsFile is where the desktop app drops the daemon's bus token
+// (control-plane URL + token + tenant) after cloud sign-in. The bus client
+// re-reads it on every connect, so a rotated token needs no daemon restart.
+const busCredentialsFile = "bus-credentials.json"
 
 // busSessions is the slice of the session Service the bus executor drives. It's
 // the same surface the HTTP controllers use, so a routed send/kill/spawn behaves
@@ -102,15 +108,17 @@ var _ busclient.Executor = busExecutor{}
 // is configured. It's a no-op returning nil otherwise, so a bare local daemon is
 // unaffected. The client's Run loop exits when ctx is cancelled at shutdown.
 func startBusClient(ctx context.Context, cfg config.Config, svc busSessions, log *slog.Logger) *busclient.Client {
-	if !cfg.Bus.Enabled() {
-		return nil
-	}
+	// Always construct with a credentials-file path: the sandbox uses the env
+	// fields; the desktop drops the file after sign-in. The client idles cheaply
+	// until either is present, so cloud works without a daemon restart while a
+	// purely-local daemon just polls a (missing) file.
 	client := busclient.New(busclient.Config{
 		ControlPlaneURL: cfg.Bus.ControlPlaneURL,
 		Token:           cfg.Bus.Token,
 		Tenant:          cfg.Bus.Tenant,
 		DaemonID:        cfg.Bus.DaemonID,
 		AgentHost:       cfg.Bus.AgentHost,
+		CredentialsPath: filepath.Join(cfg.DataDir, busCredentialsFile),
 	}, busExecutor{svc: svc}, log)
 	go func() {
 		if err := client.Run(ctx); err != nil && ctx.Err() == nil {

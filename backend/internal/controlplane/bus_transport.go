@@ -48,6 +48,11 @@ func (s *Server) busStream(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "daemonId required"})
 		return
 	}
+	// A scoped bus token may only hold open ITS OWN daemon channel. (Audit #4.)
+	if scope, scoped := BusScopeFromContext(r.Context()); scoped && scope != daemonID {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "bus token not scoped to this daemon"})
+		return
+	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "streaming unsupported"})
@@ -58,7 +63,7 @@ func (s *Server) busStream(w http.ResponseWriter, r *http.Request) {
 	s.hub.Connect(tenant, daemonID, conn)
 	defer func() {
 		close(conn.done)
-		s.hub.Disconnect(tenant, daemonID)
+		s.hub.Disconnect(tenant, daemonID, conn) // compare-and-delete: only if still ours
 	}()
 
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -101,6 +106,12 @@ func (s *Server) busRegister(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "daemonId + sessions required"})
 		return
 	}
+	// A scoped bus token may only register under its OWN sandbox/daemon id — it
+	// can't impersonate another daemon. (Audit #4; full user tokens are unscoped.)
+	if scope, scoped := BusScopeFromContext(r.Context()); scoped && scope != in.DaemonID {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "bus token not scoped to this daemon"})
+		return
+	}
 	s.hub.Register(tenant, in.DaemonID, in.Sessions)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "count": len(in.Sessions)})
 }
@@ -112,6 +123,10 @@ func (s *Server) busRoute(w http.ResponseWriter, r *http.Request) {
 	var cmd Command
 	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil || cmd.SessionID == "" || cmd.Op == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "op + sessionId required"})
+		return
+	}
+	if scope, scoped := BusScopeFromContext(r.Context()); scoped && !s.hub.AuthorizeBusTarget(tenant, scope, cmd.SessionID) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "bus token not authorized for this target"})
 		return
 	}
 	if err := s.hub.RouteCommand(r.Context(), tenant, cmd); err != nil {
@@ -129,11 +144,56 @@ func (s *Server) busEvent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "toSessionId required"})
 		return
 	}
+	if scope, scoped := BusScopeFromContext(r.Context()); scoped && !s.hub.AuthorizeBusTarget(tenant, scope, ev.ToSessionID) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "bus token not authorized for this target"})
+		return
+	}
 	if err := s.hub.DeliverEvent(r.Context(), tenant, ev); err != nil {
 		s.busErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// busToken mints a tenant-scoped bus token for a laptop daemon. The caller is
+// already authenticated with a real user JWT (user-auth group), so this just
+// exchanges it for a longer-lived token the daemon presents on the bus.
+func (s *Server) busToken(w http.ResponseWriter, r *http.Request) {
+	tenant := TenantFromContext(r.Context())
+	if s.busSigner == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "bus token signing not configured"})
+		return
+	}
+	var in struct {
+		DaemonID string `json:"daemonId"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&in) // body optional
+	tok, err := s.busSigner.MintForSandbox(tenant, in.DaemonID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"token": tok, "expiresInSeconds": int(12 * time.Hour / time.Second)})
+}
+
+// busLocations returns every session the tenant owns across locations — the
+// cross-location fleet view an orchestrator uses to discover and address workers
+// that live in other sandboxes/daemons.
+func (s *Server) busLocations(w http.ResponseWriter, r *http.Request) {
+	tenant := TenantFromContext(r.Context())
+	locs := s.locations.ListForTenant(tenant)
+	out := make([]map[string]any, 0, len(locs))
+	for _, l := range locs {
+		out = append(out, map[string]any{
+			"sessionId":          l.SessionID, // routing key (sandboxId for sandbox sessions)
+			"kind":               l.Kind,
+			"projectId":          l.ProjectID,
+			"type":               string(l.Type),
+			"sandboxId":          l.SandboxID,
+			"inSandboxSessionId": l.InSandboxSessionID,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sessions": out})
 }
 
 func (s *Server) busErr(w http.ResponseWriter, err error) {

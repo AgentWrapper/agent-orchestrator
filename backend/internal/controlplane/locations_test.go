@@ -74,14 +74,33 @@ func TestLocationRegistry_RemoveDaemonDropsOnlyThatDaemon(t *testing.T) {
 	}
 }
 
-func TestLocationRegistry_RegisterOverwrites(t *testing.T) {
+func TestLocationRegistry_SameOwnerRefreshOverwrites(t *testing.T) {
 	r := NewInMemoryLocationRegistry()
-	r.Register(SessionLocation{SessionID: "s", TenantID: "acme", Type: LocationDaemon, DaemonID: "d1"})
-	// Same session moves to a sandbox → latest wins.
-	r.Register(SessionLocation{SessionID: "s", TenantID: "acme", Type: LocationSandbox, SandboxID: "sb-9"})
+	r.Register(SessionLocation{SessionID: "s", TenantID: "acme", Type: LocationDaemon, DaemonID: "d1", ProjectID: "old"})
+	// Same owner (daemon d1) re-registers → refresh wins.
+	r.Register(SessionLocation{SessionID: "s", TenantID: "acme", Type: LocationDaemon, DaemonID: "d1", ProjectID: "new"})
+	got, _ := r.Lookup("acme", "s")
+	if got.ProjectID != "new" {
+		t.Fatalf("same-owner refresh should overwrite, got %+v", got)
+	}
+}
+
+// Ownership guard (audit #1/#4): a DIFFERENT host must not steal an existing
+// routing key. The first owner survives.
+func TestLocationRegistry_RejectsCrossOwnerOverwrite(t *testing.T) {
+	r := NewInMemoryLocationRegistry()
+	r.Register(SessionLocation{SessionID: "s", TenantID: "acme", Type: LocationSandbox, SandboxID: "sb-victim", PreviewURL: "https://p/victim"})
+	// A different host tries to hijack routing key "s" as its own daemon session.
+	r.Register(SessionLocation{SessionID: "s", TenantID: "acme", Type: LocationDaemon, DaemonID: "attacker"})
 	got, ok := r.Lookup("acme", "s")
-	if !ok || got.Type != LocationSandbox || got.SandboxID != "sb-9" {
-		t.Fatalf("expected overwrite to sandbox sb-9, got %+v", got)
+	if !ok || got.Type != LocationSandbox || got.SandboxID != "sb-victim" {
+		t.Fatalf("cross-owner overwrite must be refused; got %+v", got)
+	}
+	// A different sandbox id also can't steal it.
+	r.Register(SessionLocation{SessionID: "s", TenantID: "acme", Type: LocationSandbox, SandboxID: "sb-other"})
+	got, _ = r.Lookup("acme", "s")
+	if got.SandboxID != "sb-victim" {
+		t.Fatalf("different sandbox must not steal routing key; got %+v", got)
 	}
 }
 

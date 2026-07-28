@@ -131,6 +131,11 @@ type BusConfig struct {
 	// its sessions inbound via a signed preview URL, so it keeps its registration
 	// warm rather than holding an SSE channel open.
 	AgentHost bool
+	// OrchestratorID is the remote orchestrator session this sandbox's workers
+	// report to over the bus (worker_idle nudges). Set by the control plane at
+	// spawn (AO_ORCHESTRATOR_SESSION_ID) for a delegated worker sandbox; empty for
+	// a laptop or a co-located orchestrator.
+	OrchestratorID string
 }
 
 // Enabled reports whether the federated bus is configured.
@@ -228,6 +233,7 @@ func Load() (Config, error) {
 		Tenant:          strings.TrimSpace(os.Getenv("AO_TENANT")),
 		DaemonID:        strings.TrimSpace(os.Getenv("AO_DAEMON_ID")),
 		AgentHost:       os.Getenv("AO_AGENT_HOST_HARNESSES") != "",
+		OrchestratorID:  strings.TrimSpace(os.Getenv("AO_ORCHESTRATOR_SESSION_ID")),
 	}
 	if cfg.Bus.DaemonID == "" {
 		// Tie daemon identity to the app-run so it's stable across the supervisor's

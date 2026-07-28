@@ -54,6 +54,11 @@ export const aoBridge: AoBridge =
 		telemetry: {
 			getBootstrap: async () => null,
 		},
+		cloud: {
+			getHarnessCredential: async () => null,
+			setBusCredentials: async () => undefined,
+			clearBusCredentials: async () => undefined,
+		},
 		browser: {
 			ensure: async (sessionId: string) => ({
 				viewId: `preview:${sessionId}`,

@@ -149,6 +149,19 @@ const api = {
 	telemetry: {
 		getBootstrap: () => ipcRenderer.invoke("telemetry:getBootstrap") as Promise<TelemetryBootstrap | null>,
 	},
+	cloud: {
+		// Reads the user's CURRENT local credential for a harness (e.g. claude-code)
+		// so it can be injected into a fresh cloud sandbox at spawn time. Returns
+		// null when none is found. The value is a secret — pass it straight into
+		// the spawn request, never log it.
+		getHarnessCredential: (harness: string) =>
+			ipcRenderer.invoke("cloud:getHarnessCredential", harness) as Promise<string | null>,
+		// Hands the local daemon a bus token (control-plane URL + token) so it can
+		// join the federated bus. The value is a secret — never log it.
+		setBusCredentials: (creds: { controlPlaneUrl: string; token: string; tenant?: string }) =>
+			ipcRenderer.invoke("cloud:setBusCredentials", creds) as Promise<void>,
+		clearBusCredentials: () => ipcRenderer.invoke("cloud:clearBusCredentials") as Promise<void>,
+	},
 	browser: {
 		ensure: (sessionId: string) => ipcRenderer.invoke("browser:ensure", sessionId) as Promise<BrowserNavState>,
 		setBounds: (input: BrowserBoundsInput) => ipcRenderer.send("browser:setBounds", input),

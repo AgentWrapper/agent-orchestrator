@@ -134,6 +134,10 @@ type Service struct {
 // daemon's bus client; nil in a purely local daemon.
 type RemoteRouter interface {
 	RouteSend(ctx context.Context, sessionID, message string) error
+	// CanRoute reports whether the bus is configured/ready right now. When false
+	// (e.g. signed out, no token yet), the service treats a non-local session as
+	// a plain not-found, so local behavior is identical to a bus-less daemon.
+	CanRoute() bool
 }
 
 // New wires a controller-facing session service over an internal session Manager.
@@ -489,7 +493,7 @@ func (s *Service) RollbackSpawn(ctx context.Context, id domain.SessionID) (Rollb
 // instead of failing not-found. A locally-known session — even terminated — is
 // always handled locally.
 func (s *Service) Send(ctx context.Context, id domain.SessionID, message string) error {
-	if s.remoteRouter != nil {
+	if s.remoteRouter != nil && s.remoteRouter.CanRoute() {
 		if _, ok, err := s.store.GetSession(ctx, id); err == nil && !ok {
 			return toAPIError(s.remoteRouter.RouteSend(ctx, string(id), message))
 		}

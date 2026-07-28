@@ -20,6 +20,11 @@ import (
 // tenantContextKey carries the authenticated tenant id through the request.
 type tenantContextKey struct{}
 
+// busScopeKey carries a bus token's sandbox scope. Empty for a full user token
+// (which has authority over all of its tenant's sessions); set to the token's
+// sandbox id for a per-sandbox bus token, which may only act for that sandbox.
+type busScopeKey struct{}
+
 // TenantFromContext returns the authenticated tenant id set by the auth
 // middleware, or "" if none.
 func TenantFromContext(ctx context.Context) string {
@@ -27,6 +32,14 @@ func TenantFromContext(ctx context.Context) string {
 		return v
 	}
 	return ""
+}
+
+// BusScopeFromContext returns the sandbox a bus token is scoped to, and whether
+// the caller is a scoped bus token at all. (scoped=false ⇒ a full user token,
+// unrestricted within its tenant.)
+func BusScopeFromContext(ctx context.Context) (sandbox string, scoped bool) {
+	v, ok := ctx.Value(busScopeKey{}).(string)
+	return v, ok
 }
 
 // Authenticator resolves the tenant id for a request, or an error to reject it.
@@ -131,16 +144,18 @@ func authMiddleware(a Authenticator) func(http.Handler) http.Handler {
 func busAuthMiddleware(a Authenticator, signer *BusTokenSigner) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Prefer a full user token.
+			// Prefer a full user token (unrestricted within its tenant → no scope).
 			if tenant, err := a.Authenticate(r); err == nil && tenant != "" {
 				ctx := context.WithValue(r.Context(), tenantContextKey{}, tenant)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
-			// Fall back to a per-sandbox bus token.
+			// Fall back to a per-sandbox bus token: carry its sandbox scope so
+			// downstream handlers restrict it to acting for that sandbox only.
 			if signer != nil {
-				if tenant, _, err := signer.Verify(bearerToken(r)); err == nil && tenant != "" {
+				if tenant, sandbox, err := signer.Verify(bearerToken(r)); err == nil && tenant != "" {
 					ctx := context.WithValue(r.Context(), tenantContextKey{}, tenant)
+					ctx = context.WithValue(ctx, busScopeKey{}, sandbox)
 					next.ServeHTTP(w, r.WithContext(ctx))
 					return
 				}

@@ -1192,9 +1192,76 @@ function stopDaemon(): DaemonStatus {
 	return daemonStatus;
 }
 
+// The daemon's data dir — where the bus credentials file lives, matching the
+// AO_DATA_DIR the daemon resolves (dev: ~/.ao/dev/data, prod: ~/.ao/data).
+function daemonDataDir(): string {
+	if (process.env.AO_DATA_DIR) return process.env.AO_DATA_DIR;
+	if (isDev) return path.join(os.homedir(), ".ao", DEV_STATE_SUBDIR, "data");
+	return path.join(os.homedir(), ".ao", "data");
+}
+
+function busCredentialsPath(): string {
+	return path.join(daemonDataDir(), "bus-credentials.json");
+}
+
+// Where each harness's local credential lives, mirroring the Go supervisor's
+// resolveLocalCredential order (macOS Keychain first, then the on-disk file).
+// Used for spawn-time credential injection: the app reads the user's CURRENT
+// credential and passes it in the cloud-spawn body, so the hosted control plane
+// never stores a copy. The value is a secret — never log it.
+const HARNESS_CRED_LOCATIONS: Record<string, { keychainService?: string; homePath?: string }> = {
+	"claude-code": { keychainService: "Claude Code-credentials", homePath: ".claude/.credentials.json" },
+};
+
+async function readHarnessCredential(harness: string): Promise<string | null> {
+	const loc = HARNESS_CRED_LOCATIONS[harness];
+	if (!loc) return null;
+	if (process.platform === "darwin" && loc.keychainService) {
+		try {
+			const { stdout } = await execFileAsync(
+				"security",
+				["find-generic-password", "-s", loc.keychainService, "-w"],
+				{ timeout: 5000 },
+			);
+			const value = stdout.trim();
+			if (value) return value;
+		} catch {
+			// Not in the Keychain (or the CLI failed) — fall back to the file.
+		}
+	}
+	if (loc.homePath) {
+		try {
+			const raw = (await readFile(path.join(os.homedir(), loc.homePath), "utf8")).trim();
+			if (raw) return raw;
+		} catch {
+			// No on-disk credential either.
+		}
+	}
+	return null;
+}
+
 ipcMain.handle("daemon:getStatus", () => refreshDaemonStatus());
 ipcMain.handle("daemon:start", () => startDaemon());
 ipcMain.handle("daemon:stop", () => stopDaemon());
+ipcMain.handle("cloud:getHarnessCredential", (_event, harness: string) => readHarnessCredential(harness));
+// The renderer mints a bus token from the control plane (with the user's Clerk
+// JWT) and hands it here; we drop it where the local daemon's bus client reads
+// it. This is how a LOCAL daemon joins the federated bus (Task 1: laptop-in-loop).
+ipcMain.handle(
+	"cloud:setBusCredentials",
+	async (_event, creds: { controlPlaneUrl: string; token: string; tenant?: string }) => {
+		const target = busCredentialsPath();
+		await mkdir(path.dirname(target), { recursive: true });
+		await writeFile(
+			target,
+			JSON.stringify({ controlPlaneUrl: creds.controlPlaneUrl, token: creds.token, tenant: creds.tenant ?? "" }),
+			{ mode: 0o600 },
+		);
+	},
+);
+ipcMain.handle("cloud:clearBusCredentials", async () => {
+	await rm(busCredentialsPath(), { force: true });
+});
 ipcMain.handle("app:getVersion", () => app.getVersion());
 ipcMain.handle("app:openExternal", async (_event, url: string) => {
 	await openAllowedAppExternalURL(url, shell);

@@ -23,6 +23,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -46,6 +47,14 @@ type CloudSession struct {
 	LocalProjectID string `json:"localProjectId"`
 	ProjectID      string `json:"projectId"`
 	Harness        string `json:"harness"`
+	// Kind is "worker" or "orchestrator" — the role of the in-sandbox session.
+	Kind string `json:"kind,omitempty"`
+	// OrchestratorID is the bus routing key of the orchestrator that requested
+	// this worker (delegated spawn); empty for a non-delegated session. Used by
+	// the control plane to authorize cross-location bus traffic.
+	OrchestratorID string `json:"orchestratorId,omitempty"`
+	// IdempotencyKey dedupes retried spawns (see SpawnInput.IdempotencyKey).
+	IdempotencyKey string `json:"idempotencyKey,omitempty"`
 	SandboxID      string `json:"sandboxId"`
 	PreviewURL     string `json:"previewUrl"`
 	// Status tracks async provisioning: "provisioning" (sandbox created, harness
@@ -240,6 +249,22 @@ type SpawnInput struct {
 	Kind string
 	// TenantID scopes the session to a tenant (control plane). Empty = local daemon.
 	TenantID string
+	// Credential is the harness credential the CALLER supplies at spawn time
+	// (e.g. the desktop app reads the user's current Claude credential and passes
+	// it here). When set it is injected into the sandbox verbatim as the harness's
+	// credential file, taking precedence over any server-side source — so the
+	// hosted control plane never needs a stored copy. NEVER logged or persisted.
+	Credential string
+	// OrchestratorID is the session id of the orchestrator that requested this
+	// worker (delegated spawn). Injected into the sandbox as
+	// AO_ORCHESTRATOR_SESSION_ID so the worker's daemon reports idle over the bus
+	// to that remote orchestrator. Empty for a non-delegated spawn.
+	OrchestratorID string
+	// IdempotencyKey, when set, dedupes spawns: a retry carrying the same key
+	// returns the already-created session instead of provisioning a second
+	// sandbox. Lets a caller safely retry a delegated spawn whose response was
+	// lost (e.g. the sandbox→control-plane egress reset the connection).
+	IdempotencyKey string
 }
 
 // SpawnResult acknowledges a spawn. Provisioning is async, so only the sandbox
@@ -266,7 +291,29 @@ func (s *Supervisor) SpawnCloud(ctx context.Context, in SpawnInput) (*SpawnResul
 		return nil, err
 	}
 
-	box, err := s.createSandbox(ctx, client, recipe)
+	// Idempotency: a retried delegated spawn (same key) must not create a second
+	// sandbox — return the session already provisioned for this key. Guards
+	// against the sandbox→control-plane egress resetting a spawn's response.
+	if in.IdempotencyKey != "" {
+		s.mu.Lock()
+		for _, v := range s.sessions {
+			if v.TenantID == in.TenantID && v.IdempotencyKey == in.IdempotencyKey && v.Status != StatusTerminated && v.Status != StatusFailed {
+				res := &SpawnResult{SandboxID: v.SandboxID, Status: v.Status}
+				s.mu.Unlock()
+				s.logf("cloud: idempotent spawn hit key=%s → sandbox=%s", in.IdempotencyKey, shortID(v.SandboxID))
+				return res, nil
+			}
+		}
+		s.mu.Unlock()
+	}
+
+	// Detach the create call from the caller's request context (with its own
+	// timeout) so a client disconnect mid-request — e.g. a delegated spawn from
+	// inside a sandbox, over the internet — can't abort provisioning. The slow
+	// half already runs on a background context; this covers the sync half too.
+	createCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 90*time.Second)
+	defer cancel()
+	box, err := s.createSandbox(createCtx, client, recipe)
 	if err != nil {
 		return nil, err
 	}
@@ -277,6 +324,9 @@ func (s *Supervisor) SpawnCloud(ctx context.Context, in SpawnInput) (*SpawnResul
 	s.sessions[sandboxID] = &CloudSession{
 		LocalProjectID: in.LocalProjectID,
 		Harness:        in.Harness,
+		Kind:           in.Kind,
+		OrchestratorID: in.OrchestratorID,
+		IdempotencyKey: in.IdempotencyKey,
 		SandboxID:      sandboxID,
 		Status:         StatusProvisioning,
 		DisplayName:    in.DisplayName,
@@ -303,7 +353,7 @@ func (s *Supervisor) finishProvisioning(client SandboxProvider, box *Sandbox, re
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	previewURL, err := s.installAndBoot(ctx, client, box, recipe, in.TenantID)
+	previewURL, err := s.installAndBoot(ctx, client, box, recipe, in)
 	if err != nil {
 		s.markFailed(box.ID, err.Error(), client)
 		return
@@ -364,6 +414,49 @@ func (s *Supervisor) markFailed(sandboxID, msg string, client SandboxProvider) {
 // createSandbox provisions the Daytona sandbox only (fast, ~3s with a baked
 // snapshot) and resolves its toolbox proxy URL. The slow install/boot happens in
 // installAndBoot.
+// egressAllowList builds the sandbox's egress domain allowlist (Option A): the
+// control-plane host + the harness's domains + the base set (git/apt). It's
+// applied ONLY in hosted mode (a control-plane URL is configured) — that's when
+// the sandbox must reach a host Daytona's curated default blocks, and setting
+// the list REPLACES that default. In local-daemon mode it returns "" so Daytona's
+// default (which already permits git/npm/anthropic) stays in effect. The result
+// is default-deny egress scoped to exactly what the harness needs.
+func (s *Supervisor) egressAllowList(recipe Recipe) string {
+	cpHost := hostOf(s.cfg.ControlPlaneURL)
+	if cpHost == "" {
+		return "" // local daemon: no control plane to reach → keep Daytona's default
+	}
+	seen := map[string]bool{}
+	var out []string
+	add := func(d string) {
+		d = strings.TrimSpace(d)
+		if d != "" && !seen[d] {
+			seen[d] = true
+			out = append(out, d)
+		}
+	}
+	add(cpHost)
+	for _, d := range recipe.EgressDomains {
+		add(d)
+	}
+	for _, d := range baseEgressDomains {
+		add(d)
+	}
+	return strings.Join(out, ",") // Daytona caps at 20; the wildcards keep us well under
+}
+
+// hostOf returns the bare hostname of a URL (no scheme/port/path), or "".
+func hostOf(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if u, err := url.Parse(raw); err == nil && u.Host != "" {
+		return u.Hostname()
+	}
+	return ""
+}
+
 func (s *Supervisor) createSandbox(ctx context.Context, client SandboxProvider, recipe Recipe) (*Sandbox, error) {
 	// Prefer the harness's pre-baked snapshot (claude/tmux already installed) over
 	// the generic default (which needs a multi-minute install).
@@ -376,6 +469,7 @@ func (s *Supervisor) createSandbox(ctx context.Context, client SandboxProvider, 
 	box, err := client.Create(ctx, CreateSandboxRequest{
 		Snapshot:           snapshot,
 		Labels:             map[string]string{"app": "ao-agent-host", "harness": recipe.ID},
+		DomainAllowList:    s.egressAllowList(recipe),
 		AutoDeleteInterval: &autoDelete,
 	})
 	if err != nil {
@@ -397,7 +491,7 @@ func (s *Supervisor) createSandbox(ctx context.Context, client SandboxProvider, 
 // installAndBoot uploads the ao binary, installs the harness (unless baked),
 // ports credentials, boots the scoped agent-host, and returns a signed preview
 // URL. On any error the sandbox is torn down.
-func (s *Supervisor) installAndBoot(ctx context.Context, client SandboxProvider, box *Sandbox, recipe Recipe, tenantID string) (previewURL string, err error) {
+func (s *Supervisor) installAndBoot(ctx context.Context, client SandboxProvider, box *Sandbox, recipe Recipe, in SpawnInput) (previewURL string, err error) {
 	linux := s.cfg.LinuxBinaryPath()
 	if linux == "" {
 		return "", fmt.Errorf("cloud: linux ao binary not configured (set AO_LINUX_BINARY)")
@@ -447,7 +541,7 @@ func (s *Supervisor) installAndBoot(ctx context.Context, client SandboxProvider,
 	}
 
 	// 3. port credential + headless seed
-	if err = s.portCredentials(ctx, client, *box, recipe, sh); err != nil {
+	if err = s.portCredentials(ctx, client, *box, recipe, sh, in.Credential); err != nil {
 		return "", err
 	}
 
@@ -464,11 +558,16 @@ func (s *Supervisor) installAndBoot(ctx context.Context, client SandboxProvider,
 		env["AO_CONTROL_PLANE_URL"] = s.cfg.ControlPlaneURL
 		env["AO_DAEMON_ID"] = box.ID
 		if s.cfg.MintBusToken != nil {
-			if tok, mErr := s.cfg.MintBusToken(tenantID, box.ID); mErr == nil && tok != "" {
+			if tok, mErr := s.cfg.MintBusToken(in.TenantID, box.ID); mErr == nil && tok != "" {
 				env["AO_BUS_TOKEN"] = tok
 			} else if mErr != nil {
 				s.logf("cloud: bus token mint failed for sandbox %s: %v", shortID(box.ID), mErr)
 			}
+		}
+		// A delegated worker sandbox learns its remote orchestrator so its daemon
+		// can report worker_idle back over the bus (Task 4).
+		if in.OrchestratorID != "" {
+			env["AO_ORCHESTRATOR_SESSION_ID"] = in.OrchestratorID
 		}
 	}
 	if len(recipe.PathAdd) > 0 {
@@ -728,6 +827,17 @@ func runGit(dir string, args ...string) string {
 // normalizeGitURL converts an SSH git remote to its https form so the sandbox
 // clones over https (with a token if one is available). Already-https URLs and
 // unknown schemes pass through unchanged.
+// redactURLUserinfo strips any user:password@ from an https URL so an inline
+// token can't leak into an error string. Non-URL input is returned unchanged.
+func redactURLUserinfo(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.User == nil {
+		return raw
+	}
+	u.User = nil
+	return u.String()
+}
+
 func normalizeGitURL(raw string) string {
 	raw = strings.TrimSpace(raw)
 	switch {
@@ -821,7 +931,9 @@ func (s *Supervisor) prepareProject(ctx context.Context, client SandboxProvider,
 	// so a token in a credential prompt can never reach a log line.
 	clone := fmt.Sprintf("if [ ! -d %s/.git ]; then git clone %s %s; fi", q, shQuote(spec.RemoteURL), q)
 	if _, err := sh(clone, 600); err != nil {
-		return fmt.Errorf("cloud: clone %s failed (see sandbox)", spec.RemoteURL)
+		// Redact any userinfo (an inline token) before the URL reaches a persisted
+		// / client-returned error. (Audit #12.)
+		return fmt.Errorf("cloud: clone %s failed (see sandbox)", redactURLUserinfo(spec.RemoteURL))
 	}
 	// Check out the local branch if it exists on the remote; otherwise stay on the
 	// default branch. Best-effort — a cloud session sees PUSHED state, not local
@@ -929,11 +1041,21 @@ func (s *Supervisor) api(ctx context.Context, previewURL, method, apiPath string
 
 // ── credential porting ──────────────────────────────────────────────────────
 
-func (s *Supervisor) portCredentials(ctx context.Context, client SandboxProvider, box Sandbox, recipe Recipe, sh func(string, int) (string, error)) error {
+func (s *Supervisor) portCredentials(ctx context.Context, client SandboxProvider, box Sandbox, recipe Recipe, sh func(string, int) (string, error), injectedCred string) error {
 	for _, pf := range recipe.Auth.PortedFiles {
-		bytesData, ok := resolveLocalCredential(pf)
-		if !ok {
-			return fmt.Errorf("cloud: no local credential for %s (%s); authenticate locally first", recipe.ID, pf.Remote)
+		// A caller-supplied credential (spawn-time injection) wins over any
+		// server-side source, so the hosted control plane needs no stored copy.
+		// It applies to the harness's credential file — the ported file that has
+		// local credential sources.
+		var bytesData []byte
+		if injectedCred != "" && len(pf.Local) > 0 {
+			bytesData = []byte(injectedCred)
+		} else {
+			resolved, ok := resolveLocalCredential(pf)
+			if !ok {
+				return fmt.Errorf("cloud: no credential for %s (%s); pass one at spawn or authenticate locally first", recipe.ID, pf.Remote)
+			}
+			bytesData = resolved
 		}
 		if dir := path.Dir(pf.Remote); dir != "." && dir != "" {
 			if _, err := sh(fmt.Sprintf("mkdir -p /home/daytona/%s && chmod 700 /home/daytona/%s", dir, dir), 60); err != nil {
@@ -1003,13 +1125,17 @@ func (s *Supervisor) get(sandboxID string) *CloudSession {
 	return s.sessions[sandboxID]
 }
 
-// save persists the durable identity of each session (not preview URLs, which
-// expire, nor sandbox handles). Best-effort.
+// save persists the durable identity of each session. Preview URLs are
+// deliberately NOT persisted: a signed preview URL is a full-control bearer
+// secret for the sandbox, and it expires — Restore re-mints a fresh one. (Audit
+// #8: previously the whole struct, including PreviewURL, was written.) Best-effort.
 func (s *Supervisor) save() {
 	s.mu.Lock()
 	rows := make([]CloudSession, 0, len(s.sessions))
 	for _, v := range s.sessions {
-		rows = append(rows, *v)
+		row := *v
+		row.PreviewURL = "" // never persist the signed preview bearer
+		rows = append(rows, row)
 	}
 	s.mu.Unlock()
 	_ = s.cfg.Store.Save(rows)

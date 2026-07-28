@@ -117,6 +117,34 @@ type Manager struct {
 	// concurrently; without this two of them can read the same pending row and
 	// both send it before either marks it delivered.
 	dispatchLocks sync.Map
+	// remoteOrchestrator + remoteNudge wire the federated bus (Phase B): in a
+	// worker sandbox the orchestrator lives in ANOTHER location, so there is no
+	// local orchestrator to nudge. When these are set (late-bound by the daemon
+	// once the bus client is up), a worker_idle event with no local orchestrator
+	// is emitted over the bus to remoteOrchestrator instead of being held. Empty
+	// id / nil fn ⇒ purely-local behavior, unchanged.
+	//
+	// remoteSelfKey is THIS sandbox's globally-unique bus routing key (its
+	// sandboxId / AO_DAEMON_ID). The nudge must identify the worker to the remote
+	// orchestrator by this key — NOT the in-sandbox session id, which collides
+	// across sandboxes and, worse, usually matches the orchestrator's OWN local
+	// session id (so `ao send <in-sandbox-id>` would loop back to the orchestrator
+	// itself). See the bus-addressing audit.
+	remoteOrchestrator domain.SessionID
+	remoteSelfKey      domain.SessionID
+	remoteNudge        func(ctx context.Context, orchestratorID, workerRoutingKey domain.SessionID, message string) error
+}
+
+// SetRemoteNudge late-binds the federated-bus worker→orchestrator path (the bus
+// client is constructed after this Manager). orchestratorID is the remote
+// orchestrator this sandbox's workers report to; selfKey is this sandbox's own
+// bus routing key (sandboxId) used to address this worker back. Empty ⇒ local-only.
+func (m *Manager) SetRemoteNudge(orchestratorID, selfKey domain.SessionID, nudge func(ctx context.Context, orchestratorID, workerRoutingKey domain.SessionID, message string) error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.remoteOrchestrator = orchestratorID
+	m.remoteSelfKey = selfKey
+	m.remoteNudge = nudge
 }
 
 // New builds a Lifecycle Manager over the session store it writes and the messenger it uses for agent nudges.
@@ -477,7 +505,13 @@ func (m *Manager) DispatchPendingWorkerIdleEvents(ctx context.Context, project d
 		slog.Default().Error("lifecycle: resolve orchestrator", "project", project, "err", err)
 		return
 	}
-	if !ok || !m.safeToDeliver(orch) {
+	// Federated bus: no LOCAL orchestrator, but this worker sandbox reports to a
+	// remote one — emit the nudge over the bus instead of holding it. (Task 4.)
+	if !ok {
+		m.dispatchRemoteWorkerIdle(ctx, project)
+		return
+	}
+	if !m.safeToDeliver(orch) {
 		return
 	}
 	events, err := m.store.ListPendingWorkerIdleEventsByProject(ctx, project)
@@ -499,6 +533,50 @@ func (m *Manager) DispatchPendingWorkerIdleEvents(ctx context.Context, project d
 	if err := m.store.MarkWorkerIdleEventDelivered(ctx, ev.ID, m.clock()); err != nil {
 		slog.Default().Error("lifecycle: mark worker idle delivered", "event", ev.ID, "err", err)
 	}
+}
+
+// dispatchRemoteWorkerIdle emits pending worker_idle nudges to a remote
+// orchestrator over the federated bus, one per pass (matching the local
+// one-nudge-per-turn drain). No-op unless the daemon wired a remote orchestrator.
+// Caller holds the per-project dispatch lock.
+func (m *Manager) dispatchRemoteWorkerIdle(ctx context.Context, project domain.ProjectID) {
+	m.mu.Lock()
+	remoteID, selfKey, nudge := m.remoteOrchestrator, m.remoteSelfKey, m.remoteNudge
+	m.mu.Unlock()
+	if remoteID == "" || nudge == nil {
+		return
+	}
+	events, err := m.store.ListPendingWorkerIdleEventsByProject(ctx, project)
+	if err != nil {
+		slog.Default().Error("lifecycle: list pending worker events", "project", project, "err", err)
+		return
+	}
+	if len(events) == 0 {
+		return
+	}
+	ev := events[0]
+	// Address the worker to the remote orchestrator by THIS sandbox's routing key
+	// (selfKey = sandboxId), not the in-sandbox WorkerID (collides / would loop).
+	worker := selfKey
+	if worker == "" {
+		worker = ev.WorkerID // fallback (should not happen for a delegated worker)
+	}
+	if err := nudge(ctx, remoteID, worker, m.remoteWorkerIdleNudgeMessage(worker)); err != nil {
+		slog.Default().Error("lifecycle: remote worker idle nudge", "worker", worker, "orchestrator", remoteID, "err", err)
+		return // leave pending; retried on the next transition
+	}
+	if err := m.store.MarkWorkerIdleEventDelivered(ctx, ev.ID, m.clock()); err != nil {
+		slog.Default().Error("lifecycle: mark worker idle delivered", "event", ev.ID, "err", err)
+	}
+}
+
+// remoteWorkerIdleNudgeMessage is the cross-location variant of
+// workerIdleNudgeMessage: it addresses the worker by its bus routing key
+// (sandboxId), which the orchestrator uses with `ao send` / `ao fleet` — never
+// the in-sandbox id, which is not addressable from another location.
+func (m *Manager) remoteWorkerIdleNudgeMessage(workerRoutingKey domain.SessionID) string {
+	return fmt.Sprintf("A cloud worker (%s) has gone idle. Inspect your workers with `ao fleet`, "+
+		"then direct it with `ao send %s --message \"…\"`.", workerRoutingKey, workerRoutingKey)
 }
 
 // DispatchAllPendingWorkerIdleEvents re-attempts delivery for every project with

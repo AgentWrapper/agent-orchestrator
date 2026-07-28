@@ -61,15 +61,31 @@ type Recipe struct {
 	PathAdd      []string          // dirs prepended to PATH (~ expands to sandbox home)
 	HeadlessSeed []HeadlessSeed    // JSON seeds written before boot
 	Verified     bool              // proven end-to-end in a real sandbox
+	// EgressDomains are the harness-specific hostnames the sandbox must reach
+	// (model API, package registries). Combined with the base set + the control
+	// plane host to form the sandbox's egress allowlist in hosted mode. Wildcards
+	// allowed (leading "*"). Empty for credential-free harnesses.
+	EgressDomains []string
+}
+
+// baseEgressDomains are the hosts EVERY harness sandbox needs: the git host (for
+// clone/gh) and apt mirrors (best-effort gh/git install on the non-baked path).
+// Wildcards keep the list well under Daytona's 20-entry cap.
+var baseEgressDomains = []string{
+	"*.github.com",
+	"*.githubusercontent.com",
+	"*.debian.org",
+	"*.ubuntu.com",
 }
 
 // recipes is the registry keyed by harness id.
 var recipes = map[string]Recipe{
 	"claude-code": {
-		ID:       "claude-code",
-		Binary:   "claude",
-		Install:  []string{"curl -fsSL https://claude.ai/install.sh | bash"},
-		Snapshot: "ao-claude-code-v1", // pre-baked: claude + tmux + git (see scripts/bake-snapshot)
+		ID:            "claude-code",
+		Binary:        "claude",
+		Install:       []string{"curl -fsSL https://claude.ai/install.sh | bash"},
+		Snapshot:      "ao-claude-code-v1", // pre-baked: claude + tmux + git (see scripts/bake-snapshot)
+		EgressDomains: []string{"*.anthropic.com", "*.npmjs.org", "claude.ai"},
 		Auth: AuthConfig{
 			Mode: AuthOAuthFile,
 			PortedFiles: []PortedFile{

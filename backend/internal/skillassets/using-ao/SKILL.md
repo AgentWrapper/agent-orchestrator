@@ -25,6 +25,22 @@ trigger: "Using the ao CLI in an AO workspace: spawning workers, managing sessio
 | `version` | Print version information | Checking installed version | - |
 | `completion` | Generate shell completion scripts | Setting up tab completion | - |
 
+## Cloud sessions
+
+When you are running **inside a cloud session** (an AO sandbox), coordination
+works exactly as it does locally — the same commands — but across sandboxes:
+
+- `ao spawn` provisions each worker in **its own cloud sandbox** automatically
+  (no extra flag needed) and prints the new session id. Spawn workers exactly as
+  you would locally.
+- `ao send <session-id> --message "..."` reaches a worker **wherever it lives**;
+  you address it by session id, not by location.
+- `ao fleet` lists every session you own **across all sandboxes** (use this to
+  see your workers; the plain `ao session ls` only shows this sandbox).
+- Workers report back to you automatically when they go idle.
+
+You never manage sandboxes or URLs — address everything by session id.
+
 ## Conventions
 
 - Most read commands accept `--json` for machine-readable output.

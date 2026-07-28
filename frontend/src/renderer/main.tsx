@@ -16,7 +16,8 @@ import { createAppRouter } from "./router";
 import { TelemetryBoundary } from "./components/TelemetryBoundary";
 import { initTelemetry } from "./lib/telemetry";
 import { startDaemonFailureTelemetry } from "./lib/daemon-telemetry";
-import { setCloudAuthTokenGetter } from "./lib/api-client";
+import { setCloudAuthTokenGetter, getControlPlaneBaseUrl } from "./lib/api-client";
+import { aoBridge } from "./lib/bridge";
 
 // Publishable keys are public by design (Clerk embeds them in client code). The
 // fallback is our dev instance so cloud sign-in works out of the box; override
@@ -28,7 +29,7 @@ const CLERK_PUBLISHABLE_KEY =
 // Bridges Clerk's session token to the API client so control-plane cloud calls
 // carry an Authorization: Bearer JWT. Renders nothing; lives inside ClerkProvider.
 function CloudAuthBridge(): null {
-	const { getToken } = useAuth();
+	const { getToken, isSignedIn } = useAuth();
 	React.useEffect(() => {
 		setCloudAuthTokenGetter(async () => {
 			try {
@@ -39,6 +40,42 @@ function CloudAuthBridge(): null {
 		});
 		return () => setCloudAuthTokenGetter(null);
 	}, [getToken]);
+
+	// Keep the local daemon's bus credentials in sync with the Clerk session so a
+	// LOCAL orchestrator/worker can take part in the federated bus. Mints a
+	// longer-lived, tenant-scoped bus token from the control plane and hands it to
+	// the daemon (via the main process); clears it on sign-out. Best-effort.
+	React.useEffect(() => {
+		let cancelled = false;
+		async function sync() {
+			const cpUrl = getControlPlaneBaseUrl();
+			if (!isSignedIn || !cpUrl) {
+				await aoBridge.cloud.clearBusCredentials().catch(() => undefined);
+				return;
+			}
+			try {
+				const clerkToken = await getToken();
+				if (!clerkToken || cancelled) return;
+				const resp = await fetch(`${cpUrl}/api/v1/cloud/bus/token`, {
+					method: "POST",
+					headers: { Authorization: `Bearer ${clerkToken}`, "Content-Type": "application/json" },
+					body: "{}",
+				});
+				if (!resp.ok || cancelled) return;
+				const data = (await resp.json()) as { token?: string };
+				if (!data.token || cancelled) return;
+				await aoBridge.cloud.setBusCredentials({ controlPlaneUrl: cpUrl, token: data.token });
+			} catch {
+				// Transient — retried on the next tick / sign-in change.
+			}
+		}
+		void sync();
+		const refresh = setInterval(() => void sync(), 6 * 60 * 60 * 1000); // token ~12h
+		return () => {
+			cancelled = true;
+			clearInterval(refresh);
+		};
+	}, [isSignedIn, getToken]);
 	return null;
 }
 

@@ -2684,6 +2684,8 @@ components:
       properties:
         branch:
           type: string
+        credential:
+          type: string
         displayName:
           type: string
         harness:

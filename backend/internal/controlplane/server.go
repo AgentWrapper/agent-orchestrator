@@ -52,16 +52,22 @@ func NewServer(sup *cloud.Supervisor, auth Authenticator, busSigner *BusTokenSig
 	// as LocationSandbox; drop it on teardown.
 	sup.SetLocationHooks(
 		func(cs cloud.CloudSession) {
+			// Route by the globally-unique sandboxId; keep the in-sandbox session
+			// id for the relay URL. (In-sandbox ids collide across sandboxes.)
 			locations.Register(SessionLocation{
-				SessionID:  cs.SessionID,
-				TenantID:   cs.TenantID,
-				ProjectID:  cs.LocalProjectID,
-				Type:       LocationSandbox,
-				PreviewURL: cs.PreviewURL,
+				SessionID:          cs.SandboxID,
+				TenantID:           cs.TenantID,
+				ProjectID:          cs.LocalProjectID,
+				Kind:               cs.Kind,
+				Type:               LocationSandbox,
+				SandboxID:          cs.SandboxID,
+				InSandboxSessionID: cs.SessionID,
+				OrchestratorID:     cs.OrchestratorID,
+				PreviewURL:         cs.PreviewURL,
 			})
 		},
 		func(cs cloud.CloudSession) {
-			locations.Remove(cs.TenantID, cs.SessionID)
+			locations.Remove(cs.TenantID, cs.SandboxID)
 		},
 	)
 	return srv
@@ -89,6 +95,10 @@ func (s *Server) Handler() http.Handler {
 		r.Post("/api/v1/cloud/sessions/{sandboxId}/share", s.share)
 		r.Delete("/api/v1/cloud/sessions/{sandboxId}", s.terminate)
 		r.Post("/api/v1/cloud/proxy", s.proxy)
+		// A laptop daemon mints a longer-lived, tenant-scoped bus token here (with
+		// its real user JWT) so it can join the bus without re-sending the
+		// short-lived Clerk token on every frame. (Task 1: laptop-in-loop.)
+		r.Post("/api/v1/cloud/bus/token", s.busToken)
 	})
 
 	// Federated bus (Phase B): the daemon channel + routing endpoints. These
@@ -96,10 +106,14 @@ func (s *Server) Handler() http.Handler {
 	// in-sandbox daemon) — but never let a bus token reach spawn/terminate above.
 	r.Group(func(r chi.Router) {
 		r.Use(busAuthMiddleware(s.auth, s.busSigner))
-		r.Get("/api/v1/cloud/bus/stream", s.busStream)      // CP → daemon (SSE push)
-		r.Post("/api/v1/cloud/bus/register", s.busRegister) // daemon → CP: own these sessions
-		r.Post("/api/v1/cloud/bus/route", s.busRoute)       // daemon → CP: route a command
-		r.Post("/api/v1/cloud/bus/event", s.busEvent)       // daemon → CP: deliver an event
+		r.Get("/api/v1/cloud/bus/stream", s.busStream)        // CP → daemon (SSE push)
+		r.Post("/api/v1/cloud/bus/register", s.busRegister)   // daemon → CP: own these sessions
+		r.Post("/api/v1/cloud/bus/route", s.busRoute)         // daemon → CP: route a command
+		r.Post("/api/v1/cloud/bus/event", s.busEvent)         // daemon → CP: deliver an event
+		r.Post("/api/v1/cloud/bus/provision", s.busProvision) // daemon → CP: provision a new sandbox
+		// Fleet view — bus-authed so an in-sandbox orchestrator (which holds only a
+		// bus token) can discover the workers it owns across locations. (Task 3.)
+		r.Get("/api/v1/cloud/bus/locations", s.busLocations)
 	})
 	return withCORS(r)
 }
@@ -146,6 +160,15 @@ type spawnRequest struct {
 	DisplayName string `json:"displayName,omitempty"`
 	Branch      string `json:"branch,omitempty"`
 	Kind        string `json:"kind,omitempty"`
+	// Credential is the harness credential the client supplies at spawn time
+	// (e.g. the desktop app's current Claude credential). Injected into the
+	// sandbox and discarded — never stored or logged by the control plane.
+	Credential string `json:"credential,omitempty"`
+	// OrchestratorID is set on a delegated spawn (an orchestrator provisioning a
+	// worker): the worker's sandbox reports idle back to this session over the bus.
+	OrchestratorID string `json:"orchestratorId,omitempty"`
+	// IdempotencyKey dedupes retried delegated spawns (see cloud.SpawnInput).
+	IdempotencyKey string `json:"idempotencyKey,omitempty"`
 }
 
 func (s *Server) spawn(w http.ResponseWriter, r *http.Request) {
@@ -169,6 +192,45 @@ func (s *Server) spawn(w http.ResponseWriter, r *http.Request) {
 		Branch:         in.Branch,
 		Kind:           in.Kind,
 		TenantID:       tenant,
+		Credential:     in.Credential,
+	})
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, res)
+}
+
+// busProvision lets a bus-authed caller (an in-sandbox orchestrator, or a laptop
+// daemon) provision a NEW sandbox for its tenant. It's the delegation path for
+// `ao spawn --cloud` from inside a keyless sandbox: the sandbox can't reach the
+// cloud provider, so it asks the control plane to do it. Bus-authed (a scoped
+// bus token works), tenant-scoped, and it accepts a spawn-time credential so the
+// orchestrator's credential propagates to the new worker. (Task 2.)
+func (s *Server) busProvision(w http.ResponseWriter, r *http.Request) {
+	tenant := TenantFromContext(r.Context())
+	var in spawnRequest
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		return
+	}
+	if in.Harness == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "harness is required"})
+		return
+	}
+	res, err := s.sup.SpawnCloud(r.Context(), cloud.SpawnInput{
+		Harness:        in.Harness,
+		LocalProjectID: in.LocalProjectID,
+		ProjectPath:    in.ProjectPath,
+		RemoteURL:      in.RemoteURL,
+		Prompt:         in.Prompt,
+		DisplayName:    in.DisplayName,
+		Branch:         in.Branch,
+		Kind:           in.Kind,
+		TenantID:       tenant,
+		Credential:     in.Credential,
+		OrchestratorID: in.OrchestratorID,
+		IdempotencyKey: in.IdempotencyKey,
 	})
 	if err != nil {
 		s.writeErr(w, err)

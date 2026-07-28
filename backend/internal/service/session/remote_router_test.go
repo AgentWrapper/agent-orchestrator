@@ -8,8 +8,9 @@ import (
 )
 
 type fakeRemoteRouter struct {
-	routed []struct{ id, msg string }
-	err    error
+	routed   []struct{ id, msg string }
+	err      error
+	canRoute bool
 }
 
 func (f *fakeRemoteRouter) RouteSend(_ context.Context, id, msg string) error {
@@ -20,11 +21,13 @@ func (f *fakeRemoteRouter) RouteSend(_ context.Context, id, msg string) error {
 	return nil
 }
 
+func (f *fakeRemoteRouter) CanRoute() bool { return f.canRoute }
+
 func TestSend_RoutesRemoteWhenSessionNotLocal(t *testing.T) {
 	fc := &fakeCommander{}
 	st := newFakeStore()
 	svc := NewWithDeps(Deps{Manager: fc, Store: st})
-	rr := &fakeRemoteRouter{}
+	rr := &fakeRemoteRouter{canRoute: true}
 	svc.SetRemoteRouter(rr)
 
 	if err := svc.Send(context.Background(), "remote-1", "hi"); err != nil {
@@ -43,7 +46,7 @@ func TestSend_LocalWhenSessionKnown(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["local-1"] = domain.SessionRecord{ID: "local-1"}
 	svc := NewWithDeps(Deps{Manager: fc, Store: st})
-	rr := &fakeRemoteRouter{}
+	rr := &fakeRemoteRouter{canRoute: true}
 	svc.SetRemoteRouter(rr)
 
 	if err := svc.Send(context.Background(), "local-1", "hi"); err != nil {
@@ -69,11 +72,29 @@ func TestSend_NoRouterAlwaysLocal(t *testing.T) {
 	}
 }
 
+func TestSend_UnconfiguredRouterStaysLocal(t *testing.T) {
+	fc := &fakeCommander{}
+	st := newFakeStore()
+	svc := NewWithDeps(Deps{Manager: fc, Store: st})
+	rr := &fakeRemoteRouter{canRoute: false} // bus present but not ready (signed out)
+	svc.SetRemoteRouter(rr)
+
+	if err := svc.Send(context.Background(), "unknown-1", "hi"); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if len(rr.routed) != 0 {
+		t.Fatalf("must not route when CanRoute() is false, routed=%+v", rr.routed)
+	}
+	if len(fc.sent) != 1 {
+		t.Fatalf("should fall back to local delivery, sent=%v", fc.sent)
+	}
+}
+
 func TestSendLocal_NeverRoutes(t *testing.T) {
 	fc := &fakeCommander{}
 	st := newFakeStore()
 	svc := NewWithDeps(Deps{Manager: fc, Store: st})
-	rr := &fakeRemoteRouter{}
+	rr := &fakeRemoteRouter{canRoute: true}
 	svc.SetRemoteRouter(rr)
 
 	// SendLocal on an unknown session must still stay local (loop guard for

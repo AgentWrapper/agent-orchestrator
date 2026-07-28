@@ -98,14 +98,21 @@ func (h *Hub) Connect(tenantID, daemonID string, c daemonConn) {
 	byDaemon[daemonID] = c
 }
 
-// Disconnect drops a daemon's channel and forgets every session it owned.
-func (h *Hub) Disconnect(tenantID, daemonID string) {
+// Disconnect drops a daemon's channel and forgets every session it owned — but
+// only if the still-registered channel is the exact conn that is departing.
+// Otherwise a slow teardown of an OLD stream would clobber a NEWLY reconnected
+// daemon's live channel and wipe its freshly re-registered sessions. (Audit
+// findings #6/#11: compare-and-delete.)
+func (h *Hub) Disconnect(tenantID, daemonID string, c daemonConn) {
 	h.mu.Lock()
-	if byDaemon := h.conns[tenantID]; byDaemon != nil {
-		delete(byDaemon, daemonID)
-		if len(byDaemon) == 0 {
-			delete(h.conns, tenantID)
-		}
+	byDaemon := h.conns[tenantID]
+	if byDaemon == nil || byDaemon[daemonID] != c {
+		h.mu.Unlock()
+		return // a newer connection replaced us; leave it (and its sessions) alone
+	}
+	delete(byDaemon, daemonID)
+	if len(byDaemon) == 0 {
+		delete(h.conns, tenantID)
 	}
 	h.mu.Unlock()
 	h.locations.RemoveDaemon(tenantID, daemonID)
@@ -124,6 +131,29 @@ func (h *Hub) Register(tenantID, daemonID string, sessions []SessionRef) {
 			DaemonID:  daemonID,
 		})
 	}
+}
+
+// AuthorizeBusTarget decides whether a SCOPED bus-token caller (scoped to sandbox
+// `scope`) may address `targetID`. A full user token (scoped=false, checked by
+// the caller) bypasses this. A scoped caller may reach only: itself, the
+// orchestrator that owns it, or a worker it owns. This confines a per-sandbox
+// token so it can't drive or message unrelated sessions in a shared org tenant
+// (audit #5). Unknown target ⇒ allowed here (routing returns ErrSessionNotFound).
+func (h *Hub) AuthorizeBusTarget(tenantID, scope, targetID string) bool {
+	if scope == "" || scope == targetID {
+		return true // unscoped, or addressing self
+	}
+	target, ok := h.locations.Lookup(tenantID, targetID)
+	if !ok {
+		return true // not found → let routing surface ErrSessionNotFound
+	}
+	if target.OrchestratorID == scope {
+		return true // caller orchestrates the target
+	}
+	if caller, ok := h.locations.Lookup(tenantID, scope); ok && caller.OrchestratorID == targetID {
+		return true // target is the caller's orchestrator
+	}
+	return false
 }
 
 // conn returns the live channel for a daemon, if any.
@@ -145,7 +175,11 @@ func (h *Hub) RouteCommand(ctx context.Context, tenantID string, cmd Command) er
 	}
 	switch loc.Type {
 	case LocationSandbox:
-		return h.relay.Relay(ctx, loc.PreviewURL, cmd)
+		// cmd.SessionID is the routing key (sandboxId); rewrite it to the
+		// in-sandbox session id the sandbox daemon actually knows before relaying.
+		relayCmd := cmd
+		relayCmd.SessionID = loc.InSandboxSessionID
+		return h.relay.Relay(ctx, loc.PreviewURL, relayCmd)
 	case LocationDaemon:
 		c, ok := h.conn(tenantID, loc.DaemonID)
 		if !ok {
@@ -165,7 +199,11 @@ func (h *Hub) DeliverEvent(ctx context.Context, tenantID string, ev Event) error
 	}
 	switch loc.Type {
 	case LocationSandbox:
-		return h.relay.RelayEvent(ctx, loc.PreviewURL, ev)
+		// ev.ToSessionID is the routing key (sandboxId); rewrite to the in-sandbox
+		// session id for the relay into the sandbox.
+		relayEv := ev
+		relayEv.ToSessionID = loc.InSandboxSessionID
+		return h.relay.RelayEvent(ctx, loc.PreviewURL, relayEv)
 	case LocationDaemon:
 		c, ok := h.conn(tenantID, loc.DaemonID)
 		if !ok {

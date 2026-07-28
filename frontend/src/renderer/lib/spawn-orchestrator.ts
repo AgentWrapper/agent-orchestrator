@@ -1,5 +1,6 @@
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "./api-client";
+import { aoBridge } from "./bridge";
 import { cloudBoardId, refreshCloudSessions } from "./cloud-sessions";
 import type { OrchestratorSpawnSource } from "./orchestrator-spawn-sources";
 import { captureRendererEvent } from "./telemetry";
@@ -67,6 +68,11 @@ async function spawnOrchestratorInCloud(projectId: string): Promise<string> {
 		throw new Error("Set this project's orchestrator agent before running it in the cloud.");
 	}
 
+	// Spawn-time credential injection: hand the sandbox our CURRENT local
+	// credential so the control plane needs no stored copy. undefined when none
+	// (e.g. a credential-free harness) → control plane falls back to its source.
+	const credential = (await aoBridge.cloud.getHarnessCredential(harness)) ?? undefined;
+
 	const { data, error, response } = await apiClient.POST("/api/v1/cloud/sessions", {
 		body: {
 			harness,
@@ -77,6 +83,7 @@ async function spawnOrchestratorInCloud(projectId: string): Promise<string> {
 			remoteUrl: project.repo ?? "",
 			kind: "orchestrator",
 			displayName: "Orchestrator (cloud)",
+			credential,
 		},
 	});
 	if (error || !data?.sandboxId) {

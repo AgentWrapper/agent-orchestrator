@@ -301,21 +301,33 @@ func Run() error {
 		log.Error("reconcile agent processes on boot failed", "err", reconcileErr)
 	}
 
-	// Redeliver any worker_idle events left pending across the restart, now that
-	// sessions (and their orchestrators) have been reconciled. Off the critical
-	// boot path (a store read plus a possible pane write per pending project);
-	// the recovery sweep is the backstop if it does not finish before shutdown.
-	go lcStack.LCM.DispatchAllPendingWorkerIdleEvents(ctx)
-
 	// Federated bus (Phase B): join the control plane so this daemon's sessions
 	// can be reached — and can reach — sessions living in other locations
 	// (cloud sandboxes / other daemons). No-op unless AO_CONTROL_PLANE_URL is set,
 	// so the all-local flow is untouched. Cancelled with ctx at shutdown. When
 	// live, wire it as the session service's remote router so a send to a
-	// non-local session routes over the bus instead of failing not-found.
+	// non-local session routes over the bus instead of failing not-found, and (in
+	// a delegated worker sandbox) as the LCM's remote worker_idle nudge path so
+	// idle reports reach the orchestrator living in another location.
 	if bc := startBusClient(ctx, cfg, sessionSvc, log); bc != nil {
 		sessionSvc.SetRemoteRouter(bc)
+		if cfg.Bus.OrchestratorID != "" {
+			lcStack.LCM.SetRemoteNudge(
+				domain.SessionID(cfg.Bus.OrchestratorID),
+				domain.SessionID(cfg.Bus.DaemonID), // this sandbox's own routing key
+				func(ctx context.Context, orchestratorID, workerRoutingKey domain.SessionID, message string) error {
+					return bc.EmitMessage(ctx, string(workerRoutingKey), string(orchestratorID), message)
+				},
+			)
+		}
 	}
+
+	// Redeliver any worker_idle events left pending across the restart, now that
+	// sessions (and their orchestrators) have been reconciled AND the bus nudge is
+	// wired. Off the critical boot path (a store read plus a possible pane write
+	// per pending project); the recovery sweep is the backstop if it does not
+	// finish before shutdown.
+	go lcStack.LCM.DispatchAllPendingWorkerIdleEvents(ctx)
 
 	// ponytail: 5s tolerates a brief frontend restart; tune if dev hot-reload trips it.
 	const supervisorGrace = 5 * time.Second

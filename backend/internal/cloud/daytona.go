@@ -83,11 +83,15 @@ func (s Sandbox) Stopped() bool {
 
 // CreateSandboxRequest is the POST /sandbox body (subset).
 type CreateSandboxRequest struct {
-	Snapshot           string            `json:"snapshot,omitempty"`
-	Env                map[string]string `json:"env,omitempty"`
-	Labels             map[string]string `json:"labels,omitempty"`
-	AutoStopInterval   *int              `json:"autoStopInterval,omitempty"`
-	AutoDeleteInterval *int              `json:"autoDeleteInterval,omitempty"`
+	Snapshot string            `json:"snapshot,omitempty"`
+	Env      map[string]string `json:"env,omitempty"`
+	Labels   map[string]string `json:"labels,omitempty"`
+	// DomainAllowList is a comma-separated egress allowlist (hostnames, wildcards
+	// via a leading "*", max 20). When set it REPLACES Daytona's curated default,
+	// so it must enumerate every host the sandbox needs. Empty ⇒ Daytona default.
+	DomainAllowList    string `json:"domainAllowList,omitempty"`
+	AutoStopInterval   *int   `json:"autoStopInterval,omitempty"`
+	AutoDeleteInterval *int   `json:"autoDeleteInterval,omitempty"`
 }
 
 // Create provisions a new sandbox (POST /sandbox).

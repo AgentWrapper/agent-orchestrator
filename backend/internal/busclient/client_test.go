@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -46,10 +48,32 @@ func (f *fakeExec) OwnedSessions(_ context.Context) ([]busproto.SessionRef, erro
 func TestClient_DisabledIsNoop(t *testing.T) {
 	c := New(Config{}, newFakeExec(), nil)
 	if c.cfg.Enabled() {
-		t.Fatal("empty URL should be disabled")
+		t.Fatal("no URL and no creds file should be disabled")
 	}
 	if err := c.Run(context.Background()); err != nil {
 		t.Fatalf("disabled Run should return nil, got %v", err)
+	}
+}
+
+func TestClient_FileCredentialsOverrideEnv(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "bus-credentials.json")
+	c := New(Config{CredentialsPath: p}, newFakeExec(), nil)
+
+	// No file yet → not routable (signed-out laptop).
+	if c.CanRoute() {
+		t.Fatal("should not be routable before the creds file exists")
+	}
+	// Desktop app drops the token file after sign-in.
+	if err := os.WriteFile(p, []byte(`{"controlPlaneUrl":"https://cp","token":"tok","tenant":"acme"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !c.CanRoute() {
+		t.Fatal("should become routable once the creds file appears")
+	}
+	url, token, tenant := c.currentCreds()
+	if url != "https://cp" || token != "tok" || tenant != "acme" {
+		t.Fatalf("currentCreds = %q/%q/%q", url, token, tenant)
 	}
 }
 

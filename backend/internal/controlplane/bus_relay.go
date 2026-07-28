@@ -57,6 +57,12 @@ func (r *supervisorRelay) post(ctx context.Context, previewURL, path string, bod
 
 func eventMessage(ev Event) string {
 	if len(ev.Data) > 0 {
+		// Unwrap a JSON-encoded string payload so the injected message has no
+		// surrounding quotes; fall back to raw bytes otherwise.
+		var s string
+		if json.Unmarshal(ev.Data, &s) == nil {
+			return s
+		}
 		return string(ev.Data)
 	}
 	return ev.Kind

@@ -59,14 +59,22 @@ func TestHub_RouteCommandToDaemon(t *testing.T) {
 
 func TestHub_RouteCommandToSandbox(t *testing.T) {
 	h, reg, relay := newTestHub()
+	// Routing key is the sandboxId; the in-sandbox session id (collides across
+	// sandboxes) is stored separately and used for the relay.
 	reg.Register(SessionLocation{
-		SessionID: "w2", TenantID: "acme", Type: LocationSandbox, PreviewURL: "https://preview/sb",
+		SessionID: "sb-123", TenantID: "acme", Type: LocationSandbox,
+		InSandboxSessionID: "proj-1", PreviewURL: "https://preview/sb",
 	})
-	if err := h.RouteCommand(context.Background(), "acme", Command{Op: "kill", SessionID: "w2"}); err != nil {
+	if err := h.RouteCommand(context.Background(), "acme", Command{Op: "kill", SessionID: "sb-123"}); err != nil {
 		t.Fatalf("route: %v", err)
 	}
 	if len(relay.cmds) != 1 || relay.cmds[0].url != "https://preview/sb" || relay.cmds[0].cmd.Op != "kill" {
 		t.Fatalf("relay got %+v", relay.cmds)
+	}
+	// The command relayed INTO the sandbox must carry the in-sandbox session id,
+	// not the sandboxId routing key.
+	if relay.cmds[0].cmd.SessionID != "proj-1" {
+		t.Fatalf("relay cmd sessionId = %q, want in-sandbox id proj-1", relay.cmds[0].cmd.SessionID)
 	}
 }
 
@@ -103,12 +111,20 @@ func TestHub_DeliverEventToOrchestratorOnDaemon(t *testing.T) {
 
 func TestHub_DeliverEventToSandbox(t *testing.T) {
 	h, reg, relay := newTestHub()
-	reg.Register(SessionLocation{SessionID: "orch1", TenantID: "acme", Type: LocationSandbox, PreviewURL: "https://preview/orch"})
-	if err := h.DeliverEvent(context.Background(), "acme", Event{FromSessionID: "w1", ToSessionID: "orch1"}); err != nil {
+	reg.Register(SessionLocation{
+		SessionID: "sb-orch", TenantID: "acme", Type: LocationSandbox,
+		InSandboxSessionID: "orch-local-1", PreviewURL: "https://preview/orch",
+	})
+	// A worker reports to the orchestrator by its routing key (sandboxId).
+	if err := h.DeliverEvent(context.Background(), "acme", Event{FromSessionID: "w1", ToSessionID: "sb-orch"}); err != nil {
 		t.Fatalf("deliver: %v", err)
 	}
 	if len(relay.events) != 1 || relay.events[0].url != "https://preview/orch" {
 		t.Fatalf("relay events %+v", relay.events)
+	}
+	// Delivered into the sandbox using the in-sandbox session id.
+	if relay.events[0].ev.ToSessionID != "orch-local-1" {
+		t.Fatalf("relay event ToSessionID = %q, want in-sandbox id orch-local-1", relay.events[0].ev.ToSessionID)
 	}
 }
 
@@ -118,10 +134,52 @@ func TestHub_DisconnectRemovesSessions(t *testing.T) {
 	h.Connect("acme", "daemon-A", c)
 	h.Register("acme", "daemon-A", []SessionRef{{SessionID: "w1", Kind: "worker"}})
 
-	h.Disconnect("acme", "daemon-A")
+	h.Disconnect("acme", "daemon-A", c)
 
 	if err := h.RouteCommand(context.Background(), "acme", Command{Op: "send", SessionID: "w1"}); !errors.Is(err, ErrSessionNotFound) {
 		t.Fatalf("after disconnect want ErrSessionNotFound, got %v", err)
+	}
+}
+
+// A stale stream's teardown must NOT clobber a daemon that reconnected with a new
+// channel (audit #6/#11): Disconnect with the OLD conn is a no-op.
+func TestHub_DisconnectStaleConnIsNoop(t *testing.T) {
+	h, _, _ := newTestHub()
+	oldC := &fakeConn{}
+	h.Connect("acme", "daemon-A", oldC)
+	newC := &fakeConn{}
+	h.Connect("acme", "daemon-A", newC) // reconnect replaces the channel
+	h.Register("acme", "daemon-A", []SessionRef{{SessionID: "w1", Kind: "worker"}})
+
+	h.Disconnect("acme", "daemon-A", oldC) // stale teardown — must be ignored
+
+	if err := h.RouteCommand(context.Background(), "acme", Command{Op: "send", SessionID: "w1", Message: "hi"}); err != nil {
+		t.Fatalf("reconnected daemon should still route, got %v", err)
+	}
+	if len(newC.sent) != 1 {
+		t.Fatalf("new channel should have received the command, got %d frames", len(newC.sent))
+	}
+}
+
+// Two sandboxes whose in-sandbox session ids collide ("proj-1" each) must remain
+// independently addressable via their distinct sandboxId routing keys — the bug
+// the live run surfaced.
+func TestHub_NoCollisionAcrossSandboxesWithSameInSandboxID(t *testing.T) {
+	h, reg, relay := newTestHub()
+	reg.Register(SessionLocation{SessionID: "sb-A", TenantID: "acme", Type: LocationSandbox, InSandboxSessionID: "proj-1", PreviewURL: "https://preview/A"})
+	reg.Register(SessionLocation{SessionID: "sb-B", TenantID: "acme", Type: LocationSandbox, InSandboxSessionID: "proj-1", PreviewURL: "https://preview/B"})
+
+	if err := h.RouteCommand(context.Background(), "acme", Command{Op: "send", SessionID: "sb-A", Message: "to-A"}); err != nil {
+		t.Fatalf("route A: %v", err)
+	}
+	if err := h.RouteCommand(context.Background(), "acme", Command{Op: "send", SessionID: "sb-B", Message: "to-B"}); err != nil {
+		t.Fatalf("route B: %v", err)
+	}
+	if len(relay.cmds) != 2 {
+		t.Fatalf("want 2 relays, got %d", len(relay.cmds))
+	}
+	if relay.cmds[0].url != "https://preview/A" || relay.cmds[1].url != "https://preview/B" {
+		t.Fatalf("collision: relays went to %q and %q", relay.cmds[0].url, relay.cmds[1].url)
 	}
 }
 

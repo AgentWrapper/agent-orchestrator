@@ -8,6 +8,7 @@ import { Label } from "./ui/label";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { aoBridge } from "../lib/bridge";
 import { captureRendererEvent } from "../lib/telemetry";
 import type { AgentProvider } from "../types/workspace";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
@@ -129,6 +130,9 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 			// card then behaves like any local session (its state/terminal stream from
 			// the sandbox). Provisioning blocks for ~15-20s.
 			if (runInCloud) {
+				// Spawn-time credential injection: pass our CURRENT local credential
+				// so the control plane needs no stored copy. undefined → it falls back.
+				const credential = (await aoBridge.cloud.getHarnessCredential(effectiveHarness)) ?? undefined;
 				const { data, error: apiError } = await apiClient.POST("/api/v1/cloud/sessions", {
 					body: {
 						harness: effectiveHarness,
@@ -140,6 +144,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 						prompt: cleanPrompt,
 						displayName: cleanTitle.slice(0, 20),
 						branch: !isScratchProject && cleanBranch ? cleanBranch : undefined,
+						credential,
 					},
 				});
 				if (apiError) throw new Error(apiErrorMessage(apiError, "Unable to start cloud task"));

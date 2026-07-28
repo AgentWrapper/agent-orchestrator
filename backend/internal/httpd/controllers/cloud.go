@@ -63,6 +63,10 @@ type CloudSpawnRequest struct {
 	DisplayName string `json:"displayName,omitempty"`
 	Branch      string `json:"branch,omitempty"`
 	Kind        string `json:"kind,omitempty"`
+	// Credential is the harness credential supplied at spawn time (the desktop
+	// app reads the user's current Claude credential and sends it). Injected into
+	// the sandbox and discarded — never stored or logged.
+	Credential string `json:"credential,omitempty"`
 }
 
 // CloudSpawnResponse acknowledges a spawn. Provisioning is async: the sandbox is
@@ -182,6 +186,7 @@ func (c *CloudController) spawn(w http.ResponseWriter, r *http.Request) {
 		DisplayName:    in.DisplayName,
 		Branch:         in.Branch,
 		Kind:           in.Kind,
+		Credential:     in.Credential,
 	})
 	if err != nil {
 		envelope.WriteError(w, r, err)

@@ -1013,6 +1013,7 @@ export interface components {
         };
         ControllersCloudSpawnRequest: {
             branch?: string;
+            credential?: string;
             displayName?: string;
             harness: string;
             kind?: string;

@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -98,8 +99,8 @@ func TestBusRoute_DaemonOffline503(t *testing.T) {
 
 func TestBusEvent_ToSandboxRelays(t *testing.T) {
 	s, relay := testServer()
-	s.locations.Register(SessionLocation{SessionID: "orch1", TenantID: "acme", Type: LocationSandbox, PreviewURL: "https://preview/o"})
-	req := withTenant(httptest.NewRequest("POST", "/api/v1/cloud/bus/event", strings.NewReader(`{"fromSessionId":"w1","toSessionId":"orch1","kind":"message"}`)), "acme")
+	s.locations.Register(SessionLocation{SessionID: "sb-o", TenantID: "acme", Type: LocationSandbox, InSandboxSessionID: "orch1", PreviewURL: "https://preview/o"})
+	req := withTenant(httptest.NewRequest("POST", "/api/v1/cloud/bus/event", strings.NewReader(`{"fromSessionId":"w1","toSessionId":"sb-o","kind":"message"}`)), "acme")
 	rec := httptest.NewRecorder()
 	s.busEvent(rec, req)
 	if rec.Code != http.StatusOK {
@@ -107,6 +108,35 @@ func TestBusEvent_ToSandboxRelays(t *testing.T) {
 	}
 	if len(relay.events) != 1 || relay.events[0].url != "https://preview/o" {
 		t.Fatalf("relay events %+v", relay.events)
+	}
+}
+
+func TestBusProvision_RequiresHarness(t *testing.T) {
+	s, _ := testServer()
+	req := withTenant(httptest.NewRequest("POST", "/api/v1/cloud/bus/provision", strings.NewReader(`{}`)), "acme")
+	rec := httptest.NewRecorder()
+	s.busProvision(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("want 400 without harness, got %d", rec.Code)
+	}
+}
+
+func TestBusLocations_ListsTenantSessions(t *testing.T) {
+	s, _ := testServer()
+	s.locations.Register(SessionLocation{SessionID: "w1", TenantID: "acme", Type: LocationSandbox, Kind: "worker", SandboxID: "box1"})
+	s.locations.Register(SessionLocation{SessionID: "other", TenantID: "globex", Type: LocationSandbox})
+	req := withTenant(httptest.NewRequest("GET", "/api/v1/cloud/bus/locations", nil), "acme")
+	rec := httptest.NewRecorder()
+	s.busLocations(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("locations status %d", rec.Code)
+	}
+	var out struct {
+		Sessions []map[string]any `json:"sessions"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	if len(out.Sessions) != 1 || out.Sessions[0]["sessionId"] != "w1" {
+		t.Fatalf("want only acme's w1, got %+v", out.Sessions)
 	}
 }
 
