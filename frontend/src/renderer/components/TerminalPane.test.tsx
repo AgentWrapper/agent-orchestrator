@@ -347,6 +347,42 @@ describe("terminal link preview", () => {
 		}
 	});
 
+	it("keeps a replay URL deferred at a chunk boundary classified as replay", () => {
+		const view = renderPane(worker);
+		try {
+			act(() => terminalOutputHandler?.("old http://localhost:3000/app", "replay"));
+			act(() => terminalOutputHandler?.("live output\n", "live"));
+			expect(postMock).not.toHaveBeenCalled();
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("uses the restored session state for a watcher created while inactive", async () => {
+		const inactiveWorker = { ...worker, status: "terminated" };
+		const view = renderPane(inactiveWorker);
+		try {
+			act(() => terminalOutputHandler?.("old http://localhost:3000/app\n", "live"));
+			expect(postMock).not.toHaveBeenCalled();
+
+			view.rerender(
+				<QueryClientProvider client={view.queryClient}>
+					<TerminalPane daemonReady fontSize={12} session={worker} theme="dark" />
+				</QueryClientProvider>,
+			);
+			act(() => terminalOutputHandler?.("ready http://localhost:4000/app\n", "live"));
+
+			await waitFor(() =>
+				expect(postMock).toHaveBeenCalledWith(
+					"/api/v1/sessions/{sessionId}/preview",
+					previewRequest("http://localhost:4000/app"),
+				),
+			);
+		} finally {
+			view.restore();
+		}
+	});
+
 	it("does not auto-open an external URL printed in live output", () => {
 		const view = renderPane(worker);
 		try {

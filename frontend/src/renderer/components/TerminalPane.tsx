@@ -315,19 +315,25 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	// so reconnecting cannot steal focus and a printed PR/docs link stays passive.
 	const watchLinks = Boolean(session?.id && session.kind === "worker" && terminalTarget?.kind !== "shell");
 	const urlWatcherRef = useRef<UrlWatcher | null>(null);
+	const urlWatcherSessionRef = useRef<string | null>(null);
 	const outputPhaseRef = useRef<"replay" | "live">("replay");
+	const openLinkInBrowserRef = useRef(openLinkInBrowser);
+	openLinkInBrowserRef.current = openLinkInBrowser;
+	const linkSessionIdRef = useRef(session?.id);
+	linkSessionIdRef.current = session?.id;
 	const handleOutput = useCallback(
 		(text: string, phase: "replay" | "live") => {
 			const sessionId = session?.id;
 			if (!sessionId) return;
-			outputPhaseRef.current = phase;
-			if (!urlWatcherRef.current) {
+			if (!urlWatcherRef.current || urlWatcherSessionRef.current !== sessionId) {
+				urlWatcherSessionRef.current = sessionId;
+				outputPhaseRef.current = phase;
 				urlWatcherRef.current = createUrlWatcher((url) => {
 					if (outputPhaseRef.current === "live") {
 						try {
 							const parsed = new URL(url);
 							if (isLoopbackHostname(parsed.hostname)) {
-								openLinkInBrowser(url);
+								openLinkInBrowserRef.current(url);
 								return;
 							}
 						} catch {
@@ -336,14 +342,22 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 						}
 					}
 					const store = useUiStore.getState();
-					const current = store.inspectorSessions[sessionId];
+					const currentSessionId = linkSessionIdRef.current;
+					if (!currentSessionId) return;
+					const current = store.inspectorSessions[currentSessionId];
 					const viewingBrowser = (current?.isOpen ?? true) && (current?.view ?? "summary") === "browser";
-					if (!viewingBrowser) store.setBrowserUnseen(sessionId, true);
+					if (!viewingBrowser) store.setBrowserUnseen(currentSessionId, true);
 				});
+			}
+			if (outputPhaseRef.current !== phase) {
+				// Flush any URL deferred at the prior chunk boundary while it
+				// still has its original replay/live classification.
+				urlWatcherRef.current.push("\n");
+				outputPhaseRef.current = phase;
 			}
 			urlWatcherRef.current.push(text);
 		},
-		[openLinkInBrowser, session?.id],
+		[session?.id],
 	);
 	const { attach, state, error, replaySettled } = useTerminalSession(attachSession, {
 		daemonReady,
