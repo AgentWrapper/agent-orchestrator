@@ -101,6 +101,42 @@ func TestPollerBaselinesExistingMarkdownWhenWorkspaceMaterializes(t *testing.T) 
 	})
 }
 
+func TestPollerBaselinesFilesCreatedBeforeRuntimeLaunchIsCommitted(t *testing.T) {
+	workspace := t.TempDir()
+	sess := workerSession("ao-1", workspace, "")
+	sess.Metadata.RuntimeHandleID = ""
+	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{sess}}
+	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
+
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("seed session Poll: %v", err)
+	}
+	writeFile(t, filepath.Join(workspace, "README.md"), "# Existing documentation")
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("worktree population Poll: %v", err)
+	}
+
+	svc.sessions[0].Metadata.RuntimeHandleID = "ao-1"
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("launched session Poll: %v", err)
+	}
+	assertSets(t, svc.sets)
+
+	entry := filepath.Join(workspace, "README.md")
+	writeFile(t, entry, "# Changed documentation")
+	nextMod := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(entry, nextMod, nextMod); err != nil {
+		t.Fatalf("chtimes markdown: %v", err)
+	}
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("changed markdown Poll: %v", err)
+	}
+	assertSets(t, svc.sets, previewSet{
+		id:  "ao-1",
+		url: mustFileURL(t, "http://127.0.0.1:3001", "ao-1", "README.md"),
+	})
+}
+
 func TestPollerDefersChangedEntryUntilWorkerFinishesActiveWork(t *testing.T) {
 	workspace := t.TempDir()
 	sess := workerSession("ao-1", workspace, "")
@@ -125,6 +161,30 @@ func TestPollerDefersChangedEntryUntilWorkerFinishesActiveWork(t *testing.T) {
 		id:  "ao-1",
 		url: mustFileURL(t, "http://127.0.0.1:3001", "ao-1", "index.html"),
 	})
+}
+
+func TestPollerDoesNotApplyPendingRefreshAfterExplicitPreviewChange(t *testing.T) {
+	workspace := t.TempDir()
+	sess := workerSession("ao-1", workspace, "")
+	sess.Activity.State = domain.ActivityActive
+	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{sess}}
+	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
+
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("baseline Poll: %v", err)
+	}
+	writeFile(t, filepath.Join(workspace, "index.html"), "<main>finished UI</main>")
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("active Poll: %v", err)
+	}
+
+	svc.sessions[0].Metadata.PreviewURL = "http://127.0.0.1:4173/app"
+	svc.sessions[0].Metadata.PreviewRevision++
+	svc.sessions[0].Activity.State = domain.ActivityIdle
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("idle Poll: %v", err)
+	}
+	assertSets(t, svc.sets)
 }
 
 func TestPollerUsesFirstExistingEntrypoint(t *testing.T) {
@@ -596,8 +656,9 @@ func workerSession(id domain.SessionID, workspace, previewURL string) domain.Ses
 		Kind:     domain.KindWorker,
 		Activity: domain.Activity{State: domain.ActivityIdle},
 		Metadata: domain.SessionMetadata{
-			WorkspacePath: workspace,
-			PreviewURL:    previewURL,
+			WorkspacePath:   workspace,
+			RuntimeHandleID: string(id),
+			PreviewURL:      previewURL,
 		},
 	}
 }

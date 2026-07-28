@@ -44,10 +44,16 @@ type entryState struct {
 	signature    uint64
 	entryModUnix int64
 	entrySize    int64
+	// initializing marks the seed-session window before the runtime launch is
+	// committed. Git may be populating the worktree during this interval, so
+	// files that appear are inherited baseline content, not worker changes.
+	initializing bool
 	// pending records a relevant file change observed while the worker was
 	// active. The final target is persisted only after the worker reaches an
 	// end-of-work activity state.
-	pending bool
+	pending                bool
+	pendingPreviewURL      string
+	pendingPreviewRevision int64
 	// missing baselines a workspace before any previewable file exists. A file
 	// created later is a real change, unlike a Markdown file already present
 	// when the daemon first observes the session.
@@ -126,6 +132,10 @@ func (p *Poller) Poll(ctx context.Context) error {
 		if sess.Kind != domain.KindWorker {
 			continue
 		}
+		if strings.TrimSpace(sess.Metadata.RuntimeHandleID) == "" {
+			p.seen[sess.ID] = entryState{initializing: true}
+			continue
+		}
 		storedEntry, workspaceOwned := StoredWorkspaceEntry(sess.Metadata.PreviewURL, sess.ID)
 		entry, ok := Entry{}, false
 		if workspaceOwned {
@@ -194,6 +204,8 @@ func (p *Poller) Poll(ctx context.Context) error {
 		}
 		if !previewReady(sess.Activity.State) {
 			state.pending = true
+			state.pendingPreviewURL = current
+			state.pendingPreviewRevision = sess.Metadata.PreviewRevision
 			p.seen[sess.ID] = state
 			continue
 		}
@@ -221,6 +233,11 @@ func (p *Poller) shouldRefresh(
 	pending bool,
 ) bool {
 	if pending {
+		previous := p.seen[sess.ID]
+		if strings.TrimSpace(sess.Metadata.PreviewURL) != previous.pendingPreviewURL ||
+			sess.Metadata.PreviewRevision != previous.pendingPreviewRevision {
+			return false
+		}
 		return true
 	}
 	current := strings.TrimSpace(sess.Metadata.PreviewURL)
@@ -229,6 +246,9 @@ func (p *Poller) shouldRefresh(
 			return false
 		}
 		previous := p.seen[sess.ID]
+		if previous.initializing {
+			return false
+		}
 		if previous.workspaceMissing {
 			return false
 		}
