@@ -118,7 +118,20 @@ func (p *Poller) Poll(ctx context.Context) error {
 			entry, ok = EntryAtPath(sess.Metadata.WorkspacePath, storedEntry)
 		}
 		if !ok {
-			entry, ok = DiscoverEntry(sess.Metadata.WorkspacePath)
+			// A session the user has never explicitly previewed
+			// (workspaceOwned == false) is only auto-previewed when it has a
+			// real static-frontend entrypoint (index.html variants). The
+			// mostRecentPreviewable .md/.html fallback is intentionally NOT
+			// applied here, otherwise every new session in a Markdown-rich repo
+			// auto-opens its browser to an arbitrary repo doc. Once a session
+			// has been explicitly previewed (workspaceOwned == true), full
+			// DiscoverEntry — including the document fallback — keeps the
+			// preview fresh. See issue #2859.
+			if workspaceOwned {
+				entry, ok = DiscoverEntry(sess.Metadata.WorkspacePath)
+			} else {
+				entry, ok = DiscoverWebEntrypoint(sess.Metadata.WorkspacePath)
+			}
 		}
 		if !ok {
 			if workspaceOwned {

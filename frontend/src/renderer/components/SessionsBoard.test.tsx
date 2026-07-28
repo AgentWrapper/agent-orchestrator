@@ -115,6 +115,48 @@ describe("SessionsBoard", () => {
 		expect(screen.getByRole("button", { name: "New task" })).toBeInTheDocument();
 	});
 
+	it.each([
+		["active", "Working", "bg-status-working", true],
+		["idle", "Idle", "bg-status-idle", false],
+	] as const)("shows %s orchestrator activity in the in-panel board toolbar", (state, label, tone, pulses) => {
+		boardActionsInPanelMock.mockReturnValue(true);
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				{
+					id: "p1",
+					name: "solkit-ui",
+					path: "/tmp/solkit-ui",
+					sessions: [
+						{
+							id: "orch-1",
+							workspaceId: "p1",
+							workspaceName: "solkit-ui",
+							title: "orchestrator",
+							provider: "codex",
+							kind: "orchestrator",
+							branch: "main",
+							status: "working",
+							activity: { state, lastActivityAt: "2026-01-01T00:00:00Z" },
+							updatedAt: "2026-01-01T00:00:00Z",
+							prs: [],
+						},
+					],
+				},
+			],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		const button = screen.getByRole("button", { name: `Orchestrator, ${label}` });
+		const indicator = button.querySelector("span.size-dot-sm") as HTMLElement;
+		expect(indicator).toHaveAttribute("aria-hidden", "true");
+		expect(indicator).toHaveClass(tone);
+		expect(indicator).toHaveClass(pulses ? "animate-status-pulse" : "size-dot-sm");
+		if (!pulses) expect(indicator).not.toHaveClass("animate-status-pulse");
+	});
+
 	it("shows the Board crumb on the root board when actions live in the panel", () => {
 		boardActionsInPanelMock.mockReturnValue(true);
 		workspaceQueryMock.mockReturnValue({
@@ -521,42 +563,25 @@ describe("SessionsBoard", () => {
 		).not.toBe(0);
 		expect(screen.getByRole("button", { name: "Restore dead worker" })).toBeInTheDocument();
 
-		// The row layout renders the same accessible logo (both archive layouts changed).
-		await userEvent.click(screen.getByRole("button", { name: "Rows" }));
-		const rowCard = within(screen.getByRole("list", { name: "Archived sessions" }))
-			.getByText("dead worker")
-			.closest<HTMLElement>("[role='listitem']");
-		expect(rowCard).not.toBeNull();
-		expect(within(rowCard!).getByRole("img", { name: "claude-code" })).toBeInTheDocument();
+		expect(screen.queryByRole("group", { name: "Archive layout" })).not.toBeInTheDocument();
 	});
 
-	it("switches between rows and columns and remembers the archive layout", async () => {
+	it("renders archived sessions as a grid even when rows were previously saved", async () => {
+		window.localStorage.setItem("ao.board.archive.layout", "rows");
 		workspaceQueryMock.mockReturnValue({
 			data: [workspaceWithSessions([terminatedSession()])],
 			isError: false,
 			isSuccess: true,
 		});
-		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-		const view = renderBoardWithClient(queryClient, "p1");
+		renderBoard("p1");
 
 		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
-		const layout = screen.getByRole("group", { name: "Archive layout" });
-		expect(within(layout).getByRole("button", { name: "Columns" })).toHaveAttribute("aria-pressed", "true");
-		expect(screen.getByRole("list", { name: "Archived sessions" })).toHaveClass("grid");
+		expect(screen.queryByRole("group", { name: "Archive layout" })).not.toBeInTheDocument();
+		const archive = screen.getByRole("list", { name: "Archived sessions" });
+		expect(archive).toHaveClass("grid");
 		const restore = screen.getByRole("button", { name: "Restore dead worker" });
 		expect(restore.parentElement).toContainElement(screen.getByText("Terminated"));
-
-		await userEvent.click(within(layout).getByRole("button", { name: "Rows" }));
-		expect(within(layout).getByRole("button", { name: "Rows" })).toHaveAttribute("aria-pressed", "true");
-		expect(screen.getByRole("list", { name: "Archived sessions" })).not.toHaveClass("grid");
 		expect(screen.queryByRole("button", { name: "Open dead worker" })).not.toBeInTheDocument();
-		expect(window.localStorage.getItem("ao.board.archive.layout")).toBe("rows");
-
-		view.unmount();
-		renderBoard("p1");
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
-		expect(screen.getByRole("button", { name: "Rows" })).toHaveAttribute("aria-pressed", "true");
-		expect(screen.getByRole("list", { name: "Archived sessions" })).not.toHaveClass("grid");
 	});
 
 	it("restores a terminated session, refreshes workspace data, and opens the restored terminal", async () => {
