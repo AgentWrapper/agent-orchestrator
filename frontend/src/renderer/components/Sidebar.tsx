@@ -256,7 +256,7 @@ export function Sidebar({
 							Orchestrator board
 						</TooltipContent>
 					</Tooltip>
-					<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate text-sm font-bold leading-none tracking-tight-lg text-foreground group-data-[collapsible=icon]:hidden">
+					<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate text-sm font-bold leading-tight tracking-tight-lg text-foreground group-data-[collapsible=icon]:hidden">
 						Agent Orchestrator
 					</span>
 					{isNightly && (
