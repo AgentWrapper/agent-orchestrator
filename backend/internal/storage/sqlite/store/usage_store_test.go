@@ -79,24 +79,33 @@ func TestUsageBindingAndSourceIdempotency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("insert source again: %v", err)
 	}
-	if srcAgain.ID != src.ID || srcAgain.NativeSessionID != "child-thread-updated" || srcAgain.FileIdentity != "dev:ino:updated" {
+	if srcAgain.ID != src.ID || srcAgain.NativeSessionID != "child-thread-updated" ||
+		srcAgain.FileIdentity != "dev:ino" || srcAgain.ParserVersion != "codex-rollout/v1" {
 		t.Fatalf("idempotent source = %+v", srcAgain)
 	}
 
-	ready, err := s.ListObserverReadyUsageSources(ctx, now.Add(2*time.Hour), 10)
+	watchable, err := s.ListWatchableUsageSources(ctx)
 	if err != nil {
-		t.Fatalf("ready sources: %v", err)
+		t.Fatalf("watchable sources: %v", err)
 	}
-	if len(ready) != 1 || ready[0].ID != src.ID {
-		t.Fatalf("ready sources = %+v, want source %d", ready, src.ID)
+	if len(watchable) != 1 || watchable[0].ID != src.ID {
+		t.Fatalf("watchable sources = %+v, want source %d", watchable, src.ID)
 	}
 
-	counts, err := s.CountUsageRowsForSession(ctx, sess.ID)
+	bindings, err := s.ListUsageBindingsForSession(ctx, sess.ID)
 	if err != nil {
-		t.Fatalf("counts: %v", err)
+		t.Fatalf("bindings: %v", err)
 	}
-	if counts.BindingCount != 1 || counts.SourceCount != 1 || counts.EventCount != 0 {
-		t.Fatalf("counts = %+v, want 1/1/0", counts)
+	sources, err := s.ListUsageSourcesForBinding(ctx, binding.ID)
+	if err != nil {
+		t.Fatalf("sources: %v", err)
+	}
+	aggregates, err := s.ListUsageModelAggregates(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("aggregates: %v", err)
+	}
+	if len(bindings) != 1 || len(sources) != 1 || len(aggregates) != 0 {
+		t.Fatalf("rows = bindings:%d sources:%d aggregates:%d, want 1/1/0", len(bindings), len(sources), len(aggregates))
 	}
 }
 
@@ -176,12 +185,8 @@ func TestApplyUsageChunkAtomicReplayAndAggregates(t *testing.T) {
 		t.Fatalf("aggregate last observed = %v, want %v", got.LastObservedAt, now)
 	}
 
-	coverage, err := s.UsageCoverageCountsForSession(ctx, sess.ID)
-	if err != nil {
-		t.Fatalf("coverage: %v", err)
-	}
-	if coverage.EventCount != 1 || coverage.ReasoningEventCount != 1 || coverage.EstimatedCostEventCount != 1 {
-		t.Fatalf("coverage = %+v, want 1/1/1", coverage)
+	if got.EventCount != 1 || got.ReasoningEventCount != 1 || got.EstimatedCostEventCount != 1 {
+		t.Fatalf("aggregate coverage counts = %+v, want 1/1/1", got)
 	}
 
 	ctxRow, ok, err := s.GetUsageSourceForIngestion(ctx, source.ID)
@@ -258,12 +263,16 @@ func TestUsageRowsCascadeWhenSeedSessionDeleted(t *testing.T) {
 	if err != nil || !deleted {
 		t.Fatalf("delete seed session = %v, %v; want true nil", deleted, err)
 	}
-	counts, err := s.CountUsageRowsForSession(ctx, sess.ID)
+	bindings, err := s.ListUsageBindingsForSession(ctx, sess.ID)
 	if err != nil {
-		t.Fatalf("counts after delete: %v", err)
+		t.Fatalf("bindings after delete: %v", err)
 	}
-	if counts != (domain.UsageRowCounts{}) {
-		t.Fatalf("counts after delete = %+v, want zero", counts)
+	aggregates, err := s.ListUsageModelAggregates(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("aggregates after delete: %v", err)
+	}
+	if len(bindings) != 0 || len(aggregates) != 0 {
+		t.Fatalf("rows after delete = bindings:%d aggregates:%d, want zero", len(bindings), len(aggregates))
 	}
 }
 

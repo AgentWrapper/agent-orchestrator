@@ -90,27 +90,46 @@ func (q *Queries) AggregateUsageBySessionHarnessModel(ctx context.Context, sessi
 	return items, nil
 }
 
-const countUsageRowsForSession = `-- name: CountUsageRowsForSession :one
-SELECT
-    (SELECT COUNT(*) FROM usage_bindings WHERE usage_bindings.session_id = ?1) AS binding_count,
-    (SELECT COUNT(*)
-     FROM usage_sources us
-     JOIN usage_bindings ub ON ub.id = us.binding_id
-     WHERE ub.session_id = ?1) AS source_count,
-    (SELECT COUNT(*) FROM model_usage_events WHERE model_usage_events.session_id = ?1) AS event_count
+const completeUsageBindingIfSettled = `-- name: CompleteUsageBindingIfSettled :execrows
+UPDATE usage_bindings
+SET state = CASE
+        WHEN EXISTS (
+            SELECT 1
+            FROM usage_sources
+            WHERE usage_sources.binding_id = ?1
+              AND (anomaly_count > 0 OR last_error_code <> '')
+        ) THEN 'partial'
+        ELSE 'complete'
+    END,
+    last_error_code = '',
+    last_seen_at = ?2,
+    updated_at = ?2
+WHERE id = ?1
+  AND state = 'finalizing'
+  AND EXISTS (
+      SELECT 1
+      FROM usage_sources
+      WHERE usage_sources.binding_id = ?1
+  )
+  AND NOT EXISTS (
+      SELECT 1
+      FROM usage_sources
+      WHERE usage_sources.binding_id = ?1
+        AND state <> 'complete'
+  )
 `
 
-type CountUsageRowsForSessionRow struct {
-	BindingCount int64
-	SourceCount  int64
-	EventCount   int64
+type CompleteUsageBindingIfSettledParams struct {
+	UsageBindingID int64
+	UpdatedAt      time.Time
 }
 
-func (q *Queries) CountUsageRowsForSession(ctx context.Context, sessionID domain.SessionID) (CountUsageRowsForSessionRow, error) {
-	row := q.db.QueryRowContext(ctx, countUsageRowsForSession, sessionID)
-	var i CountUsageRowsForSessionRow
-	err := row.Scan(&i.BindingCount, &i.SourceCount, &i.EventCount)
-	return i, err
+func (q *Queries) CompleteUsageBindingIfSettled(ctx context.Context, arg CompleteUsageBindingIfSettledParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, completeUsageBindingIfSettled, arg.UsageBindingID, arg.UpdatedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const getModelUsageEventByKey = `-- name: GetModelUsageEventByKey :one
@@ -287,11 +306,11 @@ INSERT INTO model_usage_events (
     binding_id, usage_source_id, project_id, session_id, harness, provider,
     model_id, observed_at, input_tokens, uncached_input_tokens,
     cache_read_tokens, cache_write_tokens, cache_write_5m_tokens,
-    cache_write_1h_tokens, output_tokens, reasoning_tokens, duration_ms,
+    cache_write_1h_tokens, output_tokens, reasoning_tokens,
     reported_cost_nanos, estimated_cost_nanos, pricing_version, cost_basis,
     token_confidence, cost_confidence, source_event_key, source_usage_hash,
     parser_version, source_cli_version, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertModelUsageEventParams struct {
@@ -311,7 +330,6 @@ type InsertModelUsageEventParams struct {
 	CacheWrite1hTokens  sql.NullInt64
 	OutputTokens        int64
 	ReasoningTokens     sql.NullInt64
-	DurationMs          sql.NullInt64
 	ReportedCostNanos   sql.NullInt64
 	EstimatedCostNanos  sql.NullInt64
 	PricingVersion      string
@@ -343,7 +361,6 @@ func (q *Queries) InsertModelUsageEvent(ctx context.Context, arg InsertModelUsag
 		arg.CacheWrite1hTokens,
 		arg.OutputTokens,
 		arg.ReasoningTokens,
-		arg.DurationMs,
 		arg.ReportedCostNanos,
 		arg.EstimatedCostNanos,
 		arg.PricingVersion,
@@ -378,10 +395,6 @@ ON CONFLICT (binding_id, artifact_path, generation) DO UPDATE SET
         WHEN excluded.subagent_id <> '' THEN excluded.subagent_id
         ELSE usage_sources.subagent_id
     END,
-    file_identity = CASE
-        WHEN excluded.file_identity <> '' THEN excluded.file_identity
-        ELSE usage_sources.file_identity
-    END,
     current_model_id = CASE
         WHEN excluded.current_model_id <> '' THEN excluded.current_model_id
         ELSE usage_sources.current_model_id
@@ -390,9 +403,8 @@ ON CONFLICT (binding_id, artifact_path, generation) DO UPDATE SET
         WHEN excluded.current_provider <> '' THEN excluded.current_provider
         ELSE usage_sources.current_provider
     END,
-    parser_version = excluded.parser_version,
     updated_at = excluded.updated_at
-RETURNING id, binding_id, kind, native_session_id, subagent_id, artifact_path, file_identity, generation, byte_offset, baseline_input_tokens, baseline_cached_input_tokens, baseline_cache_write_tokens, baseline_output_tokens, baseline_reasoning_tokens, parser_version, state, failure_count, anomaly_count, next_retry_at, last_error_code, last_observed_at, created_at, updated_at, current_model_id, current_provider
+RETURNING id, binding_id, kind, native_session_id, subagent_id, artifact_path, file_identity, generation, byte_offset, baseline_input_tokens, baseline_cached_input_tokens, baseline_cache_write_tokens, baseline_output_tokens, baseline_reasoning_tokens, current_model_id, current_provider, parser_version, state, failure_count, anomaly_count, next_retry_at, last_error_code, last_observed_at, created_at, updated_at
 `
 
 type InsertUsageSourceParams struct {
@@ -465,6 +477,8 @@ func (q *Queries) InsertUsageSource(ctx context.Context, arg InsertUsageSourcePa
 		&i.BaselineCacheWriteTokens,
 		&i.BaselineOutputTokens,
 		&i.BaselineReasoningTokens,
+		&i.CurrentModelID,
+		&i.CurrentProvider,
 		&i.ParserVersion,
 		&i.State,
 		&i.FailureCount,
@@ -474,8 +488,6 @@ func (q *Queries) InsertUsageSource(ctx context.Context, arg InsertUsageSourcePa
 		&i.LastObservedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.CurrentModelID,
-		&i.CurrentProvider,
 	)
 	return i, err
 }
@@ -556,69 +568,6 @@ func (q *Queries) ListCompactSessionUsage(ctx context.Context, projectID interfa
 	return items, nil
 }
 
-const listObserverReadyUsageSources = `-- name: ListObserverReadyUsageSources :many
-SELECT id, binding_id, kind, native_session_id, subagent_id, artifact_path, file_identity, generation, byte_offset, baseline_input_tokens, baseline_cached_input_tokens, baseline_cache_write_tokens, baseline_output_tokens, baseline_reasoning_tokens, parser_version, state, failure_count, anomaly_count, next_retry_at, last_error_code, last_observed_at, created_at, updated_at, current_model_id, current_provider
-FROM usage_sources
-WHERE state IN ('pending', 'active', 'error')
-  AND (next_retry_at IS NULL OR next_retry_at <= ?)
-ORDER BY updated_at, id
-LIMIT ?
-`
-
-type ListObserverReadyUsageSourcesParams struct {
-	NextRetryAt sql.NullTime
-	Limit       int64
-}
-
-func (q *Queries) ListObserverReadyUsageSources(ctx context.Context, arg ListObserverReadyUsageSourcesParams) ([]UsageSource, error) {
-	rows, err := q.db.QueryContext(ctx, listObserverReadyUsageSources, arg.NextRetryAt, arg.Limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []UsageSource{}
-	for rows.Next() {
-		var i UsageSource
-		if err := rows.Scan(
-			&i.ID,
-			&i.BindingID,
-			&i.Kind,
-			&i.NativeSessionID,
-			&i.SubagentID,
-			&i.ArtifactPath,
-			&i.FileIdentity,
-			&i.Generation,
-			&i.ByteOffset,
-			&i.BaselineInputTokens,
-			&i.BaselineCachedInputTokens,
-			&i.BaselineCacheWriteTokens,
-			&i.BaselineOutputTokens,
-			&i.BaselineReasoningTokens,
-			&i.ParserVersion,
-			&i.State,
-			&i.FailureCount,
-			&i.AnomalyCount,
-			&i.NextRetryAt,
-			&i.LastErrorCode,
-			&i.LastObservedAt,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.CurrentModelID,
-			&i.CurrentProvider,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listUsageBindingsForSession = `-- name: ListUsageBindingsForSession :many
 SELECT id, session_id, harness, native_root_id, initial_model_id, source_cli_version, state, last_error_code, first_seen_at, last_seen_at, updated_at
 FROM usage_bindings
@@ -665,7 +614,7 @@ const listUsageDiscoveryBindings = `-- name: ListUsageDiscoveryBindings :many
 SELECT ub.id, ub.session_id, ub.harness, ub.native_root_id, ub.initial_model_id, ub.source_cli_version, ub.state, ub.last_error_code, ub.first_seen_at, ub.last_seen_at, ub.updated_at
 FROM usage_bindings ub
 JOIN sessions s ON s.id = ub.session_id
-WHERE s.is_terminated = 0
+WHERE (s.is_terminated = 0 OR ub.state = 'finalizing')
   AND ub.harness IN ('claude-code', 'codex')
   AND ub.state IN ('discovering', 'active', 'finalizing')
   AND (
@@ -728,7 +677,7 @@ func (q *Queries) ListUsageDiscoveryBindings(ctx context.Context, limit int64) (
 }
 
 const listUsageSourcesForBinding = `-- name: ListUsageSourcesForBinding :many
-SELECT id, binding_id, kind, native_session_id, subagent_id, artifact_path, file_identity, generation, byte_offset, baseline_input_tokens, baseline_cached_input_tokens, baseline_cache_write_tokens, baseline_output_tokens, baseline_reasoning_tokens, parser_version, state, failure_count, anomaly_count, next_retry_at, last_error_code, last_observed_at, created_at, updated_at, current_model_id, current_provider
+SELECT id, binding_id, kind, native_session_id, subagent_id, artifact_path, file_identity, generation, byte_offset, baseline_input_tokens, baseline_cached_input_tokens, baseline_cache_write_tokens, baseline_output_tokens, baseline_reasoning_tokens, current_model_id, current_provider, parser_version, state, failure_count, anomaly_count, next_retry_at, last_error_code, last_observed_at, created_at, updated_at
 FROM usage_sources
 WHERE binding_id = ?
 ORDER BY generation, id
@@ -758,6 +707,8 @@ func (q *Queries) ListUsageSourcesForBinding(ctx context.Context, bindingID int6
 			&i.BaselineCacheWriteTokens,
 			&i.BaselineOutputTokens,
 			&i.BaselineReasoningTokens,
+			&i.CurrentModelID,
+			&i.CurrentProvider,
 			&i.ParserVersion,
 			&i.State,
 			&i.FailureCount,
@@ -767,8 +718,72 @@ func (q *Queries) ListUsageSourcesForBinding(ctx context.Context, bindingID int6
 			&i.LastObservedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listWatchableUsageSources = `-- name: ListWatchableUsageSources :many
+SELECT us.id, us.binding_id, us.kind, us.native_session_id, us.subagent_id, us.artifact_path, us.file_identity, us.generation, us.byte_offset, us.baseline_input_tokens, us.baseline_cached_input_tokens, us.baseline_cache_write_tokens, us.baseline_output_tokens, us.baseline_reasoning_tokens, us.current_model_id, us.current_provider, us.parser_version, us.state, us.failure_count, us.anomaly_count, us.next_retry_at, us.last_error_code, us.last_observed_at, us.created_at, us.updated_at
+FROM usage_sources us
+JOIN usage_bindings ub ON ub.id = us.binding_id
+JOIN sessions s ON s.id = ub.session_id
+WHERE (s.is_terminated = 0 OR ub.state = 'finalizing')
+  AND us.id = (
+      SELECT latest.id
+      FROM usage_sources latest
+      WHERE latest.binding_id = us.binding_id
+        AND latest.artifact_path = us.artifact_path
+      ORDER BY latest.generation DESC, latest.id DESC
+      LIMIT 1
+  )
+ORDER BY us.artifact_path, us.generation, us.id
+`
+
+func (q *Queries) ListWatchableUsageSources(ctx context.Context) ([]UsageSource, error) {
+	rows, err := q.db.QueryContext(ctx, listWatchableUsageSources)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []UsageSource{}
+	for rows.Next() {
+		var i UsageSource
+		if err := rows.Scan(
+			&i.ID,
+			&i.BindingID,
+			&i.Kind,
+			&i.NativeSessionID,
+			&i.SubagentID,
+			&i.ArtifactPath,
+			&i.FileIdentity,
+			&i.Generation,
+			&i.ByteOffset,
+			&i.BaselineInputTokens,
+			&i.BaselineCachedInputTokens,
+			&i.BaselineCacheWriteTokens,
+			&i.BaselineOutputTokens,
+			&i.BaselineReasoningTokens,
 			&i.CurrentModelID,
 			&i.CurrentProvider,
+			&i.ParserVersion,
+			&i.State,
+			&i.FailureCount,
+			&i.AnomalyCount,
+			&i.NextRetryAt,
+			&i.LastErrorCode,
+			&i.LastObservedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1022,27 +1037,5 @@ func (q *Queries) UpsertUsageBinding(ctx context.Context, arg UpsertUsageBinding
 		&i.LastSeenAt,
 		&i.UpdatedAt,
 	)
-	return i, err
-}
-
-const usageCoverageCountsForSession = `-- name: UsageCoverageCountsForSession :one
-SELECT
-    COUNT(*) AS event_count,
-    COUNT(reasoning_tokens) AS reasoning_event_count,
-    COUNT(estimated_cost_nanos) AS estimated_cost_event_count
-FROM model_usage_events
-WHERE session_id = ?
-`
-
-type UsageCoverageCountsForSessionRow struct {
-	EventCount              int64
-	ReasoningEventCount     int64
-	EstimatedCostEventCount int64
-}
-
-func (q *Queries) UsageCoverageCountsForSession(ctx context.Context, sessionID domain.SessionID) (UsageCoverageCountsForSessionRow, error) {
-	row := q.db.QueryRowContext(ctx, usageCoverageCountsForSession, sessionID)
-	var i UsageCoverageCountsForSessionRow
-	err := row.Scan(&i.EventCount, &i.ReasoningEventCount, &i.EstimatedCostEventCount)
 	return i, err
 }

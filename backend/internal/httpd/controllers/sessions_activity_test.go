@@ -28,13 +28,14 @@ type fakeUsageHookRecorder struct {
 	gotID     domain.SessionID
 	gotSignal usagesvc.HookSignal
 	calls     int
+	err       error
 }
 
 func (f *fakeUsageHookRecorder) RecordHook(_ context.Context, id domain.SessionID, signal usagesvc.HookSignal) error {
 	f.calls++
 	f.gotID = id
 	f.gotSignal = signal
-	return nil
+	return f.err
 }
 
 func (f *fakeActivityRecorder) ApplyActivitySignal(_ context.Context, id domain.SessionID, s ports.ActivitySignal) error {
@@ -99,7 +100,7 @@ func TestSessionsAPI_ActivityForwardsMetadataOnlySessionStartToUsage(t *testing.
 	t.Cleanup(srv.Close)
 
 	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity",
-		`{"event":"session-start","agentSessionId":"codex-native-1"}`)
+		`{"event":"session-start","agentSessionId":"codex-native-1","launchId":"launch-7"}`)
 	if status != http.StatusOK {
 		t.Fatalf("activity = %d, want 200; body=%s", status, body)
 	}
@@ -108,8 +109,32 @@ func TestSessionsAPI_ActivityForwardsMetadataOnlySessionStartToUsage(t *testing.
 	}
 	if usage.gotSignal.Event != "session-start" ||
 		usage.gotSignal.NativeSessionID != "codex-native-1" ||
+		usage.gotSignal.LaunchID != "launch-7" ||
 		usage.gotSignal.Harness != "" {
 		t.Fatalf("usage signal = %+v", usage.gotSignal)
+	}
+}
+
+func TestSessionsAPI_ActivityUsageFailureDoesNotRejectAgentSignal(t *testing.T) {
+	usage := &fakeUsageHookRecorder{err: errors.New("usage storage unavailable")}
+	activity := &fakeActivityRecorder{}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(httpd.NewRouterWithControl(
+		config.Config{},
+		log,
+		nil,
+		httpd.APIDeps{Activity: activity, UsageHooks: usage},
+		httpd.ControlDeps{},
+	))
+	t.Cleanup(srv.Close)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity",
+		`{"state":"idle","event":"session-end","agentSessionId":"native-1"}`)
+	if status != http.StatusOK {
+		t.Fatalf("activity = %d, want 200; body=%s", status, body)
+	}
+	if activity.calls != 1 || usage.calls != 1 {
+		t.Fatalf("activity calls=%d usage calls=%d, want 1/1", activity.calls, usage.calls)
 	}
 }
 

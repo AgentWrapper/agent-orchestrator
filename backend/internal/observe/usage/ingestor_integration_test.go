@@ -12,7 +12,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
-func TestObserverDiscoversAndCollectsCodexSourceCreatedAfterStartup(t *testing.T) {
+func TestIngestorCollectsCodexSourceDiscoveredAfterStartup(t *testing.T) {
 	ctx := context.Background()
 	store, err := sqlite.Open(t.TempDir())
 	if err != nil {
@@ -52,17 +52,15 @@ func TestObserverDiscoversAndCollectsCodexSourceCreatedAfterStartup(t *testing.T
 		t.Fatal(err)
 	}
 
-	observer := New(store, Config{
-		Clock:     func() time.Time { return now },
-		Reconcile: collector.ReconcileSources,
-	})
-	if err := observer.Poll(ctx); err != nil {
-		t.Fatalf("poll: %v", err)
+	if err := collector.ReconcileSources(ctx, -1); err != nil {
+		t.Fatalf("reconcile: %v", err)
 	}
+	ingestor := NewIngestor(store, IngestorConfig{Clock: func() time.Time { return now }})
+	ingestAllWatchable(ctx, t, store, ingestor)
 	assertTokenAggregate(t, store, session.ID, 120)
 }
 
-func TestObserverCompletesCodexExitWhoseSourceAppearsLate(t *testing.T) {
+func TestIngestorCompletesCodexExitWhoseSourceAppearsLate(t *testing.T) {
 	ctx := context.Background()
 	store, err := sqlite.Open(t.TempDir())
 	if err != nil {
@@ -90,6 +88,11 @@ func TestObserverCompletesCodexExitWhoseSourceAppearsLate(t *testing.T) {
 	if err := collector.BackfillActive(ctx); err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
+	session.IsTerminated = true
+	session.UpdatedAt = now.Add(time.Second)
+	if err := store.UpdateSession(ctx, session); err != nil {
+		t.Fatalf("terminate session after finalization registration: %v", err)
+	}
 
 	path := filepath.Join(root, "2026", "07", "28", "rollout-native-final.jsonl")
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -101,21 +104,21 @@ func TestObserverCompletesCodexExitWhoseSourceAppearsLate(t *testing.T) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	observer := New(store, Config{
-		Clock:     func() time.Time { return now },
-		Reconcile: collector.ReconcileSources,
-	})
-	if err := observer.Poll(ctx); err != nil {
-		t.Fatalf("poll: %v", err)
+	if err := collector.ReconcileSources(ctx, -1); err != nil {
+		t.Fatalf("reconcile: %v", err)
 	}
+	ingestor := NewIngestor(store, IngestorConfig{Clock: func() time.Time { return now }})
+	ingestAllWatchable(ctx, t, store, ingestor)
 	assertTokenAggregate(t, store, session.ID, 120)
+	now = now.Add(defaultFinalizationWait + time.Second)
+	ingestAllWatchable(ctx, t, store, ingestor)
 	bindings, err := store.ListUsageBindingsForSession(ctx, session.ID)
 	if err != nil || len(bindings) != 1 || bindings[0].State != domain.UsageBindingComplete {
 		t.Fatalf("bindings=%+v err=%v", bindings, err)
 	}
 }
 
-func TestObserverPreservesCursorWhenCodexRolloutMovesToArchive(t *testing.T) {
+func TestIngestorPreservesCursorWhenCodexRolloutMovesToArchive(t *testing.T) {
 	ctx := context.Background()
 	store, err := sqlite.Open(t.TempDir())
 	if err != nil {
@@ -157,13 +160,8 @@ func TestObserverPreservesCursorWhenCodexRolloutMovesToArchive(t *testing.T) {
 	if err := collector.BackfillActive(ctx); err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
-	observer := New(store, Config{
-		Clock:     func() time.Time { return now },
-		Reconcile: collector.ReconcileSources,
-	})
-	if err := observer.Poll(ctx); err != nil {
-		t.Fatalf("initial poll: %v", err)
-	}
+	ingestor := NewIngestor(store, IngestorConfig{Clock: func() time.Time { return now }})
+	ingestAllWatchable(ctx, t, store, ingestor)
 	assertTokenAggregate(t, store, session.ID, 120)
 
 	archivedPath := filepath.Join(archiveRoot, filepath.Base(activePath))
@@ -174,11 +172,20 @@ func TestObserverPreservesCursorWhenCodexRolloutMovesToArchive(t *testing.T) {
 		t.Fatal(err)
 	}
 	now = now.Add(30 * time.Second)
-	_ = observer.Poll(ctx) // Records the missing old path and schedules recovery.
-	now = now.Add(30 * time.Second)
-	if err := observer.Poll(ctx); err != nil {
-		t.Fatalf("relocation poll: %v", err)
+	sources, err := store.ListWatchableUsageSources(ctx)
+	if err != nil {
+		t.Fatal(err)
 	}
+	for _, source := range sources {
+		result, ingestErr := ingestor.Ingest(ctx, source.ID)
+		if ingestErr != nil && result.RetryAt == nil {
+			t.Fatalf("ingest relocated source %d: %v", source.ID, ingestErr)
+		}
+	}
+	if err := collector.ReconcileSources(ctx, -1); err != nil {
+		t.Fatalf("relocation reconcile: %v", err)
+	}
+	ingestAllWatchable(ctx, t, store, ingestor)
 	assertTokenAggregate(t, store, session.ID, 120)
 
 	file, err := os.OpenFile(archivedPath, os.O_APPEND|os.O_WRONLY, 0o600)
@@ -191,13 +198,83 @@ func TestObserverPreservesCursorWhenCodexRolloutMovesToArchive(t *testing.T) {
 	}
 	_ = file.Close()
 	now = now.Add(30 * time.Second)
-	if err := observer.Poll(ctx); err != nil {
-		t.Fatalf("archived append poll: %v", err)
-	}
+	ingestAllWatchable(ctx, t, store, ingestor)
 	assertTokenAggregate(t, store, session.ID, 180)
 }
 
-func TestObserverPersistsAppendOnlyUsageAcrossRestartAndFinalization(t *testing.T) {
+func TestCoordinatorCollectsCodexUsageFromFilesystemEvents(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	now := time.Now().UTC()
+	if err := store.UpsertProject(ctx, domain.ProjectRecord{ID: "usage", Path: t.TempDir(), RegisteredAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	session, err := store.CreateSession(ctx, domain.SessionRecord{
+		ProjectID: "usage",
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessCodex,
+		Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
+		Metadata:  domain.SessionMetadata{AgentSessionID: "native-watch"},
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	base := t.TempDir()
+	sessionsRoot := filepath.Join(base, "sessions")
+	archiveRoot := filepath.Join(base, "archived_sessions")
+	transcript := filepath.Join(sessionsRoot, "2026", "07", "28", "rollout-native-watch.jsonl")
+	if err := os.MkdirAll(filepath.Dir(transcript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	initial := `{"type":"session_meta","payload":{"model_provider":"openai"}}` + "\n" +
+		`{"type":"turn_context","payload":{"model":"gpt-5.6"}}` + "\n"
+	if err := os.WriteFile(transcript, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	watcher, err := NewTranscriptWatcher([]string{sessionsRoot, archiveRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	collector := usagesvc.NewCollector(store, usagesvc.SourceRoots{
+		CodexSessions: sessionsRoot,
+		CodexArchived: archiveRoot,
+	}, nil)
+	ingestor := NewIngestor(store, IngestorConfig{})
+	coordinator := NewCoordinator(store, ingestor, watcher, CoordinatorConfig{
+		Workers:    1,
+		Initialize: collector.BackfillActive,
+		Reconcile: func(reconcileCtx context.Context) error {
+			return collector.ReconcileSources(reconcileCtx, 0)
+		},
+	})
+	done := coordinator.Start(ctx)
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("usage coordinator did not stop")
+		}
+	})
+
+	waitForWatchableSource(ctx, t, store, transcript)
+	appendJSONLRecord(t, transcript, codexTokenLine("2026-07-28T10:00:00Z", 100, 60, 0, 20, 5))
+	waitForTokenAggregate(t, store, session.ID, 120)
+
+	appendJSONLRecord(t, transcript, codexTokenLine("2026-07-28T10:01:00Z", 150, 90, 0, 30, 8))
+	waitForTokenAggregate(t, store, session.ID, 180)
+}
+
+func TestIngestorPersistsAppendOnlyUsageAcrossRestartAndFinalization(t *testing.T) {
 	ctx := context.Background()
 	store, err := sqlite.Open(t.TempDir())
 	if err != nil {
@@ -255,10 +332,8 @@ func TestObserverPersistsAppendOnlyUsageAcrossRestartAndFinalization(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	observer := New(store, Config{Clock: func() time.Time { return now }})
-	if err := observer.Poll(ctx); err != nil {
-		t.Fatalf("first poll: %v", err)
-	}
+	ingestor := NewIngestor(store, IngestorConfig{Clock: func() time.Time { return now }})
+	ingestSourceFully(ctx, t, ingestor, source.ID)
 	assertTokenAggregate(t, store, session.ID, 120)
 
 	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
@@ -271,15 +346,11 @@ func TestObserverPersistsAppendOnlyUsageAcrossRestartAndFinalization(t *testing.
 	}
 	_ = file.Close()
 	now = now.Add(30 * time.Second)
-	if err := observer.Poll(ctx); err != nil {
-		t.Fatalf("append poll: %v", err)
-	}
+	ingestSourceFully(ctx, t, ingestor, source.ID)
 	assertTokenAggregate(t, store, session.ID, 180)
 
-	restarted := New(store, Config{Clock: func() time.Time { return now }})
-	if err := restarted.Poll(ctx); err != nil {
-		t.Fatalf("restart poll: %v", err)
-	}
+	restarted := NewIngestor(store, IngestorConfig{Clock: func() time.Time { return now }})
+	ingestSourceFully(ctx, t, restarted, source.ID)
 	assertTokenAggregate(t, store, session.ID, 180)
 
 	replacement := `{"type":"session_meta","payload":{"model_provider":"openai-replacement"}}` + "\n" +
@@ -288,12 +359,8 @@ func TestObserverPersistsAppendOnlyUsageAcrossRestartAndFinalization(t *testing.
 	if err := os.WriteFile(path, []byte(replacement), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := restarted.Poll(ctx); err != nil {
-		t.Fatalf("replacement generation: %v", err)
-	}
-	if err := restarted.Poll(ctx); err != nil {
-		t.Fatalf("replacement ingest: %v", err)
-	}
+	ingestSourceFully(ctx, t, restarted, source.ID)
+	ingestAllWatchable(ctx, t, store, restarted)
 	assertTokenAggregate(t, store, session.ID, 192)
 	sources, err := store.ListUsageSourcesForBinding(ctx, binding.ID)
 	if err != nil || len(sources) != 2 ||
@@ -305,9 +372,16 @@ func TestObserverPersistsAppendOnlyUsageAcrossRestartAndFinalization(t *testing.
 	if _, err := store.UpdateUsageBindingState(ctx, binding.ID, domain.UsageBindingFinalizing, "", now); err != nil {
 		t.Fatal(err)
 	}
-	if err := restarted.Poll(ctx); err != nil {
-		t.Fatalf("final poll: %v", err)
+	ingestAllWatchable(ctx, t, store, restarted)
+	if err := osAppend(path, string(codexTokenLine("2026-07-01T11:00:01Z", 15, 8, 0, 3, 1))); err != nil {
+		t.Fatal(err)
 	}
+	now = now.Add(time.Second)
+	ingestAllWatchable(ctx, t, store, restarted)
+	assertTokenAggregate(t, store, session.ID, 192)
+	now = now.Add(defaultFinalizationWait + time.Second)
+	ingestAllWatchable(ctx, t, store, restarted)
+	assertTokenAggregate(t, store, session.ID, 198)
 	got, ok, err := store.GetUsageSourceForIngestion(ctx, source.ID)
 	if err != nil || !ok {
 		t.Fatalf("source ok=%v err=%v", ok, err)
@@ -321,7 +395,100 @@ func TestObserverPersistsAppendOnlyUsageAcrossRestartAndFinalization(t *testing.
 	}
 }
 
-func TestObserverStopsRetryingConflictingNativeEvent(t *testing.T) {
+func TestIngestorLateAppendReturnsCompletedBindingToFinalizing(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	now := time.Unix(1700000000, 0).UTC()
+	if err := store.UpsertProject(ctx, domain.ProjectRecord{ID: "usage", Path: t.TempDir(), RegisteredAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	session, err := store.CreateSession(ctx, domain.SessionRecord{
+		ProjectID: "usage",
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessCodex,
+		Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := store.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
+		SessionID:    session.ID,
+		Harness:      session.Harness,
+		NativeRootID: "native-late-append",
+		State:        domain.UsageBindingActive,
+		FirstSeenAt:  now,
+		LastSeenAt:   now,
+		UpdatedAt:    now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	content := `{"type":"turn_context","payload":{"model":"gpt-5.6"}}` + "\n" +
+		string(codexTokenLine("2026-07-01T10:00:00Z", 100, 60, 0, 20, 5)) + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	identity, err := usagesvc.SourceIdentity(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := store.InsertUsageSource(ctx, domain.UsageSourceRecord{
+		BindingID:     binding.ID,
+		Kind:          domain.UsageSourceCodexRollout,
+		ArtifactPath:  path,
+		FileIdentity:  identity,
+		ParserVersion: usagesvc.CodexRolloutParserVersion,
+		State:         domain.UsageSourcePending,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ingestor := NewIngestor(store, IngestorConfig{Clock: func() time.Time { return now }})
+	ingestSourceFully(ctx, t, ingestor, source.ID)
+	if _, err := store.MarkUsageSourceState(ctx, source.ID, domain.UsageSourceComplete, "", nil, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpdateUsageBindingState(ctx, binding.ID, domain.UsageBindingFinalizing, "", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CompleteUsageBindingIfSettled(ctx, binding.ID, now); err != nil {
+		t.Fatal(err)
+	}
+
+	appendJSONLRecord(t, path, codexTokenLine("2026-07-01T10:01:00Z", 150, 90, 0, 30, 8))
+	now = now.Add(time.Second)
+	result, err := ingestor.Ingest(ctx, source.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RetryAt == nil {
+		t.Fatal("late append did not schedule a finalization quiet period")
+	}
+	bindings, err := store.ListUsageBindingsForSession(ctx, session.ID)
+	if err != nil || len(bindings) != 1 || bindings[0].State != domain.UsageBindingFinalizing {
+		t.Fatalf("bindings=%+v err=%v", bindings, err)
+	}
+	now = now.Add(defaultFinalizationWait + time.Second)
+	if _, err := ingestor.Ingest(ctx, source.ID); err != nil {
+		t.Fatal(err)
+	}
+	bindings, err = store.ListUsageBindingsForSession(ctx, session.ID)
+	if err != nil || len(bindings) != 1 || bindings[0].State != domain.UsageBindingComplete {
+		t.Fatalf("settled bindings=%+v err=%v", bindings, err)
+	}
+	assertTokenAggregate(t, store, session.ID, 180)
+}
+
+func TestIngestorStopsRetryingConflictingNativeEvent(t *testing.T) {
 	ctx := context.Background()
 	store, err := sqlite.Open(t.TempDir())
 	if err != nil {
@@ -393,9 +560,9 @@ func TestObserverStopsRetryingConflictingNativeEvent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	observer := New(store, Config{Clock: func() time.Time { return now }})
-	if err := observer.Poll(ctx); err != nil {
-		t.Fatalf("conflict poll: %v", err)
+	ingestor := NewIngestor(store, IngestorConfig{Clock: func() time.Time { return now }})
+	if _, err := ingestor.Ingest(ctx, source.ID); err != nil {
+		t.Fatalf("conflict ingest: %v", err)
 	}
 	got, ok, err := store.GetUsageSourceForIngestion(ctx, source.ID)
 	if err != nil || !ok {
@@ -425,6 +592,42 @@ func TestRetryDelayUsesBoundedBackoff(t *testing.T) {
 	}
 }
 
+func ingestAllWatchable(ctx context.Context, t *testing.T, store *sqlite.Store, ingestor *Ingestor) {
+	t.Helper()
+	for pass := 0; pass < 16; pass++ {
+		sources, err := store.ListWatchableUsageSources(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		again := false
+		for _, source := range sources {
+			result, ingestErr := ingestor.Ingest(ctx, source.ID)
+			if ingestErr != nil && result.RetryAt == nil {
+				t.Fatalf("ingest source %d: %v", source.ID, ingestErr)
+			}
+			again = again || result.More || result.Refresh
+		}
+		if !again {
+			return
+		}
+	}
+	t.Fatal("usage ingestion did not settle")
+}
+
+func ingestSourceFully(ctx context.Context, t *testing.T, ingestor *Ingestor, sourceID int64) {
+	t.Helper()
+	for pass := 0; pass < 16; pass++ {
+		result, err := ingestor.Ingest(ctx, sourceID)
+		if err != nil && result.RetryAt == nil {
+			t.Fatalf("ingest source %d: %v", sourceID, err)
+		}
+		if !result.More {
+			return
+		}
+	}
+	t.Fatalf("usage source %d did not reach EOF", sourceID)
+}
+
 func assertTokenAggregate(t *testing.T, store *sqlite.Store, sessionID domain.SessionID, total int64) {
 	t.Helper()
 	aggregates, err := store.ListUsageModelAggregates(context.Background(), sessionID)
@@ -438,4 +641,58 @@ func assertTokenAggregate(t *testing.T, store *sqlite.Store, sessionID domain.Se
 	if got != total {
 		t.Fatalf("total tokens = %d, want %d; aggregates=%+v", got, total, aggregates)
 	}
+}
+
+func waitForWatchableSource(ctx context.Context, t *testing.T, store *sqlite.Store, path string) {
+	t.Helper()
+	path = canonicalTranscriptPath(path)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		sources, err := store.ListWatchableUsageSources(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, source := range sources {
+			if canonicalTranscriptPath(source.ArtifactPath) == path {
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("usage source %q was not registered", path)
+}
+
+func appendJSONLRecord(t *testing.T, path string, record []byte) {
+	t.Helper()
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Write(append(record, '\n')); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func waitForTokenAggregate(t *testing.T, store *sqlite.Store, sessionID domain.SessionID, total int64) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		aggregates, err := store.ListUsageModelAggregates(context.Background(), sessionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got int64
+		for _, aggregate := range aggregates {
+			got += aggregate.Tokens.InputTokens + aggregate.Tokens.OutputTokens
+		}
+		if got == total {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	assertTokenAggregate(t, store, sessionID, total)
 }

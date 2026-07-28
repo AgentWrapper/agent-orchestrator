@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,7 +24,7 @@ func TestCollectorRegistersFinalizesAndReactivatesSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	wakes := 0
-	collector := NewCollector(store, SourceRoots{CodexSessions: root}, func() { wakes++ })
+	collector := NewCollector(store, SourceRoots{CodexSessions: root}, func(bool) { wakes++ })
 	now := time.Unix(1700000000, 0).UTC()
 	collector.now = func() time.Time { return now }
 
@@ -72,6 +73,54 @@ func TestCollectorRegistersFinalizesAndReactivatesSource(t *testing.T) {
 	sources, _ = store.ListUsageSourcesForBinding(context.Background(), bindings[0].ID)
 	if sources[0].State != domain.UsageSourceActive {
 		t.Fatalf("reactivated source state = %s", sources[0].State)
+	}
+}
+
+func TestCollectorIgnoresUsageSignalFromStaleRuntimeLaunch(t *testing.T) {
+	store := collectorTestStore(t)
+	now := time.Now().UTC()
+	session, err := store.CreateSession(context.Background(), domain.SessionRecord{
+		ProjectID: "usage-test",
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessCodex,
+		Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
+		Metadata: domain.SessionMetadata{
+			AgentSessionID:  "native-fenced",
+			RuntimeLaunchID: "launch-current",
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(t.TempDir(), "sessions")
+	path := filepath.Join(root, "2026", "07", "28", "rollout-native-fenced.jsonl")
+	writeUsageFixture(t, path, "{\"type\":\"session_meta\"}\n")
+	collector := NewCollector(store, SourceRoots{CodexSessions: root}, nil)
+
+	if err := collector.RecordHook(context.Background(), session.ID, HookSignal{
+		Harness:         domain.HarnessCodex,
+		Event:           "session-start",
+		LaunchID:        "launch-current",
+		NativeSessionID: "native-fenced",
+		TranscriptPath:  path,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := collector.RecordHook(context.Background(), session.ID, HookSignal{
+		Event:    "process-exited",
+		LaunchID: "launch-old",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	bindings, err := store.ListUsageBindingsForSession(context.Background(), session.ID)
+	if err != nil || len(bindings) != 1 {
+		t.Fatalf("bindings=%+v err=%v", bindings, err)
+	}
+	if bindings[0].State != domain.UsageBindingActive {
+		t.Fatalf("stale launch finalized usage binding: %+v", bindings[0])
 	}
 }
 
@@ -129,9 +178,9 @@ func TestCollectorBackfillsOnlyNonTerminatedSupportedSessions(t *testing.T) {
 	if err != nil || len(bindings) != 1 {
 		t.Fatalf("active bindings=%+v err=%v", bindings, err)
 	}
-	counts, err := store.CountUsageRowsForSession(context.Background(), active.ID)
-	if err != nil || counts.SourceCount != 1 {
-		t.Fatalf("active counts=%+v err=%v", counts, err)
+	sources, err := store.ListUsageSourcesForBinding(context.Background(), bindings[0].ID)
+	if err != nil || len(sources) != 1 {
+		t.Fatalf("active sources=%+v err=%v", sources, err)
 	}
 }
 
@@ -459,6 +508,105 @@ func TestCollectorResumeKeepsDiscoveringAfterOnlyArchivedRolloutMatches(t *testi
 	oldContext, _, _ := store.GetUsageSourceForIngestion(context.Background(), archivedSource.ID)
 	if resumedBinding.LastErrorCode != "" || oldContext.Source.State != domain.UsageSourceComplete {
 		t.Fatalf("binding/old source=%+v/%+v", resumedBinding, oldContext.Source)
+	}
+}
+
+func TestCollectorDoesNotTransferCursorAcrossNativeSessions(t *testing.T) {
+	store := collectorTestStore(t)
+	session := collectorTestSession(t, store, domain.HarnessCodex, "root-native", false)
+	now := time.Unix(1700000000, 0).UTC()
+	binding, err := store.UpsertUsageBinding(context.Background(), domain.UsageBindingRecord{
+		SessionID:    session.ID,
+		Harness:      session.Harness,
+		NativeRootID: "root-native",
+		State:        domain.UsageBindingActive,
+		FirstSeenAt:  now,
+		LastSeenAt:   now,
+		UpdatedAt:    now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	firstPath := filepath.Join(root, "first.jsonl")
+	secondPath := filepath.Join(root, "second.jsonl")
+	if err := os.WriteFile(firstPath, []byte(strings.Repeat("x", 256)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(firstPath, secondPath); err != nil {
+		t.Skipf("hard links unavailable: %v", err)
+	}
+	collector := NewCollector(store, SourceRoots{CodexSessions: root}, nil)
+	if _, err := collector.registerSource(
+		context.Background(),
+		binding,
+		domain.UsageSourceCodexRollout,
+		"native-a",
+		"",
+		firstPath,
+		"",
+		now,
+		false,
+	); err != nil {
+		t.Fatal(err)
+	}
+	sources, err := store.ListUsageSourcesForBinding(context.Background(), binding.ID)
+	if err != nil || len(sources) != 1 {
+		t.Fatalf("sources=%+v err=%v", sources, err)
+	}
+	if _, err := store.ApplyUsageChunk(context.Background(), sources[0].ID, 0, domain.SourceCursorState{
+		ByteOffset: 100,
+		State:      domain.UsageSourceActive,
+		UpdatedAt:  now,
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := collector.registerSource(
+		context.Background(),
+		binding,
+		domain.UsageSourceCodexRollout,
+		"native-b",
+		"",
+		secondPath,
+		"",
+		now.Add(time.Second),
+		false,
+	); err != nil {
+		t.Fatal(err)
+	}
+	sources, err = store.ListUsageSourcesForBinding(context.Background(), binding.ID)
+	if err != nil || len(sources) != 2 {
+		t.Fatalf("sources=%+v err=%v", sources, err)
+	}
+	if sources[1].NativeSessionID != "native-b" || sources[1].ByteOffset != 0 {
+		t.Fatalf("new native source inherited an unrelated cursor: %+v", sources[1])
+	}
+}
+
+func TestSourceIdentityChangesWhenFileIsReplacedWithSameFirstRecord(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "session.jsonl")
+	previous := filepath.Join(root, "previous.jsonl")
+	content := []byte(`{"type":"session_meta","payload":{"id":"same"}}` + "\n")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	first, err := SourceIdentity(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(path, previous); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	second, err := SourceIdentity(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatalf("replacement identity = %q, want a new file generation", second)
 	}
 }
 

@@ -80,6 +80,21 @@ func (s *Store) UpdateUsageBindingState(ctx context.Context, id int64, state dom
 	return n > 0, nil
 }
 
+// CompleteUsageBindingIfSettled atomically completes a finalizing binding only
+// when every registered source generation is complete.
+func (s *Store) CompleteUsageBindingIfSettled(ctx context.Context, bindingID int64, at time.Time) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	n, err := s.qw.CompleteUsageBindingIfSettled(ctx, gen.CompleteUsageBindingIfSettledParams{
+		UsageBindingID: bindingID,
+		UpdatedAt:      timeOrNow(at),
+	})
+	if err != nil {
+		return false, fmt.Errorf("complete settled usage binding %d: %w", bindingID, err)
+	}
+	return n > 0, nil
+}
+
 // InsertUsageSource records a physical JSONL source generation. Repeated calls
 // for the same binding/path/generation return the existing row.
 func (s *Store) InsertUsageSource(ctx context.Context, rec domain.UsageSourceRecord) (domain.UsageSourceRecord, error) {
@@ -90,6 +105,44 @@ func (s *Store) InsertUsageSource(ctx context.Context, rec domain.UsageSourceRec
 		return domain.UsageSourceRecord{}, fmt.Errorf("insert usage source for binding %d path %q generation %d: %w", rec.BindingID, rec.ArtifactPath, rec.Generation, err)
 	}
 	return usageSourceFromGen(row), nil
+}
+
+// ReplaceUsageSource atomically retires one source generation and inserts its
+// replacement so startup or watcher reconciliation can never observe a gap.
+func (s *Store) ReplaceUsageSource(
+	ctx context.Context,
+	oldSourceID int64,
+	oldErrorCode string,
+	rec domain.UsageSourceRecord,
+	at time.Time,
+) (domain.UsageSourceRecord, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	var replaced domain.UsageSourceRecord
+	err := s.inTx(ctx, "replace usage source", func(q *gen.Queries) error {
+		n, err := q.MarkUsageSourceState(ctx, gen.MarkUsageSourceStateParams{
+			ID:            oldSourceID,
+			State:         domain.UsageSourceComplete,
+			LastErrorCode: oldErrorCode,
+			UpdatedAt:     timeOrNow(at),
+		})
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return fmt.Errorf("usage source %d not found", oldSourceID)
+		}
+		row, err := q.InsertUsageSource(ctx, usageSourceInsertParams(rec))
+		if err != nil {
+			return err
+		}
+		replaced = usageSourceFromGen(row)
+		return nil
+	})
+	if err != nil {
+		return domain.UsageSourceRecord{}, fmt.Errorf("replace usage source %d: %w", oldSourceID, err)
+	}
+	return replaced, nil
 }
 
 // ListUsageSourcesForBinding returns all source generations for one native
@@ -106,14 +159,13 @@ func (s *Store) ListUsageSourcesForBinding(ctx context.Context, bindingID int64)
 	return out, nil
 }
 
-// ListObserverReadyUsageSources returns sources eligible for observer work.
-func (s *Store) ListObserverReadyUsageSources(ctx context.Context, now time.Time, limit int64) ([]domain.UsageSourceRecord, error) {
-	rows, err := s.qr.ListObserverReadyUsageSources(ctx, gen.ListObserverReadyUsageSourcesParams{
-		NextRetryAt: sql.NullTime{Time: now.UTC(), Valid: true},
-		Limit:       limit,
-	})
+// ListWatchableUsageSources returns the latest source generation for every
+// provider artifact attached to a resumable session. Watch registrations are
+// rebuilt from this durable inventory after daemon and watcher restarts.
+func (s *Store) ListWatchableUsageSources(ctx context.Context) ([]domain.UsageSourceRecord, error) {
+	rows, err := s.qr.ListWatchableUsageSources(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list observer-ready usage sources: %w", err)
+		return nil, fmt.Errorf("list watchable usage sources: %w", err)
 	}
 	out := make([]domain.UsageSourceRecord, 0, len(rows))
 	for _, row := range rows {
@@ -137,7 +189,7 @@ func (s *Store) ListUsageDiscoveryBindings(ctx context.Context, limit int64) ([]
 }
 
 // GetUsageSourceForIngestion returns a source plus immutable binding/session
-// facts needed by the observer and ingester.
+// facts needed by the ingestor.
 func (s *Store) GetUsageSourceForIngestion(ctx context.Context, id int64) (domain.UsageSourceContext, bool, error) {
 	row, err := s.qr.GetUsageSourceWithBindingAndSession(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -166,8 +218,8 @@ func (s *Store) MarkUsageSourceState(ctx context.Context, id int64, state domain
 	return n > 0, nil
 }
 
-// ReactivateUsageSource makes a completed or failed source eligible for an
-// immediate resumed-session poll and clears transient retry state.
+// ReactivateUsageSource makes a completed or failed source eligible for
+// immediate resumed-session ingestion and clears transient retry state.
 func (s *Store) ReactivateUsageSource(ctx context.Context, id int64, updatedAt time.Time) (bool, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
@@ -181,7 +233,7 @@ func (s *Store) ReactivateUsageSource(ctx context.Context, id int64, updatedAt t
 	return n > 0, nil
 }
 
-// MarkUsageSourceFailure records a failed observer attempt and its bounded
+// MarkUsageSourceFailure records a failed ingestion attempt and its bounded
 // retry schedule.
 func (s *Store) MarkUsageSourceFailure(ctx context.Context, id, failureCount int64, lastErrorCode string, nextRetryAt, updatedAt time.Time) (bool, error) {
 	s.writeMu.Lock()
@@ -270,30 +322,6 @@ func (s *Store) ListUsageModelAggregates(ctx context.Context, sessionID domain.S
 		out = append(out, usageAggregateFromGen(row))
 	}
 	return out, nil
-}
-
-// UsageCoverageCountsForSession returns counts used to derive aggregate
-// reasoning/cost coverage.
-func (s *Store) UsageCoverageCountsForSession(ctx context.Context, sessionID domain.SessionID) (domain.UsageCoverageCounts, error) {
-	row, err := s.qr.UsageCoverageCountsForSession(ctx, sessionID)
-	if err != nil {
-		return domain.UsageCoverageCounts{}, fmt.Errorf("usage coverage counts for session %s: %w", sessionID, err)
-	}
-	return domain.UsageCoverageCounts{
-		EventCount:              row.EventCount,
-		ReasoningEventCount:     row.ReasoningEventCount,
-		EstimatedCostEventCount: row.EstimatedCostEventCount,
-	}, nil
-}
-
-// CountUsageRowsForSession returns cheap row counts for summary state
-// derivation and tests.
-func (s *Store) CountUsageRowsForSession(ctx context.Context, sessionID domain.SessionID) (domain.UsageRowCounts, error) {
-	row, err := s.qr.CountUsageRowsForSession(ctx, sessionID)
-	if err != nil {
-		return domain.UsageRowCounts{}, fmt.Errorf("count usage rows for session %s: %w", sessionID, err)
-	}
-	return domain.UsageRowCounts{BindingCount: row.BindingCount, SourceCount: row.SourceCount, EventCount: row.EventCount}, nil
 }
 
 // ListCompactSessionUsage returns every session's usage facts in one grouped
@@ -459,7 +487,6 @@ func usageEventInsertParams(source gen.GetUsageSourceWithBindingAndSessionRow, e
 		CacheWrite1hTokens:  ptrInt64ToNull(ev.Tokens.CacheWrite1hTokens),
 		OutputTokens:        ev.Tokens.OutputTokens,
 		ReasoningTokens:     ptrInt64ToNull(ev.Tokens.ReasoningTokens),
-		DurationMs:          ptrInt64ToNull(ev.DurationMS),
 		ReportedCostNanos:   ptrInt64ToNull(ev.Cost.ReportedCostNanos),
 		EstimatedCostNanos:  ptrInt64ToNull(ev.Cost.EstimatedCostNanos),
 		PricingVersion:      ev.Cost.PricingVersion,

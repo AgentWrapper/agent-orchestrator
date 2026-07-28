@@ -24,7 +24,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/mobilebridge"
 	"github.com/aoagents/agent-orchestrator/backend/internal/notify"
-	usageobserver "github.com/aoagents/agent-orchestrator/backend/internal/observe/usage"
+	usagepipeline "github.com/aoagents/agent-orchestrator/backend/internal/observe/usage"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/preview"
 	"github.com/aoagents/agent-orchestrator/backend/internal/previewserver"
@@ -178,7 +178,6 @@ func Run() error {
 		return fmt.Errorf("wire session service: %w", err)
 	}
 	lcStack.LCM.SetCompletionTerminator(sessMgr)
-	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
 	projectSvc := projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink})
 	if err := seedScratchProjectOnBoot(ctx, cfg, projectSvc); err != nil {
 		stop()
@@ -221,21 +220,36 @@ func Run() error {
 	sessMgr.SetShellTerminalCloser(shellTermSvc)
 	var (
 		usageCollector *usagesvc.Collector
-		usageObserver  *usageobserver.Observer
+		usagePipeline  *usagepipeline.Pipeline
 	)
 	if roots, rootsErr := usagesvc.DefaultSourceRoots(); rootsErr != nil {
 		log.Warn("usage collection disabled", "err", rootsErr)
 	} else {
-		usageCollector = usagesvc.NewCollector(store, roots, func() {
-			if usageObserver != nil {
-				usageObserver.Wake()
+		usageCollector = usagesvc.NewCollector(store, roots, func(reconcile bool) {
+			if usagePipeline == nil {
+				return
+			}
+			if reconcile {
+				usagePipeline.NotifySourcesChanged()
+			} else {
+				usagePipeline.NotifyInventoryChanged()
 			}
 		})
-		usageObserver = usageobserver.New(store, usageobserver.Config{
-			Logger:    log,
-			Reconcile: usageCollector.ReconcileSources,
+		ingestor := usagepipeline.NewIngestor(store, usagepipeline.IngestorConfig{})
+		usagePipeline = usagepipeline.NewPipeline(store, ingestor, []string{
+			roots.ClaudeProjects,
+			roots.CodexSessions,
+			roots.CodexArchived,
+		}, usagepipeline.CoordinatorConfig{
+			Logger:     log,
+			Initialize: usageCollector.BackfillActive,
+			Reconcile: func(reconcileCtx context.Context) error {
+				return usageCollector.ReconcileSources(reconcileCtx, 0)
+			},
 		})
+		lcStack.LCM.SetUsageFinalizer(usageCollector)
 	}
+	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
 	// Push-device registry: persisted phones that receive OS push notifications.
 	// A load failure must not block boot — degrade to no push rather than refusing
 	// to start the daemon. pushRegistry (interface) is assigned only when load
@@ -315,9 +329,6 @@ func Run() error {
 		}()
 	}
 	var usageDone <-chan struct{}
-	if usageObserver != nil {
-		usageDone = usageObserver.Start(ctx)
-	}
 
 	// Late-bind: the LAN listener shares the exact loopback router instance so
 	// the LAN surface and loopback surface never drift apart.
@@ -342,10 +353,8 @@ func Run() error {
 	if reconcileErr := lcStack.ReconcileRuntime(ctx); reconcileErr != nil {
 		log.Error("reconcile agent processes on boot failed", "err", reconcileErr)
 	}
-	if usageCollector != nil {
-		if backfillErr := usageCollector.BackfillActive(ctx); backfillErr != nil {
-			log.Warn("backfill active usage sources failed", "err", backfillErr)
-		}
+	if usagePipeline != nil {
+		usageDone = usagePipeline.Start(ctx)
 	}
 
 	// ponytail: 5s tolerates a brief frontend restart; tune if dev hot-reload trips it.

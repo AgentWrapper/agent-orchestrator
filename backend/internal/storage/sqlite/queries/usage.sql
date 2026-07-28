@@ -48,10 +48,6 @@ ON CONFLICT (binding_id, artifact_path, generation) DO UPDATE SET
         WHEN excluded.subagent_id <> '' THEN excluded.subagent_id
         ELSE usage_sources.subagent_id
     END,
-    file_identity = CASE
-        WHEN excluded.file_identity <> '' THEN excluded.file_identity
-        ELSE usage_sources.file_identity
-    END,
     current_model_id = CASE
         WHEN excluded.current_model_id <> '' THEN excluded.current_model_id
         ELSE usage_sources.current_model_id
@@ -60,7 +56,6 @@ ON CONFLICT (binding_id, artifact_path, generation) DO UPDATE SET
         WHEN excluded.current_provider <> '' THEN excluded.current_provider
         ELSE usage_sources.current_provider
     END,
-    parser_version = excluded.parser_version,
     updated_at = excluded.updated_at
 RETURNING *;
 
@@ -70,19 +65,27 @@ FROM usage_sources
 WHERE binding_id = ?
 ORDER BY generation, id;
 
--- name: ListObserverReadyUsageSources :many
-SELECT *
-FROM usage_sources
-WHERE state IN ('pending', 'active', 'error')
-  AND (next_retry_at IS NULL OR next_retry_at <= ?)
-ORDER BY updated_at, id
-LIMIT ?;
+-- name: ListWatchableUsageSources :many
+SELECT us.*
+FROM usage_sources us
+JOIN usage_bindings ub ON ub.id = us.binding_id
+JOIN sessions s ON s.id = ub.session_id
+WHERE (s.is_terminated = 0 OR ub.state = 'finalizing')
+  AND us.id = (
+      SELECT latest.id
+      FROM usage_sources latest
+      WHERE latest.binding_id = us.binding_id
+        AND latest.artifact_path = us.artifact_path
+      ORDER BY latest.generation DESC, latest.id DESC
+      LIMIT 1
+  )
+ORDER BY us.artifact_path, us.generation, us.id;
 
 -- name: ListUsageDiscoveryBindings :many
 SELECT ub.*
 FROM usage_bindings ub
 JOIN sessions s ON s.id = ub.session_id
-WHERE s.is_terminated = 0
+WHERE (s.is_terminated = 0 OR ub.state = 'finalizing')
   AND ub.harness IN ('claude-code', 'codex')
   AND ub.state IN ('discovering', 'active', 'finalizing')
   AND (
@@ -200,6 +203,34 @@ UPDATE usage_bindings SET
     updated_at = ?
 WHERE id = ?;
 
+-- name: CompleteUsageBindingIfSettled :execrows
+UPDATE usage_bindings
+SET state = CASE
+        WHEN EXISTS (
+            SELECT 1
+            FROM usage_sources
+            WHERE usage_sources.binding_id = sqlc.arg(usage_binding_id)
+              AND (anomaly_count > 0 OR last_error_code <> '')
+        ) THEN 'partial'
+        ELSE 'complete'
+    END,
+    last_error_code = '',
+    last_seen_at = sqlc.arg(updated_at),
+    updated_at = sqlc.arg(updated_at)
+WHERE id = sqlc.arg(usage_binding_id)
+  AND state = 'finalizing'
+  AND EXISTS (
+      SELECT 1
+      FROM usage_sources
+      WHERE usage_sources.binding_id = sqlc.arg(usage_binding_id)
+  )
+  AND NOT EXISTS (
+      SELECT 1
+      FROM usage_sources
+      WHERE usage_sources.binding_id = sqlc.arg(usage_binding_id)
+        AND state <> 'complete'
+  );
+
 -- name: GetModelUsageEventByKey :one
 SELECT id, source_usage_hash
 FROM model_usage_events
@@ -210,11 +241,11 @@ INSERT INTO model_usage_events (
     binding_id, usage_source_id, project_id, session_id, harness, provider,
     model_id, observed_at, input_tokens, uncached_input_tokens,
     cache_read_tokens, cache_write_tokens, cache_write_5m_tokens,
-    cache_write_1h_tokens, output_tokens, reasoning_tokens, duration_ms,
+    cache_write_1h_tokens, output_tokens, reasoning_tokens,
     reported_cost_nanos, estimated_cost_nanos, pricing_version, cost_basis,
     token_confidence, cost_confidence, source_event_key, source_usage_hash,
     parser_version, source_cli_version, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: AggregateUsageBySessionHarnessModel :many
 SELECT
@@ -236,23 +267,6 @@ FROM model_usage_events
 WHERE session_id = ?
 GROUP BY harness, provider, model_id
 ORDER BY SUM(input_tokens + output_tokens) DESC, harness, provider, model_id;
-
--- name: UsageCoverageCountsForSession :one
-SELECT
-    COUNT(*) AS event_count,
-    COUNT(reasoning_tokens) AS reasoning_event_count,
-    COUNT(estimated_cost_nanos) AS estimated_cost_event_count
-FROM model_usage_events
-WHERE session_id = ?;
-
--- name: CountUsageRowsForSession :one
-SELECT
-    (SELECT COUNT(*) FROM usage_bindings WHERE usage_bindings.session_id = sqlc.arg(session_id)) AS binding_count,
-    (SELECT COUNT(*)
-     FROM usage_sources us
-     JOIN usage_bindings ub ON ub.id = us.binding_id
-     WHERE ub.session_id = sqlc.arg(session_id)) AS source_count,
-    (SELECT COUNT(*) FROM model_usage_events WHERE model_usage_events.session_id = sqlc.arg(session_id)) AS event_count;
 
 -- name: ListCompactSessionUsage :many
 SELECT

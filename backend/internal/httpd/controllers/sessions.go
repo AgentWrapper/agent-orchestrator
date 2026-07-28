@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -927,7 +928,11 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 	}
 	if c.Usage != nil &&
 		(in.Usage != nil || in.Event == "session-start" || in.Event == "session-end" || in.Event == "process-exited") {
-		usageSignal := usagesvc.HookSignal{Event: in.Event, NativeSessionID: agentSessionID}
+		usageSignal := usagesvc.HookSignal{
+			Event:           in.Event,
+			LaunchID:        sig.LaunchID,
+			NativeSessionID: agentSessionID,
+		}
 		if in.Usage != nil {
 			usageSignal.Harness = in.Usage.Harness
 			usageSignal.TranscriptPath = in.Usage.TranscriptPath
@@ -937,8 +942,12 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 			usageSignal.SourceCLIVersion = in.Usage.SourceCLIVersion
 		}
 		if err := c.Usage.RecordHook(r.Context(), sessionID(r), usageSignal); err != nil {
-			envelope.WriteError(w, r, err)
-			return
+			slog.Default().Warn(
+				"usage hook processing failed",
+				"session", sessionID(r),
+				"event", in.Event,
+				"err", err,
+			)
 		}
 	}
 	envelope.WriteJSON(w, http.StatusOK, SetActivityResponse{OK: true, SessionID: sessionID(r), State: in.State})

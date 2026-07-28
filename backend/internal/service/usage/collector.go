@@ -30,6 +30,7 @@ var nativeUsageIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 type HookSignal struct {
 	Harness                domain.AgentHarness
 	Event                  string
+	LaunchID               string
 	NativeSessionID        string
 	ModelID                string
 	TranscriptPath         string
@@ -72,6 +73,7 @@ type collectorStore interface {
 	ListUsageBindingsForSession(context.Context, domain.SessionID) ([]domain.UsageBindingRecord, error)
 	ListUsageDiscoveryBindings(context.Context, int64) ([]domain.UsageBindingRecord, error)
 	UpdateUsageBindingState(context.Context, int64, domain.UsageBindingState, string, time.Time) (bool, error)
+	CompleteUsageBindingIfSettled(context.Context, int64, time.Time) (bool, error)
 	InsertUsageSource(context.Context, domain.UsageSourceRecord) (domain.UsageSourceRecord, error)
 	ListUsageSourcesForBinding(context.Context, int64) ([]domain.UsageSourceRecord, error)
 	MarkUsageSourceState(context.Context, int64, domain.UsageSourceState, string, *time.Time, time.Time) (bool, error)
@@ -79,17 +81,29 @@ type collectorStore interface {
 }
 
 // Collector registers provider transcript files and coordinates their source
-// lifecycle. Parsing remains in the observer package.
+// lifecycle. Parsing and cursor advancement remain in the usage ingestor.
 type Collector struct {
-	store collectorStore
-	roots SourceRoots
-	wake  func()
-	now   func() time.Time
+	store                collectorStore
+	roots                SourceRoots
+	notifySourcesChanged func(reconcile bool)
+	now                  func() time.Time
 }
 
 // NewCollector constructs a transcript source registrar.
-func NewCollector(store collectorStore, roots SourceRoots, wake func()) *Collector {
-	return &Collector{store: store, roots: roots, wake: wake, now: time.Now}
+func NewCollector(store collectorStore, roots SourceRoots, notifySourcesChanged func(reconcile bool)) *Collector {
+	return &Collector{
+		store:                store,
+		roots:                roots,
+		notifySourcesChanged: notifySourcesChanged,
+		now:                  time.Now,
+	}
+}
+
+// FinalizeSession moves every known native binding into finalization and asks
+// the ingestion pipeline to collect a stable final cursor. It is idempotent and
+// safe to call before a session is marked terminated.
+func (c *Collector) FinalizeSession(ctx context.Context, sessionID domain.SessionID) error {
+	return c.RecordHook(ctx, sessionID, HookSignal{Event: "process-exited"})
 }
 
 // RecordHook registers transcript metadata and updates collection lifecycle for
@@ -103,6 +117,12 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 		return fmt.Errorf("usage session %s not found", sessionID)
 	}
 	if !SupportedHarness(session.Harness) {
+		return nil
+	}
+	signal.LaunchID = boundedUsageMetadata(signal.LaunchID)
+	if signal.LaunchID != "" &&
+		session.Metadata.RuntimeLaunchID != "" &&
+		signal.LaunchID != session.Metadata.RuntimeLaunchID {
 		return nil
 	}
 	if signal.Harness != "" && signal.Harness != session.Harness {
@@ -124,11 +144,11 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 		}
 	}
 	if signal.NativeSessionID == "" {
-		c.notify()
+		c.notifySourceInventory(!finalizingEvent(signal.Event))
 		return nil
 	}
 
-	finalizing := signal.Event == "session-end" || signal.Event == "process-exited"
+	finalizing := finalizingEvent(signal.Event)
 	existing, exists, err := c.store.GetUsageBinding(ctx, sessionID, session.Harness, signal.NativeSessionID)
 	if err != nil {
 		return err
@@ -143,9 +163,11 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 	case signal.Event == "session-start":
 		state = domain.UsageBindingActive
 	case exists && (state == domain.UsageBindingComplete || state == domain.UsageBindingPartial) &&
-		(strings.TrimSpace(signal.TranscriptPath) != "" || strings.TrimSpace(signal.SubagentTranscriptPath) != ""):
+		signal.Event == "subagent-stop":
 		state = domain.UsageBindingFinalizing
 	}
+	inventoryChanged := !exists || state != existing.State
+	needsReconcile := false
 	lastErrorCode := ""
 	if session.Harness == domain.HarnessCodex && strings.TrimSpace(signal.TranscriptPath) == "" {
 		lastErrorCode = domain.UsageErrorSourceDiscoveryPending
@@ -175,7 +197,7 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 		if session.Harness == domain.HarnessCodex {
 			kind = domain.UsageSourceCodexRollout
 		}
-		if err := c.registerSource(
+		changed, err := c.registerSource(
 			ctx,
 			binding,
 			kind,
@@ -184,10 +206,13 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 			mainPath,
 			signal.ModelID,
 			now,
-			signal.Event == "session-start",
-		); err != nil {
+			signal.Event == "session-start" || finalizing,
+		)
+		if err != nil {
+			c.notifySourceInventory(true)
 			return err
 		}
+		inventoryChanged = inventoryChanged || changed
 		sourceErrorCode := ""
 		if c.codexDiscoveryStillPending(signal.Event, signal.TranscriptPath, mainPath) {
 			sourceErrorCode = domain.UsageErrorSourceDiscoveryPending
@@ -195,9 +220,11 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 		if _, err := c.store.UpdateUsageBindingState(ctx, binding.ID, state, sourceErrorCode, now); err != nil {
 			return err
 		}
+	} else {
+		needsReconcile = true
 	}
 	if path := strings.TrimSpace(signal.SubagentTranscriptPath); path != "" && session.Harness == domain.HarnessClaudeCode {
-		if err := c.registerSource(
+		changed, err := c.registerSource(
 			ctx,
 			binding,
 			domain.UsageSourceClaudeSubagent,
@@ -206,15 +233,20 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 			path,
 			signal.ModelID,
 			now,
-			false,
-		); err != nil {
+			finalizing,
+		)
+		if err != nil {
+			c.notifySourceInventory(true)
 			return err
 		}
+		inventoryChanged = inventoryChanged || changed
 	}
 	if signal.Event == "session-start" {
-		if err := c.reactivateBinding(ctx, binding, now); err != nil {
+		changed, err := c.reactivateBinding(ctx, binding, now)
+		if err != nil {
 			return err
 		}
+		inventoryChanged = inventoryChanged || changed
 		if c.codexDiscoveryStillPending(signal.Event, signal.TranscriptPath, mainPath) {
 			if _, err := c.store.UpdateUsageBindingState(
 				ctx,
@@ -231,8 +263,17 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 			return err
 		}
 	}
-	c.notify()
+	switch {
+	case needsReconcile:
+		c.notifySourceInventory(true)
+	case inventoryChanged:
+		c.notifySourceInventory(false)
+	}
 	return nil
+}
+
+func finalizingEvent(event string) bool {
+	return event == "session-end" || event == "process-exited"
 }
 
 // BackfillActive discovers transcript files only for live/resumable AO
@@ -255,7 +296,6 @@ func (c *Collector) BackfillActive(ctx context.Context) error {
 			errs = append(errs, err)
 		}
 	}
-	c.notify()
 	return errors.Join(errs...)
 }
 
@@ -312,7 +352,7 @@ func (c *Collector) backfillSession(ctx context.Context, session domain.SessionR
 	if session.Harness == domain.HarnessCodex {
 		kind = domain.UsageSourceCodexRollout
 	}
-	if err := c.registerSource(ctx, binding, kind, nativeID, "", path, "", now, false); err != nil {
+	if _, err := c.registerSource(ctx, binding, kind, nativeID, "", path, "", now, false); err != nil {
 		return err
 	}
 	if session.Harness == domain.HarnessClaudeCode {
@@ -328,9 +368,10 @@ func (c *Collector) backfillSession(ctx context.Context, session domain.SessionR
 
 // ReconcileSources discovers provider artifacts that hooks could not name,
 // appeared after their hook, or moved between provider-owned directories.
-// The caller bounds each pass so discovery cannot monopolize the daemon.
+// A negative limit reconciles every eligible binding; zero uses the bounded
+// default.
 func (c *Collector) ReconcileSources(ctx context.Context, limit int64) error {
-	if limit <= 0 {
+	if limit == 0 {
 		limit = defaultDiscoveryLimit
 	}
 	bindings, err := c.store.ListUsageDiscoveryBindings(ctx, limit)
@@ -352,7 +393,7 @@ func (c *Collector) reconcileBinding(ctx context.Context, binding domain.UsageBi
 	if err != nil || !ok {
 		return err
 	}
-	if session.IsTerminated {
+	if session.IsTerminated && binding.State != domain.UsageBindingFinalizing {
 		return nil
 	}
 
@@ -375,7 +416,7 @@ func (c *Collector) reconcileBinding(ctx context.Context, binding domain.UsageBi
 	if binding.Harness == domain.HarnessCodex {
 		kind = domain.UsageSourceCodexRollout
 	}
-	if err := c.registerSource(ctx, binding, kind, binding.NativeRootID, "", path, binding.InitialModelID, now, false); err != nil {
+	if _, err := c.registerSource(ctx, binding, kind, binding.NativeRootID, "", path, binding.InitialModelID, now, false); err != nil {
 		return err
 	}
 	if binding.Harness == domain.HarnessClaudeCode {
@@ -409,14 +450,14 @@ func (c *Collector) registerSource(
 	modelID string,
 	now time.Time,
 	reactivateExisting bool,
-) error {
+) (bool, error) {
 	resolved, identity, size, err := c.validateSourcePath(binding.Harness, path)
 	if err != nil {
-		return err
+		return false, err
 	}
 	sources, err := c.store.ListUsageSourcesForBinding(ctx, binding.ID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	var latest *domain.UsageSourceRecord
 	var identityMatch *domain.UsageSourceRecord
@@ -434,17 +475,20 @@ func (c *Collector) registerSource(
 			(source.Generation == latestKind.Generation && source.ID > latestKind.ID)) {
 			latestKind = source
 		}
-		if source.FileIdentity == identity && size >= source.ByteOffset &&
+		if source.Kind == kind &&
+			source.NativeSessionID == nativeSessionID &&
+			source.FileIdentity == identity &&
+			size >= source.ByteOffset &&
 			(identityMatch == nil || source.Generation > identityMatch.Generation) {
 			identityMatch = source
 		}
 	}
 	if latest != nil && latest.FileIdentity == identity && size >= latest.ByteOffset {
 		if reactivateExisting || latest.State == domain.UsageSourceError {
-			_, err := c.store.ReactivateUsageSource(ctx, latest.ID, now)
-			return err
+			changed, err := c.store.ReactivateUsageSource(ctx, latest.ID, now)
+			return changed, err
 		}
-		return nil
+		return false, nil
 	}
 	if latest != nil {
 		_, _ = c.store.MarkUsageSourceState(ctx, latest.ID, domain.UsageSourceComplete, domain.UsageErrorArtifactReplaced, nil, now)
@@ -482,7 +526,7 @@ func (c *Collector) registerSource(
 		record.CurrentProvider = identityMatch.CurrentProvider
 	}
 	_, err = c.store.InsertUsageSource(ctx, record)
-	return err
+	return err == nil, err
 }
 
 func (c *Collector) registerDiscoveredClaudeSubagents(
@@ -496,7 +540,7 @@ func (c *Collector) registerDiscoveredClaudeSubagents(
 	for _, path := range discoverClaudeSubagentPaths(mainPath) {
 		name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 		subagentID := strings.TrimPrefix(name, "agent-")
-		if err := c.registerSource(
+		if _, err := c.registerSource(
 			ctx,
 			binding,
 			domain.UsageSourceClaudeSubagent,
@@ -517,9 +561,6 @@ func discoverClaudeSubagentPaths(mainPath string) []string {
 	base := strings.TrimSuffix(mainPath, filepath.Ext(mainPath))
 	pattern := filepath.Join(base, "subagents", "agent-*.jsonl")
 	paths, _ := filepath.Glob(pattern)
-	if len(paths) > 128 {
-		paths = paths[:128]
-	}
 	sort.Slice(paths, func(i, j int) bool {
 		left, leftErr := os.Stat(paths[i])
 		right, rightErr := os.Stat(paths[j])
@@ -531,34 +572,24 @@ func discoverClaudeSubagentPaths(mainPath string) []string {
 		}
 		return left.ModTime().Before(right.ModTime())
 	})
+	if len(paths) > 128 {
+		paths = paths[len(paths)-128:]
+	}
 	return paths
 }
 
 func (c *Collector) settleFinalizingBinding(ctx context.Context, bindingID int64, now time.Time) error {
-	sources, err := c.store.ListUsageSourcesForBinding(ctx, bindingID)
-	if err != nil || len(sources) == 0 {
-		return err
-	}
-	state := domain.UsageBindingComplete
-	for _, source := range sources {
-		if source.State != domain.UsageSourceComplete {
-			return nil
-		}
-		if source.AnomalyCount > 0 || source.LastErrorCode != "" {
-			state = domain.UsageBindingPartial
-		}
-	}
-	_, err = c.store.UpdateUsageBindingState(ctx, bindingID, state, "", now)
+	_, err := c.store.CompleteUsageBindingIfSettled(ctx, bindingID, now)
 	return err
 }
 
-func (c *Collector) reactivateBinding(ctx context.Context, binding domain.UsageBindingRecord, now time.Time) error {
+func (c *Collector) reactivateBinding(ctx context.Context, binding domain.UsageBindingRecord, now time.Time) (bool, error) {
 	if _, err := c.store.UpdateUsageBindingState(ctx, binding.ID, domain.UsageBindingActive, "", now); err != nil {
-		return err
+		return false, err
 	}
 	sources, err := c.store.ListUsageSourcesForBinding(ctx, binding.ID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	var latestMain *domain.UsageSourceRecord
 	for i := range sources {
@@ -572,20 +603,25 @@ func (c *Collector) reactivateBinding(ctx context.Context, binding domain.UsageB
 		}
 	}
 	if latestMain != nil {
-		_, err = c.store.ReactivateUsageSource(ctx, latestMain.ID, now)
+		return c.store.ReactivateUsageSource(ctx, latestMain.ID, now)
 	}
-	return err
+	return false, nil
 }
 
-func (c *Collector) reactivateIncompleteSources(ctx context.Context, bindingID int64, now time.Time) error {
+func (c *Collector) reactivateLatestSources(ctx context.Context, bindingID int64, now time.Time) error {
 	sources, err := c.store.ListUsageSourcesForBinding(ctx, bindingID)
 	if err != nil {
 		return err
 	}
+	latestByPath := make(map[string]domain.UsageSourceRecord)
 	for _, source := range sources {
-		if source.State == domain.UsageSourceComplete {
-			continue
+		latest, ok := latestByPath[source.ArtifactPath]
+		if !ok || source.Generation > latest.Generation ||
+			(source.Generation == latest.Generation && source.ID > latest.ID) {
+			latestByPath[source.ArtifactPath] = source
 		}
+	}
+	for _, source := range latestByPath {
 		if _, err := c.store.ReactivateUsageSource(ctx, source.ID, now); err != nil {
 			return err
 		}
@@ -602,11 +638,10 @@ func (c *Collector) finalizeSession(ctx context.Context, sessionID domain.Sessio
 		if _, err := c.store.UpdateUsageBindingState(ctx, binding.ID, domain.UsageBindingFinalizing, "", now); err != nil {
 			return err
 		}
-		if err := c.reactivateIncompleteSources(ctx, binding.ID, now); err != nil {
+		if err := c.reactivateLatestSources(ctx, binding.ID, now); err != nil {
 			return err
 		}
 	}
-	c.notify()
 	return nil
 }
 
@@ -722,9 +757,9 @@ func (c *Collector) discoverPath(harness domain.AgentHarness, nativeID string) s
 	return matches[0].path
 }
 
-func (c *Collector) notify() {
-	if c.wake != nil {
-		c.wake()
+func (c *Collector) notifySourceInventory(reconcile bool) {
+	if c.notifySourcesChanged != nil {
+		c.notifySourcesChanged(reconcile)
 	}
 }
 
@@ -753,15 +788,20 @@ func boundedUsageMetadata(value string) string {
 	return value
 }
 
-// SourceIdentity returns a stable identity for an append-only transcript. The
-// provider's first record contains native session metadata and does not change
-// as later records are appended.
+// SourceIdentity combines the filesystem's stable file id with the provider's
+// first record. The file id distinguishes replacements that happen to begin
+// with the same native session metadata, while the record hash defends against
+// unsupported filesystems reusing an id.
 func SourceIdentity(path string) (string, error) {
 	file, err := os.Open(path) //nolint:gosec // validated provider-owned path.
 	if err != nil {
 		return "", err
 	}
 	defer func() { _ = file.Close() }()
+	fileID, err := sourceFileID(file)
+	if err != nil {
+		return "", err
+	}
 	reader := bufio.NewReaderSize(file, sourceIdentityRecordBytes)
 	first, err := reader.ReadSlice('\n')
 	if err != nil && !errors.Is(err, bufio.ErrBufferFull) && !errors.Is(err, io.EOF) {
@@ -769,5 +809,5 @@ func SourceIdentity(path string) (string, error) {
 			return "", err
 		}
 	}
-	return fmt.Sprintf("sha256:%x", sha256.Sum256(first)), nil
+	return fmt.Sprintf("%s:sha256:%x", fileID, sha256.Sum256(first)), nil
 }

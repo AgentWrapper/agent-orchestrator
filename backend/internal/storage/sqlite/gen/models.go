@@ -39,7 +39,6 @@ type ModelUsageEvent struct {
 	CacheWrite1hTokens  sql.NullInt64
 	OutputTokens        int64
 	ReasoningTokens     sql.NullInt64
-	DurationMs          sql.NullInt64
 	ReportedCostNanos   sql.NullInt64
 	EstimatedCostNanos  sql.NullInt64
 	PricingVersion      string
@@ -305,6 +304,8 @@ type UsageSource struct {
 	BaselineCacheWriteTokens  int64
 	BaselineOutputTokens      int64
 	BaselineReasoningTokens   int64
+	CurrentModelID            string
+	CurrentProvider           string
 	ParserVersion             string
 	State                     domain.UsageSourceState
 	FailureCount              int64
@@ -314,8 +315,6 @@ type UsageSource struct {
 	LastObservedAt            sql.NullTime
 	CreatedAt                 time.Time
 	UpdatedAt                 time.Time
-	CurrentModelID            string
-	CurrentProvider           string
 }
 
 type WorkspaceRepo struct {

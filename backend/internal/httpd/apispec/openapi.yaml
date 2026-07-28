@@ -2609,6 +2609,45 @@ paths:
       summary: List compact token usage for session cards
       tags:
       - usage
+  /api/v1/usage/sessions/{sessionId}:
+    get:
+      operationId: getSessionUsage
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionUsageResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Get detailed usage and optional cost telemetry for one session
+      tags:
+      - usage
 components:
   schemas:
     APIError:
@@ -4092,6 +4131,40 @@ components:
       required:
       - session
       type: object
+    SessionUsageResponse:
+      properties:
+        collectionState:
+          enum:
+          - waiting
+          - collecting
+          - complete
+          - partial
+          - unavailable
+          type: string
+        harnesses:
+          items:
+            $ref: '#/components/schemas/UsageHarnessResponse'
+          type: array
+        lastObservedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        sessionId:
+          type: string
+        totals:
+          $ref: '#/components/schemas/UsageTotalsResponse'
+        warnings:
+          items:
+            type: string
+          type: array
+      required:
+      - sessionId
+      - collectionState
+      - warnings
+      - totals
+      - harnesses
+      type: object
     SetActivityRequest:
       properties:
         agentSessionId:
@@ -4121,7 +4194,7 @@ components:
           type: string
         usage:
           $ref: '#/components/schemas/ControllersUsageHookMetadata'
-          description: Provider transcript metadata used by the local usage observer.
+          description: Provider transcript metadata used by the local usage pipeline.
       type: object
     SetActivityResponse:
       properties:
@@ -4388,6 +4461,108 @@ components:
       required:
       - title
       type: object
+    UsageCostMetricResponse:
+      properties:
+        confidence:
+          enum:
+          - provider_reported
+          - api_pricing_estimate
+          - unavailable
+          type: string
+        coverage:
+          enum:
+          - complete
+          - partial
+          - unavailable
+          type: string
+        currency:
+          enum:
+          - USD
+          type: string
+        pricingVersion:
+          type: string
+        valueNanos:
+          type:
+          - "null"
+          - integer
+      required:
+      - valueNanos
+      - currency
+      - coverage
+      - confidence
+      type: object
+    UsageHarnessResponse:
+      properties:
+        harness:
+          type: string
+        models:
+          items:
+            $ref: '#/components/schemas/UsageModelResponse'
+          type: array
+        provider:
+          type: string
+        totals:
+          $ref: '#/components/schemas/UsageTotalsResponse'
+      required:
+      - harness
+      - provider
+      - totals
+      - models
+      type: object
+    UsageMetricResponse:
+      properties:
+        coverage:
+          enum:
+          - complete
+          - partial
+          - unavailable
+          type: string
+        value:
+          type:
+          - "null"
+          - integer
+      required:
+      - value
+      - coverage
+      type: object
+    UsageModelResponse:
+      properties:
+        modelId:
+          type: string
+        provider:
+          type: string
+        totals:
+          $ref: '#/components/schemas/UsageTotalsResponse'
+      required:
+      - modelId
+      - provider
+      - totals
+      type: object
+    UsageTotalsResponse:
+      properties:
+        cacheReadTokens:
+          $ref: '#/components/schemas/UsageMetricResponse'
+        cacheWriteTokens:
+          $ref: '#/components/schemas/UsageMetricResponse'
+        estimatedCost:
+          $ref: '#/components/schemas/UsageCostMetricResponse'
+        inputTokens:
+          $ref: '#/components/schemas/UsageMetricResponse'
+        outputTokens:
+          $ref: '#/components/schemas/UsageMetricResponse'
+        reasoningTokens:
+          $ref: '#/components/schemas/UsageMetricResponse'
+        uncachedInputTokens:
+          $ref: '#/components/schemas/UsageMetricResponse'
+      required:
+      - inputTokens
+      - uncachedInputTokens
+      - cacheReadTokens
+      - cacheWriteTokens
+      - outputTokens
+      - reasoningTokens
+      - estimatedCost
+      type: object
     WorkspaceFileResponse:
       properties:
         additions:
@@ -4490,7 +4665,7 @@ tags:
   name: reviews
 - description: Durable dashboard notifications
   name: notifications
-- description: Compact token usage summaries for dashboard session cards
+- description: Token usage and optional cost telemetry for AO sessions
   name: usage
 - description: Mobile push-device registration for OS push notifications
   name: push

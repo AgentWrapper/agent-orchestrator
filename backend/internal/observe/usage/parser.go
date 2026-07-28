@@ -89,8 +89,12 @@ func parseClaude(source domain.UsageSourceContext, records []jsonlRecord, now ti
 			continue
 		}
 		usage := native.Message.Usage
-		input := usage.InputTokens + usage.CacheCreationInputTokens + usage.CacheReadInputTokens
-		if input < 0 || usage.OutputTokens < 0 {
+		input, ok := sumNonNegative(
+			usage.InputTokens,
+			usage.CacheCreationInputTokens,
+			usage.CacheReadInputTokens,
+		)
+		if !ok || usage.OutputTokens < 0 {
 			recordMalformed(result)
 			continue
 		}
@@ -98,6 +102,19 @@ func parseClaude(source domain.UsageSourceContext, records []jsonlRecord, now ti
 		if usage.CacheCreation != nil {
 			cache5m = int64Ptr(usage.CacheCreation.Ephemeral5mInputTokens)
 			cache1h = int64Ptr(usage.CacheCreation.Ephemeral1hInputTokens)
+		}
+		tokens := domain.UsageTokenMetrics{
+			InputTokens:         input,
+			UncachedInputTokens: usage.InputTokens,
+			CacheReadTokens:     usage.CacheReadInputTokens,
+			CacheWriteTokens:    usage.CacheCreationInputTokens,
+			CacheWrite5mTokens:  cache5m,
+			CacheWrite1hTokens:  cache1h,
+			OutputTokens:        usage.OutputTokens,
+		}
+		if !validTokenMetrics(tokens) {
+			recordMalformed(result)
+			continue
 		}
 		model := firstNonEmpty(native.Message.Model, result.Cursor.CurrentModelID, source.InitialModelID, "unknown")
 		result.Cursor.CurrentModelID = model
@@ -108,15 +125,7 @@ func parseClaude(source domain.UsageSourceContext, records []jsonlRecord, now ti
 			Provider:   result.Cursor.CurrentProvider,
 			ModelID:    model,
 			ObservedAt: observedAt,
-			Tokens: domain.UsageTokenMetrics{
-				InputTokens:         input,
-				UncachedInputTokens: usage.InputTokens,
-				CacheReadTokens:     usage.CacheReadInputTokens,
-				CacheWriteTokens:    usage.CacheCreationInputTokens,
-				CacheWrite5mTokens:  cache5m,
-				CacheWrite1hTokens:  cache1h,
-				OutputTokens:        usage.OutputTokens,
-			},
+			Tokens:     tokens,
 			Cost: domain.UsageCostMetrics{
 				CostBasis:  domain.CostBasisUnavailable,
 				Confidence: domain.CostConfidenceNone,
@@ -191,8 +200,7 @@ func parseCodexEvent(source domain.UsageSourceContext, envelope codexEnvelope, n
 		return
 	}
 	total := payload.Info.Total
-	if total.InputTokens < 0 || total.CachedInputTokens < 0 || total.CacheWriteInputTokens < 0 ||
-		total.OutputTokens < 0 || total.ReasoningOutputTokens < 0 {
+	if !validCodexTotal(total) {
 		recordMalformed(result)
 		return
 	}
@@ -224,18 +232,24 @@ func parseCodexEvent(source domain.UsageSourceContext, envelope codexEnvelope, n
 	model := firstNonEmpty(result.Cursor.CurrentModelID, source.InitialModelID, "unknown")
 	provider := firstNonEmpty(result.Cursor.CurrentProvider, "openai")
 	observedAt := parseTimestamp(envelope.Timestamp, now)
+	tokens := domain.UsageTokenMetrics{
+		InputTokens:         input,
+		UncachedInputTokens: uncached,
+		CacheReadTokens:     cached,
+		CacheWriteTokens:    cacheWrite,
+		OutputTokens:        output,
+		ReasoningTokens:     int64Ptr(reasoning),
+	}
+	if !validTokenMetrics(tokens) {
+		result.Cursor.AnomalyCount++
+		result.Cursor.LastErrorCode = domain.UsageErrorNonMonotonicCumulativeUsage
+		return
+	}
 	event := domain.ModelUsageEvent{
 		Provider:   provider,
 		ModelID:    model,
 		ObservedAt: observedAt,
-		Tokens: domain.UsageTokenMetrics{
-			InputTokens:         input,
-			UncachedInputTokens: uncached,
-			CacheReadTokens:     cached,
-			CacheWriteTokens:    cacheWrite,
-			OutputTokens:        output,
-			ReasoningTokens:     int64Ptr(reasoning),
-		},
+		Tokens:     tokens,
 		Cost: domain.UsageCostMetrics{
 			CostBasis:  domain.CostBasisUnavailable,
 			Confidence: domain.CostConfidenceNone,
@@ -270,6 +284,61 @@ func setCodexBaseline(cursor *domain.SourceCursorState, total codexTokenVector) 
 func recordMalformed(result *parseResult) {
 	result.Cursor.AnomalyCount++
 	result.Cursor.LastErrorCode = domain.UsageErrorMalformedJSONL
+}
+
+func validCodexTotal(total codexTokenVector) bool {
+	if total.InputTokens < 0 || total.CachedInputTokens < 0 || total.CacheWriteInputTokens < 0 ||
+		total.OutputTokens < 0 || total.ReasoningOutputTokens < 0 {
+		return false
+	}
+	if total.CachedInputTokens > total.InputTokens ||
+		total.CacheWriteInputTokens > total.InputTokens-total.CachedInputTokens {
+		return false
+	}
+	return total.ReasoningOutputTokens <= total.OutputTokens
+}
+
+func validTokenMetrics(tokens domain.UsageTokenMetrics) bool {
+	if tokens.InputTokens < 0 || tokens.UncachedInputTokens < 0 ||
+		tokens.CacheReadTokens < 0 || tokens.CacheWriteTokens < 0 ||
+		tokens.OutputTokens < 0 {
+		return false
+	}
+	if tokens.UncachedInputTokens > tokens.InputTokens ||
+		tokens.CacheReadTokens > tokens.InputTokens ||
+		tokens.CacheWriteTokens > tokens.InputTokens {
+		return false
+	}
+	if tokens.CacheReadTokens > tokens.InputTokens-tokens.UncachedInputTokens ||
+		tokens.CacheWriteTokens > tokens.InputTokens-tokens.UncachedInputTokens-tokens.CacheReadTokens {
+		return false
+	}
+	if tokens.CacheWrite5mTokens != nil &&
+		(*tokens.CacheWrite5mTokens < 0 || *tokens.CacheWrite5mTokens > tokens.CacheWriteTokens) {
+		return false
+	}
+	if tokens.CacheWrite1hTokens != nil &&
+		(*tokens.CacheWrite1hTokens < 0 || *tokens.CacheWrite1hTokens > tokens.CacheWriteTokens) {
+		return false
+	}
+	if tokens.CacheWrite5mTokens != nil && tokens.CacheWrite1hTokens != nil &&
+		*tokens.CacheWrite5mTokens > tokens.CacheWriteTokens-*tokens.CacheWrite1hTokens {
+		return false
+	}
+	return tokens.ReasoningTokens == nil ||
+		(*tokens.ReasoningTokens >= 0 && *tokens.ReasoningTokens <= tokens.OutputTokens)
+}
+
+func sumNonNegative(values ...int64) (int64, bool) {
+	const maxInt64 = int64(1<<63 - 1)
+	var total int64
+	for _, value := range values {
+		if value < 0 || value > maxInt64-total {
+			return 0, false
+		}
+		total += value
+	}
+	return total, true
 }
 
 func usageHash(event domain.ModelUsageEvent) string {

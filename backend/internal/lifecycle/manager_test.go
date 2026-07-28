@@ -529,6 +529,42 @@ func TestMarkTerminated(t *testing.T) {
 	}
 }
 
+type fakeUsageFinalizer struct {
+	store         *fakeStore
+	calls         int
+	sawTerminated bool
+	err           error
+}
+
+func (f *fakeUsageFinalizer) FinalizeSession(_ context.Context, id domain.SessionID) error {
+	f.calls++
+	f.sawTerminated = f.store.sessions[id].IsTerminated
+	return f.err
+}
+
+func TestMarkTerminatedFinalizesUsageBeforeLifecycleTransition(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	finalizer := &fakeUsageFinalizer{store: st, err: errors.New("best effort failure")}
+	m.SetUsageFinalizer(finalizer)
+
+	if err := m.MarkTerminated(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if finalizer.calls != 1 || finalizer.sawTerminated {
+		t.Fatalf("finalizer calls=%d sawTerminated=%v, want 1/false", finalizer.calls, finalizer.sawTerminated)
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("finalizer failure prevented session termination")
+	}
+	if err := m.MarkTerminated(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if finalizer.calls != 1 {
+		t.Fatalf("already terminated session finalized %d times, want once", finalizer.calls)
+	}
+}
+
 func TestMarkSpawnedStoresRuntimeMetadata(t *testing.T) {
 	m, st, _ := newManager()
 	st.sessions["mer-1"] = working("mer-1")
