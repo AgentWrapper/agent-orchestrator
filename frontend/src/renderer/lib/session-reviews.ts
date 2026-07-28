@@ -14,10 +14,11 @@ const usePreviewData = import.meta.env.VITE_NO_ELECTRON === "1";
  * and the command palette both subscribe through this, so React Query shares
  * one cache entry per session and one fetch path (including the preview mock).
  */
-export function sessionReviewsQueryOptions(session: WorkspaceSession, enabled: boolean) {
+export function sessionReviewsQueryOptions(session: WorkspaceSession, enabled: boolean, staleTime?: number) {
 	return queryOptions({
 		queryKey: ["session-reviews", session.id] as const,
 		enabled,
+		...(staleTime !== undefined ? { staleTime } : {}),
 		refetchInterval: (query) => {
 			const data = query.state.data as ReviewsResponse | undefined;
 			const reviews = data?.reviews ?? [];

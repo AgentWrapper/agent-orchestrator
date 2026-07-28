@@ -224,13 +224,13 @@ describe("buildCommands PR actions", () => {
 	it("labels the review item Re-run review for changes requested or a completed run", () => {
 		const changesRequested = buildCommands({
 			workspaces: workspaces(),
-			reviewStatesBySessionId: new Map([["w-pr", [reviewState(42, "changes_requested")]]]),
+			reviewStatesBySessionId: { "w-pr": [reviewState(42, "changes_requested")] },
 		});
 		expect(byId(changesRequested).get("pr-review:w-pr:42")?.title).toBe("Re-run review #42");
 
 		const upToDate = buildCommands({
 			workspaces: workspaces(),
-			reviewStatesBySessionId: new Map([["w-pr", [reviewState(42, "up_to_date", { latestRun: reviewRun(42) })]]]),
+			reviewStatesBySessionId: { "w-pr": [reviewState(42, "up_to_date", { latestRun: reviewRun(42) })] },
 		});
 		const item = byId(upToDate).get("pr-review:w-pr:42");
 		expect(item?.title).toBe("Re-run review #42");
@@ -240,7 +240,7 @@ describe("buildCommands PR actions", () => {
 	it("disables the review item with Review already running when a session review is running", () => {
 		const items = buildCommands({
 			workspaces: workspaces(),
-			reviewStatesBySessionId: new Map([["w-pr", [reviewState(42, "running")]]]),
+			reviewStatesBySessionId: { "w-pr": [reviewState(42, "running")] },
 		});
 		const review = byId(items).get("pr-review:w-pr:42");
 		expect(review?.disabled).toBe(true);
@@ -250,7 +250,7 @@ describe("buildCommands PR actions", () => {
 	it("disables the review item with Not eligible for review for ineligible or draft PRs", () => {
 		const ineligible = buildCommands({
 			workspaces: workspaces(),
-			reviewStatesBySessionId: new Map([["w-pr", [reviewState(42, "ineligible")]]]),
+			reviewStatesBySessionId: { "w-pr": [reviewState(42, "ineligible")] },
 		});
 		const ineligibleItem = byId(ineligible).get("pr-review:w-pr:42");
 		expect(ineligibleItem?.disabled).toBe(true);
@@ -267,7 +267,7 @@ describe("buildCommands PR actions", () => {
 		];
 		const draft = buildCommands({
 			workspaces: draftWorkspaces,
-			reviewStatesBySessionId: new Map([["w-draft", [reviewState(5, "ineligible")]]]),
+			reviewStatesBySessionId: { "w-draft": [reviewState(5, "ineligible")] },	
 		});
 		const draftItem = byId(draft).get("pr-review:w-draft:5");
 		expect(draftItem?.disabled).toBe(true);

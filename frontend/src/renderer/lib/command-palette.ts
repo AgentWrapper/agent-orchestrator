@@ -53,7 +53,7 @@ export type CommandPaletteContext = {
 	currentSessionId?: string;
 	restartingProjectIds?: ReadonlySet<string>;
 	/** Live review states per session, injected by the palette's queries; absent sessions render enabled (the daemon validates on trigger). */
-	reviewStatesBySessionId?: ReadonlyMap<string, PRReviewState[]>;
+	reviewStatesBySessionId?: Readonly<Record<string, PRReviewState[]>>;
 };
 
 export const commandGroupOrder: CommandGroupId[] = ["current", "attention", "projects", "sessions", "prs", "global"];
@@ -202,7 +202,7 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 
 	for (const workspace of workspaces) {
 		for (const session of workerSessions(workspace.sessions)) {
-			const sessionReviewStates = reviewStatesBySessionId?.get(session.id);
+			const sessionReviewStates = reviewStatesBySessionId?.[session.id];
 			const openReviewStates = sessionReviewStates ? openReviewStatesFor(session, sessionReviewStates) : undefined;
 			const sessionReviewRunning = openReviewStates ? reviewIsRunning(openReviewStates) : false;
 			for (const pr of openPRs(session)) {
@@ -248,7 +248,9 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 					searchOnly: true,
 					action: { kind: "copy-pr-url", url: pr.url },
 				});
-				items.push(prReviewCommand(session, pr, openReviewStates, sessionReviewRunning, subtitle, prKeywords));
+				if (sessionIsActive(session)) {
+					items.push(prReviewCommand(session, pr, openReviewStates, sessionReviewRunning, subtitle, prKeywords));
+				}
 			}
 		}
 	}

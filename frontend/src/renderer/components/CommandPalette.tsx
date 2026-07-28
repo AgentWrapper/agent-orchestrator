@@ -23,6 +23,8 @@ import { CreateProjectFlow } from "./CreateProjectFlow";
 import { NewTaskDialog } from "./NewTaskDialog";
 import { CommandDialog, CommandEmpty, CommandFooter, CommandGroup, CommandInput, CommandItem, CommandList } from "./ui/command";
 
+const PALETTE_REVIEW_STALE_TIME_MS = 60_000;
+
 function isMacPlatform(): boolean {
 	return typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
 }
@@ -52,6 +54,9 @@ export function CommandPalette() {
 	const [newTaskProjectId, setNewTaskProjectId] = useState<string | undefined>();
 	const [isNewTaskOpen, setIsNewTaskOpen] = useState(false);
 	const [pendingId, setPendingId] = useState<string | null>(null);
+	const [reviewStatesSnapshot, setReviewStatesSnapshot] = useState<Readonly<Record<string, PRReviewState[]>>>();
+	const openSnapshotSettledRef = useRef(false);
+	const wasOpenRef = useRef(false);
 	const pendingRef = useRef(false);
 	const choosePathRef = useRef<(() => void) | null>(null);
 
@@ -69,17 +74,41 @@ export function CommandPalette() {
 	);
 	// Review states are fetched only while the palette is open; the shared query
 	// key means sessions already viewed in the inspector reuse the cached data.
-	const reviewQueries = useQueries({
-		queries: sessionsWithOpenPRs.map((session) => sessionReviewsQueryOptions(session, isOpen)),
-	});
-	const reviewStatesBySessionId = useMemo(() => {
-		const map = new Map<string, PRReviewState[]>();
-		sessionsWithOpenPRs.forEach((session, index) => {
-			const data = reviewQueries[index]?.data;
-			if (data) map.set(session.id, data.reviews ?? []);
-		});
-		return map;
-	}, [sessionsWithOpenPRs, reviewQueries]);
+	// new
+const reviewQuerySummary = useQueries({
+    queries: sessionsWithOpenPRs.map((session) =>
+        sessionReviewsQueryOptions(session, isOpen, PALETTE_REVIEW_STALE_TIME_MS),
+    ),
+    combine: (results) => {
+        const reviewStatesBySessionId: Record<string, PRReviewState[]> = {};
+        let allSettled = true;
+        results.forEach((result, index) => {
+            const session = sessionsWithOpenPRs[index];
+            if (session && result.data) reviewStatesBySessionId[session.id] = result.data.reviews ?? [];
+            if (result.isPending) allSettled = false;
+        });
+        return { allSettled, reviewStatesBySessionId };
+    },
+});
+
+useEffect(() => {
+    if (!isOpen) {
+        wasOpenRef.current = false;
+        openSnapshotSettledRef.current = false;
+        setReviewStatesSnapshot(undefined);
+        return;
+    }
+    if (!wasOpenRef.current) {
+        wasOpenRef.current = true;
+        openSnapshotSettledRef.current = reviewQuerySummary.allSettled;
+        setReviewStatesSnapshot(reviewQuerySummary.reviewStatesBySessionId);
+        return;
+    }
+    if (!openSnapshotSettledRef.current && reviewQuerySummary.allSettled) {
+        openSnapshotSettledRef.current = true;
+        setReviewStatesSnapshot(reviewQuerySummary.reviewStatesBySessionId);
+    }
+}, [isOpen, reviewQuerySummary.allSettled, reviewQuerySummary.reviewStatesBySessionId]);
 
 	const items = useMemo(
 		() =>
@@ -88,9 +117,9 @@ export function CommandPalette() {
 				currentProjectId,
 				currentSessionId: params.sessionId,
 				restartingProjectIds,
-				reviewStatesBySessionId,
-			}),
-		[workspaces, currentProjectId, params.sessionId, restartingProjectIds, reviewStatesBySessionId],
+                reviewStatesBySessionId: reviewStatesSnapshot,
+            }),
+        [workspaces, currentProjectId, params.sessionId, restartingProjectIds, reviewStatesSnapshot],
 	);
 	const groups = useMemo(() => displayGroups(items, query), [items, query]);
 
