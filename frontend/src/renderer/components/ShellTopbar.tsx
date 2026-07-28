@@ -21,6 +21,7 @@ import { getAgentActivityView } from "../lib/session-presentation";
 import { isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { StatusPill } from "./StatusPill";
 import { TopbarButton, TopbarKillError, topbarHeaderClass, topbarProjectLabelClass } from "./TopbarButton";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 const isMac = isMacPlatform();
 const boardActionsInPanel = usesBoardActionsInPanel();
@@ -147,13 +148,9 @@ export function ShellTopbar() {
 						</div>
 					</div>
 				) : isSessionRoute ? (
-					<div className="flex min-w-0 items-center gap-3">
-						{session?.branch ? (
-							<div className="inline-flex min-w-0 items-center gap-1.5 font-mono text-brand leading-none text-foreground">
-								<GitBranch className="size-4 shrink-0" aria-hidden="true" />
-								<span className="truncate">{session.branch}</span>
-							</div>
-						) : null}
+					<div className="flex min-w-0 items-center gap-2.5">
+						{session?.branch ? <WorkerBranchLabel branch={session.branch} /> : null}
+						{session?.branch && session ? <div aria-hidden="true" className="h-4 w-px shrink-0 bg-border" /> : null}
 						{session ? <SessionStatusPill session={session} /> : null}
 					</div>
 				) : (isProjectBoardRoute && boardActionsInPanel) ||
@@ -335,6 +332,28 @@ export function TopbarKillButton({
 		</>
 	);
 }
+
+function WorkerBranchLabel({ branch }: { branch: string }) {
+	const segments = branch.split("/").filter(Boolean);
+	const displayBranch = segments[segments.length - 1] ?? branch;
+
+	return (
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<div
+					aria-label={`Branch: ${branch}`}
+					className="inline-flex min-w-0 max-w-40 items-center gap-1.5 font-mono text-2xs leading-none text-passive sm:max-w-56"
+					style={noDragStyle}
+				>
+					<GitBranch className="size-icon-2xs shrink-0" aria-hidden="true" />
+					<span className="truncate">{displayBranch}</span>
+				</div>
+			</TooltipTrigger>
+			<TooltipContent side="bottom">{branch}</TooltipContent>
+		</Tooltip>
+	);
+}
+
 function SessionStatusPill({ session }: { session: WorkspaceSession }) {
 	const { label, tone, breathe } = getAgentActivityView(session.activity);
 	return (
