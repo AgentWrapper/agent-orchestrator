@@ -764,6 +764,8 @@ describe("SessionInspector reviews tab", () => {
 					id: "run-previous",
 					status: "delivered",
 					verdict: previousVerdict,
+					body: "Previous review summary with actionable detail.",
+					githubReviewId: "98765",
 					targetSha: "sha-previous",
 				},
 			};
@@ -782,7 +784,12 @@ describe("SessionInspector reviews tab", () => {
 			await openReviewsTab();
 
 			const previous = await screen.findByText(`Previous: ${previousLabel}`);
-			expect(within(previous.parentElement as HTMLElement).getByText(currentLabel)).toBeInTheDocument();
+			expect(screen.getAllByText(currentLabel).length).toBeGreaterThan(0);
+			expect(within(previous.parentElement as HTMLElement).getByText("Previous review summary with actionable detail.")).toBeInTheDocument();
+			expect(within(previous.parentElement as HTMLElement).getByRole("link", { name: "View previous review" })).toHaveAttribute(
+				"href",
+				"https://example.com/pr/3#pullrequestreview-98765",
+			);
 			expect(screen.getByRole("button", { name: actionLabel })).toBeInTheDocument();
 		},
 	);
@@ -923,7 +930,8 @@ describe("SessionInspector reviews tab", () => {
 				{
 					reviewerId: "alice",
 					verdict: "changes_requested",
-					body: "please fix the nil check",
+					body: "please fix the nil check\nand verify the fallback path",
+					reviewUrl: "https://example.com/pr/3#pullrequestreview-101",
 					submittedAt: "2026-06-15T00:00:00Z",
 					isBot: false,
 				},
@@ -931,6 +939,7 @@ describe("SessionInspector reviews tab", () => {
 					reviewerId: "review-bot",
 					verdict: "approved",
 					body: "automated approval",
+					reviewUrl: "https://example.com/pr/3#pullrequestreview-102",
 					submittedAt: "2026-06-15T00:00:00Z",
 					isBot: true,
 				},
@@ -941,9 +950,17 @@ describe("SessionInspector reviews tab", () => {
 		await openReviewsTab();
 
 		expect(await screen.findByText("Pull request reviews")).toBeInTheDocument();
-		expect(screen.getByText("please fix the nil check")).toBeInTheDocument();
+		expect(screen.getByText(/please fix the nil check/)).not.toHaveClass("line-clamp-1");
+		expect(screen.getByText(/please fix the nil check/)).toHaveClass("whitespace-pre-wrap", "break-words");
 		expect(screen.getByText("automated approval")).toBeInTheDocument();
-		expect(screen.getByText("alice")).toBeInTheDocument();
+		expect(screen.getByRole("link", { name: "alice" })).toHaveAttribute(
+			"href",
+			"https://example.com/pr/3#pullrequestreview-101",
+		);
+		expect(screen.getAllByRole("link", { name: "View review" }).map((link) => link.getAttribute("href"))).toEqual([
+			"https://example.com/pr/3#pullrequestreview-101",
+			"https://example.com/pr/3#pullrequestreview-102",
+		]);
 		expect(screen.getByText("review-bot · bot")).toBeInTheDocument();
 		expect(screen.getByText("AO code reviews")).toBeInTheDocument();
 	});

@@ -876,7 +876,18 @@ function PullRequestReviewRow({ entry }: { entry: SessionPRReviewEntry }) {
 				)}
 				<VerdictBadge label={verdict.label} tone={verdict.tone} />
 			</div>
-			{body ? <p className="mt-1 line-clamp-1 text-2xs leading-relaxed text-passive">{body}</p> : null}
+			{body ? <p className="mt-1 whitespace-pre-wrap break-words text-2xs leading-relaxed text-passive">{body}</p> : null}
+			{entry.reviewUrl ? (
+				<a
+					className="mt-1 inline-flex items-center gap-0.5 text-2xs font-medium text-passive no-underline transition-colors hover:text-foreground"
+					href={entry.reviewUrl}
+					target="_blank"
+					rel="noopener noreferrer"
+				>
+					View review
+					<ArrowUpRight aria-hidden="true" className="size-3 shrink-0" />
+				</a>
+			) : null}
 		</div>
 	);
 }
@@ -1104,14 +1115,32 @@ function AoReviewRow({ reviewState }: { reviewState: PRReviewState }) {
 	const previousVerdict = previousReviewVerdict(reviewState);
 	const summary = reviewState.latestRun?.body?.trim();
 	const reviewUrl = aoReviewCommentUrl(reviewState.latestRun);
+	const previousSummary = reviewState.previousRun?.body?.trim();
+	const previousReviewUrl = aoReviewCommentUrl(reviewState.previousRun);
 	return (
 		<div className={cn("flex min-w-0 flex-col gap-2", reviewState.status === "ineligible" && "opacity-70")}>
 			<VerdictBadge label={verdict.label} tone={verdict.tone} />
-			{summary ? <p className="line-clamp-2 text-2xs leading-relaxed text-passive">{summary}</p> : null}
+			{summary ? <p className="whitespace-pre-wrap break-words text-2xs leading-relaxed text-passive">{summary}</p> : null}
 			{previousVerdict ? (
-				<p className={cn("text-2xs font-medium", reviewerVerdictTone[previousVerdict.tone])}>
-					Previous: {previousVerdict.label}
-				</p>
+				<div className="flex min-w-0 flex-col gap-1 rounded-md border border-border/60 px-2 py-1.5">
+					<p className={cn("text-2xs font-medium", reviewerVerdictTone[previousVerdict.tone])}>
+						Previous: {previousVerdict.label}
+					</p>
+					{previousSummary ? (
+						<p className="whitespace-pre-wrap break-words text-2xs leading-relaxed text-passive">{previousSummary}</p>
+					) : null}
+					{previousReviewUrl ? (
+						<a
+							className="inline-flex items-center gap-0.5 self-start text-2xs font-medium text-passive no-underline transition-colors hover:text-foreground"
+							href={previousReviewUrl}
+							target="_blank"
+							rel="noopener noreferrer"
+						>
+							View previous review
+							<ArrowUpRight aria-hidden="true" className="size-3 shrink-0" />
+						</a>
+					) : null}
+				</div>
 			) : null}
 			{reviewUrl ? (
 				<a
