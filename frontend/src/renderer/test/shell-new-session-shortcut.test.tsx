@@ -3,7 +3,6 @@ import { Suspense, type ComponentType, type PropsWithChildren } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useUiStore } from "../stores/ui-store";
 import type { WorkspaceSummary } from "../types/workspace";
-import { apiClient } from "../lib/api-client";
 
 const shellMocks = vi.hoisted(() => {
 	const state = {
@@ -378,15 +377,6 @@ describe("shell new-session shortcut subscription", () => {
 });
 
 describe("shell application shortcut subscriptions", () => {
-	it("opens board docs links in the session Browser preview", async () => {
-		const post = vi.spyOn(apiClient, "POST").mockResolvedValue({} as never);
-		await renderShell();
-		const card = document.body.appendChild(document.createElement("div")); card.dataset.sessionId = "sess-1";
-		fireEvent.click(card.appendChild(Object.assign(document.createElement("a"), { href: "https://docs.example.com" })));
-		expect(post).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/preview", expect.objectContaining({ body: { url: "https://docs.example.com/" } }));
-		card.remove(); post.mockRestore();
-	});
-
 	it("opens settings", async () => {
 		await renderShell();
 

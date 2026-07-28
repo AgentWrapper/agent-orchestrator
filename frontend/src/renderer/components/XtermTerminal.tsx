@@ -30,6 +30,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import type { AttachableTerminal, TerminalUserInputSource } from "../hooks/useTerminalSession";
 import { aoBridge } from "../lib/bridge";
 import { TERMINAL_FONT_SIZE_DEFAULT } from "../lib/design-tokens";
+import { openLinkInSystemBrowser } from "../lib/external-link-policy";
 import { buildTerminalThemes } from "../lib/terminal-themes";
 import type { Theme } from "../stores/ui-store";
 import {
@@ -296,7 +297,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			// link in the system browser instead — see the context menu below.
 			if (isWebLink(uri)) {
 				if (event.altKey) {
-					void aoBridge.app.openExternal(uri);
+					void openLinkInSystemBrowser(uri);
 					return;
 				}
 				callbacksRef.current.onLinkOpen?.(uri);
