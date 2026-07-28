@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { ArrowLeft, ArrowRight, Globe2, Maximize2, Minimize2, MousePointer2, RefreshCw, X } from "lucide-react";
+import {
+	ArrowLeft,
+	ArrowRight,
+	ExternalLink,
+	Globe2,
+	Maximize2,
+	Minimize2,
+	MousePointer2,
+	RefreshCw,
+	X,
+} from "lucide-react";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { useBrowserView, type BrowserViewModel } from "../hooks/useBrowserView";
 import { formatBrowserAnnotationMessage, type BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
@@ -16,6 +26,13 @@ type BrowserPanelProps = {
 };
 
 type AnnotationStatus = "idle" | "picking" | "queued" | "sending" | "sent" | "error";
+type BrowserViewport = "responsive" | "tablet" | "mobile";
+
+const browserViewportWidths: Record<BrowserViewport, number | undefined> = {
+	responsive: undefined,
+	tablet: 768,
+	mobile: 390,
+};
 
 export type BrowserAnnotationQueueModel = {
 	status: AnnotationStatus;
@@ -200,6 +217,7 @@ export function BrowserPanelView({
 		setAnnotationMode,
 	} = browserView;
 	const [urlInput, setUrlInput] = useState(navState.url);
+	const [viewport, setViewport] = useState<BrowserViewport>("responsive");
 	const { beginPicking, cancelPicking, enqueue, error, failPicking, queuedCount, retryQueued, status } =
 		annotationQueue;
 	const showStaticPreview = !window.ao?.browser && navState.url !== "";
@@ -229,6 +247,16 @@ export function BrowserPanelView({
 		event.preventDefault();
 		const nextURL = urlInput.trim();
 		if (nextURL) void navigate(nextURL);
+	};
+
+	const openExternally = () => {
+		const url = navState.url.trim();
+		if (!url) return;
+		if (window.ao?.app.openExternal) {
+			void window.ao.app.openExternal(url);
+			return;
+		}
+		window.open(url, "_blank", "noopener,noreferrer");
 	};
 
 	const toggleAnnotationMode = async () => {
@@ -351,6 +379,26 @@ export function BrowserPanelView({
 						value={urlInput}
 					/>
 				</div>
+				<select
+					aria-label="Viewport"
+					className="h-8 rounded-md border border-border bg-background px-1.5 font-mono text-xs text-foreground"
+					onChange={(event) => setViewport(event.target.value as BrowserViewport)}
+					value={viewport}
+				>
+					<option value="responsive">Responsive</option>
+					<option value="tablet">Tablet · 768</option>
+					<option value="mobile">Mobile · 390</option>
+				</select>
+				<Button
+					aria-label="Open externally"
+					disabled={!navState.url}
+					onClick={openExternally}
+					size="icon-sm"
+					type="button"
+					variant="ghost"
+				>
+					<ExternalLink aria-hidden="true" className="size-icon-base" />
+				</Button>
 				<Button
 					aria-label={poppedOut ? "Return to panel" : "Pop out"}
 					onClick={() => onTogglePopOut(!poppedOut)}
@@ -365,30 +413,36 @@ export function BrowserPanelView({
 					)}
 				</Button>
 			</form>
-			<div className="relative min-h-0 flex-1 overflow-hidden bg-background">
-				<div className="absolute inset-0 min-h-px min-w-px" ref={slotRef} />
-				{mirrorStream ? (
-					<MirrorVideo stream={mirrorStream} />
-				) : mirrorUrl ? (
-					<img alt="" className="absolute inset-0 h-full w-full object-cover" src={mirrorUrl} />
-				) : null}
-				{showStaticPreview ? <StaticPreview url={navState.url} /> : null}
-				{navState.url === "" ? (
-					<div className="pointer-events-none absolute inset-0 grid place-items-center p-5 text-center font-mono text-xs text-passive">
-						<p>Enter a URL or click one in the terminal.</p>
-					</div>
-				) : null}
-				{navState.error ? (
-					<p
-						className={cn(
-							"absolute inset-x-2.5 bottom-2.5 m-0 border border-error/35 bg-error/8 px-2.5 py-2",
-							"rounded-md text-xs text-destructive",
-						)}
-						data-testid="browser-preview-error"
-					>
-						{navState.error}
-					</p>
-				) : null}
+			<div className="flex min-h-0 flex-1 justify-center overflow-hidden bg-surface">
+				<div
+					className="relative h-full w-full min-w-0 overflow-hidden bg-background"
+					data-testid="browser-viewport"
+					style={{ maxWidth: browserViewportWidths[viewport] }}
+				>
+					<div className="absolute inset-0 min-h-px min-w-px" ref={slotRef} />
+					{mirrorStream ? (
+						<MirrorVideo stream={mirrorStream} />
+					) : mirrorUrl ? (
+						<img alt="" className="absolute inset-0 h-full w-full object-cover" src={mirrorUrl} />
+					) : null}
+					{showStaticPreview ? <StaticPreview url={navState.url} /> : null}
+					{navState.url === "" ? (
+						<div className="pointer-events-none absolute inset-0 grid place-items-center p-5 text-center font-mono text-xs text-passive">
+							<p>Enter a URL or click one in the terminal.</p>
+						</div>
+					) : null}
+					{navState.error ? (
+						<p
+							className={cn(
+								"absolute inset-x-2.5 bottom-2.5 m-0 border border-error/35 bg-error/8 px-2.5 py-2",
+								"rounded-md text-xs text-destructive",
+							)}
+							data-testid="browser-preview-error"
+						>
+							{navState.error}
+						</p>
+					) : null}
+				</div>
 			</div>
 		</div>
 	);
