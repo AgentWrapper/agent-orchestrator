@@ -13,7 +13,7 @@ function Invoke-Native {
         [Parameter(Mandatory)]
         [string]$Command,
 
-        [Parameter(ValueFromRemainingArguments)]
+        [Parameter(Mandatory)]
         [string[]]$Arguments
     )
 
@@ -73,6 +73,53 @@ function Ensure-AOOnPath {
     Write-Host "Placed $Directory at the beginning of your user PATH."
 }
 
+function Install-Binary {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Source,
+
+        [Parameter(Mandatory)]
+        [string]$Destination
+    )
+
+    try {
+        Copy-Item -LiteralPath $Source -Destination $Destination -Force
+        return
+    }
+    catch {
+        $copyError = $_
+        if (-not (Test-Path -LiteralPath $Destination)) {
+            throw
+        }
+    }
+
+    # Windows can keep an executable locked while restored PTY hosts continue
+    # serving live sessions after the daemon exits. Rename the old image out of
+    # the stable PATH location, then publish the new build in its place.
+    $setAsidePath = "$Destination.in-use-$PID"
+    try {
+        Move-Item -LiteralPath $Destination -Destination $setAsidePath -Force
+    }
+    catch {
+        throw $copyError
+    }
+
+    try {
+        Copy-Item -LiteralPath $Source -Destination $Destination -Force
+    }
+    catch {
+        Move-Item -LiteralPath $setAsidePath -Destination $Destination -Force
+        throw
+    }
+
+    try {
+        Remove-Item -LiteralPath $setAsidePath -Force
+    }
+    catch {
+        Write-Warning "The previous in-use binary remains at $setAsidePath and can be removed after its sessions exit."
+    }
+}
+
 $isWindowsHost = [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
 if (-not $isWindowsHost) {
     throw 'scripts/install.ps1 supports Windows only'
@@ -109,12 +156,12 @@ if ($Fetch) {
         throw 'Fetch mode requires a worktree with no tracked changes'
     }
 
-    Invoke-Native git -C $repoRoot fetch origin main
-    Invoke-Native git -C $repoRoot pull --ff-only origin main
+    Invoke-Native -Command git -Arguments @('-C', $repoRoot, 'fetch', 'origin', 'main')
+    Invoke-Native -Command git -Arguments @('-C', $repoRoot, 'pull', '--ff-only', 'origin', 'main')
 }
 
 if ($InstallDependencies -or -not (Test-Path -LiteralPath $nodeModules)) {
-    Invoke-Native npm ci --prefix $frontendDir
+    Invoke-Native -Command npm -Arguments @('ci', '--prefix', $frontendDir)
 }
 
 if ($Start) {
@@ -131,7 +178,7 @@ New-Item -ItemType Directory -Path $tempRoot | Out-Null
 try {
     Push-Location $backendDir
     try {
-        Invoke-Native go build -trimpath -o $builtPath ./cmd/ao
+        Invoke-Native -Command go -Arguments @('build', '-trimpath', '-o', $builtPath, './cmd/ao')
     }
     finally {
         Pop-Location
@@ -140,11 +187,11 @@ try {
     & $builtPath status *> $null
     if ($LASTEXITCODE -eq 0) {
         Write-Host 'Stopping the running AO daemon before replacing ao.exe...'
-        Invoke-Native $builtPath stop --timeout 10s
+        Invoke-Native -Command $builtPath -Arguments @('stop', '--timeout', '10s')
     }
 
     New-Item -ItemType Directory -Force -Path $resolvedInstallDirectory | Out-Null
-    Copy-Item -LiteralPath $builtPath -Destination $installPath -Force
+    Install-Binary -Source $builtPath -Destination $installPath
     Ensure-AOOnPath -Directory $resolvedInstallDirectory -Executable $installPath
 
     $resolvedAO = (Get-Command ao -CommandType Application -ErrorAction Stop).Source
@@ -163,7 +210,7 @@ try {
         Write-Host 'This terminal stays attached to the dev app; press Ctrl-C to stop it.'
         Push-Location $repoRoot
         try {
-            Invoke-Native $installPath start --source
+            Invoke-Native -Command $installPath -Arguments @('start', '--source')
         }
         finally {
             Pop-Location
