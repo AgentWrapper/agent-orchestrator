@@ -199,6 +199,7 @@ func (w *TranscriptWatcher) rebuildLocked() error {
 	// each add pass, scan again to close the stat-to-watch race where another
 	// directory appears before its parent watch is installed.
 	const maxTopologyPasses = 16
+	var addedPaths []string
 	for pass := 0; pass < maxTopologyPasses; pass++ {
 		paths := unwatchedPaths(desired, w.watched)
 		for _, path := range paths {
@@ -206,6 +207,7 @@ func (w *TranscriptWatcher) rebuildLocked() error {
 				return fmt.Errorf("watch directory %q: %w", path, err)
 			}
 			w.watched[path] = struct{}{}
+			addedPaths = append(addedPaths, path)
 		}
 
 		refreshed, err := w.desiredWatchSetLocked()
@@ -222,6 +224,7 @@ func (w *TranscriptWatcher) rebuildLocked() error {
 		}
 	}
 
+	removedStale := false
 	for path := range w.watched {
 		if _, keep := desired[path]; keep {
 			continue
@@ -231,6 +234,23 @@ func (w *TranscriptWatcher) rebuildLocked() error {
 			return fmt.Errorf("remove stale watch %q: %w", path, err)
 		}
 		delete(w.watched, path)
+		removedStale = true
+	}
+
+	// On Linux, a directory rename can leave the old and new paths referring
+	// to the same inotify watch. Removing the stale path can then remove the
+	// watch just added for the new path. Re-add new paths after stale removals
+	// so the kernel watch set and w.watched cannot diverge.
+	if removedStale {
+		sort.Strings(addedPaths)
+		for _, path := range addedPaths {
+			if _, keep := desired[path]; !keep {
+				continue
+			}
+			if err := w.watcher.Add(path); err != nil {
+				return fmt.Errorf("refresh watch directory %q: %w", path, err)
+			}
+		}
 	}
 	return nil
 }
