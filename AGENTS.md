@@ -41,7 +41,7 @@ npm run typecheck
 npm run build
 ```
 
-When showing or demoing frontend changes, run `ao preview [url]` from inside the session so the change renders in the desktop browser panel (the inspector rail's Browser tab); do not just describe it. For renderer source changes, reuse a Vite server only when its process is rooted in this exact worktree. Otherwise run `npm run dev:web -- --host 127.0.0.1` from this worktree's `frontend/`, use the URL and route that render the changed UI, and keep it running during review. A server from the main checkout or another worker cannot show this worktree's source changes. Created or changed static `index.html` and Markdown files can be opened directly with `ao preview`; do not surface unchanged pre-existing Markdown.
+When showing or demoing frontend changes, run `ao preview [url]` from inside the session after the relevant file changes are complete so the final result renders in the desktop browser panel (the inspector rail's Browser tab); do not navigate merely because a URL appeared in terminal output, and do not just describe what you would launch. For renderer source changes, reuse a Vite server only when its process is rooted in this exact worktree. Otherwise run `npm run dev:web -- --host 127.0.0.1` from this worktree's `frontend/`, use the URL and route that render the changed UI, and keep it running during review. A server from the main checkout or another worker cannot show this worktree's source changes. Created or changed static `index.html` and Markdown files can be opened directly with `ao preview`; do not surface unchanged pre-existing Markdown.
 
 ## Where to look first
 

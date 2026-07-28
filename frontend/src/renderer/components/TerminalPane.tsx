@@ -7,7 +7,6 @@ import { useUiStore, type Theme } from "../stores/ui-store";
 import { useTerminalSession, type AttachableTerminal, type TerminalSessionState } from "../hooks/useTerminalSession";
 import { apiClient } from "../lib/api-client";
 import { createUrlWatcher, type UrlWatcher } from "../lib/detect-urls";
-import { isAoPreviewHostname, isLoopbackHostname } from "../lib/loopback";
 import { cn } from "../lib/utils";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { useRestoreSession } from "../hooks/useRestoreSession";
@@ -266,7 +265,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 			const linkSessionId = session.id;
 			setInspectorViewForSession(linkSessionId, "browser");
 			setInspectorOpenForSession(linkSessionId, true);
-			// Serialize writes and coalesce queued output to its latest target.
+			// Serialize writes and coalesce queued clicks to their latest target.
 			// Timeout and unmount cleanup keep stale requests from blocking links.
 			pendingPreviewRef.current = { sessionId: linkSessionId, url: uri };
 			if (previewRequestRunningRef.current) return;
@@ -310,50 +309,23 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 		},
 		[isSessionActive, queryClient, session?.id, session?.kind, setInspectorOpenForSession, setInspectorViewForSession],
 	);
-	// Live loopback links are preview targets: open the Browser tab immediately.
-	// Replay URLs and external web links retain the upstream unseen-dot behavior
-	// so reconnecting cannot steal focus and a printed PR/docs link stays passive.
+	// Terminal output only signals that a link exists. Navigation is reserved
+	// for explicit clicks and file-change previews completed by the worker.
 	const watchLinks = Boolean(session?.id && session.kind === "worker" && terminalTarget?.kind !== "shell");
 	const urlWatcherRef = useRef<UrlWatcher | null>(null);
 	const urlWatcherSessionRef = useRef<string | null>(null);
-	const outputPhaseRef = useRef<"replay" | "live">("replay");
-	const openLinkInBrowserRef = useRef(openLinkInBrowser);
-	openLinkInBrowserRef.current = openLinkInBrowser;
-	const linkSessionIdRef = useRef(session?.id);
-	linkSessionIdRef.current = session?.id;
 	const handleOutput = useCallback(
-		(text: string, phase: "replay" | "live") => {
+		(text: string) => {
 			const sessionId = session?.id;
 			if (!sessionId) return;
 			if (!urlWatcherRef.current || urlWatcherSessionRef.current !== sessionId) {
 				urlWatcherSessionRef.current = sessionId;
-				outputPhaseRef.current = phase;
-				urlWatcherRef.current = createUrlWatcher((url) => {
-					if (outputPhaseRef.current === "live") {
-						try {
-							const parsed = new URL(url);
-							if (isLoopbackHostname(parsed.hostname) && !isAoPreviewHostname(parsed.hostname)) {
-								openLinkInBrowserRef.current(url);
-								return;
-							}
-						} catch {
-							// The watcher only reports web URLs; keep the passive
-							// fallback if a malformed candidate slips through.
-						}
-					}
+				urlWatcherRef.current = createUrlWatcher(() => {
 					const store = useUiStore.getState();
-					const currentSessionId = linkSessionIdRef.current;
-					if (!currentSessionId) return;
-					const current = store.inspectorSessions[currentSessionId];
+					const current = store.inspectorSessions[sessionId];
 					const viewingBrowser = (current?.isOpen ?? true) && (current?.view ?? "summary") === "browser";
-					if (!viewingBrowser) store.setBrowserUnseen(currentSessionId, true);
+					if (!viewingBrowser) store.setBrowserUnseen(sessionId, true);
 				});
-			}
-			if (outputPhaseRef.current !== phase) {
-				// Flush any URL deferred at the prior chunk boundary while it
-				// still has its original replay/live classification.
-				urlWatcherRef.current.push("\n");
-				outputPhaseRef.current = phase;
 			}
 			urlWatcherRef.current.push(text);
 		},

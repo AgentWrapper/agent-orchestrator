@@ -65,7 +65,7 @@ export type UseTerminalSessionOptions = {
 	 * for signals like printed URLs; it must be cheap and side-effect-light since
 	 * it runs on every output chunk. Omit to skip decoding entirely.
 	 */
-	onOutput?: (text: string, phase: "replay" | "live") => void;
+	onOutput?: (text: string) => void;
 	/**
 	 * Attach to a standalone shell terminal (POST /api/v1/shell-terminals)
 	 * instead of a session's pane. When set it wins over `session`, which
@@ -265,8 +265,8 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		// correctly for onOutput. Only built when a caller is listening.
 		const outputDecoder = optionsRef.current.onOutput ? new TextDecoder() : null;
 
-		const emitOutput = (bytes: Uint8Array, phase: "replay" | "live") => {
-			if (outputDecoder) optionsRef.current.onOutput?.(outputDecoder.decode(bytes, { stream: true }), phase);
+		const emitOutput = (bytes: Uint8Array) => {
+			if (outputDecoder) optionsRef.current.onOutput?.(outputDecoder.decode(bytes, { stream: true }));
 		};
 
 		// End the initial-replay burst: concatenate everything buffered so far
@@ -304,7 +304,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			}
 			// Observers (the URL watcher) must still see the replay text, and see
 			// it once, in order — decode the joined buffer, not the pieces.
-			emitOutput(replay, "replay");
+			emitOutput(replay);
 			terminal.write(replay, () => {
 				if (!isCurrentAttachment(generation, handle, mux)) return;
 				setReplaySettled(true);
@@ -324,7 +324,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 					return;
 				}
 				terminal.write(bytes);
-				emitOutput(bytes, "live");
+				emitOutput(bytes);
 			}),
 			mux.onOpened(handle, () => {
 				if (!isCurrentAttachment(generation, handle, mux)) return;

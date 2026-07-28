@@ -43,6 +43,10 @@ type entryState struct {
 	signature    uint64
 	entryModUnix int64
 	entrySize    int64
+	// pending records a relevant file change observed while the worker was
+	// active. The final target is persisted only after the worker reaches an
+	// end-of-work activity state.
+	pending bool
 	// missing baselines a workspace before any previewable file exists. A file
 	// created later is a real change, unlike a Markdown file already present
 	// when the daemon first observes the session.
@@ -119,7 +123,6 @@ func (p *Poller) Poll(ctx context.Context) error {
 		}
 		storedEntry, workspaceOwned := StoredWorkspaceEntry(sess.Metadata.PreviewURL, sess.ID)
 		entry, ok := Entry{}, false
-		baselineOnly := false
 		if workspaceOwned {
 			entry, ok = EntryAtPath(sess.Metadata.WorkspacePath, storedEntry)
 		}
@@ -142,7 +145,6 @@ func (p *Poller) Poll(ctx context.Context) error {
 					// arbitrary repo doc. A later creation or edit is a real
 					// session change and may then open the preview.
 					entry, ok = DiscoverEntry(sess.Metadata.WorkspacePath)
-					baselineOnly = ok
 				}
 			}
 		}
@@ -177,7 +179,13 @@ func (p *Poller) Poll(ctx context.Context) error {
 			(previous.path != state.path ||
 				previous.entryModUnix != state.entryModUnix ||
 				previous.entrySize != state.entrySize)
-		if !p.shouldRefresh(sess, target, seenBefore, workspaceOwned, entryChanged, baselineOnly) {
+		pending := seenBefore && previous.pending
+		if !p.shouldRefresh(sess, target, seenBefore, workspaceOwned, entryChanged, pending) {
+			p.seen[sess.ID] = state
+			continue
+		}
+		if !previewReady(sess.Activity.State) {
+			state.pending = true
 			p.seen[sess.ID] = state
 			continue
 		}
@@ -202,15 +210,15 @@ func (p *Poller) shouldRefresh(
 	seenBefore bool,
 	workspaceOwned bool,
 	entryChanged bool,
-	baselineOnly bool,
+	pending bool,
 ) bool {
+	if pending {
+		return true
+	}
 	current := strings.TrimSpace(sess.Metadata.PreviewURL)
 	if current == "" {
 		if !seenBefore {
-			if baselineOnly {
-				return false
-			}
-			return sess.Metadata.PreviewRevision == 0
+			return false
 		}
 		if entryChanged {
 			return true
@@ -222,6 +230,12 @@ func (p *Poller) shouldRefresh(
 		return seenBefore
 	}
 	return workspaceOwned
+}
+
+func previewReady(state domain.ActivityState) bool {
+	return state == domain.ActivityIdle ||
+		state == domain.ActivityWaitingInput ||
+		state == domain.ActivityExited
 }
 
 func stateFor(entry Entry, includeAssets bool) entryState {

@@ -257,10 +257,11 @@ Your job is to complete the assigned task in this workspace. Inspect the relevan
 
 ## Frontend Preview Workflow
 
-- When a task changes user-visible UI, verify it in AO's Browser panel before claiming the preview is ready.
+- Do not navigate AO's Browser merely because a URL appears in terminal output. Preview only after this session has actually changed a relevant file, and do it once the implementation work is complete.
+- When a task changes user-visible UI, verify the final state in AO's Browser panel before claiming the preview is ready.
 - For a created or changed static `+"`index.html`"+` or Markdown file, use `+"`ao preview [path-or-file-url]`"+` directly. Do not surface an unchanged pre-existing Markdown file.
 - For framework source such as React, Vue, or Svelte, inspect the project's documented scripts and start its frontend dev server from this session's assigned workspace when needed. Reuse an existing server only after verifying that its working directory is this exact workspace; a server rooted in another checkout cannot show this session's changes.
-- Wait for the server's actual URL, choose the route that renders the changed UI, and run `+"`ao preview <url>`"+`. Keep the server running while the user reviews the result.
+- Wait for the server's actual URL, choose the route that renders the changed UI, and run `+"`ao preview <url>`"+` at the end of the implementation. Keep the server running while the user reviews the result.
 - Do not merely say that you will launch or preview the UI. Execute the command and report a blocker if the project has no runnable frontend or the server cannot start.
 
 ## Review, CI, and Task Planning
