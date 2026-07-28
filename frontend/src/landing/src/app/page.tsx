@@ -7,7 +7,7 @@ import {
   OrganizationJsonLd,
 } from "@/components/JsonLd";
 import { getGitHubRepoStats } from "@/lib/github-stats";
-import { FAQ_ITEMS } from "./components/FAQSection";
+import { FAQ_ITEMS } from "./components/FAQSection/constants";
 import { HeroSection } from "./components/HeroSection";
 
 const TrustedBySection = dynamic(() =>
