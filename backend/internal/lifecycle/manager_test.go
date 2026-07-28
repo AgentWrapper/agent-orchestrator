@@ -1350,7 +1350,7 @@ func TestApplyReviewResultDedupsSCMRoundTripByGitHubReviewID(t *testing.T) {
 			Threads: []ports.SCMReviewThreadObservation{{
 				ID: "thread-1", Path: "auth.go", Line: 12,
 				Comments: []ports.SCMReviewCommentObservation{{
-					ID: "comment-1", ReviewID: "98765", Author: "ao-reviewer", Body: "fix auth", URL: prURL + "#discussion_r1",
+					ID: "comment-1", Author: "ao-reviewer", Body: "fix auth", URL: prURL + "#discussion_r1",
 				}},
 			}},
 		},
@@ -1396,8 +1396,8 @@ func TestApplyReviewResultSCMRoundTripKeepsOtherReviewerComments(t *testing.T) {
 			Threads: []ports.SCMReviewThreadObservation{{
 				ID: "thread-1", Path: "auth.go", Line: 12,
 				Comments: []ports.SCMReviewCommentObservation{
-					{ID: "comment-1", ReviewID: "98765", Author: "ao-reviewer", Body: "fix auth", URL: prURL + "#discussion_r1"},
-					{ID: "comment-2", ReviewID: "555", Author: "human-reviewer", Body: "also fix tests", URL: prURL + "#discussion_r2"},
+					{ID: "comment-1", Author: "ao-reviewer", Body: "fix auth", URL: prURL + "#discussion_r1"},
+					{ID: "comment-2", Author: "human-reviewer", Body: "also fix tests", URL: prURL + "#discussion_r2"},
 				},
 			}},
 		},
@@ -1413,59 +1413,6 @@ func TestApplyReviewResultSCMRoundTripKeepsOtherReviewerComments(t *testing.T) {
 	}
 	if !strings.Contains(scmMsg.msgs[0], "also fix tests") {
 		t.Fatalf("SCM nudge should keep human reviewer comment:\n%s", scmMsg.msgs[0])
-	}
-}
-
-func TestApplyReviewResultSCMRoundTripKeepsSameAuthorDifferentReviewComments(t *testing.T) {
-	st := newFakeStore()
-	st.sessions["mer-1"] = working("mer-1")
-	msg := &fakeMessenger{}
-	m := New(st, msg)
-	prURL := "https://github.com/o/r/pull/1"
-	result := ReviewResult{
-		RunID:          "run-1",
-		WorkerID:       "mer-1",
-		PRURL:          prURL,
-		TargetSHA:      "sha1",
-		Verdict:        domain.VerdictChangesRequested,
-		Body:           "fix auth",
-		GithubReviewID: "98765",
-	}
-	if outcome, err := m.ApplyReviewResult(ctx, "mer-1", result); err != nil || outcome != ReviewDeliverySent {
-		t.Fatalf("ApplyReviewResult outcome=%q err=%v, want sent", outcome, err)
-	}
-
-	scmMsg := &fakeMessenger{}
-	scmManager := New(st, scmMsg)
-	obs := ports.SCMObservation{
-		Fetched: true,
-		PR:      ports.SCMPRObservation{URL: prURL},
-		Review: ports.SCMReviewObservation{
-			Decision: string(domain.ReviewChangesRequest),
-			Reviews: []ports.SCMReviewSummaryObservation{
-				{ID: "98765", Author: "alice", State: string(domain.ReviewChangesRequest), Body: "fix auth"},
-				{ID: "222", Author: "alice", State: string(domain.ReviewChangesRequest), Body: "new manual feedback"},
-			},
-			Threads: []ports.SCMReviewThreadObservation{{
-				ID: "thread-1", Path: "auth.go", Line: 12,
-				Comments: []ports.SCMReviewCommentObservation{
-					{ID: "comment-1", ReviewID: "98765", Author: "alice", Body: "fix auth", URL: prURL + "#discussion_r1"},
-					{ID: "comment-2", ReviewID: "222", Author: "alice", Body: "new manual feedback", URL: prURL + "#discussion_r2"},
-				},
-			}},
-		},
-	}
-	if err := scmManager.ApplySCMObservation(ctx, "mer-1", obs); err != nil {
-		t.Fatalf("ApplySCMObservation: %v", err)
-	}
-	if len(scmMsg.msgs) != 1 {
-		t.Fatalf("same author feedback from a different review should still nudge once, got %v", scmMsg.msgs)
-	}
-	if strings.Contains(scmMsg.msgs[0], "fix auth") {
-		t.Fatalf("SCM nudge should filter only the already-delivered review comment:\n%s", scmMsg.msgs[0])
-	}
-	if !strings.Contains(scmMsg.msgs[0], "new manual feedback") {
-		t.Fatalf("SCM nudge should keep same-author comment from a different review:\n%s", scmMsg.msgs[0])
 	}
 }
 

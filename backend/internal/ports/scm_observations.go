@@ -233,9 +233,6 @@ type SCMReviewThreadObservation struct {
 type SCMReviewCommentObservation struct {
 	// ID is the provider's stable review comment identifier.
 	ID string
-	// ReviewID is the provider's stable submitted-review identifier that owns
-	// this review comment, when supplied.
-	ReviewID string
 	// Author is the provider login/name of the commenter.
 	Author string
 	// Body is the review comment text.

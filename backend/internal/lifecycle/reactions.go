@@ -410,12 +410,12 @@ func (m *Manager) filterDeliveredAOReviewRoundTrip(ctx context.Context, o ports.
 		return o, nil
 	}
 	coverage, err := m.deliveredAOReviewCoverage(ctx, prURL, o.Review.Reviews)
-	if err != nil || len(coverage.reviewIDs) == 0 {
+	if err != nil || len(coverage.authors) == 0 {
 		return o, err
 	}
 
 	filtered := o
-	filtered.Review.Threads = filterCoveredReviewThreads(o.Review.Threads, coverage.reviewIDs)
+	filtered.Review.Threads = filterCoveredReviewThreads(o.Review.Threads, coverage.authors)
 	if domain.ReviewDecision(o.Review.Decision) == domain.ReviewChangesRequest &&
 		!hasUncoveredChangesRequestedReview(o.Review.Reviews, coverage.reviewIDs) &&
 		!hasUnresolvedSCMComments(filtered.Review.Threads) {
@@ -425,14 +425,16 @@ func (m *Manager) filterDeliveredAOReviewRoundTrip(ctx context.Context, o ports.
 }
 
 type deliveredAOReviewCoverage struct {
+	authors   map[string]bool
 	reviewIDs map[string]bool
 }
 
 func (m *Manager) deliveredAOReviewCoverage(ctx context.Context, prURL string, reviews []ports.SCMReviewSummaryObservation) (deliveredAOReviewCoverage, error) {
-	coverage := deliveredAOReviewCoverage{reviewIDs: map[string]bool{}}
+	coverage := deliveredAOReviewCoverage{authors: map[string]bool{}, reviewIDs: map[string]bool{}}
 	for _, review := range reviews {
 		reviewID := strings.TrimSpace(review.ID)
-		if reviewID == "" {
+		author := strings.TrimSpace(review.Author)
+		if reviewID == "" || author == "" {
 			continue
 		}
 		seen, err := m.reactionSeen(ctx, prURL, deliveredAOReviewKey(prURL, reviewID), reviewID)
@@ -440,19 +442,20 @@ func (m *Manager) deliveredAOReviewCoverage(ctx context.Context, prURL string, r
 			return deliveredAOReviewCoverage{}, err
 		}
 		if seen {
+			coverage.authors[author] = true
 			coverage.reviewIDs[reviewID] = true
 		}
 	}
 	return coverage, nil
 }
 
-func filterCoveredReviewThreads(threads []ports.SCMReviewThreadObservation, coveredReviewIDs map[string]bool) []ports.SCMReviewThreadObservation {
+func filterCoveredReviewThreads(threads []ports.SCMReviewThreadObservation, coveredAuthors map[string]bool) []ports.SCMReviewThreadObservation {
 	filtered := make([]ports.SCMReviewThreadObservation, 0, len(threads))
 	for _, th := range threads {
 		next := th
 		next.Comments = make([]ports.SCMReviewCommentObservation, 0, len(th.Comments))
 		for _, c := range th.Comments {
-			if coveredReviewIDs[strings.TrimSpace(c.ReviewID)] {
+			if !c.IsBot && coveredAuthors[strings.TrimSpace(c.Author)] {
 				continue
 			}
 			next.Comments = append(next.Comments, c)
