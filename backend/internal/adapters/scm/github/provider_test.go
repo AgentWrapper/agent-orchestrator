@@ -1172,7 +1172,7 @@ func TestSCMThreadFromGraphQLMarksThreadBotOnlyWhenAllCommentsAreBots(t *testing
 		"line":       float64(12),
 		"isResolved": false,
 		"comments": map[string]any{"nodes": []any{
-			map[string]any{"id": "C-human", "body": "please fix", "author": map[string]any{"login": "alice", "__typename": "User"}},
+			map[string]any{"id": "C-human", "body": "please fix", "pullRequestReview": map[string]any{"id": "review-human"}, "author": map[string]any{"login": "alice", "__typename": "User"}},
 			map[string]any{"id": "C-bot", "body": "automated note", "author": map[string]any{"login": "review-bot", "__typename": "Bot"}},
 		}},
 	})
@@ -1181,6 +1181,9 @@ func TestSCMThreadFromGraphQLMarksThreadBotOnlyWhenAllCommentsAreBots(t *testing
 	}
 	if len(mixed.Comments) != 2 || mixed.Comments[0].IsBot || !mixed.Comments[1].IsBot {
 		t.Fatalf("comment bot flags not preserved on mixed thread: %+v", mixed.Comments)
+	}
+	if mixed.Comments[0].ReviewID != "review-human" {
+		t.Fatalf("comment review id not preserved: %+v", mixed.Comments[0])
 	}
 
 	allBot := scmThreadFromGraphQL(map[string]any{
@@ -1381,6 +1384,9 @@ func TestFetchReviewThreadsUsesLatestWindowWithoutFallbackWhenOldestResolved(t *
 		if !strings.Contains(string(body), "comments(first:5)") {
 			t.Fatalf("review query should cap comments per thread, body=%s", body)
 		}
+		if !strings.Contains(string(body), "pullRequestReview{ id }") {
+			t.Fatalf("review query should request comment review identity, body=%s", body)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"data": map[string]any{"repo": map[string]any{"pullRequest": map[string]any{
@@ -1395,7 +1401,7 @@ func TestFetchReviewThreadsUsesLatestWindowWithoutFallbackWhenOldestResolved(t *
 				}}},
 				"reviewThreads": map[string]any{
 					"nodes": []any{map[string]any{"id": "latest-resolved", "path": "main.go", "line": 1, "isResolved": true, "comments": map[string]any{"nodes": []any{map[string]any{
-						"id": "comment-1", "body": "fix", "url": "https://github.com/o/r/pull/1#discussion_r1", "author": map[string]any{"login": "alice", "__typename": "User"},
+						"id": "comment-1", "body": "fix", "url": "https://github.com/o/r/pull/1#discussion_r1", "pullRequestReview": map[string]any{"id": "review-1"}, "author": map[string]any{"login": "alice", "__typename": "User"},
 					}}}}},
 					"pageInfo": map[string]any{"hasPreviousPage": true, "startCursor": "latest-start"},
 				},
