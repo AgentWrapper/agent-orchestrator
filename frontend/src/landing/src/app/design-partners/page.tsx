@@ -1,6 +1,11 @@
-import { COMPANY } from "@ao/shared/constants";
+import { AGENT_HARNESSES, COMPANY } from "@ao/shared/constants";
 import type { Metadata } from "next";
 import Image from "next/image";
+import {
+  formatStatPlus,
+  getGitHubRepoStats,
+  monthsSince,
+} from "@/lib/github-stats";
 import {
   RoadmapSlideshow,
   type RoadmapPhase,
@@ -13,6 +18,13 @@ const MAILTO_HREF = `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(
 )}&body=${encodeURIComponent(
   "Hi Prateek,\n\nWe're interested in the AO design partner program.\n\nCompany:\nEngineering team size:\nAgent harnesses we use today (Claude Code / Codex / Cursor / ...):\nWhat we want out of AO:\n",
 )}`;
+
+/** Shown only if the GitHub API request fails. */
+const FALLBACK_STATS = {
+  stars: 8400,
+  forks: 1200,
+  months: 5,
+} as const;
 
 export const metadata: Metadata = {
   title: "Design Partner Program - Agent Orchestrator",
@@ -28,13 +40,6 @@ export const metadata: Metadata = {
     canonical: `${COMPANY.MARKETING_URL}/design-partners`,
   },
 };
-
-const STATS = [
-  { value: "8,400+", label: "stars in 5 months" },
-  { value: "1,200+", label: "forks" },
-  { value: "23", label: "agent harnesses" },
-  { value: "Nightly", label: "desktop releases" },
-];
 
 const partnerGets = [
   {
@@ -177,7 +182,22 @@ function TextLink({
   );
 }
 
-export default function DesignPartnersPage() {
+export default async function DesignPartnersPage() {
+  const repo = await getGitHubRepoStats();
+  const stars = repo?.stars ?? FALLBACK_STATS.stars;
+  const forks = repo?.forks ?? FALLBACK_STATS.forks;
+  const months = repo ? monthsSince(repo.createdAt) : FALLBACK_STATS.months;
+
+  const stats = [
+    {
+      value: formatStatPlus(stars),
+      label: `stars in ${months} month${months === 1 ? "" : "s"}`,
+    },
+    { value: formatStatPlus(forks), label: "forks" },
+    { value: String(AGENT_HARNESSES), label: "agent harnesses" },
+    { value: "Nightly", label: "desktop releases" },
+  ];
+
   return (
     <main className="bg-background text-foreground">
       <section className="relative overflow-hidden px-4 pb-20 pt-24 sm:px-8 sm:pb-28 sm:pt-32 lg:px-[30px] lg:pt-36">
@@ -228,7 +248,7 @@ export default function DesignPartnersPage() {
           </div>
 
           <div className="mt-16 grid overflow-hidden rounded-xl border border-border sm:grid-cols-2 lg:grid-cols-4">
-            {STATS.map((stat) => (
+            {stats.map((stat) => (
               <div
                 key={stat.label}
                 className="border-b border-border px-6 py-5 sm:border-r sm:[&:nth-child(2n)]:border-r-0 lg:border-b-0 lg:[&:nth-child(2n)]:border-r lg:last:border-r-0"
