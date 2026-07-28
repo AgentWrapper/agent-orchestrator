@@ -1,17 +1,29 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import {
+	useEffect,
+	useRef,
+	useState,
+	type KeyboardEvent,
+	type MouseEvent,
+	type PointerEvent as ReactPointerEvent,
+} from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {
 	AlertTriangle,
 	Check,
+	CircleCheck,
+	CirclePause,
 	Copy,
 	GitBranch,
+	GitMerge,
 	LayoutGrid,
+	LoaderCircle,
 	Plus,
 	RotateCcw,
 	RotateCw,
 	Rows3,
 	Trash2,
+	type LucideIcon,
 } from "lucide-react";
 import {
 	type SessionStatus,
@@ -65,10 +77,24 @@ type Column = AttentionZoneView;
 const COLUMNS: Column[] = boardAttentionZoneOrder.map((zone) => getAttentionZoneViewForZone(zone));
 type ArchiveLayout = "rows" | "grid";
 const archiveLayoutStorageKey = "ao.board.archive.layout";
+const archiveHeightStorageKey = "ao.board.archive.height";
+
+// The archive opens showing a couple of cards, not every one it holds — it sits
+// under the lanes and used to push them off screen when a project had a long
+// history. Past the default it scrolls, and the drag handle overrides both.
+const ARCHIVE_DEFAULT_HEIGHT: Record<ArchiveLayout, number> = { rows: 336, grid: 226 };
+const ARCHIVE_MIN_HEIGHT = 112;
+const archiveMaxHeight = () => (typeof window === "undefined" ? 640 : Math.round(window.innerHeight * 0.7));
 
 function initialArchiveLayout(): ArchiveLayout {
 	if (typeof window === "undefined") return "grid";
 	return window.localStorage?.getItem(archiveLayoutStorageKey) === "rows" ? "rows" : "grid";
+}
+
+function initialArchiveHeight(): number | undefined {
+	if (typeof window === "undefined") return undefined;
+	const stored = Number(window.localStorage?.getItem(archiveHeightStorageKey));
+	return Number.isFinite(stored) && stored >= ARCHIVE_MIN_HEIGHT ? stored : undefined;
 }
 
 function isArchivedSession(session: WorkspaceSession): boolean {
@@ -143,6 +169,9 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	// Archived sessions cost one quiet line under the board until expanded.
 	const [archiveExpanded, setArchiveExpanded] = useState(false);
 	const [archiveLayout, setArchiveLayout] = useState<ArchiveLayout>(initialArchiveLayout);
+	// undefined = follow the layout's default; a number = the user dragged it.
+	const [archiveHeight, setArchiveHeight] = useState<number | undefined>(initialArchiveHeight);
+	const archiveResizeRef = useRef<{ startY: number; startHeight: number } | null>(null);
 	const [restoringSessionId, setRestoringSessionId] = useState<string | undefined>();
 	const [restoreErrors, setRestoreErrors] = useState<Record<string, string>>({});
 	const [restoreUnavailableSession, setRestoreUnavailableSession] = useState<WorkspaceSession | undefined>();
@@ -162,6 +191,41 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			to: "/projects/$projectId/sessions/$sessionId",
 			params: { projectId: session.workspaceId, sessionId: session.id },
 		});
+	const clampArchiveHeight = (value: number) =>
+		Math.min(Math.max(value, ARCHIVE_MIN_HEIGHT), archiveMaxHeight());
+	const commitArchiveHeight = (value: number) => {
+		const next = clampArchiveHeight(value);
+		setArchiveHeight(next);
+		window.localStorage?.setItem(archiveHeightStorageKey, String(next));
+	};
+	const resolvedArchiveHeight = archiveHeight ?? ARCHIVE_DEFAULT_HEIGHT[archiveLayout];
+	const startArchiveResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+		event.preventDefault();
+		archiveResizeRef.current = { startY: event.clientY, startHeight: resolvedArchiveHeight };
+		event.currentTarget.setPointerCapture(event.pointerId);
+	};
+	const moveArchiveResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+		const drag = archiveResizeRef.current;
+		if (!drag) return;
+		// The handle is on the panel's top edge, so dragging up grows the archive.
+		commitArchiveHeight(drag.startHeight - (event.clientY - drag.startY));
+	};
+	const endArchiveResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+		if (!archiveResizeRef.current) return;
+		archiveResizeRef.current = null;
+		event.currentTarget.releasePointerCapture(event.pointerId);
+	};
+	const nudgeArchiveHeight = (event: KeyboardEvent<HTMLDivElement>) => {
+		const step = event.shiftKey ? 64 : 16;
+		if (event.key === "ArrowUp") {
+			event.preventDefault();
+			commitArchiveHeight(resolvedArchiveHeight + step);
+		} else if (event.key === "ArrowDown") {
+			event.preventDefault();
+			commitArchiveHeight(resolvedArchiveHeight - step);
+		}
+	};
+
 	const chooseArchiveLayout = (layout: ArchiveLayout) => {
 		window.localStorage?.setItem(archiveLayoutStorageKey, layout);
 		setArchiveLayout(layout);
@@ -360,7 +424,28 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			</div>
 
 			{archived.length > 0 && (
-				<div className="shrink-0 border-t border-border-strong px-3">
+				<div className="relative shrink-0 border-t border-border-strong px-3">
+					{archiveExpanded && (
+						<div
+							aria-label="Resize archive"
+							aria-orientation="horizontal"
+							aria-valuemin={ARCHIVE_MIN_HEIGHT}
+							aria-valuenow={Math.round(resolvedArchiveHeight)}
+							className="group absolute inset-x-0 -top-1 z-10 flex h-2 cursor-row-resize touch-none items-center justify-center focus-visible:outline-none"
+							onKeyDown={nudgeArchiveHeight}
+							onPointerDown={startArchiveResize}
+							onPointerMove={moveArchiveResize}
+							onPointerUp={endArchiveResize}
+							onPointerCancel={endArchiveResize}
+							role="separator"
+							tabIndex={0}
+						>
+							<span
+								aria-hidden="true"
+								className="h-0.5 w-10 rounded-full bg-border-strong transition-colors group-hover:bg-accent group-focus-visible:bg-accent"
+							/>
+						</div>
+					)}
 					{/* agent-orchestrator's archive bar (Dashboard.tsx + globals.css):
 					    a full-width chevron + label + count toggle row. The button is
 					    37px (not the 35.5px its text-control implies) because the
@@ -414,13 +499,20 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 					{archiveExpanded && (
 						<div
 							aria-label="Archived sessions"
+							style={{ height: resolvedArchiveHeight }}
 							className={cn(
-								"board-scrollbar max-h-[45vh] gap-2.5 overflow-y-auto pb-3",
+								"board-scrollbar gap-2.5 overflow-y-auto pb-3",
 								// The card is identical in both modes — the toggle only decides
 								// how many sit on a line.
+								//
+								// content-start + auto-rows-min keep the cards at their own
+								// height: a grid defaults to stretching its rows over the
+								// container, so dragging the panel taller inflated every card
+								// instead of leaving the new room empty. Same reason the flex
+								// mode pins shrink-0 on its children.
 								archiveLayout === "grid"
-									? "grid grid-cols-[repeat(auto-fill,minmax(17rem,1fr))]"
-									: "flex flex-col",
+									? "grid auto-rows-min grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] content-start"
+									: "flex flex-col [&>*]:shrink-0",
 							)}
 							role="list"
 						>
@@ -480,6 +572,36 @@ function BoardColumn({
 	return <ZoneColumn col={col} sessions={sessions} onOpen={onOpen} onTerminate={onTerminate} />;
 }
 
+/**
+ * Column and lane titles. They sit directly above a stack of cards, so without
+ * their own band and weight they read as another card footer rather than as the
+ * heading for everything under them.
+ */
+function LaneHeadingBar({ color }: { color: string }) {
+	return <span aria-hidden="true" className="h-3.5 w-0.5 shrink-0 rounded-full" style={{ background: color }} />;
+}
+
+function LaneHeadingText({ className, children }: { className?: string; children: string }) {
+	return (
+		<span className={cn("truncate font-mono text-xs font-semibold uppercase tracking-wide-md", className)}>
+			{children}
+		</span>
+	);
+}
+
+function LaneHeadingCount({ count, label }: { count: number; label: string }) {
+	return (
+		<span
+			aria-label={`${count} ${label} ${count === 1 ? "session" : "sessions"}`}
+			className="ml-auto shrink-0 rounded-full bg-muted px-2 py-0.5 font-mono text-2xs leading-none tabular-nums text-muted-foreground"
+		>
+			{count}
+		</span>
+	);
+}
+
+const laneHeadingBandClass = "flex h-12 shrink-0 items-center gap-2.5 border-b border-border bg-surface-faint px-4";
+
 function ZoneColumn({
 	col,
 	sessions,
@@ -498,18 +620,10 @@ function ZoneColumn({
 			data-testid="board-column"
 			data-column={col.zone}
 		>
-			<div className="flex h-12 shrink-0 items-center gap-2.5 px-4">
-				<span
-					className="size-dot-sm rounded-full"
-					style={{
-						background: col.dot,
-						boxShadow: col.dotGlow ? `0 0 7px color-mix(in srgb, ${col.dot} 60%, transparent)` : undefined,
-					}}
-				/>
-				<span className={cn("font-mono text-2xs font-medium uppercase tracking-wide-sm", col.titleClassName)}>
-					{col.label}
-				</span>
-				<span className="ml-auto font-mono text-2xs leading-none text-passive">{sessions.length}</span>
+			<div className={laneHeadingBandClass}>
+				<LaneHeadingBar color={col.dot} />
+				<LaneHeadingText className={col.titleClassName}>{col.label}</LaneHeadingText>
+				<LaneHeadingCount count={sessions.length} label={col.label.toLowerCase()} />
 			</div>
 			<div className="board-scrollbar min-h-0 flex-1 overflow-y-auto px-3 pb-3 pt-3">
 				<div className="flex min-h-full flex-col gap-2.5">
@@ -535,6 +649,7 @@ type SplitLaneTone = {
 	titleClassName: string;
 	color: string;
 	dotGlow: boolean;
+	icon: LucideIcon;
 };
 
 const idleLaneTone: SplitLaneTone = {
@@ -545,6 +660,7 @@ const idleLaneTone: SplitLaneTone = {
 	titleClassName: "text-status-idle",
 	color: "var(--color-status-idle)",
 	dotGlow: false,
+	icon: CirclePause,
 };
 
 const workingLaneTone: SplitLaneTone = {
@@ -555,6 +671,7 @@ const workingLaneTone: SplitLaneTone = {
 	titleClassName: "text-status-working",
 	color: "var(--color-status-working)",
 	dotGlow: true,
+	icon: LoaderCircle,
 };
 
 const readyLaneTone: SplitLaneTone = {
@@ -565,6 +682,7 @@ const readyLaneTone: SplitLaneTone = {
 	titleClassName: "text-status-ready",
 	color: "var(--color-status-ready)",
 	dotGlow: true,
+	icon: GitMerge,
 };
 
 const mergedLaneTone: SplitLaneTone = {
@@ -575,6 +693,7 @@ const mergedLaneTone: SplitLaneTone = {
 	titleClassName: "text-status-merged",
 	color: "var(--color-status-merged)",
 	dotGlow: false,
+	icon: CircleCheck,
 };
 
 function WorkLaneColumn({
@@ -650,6 +769,12 @@ function SplitLaneColumn({
 }) {
 	const showPrimary = primarySessions.length > 0;
 	const showSecondary = secondarySessions.length > 0;
+	// The header names the lane the column starts with, and nothing else. Naming
+	// both meant "Working" appeared twice whenever both lanes had work — once up
+	// here and again on the section that actually holds the working cards — and
+	// it named an Idle lane that wasn't on screen when every session was active.
+	const headerTone = showPrimary ? primaryTone : secondaryTone;
+	const headerCount = showPrimary ? primarySessions.length : secondarySessions.length;
 
 	return (
 		<section
@@ -658,35 +783,23 @@ function SplitLaneColumn({
 			data-column={zone}
 			data-testid="board-column"
 		>
-			<div className="flex h-12 shrink-0 items-center gap-2.5 px-4">
+			<div className={laneHeadingBandClass}>
 				<div
 					aria-label={`${primaryTone.label} / ${secondaryTone.label} lane summary`}
-					className="flex min-w-0 items-center gap-2 font-mono text-2xs font-medium uppercase tracking-wide-sm"
+					className="flex min-w-0 items-center gap-2.5"
 					role="group"
 				>
-					<LaneStatusLabel tone={primaryTone} />
-					<span className="text-passive" aria-hidden="true">
-						/
-					</span>
-					<LaneStatusLabel tone={secondaryTone} />
+					<LaneStatusLabel tone={headerTone} />
 				</div>
-				<div className="ml-auto flex shrink-0 items-center gap-2 font-mono text-2xs leading-none text-passive">
-					<SessionCount count={primarySessions.length} label={primaryTone.countLabel} />
-					<span aria-hidden="true">/</span>
-					<SessionCount count={secondarySessions.length} label={secondaryTone.countLabel} />
-				</div>
+				<LaneHeadingCount count={headerCount} label={headerTone.countLabel} />
 			</div>
-			<div className="flex min-h-0 flex-1 flex-col">
+			{/* One scroller for the whole column: the lanes are sized by their content
+			    so a short primary lane doesn't reserve height the secondary header
+			    then has to sit below. */}
+			<div className="board-scrollbar min-h-0 flex-1 overflow-y-auto pb-3">
 				{showPrimary ? (
-					<div
-						aria-label={primaryTone.regionLabel}
-						className={cn(
-							"board-scrollbar min-h-0 overflow-y-auto px-3 pb-3 pt-3",
-							showSecondary ? "flex-[3]" : "flex-1",
-						)}
-						role="region"
-					>
-						<div className="flex min-h-full flex-col gap-2.5">
+					<div aria-label={primaryTone.regionLabel} className="px-3 pt-3" role="region">
+						<div className="flex flex-col gap-2.5">
 							{primarySessions.map((session) => (
 								<SessionCard
 									key={session.id}
@@ -714,19 +827,11 @@ function SplitLaneColumn({
 
 function LaneStatusLabel({ tone }: { tone: SplitLaneTone }) {
 	return (
-		<span className={cn("inline-flex shrink-0 items-center gap-2 whitespace-nowrap", tone.titleClassName)}>
-			<span
-				className={cn("size-dot-sm rounded-full", tone.dotClassName)}
-				style={{ boxShadow: tone.dotGlow ? `0 0 7px color-mix(in srgb, ${tone.color} 60%, transparent)` : undefined }}
-				aria-hidden="true"
-			/>
-			{tone.label}
+		<span className="inline-flex min-w-0 items-center gap-2.5">
+			<LaneHeadingBar color={tone.color} />
+			<LaneHeadingText className={tone.titleClassName}>{tone.label}</LaneHeadingText>
 		</span>
 	);
-}
-
-function SessionCount({ count, label }: { count: number; label: string }) {
-	return <span aria-label={`${count} ${label} ${count === 1 ? "session" : "sessions"}`}>{count}</span>;
 }
 
 function SecondaryLaneSection({
@@ -743,31 +848,24 @@ function SecondaryLaneSection({
 	tone: SplitLaneTone;
 }) {
 	return (
-		<div
-			aria-label={tone.regionLabel}
-			className={cn(
-				"min-h-0 overflow-hidden",
-				standalone ? "flex flex-1 flex-col" : "flex flex-[2] flex-col border-t border-border-strong",
-			)}
-			role="region"
-		>
-			<div className="flex shrink-0 items-center gap-2.5 px-4 py-2.5">
-				<div className="font-mono text-2xs font-medium uppercase tracking-wide-sm">
+		<div aria-label={tone.regionLabel} className="flex flex-col" role="region">
+			{/* When this lane is the only one with work, the column header already
+			    names it — a second identical header would just repeat itself. */}
+			{!standalone && (
+				<div className="mt-3 flex shrink-0 items-center gap-2.5 border-y border-border bg-surface-faint px-4 py-2.5">
 					<LaneStatusLabel tone={tone} />
+					<LaneHeadingCount count={sessions.length} label={tone.countLabel} />
 				</div>
-				<span className="ml-auto font-mono text-2xs leading-none text-passive">{sessions.length}</span>
-			</div>
-			<div className="board-scrollbar min-h-0 flex-1 overflow-y-auto px-3 pb-3 pt-3">
-				<div className="flex min-h-full flex-col gap-2.5">
-					{sessions.map((session) => (
-						<SessionCard
-							key={session.id}
-							session={session}
-							onOpen={() => onOpen(session)}
-							onTerminate={onTerminate ? () => onTerminate(session) : undefined}
-						/>
-					))}
-				</div>
+			)}
+			<div className={cn("flex flex-col gap-2.5 px-3", standalone && "pt-3")}>
+				{sessions.map((session) => (
+					<SessionCard
+						key={session.id}
+						session={session}
+						onOpen={() => onOpen(session)}
+						onTerminate={onTerminate ? () => onTerminate(session) : undefined}
+					/>
+				))}
 			</div>
 		</div>
 	);
