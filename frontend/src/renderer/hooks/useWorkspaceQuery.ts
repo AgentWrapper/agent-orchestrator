@@ -7,6 +7,8 @@ import {
 	boardIdForRef,
 	SHARED_PROJECT_ID,
 	SHARED_PROJECT_NAME,
+	CLOUD_PROJECT_ID,
+	CLOUD_PROJECT_NAME,
 	type CloudSessionRef,
 } from "../lib/cloud-sessions";
 import { mockWorkspaces } from "../lib/mock-data";
@@ -139,23 +141,32 @@ async function mergeCloudSessions(workspaces: WorkspaceSummary[]): Promise<void>
 
 	const byProject = new Map(workspaces.map((w) => [w.id, w]));
 
-	// Sessions shared with us belong to no local project — materialize a synthetic
-	// "Shared with me" group only once a shared card actually resolves.
-	const ensureSharedGroup = (): WorkspaceSummary => {
-		let group = byProject.get(SHARED_PROJECT_ID);
+	// Lazily materialize a synthetic board group the first time a card needs it,
+	// so an empty group never shows.
+	const ensureGroup = (id: string, name: string): WorkspaceSummary => {
+		let group = byProject.get(id);
 		if (!group) {
-			group = { id: SHARED_PROJECT_ID, name: SHARED_PROJECT_NAME, path: "", sessions: [] };
+			group = { id, name, path: "", sessions: [] };
 			workspaces.push(group);
-			byProject.set(SHARED_PROJECT_ID, group);
+			byProject.set(id, group);
 		}
 		return group;
 	};
 
+	// Which board group a cloud session's card belongs to. Shared imports have no
+	// local project, so they live under "Shared with me". An OWNED session goes
+	// under its local project when that project is loaded; when it isn't (deleted,
+	// on another machine, or an id mismatch) it falls back to the "Cloud" group.
+	// The control plane is the durable source of owned sessions, so one must never
+	// be silently dropped just because its local project isn't present.
+	const groupFor = (ref: CloudSessionRef): WorkspaceSummary => {
+		if (ref.shared) return ensureGroup(SHARED_PROJECT_ID, SHARED_PROJECT_NAME);
+		return byProject.get(ref.localProjectId) ?? ensureGroup(CLOUD_PROJECT_ID, CLOUD_PROJECT_NAME);
+	};
+
 	await Promise.all(
 		refs.map(async (ref) => {
-			if (!ref.shared && !byProject.has(ref.localProjectId)) return; // its local project isn't loaded
-			const target = ref.shared ? ensureSharedGroup() : byProject.get(ref.localProjectId);
-			if (!target) return;
+			const target = groupFor(ref);
 			const boardId = boardIdForRef(ref);
 			if (target.sessions.some((s) => s.id === boardId)) return; // de-dupe by unique board id
 
@@ -171,17 +182,53 @@ async function mergeCloudSessions(workspaces: WorkspaceSummary[]): Promise<void>
 				target.sessions.push(provisioningCard(ref, target.id, target.name, boardId));
 				return;
 			}
+			// Live view from the sandbox. If it can't be fetched this tick (offline,
+			// waking, slow), still render a card from the control-plane registry
+			// fields — the durable source — so a cloud session persists across
+			// reconnects/restarts instead of vanishing. The live view fills in detail
+			// on the next successful tick.
+			let dto: SessionView | undefined;
 			try {
-				const dto = await fetchCloudSessionDto(ref);
-				if (!dto) return; // sandbox pruned / unreachable / not ready this tick
-				target.sessions.push(
-					toWorkspaceSession(dto, target.id, target.name, { previewUrl: ref.previewUrl, boardId, readonly: ref.readonly }),
-				);
+				dto = await fetchCloudSessionDto(ref);
 			} catch {
-				/* sandbox not reachable this tick; skip */
+				dto = undefined;
 			}
+			target.sessions.push(
+				dto
+					? toWorkspaceSession(dto, target.id, target.name, {
+							previewUrl: ref.previewUrl,
+							boardId,
+							readonly: ref.readonly,
+						})
+					: cloudRefCard(ref, target.id, target.name, boardId),
+			);
 		}),
 	);
+}
+
+// A card built from control-plane registry fields alone, used when the live
+// sandbox view can't be fetched this tick. Keyed off the durable registry so an
+// owned/shared cloud session stays on the board while its sandbox is briefly
+// unreachable; the real activity/PR detail resolves once the fetch succeeds.
+function cloudRefCard(ref: CloudSessionRef, projectId: string, projectName: string, boardId: string): WorkspaceSession {
+	return {
+		id: boardId,
+		terminalHandleId: ref.sessionId,
+		workspaceId: projectId,
+		workspaceName: projectName,
+		title: ref.displayName || `${ref.harness} (cloud)`,
+		provider: toAgentProvider(ref.harness),
+		kind: ref.kind === "orchestrator" ? "orchestrator" : "worker",
+		status: "unknown",
+		isTerminated: false,
+		terminateOnPrMerge: false,
+		updatedAt: "",
+		activity: { state: "idle", lastActivityAt: "" },
+		previewUrl: ref.previewUrl,
+		cloudPreviewUrl: ref.previewUrl,
+		readonly: ref.readonly,
+		prs: [],
+	};
 }
 
 // An archived card for a killed cloud session (sandbox deleted). Rendered from

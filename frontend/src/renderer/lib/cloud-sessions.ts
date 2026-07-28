@@ -14,6 +14,10 @@ export type CloudSessionRef = {
 	sessionId: string;
 	localProjectId: string;
 	harness: string;
+	/** "worker" | "orchestrator". Carried from the control-plane registry so a
+	 *  fallback card (rendered when the live sandbox fetch is unavailable) still
+	 *  shows the right role. */
+	kind?: string;
 	sandboxId: string;
 	previewUrl: string;
 	/** Async provisioning state: "provisioning" | "ready" | "failed". Owned cloud
@@ -46,6 +50,14 @@ export type SharePayload = {
 // they belong to no local project, so mergeCloudSessions materializes this group.
 export const SHARED_PROJECT_ID = "shared-with-me";
 export const SHARED_PROJECT_NAME = "Shared with me";
+
+// Synthetic board group for cloud sessions you OWN whose local project isn't
+// loaded on this machine (deleted, on another device, or an id mismatch). The
+// control plane is the durable source of these, so they must surface even with
+// no matching local project — otherwise a created cloud session silently
+// vanishes on reconnect/restart.
+export const CLOUD_PROJECT_ID = "cloud-sessions";
+export const CLOUD_PROJECT_NAME = "Cloud";
 
 const SHARED_STORE_KEY = "ao.sharedSessions";
 
@@ -197,6 +209,7 @@ export async function refreshCloudSessions(): Promise<void> {
 			sessionId: s.sessionId,
 			localProjectId: s.localProjectId,
 			harness: s.harness,
+			kind: s.kind,
 			sandboxId: s.sandboxId,
 			previewUrl: s.previewUrl,
 			status: s.status,

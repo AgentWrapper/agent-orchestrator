@@ -84,11 +84,15 @@ type CloudSessionView struct {
 	LocalProjectID string `json:"localProjectId"`
 	ProjectID      string `json:"projectId"`
 	Harness        string `json:"harness"`
-	SandboxID      string `json:"sandboxId"`
-	PreviewURL     string `json:"previewUrl"`
-	Status         string `json:"status"`
-	Error          string `json:"error,omitempty"`
-	DisplayName    string `json:"displayName,omitempty"`
+	// Kind is "worker" or "orchestrator" — carried so a client can label a card
+	// (and pick the right role on a registry-only fallback card) without a live
+	// sandbox fetch.
+	Kind        string `json:"kind,omitempty"`
+	SandboxID   string `json:"sandboxId"`
+	PreviewURL  string `json:"previewUrl"`
+	Status      string `json:"status"`
+	Error       string `json:"error,omitempty"`
+	DisplayName string `json:"displayName,omitempty"`
 }
 
 // CloudSessionsResponse lists the live cloud sessions.
@@ -208,7 +212,7 @@ func (c *CloudController) list(w http.ResponseWriter, r *http.Request) {
 	for _, s := range sessions {
 		views = append(views, CloudSessionView{
 			SessionID: s.SessionID, LocalProjectID: s.LocalProjectID, ProjectID: s.ProjectID,
-			Harness: s.Harness, SandboxID: s.SandboxID, PreviewURL: s.PreviewURL,
+			Harness: s.Harness, Kind: s.Kind, SandboxID: s.SandboxID, PreviewURL: s.PreviewURL,
 			Status: s.Status, Error: s.Error, DisplayName: s.DisplayName,
 		})
 	}

@@ -1010,6 +1010,7 @@ export interface components {
             displayName?: string;
             error?: string;
             harness: string;
+            kind?: string;
             localProjectId: string;
             previewUrl: string;
             projectId: string;

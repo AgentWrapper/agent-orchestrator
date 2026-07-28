@@ -2671,6 +2671,8 @@ components:
           type: string
         harness:
           type: string
+        kind:
+          type: string
         localProjectId:
           type: string
         previewUrl:
