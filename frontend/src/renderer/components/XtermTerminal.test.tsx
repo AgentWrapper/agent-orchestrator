@@ -224,7 +224,7 @@ describe("XtermTerminal", () => {
 		expect(trigger.style.top).toBe("88px");
 	});
 
-	it("offers AO Browser, system browser, and copy actions for a web link", async () => {
+	it("offers system browser and copy actions for a web link", async () => {
 		const onLinkOpen = vi.fn();
 		const openExternal = vi.fn().mockResolvedValue(undefined);
 		window.ao!.app.openExternal = openExternal;
@@ -237,13 +237,9 @@ describe("XtermTerminal", () => {
 
 		linkHandler.hover({} as MouseEvent, link);
 		fireEvent.contextMenu(host);
-		fireEvent.click(await screen.findByText("Open in AO Browser"));
-		expect(onLinkOpen).toHaveBeenCalledWith(link);
-		expect(openExternal).not.toHaveBeenCalled();
-
-		fireEvent.contextMenu(host);
 		fireEvent.click(await screen.findByText("Open in system browser"));
 		await waitFor(() => expect(openExternal).toHaveBeenCalledWith(link));
+		expect(onLinkOpen).not.toHaveBeenCalled();
 
 		fireEvent.contextMenu(host);
 		fireEvent.click(await screen.findByText("Copy link"));

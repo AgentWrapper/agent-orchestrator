@@ -808,17 +808,6 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				>
 					{contextMenu.link ? (
 						<>
-							{props.onLinkOpen ? (
-								<DropdownMenuItem
-									onSelect={() => {
-										const { link } = contextMenu;
-										setContextMenuOpen(false);
-										if (link) callbacksRef.current.onLinkOpen?.(link);
-									}}
-								>
-									Open in AO Browser
-								</DropdownMenuItem>
-							) : null}
 							<DropdownMenuItem
 								onSelect={() => {
 									const { link } = contextMenu;
