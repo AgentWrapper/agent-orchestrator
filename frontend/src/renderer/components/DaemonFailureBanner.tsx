@@ -18,6 +18,11 @@ function DaemonFailureContent({ status }: { status: DaemonStatus }) {
 	const details = status.details?.trim();
 	const hint = daemonFailureHint(status);
 	const title = daemonFailureTitle(status);
+	const canRestart =
+		status.code === "not_ready" ||
+		status.code === "spawn_failed" ||
+		status.code === "exited" ||
+		status.code === "daemon_unreachable";
 	useEffect(() => {
 		setCopied(false);
 		return () => {
@@ -65,7 +70,7 @@ function DaemonFailureContent({ status }: { status: DaemonStatus }) {
 					<p className="font-medium text-(--color-text-import-title)">{title}</p>
 					<p className="mt-0.5 wrap-break-word text-[var(--color-text-import-muted)]">{daemonFailureMessage(status)}</p>
 					{hint ? <p className="mt-1 text-[var(--color-text-import-muted)]">{hint}</p> : null}
-					{status.code === "not_ready" ? (
+					{canRestart ? (
 						<button
 							type="button"
 							className="mt-2 inline-flex h-control-md items-center rounded-md bg-accent-strong px-3 font-semibold text-accent-foreground transition-[filter,opacity] hover:brightness-110 disabled:cursor-wait disabled:opacity-60"

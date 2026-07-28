@@ -24,6 +24,7 @@ describe("DaemonFailureBanner", () => {
 		expect(screen.getByRole("alert")).toHaveTextContent("AO daemon failed to start");
 		expect(screen.getByRole("alert")).toHaveTextContent("AO daemon exited with code 1");
 		expect(screen.getByText("exited")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Restart daemon" })).toBeInTheDocument();
 		fireEvent.click(screen.getByRole("button", { name: "Show details" }));
 		expect(screen.getByText("go: go.mod requires go >= 1.25.7")).toBeInTheDocument();
 	});

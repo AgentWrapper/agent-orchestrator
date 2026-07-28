@@ -101,6 +101,7 @@ app.setPath("userData", path.join(os.homedir(), ".ao", "electron"));
 let mainWindow: BrowserWindow | null = null;
 let daemonProcess: ChildProcess | null = null;
 let daemonStoppingProcess: ChildProcess | null = null;
+let daemonRestartAfterExitProcess: ChildProcess | null = null;
 let daemonStartPromise: Promise<DaemonStatus> | null = null;
 let daemonStartEpoch = 0;
 let daemonStatus: DaemonStatus = { state: "stopped" };
@@ -1013,7 +1014,10 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 	// attempting workspace requests against an assumed port.
 	fallbackTimer = setTimeout(() => {
 		if (portConfirmed || daemonProcess !== child || daemonStoppingProcess === child) return;
-		stopDiscovery();
+		// Keep running.json polling alive after surfacing the timeout. In
+		// keep-daemon mode there are no stdout/stderr scanners, so the run file is
+		// the only way a slow-but-successful boot can still recover to ready.
+		fallbackTimer = undefined;
 		setDaemonStatus({
 			state: "error",
 			message: "AO daemon did not finish starting within 30 seconds.",
@@ -1055,6 +1059,11 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		// failures. Preserve the clean stopped status instead.
 		if (daemonStoppingProcess === child) {
 			daemonStoppingProcess = null;
+			if (daemonRestartAfterExitProcess === child) {
+				daemonRestartAfterExitProcess = null;
+				void startDaemonForRestart();
+				return;
+			}
 			setDaemonStatus({ state: "stopped" });
 			return;
 		}
@@ -1087,6 +1096,9 @@ function killDaemon(child: ChildProcess): void {
 function stopDaemon(): DaemonStatus {
 	daemonStartEpoch += 1;
 	daemonStartPromise = null;
+	// An explicit stop (or a newer restart request) cancels any deferred restart
+	// left waiting for a previously slow child to exit.
+	daemonRestartAfterExitProcess = null;
 	if (!daemonProcess) {
 		setDaemonStatus({ state: "stopped" });
 		return daemonStatus;
@@ -1103,9 +1115,27 @@ function stopDaemon(): DaemonStatus {
 	return daemonStatus;
 }
 
+function reportDaemonRestartFailure(error: unknown): DaemonStatus {
+	setDaemonStatus({
+		state: "error",
+		message: `Could not restart the AO daemon: ${error instanceof Error ? error.message : String(error)}`,
+		details: daemonOutput.trim() || undefined,
+		code: "spawn_failed",
+	});
+	return daemonStatus;
+}
+
+async function startDaemonForRestart(): Promise<DaemonStatus> {
+	try {
+		return await startDaemon();
+	} catch (error) {
+		return reportDaemonRestartFailure(error);
+	}
+}
+
 async function restartDaemon(): Promise<DaemonStatus> {
 	const child = daemonProcess;
-	if (!child) return startDaemon();
+	if (!child) return startDaemonForRestart();
 
 	const exited = new Promise<boolean>((resolve) => {
 		let settled = false;
@@ -1122,22 +1152,35 @@ async function restartDaemon(): Promise<DaemonStatus> {
 	});
 
 	stopDaemon();
+	// Register the deferred intent immediately after signaling the child. The
+	// exit can race the five-second UI timeout, so waiting until after the
+	// timeout to set this would occasionally miss the only exit event.
+	daemonRestartAfterExitProcess = child;
 	if (!(await exited)) {
+		// The process may still honor SIGTERM after the UI timeout. Keep the
+		// restart intent attached to that exact child so its eventual exit starts
+		// a replacement instead of collapsing back to a code-less stopped state.
 		setDaemonStatus({
 			state: "error",
-			message: "AO daemon did not stop within 5 seconds, so the restart was cancelled.",
+			message: "AO daemon is still stopping. It will restart automatically when shutdown completes.",
 			details: daemonOutput.trim() || undefined,
 			code: "not_ready",
 		});
 		return daemonStatus;
 	}
-	return startDaemon();
+	return startDaemonForRestart();
 }
 
 ipcMain.handle("daemon:getStatus", () => refreshDaemonStatus());
 ipcMain.handle("daemon:start", () => startDaemon());
 ipcMain.handle("daemon:stop", () => stopDaemon());
-ipcMain.handle("daemon:restart", () => restartDaemon());
+ipcMain.handle("daemon:restart", async () => {
+	try {
+		return await restartDaemon();
+	} catch (error) {
+		return reportDaemonRestartFailure(error);
+	}
+});
 ipcMain.handle("app:getVersion", () => app.getVersion());
 ipcMain.handle("app:openExternal", async (_event, url: string) => {
 	await openAllowedAppExternalURL(url, shell);
