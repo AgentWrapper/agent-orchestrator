@@ -95,9 +95,11 @@ export function cloudPreviewUrlFor(sessionId: string): string | undefined {
 }
 
 // Resolve a board session id to its sandbox target, or null for local sessions.
-export function cloudTargetFor(boardSessionId: string): { previewUrl: string; sessionId: string } | null {
+export function cloudTargetFor(
+	boardSessionId: string,
+): { previewUrl: string; sessionId: string; shared: boolean } | null {
 	const ref = refs.find((r) => boardIdForRef(r) === boardSessionId);
-	return ref ? { previewUrl: ref.previewUrl, sessionId: ref.sessionId } : null;
+	return ref ? { previewUrl: ref.previewUrl, sessionId: ref.sessionId, shared: Boolean(ref.shared) } : null;
 }
 
 /** Whether cloud sandboxes are usable + which harnesses (drives the New Task

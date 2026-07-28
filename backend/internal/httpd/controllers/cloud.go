@@ -146,6 +146,7 @@ func (c *CloudController) Register(r chi.Router) {
 	r.Post("/cloud/sessions/{sandboxId}/share", c.share)
 	r.Delete("/cloud/sessions/{sandboxId}", c.terminate)
 	r.Post("/cloud/proxy", c.proxy)
+	r.Post("/cloud/shared-proxy", c.sharedProxy)
 }
 
 func (c *CloudController) capabilities(w http.ResponseWriter, r *http.Request) {
@@ -301,6 +302,48 @@ func (c *CloudController) proxy(w http.ResponseWriter, r *http.Request) {
 		method = http.MethodGet
 	}
 	status, raw, err := c.Svc.ProxyFetch(r.Context(), in.PreviewURL, method, in.Path, in.Body)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	var jsonField any
+	if len(raw) > 0 {
+		jsonField = json.RawMessage(raw)
+	}
+	envelope.WriteJSON(w, http.StatusOK, CloudProxyResponse{
+		OK: status >= 200 && status < 300, Status: status, JSON: jsonField,
+	})
+}
+
+// sharedProxy is the read-only relay for shared-session viewers. It mirrors
+// proxy but forbids non-GET methods. On the hosted control plane the equivalent
+// route skips the tenant-ownership check so a readonly `ao://share/...` link is
+// viewable by anyone holding it; ProxyFetch still refuses non-sandbox URLs.
+func (c *CloudController) sharedProxy(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/cloud/shared-proxy")
+		return
+	}
+	var in CloudProxyRequest
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	if in.PreviewURL == "" || in.Path == "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "MISSING_FIELD",
+			"previewUrl and path are required", nil)
+		return
+	}
+	method := in.Method
+	if method == "" {
+		method = http.MethodGet
+	}
+	if method != http.MethodGet {
+		envelope.WriteAPIError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "READ_ONLY",
+			"shared sessions are read-only", nil)
+		return
+	}
+	status, raw, err := c.Svc.ProxyFetch(r.Context(), in.PreviewURL, method, in.Path, nil)
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return

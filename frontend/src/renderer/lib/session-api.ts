@@ -14,11 +14,15 @@ import type { paths } from "../../api/schema";
 import { apiClient } from "./api-client";
 import { cloudTargetFor } from "./cloud-sessions";
 
-// One client per sandbox preview URL (memoized).
+// One client per (preview URL, shared?) pair (memoized). Shared readonly viewers
+// route through /cloud/shared-proxy, which skips the tenant-ownership check the
+// owner proxy enforces — so an `ao://share/...` link connects even when the
+// viewer isn't the sandbox's owner.
 const cloudClients = new Map<string, typeof apiClient>();
 
-function clientForBase(previewUrl: string): typeof apiClient {
-	let c = cloudClients.get(previewUrl);
+function clientForBase(previewUrl: string, shared: boolean): typeof apiClient {
+	const key = `${shared ? "shared" : "owned"}:${previewUrl}`;
+	let c = cloudClients.get(key);
 	if (!c) {
 		c = createClient<paths>({
 			baseUrl: previewUrl,
@@ -35,7 +39,8 @@ function clientForBase(previewUrl: string): typeof apiClient {
 						body = text;
 					}
 				}
-				const { data } = await apiClient.POST("/api/v1/cloud/proxy", {
+				const endpoint = shared ? "/api/v1/cloud/shared-proxy" : "/api/v1/cloud/proxy";
+				const { data } = await apiClient.POST(endpoint, {
 					body: { previewUrl, method, path, body },
 				});
 				const status = data?.status ?? 502;
@@ -46,7 +51,7 @@ function clientForBase(previewUrl: string): typeof apiClient {
 				});
 			},
 		}) as unknown as typeof apiClient;
-		cloudClients.set(previewUrl, c);
+		cloudClients.set(key, c);
 	}
 	return c;
 }
@@ -60,5 +65,5 @@ function clientForBase(previewUrl: string): typeof apiClient {
 export function sessionApi(boardSessionId: string): { client: typeof apiClient; sessionId: string } {
 	const target = cloudTargetFor(boardSessionId);
 	if (!target) return { client: apiClient, sessionId: boardSessionId };
-	return { client: clientForBase(target.previewUrl), sessionId: target.sessionId };
+	return { client: clientForBase(target.previewUrl, target.shared), sessionId: target.sessionId };
 }

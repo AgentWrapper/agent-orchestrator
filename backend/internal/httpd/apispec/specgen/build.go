@@ -677,6 +677,17 @@ func cloudOperations() []operation {
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},
 		},
+		{
+			method: http.MethodPost, path: "/api/v1/cloud/shared-proxy", id: "cloudSharedProxy", tag: "cloud",
+			summary: "Read-only relay to a shared cloud sandbox session (no tenant-ownership check)",
+			reqBody: controllers.CloudProxyRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.CloudProxyResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
 	}
 }
 

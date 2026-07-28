@@ -95,6 +95,10 @@ func (s *Server) Handler() http.Handler {
 		r.Post("/api/v1/cloud/sessions/{sandboxId}/share", s.share)
 		r.Delete("/api/v1/cloud/sessions/{sandboxId}", s.terminate)
 		r.Post("/api/v1/cloud/proxy", s.proxy)
+		// Read-only relay for shared-session viewers: no tenant-ownership check
+		// (the share link is the capability), GET-only. (Fixes cross-tenant /
+		// bare-preview-URL 403 when opening an ao://share link.)
+		r.Post("/api/v1/cloud/shared-proxy", s.sharedProxy)
 		// A laptop daemon mints a longer-lived, tenant-scoped bus token here (with
 		// its real user JWT) so it can join the bus without re-sending the
 		// short-lived Clerk token on every frame. (Task 1: laptop-in-loop.)
@@ -371,6 +375,44 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, err)
 		return
 	}
+	s.writeProxyResult(w, status, raw)
+}
+
+// sharedProxy relays a READ-ONLY call to a sandbox for a shared-session viewer.
+// Unlike proxy it does NOT require the caller's tenant to own the sandbox: a
+// readonly share link (the `ao://share/...` payload) grants view access to
+// anyone holding it (the unguessable preview URL is the capability). It is
+// therefore restricted to GET, and s.sup.ProxyFetch still refuses any URL that
+// isn't a real sandbox preview, so this can't be turned into an open relay.
+func (s *Server) sharedProxy(w http.ResponseWriter, r *http.Request) {
+	var in proxyRequest
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		return
+	}
+	if in.PreviewURL == "" || in.Path == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "previewUrl and path are required"})
+		return
+	}
+	method := in.Method
+	if method == "" {
+		method = http.MethodGet
+	}
+	if method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "shared sessions are read-only"})
+		return
+	}
+	status, raw, err := s.sup.ProxyFetch(r.Context(), in.PreviewURL, method, in.Path, nil)
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	s.writeProxyResult(w, status, raw)
+}
+
+// writeProxyResult renders a relayed sandbox response in the shape the renderer's
+// cloud fetch shim expects.
+func (s *Server) writeProxyResult(w http.ResponseWriter, status int, raw []byte) {
 	out := map[string]any{"ok": status >= 200 && status < 300, "status": status}
 	if len(raw) > 0 {
 		out["json"] = json.RawMessage(raw)

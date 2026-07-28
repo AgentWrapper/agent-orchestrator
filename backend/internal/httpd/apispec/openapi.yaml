@@ -340,6 +340,44 @@ paths:
       summary: Mint a fresh signed preview URL for a cloud sandbox
       tags:
       - cloud
+  /api/v1/cloud/shared-proxy:
+    post:
+      operationId: cloudSharedProxy
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControllersCloudProxyRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersCloudProxyResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Read-only relay to a shared cloud sandbox session (no tenant-ownership
+        check)
+      tags:
+      - cloud
   /api/v1/dev/import-projects:
     post:
       operationId: runDevImportProjects
