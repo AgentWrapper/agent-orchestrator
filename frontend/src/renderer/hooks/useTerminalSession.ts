@@ -91,9 +91,13 @@ const RESIZE_DEBOUNCE_MS = 100;
 // and re-report its grid; when everything is already in sync it's a no-op.
 const RESIZE_REASSERT_MS = 250;
 
-function defaultCreateMux(): TerminalMux {
+function defaultCreateMux(session?: WorkspaceSession): TerminalMux {
 	// Resolved per connect, not per hook: a daemon restart can change the port.
-	return createTerminalMux(muxUrlFromApiBase(getApiBaseUrl()));
+	// A CLOUD session's mux streams from its sandbox daemon (cloudPreviewUrl), a
+	// direct WebSocket that is NOT subject to browser CORS; a local session uses
+	// the local daemon's base URL.
+	const base = session?.cloudPreviewUrl ?? getApiBaseUrl();
+	return createTerminalMux(muxUrlFromApiBase(base));
 }
 
 export function useTerminalSession(session: WorkspaceSession | undefined, options: UseTerminalSessionOptions) {
@@ -210,7 +214,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		r.inputReady = false;
 		teardownMux();
 
-		const mux = (optionsRef.current.createMux ?? defaultCreateMux)();
+		const mux = optionsRef.current.createMux ? optionsRef.current.createMux() : defaultCreateMux(sessionRef.current);
 		r.mux = mux;
 
 		// Streaming decoder so a multi-byte sequence split across chunks decodes

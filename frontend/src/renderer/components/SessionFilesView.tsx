@@ -15,7 +15,8 @@ import {
 	X,
 } from "lucide-react";
 import type { components } from "../../api/schema";
-import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { apiErrorMessage } from "../lib/api-client";
+import { sessionApi } from "../lib/session-api";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -67,8 +68,9 @@ export function SessionFilesView({
 		queryKey: ["session-workspace-files", sessionId],
 		refetchInterval: 3500,
 		queryFn: async () => {
-			const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/workspace/files", {
-				params: { path: { sessionId } },
+			const { client, sessionId: routedId } = sessionApi(sessionId);
+			const { data, error } = await client.GET("/api/v1/sessions/{sessionId}/workspace/files", {
+				params: { path: { sessionId: routedId } },
 			});
 			if (error) throw new Error(apiErrorMessage(error, "Unable to load workspace files"));
 			return data ?? { sessionId, files: [], truncated: false };
@@ -414,8 +416,9 @@ function CopyPathButton({ path }: { path: string }) {
 }
 
 async function loadWorkspaceFile(sessionId: string, path: string) {
-	const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/workspace/file", {
-		params: { path: { sessionId }, query: { path } },
+	const { client, sessionId: routedId } = sessionApi(sessionId);
+	const { data, error } = await client.GET("/api/v1/sessions/{sessionId}/workspace/file", {
+		params: { path: { sessionId: routedId }, query: { path } },
 	});
 	if (error) throw new Error(apiErrorMessage(error, "Unable to load workspace file"));
 	if (!data) throw new Error("Workspace file response was empty");

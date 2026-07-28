@@ -11,10 +11,13 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
+	agentregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/registry"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
+	"github.com/aoagents/agent-orchestrator/backend/internal/cloud"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/daemon/supervisor"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -169,6 +172,16 @@ func Run() error {
 	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, log)
 
 	agentSvc := agentsvc.New()
+	// Agent-host mode: a daemon running inside a per-harness cloud sandbox scopes
+	// its catalog to the sandbox's harness so it never advertises one it cannot
+	// spawn. Unset env = full catalog (local behavior, unchanged).
+	if allow := os.Getenv(agentregistry.AllowedHarnessesEnv); strings.TrimSpace(allow) != "" {
+		scoped, scopeErr := agentregistry.HarnessedAllowed(allow)
+		if scopeErr != nil {
+			return fmt.Errorf("agent-host harness scope: %w", scopeErr)
+		}
+		agentSvc = agentsvc.NewWithAgents(scoped)
+	}
 	go func() {
 		if _, err := agentSvc.Refresh(ctx); err != nil {
 			log.Warn("initial agent catalog refresh failed", "err", err)
@@ -218,8 +231,21 @@ func Run() error {
 		go dispatcher.Run(ctx)
 	}
 
+	// Cloud sandbox supervisor: provisions a Daytona sandbox per cloud worker
+	// session. The Daytona key + linux ao binary path are read from the env at
+	// call time (never persisted); with no key set, the supervisor simply reports
+	// "not configured" and the Local/Cloud toggle stays hidden client-side.
+	cloudSup := cloud.NewSupervisor(cloud.SupervisorConfig{
+		APIKey:          func() string { return os.Getenv("DAYTONA_API_KEY") },
+		LinuxBinaryPath: func() string { return os.Getenv("AO_LINUX_BINARY") },
+		Snapshot:        os.Getenv("AO_DAYTONA_SNAPSHOT"),
+		StatePath:       filepath.Join(cfg.DataDir, "cloud-sessions.json"),
+		Log:             log,
+	})
+
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
 		Projects:           projectSvc,
+		Cloud:              cloudSup,
 		Agents:             agentSvc,
 		Sessions:           sessionSvc,
 		Reviews:            reviewSvc,
@@ -280,6 +306,16 @@ func Run() error {
 	// boot path (a store read plus a possible pane write per pending project);
 	// the recovery sweep is the backstop if it does not finish before shutdown.
 	go lcStack.LCM.DispatchAllPendingWorkerIdleEvents(ctx)
+
+	// Federated bus (Phase B): join the control plane so this daemon's sessions
+	// can be reached — and can reach — sessions living in other locations
+	// (cloud sandboxes / other daemons). No-op unless AO_CONTROL_PLANE_URL is set,
+	// so the all-local flow is untouched. Cancelled with ctx at shutdown. When
+	// live, wire it as the session service's remote router so a send to a
+	// non-local session routes over the bus instead of failing not-found.
+	if bc := startBusClient(ctx, cfg, sessionSvc, log); bc != nil {
+		sessionSvc.SetRemoteRouter(bc)
+	}
 
 	// ponytail: 5s tolerates a brief frontend restart; tune if dev hot-reload trips it.
 	const supervisorGrace = 5 * time.Second

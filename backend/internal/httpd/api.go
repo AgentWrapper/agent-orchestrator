@@ -31,6 +31,7 @@ type APIDeps struct {
 	Import             controllers.ImportService
 	ShellTerminals     controllers.ShellTerminalService
 	DevImport          controllers.DevImportService
+	Cloud              controllers.CloudService
 	CDC                cdc.Source
 	Events             cdcSubscriber
 	Telemetry          ports.EventSink
@@ -51,6 +52,7 @@ type API struct {
 	imports       *controllers.ImportController
 	shellTerms    *controllers.ShellTerminalsController
 	dev           *controllers.DevController
+	cloud         *controllers.CloudController
 	events        *EventsController
 }
 
@@ -77,6 +79,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		imports:       &controllers.ImportController{Svc: deps.Import},
 		shellTerms:    &controllers.ShellTerminalsController{Svc: deps.ShellTerminals},
 		dev:           &controllers.DevController{Import: deps.DevImport},
+		cloud:         &controllers.CloudController{Svc: deps.Cloud},
 		events:        &EventsController{Source: deps.CDC, Live: deps.Events},
 	}
 }
@@ -107,6 +110,12 @@ func (a *API) Register(root chi.Router) {
 			a.dev.Register(r)
 			// Sibling REST controllers plug in here.
 		})
+		// Cloud provisioning (POST /cloud/sessions) creates a sandbox, uploads the
+		// ao binary, installs the harness and boots a daemon — well past the bounded
+		// REST timeout. Mount the cloud surface OUTSIDE the timeout group so spawn
+		// can run to completion; its own layers (Daytona client timeout, per-exec
+		// timeouts, readiness poll) bound it instead.
+		a.cloud.Register(r)
 		// Long-lived streams intentionally bypass the REST timeout middleware.
 		a.notifications.RegisterStream(r)
 		a.events.Register(r)

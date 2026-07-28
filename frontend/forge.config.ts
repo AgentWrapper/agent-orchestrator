@@ -37,6 +37,10 @@ const config: ForgeConfig = {
 		// (.icns on macOS, .ico on Windows); Linux menu icons come from the
 		// deb/rpm makers below, and the runtime window icon from src/main.ts.
 		icon: "assets/icon",
+		// Deep-link scheme (ao://share/<token>) so a packaged macOS app is registered
+		// with LaunchServices as the ao:// handler (Info.plist CFBundleURLTypes).
+		// Windows/Linux registration happens at runtime via setAsDefaultProtocolClient.
+		protocols: [{ name: "Agent Orchestrator", schemes: ["ao"] }],
 		extraResource: ["daemon", "assets/icon.png", "assets/icon.ico", "app-update.yml"],
 		// Notarization. Two paths:
 		//  - CI: an App Store Connect API key. APPLE_API_KEY is a PATH to the .p8

@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
@@ -273,6 +275,12 @@ func newSessionMessenger(store *sqlite.Store, runtime runtimeMessageSender, _ *s
 // The shipped adapter list lives in the adapters/agent/registry package
 // (registry.Constructors). Adding a new harness is a one-line edit there.
 func buildAgentRegistry() (*adapters.Registry, error) {
+	// When AO_AGENT_HOST_HARNESSES is set (the daemon is an agent-host inside a
+	// per-harness cloud sandbox), the registry is scoped to that allowlist: spawn,
+	// catalog, and preflight all see only the sandbox's own harness.
+	if allow := os.Getenv(agentregistry.AllowedHarnessesEnv); strings.TrimSpace(allow) != "" {
+		return agentregistry.BuildAllowed(allow)
+	}
 	return agentregistry.Build()
 }
 
@@ -309,6 +317,19 @@ func buildAgentResolver(defaultAgent string, log *slog.Logger) (ports.AgentResol
 		return nil, err
 	}
 	resolver := agentRegistry{reg: reg}
+	if _, ok := resolver.Agent(domain.AgentHarness(defaultAgent)); !ok {
+		// Agent-host mode: the registry is scoped to the sandbox's harness, so a
+		// global default (config.DefaultAgent = claude-code) may legitimately not
+		// be registered. Fall back to the first scoped harness rather than
+		// refusing to start a sandbox that will only ever spawn its own harness.
+		if allow := os.Getenv(agentregistry.AllowedHarnessesEnv); strings.TrimSpace(allow) != "" {
+			if mfs := reg.Manifests(); len(mfs) > 0 {
+				log.Info("agent-host: default agent not in scope, using first allowed harness",
+					"configured", defaultAgent, "using", mfs[0].ID)
+				defaultAgent = mfs[0].ID
+			}
+		}
+	}
 	if _, ok := resolver.Agent(domain.AgentHarness(defaultAgent)); !ok {
 		return nil, fmt.Errorf("configured default agent %q is not a registered adapter", defaultAgent)
 	}

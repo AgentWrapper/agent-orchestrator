@@ -85,3 +85,9 @@ e2e-artifacts/
 
 # Local pnpm artifacts
 pnpm-lock.yaml
+
+# Stray locally-built Go binaries (e.g. `go build ./cmd/controlplane` output)
+/backend/controlplane
+/backend/ao
+/backend/cmd/**/controlplane
+/backend/cmd/**/ao

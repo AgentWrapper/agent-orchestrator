@@ -197,6 +197,17 @@ const api = {
 			};
 		},
 	},
+	// Deep links: an ao://share/<token> link opens/focuses AO and hands the token
+	// here so the renderer can import the shared session and navigate to it.
+	deepLinks: {
+		onShareLink: (listener: (token: string) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, token: string) => listener(token);
+			ipcRenderer.on("share:deeplink", wrapped);
+			return () => {
+				ipcRenderer.off("share:deeplink", wrapped);
+			};
+		},
+	},
 	appState: {
 		getMigration: () => ipcRenderer.invoke("appState:getMigration") as Promise<MigrationState>,
 		setMigration: (migration: MigrationState) =>

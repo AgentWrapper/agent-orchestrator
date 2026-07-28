@@ -3,10 +3,13 @@ import {
 	apiClient,
 	apiErrorMessage,
 	getApiBaseUrl,
+	getControlPlaneBaseUrl,
 	hasTrustedApiBaseUrl,
 	normalizeApiOperation,
 	setApiDaemonStatus,
 	setApiBaseUrl,
+	setCloudAuthTokenGetter,
+	setControlPlaneBaseUrl,
 	subscribeApiBaseUrl,
 } from "./api-client";
 import { captureRendererEvent } from "./telemetry";
@@ -309,6 +312,90 @@ describe("api error telemetry", () => {
 		vi.setSystemTime(clock + 31_000);
 		await apiClient.GET("/api/v1/projects");
 		expect(captureMock).toHaveBeenCalledTimes(2);
+	});
+});
+
+describe("cloud control-plane routing + Clerk bearer", () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+		setApiBaseUrl("http://127.0.0.1:3001");
+		setControlPlaneBaseUrl(null);
+		setCloudAuthTokenGetter(null);
+	});
+
+	type Seen = { url: string; auth: string | null };
+	function spyFetch(): Seen[] {
+		const seen: Seen[] = [];
+		vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+			const url = input instanceof Request ? input.url : input.toString();
+			const headers = new Headers(input instanceof Request ? input.headers : init?.headers);
+			seen.push({ url, auth: headers.get("authorization") });
+			return new Response(JSON.stringify({}), { status: 200, headers: { "Content-Type": "application/json" } });
+		});
+		return seen;
+	}
+
+	it("normalizes the control-plane base URL (strips trailing slash)", () => {
+		setControlPlaneBaseUrl("https://cp.example.com/");
+		expect(getControlPlaneBaseUrl()).toBe("https://cp.example.com");
+		setControlPlaneBaseUrl("");
+		expect(getControlPlaneBaseUrl()).toBeNull();
+	});
+
+	it("rebases /api/v1/cloud/* to the control plane and attaches the Clerk bearer", async () => {
+		const seen = spyFetch();
+		setControlPlaneBaseUrl("https://cp.example.com");
+		setCloudAuthTokenGetter(async () => "test-jwt");
+
+		const { error } = await apiClient.GET("/api/v1/cloud/capabilities");
+
+		expect(error).toBeUndefined();
+		expect(seen).toHaveLength(1);
+		expect(seen[0].url).toBe("https://cp.example.com/api/v1/cloud/capabilities");
+		expect(seen[0].auth).toBe("Bearer test-jwt");
+	});
+
+	it("never sends the bearer to the local daemon (control plane unset → cloud stays local, no auth)", async () => {
+		const seen = spyFetch();
+		setApiBaseUrl("http://127.0.0.1:3037");
+		setControlPlaneBaseUrl(null); // default: cloud runs through the daemon
+		setCloudAuthTokenGetter(async () => "test-jwt");
+
+		const { error } = await apiClient.GET("/api/v1/cloud/capabilities");
+
+		expect(error).toBeUndefined();
+		expect(seen).toHaveLength(1);
+		expect(seen[0].url).toBe("http://127.0.0.1:3037/api/v1/cloud/capabilities");
+		expect(seen[0].auth).toBeNull();
+	});
+
+	it("does not attach the bearer to non-cloud (local session) calls even when signed in", async () => {
+		const seen = spyFetch();
+		setApiBaseUrl("http://127.0.0.1:3037");
+		setControlPlaneBaseUrl("https://cp.example.com");
+		setCloudAuthTokenGetter(async () => "test-jwt");
+
+		const { error } = await apiClient.GET("/api/v1/projects");
+
+		expect(error).toBeUndefined();
+		expect(seen).toHaveLength(1);
+		expect(seen[0].url).toBe("http://127.0.0.1:3037/api/v1/projects");
+		expect(seen[0].auth).toBeNull();
+	});
+
+	it("proceeds unauthenticated to the control plane when the token getter throws (signed out)", async () => {
+		const seen = spyFetch();
+		setControlPlaneBaseUrl("https://cp.example.com");
+		setCloudAuthTokenGetter(async () => {
+			throw new Error("signed out");
+		});
+
+		const { error } = await apiClient.GET("/api/v1/cloud/capabilities");
+
+		expect(error).toBeUndefined();
+		expect(seen).toHaveLength(1);
+		expect(seen[0].url).toBe("https://cp.example.com/api/v1/cloud/capabilities");
+		expect(seen[0].auth).toBeNull();
 	});
 });
 

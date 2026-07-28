@@ -4,8 +4,9 @@ import { type CSSProperties, useCallback, useEffect, useRef, useState } from "re
 import { CommandPalette } from "../components/CommandPalette";
 import { CenterPanelShell } from "../components/CenterPanelShell";
 import { DaemonFailureBanner } from "../components/DaemonFailureBanner";
-import { NotificationRuntime } from "../components/NotificationCenter";
+import { NotificationRuntime, ShareDeepLinkRuntime } from "../components/NotificationCenter";
 import { GlobalNewTaskDialog } from "../components/GlobalNewTaskDialog";
+import { GlobalOrchestratorLaunchDialog } from "../components/GlobalOrchestratorLaunchDialog";
 import { KeyboardShortcutsDialog } from "../components/KeyboardShortcutsDialog";
 import { ShellTopbar } from "../components/ShellTopbar";
 import { OrchestratorReplacementDialog } from "../components/OrchestratorReplacementDialog";
@@ -517,7 +518,9 @@ function ShellLayout() {
 	return (
 		<ShellProvider value={{ daemonStatus, createProject, initializeProjectRepository }}>
 			<NotificationRuntime />
+			<ShareDeepLinkRuntime />
 			<GlobalNewTaskDialog />
+			<GlobalOrchestratorLaunchDialog />
 			<KeyboardShortcutsDialog open={isKeyboardShortcutsOpen} onOpenChange={setIsKeyboardShortcutsOpen} />
 			{/* Shell chrome: Win/Linux hang the sidebar under a topbar. macOS uses a
           titlebar strip above the off-canvas sidebar. Session and board actions

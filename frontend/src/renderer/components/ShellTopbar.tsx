@@ -1,4 +1,3 @@
-import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { GitBranch, LayoutDashboard, PanelRightClose, PanelRightOpen, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
@@ -10,10 +9,9 @@ import {
 	sessionIsActive,
 	type WorkspaceSession,
 } from "../types/workspace";
-import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { useTerminateSession } from "../hooks/useTerminateSession";
-import { spawnOrchestrator } from "../lib/spawn-orchestrator";
-import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
+import { addRendererExceptionStep, captureRendererEvent } from "../lib/telemetry";
 import { useUiStore } from "../stores/ui-store";
 import { OrchestratorIcon } from "./icons";
 import { getAgentActivityView } from "../lib/session-presentation";
@@ -39,7 +37,6 @@ const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperti
 // aligned only by CSS.
 export function ShellTopbar() {
 	const navigate = useNavigate();
-	const queryClient = useQueryClient();
 	const params = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
 	const currentSessionId = params.sessionId;
 	const isInspectorOpen = useUiStore((state) =>
@@ -48,7 +45,7 @@ export function ShellTopbar() {
 	const toggleInspector = useUiStore((state) => state.toggleInspector);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
-	const [isSpawning, setIsSpawning] = useState(false);
+	const requestOrchestratorLaunch = useUiStore((state) => state.requestOrchestratorLaunch);
 	// Board-scope spawn failures surface where the board actions render.
 	const [boardSpawnError, setBoardSpawnError] = useState<string | null>(null);
 	const all = useWorkspaceQuery().data ?? [];
@@ -101,26 +98,9 @@ export function ShellTopbar() {
 			});
 			return;
 		}
-		setIsSpawning(true);
-		try {
-			const sessionId = await spawnOrchestrator(projectId, "topbar");
-			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-			void navigate({
-				to: "/projects/$projectId/sessions/$sessionId",
-				params: { projectId, sessionId },
-			});
-		} catch (error) {
-			void captureRendererException(error, {
-				source: "orchestrator-open",
-				operation: "open_orchestrator",
-				surface: isSessionRoute ? "session_detail" : "project_board",
-				project_id: projectId,
-			});
-			console.error("Failed to spawn orchestrator:", error);
-			setBoardSpawnError(error instanceof Error ? error.message : "Could not spawn orchestrator");
-		} finally {
-			setIsSpawning(false);
-		}
+		// No orchestrator yet → open the Local/Cloud launcher (a global dialog that
+		// spawns local, or in a cloud sandbox, then navigates).
+		requestOrchestratorLaunch(projectId);
 	};
 
 	return (
@@ -179,19 +159,13 @@ export function ShellTopbar() {
 						</TopbarButton>
 						<TopbarButton
 							aria-label={orchestrator ? "Orchestrator" : "Spawn Orchestrator"}
-							disabled={isSpawning || isProjectRestarting}
+							disabled={isProjectRestarting}
 							onClick={() => void openOrchestrator()}
 							style={noDragStyle}
 							variant="primary"
 						>
 							<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
-							{isProjectRestarting
-								? "Restarting…"
-								: isSpawning
-									? "Spawning…"
-									: orchestrator
-										? "Orchestrator"
-										: "Spawn Orchestrator"}
+							{isProjectRestarting ? "Restarting…" : orchestrator ? "Orchestrator" : "Spawn Orchestrator"}
 						</TopbarButton>
 					</>
 				) : null}
@@ -236,13 +210,13 @@ export function ShellTopbar() {
 						{!isOrchestrator && (
 							<TopbarButton
 								aria-label="Open orchestrator"
-								disabled={isSpawning || isProjectRestarting}
+								disabled={isProjectRestarting}
 								onClick={() => void openOrchestrator()}
 								style={noDragStyle}
 								variant="primary"
 							>
 								<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
-								{isProjectRestarting ? "Restarting…" : isSpawning ? "Spawning…" : "Orchestrator"}
+								{isProjectRestarting ? "Restarting…" : "Orchestrator"}
 							</TopbarButton>
 						)}
 						{/* Inspector collapse (worker sessions only — orchestrators have no rail). */}

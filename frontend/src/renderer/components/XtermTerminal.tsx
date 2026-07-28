@@ -52,6 +52,12 @@ export type XtermTerminalProps = {
 	 * on every platform (see the wheel handler), fixing it under a mux too.
 	 */
 	paneScrollsByKeyboard?: boolean;
+	/**
+	 * Read-only view (a session shared with this user): swallow ALL user input so
+	 * nothing is written to the owner's PTY. Live, but look-don't-touch. Read via a
+	 * live ref so toggling doesn't tear down the terminal.
+	 */
+	readOnly?: boolean;
 	/** Terminal construction failed; the owner decides how to surface it. */
 	onError?: (error: unknown) => void;
 	/** Called after a terminal hyperlink is opened in the OS browser. */
@@ -66,12 +72,16 @@ export type XtermTerminalProps = {
 // Prefer the WebGL renderer, fall back to 2D canvas. Both rasterize box-drawing
 // glyphs themselves onto a fixed cell grid; the DOM renderer does not, so TUI
 // borders would drift. Loaded after open().
-function loadRenderer(term: Terminal): void {
+// Returns the WebGL addon (or null on the canvas fallback) so the caller can
+// rebuild its glyph atlas once webfonts finish loading — see the font-ready
+// refresh in the setup effect. The renderer rasterizes glyphs at construction,
+// so a webfont that loads after open() would otherwise render as the fallback.
+function loadRenderer(term: Terminal): WebglAddon | null {
 	try {
 		const webgl = new WebglAddon();
 		webgl.onContextLoss(() => webgl.dispose());
 		term.loadAddon(webgl);
-		return;
+		return webgl;
 	} catch {
 		// WebGL context unavailable — fall through to the canvas renderer.
 	}
@@ -80,6 +90,7 @@ function loadRenderer(term: Terminal): void {
 	} catch (error) {
 		console.warn("xterm: WebGL and canvas renderers unavailable; box-drawing may drift", error);
 	}
+	return null;
 }
 
 // xterm palette tracks the app theme (see lib/terminal-themes.ts + tokens.css).
@@ -364,7 +375,23 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		term.loadAddon(new SearchAddon());
 
 		term.open(host);
-		loadRenderer(term);
+		const webglAddon = loadRenderer(term);
+		// The renderer rasterizes glyphs into a texture atlas at open(). If the
+		// bundled JetBrains Mono webfont hadn't finished loading yet, the terminal
+		// measured the fallback (Menlo/SF Mono) — so once fonts are ready, rebuild
+		// the atlas + refit so text re-rasterizes in the premium font. No-op when
+		// the font was already loaded (the common case after the first pane).
+		if (typeof document !== "undefined" && document.fonts?.ready) {
+			void document.fonts.ready.then(() => {
+				if (termRef.current !== term) return; // disposed/replaced meanwhile
+				try {
+					webglAddon?.clearTextureAtlas();
+					term.refresh(0, term.rows - 1);
+				} catch {
+					/* renderer torn down; ignore */
+				}
+			});
+		}
 		term.options.macOptionClickForcesSelection = true;
 		forceSelectionMode(term);
 
@@ -389,6 +416,13 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		const userInputListeners = new Set<(data: string, source: TerminalUserInputSource) => void>();
 		const emitUserInput = (data: string, source: TerminalUserInputSource) => {
 			if (data.length === 0) return;
+			// Read-only shared session: drop keystrokes/paste/shortcuts/composition so
+			// the viewer never types into the owner's PTY — but ALLOW "wheel" through.
+			// Wheel events are scroll-only signals (SGR wheel reports / page keys), not
+			// command input, and a full-screen TUI (claude-code) can only be scrolled
+			// by sending them; blocking them left the viewer unable to scroll at all.
+			// (callbacksRef stays live so toggling readonly needs no re-attach.)
+			if (callbacksRef.current.readOnly && source !== "wheel") return;
 			userInputListeners.forEach((listener) => listener(data, source));
 		};
 		const pasteText = (text: string) => {

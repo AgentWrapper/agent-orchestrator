@@ -1,0 +1,52 @@
+# Local control-plane stack: Postgres + the control-plane service.
+#
+# Postgres-everywhere (same engine as Azure → no dev/prod drift). Two ways to run:
+#
+#   1) Full stack:   docker compose up --build
+#   2) DB only (fast iterate the Go service with `go run`):
+#        docker compose up -d postgres
+#        DAYTONA_API_KEY=... AO_LINUX_BINARY=/tmp/ao-linux-amd64 \
+#          CONTROLPLANE_DB='postgres://ao:ao@localhost:5432/ao_controlplane?sslmode=disable' \
+#          go run ./cmd/controlplane
+#
+# Secrets are read from the environment / an .env file — never hardcode them here.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ao
+      POSTGRES_PASSWORD: ao
+      POSTGRES_DB: ao_controlplane
+    ports:
+      - "5432:5432"
+    volumes:
+      - ao_cp_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ao -d ao_controlplane"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  controlplane:
+    build:
+      # Build context is the backend module root (two levels up from this file).
+      context: ../..
+      dockerfile: deploy/controlplane/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      CONTROLPLANE_ADDR: ":8080"
+      CONTROLPLANE_DB: "postgres://ao:ao@postgres:5432/ao_controlplane?sslmode=disable"
+      # Provisioning + auth secrets come from your shell / .env (NOT committed):
+      DAYTONA_API_KEY: "${DAYTONA_API_KEY:-}"
+      GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
+      AO_DAYTONA_SNAPSHOT: "${AO_DAYTONA_SNAPSHOT:-}"
+      # Leave CLERK_JWKS_URL unset for local dev-auth (X-AO-Tenant header).
+      CLERK_JWKS_URL: "${CLERK_JWKS_URL:-}"
+      CLERK_ISSUER: "${CLERK_ISSUER:-}"
+    ports:
+      - "8080:8080"
+
+volumes:
+  ao_cp_pgdata:

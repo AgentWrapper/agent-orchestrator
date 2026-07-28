@@ -47,6 +47,10 @@ type UiState = {
 	// re-fires; the always-mounted GlobalNewTaskDialog consumes it. Selection
 	// still lives in the URL — this is a one-shot action, not persisted state.
 	newTaskRequest: { projectId: string; nonce: number } | null;
+	// Transient "open the orchestrator Local/Cloud launcher for this project"
+	// signal — same one-shot nonce pattern as newTaskRequest; consumed by the
+	// always-mounted GlobalOrchestratorLaunchDialog.
+	orchestratorLaunchRequest: { projectId: string; nonce: number } | null;
 	// Bumps to ask the sidebar's create-project flow to open (the ⌘N fallback
 	// when no project is in scope).
 	createProjectNonce: number;
@@ -76,6 +80,7 @@ type UiState = {
 	setOrchestratorReplacementError: (projectId: string, message: string | null) => void;
 	setOrchestratorStartupError: (projectId: string, message: string | null) => void;
 	requestNewTask: (projectId: string) => void;
+	requestOrchestratorLaunch: (projectId: string) => void;
 	requestCreateProject: () => void;
 	requestNewShellTerminal: () => void;
 	setActiveShellTerminal: (handleId: string | null) => void;
@@ -115,6 +120,7 @@ export const useUiStore = create<UiState>((set) => ({
 	orchestratorReplacementErrors: {},
 	orchestratorStartupErrors: {},
 	newTaskRequest: null,
+	orchestratorLaunchRequest: null,
 	createProjectNonce: 0,
 	newShellTerminalNonce: 0,
 	activeShellTerminalHandleId: null,
@@ -225,6 +231,10 @@ export const useUiStore = create<UiState>((set) => ({
 		}),
 	requestNewTask: (projectId) =>
 		set((state) => ({ newTaskRequest: { projectId, nonce: (state.newTaskRequest?.nonce ?? 0) + 1 } })),
+	requestOrchestratorLaunch: (projectId) =>
+		set((state) => ({
+			orchestratorLaunchRequest: { projectId, nonce: (state.orchestratorLaunchRequest?.nonce ?? 0) + 1 },
+		})),
 	requestCreateProject: () => set((state) => ({ createProjectNonce: state.createProjectNonce + 1 })),
 	requestNewShellTerminal: () => set((state) => ({ newShellTerminalNonce: state.newShellTerminalNonce + 1 })),
 	setActiveShellTerminal: (activeShellTerminalHandleId) => set({ activeShellTerminalHandleId }),

@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { apiErrorMessage } from "../lib/api-client";
+import { sessionApi } from "../lib/session-api";
 import { aoBridge } from "../lib/bridge";
 import { workspaceQueryKey } from "./useWorkspaceQuery";
 
@@ -13,8 +14,9 @@ export function useRestoreSession(): (sessionId: string) => Promise<RestoreSessi
 	return useCallback(
 		async (sessionId: string) => {
 			try {
-				const { data, error } = await apiClient.POST("/api/v1/sessions/{sessionId}/restore", {
-					params: { path: { sessionId } },
+				const { client, sessionId: routedId } = sessionApi(sessionId);
+				const { data, error } = await client.POST("/api/v1/sessions/{sessionId}/restore", {
+					params: { path: { sessionId: routedId } },
 				});
 				if (error) {
 					const code = (error as { code?: string }).code;

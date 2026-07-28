@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
-import { ChevronRight, LayoutDashboard, MoreVertical, Pencil, Plus, RefreshCw, Search, Settings, Trash2 } from "lucide-react";
+import { ChevronRight, Inbox, LayoutDashboard, MoreVertical, Pencil, Plus, RefreshCw, Search, Settings, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { UpdateStatus } from "../../main/update-settings";
 import { APP_SHORTCUTS, shortcutKeys } from "../../shared/shortcuts";
@@ -14,7 +14,6 @@ import { getSessionDotView } from "../lib/session-presentation";
 import { aoBridge } from "../lib/bridge";
 import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
-import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { renameSession } from "../lib/rename-session";
 import { useResizable } from "../hooks/useResizable";
 import { useShellMaybe } from "../lib/shell-context";
@@ -48,8 +47,10 @@ import { OrchestratorIcon } from "./icons";
 import aoLogo from "../../../assets/ao-logo.svg";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
+import { CloudAuthControls } from "./CloudAuthControls";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CreateProjectInput } from "./CreateProjectFlow";
+import { ImportSharedSessionDialog } from "./ImportSharedSessionDialog";
 import { ResizeHandle } from "./ResizeHandle";
 import { isMacPlatform, isWindowsPlatform } from "../lib/platform";
 
@@ -299,11 +300,14 @@ export function Sidebar({
 					<SidebarGroupLabel className="h-auto rounded-none p-0 text-2xs font-semibold uppercase tracking-wide-lg text-passive">
 						Projects
 					</SidebarGroupLabel>
-					<CreateProjectButton
-						hideTrigger={workspaces.length === 0}
-						onCreateProject={onCreateProject}
-						onInitializeProject={onInitializeProject}
-					/>
+					<div className="flex items-center gap-0.5">
+						<OpenSharedSessionButton />
+						<CreateProjectButton
+							hideTrigger={workspaces.length === 0}
+							onCreateProject={onCreateProject}
+							onInitializeProject={onInitializeProject}
+						/>
+					</div>
 				</div>
 			</div>
 
@@ -353,6 +357,7 @@ export function Sidebar({
 				)}
 				<div className="sidebar-expanded-chrome relative flex w-full min-w-46.5 flex-col gap-1 transition-[opacity,transform] duration-150 ease-out group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:-translate-x-2 group-data-[collapsible=icon]:opacity-0">
 					<RestartToUpdateRow status={updateStatus} />
+						<CloudAuthControls />
 					<button
 						aria-label="Settings"
 						className="flex w-full items-center justify-center gap-2.5 rounded-settings-row bg-interactive-hover px-2.5 py-2.5 text-control font-medium text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-lg [&_svg]:shrink-0 [&_svg]:text-muted-foreground"
@@ -414,14 +419,13 @@ function ProjectItem({
 	onRemoveProject: (projectId: string) => Promise<void>;
 }) {
 	const projectActive = selection.activeProjectId === workspace.id && !selection.activeSessionId;
-	const queryClient = useQueryClient();
 	const [removeError, setRemoveError] = useState<string | null>(null);
 	const [isRemoving, setIsRemoving] = useState(false);
 	const [confirmOpen, setConfirmOpen] = useState(false);
-	const [isSpawning, setIsSpawning] = useState(false);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const isProjectRestarting = restartingProjectIds.has(workspace.id);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
+	const requestOrchestratorLaunch = useUiStore((state) => state.requestOrchestratorLaunch);
 	// Keep completed PR sessions reachable while their runtime still exists.
 	// Only termination removes a worker from the sidebar; archived sessions stay
 	// reachable through SessionsBoard.
@@ -438,16 +442,9 @@ function ProjectItem({
 			selection.goSession(workspace.id, orchestrator.id);
 			return;
 		}
-		setIsSpawning(true);
-		try {
-			const sessionId = await spawnOrchestrator(workspace.id, "sidebar");
-			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-			selection.goSession(workspace.id, sessionId);
-		} catch (err) {
-			console.error("Failed to spawn orchestrator:", err);
-		} finally {
-			setIsSpawning(false);
-		}
+		// No orchestrator yet → open the Local/Cloud launcher (global dialog handles
+		// the spawn and navigation).
+		requestOrchestratorLaunch(workspace.id);
 	};
 
 	const onProjectClick = () => {
@@ -542,7 +539,7 @@ function ProjectItem({
 						<button
 							aria-label={orchestrator ? `Open ${workspace.name} orchestrator` : `Spawn ${workspace.name} orchestrator`}
 							className={HOVER_ACTION_CLASS}
-							disabled={isSpawning || isProjectRestarting}
+							disabled={isProjectRestarting}
 							onClick={() => void openOrchestrator()}
 							type="button"
 						>
@@ -550,13 +547,7 @@ function ProjectItem({
 						</button>
 					</TooltipTrigger>
 					<TooltipContent>
-						{isProjectRestarting
-							? "Restarting…"
-							: isSpawning
-								? "Spawning…"
-								: orchestrator
-									? "Orchestrator"
-									: "Spawn orchestrator"}
+						{isProjectRestarting ? "Restarting…" : orchestrator ? "Orchestrator" : "Spawn orchestrator"}
 					</TooltipContent>
 				</Tooltip>
 				<DropdownMenu>
@@ -836,6 +827,30 @@ function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
 				</span>
 			</SidebarMenuButton>
 		</SidebarMenuItem>
+	);
+}
+
+// Header affordance to import a session a teammate shared (model A, readonly).
+// Sits beside "New project"; opens the paste-a-link dialog.
+function OpenSharedSessionButton() {
+	const [open, setOpen] = useState(false);
+	return (
+		<>
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<button
+						aria-label="Open shared session"
+						className="sidebar-expanded-chrome grid size-icon-xl place-items-center rounded-sm text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground group-data-[collapsible=icon]:hidden"
+						onClick={() => setOpen(true)}
+						type="button"
+					>
+						<Inbox className="size-icon-sm" aria-hidden="true" />
+					</button>
+				</TooltipTrigger>
+				<TooltipContent>Open shared session</TooltipContent>
+			</Tooltip>
+			<ImportSharedSessionDialog open={open} onOpenChange={setOpen} />
+		</>
 	);
 }
 

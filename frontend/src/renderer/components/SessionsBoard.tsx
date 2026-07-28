@@ -763,7 +763,8 @@ function SessionCard({
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
-	const showTerminate = interactive && session.isTerminated !== true && onTerminate;
+	// Read-only shared session: the viewer can't terminate someone else's session.
+	const showTerminate = interactive && session.isTerminated !== true && !session.readonly && onTerminate;
 	const keepTerminateVisible = session.status === "merged";
 	const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
 		if (!interactive || !onOpen) return;

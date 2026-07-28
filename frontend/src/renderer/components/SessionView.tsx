@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Loader2 } from "lucide-react";
 import { createPortal } from "react-dom";
 import type { PanelImperativeHandle, PanelSize } from "react-resizable-panels";
 import { BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
@@ -12,6 +13,7 @@ import { useShell } from "../lib/shell-context";
 import { useBrowserView } from "../hooks/useBrowserView";
 import { useCloseShellTerminal, useRenameShellTerminal, useShellTerminals } from "../hooks/useShellTerminals";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
+import { sandboxIdFromBoardId } from "../lib/cloud-sessions";
 import { hidesShellTopbar } from "../lib/platform";
 import { isOrchestratorSession, sessionIsActive } from "../types/workspace";
 import type { TerminalTarget } from "../types/terminal";
@@ -332,6 +334,21 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	);
 
 	if (!session && !workspaceQuery.isLoading) {
+		// A cloud/shared board id (cloud-/shared-<sandboxId>) that isn't merged into
+		// the board yet — its card resolves asynchronously (registry fetch + sandbox
+		// status/proxy round-trip, a few seconds). Show a connecting state, not the
+		// "not found" error, so opening a share link / freshly-spawned cloud session
+		// doesn't flash an error before the terminal loads.
+		if (sandboxIdFromBoardId(sessionId)) {
+			return (
+				<div className="grid h-full place-items-center p-6 text-center font-mono text-xs text-passive">
+					<div className="flex items-center gap-2">
+						<Loader2 className="size-4 animate-spin" aria-hidden="true" />
+						Connecting to cloud session…
+					</div>
+				</div>
+			);
+		}
 		return (
 			<div className="grid h-full place-items-center p-6 text-center font-mono text-xs text-passive">
 				Session not found. It may have been cleaned up — pick another from the sidebar.

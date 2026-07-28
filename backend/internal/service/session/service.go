@@ -124,6 +124,16 @@ type Service struct {
 	// the no_signal downgrade: a hook-less harness staying silent forever is
 	// normal, not a broken pipeline. nil means "unknown": never downgrade.
 	signalCapable func(domain.AgentHarness) bool
+	// remoteRouter, when set, routes sends to sessions not owned by this daemon
+	// over the federated bus (Phase B). nil ⇒ purely local.
+	remoteRouter RemoteRouter
+}
+
+// RemoteRouter routes a send to a session that lives in another location — a
+// different sandbox or daemon — over the federated bus. Implemented by the
+// daemon's bus client; nil in a purely local daemon.
+type RemoteRouter interface {
+	RouteSend(ctx context.Context, sessionID, message string) error
 }
 
 // New wires a controller-facing session service over an internal session Manager.
@@ -473,10 +483,30 @@ func (s *Service) RollbackSpawn(ctx context.Context, id domain.SessionID) (Rollb
 	return RollbackOutcome{Deleted: deleted, Killed: killed}, nil
 }
 
-// Send delegates agent messaging to the internal manager.
+// Send delegates agent messaging to the internal manager. When a federated-bus
+// remote router is wired and the target session is not known to THIS daemon, the
+// message is routed to whichever location owns it (a different sandbox/daemon)
+// instead of failing not-found. A locally-known session — even terminated — is
+// always handled locally.
 func (s *Service) Send(ctx context.Context, id domain.SessionID, message string) error {
+	if s.remoteRouter != nil {
+		if _, ok, err := s.store.GetSession(ctx, id); err == nil && !ok {
+			return toAPIError(s.remoteRouter.RouteSend(ctx, string(id), message))
+		}
+	}
+	return s.SendLocal(ctx, id, message)
+}
+
+// SendLocal delivers strictly to a local session, never routing over the bus.
+// The bus executor uses it when running an inbound routed command so a stale
+// registry entry can't bounce a message back out and loop.
+func (s *Service) SendLocal(ctx context.Context, id domain.SessionID, message string) error {
 	return toAPIError(s.manager.Send(ctx, id, message))
 }
+
+// SetRemoteRouter wires the federated-bus router used to reach non-local
+// sessions. nil (the default) keeps the service purely local.
+func (s *Service) SetRemoteRouter(r RemoteRouter) { s.remoteRouter = r }
 
 // Rename updates the user-facing session display name.
 func (s *Service) Rename(ctx context.Context, id domain.SessionID, displayName string) error {

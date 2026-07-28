@@ -161,6 +161,29 @@ const RENDERER_SCHEME = "app";
 const RENDERER_HOST = "renderer";
 const RENDERER_ORIGIN = `${RENDERER_SCHEME}://${RENDERER_HOST}`;
 
+// The Clerk + OAuth-provider hosts the "Continue with Google" (and other social)
+// sign-in redirect chain navigates through: app → Clerk Frontend API →
+// provider consent → back to our origin. These full-page navigations must be
+// allowed to complete IN the window; every other off-origin navigation stays
+// blocked. Kept host-suffix based so it works for any Clerk instance/provider.
+function isOAuthRedirectURL(raw: string): boolean {
+	try {
+		const h = new URL(raw).hostname.toLowerCase();
+		return (
+			h === "accounts.dev" ||
+			h.endsWith(".accounts.dev") || // *.clerk.accounts.dev (Clerk dev FAPI)
+			h === "clerk.com" ||
+			h.endsWith(".clerk.com") ||
+			h === "accounts.google.com" ||
+			h === "oauth2.googleapis.com" ||
+			h.endsWith(".githubusercontent.com") || // GitHub OAuth avatars/redirects
+			h === "github.com" // GitHub OAuth (if enabled later)
+		);
+	} catch {
+		return false;
+	}
+}
+
 // The packaged renderer is served from a custom standard scheme, not file://.
 // A file:// page has the opaque "null" origin, which the daemon must never
 // trust (every sandboxed iframe on any website also presents "null"), so its
@@ -175,6 +198,80 @@ protocol.registerSchemesAsPrivileged([
 		privileges: { standard: true, secure: true, supportFetchAPI: true },
 	},
 ]);
+
+// ── Deep links: ao://share/<token> ──────────────────────────────────────────
+// A shared-session link opens (or focuses) AO and auto-imports the session, so a
+// teammate just clicks the link. The token is the readonly payload the Go daemon
+// minted; we only relay it to the renderer, which imports + navigates.
+const SHARE_SCHEME = "ao";
+let pendingShareToken: string | null = null;
+
+function parseShareDeepLink(url: string | undefined): string | null {
+	if (!url) return null;
+	try {
+		const u = new URL(url);
+		if (u.protocol !== `${SHARE_SCHEME}:`) return null;
+		const fromQuery = u.searchParams.get("token");
+		if (fromQuery) return fromQuery;
+		const rest = decodeURIComponent(u.pathname.replace(/^\/+/, ""));
+		if (u.hostname === "share") return rest || null; // ao://share/<token>
+		if (!u.hostname && rest.startsWith("share/")) return rest.slice("share/".length) || null; // ao:///share/<token>
+		return null;
+	} catch {
+		return null;
+	}
+}
+
+function deliverShareToken(token: string | null): void {
+	if (!token) return;
+	// Never log the token itself — it embeds a signed sandbox URL (a bearer secret).
+	console.log("[deeplink] share link received");
+	const win = mainWindow;
+	if (win && !win.webContents.isLoading()) {
+		if (win.isMinimized()) win.restore();
+		win.show();
+		win.focus();
+		win.webContents.send("share:deeplink", token);
+	} else {
+		pendingShareToken = token; // flushed on did-finish-load (see createWindow)
+	}
+}
+
+function firstShareUrlInArgv(argv: string[]): string | undefined {
+	return argv.find((arg) => arg.startsWith(`${SHARE_SCHEME}://`));
+}
+
+// macOS delivers deep links via open-url (both cold-start and while running); the
+// listener must exist before app "ready", so register it at module load.
+app.on("open-url", (event, url) => {
+	event.preventDefault();
+	deliverShareToken(parseShareDeepLink(url));
+});
+
+// Windows/Linux deliver the URL as an argv entry to a second launch; hold a
+// single-instance lock so that launch focuses THIS window and hands us the URL.
+// (macOS uses open-url above, so skip it there.)
+if (process.platform !== "darwin") {
+	if (!app.requestSingleInstanceLock()) {
+		app.quit();
+	} else {
+		app.on("second-instance", (_event, argv) => {
+			deliverShareToken(parseShareDeepLink(firstShareUrlInArgv(argv)));
+		});
+	}
+}
+
+// Register AO as the ao:// handler with the OS. In dev (`electron .`) the exec
+// path + script must be passed so LaunchServices resolves back to us.
+function registerShareProtocol(): void {
+	if (process.defaultApp) {
+		if (process.argv.length >= 2) {
+			app.setAsDefaultProtocolClient(SHARE_SCHEME, process.execPath, [path.resolve(process.argv[1])]);
+		}
+	} else {
+		app.setAsDefaultProtocolClient(SHARE_SCHEME);
+	}
+}
 
 // Maps app://renderer/<path> to the built renderer in dist/. Paths without a
 // file extension are client-side routes and fall back to index.html (SPA).
@@ -316,9 +413,27 @@ function createWindow(): void {
 	});
 
 	mainWindow.webContents.on("will-navigate", (event, url) => {
-		if (url !== mainWindow?.webContents.getURL()) {
-			event.preventDefault();
+		const current = mainWindow?.webContents.getURL() ?? "";
+		if (url === current) return;
+		try {
+			const target = new URL(url);
+			// Allow navigation to the app's OWN origin — dev: the Vite server on
+			// localhost; packaged: the app:// scheme. This is critical for OAuth: the
+			// Clerk handshake redirects BACK to our origin (…/?__clerk_handshake=…),
+			// and blocking it here is exactly what left sign-in on a blank page.
+			if (
+				url.startsWith(RENDERER_ORIGIN) ||
+				target.hostname === "localhost" ||
+				target.hostname === "127.0.0.1"
+			) {
+				return;
+			}
+			// Allow the OAuth redirect chain OUT to Clerk / provider hosts.
+			if (isOAuthRedirectURL(url)) return;
+		} catch {
+			/* unparseable → block below */
 		}
+		event.preventDefault();
 	});
 
 	// Application shortcuts are handled here so they fire no matter which web
@@ -338,6 +453,14 @@ function createWindow(): void {
 	});
 
 	void mainWindow.loadURL(rendererUrl());
+
+	// Flush any deep-link token that arrived before the renderer was ready.
+	mainWindow.webContents.once("did-finish-load", () => {
+		if (!pendingShareToken) return;
+		const token = pendingShareToken;
+		pendingShareToken = null;
+		mainWindow?.webContents.send("share:deeplink", token);
+	});
 
 	if (isDev && process.env.AO_OPEN_DEVTOOLS === "1") {
 		mainWindow.webContents.once("did-frame-finish-load", () => {
@@ -1504,8 +1627,13 @@ app.whenReady().then(async () => {
 	}
 
 	registerRendererProtocol();
+	registerShareProtocol();
 	applyRuntimeAppIcon();
 	createWindow();
+	// Windows/Linux cold start: the ao:// URL is in our own argv.
+	if (process.platform !== "darwin") {
+		deliverShareToken(parseShareDeepLink(firstShareUrlInArgv(process.argv)));
+	}
 	void startDaemon();
 	initAutoUpdates();
 

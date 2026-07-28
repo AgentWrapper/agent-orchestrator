@@ -1,4 +1,21 @@
 import "@testing-library/jest-dom/vitest";
+import { vi } from "vitest";
+
+// Clerk's components (SignedIn/SignedOut/UserButton/…) require a <ClerkProvider>,
+// which unit tests don't mount. Stub the module so any component that uses them
+// (e.g. CloudAuthControls in the Sidebar) renders inertly instead of throwing.
+// Hooks return a signed-out state; ClerkProvider is a passthrough.
+vi.mock("@clerk/clerk-react", () => ({
+	ClerkProvider: ({ children }: { children?: unknown }) => children ?? null,
+	SignedIn: () => null,
+	SignedOut: () => null,
+	SignInButton: () => null,
+	SignOutButton: () => null,
+	UserButton: () => null,
+	useAuth: () => ({ getToken: async () => null, isSignedIn: false, isLoaded: true }),
+	useUser: () => ({ user: null, isSignedIn: false, isLoaded: true }),
+	useClerk: () => ({}),
+}));
 
 // Guard: src/main/** tests run in the Node.js environment (no DOM). vitest still
 // routes setupFiles here, so only install the DOM stubs when a DOM exists.
@@ -165,6 +182,9 @@ if (typeof window !== "undefined") {
 		notifications: {
 			show: async () => undefined,
 			onClick: () => () => undefined,
+		},
+		deepLinks: {
+			onShareLink: () => () => undefined,
 		},
 		appState: {
 			getMigration: async () => ({ status: "pending" }),

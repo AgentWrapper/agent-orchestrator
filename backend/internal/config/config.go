@@ -109,7 +109,32 @@ type Config struct {
 	// normalizes it. The desktop uses this to identify dev daemons after the
 	// process cwd is moved to the stable data dir.
 	StartupWorkingDirectory string
+	// Bus configures participation in the federated bus (Phase B). Off unless a
+	// control-plane URL is set, so a bare local daemon is unaffected.
+	Bus BusConfig
 }
+
+// BusConfig configures the daemon's federated-bus client. ControlPlaneURL empty
+// ⇒ the bus client is never started and the daemon stays purely local.
+type BusConfig struct {
+	// ControlPlaneURL is the hosted control-plane base URL to dial.
+	ControlPlaneURL string
+	// Token is the Bearer JWT presented to the control plane; its org_id/sub is
+	// the tenant the daemon's sessions are filed under.
+	Token string
+	// Tenant is a dev-only fallback (sent as X-AO-Tenant) when no Token is set,
+	// matching the control plane's dev auth path.
+	Tenant string
+	// DaemonID is this daemon's stable identity on the bus.
+	DaemonID string
+	// AgentHost marks an in-sandbox agent-host daemon: the control plane reaches
+	// its sessions inbound via a signed preview URL, so it keeps its registration
+	// warm rather than holding an SSE channel open.
+	AgentHost bool
+}
+
+// Enabled reports whether the federated bus is configured.
+func (b BusConfig) Enabled() bool { return strings.TrimSpace(b.ControlPlaneURL) != "" }
 
 // Addr returns the host:port the HTTP server binds. It uses net.JoinHostPort so
 // the result is correct for IPv6 literals as well as IPv4 / hostnames.
@@ -191,6 +216,23 @@ func Load() (Config, error) {
 		cfg.AppRunID = raw
 	} else {
 		cfg.AppRunID = newAppRunID()
+	}
+
+	// Federated bus (Phase B). All optional; a missing control-plane URL leaves
+	// the bus off. "AO_AGENT_HOST_HARNESSES" is the same in-sandbox signal used
+	// by the agent registry (registry.AllowedHarnessesEnv) — read by name here to
+	// avoid importing that package into config.
+	cfg.Bus = BusConfig{
+		ControlPlaneURL: strings.TrimSpace(os.Getenv("AO_CONTROL_PLANE_URL")),
+		Token:           strings.TrimSpace(os.Getenv("AO_BUS_TOKEN")),
+		Tenant:          strings.TrimSpace(os.Getenv("AO_TENANT")),
+		DaemonID:        strings.TrimSpace(os.Getenv("AO_DAEMON_ID")),
+		AgentHost:       os.Getenv("AO_AGENT_HOST_HARNESSES") != "",
+	}
+	if cfg.Bus.DaemonID == "" {
+		// Tie daemon identity to the app-run so it's stable across the supervisor's
+		// daemon restarts, falling back to the freshly minted run id.
+		cfg.Bus.DaemonID = cfg.AppRunID
 	}
 
 	if raw, ok := os.LookupEnv("AO_ALLOWED_ORIGINS"); ok && raw != "" {

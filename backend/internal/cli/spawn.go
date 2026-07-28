@@ -31,6 +31,23 @@ type spawnOptions struct {
 	claimPR        string
 	noTakeover     bool
 	skipAgentCheck bool
+	cloud          bool
+}
+
+// cloudSpawnRequest mirrors the daemon's POST /api/v1/cloud/sessions body.
+type cloudSpawnRequest struct {
+	Harness        string `json:"harness"`
+	LocalProjectID string `json:"localProjectId"`
+	ProjectPath    string `json:"projectPath"`
+	Prompt         string `json:"prompt,omitempty"`
+	DisplayName    string `json:"displayName,omitempty"`
+	Branch         string `json:"branch,omitempty"`
+	Kind           string `json:"kind,omitempty"`
+}
+
+type cloudSpawnResult struct {
+	SandboxID string `json:"sandboxId"`
+	Status    string `json:"status"`
 }
 
 // spawnRequest mirrors the daemon's SpawnSessionRequest body for
@@ -111,6 +128,30 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 					return err
 				}
 			}
+			// Cloud: provision a per-session Daytona sandbox and run the session in
+			// it (survives app/laptop shutdown; shareable). This is the capability an
+			// orchestrator uses to spin up cloud workers/sessions on demand. Claiming
+			// a PR at spawn isn't supported for cloud yet (the sandbox clones fresh).
+			if opts.cloud {
+				if opts.claimPR != "" {
+					return usageError{fmt.Errorf("--claim-pr is not supported with --cloud")}
+				}
+				creq := cloudSpawnRequest{
+					Harness:        opts.harness,
+					LocalProjectID: opts.project,
+					ProjectPath:    project.Path,
+					Prompt:         opts.prompt,
+					DisplayName:    name,
+					Branch:         opts.branch,
+					Kind:           opts.kind,
+				}
+				var cres cloudSpawnResult
+				if err := ctx.postJSON(cmd.Context(), "cloud/sessions", creq, &cres); err != nil {
+					return err
+				}
+				_, err = fmt.Fprintf(cmd.OutOrStdout(), "spawning cloud session in sandbox %s (%s)\n", cres.SandboxID, cres.Status)
+				return err
+			}
 			claimRef := ""
 			if opts.claimPR != "" {
 				claimRef, err = ctx.resolvePRRef(cmd.Context(), opts.claimPR, project)
@@ -176,6 +217,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.claimPR, "claim-pr", "", "Immediately claim an existing PR for the spawned session")
 	f.BoolVar(&opts.noTakeover, "no-takeover", false, "Refuse if another active session owns the claimed PR (requires --claim-pr)")
 	f.BoolVar(&opts.skipAgentCheck, "skip-agent-check", false, "Skip advisory agent catalog install/auth preflight before spawning")
+	f.BoolVar(&opts.cloud, "cloud", false, "Run the session in a per-session cloud sandbox (survives app/laptop shutdown; shareable). Requires the daemon to have DAYTONA_API_KEY configured")
 	return cmd
 }
 
