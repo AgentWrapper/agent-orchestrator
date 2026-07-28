@@ -752,11 +752,11 @@ describe("SessionInspector reviews tab", () => {
 	});
 
 	it.each([
-		["needs_review", "changes_requested", "Changes requested", "Not run", "Run review"],
-		["running", "approved", "Approved", "Reviewing...", "Cancel review"],
+		["needs_review", "changes_requested", "Changes requested", "Run review", true],
+		["running", "approved", "Reviewing...", "Cancel review", false],
 	] as const)(
-		"shows the previous verdict while the current head is %s without changing its current status",
-		async (status, previousVerdict, previousLabel, currentLabel, actionLabel) => {
+		"shows only the latest available AO review run while the current head is %s",
+		async (status, previousVerdict, runLabel, actionLabel, showsPreviousRun) => {
 			const current = {
 				...reviewState(3, status, "sha-current"),
 				previousRun: {
@@ -783,13 +783,19 @@ describe("SessionInspector reviews tab", () => {
 			renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 			await openReviewsTab();
 
-			const previous = await screen.findByText(`Previous: ${previousLabel}`);
-			expect(screen.getAllByText(currentLabel).length).toBeGreaterThan(0);
-			expect(within(previous.parentElement as HTMLElement).getByText("Previous review summary with actionable detail.")).toBeInTheDocument();
-			expect(within(previous.parentElement as HTMLElement).getByRole("link", { name: "View previous review" })).toHaveAttribute(
-				"href",
-				"https://example.com/pr/3#pullrequestreview-98765",
-			);
+			expect(await screen.findByText(runLabel)).toBeInTheDocument();
+			if (showsPreviousRun) {
+				expect(screen.queryByText("Not run")).not.toBeInTheDocument();
+				expect(screen.queryByText(/Previous:/)).not.toBeInTheDocument();
+				expect(screen.getByText("Previous review summary with actionable detail.")).toBeInTheDocument();
+				expect(screen.getByRole("link", { name: "View previous review" })).toHaveAttribute(
+					"href",
+					"https://example.com/pr/3#pullrequestreview-98765",
+				);
+			} else {
+				expect(screen.queryByText("Previous review summary with actionable detail.")).not.toBeInTheDocument();
+				expect(screen.queryByRole("link", { name: "View previous review" })).not.toBeInTheDocument();
+			}
 			expect(screen.getByRole("button", { name: actionLabel })).toBeInTheDocument();
 		},
 	);

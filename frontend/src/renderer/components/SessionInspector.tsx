@@ -1111,37 +1111,15 @@ function aoReviewMeta(reviewState: PRReviewState): string {
 }
 
 function AoReviewRow({ reviewState }: { reviewState: PRReviewState }) {
-	const verdict = reviewVerdict(reviewState);
-	const previousVerdict = previousReviewVerdict(reviewState);
-	const summary = reviewState.latestRun?.body?.trim();
-	const reviewUrl = aoReviewCommentUrl(reviewState.latestRun);
-	const previousSummary = reviewState.previousRun?.body?.trim();
-	const previousReviewUrl = aoReviewCommentUrl(reviewState.previousRun);
+	const displayRun = reviewState.latestRun ?? reviewState.previousRun;
+	const verdict = displayRun ? runReviewVerdict(displayRun) : reviewVerdict(reviewState);
+	const summary = displayRun?.body?.trim();
+	const reviewUrl = aoReviewCommentUrl(displayRun);
+	const reviewLinkLabel = reviewState.latestRun ? "View review" : "View previous review";
 	return (
 		<div className={cn("flex min-w-0 flex-col gap-2", reviewState.status === "ineligible" && "opacity-70")}>
 			<VerdictBadge label={verdict.label} tone={verdict.tone} />
 			{summary ? <p className="whitespace-pre-wrap break-words text-2xs leading-relaxed text-passive">{summary}</p> : null}
-			{previousVerdict ? (
-				<div className="flex min-w-0 flex-col gap-1 rounded-md border border-border/60 px-2 py-1.5">
-					<p className={cn("text-2xs font-medium", reviewerVerdictTone[previousVerdict.tone])}>
-						Previous: {previousVerdict.label}
-					</p>
-					{previousSummary ? (
-						<p className="whitespace-pre-wrap break-words text-2xs leading-relaxed text-passive">{previousSummary}</p>
-					) : null}
-					{previousReviewUrl ? (
-						<a
-							className="inline-flex items-center gap-0.5 self-start text-2xs font-medium text-passive no-underline transition-colors hover:text-foreground"
-							href={previousReviewUrl}
-							target="_blank"
-							rel="noopener noreferrer"
-						>
-							View previous review
-							<ArrowUpRight aria-hidden="true" className="size-3 shrink-0" />
-						</a>
-					) : null}
-				</div>
-			) : null}
 			{reviewUrl ? (
 				<a
 					className="inline-flex items-center gap-0.5 self-start text-2xs font-medium text-passive no-underline transition-colors hover:text-foreground"
@@ -1149,12 +1127,35 @@ function AoReviewRow({ reviewState }: { reviewState: PRReviewState }) {
 					target="_blank"
 					rel="noopener noreferrer"
 				>
-					View review
+					{reviewLinkLabel}
 					<ArrowUpRight aria-hidden="true" className="size-3 shrink-0" />
 				</a>
 			) : null}
 		</div>
 	);
+}
+
+function runReviewVerdict(run: NonNullable<PRReviewState["latestRun"]>): {
+	label: string;
+	tone: "neutral" | "running" | "success" | "danger";
+} {
+	if (run.status === "failed") {
+		return { label: "Failed", tone: "danger" };
+	}
+	if (run.status === "cancelled") {
+		return { label: "Cancelled", tone: "neutral" };
+	}
+	if (run.status === "running") {
+		return { label: "Reviewing...", tone: "running" };
+	}
+	switch (run.verdict) {
+		case "approved":
+			return { label: "Approved", tone: "success" };
+		case "changes_requested":
+			return { label: "Changes requested", tone: "danger" };
+		default:
+			return { label: "Not run", tone: "neutral" };
+	}
 }
 
 // GitHub anchors a posted review at #pullrequestreview-<id> on the PR page; we
@@ -1186,21 +1187,6 @@ function reviewVerdict(reviewState: PRReviewState): {
 			return { label: "Not run", tone: "neutral" };
 	}
 	return { label: "Not run", tone: "neutral" };
-}
-
-function previousReviewVerdict(reviewState: PRReviewState): {
-	label: string;
-	tone: "success" | "danger";
-} | null {
-	if (reviewState.status !== "needs_review" && reviewState.status !== "running") return null;
-	switch (reviewState.previousRun?.verdict) {
-		case "approved":
-			return { label: "Approved", tone: "success" };
-		case "changes_requested":
-			return { label: "Changes requested", tone: "danger" };
-		default:
-			return null;
-	}
 }
 
 function reviewSessionRunAction(reviewStates: PRReviewState[], isTriggering: boolean): string {
