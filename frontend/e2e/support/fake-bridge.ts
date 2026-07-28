@@ -140,6 +140,12 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					install: async () => undefined,
 					onStatus: unsubscribe,
 				},
+				cloud: {
+					getHarnessCredential: async () => null,
+					setBusCredentials: async () => undefined,
+					clearBusCredentials: async () => undefined,
+				},
+				deepLinks: { onShareLink: unsubscribe },
 				// UpdatesSection calls featureBuilds.getActive() immediately on mount; an
 				// omitted namespace would surface as a swallowed React Query error.
 				featureBuilds: {
@@ -494,6 +500,12 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					install: async () => undefined,
 					onStatus: unsubscribe,
 				},
+				cloud: {
+					getHarnessCredential: async () => null,
+					setBusCredentials: async () => undefined,
+					clearBusCredentials: async () => undefined,
+				},
+				deepLinks: { onShareLink: unsubscribe },
 				// UpdatesSection calls featureBuilds.getActive() immediately on mount; an
 				// omitted namespace would surface as a swallowed React Query error.
 				featureBuilds: {
