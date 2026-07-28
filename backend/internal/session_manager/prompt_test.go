@@ -108,12 +108,15 @@ func TestBuildSystemPrompt_WorkerHandlesTaskSourcesAndProviderPRRules(t *testing
 		"claim or attach that PR/MR first",
 		"do not invent issue, PR, or MR requirements",
 		"## Frontend Preview Workflow",
+		"AO's Browser renders a URL; it is not a source-file viewer",
 		"Do not navigate AO's Browser merely because a URL appears in terminal output",
 		"start its frontend dev server from this session's assigned workspace",
 		"a server rooted in another checkout cannot show this session's changes",
 		"Do not surface an unchanged pre-existing Markdown file",
 		"Do not merely say that you will launch or preview the UI",
 		"run `ao preview <url>` at the end of the implementation",
+		"Inspect the rendered result",
+		"Backend-only, CLI-only, database-only, and review-only tasks do not require a Browser preview",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("worker prompt missing %q:\n%s", want, got)

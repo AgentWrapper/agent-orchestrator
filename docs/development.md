@@ -154,6 +154,25 @@ npm run dev            # Electron dev mode
 npm run dev:web        # Web-only (no Electron, for quick UI iteration)
 ```
 
+### Preview frontend work in AO
+
+AO's Browser panel displays rendered URLs, not raw source files. After a session
+has changed user-visible frontend code:
+
+1. Start the documented frontend development server from that session's exact
+   worktree, or reuse one only after verifying that it serves the same worktree.
+2. Wait for its working localhost URL and select the application route that
+   renders the changed component.
+3. Run `ao preview <url>` near the end of the implementation.
+4. Inspect and exercise the rendered result, reload after fixes as needed, then
+   run the relevant tests before finishing.
+
+Printed terminal URLs only signal that a link exists; they do not navigate the
+Browser automatically. Existing unchanged files also do not open it. A created
+or changed static `index.html` or Markdown file can be previewed directly
+because AO serves those formats as rendered pages. Backend-only, CLI-only,
+database-only, and review-only work does not need a Browser preview.
+
 ### Build
 
 ```bash
