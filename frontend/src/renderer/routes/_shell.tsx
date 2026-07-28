@@ -90,7 +90,6 @@ function ShellLayout() {
 	const daemonStatus = useDaemonStatus(queryClient);
 	const [workspaceStartupState, setWorkspaceStartupState] = useState<"loading" | "ready" | "error">("loading");
 	const workspaceStartupBaselineRef = useRef(0);
-	const sidebarWasCollapsedForStartupRef = useRef(false);
 	const agentCatalogPortRef = useRef<number | undefined>(undefined);
 	const { themePreference, resolvedTheme, isSidebarOpen, toggleSidebar } = useUiStore();
 	const syncSystemTheme = useUiStore((state) => state.syncSystemTheme);
@@ -169,10 +168,6 @@ function ShellLayout() {
 	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
 	const setOrchestratorStartupError = useUiStore((state) => state.setOrchestratorStartupError);
 	const replacementErrorProjectId = Object.keys(orchestratorReplacementErrors)[0] ?? null;
-	const isStartupLoading =
-		!usesPreviewWorkspaceData &&
-		!daemonStatus.code &&
-		(daemonStatus.state !== "ready" || workspaceStartupState === "loading");
 
 	const cancelSidebarPeekClose = useCallback(() => {
 		if (sidebarPeekCloseTimerRef.current === undefined) return;
@@ -454,21 +449,6 @@ function ShellLayout() {
 
 	useEffect(() => cancelSidebarPeekClose, [cancelSidebarPeekClose]);
 
-	// Keep the startup treatment in the content pane: temporarily collapse the
-	// sidebar while the daemon and workspace list hydrate, then pin it open once
-	// the first load completes (or startup reports a failure).
-	useEffect(() => {
-		if (isStartupLoading) {
-			sidebarWasCollapsedForStartupRef.current = true;
-			cancelSidebarPeekClose();
-			setIsSidebarPeekOpen(false);
-			return;
-		}
-		if (!sidebarWasCollapsedForStartupRef.current) return;
-		sidebarWasCollapsedForStartupRef.current = false;
-		if (!isSidebarOpen) toggleSidebar();
-	}, [cancelSidebarPeekClose, isSidebarOpen, isStartupLoading, toggleSidebar]);
-
 	useEffect(() => {
 		if (!isSidebarPeekOpen || isSidebarOpen) return;
 
@@ -653,7 +633,7 @@ function ShellLayout() {
 						setIsSidebarPeekOpen(false);
 						if (open !== isSidebarOpen) toggleSidebar();
 					}}
-					open={!isStartupLoading && (isSidebarOpen || isSidebarPeekOpen)}
+					open={isSidebarOpen || isSidebarPeekOpen}
 					style={
 						{
 							"--sidebar-width": "var(--ao-sidebar-w, var(--size-sidebar-default))",
