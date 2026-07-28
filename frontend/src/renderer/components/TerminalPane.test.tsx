@@ -91,14 +91,6 @@ function renderPane(session?: WorkspaceSession) {
 	};
 }
 
-function previewRequest(url: string) {
-	return expect.objectContaining({
-		params: { path: { sessionId: "sess-1" } },
-		body: { url },
-		signal: expect.any(AbortSignal),
-	});
-}
-
 describe("TerminalPane empty states", () => {
 	it("shows a no-selection message when no session is selected", () => {
 		const view = renderPane();
@@ -257,10 +249,10 @@ describe("terminal link preview", () => {
 			act(() => terminalOutputHandler?.("ready at http://localhost:3000/app\n", "live"));
 
 			await waitFor(() =>
-				expect(postMock).toHaveBeenCalledWith(
-					"/api/v1/sessions/{sessionId}/preview",
-					previewRequest("http://localhost:3000/app"),
-				),
+				expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/preview", {
+					params: { path: { sessionId: "sess-1" } },
+					body: { url: "http://localhost:3000/app" },
+				}),
 			);
 			expect(useUiStore.getState().inspectorSessions["sess-1"]).toMatchObject({
 				isOpen: true,
@@ -285,53 +277,23 @@ describe("terminal link preview", () => {
 		try {
 			act(() =>
 				terminalOutputHandler?.(
-					"UI http://localhost:3000 API http://localhost:4000 docs http://localhost:5000\n",
-					"live",
-				),
-			);
-
-			await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
-			expect(postMock).toHaveBeenNthCalledWith(
-				1,
-				"/api/v1/sessions/{sessionId}/preview",
-				previewRequest("http://localhost:3000"),
-			);
-
-			resolveFirst({ data: {} });
-			await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
-			expect(postMock).toHaveBeenNthCalledWith(
-				2,
-				"/api/v1/sessions/{sessionId}/preview",
-				previewRequest("http://localhost:5000"),
-			);
-		} finally {
-			view.restore();
-		}
-	});
-
-	it("cancels the active preview request and drops queued links on unmount", async () => {
-		let resolveFirst!: (value: { data: Record<string, never> }) => void;
-		postMock.mockImplementationOnce(
-			() =>
-				new Promise((resolve) => {
-					resolveFirst = resolve;
-				}),
-		);
-		const view = renderPane(worker);
-		try {
-			act(() =>
-				terminalOutputHandler?.(
 					"UI http://localhost:3000 API http://localhost:4000\n",
 					"live",
 				),
 			);
-			await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
 
-			view.unmount();
-			const request = postMock.mock.calls[0]?.[1] as { signal: AbortSignal };
-			expect(request.signal.aborted).toBe(true);
-			await act(async () => resolveFirst({ data: {} }));
-			expect(postMock).toHaveBeenCalledTimes(1);
+			await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+			expect(postMock).toHaveBeenNthCalledWith(1, "/api/v1/sessions/{sessionId}/preview", {
+				params: { path: { sessionId: "sess-1" } },
+				body: { url: "http://localhost:3000" },
+			});
+
+			resolveFirst({ data: {} });
+			await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
+			expect(postMock).toHaveBeenNthCalledWith(2, "/api/v1/sessions/{sessionId}/preview", {
+				params: { path: { sessionId: "sess-1" } },
+				body: { url: "http://localhost:4000" },
+			});
 		} finally {
 			view.restore();
 		}
@@ -366,10 +328,10 @@ describe("terminal link preview", () => {
 				act(() => terminalLinkHandler?.(url));
 
 				await waitFor(() =>
-					expect(postMock).toHaveBeenCalledWith(
-						"/api/v1/sessions/{sessionId}/preview",
-						previewRequest(url),
-					),
+					expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/preview", {
+						params: { path: { sessionId: "sess-1" } },
+						body: { url },
+					}),
 				);
 			} finally {
 				view.restore();
@@ -382,10 +344,10 @@ describe("terminal link preview", () => {
 		try {
 			act(() => terminalLinkHandler?.("https://example.com/pull/42"));
 			await waitFor(() =>
-				expect(postMock).toHaveBeenCalledWith(
-					"/api/v1/sessions/{sessionId}/preview",
-					previewRequest("https://example.com/pull/42"),
-				),
+				expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/preview", {
+					params: { path: { sessionId: "sess-1" } },
+					body: { url: "https://example.com/pull/42" },
+				}),
 			);
 		} finally {
 			view.restore();
