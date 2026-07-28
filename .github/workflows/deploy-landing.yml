@@ -21,9 +21,6 @@ jobs:
   build:
     # Pages deploy is canonical-repo only. Forks copy this workflow but cannot
     # create/enable GitHub Pages with GITHUB_TOKEN, which otherwise fails red.
-    # Tested against the fork flag rather than a hardcoded owner/name: an org
-    # rename silently turns a hardcoded check false, which skips both jobs and
-    # freezes the live site with no red run to notice.
     if: ${{ !github.event.repository.fork }}
     runs-on: ubuntu-latest
     steps:
