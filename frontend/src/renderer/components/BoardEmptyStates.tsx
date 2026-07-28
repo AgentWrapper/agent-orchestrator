@@ -31,6 +31,7 @@ export function BoardWelcome() {
 // (Orchestrator stays the primary, like the topbar) so the vocabulary holds.
 export function ProjectBoardEmpty({
 	hasOrchestrator,
+	daemonReady,
 	isProjectRestarting,
 	isSpawning,
 	onNewTask,
@@ -38,6 +39,7 @@ export function ProjectBoardEmpty({
 	spawnError,
 }: {
 	hasOrchestrator: boolean;
+	daemonReady: boolean;
 	isProjectRestarting: boolean;
 	isSpawning: boolean;
 	onNewTask: () => void;
@@ -55,7 +57,7 @@ export function ProjectBoardEmpty({
 				<div className="mt-5 flex items-center gap-2">
 					<TopbarButton
 						aria-label={hasOrchestrator ? "Orchestrator" : "Spawn Orchestrator"}
-						disabled={isSpawning || isProjectRestarting}
+						disabled={!daemonReady || isSpawning || isProjectRestarting}
 						onClick={onOpenOrchestrator}
 						variant="primary"
 					>
@@ -68,7 +70,12 @@ export function ProjectBoardEmpty({
 									? "Orchestrator"
 									: "Spawn Orchestrator"}
 					</TopbarButton>
-					<TopbarButton aria-label="New task" disabled={isProjectRestarting} onClick={onNewTask} variant="accent">
+					<TopbarButton
+						aria-label="New task"
+						disabled={!daemonReady || isProjectRestarting}
+						onClick={onNewTask}
+						variant="accent"
+					>
 						<Plus className="size-icon-md" aria-hidden="true" />
 						New task
 					</TopbarButton>

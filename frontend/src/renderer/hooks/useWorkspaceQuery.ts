@@ -4,6 +4,7 @@ import { apiClient, hasTrustedApiBaseUrl } from "../lib/api-client";
 import { mockWorkspaces } from "../lib/mock-data";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import { captureRendererEvent } from "../lib/telemetry";
+import { workspaceQueriesEnabled } from "../lib/workspace-query-readiness";
 import {
 	type PRState,
 	type PullRequestFacts,
@@ -116,5 +117,8 @@ export const workspaceQueryOptions = {
 };
 
 export function useWorkspaceQuery() {
-	return useQuery(workspaceQueryOptions);
+	return useQuery({
+		...workspaceQueryOptions,
+		enabled: workspaceQueriesEnabled(),
+	});
 }

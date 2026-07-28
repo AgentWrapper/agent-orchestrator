@@ -10,7 +10,9 @@ import { createAppRouter } from "./router";
 import { TelemetryBoundary } from "./components/TelemetryBoundary";
 import { initTelemetry } from "./lib/telemetry";
 import { startDaemonFailureTelemetry } from "./lib/daemon-telemetry";
+import { initializeWorkspaceSnapshotCache } from "./lib/workspace-cache";
 
+initializeWorkspaceSnapshotCache(queryClient);
 const router = createAppRouter(queryClient);
 void initTelemetry();
 startDaemonFailureTelemetry();

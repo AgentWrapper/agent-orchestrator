@@ -1,10 +1,12 @@
 import { aoBridge } from "./bridge";
 import { setApiBaseUrl, setApiDaemonStatus } from "./api-client";
+import { setWorkspaceQueriesEnabled } from "./workspace-query-readiness";
 
 export type DaemonStatus = Awaited<ReturnType<typeof aoBridge.daemon.getStatus>>;
 
 export function applyDaemonStatus(nextStatus: DaemonStatus): void {
 	setApiDaemonStatus(nextStatus);
+	setWorkspaceQueriesEnabled(nextStatus.state === "ready" && Boolean(nextStatus.port));
 	if (nextStatus.state === "ready" && nextStatus.port) {
 		setApiBaseUrl(`http://127.0.0.1:${nextStatus.port}`);
 	} else {

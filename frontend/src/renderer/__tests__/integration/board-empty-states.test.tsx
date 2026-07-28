@@ -116,6 +116,55 @@ beforeEach(() => {
 });
 
 describe("global board first launch", () => {
+	it("shows the cached board instead of a loader while the daemon starts", async () => {
+		respondWith([project], [workerSession]);
+		lastQueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		lastQueryClient.setQueryData(["workspaces"], [
+			{
+				id: "proj-1",
+				name: "my-app",
+				path: "/repo/my-app",
+				orchestratorAgent: "claude-code",
+				sessions: [
+					{
+						id: "sess-1",
+						workspaceId: "proj-1",
+						workspaceName: "my-app",
+						title: "fix the bug",
+						provider: "claude-code",
+						kind: "worker",
+						status: "working",
+						isTerminated: false,
+						updatedAt: "2026-07-04T10:00:00Z",
+						prs: [],
+					},
+				],
+			},
+		]);
+		lastShell = {
+			daemonStatus: { state: "starting" } as ShellContextValue["daemonStatus"],
+			workspaceStartupState: "loading",
+			createProject: createProjectMock,
+			initializeProjectRepository: initializeProjectRepositoryMock,
+		};
+
+		render(
+			<QueryClientProvider client={lastQueryClient}>
+				<ShellProvider value={lastShell}>
+					<SessionsBoard projectId="proj-1" />
+				</ShellProvider>
+			</QueryClientProvider>,
+		);
+
+		expect(await screen.findByText("fix the bug")).toBeInTheDocument();
+		expect(screen.getByTestId("cached-workspace-state")).toHaveTextContent(
+			"Showing the last saved state while AO starts",
+		);
+		expect(screen.queryByTestId("daemon-startup-loader")).not.toBeInTheDocument();
+		expect(columnCount()).toBe(4);
+		expect(screen.queryByRole("button", { name: "Terminate fix the bug" })).not.toBeInTheDocument();
+	});
+
 	it("shows the startup loader instead of import while the daemon is booting", async () => {
 		respondWith([], []);
 		lastQueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });

@@ -3,10 +3,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
-const { captureRendererEventMock, getMock, hasTrustedApiBaseUrlMock } = vi.hoisted(() => ({
+const { captureRendererEventMock, getMock, hasTrustedApiBaseUrlMock, workspaceQueriesEnabledMock } = vi.hoisted(() => ({
 	captureRendererEventMock: vi.fn().mockResolvedValue(undefined),
 	getMock: vi.fn(),
 	hasTrustedApiBaseUrlMock: vi.fn(() => true),
+	workspaceQueriesEnabledMock: vi.fn(() => true),
 }));
 
 vi.mock("../lib/api-client", () => ({
@@ -15,6 +16,7 @@ vi.mock("../lib/api-client", () => ({
 }));
 
 vi.mock("../lib/telemetry", () => ({ captureRendererEvent: captureRendererEventMock }));
+vi.mock("../lib/workspace-query-readiness", () => ({ workspaceQueriesEnabled: workspaceQueriesEnabledMock }));
 
 import { useWorkspaceQuery } from "./useWorkspaceQuery";
 
@@ -39,16 +41,44 @@ beforeEach(() => {
 	captureRendererEventMock.mockClear();
 	getMock.mockReset();
 	hasTrustedApiBaseUrlMock.mockReset().mockReturnValue(true);
+	workspaceQueriesEnabledMock.mockReset().mockReturnValue(true);
 });
 
 describe("useWorkspaceQuery", () => {
-	it("rejects workspace reads while the daemon base URL is untrusted", async () => {
+	it("keeps a cached workspace list while the daemon base URL is untrusted", async () => {
 		hasTrustedApiBaseUrlMock.mockReturnValue(false);
+		workspaceQueriesEnabledMock.mockReturnValue(false);
+		const queryClient = new QueryClient();
+		const cached = [
+			{
+				id: "cached-project",
+				name: "Cached project",
+				path: "/cached",
+				sessions: [],
+			},
+		];
+		queryClient.setQueryData(["workspaces"], cached);
+
+		const { result } = renderHook(() => useWorkspaceQuery(), {
+			wrapper: ({ children }: { children: ReactNode }) => (
+				<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+			),
+		});
+
+		expect(result.current.isSuccess).toBe(true);
+		expect(result.current.data).toEqual(cached);
+		expect(getMock).not.toHaveBeenCalled();
+	});
+
+	it("does not create a fake empty result while the daemon base URL is untrusted", () => {
+		hasTrustedApiBaseUrlMock.mockReturnValue(false);
+		workspaceQueriesEnabledMock.mockReturnValue(false);
 
 		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
 
-		await waitFor(() => expect(result.current.isError).toBe(true));
-		expect(result.current.error).toEqual(new Error("AO daemon API is not ready"));
+		expect(result.current.status).toBe("pending");
+		expect(result.current.fetchStatus).toBe("idle");
+		expect(result.current.data).toBeUndefined();
 		expect(getMock).not.toHaveBeenCalled();
 	});
 

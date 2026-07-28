@@ -84,6 +84,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const restoreSessionById = useRestoreSession();
 	const workspaceQuery = useWorkspaceQuery();
 	const shell = useShellMaybe();
+	const daemonReady = shell ? shell.daemonStatus.state === "ready" : true;
 	// Evaluated at render so platform mocks in tests can flip the in-panel chrome.
 	const boardActionsInPanel = usesBoardActionsInPanel();
 	/** Bell lives in the board action row when the shell topbar does not host it. */
@@ -170,7 +171,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 	const restoreArchivedSession = async (event: MouseEvent<HTMLButtonElement>, session: WorkspaceSession) => {
 		event.stopPropagation();
-		if (restoringSessionId) return;
+		if (!daemonReady || restoringSessionId) return;
 		const restoreProjectId = projectId;
 		const isStillActiveProject = () => !restoreProjectId || activeProjectIdRef.current === restoreProjectId;
 		setRestoringSessionId(session.id);
@@ -202,7 +203,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	};
 
 	const openOrchestrator = async () => {
-		if (!projectId || isProjectRestarting) return;
+		if (!daemonReady || !projectId || isProjectRestarting) return;
 		if (orchestrator) {
 			void navigate({
 				to: "/projects/$projectId/sessions/$sessionId",
@@ -238,7 +239,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	};
 
 	const restartOrchestrator = async () => {
-		if (!projectId) return;
+		if (!daemonReady || !projectId) return;
 		await restartProjectOrchestrator({
 			projectId,
 			queryClient,
@@ -258,7 +259,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			)}
 			<TopbarButton
 				aria-label="New task"
-				disabled={isProjectRestarting}
+				disabled={!daemonReady || isProjectRestarting}
 				onClick={() => projectId && requestNewTask(projectId)}
 				variant="accent"
 			>
@@ -267,7 +268,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			</TopbarButton>
 			<TopbarButton
 				aria-label={orchestratorActivityLabel ? `Orchestrator, ${orchestratorActivityLabel}` : "Spawn Orchestrator"}
-				disabled={isSpawning || isProjectRestarting}
+				disabled={!daemonReady || isSpawning || isProjectRestarting}
 				onClick={() => void openOrchestrator()}
 				variant="primary"
 			>
@@ -308,13 +309,28 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				</div>
 			) : null}
 
+			{!daemonReady && workspaceQuery.data !== undefined ? (
+				<div
+					aria-live="polite"
+					className="shrink-0 border-b border-border-strong bg-surface px-3 py-1.5 text-center font-mono text-caption text-muted-foreground"
+					data-testid="cached-workspace-state"
+					role="status"
+				>
+					Showing the last saved state while AO starts…
+				</div>
+			) : null}
+
 			<div className="min-h-0 flex-1 overflow-hidden">
 				{projectId && health.state !== "ok" ? (
 					<div className="mx-3 my-3 flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-xs text-muted-foreground">
 						<AlertTriangle className="size-icon-base shrink-0 text-warning" aria-hidden="true" />
 						<span className="min-w-0 flex-1">{health.message}</span>
 						{health.state === "restart_needed" || health.state === "duplicates" ? (
-							<TopbarButton disabled={isProjectRestarting} onClick={() => void restartOrchestrator()} variant="primary">
+							<TopbarButton
+								disabled={!daemonReady || isProjectRestarting}
+								onClick={() => void restartOrchestrator()}
+								variant="primary"
+							>
 								<RotateCw className="size-3.5" aria-hidden="true" />
 								Restart
 							</TopbarButton>
@@ -332,6 +348,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						hasOrchestrator={orchestrator !== undefined}
 						isSpawning={isSpawning}
 						isProjectRestarting={isProjectRestarting}
+						daemonReady={daemonReady}
 						onNewTask={() => projectId && requestNewTask(projectId)}
 						onOpenOrchestrator={() => void openOrchestrator()}
 						spawnError={visibleSpawnError}
@@ -352,7 +369,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 									col={col}
 									sessions={byZone.get(col.zone) ?? []}
 									onOpen={openSession}
-									onTerminate={(session) => terminateSession.mutate(session)}
+									onTerminate={daemonReady ? (session) => terminateSession.mutate(session) : undefined}
 								/>
 							))}
 						</div>
@@ -405,7 +422,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 									restoreAction={(event) => void restoreArchivedSession(event, s)}
 									restoreError={restoreErrors[s.id]}
 									isRestoring={restoringSessionId === s.id}
-									isRestoreDisabled={restoringSessionId !== undefined}
+									isRestoreDisabled={!daemonReady || restoringSessionId !== undefined}
 								/>
 							))}
 						</div>
@@ -437,7 +454,7 @@ function BoardColumn({
 	col: Column;
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
-	onTerminate: (s: WorkspaceSession) => void;
+	onTerminate?: (s: WorkspaceSession) => void;
 }) {
 	if (col.zone === "working") return <WorkLaneColumn sessions={sessions} onOpen={onOpen} onTerminate={onTerminate} />;
 	if (col.zone === "merge") return <MergeLaneColumn sessions={sessions} onOpen={onOpen} onTerminate={onTerminate} />;
@@ -453,7 +470,7 @@ function ZoneColumn({
 	col: Column;
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
-	onTerminate: (s: WorkspaceSession) => void;
+	onTerminate?: (s: WorkspaceSession) => void;
 }) {
 	return (
 		<section
@@ -482,7 +499,7 @@ function ZoneColumn({
 							key={session.id}
 							session={session}
 							onOpen={() => onOpen(session)}
-							onTerminate={() => onTerminate(session)}
+							onTerminate={onTerminate ? () => onTerminate(session) : undefined}
 						/>
 					))}
 				</div>
@@ -548,7 +565,7 @@ function WorkLaneColumn({
 }: {
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
-	onTerminate: (s: WorkspaceSession) => void;
+	onTerminate?: (s: WorkspaceSession) => void;
 }) {
 	const idleSessions = sessions.filter(isSessionIdle);
 	const workingSessions = sessions.filter((session) => !isSessionIdle(session));
@@ -574,7 +591,7 @@ function MergeLaneColumn({
 }: {
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
-	onTerminate: (s: WorkspaceSession) => void;
+	onTerminate?: (s: WorkspaceSession) => void;
 }) {
 	const mergedSessions = sessions
 		.filter((session) => session.status === "merged")
@@ -614,7 +631,7 @@ function SplitLaneColumn({
 	secondarySessions: WorkspaceSession[];
 	secondaryTone: SplitLaneTone;
 	onOpen: (s: WorkspaceSession) => void;
-	onTerminate: (s: WorkspaceSession) => void;
+	onTerminate?: (s: WorkspaceSession) => void;
 }) {
 	const showPrimary = primarySessions.length > 0;
 	const showSecondary = secondarySessions.length > 0;
@@ -658,7 +675,7 @@ function SplitLaneColumn({
 										key={session.id}
 										session={session}
 										onOpen={() => onOpen(session)}
-										onTerminate={() => onTerminate(session)}
+										onTerminate={onTerminate ? () => onTerminate(session) : undefined}
 									/>
 								))}
 							</div>
