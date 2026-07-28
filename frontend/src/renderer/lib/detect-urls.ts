@@ -11,7 +11,8 @@
 // CSI/other escape sequences (ESC 0x1B or single-byte CSI 0x9B, plus params and
 // a final byte). Built from string escapes so the source stays pure ASCII.
 const ANSI_PATTERN = new RegExp("[\\u001B\\u009B][[\\]()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]", "g");
-const URL_PATTERN = /\bhttps?:\/\/[^\s"'`<>()[\]{}]+/gi;
+const URL_PATTERN = /\bhttps?:\/\/[A-Za-z0-9\-._~:/?#@!$&'*+,;=%[\]]+/gi;
+const URL_CONTINUATION_PATTERN = /^[A-Za-z0-9\-._~:/?#@!$&'*+,;=%[\]]*$/;
 // Characters that commonly trail a URL in prose/logs but are not part of it.
 const TRAILING_PUNCT = /[.,;:!?)\]}'"]+$/;
 
@@ -32,10 +33,27 @@ function stripTrailingPunct(url: string): string {
 export function createUrlWatcher(onUrl: (url: string) => void): UrlWatcher {
 	let tail = "";
 	let seen = new Set<string>();
+	let pendingBoundaryUrl: string | null = null;
+
+	const report = (url: string) => {
+		if (!url || seen.has(url)) return;
+		if (seen.size >= SEEN_MAX) seen = new Set();
+		seen.add(url);
+		onUrl(url);
+	};
 
 	return {
 		push(chunk: string) {
 			if (!chunk) return;
+			const leadingToken = /^\S*/.exec(chunk)?.[0] ?? "";
+			if (pendingBoundaryUrl && !URL_CONTINUATION_PATTERN.test(leadingToken)) {
+				// Terminal activity can arrive immediately after a complete URL
+				// without whitespace. Non-URL glyphs prove this is a new token,
+				// so do not append progress text to the pending URL.
+				report(pendingBoundaryUrl);
+				tail = "";
+			}
+			pendingBoundaryUrl = null;
 			const text = (tail + chunk).replace(ANSI_PATTERN, "");
 			URL_PATTERN.lastIndex = 0;
 			let match: RegExpExecArray | null;
@@ -43,18 +61,19 @@ export function createUrlWatcher(onUrl: (url: string) => void): UrlWatcher {
 				const end = match.index + match[0].length;
 				// A match flush against the buffer end may be truncated mid-URL by a
 				// chunk split — leave it for the next push (it survives in `tail`).
-				if (end === text.length) break;
+				if (end === text.length) {
+					pendingBoundaryUrl = stripTrailingPunct(match[0]);
+					break;
+				}
 				const url = stripTrailingPunct(match[0]);
-				if (!url || seen.has(url)) continue;
-				if (seen.size >= SEEN_MAX) seen = new Set();
-				seen.add(url);
-				onUrl(url);
+				report(url);
 			}
 			tail = text.length > TAIL_MAX ? text.slice(text.length - TAIL_MAX) : text;
 		},
 		reset() {
 			tail = "";
 			seen = new Set();
+			pendingBoundaryUrl = null;
 		},
 	};
 }

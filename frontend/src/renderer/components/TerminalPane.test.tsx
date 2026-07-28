@@ -271,6 +271,24 @@ describe("terminal link preview", () => {
 		}
 	});
 
+	it("does not append terminal activity text to a loopback URL at a chunk boundary", async () => {
+		const view = renderPane(worker);
+		try {
+			act(() => terminalOutputHandler?.("http://localhost:4000/app", "live"));
+			act(() => terminalOutputHandler?.(".5WWo•Wor•Work•WorkiSd\n", "live"));
+
+			await waitFor(() =>
+				expect(postMock).toHaveBeenCalledWith(
+					"/api/v1/sessions/{sessionId}/preview",
+					previewRequest("http://localhost:4000/app"),
+				),
+			);
+			expect(postMock).toHaveBeenCalledTimes(1);
+		} finally {
+			view.restore();
+		}
+	});
+
 	it("serializes multiple live loopback URLs in terminal order", async () => {
 		let resolveFirst!: (value: { data: Record<string, never> }) => void;
 		postMock

@@ -34,6 +34,14 @@ describe("createUrlWatcher", () => {
 		expect(onUrl).toHaveBeenCalledExactlyOnceWith("https://example.com/very/long/path/here");
 	});
 
+	it("does not append terminal activity glyphs to a URL at a chunk boundary", () => {
+		const onUrl = vi.fn();
+		const watcher = createUrlWatcher(onUrl);
+		watcher.push("http://localhost:4000/app");
+		watcher.push(".5WWo•Wor•Work•WorkiSd\n");
+		expect(onUrl).toHaveBeenCalledExactlyOnceWith("http://localhost:4000/app");
+	});
+
 	it("ignores non-web schemes", () => {
 		const onUrl = vi.fn();
 		const watcher = createUrlWatcher(onUrl);
