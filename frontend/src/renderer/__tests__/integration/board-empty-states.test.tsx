@@ -90,6 +90,7 @@ function renderBoard(ui: ReactNode) {
 	lastQueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	lastShell = {
 		daemonStatus: { state: "ready" } as ShellContextValue["daemonStatus"],
+		workspaceStartupState: "ready",
 		createProject: createProjectMock,
 		initializeProjectRepository: initializeProjectRepositoryMock,
 	};
@@ -115,6 +116,29 @@ beforeEach(() => {
 });
 
 describe("global board first launch", () => {
+	it("shows the startup loader instead of import while the daemon is booting", async () => {
+		respondWith([], []);
+		lastQueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		lastShell = {
+			daemonStatus: { state: "starting" } as ShellContextValue["daemonStatus"],
+			workspaceStartupState: "loading",
+			createProject: createProjectMock,
+			initializeProjectRepository: initializeProjectRepositoryMock,
+		};
+		render(
+			<QueryClientProvider client={lastQueryClient}>
+				<ShellProvider value={lastShell}>
+					<SessionsBoard />
+				</ShellProvider>
+			</QueryClientProvider>,
+		);
+
+		expect(await screen.findByTestId("daemon-startup-loader")).toBeInTheDocument();
+		expect(screen.getByText("Agent Orchestrator")).toBeInTheDocument();
+		expect(screen.queryByText("Import to Agent Orchestrator")).not.toBeInTheDocument();
+		expect(columnCount()).toBe(0);
+	});
+
 	it("shows the import chooser instead of empty columns when no projects exist", async () => {
 		respondWith([], []);
 		renderBoard(<SessionsBoard />);

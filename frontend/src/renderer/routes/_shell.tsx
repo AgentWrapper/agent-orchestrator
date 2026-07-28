@@ -87,6 +87,7 @@ function ShellLayout() {
 	const workspaceQuery = useWorkspaceQuery();
 	const workspaces = workspaceQuery.data ?? [];
 	const daemonStatus = useDaemonStatus(queryClient);
+	const [workspaceStartupState, setWorkspaceStartupState] = useState<"loading" | "ready" | "error">("loading");
 	const agentCatalogPortRef = useRef<number | undefined>(undefined);
 	const { themePreference, resolvedTheme, isSidebarOpen, toggleSidebar } = useUiStore();
 	const syncSystemTheme = useUiStore((state) => state.syncSystemTheme);
@@ -147,7 +148,11 @@ function ShellLayout() {
 			? workspaces.find((workspace) => workspace.sessions.some((session) => session.id === routeParams.sessionId))?.id
 			: undefined;
 	// First-launch root board only (no projects in scope).
-	const isWelcomeBoard = Boolean(matchRoute({ to: "/" })) && workspaces.length === 0;
+	const isWelcomeBoard =
+		Boolean(matchRoute({ to: "/" })) &&
+		workspaceStartupState === "ready" &&
+		workspaceQuery.isSuccess &&
+		workspaces.length === 0;
 	const isSettingsRoute =
 		Boolean(matchRoute({ to: "/settings", fuzzy: true })) ||
 		Boolean(matchRoute({ to: "/projects/$projectId/settings", fuzzy: true }));
@@ -369,6 +374,34 @@ function ShellLayout() {
 		applyDocumentTheme(resolvedTheme);
 	}, [resolvedTheme]);
 
+	// A daemon port is not enough to render a trustworthy empty state: the
+	// route loader may have cached [] before Electron reported the port. Fetch
+	// once against each ready daemon before allowing the board to decide
+	// between projects and the first-run import flow.
+	useEffect(() => {
+		let active = true;
+		if (daemonStatus.state !== "ready" || !daemonStatus.port) {
+			setWorkspaceStartupState("loading");
+			return () => {
+				active = false;
+			};
+		}
+
+		setWorkspaceStartupState("loading");
+		void queryClient
+			.fetchQuery(workspaceQueryOptions)
+			.then(() => {
+				if (active) setWorkspaceStartupState("ready");
+			})
+			.catch(() => {
+				if (active) setWorkspaceStartupState("error");
+			});
+
+		return () => {
+			active = false;
+		};
+	}, [daemonStatus.port, daemonStatus.state, queryClient]);
+
 	// Keep Electron's nativeTheme in step with the shell so the embedded preview
 	// WebContentsView (which follows prefers-color-scheme) flips at the same time.
 	// Send the preference, not the resolved theme, so "system" keeps both surfaces
@@ -533,7 +566,7 @@ function ShellLayout() {
 	);
 
 	return (
-		<ShellProvider value={{ daemonStatus, createProject, initializeProjectRepository }}>
+		<ShellProvider value={{ daemonStatus, workspaceStartupState, createProject, initializeProjectRepository }}>
 			<NotificationRuntime />
 			<GlobalNewTaskDialog />
 			<KeyboardShortcutsDialog
