@@ -95,14 +95,14 @@ const RESIZE_DEBOUNCE_MS = 100;
 // explicit SIGWINCH (pty_unix.go), so this re-assert makes the client re-read
 // and re-report its grid; when everything is already in sync it's a no-op.
 const RESIZE_REASSERT_MS = 250;
-// Initial-replay gate (issue #3160). On attach the runtime replays the pane's
-// state, and the daemon pumps it in 32KB reads (attachment.go copyOut) — so the
-// renderer gets N WebSocket frames, N `write()` calls, and N separate event-loop
-// turns. xterm parses each write atomically but the browser paints BETWEEN
-// turns, so every frame boundary is a painted, further-scrolled state: the
-// terminal visibly walks from mid-session down to the tail. Measured on a
-// 1000-line replay: 25 frames at 16ms spacing paint 25 distinct scroll
-// positions; the same bytes as ONE write paint exactly 1, for ~2ms of parse.
+// Initial-replay gate. On attach the runtime replays the pane's state, and the
+// daemon pumps it in 32KB reads (attachment.go copyOut) — so the renderer gets
+// N WebSocket frames, N `write()` calls, and N separate event-loop turns. xterm
+// parses each write atomically but the browser paints BETWEEN turns, so every
+// frame boundary is a painted, further-scrolled state: the terminal visibly
+// walks from mid-session down to the tail. Measured on a 1000-line replay: 25
+// frames at 16ms spacing paint 25 distinct scroll positions; the same bytes as
+// ONE write paint exactly 1, for ~2ms of parse.
 //
 // So the replay burst is buffered and written once, with the pane covered until
 // that write is parsed. QUIET_MS is the no-data gap that ends the burst; CAP_MS
