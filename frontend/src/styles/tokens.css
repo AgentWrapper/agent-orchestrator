@@ -446,6 +446,26 @@
 	--color-term-bright-cyan: #79d4df;
 	--color-term-bright-white: #f4f5f7;
 
+	/* Light terminal ANSI palette tokens. Kept globally addressable so xterm can
+	   build a light palette even while the document is transitioning themes. */
+	--color-term-light-black: #e5e7eb;
+	--color-term-light-red: #a13c37;
+	--color-term-light-green: #2e6b3e;
+	--color-term-light-yellow: #87660f;
+	--color-term-light-blue: #3b5aa6;
+	--color-term-light-magenta: #7b5799;
+	--color-term-light-cyan: #3d7a7a;
+	--color-term-light-white: #666d75;
+	--color-term-light-bright-black: #4c535b;
+	--color-term-light-bright-red: #7e3330;
+	--color-term-light-bright-green: #265231;
+	--color-term-light-bright-yellow: #6b5108;
+	--color-term-light-bright-blue: #31487f;
+	--color-term-light-bright-magenta: #5f4476;
+	--color-term-light-bright-cyan: #316061;
+	--color-term-light-bright-white: #24292f;
+	--color-term-light-panel-bg: var(--color-term-light-black);
+
 	/* ═══════════════════════════════════════════════════════════════
 	   SHADOWS
 	   ═══════════════════════════════════════════════════════════════ */
@@ -601,20 +621,20 @@
 	--color-settings-accent: #4f8afa;
 	--color-settings-switch-on: #3b82f6;
 
-	--color-term-black: #24292f;
-	--color-term-red: #a13c37;
-	--color-term-green: #2e6b3e;
-	--color-term-yellow: #87660f;
-	--color-term-blue: #3b5aa6;
-	--color-term-magenta: #7b5799;
-	--color-term-cyan: #3d7a7a;
-	--color-term-white: #666d75;
-	--color-term-bright-black: #4c535b;
-	--color-term-bright-red: #7e3330;
-	--color-term-bright-green: #265231;
-	--color-term-bright-yellow: #6b5108;
-	--color-term-bright-blue: #31487f;
-	--color-term-bright-magenta: #5f4476;
-	--color-term-bright-cyan: #316061;
-	--color-term-bright-white: #24292f;
+	--color-term-black: var(--color-term-light-black);
+	--color-term-red: var(--color-term-light-red);
+	--color-term-green: var(--color-term-light-green);
+	--color-term-yellow: var(--color-term-light-yellow);
+	--color-term-blue: var(--color-term-light-blue);
+	--color-term-magenta: var(--color-term-light-magenta);
+	--color-term-cyan: var(--color-term-light-cyan);
+	--color-term-white: var(--color-term-light-white);
+	--color-term-bright-black: var(--color-term-light-bright-black);
+	--color-term-bright-red: var(--color-term-light-bright-red);
+	--color-term-bright-green: var(--color-term-light-bright-green);
+	--color-term-bright-yellow: var(--color-term-light-bright-yellow);
+	--color-term-bright-blue: var(--color-term-light-bright-blue);
+	--color-term-bright-magenta: var(--color-term-light-bright-magenta);
+	--color-term-bright-cyan: var(--color-term-light-bright-cyan);
+	--color-term-bright-white: var(--color-term-light-bright-white);
 }

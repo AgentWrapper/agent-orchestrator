@@ -92,6 +92,137 @@ const SUPPRESS_NATIVE_PASTE_MS = 100;
 // handshake arrives. The clear only wipes pixels; modes stay up.
 const CLEAR_SEQUENCE = "\x1b[3J\x1b[2J\x1b[H";
 
+const DARK_BACKGROUND_MAX_CHANNEL = 56;
+const LIGHT_THEME_FOREGROUND_MAX_LUMINANCE = 115;
+const LIGHT_THEME_PANEL_BACKGROUND_TOKEN = "--color-term-light-panel-bg";
+const XTERM_256_COLOR_STEPS = [0, 95, 135, 175, 215, 255];
+const LIGHT_THEME_BRIGHT_FOREGROUND_REPLACEMENTS: Record<string, string> = {
+	"92": "32",
+	"93": "33",
+};
+const LIGHT_THEME_256_FOREGROUND_REPLACEMENTS: Record<string, string> = {
+	"10": "32",
+	"11": "33",
+	"82": "32",
+	"118": "32",
+	"154": "32",
+	"190": "33",
+	"220": "33",
+	"226": "33",
+};
+const SGR_SEQUENCE = /\x1b\[([0-9;]*)m/g;
+
+function parseCssColorRgb(value: string): [number, number, number] | null {
+	const color = value.trim();
+	const hex = color.match(/^#([0-9a-f]{6})$/i);
+	if (hex) {
+		const raw = hex[1];
+		return [Number.parseInt(raw.slice(0, 2), 16), Number.parseInt(raw.slice(2, 4), 16), Number.parseInt(raw.slice(4, 6), 16)];
+	}
+	const rgb = color.match(/^rgb\(\s*(\d+)\s+(\d+)\s+(\d+)\s*(?:\/[^)]*)?\)$/i) ?? color.match(/^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
+	if (!rgb) return null;
+	return [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])];
+}
+
+function cssRgbToken(name: string): [number, number, number] | null {
+	if (typeof document === "undefined") return null;
+	return parseCssColorRgb(getComputedStyle(document.documentElement).getPropertyValue(name));
+}
+
+function sgrTrueColor(kind: "38" | "48", red: number, green: number, blue: number): string {
+	return `${kind};2;${red};${green};${blue}`;
+}
+
+function remapLightThemeForeground(red: number, green: number, blue: number): string | null {
+	if (![red, green, blue].every((channel) => Number.isFinite(channel) && channel >= 0 && channel <= 255)) return null;
+	const luminance = 0.299 * red + 0.587 * green + 0.114 * blue;
+	if (luminance <= LIGHT_THEME_FOREGROUND_MAX_LUMINANCE) return null;
+	const scale = LIGHT_THEME_FOREGROUND_MAX_LUMINANCE / luminance;
+	return sgrTrueColor("38", Math.round(red * scale), Math.round(green * scale), Math.round(blue * scale));
+}
+
+function remapLightThemeBackground(red: number, green: number, blue: number): string | null {
+	if (![red, green, blue].every((channel) => Number.isFinite(channel) && channel <= DARK_BACKGROUND_MAX_CHANNEL)) return null;
+	const panel = cssRgbToken(LIGHT_THEME_PANEL_BACKGROUND_TOKEN);
+	return panel ? sgrTrueColor("48", ...panel) : "49";
+}
+
+function xterm256ColorToRgb(index: number): [number, number, number] | null {
+	if (!Number.isInteger(index) || index < 0 || index > 255) return null;
+	if (index < 16) return null;
+	if (index < 232) {
+		const offset = index - 16;
+		return [
+			XTERM_256_COLOR_STEPS[Math.floor(offset / 36)] ?? 0,
+			XTERM_256_COLOR_STEPS[Math.floor((offset % 36) / 6)] ?? 0,
+			XTERM_256_COLOR_STEPS[offset % 6] ?? 0,
+		];
+	}
+	const level = 8 + (index - 232) * 10;
+	return [level, level, level];
+}
+
+function createTerminalOutputNormalizer(theme: () => Theme): (data: Uint8Array) => Uint8Array | string {
+	const decoder = new TextDecoder();
+	let pendingText = "";
+	return (data) => {
+		if (theme() !== "light") return data;
+		const decoded = pendingText + decoder.decode(data, { stream: true });
+		const { complete, pending } = splitIncompleteSgrTail(decoded);
+		pendingText = pending;
+		return complete.replace(SGR_SEQUENCE, (sequence, params: string) => {
+			const rewritten = rewriteSgrParamsForLightTheme(params);
+			return rewritten === params ? sequence : `\x1b[${rewritten}m`;
+		});
+	};
+}
+
+function splitIncompleteSgrTail(text: string): { complete: string; pending: string } {
+	const start = text.lastIndexOf("\x1b[");
+	if (start === -1) return { complete: text, pending: "" };
+	const tail = text.slice(start);
+	if (!/^\x1b\[[0-9;]*$/.test(tail)) return { complete: text, pending: "" };
+	return { complete: text.slice(0, start), pending: tail };
+}
+function rewriteSgrParamsForLightTheme(params: string): string {
+	const parts = params.split(";");
+	const next: string[] = [];
+	for (let index = 0; index < parts.length; index += 1) {
+		const part = parts[index];
+		if (LIGHT_THEME_BRIGHT_FOREGROUND_REPLACEMENTS[part]) {
+			next.push(LIGHT_THEME_BRIGHT_FOREGROUND_REPLACEMENTS[part]);
+			continue;
+		}
+		if (part === "38" && parts[index + 1] === "5") {
+			const colorIndex = parts[index + 2];
+			if (LIGHT_THEME_256_FOREGROUND_REPLACEMENTS[colorIndex]) {
+				next.push(LIGHT_THEME_256_FOREGROUND_REPLACEMENTS[colorIndex]);
+				index += 2;
+				continue;
+			}
+			const rgb = xterm256ColorToRgb(Number(colorIndex));
+			const remapped = rgb ? remapLightThemeForeground(...rgb) : null;
+			if (remapped) {
+				next.push(remapped);
+				index += 2;
+				continue;
+			}
+		}
+		if ((part === "38" || part === "48") && parts[index + 1] === "2") {
+			const red = Number(parts[index + 2]);
+			const green = Number(parts[index + 3]);
+			const blue = Number(parts[index + 4]);
+			const remapped = part === "38" ? remapLightThemeForeground(red, green, blue) : remapLightThemeBackground(red, green, blue);
+			if (remapped) {
+				next.push(remapped);
+				index += 4;
+				continue;
+			}
+		}
+		next.push(part);
+	}
+	return next.join(";");
+}
 function preparePastedText(text: string): string {
 	return text.replace(/\r?\n/g, "\r");
 }
@@ -722,6 +853,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 
 		// Live cols/rows getters: the owner reads the current grid at attach time,
 		// not a snapshot taken at ready time (the first fit may not have run yet).
+		const outputNormalizer = createTerminalOutputNormalizer(() => callbacksRef.current.theme);
 		const handle: AttachableTerminal = {
 			get cols() {
 				return term.cols;
@@ -732,7 +864,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			// Forward xterm's write callback: it fires once THIS chunk has been
 			// parsed into the buffer, which is what lets the attachment reveal the
 			// pane at the replay's settled scroll position (issue #3160).
-			write: (data, done) => term.write(data, done),
+			write: (data, done) => term.write(outputNormalizer(data), done),
 			writeln: (line) => term.writeln(line),
 			clear: () => term.write(CLEAR_SEQUENCE),
 			onUserInput: (listener) => {
