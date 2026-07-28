@@ -1,15 +1,25 @@
 package httpd
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
+	telemetryadapter "github.com/aoagents/agent-orchestrator/backend/internal/adapters/telemetry"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 )
+
+type telemetryRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f telemetryRoundTripper) Do(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
 
 func TestCLIInvokedRouteEmitsTelemetry(t *testing.T) {
 	sink := &captureSink{}
@@ -198,6 +208,69 @@ func TestCLIUsageErrorRouteEmitsTelemetry(t *testing.T) {
 	}
 	if _, ok := payload["error"]; ok {
 		t.Fatalf("payload leaked raw error text: %#v", payload)
+	}
+}
+
+func TestCLIUsageErrorRouteHashesInvalidCommandsBeforeRemoteExport(t *testing.T) {
+	requests := make(chan map[string]any, 1)
+	sink, err := telemetryadapter.NewPostHogSink(
+		t.TempDir(),
+		"phc_test",
+		"https://us.i.posthog.com",
+		telemetryRoundTripper(func(req *http.Request) (*http.Response, error) {
+			defer req.Body.Close()
+			var body map[string]any
+			if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+				return nil, err
+			}
+			requests <- body
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       http.NoBody,
+			}, nil
+		}),
+		discardLogger(),
+	)
+	if err != nil {
+		t.Fatalf("NewPostHogSink: %v", err)
+	}
+
+	r := chi.NewRouter()
+	mountTelemetry(r, config.Config{DataDir: t.TempDir()}, sink)
+
+	const rawCommand = "Review https://example.com/private; ping @security"
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"http://127.0.0.1/internal/telemetry/cli-usage-error",
+		strings.NewReader(`{"command":"`+rawCommand+`","commandPath":"ao `+rawCommand+`","error":"too many args"}`),
+	)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", rec.Code)
+	}
+	if err := sink.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	select {
+	case request := <-requests:
+		properties, ok := request["properties"].(map[string]any)
+		if !ok {
+			t.Fatalf("properties type = %T, want map[string]any", request["properties"])
+		}
+		for _, key := range []string{"command", "command_path"} {
+			value, ok := properties[key].(string)
+			if !ok || len(value) != len("sha256:")+16 || !strings.HasPrefix(value, "sha256:") {
+				t.Fatalf("properties.%s = %#v, want sha256:<16 hex>", key, properties[key])
+			}
+			if strings.Contains(value, rawCommand) {
+				t.Fatalf("properties.%s leaked raw command: %q", key, value)
+			}
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("PostHog sink did not send request")
 	}
 }
 

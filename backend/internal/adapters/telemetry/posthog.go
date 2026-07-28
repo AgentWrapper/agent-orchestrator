@@ -23,6 +23,7 @@ import (
 )
 
 const postHogBufferSize = 128
+const maxCommandShapeLength = 48
 
 var remotePayloadAllowlist = map[string]map[string]struct{}{
 	"ao.app.active": {
@@ -263,18 +264,49 @@ func sanitizeRemotePayload(name string, payload map[string]any) map[string]any {
 		if !ok {
 			continue
 		}
-		if safe, ok := sanitizeRemoteValue(value); ok {
+		if safe, ok := sanitizeRemoteValue(key, value); ok {
 			sanitized[key] = safe
 		}
 	}
 	return sanitized
 }
 
-func sanitizeRemoteValue(v any) (any, bool) {
+func isCommandShaped(value string) bool {
+	if value == "" || len(value) > maxCommandShapeLength {
+		return false
+	}
+	tokens := strings.Fields(value)
+	if len(tokens) == 0 || strings.Join(tokens, " ") != value {
+		return false
+	}
+	for _, token := range tokens {
+		if token == "<unknown>" {
+			continue
+		}
+		for _, char := range token {
+			if (char < 'a' || char > 'z') &&
+				(char < 'A' || char > 'Z') &&
+				(char < '0' || char > '9') &&
+				char != '-' &&
+				char != '_' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func sanitizeRemoteValue(key string, v any) (any, bool) {
 	switch value := v.(type) {
 	case string:
 		value = strings.TrimSpace(value)
-		return value, value != ""
+		if value == "" {
+			return nil, false
+		}
+		if (key == "command" || key == "command_path") && !isCommandShaped(value) {
+			return "sha256:" + sha256String(value)[:16], true
+		}
+		return value, true
 	case bool:
 		return value, true
 	case int:
