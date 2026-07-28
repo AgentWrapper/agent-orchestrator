@@ -99,11 +99,6 @@ func (m *Manager) ApplyReviewBatch(ctx context.Context, workerID domain.SessionI
 		// delivered — it must re-fire once the session is workable again.
 		return ReviewDeliveryNoop, nil
 	}
-	for _, r := range results {
-		if err := m.rememberDeliveredAOReview(ctx, r.PRURL, r.GithubReviewID); err != nil {
-			return ReviewDeliveryNoop, err
-		}
-	}
 	return ReviewDeliverySent, nil
 }
 
@@ -303,9 +298,6 @@ func (m *Manager) ApplyReviewResult(ctx context.Context, workerID domain.Session
 		// undelivered to re-fire on the next observation.
 		return ReviewDeliveryNoop, nil
 	}
-	if err := m.rememberDeliveredAOReview(ctx, r.PRURL, r.GithubReviewID); err != nil {
-		return ReviewDeliveryNoop, err
-	}
 	return ReviewDeliverySent, nil
 }
 
@@ -361,11 +353,6 @@ func (m *Manager) ApplySCMObservation(ctx context.Context, id domain.SessionID, 
 	if !o.Fetched {
 		return nil
 	}
-	var err error
-	o, err = m.filterDeliveredAOReviewRoundTrip(ctx, o)
-	if err != nil {
-		return err
-	}
 	if err := m.ApplyPRObservation(ctx, id, scmToPRObservation(o)); err != nil {
 		return err
 	}
@@ -390,93 +377,6 @@ func (m *Manager) notificationIntentForCurrentSCM(ctx context.Context, id domain
 		return nil, nil
 	}
 	return m.notificationIntentForSCM(rec, o), nil
-}
-
-func (m *Manager) rememberDeliveredAOReview(ctx context.Context, prURL, githubReviewID string) error {
-	reviewID := strings.TrimSpace(githubReviewID)
-	if prURL == "" || reviewID == "" {
-		return nil
-	}
-	return m.rememberReactionSeen(ctx, prURL, deliveredAOReviewKey(prURL, reviewID), reviewID)
-}
-
-func deliveredAOReviewKey(prURL, githubReviewID string) string {
-	return "review-github:" + prURL + ":" + githubReviewID
-}
-
-func (m *Manager) filterDeliveredAOReviewRoundTrip(ctx context.Context, o ports.SCMObservation) (ports.SCMObservation, error) {
-	prURL := firstSCMNonEmpty(o.PR.URL, o.PR.HTMLURL)
-	if prURL == "" || len(o.Review.Reviews) == 0 {
-		return o, nil
-	}
-	coverage, err := m.deliveredAOReviewCoverage(ctx, prURL, o.Review.Reviews)
-	if err != nil || len(coverage.authors) == 0 {
-		return o, err
-	}
-
-	filtered := o
-	filtered.Review.Threads = filterCoveredReviewThreads(o.Review.Threads, coverage.authors)
-	if domain.ReviewDecision(o.Review.Decision) == domain.ReviewChangesRequest &&
-		!hasUncoveredChangesRequestedReview(o.Review.Reviews, coverage.reviewIDs) &&
-		!hasUnresolvedSCMComments(filtered.Review.Threads) {
-		filtered.Review.Decision = string(domain.ReviewNone)
-	}
-	return filtered, nil
-}
-
-type deliveredAOReviewCoverage struct {
-	authors   map[string]bool
-	reviewIDs map[string]bool
-}
-
-func (m *Manager) deliveredAOReviewCoverage(ctx context.Context, prURL string, reviews []ports.SCMReviewSummaryObservation) (deliveredAOReviewCoverage, error) {
-	coverage := deliveredAOReviewCoverage{authors: map[string]bool{}, reviewIDs: map[string]bool{}}
-	for _, review := range reviews {
-		reviewID := strings.TrimSpace(review.ID)
-		author := strings.TrimSpace(review.Author)
-		if reviewID == "" || author == "" {
-			continue
-		}
-		seen, err := m.reactionSeen(ctx, prURL, deliveredAOReviewKey(prURL, reviewID), reviewID)
-		if err != nil {
-			return deliveredAOReviewCoverage{}, err
-		}
-		if seen {
-			coverage.authors[author] = true
-			coverage.reviewIDs[reviewID] = true
-		}
-	}
-	return coverage, nil
-}
-
-func filterCoveredReviewThreads(threads []ports.SCMReviewThreadObservation, coveredAuthors map[string]bool) []ports.SCMReviewThreadObservation {
-	filtered := make([]ports.SCMReviewThreadObservation, 0, len(threads))
-	for _, th := range threads {
-		next := th
-		next.Comments = make([]ports.SCMReviewCommentObservation, 0, len(th.Comments))
-		for _, c := range th.Comments {
-			if !c.IsBot && coveredAuthors[strings.TrimSpace(c.Author)] {
-				continue
-			}
-			next.Comments = append(next.Comments, c)
-		}
-		if len(next.Comments) > 0 {
-			filtered = append(filtered, next)
-		}
-	}
-	return filtered
-}
-
-func hasUncoveredChangesRequestedReview(reviews []ports.SCMReviewSummaryObservation, coveredReviewIDs map[string]bool) bool {
-	for _, review := range reviews {
-		if domain.ReviewDecision(review.State) != domain.ReviewChangesRequest {
-			continue
-		}
-		if !coveredReviewIDs[strings.TrimSpace(review.ID)] {
-			return true
-		}
-	}
-	return false
 }
 
 func (m *Manager) notificationIntentForSCM(rec domain.SessionRecord, o ports.SCMObservation) *ports.NotificationIntent {
@@ -930,40 +830,6 @@ func (m *Manager) sendOnce(ctx context.Context, id domain.SessionID, prURL, key,
 		}
 	}
 	return sendOnceAccounted, nil
-}
-
-func (m *Manager) reactionSeen(ctx context.Context, prURL, key, sig string) (bool, error) {
-	if prURL == "" || key == "" {
-		return false, nil
-	}
-	m.react.mu.Lock()
-	defer m.react.mu.Unlock()
-	if !m.react.loaded[prURL] {
-		if err := m.loadPRSignaturesLocked(ctx, prURL); err != nil {
-			return false, err
-		}
-		m.react.loaded[prURL] = true
-	}
-	return m.react.seen[key] == sig, nil
-}
-
-func (m *Manager) rememberReactionSeen(ctx context.Context, prURL, key, sig string) error {
-	if prURL == "" || key == "" {
-		return nil
-	}
-	m.react.mu.Lock()
-	defer m.react.mu.Unlock()
-	if !m.react.loaded[prURL] {
-		if err := m.loadPRSignaturesLocked(ctx, prURL); err != nil {
-			return err
-		}
-		m.react.loaded[prURL] = true
-	}
-	if m.react.seen[key] == sig {
-		return nil
-	}
-	m.react.seen[key] = sig
-	return m.persistPRSignaturesLocked(ctx, prURL)
 }
 
 // loadPRSignaturesLocked merges any previously persisted reaction-dedup state

@@ -131,11 +131,6 @@ func (s *Service) SubmitMany(ctx context.Context, workerID domain.SessionID, rev
 	if s.store == nil {
 		return nil, fmt.Errorf("review service store is not configured")
 	}
-	for _, review := range reviews {
-		if err := validateSubmittedReviewBody(review); err != nil {
-			return nil, err
-		}
-	}
 	runs := make([]domain.ReviewRun, 0, len(reviews))
 	for _, review := range reviews {
 		run, err := s.submitOne(ctx, workerID, review)
@@ -177,9 +172,6 @@ func (s *Service) submitOne(ctx context.Context, workerID domain.SessionID, revi
 	if verdict == domain.VerdictChangesRequested && body == "" {
 		return domain.ReviewRun{}, fmt.Errorf("%w: a changes_requested review requires a body", ErrInvalid)
 	}
-	if err := validateSubmittedReviewBody(review); err != nil {
-		return domain.ReviewRun{}, err
-	}
 	run, ok, err := s.store.GetReviewRun(ctx, runID)
 	if err != nil {
 		return domain.ReviewRun{}, err
@@ -220,13 +212,6 @@ func (s *Service) submitOne(ctx context.Context, workerID domain.SessionID, revi
 		return domain.ReviewRun{}, fmt.Errorf("%w: review run %q is not running", ErrInvalid, runID)
 	}
 	return run, nil
-}
-
-func validateSubmittedReviewBody(review SubmittedReview) error {
-	if err := domain.ValidateReviewBody(review.Body); err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalid, err)
-	}
-	return nil
 }
 
 func (s *Service) deliverSubmitted(ctx context.Context, workerID domain.SessionID, runs []domain.ReviewRun) ([]domain.ReviewRun, error) {

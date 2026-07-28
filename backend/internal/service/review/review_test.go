@@ -3,7 +3,6 @@ package review
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -277,50 +276,5 @@ func TestSubmitCompletedRetryRejectsDifferentRecordedFields(t *testing.T) {
 				t.Fatalf("mismatched retry should not rewrite or deliver: update=%d mark=%d reducer=%d", st.updateCalls, st.markCalls, reducer.calls)
 			}
 		})
-	}
-}
-
-func TestSubmitRejectsCorruptedReviewBodyBeforePersistence(t *testing.T) {
-	st := &fakeStore{ok: true, run: domain.ReviewRun{ID: "run-1", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning}}
-	reducer := &fakeReducer{outcome: lifecycle.ReviewDeliverySent}
-	svc := New(nil, st, WithLifecycleReducer(reducer))
-
-	body := strings.Repeat("ગુજરાતી русский 中文 հայերեն عربي ", 6)
-	if _, err := svc.Submit(context.Background(), "mer-1", "run-1", domain.VerdictChangesRequested, body, "987"); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("err = %v, want ErrInvalid", err)
-	}
-	if st.updateCalls != 0 || st.markCalls != 0 || reducer.calls != 0 {
-		t.Fatalf("invalid body should not persist or deliver: update=%d mark=%d reducer=%d", st.updateCalls, st.markCalls, reducer.calls)
-	}
-	if st.run.Status != domain.ReviewRunRunning || st.run.Body != "" {
-		t.Fatalf("run mutated despite rejected body: %+v", st.run)
-	}
-}
-
-func TestSubmitManyRejectsInvalidBodyBeforeAnyPersistence(t *testing.T) {
-	st := &fakeStore{
-		ok: true,
-		batchRuns: []domain.ReviewRun{
-			{ID: "run-1", SessionID: "mer-1", BatchID: "batch-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning},
-			{ID: "run-2", SessionID: "mer-1", BatchID: "batch-1", PRURL: "pr2", TargetSHA: "sha2", Status: domain.ReviewRunRunning},
-		},
-	}
-	reducer := &fakeReducer{outcome: lifecycle.ReviewDeliverySent}
-	svc := New(nil, st, WithLifecycleReducer(reducer))
-
-	_, err := svc.SubmitMany(context.Background(), "mer-1", []SubmittedReview{
-		{RunID: "run-1", Verdict: domain.VerdictChangesRequested, Body: "fix pr1", GithubReviewID: "101"},
-		{RunID: "run-2", Verdict: domain.VerdictChangesRequested, Body: strings.Repeat("ગુજરાતી русский 中文 հայերեն عربي ", 6), GithubReviewID: "102"},
-	})
-	if !errors.Is(err, ErrInvalid) {
-		t.Fatalf("err = %v, want ErrInvalid", err)
-	}
-	if st.updateCalls != 0 || st.markCalls != 0 || reducer.batchCalls != 0 {
-		t.Fatalf("invalid batch should not persist or deliver: update=%d mark=%d batch=%d", st.updateCalls, st.markCalls, reducer.batchCalls)
-	}
-	for _, run := range st.batchRuns {
-		if run.Status != domain.ReviewRunRunning || run.Body != "" {
-			t.Fatalf("run mutated despite rejected batch: %+v", run)
-		}
 	}
 }
