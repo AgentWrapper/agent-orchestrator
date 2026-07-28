@@ -2,7 +2,6 @@
 
 import { AnimatePresence, LayoutGroup, motion } from "motion/react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { Terminal as XTerm } from "@xterm/xterm";
 
 export type { ActiveDemo } from "./types";
 
@@ -1193,15 +1192,6 @@ function BeakerIcon({ className = "" }: { className?: string }) {
 	);
 }
 
-function FileIcon({ className = "" }: { className?: string }) {
-	return (
-		<svg className={className} viewBox="0 0 16 16" fill="none" aria-hidden="true">
-			<path d="M4 2.5h5l3 3v8H4v-11Z" stroke="currentColor" strokeLinejoin="round" strokeWidth="1.2" />
-			<path d="M9 2.5v3h3" stroke="currentColor" strokeLinejoin="round" strokeWidth="1.2" />
-		</svg>
-	);
-}
-
 function GitHubIcon({ className = "" }: { className?: string }) {
 	return (
 		<svg className={className} viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
@@ -1527,13 +1517,10 @@ function BoardChrome({
 function BoardCard({
 	card,
 	onMerge,
-	onOpen,
 }: {
 	card: PreviewCard;
 	onMerge: (id: string) => void;
-	onOpen: (card: PreviewCard) => void;
 }) {
-	const [canPressScale, setCanPressScale] = useState(true);
 	const statusColor = cardStatusColor(card);
 	const statusLabel =
 		card.column === "working"
@@ -1546,23 +1533,6 @@ function BoardCard({
 		<motion.div
 			layout
 			layoutId={`${card.id}-${card.column}`}
-			role="button"
-			tabIndex={0}
-			aria-label={`Open ${card.title} agent status`}
-			onClick={() => onOpen(card)}
-			onPointerDownCapture={(event) => {
-				const target = event.target as HTMLElement;
-				setCanPressScale(!target.closest("button"));
-			}}
-			onPointerLeave={() => setCanPressScale(true)}
-			onPointerUp={() => setCanPressScale(true)}
-			onKeyDown={(event) => {
-				if (event.key === "Enter" || event.key === " ") {
-					event.preventDefault();
-					onOpen(card);
-				}
-			}}
-			whileTap={canPressScale ? { scale: 0.96 } : undefined}
 			initial={{ opacity: 0, scale: 0.98, y: -8 }}
 			animate={
 				card.merging
@@ -1575,7 +1545,7 @@ function BoardCard({
 				ease: [0.22, 1, 0.36, 1],
 				layout: { duration: 0.55, ease: [0.22, 1, 0.36, 1] },
 			}}
-			className="group relative w-full cursor-pointer rounded-lg border border-[var(--preview-border)] bg-[var(--preview-card)] text-left outline-none transition-[border-color,box-shadow] hover:border-[var(--preview-border-strong)] focus-visible:ring-2 focus-visible:ring-[var(--preview-ring)]"
+			className="group relative w-full rounded-lg border border-[var(--preview-border)] bg-[var(--preview-card)] text-left outline-none transition-[border-color,box-shadow] hover:border-[var(--preview-border-strong)]"
 		>
 			<div className="flex items-start gap-2.5 px-3.5 pb-2.5 pt-3">
 				<img
@@ -1740,12 +1710,10 @@ function BoardColumnBody({
 	cards,
 	id,
 	onMerge,
-	onOpen,
 }: {
 	cards: PreviewCard[];
 	id: BoardColumnId;
 	onMerge: (id: string) => void;
-	onOpen: (card: PreviewCard) => void;
 }) {
 	const idleCards = id === "working" ? cards.filter(isIdleCard) : [];
 	const workingCards = id === "working" ? cards.filter((card) => !isIdleCard(card)) : cards;
@@ -1755,7 +1723,7 @@ function BoardColumnBody({
 		<div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2.5 py-2 scrollbar-hide">
 			<AnimatePresence initial={false}>
 				{visibleCards.map((card) => (
-					<BoardCard key={`${card.id}-${card.column}`} card={card} onMerge={onMerge} onOpen={onOpen} />
+					<BoardCard key={`${card.id}-${card.column}`} card={card} onMerge={onMerge} />
 				))}
 			</AnimatePresence>
 		</div>
@@ -1765,7 +1733,6 @@ function BoardColumnBody({
 function BoardGrid({
 	columns,
 	onMerge,
-	onOpen,
 }: {
 	columns: Array<{
 		cards: PreviewCard[];
@@ -1774,7 +1741,6 @@ function BoardGrid({
 		title: string;
 	}>;
 	onMerge: (id: string) => void;
-	onOpen: (card: PreviewCard) => void;
 }) {
 	return (
 		<div className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -1801,7 +1767,7 @@ function BoardGrid({
 			<div className="grid min-h-0 flex-1 grid-cols-4">
 				{columns.map((column) => (
 					<div key={`${column.title}-body`} className="flex min-h-0 min-w-0 flex-col">
-						<BoardColumnBody cards={column.cards} id={column.id} onMerge={onMerge} onOpen={onOpen} />
+						<BoardColumnBody cards={column.cards} id={column.id} onMerge={onMerge} />
 					</div>
 				))}
 			</div>
@@ -1834,211 +1800,6 @@ function ArchiveBar({ count }: { count: number }) {
 				<span className="font-mono tabular-nums text-[var(--preview-passive)]">{count}</span>
 			</button>
 		</div>
-	);
-}
-
-function CloseIcon({ className = "" }: { className?: string }) {
-	return (
-		<svg className={className} viewBox="0 0 16 16" fill="none" aria-hidden="true">
-			<path d="m4 4 8 8M12 4l-8 8" stroke="currentColor" strokeLinecap="round" strokeWidth="1.5" />
-		</svg>
-	);
-}
-
-function AgentTerminalDisplay({ card }: { card: PreviewCard }) {
-	const terminalElementRef = useRef<HTMLDivElement>(null);
-
-	useEffect(() => {
-		const element = terminalElementRef.current;
-		if (!element) return;
-
-		element.replaceChildren();
-		const getCols = () => Math.max(24, Math.floor(element.clientWidth / 6.8));
-		const cols = getCols();
-		const block = (text: string) => `\x1b[48;2;17;24;39m\x1b[37m ${text.padEnd(cols - 2, " ")} \x1b[0m\r\n`;
-
-		const terminal = new XTerm({
-			allowProposedApi: false,
-			cols,
-			convertEol: true,
-			cursorBlink: false,
-			disableStdin: true,
-			fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-			fontSize: 11,
-			lineHeight: 1.35,
-			rows: 15,
-			scrollback: 0,
-			theme: {
-				background: "oklch(0.153 0.006 107.1)",
-				black: "oklch(0.153 0.006 107.1)",
-				blue: "#93c5fd",
-				brightBlack: "#6b7280",
-				brightBlue: "#bfdbfe",
-				brightGreen: "#bbf7d0",
-				brightYellow: "#fde68a",
-				cursor: "#d1d5db",
-				foreground: "oklch(0.737 0.021 106.9)",
-				green: "#86efac",
-				red: "#fca5a5",
-				white: "#f9fafb",
-				yellow: "#fcd34d",
-			},
-		});
-
-		terminal.open(element);
-		const resizeObserver = new ResizeObserver(() => {
-			terminal.resize(getCols(), 15);
-		});
-		resizeObserver.observe(element);
-		terminal.write(block(card.title.toLowerCase()));
-		terminal.write("I'll inspect the branch, check the current agent output, and keep\r\n");
-		terminal.write("the fix scoped to this worktree.\r\n\r\n");
-		terminal.write("\x1b[36m⏺ Read\x1b[0m(src/app/components/HeroSection/...)\r\n");
-		terminal.write("  \x1b[2m⎿  opened preview component and current task state\x1b[0m\r\n\r\n");
-		terminal.write(`\x1b[36m⏺ Bash\x1b[0m(${card.checks})\r\n`);
-		terminal.write(`  \x1b[2m⎿  ${card.activity.toLowerCase()} · ${card.files.toLowerCase()}\x1b[0m\r\n\r\n`);
-		terminal.write("\x1b[36m⏺ Edit\x1b[0m(agent status surface)\r\n");
-		terminal.write(
-			card.tone === "ready"
-				? "  \x1b[32m⎿  ready to summarize and merge\x1b[0m\r\n\r\n"
-				: "  \x1b[33m⎿  waiting on final agent output\x1b[0m\r\n\r\n",
-		);
-		terminal.write("checking whether this needs a patch, a review reply, or a merge\r\n");
-		const spinnerFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-		let spinnerIndex = 0;
-		const renderSpinner = () => {
-			const frame = spinnerFrames[spinnerIndex % spinnerFrames.length];
-			spinnerIndex += 1;
-			terminal.write(`\r\x1b[2K\x1b[35m${frame}\x1b[0m Thinking`);
-			terminal.scrollToBottom();
-		};
-		renderSpinner();
-		terminal.scrollToBottom();
-		const spinnerInterval = window.setInterval(renderSpinner, 140);
-
-		return () => {
-			window.clearInterval(spinnerInterval);
-			resizeObserver.disconnect();
-			terminal.dispose();
-		};
-	}, [card]);
-
-	return (
-		<div className="mt-4 overflow-hidden rounded-xl border border-[var(--preview-border)] bg-[var(--preview-background)] p-3">
-			<div
-				ref={terminalElementRef}
-				className="pointer-events-none h-[236px] select-none overflow-hidden [font-feature-settings:'liga'_0] [&_.xterm-viewport]:!overflow-hidden"
-			/>
-		</div>
-	);
-}
-
-function AgentMetaItem({
-	children,
-	Icon,
-}: {
-	children: ReactNode;
-	Icon: (props: { className?: string }) => ReactNode;
-}) {
-	return (
-		<div className="flex min-w-0 items-center gap-2 rounded-lg border border-[var(--preview-border)] bg-[var(--preview-muted)] px-3 py-2 text-[10px] text-[var(--preview-muted-foreground)]">
-			<Icon className="h-3.5 w-3.5 shrink-0 text-[var(--preview-foreground)]" />
-			<span className="truncate">{children}</span>
-		</div>
-	);
-}
-
-function AgentStatusModal({
-	card,
-	onClose,
-}: {
-	card: PreviewCard | null;
-	onClose: () => void;
-}) {
-	return (
-		<AnimatePresence initial={false}>
-			{card ? (
-				<>
-					<motion.div
-						key="agent-status-titlebar-blur"
-						className="absolute inset-x-0 bottom-auto top-0 z-40 h-10 bg-black/35 backdrop-blur-[1px]"
-						initial={{ opacity: 0 }}
-						animate={{ opacity: 1 }}
-						exit={{ opacity: 0 }}
-						transition={{ duration: 0.18, ease: [0.2, 0, 0, 1] }}
-						onClick={onClose}
-					/>
-					<motion.div
-						key="agent-status-overlay"
-						className="absolute inset-x-0 bottom-0 top-10 z-40 grid place-items-center bg-black/35 p-3 backdrop-blur-[1px] sm:p-8"
-						initial={{ opacity: 0 }}
-						animate={{ opacity: 1 }}
-						exit={{ opacity: 0 }}
-						transition={{ duration: 0.18, ease: [0.2, 0, 0, 1] }}
-						onClick={onClose}
-					>
-					<motion.div
-						role="dialog"
-						aria-modal="true"
-						aria-label={`${card.title} agent status`}
-						className="w-full min-w-0 max-w-[520px] rounded-2xl border border-[var(--preview-border)] bg-[var(--preview-card)] p-3 text-[var(--preview-card-foreground)] shadow-[0_24px_80px_rgba(0,0,0,0.45)] outline-none sm:p-4"
-						initial={{ opacity: 0, scale: 0.99 }}
-						animate={{ opacity: 1, scale: 1 }}
-						exit={{ opacity: 0, scale: 0.99 }}
-						transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
-						onClick={(event) => event.stopPropagation()}
-					>
-						<div className="flex items-start gap-3">
-							<img
-								src={card.icon}
-								alt=""
-								width={24}
-								height={24}
-								aria-hidden="true"
-								className="mt-0.5 h-6 w-6"
-								draggable="false"
-							/>
-							<div className="min-w-0 flex-1">
-								<div className="text-[13px] font-semibold tracking-[-0.5px] text-[var(--preview-foreground)]">
-									{card.agent} worker
-								</div>
-								<div className="mt-1 truncate font-mono text-[10px] tabular-nums text-[var(--preview-muted-foreground)]">
-									{card.branch} · {card.pr}
-								</div>
-							</div>
-							<button
-								type="button"
-								onClick={onClose}
-								className="grid h-10 w-10 shrink-0 place-items-center rounded-xl text-[var(--preview-muted-foreground)] transition-[background-color,color,transform] hover:bg-[var(--preview-muted)] hover:text-[var(--preview-foreground)] active:scale-[0.96]"
-								aria-label="Close agent status"
-							>
-								<CloseIcon className="h-4 w-4" />
-							</button>
-						</div>
-
-						<div className="mt-4 grid grid-cols-2 gap-2">
-							<AgentMetaItem Icon={BranchIcon}>{card.branch}</AgentMetaItem>
-							<AgentMetaItem Icon={FileIcon}>{card.files} changed</AgentMetaItem>
-							<AgentMetaItem Icon={GitHubIcon}>{card.pr}</AgentMetaItem>
-							<AgentMetaItem
-								Icon={
-									card.activityState === "passed"
-										? CheckIcon
-										: card.activityState === "failed"
-											? WarningIcon
-											: WaitingIcon
-								}
-							>
-								{card.activity}
-							</AgentMetaItem>
-						</div>
-
-						<AgentTerminalDisplay card={card} />
-					</motion.div>
-				</motion.div>
-				</>
-			) : null}
-		</AnimatePresence>
 	);
 }
 
@@ -2164,7 +1925,6 @@ export function AppMockup() {
 	});
 	const [boardVersion, setBoardVersion] = useState(0);
 	const [selectedTrackId, setSelectedTrackId] = useState<TrackId>("landing");
-	const [selectedCard, setSelectedCard] = useState<PreviewCard | null>(null);
 	const [viewMode, setViewMode] = useState<ViewMode>("board");
 	const incomingIndexes = useRef<Record<TrackId, number>>({
 		landing: 0,
@@ -2295,12 +2055,9 @@ export function AppMockup() {
 
 	const selectTrack = useCallback((trackId: TrackId) => {
 		setSelectedTrackId(trackId);
-		setSelectedCard(null);
 		setViewMode("board");
 		setBoardVersion((current) => current + 1);
 	}, []);
-
-	const selectedCardId = selectedCard?.id ?? null;
 
 	useEffect(() => {
 		let timeoutId: number;
@@ -2313,9 +2070,7 @@ export function AppMockup() {
 			const trackId = selectedTrackId;
 			const incomingCards = incomingCardsByTrack[trackId];
 			updateTrackCards(trackId, (current) => {
-				const chosen = randomItem(
-					current.filter((card) => !card.merging && card.id !== selectedCardId),
-				);
+				const chosen = randomItem(current.filter((card) => !card.merging));
 
 				let next = current;
 				if (chosen) {
@@ -2369,7 +2124,7 @@ export function AppMockup() {
 
 		scheduleNext();
 		return () => window.clearTimeout(timeoutId);
-	}, [mergeCard, selectedCardId, selectedTrackId, updateTrackCards]);
+	}, [mergeCard, selectedTrackId, updateTrackCards]);
 
 	const boardColumns = columns.map((column) => {
 		const columnCards = cards.filter((card) => card.column === column.id);
@@ -2439,7 +2194,6 @@ export function AppMockup() {
 												<BoardGrid
 													columns={boardColumns}
 													onMerge={mergeCard}
-													onOpen={setSelectedCard}
 												/>
 											</LayoutGroup>
 										</div>
@@ -2449,13 +2203,9 @@ export function AppMockup() {
 							</div>
 						</div>
 					</div>
-					<AgentStatusModal
-						card={selectedCard}
-						onClose={() => setSelectedCard(null)}
-					/>
 				</div>
 			</div>
-			{selectedCard ? null : <ResizeHandles onResizeStart={startResize} />}
+			<ResizeHandles onResizeStart={startResize} />
 		</div>
 	);
 }
