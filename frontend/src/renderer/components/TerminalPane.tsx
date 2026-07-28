@@ -22,6 +22,8 @@ type TerminalPaneProps = {
 	fontSize: number;
 };
 
+const previewRequestTimeoutMs = 10_000;
+
 export function TerminalPane({ session, theme, daemonReady, terminalTarget, fontSize }: TerminalPaneProps) {
 	const terminalKey =
 		terminalTarget?.kind === "reviewer" || terminalTarget?.kind === "shell"
@@ -242,7 +244,16 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	const isSessionActive = session ? sessionIsActive(session) : false;
 	const setInspectorViewForSession = useUiStore((state) => state.setInspectorView);
 	const setInspectorOpenForSession = useUiStore((state) => state.setInspectorOpen);
-	const previewRequestChainRef = useRef<Promise<void>>(Promise.resolve());
+	const pendingPreviewRef = useRef<{ sessionId: string; url: string } | null>(null);
+	const previewRequestRunningRef = useRef(false);
+	const previewAbortRef = useRef<AbortController | null>(null);
+	useEffect(
+		() => () => {
+			pendingPreviewRef.current = null;
+			previewAbortRef.current?.abort();
+		},
+		[],
+	);
 	const openLinkInBrowser = useCallback(
 		(uri: string) => {
 			if (!session?.id || session.kind !== "worker" || !isSessionActive) return;
@@ -255,24 +266,47 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 			const linkSessionId = session.id;
 			setInspectorViewForSession(linkSessionId, "browser");
 			setInspectorOpenForSession(linkSessionId, true);
-			// Preserve terminal order when one output chunk contains multiple
-			// loopback URLs. The last printed URL deterministically becomes the
-			// final Browser target instead of racing concurrent preview writes.
-			previewRequestChainRef.current = previewRequestChainRef.current.then(async () => {
+			// Serialize writes and coalesce queued output to its latest target.
+			// Timeout and unmount cleanup keep stale requests from blocking links.
+			pendingPreviewRef.current = { sessionId: linkSessionId, url: uri };
+			if (previewRequestRunningRef.current) return;
+			previewRequestRunningRef.current = true;
+			void (async () => {
 				try {
-					const { error: previewError } = await apiClient.POST("/api/v1/sessions/{sessionId}/preview", {
-						params: { path: { sessionId: linkSessionId } },
-						body: { url: uri },
-					});
-					if (previewError) {
-						console.warn("Unable to open terminal link in Browser preview", previewError);
-						return;
+					while (pendingPreviewRef.current) {
+						const next = pendingPreviewRef.current;
+						pendingPreviewRef.current = null;
+						const controller = new AbortController();
+						previewAbortRef.current = controller;
+						const timeout = window.setTimeout(() => controller.abort(), previewRequestTimeoutMs);
+						let succeeded = false;
+						try {
+							const { error: previewError } = await apiClient.POST("/api/v1/sessions/{sessionId}/preview", {
+								params: { path: { sessionId: next.sessionId } },
+								body: { url: next.url },
+								signal: controller.signal,
+							});
+							if (previewError) {
+								console.warn("Unable to open terminal link in Browser preview", previewError);
+								continue;
+							}
+							succeeded = true;
+						} catch (error) {
+							if (!controller.signal.aborted) {
+								console.warn("Unable to open terminal link in Browser preview", error);
+							}
+						} finally {
+							window.clearTimeout(timeout);
+						}
+						if (succeeded) {
+							void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+						}
 					}
-					await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-				} catch (error) {
-					console.warn("Unable to open terminal link in Browser preview", error);
+				} finally {
+					previewAbortRef.current = null;
+					previewRequestRunningRef.current = false;
 				}
-			});
+			})();
 		},
 		[isSessionActive, queryClient, session?.id, session?.kind, setInspectorOpenForSession, setInspectorViewForSession],
 	);
