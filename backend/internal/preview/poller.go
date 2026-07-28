@@ -39,8 +39,14 @@ type Poller struct {
 }
 
 type entryState struct {
-	path      string
-	signature uint64
+	path         string
+	signature    uint64
+	entryModUnix int64
+	entrySize    int64
+	// missing baselines a workspace before any previewable file exists. A file
+	// created later is a real change, unlike a Markdown file already present
+	// when the daemon first observes the session.
+	missing bool
 	// cleared is set when the poller itself cleared the preview URL because the
 	// workspace entry was missing. When the file reappears, shouldRefresh uses
 	// this to re-discover even though the revision was bumped by the clear.
@@ -126,6 +132,8 @@ func (p *Poller) Poll(ctx context.Context) error {
 						"session", sess.ID, "err", err)
 				}
 				p.seen[sess.ID] = entryState{cleared: true}
+			} else if previous, exists := p.seen[sess.ID]; !exists || !previous.cleared {
+				p.seen[sess.ID] = entryState{missing: true}
 			}
 			continue
 		}
@@ -140,7 +148,11 @@ func (p *Poller) Poll(ctx context.Context) error {
 			p.seen[sess.ID] = state
 			continue
 		}
-		if !p.shouldRefresh(sess, target, seenBefore, workspaceOwned) {
+		entryChanged := seenBefore &&
+			(previous.path != state.path ||
+				previous.entryModUnix != state.entryModUnix ||
+				previous.entrySize != state.entrySize)
+		if !p.shouldRefresh(sess, target, entry, seenBefore, workspaceOwned, entryChanged) {
 			p.seen[sess.ID] = state
 			continue
 		}
@@ -157,14 +169,24 @@ func (p *Poller) Poll(ctx context.Context) error {
 	return nil
 }
 
-func (p *Poller) shouldRefresh(sess domain.SessionRecord, target string, seenBefore, workspaceOwned bool) bool {
+func (p *Poller) shouldRefresh(
+	sess domain.SessionRecord,
+	target string,
+	entry Entry,
+	seenBefore bool,
+	workspaceOwned bool,
+	entryChanged bool,
+) bool {
 	current := strings.TrimSpace(sess.Metadata.PreviewURL)
 	if current == "" {
+		if IsMarkdownPath(entry.Path) {
+			return seenBefore && entryChanged
+		}
 		if !seenBefore {
 			return sess.Metadata.PreviewRevision == 0
 		}
 		previous := p.seen[sess.ID]
-		return previous.cleared
+		return previous.cleared || previous.missing
 	}
 	if current == target {
 		return seenBefore
@@ -173,5 +195,10 @@ func (p *Poller) shouldRefresh(sess domain.SessionRecord, target string, seenBef
 }
 
 func stateFor(entry Entry) entryState {
-	return entryState{path: entry.Path, signature: staticTreeSignature(entry)}
+	return entryState{
+		path:         entry.Path,
+		signature:    staticTreeSignature(entry),
+		entryModUnix: entry.ModTime.UnixNano(),
+		entrySize:    entry.Size,
+	}
 }

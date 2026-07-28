@@ -165,6 +165,9 @@ func TestPollerRefreshesWhenMarkdownPreviewChanges(t *testing.T) {
 			if err := poller.Poll(context.Background()); err != nil {
 				t.Fatalf("first Poll: %v", err)
 			}
+			if len(svc.sets) != 0 {
+				t.Fatalf("sets for unchanged existing markdown = %#v, want none", svc.sets)
+			}
 			writeFile(t, entry, "# Version two")
 			nextMod := time.Now().Add(2 * time.Second)
 			if err := os.Chtimes(entry, nextMod, nextMod); err != nil {
@@ -174,13 +177,57 @@ func TestPollerRefreshesWhenMarkdownPreviewChanges(t *testing.T) {
 				t.Fatalf("second Poll: %v", err)
 			}
 
-			if len(svc.sets) != 2 {
+			if len(svc.sets) != 1 {
 				t.Fatalf("sets after markdown change = %#v, want preview refresh", svc.sets)
 			}
-			if svc.sets[1].url != svc.sets[0].url {
-				t.Fatalf("refresh url = %q, want unchanged target %q", svc.sets[1].url, svc.sets[0].url)
+			if want := mustFileURL(t, "http://127.0.0.1:3001", "ao-1", "notes"+extension); svc.sets[0].url != want {
+				t.Fatalf("refresh url = %q, want %q", svc.sets[0].url, want)
 			}
 		})
+	}
+}
+
+func TestPollerShowsMarkdownCreatedAfterEmptyWorkspaceBaseline(t *testing.T) {
+	workspace := t.TempDir()
+	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "")}}
+	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
+
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("baseline Poll: %v", err)
+	}
+	writeFile(t, filepath.Join(workspace, "report.md"), "# New report")
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("creation Poll: %v", err)
+	}
+
+	assertSets(t, svc.sets, previewSet{
+		id:  "ao-1",
+		url: mustFileURL(t, "http://127.0.0.1:3001", "ao-1", "report.md"),
+	})
+}
+
+func TestPollerDoesNotShowUnchangedMarkdownWhenSiblingAssetChanges(t *testing.T) {
+	workspace := t.TempDir()
+	writeFile(t, filepath.Join(workspace, "report.md"), "# Existing report")
+	asset := filepath.Join(workspace, "diagram.svg")
+	writeFile(t, asset, "<svg/>")
+	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "")}}
+	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
+
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("baseline Poll: %v", err)
+	}
+	writeFile(t, asset, "<svg><path/></svg>")
+	nextMod := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(asset, nextMod, nextMod); err != nil {
+		t.Fatalf("chtimes asset: %v", err)
+	}
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("asset Poll: %v", err)
+	}
+
+	if len(svc.sets) != 0 {
+		t.Fatalf("sets after sibling change = %#v, want unchanged markdown to remain hidden", svc.sets)
 	}
 }
 
