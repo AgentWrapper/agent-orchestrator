@@ -115,3 +115,11 @@ describe("preload uiSettings bridge", () => {
 		expect(electronMocks.invoke).toHaveBeenNthCalledWith(2, "uiSettings:set", { locale: "zh-CN" });
 	});
 });
+
+describe("preload notification badge bridge", () => {
+	it("forwards the badge count to the main process", async () => {
+		await exposedBridge().notifications.setBadgeCount(7);
+
+		expect(electronMocks.invoke).toHaveBeenCalledWith("notifications:setBadgeCount", 7);
+	});
+});

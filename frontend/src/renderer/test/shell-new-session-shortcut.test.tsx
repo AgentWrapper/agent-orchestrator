@@ -107,6 +107,11 @@ vi.mock("../lib/bridge", () => ({
 			set: shellMocks.setKeybindings,
 			setRecording: shellMocks.setKeybindingRecording,
 		},
+		notifications: {
+			show: vi.fn(),
+			setBadgeCount: vi.fn(),
+			onClick: () => () => undefined,
+		},
 		window: {},
 	},
 }));

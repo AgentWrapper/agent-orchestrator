@@ -34,6 +34,8 @@ vi.mock("../lib/bridge", () => ({
 		},
 		notifications: {
 			show: (...args: unknown[]) => notificationShowMock(...args),
+			setBadgeCount: vi.fn(),
+			onClick: () => () => undefined,
 		},
 	},
 }));

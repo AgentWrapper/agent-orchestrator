@@ -136,6 +136,7 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 				},
 				notifications: {
 					show: async () => undefined,
+					setBadgeCount: async () => undefined,
 					onClick: unsubscribe,
 				},
 				appState: {
@@ -517,7 +518,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					onTabsState: unsubscribe,
 					onAgentActivity: unsubscribe,
 				},
-				notifications: { show: async () => undefined, onClick: unsubscribe },
+				notifications: { show: async () => undefined, setBadgeCount: async () => undefined, onClick: unsubscribe },
 				appState: { getMigration: async () => ({ status: "completed" }), setMigration: async () => undefined },
 				updateSettings: {
 					get: async () => ({ enabled: false, channel: "latest", nightlyAck: false, feature: null }),

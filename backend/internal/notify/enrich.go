@@ -73,6 +73,9 @@ func sessionLabel(intent Intent) string {
 	if v := strings.TrimSpace(intent.SessionDisplayName); v != "" {
 		return v
 	}
+	if intent.ProjectID != "" {
+		return string(intent.ProjectID)
+	}
 	if intent.SessionID != "" {
 		return string(intent.SessionID)
 	}

@@ -6,16 +6,25 @@ import type { NotificationDTO } from "../lib/notifications";
 import { useUiStore } from "../stores/ui-store";
 import { NotificationCenter, NotificationRuntime } from "./NotificationCenter";
 
-const { connectMock, fetchNextPageMock, markAllMock, markReadMock, navigateMock, notificationQueryMock, paramsMock } =
-	vi.hoisted(() => ({
-		connectMock: vi.fn(),
-		fetchNextPageMock: vi.fn(),
-		markAllMock: vi.fn(),
-		markReadMock: vi.fn(),
-		navigateMock: vi.fn(),
-		notificationQueryMock: vi.fn(),
-		paramsMock: vi.fn(),
-	}));
+const {
+	connectMock,
+	fetchNextPageMock,
+	markAllMock,
+	markReadMock,
+	navigateMock,
+	notificationQueryMock,
+	paramsMock,
+	setBadgeCountMock,
+} = vi.hoisted(() => ({
+	connectMock: vi.fn(),
+	fetchNextPageMock: vi.fn(),
+	markAllMock: vi.fn(),
+	markReadMock: vi.fn(),
+	navigateMock: vi.fn(),
+	notificationQueryMock: vi.fn(),
+	paramsMock: vi.fn(),
+	setBadgeCountMock: vi.fn(),
+}));
 
 const notifications: NotificationDTO[] = [
 	{
@@ -57,6 +66,15 @@ const notifications: NotificationDTO[] = [
 ];
 
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => navigateMock, useParams: () => paramsMock() }));
+
+vi.mock("../lib/bridge", () => ({
+	aoBridge: {
+		notifications: {
+			setBadgeCount: setBadgeCountMock,
+			onClick: () => () => undefined,
+		},
+	},
+}));
 
 vi.mock("../hooks/useNotificationsQuery", () => ({
 	useMarkAllNotificationsReadMutation: () => ({ isPending: false, mutateAsync: markAllMock }),
@@ -129,6 +147,7 @@ beforeEach(() => {
 	markReadMock.mockReset().mockResolvedValue(notifications[0]);
 	navigateMock.mockReset();
 	notificationQueryMock.mockReset().mockImplementation(notificationQueryResult);
+	setBadgeCountMock.mockReset().mockResolvedValue(undefined);
 	vi.spyOn(window, "open").mockImplementation(() => null);
 });
 
@@ -292,5 +311,12 @@ describe("NotificationCenter", () => {
 		await clickOpen();
 
 		expect(screen.getByText("The agent is waiting for your response.")).not.toHaveClass("line-clamp-2");
+	});
+
+	it("syncs the OS badge count with the unread notification count", async () => {
+		renderNotificationCenter();
+
+		await waitFor(() => expect(setBadgeCountMock).toHaveBeenCalledWith(2));
+		expect(setBadgeCountMock).toHaveBeenCalledTimes(1);
 	});
 });

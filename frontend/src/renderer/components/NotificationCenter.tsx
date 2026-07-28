@@ -133,6 +133,10 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 	const visibleNotifications = view === "unread" ? unread : all;
 	const { openPrimary, openSession } = useNotificationTargetNavigation();
 
+	useEffect(() => {
+		void aoBridge.notifications.setBadgeCount(unreadCount);
+	}, [unreadCount]);
+
 	const markOneRead = async (id: string) => {
 		setActionError(null);
 		void captureRendererEvent("ao.renderer.notification_mark_read_requested", { scope: "single" });

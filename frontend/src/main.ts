@@ -64,6 +64,11 @@ import { readMigrationState, updateMigration, writeAppStateMarker, type Migratio
 import { isAllowedAppExternalURL, openAllowedAppExternalURL } from "./main/external-open";
 import { buildWindowsAppMenuTemplate } from "./main/menu";
 import { ancestorRepositorySetupWarning, scanImportFolder } from "./main/import-folder-scan";
+import {
+	readBadgeCount,
+	setAppBadgeCount,
+	writeBadgeCount,
+} from "./main/notification-badge";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -1428,6 +1433,19 @@ ipcMain.handle("notifications:show", (_event, notification: { id: string; title:
 	toast.show();
 });
 
+ipcMain.handle("notifications:setBadgeCount", async (_event, count: unknown) => {
+	const numericCount = typeof count === "number" && Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
+	setAppBadgeCount(numericCount);
+	const runFile = runFilePath();
+	if (runFile) {
+		try {
+			await writeBadgeCount(path.dirname(runFile), numericCount);
+		} catch (err) {
+			console.error("failed to persist badge count:", err);
+		}
+	}
+});
+
 // Auto-update only runs for packaged builds reading the GitHub Releases feed
 // (see forge.config.ts publishers). In dev there is no feed, so it is skipped.
 // A live updater additionally requires a signed + notarized build — see
@@ -1523,6 +1541,18 @@ app.whenReady().then(async () => {
 	const keybindingRunFile = runFilePath();
 	if (keybindingRunFile) {
 		keybindingOverrides = await readKeybindingOverrides(path.dirname(keybindingRunFile));
+	}
+
+	// Restore the last known notification badge count early so the dock/taskbar
+	// badge is accurate before the renderer connects and refetches unread counts.
+	const badgeRunFile = runFilePath();
+	if (badgeRunFile) {
+		try {
+			const persistedCount = await readBadgeCount(path.dirname(badgeRunFile));
+			setAppBadgeCount(persistedCount);
+		} catch (err) {
+			console.error("failed to restore badge count:", err);
+		}
 	}
 
 	registerRendererProtocol();
