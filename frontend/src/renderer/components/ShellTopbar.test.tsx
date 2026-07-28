@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useUiStore } from "../stores/ui-store";
 import type { SessionActivityState, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { ShellTopbar, TopbarKillButton } from "./ShellTopbar";
+import { TooltipProvider } from "./ui/tooltip";
 
 const { navigateMock, onKilledMock, paramsMock, postMock, spawnMock, useWorkspaceQueryMock } = vi.hoisted(() => ({
 	navigateMock: vi.fn(),
@@ -112,7 +113,9 @@ function renderTopbarSessions(sessions: WorkspaceSession[], sessionId: string) {
 	const queryClient = new QueryClient();
 	const topbar = () => (
 		<QueryClientProvider client={queryClient}>
-			<ShellTopbar />
+			<TooltipProvider delayDuration={0}>
+				<ShellTopbar />
+			</TooltipProvider>
 		</QueryClientProvider>
 	);
 	const result = render(topbar());
@@ -207,6 +210,61 @@ describe("ShellTopbar status pill", () => {
 	});
 });
 
+// jsdom has no layout, so scrollWidth/clientWidth are always 0 and the branch
+// never measures as cropped. Shadow the Element.prototype getters to simulate a
+// name wider than its container; returns a restore fn.
+function stubCroppedText() {
+	Object.defineProperty(HTMLElement.prototype, "scrollWidth", { configurable: true, get: () => 300 });
+	Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => 100 });
+	return () => {
+		delete (HTMLElement.prototype as { scrollWidth?: number }).scrollWidth;
+		delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth;
+	};
+}
+
+describe("ShellTopbar worker branch (#3173)", () => {
+	it("renders the branch as plain text, not a button", () => {
+		renderTopbar(sessionWith());
+
+		const branch = screen.getByText("ao/sess-1");
+		expect(branch.closest("button")).toBeNull();
+		expect(branch.closest('[role="button"]')).toBeNull();
+	});
+
+	it("separates the branch from the status pill with a divider", () => {
+		const { container } = renderTopbar(sessionWith());
+
+		expect(container.querySelector(".w-px.bg-border")).not.toBeNull();
+	});
+
+	it("renders no divider for branchless sessions", () => {
+		const { container } = renderTopbar(sessionWith({ branch: undefined }));
+
+		expect(container.querySelector(".w-px.bg-border")).toBeNull();
+	});
+
+	it("shows no tooltip while the full branch name fits", async () => {
+		renderTopbar(sessionWith());
+
+		await userEvent.hover(screen.getByText("ao/sess-1"));
+
+		expect(screen.queryByRole("tooltip")).toBeNull();
+	});
+
+	it("reveals the full branch in a tooltip when the name is cropped", async () => {
+		const restore = stubCroppedText();
+		try {
+			renderTopbar(sessionWith({ branch: "ao/agent-orchestrator-53/root" }));
+
+			await userEvent.hover(screen.getByText("ao/agent-orchestrator-53/root"));
+
+			expect(await screen.findByRole("tooltip")).toHaveTextContent("ao/agent-orchestrator-53/root");
+		} finally {
+			restore();
+		}
+	});
+});
+
 describe("ShellTopbar orchestrator actions", () => {
 	it.each([
 		["active", "Working", "bg-status-working", true],
@@ -255,7 +313,9 @@ describe("ShellTopbar orchestrator actions", () => {
 		paramsMock.sessionId = "sess-1";
 		render(
 			<QueryClientProvider client={new QueryClient()}>
-				<ShellTopbar />
+				<TooltipProvider>
+					<ShellTopbar />
+				</TooltipProvider>
 			</QueryClientProvider>,
 		);
 

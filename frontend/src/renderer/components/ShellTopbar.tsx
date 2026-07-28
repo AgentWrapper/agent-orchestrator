@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { GitBranch, LayoutDashboard, PanelRightClose, PanelRightOpen, Plus, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NotificationCenter } from "./NotificationCenter";
 import {
 	findProjectOrchestrator,
@@ -27,6 +27,7 @@ import { isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { StatusPill } from "./StatusPill";
 import { TopbarButton, TopbarKillError, topbarHeaderClass, topbarProjectLabelClass } from "./TopbarButton";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 const isMac = isMacPlatform();
 const boardActionsInPanel = usesBoardActionsInPanel();
@@ -156,10 +157,12 @@ export function ShellTopbar() {
 				) : isSessionRoute ? (
 					<div className="flex min-w-0 items-center gap-3">
 						{session?.branch ? (
-							<div className="inline-flex min-w-0 items-center gap-1 font-mono text-2xs leading-none text-passive">
-								<GitBranch className="size-icon-2xs shrink-0" aria-hidden="true" />
-								<span className="truncate">{session.branch}</span>
-							</div>
+							<>
+								<SessionBranchLabel branch={session.branch} />
+								{/* Hairline divider so the static branch text can't be read as
+								    part of the status pill's chip (#3173). */}
+								<span aria-hidden="true" className="h-3.5 w-px shrink-0 bg-border" />
+							</>
 						) : null}
 						{session ? <SessionStatusPill session={session} /> : null}
 					</div>
@@ -364,6 +367,42 @@ function ProjectTerminationFeedback({ projectId }: { projectId: string | undefin
 		</div>
 	);
 }
+// Static branch identity for worker sessions (#3173). Deliberately plain text —
+// no fill, border, or hover state — so it reads as a label, not a control. The
+// name keeps all available row width (min-w-0 + truncate only bite when the
+// window runs out of space); while it is actually cropped, the full branch is
+// recoverable from a tooltip. The Tooltip root stays mounted and only the
+// content is gated on the cropped state, so the measured span never remounts
+// out from under its ResizeObserver.
+export function SessionBranchLabel({ branch }: { branch: string }) {
+	const textRef = useRef<HTMLSpanElement | null>(null);
+	const [isCropped, setIsCropped] = useState(false);
+
+	useEffect(() => {
+		const el = textRef.current;
+		if (!el) return;
+		const measure = () => setIsCropped(el.scrollWidth > el.clientWidth);
+		measure();
+		const observer = new ResizeObserver(measure);
+		observer.observe(el);
+		return () => observer.disconnect();
+	}, [branch]);
+
+	return (
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<div className="inline-flex min-w-0 cursor-default items-center gap-1 font-mono text-2xs leading-none text-passive">
+					<GitBranch className="size-icon-2xs shrink-0" aria-hidden="true" />
+					<span ref={textRef} className="truncate">
+						{branch}
+					</span>
+				</div>
+			</TooltipTrigger>
+			{isCropped ? <TooltipContent className="font-mono text-2xs">{branch}</TooltipContent> : null}
+		</Tooltip>
+	);
+}
+
 function SessionStatusPill({ session }: { session: WorkspaceSession }) {
 	const { label, tone, breathe } = getAgentActivityView(session.activity);
 	return (
