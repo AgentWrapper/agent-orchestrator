@@ -27,6 +27,7 @@ import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { captureOrchestratorReplacementFailure } from "../lib/orchestrator-replacement-telemetry";
 import { applyDocumentTheme } from "../lib/theme";
 import { aoBridge } from "../lib/bridge";
+import { handleModifierLinkClick } from "../lib/external-link-policy";
 import { cn } from "../lib/utils";
 import {
 	isLinuxPlatform,
@@ -133,6 +134,10 @@ function ShellLayout() {
 		? workspaces.flatMap((workspace) => workspace.sessions).find((session) => session.id === routeSearch.tabOwner)
 		: undefined;
 	const tabOwnerSessionId = tabOwnerSession?.id;
+	useEffect(() => {
+		document.addEventListener("click", handleModifierLinkClick);
+		return () => document.removeEventListener("click", handleModifierLinkClick);
+	}, []);
 	// Project in scope for a new-session shortcut: the route's project, or the
 	// workspace owning the open session (so the shortcut works from a worker's
 	// detail view, where the URL carries only a sessionId).
