@@ -77,6 +77,10 @@
 	--color-overlay-subtle: rgb(255 255 255 / 0.018);
 	--color-overlay-faint: rgb(255 255 255 / 0.02);
 	--color-scrollbar: rgb(255 255 255 / 0.12);
+	/* The board lanes need a thumb you can actually spot — at the shared 0.12 it
+	   sat at the border's contrast, so a scrollable lane looked like a full one. */
+	--color-scrollbar-board: rgb(255 255 255 / 0.26);
+	--color-scrollbar-board-hover: rgb(255 255 255 / 0.45);
 	--color-scrim: rgb(0 0 0 / 0.55);
 	--blur-overlay: 1px;
 
@@ -549,6 +553,8 @@
 	--color-overlay-subtle: rgb(0 0 0 / 0.02);
 	--color-overlay-faint: rgb(0 0 0 / 0.03);
 	--color-scrollbar: rgb(0 0 0 / 0.12);
+	--color-scrollbar-board: rgb(0 0 0 / 0.26);
+	--color-scrollbar-board-hover: rgb(0 0 0 / 0.45);
 	--color-scrim: rgb(0 0 0 / 0.45);
 
 	--elevation-sm: 0 1px 0 rgb(0 0 0 / 0.06);
