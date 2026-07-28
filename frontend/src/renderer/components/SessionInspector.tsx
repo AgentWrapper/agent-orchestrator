@@ -1101,10 +1101,11 @@ function ReviewPanel({
 }
 
 function aoReviewMeta(reviewState: PRReviewState): string {
-	if (reviewState.latestRun?.createdAt) {
-		return `#${reviewState.prNumber} · ${formatTimeCompact(reviewState.latestRun.createdAt)}`;
+	const displayRun = reviewState.latestRun ?? reviewState.previousRun;
+	if (displayRun?.createdAt) {
+		return `#${reviewState.prNumber} · ${formatTimeCompact(displayRun.createdAt)}`;
 	}
-	if (reviewVerdict(reviewState).label === "Not run") {
+	if (!displayRun && reviewVerdict(reviewState).label === "Not run") {
 		return `#${reviewState.prNumber} · Not run`;
 	}
 	return `#${reviewState.prNumber}`;

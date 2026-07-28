@@ -785,7 +785,8 @@ describe("SessionInspector reviews tab", () => {
 
 			expect(await screen.findByText(runLabel)).toBeInTheDocument();
 			if (showsPreviousRun) {
-				expect(screen.queryByText("Not run")).not.toBeInTheDocument();
+				expect(screen.queryByText("#3 · Not run")).not.toBeInTheDocument();
+				expect(screen.getByText(/^#3 · /)).toBeInTheDocument();
 				expect(screen.queryByText(/Previous:/)).not.toBeInTheDocument();
 				expect(screen.getByText("Previous review summary with actionable detail.")).toBeInTheDocument();
 				expect(screen.getByRole("link", { name: "View previous review" })).toHaveAttribute(
