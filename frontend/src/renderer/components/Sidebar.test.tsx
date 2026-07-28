@@ -491,6 +491,33 @@ describe("Sidebar", () => {
 		await waitFor(() => expect(onCreateProject).toHaveBeenCalledTimes(1));
 	});
 
+	it("warns before initializing a plain project folder nested inside a parent repo", async () => {
+		const user = userEvent.setup();
+		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;
+		const onInitializeProject = vi.fn().mockResolvedValue(undefined) as InitializeProjectHandler;
+		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/parent/universe");
+		window.ao!.app.scanImportFolder = vi.fn().mockResolvedValue({
+			path: "/repo/parent/universe",
+			repos: [],
+			setupWarning:
+				"Selected folder is inside an existing Git repository at /repo/parent. AO will initialize this folder as a separate repository.",
+		});
+		renderSidebar({ onCreateProject, onInitializeProject });
+
+		await user.click(screen.getByLabelText("New project"));
+		await user.click(screen.getByRole("button", { name: /^Project/i }));
+
+		expect(await screen.findByRole("dialog", { name: "Project agents" })).toBeInTheDocument();
+		expect(screen.getByText(/If this folder needs Git setup/i)).toBeInTheDocument();
+		expect(screen.getByText(/inside an existing Git repository at \/repo\/parent/i)).toBeInTheDocument();
+		expect(onInitializeProject).not.toHaveBeenCalled();
+		expect(onCreateProject).not.toHaveBeenCalled();
+
+		await user.click(screen.getByRole("button", { name: "Create and start" }));
+		await waitFor(() => expect(onInitializeProject).toHaveBeenCalledWith("/repo/parent/universe"));
+		await waitFor(() => expect(onCreateProject).toHaveBeenCalledTimes(1));
+	});
+
 	it("shows repository initialization recovery for git repos with no commits", async () => {
 		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;
 		const onInitializeProject = vi.fn().mockResolvedValue(undefined) as InitializeProjectHandler;
