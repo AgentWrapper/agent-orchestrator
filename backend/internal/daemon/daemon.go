@@ -192,7 +192,11 @@ func Run() error {
 	// behind them. They reuse the same runtime adapter (and therefore the same
 	// terminal mux) as session panes, but keep their own ids, storage, and
 	// lifetime — see internal/service/shellterm.
-	shellTermSvc := startShellTerminals(ctx, cfg, runtimeAdapter, store, projectSvc, log)
+	shellTermSvc := startShellTerminals(ctx, cfg, runtimeAdapter, store, projectSvc, sessionSvc, log)
+	// Late-bound so Kill/Cleanup close a session's scoped shells before its
+	// worktree is torn down (shellTermSvc cannot exist before sessMgr does; see
+	// SetShellTerminalCloser).
+	sessMgr.SetShellTerminalCloser(shellTermSvc)
 	var (
 		usageCollector *usagesvc.Collector
 		usagePipeline  *usagepipeline.Pipeline

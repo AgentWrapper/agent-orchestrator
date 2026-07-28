@@ -205,6 +205,14 @@ var (
 	// this state after path-safety checks, while real preserve failures remain
 	// fatal.
 	ErrWorkspaceStale = errors.New("workspace: stale managed worktree")
+	// ErrWorkspaceLocked reports a registered git worktree whose directory is
+	// missing but whose registration is locked (`git worktree lock`). `git
+	// worktree prune` deliberately leaves a locked registration in place even
+	// when its directory is gone, and `git worktree add`/`remove` at the same
+	// path then fail with an opaque git error. Callers must not treat this as
+	// recoverable on their own; the operator has to unlock or remove the
+	// registration first.
+	ErrWorkspaceLocked = errors.New("workspace: registered worktree is locked")
 	// ErrPreservedConflict is returned by ApplyPreserved when replaying a
 	// preserved ref onto the worktree produces merge conflicts. The ref is
 	// kept intact (never deleted on conflict); the working tree is left with
@@ -214,6 +222,13 @@ var (
 	// ErrRuntimePrerequisite reports a missing host prerequisite for the selected
 	// runtime before a session can be created.
 	ErrRuntimePrerequisite = errors.New("runtime: prerequisite missing")
+	// ErrRuntimeWorkspaceCwdMismatch reports that a runtime session's working
+	// directory never settled on the wanted workspace path after Create's
+	// retried verification (see the tmux adapter's verifyPaneWorkingDirectory).
+	// Wrapping this sentinel lets the session service map it to a typed,
+	// actionable apierr instead of letting it fall through to an opaque 500
+	// with no message (issue #2775).
+	ErrRuntimeWorkspaceCwdMismatch = errors.New("runtime: session working directory mismatch")
 )
 
 // WorkspaceConfig is the spec for creating or restoring a session's workspace.

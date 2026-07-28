@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { TerminalTarget } from "../types/terminal";
 import {
 	readStoredThemePreference,
 	resolveTheme,
@@ -62,6 +63,12 @@ type UiState = {
 	// session view (tabs beside the session's pane) and the standalone terminals
 	// view read it, so whichever one is on screen shows the same shell.
 	activeShellTerminalHandleId: string | null;
+	// Which terminal each mounted session is actually showing. The session pane
+	// renders one terminal at a time, so opening a shell or the reviewer swaps
+	// the agent's terminal off screen even though the route still points at that
+	// session. Surfaces outside the session subtree (the notification runtime)
+	// need that distinction, and SessionView's own target is local state.
+	visibleTerminalKindBySession: Record<string, TerminalTarget["kind"]>;
 	setWorkbenchTab: (tab: WorkbenchTab) => void;
 	setThemePreference: (theme: ThemePreference) => void;
 	setDeveloperMode: (enabled: boolean) => void;
@@ -83,6 +90,8 @@ type UiState = {
 	requestCreateProject: () => void;
 	requestNewShellTerminal: () => void;
 	setActiveShellTerminal: (handleId: string | null) => void;
+	setVisibleTerminalKind: (sessionId: string, kind: TerminalTarget["kind"]) => void;
+	clearVisibleTerminalKind: (sessionId: string) => void;
 };
 
 const sidebarStorageKey = "ao.sidebar.open";
@@ -146,6 +155,7 @@ export const useUiStore = create<UiState>((set) => ({
 	createProjectNonce: 0,
 	newShellTerminalNonce: 0,
 	activeShellTerminalHandleId: null,
+	visibleTerminalKindBySession: {},
 	setWorkbenchTab: (workbenchTab) => set({ workbenchTab }),
 	setThemePreference: (themePreference) => {
 		getLocalStorage()?.setItem(themeStorageKey, themePreference);
@@ -278,6 +288,19 @@ export const useUiStore = create<UiState>((set) => ({
 	requestCreateProject: () => set((state) => ({ createProjectNonce: state.createProjectNonce + 1 })),
 	requestNewShellTerminal: () => set((state) => ({ newShellTerminalNonce: state.newShellTerminalNonce + 1 })),
 	setActiveShellTerminal: (activeShellTerminalHandleId) => set({ activeShellTerminalHandleId }),
+	setVisibleTerminalKind: (sessionId, kind) =>
+		set((state) =>
+			state.visibleTerminalKindBySession[sessionId] === kind
+				? state
+				: { visibleTerminalKindBySession: { ...state.visibleTerminalKindBySession, [sessionId]: kind } },
+		),
+	clearVisibleTerminalKind: (sessionId) =>
+		set((state) => {
+			if (!(sessionId in state.visibleTerminalKindBySession)) return state;
+			const visibleTerminalKindBySession = { ...state.visibleTerminalKindBySession };
+			delete visibleTerminalKindBySession[sessionId];
+			return { visibleTerminalKindBySession };
+		}),
 }));
 
 export function useResolvedTheme(): Theme {

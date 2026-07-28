@@ -28,19 +28,22 @@ import {
 } from "./main/auto-updater";
 import { listFeatureBuilds, getActiveFeatureBuild } from "./main/feature-builds";
 import { readUpdateSettings, type UpdateSettings, type UpdateStatus } from "./main/update-settings";
-import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { readKeybindingOverrides, writeKeybindingOverrides } from "./main/keybinding-settings";
+import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { closeSync, existsSync, openSync } from "node:fs";
-import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { promisify } from "node:util";
 import { type DaemonLaunchSpec, resolveDaemonLaunch } from "./shared/daemon-launch";
 import { createListenPortScanner, defaultRunFilePath, parseRunFile } from "./shared/daemon-discovery";
 import type { DaemonStatus } from "./shared/daemon-status";
 import { attachAppShortcuts } from "./main/app-shortcuts";
-import { KEYBOARD_SHORTCUTS_HELP_CHANNEL } from "./shared/shortcuts";
+import {
+	KEYBOARD_SHORTCUTS_HELP_CHANNEL,
+	type KeybindingOverrides,
+} from "./shared/shortcuts";
 import {
 	type DaemonProbe,
 	expectedDaemonPort,
@@ -58,6 +61,7 @@ import { keepDaemonAlive, shouldLinkOnAttach } from "./main/daemon-owner";
 import { readMigrationState, updateMigration, writeAppStateMarker, type MigrationState } from "./main/app-state";
 import { isAllowedAppExternalURL, openAllowedAppExternalURL } from "./main/external-open";
 import { buildWindowsAppMenuTemplate } from "./main/menu";
+import { scanImportFolder } from "./main/import-folder-scan";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -102,42 +106,10 @@ let daemonStartEpoch = 0;
 let daemonStatus: DaemonStatus = { state: "stopped" };
 let daemonOutput = "";
 let browserViewHost: BrowserViewHost | null = null;
+let keybindingOverrides: KeybindingOverrides = {};
+let keybindingRecordingActive = false;
 // Held for the app lifetime. Dropping it (on any exit) triggers daemon self-stop.
 let supervisorLink: SupervisorLinkHandle | null = null;
-
-const execFileAsync = promisify(execFile);
-
-type GitRepoScanResult = {
-	name: string;
-	path: string;
-	relativePath: string;
-	branch: string;
-	remote: string;
-	hasRemote: boolean;
-	status: "ok" | "error";
-	reason?: string;
-};
-
-type ImportFolderScanResult = {
-	path: string;
-	repos: GitRepoScanResult[];
-};
-
-const IMPORT_SCAN_CONCURRENCY = 8;
-const IMPORT_SCAN_MAX_ENTRIES = 200;
-const IMPORT_SCAN_SKIP_DIRS = new Set([
-	".git",
-	"node_modules",
-	"dist",
-	"build",
-	".cache",
-	".turbo",
-	"target",
-	"coverage",
-	"tmp",
-	"temp",
-	"Library",
-]);
 
 const isDev = !app.isPackaged;
 
@@ -325,7 +297,14 @@ function createWindow(): void {
 	// contents holds focus — the shell renderer, xterm's helper textarea, or a
 	// browser-preview view (wired per-view in the browser host).
 	const isMac = process.platform === "darwin";
-	attachAppShortcuts(mainWindow.webContents, isMac, mainWindow.webContents);
+	attachAppShortcuts(
+		mainWindow.webContents,
+		isMac,
+		mainWindow.webContents,
+		false,
+		() => keybindingOverrides,
+		() => keybindingRecordingActive,
+	);
 
 	browserViewHost = createBrowserViewHost({
 		mainWindow,
@@ -335,6 +314,8 @@ function createWindow(): void {
 		annotatePreloadPath: annotatePreloadPath(),
 		rendererOrigin: RENDERER_ORIGIN,
 		isMac,
+		getKeybindingOverrides: () => keybindingOverrides,
+		isKeybindingRecording: () => keybindingRecordingActive,
 	});
 
 	void mainWindow.loadURL(rendererUrl());
@@ -354,8 +335,15 @@ function createWindow(): void {
 	};
 	mainWindow.on("enter-full-screen", pushFullScreen);
 	mainWindow.on("leave-full-screen", pushFullScreen);
+	mainWindow.on("blur", () => {
+		keybindingRecordingActive = false;
+	});
+	mainWindow.webContents.on("render-process-gone", () => {
+		keybindingRecordingActive = false;
+	});
 
 	mainWindow.on("closed", () => {
+		keybindingRecordingActive = false;
 		browserViewHost?.dispose();
 		browserViewHost = null;
 		mainWindow = null;
@@ -1179,156 +1167,12 @@ async function chooseDirectory(title: string): Promise<string | null> {
 	return result.filePaths[0] ?? null;
 }
 
-async function gitOutput(cwd: string, args: string[]): Promise<string> {
-	const { stdout } = await execFileAsync("git", args, { cwd, env: daemonEnv(), timeout: 5000 });
-	return String(stdout).trim();
-}
-
-async function isGitRepo(repoPath: string): Promise<boolean> {
-	try {
-		const gitInfo = await stat(path.join(repoPath, ".git"));
-		if (!gitInfo.isDirectory()) return false;
-		await gitOutput(repoPath, ["rev-parse", "--show-toplevel"]);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-async function resolveDefaultBranch(repoPath: string): Promise<string> {
-	try {
-		const ref = await gitOutput(repoPath, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]);
-		if (ref) return ref.replace(/^origin\//, "");
-	} catch {
-		// Fall back to the checked-out branch when origin/HEAD is unavailable.
-	}
-	try {
-		const branch = await gitOutput(repoPath, ["branch", "--show-current"]);
-		if (branch) return branch;
-	} catch {
-		// Detached or unreadable HEAD is represented below.
-	}
-	return "HEAD";
-}
-
-async function scanGitRepo(repoPath: string, rootPath: string): Promise<GitRepoScanResult | null> {
-	const relativePath = repoPath === rootPath ? "." : path.relative(rootPath, repoPath);
-	const name = path.basename(repoPath);
-	try {
-		const gitInfo = await stat(path.join(repoPath, ".git"));
-		if (!gitInfo.isDirectory()) {
-			return {
-				name,
-				path: repoPath,
-				relativePath,
-				branch: "HEAD",
-				remote: "",
-				hasRemote: false,
-				status: "error",
-				reason: "Linked worktree children cannot be imported.",
-			};
-		}
-	} catch {
-		try {
-			if ((await gitOutput(repoPath, ["rev-parse", "--is-bare-repository"])) === "true") {
-				return {
-					name,
-					path: repoPath,
-					relativePath,
-					branch: "HEAD",
-					remote: "",
-					hasRemote: false,
-					status: "error",
-					reason: "Bare repositories cannot be imported.",
-				};
-			}
-		} catch {
-			// Not a git repository.
-		}
-		return null;
-	}
-	if (!(await isGitRepo(repoPath))) return null;
-	const [branchResult, remoteResult, bareResult, headResult] = await Promise.allSettled([
-		resolveDefaultBranch(repoPath),
-		gitOutput(repoPath, ["remote", "get-url", "origin"]),
-		gitOutput(repoPath, ["rev-parse", "--is-bare-repository"]),
-		gitOutput(repoPath, ["rev-parse", "--verify", "HEAD"]),
-	]);
-	const validationReason = scanRepoValidationReason(
-		name,
-		branchResult.status === "fulfilled" && branchResult.value ? branchResult.value : "HEAD",
-		remoteResult.status === "fulfilled" && remoteResult.value.length > 0,
-		bareResult.status === "fulfilled" && bareResult.value === "true",
-		headResult.status === "fulfilled",
-	);
-	return {
-		name,
-		path: repoPath,
-		relativePath,
-		branch: branchResult.status === "fulfilled" && branchResult.value ? branchResult.value : "HEAD",
-		remote: remoteResult.status === "fulfilled" ? remoteResult.value : "",
-		hasRemote: remoteResult.status === "fulfilled" && remoteResult.value.length > 0,
-		status: validationReason ? "error" : "ok",
-		reason: validationReason,
-	};
-}
-
-function scanRepoValidationReason(
-	name: string,
-	branch: string,
-	hasRemote: boolean,
-	isBare: boolean,
-	hasHead: boolean,
-): string | undefined {
-	if (name === "__root__") return "Repository name is reserved by AO.";
-	if (isBare) return "Bare repositories cannot be imported.";
-	if (!hasHead) return "Repository must have at least one commit.";
-	if (branch === "HEAD") return "Repository must have a checked-out branch.";
-	if (!hasRemote) return "Origin remote is required.";
-	return undefined;
-}
-
-async function mapLimited<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-	const out = new Array<R>(items.length);
-	let next = 0;
-	await Promise.all(
-		Array.from({ length: Math.min(limit, items.length) }, async () => {
-			for (;;) {
-				const index = next++;
-				if (index >= items.length) return;
-				out[index] = await fn(items[index]);
-			}
-		}),
-	);
-	return out;
-}
-
-async function scanImportFolder(rootPath: string, mode: "project" | "workspace"): Promise<ImportFolderScanResult> {
-	if (mode === "project") {
-		const repo = await scanGitRepo(rootPath, rootPath);
-		return { path: rootPath, repos: repo ? [repo] : [] };
-	}
-
-	const entries = (await readdir(rootPath, { withFileTypes: true }))
-		.filter((entry) => entry.isDirectory() && !IMPORT_SCAN_SKIP_DIRS.has(entry.name))
-		.slice(0, IMPORT_SCAN_MAX_ENTRIES);
-	const repos = await mapLimited(entries, IMPORT_SCAN_CONCURRENCY, (entry) =>
-		scanGitRepo(path.join(rootPath, entry.name), rootPath),
-	);
-	return {
-		path: rootPath,
-		repos: repos
-			.filter((repo): repo is GitRepoScanResult => repo !== null)
-			.sort((a, b) => a.name.localeCompare(b.name)),
-	};
-}
-
 ipcMain.handle("app:chooseDirectory", async (_event, title?: string) => {
 	return chooseDirectory(typeof title === "string" && title.trim() ? title : "Choose a git repository");
 });
 ipcMain.handle("app:scanImportFolder", async (_event, input: { path: string; mode: "project" | "workspace" }) => {
 	await ensureShellEnv();
-	return scanImportFolder(input.path, input.mode);
+	return scanImportFolder(input.path, input.mode, { env: daemonEnv(), homeDir: os.homedir() });
 });
 ipcMain.handle("clipboard:writeText", (_event, text: string) => {
 	clipboard.writeText(text, "clipboard");
@@ -1372,6 +1216,18 @@ ipcMain.handle("updateSettings:set", async (_event, settings: UpdateSettings) =>
 	const runFile = runFilePath();
 	if (!runFile) return;
 	await setUpdateSettings(path.dirname(runFile), settings);
+});
+
+ipcMain.handle("keybindings:get", (): KeybindingOverrides => keybindingOverrides);
+ipcMain.handle("keybindings:set", async (_event, overrides: KeybindingOverrides): Promise<KeybindingOverrides> => {
+	const runFile = runFilePath();
+	if (!runFile) return keybindingOverrides;
+	keybindingOverrides = await writeKeybindingOverrides(path.dirname(runFile), overrides);
+	return keybindingOverrides;
+});
+ipcMain.handle("keybindings:setRecording", (event, active: unknown): void => {
+	if (event.sender !== mainWindow?.webContents || typeof active !== "boolean") return;
+	keybindingRecordingActive = active;
 });
 
 ipcMain.handle("featureBuilds:list", () => listFeatureBuilds());
@@ -1501,6 +1357,11 @@ app.whenReady().then(async () => {
 		await writeAppStateOnLaunch();
 	} catch (err) {
 		console.error("failed to write app-state marker:", err);
+	}
+
+	const keybindingRunFile = runFilePath();
+	if (keybindingRunFile) {
+		keybindingOverrides = await readKeybindingOverrides(path.dirname(keybindingRunFile));
 	}
 
 	registerRendererProtocol();

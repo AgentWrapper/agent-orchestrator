@@ -53,6 +53,7 @@ mise.toml
 .next
 out
 next-env.d.ts
+.source
 
 # Local dev artifacts (track scripts/config; ignore generated workspace artifacts)
 .ao/ports.json

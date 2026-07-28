@@ -87,6 +87,8 @@ vi.mock("./ShellTopbar", () => ({ ShellTopbar: () => null }));
 vi.mock("./CenterPane", () => ({
 	CenterPane: ({
 		shellTerminals = [],
+		onSelectShellTerminal,
+		onSelectSessionTerminal,
 		projectSessions = [],
 		availableProjectSessions = [],
 		onAddProjectSession,
@@ -94,6 +96,8 @@ vi.mock("./CenterPane", () => ({
 		onSelectProjectSession,
 	}: {
 		shellTerminals?: Array<{ handleId: string; title: string }>;
+		onSelectShellTerminal?: (handleId: string) => void;
+		onSelectSessionTerminal?: () => void;
 		projectSessions?: WorkspaceSession[];
 		availableProjectSessions?: WorkspaceSession[];
 		onAddProjectSession?: (session: WorkspaceSession) => void;
@@ -103,6 +107,14 @@ vi.mock("./CenterPane", () => ({
 		<div>
 			terminal center
 			<div data-testid="shell-tabs">{shellTerminals.map((s) => s.title).join(",")}</div>
+			{shellTerminals.map((s) => (
+				<button key={s.handleId} type="button" onClick={() => onSelectShellTerminal?.(s.handleId)}>
+					select {s.title}
+				</button>
+			))}
+			<button type="button" onClick={() => onSelectSessionTerminal?.()}>
+				select agent tab
+			</button>
 			<div data-testid="project-tabs">
 				{projectSessions.map((session) => (
 					<button key={session.id} type="button" onClick={() => onSelectProjectSession?.(session)}>
@@ -330,7 +342,7 @@ describe("SessionView", () => {
 		}
 		workspaceQueryState.data = workspaces;
 		workspaceQueryState.isLoading = false;
-		useUiStore.setState({ inspectorSessions: {}, sessionTabsByOwner: {} });
+		useUiStore.setState({ inspectorSessions: {}, visibleTerminalKindBySession: {}, sessionTabsByOwner: {} });
 		panels.clear();
 		browserDestroy.mockReset();
 		browserViewOptions.current = undefined;
@@ -365,6 +377,35 @@ describe("SessionView", () => {
 		expect(tabs).toHaveTextContent("sess-1-shell");
 		expect(tabs).not.toHaveTextContent("sess-2-shell");
 		expect(tabs).not.toHaveTextContent("loose-shell");
+	});
+
+	// The pane shows one terminal at a time, so selecting a shell takes the
+	// agent's terminal off screen while the route still points at this session.
+	// The notification runtime lives outside this subtree and reads the published
+	// kind to decide whether the user can actually see a needs_input prompt.
+	it("publishes which terminal the session pane is showing", () => {
+		shellTerminalsState.data = [
+			{
+				handleId: "sh-a",
+				sessionId: "sess-1",
+				title: "sess-1-shell",
+				workingDir: "/p",
+				createdAt: "2026-07-24T00:00:00Z",
+			},
+		];
+		const view = render(<SessionView sessionId="sess-1" />);
+		expect(useUiStore.getState().visibleTerminalKindBySession["sess-1"]).toBe("worker");
+
+		fireEvent.click(screen.getByRole("button", { name: "select sess-1-shell" }));
+		expect(useUiStore.getState().visibleTerminalKindBySession["sess-1"]).toBe("shell");
+
+		fireEvent.click(screen.getByRole("button", { name: "select agent tab" }));
+		expect(useUiStore.getState().visibleTerminalKindBySession["sess-1"]).toBe("worker");
+
+		// Leaving the session drops the entry rather than leaving a stale "worker"
+		// behind for a pane that is no longer mounted.
+		view.unmount();
+		expect(useUiStore.getState().visibleTerminalKindBySession["sess-1"]).toBeUndefined();
 	});
 
 	it("starts with only the owner tab and pins another worker through the add menu", () => {
@@ -496,7 +537,7 @@ describe("SessionView", () => {
 		expect(handle.expand).not.toHaveBeenCalled();
 		expect(handle.collapse).not.toHaveBeenCalled();
 
-		fireEvent.keyDown(window, { key: "B", metaKey: true, shiftKey: true });
+		fireEvent.keyDown(window, { key: "B", ctrlKey: true, shiftKey: true });
 
 		expect(inspectorOpen("sess-1")).toBe(false);
 		expect(handle.collapse).toHaveBeenCalledTimes(1);
@@ -515,7 +556,7 @@ describe("SessionView", () => {
 		expect(handle.expand).not.toHaveBeenCalled();
 		expect(handle.collapse).not.toHaveBeenCalled();
 
-		fireEvent.keyDown(window, { key: "B", metaKey: true, shiftKey: true });
+		fireEvent.keyDown(window, { key: "B", ctrlKey: true, shiftKey: true });
 
 		expect(inspectorOpen("sess-1")).toBe(true);
 		expect(handle.expand).toHaveBeenCalledTimes(1);
@@ -527,7 +568,7 @@ describe("SessionView", () => {
 		render(<SessionView sessionId="sess-1" />);
 		const handle = panels.get("inspector")!.handle;
 
-		fireEvent.keyDown(window, { key: "B", metaKey: true, shiftKey: true });
+		fireEvent.keyDown(window, { key: "B", ctrlKey: true, shiftKey: true });
 		expect(inspectorOpen("sess-1")).toBe(false);
 		expect(handle.collapse).toHaveBeenCalledTimes(1);
 
@@ -632,7 +673,7 @@ describe("SessionView", () => {
 		expect(panelSizes("inspector")[0]).toBe("0%");
 		expect(handle.collapse).not.toHaveBeenCalled();
 
-		fireEvent.keyDown(window, { key: "B", metaKey: true, shiftKey: true });
+		fireEvent.keyDown(window, { key: "B", ctrlKey: true, shiftKey: true });
 
 		expect(inspectorOpen("sess-2")).toBe(true);
 		expect(handle.expand).toHaveBeenCalledTimes(1);

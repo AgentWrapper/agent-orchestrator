@@ -212,7 +212,7 @@
 	--size-control-board: 36px;
 	--size-table-head: var(--space-10);
 	--size-toolbar: 56px;
-	--size-inspector-tabs: 42px;
+	--size-inspector-tabs: 48px;
 	--size-row-md: 52px;
 	--size-browser-url: 29px;
 	--size-browser-min: 320px;
@@ -235,7 +235,7 @@
 		var(--size-titlebar-cluster-left-linux) + var(--size-titlebar-cluster-width) + var(--size-titlebar-content-gap)
 	);
 	/* Clears the macOS traffic-light row used by the fixed titlebar controls. */
-	--size-traffic-light-clearance: 36px;
+	--size-traffic-light-clearance: 44px;
 	--size-traffic-light-clearance-fullscreen: var(--space-2);
 	--size-resize-handle: 7px;
 	--size-resize-handle-offset: 3px;
@@ -244,6 +244,8 @@
 	--size-notification-width: 460px;
 	--size-notification-max-height: 420px;
 	--size-select-menu-max: 320px; /* agent/select dropdown scroll cap (was max-h-80) */
+	--size-settings-menu-width: 18rem; /* settings option menus — max width cap */
+	--size-settings-agent-menu-min-width: 20rem; /* agent harness picker — wider rows */
 	--size-notification-icon: 26px;
 	/* DaemonFailureBanner floating toast (was w-[min(22rem,…)] / max-h-40). */
 	--size-daemon-failure-toast: 22rem;
@@ -348,6 +350,15 @@
 	--size-settings-section-inner-gap: 12px;
 	--size-settings-row-padding: 16px;
 	--size-settings-row-icon-gap: 12px;
+	--size-settings-menu-min-width: 11rem;
+	--size-settings-inline-input-min: 3.5rem;
+	--size-settings-inline-input-max: 12rem;
+	--size-settings-inline-input-max-percent: 42%;
+	--size-settings-inline-input-height: 28px;
+	--size-settings-row-value-max: 20rem;
+	--size-settings-row-value-max-percent: 55%;
+	--size-settings-footer-button-padding-x: 20px;
+	--color-settings-footer-button-primary-fg: #ffffff;
 	--size-settings-dialog: 575px;
 	--size-settings-dialog-max-h: 680px;
 	--color-border-settings-dialog: #2d2d34;

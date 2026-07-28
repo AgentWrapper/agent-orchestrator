@@ -5,6 +5,7 @@ import { DelegationDemo } from "./components/DelegationDemo/DelegationDemo";
 import { FeedbackLoopDemo } from "./components/FeedbackLoopDemo/FeedbackLoopDemo";
 import { FleetBoardDemo } from "./components/FleetBoardDemo/FleetBoardDemo";
 import { HarnessCoverageDemo } from "./components/HarnessCoverageDemo/HarnessCoverageDemo";
+import { MobileAppDemo } from "./components/MobileAppDemo/MobileAppDemo";
 import { FEATURES } from "./constants";
 
 const DEMO_COMPONENTS = [
@@ -12,6 +13,7 @@ const DEMO_COMPONENTS = [
 	FleetBoardDemo,
 	FeedbackLoopDemo,
 	HarnessCoverageDemo,
+	MobileAppDemo,
 ];
 
 const FEATURE_BACKGROUNDS = [
@@ -19,6 +21,7 @@ const FEATURE_BACKGROUNDS = [
 	"/feature.png",
 	"/feature4.png",
 	"/feature2.png",
+	"/feature3.png",
 ] as const;
 
 export function FeaturesSection() {
@@ -45,12 +48,12 @@ export function FeaturesSection() {
 										<span className="text-sm font-mono text-muted-foreground tracking-[0.5px]">
 											{feature.tag}
 										</span>
-										<h3 className="text-2xl sm:text-3xl lg:text-4xl font-medium tracking-[-0.5px] text-foreground">
+										<h3 className="text-balance text-2xl sm:text-3xl lg:text-4xl font-medium tracking-[-0.5px] text-foreground">
 											{feature.title}
 										</h3>
 									</div>
 									<p
-										className={`text-base sm:text-lg text-muted-foreground leading-relaxed max-w-[500px] ${isReversed ? "xl:ml-auto" : ""}`}
+										className={`max-w-[500px] text-pretty text-base sm:text-lg text-muted-foreground leading-relaxed ${isReversed ? "xl:ml-auto" : ""}`}
 									>
 										{feature.description}
 									</p>
