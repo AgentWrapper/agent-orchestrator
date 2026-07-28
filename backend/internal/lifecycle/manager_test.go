@@ -2275,6 +2275,114 @@ func TestDispatch_DeliversAtMostOnePerCycleAndDrainsOnReturnToIdle(t *testing.T)
 	}
 }
 
+func TestActivity_WorkerReportedOncePerEpisode(t *testing.T) {
+	m, st, msg := newManager()
+	now := time.Now()
+	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
+	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
+
+	// First completion is reported once.
+	if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle, Timestamp: now}); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("first idle nudges = %d, want 1", len(msg.msgs))
+	}
+
+	// A re-idle with no intervening needs-input (e.g. an auto-mode turn boundary
+	// or an orchestrator poke) must NOT produce a second nudge.
+	if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityActive, Timestamp: now.Add(time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle, Timestamp: now.Add(2 * time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("re-idle nudges = %d, want 1 (report-once per episode)", len(msg.msgs))
+	}
+	if pending, _ := st.ListPendingWorkerIdleEvents(ctx); len(pending) != 0 {
+		t.Fatalf("pending after re-idle = %d, want 0 (no new event enqueued)", len(pending))
+	}
+}
+
+func TestActivity_WorkerReReportsAfterNeedsInput(t *testing.T) {
+	m, st, msg := newManager()
+	now := time.Now()
+	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
+	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
+
+	// Completion #1 reported.
+	if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle, Timestamp: now}); err != nil {
+		t.Fatal(err)
+	}
+	// The worker enters a real needs-input state: a fresh episode that reopens
+	// reporting for its next completion.
+	if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityWaitingInput, Timestamp: now.Add(time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityActive, Timestamp: now.Add(2 * time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	// Completion #2 is reportable again.
+	if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle, Timestamp: now.Add(3 * time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 2 {
+		t.Fatalf("nudges = %d, want 2 (re-armed after needs-input)", len(msg.msgs))
+	}
+}
+
+func TestDispatch_DrainsTerminatedWorkerWithoutNudge(t *testing.T) {
+	st := newFakeStore()
+	now := time.Now()
+	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
+	// The worker was killed after the event was enqueued: nothing to inspect.
+	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, IsTerminated: true, Activity: domain.Activity{State: domain.ActivityExited, LastActivityAt: now}}
+	st.idleEvents = []domain.WorkerIdleEvent{{ID: "wie_1", ProjectID: "mer", WorkerID: "mer-8", TransitionAt: now, CreatedAt: now}}
+	msg := &fakeMessenger{}
+	m := New(st, msg)
+
+	m.DispatchPendingWorkerIdleEvents(ctx, "mer")
+	if len(msg.msgs) != 0 {
+		t.Fatalf("nudged for a terminated worker: %d, want 0", len(msg.msgs))
+	}
+	if pending, _ := st.ListPendingWorkerIdleEvents(ctx); len(pending) != 0 {
+		t.Fatalf("stale event not drained: pending = %d, want 0", len(pending))
+	}
+}
+
+func TestDispatch_OpenPRDrainsMergedPRStillNudges(t *testing.T) {
+	st := newFakeStore()
+	now := time.Now()
+	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
+	// mer-8 has an open PR (work already in review): nudge is noise, drain it.
+	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
+	st.prs["mer-8"] = []domain.PullRequest{{URL: "pr-open"}}
+	// mer-9's only PR is merged: its idle is still a real completion to report.
+	st.sessions["mer-9"] = domain.SessionRecord{ID: "mer-9", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
+	st.prs["mer-9"] = []domain.PullRequest{{URL: "pr-merged", Merged: true}}
+	st.idleEvents = []domain.WorkerIdleEvent{
+		{ID: "wie_8", ProjectID: "mer", WorkerID: "mer-8", TransitionAt: now, CreatedAt: now},
+		{ID: "wie_9", ProjectID: "mer", WorkerID: "mer-9", TransitionAt: now.Add(time.Second), CreatedAt: now.Add(time.Second)},
+	}
+	msg := &fakeMessenger{}
+	m := New(st, msg)
+
+	// Cycle 1 drains the open-PR worker without sending.
+	m.DispatchPendingWorkerIdleEvents(ctx, "mer")
+	if len(msg.msgs) != 0 {
+		t.Fatalf("nudged for an open-PR worker: %d, want 0", len(msg.msgs))
+	}
+	// Cycle 2 delivers the merged-PR worker's completion.
+	m.DispatchPendingWorkerIdleEvents(ctx, "mer")
+	if len(msg.msgs) != 1 || !strings.Contains(msg.msgs[0], "mer-9") {
+		t.Fatalf("merged-PR worker not nudged: msgs = %v", msg.msgs)
+	}
+	if pending, _ := st.ListPendingWorkerIdleEvents(ctx); len(pending) != 0 {
+		t.Fatalf("events not fully processed: pending = %d, want 0", len(pending))
+	}
+}
+
 func TestDispatch_UnsettledOrchestratorRetainsUntilFirstSignal(t *testing.T) {
 	st := newFakeStore()
 	now := time.Now()

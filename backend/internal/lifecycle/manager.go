@@ -108,6 +108,17 @@ type Manager struct {
 	// This coordination is intentionally memory-only: a daemon crash leaves the
 	// durable session exited, so the user can safely retry the resume.
 	pendingLaunches map[domain.SessionID]pendingLaunch
+	// reportedIdle holds the workers already reported to the orchestrator for
+	// their current attention episode. A worker is reported at most once per
+	// episode: an active->idle transition enqueues a nudge only when the worker
+	// is absent from this set. The set is cleared when the worker enters a real
+	// needs-input state (a fresh "I need you" that reopens reporting), on
+	// spawn/restore, and on termination. This collapses the duplicate nudges and
+	// the poke-induced re-arms (an idle caused by an inbound message never passes
+	// through needs_input, so it stays suppressed). In-memory by design: a daemon
+	// restart forgets it and at worst allows one extra nudge — fail-safe, never a
+	// lost completion, matching the flights map's philosophy. Guarded by mu.
+	reportedIdle map[domain.SessionID]struct{}
 	// steerActive reports whether a harness can safely receive a write during an
 	// active turn (input steers the run) rather than only while idle. Supplied by
 	// the agent adapter via WithActiveSteering; the default answers false, so an
@@ -133,6 +144,7 @@ func New(store sessionStore, messenger ports.AgentMessenger, opts ...Option) *Ma
 		react:           newReactionState(),
 		flights:         map[domain.SessionID]*toolFlight{},
 		pendingLaunches: map[domain.SessionID]pendingLaunch{},
+		reportedIdle:    map[domain.SessionID]struct{}{},
 		steerActive:     func(domain.AgentHarness) bool { return false },
 	}
 	if messenger != nil {
@@ -246,6 +258,7 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 		// (later observations return early on cur.IsTerminated). Runs under
 		// m.mu — mutate holds it across this callback.
 		delete(m.flights, id)
+		delete(m.reportedIdle, id)
 		return next, true
 	})
 }
@@ -287,6 +300,7 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	now := m.clock()
 	if rec.IsTerminated {
 		delete(m.flights, id)
+		delete(m.reportedIdle, id)
 		m.mu.Unlock()
 		return nil
 	}
@@ -366,15 +380,24 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	next.UpdatedAt = now
 	// A worker's active->idle transition creates a durable worker_idle event in
 	// the same write as the activity change, so a crash can't persist the idle
-	// state while losing the pending delivery.
+	// state while losing the pending delivery. It is enqueued at most once per
+	// attention episode (see reportedIdle): re-idles and poke-induced idles are
+	// suppressed, and a worker entering a real needs-input state reopens
+	// reporting for its next completion.
 	var idleEvent *domain.WorkerIdleEvent
-	if crossedToIdle(prevState, next) {
-		idleEvent = &domain.WorkerIdleEvent{
-			ID:           uuid.NewString(),
-			ProjectID:    next.ProjectID,
-			WorkerID:     next.ID,
-			TransitionAt: next.Activity.LastActivityAt,
-			CreatedAt:    now,
+	switch {
+	case next.Kind == domain.KindWorker && !prevState.NeedsInput() && next.Activity.State.NeedsInput():
+		delete(m.reportedIdle, id)
+	case crossedToIdle(prevState, next):
+		if _, reported := m.reportedIdle[id]; !reported {
+			idleEvent = &domain.WorkerIdleEvent{
+				ID:           uuid.NewString(),
+				ProjectID:    next.ProjectID,
+				WorkerID:     next.ID,
+				TransitionAt: next.Activity.LastActivityAt,
+				CreatedAt:    now,
+			}
+			m.reportedIdle[id] = struct{}{}
 		}
 	}
 	if err := m.persistActivity(ctx, next, idleEvent); err != nil {
@@ -494,6 +517,20 @@ func (m *Manager) DispatchPendingWorkerIdleEvents(ctx context.Context, project d
 		return
 	}
 	ev := events[0]
+	// Re-check the worker at delivery time, not just at enqueue. A completion
+	// enqueued minutes ago is stale if the worker has since been killed (no one
+	// to inspect) or opened a PR (its work is already in review and visible to
+	// the orchestrator). In both cases the nudge is noise, so drain the event
+	// without sending rather than leave it pending to retry forever.
+	if worker, ok, err := m.store.GetSession(ctx, ev.WorkerID); err != nil {
+		slog.Default().Error("lifecycle: read worker for idle delivery", "worker", ev.WorkerID, "err", err)
+		return
+	} else if !ok || worker.IsTerminated || m.workerHasOpenPR(ctx, ev.WorkerID) {
+		if err := m.store.MarkWorkerIdleEventDelivered(ctx, ev.ID, m.clock()); err != nil {
+			slog.Default().Error("lifecycle: drain stale worker idle", "event", ev.ID, "err", err)
+		}
+		return
+	}
 	outcome, err := m.guard.NudgeCoordination(ctx, orch.ID, m.workerIdleNudgeMessage(ctx, ev.WorkerID), m.steerActive)
 	if err != nil {
 		slog.Default().Error("lifecycle: deliver worker idle", "worker", ev.WorkerID, "orchestrator", orch.ID, "err", err)
@@ -567,6 +604,25 @@ func (m *Manager) liveOrchestrator(ctx context.Context, project domain.ProjectID
 		}
 	}
 	return domain.SessionRecord{}, false, nil
+}
+
+// workerHasOpenPR reports whether the worker owns a pull request that is
+// neither merged nor closed. Such a worker's output is already in review and
+// visible to the orchestrator, so an "it went idle" nudge adds nothing. A read
+// error is treated as "no open PR" — failing open here only risks one extra
+// nudge, never a suppressed real signal.
+func (m *Manager) workerHasOpenPR(ctx context.Context, worker domain.SessionID) bool {
+	prs, err := m.store.ListPRsBySession(ctx, worker)
+	if err != nil {
+		slog.Default().Warn("lifecycle: list worker PRs for idle delivery", "worker", worker, "err", err)
+		return false
+	}
+	for _, pr := range prs {
+		if !pr.Merged && !pr.Closed {
+			return true
+		}
+	}
+	return false
 }
 
 // workerIdleNudgeMessage tells the orchestrator to inspect the worker with a
@@ -813,6 +869,9 @@ func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, metadata
 	rec.FirstSignalAt = time.Time{}
 	rec.Metadata = mergeMetadata(rec.Metadata, metadata)
 	rec.UpdatedAt = now
+	// A fresh spawn/restore is a new attention episode: its first completion is
+	// reportable again even if a prior episode already reported this id.
+	delete(m.reportedIdle, id)
 	return m.store.UpdateSession(ctx, rec)
 }
 
@@ -825,6 +884,7 @@ func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error
 		cur.IsTerminated = true
 		cur.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: now}
 		delete(m.flights, id) // runs under m.mu (mutate holds it)
+		delete(m.reportedIdle, id)
 		return cur, true
 	})
 }
