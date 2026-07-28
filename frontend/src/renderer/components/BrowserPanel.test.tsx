@@ -210,20 +210,6 @@ describe("BrowserPanel", () => {
 		}
 	});
 
-	it("supports responsive, tablet, and mobile preview widths", async () => {
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
-		const viewport = screen.getByTestId("browser-viewport");
-		const selector = screen.getByRole("combobox", { name: /viewport/i });
-
-		expect(viewport).not.toHaveStyle({ maxWidth: "390px" });
-		await userEvent.selectOptions(selector, "mobile");
-		expect(viewport).toHaveStyle({ maxWidth: "390px" });
-		await userEvent.selectOptions(selector, "tablet");
-		expect(viewport).toHaveStyle({ maxWidth: "768px" });
-		await userEvent.selectOptions(selector, "responsive");
-		expect(viewport.style.maxWidth).toBe("");
-	});
-
 	it("shows empty and error states", () => {
 		hookState.navState = { ...hookState.navState, error: "Connection refused" };
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);

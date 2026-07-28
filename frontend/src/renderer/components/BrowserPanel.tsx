@@ -26,13 +26,6 @@ type BrowserPanelProps = {
 };
 
 type AnnotationStatus = "idle" | "picking" | "queued" | "sending" | "sent" | "error";
-type BrowserViewport = "responsive" | "tablet" | "mobile";
-
-const browserViewportWidths: Record<BrowserViewport, number | undefined> = {
-	responsive: undefined,
-	tablet: 768,
-	mobile: 390,
-};
 
 export type BrowserAnnotationQueueModel = {
 	status: AnnotationStatus;
@@ -217,7 +210,6 @@ export function BrowserPanelView({
 		setAnnotationMode,
 	} = browserView;
 	const [urlInput, setUrlInput] = useState(navState.url);
-	const [viewport, setViewport] = useState<BrowserViewport>("responsive");
 	const { beginPicking, cancelPicking, enqueue, error, failPicking, queuedCount, retryQueued, status } =
 		annotationQueue;
 	const showStaticPreview = !window.ao?.browser && navState.url !== "";
@@ -379,16 +371,6 @@ export function BrowserPanelView({
 						value={urlInput}
 					/>
 				</div>
-				<select
-					aria-label="Viewport"
-					className="h-8 rounded-md border border-border bg-background px-1.5 font-mono text-xs text-foreground"
-					onChange={(event) => setViewport(event.target.value as BrowserViewport)}
-					value={viewport}
-				>
-					<option value="responsive">Responsive</option>
-					<option value="tablet">Tablet · 768</option>
-					<option value="mobile">Mobile · 390</option>
-				</select>
 				<Button
 					aria-label="Open externally"
 					disabled={!navState.url}
@@ -413,12 +395,8 @@ export function BrowserPanelView({
 					)}
 				</Button>
 			</form>
-			<div className="flex min-h-0 flex-1 justify-center overflow-hidden bg-surface">
-				<div
-					className="relative h-full w-full min-w-0 overflow-hidden bg-background"
-					data-testid="browser-viewport"
-					style={{ maxWidth: browserViewportWidths[viewport] }}
-				>
+			<div className="flex min-h-0 flex-1 overflow-hidden bg-surface">
+				<div className="relative h-full w-full min-w-0 overflow-hidden bg-background">
 					<div className="absolute inset-0 min-h-px min-w-px" ref={slotRef} />
 					{mirrorStream ? (
 						<MirrorVideo stream={mirrorStream} />
