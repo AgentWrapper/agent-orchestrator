@@ -38,7 +38,6 @@ import { Switch } from "./ui/switch";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
-type SessionPRReviewEntry = components["schemas"]["SessionPRReviewEntry"];
 type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
 type OpenReviewerTerminal = (target: { handleId: string; harness: string }) => void;
 
@@ -768,10 +767,6 @@ function ReviewsView({
 		},
 	});
 	const reviewStates = reviewsQuery.data?.reviews ?? [];
-	const scmSummary = useSessionScmSummary(hasPr ? session.id : undefined);
-	const prReviewSummaries = sessionPRDisplaySummaries(session, scmSummary.data).filter(
-		(pr) => pr.state === "open" && (pr.review.reviews?.length ?? 0) > 0,
-	);
 
 	return (
 		<div role="tabpanel">
@@ -792,36 +787,12 @@ function ReviewsView({
 					session={session}
 				/>
 			</Section>
-			{prReviewSummaries.length > 0 ? <PullRequestReviewsSection prs={prReviewSummaries} /> : null}
 		</div>
 	);
 }
 
-function PullRequestReviewsSection({ prs }: { prs: SessionPRSummary[] }) {
-	return (
-		<Section surface title="Pull request reviews">
-			<div className="flex flex-col divide-y divide-border">
-				{prs.map((pr, index) => (
-					<ReviewDisclosure
-						key={pr.url}
-						defaultOpen={index === 0}
-						meta={`#${pr.number} · ${formatTimeCompact(pr.updatedAt)}`}
-						title={pr.title?.trim() || `PR #${pr.number}`}
-					>
-						{(pr.review.reviews ?? []).map((entry, entryIndex) => (
-							<PullRequestReviewRow entry={entry} key={`${entry.reviewerId}-${entryIndex}`} />
-						))}
-					</ReviewDisclosure>
-				))}
-			</div>
-		</Section>
-	);
-}
-
-/**
- * One expandable PR row shared by both reviews sections. The header carries PR
- * identity + update context only; verdicts live in the expanded rows below.
- */
+// One expandable PR row for AO review state. The header carries PR identity and
+// update context; verdicts live in the expanded row below.
 function ReviewDisclosure({
 	title,
 	meta,
@@ -853,48 +824,6 @@ function ReviewDisclosure({
 			{open ? <div className="ml-2 mt-2.5 flex flex-col gap-4 border-l border-border/60 pl-3.5">{children}</div> : null}
 		</div>
 	);
-}
-
-function PullRequestReviewRow({ entry }: { entry: SessionPRReviewEntry }) {
-	const verdict = prReviewVerdict(entry.verdict);
-	const body = entry.body?.trim();
-	const name = entry.isBot ? `${entry.reviewerId} · bot` : entry.reviewerId;
-	return (
-		<div className="min-w-0">
-			<div className="flex items-center gap-2">
-				{entry.reviewUrl ? (
-					<a
-						className="min-w-0 truncate text-xs font-medium text-foreground no-underline hover:underline"
-						href={entry.reviewUrl}
-						target="_blank"
-						rel="noopener noreferrer"
-					>
-						{name}
-					</a>
-				) : (
-					<span className="min-w-0 truncate text-xs font-medium text-foreground">{name}</span>
-				)}
-				<VerdictBadge label={verdict.label} tone={verdict.tone} />
-			</div>
-			{body ? <p className="mt-1 line-clamp-1 text-2xs leading-relaxed text-passive">{body}</p> : null}
-		</div>
-	);
-}
-
-function prReviewVerdict(verdict: SessionPRReviewEntry["verdict"]): {
-	label: string;
-	tone: "neutral" | "success" | "danger";
-} {
-	switch (verdict) {
-		case "approved":
-			return { label: "Approved", tone: "success" };
-		case "changes_requested":
-			return { label: "Changes requested", tone: "danger" };
-		case "review_required":
-			return { label: "Review required", tone: "neutral" };
-		default:
-			return { label: "Commented", tone: "neutral" };
-	}
 }
 
 function projectConfig(project: components["schemas"]["ProjectOrDegraded"] | undefined): ProjectConfig | undefined {
@@ -1016,8 +945,6 @@ function ReviewPanel({
 	const harness = latest?.harness || config?.reviewers?.[0]?.harness || "claude-code";
 	const terminalEnabled = Boolean(reviewerHandleId && onOpenTerminal);
 	const reviewRunning = openReviewStates.some((reviewState) => reviewState.status === "running");
-	// The reviewer terminal only exists once a review has actually run (or is
-	// running), so keep the button out of the footer until then.
 	const reviewHasRun = reviewRunning || Boolean(latest);
 	const runAction = reviewSessionRunAction(openReviewStates, isTriggering);
 	const openReviewerTerminal = () => {
@@ -1044,7 +971,6 @@ function ReviewPanel({
 			<p className={cn(inspectorEmptyClass, "inline-flex min-w-0 items-center gap-1.5")}>
 				<ReviewerHarnessIcon className="size-icon-sm shrink-0 text-passive" harness={harness} />
 				<span className="truncate font-mono font-medium text-foreground">{harness}</span>
-				<span className="shrink-0">reviewer</span>
 			</p>
 			<div className="flex flex-col divide-y divide-border">
 				{openReviewStates.length === 0 ? (
@@ -1054,11 +980,7 @@ function ReviewPanel({
 						<ReviewDisclosure
 							key={`${reviewState.prUrl}:${reviewState.targetSha}`}
 							defaultOpen={index === 0}
-							meta={
-								reviewState.latestRun?.createdAt
-									? `#${reviewState.prNumber} · ${formatTimeCompact(reviewState.latestRun.createdAt)}`
-									: `#${reviewState.prNumber}`
-							}
+							meta={aoReviewMeta(reviewState)}
 							title={reviewState.title?.trim() || `PR #${reviewState.prNumber}`}
 						>
 							<AoReviewRow reviewState={reviewState} />
@@ -1096,20 +1018,27 @@ function ReviewPanel({
 	);
 }
 
+function aoReviewMeta(reviewState: PRReviewState): string {
+	const displayRun = reviewState.latestRun ?? reviewState.previousRun;
+	if (displayRun?.createdAt) {
+		return `#${reviewState.prNumber} · ${formatTimeCompact(displayRun.createdAt)}`;
+	}
+	if (!displayRun && reviewVerdict(reviewState).label === "Not run") {
+		return `#${reviewState.prNumber} · Not run`;
+	}
+	return `#${reviewState.prNumber}`;
+}
+
 function AoReviewRow({ reviewState }: { reviewState: PRReviewState }) {
-	const verdict = reviewVerdict(reviewState);
-	const previousVerdict = previousReviewVerdict(reviewState);
-	const summary = reviewState.latestRun?.body?.trim();
-	const reviewUrl = aoReviewCommentUrl(reviewState.latestRun);
+	const displayRun = reviewState.latestRun ?? reviewState.previousRun;
+	const verdict = displayRun ? runReviewVerdict(displayRun) : reviewVerdict(reviewState);
+	const summary = displayRun?.body?.trim();
+	const reviewUrl = aoReviewCommentUrl(displayRun);
+	const reviewLinkLabel = reviewState.latestRun ? "View review" : "View previous review";
 	return (
 		<div className={cn("flex min-w-0 flex-col gap-2", reviewState.status === "ineligible" && "opacity-70")}>
 			<VerdictBadge label={verdict.label} tone={verdict.tone} />
-			{summary ? <p className="line-clamp-2 text-2xs leading-relaxed text-passive">{summary}</p> : null}
-			{previousVerdict ? (
-				<p className={cn("text-2xs font-medium", reviewerVerdictTone[previousVerdict.tone])}>
-					Previous: {previousVerdict.label}
-				</p>
-			) : null}
+			{summary ? <p className="whitespace-pre-wrap break-words text-2xs leading-relaxed text-passive">{summary}</p> : null}
 			{reviewUrl ? (
 				<a
 					className="inline-flex items-center gap-0.5 self-start text-2xs font-medium text-passive no-underline transition-colors hover:text-foreground"
@@ -1117,12 +1046,35 @@ function AoReviewRow({ reviewState }: { reviewState: PRReviewState }) {
 					target="_blank"
 					rel="noopener noreferrer"
 				>
-					View review
+					{reviewLinkLabel}
 					<ArrowUpRight aria-hidden="true" className="size-3 shrink-0" />
 				</a>
 			) : null}
 		</div>
 	);
+}
+
+function runReviewVerdict(run: NonNullable<PRReviewState["latestRun"]>): {
+	label: string;
+	tone: "neutral" | "running" | "success" | "danger";
+} {
+	if (run.status === "failed") {
+		return { label: "Failed", tone: "danger" };
+	}
+	if (run.status === "cancelled") {
+		return { label: "Cancelled", tone: "neutral" };
+	}
+	if (run.status === "running") {
+		return { label: "Reviewing...", tone: "running" };
+	}
+	switch (run.verdict) {
+		case "approved":
+			return { label: "Approved", tone: "success" };
+		case "changes_requested":
+			return { label: "Changes requested", tone: "danger" };
+		default:
+			return { label: "Not run", tone: "neutral" };
+	}
 }
 
 // GitHub anchors a posted review at #pullrequestreview-<id> on the PR page; we
@@ -1154,21 +1106,6 @@ function reviewVerdict(reviewState: PRReviewState): {
 			return { label: "Not run", tone: "neutral" };
 	}
 	return { label: "Not run", tone: "neutral" };
-}
-
-function previousReviewVerdict(reviewState: PRReviewState): {
-	label: string;
-	tone: "success" | "danger";
-} | null {
-	if (reviewState.status !== "needs_review" && reviewState.status !== "running") return null;
-	switch (reviewState.previousRun?.verdict) {
-		case "approved":
-			return { label: "Approved", tone: "success" };
-		case "changes_requested":
-			return { label: "Changes requested", tone: "danger" };
-		default:
-			return null;
-	}
 }
 
 function reviewSessionRunAction(reviewStates: PRReviewState[], isTriggering: boolean): string {
