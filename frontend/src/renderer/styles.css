@@ -336,6 +336,18 @@
 	background-color: color-mix(in srgb, var(--color-bg-primary) 35%, transparent);
 }
 
+/* Single-colour agent marks (see lib/agent-logos.ts). The asset supplies only a
+   silhouette, so it is painted with currentColor through a mask instead of being
+   drawn directly — a black mark stays legible on the dark board and a white one
+   on the light board, with no per-theme asset. The mask URL is the only thing
+   the component sets inline. */
+@utility agent-mark-mono {
+	background-color: currentColor;
+	mask-position: center;
+	mask-repeat: no-repeat;
+	mask-size: contain;
+}
+
 @utility bg-settings-dialog {
 	background-color: var(--color-bg-settings-dialog);
 }
