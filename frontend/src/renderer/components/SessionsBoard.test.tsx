@@ -621,7 +621,8 @@ describe("SessionsBoard", () => {
 		expect(screen.getByText("github:INT-17")).toBeInTheDocument();
 		const prStatus = screen.getByLabelText("#42 merged");
 		expect(prStatus).toHaveTextContent("PR#42merged");
-		const divider = terminatedCard!.querySelector(".mx-3.my-px.h-px.bg-border");
+		// Archive cards now use the board card's divider inset.
+		const divider = terminatedCard!.querySelector(".mx-3\\.5.my-px.h-px.bg-border");
 		expect(divider).not.toBeNull();
 		expect(divider!.compareDocumentPosition(prStatus) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
 		expect(
