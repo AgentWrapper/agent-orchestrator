@@ -13,7 +13,7 @@
   ],
   "dependencies": {
     "@paper-design/shaders-react": "workspace:*",
-    "@sentry/nextjs": "10.46.0",
+    "@sentry/nextjs": "10.68.0",
     "@ao/auth": "workspace:*",
     "@ao/email": "workspace:*",
     "@ao/shared": "workspace:*",
