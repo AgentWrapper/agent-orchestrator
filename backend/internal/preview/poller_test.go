@@ -153,6 +153,37 @@ func TestPollerRefreshesWhenStaticPreviewAssetChanges(t *testing.T) {
 	}
 }
 
+func TestPollerRefreshesWhenMarkdownPreviewChanges(t *testing.T) {
+	for _, extension := range []string{".md", ".markdown"} {
+		t.Run(extension, func(t *testing.T) {
+			workspace := t.TempDir()
+			entry := filepath.Join(workspace, "notes"+extension)
+			writeFile(t, entry, "# Version one")
+			svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "")}}
+			poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
+
+			if err := poller.Poll(context.Background()); err != nil {
+				t.Fatalf("first Poll: %v", err)
+			}
+			writeFile(t, entry, "# Version two")
+			nextMod := time.Now().Add(2 * time.Second)
+			if err := os.Chtimes(entry, nextMod, nextMod); err != nil {
+				t.Fatalf("chtimes markdown: %v", err)
+			}
+			if err := poller.Poll(context.Background()); err != nil {
+				t.Fatalf("second Poll: %v", err)
+			}
+
+			if len(svc.sets) != 2 {
+				t.Fatalf("sets after markdown change = %#v, want preview refresh", svc.sets)
+			}
+			if svc.sets[1].url != svc.sets[0].url {
+				t.Fatalf("refresh url = %q, want unchanged target %q", svc.sets[1].url, svc.sets[0].url)
+			}
+		})
+	}
+}
+
 func TestPollerIgnoresChangesOutsideStaticPreviewRoot(t *testing.T) {
 	workspace := t.TempDir()
 	writeFile(t, filepath.Join(workspace, "dist", "index.html"), "<main>preview</main>")
