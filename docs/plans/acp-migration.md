@@ -1,14 +1,59 @@
-# Design: ACP Migration — Remove tmux, Node Sidecar, Chat UI
+# Design: ACP Migration — Remove tmux, Node acp-bridge, Chat UI
 
 | Field | Value |
 | --- | --- |
 | **Title** | ACP Migration: Replace terminal-mux agent launch with Agent Client Protocol |
 | **Author** | Agent Orchestrator architecture (implementation planning) |
 | **Date** | 2026-07-28 |
-| **Status** | Ready for implementation planning (rev 3 — design review approved) |
+| **Status** | Ready for implementation planning (rev 4 — IP / clean-room rules + AO-native naming) |
 | **Supersedes** | Branch research `docs/research/tmux-replacement-options.md` (tmux-replacement-options branch) **for agent sessions only** — that brief recommended bundled-tmux / Unix pty-host; this plan is the human-confirmed ACP path |
 | **Workspace** | `agent-orchestrator` Go rewrite + Electron/React frontend |
-| **Revision** | rev 3: end_turn→idle LCM compatibility; daemon-crash worker survival; ship discipline PR4–PR7; metadata SQL migration; http↔worker IPC |
+| **Revision** | rev 4: clean-room ACP (no third-party app code/UI cloning); AO-native package/UI names; prior art only at product level |
+
+---
+
+## IP / clean-room rules
+
+**Implementers and designers must follow this section.** Violation is a ship blocker.
+
+This migration is an **independent, clean-room implementation** of the public **Agent Client Protocol** for Agent Orchestrator’s own product needs. Third-party desktop apps that also speak ACP (including [AionUi](https://github.com/iOfficeAI/AionUi) and others) may be cited only as **high-level product prior art** (“ACP-based multi-agent desktop chat exists in the market”). They are **not** reference implementations to port.
+
+### Forbidden
+
+- Do **not** copy-paste or lightly rephrase any third-party app’s source code, configs, prompts, i18n strings, PRDs, comments, tests, or docs into this repo.
+- Do **not** clone third-party UI layout, component trees, class names, assets, icons, copy, or interaction chrome as a look-alike.
+- Do **not** vendor third-party app files into this repository.
+- Do **not** treat any third-party ACP client as “port line-by-line” or “mirror their package/module structure.”
+- Do **not** reuse third-party package/component names (`AcpChat`, `useAcpMessage`, aionrs patterns, their adapter JSON shapes, etc.) as our identifiers.
+
+### Allowed
+
+- Implement against the **public ACP standard** and **official** SDKs/docs only:
+  - https://agentclientprotocol.com (protocol overview, methods, session updates, permissions)
+  - `@agentclientprotocol/sdk` and schema from the **agentclientprotocol** org
+  - Official examples from that org (not from third-party product apps)
+- Independently design AO-owned pieces driven by **this repo’s** architecture and UX:
+  - Node **acp-bridge** process model + Go↔bridge IPC (this doc)
+  - Go daemon integration (`session_manager`, lifecycle, SQLite facts)
+  - Chat UI matching **`DESIGN.md` / existing agent-orchestrator renderer** (shadcn, CenterPane patterns) — not any third-party chat chrome
+  - AO harness IDs (`domain.AgentHarness`) and our own declarative adapter catalog format
+- Mention third-party ACP products only at product-inspiration level in prose; never as code to replicate.
+
+### Naming (AO-native)
+
+| Prefer (AO) | Avoid (third-party look-alike) |
+| --- | --- |
+| `packages/acp-bridge` | Vendor or clone of another app’s ACP package tree |
+| `ChatPane`, `ChatSendBox`, `useChatStream` | `AcpChat`, `useAcpMessage`, foreign brand prefixes |
+| `backend/internal/acpbridge` (Go supervisor/client) | Foreign “backend launcher” module layouts |
+| `~/.ao/acp-bridge/` | Foreign data-dir layouts or config keys |
+| AO harness IDs (`claude-code`, `codex`, …) | Foreign backend id taxonomies / extension schemas |
+
+### Dependency policy
+
+- **Runtime protocol dependency:** official `@agentclientprotocol/sdk` (pinned) + public ACP schema.
+- **Not a dependency:** any third-party product app’s packages, git submodules, or extracted sources.
+- Catalog entries (CLI binary names, common `--acp` style flags) are derived from **each agent’s public docs / `--help` / ACP advertise path**, recorded as our research notes if needed — not from another product’s private adapter tables.
 
 ---
 
@@ -16,17 +61,17 @@
 
 Agent Orchestrator today launches coding agents inside a **terminal multiplexer** (`tmux` on Darwin/Linux, ConPTY pty-host on Windows), injects prompts via `send-keys`/keystrokes, observes activity via CLI hooks + pane capture, and surfaces a **raw xterm** over WebSocket `/mux`. That model is packaging-fragile (`RUNTIME_PREREQUISITE_MISSING`), delivery is unacknowledged (paste + Enter), and the UI is a TUI terminal rather than a first-class chat product.
 
-This design migrates **agent sessions** to the **Agent Client Protocol (ACP)** as used by [AionUi](https://github.com/iOfficeAI/AionUi): a **Go-supervised Node sidecar** speaks ACP via `@agentclientprotocol/sdk`, while the Go daemon remains the lifecycle/control plane. The frontend replaces the agent terminal **body** with a **React chat input + streaming reply** surface (multi-session tabs preserved). **tmux is not a fallback for agents** — when ACP is the agent path, flag-off means spawn fails hard, never silent tmux.
+This design migrates **agent sessions** to the public **Agent Client Protocol (ACP)**: a **Go-supervised Node process** (`packages/acp-bridge`) speaks ACP via the official `@agentclientprotocol/sdk`, while the Go daemon remains the lifecycle/control plane. The frontend replaces the agent terminal **body** with an **AO-native React chat input + streaming reply** surface (multi-session tabs preserved; looks follow `DESIGN.md`). **tmux is not a fallback for agents** — when ACP is the agent path, flag-off means spawn fails hard, never silent tmux.
 
 Confirmed product decisions (not reopened):
 
 1. Remove tmux / agent conpty — no agent dual-path fallback to tmux.
-2. Align agent coverage to AionUi-style multi-agent ACP list via **declarative adapter configs**.
-3. ACP client lives in a **Node sidecar** supervised by the Go daemon (not a pure-Go primary client).
+2. Broad multi-agent ACP coverage (popular coding CLIs that speak ACP) via **AO-owned declarative adapter configs**.
+3. ACP client lives in a **Node acp-bridge** supervised by the Go daemon (not a pure-Go primary client).
 
 **Rev-3 load-bearing decisions (reviews):**
 
-- Agent OS processes are **not** children of the sidecar HTTP process; **session workers survive daemon crash** (tmux-class) on macOS/Linux.
+- Agent OS processes are **not** children of the acp-bridge HTTP process; **session workers survive daemon crash** (tmux-class) on macOS/Linux.
 - ACP sessions are **signal-capable**; stream pump stamps `FirstSignalAt` via LCM.
 - ACP **end_turn / ready-for-prompt → `idle`** (preserves `worker_idle` / `safeToDeliver` / `NudgeCoordination`); not `waiting_input`.
 - Chat SSE mounts **outside** `middleware.Timeout` (same group as `/events`).
@@ -99,17 +144,17 @@ flowchart TB
     REG[Declarative ACP adapter registry]
     LCM[lifecycle + reaper]
     DB[(SQLite: sessions + turns + acp handles)]
-    SUPER[sidecar supervisor]
+    SUPER[acp-bridge supervisor]
     SHELL[ShellRuntime + ReviewerRuntime]
     PUMP[Per-session stream pump + ring]
   end
-  subgraph sidecar [Node sidecar 127.0.0.1:ephemeral]
+  subgraph bridge [Node acp-bridge 127.0.0.1:ephemeral]
     POOL[Session registry + ACP peers]
     SDK["@agentclientprotocol/sdk client"]
   end
   subgraph agents [Agent OS processes detachable]
-    A1[claude --acp …]
-    A2[codex …]
+    A1[claude ACP stdio …]
+    A2[codex ACP …]
   end
   FE -->|REST| HTTP
   FE -->|SSE| SSE
@@ -119,11 +164,11 @@ flowchart TB
   SM --> REG
   SM --> SHELL
   ACPRT -->|HTTP JSON IPC| POOL
-  SUPER -->|spawn/health/restart| sidecar
+  SUPER -->|spawn/health/restart| bridge
   POOL --> SDK
   SDK -->|JSON-RPC stdio reattachable| A1
   SDK --> A2
-  PUMP -->|sidecar SSE| POOL
+  PUMP -->|bridge SSE| POOL
   PUMP --> SSE
   SM --> LCM
   LCM --> DB
@@ -136,10 +181,10 @@ flowchart TB
 ### Goals (v1)
 
 1. Spawn / send / stream / permission / kill / restore agent sessions **without tmux or agent ConPTY**.
-2. Node sidecar as sole ACP protocol engine, supervised by Go; state under `~/.ao`.
-3. **Agent process lifetime independent of sidecar process lifetime** (reattach after sidecar restart).
-4. Declarative ACP adapter catalog aligned with AionUi coverage (stdio/http agents).
-5. React chat UI replaces agent terminal **body** in `CenterPane` (tabs preserved).
+2. Node **acp-bridge** as sole ACP protocol engine, supervised by Go; state under `~/.ao`.
+3. **Agent process lifetime independent of bridge process lifetime** (reattach after bridge restart).
+4. AO-owned declarative ACP adapter catalog covering popular ACP-capable CLIs (stdio/http).
+5. AO-native React **ChatPane** replaces agent terminal **body** in `CenterPane` (tabs preserved; `DESIGN.md`).
 6. `ao send` / `POST .../send` and **lifecycle coordination nudges** work over ACP.
 7. Activity + `FirstSignalAt` derived from ACP turn lifecycle (hooks optional enrichment only).
 8. High-volume stream content **not** written token-by-token into SQLite (`docs/stack.md`).
@@ -152,7 +197,7 @@ flowchart TB
 | --- | --- |
 | Pure-Go ACP client as primary | Product decision |
 | Dual-path tmux fallback for agents | Product decision |
-| Full AionUi F-* parity (cron, team, undo/redo, /btw, multi-upload UX) | Core lifecycle + chat + permissions first |
+| Full “desktop agent chat product” feature parity with any third-party app (cron, team, undo/redo, side-channels, multi-upload UX, …) | Core lifecycle + chat + permissions first; clean-room scope |
 | Multi-tenant / remote daemon ACP | Loopback primary listener unchanged |
 | Storing full token streams in SQLite | High-volume out of SQLite |
 | Replacing git worktree / project / PR / review engine domain | Unchanged |
@@ -171,7 +216,7 @@ flowchart TB
 | Reuse full agent tmux/conpty runtime forever | Rejected |
 | **Minimal shell-only PTY host** (Unix creack/pty host + Windows conpty host, **not** agent launch) | **Accepted** |
 
-**Transitional window (PR4–PR11):** agents may already be ACP while shells still use the shared `runtimeselect` tmux/conpty adapter. Doctor and packaging must say: **agents → sidecar+Node; shells → tmux (Unix) until PR11**. After PR11: shells need shell-host only, not tmux.
+**Transitional window (PR4–PR11):** agents may already be ACP while shells still use the shared `runtimeselect` tmux/conpty adapter. Doctor and packaging must say: **agents → acp-bridge+Node; shells → tmux (Unix) until PR11**. After PR11: shells need shell-host only, not tmux.
 
 ### Explicit recommendation: reviewers (third consumer)
 
@@ -192,23 +237,24 @@ Reviewers today (`review/launcher.go`) use the **same** `ports.Runtime` as worke
 | # | Decision | Rationale |
 | --- | --- | --- |
 | 1 | **No agent tmux fallback**; flag-off = hard error | Product; avoids dual maintenance |
-| 2 | **Node sidecar + SDK pin `1.3.0`**, Go-supervised | Product; AionUi alignment; modern SDK |
-| 3 | **HTTP+SSE loopback IPC** Go↔sidecar | Concurrency, debug, streaming, Windows |
+| 2 | **Node `packages/acp-bridge` + official SDK pin `1.3.0`**, Go-supervised | Product; public ACP; modern official SDK |
+| 3 | **HTTP+SSE loopback IPC** Go↔acp-bridge | Concurrency, debug, streaming, Windows |
 | 4 | **SSE chat stream** to FE (not WS); REST for send/permission | Existing SSE client; high-volume off CDC |
-| 5 | **Go owns lifecycle**; sidecar is protocol pool | architecture.md control plane |
-| 6 | **Declarative ACP adapter JSON** | AionUi pattern |
+| 5 | **Go owns lifecycle**; bridge is protocol pool | architecture.md control plane |
+| 6 | **AO-owned declarative ACP adapter JSON** | Independent catalog; agent public CLIs/docs |
 | 7 | **Unsupported harnesses fail closed** | Product |
 | 8 | **Durable turns in SQLite; tokens in ring/SSE only** | stack.md |
 | 9 | **Minimal PTY for shells + reviewers** | Debug UX + auto-review without agent mux |
 | 10 | **Activity + FirstSignalAt from ACP pump** (single writer); **end_turn → idle** | Avoids no_signal; preserves worker_idle / safeToDeliver machine |
-| 11 | **Session workers survive sidecar HTTP *and* daemon crash** (double-fork / reparent); boot reattach | Preserve multi-hour unattended sessions (tmux-class) |
+| 11 | **Session workers survive bridge HTTP *and* daemon crash** (double-fork / reparent); boot reattach | Preserve multi-hour unattended sessions (tmux-class) |
 | 12 | **Supersede bundled-tmux research for agents** | Chat + ACP end-state |
 | 13 | **Chat SSE outside request Timeout** | Same pattern as `/events` in `httpd/api.go` |
 | 14 | **One in-flight turn per session** (409 if busy) | Prevents overlapping session/prompt |
-| 15 | **Desktop bundles Node+sidecar; CLI needs system Node** | Closes packaging OQ |
+| 15 | **Desktop bundles Node+acp-bridge; CLI needs system Node** | Closes packaging OQ |
 | 16 | **Min certified adapter set before desktop default-on** | Avoid breaking default harnesses at UI flip |
 | 17 | **No desktop release channel until PR7+PR10a** | Avoid agent-with-no-UI window |
-| 18 | **sidecar-http reverse-proxies detached workers** (loopback HTTP + generation token) | PR1 IPC contract |
+| 18 | **acp-bridge-http reverse-proxies detached workers** (loopback HTTP + generation token) | PR1 IPC contract |
+| 19 | **Clean-room ACP; no third-party app code/UI cloning** | Legal/IP constraint; see § IP / clean-room rules |
 
 ---
 
@@ -218,45 +264,45 @@ Reviewers today (`review/launcher.go`) use the **same** `ports.Runtime` as worke
 
 | Component | Owns | Does not own |
 | --- | --- | --- |
-| **Go daemon** | Session lifecycle, workspace, SQLite facts, CDC, reaper, sidecar supervise, HTTP API, permission policy, turn summaries, stream pump/ring, coordination delivery | ACP JSON-RPC wire details, agent TUI |
-| **Node sidecar** | ACP initialize/session/prompt/cancel/permission, agent **spawn + reattach**, stream fan-in to Go | Session business rules, worktree, display status |
-| **Electron renderer** | Chat UI, permission cards, stream render, multi-session tabs | Spawning agents, SQLite |
-| **CLI** | Thin HTTP client | Direct sidecar access |
+| **Go daemon** | Session lifecycle, workspace, SQLite facts, CDC, reaper, acp-bridge supervise, HTTP API, permission policy, turn summaries, stream pump/ring, coordination delivery | ACP JSON-RPC wire details, agent TUI |
+| **Node acp-bridge** (`packages/acp-bridge`) | ACP initialize/session/prompt/cancel/permission (via official SDK), agent **spawn + reattach**, stream fan-in to Go | Session business rules, worktree, display status |
+| **Electron renderer** | AO-native ChatPane, permission cards, stream render, multi-session tabs (`DESIGN.md`) | Spawning agents, SQLite |
+| **CLI** | Thin HTTP client | Direct acp-bridge access |
 | **Shell PTY host** | User shells + reviewer panes | Agent sessions |
 
-### 2. Sidecar process model + agent process isolation
+### 2. acp-bridge process model + agent process isolation
 
 #### 2.1 Layout under `~/.ao`
 
 ```
 ~/.ao/
-  sidecar/
+  acp-bridge/
     listen.json          # { "port", "pid", "generation", "tokenPath" } atomic write
     token.<generation>   # 0600 bearer; per-generation
-    log/sidecar.log
-    adapters.d/          # optional user overlays
-    agent-pids/          # optional: aoSessionId → pid map for reattach (also in SQLite)
+    log/acp-bridge.log
+    adapters.d/          # optional user overlays (AO format)
+    workers/             # per-session worker registry JSON
   sessions/<id>/artifacts/
   data.db
   running.json
 ```
 
-#### 2.2 Decision: agents are **not** in the sidecar process group (Option A)
+#### 2.2 Decision: agents are **not** in the bridge process group (Option A)
 
-**Problem:** If agent CLIs are children of the sidecar process group, any sidecar restart/crash/upgrade **kills every live agent**, regressing Unix tmux behavior where agents survive daemon death and boot `Reconcile` adopts them.
+**Problem:** If agent CLIs are children of the bridge process group, any bridge restart/crash/upgrade **kills every live agent**, regressing Unix tmux behavior where agents survive daemon death and boot `Reconcile` adopts them.
 
 **Chosen architecture:**
 
 | Process | Process group / supervision | Lifetime |
 | --- | --- | --- |
-| Sidecar Node | Child of daemon supervisor; daemon owns kill on shutdown | Restarts independently |
-| Agent CLI | **Own process group** (`setsid` / Windows job object separate from sidecar); spawned by sidecar but **detached** from sidecar death | Survives sidecar restart if OS process still alive |
-| Daemon | Parent of sidecar only | Crash does not require killing agents |
+| acp-bridge HTTP | Child of daemon supervisor; daemon owns kill on shutdown | Restarts independently |
+| Agent CLI | **Own process group** (`setsid` / Windows job object separate from bridge); spawned by worker but **detached** from bridge-HTTP death | Survives bridge-HTTP restart if OS process still alive |
+| Daemon | Parent of bridge-HTTP only (workers reparented) | Crash does not require killing agents |
 
-**Reattach protocol (sidecar restart or new generation):**
+**Reattach protocol (bridge restart or new generation):**
 
 1. Durable facts: `metadata.AcpAgentPid`, `metadata.AgentSessionID`, `metadata.AcpAdapterID`, `metadata.AcpSessionID` (last known), stdio attach cookies if any (v1: pid + cwd + adapter id).
-2. New sidecar generation mints **new token**; old token invalid.
+2. New bridge generation mints **new token**; old token invalid.
 3. For each non-terminated ACP session with live pid (`kill(pid,0)` / Windows equivalent):
    - If ACP transport was stdio to a dead pipe, **cannot** reattach stdio to an existing process — **important limitation**.
 
@@ -264,8 +310,8 @@ Reviewers today (`review/launcher.go`) use the **same** `ports.Runtime` as worke
 
 | Strategy | When | Behavior |
 | --- | --- | --- |
-| **A1 — Sidecar keeps a thin “agent supervisor” child that outlives protocol process** | Preferred long-term | A tiny native/node **agent-host** process owns the agent stdio and exposes **loopback reattach** (like Windows conpty host). Sidecar is protocol client to agent-host; agent-host survives sidecar restart. |
-| **A2 — Accept death on sidecar crash for v1 stdio** | Only if A1 slips | Document as known regression; auto-resume on boot via native ACP resume / digest; elevate UX bulk-reconnect |
+| **A1 — Thin session-worker owns agent stdio; outlives bridge-HTTP** | Preferred long-term | AO-designed **session worker** process owns the agent stdio and exposes **loopback reattach** (same *idea class* as AO’s existing Windows conpty host, independently designed). Bridge-HTTP is reverse-proxy only; worker survives bridge-HTTP restart. |
+| **A2 — Accept death on bridge crash for v1 stdio** | Only if A1 slips | Document as known regression; auto-resume on boot via native ACP resume / digest; elevate UX bulk-reconnect |
 
 **v1 committed path: A1 for stdio agents + daemon-crash survival (tmux-class).**
 
@@ -273,20 +319,20 @@ Reviewers today (`review/launcher.go`) use the **same** `ports.Runtime` as worke
 Daemon (boot only starts/adopts; does NOT own worker lifetime as PG leader)
    │ supervise (restart)
    ▼
-sidecar-http (restartable; reverse-proxy; holds no agent stdio)
+acp-bridge-http (restartable; reverse-proxy; holds no agent stdio)
    │ loopback HTTP to worker (same generation token)
    ▼
-sidecar-worker-<session>  ◄── double-fork / setsid / detach so daemon death
-   │ stdio ACP                 does NOT kill worker (macOS/Linux)
+acp-worker-<session>  ◄── double-fork / setsid / detach so daemon death
+   │ stdio ACP             does NOT kill worker (macOS/Linux)
    ▼
 Agent CLI (child of worker only)
 ```
 
 **Committed product truth (Issue 2):** On **Darwin/Linux**, session workers **must survive daemon crash** the way tmux sessions do today. Workers are **not** mere children of the daemon process group:
 
-1. Spawn path: daemon/sidecar starts worker with **double-fork + `setsid`** (or equivalent detach) so the worker is reparented to init/launchd and is **not** killed when the daemon PID exits.
-2. Durable registry: `$AO_DATA_DIR/sidecar/workers/<aoSessionId>.json` records `{ pid, ipcPort, adapterId, acpSessionId, generation, startedAt }` (atomic write).
-3. Boot: start sidecar-http → **adopt** live workers from registry (pid alive + IPC health) → Reconcile (see §4.4). No requirement to re-spawn agent if worker still holds stdio.
+1. Spawn path: daemon/bridge starts worker with **double-fork + `setsid`** (or equivalent detach) so the worker is reparented to init/launchd and is **not** killed when the daemon PID exits.
+2. Durable registry: `$AO_DATA_DIR/acp-bridge/workers/<aoSessionId>.json` records `{ pid, ipcPort, adapterId, acpSessionId, generation, startedAt }` (atomic write).
+3. Boot: start acp-bridge-http → **adopt** live workers from registry (pid alive + IPC health) → Reconcile (see §4.4). No requirement to re-spawn agent if worker still holds stdio.
 4. Windows: best-effort; if job-object coupling makes survival hard, document Windows as weaker (like today’s conpty coupling) but still attempt detach. Do **not** weaken Darwin/Linux to match Windows.
 
 **PR1 acceptance (hard):** kill daemon PID → worker PID still alive → restart daemon → reattach HTTP to worker without killing agent.
@@ -295,10 +341,10 @@ Agent CLI (child of worker only)
 
 | Item | Spec |
 | --- | --- |
-| Topology | **sidecar-http is reverse-proxy**; each worker owns ACP stdio + local control plane |
+| Topology | **acp-bridge-http is reverse-proxy**; each worker owns ACP stdio + local control plane |
 | Worker bind | `127.0.0.1:0` only; port written to `workers/<session>.json` |
 | Worker routes | `POST /prompt`, `POST /cancel`, `POST /permission`, `GET /events` (SSE), `POST /kill`, `GET /healthz` |
-| Auth | Same **generation bearer token** as sidecar-http (workers reject stale generation) |
+| Auth | Same **generation bearer token** as bridge-http (workers reject stale generation) |
 | Routing | `POST /v1/sessions/{acpSessionId}/prompt` on HTTP process → look up worker → proxy to worker `/prompt` |
 | Events | Worker `/events` SSE → HTTP process may multiplex to Go pump; Go may also dial worker directly using registry (either OK; prefer **Go pump dials worker** after Create returns ipc endpoint to avoid double-hop loss on HTTP restart) |
 | Create | HTTP `POST /v1/sessions` spawns detached worker, waits for worker `/healthz`, returns acpSessionId + worker endpoint to Go |
@@ -308,19 +354,19 @@ Agent CLI (child of worker only)
 
 | Failure | Agent + worker | Durable turns | UX / recovery |
 | --- | --- | --- | --- |
-| Sidecar HTTP crash | Workers **keep running** | Intact | New HTTP generation; re-read `workers/*.json`; pumps reattach |
+| Bridge HTTP crash | Workers **keep running** | Intact | New HTTP generation; re-read `workers/*.json`; pumps reattach |
 | Worker crash | Agent dead | Intact | `activity=exited`; ResumeAgent / restore |
-| **Daemon crash** | Workers **keep running** (Darwin/Linux committed) | Intact | Boot: sidecar-http up → adopt workers → Reconcile live pass |
+| **Daemon crash** | Workers **keep running** (Darwin/Linux committed) | Intact | Boot: acp-bridge-http up → adopt workers → Reconcile live pass |
 | Clean `SaveAndTeardownAll` | Destroy all workers + agents | Intact + worktree markers | RestoreAll relaunches ACP |
 | User Kill | Destroy worker + agent | Per cleanup policy | Terminated |
 
 **If implementers cannot land detach + reattach in PR1:** do **not** ship A2 silently; slip schedule. Unattended multi-hour sessions are a product goal on macOS/Linux.
 
-#### 2.3 Sidecar lifecycle (HTTP process)
+#### 2.3 Bridge lifecycle (HTTP process)
 
 1. Daemon boot starts supervisor after SQLite open, **before** session Reconcile that needs ACP.
 2. Mint `generation` UUID + token file `token.<generation>` mode 0600.
-3. Spawn sidecar-http: `node <entry> serve --host 127.0.0.1 --port 0 --data-dir $AO_DATA_DIR --token-file ... --generation ...`.
+3. Spawn acp-bridge-http: `node <entry> serve --host 127.0.0.1 --port 0 --data-dir $AO_DATA_DIR --token-file ... --generation ...`.
 4. Parse listen port from stdout JSON line **or** atomic `listen.json`.
 5. Health: `/healthz`, `/readyz`.
 6. Crash → restart HTTP with **new generation + new token**; re-register existing workers from `workers/*.json`.
@@ -330,11 +376,11 @@ Agent CLI (child of worker only)
 
 | Channel | How |
 | --- | --- |
-| **Desktop (canonical)** | Bundle **Node runtime + sidecar JS** (esbuild single-file preferred) under Electron resources (`Resources/ao-sidecar/`). Supervisor prefers bundled Node path. |
-| **CLI / daemon-only** | Requires **system Node ≥20** on PATH; sidecar assets beside `ao` binary (`<ao-dir>/sidecar/`) or `AO_SIDECAR_ENTRY`. Doctor codes: `SIDECAR_NODE_MISSING`, `SIDECAR_ENTRY_MISSING`, `SIDECAR_UNHEALTHY`. |
-| **Dev** | `AO_SIDECAR_ENTRY` → `tsx`/`node dist`; optional external Node. |
+| **Desktop (canonical)** | Bundle **Node runtime + acp-bridge JS** (esbuild single-file preferred) under Electron resources (`Resources/ao-acp-bridge/`). Supervisor prefers bundled Node path. |
+| **CLI / daemon-only** | Requires **system Node ≥20** on PATH; bridge assets beside `ao` binary (`<ao-dir>/acp-bridge/`) or `AO_ACP_BRIDGE_ENTRY`. Doctor codes: `ACP_BRIDGE_NODE_MISSING`, `ACP_BRIDGE_ENTRY_MISSING`, `ACP_BRIDGE_UNHEALTHY`. |
+| **Dev** | `AO_ACP_BRIDGE_ENTRY` → `tsx`/`node dist`; optional external Node. |
 
-FE **never** receives sidecar URL or token — only Go talks to sidecar.
+FE **never** receives bridge URL or token — only Go talks to the bridge.
 
 #### 2.5 SDK version
 
@@ -348,7 +394,7 @@ FE **never** receives sidecar URL or token — only Go talks to sidecar.
 
 #### Decision: **HTTP JSON + SSE over loopback**
 
-| Criterion | HTTP loopback | stdio JSON-lines Go↔sidecar |
+| Criterion | HTTP loopback | stdio JSON-lines Go↔bridge |
 | --- | --- | --- |
 | Multi-session concurrency | Natural | Manual multiplex |
 | Streaming | SSE | Custom frames |
@@ -365,9 +411,9 @@ FE **never** receives sidecar URL or token — only Go talks to sidecar.
 | Connect | 2s | Retry / fail spawn |
 | `session/new` / initialize | 70s default; **150s** for adapters tagged `slowConnect` (codex) | Error `ACP_CONNECT_TIMEOUT`; activity unchanged until create fails |
 | Prompt **stream idle** | Default **15 min** without any sessionUpdate **or** tool_call heartbeat | **Cancel in-flight turn** via ACP cancel; persist partial assistant text; set `activity_state=idle` (ready for next prompt); surface error code `ACP_TURN_IDLE_TIMEOUT` on stream + optional notification. **Does not** set `exited` or `waiting_input`. **Does not** treat as reaper death. |
-| Permission wait | 30 min (AionUi) | Auto-reject permission; turn may continue or end per agent |
+| Permission wait | **30 min** (AO default; configurable later) | Auto-reject permission; turn may continue or end per agent |
 
-#### Sidecar HTTP API (v1)
+#### acp-bridge HTTP API (v1)
 
 Base: `http://127.0.0.1:<port>/v1`
 
@@ -384,7 +430,7 @@ Base: `http://127.0.0.1:<port>/v1`
 | `GET` | `/sessions/{acpSessionId}/events` | SSE sessionUpdate / permission / lifecycle / process_exit |
 | `POST` | `/sessions/{acpSessionId}/set-config` | Model/mode when supported |
 
-**Create session body — permissionMode uses AO kebab-case on the wire from Go; sidecar maps to agent flags:**
+**Create session body — permissionMode uses AO kebab-case on the wire from Go; bridge maps to agent flags:**
 
 ```json
 {
@@ -406,8 +452,8 @@ Base: `http://127.0.0.1:<port>/v1`
 | Layer | Values |
 | --- | --- |
 | AO domain / REST / SQLite | kebab-case: `default`, `accept-edits`, `auto`, `bypass-permissions` (`domain/agentconfig.go`) |
-| Go → sidecar JSON | **Same kebab-case** (no camelCase invent) |
-| Sidecar → agent CLI | Per-adapter templates in catalog (`env`, `acpArgs`, flags) |
+| Go → bridge JSON | **Same kebab-case** (no camelCase invent) |
+| Bridge → agent CLI | Per-adapter templates in catalog (`env`, `args`, flags — AO field names) |
 | UI | Display labels; store/API kebab-case |
 
 Round-trip test required: project config permissions → create payload unchanged enum set.
@@ -418,7 +464,7 @@ Round-trip test required: project config permissions → create payload unchange
 
 | Concern | New behavior |
 | --- | --- |
-| Prerequisites | Sidecar ready + adapter healthCheck (not tmux) |
+| Prerequisites | acp-bridge ready + adapter healthCheck (not tmux) |
 | Spawn | Workspace + optional hooks + `AcpRuntime.Create` |
 | Prompt delivery | Initial prompt = first ACP `prompt` (no after-start paste) |
 | Attachments | Still written to worktree; prompt gets path refs (and ACP image content parts when `promptCapabilities.image`) |
@@ -502,7 +548,7 @@ Without stamping `FirstSignalAt`, board shows **`no_signal`** after 90s (`servic
 | Permission resolved, turn continues | `active` | no | |
 | Cancel completed / `ACP_TURN_IDLE_TIMEOUT` | **`idle`** | no | Partial text kept; ready for next prompt |
 | `agent_process_exited` / worker dead | `exited` | — | Does **not** alone set `is_terminated` |
-| Sidecar HTTP down, worker alive | keep last state | — | Stream degraded; not death |
+| Bridge HTTP down, worker alive | keep last state | — | Stream degraded; not death |
 | Time demotion of `active` → `idle` without end_turn | **Not used for ACP** | — | Turn boundaries (or idle-timeout cancel) are authoritative |
 
 **sessionguard (unchanged semantics):**
@@ -531,7 +577,7 @@ Preserve existing functions; ACP pump only feeds correct states:
 
 ##### Exit detection (replaces agent-process supervise for ACP)
 
-1. Sidecar/worker emits SSE `agent_process_exited` → Go pump → LCM `ApplyActivitySignal(exited)`.
+1. Bridge/worker emits SSE `agent_process_exited` → Go pump → LCM `ApplyActivitySignal(exited)`.
 2. Reaper `IsAlive` on AcpRuntime (HTTP + worker pid) is **backup only**.
 3. Probe **failed** ≠ death (existing invariant).
 4. `ao agent-process supervise` wrapper: **no-op / not used** for ACP adapters (`ExitDetectionMode` unused).
@@ -543,9 +589,9 @@ Preserve existing functions; ACP pump only feeds correct states:
 
 | Field | ACP meaning | Storage |
 | --- | --- | --- |
-| `metadata.RuntimeHandleID` | **`acpSessionId`** (sidecar session id). Read model **must not** expose as `terminalHandleId` for agents (null/absent). | Existing column |
+| `metadata.RuntimeHandleID` | **`acpSessionId`** (bridge session id). Read model **must not** expose as `terminalHandleId` for agents (null/absent). | Existing column |
 | `metadata.AgentSessionID` | Native agent transcript id (resume) | Existing column |
-| `metadata.RuntimeLaunchID` | Launch fence (spawn/restore); pump rejects stale signals — **not** sidecar generation | Existing column |
+| `metadata.RuntimeLaunchID` | Launch fence (spawn/restore); pump rejects stale signals — **not** bridge generation | Existing column |
 | `metadata.AcpAdapterID` | Catalog adapter id | **New column** (migration) |
 | `metadata.AcpWorkerPID` | Detached worker OS pid for adopt | **New column** (migration) |
 | `metadata.AcpWorkerPort` | Worker loopback control port (optional if only in `workers/*.json`) | Prefer file registry; column optional |
@@ -559,11 +605,11 @@ Preserve existing functions; ACP pump only feeds correct states:
 -- new migration only
 ALTER TABLE sessions ADD COLUMN acp_adapter_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE sessions ADD COLUMN acp_worker_pid INTEGER NOT NULL DEFAULT 0;
--- sidecar_generation is NOT stored per-session as source of truth;
+-- bridge_generation is NOT stored per-session as source of truth;
 -- live generation is supervisor memory + token file; workers/*.json holds ipc.
 ```
 
-Store mapping: `RuntimeHandleID` continues to serialize `runtime_handle_id`; new columns map to `AcpAdapterID` / `AcpWorkerPID`. Worker ipc port remains primarily in `$AO_DATA_DIR/sidecar/workers/<id>.json` for boot adopt (avoids stale port in DB after worker restart on same session).
+Store mapping: `RuntimeHandleID` continues to serialize `runtime_handle_id`; new columns map to `AcpAdapterID` / `AcpWorkerPID`. Worker ipc port remains primarily in `$AO_DATA_DIR/acp-bridge/workers/<id>.json` for boot adopt (avoids stale port in DB after worker restart on same session).
 
 ##### Public operations → ACP behavior
 
@@ -575,7 +621,7 @@ Store mapping: `RuntimeHandleID` continues to serialize `runtime_handle_id`; new
 | `ResumeAgentWithMode` | Agent `exited` but session not terminated: **do not** preserve old terminal identity (none). Start **new** worker+ACP session in same worktree; new `acpSessionId` → update `RuntimeHandleID`. Prefer native resume command/capability when `AgentSessionID` set. Return mode like restore. **No** `RuntimeRestarter` / same-pane respawn. |
 | `SaveAndTeardownAll` | For each live ACP session: destroy worker+agent (like runtime Destroy today), write `session_worktrees` markers, force-destroy worktrees as today. **Does not** leave agents running. |
 | `RestoreAll` | After worktree restore, relaunch ACP (same as RestoreWithMode per row) |
-| Boot `Reconcile` | Order: (0) **sidecar-http up + ready** (1) **adopt workers** from `workers/*.json` (pid alive + `/healthz`) and rebind pumps (2) live pass: if worker/agent alive → adopt session; else stash+terminate (3) reap leaked workers (4) `RestoreAll` for shutdown-saved |
+| Boot `Reconcile` | Order: (0) **acp-bridge-http up + ready** (1) **adopt workers** from `workers/*.json` (pid alive + `/healthz`) and rebind pumps (2) live pass: if worker/agent alive → adopt session; else stash+terminate (3) reap leaked workers (4) `RestoreAll` for shutdown-saved |
 | `ao session restore` / resume-agent CLI | Unchanged HTTP surface; backend behavior above |
 
 ##### RestoreMode mapping
@@ -637,7 +683,7 @@ sequenceDiagram
   participant SM as SessionManager
   participant WS as Workspace
   participant ACP as AcpRuntime
-  participant SC as Sidecar HTTP
+  participant SC as acp-bridge HTTP
   participant W as Session worker
   participant Agent as ACP Agent CLI
   participant LCM as Lifecycle
@@ -671,7 +717,7 @@ sequenceDiagram
   participant SM as SessionManager
   participant G as sessionguard
   participant ACP as AcpRuntime
-  participant SC as Sidecar
+  participant SC as acp-bridge
 
   C->>SM: Send
   SM->>G: refuse if blocked/terminated/exited
@@ -712,7 +758,7 @@ sequenceDiagram
   participant Pump as Pump
   participant FE as Chat UI
   participant User as User
-  participant SC as Sidecar
+  participant SC as acp-bridge
 
   Agent->>Pump: requestPermission
   Pump->>Pump: activity=blocked
@@ -777,12 +823,12 @@ a.sessions.RegisterChatStream(r) // GET .../chat/stream ONLY
 | Rule | Spec |
 | --- | --- |
 | When pump starts | At successful `AcpRuntime.Create` (not lazy on first FE) |
-| Sidecar events sub | Pump opens `GET .../events` immediately; reconnect with backoff on HTTP death |
+| Bridge events sub | Pump opens `GET .../events` immediately; reconnect with backoff on HTTP death |
 | FE subscribers | Reference-counted; 0 subscribers still runs pump (activity/LCM need it) |
 | Ring | Last **512 events** or **2 MiB** compressed estimate, whichever first; drop oldest |
 | Backpressure FE | Non-blocking send; slow client dropped (reconnect → snapshot) |
-| Sidecar→Go backpressure | SSE reader must not unbounded buffer; apply max line size (e.g. 1 MiB) |
-| FE reconnect snapshot | Durable turns (REST) + ring contents + open turn + pending permissions — **no** full sidecar history replay required |
+| Bridge→Go backpressure | SSE reader must not unbounded buffer; apply max line size (e.g. 1 MiB) |
+| FE reconnect snapshot | Durable turns (REST) + ring contents + open turn + pending permissions — **no** full bridge history replay required |
 | Metrics | drops, reconnects, ring size, subscriber count |
 
 #### Chat stream events
@@ -829,17 +875,37 @@ OpenAPI: `terminalHandleId` optional; document ACP sessions omit it. Regen via `
 
 ### 8. Agent registry migration
 
-#### 8.1 Declarative catalog
+#### 8.1 Declarative catalog (AO-owned format)
 
-Ship `sidecar/adapters/default.json` + optional `~/.ao/sidecar/adapters.d/*.json`.
+Ship `packages/acp-bridge/adapters/default.json` + optional `~/.ao/acp-bridge/adapters.d/*.json`.
+
+**Format is AO-designed** (not copied from any third-party product). Illustrative shape:
+
+```json
+{
+  "id": "claude-code",
+  "displayName": "Claude Code",
+  "connectionType": "stdio",
+  "command": "claude",
+  "args": ["--acp"],
+  "healthCheck": { "command": ["claude", "--version"], "timeoutMs": 5000 },
+  "slowConnect": false,
+  "supported": true
+}
+```
+
+Field names and semantics are defined by this design + ACP agent public CLIs. Implementers research flags from each agent’s **public docs / `--help`**, not from another app’s adapter tables.
 
 #### 8.2 Harness map (abbrev.)
 
-Supported targets: claude-code, codex, opencode, qwen-code, goose, augment/auggie, kimi-cli, factory-droid, github-copilot, mistral-vibe, cursor-agent (if healthCheck), plus AionUi adds (codebuddy, openclaw, …) as certified.
+**Target coverage (product goal):** popular ACP-capable coding CLIs, mapped onto AO `domain.AgentHarness` ids where they already exist. Examples of intended coverage (certify independently):
 
-**Detection for cursor/grok “if ACP available”:** catalog `healthCheck.versionCommand` + optional `acpProbe: true` (spawn `--help`/short initialize timeout). `available=false` → treat as unsupported at spawn.
+- Existing AO harnesses with ACP path when certified: `claude-code`, `codex`, `opencode`, `qwen`, `goose`, `auggie`, `kimi`, `droid`, `copilot`, `vibe`, `cursor` (if healthCheck proves ACP), `fake`
+- Additional harness ids may be added when a CLI is certified (e.g. other community ACP agents) — only after public CLI research + our healthCheck, never by importing foreign backend lists
 
-Unsupported v1 unless certified: aider, amp, agy, crush, continue, devin, cline, kiro, kilocode, pi, autohand, …
+**Detection when ACP availability is unknown:** catalog `healthCheck` + optional short initialize probe. `available=false` → treat as unsupported at spawn.
+
+**Unsupported v1 unless certified:** harnesses without a working ACP entry remain fail-closed (examples today: aider, amp, agy, crush, continue, devin, cline, kiro, kilocode, pi, autohand, … until each is certified).
 
 #### 8.3 Unsupported policy + cutover UX
 
@@ -858,7 +924,7 @@ Unsupported v1 unless certified: aider, amp, agy, crush, continue, devin, cline,
 | Agent conpty | shells/reviewers keep Windows host |
 | Agent `/mux` | chat SSE |
 | Agent TerminalPane | ChatPane |
-| tmux doctor for agents | sidecar doctor |
+| tmux doctor for agents | acp-bridge doctor |
 | supervise wrapper for ACP | process_exit events |
 
 **PR12 gate:** reviewers on shell host + shells on shell host + no agent tmux imports.
@@ -936,7 +1002,7 @@ CREATE INDEX session_turns_session_idx ON session_turns(session_id, turn_index);
 
 Doctor matrix this window:
 
-- Agents: Node + sidecar + adapter health
+- Agents: Node + acp-bridge + adapter health
 - Shells: tmux on Unix (WARN/FAIL as today) until PR11
 - Messaging: “Agent Orchestrator no longer needs tmux for **agents**; shell tabs still require tmux until … ”
 
@@ -954,22 +1020,23 @@ Doctor matrix this window:
 
 | Threat | Mitigation |
 | --- | --- |
-| Local calls to sidecar | Loopback + **per-generation** bearer token; old generation fails auth |
+| Local calls to acp-bridge | Loopback + **per-generation** bearer token; old generation fails auth |
 | Token lifecycle | Supervisor mints on each HTTP start; delete old token files; workers validate generation |
-| FE sees sidecar | **Never** proxy sidecar to renderer or LAN listener |
-| LAN | ADR-0001 unchanged; sidecar bind 127.0.0.1 only |
+| FE sees bridge | **Never** proxy bridge to renderer or LAN listener |
+| LAN | ADR-0001 unchanged; bridge bind 127.0.0.1 only |
 | YOLO | Default off |
 | Logs | No full prompt bodies at info |
 
 ### 15. Observability
 
-Sidecar start/fail/restart, connect latency, turn idle timeouts, permission waits, ring drops, adapter health, worker reattach success/fail. UI toast on stream disconnect with auto-retry.
+acp-bridge start/fail/restart, connect latency, turn idle timeouts, permission waits, ring drops, adapter health, worker reattach success/fail. UI toast on stream disconnect with auto-retry.
 
 ### 16. Risks
 
 | Risk | Severity | Mitigation |
 | --- | --- | --- |
-| Stdio reattach complexity (A1 workers) | Critical | PR1 architecture; tests for HTTP restart with live worker |
+| Stdio reattach complexity (A1 workers) | Critical | PR1 architecture; tests for bridge-HTTP restart with live worker |
+| Accidental third-party code/UI cloning | Critical | § IP / clean-room rules; code review checklist; no vendored foreign sources |
 | Agent death if A1 slips / workers daemon-coupled | Critical | PR1 daemon-kill test required; slip if fail |
 | end_turn mis-mapped to waiting_input | Critical | Fixed rev3 → idle; LCM tests PR5 |
 | Headless agent desktop mid-series | Critical | Ship rule: no release until PR7+PR10a |
@@ -989,7 +1056,7 @@ Sidecar start/fail/restart, connect latency, turn idle timeouts, permission wait
 3. ~~Turn retention~~ — **decided** 500 / 64KiB.
 4. Mobile chat timeline — still later.
 5. ~~Coordination silent messages~~ — **decided** v1 visible coordination; deliver on **idle**.
-6. ~~Agent-host / worker IPC~~ — **decided** §2.2 loopback HTTP reverse-proxy + detached workers.
+6. ~~Worker IPC~~ — **decided** §2.2 loopback HTTP reverse-proxy + detached workers.
 7. ~~end_turn activity~~ — **decided** → **idle** (LCM compatibility).
 8. ~~Daemon crash~~ — **decided** workers survive on Darwin/Linux.
 9. Windows worker detach strength vs Darwin — implementer measures; Darwin/Linux bar is non-negotiable.
@@ -999,10 +1066,11 @@ Sidecar start/fail/restart, connect latency, turn idle timeouts, permission wait
 (A) Bundled tmux — superseded for agents.  
 (B) Pure-Go ACP — rejected primary.  
 (C) Electron-main ACP — rejected primary.  
-(D) stdio Go↔sidecar IPC — rejected.  
+(D) stdio Go↔bridge IPC — rejected.  
 (E) Chat WebSocket — rejected v1.  
 (F) Dual-path tmux fallback — rejected; kill-switch only.  
-(G) Agents in sidecar process group (kill on restart) — **rejected** (Issue 1); choose A1 workers.
+(G) Agents in bridge process group (kill on restart) — **rejected** (Issue 1); choose A1 workers.  
+(H) Porting a third-party ACP desktop app’s code/UI — **forbidden** (IP / clean-room).
 
 ### 19. Divergence from prior tmux research
 
@@ -1021,7 +1089,9 @@ Sidecar start/fail/restart, connect latency, turn idle timeouts, permission wait
 - `review/launcher.go`, `service/shellterm`
 - `domain/activity.go`, `domain/agentconfig.go`, `domain/harness.go`
 - Scratch research: `…/grok-501/acp-research/*` (not in-repo `docs/research/` unless later landed)
-- ACP: agentclientprotocol.com, `@agentclientprotocol/sdk@1.3.0`
+- **Official ACP only:** https://agentclientprotocol.com , `@agentclientprotocol/sdk@1.3.0`, agentclientprotocol org schema/examples
+- **Prior art (product-level only, not code):** third-party ACP desktop chat products exist; do not use as implementation sources
+- **AO UX:** `DESIGN.md`, existing `CenterPane` / shadcn patterns
 
 ---
 
@@ -1029,7 +1099,7 @@ Sidecar start/fail/restart, connect latency, turn idle timeouts, permission wait
 
 ```mermaid
 flowchart TD
-  P1[PR1 Sidecar + workers isolation]
+  P1[PR1 acp-bridge + workers isolation]
   P2[PR2 Go AcpRuntime client]
   P3[PR3 Adapter catalog]
   P4[PR4 Spawn/Kill ACP]
@@ -1069,22 +1139,23 @@ flowchart TD
 
 ---
 
-### PR1 — feat: Node ACP sidecar + detachable session workers + Go supervisor
+### PR1 — feat: Node acp-bridge + detachable session workers + Go supervisor
 
 **Dependencies:** none  
 
-**Files:** `sidecar/**` (http reverse-proxy + worker), `backend/internal/sidecar/supervisor.go`, worker registry under `~/.ao/sidecar/workers/`, `daemon.go`, `cli/doctor.go`, desktop copy Node+sidecar assets  
+**Files:** `packages/acp-bridge/**` (http reverse-proxy + worker; AO-written), `backend/internal/acpbridge/supervisor.go`, worker registry under `~/.ao/acp-bridge/workers/`, `daemon.go`, `cli/doctor.go`, desktop copy Node+bridge assets  
 
-**Description:** HTTP serve process reverse-proxies to **detached** session workers (A1 + daemon-crash survival). Worker loopback API (`/prompt|/cancel|/events|/kill|/healthz`) with generation token. Per-generation tokens. SDK 1.3.0; **contract compile tests against SDK types**.  
+**Description:** Independently designed HTTP serve process reverse-proxies to **detached** session workers (A1 + daemon-crash survival). Worker loopback API (`/prompt|/cancel|/events|/kill|/healthz`) with generation token. Per-generation tokens. Official SDK 1.3.0 only; **contract compile tests against SDK types**. No third-party app sources.  
 
 **Acceptance:**
 - [ ] HTTP restart does **not** kill session worker PIDs
 - [ ] **Daemon PID kill** does **not** kill session worker PIDs (Darwin/Linux); restart daemon → adopt worker from `workers/*.json` + healthz
 - [ ] Worker IPC: bind `127.0.0.1:0`, routes above, auth = generation token; HTTP proxies prompt
 - [ ] New generation invalidates old token
-- [ ] Doctor: `SIDECAR_NODE_MISSING` / `SIDECAR_UNHEALTHY`
-- [ ] Desktop bundles Node+sidecar; CLI path documented
+- [ ] Doctor: `ACP_BRIDGE_NODE_MISSING` / `ACP_BRIDGE_UNHEALTHY`
+- [ ] Desktop bundles Node+acp-bridge; CLI path documented
 - [ ] TS builds against `@agentclientprotocol/sdk@1.3.0` types
+- [ ] No vendored third-party product code under `packages/acp-bridge`
 
 ---
 
@@ -1092,24 +1163,25 @@ flowchart TD
 
 **Dependencies:** PR1  
 
-**Files:** `ports/acp.go`, `sidecar/client.go`, fakes, unit tests  
+**Files:** `ports/acp.go`, `backend/internal/acpbridge/client.go`, fakes, unit tests  
 
 **Acceptance:**
 - [ ] Typed errors; correlation headers
-- [ ] Client unit tests; no invented RPC names without SDK fixtures
+- [ ] Client unit tests; no invented RPC names without **official** SDK fixtures
 
 ---
 
-### PR3 — feat: Declarative ACP adapter catalog
+### PR3 — feat: Declarative AO ACP adapter catalog
 
 **Dependencies:** PR1  
 
-**Files:** `sidecar/adapters/default.json`, load + overlay, healthCheck, fake adapter  
+**Files:** `packages/acp-bridge/adapters/default.json` (AO schema), load + overlay, healthCheck, fake adapter  
 
 **Acceptance:**
-- [ ] Overlay from `adapters.d`
+- [ ] Overlay from `~/.ao/acp-bridge/adapters.d`
 - [ ] Fake always available
 - [ ] kebab-case permissionMode accepted on create API
+- [ ] Catalog entries justified from agent public CLIs/docs — not imported foreign tables
 
 ---
 
@@ -1179,15 +1251,16 @@ flowchart TD
 
 **Dependencies:** PR6, PR10a  
 
-**Files:** `chat/*`, CenterPane body swap only, SessionView, FE types null terminalHandleId, e2e smoke-chat  
+**Files:** `frontend/.../ChatPane*`, `ChatSendBox`, `useChatStream` (AO names), CenterPane body swap only, SessionView, FE types null terminalHandleId, e2e smoke-chat  
 
-**Description:** First user-visible agent UI on ACP path. **Together with PR10a, this is the earliest desktop release-train candidate** (§12 ship rule).  
+**Description:** First user-visible agent UI on ACP path. **AO-native chat chrome per `DESIGN.md`** — not a clone of any third-party chat UI. **Together with PR10a, this is the earliest desktop release-train candidate** (§12 ship rule).  
 
 **Acceptance:**
 - [ ] Multi-session tabs still work; body is ChatPane
 - [ ] No mux connect for agent sessions
 - [ ] typecheck + e2e fake harness stream
 - [ ] Release checklist notes: no auto-update channel from PR4–PR6 alone
+- [ ] UI review: matches DESIGN.md / AO look; no look-alike third-party chrome
 
 ---
 
@@ -1208,13 +1281,13 @@ flowchart TD
 
 **Dependencies:** PR5, PR6  
 
-**Files:** RestoreWithMode, ResumeAgentWithMode, Reconcile order (sidecar first), SaveAndTeardownAll destroys workers, RestoreMode mapping  
+**Files:** RestoreWithMode, ResumeAgentWithMode, Reconcile order (acp-bridge first), SaveAndTeardownAll destroys workers, RestoreMode mapping  
 
 **Acceptance:**
 - [ ] Mapping table implemented
 - [ ] ResumeAgent issues new acpSessionId
-- [ ] Boot: sidecar ready before reconcile
-- [ ] HTTP sidecar restart reattaches pump to live worker (A1)
+- [ ] Boot: acp-bridge ready before reconcile
+- [ ] Bridge-HTTP restart reattaches pump to live worker (A1)
 
 ---
 
@@ -1222,11 +1295,12 @@ flowchart TD
 
 **Dependencies:** PR10a, PR7  
 
-**Files:** more AionUi adapters; UI disable unsupported; doctor matrix; docs support matrix  
+**Files:** additional AO-certified catalog entries (public CLI research); UI disable unsupported; doctor matrix; docs support matrix  
 
 **Acceptance:**
 - [ ] Create-task flow hides/disables unsupported
 - [ ] Doctor upgrade notes
+- [ ] No foreign adapter tables or UI strings copied
 
 ---
 
@@ -1271,11 +1345,11 @@ flowchart TD
 
 ## Appendix A — SDK contract note
 
-Pseudo-code in design is illustrative. Implementation **must** use `@agentclientprotocol/sdk@1.3.0` exported client APIs and types; PR2 fixtures import SDK types for initialize/session/prompt/cancel/permission.
+Pseudo-code in design is illustrative. Implementation **must** use official `@agentclientprotocol/sdk@1.3.0` exported client APIs and types; PR2 fixtures import **official** SDK types for initialize/session/prompt/cancel/permission. Do not invent RPC names from third-party apps.
 
 ## Appendix B — PermissionMode map
 
-| AO kebab-case | Sidecar create field | Typical agent behavior |
+| AO kebab-case | Bridge create field | Typical agent behavior |
 | --- | --- | --- |
 | `default` | `permissionMode: "default"` | Forward permissions to UI |
 | `accept-edits` | `accept-edits` | Auto-allow edit-kind |
@@ -1286,10 +1360,20 @@ Pseudo-code in design is illustrative. Implementation **must** use `@agentclient
 
 | Check | PR4–10 | After PR11 |
 | --- | --- | --- |
-| Node+sidecar | required for agents | required |
+| Node + acp-bridge | required for agents | required |
 | tmux | required for shells/reviewers (Unix) | not required |
 | Shell host | n/a | required |
 
+## Appendix D — Clean-room implementer checklist
+
+Before merging any ACP PR:
+
+- [ ] Only dependencies on official ACP SDK/schema and AO code
+- [ ] No files, strings, assets, or layouts sourced from third-party ACP product apps
+- [ ] Package/UI names are AO-native (`packages/acp-bridge`, `ChatPane`, …)
+- [ ] Adapter flags researched from agent public docs / `--help`, with sources noted in PR if non-obvious
+- [ ] Chat UI matches `DESIGN.md` / existing renderer, not a foreign product look-alike
+
 ---
 
-*End of design document (rev 2).*
+*End of design document (rev 4 — IP / clean-room).*
