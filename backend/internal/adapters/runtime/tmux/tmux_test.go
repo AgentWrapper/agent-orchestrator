@@ -1035,6 +1035,17 @@ func TestSendMessageRemainingChunksSurviveCallerCancel(t *testing.T) {
 	}
 }
 
+func TestSendMessageCompletionBudgetScalesWithChunks(t *testing.T) {
+	const commandTimeout = 5 * time.Second
+	const enterDelay = 300 * time.Millisecond
+	if got, want := sendCompletionBudget(1, commandTimeout, enterDelay), 5*time.Second+enterDelay; got != want {
+		t.Fatalf("single-chunk completion budget = %s, want %s", got, want)
+	}
+	if got, want := sendCompletionBudget(4, commandTimeout, enterDelay), 20*time.Second+enterDelay; got != want {
+		t.Fatalf("four-chunk completion budget = %s, want %s", got, want)
+	}
+}
+
 func TestSendMessageCancellationBeforeFirstChunkAborts(t *testing.T) {
 	r, fr := newTestRuntime(5)
 	ctx, cancel := context.WithCancel(context.Background())

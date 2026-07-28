@@ -490,9 +490,10 @@ func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, m
 	}
 	enterCtx := ctx
 	if message != "" {
+		messageChunks := chunks(message, r.chunkSize)
 		sendCtx := ctx
 		var finishCancel context.CancelFunc
-		for i, chunk := range chunks(message, r.chunkSize) {
+		for i, chunk := range messageChunks {
 			if _, err := r.run(sendCtx, sendKeysLiteralArgs(id, chunk)...); err != nil {
 				if finishCancel != nil {
 					finishCancel()
@@ -500,7 +501,8 @@ func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, m
 				return fmt.Errorf("tmux runtime: send message %s: %w", id, err)
 			}
 			if i == 0 {
-				enterCtx, finishCancel = context.WithTimeout(context.WithoutCancel(ctx), r.enterDelay+5*time.Second)
+				completionBudget := sendCompletionBudget(len(messageChunks), r.timeout, r.enterDelay)
+				enterCtx, finishCancel = context.WithTimeout(context.WithoutCancel(ctx), completionBudget)
 				sendCtx = enterCtx
 			}
 		}
@@ -517,6 +519,9 @@ func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, m
 		// the Enter are detached from the caller's cancellation (bounded by
 		// their own timeout instead): abandoning mid-pause would strand an
 		// unsubmitted draft that a retried send would then double-paste.
+		// Errors reported by tmux after it accepts a chunk still return to the
+		// caller; they are not retried because AO cannot safely distinguish
+		// whether tmux applied the failed command.
 		if r.enterDelay > 0 {
 			select {
 			case <-enterCtx.Done():
@@ -529,6 +534,10 @@ func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, m
 		return fmt.Errorf("tmux runtime: send enter %s: %w", id, err)
 	}
 	return nil
+}
+
+func sendCompletionBudget(chunkCount int, commandTimeout, enterDelay time.Duration) time.Duration {
+	return time.Duration(chunkCount)*commandTimeout + enterDelay
 }
 
 // Interrupt sends Ctrl-C to the foreground process without destroying the tmux
