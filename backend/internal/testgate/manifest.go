@@ -45,6 +45,7 @@ type ManifestService struct {
 // CommandList accepts either a single shell command string or a YAML list.
 type CommandList []string
 
+// UnmarshalYAML accepts a command string or list of command strings.
 func (c *CommandList) UnmarshalYAML(value *yaml.Node) error {
 	switch value.Kind {
 	case yaml.ScalarNode:
@@ -66,6 +67,7 @@ func (c *CommandList) UnmarshalYAML(value *yaml.Node) error {
 	}
 }
 
+// UnmarshalYAML accepts a service name string or structured service object.
 func (s *ManifestService) UnmarshalYAML(value *yaml.Node) error {
 	if value.Kind == yaml.ScalarNode {
 		var serviceType string
