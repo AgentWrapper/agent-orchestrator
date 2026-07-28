@@ -61,17 +61,10 @@ function renderBoard(projectId?: string) {
 	return queryClient;
 }
 
-/** Cards render in one flat list per column, so order is the only grouping signal. */
-function cardSessionIds(column: HTMLElement): string[] {
-	return within(column)
-		.queryAllByTestId("board-session-card")
-		.map((card) => card.getAttribute("data-session-id") ?? "");
-}
-
 function renderBoardWithClient(queryClient: QueryClient, projectId?: string) {
 	return render(
 		<QueryClientProvider client={queryClient}>
-			<TooltipProvider delayDuration={0}>
+			<TooltipProvider>
 				<SessionsBoard projectId={projectId} />
 			</TooltipProvider>
 		</QueryClientProvider>,
@@ -95,7 +88,7 @@ describe("SessionsBoard", () => {
 		expect(screen.queryByText(/reload agents/i)).not.toBeInTheDocument();
 	});
 
-	it("keeps in-panel board identity and actions compact", async () => {
+	it("shows the project name in the in-panel board chrome when actions live in the panel", () => {
 		boardActionsInPanelMock.mockReturnValue(true);
 		workspaceQueryMock.mockReturnValue({
 			data: [
@@ -125,55 +118,8 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		expect(screen.getByText("Board")).toBeInTheDocument();
-		expect(screen.queryByText("solkit-ui")).not.toBeInTheDocument();
-		const newTask = screen.getByRole("button", { name: "New task" });
-		expect(newTask).toHaveClass("reverb-topbar__control--icon");
-		expect(newTask.textContent).toBe("");
-		await userEvent.hover(newTask);
-		expect(await screen.findByRole("tooltip")).toHaveTextContent("New task");
-	});
-
-	it.each([
-		["active", "Working"],
-		["idle", "Idle"],
-	] as const)("names %s orchestrator activity on the in-panel board toolbar control", (state, label) => {
-		boardActionsInPanelMock.mockReturnValue(true);
-		workspaceQueryMock.mockReturnValue({
-			data: [
-				{
-					id: "p1",
-					name: "solkit-ui",
-					path: "/tmp/solkit-ui",
-					sessions: [
-						{
-							id: "orch-1",
-							workspaceId: "p1",
-							workspaceName: "solkit-ui",
-							title: "orchestrator",
-							provider: "codex",
-							kind: "orchestrator",
-							branch: "main",
-							status: "working",
-							activity: { state, lastActivityAt: "2026-01-01T00:00:00Z" },
-							updatedAt: "2026-01-01T00:00:00Z",
-							prs: [],
-						},
-					],
-				},
-			],
-			isError: false,
-			isSuccess: true,
-		});
-
-		renderBoard("p1");
-
-		// Activity now reaches assistive tech through the control's name only; the
-		// center context pill that used to show it is gone.
-		const button = screen.getByRole("button", { name: `Orchestrator, ${label}` });
-		expect(button).toHaveClass("reverb-topbar__control--icon");
-		expect(button.textContent).toBe("");
-		expect(screen.queryByText(label)).not.toBeInTheDocument();
+		expect(screen.getByText("solkit-ui")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "New task" })).toBeInTheDocument();
 	});
 
 	it("shows the Board crumb on the root board when actions live in the panel", () => {
@@ -290,9 +236,7 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 		const idleCard = screen.getByText("idle-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
-		const noSignalCard = screen
-			.getByText("no-signal-card-task")
-			.closest('[data-testid="board-session-card"]') as HTMLElement;
+		const noSignalCard = screen.getByText("no-signal-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
 		const draftCard = screen.getByText("draft-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
 
 		// The column header names the stage, so no card repeats a status pill —
@@ -422,12 +366,12 @@ describe("SessionsBoard", () => {
 		renderBoard("p1");
 
 		const needsYouColumn = screen.getByText("Needs you").closest("section") as HTMLElement;
-		expect(needsYouColumn.firstElementChild).toHaveClass("h-9");
+		expect(needsYouColumn.firstElementChild).toHaveClass("h-12");
 		expect(within(needsYouColumn).getByText("agent-exited-task")).toBeInTheDocument();
 		expect(within(needsYouColumn).queryByText("Exited")).toBeNull();
 	});
 
-	it("orders working sessions above idle ones in a single column list", () => {
+	it("renders an idle-first work lane with a separate lower working section", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
 				workspaceWithSessions([
@@ -474,19 +418,29 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		const workLane = screen.getByRole("region", { name: "Working sessions" });
+		const workLane = screen.getByRole("region", { name: "Idle / Working sessions" });
+		const idleRegion = within(workLane).getByRole("region", { name: "Idle sessions" });
+		const workingRegion = within(workLane).getByRole("region", { name: "Working sessions" });
 		const reviewRegion = screen.getByRole("region", { name: "In review sessions" });
-		const workHeader = workLane.firstElementChild as HTMLElement;
+		const workSummary = within(workLane).getByRole("group", { name: "Idle / Working lane summary" });
 
-		expect(workHeader).toHaveClass("h-9");
-		expect(workHeader.firstElementChild).toHaveClass("rounded-swatch");
-		expect(within(workHeader).getByText("Working")).toBeInTheDocument();
-		// One count for the whole column now that idle has no section of its own.
-		expect(within(workHeader).getByLabelText("3 working sessions")).toHaveTextContent("3");
+		// The column header names only the lane the column starts with; "Working" is
+		// named once, on the section that actually holds the working cards.
+		// Titles carry their own weight and a colour bar rather than a glyph.
+		expect(within(workSummary).getByText("Idle")).toHaveClass("font-mono", "text-xs", "uppercase");
+		expect(within(workSummary).queryByText("Working")).toBeNull();
+		expect(workSummary.parentElement).toHaveClass("h-12", "border-b");
+		expect(within(workLane).getByLabelText("2 idle sessions")).toHaveTextContent("2");
+		expect(within(workingRegion).getByText("Working")).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: /idle sessions/i })).not.toBeInTheDocument();
-		expect(workLane.querySelectorAll(".overflow-y-auto")).toHaveLength(1);
-		// Working leads so attention lands on live work first; idle settles below.
-		expect(cardSessionIds(workLane)).toEqual(["s-active", "s-idle-1", "s-idle-2"]);
+		// Lanes are sized by their content, so a short Idle lane leaves no dead
+		// space above the Working header.
+		expect(idleRegion.className).not.toContain("flex-[3]");
+		expect(workingRegion.className).not.toContain("flex-[2]");
+		expect(workingRegion.firstElementChild?.className).toContain("border-y");
+		expect(within(idleRegion).getByText("idle-no-pr-task")).toBeInTheDocument();
+		expect(within(idleRegion).getByText("second-idle-task")).toBeInTheDocument();
+		expect(within(workingRegion).getByText("active-task")).toBeInTheDocument();
 		expect(within(reviewRegion).getByText("idle-with-pr-task")).toBeInTheDocument();
 		expect(within(workLane).queryByText("idle-with-pr-task")).not.toBeInTheDocument();
 
@@ -497,42 +451,7 @@ describe("SessionsBoard", () => {
 		expect(within(idleCard).queryByText("Working")).toBeNull();
 	});
 
-	it("uses one shared scrollbar for the whole work column", () => {
-		workspaceQueryMock.mockReturnValue({
-			data: [
-				workspaceWithSessions([
-					boardSession({
-						id: "s-idle",
-						title: "single-idle-task",
-						status: "idle",
-						activity: { state: "idle", lastActivityAt: "2026-01-01T00:00:00Z" },
-					}),
-					...Array.from({ length: 7 }, (_, index) =>
-						boardSession({
-							id: `s-working-${index + 1}`,
-							title: `working-task-${index + 1}`,
-							status: "working",
-							activity: { state: "active", lastActivityAt: "2026-01-01T00:00:00Z" },
-						}),
-					),
-				]),
-			],
-			isError: false,
-		});
-
-		renderBoard("p1");
-
-		const workLane = screen.getByRole("region", { name: "Working sessions" });
-		const laneScrollers = Array.from(workLane.querySelectorAll<HTMLElement>(".overflow-y-auto"));
-
-		expect(laneScrollers).toHaveLength(1);
-		expect(laneScrollers[0]).toHaveClass("board-scrollbar", "overflow-y-auto");
-		expect(within(laneScrollers[0]).getAllByTestId("board-session-card")).toHaveLength(8);
-		// The single idle session trails the seven working ones.
-		expect(cardSessionIds(workLane).at(-1)).toBe("s-idle");
-	});
-
-	it("shows an idle-only work column without any section chrome", () => {
+	it("lets idle sessions fill the lane when no working sessions exist", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
 				workspaceWithSessions([
@@ -549,15 +468,20 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		const workLane = screen.getByRole("region", { name: "Working sessions" });
-		expect(within(workLane).getByLabelText("1 working session")).toHaveTextContent("1");
-		expect(within(workLane).getByText("idle-task")).toBeInTheDocument();
-		// No "Idle" sub-header competing with the column header above it.
-		expect(within(workLane).queryByText("Idle sessions")).not.toBeInTheDocument();
-		expect(cardSessionIds(workLane)).toEqual(["s-idle"]);
+		const workLane = screen.getByRole("region", { name: "Idle / Working sessions" });
+		const idleRegion = within(workLane).getByRole("region", { name: "Idle sessions" });
+		expect(within(workLane).getByLabelText("1 idle session")).toHaveTextContent("1");
+		// Only Idle has work, so the header names Idle alone rather than showing an
+		// empty Working half.
+		expect(within(workLane).queryByLabelText("0 working sessions")).not.toBeInTheDocument();
+		const idleOnlySummary = within(workLane).getByRole("group", { name: "Idle / Working lane summary" });
+		expect(within(idleOnlySummary).getByText("Idle")).toBeInTheDocument();
+		expect(within(idleOnlySummary).queryByText("Working")).toBeNull();
+		expect(within(idleRegion).getByText("idle-task")).toBeInTheDocument();
+		expect(within(workLane).queryByRole("region", { name: "Working sessions" })).not.toBeInTheDocument();
 	});
 
-	it("shows a working-only column with a single scroller", () => {
+	it("lets working sessions fill the lane when no idle sessions exist", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
 				workspaceWithSessions([
@@ -580,13 +504,22 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		const workLane = screen.getByRole("region", { name: "Working sessions" });
+		const workLane = screen.getByRole("region", { name: "Idle / Working sessions" });
+		const workingRegion = within(workLane).getByRole("region", { name: "Working sessions" });
 		expect(within(workLane).getByLabelText("2 working sessions")).toHaveTextContent("2");
-		expect(workLane.querySelectorAll(".overflow-y-auto")).toHaveLength(1);
-		expect(cardSessionIds(workLane)).toEqual(["s-working-1", "s-working-2"]);
+		// Working is the only lane with work, so Idle is absent from the header.
+		expect(within(workLane).queryByLabelText("0 idle sessions")).not.toBeInTheDocument();
+		const workingOnlySummary = within(workLane).getByRole("group", { name: "Idle / Working lane summary" });
+		expect(within(workingOnlySummary).getByText("Working")).toBeInTheDocument();
+		expect(within(workingOnlySummary).queryByText("Idle")).toBeNull();
+		expect(within(workLane).queryByRole("region", { name: "Idle sessions" })).not.toBeInTheDocument();
+		// Standalone: no repeated sub-header, since the column header already names it.
+		expect(workingRegion.className).not.toContain("border-y");
+		expect(within(workingRegion).getByText("first-working-task")).toBeInTheDocument();
+		expect(within(workingRegion).getByText("second-working-task")).toBeInTheDocument();
 	});
 
-	it("keeps idle and working cards visible when navigating between project boards", () => {
+	it("keeps idle and working sections visible when navigating between project boards", () => {
 		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 		workspaceQueryMock.mockReturnValue({
 			data: [
@@ -657,8 +590,9 @@ describe("SessionsBoard", () => {
 		});
 		const view = renderBoardWithClient(queryClient, "p1");
 
-		const p1Lane = screen.getByRole("region", { name: "Working sessions" });
-		expect(cardSessionIds(p1Lane)).toEqual(["p1-active", "p1-idle"]);
+		const p1Lane = screen.getByRole("region", { name: "Idle / Working sessions" });
+		expect(within(p1Lane).getByRole("region", { name: "Idle sessions" })).toHaveTextContent("p1 idle");
+		expect(within(p1Lane).getByRole("region", { name: "Working sessions" })).toHaveTextContent("p1 active");
 
 		view.rerender(
 			<QueryClientProvider client={queryClient}>
@@ -668,9 +602,10 @@ describe("SessionsBoard", () => {
 			</QueryClientProvider>,
 		);
 
-		const p2Lane = screen.getByRole("region", { name: "Working sessions" });
+		const p2Lane = screen.getByRole("region", { name: "Idle / Working sessions" });
 		expect(screen.queryByText("p1 idle")).not.toBeInTheDocument();
-		expect(cardSessionIds(p2Lane)).toEqual(["p2-active", "p2-idle"]);
+		expect(within(p2Lane).getByRole("region", { name: "Idle sessions" })).toHaveTextContent("p2 idle");
+		expect(within(p2Lane).getByRole("region", { name: "Working sessions" })).toHaveTextContent("p2 active");
 	});
 
 	it("shows a static archive card with a persistent restore action", async () => {
@@ -705,25 +640,42 @@ describe("SessionsBoard", () => {
 		).not.toBe(0);
 		expect(screen.getByRole("button", { name: "Restore dead worker" })).toBeInTheDocument();
 
-		expect(screen.queryByRole("group", { name: "Archive layout" })).not.toBeInTheDocument();
+		// The row layout renders the same accessible logo (both archive layouts changed).
+		await userEvent.click(screen.getByRole("button", { name: "Rows" }));
+		const rowCard = within(screen.getByRole("list", { name: "Archived sessions" }))
+			.getByText("dead worker")
+			.closest<HTMLElement>("[role='listitem']");
+		expect(rowCard).not.toBeNull();
+		expect(within(rowCard!).getByRole("img", { name: "claude-code" })).toBeInTheDocument();
 	});
 
-	it("renders archived sessions as a grid even when rows were previously saved", async () => {
-		window.localStorage.setItem("ao.board.archive.layout", "rows");
+	it("switches between rows and columns and remembers the archive layout", async () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [workspaceWithSessions([terminatedSession()])],
 			isError: false,
 			isSuccess: true,
 		});
-		renderBoard("p1");
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		const view = renderBoardWithClient(queryClient, "p1");
 
 		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
-		expect(screen.queryByRole("group", { name: "Archive layout" })).not.toBeInTheDocument();
-		const archive = screen.getByRole("list", { name: "Archived sessions" });
-		expect(archive).toHaveClass("grid");
+		const layout = screen.getByRole("group", { name: "Archive layout" });
+		expect(within(layout).getByRole("button", { name: "Columns" })).toHaveAttribute("aria-pressed", "true");
+		expect(screen.getByRole("list", { name: "Archived sessions" })).toHaveClass("grid");
 		const restore = screen.getByRole("button", { name: "Restore dead worker" });
 		expect(restore.parentElement).toContainElement(screen.getByText("Terminated"));
+
+		await userEvent.click(within(layout).getByRole("button", { name: "Rows" }));
+		expect(within(layout).getByRole("button", { name: "Rows" })).toHaveAttribute("aria-pressed", "true");
+		expect(screen.getByRole("list", { name: "Archived sessions" })).not.toHaveClass("grid");
 		expect(screen.queryByRole("button", { name: "Open dead worker" })).not.toBeInTheDocument();
+		expect(window.localStorage.getItem("ao.board.archive.layout")).toBe("rows");
+
+		view.unmount();
+		renderBoard("p1");
+		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		expect(screen.getByRole("button", { name: "Rows" })).toHaveAttribute("aria-pressed", "true");
+		expect(screen.getByRole("list", { name: "Archived sessions" })).not.toHaveClass("grid");
 	});
 
 	it("restores a terminated session, refreshes workspace data, and opens the restored terminal", async () => {
@@ -957,10 +909,17 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		const mergeLane = screen.getByRole("region", { name: "Ready to merge sessions" });
-		expect(within(mergeLane).getByLabelText("1 ready to merge session")).toHaveTextContent("1");
-		expect(within(mergeLane).queryByText("Merged sessions")).not.toBeInTheDocument();
-		expect(within(mergeLane).getByText("merged worker")).toBeInTheDocument();
+		const mergeLane = screen.getByRole("region", { name: "Ready to merge / Merged sessions" });
+		const mergedRegion = within(mergeLane).getByRole("region", { name: "Merged sessions" });
+		const mergeSummary = within(mergeLane).getByRole("group", { name: "Ready to merge / Merged lane summary" });
+		expect(within(mergeSummary).getByText("Merged")).toHaveClass("font-mono", "text-xs", "uppercase");
+		expect(within(mergeLane).getByLabelText("1 merged session")).toHaveTextContent("1");
+		// Nothing is ready to merge, so that half is dropped from the header too.
+		expect(within(mergeLane).queryByLabelText("0 ready to merge sessions")).not.toBeInTheDocument();
+		expect(within(mergeSummary).queryByText("Ready to merge")).toBeNull();
+		expect(within(mergeLane).queryByRole("region", { name: "Ready to merge sessions" })).not.toBeInTheDocument();
+		expect(mergedRegion.className).not.toContain("border-y");
+		expect(within(mergedRegion).getByText("merged worker")).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: /archive/i })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Restore merged worker" })).not.toBeInTheDocument();
 
@@ -973,7 +932,7 @@ describe("SessionsBoard", () => {
 		});
 	});
 
-	it("orders ready-to-merge sessions above merged ones in a single column list", () => {
+	it("splits ready and merged sessions into upper and lower regions", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
 				workspaceWithSessions([
@@ -987,10 +946,17 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		const mergeLane = screen.getByRole("region", { name: "Ready to merge sessions" });
-		expect(within(mergeLane).getByLabelText("2 ready to merge sessions")).toHaveTextContent("2");
-		expect(mergeLane.querySelectorAll(".overflow-y-auto")).toHaveLength(1);
-		expect(cardSessionIds(mergeLane)).toEqual(["s-ready", "s-merged"]);
+		const mergeLane = screen.getByRole("region", { name: "Ready to merge / Merged sessions" });
+		const readyRegion = within(mergeLane).getByRole("region", { name: "Ready to merge sessions" });
+		const mergedRegion = within(mergeLane).getByRole("region", { name: "Merged sessions" });
+		expect(within(mergeLane).getByLabelText("1 ready to merge session")).toHaveTextContent("1");
+		expect(within(mergedRegion).getByText("Merged")).toBeInTheDocument();
+		// Content-sized lanes: no fixed ratio reserving height for a short lane.
+		expect(readyRegion.className).not.toContain("flex-[3]");
+		expect(mergedRegion.className).not.toContain("flex-[2]");
+		expect(mergedRegion.firstElementChild?.className).toContain("border-y");
+		expect(within(readyRegion).getByText("ready worker")).toBeInTheDocument();
+		expect(within(mergedRegion).getByText("merged worker")).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: /archive/i })).not.toBeInTheDocument();
 	});
 
@@ -1015,13 +981,15 @@ describe("SessionsBoard", () => {
 		const laneScrollers = screen
 			.getAllByTestId("board-column")
 			.flatMap((column) => Array.from(column.querySelectorAll<HTMLElement>(".overflow-y-auto")));
+		// One scroller per column: the split lanes share theirs so the lower lane
+		// can sit directly under the upper one.
 		expect(laneScrollers).toHaveLength(4);
 		for (const scroller of laneScrollers) {
 			expect(scroller).toHaveClass("board-scrollbar", "overflow-y-auto");
 		}
 	});
 
-	it("archives a terminated merged runtime without duplicating it in the merge column", async () => {
+	it("archives a terminated merged runtime without duplicating it in the merged lane", async () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
 				workspaceWithSessions([
@@ -1035,9 +1003,9 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		const mergeLane = screen.getByRole("region", { name: "Ready to merge sessions" });
-		expect(within(mergeLane).getByText("live merged worker")).toBeInTheDocument();
-		expect(within(mergeLane).queryByText("archived merged worker")).not.toBeInTheDocument();
+		const mergedRegion = screen.getByRole("region", { name: "Merged sessions" });
+		expect(within(mergedRegion).getByText("live merged worker")).toBeInTheDocument();
+		expect(within(mergedRegion).queryByText("archived merged worker")).not.toBeInTheDocument();
 
 		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
 		const archive = screen.getByRole("list", { name: "Archived sessions" });
@@ -1083,51 +1051,17 @@ describe("SessionsBoard", () => {
 		await userEvent.click(terminateButton);
 		expect(navigateMock).not.toHaveBeenCalled();
 		const dialog = screen.getByRole("dialog", { name: "Terminate merged worker?" });
-		await userEvent.click(within(dialog).getByRole("button", { name: "Yes, terminate session" }));
+		await userEvent.click(within(dialog).getByRole("button", { name: "Terminate session" }));
 
 		await waitFor(() =>
 			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/kill", {
 				params: { path: { sessionId: "s-merged" } },
 			}),
 		);
-		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
-	it("keeps only the targeted card disabled while its termination is pending", async () => {
-		let finishKill!: (value: { data: { ok: boolean; sessionId: string }; error: undefined }) => void;
-		postMock.mockReturnValueOnce(
-			new Promise((resolve) => {
-				finishKill = resolve;
-			}),
-		);
-		workspaceQueryMock.mockReturnValue({
-			data: [
-				workspaceWithSessions([
-					boardSession({ id: "s-one", title: "worker one", status: "working" }),
-					boardSession({ id: "s-two", title: "worker two", status: "merged" }),
-				]),
-			],
-			isError: false,
-			isSuccess: true,
-		});
-		renderBoard("p1");
-
-		await userEvent.click(screen.getByRole("button", { name: "Terminate worker one" }));
-		await userEvent.click(
-			within(screen.getByRole("dialog")).getByRole("button", { name: "Yes, terminate session" }),
-		);
-
-		expect(screen.getByRole("button", { name: "Killing worker one" })).toBeDisabled();
-		expect(screen.getByRole("button", { name: "Killing worker one" })).toHaveClass("opacity-100");
-		expect(screen.getByRole("button", { name: "Terminate worker two" })).toBeEnabled();
-		expect(postMock).toHaveBeenCalledTimes(1);
-
-		finishKill({ data: { ok: true, sessionId: "s-one" }, error: undefined });
-		await waitFor(() => expect(screen.getByRole("button", { name: "Terminate worker one" })).toBeEnabled());
-	});
-
-	it("keeps the merged-card confirmation dismissed and surfaces termination failures", async () => {
+	it("keeps the merged-card confirmation open when termination fails", async () => {
 		postMock.mockResolvedValueOnce({ error: { message: "runtime failed" }, response: { status: 500 } });
 		workspaceQueryMock.mockReturnValue({
 			data: [workspaceWithSessions([boardSession({ id: "s-merged", title: "merged worker", status: "merged" })])],
@@ -1137,14 +1071,10 @@ describe("SessionsBoard", () => {
 		renderBoard("p1");
 
 		await userEvent.click(screen.getByRole("button", { name: "Terminate merged worker" }));
-		await userEvent.click(
-			within(screen.getByRole("dialog")).getByRole("button", { name: "Yes, terminate session" }),
-		);
+		await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Terminate session" }));
 
-		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
-		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-		expect(await screen.findByRole("alert")).toHaveTextContent("Failed to terminate session (500)");
-		expect(screen.getByRole("button", { name: "Terminate merged worker" })).toBeEnabled();
+		expect(await screen.findByText("Failed to terminate session (500)")).toBeInTheDocument();
+		expect(screen.getByRole("dialog")).toBeInTheDocument();
 	});
 });
 

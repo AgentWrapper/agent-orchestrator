@@ -1,18 +1,29 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
-import { motion } from "motion/react";
+import {
+	useEffect,
+	useRef,
+	useState,
+	type KeyboardEvent,
+	type MouseEvent,
+	type PointerEvent as ReactPointerEvent,
+} from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {
 	AlertTriangle,
 	Check,
+	CircleCheck,
+	CirclePause,
 	Copy,
 	GitBranch,
-	LayoutDashboard,
+	GitMerge,
+	LayoutGrid,
 	LoaderCircle,
 	Plus,
 	RotateCcw,
 	RotateCw,
+	Rows3,
 	Trash2,
+	type LucideIcon,
 } from "lucide-react";
 import {
 	type SessionStatus,
@@ -26,7 +37,6 @@ import {
 import {
 	attentionZone,
 	boardAttentionZoneOrder,
-	getAgentActivityView,
 	getAttentionZoneView,
 	getAttentionZoneViewForZone,
 	getSessionStatusView,
@@ -43,23 +53,18 @@ import { NotificationCenter } from "./NotificationCenter";
 import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyStates";
 import { OrchestratorIcon } from "./icons";
 import { AgentAvatar } from "./AgentAvatar";
-import { TopbarButton, TopbarKillError } from "./TopbarButton";
+import { TopbarButton, TopbarKillError, topbarProjectLabelClass } from "./TopbarButton";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { formatTimeCompact } from "../lib/format-time";
 import { aoBridge } from "../lib/bridge";
-import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import { cn } from "../lib/utils";
 import { isLinuxPlatform, isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { useUiStore } from "../stores/ui-store";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { SessionTerminationDialog } from "./SessionTerminationDialog";
-import { DaemonStartupLoader } from "./DaemonStartupLoader";
-import { useShellMaybe } from "../lib/shell-context";
-import { ReverbTopbar } from "./topbar/ReverbTopbar";
-import type { ReverbTopbarModel } from "./topbar/topbar-model";
 
 type SessionsBoardProps = {
 	/** When set, the board shows only this project's sessions. */
@@ -70,6 +75,27 @@ type SessionsBoardProps = {
 // when its SCM outcome remains `merged`.
 type Column = AttentionZoneView;
 const COLUMNS: Column[] = boardAttentionZoneOrder.map((zone) => getAttentionZoneViewForZone(zone));
+type ArchiveLayout = "rows" | "grid";
+const archiveLayoutStorageKey = "ao.board.archive.layout";
+const archiveHeightStorageKey = "ao.board.archive.height";
+
+// The archive opens showing a couple of cards, not every one it holds — it sits
+// under the lanes and used to push them off screen when a project had a long
+// history. Past the default it scrolls, and the drag handle overrides both.
+const ARCHIVE_DEFAULT_HEIGHT: Record<ArchiveLayout, number> = { rows: 336, grid: 226 };
+const ARCHIVE_MIN_HEIGHT = 112;
+const archiveMaxHeight = () => (typeof window === "undefined" ? 640 : Math.round(window.innerHeight * 0.7));
+
+function initialArchiveLayout(): ArchiveLayout {
+	if (typeof window === "undefined") return "grid";
+	return window.localStorage?.getItem(archiveLayoutStorageKey) === "rows" ? "rows" : "grid";
+}
+
+function initialArchiveHeight(): number | undefined {
+	if (typeof window === "undefined") return undefined;
+	const stored = Number(window.localStorage?.getItem(archiveHeightStorageKey));
+	return Number.isFinite(stored) && stored >= ARCHIVE_MIN_HEIGHT ? stored : undefined;
+}
 
 function isArchivedSession(session: WorkspaceSession): boolean {
 	return session.isTerminated === true || session.status === "terminated";
@@ -77,13 +103,13 @@ function isArchivedSession(session: WorkspaceSession): boolean {
 
 const isMac = isMacPlatform();
 const dragStyle = isMac ? ({ WebkitAppRegion: "drag" } as React.CSSProperties) : undefined;
+const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
 export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const restoreSessionById = useRestoreSession();
 	const workspaceQuery = useWorkspaceQuery();
-	const shell = useShellMaybe();
 	// Evaluated at render so platform mocks in tests can flip the in-panel chrome.
 	const boardActionsInPanel = usesBoardActionsInPanel();
 	/** Bell lives in the board action row when the shell topbar does not host it. */
@@ -91,9 +117,10 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const all = workspaceQuery.data ?? [];
 	const workspaces = projectId ? all.filter((w) => w.id === projectId) : all;
 	const workspace = projectId ? workspaces[0] : undefined;
+	// Same crumb as ShellTopbar: project name in scope, else root-board "Board".
+	const boardLabel = workspace?.name ?? (projectId ? "" : "Board");
 	const sessions = workspaces.flatMap((w) => workerSessions(w.sessions));
 	const orchestrator = projectId ? newestActiveOrchestrator(workspaces[0]?.sessions ?? []) : undefined;
-	const orchestratorActivityLabel = orchestrator ? getAgentActivityView(orchestrator.activity).label : undefined;
 	const [isSpawning, setIsSpawning] = useState(false);
 	const [spawnError, setSpawnError] = useState<string | null>(null);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
@@ -104,17 +131,9 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
 	const setOrchestratorStartupError = useUiStore((state) => state.setOrchestratorStartupError);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
-	const openProjectSettings = useUiStore((state) => state.openProjectSettings);
 	const isProjectRestarting = projectId ? restartingProjectIds.has(projectId) : false;
 	const health = workspace ? orchestratorHealth(workspace, isProjectRestarting) : { state: "ok" as const };
 	const visibleSpawnError = spawnError ?? orchestratorStartupError;
-	const orchestratorTooltip = isProjectRestarting
-		? "Restarting orchestrator"
-		: isSpawning
-			? "Spawning orchestrator"
-			: orchestrator
-				? "Open orchestrator"
-				: "Spawn orchestrator";
 	// The board instance survives project-to-project navigation (same route,
 	// new param), so a spawn failure must not follow the user to another board.
 	useEffect(() => setSpawnError(null), [projectId]);
@@ -144,19 +163,15 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	// query has resolved, so the welcome never flashes over real data): the
 	// global board teaches the app before any project exists, and a fresh
 	// project board invites the first task instead of showing four zeros.
-	const isDaemonReady = usesPreviewWorkspaceData || (shell ? shell.daemonStatus.state === "ready" : true);
-	const daemonHasFailed = Boolean(shell?.daemonStatus.code);
-	const workspaceStartupState = shell?.workspaceStartupState ?? "ready";
-	const isLoaded = isDaemonReady && workspaceStartupState === "ready" && workspaceQuery.isSuccess;
-	const showStartup =
-		shell !== null &&
-		!daemonHasFailed &&
-		(!isDaemonReady || workspaceStartupState === "loading" || (!workspaceQuery.isSuccess && !workspaceQuery.isError));
+	const isLoaded = workspaceQuery.isSuccess;
 	const showWelcome = !projectId && isLoaded && all.length === 0;
 	const showProjectEmpty = projectId !== undefined && isLoaded && workspaces.length > 0 && sessions.length === 0;
 	// Archived sessions cost one quiet line under the board until expanded.
 	const [archiveExpanded, setArchiveExpanded] = useState(false);
-	const [archiveLayout, setArchiveLayout] = useState<"grid" | "list">("grid");
+	const [archiveLayout, setArchiveLayout] = useState<ArchiveLayout>(initialArchiveLayout);
+	// undefined = follow the layout's default; a number = the user dragged it.
+	const [archiveHeight, setArchiveHeight] = useState<number | undefined>(initialArchiveHeight);
+	const archiveResizeRef = useRef<{ startY: number; startHeight: number } | null>(null);
 	const [restoringSessionId, setRestoringSessionId] = useState<string | undefined>();
 	const [restoreErrors, setRestoreErrors] = useState<Record<string, string>>({});
 	const [restoreUnavailableSession, setRestoreUnavailableSession] = useState<WorkspaceSession | undefined>();
@@ -176,6 +191,45 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			to: "/projects/$projectId/sessions/$sessionId",
 			params: { projectId: session.workspaceId, sessionId: session.id },
 		});
+	const clampArchiveHeight = (value: number) =>
+		Math.min(Math.max(value, ARCHIVE_MIN_HEIGHT), archiveMaxHeight());
+	const commitArchiveHeight = (value: number) => {
+		const next = clampArchiveHeight(value);
+		setArchiveHeight(next);
+		window.localStorage?.setItem(archiveHeightStorageKey, String(next));
+	};
+	const resolvedArchiveHeight = archiveHeight ?? ARCHIVE_DEFAULT_HEIGHT[archiveLayout];
+	const startArchiveResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+		event.preventDefault();
+		archiveResizeRef.current = { startY: event.clientY, startHeight: resolvedArchiveHeight };
+		event.currentTarget.setPointerCapture(event.pointerId);
+	};
+	const moveArchiveResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+		const drag = archiveResizeRef.current;
+		if (!drag) return;
+		// The handle is on the panel's top edge, so dragging up grows the archive.
+		commitArchiveHeight(drag.startHeight - (event.clientY - drag.startY));
+	};
+	const endArchiveResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+		if (!archiveResizeRef.current) return;
+		archiveResizeRef.current = null;
+		event.currentTarget.releasePointerCapture(event.pointerId);
+	};
+	const nudgeArchiveHeight = (event: KeyboardEvent<HTMLDivElement>) => {
+		const step = event.shiftKey ? 64 : 16;
+		if (event.key === "ArrowUp") {
+			event.preventDefault();
+			commitArchiveHeight(resolvedArchiveHeight + step);
+		} else if (event.key === "ArrowDown") {
+			event.preventDefault();
+			commitArchiveHeight(resolvedArchiveHeight - step);
+		}
+	};
+
+	const chooseArchiveLayout = (layout: ArchiveLayout) => {
+		window.localStorage?.setItem(archiveLayoutStorageKey, layout);
+		setArchiveLayout(layout);
+	};
 
 	const restoreArchivedSession = async (event: MouseEvent<HTMLButtonElement>, session: WorkspaceSession) => {
 		event.stopPropagation();
@@ -220,7 +274,9 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			return;
 		}
 		if (!hasConfiguredOrchestratorAgent(workspace)) {
-			if (workspace) openProjectSettings(projectId);
+			if (workspace) {
+				void navigate({ to: "/projects/$projectId/settings", params: { projectId } });
+			}
 			return;
 		}
 		setSpawnError(null);
@@ -257,75 +313,66 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 	const actions = projectId ? (
 		<>
-			<Tooltip>
-				<TooltipTrigger asChild>
-					<span className="inline-flex">
-						<TopbarButton
-							aria-label="New task"
-							disabled={isProjectRestarting}
-							onClick={() => projectId && requestNewTask(projectId)}
-							variant="icon"
-						>
-							<Plus className="size-icon-md" aria-hidden="true" />
-						</TopbarButton>
-					</span>
-				</TooltipTrigger>
-				<TooltipContent side="bottom">New task</TooltipContent>
-			</Tooltip>
-			<Tooltip>
-				<TooltipTrigger asChild>
-					<span className="inline-flex">
-						<TopbarButton
-							aria-label={
-								orchestratorActivityLabel ? `Orchestrator, ${orchestratorActivityLabel}` : "Spawn Orchestrator"
-							}
-							disabled={isSpawning || isProjectRestarting}
-							onClick={() => void openOrchestrator()}
-							variant="icon"
-						>
-							<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
-						</TopbarButton>
-					</span>
-				</TooltipTrigger>
-				<TooltipContent side="bottom">{orchestratorTooltip}</TooltipContent>
-			</Tooltip>
+			{boardOwnsNotificationCenter ? <NotificationCenter /> : null}
+			{visibleSpawnError && !showProjectEmpty && (
+				<TopbarKillError className="max-w-content-max truncate" title={visibleSpawnError}>
+					{visibleSpawnError}
+				</TopbarKillError>
+			)}
+			<TopbarButton
+				aria-label="New task"
+				disabled={isProjectRestarting}
+				onClick={() => projectId && requestNewTask(projectId)}
+				variant="accent"
+			>
+				<Plus className="size-icon-md" aria-hidden="true" />
+				New task
+			</TopbarButton>
+			<TopbarButton
+				aria-label={orchestrator ? "Orchestrator" : "Spawn Orchestrator"}
+				disabled={isSpawning || isProjectRestarting}
+				onClick={() => void openOrchestrator()}
+				variant="primary"
+			>
+				<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
+				{isProjectRestarting
+					? "Restarting..."
+					: isSpawning
+						? "Spawning..."
+						: orchestrator
+							? "Orchestrator"
+							: "Spawn Orchestrator"}
+			</TopbarButton>
 		</>
+	) : boardOwnsNotificationCenter ? (
+		<NotificationCenter />
 	) : undefined;
-	const model: ReverbTopbarModel = projectId
-		? {
-				surface: "project-board",
-				breadcrumbs: [{ id: "board", label: "Board" }],
-			}
-		: {
-				surface: "global-board",
-				breadcrumbs: [{ id: "board", label: "Board" }],
-			};
+
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="board">
-			{/* macOS/Linux keep board actions inside the center panel. Welcome
-			    and daemon startup intentionally skip the workspace bar. */}
-			{!showWelcome && !showStartup && boardActionsInPanel ? (
-				<ReverbTopbar
-					actions={actions}
-					dragStyle={dragStyle}
-					error={
-						visibleSpawnError && !showProjectEmpty ? (
-							<TopbarKillError className="max-w-content-max truncate" title={visibleSpawnError}>
-								{visibleSpawnError}
-							</TopbarKillError>
-						) : null
-					}
-					leadingIcon={<LayoutDashboard className="size-icon-md" />}
-					model={model}
-					utilities={boardOwnsNotificationCenter ? <NotificationCenter /> : null}
-				/>
+			{/* macOS: shell topbar is hidden on board routes, so the project/"Board"
+			    crumb + New task / Orchestrator / bell live in this in-panel row.
+			    Win/Linux keep the crumb and actions in the framed ShellTopbar.
+			    Welcome skips the row — a dangling "Board" above the import
+			    chooser was review feedback on #2432. */}
+			{!showWelcome && boardActionsInPanel && (boardLabel || actions) ? (
+				<div
+					className="center-panel-titlebar flex h-toolbar shrink-0 items-center gap-2 border-b border-border-strong pr-4.5"
+					style={dragStyle}
+				>
+					{boardLabel ? <span className={topbarProjectLabelClass}>{boardLabel}</span> : null}
+					<div className="min-w-0 flex-1" />
+					{actions ? (
+						<div className="flex shrink-0 items-center gap-2" style={noDragStyle}>
+							{actions}
+						</div>
+					) : null}
+				</div>
 			) : null}
 
 			<div className="min-h-0 flex-1 overflow-hidden">
 				{projectId && health.state !== "ok" ? (
-					// A full-bleed strip, not a card: the column header rule below it runs
-					// edge to edge, so an inset rounded box floats against it.
-					<div className="flex items-center gap-3 border-b border-border bg-background px-3 py-2 text-xs text-muted-foreground">
+					<div className="mx-3 my-3 flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-xs text-muted-foreground">
 						<AlertTriangle className="size-icon-base shrink-0 text-warning" aria-hidden="true" />
 						<span className="min-w-0 flex-1">{health.message}</span>
 						{health.state === "restart_needed" || health.state === "duplicates" ? (
@@ -336,9 +383,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						) : null}
 					</div>
 				) : null}
-				{showStartup ? (
-					<DaemonStartupLoader />
-				) : workspaceStartupState === "error" || workspaceQuery.isError ? (
+				{workspaceQuery.isError ? (
 					<p className="py-10 text-center text-xs text-passive">Could not load sessions.</p>
 				) : showWelcome ? (
 					<BoardWelcome />
@@ -355,11 +400,11 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 					<div className="h-full overflow-x-auto overflow-y-hidden">
 						{/* Hairline column grid: vertical divide-x + one absolute header rule so
 						    the horizontal divider stays continuous and level across lanes.
-						    Keep `top-9` aligned with each column header's `h-9`. */}
-						<div className="relative grid h-full min-w-[64rem] grid-cols-4 divide-x divide-border xl:min-w-0">
+						    Keep `top-12` aligned with each column header's `h-12`. */}
+						<div className="relative grid h-full min-w-[64rem] grid-cols-4 divide-x divide-border-strong xl:min-w-0">
 							<div
 								aria-hidden="true"
-								className="pointer-events-none absolute inset-x-0 top-9 z-10 border-t border-border"
+								className="pointer-events-none absolute inset-x-0 top-12 z-10 border-t border-border-strong"
 							/>
 							{COLUMNS.map((col) => (
 								<BoardColumn
@@ -379,11 +424,38 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			</div>
 
 			{archived.length > 0 && (
-				<div className="shrink-0 border-t border-border">
+				<div className="relative shrink-0 border-t border-border-strong px-3">
+					{archiveExpanded && (
+						<div
+							aria-label="Resize archive"
+							aria-orientation="horizontal"
+							aria-valuemin={ARCHIVE_MIN_HEIGHT}
+							aria-valuenow={Math.round(resolvedArchiveHeight)}
+							className="group absolute inset-x-0 -top-1 z-10 flex h-2 cursor-row-resize touch-none items-center justify-center focus-visible:outline-none"
+							onKeyDown={nudgeArchiveHeight}
+							onPointerDown={startArchiveResize}
+							onPointerMove={moveArchiveResize}
+							onPointerUp={endArchiveResize}
+							onPointerCancel={endArchiveResize}
+							role="separator"
+							tabIndex={0}
+						>
+							<span
+								aria-hidden="true"
+								className="h-0.5 w-10 rounded-full bg-border-strong transition-colors group-hover:bg-accent group-focus-visible:bg-accent"
+							/>
+						</div>
+					)}
+					{/* agent-orchestrator's archive bar (Dashboard.tsx + globals.css):
+					    a full-width chevron + label + count toggle row. The button is
+					    37px (not the 35.5px its text-control implies) because the
+					    unlayered `button { font: inherit }` in styles.css outranks
+					    Tailwind's layered text utilities, leaving it at 14px/21px. */}
+					<div className={cn("flex items-center gap-2", archiveExpanded ? "min-h-11" : "min-h-row-md")}>
 						<button
 							aria-expanded={archiveExpanded}
 							aria-label={`Archive, ${archived.length} ${archived.length === 1 ? "session" : "sessions"}`}
-							className="group flex w-full min-w-0 items-center gap-2 px-3 py-2 text-muted-foreground transition-colors hover:text-foreground"
+							className="group flex min-w-0 items-center gap-2 py-2 text-muted-foreground transition-colors hover:text-foreground"
 							onClick={() => setArchiveExpanded((v) => !v)}
 							type="button"
 						>
@@ -400,24 +472,47 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 							>
 								<path d="m9 18 6-6-6-6" />
 							</svg>
-							<span className="text-2xs font-medium tracking-wide-sm">Archive</span>
-							<span className="ml-1.5 text-micro text-passive">{archived.length}</span>
+							<span className="font-mono text-2xs font-medium uppercase tracking-wide-sm">Archive</span>
+							<span className="ml-1.5 font-mono text-micro text-passive">{archived.length}</span>
 						</button>
-					<motion.div
-						initial={false}
-						animate={{ height: archiveExpanded ? "auto" : 0 }}
-						transition={{ duration: 0.22, ease: [0.25, 0.46, 0.45, 0.94] }}
-						style={{ overflow: "hidden" }}
-					>
+						{archiveExpanded && (
+							<div
+								aria-label="Archive layout"
+								className="ml-auto flex shrink-0 items-center rounded-md border border-border bg-surface-faint p-0.5"
+								role="group"
+							>
+								<ArchiveLayoutButton
+									active={archiveLayout === "rows"}
+									icon={Rows3}
+									label="Rows"
+									onClick={() => chooseArchiveLayout("rows")}
+								/>
+								<ArchiveLayoutButton
+									active={archiveLayout === "grid"}
+									icon={LayoutGrid}
+									label="Columns"
+									onClick={() => chooseArchiveLayout("grid")}
+								/>
+							</div>
+						)}
+					</div>
+					{archiveExpanded && (
 						<div
 							aria-label="Archived sessions"
+							style={{ height: resolvedArchiveHeight }}
 							className={cn(
-								"board-scrollbar max-h-[45vh] gap-2.5 overflow-y-auto pb-3",
+								"board-scrollbar gap-2.5 overflow-y-auto pb-3",
 								// The card is identical in both modes — the toggle only decides
 								// how many sit on a line.
+								//
+								// content-start + auto-rows-min keep the cards at their own
+								// height: a grid defaults to stretching its rows over the
+								// container, so dragging the panel taller inflated every card
+								// instead of leaving the new room empty. Same reason the flex
+								// mode pins shrink-0 on its children.
 								archiveLayout === "grid"
-									? "grid grid-cols-[repeat(auto-fill,minmax(17rem,1fr))]"
-									: "flex flex-col",
+									? "grid auto-rows-min grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] content-start"
+									: "flex flex-col [&>*]:shrink-0",
 							)}
 							role="list"
 						>
@@ -432,7 +527,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 								/>
 							))}
 						</div>
-					</motion.div>
+					)}
 				</div>
 			)}
 			{restoreUnavailableSession && (
@@ -472,23 +567,40 @@ function BoardColumn({
 	onOpen: (s: WorkspaceSession) => void;
 	onTerminate: (s: WorkspaceSession) => void;
 }) {
-	if (col.zone === "working")
-		return <WorkLaneColumn col={col} sessions={sessions} onOpen={onOpen} onTerminate={onTerminate} />;
-	if (col.zone === "merge")
-		return <MergeLaneColumn col={col} sessions={sessions} onOpen={onOpen} onTerminate={onTerminate} />;
+	if (col.zone === "working") return <WorkLaneColumn sessions={sessions} onOpen={onOpen} onTerminate={onTerminate} />;
+	if (col.zone === "merge") return <MergeLaneColumn sessions={sessions} onOpen={onOpen} onTerminate={onTerminate} />;
 	return <ZoneColumn col={col} sessions={sessions} onOpen={onOpen} onTerminate={onTerminate} />;
 }
 
-/** Board column header: color swatch, name, count — the landing hero's board preview. */
-function ColumnHeader({ color, count, label }: { color: string; count: number; label: string }) {
+/**
+ * Column and lane titles. They sit directly above a stack of cards, so without
+ * their own band and weight they read as another card footer rather than as the
+ * heading for everything under them.
+ */
+function LaneHeadingBar({ color }: { color: string }) {
+	return <span aria-hidden="true" className="h-3.5 w-0.5 shrink-0 rounded-full" style={{ background: color }} />;
+}
+
+function LaneHeadingText({ className, children }: { className?: string; children: string }) {
 	return (
-		<div className="flex h-9 shrink-0 items-center gap-2 px-3">
-			<span aria-hidden="true" className="size-2 shrink-0 rounded-swatch" style={{ background: color }} />
-			<span className="min-w-0 truncate text-xs font-medium tracking-wide-sm text-muted-foreground">{label}</span>
-			<SessionCount count={count} label={label.toLowerCase()} />
-		</div>
+		<span className={cn("truncate font-mono text-xs font-semibold uppercase tracking-wide-md", className)}>
+			{children}
+		</span>
 	);
 }
+
+function LaneHeadingCount({ count, label }: { count: number; label: string }) {
+	return (
+		<span
+			aria-label={`${count} ${label} ${count === 1 ? "session" : "sessions"}`}
+			className="ml-auto shrink-0 rounded-full bg-muted px-2 py-0.5 font-mono text-2xs leading-none tabular-nums text-muted-foreground"
+		>
+			{count}
+		</span>
+	);
+}
+
+const laneHeadingBandClass = "flex h-12 shrink-0 items-center gap-2.5 border-b border-border bg-surface-faint px-4";
 
 function ZoneColumn({
 	col,
@@ -508,8 +620,12 @@ function ZoneColumn({
 			data-testid="board-column"
 			data-column={col.zone}
 		>
-			<ColumnHeader color={col.dot} count={sessions.length} label={col.label} />
-			<div className="board-scrollbar board-lane-scroller min-h-0 flex-1 overflow-y-auto px-2 pb-3 pt-3">
+			<div className={laneHeadingBandClass}>
+				<LaneHeadingBar color={col.dot} />
+				<LaneHeadingText className={col.titleClassName}>{col.label}</LaneHeadingText>
+				<LaneHeadingCount count={sessions.length} label={col.label.toLowerCase()} />
+			</div>
+			<div className="board-scrollbar min-h-0 flex-1 overflow-y-auto px-3 pb-3 pt-3">
 				<div className="flex min-h-full flex-col gap-2.5">
 					{sessions.map((session) => (
 						<SessionCard
@@ -525,42 +641,98 @@ function ZoneColumn({
 	);
 }
 
-// Working sessions lead the lane; idle ones settle at the bottom of the same
-// list. They are ordered, not sectioned: a sub-header inside a column competes
-// with the column header above it.
+type SplitLaneTone = {
+	label: string;
+	countLabel: string;
+	regionLabel: string;
+	dotClassName: string;
+	titleClassName: string;
+	color: string;
+	dotGlow: boolean;
+	icon: LucideIcon;
+};
+
+const idleLaneTone: SplitLaneTone = {
+	label: "Idle",
+	countLabel: "idle",
+	regionLabel: "Idle sessions",
+	dotClassName: "bg-status-idle",
+	titleClassName: "text-status-idle",
+	color: "var(--color-status-idle)",
+	dotGlow: false,
+	icon: CirclePause,
+};
+
+const workingLaneTone: SplitLaneTone = {
+	label: "Working",
+	countLabel: "working",
+	regionLabel: "Working sessions",
+	dotClassName: "bg-status-working",
+	titleClassName: "text-status-working",
+	color: "var(--color-status-working)",
+	dotGlow: true,
+	icon: LoaderCircle,
+};
+
+const readyLaneTone: SplitLaneTone = {
+	label: "Ready to merge",
+	countLabel: "ready to merge",
+	regionLabel: "Ready to merge sessions",
+	dotClassName: "bg-status-ready",
+	titleClassName: "text-status-ready",
+	color: "var(--color-status-ready)",
+	dotGlow: true,
+	icon: GitMerge,
+};
+
+const mergedLaneTone: SplitLaneTone = {
+	label: "Merged",
+	countLabel: "merged",
+	regionLabel: "Merged sessions",
+	dotClassName: "bg-status-merged",
+	titleClassName: "text-status-merged",
+	color: "var(--color-status-merged)",
+	dotGlow: false,
+	icon: CircleCheck,
+};
+
 function WorkLaneColumn({
-	col,
 	sessions,
 	onOpen,
 	onTerminate,
 }: {
-	col: Column;
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
 	onTerminate: (s: WorkspaceSession) => void;
 }) {
-	const ordered = [...sessions.filter((session) => !isSessionIdle(session)), ...sessions.filter(isSessionIdle)];
+	const idleSessions = sessions.filter(isSessionIdle);
+	const workingSessions = sessions.filter((session) => !isSessionIdle(session));
 
-	return <ZoneColumn col={col} sessions={ordered} onOpen={onOpen} onTerminate={onTerminate} />;
+	return (
+		<SplitLaneColumn
+			ariaLabel="Idle / Working sessions"
+			zone="working"
+			primarySessions={idleSessions}
+			primaryTone={idleLaneTone}
+			secondarySessions={workingSessions}
+			secondaryTone={workingLaneTone}
+			onOpen={onOpen}
+			onTerminate={onTerminate}
+		/>
+	);
 }
 
-// Ready-to-merge leads; already-merged settles underneath, newest first in both.
 function MergeLaneColumn({
-	col,
 	sessions,
 	onOpen,
 	onTerminate,
 }: {
-	col: Column;
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
 	onTerminate: (s: WorkspaceSession) => void;
 }) {
-	const newestFirst = (left: WorkspaceSession, right: WorkspaceSession) => right.updatedAt.localeCompare(left.updatedAt);
-	const ordered = [
-		...sessions.filter((session) => session.status !== "merged").sort(newestFirst),
-		...sessions.filter((session) => session.status === "merged").sort(newestFirst),
-	];
+	const mergedSessions = sessions.filter((session) => session.status === "merged");
+	const readySessions = sessions.filter((session) => session.status !== "merged");
 
 	return (
 		<SplitLaneColumn
@@ -597,46 +769,37 @@ function SplitLaneColumn({
 }) {
 	const showPrimary = primarySessions.length > 0;
 	const showSecondary = secondarySessions.length > 0;
+	// The header names the lane the column starts with, and nothing else. Naming
+	// both meant "Working" appeared twice whenever both lanes had work — once up
+	// here and again on the section that actually holds the working cards — and
+	// it named an Idle lane that wasn't on screen when every session was active.
+	const headerTone = showPrimary ? primaryTone : secondaryTone;
+	const headerCount = showPrimary ? primarySessions.length : secondarySessions.length;
 
 	return (
 		<section
 			aria-label={ariaLabel}
-			className="flex min-w-0 flex-col overflow-hidden rounded-panel"
+			className="flex min-w-0 flex-col overflow-hidden"
 			data-column={zone}
 			data-testid="board-column"
-			style={{
-				background: `linear-gradient(180deg, color-mix(in srgb, ${primaryTone.color} 7%, transparent), transparent var(--size-kanban-glow)), var(--color-overlay-subtle)`,
-			}}
 		>
-			<div className="flex shrink-0 items-center gap-2 px-3 pb-2.5 pt-2.5">
+			<div className={laneHeadingBandClass}>
 				<div
 					aria-label={`${primaryTone.label} / ${secondaryTone.label} lane summary`}
-					className="flex min-w-0 items-center gap-1.5 text-caption font-semibold uppercase tracking-wide-md"
+					className="flex min-w-0 items-center gap-2.5"
 					role="group"
 				>
-					<LaneStatusLabel tone={primaryTone} />
-					<span className="text-passive" aria-hidden="true">
-						/
-					</span>
-					<LaneStatusLabel tone={secondaryTone} />
+					<LaneStatusLabel tone={headerTone} />
 				</div>
-				<div className="ml-auto flex shrink-0 items-center gap-1.5 font-mono text-caption leading-none text-passive">
-					<SessionCount count={primarySessions.length} label={primaryTone.countLabel} />
-					<span aria-hidden="true">/</span>
-					<SessionCount count={secondarySessions.length} label={secondaryTone.countLabel} />
-				</div>
+				<LaneHeadingCount count={headerCount} label={headerTone.countLabel} />
 			</div>
-			<div className="flex min-h-0 flex-1 flex-col">
+			{/* One scroller for the whole column: the lanes are sized by their content
+			    so a short primary lane doesn't reserve height the secondary header
+			    then has to sit below. */}
+			<div className="board-scrollbar min-h-0 flex-1 overflow-y-auto pb-3">
 				{showPrimary ? (
-					<div
-						aria-label={primaryTone.regionLabel}
-						className={cn(
-							"board-scrollbar min-h-0 overflow-y-auto px-2",
-							showSecondary ? "flex-[3] pb-2" : "flex-1 pb-2",
-						)}
-						role="region"
-					>
-						<div className="flex min-h-full flex-col gap-2">
+					<div aria-label={primaryTone.regionLabel} className="px-3 pt-3" role="region">
+						<div className="flex flex-col gap-2.5">
 							{primarySessions.map((session) => (
 								<SessionCard
 									key={session.id}
@@ -664,40 +827,45 @@ function SplitLaneColumn({
 
 function LaneStatusLabel({ tone }: { tone: SplitLaneTone }) {
 	return (
-		<span className={cn("inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap", tone.titleClassName)}>
-			<span
-				className={cn("size-dot-sm rounded-full", tone.dotClassName)}
-				style={{ boxShadow: tone.dotGlow ? `0 0 7px color-mix(in srgb, ${tone.color} 60%, transparent)` : undefined }}
-				aria-hidden="true"
-			/>
-			{tone.label}
+		<span className="inline-flex min-w-0 items-center gap-2.5">
+			<LaneHeadingBar color={tone.color} />
+			<LaneHeadingText className={tone.titleClassName}>{tone.label}</LaneHeadingText>
 		</span>
 	);
 }
 
-function SessionCount({ count, label }: { count: number; label: string }) {
+function SecondaryLaneSection({
+	sessions,
+	onOpen,
+	onTerminate,
+	standalone,
+	tone,
+}: {
+	sessions: WorkspaceSession[];
+	onOpen: (s: WorkspaceSession) => void;
+	onTerminate?: (s: WorkspaceSession) => void;
+	standalone: boolean;
+	tone: SplitLaneTone;
+}) {
 	return (
-		<span
-			aria-label={`${count} ${label} ${count === 1 ? "session" : "sessions"}`}
-			className="ml-2 text-xs tabular-nums leading-none text-passive"
-		>
-			<div className="flex shrink-0 items-center gap-2 px-3 pb-2.5 pt-2.5">
-				<div className="text-caption font-semibold uppercase tracking-wide-md">
+		<div aria-label={tone.regionLabel} className="flex flex-col" role="region">
+			{/* When this lane is the only one with work, the column header already
+			    names it — a second identical header would just repeat itself. */}
+			{!standalone && (
+				<div className="mt-3 flex shrink-0 items-center gap-2.5 border-y border-border bg-surface-faint px-4 py-2.5">
 					<LaneStatusLabel tone={tone} />
+					<LaneHeadingCount count={sessions.length} label={tone.countLabel} />
 				</div>
-				<span className="ml-auto font-mono text-caption leading-none text-passive">{sessions.length}</span>
-			</div>
-			<div className="board-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-				<div className="flex min-h-full flex-col gap-2">
-					{sessions.map((session) => (
-						<SessionCard
-							key={session.id}
-							session={session}
-							onOpen={() => onOpen(session)}
-							onTerminate={onTerminate ? () => onTerminate(session) : undefined}
-						/>
-					))}
-				</div>
+			)}
+			<div className={cn("flex flex-col gap-2.5 px-3", standalone && "pt-3")}>
+				{sessions.map((session) => (
+					<SessionCard
+						key={session.id}
+						session={session}
+						onOpen={() => onOpen(session)}
+						onTerminate={onTerminate ? () => onTerminate(session) : undefined}
+					/>
+				))}
 			</div>
 		</div>
 	);
@@ -753,9 +921,9 @@ function SessionCard({
 		<div
 			{...cardBodyProps}
 			className={cn(
-		"group relative w-full rounded-lg border text-left transition-[border-color,box-shadow,background-color,transform] duration-[100ms] ease-out",
-		badge.cardClassName ?? "border-border bg-card",
-		interactive && "cursor-pointer hover:border-border-strong hover:shadow-sm hover:bg-[color-mix(in_oklch,var(--foreground)_7%,var(--card))] active:scale-[0.98]",
+				"group relative w-full rounded-lg border text-left transition-[border-color,box-shadow]",
+				badge.cardClassName ?? "border-border bg-surface",
+				interactive && "cursor-pointer hover:border-border-strong hover:shadow-sm",
 			)}
 			data-testid="board-session-card"
 			data-session-id={session.id}
@@ -796,7 +964,7 @@ function SessionCard({
 					    keep the specific status in the accessible name for screen readers. */}
 					<span className="sr-only">Status: {badge.label}</span>
 					{showBranch && (
-						<div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-2xs text-passive">
+						<div className="mt-1.5 flex min-w-0 items-center gap-1.5 font-mono text-2xs text-passive">
 							<GitBranch aria-hidden="true" className="size-icon-2xs shrink-0" />
 							<span className="truncate">{branch}</span>
 							<CopyActionButton label={`branch ${branch}`} value={branch} />
@@ -804,6 +972,7 @@ function SessionCard({
 					)}
 				</div>
 			</div>
+			<div aria-hidden="true" className="mx-3.5 my-px h-px bg-border" />
 			<div className="flex items-center gap-2 px-3.5 py-2 font-mono text-2xs text-passive">
 				<div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
 					{showAgentName && (
@@ -980,6 +1149,38 @@ function ArchiveRestoreError({ message }: { message?: string }) {
 			{message}
 		</div>
 	) : null;
+}
+
+function ArchiveLayoutButton({
+	active,
+	icon: Icon,
+	label,
+	onClick,
+}: {
+	active: boolean;
+	icon: typeof Rows3;
+	label: string;
+	onClick: () => void;
+}) {
+	return (
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<button
+					aria-label={label}
+					aria-pressed={active}
+					className={cn(
+						"grid size-control-sm place-items-center rounded-sm text-passive transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
+						active && "bg-interactive-active text-foreground",
+					)}
+					onClick={onClick}
+					type="button"
+				>
+					<Icon className="size-icon-sm" aria-hidden="true" />
+				</button>
+			</TooltipTrigger>
+			<TooltipContent side="top">{label}</TooltipContent>
+		</Tooltip>
+	);
 }
 
 type BoardPRLifecycleStatus = { label: "closed" | "open" | "draft" | "merged"; className: string };

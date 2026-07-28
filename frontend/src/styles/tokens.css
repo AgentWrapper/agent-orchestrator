@@ -125,6 +125,8 @@
 	--color-overlay-subtle: color-mix(in oklch, var(--foreground) 1.8%, transparent);
 	--color-overlay-faint: color-mix(in oklch, var(--foreground) 2%, transparent);
 	--color-scrollbar: color-mix(in oklch, var(--foreground) 12%, transparent);
+	--color-scrollbar-board: color-mix(in oklch, var(--foreground) 26%, transparent);
+	--color-scrollbar-board-hover: color-mix(in oklch, var(--foreground) 45%, transparent);
 	--color-scrim: color-mix(in oklch, var(--background) 85%, transparent);
 	--blur-overlay: 1px;
 
@@ -686,6 +688,8 @@
 	--color-overlay-subtle: color-mix(in oklch, var(--foreground) 2%, transparent);
 	--color-overlay-faint: color-mix(in oklch, var(--foreground) 3%, transparent);
 	--color-scrollbar: color-mix(in oklch, var(--foreground) 12%, transparent);
+	--color-scrollbar-board: color-mix(in oklch, var(--foreground) 26%, transparent);
+	--color-scrollbar-board-hover: color-mix(in oklch, var(--foreground) 45%, transparent);
 	--color-scrim: color-mix(in oklch, var(--foreground) 45%, transparent);
 
 	--elevation-sm: 0 1px 0 color-mix(in oklch, var(--foreground) 6%, transparent);
