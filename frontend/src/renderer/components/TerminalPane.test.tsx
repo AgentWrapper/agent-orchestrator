@@ -359,7 +359,7 @@ describe("terminal link preview", () => {
 	});
 
 	it("uses the restored session state for a watcher created while inactive", async () => {
-		const inactiveWorker = { ...worker, status: "terminated" };
+		const inactiveWorker = { ...worker, status: "terminated" } satisfies WorkspaceSession;
 		const view = renderPane(inactiveWorker);
 		try {
 			act(() => terminalOutputHandler?.("old http://localhost:3000/app\n", "live"));
