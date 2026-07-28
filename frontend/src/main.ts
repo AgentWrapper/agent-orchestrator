@@ -389,6 +389,7 @@ function createWindow(): void {
 // this window is reported with its captured output instead of being treated as
 // ready on an assumed port.
 const PORT_DISCOVERY_TIMEOUT_MS = 30_000;
+const DAEMON_RESTART_STOP_TIMEOUT_MS = 5_000;
 const RUN_FILE_POLL_MS = 300;
 // Accept run-files stamped slightly before our spawn timestamp: the daemon's
 // clock reading and ours race within normal scheduling jitter.
@@ -1102,9 +1103,41 @@ function stopDaemon(): DaemonStatus {
 	return daemonStatus;
 }
 
+async function restartDaemon(): Promise<DaemonStatus> {
+	const child = daemonProcess;
+	if (!child) return startDaemon();
+
+	const exited = new Promise<boolean>((resolve) => {
+		let settled = false;
+		const finish = (didExit: boolean) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			child.off("exit", onExit);
+			resolve(didExit);
+		};
+		const onExit = () => finish(true);
+		const timer = setTimeout(() => finish(false), DAEMON_RESTART_STOP_TIMEOUT_MS);
+		child.once("exit", onExit);
+	});
+
+	stopDaemon();
+	if (!(await exited)) {
+		setDaemonStatus({
+			state: "error",
+			message: "AO daemon did not stop within 5 seconds, so the restart was cancelled.",
+			details: daemonOutput.trim() || undefined,
+			code: "not_ready",
+		});
+		return daemonStatus;
+	}
+	return startDaemon();
+}
+
 ipcMain.handle("daemon:getStatus", () => refreshDaemonStatus());
 ipcMain.handle("daemon:start", () => startDaemon());
 ipcMain.handle("daemon:stop", () => stopDaemon());
+ipcMain.handle("daemon:restart", () => restartDaemon());
 ipcMain.handle("app:getVersion", () => app.getVersion());
 ipcMain.handle("app:openExternal", async (_event, url: string) => {
 	await openAllowedAppExternalURL(url, shell);
