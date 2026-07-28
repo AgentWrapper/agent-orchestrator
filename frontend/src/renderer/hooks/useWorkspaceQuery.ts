@@ -54,7 +54,7 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 		return fake ? fake.snapshot() : mockWorkspaces;
 	}
 	if (!hasTrustedApiBaseUrl()) {
-		return [];
+		throw new Error("AO daemon API is not ready");
 	}
 
 	const [{ data: projectsData, error: projectsError }, { data: sessionsData, error: sessionsError }] =

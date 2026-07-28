@@ -140,10 +140,12 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	// global board teaches the app before any project exists, and a fresh
 	// project board invites the first task instead of showing four zeros.
 	const isDaemonReady = usesPreviewWorkspaceData || (shell ? shell.daemonStatus.state === "ready" : true);
+	const daemonHasFailed = Boolean(shell?.daemonStatus.code);
 	const workspaceStartupState = shell?.workspaceStartupState ?? "ready";
 	const isLoaded = isDaemonReady && workspaceStartupState === "ready" && workspaceQuery.isSuccess;
 	const showStartup =
 		shell !== null &&
+		!daemonHasFailed &&
 		(!isDaemonReady || workspaceStartupState === "loading" || (!workspaceQuery.isSuccess && !workspaceQuery.isError));
 	const showWelcome = !projectId && isLoaded && all.length === 0;
 	const showProjectEmpty = projectId !== undefined && isLoaded && workspaces.length > 0 && sessions.length === 0;

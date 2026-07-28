@@ -134,7 +134,9 @@ describe("global board first launch", () => {
 		);
 
 		expect(await screen.findByTestId("daemon-startup-loader")).toHaveClass("ao-startup-screen");
+		expect(screen.getByRole("status", { name: "Agent Orchestrator is starting" })).toBeInTheDocument();
 		expect(screen.getByText("Agent Orchestrator")).toBeInTheDocument();
+		expect(screen.getByText("Starting local services")).toHaveAttribute("aria-hidden", "true");
 		expect(screen.queryByText("Import to Agent Orchestrator")).not.toBeInTheDocument();
 		expect(columnCount()).toBe(0);
 	});
@@ -188,6 +190,28 @@ describe("global board first launch", () => {
 
 		expect(await screen.findByText("fix the bug")).toBeInTheDocument();
 		expect(screen.queryByText("Import to Agent Orchestrator")).not.toBeInTheDocument();
+		expect(columnCount()).toBe(4);
+	});
+
+	it("keeps populated columns visible after the daemon reports a startup failure", async () => {
+		respondWith([project], [workerSession]);
+		lastQueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		lastShell = {
+			daemonStatus: { state: "stopped", code: "exited" } as ShellContextValue["daemonStatus"],
+			workspaceStartupState: "loading",
+			createProject: createProjectMock,
+			initializeProjectRepository: initializeProjectRepositoryMock,
+		};
+		render(
+			<QueryClientProvider client={lastQueryClient}>
+				<ShellProvider value={lastShell}>
+					<SessionsBoard />
+				</ShellProvider>
+			</QueryClientProvider>,
+		);
+
+		expect(await screen.findByText("fix the bug")).toBeInTheDocument();
+		expect(screen.queryByTestId("daemon-startup-loader")).not.toBeInTheDocument();
 		expect(columnCount()).toBe(4);
 	});
 });

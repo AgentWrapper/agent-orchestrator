@@ -1,5 +1,5 @@
 import { createFileRoute, Outlet, useMatchRoute, useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { useQueryClient } from "@tanstack/react-query";
+import { isCancelledError, useQueryClient } from "@tanstack/react-query";
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 import { CommandPalette } from "../components/CommandPalette";
 import { CenterPanelShell } from "../components/CenterPanelShell";
@@ -19,7 +19,7 @@ import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useOpenShellTerminal } from "../hooks/useShellTerminals";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
-import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
+import { apiClient, apiErrorCode, apiErrorMessage, hasTrustedApiBaseUrl } from "../lib/api-client";
 import { refreshDaemonStatus } from "../lib/daemon-status";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
@@ -48,6 +48,7 @@ export const Route = createFileRoute("/_shell")({
 	// nav target is warm before the click.
 	loader: async ({ context }) => {
 		await refreshDaemonStatus().catch(() => undefined);
+		if (!usesPreviewWorkspaceData && !hasTrustedApiBaseUrl()) return;
 		return context.queryClient.ensureQueryData(workspaceQueryOptions);
 	},
 	component: ShellLayout,
@@ -90,7 +91,6 @@ function ShellLayout() {
 	const daemonStatus = useDaemonStatus(queryClient);
 	const [workspaceStartupState, setWorkspaceStartupState] = useState<"loading" | "ready" | "error">("loading");
 	const workspaceStartupBaselineRef = useRef(0);
-	const sidebarWasCollapsedForStartupRef = useRef(false);
 	const agentCatalogPortRef = useRef<number | undefined>(undefined);
 	const { themePreference, resolvedTheme, isSidebarOpen, toggleSidebar } = useUiStore();
 	const syncSystemTheme = useUiStore((state) => state.syncSystemTheme);
@@ -406,9 +406,12 @@ function ShellLayout() {
 			queryClient.getQueryState(workspaceQueryKey)?.dataUpdatedAt ?? 0;
 		setWorkspaceStartupState("loading");
 		void queryClient
-			.fetchQuery(workspaceQueryOptions)
-			.catch(() => {
-				if (active) setWorkspaceStartupState("error");
+			.fetchQuery({ ...workspaceQueryOptions, staleTime: 0 })
+			.then(() => {
+				if (active) setWorkspaceStartupState("ready");
+			})
+			.catch((error) => {
+				if (active && !isCancelledError(error)) setWorkspaceStartupState("error");
 			});
 
 		return () => {
@@ -454,21 +457,6 @@ function ShellLayout() {
 
 	useEffect(() => cancelSidebarPeekClose, [cancelSidebarPeekClose]);
 
-	// Keep the startup treatment in the content pane: temporarily collapse the
-	// sidebar while the daemon and workspace list hydrate, then pin it open once
-	// the first load completes (or startup reports a failure).
-	useEffect(() => {
-		if (isStartupLoading) {
-			sidebarWasCollapsedForStartupRef.current = true;
-			cancelSidebarPeekClose();
-			setIsSidebarPeekOpen(false);
-			return;
-		}
-		if (!sidebarWasCollapsedForStartupRef.current) return;
-		sidebarWasCollapsedForStartupRef.current = false;
-		if (!isSidebarOpen) toggleSidebar();
-	}, [cancelSidebarPeekClose, isSidebarOpen, isStartupLoading, toggleSidebar]);
-
 	useEffect(() => {
 		if (!isSidebarPeekOpen || isSidebarOpen) return;
 
@@ -503,7 +491,6 @@ function ShellLayout() {
 		agentCatalogPortRef.current = daemonStatus.port;
 		void queryClient.invalidateQueries({ queryKey: agentsQueryKey });
 		void queryClient.fetchQuery({ ...agentsQueryOptions, queryFn: refreshAgents });
-		void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 	}, [daemonStatus.port, daemonStatus.state, queryClient]);
 
 	// Follow OS appearance while the user keeps Theme on System — updates

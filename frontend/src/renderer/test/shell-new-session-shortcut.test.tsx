@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { CancelledError } from "@tanstack/react-query";
 import { Suspense, type ComponentType, type PropsWithChildren } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KeybindingOverrides } from "../../shared/shortcuts";
@@ -75,7 +76,8 @@ const shellMocks = vi.hoisted(() => {
 	};
 });
 
-vi.mock("@tanstack/react-query", () => ({
+vi.mock("@tanstack/react-query", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@tanstack/react-query")>()),
 	useQueryClient: () => shellMocks.queryClient,
 }));
 
@@ -281,7 +283,7 @@ beforeEach(() => {
 });
 
 describe("shell workspace startup", () => {
-	it("stays loading until React observes the newer workspace result", async () => {
+	it("forces a confirmed fetch and preserves a collapsed sidebar preference", async () => {
 		let resolveFetch: ((value: WorkspaceSummary[]) => void) | undefined;
 		useUiStore.setState({ isSidebarOpen: false });
 		shellMocks.state.daemonStatus = { state: "ready", port: 4777 };
@@ -301,25 +303,54 @@ describe("shell workspace startup", () => {
 		const view = await renderShell();
 		expect(shellMocks.state.shellValue?.workspaceStartupState).toBe("loading");
 		expect(screen.getByTestId("sidebar-provider")).toHaveAttribute("data-open", "false");
+		expect(shellMocks.queryClient.fetchQuery).toHaveBeenCalledWith(expect.objectContaining({ staleTime: 0 }));
 
 		await act(async () => resolveFetch?.(workspaces));
-		expect(shellMocks.state.shellValue?.workspaceStartupState).toBe("loading");
 
+		await waitFor(() => expect(shellMocks.state.shellValue?.workspaceStartupState).toBe("ready"));
+		expect(screen.getByTestId("sidebar-provider")).toHaveAttribute("data-open", "false");
+		expect(useUiStore.getState().isSidebarOpen).toBe(false);
+		view.unmount();
+	});
+
+	it("does not turn a cancelled confirmed fetch into a startup error", async () => {
+		shellMocks.state.daemonStatus = { state: "ready", port: 4777 };
 		shellMocks.state.workspaceQuery = {
-			data: workspaces,
-			dataUpdatedAt: 200,
+			data: [],
+			dataUpdatedAt: 100,
 			isError: false,
 			isSuccess: true,
 		};
+		shellMocks.queryClient.getQueryState.mockReturnValue({ dataUpdatedAt: 100 });
+		shellMocks.queryClient.fetchQuery.mockRejectedValueOnce(new CancelledError());
+
+		await renderShell();
+
+		await waitFor(() =>
+			expect(shellMocks.queryClient.fetchQuery).toHaveBeenCalledWith(expect.objectContaining({ staleTime: 0 })),
+		);
+		expect(shellMocks.state.shellValue?.workspaceStartupState).toBe("loading");
+	});
+
+	it("forces a workspace fetch when a daemon returns ready on the same port", async () => {
+		shellMocks.state.daemonStatus = { state: "starting", port: 4777 };
+		shellMocks.queryClient.fetchQuery.mockResolvedValue(workspaces);
+
+		const view = await renderShell();
+		expect(shellMocks.state.shellValue?.workspaceStartupState).toBe("loading");
+		expect(shellMocks.queryClient.fetchQuery).not.toHaveBeenCalled();
+
+		shellMocks.state.daemonStatus = { state: "ready", port: 4777 };
 		view.rerender(
 			<Suspense fallback={null}>
 				<ShellRoute />
 			</Suspense>,
 		);
 
+		await waitFor(() =>
+			expect(shellMocks.queryClient.fetchQuery).toHaveBeenCalledWith(expect.objectContaining({ staleTime: 0 })),
+		);
 		await waitFor(() => expect(shellMocks.state.shellValue?.workspaceStartupState).toBe("ready"));
-		await waitFor(() => expect(screen.getByTestId("sidebar-provider")).toHaveAttribute("data-open", "true"));
-		expect(useUiStore.getState().isSidebarOpen).toBe(true);
 	});
 
 	it("recovers after a newer workspace query succeeds", async () => {
