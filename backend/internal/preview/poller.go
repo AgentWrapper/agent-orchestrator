@@ -39,9 +39,8 @@ type Poller struct {
 }
 
 type entryState struct {
-	path    string
-	modUnix int64
-	size    int64
+	path      string
+	signature uint64
 	// cleared is set when the poller itself cleared the preview URL because the
 	// workspace entry was missing. When the file reappears, shouldRefresh uses
 	// this to re-discover even though the revision was bumped by the clear.
@@ -174,5 +173,5 @@ func (p *Poller) shouldRefresh(sess domain.SessionRecord, target string, seenBef
 }
 
 func stateFor(entry Entry) entryState {
-	return entryState{path: entry.Path, modUnix: entry.ModTime.UnixNano(), size: entry.Size}
+	return entryState{path: entry.Path, signature: staticTreeSignature(entry)}
 }

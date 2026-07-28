@@ -118,6 +118,91 @@ func TestPollerRefreshesOnlyWhenEntrypointChanges(t *testing.T) {
 	}
 }
 
+func TestPollerRefreshesWhenStaticPreviewAssetChanges(t *testing.T) {
+	workspace := t.TempDir()
+	writeFile(t, filepath.Join(workspace, "dist", "index.html"), `<link rel="stylesheet" href="/app.css">`)
+	asset := filepath.Join(workspace, "dist", "app.css")
+	writeFile(t, asset, "body { color: red; }")
+	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "")}}
+	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
+
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("first Poll: %v", err)
+	}
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("second Poll: %v", err)
+	}
+	if len(svc.sets) != 1 {
+		t.Fatalf("sets after unchanged tree = %#v, want one set", svc.sets)
+	}
+
+	writeFile(t, asset, "body { color: blue; }")
+	nextMod := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(asset, nextMod, nextMod); err != nil {
+		t.Fatalf("chtimes asset: %v", err)
+	}
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("third Poll: %v", err)
+	}
+
+	if len(svc.sets) != 2 {
+		t.Fatalf("sets after changed asset = %#v, want preview refresh", svc.sets)
+	}
+	if svc.sets[1].url != svc.sets[0].url {
+		t.Fatalf("refresh url = %q, want unchanged target %q", svc.sets[1].url, svc.sets[0].url)
+	}
+}
+
+func TestPollerIgnoresChangesOutsideStaticPreviewRoot(t *testing.T) {
+	workspace := t.TempDir()
+	writeFile(t, filepath.Join(workspace, "dist", "index.html"), "<main>preview</main>")
+	source := filepath.Join(workspace, "src", "server.go")
+	writeFile(t, source, "package main")
+	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "")}}
+	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
+
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("first Poll: %v", err)
+	}
+	writeFile(t, source, "package changed")
+	nextMod := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(source, nextMod, nextMod); err != nil {
+		t.Fatalf("chtimes source: %v", err)
+	}
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("second Poll: %v", err)
+	}
+
+	if len(svc.sets) != 1 {
+		t.Fatalf("sets after change outside dist = %#v, want no refresh", svc.sets)
+	}
+}
+
+func TestPollerIgnoresNodeModulesChangesForRootPreview(t *testing.T) {
+	workspace := t.TempDir()
+	writeFile(t, filepath.Join(workspace, "index.html"), "<main>preview</main>")
+	dependency := filepath.Join(workspace, "node_modules", "pkg", "index.js")
+	writeFile(t, dependency, "old")
+	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "")}}
+	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
+
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("first Poll: %v", err)
+	}
+	writeFile(t, dependency, "new")
+	nextMod := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(dependency, nextMod, nextMod); err != nil {
+		t.Fatalf("chtimes dependency: %v", err)
+	}
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("second Poll: %v", err)
+	}
+
+	if len(svc.sets) != 1 {
+		t.Fatalf("sets after node_modules change = %#v, want no refresh", svc.sets)
+	}
+}
+
 func TestPollerRediscoverEntryAfterDeleteAndRecreate(t *testing.T) {
 	workspace := t.TempDir()
 	entry := filepath.Join(workspace, "index.html")
