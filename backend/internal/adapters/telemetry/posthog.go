@@ -25,6 +25,54 @@ import (
 const postHogBufferSize = 128
 const maxCommandShapeLength = 48
 
+var remoteCommandTokens = map[string]struct{}{
+	"add":              {},
+	"agent":            {},
+	"agent-process":    {},
+	"cancel":           {},
+	"claim-pr":         {},
+	"cleanup":          {},
+	"clear":            {},
+	"completion":       {},
+	"daemon":           {},
+	"delete":           {},
+	"dev":              {},
+	"doctor":           {},
+	"execute":          {},
+	"get":              {},
+	"help":             {},
+	"hooks":            {},
+	"import":           {},
+	"import-projects":  {},
+	"kill":             {},
+	"launch":           {},
+	"list":             {},
+	"ls":               {},
+	"merge":            {},
+	"orchestrator":     {},
+	"preview":          {},
+	"pr":               {},
+	"project":          {},
+	"remove":           {},
+	"rename":           {},
+	"resolve-comments": {},
+	"restart":          {},
+	"restore":          {},
+	"review":           {},
+	"rm":               {},
+	"send":             {},
+	"session":          {},
+	"set-config":       {},
+	"spawn":            {},
+	"start":            {},
+	"status":           {},
+	"stop":             {},
+	"submit":           {},
+	"supervise":        {},
+	"trigger":          {},
+	"version":          {},
+}
+
 var remotePayloadAllowlist = map[string]map[string]struct{}{
 	"ao.app.active": {
 		"actor_type":   {},
@@ -271,26 +319,33 @@ func sanitizeRemotePayload(name string, payload map[string]any) map[string]any {
 	return sanitized
 }
 
-func isCommandShaped(value string) bool {
+func isAllowedCommandValue(key, value string) bool {
 	if value == "" || len(value) > maxCommandShapeLength {
 		return false
 	}
-	tokens := strings.Fields(value)
-	if len(tokens) == 0 || strings.Join(tokens, " ") != value {
+	tokens := strings.Split(value, " ")
+	if key == "command" {
+		if len(tokens) != 1 {
+			return false
+		}
+		if value == "ao" || value == "<unknown>" {
+			return true
+		}
+		_, ok := remoteCommandTokens[value]
+		return ok
+	}
+	if key != "command_path" || tokens[0] != "ao" {
 		return false
 	}
-	for _, token := range tokens {
+	for i, token := range tokens[1:] {
 		if token == "<unknown>" {
-			continue
-		}
-		for _, char := range token {
-			if (char < 'a' || char > 'z') &&
-				(char < 'A' || char > 'Z') &&
-				(char < '0' || char > '9') &&
-				char != '-' &&
-				char != '_' {
+			if i != len(tokens[1:])-1 {
 				return false
 			}
+			continue
+		}
+		if _, ok := remoteCommandTokens[token]; !ok {
+			return false
 		}
 	}
 	return true
@@ -303,7 +358,7 @@ func sanitizeRemoteValue(key string, v any) (any, bool) {
 		if value == "" {
 			return nil, false
 		}
-		if (key == "command" || key == "command_path") && !isCommandShaped(value) {
+		if (key == "command" || key == "command_path") && !isAllowedCommandValue(key, value) {
 			return "sha256:" + sha256String(value)[:16], true
 		}
 		return value, true

@@ -10,6 +10,9 @@ func TestSanitizeRemoteValueHashesInvalidCommandValues(t *testing.T) {
 		"https://github.com/org/repo/pull/1",
 		"/Users/example/private-project",
 		"ao Review this PR; ping @security",
+		"customer acme launch",
+		"secret_project",
+		"ao private customer",
 		"严格审查必须完成",
 		strings.Repeat("x", maxCommandShapeLength+1),
 	}
@@ -43,9 +46,9 @@ func TestSanitizeRemoteValuePreservesValidCommands(t *testing.T) {
 		value string
 	}{
 		{key: "command", value: "status"},
-		{key: "command", value: "review-checkpoint"},
-		{key: "command_path", value: "ao session ls"},
-		{key: "command_path", value: "ao list <unknown>"},
+		{key: "command", value: "resolve-comments"},
+		{key: "command_path", value: "ao pr resolve-comments"},
+		{key: "command_path", value: "ao session get <unknown>"},
 	}
 
 	for _, test := range tests {
