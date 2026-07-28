@@ -27,7 +27,6 @@ import { NotificationCenter } from "./NotificationCenter";
 import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyStates";
 import { OrchestratorIcon } from "./icons";
 import { TopbarButton, TopbarKillError, topbarProjectLabelClass } from "./TopbarButton";
-import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { formatTimeCompact } from "../lib/format-time";
@@ -80,7 +79,6 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const boardLabel = workspace?.name ?? (projectId ? "" : "Board");
 	const sessions = workspaces.flatMap((w) => workerSessions(w.sessions));
 	const orchestrator = projectId ? newestActiveOrchestrator(workspaces[0]?.sessions ?? []) : undefined;
-	const [isSpawning, setIsSpawning] = useState(false);
 	const [spawnError, setSpawnError] = useState<string | null>(null);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const orchestratorStartupError = useUiStore((state) =>
@@ -90,6 +88,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
 	const setOrchestratorStartupError = useUiStore((state) => state.setOrchestratorStartupError);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
+	const requestOrchestratorLaunch = useUiStore((state) => state.requestOrchestratorLaunch);
 	const isProjectRestarting = projectId ? restartingProjectIds.has(projectId) : false;
 	const health = workspace ? orchestratorHealth(workspace, isProjectRestarting) : { state: "ok" as const };
 	const visibleSpawnError = spawnError ?? orchestratorStartupError;
@@ -185,34 +184,22 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 		}
 	};
 
-	const openOrchestrator = async () => {
+	const openOrchestrator = () => {
 		if (!projectId || isProjectRestarting) return;
 		if (orchestrator) {
+			// Already running → attach immediately (fast path).
 			void navigate({
 				to: "/projects/$projectId/sessions/$sessionId",
 				params: { projectId, sessionId: orchestrator.id },
 			});
 			return;
 		}
+		// No orchestrator yet → route through the global launcher so the user gets
+		// the Local | Cloud choice (same as the topbar/sidebar and the worker New
+		// Task path). It owns the spawn, navigation, and error UI.
 		setSpawnError(null);
 		setOrchestratorStartupError(projectId, null);
-		setIsSpawning(true);
-		try {
-			const sessionId = await spawnOrchestrator(projectId, "board");
-			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-			setOrchestratorStartupError(projectId, null);
-			void navigate({
-				to: "/projects/$projectId/sessions/$sessionId",
-				params: { projectId, sessionId },
-			});
-		} catch (err) {
-			// Never fail silently: the daemon's message (e.g. a worktree/branch
-			// conflict) is the only actionable signal the user gets.
-			console.error("Failed to spawn orchestrator:", err);
-			setSpawnError(err instanceof Error ? err.message : "Could not spawn orchestrator");
-		} finally {
-			setIsSpawning(false);
-		}
+		requestOrchestratorLaunch(projectId);
 	};
 
 	const restartOrchestrator = async () => {
@@ -245,18 +232,12 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			</TopbarButton>
 			<TopbarButton
 				aria-label={orchestrator ? "Orchestrator" : "Spawn Orchestrator"}
-				disabled={isSpawning || isProjectRestarting}
-				onClick={() => void openOrchestrator()}
+				disabled={isProjectRestarting}
+				onClick={() => openOrchestrator()}
 				variant="primary"
 			>
 				<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
-				{isProjectRestarting
-					? "Restarting..."
-					: isSpawning
-						? "Spawning..."
-						: orchestrator
-							? "Orchestrator"
-							: "Spawn Orchestrator"}
+				{isProjectRestarting ? "Restarting..." : orchestrator ? "Orchestrator" : "Spawn Orchestrator"}
 			</TopbarButton>
 		</>
 	) : boardOwnsNotificationCenter ? (
@@ -302,10 +283,10 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				) : showProjectEmpty ? (
 					<ProjectBoardEmpty
 						hasOrchestrator={orchestrator !== undefined}
-						isSpawning={isSpawning}
+						isSpawning={false}
 						isProjectRestarting={isProjectRestarting}
 						onNewTask={() => projectId && requestNewTask(projectId)}
-						onOpenOrchestrator={() => void openOrchestrator()}
+						onOpenOrchestrator={() => openOrchestrator()}
 						spawnError={visibleSpawnError}
 					/>
 				) : (

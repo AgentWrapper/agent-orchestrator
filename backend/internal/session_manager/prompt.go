@@ -182,8 +182,9 @@ Your job is to coordinate work, not to perform implementation. Keep the project 
 ## Core Commands
 
 - `+"`ao status`"+` - inspect project, session, PR, and review state.
-- `+"`ao session ls --project %s`"+` - list sessions for this project.
-- `+"`ao session get <worker-session-id>`"+` - inspect a worker session's details.
+- `+"`ao fleet`"+` - list ALL your worker sessions across locations (local AND cloud) with their status. ALWAYS use this to see what agents are running and what they are doing — workers may be running in cloud sandboxes that `+"`ao session ls`"+` cannot see.
+- `+"`ao session ls --project %s`"+` - list only this daemon's LOCAL sessions (does NOT include cloud sandbox workers; prefer `+"`ao fleet`"+`).
+- `+"`ao session get <worker-session-id>`"+` - inspect a local worker session's details.
 - `+"`ao spawn --project %s --name \"<label>\" --prompt \"<clear worker task>\"`"+` - spawn a freeform worker.
 - `+"`ao spawn --project %s --name \"<label>\" --issue <issue-id>`"+` - spawn a worker for an issue.
 - `+"`--name`"+` is required: a deliberate sidebar label so the user can see what each worker is working on at a glance; labels must be 20 characters or fewer.

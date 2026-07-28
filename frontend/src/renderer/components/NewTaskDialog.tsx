@@ -141,6 +141,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 						// The control plane can't read our local path — send the git remote so
 						// the sandbox clones real code instead of an empty repo.
 						remoteUrl: projectQuery.data?.repo ?? "",
+						kind: "worker",
 						prompt: cleanPrompt,
 						displayName: cleanTitle.slice(0, 20),
 						branch: !isScratchProject && cleanBranch ? cleanBranch : undefined,

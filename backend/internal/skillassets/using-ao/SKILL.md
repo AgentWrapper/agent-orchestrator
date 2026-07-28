@@ -11,7 +11,8 @@ trigger: "Using the ao CLI in an AO workspace: spawning workers, managing sessio
 | Command | What it does | When to use | Details |
 |---|---|---|---|
 | `spawn` | Spawn a worker agent in a fresh git worktree | Starting a new task or issue | [commands/spawn.md](commands/spawn.md) |
-| `session` | Manage agent sessions (list, kill, rename, restore, etc.) | Inspecting or controlling running/terminated sessions | [commands/session.md](commands/session.md) |
+| `session` | Manage agent sessions (list, kill, rename, restore, etc.) — LOCAL only | Inspecting or controlling this daemon's sessions | [commands/session.md](commands/session.md) |
+| `fleet` | List agent sessions across ALL locations (local + cloud) with status | Seeing every worker you own and what it's doing — use this, not `session ls`, when any agent may be in the cloud | - |
 | `project` | Register, inspect, configure, or remove projects | Setting up or managing repos AO knows about | [commands/project.md](commands/project.md) |
 | `orchestrator` | List orchestrator sessions | Viewing which sessions are orchestrators | [commands/orchestrator.md](commands/orchestrator.md) |
 | `review` | Submit a reviewer result for a worker's PR | Completing a code review loop | [commands/review.md](commands/review.md) |
@@ -25,21 +26,31 @@ trigger: "Using the ao CLI in an AO workspace: spawning workers, managing sessio
 | `version` | Print version information | Checking installed version | - |
 | `completion` | Generate shell completion scripts | Setting up tab completion | - |
 
-## Cloud sessions
+## Seeing your agents across local + cloud
 
-When you are running **inside a cloud session** (an AO sandbox), coordination
-works exactly as it does locally — the same commands — but across sandboxes:
+Workers can run **locally** (this daemon) or in **cloud sandboxes**. A cloud
+worker is invisible to `ao session ls` — that only lists the local daemon. To see
+**every** agent you own and what it's doing, wherever it runs, use:
 
-- `ao spawn` provisions each worker in **its own cloud sandbox** automatically
-  (no extra flag needed) and prints the new session id. Spawn workers exactly as
-  you would locally.
-- `ao send <session-id> --message "..."` reaches a worker **wherever it lives**;
-  you address it by session id, not by location.
-- `ao fleet` lists every session you own **across all sandboxes** (use this to
-  see your workers; the plain `ao session ls` only shows this sandbox).
-- Workers report back to you automatically when they go idle.
+```
+ao fleet
+```
 
-You never manage sandboxes or URLs — address everything by session id.
+It lists each session with its LOCATION (local / cloud:<sandbox>), KIND, STATUS,
+and PROJECT — merging local and cloud. **Always use `ao fleet` (not `ao session
+ls`) when any of your workers might be in the cloud** — including when you (the
+orchestrator) are running locally but spawned cloud workers. This works the same
+whether you run locally or inside a sandbox.
+
+Coordination is location-agnostic — you address agents by session id:
+
+- `ao spawn` starts a worker; in a cloud context it provisions a **cloud
+  sandbox** automatically (no extra flag) and prints the new session id.
+- `ao send --session <id> --message "..."` reaches a worker **wherever it
+  lives** — the id from `ao fleet` routes to the right location.
+- Cloud workers report back to you automatically when they go idle.
+
+You never manage sandboxes or URLs — discover with `ao fleet`, address by id.
 
 ## Conventions
 

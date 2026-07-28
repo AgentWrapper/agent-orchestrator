@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/cloud"
 )
 
 // ── Phase B · Turn 2: SSE(push) + POST(pull) transport ───────────────────────
@@ -182,16 +184,31 @@ func (s *Server) busToken(w http.ResponseWriter, r *http.Request) {
 func (s *Server) busLocations(w http.ResponseWriter, r *http.Request) {
 	tenant := TenantFromContext(r.Context())
 	locs := s.locations.ListForTenant(tenant)
+	// Join the supervisor's CloudSession registry (by sandboxId) so the fleet view
+	// carries each cloud session's status/displayName/harness — "what it's doing",
+	// not just that it exists.
+	statusBySandbox := map[string]cloud.CloudSession{}
+	if s.sup != nil {
+		for _, cs := range s.sup.ListSessionsForTenant(tenant) {
+			statusBySandbox[cs.SandboxID] = cs
+		}
+	}
 	out := make([]map[string]any, 0, len(locs))
 	for _, l := range locs {
-		out = append(out, map[string]any{
+		entry := map[string]any{
 			"sessionId":          l.SessionID, // routing key (sandboxId for sandbox sessions)
 			"kind":               l.Kind,
 			"projectId":          l.ProjectID,
 			"type":               string(l.Type),
 			"sandboxId":          l.SandboxID,
 			"inSandboxSessionId": l.InSandboxSessionID,
-		})
+		}
+		if cs, ok := statusBySandbox[l.SandboxID]; ok {
+			entry["status"] = cs.Status
+			entry["displayName"] = cs.DisplayName
+			entry["harness"] = cs.Harness
+		}
+		out = append(out, entry)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"sessions": out})
 }
