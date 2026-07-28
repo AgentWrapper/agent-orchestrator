@@ -27,7 +27,7 @@ function toPullRequestFacts(pr: components["schemas"]["SessionPRFacts"]): PullRe
 }
 
 export const workspaceQueryKey = ["workspaces"] as const;
-const usePreviewData = import.meta.env.VITE_NO_ELECTRON === "1";
+export const usesPreviewWorkspaceData = import.meta.env.VITE_NO_ELECTRON === "1";
 const reportedUnknownSessionFields = new Set<string>();
 
 function reportUnknownSessionField(field: "status" | "activity", value?: string): void {
@@ -46,7 +46,7 @@ function reportUnknownSessionField(field: "status" | "activity", value?: string)
 type FakeAgentSeam = { snapshot: () => WorkspaceSummary[] };
 
 async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
-	if (usePreviewData) {
+	if (usesPreviewWorkspaceData) {
 		const fake =
 			typeof window !== "undefined"
 				? (window as unknown as { __aoFakeAgent?: FakeAgentSeam }).__aoFakeAgent

@@ -18,7 +18,12 @@ import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useA
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useOpenShellTerminal } from "../hooks/useShellTerminals";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
-import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
+import {
+	useWorkspaceQuery,
+	usesPreviewWorkspaceData,
+	workspaceQueryKey,
+	workspaceQueryOptions,
+} from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
 import { refreshDaemonStatus } from "../lib/daemon-status";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
@@ -380,6 +385,12 @@ function ShellLayout() {
 	// between projects and the first-run import flow.
 	useEffect(() => {
 		let active = true;
+		if (usesPreviewWorkspaceData) {
+			setWorkspaceStartupState("ready");
+			return () => {
+				active = false;
+			};
+		}
 		if (daemonStatus.state !== "ready" || !daemonStatus.port) {
 			setWorkspaceStartupState("loading");
 			return () => {
