@@ -23,6 +23,35 @@ function Invoke-Native {
     }
 }
 
+function Test-Native {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Command,
+
+        [Parameter(Mandatory)]
+        [string[]]$Arguments
+    )
+
+    $previousErrorPreference = $ErrorActionPreference
+    $hadNativeErrorPreference = Test-Path Variable:PSNativeCommandUseErrorActionPreference
+    $previousNativeErrorPreference = $PSNativeCommandUseErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $PSNativeCommandUseErrorActionPreference = $false
+        & $Command @Arguments *> $null
+        return $LASTEXITCODE -eq 0
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorPreference
+        if ($hadNativeErrorPreference) {
+            $PSNativeCommandUseErrorActionPreference = $previousNativeErrorPreference
+        }
+        else {
+            Remove-Item Variable:PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 function Test-SamePath {
     param(
         [Parameter(Mandatory)]
@@ -120,6 +149,55 @@ function Install-Binary {
     }
 }
 
+function Ensure-ElectronBinary {
+    param(
+        [Parameter(Mandatory)]
+        [string]$FrontendDirectory
+    )
+
+    $electronRoot = Join-Path $FrontendDirectory 'node_modules\electron'
+    $electronExe = Join-Path $electronRoot 'dist\electron.exe'
+    if (Test-Path -LiteralPath $electronExe) {
+        return
+    }
+
+    $packagePath = Join-Path $electronRoot 'package.json'
+    $installScript = Join-Path $electronRoot 'install.js'
+    if (-not (Test-Path -LiteralPath $packagePath) -or -not (Test-Path -LiteralPath $installScript)) {
+        throw 'Electron is missing from frontend dependencies after npm ci'
+    }
+
+    Write-Host 'Electron binary is missing; repairing its installation...'
+    Invoke-Native -Command node -Arguments @($installScript)
+    if (Test-Path -LiteralPath $electronExe) {
+        return
+    }
+
+    # Electron's extract-zip installer can return successfully after extracting
+    # only part of the cached archive under some Windows/Node combinations.
+    # Reuse the checksum-verified cache artifact and let PowerShell finish it.
+    $electronVersion = (Get-Content -LiteralPath $packagePath -Raw | ConvertFrom-Json).version
+    $cacheRoot = if ($env:electron_config_cache) {
+        $env:electron_config_cache
+    }
+    else {
+        Join-Path $env:LOCALAPPDATA 'electron\Cache'
+    }
+    $archive = Get-ChildItem -LiteralPath $cacheRoot -Recurse -File -Filter "electron-v$electronVersion-win32-*.zip" -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if (-not $archive) {
+        throw "Electron $electronVersion did not install and its cache archive was not found under $cacheRoot"
+    }
+
+    $distPath = Join-Path $electronRoot 'dist'
+    New-Item -ItemType Directory -Force -Path $distPath | Out-Null
+    Expand-Archive -LiteralPath $archive.FullName -DestinationPath $distPath -Force
+    [System.IO.File]::WriteAllText((Join-Path $electronRoot 'path.txt'), 'electron.exe')
+    if (-not (Test-Path -LiteralPath $electronExe)) {
+        throw "Electron repair completed without producing $electronExe"
+    }
+}
+
 $isWindowsHost = [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
 if (-not $isWindowsHost) {
     throw 'scripts/install.ps1 supports Windows only'
@@ -160,9 +238,20 @@ if ($Fetch) {
     Invoke-Native -Command git -Arguments @('-C', $repoRoot, 'pull', '--ff-only', 'origin', 'main')
 }
 
-if ($InstallDependencies -or -not (Test-Path -LiteralPath $nodeModules)) {
+if (Test-Path -LiteralPath $nodeModules) {
+    $dependenciesReady = Test-Native -Command npm -Arguments @('--prefix', $frontendDir, 'ls', '--depth=0')
+}
+else {
+    $dependenciesReady = $false
+}
+
+if ($InstallDependencies -or -not $dependenciesReady) {
+    if (-not $dependenciesReady) {
+        Write-Host 'Frontend dependencies are missing or stale; running npm ci...'
+    }
     Invoke-Native -Command npm -Arguments @('ci', '--prefix', $frontendDir)
 }
+Ensure-ElectronBinary -FrontendDirectory $frontendDir
 
 if ($Start) {
     $releaseApp = Get-Process -Name 'agent-orchestrator' -ErrorAction SilentlyContinue
@@ -208,17 +297,52 @@ try {
     if ($Start) {
         Write-Host "Starting AO from source at $repoRoot"
         Write-Host 'This terminal stays attached to the dev app; press Ctrl-C to stop it.'
-        Push-Location $repoRoot
+        $previousDaemonCommand = $env:AO_DAEMON_COMMAND
+        $previousPort = $env:AO_PORT
+        $previousRunFile = $env:AO_RUN_FILE
+        $previousDataDirectory = $env:AO_DATA_DIR
+        $env:AO_DAEMON_COMMAND = "`"$installPath`" daemon"
+        if (-not $env:AO_PORT) {
+            $env:AO_PORT = '3001'
+        }
+        if (-not $env:AO_RUN_FILE) {
+            $env:AO_RUN_FILE = Join-Path $HOME '.ao\running.json'
+        }
+        if (-not $env:AO_DATA_DIR) {
+            $env:AO_DATA_DIR = Join-Path $HOME '.ao\data'
+        }
+        Push-Location $frontendDir
         try {
-            Invoke-Native -Command $installPath -Arguments @('start', '--source')
+            # Invoke Forge directly so npm does not run the predev release-build
+            # hook. The installer already built the exact daemon executable and
+            # AO_DAEMON_COMMAND makes the source app supervise that binary.
+            Invoke-Native -Command npm -Arguments @('exec', '--', 'electron-forge', 'start')
         }
         finally {
             Pop-Location
+            if ($null -eq $previousDaemonCommand) {
+                Remove-Item Env:AO_DAEMON_COMMAND -ErrorAction SilentlyContinue
+            }
+            else {
+                $env:AO_DAEMON_COMMAND = $previousDaemonCommand
+            }
+            foreach ($entry in @{
+                AO_PORT = $previousPort
+                AO_RUN_FILE = $previousRunFile
+                AO_DATA_DIR = $previousDataDirectory
+            }.GetEnumerator()) {
+                if ($null -eq $entry.Value) {
+                    Remove-Item "Env:$($entry.Key)" -ErrorAction SilentlyContinue
+                }
+                else {
+                    Set-Item "Env:$($entry.Key)" $entry.Value
+                }
+            }
         }
     }
     else {
-        Write-Host "Start it from this checkout with:"
-        Write-Host "  Set-Location '$repoRoot'; ao start"
+        Write-Host 'Start the source app with:'
+        Write-Host "  & '$PSCommandPath' -Start"
     }
 }
 finally {
