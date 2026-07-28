@@ -21,6 +21,9 @@ const {
 	openExternal,
 	featListBuilds,
 	featGetActive,
+	getKeybindings,
+	setKeybindings,
+	setKeybindingRecording,
 } = vi.hoisted(() => ({
 	getUpdate: vi.fn(),
 	setUpdate: vi.fn(),
@@ -37,6 +40,9 @@ const {
 	openExternal: vi.fn(),
 	featListBuilds: vi.fn(),
 	featGetActive: vi.fn(),
+	getKeybindings: vi.fn(),
+	setKeybindings: vi.fn(),
+	setKeybindingRecording: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => {
@@ -53,6 +59,11 @@ vi.mock("../lib/bridge", () => ({
 		clipboard: { writeText },
 		daemon: { getStatus: getDaemonStatus },
 		updateSettings: { get: getUpdate, set: setUpdate },
+		keybindings: {
+			get: getKeybindings,
+			set: setKeybindings,
+			setRecording: setKeybindingRecording,
+		},
 		updates: {
 			getStatus: updGetStatus,
 			check: updCheck,
@@ -92,6 +103,9 @@ beforeEach(() => {
 		getDaemonStatus,
 		featListBuilds,
 		featGetActive,
+		getKeybindings,
+		setKeybindings,
+		setKeybindingRecording,
 	]) {
 		m.mockReset();
 	}
@@ -109,6 +123,9 @@ beforeEach(() => {
 	openExternal.mockResolvedValue(undefined);
 	featListBuilds.mockResolvedValue([]);
 	featGetActive.mockResolvedValue(null);
+	getKeybindings.mockResolvedValue({});
+	setKeybindings.mockImplementation(async (overrides) => overrides);
+	setKeybindingRecording.mockResolvedValue(undefined);
 	// Feature Releases lives behind Developer Mode; reset to the default (off).
 	useUiStore.getState().setDeveloperMode(false);
 });
@@ -290,6 +307,7 @@ describe("GlobalSettingsForm", () => {
 		await user.click(await screen.findByRole("button", { name: "Report a problem" }));
 		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
 		await user.type(screen.getByLabelText("Title"), "Need help with setup");
+		await user.type(screen.getByLabelText("What happened?"), "The setup flow stalls after the first prompt.");
 
 		await user.click(screen.getByRole("radio", { name: "Discord" }));
 		expect(screen.getByRole("button", { name: /copy & open discord/i })).toBeInTheDocument();
@@ -298,6 +316,8 @@ describe("GlobalSettingsForm", () => {
 		await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
 		expect(writeText.mock.calls[0][0]).toContain("**AO feedback**");
 		expect(screen.getByText("Discord draft copied.")).toBeInTheDocument();
+		expect(screen.getByLabelText("Title")).toHaveValue("");
+		expect(screen.getByLabelText("What happened?")).toHaveValue("");
 
 		await user.click(screen.getByRole("radio", { name: "Email" }));
 		expect(screen.getByRole("button", { name: /copy & open email/i })).toBeInTheDocument();
@@ -305,6 +325,7 @@ describe("GlobalSettingsForm", () => {
 		expect(screen.queryByText("Discord draft copied.")).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: /copy & open email/i })).toBeDisabled();
 		await user.type(screen.getByLabelText("Title"), "Need help with setup");
+		await user.type(screen.getByLabelText("What happened?"), "The setup flow stalls after the first prompt.");
 		await user.click(screen.getByRole("button", { name: /copy & open email/i }));
 
 		await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));

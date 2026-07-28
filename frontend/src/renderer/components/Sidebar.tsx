@@ -3,8 +3,9 @@ import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import { ChevronRight, Inbox, LayoutDashboard, MoreVertical, Pencil, Plus, RefreshCw, Search, Settings, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { UpdateStatus } from "../../main/update-settings";
-import { APP_SHORTCUTS, shortcutKeys } from "../../shared/shortcuts";
+import { effectiveShortcutBindings, shortcutBindingLabel } from "../../shared/shortcuts";
 import {
+	hasConfiguredOrchestratorAgent,
 	newestActiveOrchestrator,
 	type WorkspaceSession,
 	type WorkspaceSummary,
@@ -39,7 +40,6 @@ import {
 	SidebarRail,
 	SidebarMenuSub,
 	SidebarMenuSubItem,
-	SidebarTrigger,
 	useSidebar,
 } from "./ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
@@ -48,16 +48,18 @@ import aoLogo from "../../../assets/ao-logo.svg";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
 import { CloudAuthControls } from "./CloudAuthControls";
+import { useKeybindingsStore } from "../stores/keybindings-store";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CreateProjectInput } from "./CreateProjectFlow";
 import { ImportSharedSessionDialog } from "./ImportSharedSessionDialog";
 import { ResizeHandle } from "./ResizeHandle";
-import { isMacPlatform, isWindowsPlatform } from "../lib/platform";
+import { isLinuxPlatform, isMacPlatform } from "../lib/platform";
 
-// On macOS the native traffic lights and fixed TitlebarNav occupy the titlebar
-// above this surface. Win/Linux hang the sidebar under their shell chrome.
+// macOS + Linux paint framed chrome: the fixed TitlebarNav cluster carries the
+// sidebar toggle + history arrows above this surface. Windows hangs the sidebar
+// under its custom titlebar.
 const isMac = isMacPlatform();
-const isWindows = isWindowsPlatform();
+const isLinux = isLinuxPlatform();
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
 // Shared styling for the per-project hover action buttons (dashboard,
@@ -69,10 +71,10 @@ const HOVER_ACTION_CLASS =
 // Mirrors the daemon's display-name cap (maxDisplayNameLen) and the spawn
 // `--name` flag, so inline edits never round-trip a value the API would reject.
 const MAX_DISPLAY_NAME_LEN = 20;
-const SIDEBAR_DEFAULT_WIDTH = 240;
-const SIDEBAR_MIN_WIDTH = 200;
-const SIDEBAR_MAX_WIDTH = 420;
-const SIDEBAR_COLLAPSE_THRESHOLD = SIDEBAR_MIN_WIDTH;
+export const SIDEBAR_DEFAULT_WIDTH = 240;
+export const SIDEBAR_MIN_WIDTH = 200;
+export const SIDEBAR_MAX_WIDTH = 420;
+export const SIDEBAR_COLLAPSE_THRESHOLD = SIDEBAR_MIN_WIDTH;
 
 type SidebarProps = {
 	/** Hide the sidebar's right edge stroke on the welcome board inset chrome. */
@@ -263,24 +265,6 @@ export function Sidebar({
 							nightly
 						</span>
 					)}
-					{!isMac && !isWindows && (
-						<Tooltip>
-							<TooltipTrigger asChild>
-								<SidebarTrigger
-									aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-									className={cn(
-										"shrink-0 text-passive hover:bg-interactive-hover hover:text-foreground",
-										isCollapsed
-											? "grid size-9 rounded-lg [&_svg]:size-4"
-											: "sidebar-expanded-chrome size-icon-xl rounded-sm p-0 [&_svg]:size-icon-lg",
-									)}
-								/>
-							</TooltipTrigger>
-							<TooltipContent side={isCollapsed ? "right" : undefined}>
-								{isCollapsed ? "Expand sidebar · ⌘B" : "Collapse sidebar · ⌘B"}
-							</TooltipContent>
-						</Tooltip>
-					)}
 				</div>
 			</SidebarHeader>
 
@@ -345,7 +329,7 @@ export function Sidebar({
 			<SidebarFooter
 				className={cn(
 					"relative mt-auto gap-0 overflow-hidden px-2.5 pb-0 pt-1.5 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-16 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pb-0 group-data-[collapsible=icon]:pt-1.5",
-					isMac ? "mb-3" : "mb-5",
+					isMac || isLinux ? "mb-3" : "mb-5",
 				)}
 			>
 				{/* Always-present daemon status mirror for the smoke suite: no visible
@@ -355,27 +339,35 @@ export function Sidebar({
 						daemon {daemonStatus.state}
 					</span>
 				)}
-				<div className="sidebar-expanded-chrome relative flex w-full min-w-46.5 flex-col gap-1 transition-[opacity,transform] duration-150 ease-out group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:-translate-x-2 group-data-[collapsible=icon]:opacity-0">
-					<RestartToUpdateRow status={updateStatus} />
-						<CloudAuthControls />
+				<div
+					aria-hidden={isCollapsed || undefined}
+					className="sidebar-expanded-chrome relative flex w-full min-w-46.5 flex-col gap-1 transition-[opacity,transform] duration-150 ease-out group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:-translate-x-2 group-data-[collapsible=icon]:opacity-0"
+				>
+					<RestartToUpdateRow status={updateStatus} tabIndex={isCollapsed ? -1 : 0} />
+					<CloudAuthControls />
 					<button
 						aria-label="Settings"
-						className="flex w-full items-center justify-center gap-2.5 rounded-settings-row bg-interactive-hover px-2.5 py-2.5 text-control font-medium text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-lg [&_svg]:shrink-0 [&_svg]:text-muted-foreground"
+						className="flex w-full items-center justify-center gap-2.5 rounded-settings-row bg-interactive-hover px-2.5 py-2.5 text-control font-medium text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-lg [&_svg]:shrink-0"
 						onClick={() => selection.goGlobalSettings()}
+						tabIndex={isCollapsed ? -1 : 0}
 						type="button"
 					>
 						<Settings aria-hidden="true" />
 						<span className="tracking-tight">Settings</span>
 					</button>
 				</div>
-				<div className="pointer-events-none absolute inset-x-1.5 bottom-0 top-auto flex min-h-row-md flex-col items-center justify-end gap-1 opacity-0 transition-opacity duration-150 ease-out group-data-[collapsible=icon]:pointer-events-auto group-data-[collapsible=icon]:opacity-100">
-					<RestartToUpdateRailButton status={updateStatus} />
+				<div
+					aria-hidden={!isCollapsed || undefined}
+					className="pointer-events-none absolute inset-x-1.5 bottom-0 top-auto flex min-h-row-md flex-col items-center justify-end gap-1 opacity-0 transition-opacity duration-150 ease-out group-data-[collapsible=icon]:pointer-events-auto group-data-[collapsible=icon]:opacity-100"
+				>
+					<RestartToUpdateRailButton status={updateStatus} tabIndex={isCollapsed ? 0 : -1} />
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<button
 								aria-label="Settings"
 								className="grid size-control-board place-items-center rounded-settings-row bg-interactive-hover text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-base"
 								onClick={() => selection.goGlobalSettings()}
+								tabIndex={isCollapsed ? 0 : -1}
 								type="button"
 							>
 								<Settings aria-hidden="true" />
@@ -440,6 +432,10 @@ function ProjectItem({
 		if (isProjectRestarting) return;
 		if (orchestrator) {
 			selection.goSession(workspace.id, orchestrator.id);
+			return;
+		}
+		if (!hasConfiguredOrchestratorAgent(workspace)) {
+			selection.goSettings(workspace.id);
 			return;
 		}
 		// No orchestrator yet → open the Local/Cloud launcher (global dialog handles
@@ -726,7 +722,7 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 // the main-process evaluator flags it escalated. Clicking installs immediately;
 // the row itself is the prompt, so no confirmation dialog. Renders nothing in
 // every other update state.
-function RestartToUpdateRow({ status }: { status: UpdateStatus }) {
+function RestartToUpdateRow({ status, tabIndex }: { status: UpdateStatus; tabIndex: number }) {
 	if (status.state !== "downloaded") return null;
 	const escalated = status.escalated === true;
 	return (
@@ -739,6 +735,7 @@ function RestartToUpdateRow({ status }: { status: UpdateStatus }) {
 					: "text-passive hover:bg-interactive-hover hover:text-foreground [&_svg]:text-passive",
 			)}
 			onClick={() => void aoBridge.updates.install()}
+			tabIndex={tabIndex}
 			type="button"
 		>
 			<RefreshCw aria-hidden="true" className="size-icon-lg shrink-0" />
@@ -760,7 +757,7 @@ function RestartToUpdateRow({ status }: { status: UpdateStatus }) {
 
 // Icon-rail variant of RestartToUpdateRow for the collapsed sidebar: icon-only
 // with the two-line copy in the tooltip.
-function RestartToUpdateRailButton({ status }: { status: UpdateStatus }) {
+function RestartToUpdateRailButton({ status, tabIndex }: { status: UpdateStatus; tabIndex: number }) {
 	if (status.state !== "downloaded") return null;
 	const escalated = status.escalated === true;
 	return (
@@ -775,6 +772,7 @@ function RestartToUpdateRailButton({ status }: { status: UpdateStatus }) {
 							: "text-passive hover:bg-interactive-hover hover:text-foreground",
 					)}
 					onClick={() => void aoBridge.updates.install()}
+					tabIndex={tabIndex}
 					type="button"
 				>
 					<RefreshCw aria-hidden="true" />
@@ -788,12 +786,9 @@ function RestartToUpdateRailButton({ status }: { status: UpdateStatus }) {
 }
 
 function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
-	const paletteShortcut = APP_SHORTCUTS.find((shortcut) => shortcut.id === "command-palette");
-	const shortcutLabel = paletteShortcut
-		? shortcutKeys(paletteShortcut, isMac).join(isMac ? "" : "+")
-		: isMac
-			? "⌘K"
-			: "Ctrl+K";
+	const overrides = useKeybindingsStore((state) => state.overrides);
+	const paletteBinding = effectiveShortcutBindings("command-palette", isMac, overrides)[0];
+	const shortcutLabel = paletteBinding ? shortcutBindingLabel(paletteBinding, isMac) : "Unassigned";
 	const { state } = useSidebar();
 	const isCollapsed = state === "collapsed";
 	return (

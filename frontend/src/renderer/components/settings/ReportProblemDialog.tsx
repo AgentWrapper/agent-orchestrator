@@ -69,10 +69,10 @@ const DESTINATIONS: {
 	action: string;
 	icon: (props: DestinationIconProps) => ReactNode;
 }[] = [
-	{ value: "github", label: "GitHub", action: "Copy & Create GitHub Issue", icon: GithubIcon },
-	{ value: "discord", label: "Discord", action: "Copy & Open Discord", icon: DiscordIcon },
-	{ value: "email", label: "Email", action: "Copy & Open Email", icon: EmailIcon },
-];
+		{ value: "github", label: "GitHub", action: "Copy & Create GitHub Issue", icon: GithubIcon },
+		{ value: "discord", label: "Discord", action: "Copy & Open Discord", icon: DiscordIcon },
+		{ value: "email", label: "Email", action: "Copy & Open Email", icon: EmailIcon },
+	];
 
 export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogProps) {
 	const titleId = useId();
@@ -108,7 +108,7 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 	const input = { summary, details };
 	const draft = formatReportProblemDraft(input, diagnostics, selectedOutput);
 	const destination = DESTINATIONS.find((option) => option.value === selectedOutput) ?? DESTINATIONS[0];
-	const canCopy = summary.trim().length > 0;
+	const canSubmit = summary.trim().length > 0 && details.trim().length > 0;
 
 	const clearStatus = () => {
 		setCopiedOutput(null);
@@ -116,7 +116,7 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 	};
 
 	const copyDraft = async () => {
-		if (!canCopy) return;
+		if (!canSubmit) return;
 		setCopyError(null);
 		const output = selectedOutput;
 		try {
@@ -240,9 +240,12 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 					</DialogClose>
 					<button
 						type="button"
-						className="settings-footer-button border-transparent bg-settings-accent text-white disabled:cursor-not-allowed disabled:opacity-50"
-						disabled={!canCopy}
-						onClick={() => void copyDraft()}
+						className="settings-footer-button border-transparent bg-settings-accent text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+						disabled={!canSubmit}
+						onClick={() => {
+							if (!canSubmit) return;
+							void copyDraft()
+						}}
 					>
 						{destination.action}
 					</button>

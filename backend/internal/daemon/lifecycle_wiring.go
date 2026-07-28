@@ -20,6 +20,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
+	activityobserver "github.com/aoagents/agent-orchestrator/backend/internal/observe/activity"
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe/reaper"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	reviewcore "github.com/aoagents/agent-orchestrator/backend/internal/review"
@@ -42,6 +43,7 @@ type lifecycleStack struct {
 	LCM           *lifecycle.Manager
 	runtimeReaper *reaper.Reaper
 	reaperDone    <-chan struct{}
+	activityDone  <-chan struct{}
 	scmDone       <-chan struct{}
 	trackerDone   <-chan struct{}
 	sweepDone     <-chan struct{}
@@ -62,10 +64,12 @@ func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runt
 		lifecycle.WithActiveSteering(activeTurnSteering(agents)),
 	)
 	rp := reaper.New(lcm, store, runtime, reaper.Config{Logger: logger})
+	activityPoller := activityobserver.New(store, lcm, runtime, agents, activityobserver.Config{Logger: logger})
 	return &lifecycleStack{
 		LCM:           lcm,
 		runtimeReaper: rp,
 		reaperDone:    rp.Start(ctx),
+		activityDone:  activityPoller.Start(ctx),
 		sweepDone:     startWorkerIdleSweep(ctx, lcm),
 	}
 }
@@ -120,6 +124,9 @@ func startWorkerIdleSweep(ctx context.Context, lcm *lifecycle.Manager) <-chan st
 // passed to startLifecycle before calling Stop.
 func (l *lifecycleStack) Stop() {
 	<-l.reaperDone
+	if l.activityDone != nil {
+		<-l.activityDone
+	}
 	if l.sweepDone != nil {
 		<-l.sweepDone
 	}
@@ -143,6 +150,11 @@ type sessionLifecycle interface {
 	Reconcile(ctx context.Context) error
 	RestoreAll(ctx context.Context) error
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
+	// SetShellTerminalCloser late-binds Kill/Cleanup to close a session's
+	// scoped shell terminals before its worktree is torn down. shellterm.Service
+	// is built after Session Manager during boot (see startShellTerminals), so
+	// this cannot be a constructor argument.
+	SetShellTerminalCloser(closer sessionmanager.ShellTerminalCloser)
 }
 
 // startSession builds the controller-facing session service: a session manager

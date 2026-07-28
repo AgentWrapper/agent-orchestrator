@@ -1,4 +1,4 @@
-import { createFileRoute, Outlet, useMatchRoute, useNavigate, useParams } from "@tanstack/react-router";
+import { createFileRoute, Outlet, useMatchRoute, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 import { CommandPalette } from "../components/CommandPalette";
@@ -8,6 +8,7 @@ import { NotificationRuntime, ShareDeepLinkRuntime } from "../components/Notific
 import { GlobalNewTaskDialog } from "../components/GlobalNewTaskDialog";
 import { GlobalOrchestratorLaunchDialog } from "../components/GlobalOrchestratorLaunchDialog";
 import { KeyboardShortcutsDialog } from "../components/KeyboardShortcutsDialog";
+import { KeyboardShortcutsSettingsDialog } from "../components/settings/KeyboardShortcutsSettingsDialog";
 import { ShellTopbar } from "../components/ShellTopbar";
 import { OrchestratorReplacementDialog } from "../components/OrchestratorReplacementDialog";
 import { Sidebar } from "../components/Sidebar";
@@ -27,6 +28,7 @@ import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { captureOrchestratorReplacementFailure } from "../lib/orchestrator-replacement-telemetry";
 import { applyDocumentTheme } from "../lib/theme";
 import { aoBridge } from "../lib/bridge";
+import { handleModifierLinkClick } from "../lib/external-link-policy";
 import { cn } from "../lib/utils";
 import {
 	isLinuxPlatform,
@@ -36,6 +38,7 @@ import {
 	hidesShellTopbar,
 } from "../lib/platform";
 import { useUiStore } from "../stores/ui-store";
+import { matchesRendererShortcut } from "../stores/keybindings-store";
 import { sessionIsActive, toProjectKind, type WorkspaceSummary } from "../types/workspace";
 import type { components } from "../../api/schema";
 
@@ -123,9 +126,19 @@ function ShellLayout() {
 	// Seeded to the current value so a mount never opens a terminal unasked.
 	const handledShellNonceRef = useRef(newShellTerminalNonce);
 	const [isKeyboardShortcutsOpen, setIsKeyboardShortcutsOpen] = useState(false);
+	const [isKeyboardShortcutsSettingsOpen, setIsKeyboardShortcutsSettingsOpen] = useState(false);
 	const [isSidebarPeekOpen, setIsSidebarPeekOpen] = useState(false);
 	const sidebarPeekCloseTimerRef = useRef<number | undefined>(undefined);
 	const routeParams = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
+	const routeSearch = useSearch({ strict: false }) as { tabOwner?: string };
+	const tabOwnerSession = routeSearch.tabOwner
+		? workspaces.flatMap((workspace) => workspace.sessions).find((session) => session.id === routeSearch.tabOwner)
+		: undefined;
+	const tabOwnerSessionId = tabOwnerSession?.id;
+	useEffect(() => {
+		document.addEventListener("click", handleModifierLinkClick);
+		return () => document.removeEventListener("click", handleModifierLinkClick);
+	}, []);
 	// Project in scope for a new-session shortcut: the route's project, or the
 	// workspace owning the open session (so the shortcut works from a worker's
 	// detail view, where the URL carries only a sessionId).
@@ -134,9 +147,6 @@ function ShellLayout() {
 		: routeParams.sessionId
 			? workspaces.find((workspace) => workspace.sessions.some((session) => session.id === routeParams.sessionId))?.id
 			: undefined;
-	const isSessionRoute =
-		Boolean(matchRoute({ to: "/projects/$projectId/sessions/$sessionId", fuzzy: true })) ||
-		Boolean(matchRoute({ to: "/sessions/$sessionId", fuzzy: true }));
 	// First-launch root board only (no projects in scope).
 	const isWelcomeBoard = Boolean(matchRoute({ to: "/" })) && workspaces.length === 0;
 	const isSettingsRoute =
@@ -424,11 +434,14 @@ function ShellLayout() {
 		return () => mediaQuery.removeEventListener("change", handleChange);
 	}, [themePreference, syncSystemTheme]);
 
-	// ⌘B lives in SidebarProvider (shadcn's built-in shortcut), which routes
-	// through onOpenChange back into the ui-store.
 	useEffect(() => {
 		const handleKeyDown = (event: KeyboardEvent) => {
-			if ((event.metaKey || event.ctrlKey) && /^[1-9]$/.test(event.key)) {
+			if (matchesRendererShortcut("toggle-sidebar", event)) {
+				event.preventDefault();
+				toggleSidebar();
+				return;
+			}
+			if (matchesRendererShortcut("open-project", event)) {
 				const workspace = workspaces[Number(event.key) - 1];
 				if (workspace) {
 					event.preventDefault();
@@ -438,7 +451,7 @@ function ShellLayout() {
 		};
 		window.addEventListener("keydown", handleKeyDown);
 		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [navigate, workspaces]);
+	}, [navigate, toggleSidebar, workspaces]);
 
 	// New session (⌘N / Ctrl+Shift+N) is detected in the main process and
 	// delivered here, so it fires even when focus is inside xterm or a native
@@ -477,7 +490,10 @@ function ShellLayout() {
 		if (handledShellNonceRef.current === newShellTerminalNonce) return;
 		handledShellNonceRef.current = newShellTerminalNonce;
 		openShellTerminal.mutate(
-			{ projectId: scopedProjectId, sessionId: routeParams.sessionId },
+			{
+				projectId: tabOwnerSession?.workspaceId ?? scopedProjectId,
+				sessionId: tabOwnerSessionId ?? routeParams.sessionId,
+			},
 			{
 				onSuccess: (shell) => {
 					setActiveShellTerminal(shell.handleId);
@@ -492,6 +508,8 @@ function ShellLayout() {
 		openShellTerminal,
 		scopedProjectId,
 		routeParams.sessionId,
+		tabOwnerSession?.workspaceId,
+		tabOwnerSessionId,
 		navigate,
 		setActiveShellTerminal,
 	]);
@@ -521,7 +539,18 @@ function ShellLayout() {
 			<ShareDeepLinkRuntime />
 			<GlobalNewTaskDialog />
 			<GlobalOrchestratorLaunchDialog />
-			<KeyboardShortcutsDialog open={isKeyboardShortcutsOpen} onOpenChange={setIsKeyboardShortcutsOpen} />
+			<KeyboardShortcutsDialog
+				open={isKeyboardShortcutsOpen}
+				onOpenChange={setIsKeyboardShortcutsOpen}
+				onCustomize={() => {
+					setIsKeyboardShortcutsOpen(false);
+					setIsKeyboardShortcutsSettingsOpen(true);
+				}}
+			/>
+			<KeyboardShortcutsSettingsDialog
+				open={isKeyboardShortcutsSettingsOpen}
+				onOpenChange={setIsKeyboardShortcutsSettingsOpen}
+			/>
 			{/* Shell chrome: Win/Linux hang the sidebar under a topbar. macOS uses a
           titlebar strip above the off-canvas sidebar. Session and board actions
           render inside the center panel when the shell topbar is hidden. */}
@@ -537,6 +566,7 @@ function ShellLayout() {
             the drag-resizable --ao-sidebar-w set on :root by useResizable. */}
 				<SidebarProvider
 					className="min-h-0 flex-1 overflow-x-hidden"
+					keyboardShortcut={false}
 					onOpenChange={(open) => {
 						cancelSidebarPeekClose();
 						setIsSidebarPeekOpen(false);
@@ -550,15 +580,14 @@ function ShellLayout() {
 						} as CSSProperties
 					}
 				>
-					{/* Hang the fixed sidebar below shell chrome on Win/Linux. macOS
-              keeps a full-height sidebar beneath the fixed titlebar controls. */}
+					{/* macOS + Linux reserve a titlebar band for the fixed TitlebarNav
+              cluster above a full-height sidebar; Windows hangs the sidebar
+              below its custom titlebar. */}
 					<Sidebar
 						hideEdgeBorder={isWelcomeBoard}
 						isOverlay={isSidebarPeekOpen && !isSidebarOpen}
 						onPreviewLeave={scheduleSidebarPeekClose}
-						underTopbar={
-							isMac || isWindows || (!framedAppTopbar && !hideShellTopbar && (isLinux ? isSessionRoute : true))
-						}
+						underTopbar={isMac || isWindows || isLinux}
 						topbarOffset={isWindows ? "titlebar" : "toolbar"}
 						onCreateProject={createProject}
 						onInitializeProject={initializeProjectRepository}
