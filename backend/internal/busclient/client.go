@@ -211,7 +211,7 @@ func (c *Client) stream(ctx context.Context) error {
 		return errors.New("bus: not configured")
 	}
 	u := url + "/api/v1/cloud/bus/stream?daemonId=" + c.cfg.DaemonID
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, http.NoBody)
 	if err != nil {
 		return err
 	}
@@ -222,7 +222,7 @@ func (c *Client) stream(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("bus stream: HTTP %d", resp.StatusCode)
 	}
@@ -397,7 +397,7 @@ func (c *Client) postJSON(ctx context.Context, path string, body, out any) error
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return fmt.Errorf("bus %s: HTTP %d: %s", path, resp.StatusCode, strings.TrimSpace(string(snippet)))
@@ -414,7 +414,7 @@ func (c *Client) getJSON(ctx context.Context, path string, out any) error {
 	if url == "" {
 		return errors.New("bus: not configured")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url+path, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url+path, http.NoBody)
 	if err != nil {
 		return err
 	}
@@ -423,7 +423,7 @@ func (c *Client) getJSON(ctx context.Context, path string, out any) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return fmt.Errorf("bus %s: HTTP %d: %s", path, resp.StatusCode, strings.TrimSpace(string(snippet)))
@@ -465,9 +465,9 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 	}
 }
 
-func capDur(d, max time.Duration) time.Duration {
-	if d > max {
-		return max
+func capDur(d, limit time.Duration) time.Duration {
+	if d > limit {
+		return limit
 	}
 	return d
 }

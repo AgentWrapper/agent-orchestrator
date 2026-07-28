@@ -232,7 +232,7 @@ func (c *CloudController) status(w http.ResponseWriter, r *http.Request) {
 	// raw is the sandbox daemon's own SessionResponse JSON — pass it through verbatim.
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(raw)
+	_, _ = w.Write(raw) // #nosec G705 -- proxied sandbox JSON; Content-Type is application/json, consumed by fetch not rendered as HTML
 }
 
 func (c *CloudController) viewURL(w http.ResponseWriter, r *http.Request) {
@@ -308,7 +308,7 @@ func (c *CloudController) proxy(w http.ResponseWriter, r *http.Request) {
 	}
 	var jsonField any
 	if len(raw) > 0 {
-		jsonField = json.RawMessage(raw)
+		jsonField = raw
 	}
 	envelope.WriteJSON(w, http.StatusOK, CloudProxyResponse{
 		OK: status >= 200 && status < 300, Status: status, JSON: jsonField,
@@ -350,7 +350,7 @@ func (c *CloudController) sharedProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	var jsonField any
 	if len(raw) > 0 {
-		jsonField = json.RawMessage(raw)
+		jsonField = raw
 	}
 	envelope.WriteJSON(w, http.StatusOK, CloudProxyResponse{
 		OK: status >= 200 && status < 300, Status: status, JSON: jsonField,

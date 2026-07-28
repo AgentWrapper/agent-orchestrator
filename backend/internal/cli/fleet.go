@@ -125,20 +125,20 @@ func gatherFleet(reqCtx context.Context, ctx *commandContext) ([]fleetSession, b
 
 func writeFleet(w io.Writer, sessions []fleetSession, cloudReachable bool) error {
 	if !cloudReachable {
-		fmt.Fprintln(w, "(cloud control plane not reachable — showing local sessions only; sign in to cloud to see cloud agents)")
+		_, _ = fmt.Fprintln(w, "(cloud control plane not reachable — showing local sessions only; sign in to cloud to see cloud agents)")
 	}
 	if len(sessions) == 0 {
 		_, err := fmt.Fprintln(w, "No active agent sessions.")
 		return err
 	}
 	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "SESSION\tKIND\tLOCATION\tSTATUS\tPROJECT\tNAME")
+	_, _ = fmt.Fprintln(tw, "SESSION\tKIND\tLOCATION\tSTATUS\tPROJECT\tNAME")
 	for _, s := range sessions {
 		loc := s.Location
 		if s.Location == "cloud" && s.SandboxID != "" {
 			loc = "cloud:" + s.SandboxID
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
 			s.SessionID, dash(s.Kind), loc, dash(s.Status), dash(s.ProjectID), dash(s.DisplayName))
 	}
 	return tw.Flush()
@@ -182,7 +182,7 @@ func controlPlaneCreds() (url, token string) {
 
 // getFromControlPlane GETs a control-plane path with the bus-token Bearer.
 func getFromControlPlane(ctx context.Context, baseURL, token, path string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+path, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+path, http.NoBody)
 	if err != nil {
 		return err
 	}
@@ -194,7 +194,7 @@ func getFromControlPlane(ctx context.Context, baseURL, token, path string, out a
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return fmt.Errorf("control plane %s: HTTP %d: %s", path, resp.StatusCode, strings.TrimSpace(string(snippet)))

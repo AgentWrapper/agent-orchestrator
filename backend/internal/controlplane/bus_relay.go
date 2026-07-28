@@ -30,7 +30,7 @@ func (r *supervisorRelay) Relay(ctx context.Context, previewURL string, cmd Comm
 	case "spawn":
 		var spec any
 		if len(cmd.Spec) > 0 {
-			spec = json.RawMessage(cmd.Spec)
+			spec = cmd.Spec
 		}
 		return r.post(ctx, previewURL, "/api/v1/sessions", spec)
 	default:

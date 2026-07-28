@@ -114,7 +114,7 @@ func postToControlPlane(ctx context.Context, baseURL, token, path string, body, 
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return httpStatusError{status: resp.StatusCode, msg: fmt.Sprintf("control plane %s: HTTP %d: %s", path, resp.StatusCode, strings.TrimSpace(string(snippet)))}

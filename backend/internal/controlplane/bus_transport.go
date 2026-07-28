@@ -72,7 +72,7 @@ func (s *Server) busStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprint(w, ": connected\n\n")
+	_, _ = fmt.Fprint(w, ": connected\n\n")
 	flusher.Flush()
 
 	// Heartbeat so intermediaries don't idle-close the stream.
@@ -84,14 +84,14 @@ func (s *Server) busStream(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		case <-ping.C:
-			fmt.Fprint(w, ": ping\n\n")
+			_, _ = fmt.Fprint(w, ": ping\n\n")
 			flusher.Flush()
 		case f := <-conn.ch:
 			buf, err := json.Marshal(f)
 			if err != nil {
 				continue
 			}
-			fmt.Fprintf(w, "data: %s\n\n", buf)
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", buf)
 			flusher.Flush()
 		}
 	}

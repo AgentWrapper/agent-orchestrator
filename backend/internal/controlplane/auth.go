@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/MicahParks/keyfunc/v3"
 	"github.com/golang-jwt/jwt/v5"
@@ -53,6 +52,7 @@ type Authenticator interface {
 // active authenticator.
 type DevAuthenticator struct{}
 
+// Authenticate resolves the tenant from the `X-AO-Tenant` header, defaulting to "dev-tenant".
 func (DevAuthenticator) Authenticate(r *http.Request) (string, error) {
 	if t := strings.TrimSpace(r.Header.Get("X-AO-Tenant")); t != "" {
 		return t, nil
@@ -84,6 +84,7 @@ func NewClerkAuthenticator(ctx context.Context, jwksURL, issuer string) (*ClerkA
 	return &ClerkAuthenticator{keys: kf, issuer: strings.TrimSpace(issuer)}, nil
 }
 
+// Authenticate verifies the request's Clerk JWT and returns its tenant id.
 func (c *ClerkAuthenticator) Authenticate(r *http.Request) (string, error) {
 	raw := bearerToken(r)
 	if raw == "" {
@@ -164,6 +165,3 @@ func busAuthMiddleware(a Authenticator, signer *BusTokenSigner) func(http.Handle
 		})
 	}
 }
-
-// jwksRefreshInterval documents the keyfunc default refresh cadence (informational).
-const jwksRefreshInterval = time.Hour

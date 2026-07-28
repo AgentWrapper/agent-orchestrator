@@ -139,7 +139,7 @@ func recipeFor(harness string) (Recipe, bool) {
 }
 
 // CloudCapableHarnesses lists harnesses that have a verified cloud recipe.
-func CloudCapableHarnesses() []string {
+func CloudCapableHarnesses() []string { //nolint:revive // name intentionally disambiguates across packages; renaming ripples widely
 	var out []string
 	for id, r := range recipes {
 		if r.Verified {

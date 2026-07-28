@@ -18,10 +18,10 @@ import (
 type LocationType string
 
 const (
-	// LocationSandbox: reachable by calling INTO the sandbox via a signed preview
+	// LocationSandbox is reachable by calling INTO the sandbox via a signed preview
 	// URL (the inbound relay that already exists as ProxyFetch).
 	LocationSandbox LocationType = "sandbox"
-	// LocationDaemon: reachable only by pushing DOWN a live outbound channel the
+	// LocationDaemon is reachable only by pushing DOWN a live outbound channel the
 	// daemon opened to the control plane (added in Turn 2) — e.g. a laptop daemon
 	// behind NAT, or an in-sandbox daemon that dialed out.
 	LocationDaemon LocationType = "daemon"

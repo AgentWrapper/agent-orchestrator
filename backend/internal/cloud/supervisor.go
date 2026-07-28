@@ -39,7 +39,7 @@ const agentHostPort = 3001
 
 // CloudSession is a live per-session sandbox. Keyed by SandboxID (globally
 // unique); SessionID is only unique within a daemon so it must not be the key.
-type CloudSession struct {
+type CloudSession struct { //nolint:revive // name intentionally disambiguates across packages; renaming ripples widely
 	SessionID string `json:"sessionId"`
 	// LocalProjectID is the LOCAL project this cloud session belongs to, so a
 	// client merges its card into the right board. Distinct from ProjectID (the
@@ -216,7 +216,7 @@ func (s *Supervisor) ProxyFetch(ctx context.Context, previewURL, method, apiPath
 	if err != nil {
 		return 0, nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return resp.StatusCode, nil, err
@@ -336,7 +336,7 @@ func (s *Supervisor) SpawnCloud(ctx context.Context, in SpawnInput) (*SpawnResul
 	s.save()
 
 	// Finish provisioning off the request path.
-	go s.finishProvisioning(client, box, recipe, in)
+	go s.finishProvisioning(client, box, recipe, in) // #nosec G118 -- provisioning must outlive the request; detached context is intentional
 
 	return &SpawnResult{SandboxID: sandboxID, Status: StatusProvisioning}, nil
 }
@@ -523,7 +523,7 @@ func (s *Supervisor) installAndBoot(ctx context.Context, client SandboxProvider,
 	if _, err = sh("mkdir -p /home/daytona/.ao", 60); err != nil {
 		return "", err
 	}
-	if err = client.UploadFile(ctx, *box, "/home/daytona/ao", binary); err != nil {
+	if err := client.UploadFile(ctx, *box, "/home/daytona/ao", binary); err != nil {
 		return "", err
 	}
 	if _, err = sh("sudo mv /home/daytona/ao /usr/local/bin/ao && sudo chmod +x /usr/local/bin/ao", 60); err != nil {
@@ -547,7 +547,7 @@ func (s *Supervisor) installAndBoot(ctx context.Context, client SandboxProvider,
 	}
 
 	// 3. port credential + headless seed
-	if err = s.portCredentials(ctx, client, *box, recipe, sh, in.Credential); err != nil {
+	if err := s.portCredentials(ctx, client, *box, recipe, sh, in.Credential); err != nil {
 		return "", err
 	}
 
@@ -633,16 +633,16 @@ func (s *Supervisor) ViewURL(ctx context.Context, sandboxID string) (string, err
 	if err != nil {
 		return "", err
 	}
-	url, err := s.signedPreview(ctx, client, sandboxID, 30*60)
+	signedURL, err := s.signedPreview(ctx, client, sandboxID, 30*60)
 	if err != nil {
 		return "", err
 	}
 	s.mu.Lock()
 	if cur := s.sessions[sandboxID]; cur != nil {
-		cur.PreviewURL = url
+		cur.PreviewURL = signedURL
 	}
 	s.mu.Unlock()
-	return url, nil
+	return signedURL, nil
 }
 
 // SharePayload is the token a teammate imports to view a session read-only
@@ -678,13 +678,13 @@ func (s *Supervisor) Share(ctx context.Context, sandboxID string, ttlSec int, pr
 	if err != nil {
 		return nil, err
 	}
-	url, err := s.signedPreview(ctx, client, sandboxID, ttlSec)
+	signedURL, err := s.signedPreview(ctx, client, sandboxID, ttlSec)
 	if err != nil {
 		return nil, err
 	}
 	payload := SharePayload{
 		V:           1,
-		PreviewURL:  url,
+		PreviewURL:  signedURL,
 		SandboxID:   sandboxID,
 		SessionID:   sess.SessionID,
 		Harness:     sess.Harness,
@@ -878,19 +878,19 @@ func githubToken() string {
 // no usable remote it falls back to an empty repo. A host GitHub token, if
 // present, is stored in the sandbox so clone (private) and push (PRs) both work.
 func (s *Supervisor) prepareProject(ctx context.Context, client SandboxProvider, box Sandbox, projectPath string, spec cloneSpec) error {
-	sh := func(cmd string, timeoutSec int) (string, error) {
+	sh := func(cmd string, timeoutSec int) error {
 		r, e := client.Exec(ctx, box, ExecuteRequest{Command: "bash -lc " + shQuote(cmd), Timeout: timeoutSec})
 		if e != nil {
-			return "", e
+			return e
 		}
 		if r.ExitCode != 0 {
-			return "", fmt.Errorf("rc=%d: %s", r.ExitCode, tail(r.Result, 400))
+			return fmt.Errorf("rc=%d: %s", r.ExitCode, tail(r.Result, 400))
 		}
-		return r.Result, nil
+		return nil
 	}
 
 	// git is on the daytona-small snapshot, but ensure it (cheap no-op if present).
-	if _, err := sh("command -v git >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq git) >/dev/null 2>&1; git --version", 300); err != nil {
+	if err := sh("command -v git >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq git) >/dev/null 2>&1; git --version", 300); err != nil {
 		return fmt.Errorf("cloud: ensure git: %w", err)
 	}
 
@@ -905,7 +905,7 @@ func (s *Supervisor) prepareProject(ctx context.Context, client SandboxProvider,
 		"sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg && " +
 		"echo \"deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main\" | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null && " +
 		"sudo apt-get update -qq && sudo apt-get install -y -qq gh; }"
-	_, _ = sh(ensureGH+" ; gh --version >/dev/null 2>&1 || true", 300)
+	_ = sh(ensureGH+" ; gh --version >/dev/null 2>&1 || true", 300)
 
 	q := shQuote(projectPath)
 
@@ -918,16 +918,16 @@ func (s *Supervisor) prepareProject(ctx context.Context, client SandboxProvider,
 			"git config --global credential.helper store && printf 'https://x-access-token:%%s@github.com\\n' %s > ~/.git-credentials && chmod 600 ~/.git-credentials",
 			shQuote(tok),
 		)
-		if _, err := sh(seed, 60); err != nil {
+		if err := sh(seed, 60); err != nil {
 			return fmt.Errorf("cloud: seed git credentials: %w", err)
 		}
 		// Persist gh auth (writes ~/.config/gh/hosts.yml) so `gh` works headless.
-		_, _ = sh(fmt.Sprintf("printf '%%s' %s | gh auth login --with-token >/dev/null 2>&1 && gh auth setup-git >/dev/null 2>&1 || true", shQuote(tok)), 60)
+		_ = sh(fmt.Sprintf("printf '%%s' %s | gh auth login --with-token >/dev/null 2>&1 && gh auth setup-git >/dev/null 2>&1 || true", shQuote(tok)), 60)
 	}
 
 	if spec.RemoteURL == "" {
 		// No remote to clone — empty init (a scratch/local-only project).
-		if _, err := sh(fmt.Sprintf("mkdir -p %s && cd %s && (git rev-parse --git-dir >/dev/null 2>&1 || (git init -q && git commit -q --allow-empty -m 'ao cloud init'))", q, q), 60); err != nil {
+		if err := sh(fmt.Sprintf("mkdir -p %s && cd %s && (git rev-parse --git-dir >/dev/null 2>&1 || (git init -q && git commit -q --allow-empty -m 'ao cloud init'))", q, q), 60); err != nil {
 			return fmt.Errorf("cloud: init project: %w", err)
 		}
 		return nil
@@ -936,7 +936,7 @@ func (s *Supervisor) prepareProject(ctx context.Context, client SandboxProvider,
 	// Clone if the dir isn't already a repo. Errors are redacted to the exit code
 	// so a token in a credential prompt can never reach a log line.
 	clone := fmt.Sprintf("if [ ! -d %s/.git ]; then git clone %s %s; fi", q, shQuote(spec.RemoteURL), q)
-	if _, err := sh(clone, 600); err != nil {
+	if err := sh(clone, 600); err != nil {
 		// Redact any userinfo (an inline token) before the URL reaches a persisted
 		// / client-returned error. (Audit #12.)
 		return fmt.Errorf("cloud: clone %s failed (see sandbox)", redactURLUserinfo(spec.RemoteURL))
@@ -945,7 +945,7 @@ func (s *Supervisor) prepareProject(ctx context.Context, client SandboxProvider,
 	// default branch. Best-effort — a cloud session sees PUSHED state, not local
 	// uncommitted work.
 	if spec.Branch != "" && spec.Branch != "HEAD" {
-		_, _ = sh(fmt.Sprintf("cd %s && git checkout %s 2>/dev/null || true", q, shQuote(spec.Branch)), 60)
+		_ = sh(fmt.Sprintf("cd %s && git checkout %s 2>/dev/null || true", q, shQuote(spec.Branch)), 60)
 	}
 	return nil
 }
@@ -1034,7 +1034,7 @@ func (s *Supervisor) api(ctx context.Context, previewURL, method, apiPath string
 	if err != nil {
 		return nil, fmt.Errorf("cloud daemon %s %s: %w", method, apiPath, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
@@ -1192,12 +1192,12 @@ func (s *Supervisor) Restore(ctx context.Context) {
 		if box.Stopped() {
 			_ = client.Start(ctx, row.SandboxID)
 		}
-		url, err := s.signedPreview(ctx, client, row.SandboxID, 30*60)
+		signedURL, err := s.signedPreview(ctx, client, row.SandboxID, 30*60)
 		if err != nil {
 			continue
 		}
 		r := row
-		r.PreviewURL = url
+		r.PreviewURL = signedURL
 		r.Status = StatusReady
 		s.mu.Lock()
 		s.sessions[row.SandboxID] = &r

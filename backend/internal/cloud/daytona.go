@@ -259,7 +259,7 @@ func (c *DaytonaClient) doAbs(ctx context.Context, method, absURL string, body i
 	if err != nil {
 		return nil, fmt.Errorf("cloud: %s %s: %w", method, redactPath(absURL), err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err

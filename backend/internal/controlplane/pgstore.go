@@ -31,16 +31,17 @@ func OpenPostgresStore(dsn string) (*PostgresStore, error) {
 		return nil, fmt.Errorf("controlplane: open registry db: %w", err)
 	}
 	if err := db.Ping(); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("controlplane: connect registry db: %w", err)
 	}
 	if _, err := db.Exec(schemaSQL); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("controlplane: migrate registry db: %w", err)
 	}
 	return &PostgresStore{db: db}, nil
 }
 
+// Close closes the underlying database connection.
 func (s *PostgresStore) Close() error { return s.db.Close() }
 
 const schemaSQL = `
@@ -59,13 +60,14 @@ CREATE TABLE IF NOT EXISTS cloud_sessions (
 CREATE INDEX IF NOT EXISTS idx_cloud_sessions_tenant ON cloud_sessions(tenant_id);
 `
 
+// Load returns all persisted cloud sessions.
 func (s *PostgresStore) Load() ([]cloud.CloudSession, error) {
 	rows, err := s.db.Query(`SELECT sandbox_id, tenant_id, session_id, local_project_id, project_id,
 		harness, preview_url, status, error, display_name FROM cloud_sessions`)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []cloud.CloudSession
 	for rows.Next() {
 		var c cloud.CloudSession
@@ -78,6 +80,7 @@ func (s *PostgresStore) Load() ([]cloud.CloudSession, error) {
 	return out, rows.Err()
 }
 
+// Save replaces the entire persisted set of cloud sessions.
 func (s *PostgresStore) Save(sessions []cloud.CloudSession) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -93,7 +96,7 @@ func (s *PostgresStore) Save(sessions []cloud.CloudSession) error {
 	if err != nil {
 		return err
 	}
-	defer stmt.Close()
+	defer func() { _ = stmt.Close() }()
 	for _, c := range sessions {
 		if _, err := stmt.Exec(c.SandboxID, c.TenantID, c.SessionID, c.LocalProjectID, c.ProjectID,
 			c.Harness, c.PreviewURL, c.Status, c.Error, c.DisplayName); err != nil {

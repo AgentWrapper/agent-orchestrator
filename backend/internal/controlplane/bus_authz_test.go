@@ -30,7 +30,7 @@ func serveBusAuth(a Authenticator, signer *BusTokenSigner, authHeader string) (i
 	h := busAuthMiddleware(a, signer)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		seenTenant = TenantFromContext(r.Context())
 	}))
-	req := httptest.NewRequest("POST", "/api/v1/cloud/bus/event", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cloud/bus/event", nil)
 	if authHeader != "" {
 		req.Header.Set("Authorization", authHeader)
 	}
@@ -81,7 +81,7 @@ func withScope(r *http.Request, tenant, sandbox string) *http.Request {
 func TestBusRegister_ScopedTokenCannotImpersonateOtherDaemon(t *testing.T) {
 	s, _ := testServer()
 	body := `{"daemonId":"victim","sessions":[{"sessionId":"x"}]}`
-	req := withScope(httptest.NewRequest("POST", "/api/v1/cloud/bus/register", strings.NewReader(body)), "acme", "attacker")
+	req := withScope(httptest.NewRequest(http.MethodPost, "/api/v1/cloud/bus/register", strings.NewReader(body)), "acme", "attacker")
 	rec := httptest.NewRecorder()
 	s.busRegister(rec, req)
 	if rec.Code != http.StatusForbidden {
@@ -95,7 +95,7 @@ func TestBusRoute_ScopedTokenCannotTargetUnrelatedSession(t *testing.T) {
 	// A victim worker owned by some other orchestrator.
 	s.locations.Register(SessionLocation{SessionID: "sb-victim", TenantID: "acme", Type: LocationSandbox, InSandboxSessionID: "p1", PreviewURL: "u", OrchestratorID: "sb-boss"})
 	body := `{"op":"send","sessionId":"sb-victim","message":"hijack"}`
-	req := withScope(httptest.NewRequest("POST", "/api/v1/cloud/bus/route", strings.NewReader(body)), "acme", "sb-attacker")
+	req := withScope(httptest.NewRequest(http.MethodPost, "/api/v1/cloud/bus/route", strings.NewReader(body)), "acme", "sb-attacker")
 	rec := httptest.NewRecorder()
 	s.busRoute(rec, req)
 	if rec.Code != http.StatusForbidden {
@@ -119,10 +119,9 @@ func TestBusRoute_ScopedTokenReachesOwnWorkerAndOrchestrator(t *testing.T) {
 	if !s.hub.AuthorizeBusTarget("acme", "sb-W", "sb-O") {
 		t.Fatal("worker should reach its own orchestrator")
 	}
-	// Worker -> unrelated: denied.
-	if s.hub.AuthorizeBusTarget("acme", "sb-W", "sb-stranger") {
-		// sb-stranger unknown -> allowed (routing 404s); use a known unrelated one.
-	}
+	// Worker -> unrelated: denied. sb-stranger is unknown until registered
+	// (an unknown target would be allowed and 404 at routing time), so register
+	// a known unrelated session before asserting denial.
 	s.locations.Register(SessionLocation{SessionID: "sb-stranger", TenantID: "acme", Type: LocationSandbox, InSandboxSessionID: "s1", PreviewURL: "us"})
 	if s.hub.AuthorizeBusTarget("acme", "sb-W", "sb-stranger") {
 		t.Fatal("worker must not reach an unrelated session")

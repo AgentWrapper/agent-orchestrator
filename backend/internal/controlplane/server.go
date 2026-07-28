@@ -286,7 +286,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(raw)
+	_, _ = w.Write(raw) // #nosec G705 -- proxied sandbox JSON; Content-Type is application/json, consumed by fetch not rendered as HTML
 }
 
 func (s *Server) viewURL(w http.ResponseWriter, r *http.Request) {

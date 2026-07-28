@@ -47,7 +47,7 @@ func TestSSEConn_BufferBackpressureAndClose(t *testing.T) {
 func TestBusRegister_PopulatesRegistry(t *testing.T) {
 	s, _ := testServer()
 	body := `{"daemonId":"d1","sessions":[{"sessionId":"w1","kind":"worker"}]}`
-	req := withTenant(httptest.NewRequest("POST", "/api/v1/cloud/bus/register", strings.NewReader(body)), "acme")
+	req := withTenant(httptest.NewRequest(http.MethodPost, "/api/v1/cloud/bus/register", strings.NewReader(body)), "acme")
 	rec := httptest.NewRecorder()
 	s.busRegister(rec, req)
 	if rec.Code != http.StatusOK {
@@ -65,7 +65,7 @@ func TestBusRoute_ToConnectedDaemon(t *testing.T) {
 	s.hub.Register("acme", "d1", []SessionRef{{SessionID: "w1", Kind: "worker"}})
 
 	body := `{"op":"send","sessionId":"w1","message":"hello"}`
-	req := withTenant(httptest.NewRequest("POST", "/api/v1/cloud/bus/route", strings.NewReader(body)), "acme")
+	req := withTenant(httptest.NewRequest(http.MethodPost, "/api/v1/cloud/bus/route", strings.NewReader(body)), "acme")
 	rec := httptest.NewRecorder()
 	s.busRoute(rec, req)
 	if rec.Code != http.StatusOK {
@@ -78,7 +78,7 @@ func TestBusRoute_ToConnectedDaemon(t *testing.T) {
 
 func TestBusRoute_UnknownSession404(t *testing.T) {
 	s, _ := testServer()
-	req := withTenant(httptest.NewRequest("POST", "/api/v1/cloud/bus/route", strings.NewReader(`{"op":"send","sessionId":"ghost"}`)), "acme")
+	req := withTenant(httptest.NewRequest(http.MethodPost, "/api/v1/cloud/bus/route", strings.NewReader(`{"op":"send","sessionId":"ghost"}`)), "acme")
 	rec := httptest.NewRecorder()
 	s.busRoute(rec, req)
 	if rec.Code != http.StatusNotFound {
@@ -89,7 +89,7 @@ func TestBusRoute_UnknownSession404(t *testing.T) {
 func TestBusRoute_DaemonOffline503(t *testing.T) {
 	s, _ := testServer()
 	s.hub.Register("acme", "ghost", []SessionRef{{SessionID: "w1"}}) // no live conn
-	req := withTenant(httptest.NewRequest("POST", "/api/v1/cloud/bus/route", strings.NewReader(`{"op":"send","sessionId":"w1"}`)), "acme")
+	req := withTenant(httptest.NewRequest(http.MethodPost, "/api/v1/cloud/bus/route", strings.NewReader(`{"op":"send","sessionId":"w1"}`)), "acme")
 	rec := httptest.NewRecorder()
 	s.busRoute(rec, req)
 	if rec.Code != http.StatusServiceUnavailable {
@@ -100,7 +100,7 @@ func TestBusRoute_DaemonOffline503(t *testing.T) {
 func TestBusEvent_ToSandboxRelays(t *testing.T) {
 	s, relay := testServer()
 	s.locations.Register(SessionLocation{SessionID: "sb-o", TenantID: "acme", Type: LocationSandbox, InSandboxSessionID: "orch1", PreviewURL: "https://preview/o"})
-	req := withTenant(httptest.NewRequest("POST", "/api/v1/cloud/bus/event", strings.NewReader(`{"fromSessionId":"w1","toSessionId":"sb-o","kind":"message"}`)), "acme")
+	req := withTenant(httptest.NewRequest(http.MethodPost, "/api/v1/cloud/bus/event", strings.NewReader(`{"fromSessionId":"w1","toSessionId":"sb-o","kind":"message"}`)), "acme")
 	rec := httptest.NewRecorder()
 	s.busEvent(rec, req)
 	if rec.Code != http.StatusOK {
@@ -113,7 +113,7 @@ func TestBusEvent_ToSandboxRelays(t *testing.T) {
 
 func TestBusProvision_RequiresHarness(t *testing.T) {
 	s, _ := testServer()
-	req := withTenant(httptest.NewRequest("POST", "/api/v1/cloud/bus/provision", strings.NewReader(`{}`)), "acme")
+	req := withTenant(httptest.NewRequest(http.MethodPost, "/api/v1/cloud/bus/provision", strings.NewReader(`{}`)), "acme")
 	rec := httptest.NewRecorder()
 	s.busProvision(rec, req)
 	if rec.Code != http.StatusBadRequest {
@@ -125,7 +125,7 @@ func TestBusLocations_ListsTenantSessions(t *testing.T) {
 	s, _ := testServer()
 	s.locations.Register(SessionLocation{SessionID: "w1", TenantID: "acme", Type: LocationSandbox, Kind: "worker", SandboxID: "box1"})
 	s.locations.Register(SessionLocation{SessionID: "other", TenantID: "globex", Type: LocationSandbox})
-	req := withTenant(httptest.NewRequest("GET", "/api/v1/cloud/bus/locations", nil), "acme")
+	req := withTenant(httptest.NewRequest(http.MethodGet, "/api/v1/cloud/bus/locations", nil), "acme")
 	rec := httptest.NewRecorder()
 	s.busLocations(rec, req)
 	if rec.Code != http.StatusOK {
@@ -142,7 +142,7 @@ func TestBusLocations_ListsTenantSessions(t *testing.T) {
 
 func TestBusStream_RequiresDaemonID(t *testing.T) {
 	s, _ := testServer()
-	req := withTenant(httptest.NewRequest("GET", "/api/v1/cloud/bus/stream", nil), "acme")
+	req := withTenant(httptest.NewRequest(http.MethodGet, "/api/v1/cloud/bus/stream", nil), "acme")
 	rec := httptest.NewRecorder()
 	s.busStream(rec, req)
 	if rec.Code != http.StatusBadRequest {

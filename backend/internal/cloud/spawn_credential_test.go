@@ -30,23 +30,23 @@ func TestPortCredentials_InjectedCredentialWins(t *testing.T) {
 	if !ok {
 		t.Fatal("no claude-code recipe")
 	}
-	cap := newCaptureProvider()
+	capture := newCaptureProvider()
 	s := NewSupervisor(SupervisorConfig{APIKey: func() string { return "k" }})
 	noopSh := func(string, int) (string, error) { return "", nil }
 
 	injected := `{"claudeAiOauth":{"accessToken":"INJECTED-AT-SPAWN"}}`
-	if err := s.portCredentials(context.Background(), cap, Sandbox{ID: "box-1"}, recipe, noopSh, injected); err != nil {
+	if err := s.portCredentials(context.Background(), capture, Sandbox{ID: "box-1"}, recipe, noopSh, injected); err != nil {
 		t.Fatalf("portCredentials: %v", err)
 	}
 
 	var credFile string
-	for path, data := range cap.uploads {
+	for path, data := range capture.uploads {
 		if strings.Contains(path, ".credentials.json") {
 			credFile = string(data)
 		}
 	}
 	if credFile == "" {
-		t.Fatalf("no credential file uploaded; uploads=%v", keysOf(cap.uploads))
+		t.Fatalf("no credential file uploaded; uploads=%v", keysOf(capture.uploads))
 	}
 	if credFile != injected {
 		t.Fatalf("credential file = %q, want the injected value verbatim", credFile)
@@ -58,11 +58,11 @@ func TestPortCredentials_FakeHarnessNeedsNoCredential(t *testing.T) {
 	if !ok {
 		t.Fatal("no fake recipe")
 	}
-	cap := newCaptureProvider()
+	capture := newCaptureProvider()
 	s := NewSupervisor(SupervisorConfig{APIKey: func() string { return "k" }})
 	noopSh := func(string, int) (string, error) { return "", nil }
 	// No injected credential, no ported credential files → must not error.
-	if err := s.portCredentials(context.Background(), cap, Sandbox{ID: "b"}, recipe, noopSh, ""); err != nil {
+	if err := s.portCredentials(context.Background(), capture, Sandbox{ID: "b"}, recipe, noopSh, ""); err != nil {
 		t.Fatalf("fake harness portCredentials should be a no-op, got %v", err)
 	}
 }
@@ -83,10 +83,9 @@ func TestSpawnCloud_IdempotentReturnsExisting(t *testing.T) {
 		t.Fatalf("retry must return the existing sandbox, got %q", res.SandboxID)
 	}
 	// A different tenant with the same key must NOT hit the dedupe.
-	if _, err := s.SpawnCloud(context.Background(), SpawnInput{Harness: "fake", TenantID: "other", IdempotencyKey: "key-1"}); err == nil {
-		// It would try to actually provision (no provider configured) → error is fine;
-		// the point is it did NOT return box-existing.
-	}
+	// It would try to actually provision (no provider configured) → error is fine;
+	// the point is it did NOT return box-existing.
+	_, _ = s.SpawnCloud(context.Background(), SpawnInput{Harness: "fake", TenantID: "other", IdempotencyKey: "key-1"})
 }
 
 func keysOf(m map[string][]byte) []string {

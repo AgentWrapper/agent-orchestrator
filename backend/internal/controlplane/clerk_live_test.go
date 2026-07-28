@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"testing"
@@ -26,7 +27,7 @@ func TestLiveClerkVerify(t *testing.T) {
 	}
 
 	// Positive: the real token verifies and yields a non-empty tenant.
-	rGood := httptest.NewRequest("GET", "/", nil)
+	rGood := httptest.NewRequest(http.MethodGet, "/", nil)
 	rGood.Header.Set("Authorization", "Bearer "+tok)
 	tenant, err := auth.Authenticate(rGood)
 	if err != nil {
@@ -38,7 +39,7 @@ func TestLiveClerkVerify(t *testing.T) {
 	t.Logf("PASS positive: real Clerk JWT verified via live JWKS → tenant=%q", tenant)
 
 	// Negative: malformed token rejected.
-	rGarbage := httptest.NewRequest("GET", "/", nil)
+	rGarbage := httptest.NewRequest(http.MethodGet, "/", nil)
 	rGarbage.Header.Set("Authorization", "Bearer not.a.real.jwt")
 	if _, err := auth.Authenticate(rGarbage); err == nil {
 		t.Fatal("SECURITY: malformed token was accepted")
@@ -46,7 +47,7 @@ func TestLiveClerkVerify(t *testing.T) {
 	t.Log("PASS negative: malformed token rejected")
 
 	// Negative: missing token rejected.
-	if _, err := auth.Authenticate(httptest.NewRequest("GET", "/", nil)); err == nil {
+	if _, err := auth.Authenticate(httptest.NewRequest(http.MethodGet, "/", nil)); err == nil {
 		t.Fatal("SECURITY: missing token was accepted")
 	}
 	t.Log("PASS negative: missing token rejected")
@@ -57,7 +58,7 @@ func TestLiveClerkVerify(t *testing.T) {
 		if err != nil {
 			t.Fatalf("build wrong-issuer authenticator: %v", err)
 		}
-		rIss := httptest.NewRequest("GET", "/", nil)
+		rIss := httptest.NewRequest(http.MethodGet, "/", nil)
 		rIss.Header.Set("Authorization", "Bearer "+tok)
 		if _, err := badIss.Authenticate(rIss); err == nil {
 			t.Fatal("SECURITY: token accepted under a wrong expected issuer")

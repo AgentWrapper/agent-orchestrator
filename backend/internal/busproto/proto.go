@@ -10,6 +10,7 @@ import "encoding/json"
 // FrameType tags a message on the daemon channel.
 type FrameType string
 
+// FrameRegister and the other Frame* constants enumerate the frame types on the daemon channel.
 const (
 	FrameRegister FrameType = "register" // daemon → hub: "here are my sessions"
 	FrameCommand  FrameType = "command"  // hub → daemon: run this against a session

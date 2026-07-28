@@ -22,6 +22,7 @@ type JSONStore struct {
 	Path string
 }
 
+// Load returns every persisted session, or nil when no file exists.
 func (s *JSONStore) Load() ([]CloudSession, error) {
 	if s.Path == "" {
 		return nil, nil
@@ -40,6 +41,7 @@ func (s *JSONStore) Load() ([]CloudSession, error) {
 	return rows, nil
 }
 
+// Save replaces the whole set of persisted sessions.
 func (s *JSONStore) Save(sessions []CloudSession) error {
 	if s.Path == "" {
 		return nil
@@ -48,7 +50,7 @@ func (s *JSONStore) Save(sessions []CloudSession) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(s.Path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(s.Path), 0o750); err != nil {
 		return err
 	}
 	return os.WriteFile(s.Path, buf, 0o600)

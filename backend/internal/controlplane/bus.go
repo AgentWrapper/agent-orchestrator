@@ -27,23 +27,30 @@ import (
 // a fake.
 
 var (
-	// ErrSessionNotFound: the target session isn't in the registry (unknown, or
-	// its host disconnected).
+	// ErrSessionNotFound is returned when the target session isn't in the
+	// registry (unknown, or its host disconnected).
 	ErrSessionNotFound = errors.New("bus: session not found")
-	// ErrDaemonOffline: the session lives on a daemon that has no live channel.
+	// ErrDaemonOffline is returned when the session lives on a daemon that has no live channel.
 	ErrDaemonOffline = errors.New("bus: owning daemon is offline")
 )
 
-// The wire types live in busproto (shared with the daemon-side bus client).
-// These aliases keep the controlplane call sites terse and unchanged.
+// These wire types are re-exported from busproto (shared with the daemon-side
+// bus client) so the controlplane call sites stay terse and unchanged.
 type (
-	FrameType  = busproto.FrameType
+	// FrameType tags a message on the daemon channel.
+	FrameType = busproto.FrameType
+	// SessionRef is a session a daemon owns, announced in a register frame.
 	SessionRef = busproto.SessionRef
-	Command    = busproto.Command
-	Event      = busproto.Event
-	Frame      = busproto.Frame
+	// Command is a hub-to-daemon instruction against a session.
+	Command = busproto.Command
+	// Event is a daemon-to-hub signal a session emitted.
+	Event = busproto.Event
+	// Frame is the envelope carried on the daemon channel.
+	Frame = busproto.Frame
 )
 
+// FrameRegister and the other frame kinds are re-exported from busproto for
+// terse controlplane call sites.
 const (
 	FrameRegister = busproto.FrameRegister
 	FrameCommand  = busproto.FrameCommand

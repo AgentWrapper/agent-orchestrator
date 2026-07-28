@@ -20,24 +20,24 @@ type capture struct {
 
 func newFakeDaytona(t *testing.T, handler func(*capture) (int, string)) (*DaytonaClient, *capture) {
 	t.Helper()
-	cap := &capture{}
+	rec := &capture{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cap.method = r.Method
-		cap.path = r.URL.Path
-		cap.query = r.URL.RawQuery
-		cap.auth = r.Header.Get("Authorization")
-		cap.contentType = r.Header.Get("Content-Type")
-		cap.body, _ = io.ReadAll(r.Body)
-		status, resp := handler(cap)
+		rec.method = r.Method
+		rec.path = r.URL.Path
+		rec.query = r.URL.RawQuery
+		rec.auth = r.Header.Get("Authorization")
+		rec.contentType = r.Header.Get("Content-Type")
+		rec.body, _ = io.ReadAll(r.Body)
+		status, resp := handler(rec)
 		w.WriteHeader(status)
 		_, _ = io.WriteString(w, resp)
 	}))
 	t.Cleanup(srv.Close)
-	return NewDaytonaClient("secret-key", srv.URL), cap
+	return NewDaytonaClient("secret-key", srv.URL), rec
 }
 
 func TestDaytonaCreateSendsSnapshotAndBearer(t *testing.T) {
-	client, cap := newFakeDaytona(t, func(_ *capture) (int, string) {
+	client, rec := newFakeDaytona(t, func(_ *capture) (int, string) {
 		return 200, `{"id":"sb-123","state":"started"}`
 	})
 	box, err := client.Create(context.Background(), CreateSandboxRequest{Snapshot: "daytona-small"})
@@ -47,19 +47,19 @@ func TestDaytonaCreateSendsSnapshotAndBearer(t *testing.T) {
 	if box.ID != "sb-123" || !box.Running() {
 		t.Fatalf("unexpected sandbox %+v", box)
 	}
-	if cap.method != http.MethodPost || cap.path != "/sandbox" {
-		t.Fatalf("want POST /sandbox, got %s %s", cap.method, cap.path)
+	if rec.method != http.MethodPost || rec.path != "/sandbox" {
+		t.Fatalf("want POST /sandbox, got %s %s", rec.method, rec.path)
 	}
-	if cap.auth != "Bearer secret-key" {
-		t.Fatalf("missing/wrong bearer: %q", cap.auth)
+	if rec.auth != "Bearer secret-key" {
+		t.Fatalf("missing/wrong bearer: %q", rec.auth)
 	}
-	if !strings.Contains(string(cap.body), `"snapshot":"daytona-small"`) {
-		t.Fatalf("snapshot not in body: %s", cap.body)
+	if !strings.Contains(string(rec.body), `"snapshot":"daytona-small"`) {
+		t.Fatalf("snapshot not in body: %s", rec.body)
 	}
 }
 
 func TestDaytonaExecHitsToolboxProcessExecute(t *testing.T) {
-	client, cap := newFakeDaytona(t, func(_ *capture) (int, string) {
+	client, rec := newFakeDaytona(t, func(_ *capture) (int, string) {
 		return 200, `{"exitCode":0,"result":"hello"}`
 	})
 	box := Sandbox{ID: "sb-1", ToolboxProxyURL: strings.TrimSuffix(client.baseURL, "") + "/toolbox"}
@@ -71,37 +71,37 @@ func TestDaytonaExecHitsToolboxProcessExecute(t *testing.T) {
 		t.Fatalf("unexpected exec result %+v", res)
 	}
 	// Toolbox calls go to {toolboxProxyUrl}/{id}/process/execute.
-	if cap.path != "/toolbox/sb-1/process/execute" {
-		t.Fatalf("wrong exec path: %s", cap.path)
+	if rec.path != "/toolbox/sb-1/process/execute" {
+		t.Fatalf("wrong exec path: %s", rec.path)
 	}
-	if !strings.Contains(string(cap.body), `"command":"echo hi"`) {
-		t.Fatalf("command not in body: %s", cap.body)
+	if !strings.Contains(string(rec.body), `"command":"echo hi"`) {
+		t.Fatalf("command not in body: %s", rec.body)
 	}
 }
 
 func TestDaytonaUploadFileIsMultipartWithPathQuery(t *testing.T) {
-	client, cap := newFakeDaytona(t, func(_ *capture) (int, string) { return 200, `{}` })
+	client, rec := newFakeDaytona(t, func(_ *capture) (int, string) { return 200, `{}` })
 	box := Sandbox{ID: "sb-1", ToolboxProxyURL: client.baseURL + "/toolbox"}
 	if err := client.UploadFile(context.Background(), box, "/home/daytona/ao", []byte("BINARY")); err != nil {
 		t.Fatalf("UploadFile: %v", err)
 	}
-	if cap.path != "/toolbox/sb-1/files/upload" {
-		t.Fatalf("wrong upload path: %s", cap.path)
+	if rec.path != "/toolbox/sb-1/files/upload" {
+		t.Fatalf("wrong upload path: %s", rec.path)
 	}
-	if !strings.Contains(cap.query, "path=") || !strings.Contains(cap.query, "%2Fhome%2Fdaytona%2Fao") {
-		t.Fatalf("destination path not in query: %s", cap.query)
+	if !strings.Contains(rec.query, "path=") || !strings.Contains(rec.query, "%2Fhome%2Fdaytona%2Fao") {
+		t.Fatalf("destination path not in query: %s", rec.query)
 	}
-	mt, _, _ := mime.ParseMediaType(cap.contentType)
+	mt, _, _ := mime.ParseMediaType(rec.contentType)
 	if mt != "multipart/form-data" {
-		t.Fatalf("want multipart/form-data, got %q", cap.contentType)
+		t.Fatalf("want multipart/form-data, got %q", rec.contentType)
 	}
-	if !strings.Contains(string(cap.body), "BINARY") {
+	if !strings.Contains(string(rec.body), "BINARY") {
 		t.Fatalf("file bytes not in multipart body")
 	}
 }
 
 func TestDaytonaSignedPreviewUsesExpiresInSeconds(t *testing.T) {
-	client, cap := newFakeDaytona(t, func(_ *capture) (int, string) {
+	client, rec := newFakeDaytona(t, func(_ *capture) (int, string) {
 		return 200, `{"sandboxId":"sb-1","port":3001,"token":"tok","url":"https://3001-sb.daytona.example/?t=tok"}`
 	})
 	signed, err := client.SignedPreview(context.Background(), "sb-1", 3001, 1800)
@@ -111,11 +111,11 @@ func TestDaytonaSignedPreviewUsesExpiresInSeconds(t *testing.T) {
 	if signed.URL == "" || signed.Token != "tok" {
 		t.Fatalf("unexpected signed preview %+v", signed)
 	}
-	if cap.path != "/sandbox/sb-1/ports/3001/signed-preview-url" {
-		t.Fatalf("wrong signed-preview path: %s", cap.path)
+	if rec.path != "/sandbox/sb-1/ports/3001/signed-preview-url" {
+		t.Fatalf("wrong signed-preview path: %s", rec.path)
 	}
-	if !strings.Contains(cap.query, "expiresInSeconds=1800") {
-		t.Fatalf("ttl not in query: %s", cap.query)
+	if !strings.Contains(rec.query, "expiresInSeconds=1800") {
+		t.Fatalf("ttl not in query: %s", rec.query)
 	}
 }
 
