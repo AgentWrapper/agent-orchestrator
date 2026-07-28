@@ -712,6 +712,18 @@ describe("SessionInspector reviews tab", () => {
 		await openReviewsTab();
 
 		expect(await screen.findByText("claude-code")).toBeInTheDocument();
+		expect(screen.queryByText("reviewer")).not.toBeInTheDocument();
+	});
+
+	it("places not-run status beside the PR number without an aggregate status chip", async () => {
+		mockCommonGets([], "", [reviewState(3, "needs_review", "abc123")]);
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsTab();
+
+		expect(await screen.findByText("Reviewable change 3")).toBeInTheDocument();
+		expect(screen.getByText("#3 · Not run")).toBeInTheDocument();
+		expect(screen.getAllByText("Not run")).toHaveLength(1);
 	});
 
 	it("shows eligible and up-to-date open PR review rows", async () => {
@@ -726,7 +738,7 @@ describe("SessionInspector reviews tab", () => {
 
 		expect(screen.getByText("AO code reviews")).toBeInTheDocument();
 		expect(await screen.findByText("Reviewable change 3")).toBeInTheDocument();
-		expect(screen.getByText("#3")).toBeInTheDocument();
+		expect(screen.getByText("#3 · Not run")).toBeInTheDocument();
 		expect(screen.getByText("Reviewable change 4")).toBeInTheDocument();
 		expect(screen.queryByText("Reviewable change 5")).not.toBeInTheDocument();
 		// PR #3 is expanded by default, so its verdict is visible.
@@ -862,7 +874,7 @@ describe("SessionInspector reviews tab", () => {
 		await openReviewsTab();
 
 		expect(await screen.findByText("codex")).toBeInTheDocument();
-		expect(screen.getByText("reviewer")).toBeInTheDocument();
+		expect(screen.queryByText("reviewer")).not.toBeInTheDocument();
 		expect(screen.queryByText("sess-1")).not.toBeInTheDocument();
 		expect(screen.queryByText("review session")).not.toBeInTheDocument();
 		expect(screen.getAllByText("Changes requested")).not.toHaveLength(0);

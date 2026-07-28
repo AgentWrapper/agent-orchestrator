@@ -1016,8 +1016,6 @@ function ReviewPanel({
 	const harness = latest?.harness || config?.reviewers?.[0]?.harness || "claude-code";
 	const terminalEnabled = Boolean(reviewerHandleId && onOpenTerminal);
 	const reviewRunning = openReviewStates.some((reviewState) => reviewState.status === "running");
-	// The reviewer terminal only exists once a review has actually run (or is
-	// running), so keep the button out of the footer until then.
 	const reviewHasRun = reviewRunning || Boolean(latest);
 	const runAction = reviewSessionRunAction(openReviewStates, isTriggering);
 	const openReviewerTerminal = () => {
@@ -1044,7 +1042,6 @@ function ReviewPanel({
 			<p className={cn(inspectorEmptyClass, "inline-flex min-w-0 items-center gap-1.5")}>
 				<ReviewerHarnessIcon className="size-icon-sm shrink-0 text-passive" harness={harness} />
 				<span className="truncate font-mono font-medium text-foreground">{harness}</span>
-				<span className="shrink-0">reviewer</span>
 			</p>
 			<div className="flex flex-col divide-y divide-border">
 				{openReviewStates.length === 0 ? (
@@ -1054,11 +1051,7 @@ function ReviewPanel({
 						<ReviewDisclosure
 							key={`${reviewState.prUrl}:${reviewState.targetSha}`}
 							defaultOpen={index === 0}
-							meta={
-								reviewState.latestRun?.createdAt
-									? `#${reviewState.prNumber} · ${formatTimeCompact(reviewState.latestRun.createdAt)}`
-									: `#${reviewState.prNumber}`
-							}
+							meta={aoReviewMeta(reviewState)}
 							title={reviewState.title?.trim() || `PR #${reviewState.prNumber}`}
 						>
 							<AoReviewRow reviewState={reviewState} />
@@ -1094,6 +1087,16 @@ function ReviewPanel({
 			</div>
 		</div>
 	);
+}
+
+function aoReviewMeta(reviewState: PRReviewState): string {
+	if (reviewState.latestRun?.createdAt) {
+		return `#${reviewState.prNumber} · ${formatTimeCompact(reviewState.latestRun.createdAt)}`;
+	}
+	if (reviewVerdict(reviewState).label === "Not run") {
+		return `#${reviewState.prNumber} · Not run`;
+	}
+	return `#${reviewState.prNumber}`;
 }
 
 function AoReviewRow({ reviewState }: { reviewState: PRReviewState }) {
