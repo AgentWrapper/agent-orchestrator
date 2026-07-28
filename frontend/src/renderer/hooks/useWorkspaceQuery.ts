@@ -235,7 +235,12 @@ function provisioningCard(ref: CloudSessionRef, projectId: string, projectName: 
 async function fetchCloudSessionDto(ref: CloudSessionRef): Promise<SessionView | undefined> {
 	let raw: unknown;
 	if (ref.shared) {
-		const { data } = await apiClient.POST("/api/v1/cloud/proxy", {
+		// Shared sessions MUST use shared-proxy, not the owner proxy: the viewer is
+		// often a different tenant and holds only a bare preview URL, which the
+		// tenant-guarded /cloud/proxy rejects (403 on the control plane). shared-proxy
+		// is GET-only and skips the ownership check. Kept in lockstep with
+		// session-api.ts, which routes a shared session's actions the same way.
+		const { data } = await apiClient.POST("/api/v1/cloud/shared-proxy", {
 			body: { previewUrl: ref.previewUrl, method: "GET", path: `/api/v1/sessions/${ref.sessionId}` },
 		});
 		if (!data?.ok) return undefined;
