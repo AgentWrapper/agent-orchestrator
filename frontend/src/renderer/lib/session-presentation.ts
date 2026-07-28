@@ -1,3 +1,4 @@
+import { CircleAlert, CircleSlash, Eye, GitMerge, LoaderCircle, type LucideIcon } from "lucide-react";
 import type {
 	PullRequestFacts,
 	SessionActivity,
@@ -110,6 +111,8 @@ export type AttentionZoneView = {
 	dotGlow: boolean;
 	titleClassName: string;
 	dotClassName: string;
+	/** Column-header mark. Says what the lane means; a bare dot only said "a lane". */
+	icon: LucideIcon;
 };
 
 const attentionZoneViews: Record<AttentionZone, AttentionZoneView> = {
@@ -121,6 +124,7 @@ const attentionZoneViews: Record<AttentionZone, AttentionZoneView> = {
 		dotGlow: true,
 		titleClassName: "text-status-working",
 		dotClassName: "bg-status-working",
+		icon: LoaderCircle,
 	},
 	action: {
 		zone: "action",
@@ -130,6 +134,7 @@ const attentionZoneViews: Record<AttentionZone, AttentionZoneView> = {
 		dotGlow: true,
 		titleClassName: "text-status-needs-you",
 		dotClassName: "bg-status-needs-you",
+		icon: CircleAlert,
 	},
 	pending: {
 		zone: "pending",
@@ -139,6 +144,7 @@ const attentionZoneViews: Record<AttentionZone, AttentionZoneView> = {
 		dotGlow: false,
 		titleClassName: "text-status-in-review",
 		dotClassName: "bg-status-in-review",
+		icon: Eye,
 	},
 	merge: {
 		zone: "merge",
@@ -148,6 +154,7 @@ const attentionZoneViews: Record<AttentionZone, AttentionZoneView> = {
 		dotGlow: true,
 		titleClassName: "text-status-ready",
 		dotClassName: "bg-status-ready",
+		icon: GitMerge,
 	},
 	done: {
 		zone: "done",
@@ -157,6 +164,7 @@ const attentionZoneViews: Record<AttentionZone, AttentionZoneView> = {
 		dotGlow: false,
 		titleClassName: "text-status-terminated-foreground",
 		dotClassName: "bg-status-terminated",
+		icon: CircleSlash,
 	},
 };
 

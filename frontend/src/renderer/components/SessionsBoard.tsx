@@ -14,6 +14,7 @@ import {
 	Trash2,
 } from "lucide-react";
 import {
+	type SessionStatus,
 	type WorkspaceSession,
 	canonicalTrackerIssueId,
 	hasConfiguredOrchestratorAgent,
@@ -24,6 +25,7 @@ import {
 import {
 	attentionZone,
 	boardAttentionZoneOrder,
+	getAttentionZoneView,
 	getAttentionZoneViewForZone,
 	getSessionStatusView,
 	isSessionIdle,
@@ -413,15 +415,18 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						<div
 							aria-label="Archived sessions"
 							className={cn(
-								"board-scrollbar max-h-[45vh] overflow-y-auto pb-3",
-								archiveLayout === "grid" && "grid grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-2",
+								"board-scrollbar max-h-[45vh] gap-2.5 overflow-y-auto pb-3",
+								// The card is identical in both modes — the toggle only decides
+								// how many sit on a line.
+								archiveLayout === "grid"
+									? "grid grid-cols-[repeat(auto-fill,minmax(17rem,1fr))]"
+									: "flex flex-col",
 							)}
 							role="list"
 						>
 							{archived.map((s) => (
 								<ArchiveSessionItem
 									key={s.id}
-									layout={archiveLayout}
 									session={s}
 									restoreAction={(event) => void restoreArchivedSession(event, s)}
 									restoreError={restoreErrors[s.id]}
@@ -793,6 +798,10 @@ function SessionCard({
 	const additions = prSummaries.reduce((total, pr) => total + pr.additions, 0);
 	const deletions = prSummaries.reduce((total, pr) => total + pr.deletions, 0);
 	const showDiff = additions + deletions > 0;
+	// A session with no PR yet (the whole Working lane) would otherwise leave the
+	// meta row empty apart from the timestamp. Name the agent there: at 16px the
+	// brand mark is the one fact on the card that isn't legible at a glance.
+	const showAgentName = prSummaries.length === 0 && !showDiff && !issueId;
 	const showTerminate = interactive && session.isTerminated !== true && onTerminate;
 	const keepTerminateVisible = session.status === "merged";
 	const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -860,6 +869,7 @@ function SessionCard({
 						<div className="mt-1.5 flex min-w-0 items-center gap-1.5 font-mono text-2xs text-passive">
 							<GitBranch aria-hidden="true" className="size-icon-2xs shrink-0" />
 							<span className="truncate">{branch}</span>
+							<CopyActionButton label={`branch ${branch}`} value={branch} />
 						</div>
 					)}
 				</div>
@@ -867,6 +877,11 @@ function SessionCard({
 			<div aria-hidden="true" className="mx-3.5 my-px h-px bg-border" />
 			<div className="flex items-center gap-2 px-3.5 py-2 font-mono text-2xs text-passive">
 				<div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+					{showAgentName && (
+						<span className="truncate" title={`Agent: ${session.provider}`}>
+							{session.provider}
+						</span>
+					)}
 					{groupPRsByLifecycle(prSummaries).map((group) => (
 						<BoardPRGroup group={group} key={group.status.label} linksInteractive={interactive} />
 					))}
@@ -888,7 +903,10 @@ function SessionCard({
 						</span>
 					)}
 				</div>
-				<span className="shrink-0 whitespace-nowrap" title={`Updated ${session.updatedAt}`}>
+				<span
+					className="shrink-0 whitespace-nowrap tabular-nums"
+					title={`Updated ${session.updatedAt}`}
+				>
 					{formatTimeCompact(session.updatedAt)}
 				</span>
 			</div>
@@ -896,16 +914,23 @@ function SessionCard({
 	);
 }
 
+/**
+ * An archived session, drawn as the same card as the live board (see
+ * {@link SessionCard}) so the archive reads as one system with the lanes above
+ * it. Two things the board card doesn't need are kept: the status, because no
+ * column header names the stage down here, and the restore control.
+ *
+ * The rows/grid toggle only changes how many cards sit per line — the card
+ * itself is identical either way.
+ */
 function ArchiveSessionItem({
 	session,
-	layout,
 	restoreAction,
 	restoreError,
 	isRestoring,
 	isRestoreDisabled,
 }: {
 	session: WorkspaceSession;
-	layout: ArchiveLayout;
 	restoreAction: (event: MouseEvent<HTMLButtonElement>) => void;
 	restoreError?: string;
 	isRestoring: boolean;
@@ -915,101 +940,75 @@ function ArchiveSessionItem({
 	const issueId = canonicalTrackerIssueId(session.issueId);
 	const prSummaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
 	const branch = session.branch || "";
-	const prMetadata =
-		prSummaries.length > 0 ? (
-			<div className="flex flex-col gap-1">
-				{groupPRsByLifecycle(prSummaries).map((group) => (
-					<BoardPRGroup group={group} key={group.status.label} linksInteractive={false} />
-				))}
-			</div>
-		) : (
-			<span>no PR yet</span>
-		);
-	const restoreButton = (
-		<ArchiveRestoreButton
-			isDisabled={isRestoreDisabled}
-			isRestoring={isRestoring}
-			label={`Restore ${session.title}`}
-			onClick={restoreAction}
-		/>
-	);
-
-	if (layout === "grid") {
-		return (
-			<div
-				className="flex min-h-28 flex-col overflow-hidden rounded-md border border-border bg-surface"
-				role="listitem"
-			>
-				<div className="flex min-w-0 items-center gap-2 px-3 pt-2">
-					<ArchiveStatus badge={badge} />
-					<span className="ml-auto shrink-0 font-mono text-2xs text-passive">
-						{formatTimeCompact(session.updatedAt)}
-					</span>
-					{restoreButton}
-				</div>
-				<div className="min-h-0 flex-1 px-3 pb-2 pt-1.5 text-left">
-					<div className="line-clamp-2 text-control font-medium leading-snug text-foreground">{session.title}</div>
-					<div className="mt-1 flex min-w-0 items-center gap-2">
-						<AgentAvatar provider={session.provider} />
-						{issueId && (
-							<span className="max-w-branch-chip truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent">
-								{issueId}
-							</span>
-						)}
-					</div>
-					{branch && (
-						<div className="mt-2 flex min-w-0 items-center gap-1 font-mono text-2xs text-passive">
-							<span className="truncate">{branch}</span>
-							<CopyActionButton label={`branch ${branch}`} value={branch} />
-						</div>
-					)}
-				</div>
-				<div aria-hidden="true" className="mx-3 my-px h-px bg-border" />
-				<div className="px-3 py-1.5 font-mono text-2xs text-passive">{prMetadata}</div>
-				<ArchiveRestoreError message={restoreError} />
-			</div>
-		);
-	}
+	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
 
 	return (
-		<div className="border-t border-border first:border-t-0" role="listitem">
-			<div className="flex min-h-row-lg items-center">
-				<div className="min-w-0 flex-1 px-2 py-2 text-left">
-					<div className="flex min-w-0 items-center gap-2">
-						<ArchiveStatus badge={badge} />
-						<span className="min-w-0 truncate text-control font-medium text-foreground">{session.title}</span>
-						{issueId && (
-							<span className="hidden max-w-branch-chip shrink-0 truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent sm:inline">
-								{issueId}
-							</span>
-						)}
-						<span className="ml-auto hidden shrink-0 md:inline-flex">
-							<AgentAvatar provider={session.provider} />
-						</span>
-						<span className="w-15 shrink-0 text-right font-mono text-2xs text-passive">
-							{formatTimeCompact(session.updatedAt)}
-						</span>
+		<div
+			className="group relative w-full rounded-lg border border-border bg-surface text-left"
+			data-testid="archive-session-card"
+			role="listitem"
+		>
+			<ArchiveRestoreButton
+				isDisabled={isRestoreDisabled}
+				isRestoring={isRestoring}
+				label={`Restore ${session.title}`}
+				onClick={restoreAction}
+			/>
+			<div className="flex items-start gap-2.5 px-3.5 pb-2.5 pt-3">
+				<AgentAvatar className="mt-0.5" provider={session.provider} />
+				<div className="min-w-0 flex-1">
+					<div
+						className="line-clamp-2 overflow-hidden pr-6 text-sm-md font-semibold leading-tight tracking-tight text-foreground"
+						title={session.title}
+					>
+						{session.title}
 					</div>
-					{branch && (
-						<div className="mt-1 flex min-w-0 items-center gap-1 font-mono text-2xs text-passive">
+					{showBranch && (
+						<div className="mt-1.5 flex min-w-0 items-center gap-1.5 font-mono text-2xs text-passive">
+							<GitBranch aria-hidden="true" className="size-icon-2xs shrink-0" />
 							<span className="truncate">{branch}</span>
 							<CopyActionButton label={`branch ${branch}`} value={branch} />
 						</div>
 					)}
-					<div aria-hidden="true" className="my-1 h-px bg-border" />
-					<div className="font-mono text-2xs text-passive">{prMetadata}</div>
 				</div>
-				<div className="mx-1.5">{restoreButton}</div>
+			</div>
+			<div aria-hidden="true" className="mx-3.5 my-px h-px bg-border" />
+			<div className="flex items-center gap-2 px-3.5 py-2 font-mono text-2xs text-passive">
+				<div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+					<ArchiveStatus badge={badge} status={session.status} />
+					{prSummaries.length > 0 ? (
+						groupPRsByLifecycle(prSummaries).map((group) => (
+							<BoardPRGroup group={group} key={group.status.label} linksInteractive={false} />
+						))
+					) : (
+						<span>no PR yet</span>
+					)}
+					{issueId && (
+						<span
+							className="max-w-branch-chip truncate rounded-sm bg-accent/12 px-1.5 py-0.5 text-micro text-accent"
+							title={`Intake issue: ${issueId}`}
+						>
+							{issueId}
+						</span>
+					)}
+				</div>
+				<span
+					className="shrink-0 whitespace-nowrap tabular-nums"
+					title={`Updated ${session.updatedAt}`}
+				>
+					{formatTimeCompact(session.updatedAt)}
+				</span>
 			</div>
 			<ArchiveRestoreError message={restoreError} />
 		</div>
 	);
 }
 
-function ArchiveStatus({ badge }: { badge: SessionStatusView }) {
+function ArchiveStatus({ badge, status }: { badge: SessionStatusView; status: SessionStatus }) {
+	const Icon = getAttentionZoneView(status).icon;
 	return (
-		<span className={cn("inline-flex shrink-0 items-center gap-1.5 text-caption font-medium", badge.className)}>
-			<span className="size-dot-sm rounded-full bg-current" aria-hidden="true" />
+		<span className={cn("inline-flex shrink-0 items-center gap-1.5 font-medium", badge.className)}>
+			<Icon className="size-icon-xs shrink-0" aria-hidden="true" />
 			{badge.label}
 		</span>
 	);
@@ -1031,7 +1030,9 @@ function ArchiveRestoreButton({
 			<TooltipTrigger asChild>
 				<button
 					aria-label={label}
-					className="grid size-control-board-sm shrink-0 place-items-center rounded-md text-passive transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:cursor-not-allowed disabled:opacity-35"
+					// Sits where the live card puts Terminate, so the primary per-card
+					// action is in the same place whether a session is running or archived.
+					className="absolute right-2 top-1.5 z-10 grid size-control-board-sm shrink-0 place-items-center rounded-md text-passive transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:cursor-not-allowed disabled:opacity-35"
 					disabled={isDisabled}
 					onClick={onClick}
 					type="button"
