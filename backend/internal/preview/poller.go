@@ -119,6 +119,7 @@ func (p *Poller) Poll(ctx context.Context) error {
 		}
 		storedEntry, workspaceOwned := StoredWorkspaceEntry(sess.Metadata.PreviewURL, sess.ID)
 		entry, ok := Entry{}, false
+		baselineOnly := false
 		if workspaceOwned {
 			entry, ok = EntryAtPath(sess.Metadata.WorkspacePath, storedEntry)
 		}
@@ -136,6 +137,13 @@ func (p *Poller) Poll(ctx context.Context) error {
 				entry, ok = DiscoverEntry(sess.Metadata.WorkspacePath)
 			} else {
 				entry, ok = DiscoverWebEntrypoint(sess.Metadata.WorkspacePath)
+				if !ok {
+					// Track fallback documents without initially surfacing an
+					// arbitrary repo doc. A later creation or edit is a real
+					// session change and may then open the preview.
+					entry, ok = DiscoverEntry(sess.Metadata.WorkspacePath)
+					baselineOnly = ok
+				}
 			}
 		}
 		if !ok {
@@ -169,7 +177,7 @@ func (p *Poller) Poll(ctx context.Context) error {
 			(previous.path != state.path ||
 				previous.entryModUnix != state.entryModUnix ||
 				previous.entrySize != state.entrySize)
-		if !p.shouldRefresh(sess, target, entry, seenBefore, workspaceOwned, entryChanged) {
+		if !p.shouldRefresh(sess, target, seenBefore, workspaceOwned, entryChanged, baselineOnly) {
 			p.seen[sess.ID] = state
 			continue
 		}
@@ -191,15 +199,15 @@ func (p *Poller) Poll(ctx context.Context) error {
 func (p *Poller) shouldRefresh(
 	sess domain.SessionRecord,
 	target string,
-	entry Entry,
 	seenBefore bool,
 	workspaceOwned bool,
 	entryChanged bool,
+	baselineOnly bool,
 ) bool {
 	current := strings.TrimSpace(sess.Metadata.PreviewURL)
 	if current == "" {
 		if !seenBefore {
-			if IsMarkdownPath(entry.Path) {
+			if baselineOnly {
 				return false
 			}
 			return sess.Metadata.PreviewRevision == 0
