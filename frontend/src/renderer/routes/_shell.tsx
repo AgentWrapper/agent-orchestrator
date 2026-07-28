@@ -89,6 +89,7 @@ function ShellLayout() {
 	const workspaces = workspaceQuery.data ?? [];
 	const daemonStatus = useDaemonStatus(queryClient);
 	const [workspaceStartupState, setWorkspaceStartupState] = useState<"loading" | "ready" | "error">("loading");
+	const workspaceStartupBaselineRef = useRef(0);
 	const agentCatalogPortRef = useRef<number | undefined>(undefined);
 	const { themePreference, resolvedTheme, isSidebarOpen, toggleSidebar } = useUiStore();
 	const syncSystemTheme = useUiStore((state) => state.syncSystemTheme);
@@ -382,18 +383,22 @@ function ShellLayout() {
 	useEffect(() => {
 		let active = true;
 		if (usesPreviewWorkspaceData) {
+			workspaceStartupBaselineRef.current = 0;
 			setWorkspaceStartupState("ready");
 			return () => {
 				active = false;
 			};
 		}
 		if (daemonStatus.state !== "ready" || !daemonStatus.port) {
+			workspaceStartupBaselineRef.current = 0;
 			setWorkspaceStartupState("loading");
 			return () => {
 				active = false;
 			};
 		}
 
+		workspaceStartupBaselineRef.current =
+			queryClient.getQueryState(workspaceQueryKey)?.dataUpdatedAt ?? 0;
 		setWorkspaceStartupState("loading");
 		void queryClient
 			.fetchQuery(workspaceQueryOptions)
@@ -408,6 +413,28 @@ function ShellLayout() {
 			active = false;
 		};
 	}, [daemonStatus.port, daemonStatus.state, queryClient]);
+
+	// The first confirmed fetch may fail transiently even though the daemon is
+	// ready. React Query keeps polling and the event transport may invalidate
+	// the workspace query later, so let a newer successful result recover the
+	// shell without requiring a daemon restart or port change.
+	useEffect(() => {
+		if (
+			usesPreviewWorkspaceData ||
+			daemonStatus.state !== "ready" ||
+			workspaceStartupState === "ready" ||
+			!workspaceQuery.isSuccess ||
+			workspaceQuery.dataUpdatedAt <= workspaceStartupBaselineRef.current
+		) {
+			return;
+		}
+		setWorkspaceStartupState("ready");
+	}, [
+		daemonStatus.state,
+		workspaceQuery.dataUpdatedAt,
+		workspaceQuery.isSuccess,
+		workspaceStartupState,
+	]);
 
 	// Keep Electron's nativeTheme in step with the shell so the embedded preview
 	// WebContentsView (which follows prefers-color-scheme) flips at the same time.

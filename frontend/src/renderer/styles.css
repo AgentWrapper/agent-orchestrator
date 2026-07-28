@@ -1013,6 +1013,12 @@ select {
 	}
 }
 
+.ao-startup-screen {
+	position: fixed;
+	z-index: calc(var(--z-overlay) - 1);
+	inset: 0;
+}
+
 .ao-startup-logo {
 	animation: ao-startup-logo-breathe 3.2s ease-in-out infinite;
 	filter: drop-shadow(0 7px 20px rgb(0 0 0 / 0.28));

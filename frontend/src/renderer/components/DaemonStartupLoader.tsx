@@ -27,7 +27,7 @@ export function DaemonStartupLoader() {
 			aria-busy="true"
 			aria-label="Agent Orchestrator is starting"
 			aria-live="polite"
-			className="flex h-full min-h-0 items-center justify-center bg-background text-foreground"
+			className="ao-startup-screen flex items-center justify-center bg-background text-foreground"
 			data-testid="daemon-startup-loader"
 			role="status"
 		>

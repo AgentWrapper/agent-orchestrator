@@ -17,6 +17,14 @@ const shellMocks = vi.hoisted(() => {
 		routeParams: {} as { projectId?: string; sessionId?: string },
 		routeSearch: {} as { tabOwner?: string },
 		workspaces: [] as WorkspaceSummary[],
+		workspaceQuery: {
+			data: [] as WorkspaceSummary[],
+			dataUpdatedAt: 0,
+			isError: false,
+			isSuccess: true,
+		},
+		daemonStatus: { state: "stopped" } as { state: "ready" | "starting" | "stopped"; port?: number },
+		shellValue: undefined as { workspaceStartupState?: string } | undefined,
 	};
 	return {
 		navigate: vi.fn(),
@@ -55,6 +63,7 @@ const shellMocks = vi.hoisted(() => {
 		queryClient: {
 			ensureQueryData: vi.fn(),
 			fetchQuery: vi.fn(),
+			getQueryState: vi.fn(),
 			invalidateQueries: vi.fn(),
 			setQueryData: vi.fn(),
 		},
@@ -97,13 +106,13 @@ vi.mock("../lib/bridge", () => ({
 }));
 
 vi.mock("../hooks/useWorkspaceQuery", () => ({
-	useWorkspaceQuery: () => ({ data: shellMocks.state.workspaces, isError: false }),
+	useWorkspaceQuery: () => shellMocks.state.workspaceQuery,
 	workspaceQueryKey: ["workspaces"],
 	workspaceQueryOptions: {},
 }));
 
 vi.mock("../hooks/useDaemonStatus", () => ({
-	useDaemonStatus: () => ({ state: "stopped" }),
+	useDaemonStatus: () => shellMocks.state.daemonStatus,
 }));
 
 // The shell layout opens standalone terminals; this suite only covers the
@@ -144,7 +153,10 @@ vi.mock("../components/KeyboardShortcutsDialog", () => ({
 	KeyboardShortcutsDialog: ({ open }: { open: boolean }) => (open ? <div data-testid="keyboard-shortcuts" /> : null),
 }));
 vi.mock("../lib/shell-context", () => ({
-	ShellProvider: ({ children }: PropsWithChildren) => children,
+	ShellProvider: ({ children, value }: PropsWithChildren<{ value?: { workspaceStartupState?: string } }>) => {
+		shellMocks.state.shellValue = value;
+		return children;
+	},
 }));
 vi.mock("../components/ui/sidebar", () => ({
 	SidebarProvider: ({ children, open }: PropsWithChildren<{ open?: boolean }>) => (
@@ -179,6 +191,7 @@ vi.mock("../components/Sidebar", async () => {
 });
 
 import { Route } from "../routes/_shell";
+const ShellRoute = Route.options.component as ComponentType;
 
 const workspaces = [
 	{
@@ -201,9 +214,9 @@ const workspaces = [
 ] as unknown as WorkspaceSummary[];
 
 async function renderShell() {
-	const ShellRoute = Route.options.component as ComponentType;
+	let view: ReturnType<typeof render> | undefined;
 	await act(async () => {
-		render(
+		view = render(
 			<Suspense fallback={null}>
 				<ShellRoute />
 			</Suspense>,
@@ -216,6 +229,7 @@ async function renderShell() {
 	await waitFor(() => expect(shellMocks.onPreviousSessionShortcut).toHaveBeenCalledTimes(1));
 	await waitFor(() => expect(shellMocks.onNextSessionShortcut).toHaveBeenCalledTimes(1));
 	await waitFor(() => expect(shellMocks.onFocusTerminalShortcut).toHaveBeenCalledTimes(1));
+	return view!;
 }
 
 function emitShortcut() {
@@ -244,11 +258,50 @@ beforeEach(() => {
 	shellMocks.state.routeParams = {};
 	shellMocks.state.routeSearch = {};
 	shellMocks.state.workspaces = workspaces;
+	shellMocks.state.workspaceQuery = {
+		data: workspaces,
+		dataUpdatedAt: 0,
+		isError: false,
+		isSuccess: true,
+	};
+	shellMocks.state.daemonStatus = { state: "stopped" };
+	shellMocks.state.shellValue = undefined;
+	shellMocks.queryClient.fetchQuery.mockReset();
+	shellMocks.queryClient.getQueryState.mockReset().mockReturnValue({ dataUpdatedAt: 0 });
 	useUiStore.setState({
 		createProjectNonce: 0,
 		isSidebarOpen: true,
 		newTaskRequest: null,
 		newShellTerminalNonce: 0,
+	});
+});
+
+describe("shell workspace startup", () => {
+	it("recovers after a newer workspace query succeeds", async () => {
+		shellMocks.state.daemonStatus = { state: "ready", port: 4777 };
+		shellMocks.state.workspaceQuery = {
+			data: workspaces,
+			dataUpdatedAt: 100,
+			isError: false,
+			isSuccess: true,
+		};
+		shellMocks.queryClient.getQueryState.mockReturnValue({ dataUpdatedAt: 100 });
+		shellMocks.queryClient.fetchQuery.mockRejectedValueOnce(new Error("temporary failure"));
+
+		const view = await renderShell();
+		await waitFor(() => expect(shellMocks.state.shellValue?.workspaceStartupState).toBe("error"));
+
+		shellMocks.state.workspaceQuery = {
+			...shellMocks.state.workspaceQuery,
+			dataUpdatedAt: 200,
+		};
+		view.rerender(
+			<Suspense fallback={null}>
+				<ShellRoute />
+			</Suspense>,
+		);
+
+		await waitFor(() => expect(shellMocks.state.shellValue?.workspaceStartupState).toBe("ready"));
 	});
 });
 
