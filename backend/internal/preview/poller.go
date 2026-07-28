@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 
@@ -51,6 +52,10 @@ type entryState struct {
 	// created later is a real change, unlike a Markdown file already present
 	// when the daemon first observes the session.
 	missing bool
+	// workspaceMissing distinguishes an empty, materialized workspace from the
+	// short session-creation window before its worktree exists. Files inherited
+	// when the worktree first appears are baseline content, not session changes.
+	workspaceMissing bool
 	// cleared is set when the poller itself cleared the preview URL because the
 	// workspace entry was missing. When the file reappears, shouldRefresh uses
 	// this to re-discover even though the revision was bumped by the clear.
@@ -156,7 +161,10 @@ func (p *Poller) Poll(ctx context.Context) error {
 				}
 				p.seen[sess.ID] = entryState{cleared: true}
 			} else if previous, exists := p.seen[sess.ID]; !exists || !previous.cleared {
-				p.seen[sess.ID] = entryState{missing: true}
+				p.seen[sess.ID] = entryState{
+					missing:          true,
+					workspaceMissing: !workspaceDirectoryExists(sess.Metadata.WorkspacePath),
+				}
 			}
 			continue
 		}
@@ -220,16 +228,24 @@ func (p *Poller) shouldRefresh(
 		if !seenBefore {
 			return false
 		}
+		previous := p.seen[sess.ID]
+		if previous.workspaceMissing {
+			return false
+		}
 		if entryChanged {
 			return true
 		}
-		previous := p.seen[sess.ID]
 		return previous.cleared || previous.missing
 	}
 	if current == target {
 		return seenBefore
 	}
 	return workspaceOwned
+}
+
+func workspaceDirectoryExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 func previewReady(state domain.ActivityState) bool {

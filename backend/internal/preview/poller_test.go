@@ -72,6 +72,35 @@ func TestPollerDoesNotPreviewExistingEntryWithoutSessionChange(t *testing.T) {
 	assertSets(t, svc.sets)
 }
 
+func TestPollerBaselinesExistingMarkdownWhenWorkspaceMaterializes(t *testing.T) {
+	workspace := filepath.Join(t.TempDir(), "pending-worktree")
+	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "")}}
+	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
+
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("missing workspace Poll: %v", err)
+	}
+	writeFile(t, filepath.Join(workspace, "README.md"), "# Existing documentation")
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("materialized workspace Poll: %v", err)
+	}
+	assertSets(t, svc.sets)
+
+	entry := filepath.Join(workspace, "README.md")
+	writeFile(t, entry, "# Changed documentation")
+	nextMod := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(entry, nextMod, nextMod); err != nil {
+		t.Fatalf("chtimes markdown: %v", err)
+	}
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("changed markdown Poll: %v", err)
+	}
+	assertSets(t, svc.sets, previewSet{
+		id:  "ao-1",
+		url: mustFileURL(t, "http://127.0.0.1:3001", "ao-1", "README.md"),
+	})
+}
+
 func TestPollerDefersChangedEntryUntilWorkerFinishesActiveWork(t *testing.T) {
 	workspace := t.TempDir()
 	sess := workerSession("ao-1", workspace, "")
