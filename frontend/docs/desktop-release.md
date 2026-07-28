@@ -24,9 +24,10 @@ This repository holds no signing or publishing secrets. Contributors do not
 need any credentials to build, test, or work on the desktop app; the unsigned
 build in `build-artifacts.yml` runs entirely from public inputs.
 
-`frontend-release.yml` and `frontend-nightly.yml` remain in this repo as
-build-only smoke checks (they run `npm run make` on every platform to prove the
-app still builds); they publish nothing.
+There is no release workflow left in this repository. The old
+`frontend-release.yml` / `frontend-nightly.yml` pair is gone; every platform
+build path that remains here (`build-artifacts.yml`, `desktop-testing.yml`,
+`testing-build.yml`) is unsigned and publishes no stable release.
 
 ## Channels
 
@@ -47,6 +48,13 @@ Open normal PRs against `main`. Contributors do not cut releases directly.
 `build-artifacts.yml` is dispatch-only and is driven by the release pipeline;
 there is no tag push or version-bump PR to perform as part of shipping. The
 version source of truth remains `frontend/package.json` `"version"`.
+
+### `desktop-v*` tags
+
+`desktop-vX.Y.Z` tags still get pushed to this repo for each stable release,
+but they are now inert here: no workflow triggers on them. They exist only as
+the marker the release pipeline reads to compute the next nightly version. A
+tag push therefore builds and publishes nothing on its own.
 
 ## Assets
 

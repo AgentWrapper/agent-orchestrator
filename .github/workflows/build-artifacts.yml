@@ -8,8 +8,8 @@ name: Desktop build artifacts
 # each artifact filename to its sha256 hex string) that the conductor reads
 # to verify hashes before signing. Creates no release, references no secrets.
 # macOS output is intentionally UNSIGNED: forge.config.ts only activates
-# osxSign/osxNotarize when the Apple env vars are present, and this workflow
-# never sets them (no macos-signing-setup). The conductor signs downstream.
+# osxSign/osxNotarize when the Apple env vars are present, and no workflow in
+# this repo sets them. The conductor signs downstream.
 
 on:
   workflow_dispatch:
@@ -68,8 +68,8 @@ jobs:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
       - run: npm ci
-      # Same stamping mechanism as frontend-nightly.yml: rewrite package.json
-      # to the caller's version, dropping any +build metadata.
+      # Rewrite package.json to the caller's version, dropping any +build
+      # metadata, so the packaged app self-reports the version being released.
       - name: Stamp version
         shell: bash
         env:
