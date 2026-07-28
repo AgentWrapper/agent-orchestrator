@@ -34,7 +34,7 @@ import {
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { useRestoreSession } from "../hooks/useRestoreSession";
 import { useTerminateSession } from "../hooks/useTerminateSession";
-import { usesPreviewWorkspaceData, useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { NotificationCenter } from "./NotificationCenter";
 import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyStates";
 import { OrchestratorIcon } from "./icons";
@@ -45,6 +45,7 @@ import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { formatTimeCompact } from "../lib/format-time";
 import { aoBridge } from "../lib/bridge";
+import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import { cn } from "../lib/utils";
 import { isLinuxPlatform, isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { useUiStore } from "../stores/ui-store";

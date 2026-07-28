@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { components } from "../../api/schema";
 import { apiClient, hasTrustedApiBaseUrl } from "../lib/api-client";
 import { mockWorkspaces } from "../lib/mock-data";
+import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import { captureRendererEvent } from "../lib/telemetry";
 import {
 	type PRState,
@@ -27,7 +28,6 @@ function toPullRequestFacts(pr: components["schemas"]["SessionPRFacts"]): PullRe
 }
 
 export const workspaceQueryKey = ["workspaces"] as const;
-export const usesPreviewWorkspaceData = import.meta.env.VITE_NO_ELECTRON === "1";
 const reportedUnknownSessionFields = new Set<string>();
 
 function reportUnknownSessionField(field: "status" | "activity", value?: string): void {

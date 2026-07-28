@@ -18,14 +18,10 @@ import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useA
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useOpenShellTerminal } from "../hooks/useShellTerminals";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
-import {
-	useWorkspaceQuery,
-	usesPreviewWorkspaceData,
-	workspaceQueryKey,
-	workspaceQueryOptions,
-} from "../hooks/useWorkspaceQuery";
+import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
 import { refreshDaemonStatus } from "../lib/daemon-status";
+import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { ShellProvider } from "../lib/shell-context";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
