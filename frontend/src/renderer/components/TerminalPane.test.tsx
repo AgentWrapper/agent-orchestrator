@@ -365,6 +365,21 @@ describe("terminal link preview", () => {
 		}
 	});
 
+	it("does not auto-open AO's own static preview URL from terminal output", () => {
+		const view = renderPane(worker);
+		try {
+			act(() =>
+				terminalOutputHandler?.(
+					"http://ao-preview.mftwk3tu.localhost:3002/test/cli/README.md\n",
+					"live",
+				),
+			);
+			expect(postMock).not.toHaveBeenCalled();
+		} finally {
+			view.restore();
+		}
+	});
+
 	it("keeps a replay URL deferred at a chunk boundary classified as replay", () => {
 		const view = renderPane(worker);
 		try {

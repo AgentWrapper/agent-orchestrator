@@ -7,7 +7,7 @@ import { useUiStore, type Theme } from "../stores/ui-store";
 import { useTerminalSession, type AttachableTerminal, type TerminalSessionState } from "../hooks/useTerminalSession";
 import { apiClient } from "../lib/api-client";
 import { createUrlWatcher, type UrlWatcher } from "../lib/detect-urls";
-import { isLoopbackHostname } from "../lib/loopback";
+import { isAoPreviewHostname, isLoopbackHostname } from "../lib/loopback";
 import { cn } from "../lib/utils";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { useRestoreSession } from "../hooks/useRestoreSession";
@@ -332,7 +332,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 					if (outputPhaseRef.current === "live") {
 						try {
 							const parsed = new URL(url);
-							if (isLoopbackHostname(parsed.hostname)) {
+							if (isLoopbackHostname(parsed.hostname) && !isAoPreviewHostname(parsed.hostname)) {
 								openLinkInBrowserRef.current(url);
 								return;
 							}

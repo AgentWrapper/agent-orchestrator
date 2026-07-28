@@ -107,6 +107,11 @@ func TestBuildSystemPrompt_WorkerHandlesTaskSourcesAndProviderPRRules(t *testing
 		"freeform task, new-task button task, or orchestrator-requested feature",
 		"claim or attach that PR/MR first",
 		"do not invent issue, PR, or MR requirements",
+		"## Frontend Preview Workflow",
+		"start its frontend dev server from this session's assigned workspace",
+		"a server rooted in another checkout cannot show this session's changes",
+		"Do not surface an unchanged pre-existing Markdown file",
+		"Do not merely say that you will launch or preview the UI",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("worker prompt missing %q:\n%s", want, got)
