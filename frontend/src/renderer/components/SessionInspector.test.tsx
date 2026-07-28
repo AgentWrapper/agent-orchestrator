@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionInspector } from "./SessionInspector";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
 import type { SessionUsage } from "../hooks/useSessionUsage";
+import { useUiStore } from "../stores/ui-store";
 import type { PRState, PullRequestFacts, WorkspaceSession } from "../types/workspace";
 
 const { getMock, navigateMock, patchMock, postMock } = vi.hoisted(() => ({
@@ -223,6 +224,7 @@ const reviewState = (n: number, status: string, targetSha = `sha-${n}`) => ({
 });
 
 beforeEach(() => {
+	useUiStore.getState().setDeveloperMode(false);
 	getMock.mockReset();
 	navigateMock.mockReset();
 	patchMock.mockReset();
@@ -707,31 +709,63 @@ describe("SessionInspector Activity section", () => {
 });
 
 describe("SessionInspector Usage & cost section", () => {
-	it("keeps telemetry compact until the user opens an agent breakdown", async () => {
+	beforeEach(() => {
+		useUiStore.getState().setDeveloperMode(true);
+	});
+
+	it("stays hidden and does not fetch detailed usage outside Developer Mode", async () => {
+		useUiStore.getState().setDeveloperMode(false);
+		renderWithQuery(<SessionInspector session={session([])} />);
+
+		expect(screen.queryByText("Usage & cost")).not.toBeInTheDocument();
+		await waitFor(() => expect(getMock.mock.calls.length).toBeGreaterThan(0));
+		expect(getMock.mock.calls.some(([path]) => path === "/api/v1/usage/sessions/{sessionId}")).toBe(false);
+	});
+
+	it("shows session telemetry immediately and peeks provider and model details on hover", async () => {
 		renderWithQuery(<SessionInspector session={session([])} />);
 
 		const usageSection = screen
 			.getByText("Usage & cost")
 			.closest("[data-testid='inspector-section']") as HTMLElement;
-		await waitFor(() => expect(within(usageSection).getByText("1.2K tok")).toBeInTheDocument());
+		await waitFor(() => expect(within(usageSection).getByText("Coming soon")).toBeInTheDocument());
 
-		expect(within(usageSection).getByText("Collecting")).toBeInTheDocument();
-		expect(within(usageSection).getByText("Estimated cost")).toBeInTheDocument();
-		expect(within(usageSection).getByText("Unavailable")).toBeInTheDocument();
-		expect(within(usageSection).getByText("1 agent · 1 model")).toBeInTheDocument();
-		expect(within(usageSection).queryByText("Input")).not.toBeInTheDocument();
+		expect(within(usageSection).getByText("Total tokens")).toBeInTheDocument();
+		expect(within(usageSection).getByText("Total cost")).toBeInTheDocument();
+		expect(within(usageSection).getByText("Coming soon")).toHaveClass("text-success");
+		expect(within(usageSection).getAllByText("1.2K").length).toBeGreaterThan(0);
+		expect(within(usageSection).queryByText("1.2K tok")).not.toBeInTheDocument();
+		expect(within(usageSection).getByText("Input tokens")).toBeInTheDocument();
+		expect(within(usageSection).getByText("Output tokens")).toBeInTheDocument();
+		expect(within(usageSection).getByText("Cache read tokens")).toBeInTheDocument();
+		expect(within(usageSection).getByText("Cache write tokens")).toBeInTheDocument();
+		expect(within(usageSection).getByText("Reasoning tokens")).toBeInTheDocument();
+		expect(within(usageSection).getByText("Uncached input tokens")).toBeInTheDocument();
+		expect(within(usageSection).getByTestId("session-usage-metrics")).toHaveClass(
+			"rounded-lg",
+			"border",
+			"bg-(--color-bg-settings-input)",
+		);
+		expect(within(usageSection).getByText("Codex")).toBeInTheDocument();
+		expect(within(usageSection).getByText("OpenAI")).toBeInTheDocument();
+		expect(within(usageSection).getByText("Collecting", { exact: false })).toBeInTheDocument();
 		expect(within(usageSection).queryByText("gpt-5.6")).not.toBeInTheDocument();
 
-		await userEvent.click(within(usageSection).getByRole("button", { name: "Breakdown" }));
-		expect(within(usageSection).getByRole("button", { name: "Codex usage" })).toBeInTheDocument();
-		expect(within(usageSection).queryByText("Input")).not.toBeInTheDocument();
+		await userEvent.hover(within(usageSection).getByLabelText("Codex usage details"));
+		const providerPeek = await screen.findByRole("region", { name: "Codex usage peek" });
+		expect(within(providerPeek).getByText("1 model")).toBeInTheDocument();
+		expect(within(providerPeek).getByText("gpt-5.6")).toBeInTheDocument();
+		expect(within(providerPeek).getByText("Input tokens")).toBeInTheDocument();
+		expect(within(providerPeek).getByText("Output tokens")).toBeInTheDocument();
 
-		await userEvent.click(within(usageSection).getByRole("button", { name: "Codex usage" }));
-		expect(within(usageSection).getByText("Input")).toBeInTheDocument();
-		expect(within(usageSection).getByText("Output")).toBeInTheDocument();
-		expect(within(usageSection).getByText("Cache read")).toBeInTheDocument();
-		expect(within(usageSection).getByText("Reasoning")).toBeInTheDocument();
-		expect(within(usageSection).getByText("gpt-5.6")).toBeInTheDocument();
+		await userEvent.hover(within(providerPeek).getByLabelText("gpt-5.6 usage details"));
+		const modelPeek = await screen.findByRole("region", { name: "gpt-5.6 usage peek" });
+		expect(within(modelPeek).getByText("Input tokens")).toBeInTheDocument();
+		expect(within(modelPeek).getByText("Output tokens")).toBeInTheDocument();
+		expect(within(modelPeek).getByText("Cache read tokens")).toBeInTheDocument();
+		expect(within(modelPeek).getByText("Cache write tokens")).toBeInTheDocument();
+		expect(within(modelPeek).getByText("Reasoning tokens")).toBeInTheDocument();
+		expect(within(modelPeek).getByText("Uncached input tokens")).toBeInTheDocument();
 
 		const sectionTitles = Array.from(
 			document.querySelectorAll("[data-testid='inspector-section']"),
@@ -743,7 +777,7 @@ describe("SessionInspector Usage & cost section", () => {
 		});
 	});
 
-	it("shows multiple agents without expanding more than one agent at a time", async () => {
+	it("shows multiple agents as compact rows with independent hover peeks", async () => {
 		const codex = usageTelemetry().harnesses[0];
 		if (!codex) throw new Error("missing Codex usage fixture");
 		const claude = {
@@ -768,22 +802,24 @@ describe("SessionInspector Usage & cost section", () => {
 			.getByText("Usage & cost")
 			.closest("[data-testid='inspector-section']") as HTMLElement;
 
-		await waitFor(() => expect(within(usageSection).getByText("2 agents · 2 models")).toBeInTheDocument());
-		expect(within(usageSection).queryByRole("button", { name: "Codex usage" })).not.toBeInTheDocument();
-
-		await userEvent.click(within(usageSection).getByRole("button", { name: "Breakdown" }));
-		const codexButton = within(usageSection).getByRole("button", { name: "Codex usage" });
-		const claudeButton = within(usageSection).getByRole("button", { name: "Claude usage" });
-
-		await userEvent.click(codexButton);
-		expect(codexButton).toHaveAttribute("aria-expanded", "true");
-		expect(claudeButton).toHaveAttribute("aria-expanded", "false");
-
-		await userEvent.click(claudeButton);
-		expect(codexButton).toHaveAttribute("aria-expanded", "false");
-		expect(claudeButton).toHaveAttribute("aria-expanded", "true");
-		expect(within(usageSection).getByText("claude-opus-4.1")).toBeInTheDocument();
+		await waitFor(() => expect(within(usageSection).getByLabelText("Codex usage details")).toBeInTheDocument());
+		const codexRow = within(usageSection).getByLabelText("Codex usage details");
+		const claudeRow = within(usageSection).getByLabelText("Claude usage details");
+		expect(within(usageSection).getByText("Codex")).toBeInTheDocument();
+		expect(within(usageSection).getByText("Claude")).toBeInTheDocument();
+		expect(within(usageSection).getByText("OpenAI")).toBeInTheDocument();
+		expect(within(usageSection).getByText("Anthropic")).toBeInTheDocument();
 		expect(within(usageSection).queryByText("gpt-5.6")).not.toBeInTheDocument();
+		expect(within(usageSection).queryByText("claude-opus-4.1")).not.toBeInTheDocument();
+
+		await userEvent.hover(codexRow);
+		const codexPeek = await screen.findByRole("region", { name: "Codex usage peek" });
+		expect(within(codexPeek).getByText("gpt-5.6")).toBeInTheDocument();
+
+		await userEvent.unhover(codexRow);
+		await userEvent.hover(claudeRow);
+		const claudePeek = await screen.findByRole("region", { name: "Claude usage peek" });
+		expect(within(claudePeek).getByText("claude-opus-4.1")).toBeInTheDocument();
 	});
 });
 
