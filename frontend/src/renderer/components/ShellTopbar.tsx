@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { GitBranch, LayoutDashboard, PanelRightClose, PanelRightOpen, Plus, Trash2 } from "lucide-react";
+import { GitBranch, LayoutDashboard, PanelRightClose, PanelRightOpen, Plus, Trash } from "lucide-react";
 import { useState } from "react";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { NotificationCenter } from "./NotificationCenter";
@@ -151,9 +151,9 @@ export function ShellTopbar() {
 				) : isSessionRoute ? (
 					<div className="flex min-w-0 items-center gap-3">
 						{session?.branch ? (
-							<div className="inline-flex min-w-0 items-center gap-1 font-mono text-2xs leading-none text-passive">
-								<GitBranch className="size-icon-2xs shrink-0" aria-hidden="true" />
-								<span className="truncate">{session.branch}</span>
+							<div className="inline-flex min-w-0 items-center gap-1.5">
+								<GitBranch className="size-icon-sm shrink-0 text-passive" aria-hidden="true" />
+								<span className={`${topbarProjectLabelClass} truncate`}>{session.branch}</span>
 							</div>
 						) : null}
 						{session ? <SessionStatusPill session={session} /> : null}
@@ -267,9 +267,9 @@ export function ShellTopbar() {
 								variant="icon"
 							>
 								{isInspectorOpen ? (
-									<PanelRightClose className="size-5" aria-hidden="true" />
+									<PanelRightClose className="size-icon-base" aria-hidden="true" />
 								) : (
-									<PanelRightOpen className="size-5" aria-hidden="true" />
+									<PanelRightOpen className="size-icon-base" aria-hidden="true" />
 								)}
 							</TopbarButton>
 						)}
@@ -283,10 +283,10 @@ export function ShellTopbar() {
 }
 
 // Compact kill control for the topbar actions row. Stop a running worker and
-// tear down its runtime/workspace. Kill is irreversible from the UI, so the
+// terminate its runtime and archive it on the board. The
 // button arms a one-step confirmation before firing POST /sessions/{id}/kill,
 // then invalidates the workspace query so the session drops into the board's
-// terminated group.
+// archived/terminated group.
 export function TopbarKillButton({
 	session,
 	orchestratorId,
@@ -312,7 +312,7 @@ export function TopbarKillButton({
 				title="Kill session"
 				variant="kill"
 			>
-				<Trash2 className="size-icon-lg" aria-hidden="true" />
+				<Trash className="size-icon-lg" aria-hidden="true" />
 				Kill
 			</TopbarButton>
 			<ConfirmDialog
@@ -321,7 +321,7 @@ export function TopbarKillButton({
 					if (!kill.isPending) setConfirmOpen(open);
 				}}
 				title="Kill session?"
-				description={`Are you sure you want to kill "${session.title}"? This stops the agent and tears down its workspace. This cannot be undone.`}
+				description={`Are you sure you want to kill "${session.title}"? This stops the agent and moves the session to the Archived section below the Kanban board, where it can be restored later.`}
 				confirmLabel={kill.isPending ? "Killing..." : "Kill session"}
 				destructive
 				busy={kill.isPending}

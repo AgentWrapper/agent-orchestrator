@@ -189,6 +189,15 @@ describe("ShellTopbar status pill", () => {
 		expect(screen.getByText("Unknown")).toBeInTheDocument();
 	});
 
+	it("styles the session branch crumb like the project title", () => {
+		renderTopbar(sessionWith({ branch: "ao/dev/agent-orchestrator-13/root" }));
+
+		const branch = screen.getByText("ao/dev/agent-orchestrator-13/root");
+
+		expect(branch).toHaveClass("text-brand", "font-semibold", "text-foreground");
+		expect(branch).not.toHaveClass("text-2xs", "text-passive");
+	});
+
 	it("does not synthesize branch text for branchless sessions", () => {
 		renderTopbar(sessionWith({ branch: undefined }));
 
@@ -305,6 +314,29 @@ describe("ShellTopbar inspector state", () => {
 });
 
 describe("TopbarKillButton", () => {
+	it("matches the raised topbar button shape without destructive chrome", () => {
+		renderKill();
+
+		const button = screen.getByRole("button", { name: "Kill session" });
+		const icon = button.querySelector("svg");
+
+		expect(button).toHaveClass("bg-raised", "px-3.5", "text-muted-foreground");
+		expect(icon).toHaveClass("size-icon-lg");
+		expect(icon).not.toHaveClass("transition-transform", "group-hover:-rotate-6", "group-hover:scale-110");
+	});
+
+	it("explains that killed sessions move to the archived section and can be restored", async () => {
+		renderKill();
+
+		await userEvent.click(screen.getByRole("button", { name: "Kill session" }));
+		const dialog = await screen.findByRole("dialog", { name: "Kill session?" });
+
+		expect(dialog).toHaveTextContent(
+			'Are you sure you want to kill "do the thing"? This stops the agent and moves the session to the Archived section below the Kanban board, where it can be restored later.',
+		);
+		expect(dialog).not.toHaveTextContent("This cannot be undone.");
+	});
+
 	it("arms a confirmation before killing an active session", async () => {
 		renderKill();
 
