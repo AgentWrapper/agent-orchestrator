@@ -490,10 +490,22 @@ func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, m
 	}
 	enterCtx := ctx
 	if message != "" {
-		for _, chunk := range chunks(message, r.chunkSize) {
-			if _, err := r.run(ctx, sendKeysLiteralArgs(id, chunk)...); err != nil {
+		sendCtx := ctx
+		var finishCancel context.CancelFunc
+		for i, chunk := range chunks(message, r.chunkSize) {
+			if _, err := r.run(sendCtx, sendKeysLiteralArgs(id, chunk)...); err != nil {
+				if finishCancel != nil {
+					finishCancel()
+				}
 				return fmt.Errorf("tmux runtime: send message %s: %w", id, err)
 			}
+			if i == 0 {
+				enterCtx, finishCancel = context.WithTimeout(context.WithoutCancel(ctx), r.enterDelay+5*time.Second)
+				sendCtx = enterCtx
+			}
+		}
+		if finishCancel != nil {
+			defer finishCancel()
 		}
 		// Give the target TUI a moment to accept the pasted text before the
 		// trailing Enter, mirroring conpty's ptyInputEnterDelay. Without it a
@@ -505,9 +517,6 @@ func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, m
 		// the Enter are detached from the caller's cancellation (bounded by
 		// their own timeout instead): abandoning mid-pause would strand an
 		// unsubmitted draft that a retried send would then double-paste.
-		var cancel context.CancelFunc
-		enterCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), r.enterDelay+5*time.Second)
-		defer cancel()
 		if r.enterDelay > 0 {
 			select {
 			case <-enterCtx.Done():
