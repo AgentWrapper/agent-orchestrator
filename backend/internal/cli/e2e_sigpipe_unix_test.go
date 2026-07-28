@@ -4,7 +4,6 @@ package cli_test
 
 import (
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -15,11 +14,7 @@ import (
 )
 
 func TestE2E_DaemonClosedOutputPipeShutdownRemovesRunFile(t *testing.T) {
-	dir, err := os.MkdirTemp("/tmp", "ao-sigpipe-")
-	if err != nil {
-		t.Fatalf("mktemp: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	dir := t.TempDir()
 	e := env{
 		runFile: filepath.Join(dir, "running.json"),
 		dataDir: filepath.Join(dir, "data"),
@@ -84,14 +79,10 @@ func TestE2E_DaemonClosedOutputPipeShutdownRemovesRunFile(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	supervisorConn, err := net.DialTimeout("unix", filepath.Join(filepath.Dir(e.runFile), "supervise.sock"), 2*time.Second)
-	if err != nil {
-		t.Fatalf("connect supervisor socket: %v", err)
-	}
-
 	_ = r.Close()
 
-	resp, err := (&http.Client{Timeout: 2 * time.Second}).Get("http://127.0.0.1:" + strconv.Itoa(e.port) + "/healthz")
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get("http://127.0.0.1:" + strconv.Itoa(e.port) + "/healthz")
 	if err != nil {
 		t.Fatalf("GET /healthz after output reader closed: %v", err)
 	}
@@ -100,7 +91,14 @@ func TestE2E_DaemonClosedOutputPipeShutdownRemovesRunFile(t *testing.T) {
 		t.Fatalf("GET /healthz = %d, want 200", resp.StatusCode)
 	}
 
-	_ = supervisorConn.Close()
+	resp, err = client.Post("http://127.0.0.1:"+strconv.Itoa(e.port)+"/shutdown", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST /shutdown after output reader closed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("POST /shutdown = %d, want 202", resp.StatusCode)
+	}
 
 	select {
 	case <-processDone:
@@ -108,7 +106,7 @@ func TestE2E_DaemonClosedOutputPipeShutdownRemovesRunFile(t *testing.T) {
 			t.Fatalf("daemon exited via signal/error after output pipe closed: %v", waitErr)
 		}
 	case <-time.After(8 * time.Second):
-		t.Fatal("daemon did not self-stop after supervisor disconnect")
+		t.Fatal("daemon did not stop after shutdown request")
 	}
 
 	if _, err := os.Stat(e.runFile); !os.IsNotExist(err) {

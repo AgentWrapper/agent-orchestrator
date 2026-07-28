@@ -19,6 +19,7 @@ func TestIgnoreBrokenPipeSignalSurvivesClosedStderr(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pipe: %v", err)
 	}
+	_ = r.Close()
 	cmd := exec.Command(os.Args[0], "-test.run=TestIgnoreBrokenPipeSignalSurvivesClosedStderr")
 	cmd.Env = append(os.Environ(), "AO_SIGPIPE_HELPER=1")
 	cmd.Stderr = w
@@ -26,7 +27,6 @@ func TestIgnoreBrokenPipeSignalSurvivesClosedStderr(t *testing.T) {
 		t.Fatalf("start helper: %v", err)
 	}
 	_ = w.Close()
-	_ = r.Close()
 
 	if err := cmd.Wait(); err != nil {
 		t.Fatalf("helper exited after writing to closed stderr: %v", err)
