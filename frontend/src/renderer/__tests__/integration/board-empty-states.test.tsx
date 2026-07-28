@@ -133,7 +133,7 @@ describe("global board first launch", () => {
 			</QueryClientProvider>,
 		);
 
-		expect(await screen.findByTestId("daemon-startup-loader")).toBeInTheDocument();
+		expect(await screen.findByTestId("daemon-startup-loader")).toHaveClass("ao-startup-screen");
 		expect(screen.getByText("Agent Orchestrator")).toBeInTheDocument();
 		expect(screen.queryByText("Import to Agent Orchestrator")).not.toBeInTheDocument();
 		expect(columnCount()).toBe(0);

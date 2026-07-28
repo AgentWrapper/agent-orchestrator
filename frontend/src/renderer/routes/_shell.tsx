@@ -402,9 +402,6 @@ function ShellLayout() {
 		setWorkspaceStartupState("loading");
 		void queryClient
 			.fetchQuery(workspaceQueryOptions)
-			.then(() => {
-				if (active) setWorkspaceStartupState("ready");
-			})
 			.catch(() => {
 				if (active) setWorkspaceStartupState("error");
 			});

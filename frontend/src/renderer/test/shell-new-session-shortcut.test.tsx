@@ -277,6 +277,43 @@ beforeEach(() => {
 });
 
 describe("shell workspace startup", () => {
+	it("stays loading until React observes the newer workspace result", async () => {
+		let resolveFetch: ((value: WorkspaceSummary[]) => void) | undefined;
+		shellMocks.state.daemonStatus = { state: "ready", port: 4777 };
+		shellMocks.state.workspaceQuery = {
+			data: [],
+			dataUpdatedAt: 100,
+			isError: false,
+			isSuccess: true,
+		};
+		shellMocks.queryClient.getQueryState.mockReturnValue({ dataUpdatedAt: 100 });
+		shellMocks.queryClient.fetchQuery.mockReturnValueOnce(
+			new Promise<WorkspaceSummary[]>((resolve) => {
+				resolveFetch = resolve;
+			}),
+		);
+
+		const view = await renderShell();
+		expect(shellMocks.state.shellValue?.workspaceStartupState).toBe("loading");
+
+		await act(async () => resolveFetch?.(workspaces));
+		expect(shellMocks.state.shellValue?.workspaceStartupState).toBe("loading");
+
+		shellMocks.state.workspaceQuery = {
+			data: workspaces,
+			dataUpdatedAt: 200,
+			isError: false,
+			isSuccess: true,
+		};
+		view.rerender(
+			<Suspense fallback={null}>
+				<ShellRoute />
+			</Suspense>,
+		);
+
+		await waitFor(() => expect(shellMocks.state.shellValue?.workspaceStartupState).toBe("ready"));
+	});
+
 	it("recovers after a newer workspace query succeeds", async () => {
 		shellMocks.state.daemonStatus = { state: "ready", port: 4777 };
 		shellMocks.state.workspaceQuery = {
