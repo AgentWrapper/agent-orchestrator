@@ -148,7 +148,7 @@ const columns = [
 				branch: "ao/dev/agent-orchestrator-18/root",
 				agent: previewAgents.copilot.agent,
 				icon: previewAgents.copilot.icon,
-				activity: "No signal",
+				activity: "Input needed",
 				activityState: "waiting",
 				pr: "PR #322",
 				checks: "review comments 4",
@@ -162,7 +162,7 @@ const columns = [
 				branch: "ao/dev/solkit-ui-6/root",
 				agent: previewAgents.cursor.agent,
 				icon: previewAgents.cursor.icon,
-				activity: "No signal",
+				activity: "Input needed",
 				activityState: "waiting",
 				pr: "PR #323",
 				checks: "needs product call",
@@ -663,11 +663,12 @@ const incomingCardsByTrack: Record<TrackId, StaticPreviewCard[]> = {
 	],
 };
 
-const BASE_WIDTH = 1056;
+const BASE_WIDTH = 1140;
 const BASE_HEIGHT = 615;
 const WINDOW_MARGIN = 4;
-const MIN_WINDOW_WIDTH = 860;
-const MIN_WINDOW_HEIGHT = 500;
+// Shell can shrink with the hero frame; inner board stays at BASE_* and CSS-scales.
+const MIN_WINDOW_WIDTH = 280;
+const MIN_WINDOW_HEIGHT = 180;
 
 interface WindowState {
 	x: number;
@@ -751,16 +752,24 @@ function useFloatingWindow(
 		if (!parent) return;
 		const rect = parent.getBoundingClientRect();
 		containerSizeRef.current = { width: rect.width, height: rect.height };
-		// Until the user drags or resizes, the window is laid out by the container,
-		// so re-derive it on every container change instead of clamping the last
-		// render. Clamping alone pins x/y to the margin at narrow widths and never
-		// recovers the centered position when the container grows back.
+		const maxWidth = Math.max(1, rect.width - WINDOW_MARGIN * 2);
+		const maxHeight = Math.max(1, rect.height - WINDOW_MARGIN * 2);
+		const desired = desiredStateRef.current;
+		const fitted = createInitialWindowState(rect.width, rect.height);
+		// Until the user drags/resizes, always re-fit to the container. If a prior
+		// desired size no longer fits (viewport shrunk), drop it and re-center.
+		const desiredFits =
+			desired != null &&
+			desired.width <= maxWidth + 0.5 &&
+			desired.height <= maxHeight + 0.5;
 		stateRef.current = clampWindowState(
-			desiredStateRef.current ??
-				createInitialWindowState(rect.width, rect.height),
+			desiredFits && desired ? desired : fitted,
 			rect.width,
 			rect.height,
 		);
+		if (desired && !desiredFits) {
+			desiredStateRef.current = null;
+		}
 		applyState();
 	}, [applyState, outerRef]);
 
@@ -771,7 +780,11 @@ function useFloatingWindow(
 		if (!parent) return;
 		const observer = new ResizeObserver(updateContainer);
 		observer.observe(parent);
-		return () => observer.disconnect();
+		window.addEventListener("resize", updateContainer);
+		return () => {
+			observer.disconnect();
+			window.removeEventListener("resize", updateContainer);
+		};
 	}, [updateContainer, outerRef]);
 
 	const startDrag = useCallback((clientX: number, clientY: number) => {
@@ -967,7 +980,7 @@ function advanceCard(card: PreviewCard): PreviewCard {
 		return {
 			...card,
 			column: "action",
-			activity: "No signal",
+			activity: "Input needed",
 			activityState: "waiting",
 			badge: "Needs input",
 			tone: "blocked",
@@ -999,7 +1012,7 @@ function advanceCard(card: PreviewCard): PreviewCard {
 }
 
 function cardStatusColor(card: PreviewCard): string {
-	if (card.column === "action" || card.tone === "blocked") return STATUS_COLORS.unknown;
+	if (card.column === "action" || card.tone === "blocked") return STATUS_COLORS.needsYou;
 	if (card.column === "pending" || card.tone === "review") return STATUS_COLORS.inReview;
 	if (card.column === "merge" || card.tone === "ready") return STATUS_COLORS.ready;
 	if (card.activityState === "running") return STATUS_COLORS.working;
@@ -1275,7 +1288,7 @@ function ProjectActionIcon({
 }) {
 	return (
 		<span
-			className={`group/action relative grid size-5 shrink-0 place-items-center rounded-md text-[var(--preview-passive)] transition-colors hover:bg-[var(--preview-sidebar-hover)] hover:text-[var(--preview-foreground)] ${className}`}
+			className={`group/action relative z-20 grid size-5 shrink-0 place-items-center rounded-md text-[var(--preview-passive)] transition-colors hover:bg-[var(--preview-sidebar-hover)] hover:text-[var(--preview-foreground)] ${className}`}
 		>
 			{children}
 			{label ? (
@@ -1308,15 +1321,14 @@ function Sidebar({
 	return (
 		<aside
 			ref={sidebarRef}
-			className="relative hidden shrink-0 flex-col bg-[var(--preview-sidebar)] text-[var(--preview-muted-foreground)] sm:flex"
-			style={{ width: 240 }}
+			className="relative flex shrink-0 flex-col bg-[var(--preview-sidebar)] text-[var(--preview-muted-foreground)]"
+			style={{ width: 175 }}
 		>
 			{/* Traffic lights + sidebar toggle + history — brand sits on the next row. */}
 			<div
 				className="flex cursor-grab items-center gap-1 px-2.5 pb-1.5 pt-3 active:cursor-grabbing"
 				onPointerDown={(event) => {
 					if ((event.target as HTMLElement).closest("button")) return;
-					if (!window.matchMedia("(min-width: 640px)").matches) return;
 					event.preventDefault();
 					onTitlebarPointerDown(event.clientX, event.clientY);
 				}}
@@ -1385,8 +1397,8 @@ function Sidebar({
 				</div>
 			</div>
 
-			<div className="flex min-h-0 flex-1 flex-col overflow-hidden pl-1.5 pr-1.75">
-				<div className="relative mb-px shrink-0">
+			<div className="flex min-h-0 flex-1 flex-col pl-1.5 pr-1.75">
+				<div className="relative z-20 mb-px shrink-0 overflow-visible">
 					<button
 						type="button"
 						aria-expanded="true"
@@ -1414,14 +1426,14 @@ function Sidebar({
 						</div>
 						<span className="min-w-0 flex-1 truncate">agent-orchestrator</span>
 					</button>
-					<div className="absolute top-0 right-1 flex h-9 items-center gap-px">
+					<div className="absolute top-0 right-1 z-30 flex h-9 items-center gap-px">
 						<ProjectActionIcon label="Dashboard">
 							<LayoutGridIcon className="h-3.5 w-3.5" />
 						</ProjectActionIcon>
 						<ProjectActionIcon label="Orchestrator">
 							<OrchestratorIcon className="h-3.5 w-3.5" />
 						</ProjectActionIcon>
-						<ProjectActionIcon>
+						<ProjectActionIcon label="More">
 							<MoreVerticalIcon className="h-3.5 w-3.5" />
 						</ProjectActionIcon>
 					</div>
@@ -1499,11 +1511,11 @@ function BoardChrome({
 				className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[var(--preview-border)] bg-[var(--preview-raised)] px-3 text-[12px] font-semibold text-[var(--preview-muted-foreground)] transition-colors hover:bg-[var(--preview-card)] hover:text-[var(--preview-foreground)] active:scale-[0.98]"
 			>
 				<PlusIcon className="h-3.5 w-3.5" />
-				<span className="hidden sm:inline">New task</span>
+				<span>New task</span>
 			</button>
 			<button
 				type="button"
-				className="hidden h-8 items-center gap-1.5 rounded-md bg-[var(--preview-primary)] px-3 text-[12px] font-semibold text-[var(--preview-primary-foreground)] transition-[filter,transform] hover:brightness-110 active:scale-[0.98] sm:inline-flex"
+				className="inline-flex h-8 items-center gap-1.5 rounded-md bg-[var(--preview-primary)] px-3 text-[12px] font-semibold text-[var(--preview-primary-foreground)] transition-[filter,transform] hover:brightness-110 active:scale-[0.98]"
 			>
 				<OrchestratorIcon className="h-3.5 w-3.5" />
 				Orchestrator
@@ -2162,11 +2174,38 @@ export function AppMockup() {
 		footer: 0,
 	});
 	const windowRef = useRef<HTMLDivElement>(null);
+	const contentRef = useRef<HTMLDivElement>(null);
 	const sidebarRef = useRef<HTMLElement>(null);
-	const sidebarWidthRef = useRef(240);
+	const sidebarWidthRef = useRef(178);
 	const { startDrag, startResize } = useFloatingWindow(windowRef);
 	const isRepoAvatarReady = useImageReady(repoAvatar);
 	useDecorativeSubtree(windowRef);
+
+	// Keep the board at the design size and scale the whole chrome to the shell.
+	// Shrinking the layout box itself reflows columns and clips Mergeable / Merge.
+	// Apply transform via ref so it stays in sync with shell resizes (no React lag).
+	useLayoutEffect(() => {
+		const outer = windowRef.current;
+		const content = contentRef.current;
+		if (!outer || !content) return;
+
+		const syncScale = () => {
+			const width = outer.clientWidth;
+			const height = outer.clientHeight;
+			if (width <= 0 || height <= 0) return;
+			const scale = Math.min(width / BASE_WIDTH, height / BASE_HEIGHT);
+			content.style.transform = `scale(${scale})`;
+		};
+
+		syncScale();
+		const observer = new ResizeObserver(syncScale);
+		observer.observe(outer);
+		window.addEventListener("resize", syncScale);
+		return () => {
+			observer.disconnect();
+			window.removeEventListener("resize", syncScale);
+		};
+	}, []);
 
 	const selectedTrack =
 		projectItems.find((item) => item.id === selectedTrackId) ?? projectItems[0];
@@ -2189,7 +2228,7 @@ export function AppMockup() {
 
 		const handleMove = (event: PointerEvent) => {
 			const delta = event.clientX - startX;
-			const nextWidth = Math.max(200, Math.min(320, startWidth + delta));
+			const nextWidth = Math.max(140, Math.min(320, startWidth + delta));
 			sidebarWidthRef.current = nextWidth;
 			if (sidebarRef.current) {
 				sidebarRef.current.style.width = `${nextWidth}px`;
@@ -2357,59 +2396,66 @@ export function AppMockup() {
 				transform: "translate(-50%, -50%)",
 			}}
 		>
-			<div className="flex h-full min-h-0">
-				<Sidebar
-					isRepoAvatarReady={isRepoAvatarReady}
-					onResizeStart={startSidebarResize}
-					onSelectTrack={selectTrack}
-					onTitlebarPointerDown={startDrag}
-					selectedTrackId={selectedTrack.id}
-					sidebarRef={sidebarRef}
-				/>
-				<div className="flex min-h-0 min-w-0 flex-1 flex-col p-[2px]">
-					<div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[17px] border border-[var(--preview-border-strong)] bg-[var(--preview-background)]">
-						<BoardChrome
-							onNewTask={spawnRandomTask}
-							trackLabel={selectedTrack.label}
-							viewMode={viewMode}
+			<div className="relative h-full w-full overflow-hidden">
+				<div
+					ref={contentRef}
+					className="origin-top-left"
+					style={{
+						width: BASE_WIDTH,
+						height: BASE_HEIGHT,
+					}}
+				>
+					<div className="flex h-full min-h-0">
+						<Sidebar
+							isRepoAvatarReady={isRepoAvatarReady}
+							onResizeStart={startSidebarResize}
+							onSelectTrack={selectTrack}
+							onTitlebarPointerDown={startDrag}
+							selectedTrackId={selectedTrack.id}
+							sidebarRef={sidebarRef}
 						/>
-						{viewMode === "orchestrator" ? (
-							<OrchestratorView
-								cards={cards}
-								onNewTask={spawnRandomTask}
-								selectedTrack={selectedTrack}
-							/>
-						) : (
-							<>
-								<div className="relative flex min-h-0 flex-1 flex-col overflow-hidden border-t border-[var(--preview-divider)]">
-									<div aria-hidden="true" className="pointer-events-none absolute inset-0 z-10">
-										<div className="absolute inset-y-0 left-1/4 w-px bg-[var(--preview-divider)]" />
-										<div className="absolute inset-y-0 left-2/4 w-px bg-[var(--preview-divider)]" />
-										<div className="absolute inset-y-0 left-3/4 w-px bg-[var(--preview-divider)]" />
-									</div>
-									<LayoutGroup key={`${selectedTrack.id}-${boardVersion}`}>
-										<BoardGrid
-											columns={boardColumns}
-											onMerge={mergeCard}
-											onOpen={setSelectedCard}
-										/>
-									</LayoutGroup>
-								</div>
-								<ArchiveBar count={mergedCount} />
-							</>
-						)}
+						<div className="flex min-h-0 min-w-0 flex-1 flex-col p-[2px]">
+							<div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[17px] border border-[var(--preview-border-strong)] bg-[var(--preview-background)]">
+								<BoardChrome
+									onNewTask={spawnRandomTask}
+									trackLabel={selectedTrack.label}
+									viewMode={viewMode}
+								/>
+								{viewMode === "orchestrator" ? (
+									<OrchestratorView
+										cards={cards}
+										onNewTask={spawnRandomTask}
+										selectedTrack={selectedTrack}
+									/>
+								) : (
+									<>
+										<div className="relative flex min-h-0 flex-1 flex-col overflow-hidden border-t border-[var(--preview-divider)]">
+											<div aria-hidden="true" className="pointer-events-none absolute inset-0 z-10">
+												<div className="absolute inset-y-0 left-1/4 w-px bg-[var(--preview-divider)]" />
+												<div className="absolute inset-y-0 left-2/4 w-px bg-[var(--preview-divider)]" />
+												<div className="absolute inset-y-0 left-3/4 w-px bg-[var(--preview-divider)]" />
+											</div>
+											<LayoutGroup key={`${selectedTrack.id}-${boardVersion}`}>
+												<BoardGrid
+													columns={boardColumns}
+													onMerge={mergeCard}
+													onOpen={setSelectedCard}
+												/>
+											</LayoutGroup>
+										</div>
+										<ArchiveBar count={mergedCount} />
+									</>
+								)}
+							</div>
+						</div>
 					</div>
+					<AgentStatusModal
+						card={selectedCard}
+						onClose={() => setSelectedCard(null)}
+					/>
 				</div>
 			</div>
-			<AgentStatusModal
-				card={selectedCard}
-				onClose={() => setSelectedCard(null)}
-			/>
-			{selectedCard ? null : (
-				<div className="hidden sm:contents">
-					<ResizeHandles onResizeStart={startResize} />
-				</div>
-			)}
+			{selectedCard ? null : <ResizeHandles onResizeStart={startResize} />}
 		</div>
 	);
 }

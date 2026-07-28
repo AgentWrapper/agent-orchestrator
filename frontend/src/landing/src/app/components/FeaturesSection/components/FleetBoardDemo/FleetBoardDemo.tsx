@@ -151,7 +151,7 @@ function BoardCard({
 		column === 0
 			? { label: status ?? "Working", color: statusColor ?? STATUS.working }
 			: column === 1
-				? { label: "No signal", color: STATUS.unknown }
+				? { label: "Input needed", color: STATUS.needsYou }
 				: column === 2
 					? { label: status ?? "Review pending", color: statusColor ?? STATUS.inReview }
 					: { label: "Ready", color: STATUS.ready };
