@@ -1,14 +1,4 @@
-import {
-	ChevronLeft,
-	ChevronRight,
-	Maximize2,
-	Minimize2,
-	Plus,
-	Search,
-	Shield,
-	Terminal as TerminalIcon,
-	X,
-} from "lucide-react";
+import { ChevronLeft, ChevronRight, Maximize2, Minimize2, Shield, Terminal as TerminalIcon, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type WheelEvent } from "react";
 import { useOverflowScroll } from "../hooks/useOverflowScroll";
 import { useTruncatedText } from "../hooks/useTruncatedText";
@@ -20,24 +10,9 @@ import type { TerminalTarget } from "../types/terminal";
 import { isOrchestratorSession, type WorkspaceSession } from "../types/workspace";
 import { ShellTerminalTab } from "./ShellTerminalTab";
 import { TerminalPane } from "./TerminalPane";
-import { Input } from "./ui/input";
-import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuSeparator,
-	DropdownMenuTrigger,
-} from "./ui/dropdown-menu";
 
 type CenterPaneProps = {
 	session?: WorkspaceSession;
-	/** Tabs pinned to the originating session's private layout. */
-	projectSessions?: WorkspaceSession[];
-	availableProjectSessions?: WorkspaceSession[];
-	tabOwnerSessionId?: string;
-	onAddProjectSession?: (session: WorkspaceSession) => void;
-	onCloseProjectSession?: (session: WorkspaceSession) => void;
-	onSelectProjectSession?: (session: WorkspaceSession) => void;
 	theme: Theme;
 	daemonReady: boolean;
 	terminalTarget?: TerminalTarget;
@@ -48,14 +23,13 @@ type CenterPaneProps = {
 	onSelectShellTerminal?: (handleId: string) => void;
 	onCloseShellTerminal?: (handleId: string) => void;
 	onRenameShellTerminal?: (handleId: string, title: string) => void;
-	/** Opens a new standalone shell tab (the "+" at the end of the tab bar). */
+	/** Opens a new shell tab in this session's worktree (the button at the end of the tab bar). */
 	onNewShellTerminal?: () => void;
 };
 
 const terminalFontSizeStorageKey = "ao.terminal.fontSize";
 const WHEEL_ZOOM_THRESHOLD = 80;
 const WHEEL_ZOOM_RESET_MS = 250;
-const COMPACT_SESSION_LIMIT = 5;
 
 function clampTerminalFontSize(size: number): number {
 	return Math.min(TERMINAL_FONT_SIZE_MAX, Math.max(TERMINAL_FONT_SIZE_MIN, size));
@@ -71,12 +45,6 @@ function initialTerminalFontSize(): number {
 
 export function CenterPane({
 	session,
-	projectSessions,
-	availableProjectSessions = [],
-	tabOwnerSessionId,
-	onAddProjectSession,
-	onCloseProjectSession,
-	onSelectProjectSession,
 	theme,
 	daemonReady,
 	terminalTarget,
@@ -93,25 +61,7 @@ export function CenterPane({
 	const lastWheelZoomAtRef = useRef(0);
 	const [fontSize, setFontSize] = useState(initialTerminalFontSize);
 	const [isFullscreen, setIsFullscreen] = useState(false);
-	const [isTabLauncherOpen, setIsTabLauncherOpen] = useState(false);
-	const [showAllSessions, setShowAllSessions] = useState(false);
-	const [sessionSearch, setSessionSearch] = useState("");
-	const sessionTabs = projectSessions?.length ? projectSessions : session ? [session] : [];
-	const effectiveTabOwnerSessionId = tabOwnerSessionId ?? session?.id;
-	const hasMoreSessions = availableProjectSessions.length > COMPACT_SESSION_LIMIT;
-	const normalizedSessionSearch = sessionSearch.trim().toLowerCase();
-	const filteredSessions = normalizedSessionSearch
-		? availableProjectSessions.filter((candidate) =>
-				`${candidate.title} ${candidate.workspaceName}`.toLowerCase().includes(normalizedSessionSearch),
-			)
-		: availableProjectSessions;
-	const expandedSessionList = showAllSessions || normalizedSessionSearch.length > 0;
-	const visibleSessions = expandedSessionList
-		? filteredSessions
-		: filteredSessions.slice(0, COMPACT_SESSION_LIMIT);
-	const tabOverflowWatch = `${sessionTabs.map((item) => item.id).join("|")}|${shellTerminals
-		.map((terminal) => terminal.handleId)
-		.join("|")}`;
+	const tabOverflowWatch = `${session?.id ?? ""}|${shellTerminals.map((terminal) => terminal.handleId).join("|")}`;
 	const tabsOverflow = useOverflowScroll<HTMLDivElement>(tabOverflowWatch);
 	const target = terminalTarget ?? { kind: "worker" };
 
@@ -189,35 +139,18 @@ export function CenterPane({
 					>
 						<ChevronLeft aria-hidden="true" className="size-icon-md" />
 					</button>
-					{/* Each originating session owns a private set of pinned worker and
-					    shell tabs. The + menu is the only way to add to that layout. */}
+					{/* The session's own pane plus the shells opened from this strip; the
+					    terminal button at the end adds a shell in the session's worktree. */}
 					<div
 						ref={tabsOverflow.ref}
 						className="scrollbar-none flex min-w-flex-min flex-1 items-center gap-3 overflow-x-auto"
 					>
-						{sessionTabs.length > 0 ? (
-							sessionTabs.map((projectSession) => {
-								const isCurrent = projectSession.id === session?.id;
-								return (
-									<SessionPaneTab
-										key={projectSession.id}
-										isActive={isCurrent && target.kind !== "shell"}
-										label={
-											isOrchestratorSession(projectSession) ? "Orchestrator" : projectSession.title
-										}
-										onSelect={
-											isCurrent
-												? onSelectSessionTerminal
-												: () => onSelectProjectSession?.(projectSession)
-										}
-										onClose={
-											projectSession.id !== effectiveTabOwnerSessionId
-												? () => onCloseProjectSession?.(projectSession)
-												: undefined
-										}
-									/>
-								);
-							})
+						{session ? (
+							<SessionPaneTab
+								isActive={target.kind !== "shell"}
+								label={isOrchestratorSession(session) ? "Orchestrator" : session.title}
+								onSelect={onSelectSessionTerminal}
+							/>
 						) : (
 							<SessionPaneTab isActive={target.kind !== "shell"} label="No session" />
 						)}
@@ -245,86 +178,15 @@ export function CenterPane({
 					>
 						<ChevronRight aria-hidden="true" className="size-icon-md" />
 					</button>
-					<DropdownMenu
-						open={isTabLauncherOpen}
-						onOpenChange={(open) => {
-							setIsTabLauncherOpen(open);
-							if (!open) {
-								setShowAllSessions(false);
-								setSessionSearch("");
-							}
-						}}
+					<button
+						aria-label="New terminal"
+						className="inline-flex h-control-sm shrink-0 items-center gap-px rounded-sm px-1 text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+						onClick={onNewShellTerminal}
+						title="New terminal"
+						type="button"
 					>
-						<DropdownMenuTrigger asChild>
-							<button
-								aria-label="Add tab"
-								className="inline-flex h-control-sm shrink-0 items-center gap-px rounded-sm px-1 text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
-								title="Add tab"
-								type="button"
-							>
-								<Plus aria-hidden="true" className="size-icon-md" />
-							</button>
-						</DropdownMenuTrigger>
-						<DropdownMenuContent align="start" className="w-72">
-							<DropdownMenuItem onSelect={onNewShellTerminal}>
-								<TerminalIcon aria-hidden="true" />
-								Terminal
-							</DropdownMenuItem>
-							<DropdownMenuSeparator />
-							{hasMoreSessions ? (
-								<div className="relative px-1 pb-1">
-									<Search
-										aria-hidden="true"
-										className="pointer-events-none absolute top-1/2 left-3 size-icon-md -translate-y-[calc(50%+2px)] text-passive"
-									/>
-									<Input
-										aria-label="Search sessions"
-										className="h-control-board pl-8"
-										onChange={(event) => setSessionSearch(event.target.value)}
-										onKeyDown={(event) => event.stopPropagation()}
-										placeholder="Search sessions"
-										value={sessionSearch}
-									/>
-								</div>
-							) : null}
-							<div className={cn(expandedSessionList && "h-52 overflow-y-auto overscroll-contain")}>
-								{visibleSessions.length > 0 ? (
-									visibleSessions.map((candidate) => {
-										const isOpen = sessionTabs.some((tab) => tab.id === candidate.id);
-										return (
-											<DropdownMenuItem
-												key={candidate.id}
-												disabled={isOpen}
-												onSelect={() => onAddProjectSession?.(candidate)}
-											>
-												<span className="size-2 shrink-0 rounded-full bg-passive" aria-hidden="true" />
-												<span className="min-w-0 flex-1 truncate">{candidate.title}</span>
-												<span className="max-w-20 truncate text-micro text-passive">
-													{isOpen ? "Open" : candidate.workspaceName}
-												</span>
-											</DropdownMenuItem>
-										);
-									})
-								) : (
-									<DropdownMenuItem disabled>No sessions found</DropdownMenuItem>
-								)}
-							</div>
-							{hasMoreSessions && !expandedSessionList ? (
-								<>
-									<DropdownMenuSeparator />
-									<DropdownMenuItem
-										className="justify-center text-foreground"
-										onSelect={(event) => {
-											event.preventDefault();
-											setShowAllSessions(true);
-										}}
-									>
-										Show all sessions
-									</DropdownMenuItem>
-								</>
-							) : null}
-						</DropdownMenuContent>
-					</DropdownMenu>
+						<TerminalIcon aria-hidden="true" className="size-icon-md" />
+					</button>
 				</div>
 			</div>
 			{target.kind === "reviewer" ? (
