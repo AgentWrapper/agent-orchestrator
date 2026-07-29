@@ -39,7 +39,7 @@ type Service struct {
 	engine    *reviewcore.Engine
 	store     Store
 	lifecycle Reducer
-	scm       ports.SCMReviewActions
+	feedback  ports.ReviewFeedbackActions
 	clock     func() time.Time
 }
 
@@ -74,9 +74,11 @@ func WithClock(clock func() time.Time) Option {
 	return func(s *Service) { s.clock = clock }
 }
 
-// WithSCMReviewActions wires provider-owned review-thread side effects.
-func WithSCMReviewActions(actions ports.SCMReviewActions) Option {
-	return func(s *Service) { s.scm = actions }
+// WithReviewFeedbackActions wires backend-owned reply/resolve side effects for
+// addressed review feedback. SCM/GitHub is one implementation, but the review
+// service only depends on review-thread ids and reply text.
+func WithReviewFeedbackActions(actions ports.ReviewFeedbackActions) Option {
+	return func(s *Service) { s.feedback = actions }
 }
 
 // New wraps a core review engine as the API-facing service.
@@ -181,7 +183,7 @@ func (s *Service) SubmitMany(ctx context.Context, workerID domain.SessionID, rev
 	return runs, nil
 }
 
-// Addressed resolves review feedback through AO-owned SCM provider calls.
+// Addressed resolves review feedback through AO-owned feedback action calls.
 func (s *Service) Addressed(ctx context.Context, sessionID domain.SessionID, in AddressedFeedback) (AddressedResult, error) {
 	if sessionID == "" {
 		return AddressedResult{}, fmt.Errorf("%w: session id is required", ErrInvalid)
@@ -197,8 +199,8 @@ func (s *Service) Addressed(ctx context.Context, sessionID domain.SessionID, in 
 	if s.store == nil {
 		return AddressedResult{}, fmt.Errorf("review service store is not configured")
 	}
-	if s.scm == nil {
-		return AddressedResult{}, fmt.Errorf("review service scm actions are not configured")
+	if s.feedback == nil {
+		return AddressedResult{}, fmt.Errorf("review service feedback actions are not configured")
 	}
 	run, ok, err := s.store.GetReviewRun(ctx, runID)
 	if err != nil {
@@ -229,10 +231,10 @@ func (s *Service) Addressed(ctx context.Context, sessionID domain.SessionID, in 
 		if th.Resolved {
 			continue
 		}
-		if err := s.scm.ReplyToReviewThread(ctx, th.ThreadID, body); err != nil {
+		if err := s.feedback.ReplyToReviewThread(ctx, th.ThreadID, body); err != nil {
 			return AddressedResult{}, err
 		}
-		if err := s.scm.ResolveReviewThread(ctx, th.ThreadID); err != nil {
+		if err := s.feedback.ResolveReviewThread(ctx, th.ThreadID); err != nil {
 			return AddressedResult{}, err
 		}
 		resolved++

@@ -224,7 +224,7 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 	})
 	reviewOpts := []reviewsvc.Option{reviewsvc.WithLifecycleReducer(lcm)}
 	if scmProvider != nil {
-		reviewOpts = append(reviewOpts, reviewsvc.WithSCMReviewActions(scmProvider))
+		reviewOpts = append(reviewOpts, reviewsvc.WithReviewFeedbackActions(scmProvider))
 	}
 	reviewSvc := reviewsvc.New(reviewEngine, store, reviewOpts...)
 	return sessionSvc, reviewSvc, mgr, nil

@@ -111,16 +111,16 @@ type fakeReducer struct {
 	gotBatch   []lifecycle.ReviewResult
 }
 
-type fakeSCMActions struct {
+type fakeReviewFeedbackActions struct {
 	calls []string
 }
 
-func (f *fakeSCMActions) ReplyToReviewThread(_ context.Context, threadID, body string) error {
+func (f *fakeReviewFeedbackActions) ReplyToReviewThread(_ context.Context, threadID, body string) error {
 	f.calls = append(f.calls, "reply:"+threadID+":"+body)
 	return nil
 }
 
-func (f *fakeSCMActions) ResolveReviewThread(_ context.Context, threadID string) error {
+func (f *fakeReviewFeedbackActions) ResolveReviewThread(_ context.Context, threadID string) error {
 	f.calls = append(f.calls, "resolve:"+threadID)
 	return nil
 }
@@ -135,8 +135,8 @@ func TestAddressedRepliesThenResolvesOnlyUnresolvedThreadsForReview(t *testing.T
 			{ThreadID: "thread-3", ReviewID: "review-1"},
 		},
 	}
-	scm := &fakeSCMActions{}
-	svc := New(nil, st, WithSCMReviewActions(scm))
+	feedback := &fakeReviewFeedbackActions{}
+	svc := New(nil, st, WithReviewFeedbackActions(feedback))
 
 	res, err := svc.Addressed(context.Background(), "worker-1", AddressedFeedback{RunID: "run-1", Body: "addressed"})
 	if err != nil {
@@ -149,12 +149,12 @@ func TestAddressedRepliesThenResolvesOnlyUnresolvedThreadsForReview(t *testing.T
 		t.Fatalf("thread lookup = %q/%q", st.gotThreadPR, st.gotThreadReview)
 	}
 	want := []string{"reply:thread-1:addressed", "resolve:thread-1", "reply:thread-3:addressed", "resolve:thread-3"}
-	if len(scm.calls) != len(want) {
-		t.Fatalf("calls = %+v, want %+v", scm.calls, want)
+	if len(feedback.calls) != len(want) {
+		t.Fatalf("calls = %+v, want %+v", feedback.calls, want)
 	}
 	for i := range want {
-		if scm.calls[i] != want[i] {
-			t.Fatalf("calls = %+v, want %+v", scm.calls, want)
+		if feedback.calls[i] != want[i] {
+			t.Fatalf("calls = %+v, want %+v", feedback.calls, want)
 		}
 	}
 }
@@ -165,7 +165,7 @@ func TestAddressedUsesExplicitReviewIDAndReturnsNothingToResolve(t *testing.T) {
 		run:     domain.ReviewRun{ID: "run-1", SessionID: "worker-1", PRURL: "https://github.com/o/r/pull/1", GithubReviewID: "review-old"},
 		threads: []domain.PullRequestReviewThread{{ThreadID: "thread-1", ReviewID: "review-new", Resolved: true}},
 	}
-	svc := New(nil, st, WithSCMReviewActions(&fakeSCMActions{}))
+	svc := New(nil, st, WithReviewFeedbackActions(&fakeReviewFeedbackActions{}))
 
 	if _, err := svc.Addressed(context.Background(), "worker-1", AddressedFeedback{RunID: "run-1", ReviewID: "review-new", Body: "addressed"}); !errors.Is(err, ErrNothingToResolve) {
 		t.Fatalf("err = %v, want ErrNothingToResolve", err)
