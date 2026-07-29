@@ -50,14 +50,8 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 	if err != nil {
 		return fmt.Errorf("crush.GetAgentHooks: %w", err)
 	}
-	modelWritten, err := applyCrushModelOverride(cfg.WorkspacePath, cfg.Config.Model)
-	if err != nil {
+	if err := applyCrushModelOverride(cfg.WorkspacePath, cfg.Config.Model); err != nil {
 		return fmt.Errorf("crush.GetAgentHooks: %w", err)
-	}
-	if modelWritten {
-		if err := hookutil.EnsureWorkspaceGitignore(cfg.WorkspacePath, crushConfigFileName); err != nil {
-			return fmt.Errorf("crush.GetAgentHooks: gitignore config: %w", err)
-		}
 	}
 	if strings.TrimSpace(prompt) == "" {
 		return nil
@@ -85,9 +79,6 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 	}
 	if err := mergeCrushContextPath(crushConfigFile(cfg.WorkspacePath), crushSystemPromptPath); err != nil {
 		return fmt.Errorf("crush.GetAgentHooks: merge config: %w", err)
-	}
-	if err := hookutil.EnsureWorkspaceGitignore(cfg.WorkspacePath, crushConfigFileName); err != nil {
-		return fmt.Errorf("crush.GetAgentHooks: gitignore config: %w", err)
 	}
 	if err := hookutil.EnsureWorkspaceGitignore(filepath.Dir(promptPath), crushSystemPromptName); err != nil {
 		return fmt.Errorf("crush.GetAgentHooks: gitignore: %w", err)
@@ -127,31 +118,31 @@ func (p *Plugin) UninstallHooks(ctx context.Context, workspacePath string) error
 // a role's model config always reflects the project's current value and a
 // later change takes effect on the session's next restore. An empty override
 // leaves any model the user picked through Crush's own model picker alone.
-func applyCrushModelOverride(workspacePath, modelOverride string) (bool, error) {
+func applyCrushModelOverride(workspacePath, modelOverride string) error {
 	model := strings.TrimSpace(modelOverride)
 	if model == "" {
-		return false, nil
+		return nil
 	}
 	provider, modelID, ok := strings.Cut(model, crushModelSeparator)
 	provider, modelID = strings.TrimSpace(provider), strings.TrimSpace(modelID)
 	if ok && provider != "" && modelID != "" {
-		return true, mergeCrushModel(crushConfigFile(workspacePath), provider, modelID)
+		return mergeCrushModel(crushConfigFile(workspacePath), provider, modelID)
 	}
 	if ok {
 		slog.Default().Warn("crush: skipping model override because provider or model id is empty",
 			"model", model)
-		return false, nil
+		return nil
 	}
 	existingProvider, err := existingCrushModelProvider(crushConfigFile(workspacePath))
 	if err != nil {
-		return false, err
+		return err
 	}
 	if existingProvider == "" {
 		slog.Default().Warn("crush: skipping bare model override because .crush.json has no existing provider to reuse",
 			"model", model)
-		return false, nil
+		return nil
 	}
-	return true, mergeCrushModel(crushConfigFile(workspacePath), existingProvider, model)
+	return mergeCrushModel(crushConfigFile(workspacePath), existingProvider, model)
 }
 
 // AreHooksInstalled reports whether AO's Crush system-prompt context file is

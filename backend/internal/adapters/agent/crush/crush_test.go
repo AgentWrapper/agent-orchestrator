@@ -485,15 +485,16 @@ func TestGetAgentHooksGitignoresManagedCrushFiles(t *testing.T) {
 	if strings.Contains(text, "/"+crushConfigFileName) {
 		t.Fatalf(".gitignore should not ignore project config %q:\n%s", crushConfigFileName, text)
 	}
-	data, err = os.ReadFile(filepath.Join(workspace, ".gitignore"))
-	if err != nil {
-		t.Fatalf("read workspace gitignore: %v", err)
-	}
-	text = string(data)
-	for _, want := range []string{hookutil.GitignoreSentinel, "/" + crushConfigFileName} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("workspace .gitignore missing %q:\n%s", want, text)
-		}
+
+	// AO must not write/own a repo-root .gitignore: EnsureWorkspaceGitignore
+	// is a no-op when a root .gitignore already exists without AO's
+	// sentinel, and unconditionally overwrites one that does carry it on
+	// every subsequent call — neither is safe for a directory the user (or
+	// their repo) already owns. .crush.json churn in the agent's worktree
+	// is a known, pre-existing limitation left to a future AddExclude-based
+	// fix (writing to .git/info/exclude instead).
+	if _, err := os.Stat(filepath.Join(workspace, ".gitignore")); !os.IsNotExist(err) {
+		t.Fatalf("workspace root .gitignore should not be created by crush's adapter, stat err = %v", err)
 	}
 }
 
