@@ -40,6 +40,7 @@ pub fn run() {
         .register_uri_scheme_protocol("mirror", browser::mirror::protocol_handler)
         .setup(|app| {
             misc::init(&app.handle().clone());
+            daemon::start_on_boot(app.handle());
             updater::start_automatic_check_timer(app.handle().clone());
             Ok(())
         })

@@ -677,6 +677,18 @@ pub async fn daemon_get_status(state: State<'_, DaemonState>) -> Result<serde_js
     serde_json::to_value(status).map_err(|e| e.to_string())
 }
 
+/// Mirrors the Electron main process's `whenReady` behavior: the daemon is
+/// ensured as soon as the app boots, without waiting for the renderer to
+/// invoke `daemon_start`.
+pub fn start_on_boot(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<DaemonState>();
+        let status = start_daemon(&app, &state).await;
+        emit_status(&app, &status).await;
+    });
+}
+
 #[tauri::command]
 pub async fn daemon_start(
     app: AppHandle,
