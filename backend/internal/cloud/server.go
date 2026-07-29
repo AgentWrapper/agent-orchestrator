@@ -57,7 +57,14 @@ func Run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	handler := NewHandler(cfg, store, issuer, credentialSvc)
+	events := cdc.NewBroadcaster()
+	poller := cdc.NewPoller(store.AdminChangeLogSource(), events, cdc.PollerConfig{Logger: logger})
+	if err := poller.SeekToHead(ctx); err != nil {
+		return err
+	}
+	pollerDone := poller.Start(ctx)
+
+	handler := NewHandler(cfg, store, issuer, credentialSvc, events)
 	srv := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second}
 	ln, err := net.Listen("tcp", cfg.Addr())
 	if err != nil {
@@ -74,6 +81,8 @@ func Run() error {
 	}()
 	select {
 	case err := <-serveErr:
+		stop()
+		<-pollerDone
 		return err
 	case <-ctx.Done():
 	}
@@ -83,12 +92,17 @@ func Run() error {
 		_ = srv.Close()
 		return err
 	}
-	return <-serveErr
+	err = <-serveErr
+	<-pollerDone
+	return err
 }
 
 // NewHandler builds the cloud HTTP surface. Tests call this directly with an
 // ephemeral Postgres store.
-func NewHandler(cfg Config, store *postgres.Store, issuer *auth.Issuer, credentialSvc *credentials.Service) http.Handler {
+func NewHandler(cfg Config, store *postgres.Store, issuer *auth.Issuer, credentialSvc *credentials.Service, events *cdc.Broadcaster) http.Handler {
+	if events == nil {
+		events = cdc.NewBroadcaster()
+	}
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
@@ -110,7 +124,7 @@ func NewHandler(cfg Config, store *postgres.Store, issuer *auth.Issuer, credenti
 		Projects: projectSvc,
 		Sessions: sessionSvc,
 		CDC:      store,
-		Events:   cdc.NewBroadcaster(),
+		Events:   events,
 		EventFilter: func(r *http.Request, e cdc.Event) bool {
 			scope, ok := tenancy.ScopeFromContext(r.Context())
 			return ok && scope.OrgID != "" && e.OrgID == scope.OrgID
@@ -121,7 +135,7 @@ func NewHandler(cfg Config, store *postgres.Store, issuer *auth.Issuer, credenti
 		if credentialSvc != nil {
 			r.Post("/api/v1/agent-credentials", credentialSvc.CreateHTTP)
 		}
-		api.Register(r)
+		api.RegisterReadOnly(r)
 	})
 	return r
 }
