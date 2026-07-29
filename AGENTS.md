@@ -142,3 +142,4 @@ Commit `openapi.yaml` and `frontend/src/api/schema.ts` together with the Go chan
 - In remote-client builds, project creation must accept a server-side absolute path and must never open the client's native folder picker.
 - Persisted credentials shown in editable settings must render masked with an explicit reveal control rather than as an empty field.
 - For Agent branding, verify product assets rather than app-shell or theme-preview icons; for Codex use the product `app.icns`, never `electron.icns` or `icon-codex-*` previews.
+- When verifying static preview files, follow canonical `index.html` redirects and assert the final response; an initial `301` from Go's file server is not a failure.
