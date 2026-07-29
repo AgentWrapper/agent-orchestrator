@@ -1,6 +1,6 @@
 import { autoUpdater } from "electron-updater";
-import { app, BrowserWindow, dialog } from "electron";
-import { existsSync } from "node:fs";
+import { app, BrowserWindow, dialog, autoUpdater as nativeAutoUpdater } from "electron";
+import { existsSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -296,12 +296,51 @@ async function runRetirementPoll(stateDir: string): Promise<void> {
 	}
 }
 
+// AO_E2E_UPDATE_SENTINEL is the absolute path the end-to-end mac update test
+// (scripts/e2e-mac-update.mjs) asks the app to write once an update is actually
+// STAGED on disk and ready for the ShipIt swap. Unset in every real build, so
+// this is a complete no-op for users.
+export const E2E_UPDATE_SENTINEL_ENV = "AO_E2E_UPDATE_SENTINEL";
+
+// installE2EUpdateSentinel hangs the sentinel off the NATIVE macOS updater
+// (require("electron").autoUpdater, i.e. Squirrel.Mac), NOT electron-updater's
+// own "update-downloaded".
+//
+// That distinction is load-bearing and was verified against the published
+// electron-updater@6.8.9 tarball. In MacUpdater.updateDownloaded(),
+// dispatchUpdateDownloaded(event) fires FIRST and only then does
+// `if (this.autoInstallOnAppQuit) { this.nativeUpdater.checkForUpdates() }`
+// kick Squirrel into fetching from the local proxy server. So electron-updater
+// announces "downloaded" BEFORE Squirrel has fetched or staged anything: a
+// harness that quits on that signal stages nothing, installs nothing, and
+// reports a false failure or flaps. The native event is the one MacUpdater
+// itself listens to in order to set squirrelDownloadedUpdate = true, and it is
+// the only signal that means "staged, will swap on quit". See #3288.
+//
+// macOS only in practice: NsisUpdater and AppImageUpdater never drive the
+// native updater, so this listener simply never fires off darwin.
+function installE2EUpdateSentinel(): void {
+	const sentinelPath = process.env[E2E_UPDATE_SENTINEL_ENV];
+	if (!sentinelPath) return;
+	nativeAutoUpdater.on("update-downloaded", (_event, _notes, releaseName) => {
+		try {
+			// Written synchronously: the harness quits the app right after seeing
+			// this file, so an async write could lose the race with termination.
+			writeFileSync(sentinelPath, `${JSON.stringify({ stagedAt: Date.now(), releaseName: releaseName ?? null })}\n`);
+			console.info(`[e2e] native updater staged ${releaseName ?? "an update"}; wrote ${sentinelPath}`);
+		} catch (err) {
+			console.error("[e2e] failed to write update sentinel:", err);
+		}
+	});
+}
+
 // wireUpdaterEvents registers electron-updater listeners once and forwards each
 // to the renderer as an UpdateStatus. Idempotent: safe to call on every entry
 // point (launch auto-check and manual check).
 function wireUpdaterEvents(): void {
 	if (eventsWired) return;
 	eventsWired = true;
+	installE2EUpdateSentinel();
 	// With a build staged, "checking" briefly hides the sidebar restart row; that
 	// is acceptable and self-healing: the available / not-available handlers below
 	// restore the enriched downloaded status right after.

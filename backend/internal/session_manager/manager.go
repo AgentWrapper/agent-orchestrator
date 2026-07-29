@@ -78,6 +78,11 @@ const (
 	EnvRuntimeLaunchID = "AO_RUNTIME_LAUNCH_ID"
 	// EnvDataDir tells a spawned agent's AO hook commands where the store lives.
 	EnvDataDir = "AO_DATA_DIR"
+	// EnvBrowserCapability proves ownership of the session's browser target.
+	EnvBrowserCapability = "AO_BROWSER_CAPABILITY"
+	// EnvBrowserRuntimeToken must never be inherited by a worker. It authenticates
+	// the privileged Electron runtime, not session-scoped browser callers.
+	EnvBrowserRuntimeToken = "AO_BROWSER_RUNTIME_TOKEN" //nolint:gosec // Environment variable name, not a credential.
 )
 
 // hookBinaryName is the executable name the workspace hook commands invoke:
@@ -189,10 +194,13 @@ type Manager struct {
 	// each call site re-deriving the check. Send/confirmActive use Deliver for
 	// its Outcome; Spawn/Restore use the interface-level Send for
 	// initial-prompt delivery, where a blocked session is impossible.
-	messenger *sessionguard.Guard
-	lcm       lifecycleRecorder
-	dataDir   string
-	clock     func() time.Time
+	messenger           *sessionguard.Guard
+	lcm                 lifecycleRecorder
+	preview             PreviewLifecycle
+	browser             BrowserLifecycle
+	browserCapabilities BrowserCapabilityIssuer
+	dataDir             string
+	clock               func() time.Time
 	// lookPath is exec.LookPath in production; tests substitute a stub so
 	// they don't need real binaries on PATH. Returns ports.ErrAgentBinaryNotFound
 	// when the binary is missing so the sentinel propagates through toAPIError.
@@ -246,6 +254,23 @@ func (m *Manager) beginShellTerminalTeardown(ctx context.Context, id domain.Sess
 	return closer.BeginSessionTeardown(ctx, id)
 }
 
+// PreviewLifecycle is the narrow teardown hook consumed by Session Manager.
+// Keeping it here follows the consumer-owned interface boundary.
+type PreviewLifecycle interface {
+	StopSession(ctx context.Context, id domain.SessionID) error
+}
+
+// BrowserLifecycle is the narrow Electron-target teardown hook consumed by
+// Session Manager. It must work even when no renderer panel mounted.
+type BrowserLifecycle interface {
+	DestroySession(ctx context.Context, id domain.SessionID) error
+}
+
+// BrowserCapabilityIssuer derives the capability injected into a worker.
+type BrowserCapabilityIssuer interface {
+	Token(id domain.SessionID) string
+}
+
 // sendConfirmConfig bounds the best-effort activity-confirmation loop run after
 // Send. AO has no delivery ack: ao send returns 200 the moment tmux send-keys
 // exits 0, and for a large multiline paste the single Enter may not submit the
@@ -273,12 +298,15 @@ const (
 
 // Deps are the collaborators a Session Manager needs; New wires them together.
 type Deps struct {
-	Runtime   runtimeController
-	Agents    ports.AgentResolver
-	Workspace ports.Workspace
-	Store     Store
-	Messenger ports.AgentMessenger
-	Lifecycle lifecycleRecorder
+	Runtime             runtimeController
+	Agents              ports.AgentResolver
+	Workspace           ports.Workspace
+	Store               Store
+	Messenger           ports.AgentMessenger
+	Lifecycle           lifecycleRecorder
+	Preview             PreviewLifecycle
+	Browser             BrowserLifecycle
+	BrowserCapabilities BrowserCapabilityIssuer
 	// DataDir is exported to spawned agents as AO_DATA_DIR so their hook
 	// commands can open the same store.
 	DataDir string
@@ -302,17 +330,20 @@ type Deps struct {
 // time.Now when Deps.Clock is nil.
 func New(d Deps) *Manager {
 	m := &Manager{
-		runtime:     d.Runtime,
-		agents:      d.Agents,
-		workspace:   d.Workspace,
-		store:       d.Store,
-		lcm:         d.Lifecycle,
-		dataDir:     d.DataDir,
-		clock:       d.Clock,
-		lookPath:    d.LookPath,
-		executable:  d.Executable,
-		newLaunchID: d.NewLaunchID,
-		resuming:    make(map[domain.SessionID]struct{}),
+		runtime:             d.Runtime,
+		agents:              d.Agents,
+		workspace:           d.Workspace,
+		store:               d.Store,
+		lcm:                 d.Lifecycle,
+		preview:             d.Preview,
+		browser:             d.Browser,
+		browserCapabilities: d.BrowserCapabilities,
+		dataDir:             d.DataDir,
+		clock:               d.Clock,
+		lookPath:            d.LookPath,
+		executable:          d.Executable,
+		newLaunchID:         d.NewLaunchID,
+		resuming:            make(map[domain.SessionID]struct{}),
 		sendConfirm: sendConfirmConfig{
 			pollInterval:    sendConfirmPollInterval,
 			attemptDeadline: sendConfirmAttemptDeadline,
@@ -808,6 +839,8 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	if !ok {
 		return false, nil // already gone: benign race
 	}
+	m.stopPreviewBestEffort(ctx, id)
+	m.destroyBrowserBestEffort(ctx, id)
 	handle := runtimeHandle(rec.Metadata)
 	ws := workspaceInfo(rec)
 
@@ -915,6 +948,8 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 	if !ok || rec.IsTerminated {
 		return nil
 	}
+	m.stopPreviewBestEffort(ctx, id)
+	m.destroyBrowserBestEffort(ctx, id)
 	if rec.Metadata.WorkspacePath == "" || rec.Metadata.Branch == "" {
 		if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
 			return fmt.Errorf("retire replacement %s: clear restore markers: %w", id, err)
@@ -979,6 +1014,26 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 		return fmt.Errorf("retire replacement %s: mark terminated: %w", id, err)
 	}
 	return nil
+}
+
+func (m *Manager) stopPreviewBestEffort(ctx context.Context, id domain.SessionID) {
+	if m.preview == nil {
+		return
+	}
+	if err := m.preview.StopSession(ctx, id); err != nil {
+		m.logger.Warn("session preview cleanup failed", "sessionID", id, "error", err)
+	}
+}
+
+func (m *Manager) destroyBrowserBestEffort(ctx context.Context, id domain.SessionID) {
+	if m.browser == nil {
+		return
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := m.browser.DestroySession(cleanupCtx, id); err != nil {
+		m.logger.Warn("session browser cleanup failed", "sessionID", id, "error", err)
+	}
 }
 
 func (m *Manager) retireWorkspaceProjectForReplacement(ctx context.Context, rec domain.SessionRecord, rows []ports.WorkspaceRepoInfo) error {
@@ -2429,8 +2484,15 @@ func (m *Manager) aoSkillPointer() string {
 	dir := skillassets.Dir(m.dataDir)
 	skillFile := filepath.ToSlash(filepath.Join(dir, "SKILL.md"))
 	commandsGlob := filepath.ToSlash(filepath.Join(dir, "commands", "*.md"))
+	browserFile := filepath.ToSlash(filepath.Join(dir, "commands", "browser.md"))
+	previewFile := filepath.ToSlash(filepath.Join(dir, "commands", "preview.md"))
 	return "\n\n" + "## Using the ao CLI\n\n" +
-		"When you need to use the `ao` CLI, read `" + skillFile + "` first (and the relevant `" + commandsGlob + "`) for the full command catalog, flags, and examples."
+		"When using `ao`, read `" + skillFile + "` and only the relevant file under `" + commandsGlob + "`; do not load unrelated command guides.\n\n" +
+		"## AO desktop Browser panel\n\n" +
+		"For frontend work, read `" + previewFile + "` before previewing or starting an app: open static HTML or Markdown directly; Never create or modify `package.json` or install dependencies solely to display static files. Do not create `.ao/launch.json` unless the user asks. Automatically open the primary requested browser-displayable artifact immediately after creating or materially updating it, but do not replace an active application preview with a supporting asset. " +
+		"For page inspection or interaction, read `" + browserFile + "` and use `ao browser` from this AO session. Browser network capture is optional and off by default; follow that guide and never enable it for routine browser actions. " +
+		"Do not use Codex/host in-app browser connectors, `agent.browsers.get(\"iab\")`, or a browser MCP for the AO Browser panel: those are separate browser runtimes and cannot see or control AO's session-owned page. " +
+		"`ao browser` operates the same live page the user sees in that panel."
 }
 
 func (m *Manager) workspaceProjectPrompt(ctx context.Context, kind domain.SessionKind, projectID domain.ProjectID) (string, error) {
@@ -2581,6 +2643,10 @@ func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueI
 // logged so the degradation isn't silent.
 func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, projectEnv map[string]string) map[string]string {
 	env := spawnEnv(id, project, issue, m.dataDir, projectEnv)
+	if m.browserCapabilities != nil {
+		env[EnvBrowserCapability] = m.browserCapabilities.Token(id)
+	}
+	env[EnvBrowserRuntimeToken] = ""
 	path, err := HookPATH(m.executable, os.Getenv, projectEnv)
 	if err != nil {
 		m.logger.Warn("session PATH not pinned to the daemon binary; `ao hooks` callbacks may resolve to a different ao and activity tracking will stall",

@@ -38,10 +38,25 @@ export function feedFilename(channel, platform) {
 
 // buildYml serializes one platform's feed. files is [{ url, sha512, size }];
 // for mac the arm64 entry comes first. The deprecated top-level path/sha512
-// point at files[0]. blockMapSize is never written (forces sidecar
-// differential on win/linux; mac has no sidecar at all — see #3034 — so it
-// always takes electron-updater's full-download path regardless). When
-// important is true, emits `important: true` after releaseDate so the
+// point at files[0].
+//
+// blockMapSize is never written. Per platform that means (verified against the
+// published electron-updater@6.8.9 tarball, see #3288 workstream 3):
+//   win:   NsisUpdater takes AppUpdater.differentialDownloadInstaller, which
+//          fetches the "<installer>.blockmap" sidecar. Omitting blockMapSize is
+//          what selects that sidecar path, so win sidecars are load-bearing.
+//   linux: AppImageUpdater NEVER fetches a sidecar. It uses
+//          FileWithEmbeddedBlockMapDifferentialDownloader, which reads the
+//          blockmap from the AppImage's own tail at
+//          `fileSize - (blockMapSize + 4)` and therefore hard-requires
+//          blockMapSize in the yml. With it absent, linux differential updates
+//          cannot run at all and every client falls back to a full download.
+//          The linux .blockmap sidecars we publish are consumed by nothing (see
+//          the note in generateFeeds).
+//   mac:   no sidecar is generated at all (see hashFile), so MacUpdater always
+//          takes the full-download path. Settled permanent baseline, #3151/#3267.
+//
+// When important is true, emits `important: true` after releaseDate so the
 // in-app update prompt is escalated.
 export function buildYml(version, files, releaseDate, important = false) {
 	const lines = [`version: ${version}`, "files:"];
@@ -59,7 +74,15 @@ export function buildYml(version, files, releaseDate, important = false) {
 
 // generateFeeds writes the yml + sidecar blockmaps for every platform present in
 // dir. version may carry +build metadata (nightly); strip it for the yml.
-// mac zips skip the blockmap sidecar entirely (see hashFile) — see #3034.
+// mac zips skip the blockmap sidecar entirely (see hashFile); see #3034/#3151.
+//
+// The linux sidecars this still writes are dead weight: AppImageUpdater reads
+// its blockmap from the AppImage tail, never from a sidecar, and needs a
+// blockMapSize we never emit (see buildYml). Generation is kept deliberately
+// rather than dropped, because the release publish guard lives in a separate
+// private pipeline that currently asserts on the linux sidecar filenames;
+// dropping the files here would red that guard out of band. Removing both
+// together is tracked as its own decision on #3288 workstream 3.
 export async function generateFeeds(dir, rawVersion, channel, releaseDate, important = false) {
 	const version = rawVersion.split("+")[0];
 	const sel = selectInstallers(readdirSync(dir), version);
@@ -96,13 +119,19 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 
 // hashFile computes the same {sha512, size} shape writeBlockmap returns, but
 // without writing a .blockmap sidecar file. Used for mac zips specifically:
-// Squirrel.Mac's ShipIt install step runs `ditto` against the extracted
-// update cache, which fails when the cache lacks AppleDouble ("._*") metadata
-// — content @electron-forge/maker-zip's output never had, unlike
-// electron-builder's ditto-based zips. A sidecar-driven differential update
-// against that mismatched format is the likely corruption source (issue
-// #3034). Skipping the sidecar for mac forces electron-updater's MacUpdater
-// onto a full-zip download every time instead of a diff.
+// Squirrel.Mac's ShipIt install step runs `ditto` against the extracted update
+// cache and fails on a corrupt one, which is the #3034 failure signature.
+//
+// The original zip-format theory (that ShipIt failed because
+// @electron-forge/maker-zip's output lacked the AppleDouble "._*" entries
+// electron-builder's ditto-based zips carry) did NOT hold. A production
+// nightly-to-stable channel switch reproduced the same corruption against a
+// target zip that was already correctly ditto-built with its full AppleDouble
+// set. The defect is in the differential download/patch-apply mechanism itself,
+// not in the zip format (#3267 decision 4). Skipping the sidecar for mac is
+// therefore the actual fix, not a workaround: it forces MacUpdater onto a full
+// zip download every time. Permanent baseline, #3151; #3267 decision 4 records
+// the evidence bar for ever revisiting it.
 export function hashFile(filePath) {
 	const data = readFileSync(filePath);
 	const sha512 = createHash("sha512").update(data).digest("base64");
