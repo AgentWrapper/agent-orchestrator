@@ -700,6 +700,7 @@ function ShellLayout() {
 								"fixed top-0 left-0 z-chrome w-(--ao-sidebar-w,var(--size-sidebar-default)) transition-[height] duration-200 ease-out motion-reduce:transition-none",
 								isFullScreen ? "pointer-events-none h-0" : "h-traffic-light-clearance",
 							)}
+							data-tauri-drag-region={trafficLightDragActive ? true : undefined}
 							style={trafficLightDragActive ? ({ WebkitAppRegion: "drag" } as CSSProperties) : undefined}
 						/>
 					) : null}

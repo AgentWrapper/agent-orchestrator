@@ -69,6 +69,8 @@ type TelemetryConfig struct {
 // be added.
 var DefaultAllowedOrigins = []string{
 	"app://renderer",
+	"tauri://localhost",
+	"http://tauri.localhost",
 }
 
 // Config is the fully-resolved daemon configuration. It is immutable once

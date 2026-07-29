@@ -293,6 +293,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			{!showWelcome && !showStartup && boardActionsInPanel && (boardLabel || actions) ? (
 				<div
 					className="center-panel-titlebar flex h-toolbar shrink-0 items-center gap-2 border-b border-border-strong pr-4.5"
+					data-tauri-drag-region={isMac ? true : undefined}
 					style={dragStyle}
 				>
 					{boardLabel ? <span className={topbarProjectLabelClass}>{boardLabel}</span> : null}

@@ -63,13 +63,18 @@ type Deps struct {
 	Out io.Writer
 	Err io.Writer
 
-	HTTPClient         *http.Client
-	Executable         func() (string, error)
-	StartProcess       func(processStartConfig) error
-	ProcessAlive       func(pid int) bool
-	LookPath           func(file string) (string, error)
-	CommandOutput      func(ctx context.Context, name string, args ...string) ([]byte, error)
-	CommandOutputInDir func(ctx context.Context, dir, name string, args ...string) ([]byte, error)
+	HTTPClient   *http.Client
+	Executable   func() (string, error)
+	StartProcess func(processStartConfig) error
+	ProcessAlive func(pid int) bool
+	// TerminateProcessGroup and KillProcessGroup back `ao daemon ensure`'s
+	// wedged-orphan takeover: a graceful SIGTERM, then an escalating SIGKILL,
+	// of the process (and its process group on unix) holding the daemon port.
+	TerminateProcessGroup func(pid int) error
+	KillProcessGroup      func(pid int) error
+	LookPath              func(file string) (string, error)
+	CommandOutput         func(ctx context.Context, name string, args ...string) ([]byte, error)
+	CommandOutputInDir    func(ctx context.Context, dir, name string, args ...string) ([]byte, error)
 	// DoctorGitHubRESTBase lets tests point the doctor GitHub token probe at
 	// httptest without mutating package-global state.
 	DoctorGitHubRESTBase string
@@ -80,19 +85,21 @@ type Deps struct {
 // DefaultDeps returns production dependencies.
 func DefaultDeps() Deps {
 	return Deps{
-		In:                   os.Stdin,
-		Out:                  os.Stdout,
-		Err:                  os.Stderr,
-		HTTPClient:           &http.Client{Timeout: 2 * time.Second},
-		Executable:           os.Executable,
-		StartProcess:         startProcess,
-		ProcessAlive:         processalive.Alive,
-		LookPath:             exec.LookPath,
-		CommandOutput:        commandOutput,
-		CommandOutputInDir:   commandOutputInDir,
-		DoctorGitHubRESTBase: defaultDoctorGitHubRESTBase,
-		Now:                  time.Now,
-		Sleep:                time.Sleep,
+		In:                    os.Stdin,
+		Out:                   os.Stdout,
+		Err:                   os.Stderr,
+		HTTPClient:            &http.Client{Timeout: 2 * time.Second},
+		Executable:            os.Executable,
+		StartProcess:          startProcess,
+		ProcessAlive:          processalive.Alive,
+		TerminateProcessGroup: terminateProcessGroup,
+		KillProcessGroup:      killProcessGroup,
+		LookPath:              exec.LookPath,
+		CommandOutput:         commandOutput,
+		CommandOutputInDir:    commandOutputInDir,
+		DoctorGitHubRESTBase:  defaultDoctorGitHubRESTBase,
+		Now:                   time.Now,
+		Sleep:                 time.Sleep,
 	}
 }
 
@@ -128,6 +135,12 @@ func (d Deps) withDefaults() Deps {
 	}
 	if d.ProcessAlive == nil {
 		d.ProcessAlive = def.ProcessAlive
+	}
+	if d.TerminateProcessGroup == nil {
+		d.TerminateProcessGroup = def.TerminateProcessGroup
+	}
+	if d.KillProcessGroup == nil {
+		d.KillProcessGroup = def.KillProcessGroup
 	}
 	if d.LookPath == nil {
 		d.LookPath = def.LookPath
@@ -179,7 +192,9 @@ func NewRootCommand(deps Deps) *cobra.Command {
 		return usageError{err}
 	})
 
-	root.AddCommand(newDaemonCommand())
+	daemonCmd := newDaemonCommand()
+	daemonCmd.AddCommand(newDaemonEnsureCommand(ctx))
+	root.AddCommand(daemonCmd)
 	root.AddCommand(newStartCommand(ctx))
 	root.AddCommand(newStopCommand(ctx))
 	root.AddCommand(newStatusCommand(ctx))

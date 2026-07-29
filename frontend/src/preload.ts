@@ -1,48 +1,33 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { FOCUS_TERMINAL_SHORTCUT_CHANNEL, KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEXT_SESSION_SHORTCUT_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL, NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL, OPEN_SETTINGS_SHORTCUT_CHANNEL, PREVIOUS_SESSION_SHORTCUT_CHANNEL, type KeybindingOverrides } from "./shared/shortcuts";
-import type { BrowserNavState, BrowserRect } from "./main/browser-view-host";
 import type { DaemonStatus } from "./shared/daemon-status";
 import type { TelemetryBootstrap } from "./shared/telemetry";
-import type { MigrationState } from "./main/app-state";
-import type { UpdateSettings, UpdateStatus } from "./main/update-settings";
-import type { UpdateCheckOptions } from "./main/auto-updater";
-import type { FeatureBuild } from "./main/feature-builds";
 import type {
 	BrowserAnnotationCancelPayload,
 	BrowserAnnotationModeInput,
 	BrowserAnnotationSubmitPayload,
 } from "./shared/browser-annotations";
+import type {
+	AoBridge,
+	BrowserBoundsInput,
+	BrowserNavigateInput,
+	BrowserNavState,
+	ImportFolderMode,
+	ImportFolderScan,
+	MigrationState,
+	UpdateCheckOptions,
+	UpdateSettings,
+	UpdateStatus,
+	FeatureBuild,
+} from "./shared/bridge-types";
 
-export type BrowserBoundsInput = {
-	viewId: string;
-	rect: BrowserRect;
-	visible: boolean;
-	parked?: boolean;
-};
-
-export type BrowserNavigateInput = {
-	viewId: string;
-	url: string;
-};
-
-export type ImportFolderMode = "project" | "workspace";
-
-export type ImportRepoScan = {
-	name: string;
-	path: string;
-	relativePath: string;
-	branch: string;
-	remote: string;
-	hasRemote: boolean;
-	status?: "ok" | "error";
-	reason?: string;
-};
-
-export type ImportFolderScan = {
-	path: string;
-	repos: ImportRepoScan[];
-	setupWarning?: string;
-};
+export type {
+	BrowserBoundsInput,
+	BrowserNavigateInput,
+	ImportFolderMode,
+	ImportRepoScan,
+	ImportFolderScan,
+} from "./shared/bridge-types";
 
 const api = {
 	app: {
@@ -232,8 +217,8 @@ const api = {
 		list: () => ipcRenderer.invoke("featureBuilds:list") as Promise<FeatureBuild[]>,
 		getActive: () => ipcRenderer.invoke("featureBuilds:getActive") as Promise<{ pr: number } | null>,
 	},
-};
+} satisfies AoBridge;
 
 contextBridge.exposeInMainWorld("ao", api);
 
-export type AoBridge = typeof api;
+export type { AoBridge } from "./shared/bridge-types";

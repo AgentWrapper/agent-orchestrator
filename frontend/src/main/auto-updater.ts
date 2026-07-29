@@ -442,10 +442,8 @@ export async function setUpdateSettings(stateDir: string, settings: UpdateSettin
 	await runSerializedUpdaterOperation("settings-write", () => persistUpdaterSettings(stateDir, settings));
 }
 
-export interface UpdateCheckOptions {
-	settings?: UpdateSettings;
-	requestId?: string;
-}
+export type { UpdateCheckOptions } from "../shared/bridge-types";
+import type { UpdateCheckOptions } from "../shared/bridge-types";
 
 // checkForUpdatesNow runs a manual update check regardless of the auto-update
 // opt-in, so a user who never enabled auto-updates can still pull the latest

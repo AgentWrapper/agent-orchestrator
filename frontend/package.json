@@ -27,7 +27,11 @@
 		"test": "vitest run --config vite.renderer.config.ts",
 		"test:e2e": "playwright test",
 		"test:e2e:renderer": "playwright test --grep \"@T0|@P0\"",
-		"api:ts": "openapi-typescript ../backend/internal/httpd/apispec/openapi.yaml -o src/api/schema.ts"
+		"api:ts": "openapi-typescript ../backend/internal/httpd/apispec/openapi.yaml -o src/api/schema.ts",
+		"tauri": "tauri",
+		"tauri:dev": "tauri dev",
+		"tauri:build": "tauri build",
+		"build:renderer:tauri": "vite build --config vite.renderer.config.ts --outDir dist-tauri --emptyOutDir"
 	},
 	"devDependencies": {
 		"@electron-forge/cli": "^7.8.0",
@@ -40,6 +44,7 @@
 		"@playwright/test": "^1.60.0",
 		"@tailwindcss/vite": "^4.3.0",
 		"@tanstack/router-plugin": "^1.168.18",
+		"@tauri-apps/cli": "^2.11.4",
 		"@testing-library/jest-dom": "^6.9.1",
 		"@testing-library/react": "^16.3.2",
 		"@testing-library/user-event": "^14.6.1",
@@ -64,6 +69,10 @@
 		"@radix-ui/react-tooltip": "^1.2.9",
 		"@tanstack/react-query": "^5.101.0",
 		"@tanstack/react-router": "^1.170.15",
+		"@tauri-apps/api": "^2.11.1",
+		"@tauri-apps/plugin-clipboard-manager": "^2.3.2",
+		"@tauri-apps/plugin-dialog": "^2.7.2",
+		"@tauri-apps/plugin-opener": "^2.5.4",
 		"@xterm/addon-canvas": "^0.7.0",
 		"@xterm/addon-fit": "^0.10.0",
 		"@xterm/addon-search": "^0.15.0",

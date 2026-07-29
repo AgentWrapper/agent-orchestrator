@@ -1,40 +1,8 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
+import type { FeaturePin, UpdateSettings } from "../shared/bridge-types";
 
-export type UpdateChannel = "latest" | "nightly";
-
-/** A pinned PR feature build. `channel` stays as the home channel; this is a separate overlay. */
-export interface FeaturePin {
-	pr: number;
-}
-
-export interface UpdateSettings {
-	enabled: boolean;
-	/** Home channel: stable or nightly. Never set this to a feature/pr value. */
-	channel: UpdateChannel;
-	nightlyAck: boolean;
-	/** When set, the updater tracks the pr<N> prerelease channel instead of `channel`. Null = not pinned. */
-	feature: FeaturePin | null;
-}
-
-// Live state of a manual update check/download, streamed to the renderer so the
-// Global Settings "Check for updates" / "Update" buttons can reflect progress.
-export type UpdateState =
-	"idle" | "checking" | "available" | "not-available" | "downloading" | "downloaded" | "error" | "unsupported";
-
-export interface UpdateStatus {
-	state: UpdateState;
-	version?: string;
-	percent?: number;
-	message?: string;
-	/** Present for statuses owned by a renderer-requested updater operation. */
-	requestId?: string;
-	// Present only when state === "downloaded".
-	// stagedAt: epoch ms when the update finished downloading.
-	// escalated: true when per-channel rules say the user should be nudged harder.
-	stagedAt?: number;
-	escalated?: boolean;
-}
+export type { UpdateChannel, FeaturePin, UpdateSettings, UpdateState, UpdateStatus } from "../shared/bridge-types";
 
 /** File holding the user's auto-update preferences under the ~/.ao state dir. */
 export const UPDATE_SETTINGS_FILE_NAME = "update-settings.json";

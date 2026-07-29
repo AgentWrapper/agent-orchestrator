@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
+import type { MigrationState } from "../shared/bridge-types";
 
 /**
  * The marker the desktop app writes under ~/.ao on every launch (spec §5).
@@ -8,15 +9,7 @@ import path from "node:path";
  * below MUST match its struct tags exactly (camelCase).
  */
 
-export type MigrationStatus = "pending" | "completed" | "declined" | "failed";
-
-export interface MigrationState {
-	status: MigrationStatus;
-	lastAttemptAt?: string;
-	completedAt?: string;
-	report?: { projectsImported: number; projectsSkipped: number };
-	error?: string;
-}
+export type { MigrationStatus, MigrationState } from "../shared/bridge-types";
 
 export interface AppStateMarker {
 	schemaVersion: number;

@@ -1,1 +1,5 @@
 app-update.yml
+src-tauri/target
+src-tauri/binaries
+src-tauri/gen
+dist-tauri

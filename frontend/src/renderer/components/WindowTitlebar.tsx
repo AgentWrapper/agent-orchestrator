@@ -1,6 +1,8 @@
 import { useNavigate } from "@tanstack/react-router";
-import { PanelLeft } from "lucide-react";
+import { Minus, PanelLeft, Square, X } from "lucide-react";
 import { useEffect, useState } from "react";
+import { isTauri } from "../lib/bridge";
+import { isLinuxPlatform } from "../lib/platform";
 import { useResolvedTheme, useUiStore } from "../stores/ui-store";
 import {
 	DropdownMenu,
@@ -11,9 +13,11 @@ import {
 	DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 
-// Windows-only: macOS keeps its system menu bar and inset traffic lights; Linux
-// keeps the existing minimal chrome. Only Windows loses the native title bar and
-// needs the app to paint its own (see the win32 branch in main.ts).
+// Windows-only under Electron: macOS keeps its system menu bar and inset
+// traffic lights; Linux keeps the existing minimal chrome, since Electron
+// leaves native decorations in place there. Only Windows loses the native
+// title bar and needs the app to paint its own (see the win32 branch in
+// main.ts).
 const isWindows =
 	typeof navigator !== "undefined" &&
 	/win/i.test(
@@ -21,6 +25,15 @@ const isWindows =
 			navigator.platform ??
 			"",
 	);
+const isLinux = isLinuxPlatform();
+// Under Tauri, `decorations: false` (tauri.windows.conf.json /
+// tauri.linux.conf.json) strips all native chrome on Windows *and* Linux —
+// unlike Electron, there's no Window Controls Overlay to fall back on — so
+// both platforms need this component's custom titlebar, and the
+// minimize/maximize/close buttons below (Electron paints its own native
+// overlay on Windows and keeps native decorations on Linux, so those buttons
+// only render under Tauri).
+const showsCustomTitlebar = isWindows || (isTauri && isLinux);
 
 type MenuKey = "file" | "edit" | "view" | "window" | "help";
 
@@ -99,10 +112,10 @@ export function WindowTitlebar({
 		return () => document.removeEventListener("focusin", onFocusIn);
 	}, []);
 
-	if (!isWindows) return null;
+	if (!showsCustomTitlebar) return null;
 
 	return (
-		<header className="window-titlebar">
+		<header className="window-titlebar" data-tauri-drag-region>
 			{/* Sidebar collapse toggle — same ui-store path as the macOS TitlebarNav
 			    cluster, so it stays in sync with the SidebarProvider. The brand
 			    logo + name stay in the sidebar header instead of duplicating here. */}
@@ -189,6 +202,48 @@ export function WindowTitlebar({
 					<DropdownMenuItem onSelect={act("help.about")}>About Agent Orchestrator</DropdownMenuItem>
 				</TopMenu>
 			</nav>
+			{isTauri ? <TauriWindowControls /> : null}
 		</header>
+	);
+}
+
+// Tauri-only: paints the minimize/maximize-restore/close buttons that Electron
+// otherwise draws natively via the Windows Controls Overlay (win32) or native
+// decorations (Linux). Wired straight to the Tauri window API rather than the
+// `menu:action` bridge command, matching this task's window-chrome spec.
+function TauriWindowControls() {
+	return (
+		<div className="window-titlebar__controls">
+			<button
+				aria-label="Minimize"
+				className="window-titlebar__control-btn"
+				onClick={() => {
+					void import("@tauri-apps/api/window").then(({ getCurrentWindow }) => getCurrentWindow().minimize());
+				}}
+				type="button"
+			>
+				<Minus aria-hidden="true" className="window-titlebar__control-icon" />
+			</button>
+			<button
+				aria-label="Maximize / Restore"
+				className="window-titlebar__control-btn"
+				onClick={() => {
+					void import("@tauri-apps/api/window").then(({ getCurrentWindow }) => getCurrentWindow().toggleMaximize());
+				}}
+				type="button"
+			>
+				<Square aria-hidden="true" className="window-titlebar__control-icon" />
+			</button>
+			<button
+				aria-label="Close"
+				className="window-titlebar__control-btn window-titlebar__control-btn--close"
+				onClick={() => {
+					void import("@tauri-apps/api/window").then(({ getCurrentWindow }) => getCurrentWindow().close());
+				}}
+				type="button"
+			>
+				<X aria-hidden="true" className="window-titlebar__control-icon" />
+			</button>
+		</div>
 	);
 }

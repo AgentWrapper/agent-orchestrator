@@ -2,7 +2,6 @@ import type {
 	IpcMain,
 	IpcMainEvent,
 	IpcMainInvokeEvent,
-	Rectangle,
 	Session,
 	View,
 	WebContents,
@@ -17,30 +16,14 @@ import type {
 } from "../shared/browser-annotations";
 import { attachAppShortcuts } from "./app-shortcuts";
 import type { KeybindingOverrides } from "../shared/shortcuts";
+import type {
+	BrowserBoundsInput,
+	BrowserNavigateInput,
+	BrowserNavState,
+	BrowserRect,
+} from "../shared/bridge-types";
 
-export type BrowserRect = Pick<Rectangle, "x" | "y" | "width" | "height">;
-
-export type BrowserNavState = {
-	viewId: string;
-	url: string;
-	title: string;
-	canGoBack: boolean;
-	canGoForward: boolean;
-	isLoading: boolean;
-	error?: string;
-};
-
-type BrowserBoundsInput = {
-	viewId: string;
-	rect: BrowserRect;
-	visible: boolean;
-	parked?: boolean;
-};
-
-type BrowserNavigateInput = {
-	viewId: string;
-	url: string;
-};
+export type { BrowserRect, BrowserNavState } from "../shared/bridge-types";
 
 type BrowserWebContents = Pick<
 	WebContents,

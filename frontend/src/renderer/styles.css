@@ -1311,12 +1311,18 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	gap: 13px;
 }
 
-/* Windows custom title bar (WindowTitlebar): the app paints the sidebar toggle
- * + menu on one row while Electron overlays the native min/max/close buttons on
- * the right. Height must match TITLEBAR_HEIGHT + the Window Controls Overlay
- * height in main.ts so the native buttons line up. The whole strip is the
- * window-drag region; interactive children opt out with
- * -webkit-app-region: no-drag. */
+/* Custom title bar (WindowTitlebar): the app paints the sidebar toggle + menu
+ * on one row. Under Electron this only mounts on Windows, which overlays its
+ * own native min/max/close buttons on the right (height must match
+ * TITLEBAR_HEIGHT + the Window Controls Overlay height in main.ts so the
+ * native buttons line up); under Tauri it also mounts on Linux, and both
+ * platforms get the app-drawn .window-titlebar__controls cluster instead
+ * (decorations: false leaves no native chrome to fall back on). The whole
+ * strip is the window-drag region: `-webkit-app-region: drag` is the
+ * Electron mechanism (CSS property, kept for that runtime), while Tauri reads
+ * the `data-tauri-drag-region` attribute set in WindowTitlebar.tsx instead —
+ * that property does nothing under Tauri. Interactive children opt out by
+ * simply not carrying either. */
 .window-titlebar {
 	display: flex;
 	height: 36px;
@@ -1383,6 +1389,44 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 
 .window-titlebar__menu {
 	min-width: 200px;
+}
+
+/* Tauri-only (see TauriWindowControls in WindowTitlebar.tsx): Electron paints
+ * these natively (Windows Controls Overlay on win32, native decorations on
+ * Linux), but Tauri's decorations: false leaves no native chrome, so the app
+ * must draw its own minimize/maximize-restore/close cluster here. */
+.window-titlebar__controls {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	margin-left: auto;
+}
+
+.window-titlebar__control-btn {
+	display: grid;
+	place-items: center;
+	width: 32px;
+	height: 28px;
+	border-radius: 6px;
+	color: var(--fg-muted);
+	transition:
+		background-color 0.12s ease,
+		color 0.12s ease;
+}
+
+.window-titlebar__control-btn:hover {
+	background: color-mix(in srgb, var(--fg) 8%, transparent);
+	color: var(--fg);
+}
+
+.window-titlebar__control-btn--close:hover {
+	background: #e81123;
+	color: #fff;
+}
+
+.window-titlebar__control-icon {
+	width: 13px;
+	height: 13px;
 }
 
 .topbar-project-pills-group {

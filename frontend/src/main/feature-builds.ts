@@ -39,16 +39,8 @@ const FEATURE_BUILD_MARKER = "<!-- ao-feature-build:";
 // cleanup workflow's 7-day expiry sweep so the app and CI agree on liveness.
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
-export interface FeatureBuild {
-	pr: number;
-	title: string;
-	base: string;
-	sha: string;
-	slug: string;
-	/** The version/tag of the build (e.g. "1.2.3-pr2270.0"). */
-	buildId: string;
-	publishedAt: string;
-}
+export type { FeatureBuild } from "../shared/bridge-types";
+import type { FeatureBuild } from "../shared/bridge-types";
 
 /**
  * Parse a version string for a feature-build prerelease identifier.

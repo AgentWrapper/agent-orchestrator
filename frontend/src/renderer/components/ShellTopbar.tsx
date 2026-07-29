@@ -133,7 +133,7 @@ export function ShellTopbar() {
 	};
 
 	return (
-		<header className={topbarHeaderClass} style={dragStyle}>
+		<header className={topbarHeaderClass} data-tauri-drag-region={isMac ? true : undefined} style={dragStyle}>
 			<div className="flex min-w-0 items-center gap-3">
 				{isSessionRoute && isOrchestrator ? (
 					<div className="inline-flex min-w-0 items-center gap-2">
