@@ -1,0 +1,35 @@
+services:
+  - type: web
+    name: ao-cloud
+    runtime: docker
+    dockerfilePath: ./ao-cloud/docker/control-plane.Dockerfile
+    dockerContext: .
+    healthCheckPath: /readyz
+    autoDeploy: false
+    envVars:
+      - key: AO_CLOUD_LISTEN_ADDR
+        value: 0.0.0.0:10000
+      - key: AO_CLOUD_PUBLIC_URL
+        sync: false
+      - key: AO_WEB_PUBLIC_URL
+        sync: false
+      - key: AO_DATABASE_URL
+        sync: false
+      - key: AO_DATABASE_DIRECT_URL
+        sync: false
+      - key: AO_SUPABASE_URL
+        sync: false
+      - key: AO_SUPABASE_ANON_KEY
+        sync: false
+      - key: AO_DAYTONA_API_URL
+        value: https://app.daytona.io/api
+      - key: AO_DAYTONA_API_KEY
+        sync: false
+      - key: AO_DAYTONA_TARGET
+        value: us
+      - key: AO_DAYTONA_WORKER_SNAPSHOT
+        sync: false
+      - key: AO_ENCRYPTION_KEY
+        sync: false
+      - key: AO_WORKER_SIGNING_KEY
+        sync: false

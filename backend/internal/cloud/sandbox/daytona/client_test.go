@@ -1,0 +1,127 @@
+package daytona
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	clouddomain "github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
+	cloudsandbox "github.com/aoagents/agent-orchestrator/backend/internal/cloud/sandbox"
+)
+
+func TestCreateMapsProviderNeutralSpec(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/sandbox" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer secret" {
+			t.Fatalf("Authorization = %q", got)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if body["target"] != "us" || body["cpu"] != float64(4) || body["memory"] != float64(8) {
+			t.Fatalf("body = %#v", body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"sandbox-one",
+			"name":"ao-session-one",
+			"state":"creating",
+			"desiredState":"started",
+			"target":"us",
+			"cpu":4,
+			"memory":8,
+			"disk":40
+		}`))
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "secret", "us", server.Client())
+	environment, err := client.Create(context.Background(), cloudsandbox.Spec{
+		Name:            "ao-session-one",
+		SessionID:       "session-one",
+		ResourceProfile: clouddomain.DefaultResourceProfile(),
+		Labels:          map[string]string{"ao.session_id": "session-one"},
+		AutoStopMinutes: 30,
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if environment.ID != "sandbox-one" || environment.Resource.Disk != 40 {
+		t.Fatalf("environment = %#v", environment)
+	}
+}
+
+func TestLifecycleEscapesSandboxID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.EscapedPath() != "/sandbox/id%2Fwith%2Fslash/stop" {
+			t.Fatalf("path = %q", r.URL.EscapedPath())
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "secret", "us", server.Client())
+	if err := client.Stop(context.Background(), cloudsandbox.ID("id/with/slash")); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+}
+
+func TestBootstrapWorkerUploadsAndLaunchesBinary(t *testing.T) {
+	var prepared, uploaded, launched bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/sandbox-one/files/upload":
+			uploaded = true
+			if r.URL.Query().Get("path") != "/home/daytona/.local/bin/ao-worker" {
+				t.Fatalf("upload path = %q", r.URL.Query().Get("path"))
+			}
+			if err := r.ParseMultipartForm(1 << 20); err != nil {
+				t.Fatalf("ParseMultipartForm() error = %v", err)
+			}
+			file, _, err := r.FormFile("file")
+			if err != nil {
+				t.Fatalf("FormFile() error = %v", err)
+			}
+			defer file.Close()
+			w.WriteHeader(http.StatusOK)
+		case "/sandbox-one/process/execute":
+			var input struct {
+				Command     string            `json:"command"`
+				Environment map[string]string `json:"env"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Fatalf("decode execute body: %v", err)
+			}
+			if strings.Contains(input.Command, "mkdir -p") {
+				prepared = true
+			} else {
+				launched = true
+				if input.Environment["AO_WORKER_BOOTSTRAP_TOKEN"] != "ticket" {
+					t.Fatalf("execute environment = %#v", input.Environment)
+				}
+			}
+			_, _ = w.Write([]byte(`{"exitCode":0,"result":""}`))
+		default:
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	client := New(server.URL, "secret", "us", server.Client()).WithToolboxURL(server.URL)
+	if err := client.BootstrapWorker(context.Background(), "sandbox-one", cloudsandbox.WorkerBootstrap{
+		Binary: []byte("worker"),
+		Environment: map[string]string{
+			"AO_WORKER_BOOTSTRAP_TOKEN": "ticket",
+		},
+	}); err != nil {
+		t.Fatalf("BootstrapWorker() error = %v", err)
+	}
+	if !prepared || !uploaded || !launched {
+		t.Fatalf("prepared=%v uploaded=%v launched=%v", prepared, uploaded, launched)
+	}
+}

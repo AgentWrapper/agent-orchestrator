@@ -1,0 +1,193 @@
+# AO Cloud
+
+AO Cloud is a separately deployable Go control plane plus a headless worker
+image. It shares AO's domain and agent adapters while keeping the local
+loopback daemon, SQLite, worktrees, and Electron lifecycle unchanged.
+
+## Components
+
+```text
+Vercel web app
+    → Render ao-cloud
+    → Supabase Auth + PostgreSQL
+    → Daytona sandbox per session
+    → ao-worker + Claude Code/Codex/Cursor
+```
+
+## Local development
+
+Prerequisites:
+
+- Go, Node.js, npm, PostgreSQL 17, Docker
+- authenticated `gh` CLI for the development Git credential broker
+- Supabase project with Google Auth enabled
+- Daytona API key
+
+Create local databases once:
+
+```bash
+brew services start postgresql@17
+createdb ao_cloud_dev
+createdb ao_cloud_test
+```
+
+Copy `ao-cloud/.env.example` to the gitignored `.env.cloud.local`, then add
+credentials. Generate local encryption/signing keys with:
+
+```bash
+openssl rand -hex 32
+openssl rand -hex 32
+```
+
+Build the Linux worker used for local-to-Daytona validation:
+
+```bash
+npm run cloud:build-worker
+```
+
+Start the control plane:
+
+```bash
+npm run cloud:server
+```
+
+Start the website in a second terminal:
+
+```bash
+npm run cloud:web
+```
+
+Open:
+
+```text
+http://127.0.0.1:5174/app
+```
+
+The Go service applies the embedded `ao_*` PostgreSQL migrations at startup.
+The website uses the Supabase public/anon key only. Service-role, database,
+Daytona, encryption, worker-signing, and Git credentials remain server-side.
+
+## Supabase configuration
+
+1. Enable Google under Authentication → Providers.
+2. Configure the Google client ID and secret in the Supabase dashboard.
+3. Add local redirect:
+
+   ```text
+   http://127.0.0.1:5174/auth/callback
+   ```
+
+4. Add the Vercel callback after deployment.
+5. Obtain the pooled runtime and direct migration PostgreSQL URLs from the
+   Supabase Connect panel.
+6. Set `AO_DATABASE_URL` to the runtime connection and apply/verify migrations
+   with the direct connection before production rollout.
+
+The control plane validates HS256 Supabase access tokens through
+`/auth/v1/user`. It does not locally trust or expose the legacy JWT signing
+secret.
+
+## Development GitHub mode
+
+`AO_GITHUB_AUTH_MODE=local-gh` uses the host's current `gh auth token`.
+Sandboxes never receive that long-lived token. Git operations use an
+AO-authenticated repository proxy scoped to the session's registered
+repository.
+
+This mode works only while the control plane runs on the developer machine.
+Render requires the planned GitHub App credential source.
+
+## Daytona
+
+The default AO-managed provider uses:
+
+```text
+DAYTONA_API_URL=https://app.daytona.io/api
+DAYTONA_TARGET=us
+```
+
+The current account exposes `daytona-large` at 4 vCPU, 8 GiB memory, and 10 GiB
+disk. AO retains the requested 40-GiB profile, but a custom snapshot/account
+limit is required before Daytona can actually allocate 40 GiB.
+
+Production should build and publish
+`ao-cloud/docker/worker.Dockerfile`, create a Daytona snapshot from it, and
+set `AO_DAYTONA_WORKER_SNAPSHOT` to that snapshot. During local development,
+`AO_WORKER_BINARY_PATH` lets the reconciler upload the compiled worker into a
+standard Daytona sandbox.
+
+## Tests
+
+```bash
+npm run cloud:test
+npm --prefix frontend/src/landing test
+npm --prefix frontend/src/landing run typecheck
+npm --prefix frontend/src/landing run build
+```
+
+Run the live Daytona lifecycle gate explicitly:
+
+```bash
+set -a
+. ./.env.cloud.local
+set +a
+AO_DAYTONA_LIVE_TEST=1 go test ./backend/internal/cloud/sandbox/daytona \
+  -run TestLiveCreateGetDelete -v
+```
+
+The live test creates and deletes one sandbox. Ordinary test runs never create
+provider resources.
+
+## Render deployment
+
+`render.yaml` defines the always-on Go service. In Render:
+
+1. Create a Blueprint from this repository.
+2. Supply every `sync: false` variable.
+3. Set `AO_CLOUD_PUBLIC_URL` to the Render HTTPS service URL.
+4. Set `AO_WEB_PUBLIC_URL` to the final Vercel origin.
+5. Set `AO_DATABASE_URL` to Supabase's pooled PostgreSQL URL.
+6. Generate 64-character hexadecimal encryption and worker-signing keys.
+7. Use a production Daytona key and GitHub App mode.
+8. Verify `/readyz` before allowing web traffic.
+
+Render builds `ao-cloud/docker/control-plane.Dockerfile`. The service keeps
+worker WebSockets and lifecycle reconciliation alive independently of Vercel.
+
+## Vercel deployment
+
+Import the repository into Vercel with:
+
+```text
+Root Directory: frontend/src/landing
+Framework: Next.js
+```
+
+Set:
+
+```text
+NEXT_PUBLIC_SUPABASE_URL
+NEXT_PUBLIC_SUPABASE_ANON_KEY
+NEXT_PUBLIC_API_URL=https://YOUR-RENDER-SERVICE
+```
+
+Then add:
+
+```text
+https://YOUR-VERCEL-DOMAIN/auth/callback
+```
+
+to the Supabase Auth redirect allowlist.
+
+## Current external blockers
+
+- Google Auth is disabled in the supplied Supabase project.
+- No Supabase PostgreSQL connection URL/password was supplied, so hosted schema
+  migration cannot yet be applied or verified; local PostgreSQL is verified.
+- Daytona lifecycle create/get/delete is verified, as are worker upload and
+  launch mechanics. The tested Daytona sandbox reset all outbound HTTPS
+  connections, including `example.com`, despite `networkBlockAll=false`; an
+  outbound worker connection requires that provider egress issue to clear or
+  the control plane to be tested from a provider-reachable production URL.
+- Render and Vercel account access has not been supplied, so deployment itself
+  remains an operator step.

@@ -1,0 +1,94 @@
+// Package events owns committed cloud-event fanout. PostgreSQL is authoritative;
+// this in-process bus is only the live edge after durable append.
+package events
+
+import (
+	"context"
+	"encoding/json"
+	"sync"
+
+	clouddomain "github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
+)
+
+type store interface {
+	AppendEvent(context.Context, clouddomain.AccountID, clouddomain.SessionID, string, json.RawMessage) (clouddomain.Event, error)
+	EventsAfter(context.Context, clouddomain.AccountID, clouddomain.SessionID, int64, int) ([]clouddomain.Event, error)
+}
+
+// Service appends durable events and fans them out to live subscribers.
+type Service struct {
+	store store
+	mu    sync.RWMutex
+	next  uint64
+	subs  map[uint64]subscription
+}
+
+type subscription struct {
+	accountID clouddomain.AccountID
+	sessionID clouddomain.SessionID
+	deliver   func(clouddomain.Event)
+}
+
+// New creates an event service backed by store.
+func New(store store) *Service {
+	return &Service{store: store, subs: make(map[uint64]subscription)}
+}
+
+// Append durably records an event and publishes it to live subscribers.
+func (s *Service) Append(
+	ctx context.Context,
+	accountID clouddomain.AccountID,
+	sessionID clouddomain.SessionID,
+	eventType string,
+	payload json.RawMessage,
+) (clouddomain.Event, error) {
+	event, err := s.store.AppendEvent(ctx, accountID, sessionID, eventType, payload)
+	if err != nil {
+		return clouddomain.Event{}, err
+	}
+	s.publish(accountID, event)
+	return event, nil
+}
+
+// Replay returns durable session events after the given sequence.
+func (s *Service) Replay(
+	ctx context.Context,
+	accountID clouddomain.AccountID,
+	sessionID clouddomain.SessionID,
+	after int64,
+	limit int,
+) ([]clouddomain.Event, error) {
+	return s.store.EventsAfter(ctx, accountID, sessionID, after, limit)
+}
+
+// Subscribe registers a live event callback and returns its unsubscribe function.
+func (s *Service) Subscribe(
+	accountID clouddomain.AccountID,
+	sessionID clouddomain.SessionID,
+	deliver func(clouddomain.Event),
+) func() {
+	s.mu.Lock()
+	id := s.next
+	s.next++
+	s.subs[id] = subscription{accountID: accountID, sessionID: sessionID, deliver: deliver}
+	s.mu.Unlock()
+	return func() {
+		s.mu.Lock()
+		delete(s.subs, id)
+		s.mu.Unlock()
+	}
+}
+
+func (s *Service) publish(accountID clouddomain.AccountID, event clouddomain.Event) {
+	s.mu.RLock()
+	deliveries := make([]func(clouddomain.Event), 0)
+	for _, subscriber := range s.subs {
+		if subscriber.accountID == accountID && subscriber.sessionID == event.SessionID {
+			deliveries = append(deliveries, subscriber.deliver)
+		}
+	}
+	s.mu.RUnlock()
+	for _, deliver := range deliveries {
+		deliver(event)
+	}
+}
