@@ -18,10 +18,17 @@ func authorizedAgentsJSON(agent string) string {
 	return `{"supported":[` + info + `],"installed":[` + info + `],"authorized":[` + info + `]}`
 }
 
+func clearSpawnContextEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("AO_PROJECT_ID", "")
+	t.Setenv("AO_SESSION_ID", "")
+}
+
 // TestSpawnCommand_MissingProjectContext asserts `ao spawn` gives a project
 // setup hint when neither --project, AO_PROJECT_ID, nor cwd can resolve one.
 func TestSpawnCommand_MissingProjectContext(t *testing.T) {
 	cfg := setConfigEnv(t)
+	clearSpawnContextEnv(t)
 	var requests []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		appendPrimaryRequest(&requests, r)
@@ -289,6 +296,7 @@ func TestSpawnAOSessionIDFailureRequiresProject(t *testing.T) {
 
 func TestSpawnResolvesProjectFromCWD(t *testing.T) {
 	cfg := setConfigEnv(t)
+	clearSpawnContextEnv(t)
 	repo := filepath.Join(t.TempDir(), "repo")
 	subdir := filepath.Join(repo, "pkg")
 	if err := os.MkdirAll(subdir, 0o755); err != nil {
@@ -336,6 +344,7 @@ func TestSpawnResolvesProjectFromCWD(t *testing.T) {
 
 func TestSpawnDefaultsToScratchWhenOnlyActiveProject(t *testing.T) {
 	cfg := setConfigEnv(t)
+	clearSpawnContextEnv(t)
 	var requests []string
 	var req spawnRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

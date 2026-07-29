@@ -5,8 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -299,7 +302,10 @@ func readSSEDataLine(t *testing.T, resp *http.Response) string {
 
 func openTestPostgresStore(ctx context.Context, t *testing.T) *postgres.Store {
 	t.Helper()
-	ctr, err := tcpostgres.Run(ctx,
+	skipIfDockerUnavailable(t)
+	startCtx, cancelStart := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancelStart()
+	ctr, err := tcpostgres.Run(startCtx,
 		"postgres:16-alpine",
 		tcpostgres.WithDatabase("ao_cloud_test"),
 		tcpostgres.WithUsername("ao"),
@@ -313,11 +319,13 @@ func openTestPostgresStore(ctx context.Context, t *testing.T) *postgres.Store {
 		t.Fatalf("start postgres: %v", err)
 	}
 	t.Cleanup(func() {
-		if err := ctr.Terminate(context.Background()); err != nil {
+		stopCtx, cancelStop := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancelStop()
+		if err := ctr.Terminate(stopCtx); err != nil {
 			t.Logf("terminate postgres container: %v", err)
 		}
 	})
-	dsn, err := ctr.ConnectionString(ctx, "sslmode=disable")
+	dsn, err := ctr.ConnectionString(startCtx, "sslmode=disable")
 	if err != nil {
 		t.Fatalf("postgres connection string: %v", err)
 	}
@@ -327,6 +335,52 @@ func openTestPostgresStore(ctx context.Context, t *testing.T) *postgres.Store {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	return store
+}
+
+func skipIfDockerUnavailable(t *testing.T) {
+	t.Helper()
+	network, address, ok := dockerPingTarget()
+	if !ok {
+		t.Skip("docker host is not a supported unix/tcp endpoint for postgres integration test")
+	}
+	transport := &http.Transport{
+		DialContext: (&net.Dialer{Timeout: 2 * time.Second}).DialContext,
+	}
+	if network == "unix" {
+		socketPath := address
+		transport.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, network, socketPath)
+		}
+		address = "docker"
+	}
+	client := &http.Client{Transport: transport, Timeout: 3 * time.Second}
+	resp, err := client.Get("http://" + address + "/_ping") //nolint:noctx // client timeout bounds this preflight.
+	if err != nil {
+		t.Skipf("docker unavailable for postgres integration test: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Skipf("docker unavailable for postgres integration test: ping status %d", resp.StatusCode)
+	}
+}
+
+func dockerPingTarget() (network, address string, ok bool) {
+	host := strings.TrimSpace(os.Getenv("DOCKER_HOST"))
+	if host == "" {
+		return "unix", "/var/run/docker.sock", true
+	}
+	u, err := url.Parse(host)
+	if err != nil {
+		return "", "", false
+	}
+	switch u.Scheme {
+	case "unix":
+		return "unix", u.Path, u.Path != ""
+	case "tcp", "http":
+		return "tcp", u.Host, u.Host != ""
+	default:
+		return "", "", false
+	}
 }
 
 func seedProjectAndSession(ctx context.Context, t *testing.T, store *postgres.Store, projectName, sessionName string, now time.Time) {

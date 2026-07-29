@@ -390,6 +390,10 @@ func setConfigEnv(t *testing.T) testConfig {
 	t.Setenv("AO_PORT", "3001")
 	t.Setenv("AO_REQUEST_TIMEOUT", "")
 	t.Setenv("AO_SHUTDOWN_TIMEOUT", "")
+	t.Setenv("AO_PROJECT_ID", "")
+	t.Setenv("AO_API_BASE", "")
+	t.Setenv("AO_API_TOKEN", "")
+	t.Setenv("AO_RUNTIME_LAUNCH_ID", "")
 	return cfg
 }
 

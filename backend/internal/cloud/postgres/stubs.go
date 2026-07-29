@@ -109,14 +109,3 @@ func (s *Store) ListTelemetryEventsSince(context.Context, time.Time, int64) ([]a
 func (s *Store) PruneTelemetryEventsBefore(context.Context, time.Time, int64) (int64, error) {
 	return 0, nil
 }
-
-func (s *Store) RecordWorkerIdle(context.Context, domain.SessionRecord, domain.WorkerIdleEvent) error {
-	return nil
-}
-func (s *Store) ListPendingWorkerIdleEventsByProject(context.Context, domain.ProjectID) ([]domain.WorkerIdleEvent, error) {
-	return []domain.WorkerIdleEvent{}, nil
-}
-func (s *Store) ListPendingWorkerIdleEvents(context.Context) ([]domain.WorkerIdleEvent, error) {
-	return []domain.WorkerIdleEvent{}, nil
-}
-func (s *Store) MarkWorkerIdleEventDelivered(context.Context, string, time.Time) error { return nil }

@@ -114,8 +114,8 @@ func TestHooks_SessionEndReportsExited(t *testing.T) {
 
 func TestHooks_ThreadsRuntimeLaunchID(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "ao-7")
-	t.Setenv("AO_RUNTIME_LAUNCH_ID", "launch-3")
 	cfg := setConfigEnv(t)
+	t.Setenv("AO_RUNTIME_LAUNCH_ID", "launch-3")
 	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
 	writeRunFileFor(t, cfg, srv)
 
