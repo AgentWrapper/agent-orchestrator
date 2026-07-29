@@ -1,6 +1,17 @@
 # T9 (M4) — Painel de browser embutido (multi-webview)
 
-> A MAIOR tarefa. Antes de implementar tudo, rodar o SPIKE (passo 1) e reportar; se o spike falhar no macOS, parar e devolver ao orquestrador.
+> A MAIOR tarefa.
+>
+> **SPIKE JÁ APROVADO (2026-07-29)** — passo 1 está CONCLUÍDO, não repetir. Resultado:
+> ~19–25ms/snapshot (~50fps) em release no macOS, via `src-tauri/src/browser_spike.rs`.
+> **Contrato de concorrência load-bearing** (a primeira tentativa travou por violá-lo):
+> `takeSnapshot`/`CapturePreview`/`snapshot` são INICIADOS na main thread
+> (`with_webview`) e o completion handler é entregue pelo run loop da main thread —
+> NUNCA bloquear a main thread esperando o resultado; iniciar na main, receber os
+> bytes numa thread/tarefa de fundo (ver `snapshot_jpeg_blocking` no spike, que é a
+> referência a seguir em `browser/capture/*.rs`). O mesmo padrão vale para toda API
+> nativa assíncrona nas 3 plataformas. Depois de portar para `browser/capture/macos.rs`,
+> deletar `browser_spike.rs`, o example e o comando `browser_capture_spike` do lib.rs.
 
 ## Objective
 Reimplement the Electron `WebContentsView` browser panel in Tauri: child webviews per session, bounds sync, nav hardening, back/forward/stop, JPEG capture, annotation overlay via init script, mirror-by-snapshot-streaming.

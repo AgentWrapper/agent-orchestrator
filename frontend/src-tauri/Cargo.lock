@@ -13,8 +13,14 @@ name = "agent-orchestrator-desktop"
 version = "0.1.0"
 dependencies = [
  "arboard",
+ "block2",
  "dirs 5.0.1",
+ "image",
  "interprocess",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "objc2-web-kit",
  "serde",
  "serde_json",
  "tauri",
@@ -26,6 +32,9 @@ dependencies = [
  "tauri-plugin-process",
  "tauri-plugin-single-instance",
  "tokio",
+ "webkit2gtk",
+ "webview2-com",
+ "windows",
 ]
 
 [[package]]
@@ -1824,6 +1833,8 @@ dependencies = [
  "num-traits",
  "png 0.18.1",
  "tiff",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]

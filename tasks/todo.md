@@ -3,8 +3,9 @@
 Wave 1: [T1 scaffold src-tauri (M0), T2 `ao daemon ensure` Go (M1), T3 CORS tauri origins]
 → Wave 2: [T4 bridge-types + tauri-bridge.ts, T5 módulo daemon Rust, T6 comandos Rust settings/misc]
 → Wave 3: [T6 comandos Rust misc] + verificação cega T4/T5
-→ Wave 4a: [T7 chrome janela (executando), T8 atalhos renderer (verificado: PASS)]
-→ Wave 4b: [T9 painel browser (spike primeiro; isolado — conflita em lib.rs/tauri-bridge)]
+→ Wave 4a: [T7 PASS (FAIL do verificador em preload/src/main era falso positivo — diffs do T4; arbitrado), T8 PASS]
+   Checkpoint commit d6ab73e80 no branch tauri-migration (T1–T8).
+→ Wave 4b: [T9 painel browser (despachado; spike primeiro)]
 → Wave 5: [T10 updater] → Wave 6: [T11 CI/release] → Wave 7: [T12 cleanup Electron, só após validação manual]
 
 Specs completas em tasks/specs/T4..T12. Handoff: um orquestrador novo precisa apenas de

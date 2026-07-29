@@ -27,3 +27,40 @@ interprocess = { version = "2", features = ["tokio"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 arboard = "3"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-web-kit = { version = "0.3", default-features = false, features = [
+    "WKWebView",
+    "WKWebViewConfiguration",
+    "WKUserContentController",
+    "WKSnapshotConfiguration",
+    "block2",
+] }
+objc2-foundation = { version = "0.3", default-features = false, features = [
+    "std",
+    "NSData",
+    "NSError",
+    "NSObject",
+    "NSGeometry",
+] }
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+    "std",
+    "NSImage",
+] }
+block2 = "0.6"
+image = { version = "0.25", default-features = false, features = ["jpeg", "tiff"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+webview2-com = "0.38"
+windows = { version = "0.61", features = ["Win32_Graphics_Gdi"] }
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+
+[target.'cfg(target_os = "linux")'.dependencies.image]
+version = "0.25"
+default-features = false
+features = ["jpeg"]
+
+[target.'cfg(target_os = "linux")'.dependencies.webkit2gtk]
+version = "2"
+features = ["v2_40"]

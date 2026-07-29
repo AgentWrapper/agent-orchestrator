@@ -4,6 +4,8 @@ mod misc;
 mod paths;
 mod settings;
 mod shell_env;
+#[cfg(target_os = "macos")]
+pub mod browser_spike;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -41,6 +43,8 @@ pub fn run() {
             misc::notifications_show,
             misc::clipboard_write_primary,
             misc::app_get_version,
+            #[cfg(target_os = "macos")]
+            browser_spike::browser_capture_spike,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
