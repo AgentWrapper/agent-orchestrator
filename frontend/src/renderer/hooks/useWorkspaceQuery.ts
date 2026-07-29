@@ -141,8 +141,8 @@ async function mergeCloudSessions(workspaces: WorkspaceSummary[]): Promise<void>
 
 	const byProject = new Map(workspaces.map((w) => [w.id, w]));
 
-	// Lazily materialize a synthetic board group the first time a card needs it,
-	// so an empty group never shows.
+	// Lazily materialize a synthetic board group only when a card actually lands in
+	// it, so an empty "Cloud" / "Shared with me" group never shows.
 	const ensureGroup = (id: string, name: string): WorkspaceSummary => {
 		let group = byProject.get(id);
 		if (!group) {
@@ -153,57 +153,58 @@ async function mergeCloudSessions(workspaces: WorkspaceSummary[]): Promise<void>
 		return group;
 	};
 
-	// Which board group a cloud session's card belongs to. Shared imports have no
-	// local project, so they live under "Shared with me". An OWNED session goes
-	// under its local project when that project is loaded; when it isn't (deleted,
-	// on another machine, or an id mismatch) it falls back to the "Cloud" group.
-	// The control plane is the durable source of owned sessions, so one must never
-	// be silently dropped just because its local project isn't present.
-	const groupFor = (ref: CloudSessionRef): WorkspaceSummary => {
-		if (ref.shared) return ensureGroup(SHARED_PROJECT_ID, SHARED_PROJECT_NAME);
-		return byProject.get(ref.localProjectId) ?? ensureGroup(CLOUD_PROJECT_ID, CLOUD_PROJECT_NAME);
+	// Which board group a cloud session's card belongs to (pure — does not create
+	// the group). Shared imports live under "Shared with me". An OWNED session goes
+	// under its local project when loaded, else the synthetic "Cloud" group, so a
+	// control-plane session is never dropped for a missing local project.
+	const groupIdName = (ref: CloudSessionRef): { id: string; name: string } => {
+		if (ref.shared) return { id: SHARED_PROJECT_ID, name: SHARED_PROJECT_NAME };
+		const local = byProject.get(ref.localProjectId);
+		return local ? { id: local.id, name: local.name } : { id: CLOUD_PROJECT_ID, name: CLOUD_PROJECT_NAME };
 	};
 
 	await Promise.all(
 		refs.map(async (ref) => {
-			const target = groupFor(ref);
 			const boardId = boardIdForRef(ref);
-			if (target.sessions.some((s) => s.id === boardId)) return; // de-dupe by unique board id
+			const { id: gid, name: gname } = groupIdName(ref);
+			if (byProject.get(gid)?.sessions.some((s) => s.id === boardId)) return; // de-dupe by unique board id
 
-			// Terminated (killed): sandbox is gone — render an archived card from
-			// cached fields, exactly like a local terminated session. No live fetch.
-			if (!ref.shared && ref.status === "terminated") {
-				target.sessions.push(terminatedCard(ref, target.id, target.name, boardId));
-				return;
-			}
-			// Still provisioning / failed → show a placeholder card (no sandbox
-			// session exists yet). Owned sessions carry a status; shared are ready.
-			if (!ref.shared && ref.status && ref.status !== "ready") {
-				target.sessions.push(provisioningCard(ref, target.id, target.name, boardId));
-				return;
-			}
-			// Live view from the sandbox. If it can't be fetched this tick (offline,
-			// waking, slow), still render a card from the control-plane registry
-			// fields — the durable source — so a cloud session persists across
-			// reconnects/restarts instead of vanishing. The live view fills in detail
-			// on the next successful tick.
-			let dto: SessionView | undefined;
-			try {
-				dto = await fetchCloudSessionDto(ref);
-			} catch {
-				dto = undefined;
-			}
-			target.sessions.push(
-				dto
-					? toWorkspaceSession(dto, target.id, target.name, {
-							previewUrl: ref.previewUrl,
-							boardId,
-							readonly: ref.readonly,
-						})
-					: cloudRefCard(ref, target.id, target.name, boardId),
-			);
+			const card = await buildCloudCard(ref, gid, gname, boardId);
+			if (!card) return; // shared session with no reachable live view → no card (see buildCloudCard)
+			ensureGroup(gid, gname).sessions.push(card);
 		}),
 	);
+}
+
+// buildCloudCard resolves a cloud ref into a board card, or null when there is
+// nothing to show. Owned sessions always yield a card: archived when terminated,
+// a placeholder while provisioning, and a registry-only fallback when the live
+// view is briefly unavailable (durable source; the owner can re-mint). A SHARED
+// session yields null when its live view can't be fetched — the viewer then gets
+// SessionView's bounded "connecting → Retry / Remove shared session" escape
+// instead of a stale card that reattaches the terminal to a dead sandbox forever.
+async function buildCloudCard(
+	ref: CloudSessionRef,
+	projectId: string,
+	projectName: string,
+	boardId: string,
+): Promise<WorkspaceSession | null> {
+	if (!ref.shared && ref.status === "terminated") {
+		return terminatedCard(ref, projectId, projectName, boardId);
+	}
+	if (!ref.shared && ref.status && ref.status !== "ready") {
+		return provisioningCard(ref, projectId, projectName, boardId);
+	}
+	let dto: SessionView | undefined;
+	try {
+		dto = await fetchCloudSessionDto(ref);
+	} catch {
+		dto = undefined;
+	}
+	if (dto) {
+		return toWorkspaceSession(dto, projectId, projectName, { previewUrl: ref.previewUrl, boardId, readonly: ref.readonly });
+	}
+	return ref.shared ? null : cloudRefCard(ref, projectId, projectName, boardId);
 }
 
 // A card built from control-plane registry fields alone, used when the live

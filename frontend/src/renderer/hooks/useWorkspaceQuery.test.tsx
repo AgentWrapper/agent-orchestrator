@@ -456,6 +456,58 @@ describe("useWorkspaceQuery cloud-session merge", () => {
 		expect(getMock).not.toHaveBeenCalledWith("/api/v1/cloud/sessions");
 	});
 
+	it("shows a shared session under 'Shared with me' when its live view resolves", async () => {
+		localStorage.setItem(
+			"ao.sharedSessions",
+			JSON.stringify([
+				{
+					v: 1,
+					previewUrl: "https://3001-live.daytonaproxy01.net",
+					sandboxId: "shX",
+					sessionId: "runbookai-1",
+					harness: "claude-code",
+					projectName: "runbookai",
+					mode: "readonly",
+				},
+			]),
+		);
+		postMock.mockResolvedValue({ data: { ok: true, status: 200, json: { session: liveDto } }, error: undefined });
+		routeCloud({ projects: [], owned: [] });
+
+		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
+		await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+		const shared = result.current.data?.find((w) => w.id === "shared-with-me");
+		expect(shared?.name).toBe("Shared with me");
+		expect(shared?.sessions.map((s) => s.id)).toContain("shared-shX");
+	});
+
+	it("renders NO card for a shared session whose sandbox is unreachable (escape UI takes over)", async () => {
+		localStorage.setItem(
+			"ao.sharedSessions",
+			JSON.stringify([
+				{
+					v: 1,
+					previewUrl: "https://3001-dead.daytonaproxy01.net",
+					sandboxId: "shDead",
+					sessionId: "runbookai-1",
+					harness: "claude-code",
+					projectName: "runbookai",
+					mode: "readonly",
+				},
+			]),
+		);
+		postMock.mockResolvedValue({ data: { ok: false, status: 502 }, error: undefined });
+		routeCloud({ projects: [], owned: [] });
+
+		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
+		await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+		// No stale card and no empty group — SessionView's connecting/Remove escape
+		// handles a dead shared sandbox instead of a perpetual terminal reattach.
+		expect(result.current.data?.some((w) => w.id === "shared-with-me")).toBe(false);
+	});
+
 	it("signed IN with a control plane configured: cloud sessions fetched and shown", async () => {
 		controlPlaneUrlMock.mockReturnValue("https://cp.example.com");
 		setCloudSignedIn(true);

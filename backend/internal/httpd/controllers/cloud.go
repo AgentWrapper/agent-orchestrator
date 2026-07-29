@@ -3,6 +3,7 @@ package controllers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -261,6 +262,11 @@ func (c *CloudController) share(w http.ResponseWriter, r *http.Request) {
 	_ = decodeJSON(r, &in) // body optional (defaults: readonly, 24h)
 	res, err := c.Svc.Share(r.Context(), chi.URLParam(r, "sandboxId"), in.TTLSec, in.ProjectName)
 	if err != nil {
+		if errors.Is(err, cloud.ErrSessionNotShareable) {
+			envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "SESSION_NOT_SHAREABLE",
+				"This session can't be shared. It may have ended or is still starting.", nil)
+			return
+		}
 		envelope.WriteError(w, r, err)
 		return
 	}

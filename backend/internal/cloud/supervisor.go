@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -78,6 +79,12 @@ const (
 	StatusFailed       = "failed"
 	StatusTerminated   = "terminated" // killed: sandbox deleted, card kept as archived
 )
+
+// ErrSessionNotShareable is returned by Share when a session isn't in a state
+// that can be shared (terminated, still provisioning, or failed). Handlers map
+// it to 409 so the caller gets a clear "can't share" instead of an opaque 500
+// from a failed preview-URL mint against a dead sandbox.
+var ErrSessionNotShareable = errors.New("cloud: session is not shareable")
 
 // SupervisorConfig wires the supervisor to its environment. APIKey and
 // LinuxBinaryPath are funcs so a missing value is a clear runtime error, not a
@@ -677,6 +684,12 @@ func (s *Supervisor) Share(ctx context.Context, sandboxID string, ttlSec int, pr
 	sess := s.get(sandboxID)
 	if sess == nil {
 		return nil, nil
+	}
+	// Only a live session can be shared. A terminated/provisioning/failed sandbox
+	// has no reachable preview to mint, so reject explicitly rather than let the
+	// signed-URL mint fail with an opaque error.
+	if sess.Status != StatusReady {
+		return nil, ErrSessionNotShareable
 	}
 	if ttlSec <= 0 {
 		ttlSec = 24 * 60 * 60

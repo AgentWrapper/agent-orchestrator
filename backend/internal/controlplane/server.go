@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -328,6 +329,13 @@ func (s *Server) share(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(r.Body).Decode(&in)
 	res, err := s.sup.Share(r.Context(), sandboxID, in.TTLSec, in.ProjectName)
 	if err != nil {
+		if errors.Is(err, cloud.ErrSessionNotShareable) {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error": "conflict", "code": "SESSION_NOT_SHAREABLE",
+				"message": "This session can't be shared. It may have ended or is still starting.",
+			})
+			return
+		}
 		s.writeErr(w, err)
 		return
 	}
