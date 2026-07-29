@@ -21,10 +21,18 @@ type PRFacts struct {
 	UpdatedAt      time.Time
 }
 
-// PRPipelineStatus computes the single-PR pipeline status used both for      ← ADD FROM HERE
+// PRPipelineStatus computes the single-PR pipeline status used both for
 // session status aggregation (service/session) and to gate merge eligibility
 // server-side (service/pr) — a single source of truth so "ready to merge"
 // means the same thing everywhere, per #3064 review.
+//
+// CI == CIUnknown is accepted here (not just CIPassing): a repo with no
+// checks configured reports an absent status rollup as CIUnknown, and
+// rejecting that would permanently disable merge on every such repo. GitHub's
+// own merge endpoint is the real backstop — it already returns 405 for a PR
+// whose required checks haven't passed, mapped to ErrProviderPRNotMergeable —
+// so this local check exists to avoid a pointless round-trip, not to be
+// stricter than GitHub itself.
 func PRPipelineStatus(pr PRFacts) SessionStatus {
 	switch {
 	case pr.CI == CIFailing:
@@ -33,7 +41,7 @@ func PRPipelineStatus(pr PRFacts) SessionStatus {
 		return StatusDraft
 	case pr.Review == ReviewChangesRequest || pr.ReviewComments:
 		return StatusChangesRequested
-	case pr.Mergeability == MergeMergeable && pr.CI == CIPassing:
+	case pr.Mergeability == MergeMergeable && pr.CI != CIPending:
 		return StatusMergeable
 	case pr.Review == ReviewApproved:
 		return StatusApproved

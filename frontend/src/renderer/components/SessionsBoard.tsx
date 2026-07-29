@@ -1088,7 +1088,6 @@ function BoardPRGroup({
 	linksInteractive?: boolean;
 	sessionId: string;
 }) {
-	const mergePR = useMergePR();
 	const showMergeActions = linksInteractive && group.status.label === "open";
 
 	return (
@@ -1110,39 +1109,37 @@ function BoardPRGroup({
 							#{pr.number}
 							</a>
 							) : (
-							<span>#{pr.number}</span>
-							)}
+						<span>#{pr.number}</span>
+					)}
 					{index < group.prs.length - 1 ? "," : null}
-					{showMergeActions ? <MergePRButton mutation={mergePR} pr={pr} sessionId={sessionId} /> : null}
+					{showMergeActions ? <MergePRButton pr={pr} sessionId={sessionId} /> : null}
 				</span>
 			))}
 			<span className={cn("font-medium", group.status.className)}>{group.status.label}</span>
-			{mergePR.isError ? (
-				<span className="basis-full text-2xs text-destructive" role="alert">
-					{mergePR.error instanceof Error ? mergePR.error.message : "Merge failed"}
-				</span>
-			) : null}
 		</span>
 	);
 }
 
-function MergePRButton({
-	mutation,
-	pr,
-	sessionId,
-}: {
-	mutation: ReturnType<typeof useMergePR>;
-	pr: SessionPRSummary;
-	sessionId: string;
-}) {
+function MergePRButton({ pr, sessionId }: { pr: SessionPRSummary; sessionId: string }) {
+	const mutation = useMergePR();
 	const eligible = isPRMergeable(pr);
-	const isThisPending = mutation.isPending && mutation.variables?.pr.number === pr.number;
+	const tooltipText = mutation.isError
+		? mutation.error instanceof Error
+			? mutation.error.message
+			: "Merge failed"
+		: eligible
+			? "Merge this pull request"
+			: mergeDisabledReason(pr);
+
 	return (
 		<Tooltip>
 			<TooltipTrigger asChild>
 				<button
 					aria-label={`Merge PR #${pr.number}`}
-					className="inline-flex items-center rounded-sm px-1 py-0.5 text-2xs font-medium text-accent transition-colors hover:bg-accent/10 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+					className={cn(
+						"inline-flex items-center rounded-sm px-1 py-0.5 text-2xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent",
+						mutation.isError ? "text-destructive hover:bg-destructive/10" : "text-accent hover:bg-accent/10",
+					)}
 					disabled={!eligible || mutation.isPending}
 					onClick={(event) => {
 						event.stopPropagation();
@@ -1150,10 +1147,10 @@ function MergePRButton({
 					}}
 					type="button"
 				>
-					{isThisPending ? "Merging…" : "Merge"}
+					{mutation.isPending ? "Merging…" : mutation.isError ? "Retry merge" : "Merge"}
 				</button>
 			</TooltipTrigger>
-			<TooltipContent side="top">{eligible ? "Merge this pull request" : mergeDisabledReason(pr)}</TooltipContent>
+			<TooltipContent side="top">{tooltipText}</TooltipContent>
 		</Tooltip>
 	);
 }

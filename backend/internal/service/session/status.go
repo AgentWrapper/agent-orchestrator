@@ -99,7 +99,7 @@ func aggregatePRStatus(open []domain.PRFacts) domain.SessionStatus {
 	stacks := buildStacks(open)
 	candidates := make([]domain.SessionStatus, 0, len(open))
 	for _, p := range open {
-		s := prPipelineStatus(p)
+		s := domain.PRPipelineStatus(p)
 		if stacks[p.URL].Blocked && !isActionableChildSignal(s) {
 			continue
 		}
@@ -107,7 +107,7 @@ func aggregatePRStatus(open []domain.PRFacts) domain.SessionStatus {
 	}
 	if len(candidates) == 0 {
 		for _, p := range open {
-			candidates = append(candidates, prPipelineStatus(p))
+			candidates = append(candidates, domain.PRPipelineStatus(p))
 		}
 	}
 	worst := candidates[0]
@@ -152,24 +152,5 @@ func statusSeverity(s domain.SessionStatus) int {
 		return 6
 	default:
 		return 7
-	}
-}
-
-func prPipelineStatus(pr domain.PRFacts) domain.SessionStatus {
-	switch {
-	case pr.CI == domain.CIFailing:
-		return domain.StatusCIFailed
-	case pr.Draft:
-		return domain.StatusDraft
-	case pr.Review == domain.ReviewChangesRequest || pr.ReviewComments:
-		return domain.StatusChangesRequested
-	case pr.Mergeability == domain.MergeMergeable:
-		return domain.StatusMergeable
-	case pr.Review == domain.ReviewApproved:
-		return domain.StatusApproved
-	case pr.Review == domain.ReviewRequired:
-		return domain.StatusReviewPending
-	default:
-		return domain.StatusPROpen
 	}
 }

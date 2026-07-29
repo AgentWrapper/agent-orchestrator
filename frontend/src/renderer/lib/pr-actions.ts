@@ -10,7 +10,7 @@ import { sessionScmSummaryQueryKey, type SessionPRSummary } from "../hooks/useSe
  */
 export function isPRMergeable(pr: SessionPRSummary): boolean {
 	if (pr.state !== "open") return false;
-	if (pr.ci.state !== "passing") return false;
+	if (pr.ci.state === "failing" || pr.ci.state === "pending") return false;
 	if (pr.review.decision === "changes_requested" || pr.review.hasUnresolvedHumanComments) return false;
 	return pr.mergeability.state === "mergeable";
 }
@@ -21,6 +21,7 @@ export function mergeDisabledReason(pr: SessionPRSummary): string {
 	}
 	if (pr.ci.state === "failing") return "CI is failing";
 	if (pr.ci.state === "pending") return "CI checks are still running";
+	if (pr.ci.state === "unknown") return "No CI status reported for this PR yet";
 	if (pr.review.decision === "changes_requested" || pr.review.hasUnresolvedHumanComments) {
 		return "Has unresolved review feedback";
 	}
