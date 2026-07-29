@@ -1,9 +1,9 @@
 "use client";
 
 import { COMPANY } from "@ao/shared/constants";
-import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 import { usePathname } from "next/navigation";
+import { HashLink } from "../HashLink";
 import { TileWordmark } from "./TileWordmark";
 
 export function Footer() {
@@ -107,12 +107,12 @@ function FooterColumn({
                 <ArrowUpRight className="h-3 w-3 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" />
               </a>
             ) : (
-              <Link
+              <HashLink
                 href={link.href}
                 className="flex min-h-8 items-center justify-between gap-3 py-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
               >
                 {link.label}
-              </Link>
+              </HashLink>
             )}
           </li>
           );
