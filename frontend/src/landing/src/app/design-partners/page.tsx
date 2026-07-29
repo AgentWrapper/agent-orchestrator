@@ -140,8 +140,10 @@ const phases: RoadmapPhase[] = [
   },
 ];
 
-const DESIGN_PARTNER_IMAGES = [
-  "/design-partners/hero-car-engine-olive.png",
+// The hero is excluded: its <Image priority> already preloads it, and as the LCP
+// element it should stay the only image competing for early bandwidth. These are
+// all below the fold, so they warm the cache at low priority instead.
+const BELOW_FOLD_IMAGES = [
   "/design-partners/shared-workspace-olive.png",
   ...phases.map((phase) => phase.image),
 ];
@@ -191,8 +193,8 @@ function TextLink({
 
 export default async function DesignPartnersPage() {
   // Emitted before the stats await so the browser can fetch artwork in parallel.
-  for (const image of DESIGN_PARTNER_IMAGES) {
-    preload(image, { as: "image" });
+  for (const image of BELOW_FOLD_IMAGES) {
+    preload(image, { as: "image", fetchPriority: "low" });
   }
 
   const repo = await getGitHubRepoStats();
