@@ -195,6 +195,39 @@ func (p *Provider) FetchReviewThreads(ctx context.Context, ref ports.SCMPRRef) (
 	return ports.SCMReviewObservation{Decision: decision, Reviews: reviews, Threads: out, Partial: true}, nil
 }
 
+// ReplyToReviewThread posts a provider-side reply to a pull request review
+// thread. GitHub review-thread ids are globally unique GraphQL node ids, so no
+// PR ref is needed for the mutation.
+func (p *Provider) ReplyToReviewThread(ctx context.Context, threadID, body string) error {
+	if strings.TrimSpace(threadID) == "" {
+		return fmt.Errorf("%w: empty review thread id", ErrNotFound)
+	}
+	if strings.TrimSpace(body) == "" {
+		return fmt.Errorf("github scm: empty review thread reply")
+	}
+	const mutation = `mutation($threadId:ID!,$body:String!){
+  addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$threadId,body:$body}){ comment{ id } }
+}`
+	if _, err := p.client.doGraphQL(ctx, mutation, map[string]any{"threadId": threadID, "body": body}); err != nil {
+		return fmt.Errorf("github scm: reply to review thread %s: %w", threadID, err)
+	}
+	return nil
+}
+
+// ResolveReviewThread marks a provider-side pull request review thread resolved.
+func (p *Provider) ResolveReviewThread(ctx context.Context, threadID string) error {
+	if strings.TrimSpace(threadID) == "" {
+		return fmt.Errorf("%w: empty review thread id", ErrNotFound)
+	}
+	const mutation = `mutation($threadId:ID!){
+  resolveReviewThread(input:{threadId:$threadId}){ thread{ id isResolved } }
+}`
+	if _, err := p.client.doGraphQL(ctx, mutation, map[string]any{"threadId": threadID}); err != nil {
+		return fmt.Errorf("github scm: resolve review thread %s: %w", threadID, err)
+	}
+	return nil
+}
+
 type restListPull struct {
 	URL     string `json:"url"`
 	HTMLURL string `json:"html_url"`
@@ -562,7 +595,7 @@ func buildReviewThreadsQuery(ref ports.SCMPRRef, beforeCursor string, includeRev
 	return fmt.Sprintf(`query{
 repo: repository(owner:%s,name:%s){ pullRequest(number:%d){ reviewDecision%s reviewThreads(last:%d, before:%s){ nodes{
   id isResolved path line
-  comments(first:%d){ nodes{ id body url author{ login __typename } } }
+  comments(first:%d){ nodes{ id body url pullRequestReview{ id } author{ login __typename } } }
 } pageInfo{ hasPreviousPage startCursor } } } }
 }`, graphQLString(ref.Repo.Owner), graphQLString(ref.Repo.Name), ref.Number, reviewSelection, githubReviewThreadPageSize, before, githubReviewCommentLimitPerThread)
 }
@@ -605,6 +638,10 @@ func scmThreadFromGraphQL(th map[string]any) ports.SCMReviewThreadObservation {
 	allCommentsBot := len(commentNodes) > 0
 	for _, cn := range commentNodes {
 		author, _ := cn["author"].(map[string]any)
+		review, _ := cn["pullRequestReview"].(map[string]any)
+		if out.ReviewID == "" {
+			out.ReviewID = str(review["id"])
+		}
 		isBot := isBotAuthor(author)
 		if !isBot {
 			allCommentsBot = false

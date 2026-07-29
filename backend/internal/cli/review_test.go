@@ -84,6 +84,33 @@ func TestReviewSubmitReadsBodyFromStdin(t *testing.T) {
 	}
 }
 
+func TestReviewAddressedPostsSignalWithSessionEnvAndStdinBody(t *testing.T) {
+	cfg := setConfigEnv(t)
+	t.Setenv("AO_SESSION_ID", "mer-1")
+	srv, capture := reviewServer(t, http.StatusOK, `{"ok":true,"runId":"run-1","reviewId":"review-1","replied":1,"resolved":1}`)
+	writeRunFileFor(t, cfg, srv)
+
+	deps := aliveDeps()
+	deps.In = strings.NewReader("fixed in latest commit")
+	out, errOut, err := executeCLI(t, deps, "review", "--addressed", "--run", "run-1", "--review_id", "review-1", "--body", "-")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if capture.method != http.MethodPost || capture.path != "/api/v1/sessions/mer-1/reviews/addressed" {
+		t.Fatalf("request = %s %s", capture.method, capture.path)
+	}
+	var req addressedReviewRequest
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if req.RunID != "run-1" || req.ReviewID != "review-1" || req.Body != "fixed in latest commit" {
+		t.Fatalf("request = %+v", req)
+	}
+	if !strings.Contains(out, "addressed review feedback for mer-1 (1 resolved)") {
+		t.Fatalf("stdout = %q", out)
+	}
+}
+
 func TestReviewSubmitAcceptsUnderscoreFlags(t *testing.T) {
 	cfg := setConfigEnv(t)
 	srv, capture := reviewServer(t, http.StatusOK, `{"review":{"verdict":"changes_requested"}}`)

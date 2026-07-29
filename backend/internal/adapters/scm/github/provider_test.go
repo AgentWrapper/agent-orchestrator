@@ -1381,6 +1381,9 @@ func TestFetchReviewThreadsUsesLatestWindowWithoutFallbackWhenOldestResolved(t *
 		if !strings.Contains(string(body), "comments(first:5)") {
 			t.Fatalf("review query should cap comments per thread, body=%s", body)
 		}
+		if !strings.Contains(string(body), "pullRequestReview") {
+			t.Fatalf("review query should request parent review ids, body=%s", body)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"data": map[string]any{"repo": map[string]any{"pullRequest": map[string]any{
@@ -1395,7 +1398,7 @@ func TestFetchReviewThreadsUsesLatestWindowWithoutFallbackWhenOldestResolved(t *
 				}}},
 				"reviewThreads": map[string]any{
 					"nodes": []any{map[string]any{"id": "latest-resolved", "path": "main.go", "line": 1, "isResolved": true, "comments": map[string]any{"nodes": []any{map[string]any{
-						"id": "comment-1", "body": "fix", "url": "https://github.com/o/r/pull/1#discussion_r1", "author": map[string]any{"login": "alice", "__typename": "User"},
+						"id": "comment-1", "body": "fix", "url": "https://github.com/o/r/pull/1#discussion_r1", "pullRequestReview": map[string]any{"id": "review-1"}, "author": map[string]any{"login": "alice", "__typename": "User"},
 					}}}}},
 					"pageInfo": map[string]any{"hasPreviousPage": true, "startCursor": "latest-start"},
 				},
@@ -1413,7 +1416,7 @@ func TestFetchReviewThreadsUsesLatestWindowWithoutFallbackWhenOldestResolved(t *
 	if !review.Partial {
 		t.Fatalf("review Partial = false, want true because older pages exist")
 	}
-	if len(review.Threads) != 1 || review.Threads[0].ID != "latest-resolved" {
+	if len(review.Threads) != 1 || review.Threads[0].ID != "latest-resolved" || review.Threads[0].ReviewID != "review-1" {
 		t.Fatalf("threads = %#v", review.Threads)
 	}
 	if len(review.Reviews) != 1 || review.Reviews[0].Author != "alice" || review.Reviews[0].URL != "https://github.com/o/r/pull/1#pullrequestreview-1" || review.Reviews[0].Body != "please address the failing test" {

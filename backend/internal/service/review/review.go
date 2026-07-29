@@ -7,6 +7,7 @@ package review
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -29,6 +30,7 @@ type Manager interface {
 	Cancel(ctx context.Context, workerID domain.SessionID) (reviewcore.CancelResult, error)
 	Submit(ctx context.Context, workerID domain.SessionID, runID string, verdict domain.ReviewVerdict, body, githubReviewID string) (domain.ReviewRun, error)
 	SubmitMany(ctx context.Context, workerID domain.SessionID, reviews []SubmittedReview) ([]domain.ReviewRun, error)
+	Addressed(ctx context.Context, sessionID domain.SessionID, in AddressedInput) (AddressedResult, error)
 	List(ctx context.Context, workerID domain.SessionID) (reviewcore.SessionReviews, error)
 }
 
@@ -37,6 +39,7 @@ type Service struct {
 	engine    *reviewcore.Engine
 	store     Store
 	lifecycle Reducer
+	feedback  ports.ReviewFeedbackActions
 	clock     func() time.Time
 }
 
@@ -48,6 +51,7 @@ type Store interface {
 	UpdateReviewRunResult(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string) (bool, error)
 	MarkReviewRunDelivered(ctx context.Context, id string, deliveredAt time.Time) (bool, error)
 	ListPRsBySession(ctx context.Context, id domain.SessionID) ([]domain.PullRequest, error)
+	ListUnresolvedPRReviewThreadsByReview(ctx context.Context, prURL, reviewID string) ([]domain.PullRequestReviewThread, error)
 }
 
 // Reducer is the lifecycle reaction boundary used after a review result has
@@ -63,6 +67,13 @@ type Option func(*Service)
 // WithLifecycleReducer wires post-submit review delivery through lifecycle.
 func WithLifecycleReducer(r Reducer) Option {
 	return func(s *Service) { s.lifecycle = r }
+}
+
+// WithReviewFeedbackActions wires backend-owned reply/resolve side effects for
+// addressed review feedback. SCM/GitHub is one implementation, but the review
+// service only depends on review-thread ids and reply text.
+func WithReviewFeedbackActions(actions ports.ReviewFeedbackActions) Option {
+	return func(s *Service) { s.feedback = actions }
 }
 
 // WithClock overrides the service clock for tests.
@@ -101,6 +112,24 @@ type SubmittedReview struct {
 	GithubReviewID string
 }
 
+// AddressedInput is sent by an agent when it has addressed review feedback.
+// RunID is preferred because it identifies the exact review run AO delivered;
+// ReviewID is a provider-review fallback for future callers that only know the
+// provider id.
+type AddressedInput struct {
+	RunID    string
+	ReviewID string
+	Body     string
+}
+
+// AddressedResult reports provider-side actions completed for addressed feedback.
+type AddressedResult struct {
+	RunID    string
+	ReviewID string
+	Replied  int
+	Resolved int
+}
+
 // Submit records a reviewer's result for a specific worker review pass.
 func (s *Service) Submit(ctx context.Context, workerID domain.SessionID, runID string, verdict domain.ReviewVerdict, body, githubReviewID string) (domain.ReviewRun, error) {
 	runs, err := s.SubmitMany(ctx, workerID, []SubmittedReview{{
@@ -116,6 +145,90 @@ func (s *Service) Submit(ctx context.Context, workerID domain.SessionID, runID s
 		return domain.ReviewRun{}, fmt.Errorf("%w: no review result submitted", ErrInvalid)
 	}
 	return runs[0], nil
+}
+
+// Addressed records an agent's addressed-feedback signal by replying to and
+// resolving unresolved provider review threads for the target submitted review.
+// The SCM provider remains the source of truth; local rows are refreshed by the
+// SCM observer after provider mutations succeed.
+func (s *Service) Addressed(ctx context.Context, sessionID domain.SessionID, in AddressedInput) (AddressedResult, error) {
+	if sessionID == "" {
+		return AddressedResult{}, fmt.Errorf("%w: session id is required", ErrInvalid)
+	}
+	if s.store == nil {
+		return AddressedResult{}, fmt.Errorf("review service store is not configured")
+	}
+	if s.feedback == nil {
+		return AddressedResult{}, fmt.Errorf("%w: review feedback actions are not configured", ErrInvalid)
+	}
+	run, reviewID, err := s.addressedTarget(ctx, sessionID, in)
+	if err != nil {
+		return AddressedResult{}, err
+	}
+	threads, err := s.store.ListUnresolvedPRReviewThreadsByReview(ctx, run.PRURL, reviewID)
+	if err != nil {
+		return AddressedResult{}, err
+	}
+	if len(threads) == 0 {
+		return AddressedResult{}, fmt.Errorf("%w: no unresolved review threads for review %q", ErrInvalid, reviewID)
+	}
+	reply := strings.TrimSpace(in.Body)
+	if reply == "" {
+		reply = defaultAddressedReply(sessionID, run)
+	}
+	res := AddressedResult{RunID: run.ID, ReviewID: reviewID}
+	for _, th := range threads {
+		if err := s.feedback.ReplyToReviewThread(ctx, th.ThreadID, reply); err != nil {
+			return res, err
+		}
+		res.Replied++
+		if err := s.feedback.ResolveReviewThread(ctx, th.ThreadID); err != nil {
+			return res, err
+		}
+		res.Resolved++
+	}
+	return res, nil
+}
+
+func (s *Service) addressedTarget(ctx context.Context, sessionID domain.SessionID, in AddressedInput) (domain.ReviewRun, string, error) {
+	runID := strings.TrimSpace(in.RunID)
+	reviewID := strings.TrimSpace(in.ReviewID)
+	if runID == "" {
+		return domain.ReviewRun{}, "", fmt.Errorf("%w: review run id is required", ErrInvalid)
+	}
+	run, ok, err := s.store.GetReviewRun(ctx, runID)
+	if err != nil {
+		return domain.ReviewRun{}, "", err
+	}
+	if !ok {
+		return domain.ReviewRun{}, "", fmt.Errorf("%w: review run %q", ErrNotFound, runID)
+	}
+	if run.SessionID != sessionID {
+		return domain.ReviewRun{}, "", fmt.Errorf("%w: review run %q does not belong to session %q", ErrInvalid, runID, sessionID)
+	}
+	if run.Verdict != domain.VerdictChangesRequested {
+		return domain.ReviewRun{}, "", fmt.Errorf("%w: review run %q did not request changes", ErrInvalid, runID)
+	}
+	if run.Status != domain.ReviewRunDelivered && run.Status != domain.ReviewRunComplete {
+		return domain.ReviewRun{}, "", fmt.Errorf("%w: review run %q is not ready to address", ErrInvalid, runID)
+	}
+	if reviewID == "" {
+		reviewID = strings.TrimSpace(run.GithubReviewID)
+	}
+	if reviewID == "" {
+		return domain.ReviewRun{}, "", fmt.Errorf("%w: provider review id is required", ErrInvalid)
+	}
+	if run.GithubReviewID != "" && reviewID != run.GithubReviewID {
+		return domain.ReviewRun{}, "", fmt.Errorf("%w: review id %q does not match run %q", ErrInvalid, reviewID, runID)
+	}
+	return run, reviewID, nil
+}
+
+func defaultAddressedReply(sessionID domain.SessionID, run domain.ReviewRun) string {
+	if run.TargetSHA != "" {
+		return fmt.Sprintf("Addressed by AO session %s after review run %s for %s.", sessionID, run.ID, run.TargetSHA)
+	}
+	return fmt.Sprintf("Addressed by AO session %s after review run %s.", sessionID, run.ID)
 }
 
 // SubmitMany records one reviewer CLI submission containing results for one or

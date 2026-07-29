@@ -34,22 +34,92 @@ func (q *Queries) DeletePRReviewThreads(ctx context.Context, prUrl string) error
 }
 
 const listPRReviewThreads = `-- name: ListPRReviewThreads :many
-SELECT pr_url, thread_id, path, line, resolved, is_bot, semantic_hash, updated_at
+SELECT pr_url, thread_id, review_id, path, line, resolved, is_bot, semantic_hash, updated_at
 FROM pr_review_threads WHERE pr_url = ? ORDER BY updated_at, thread_id
 `
 
-func (q *Queries) ListPRReviewThreads(ctx context.Context, prUrl string) ([]PRReviewThread, error) {
+type ListPRReviewThreadsRow struct {
+	PRURL        string
+	ThreadID     string
+	ReviewID     string
+	Path         string
+	Line         int64
+	Resolved     int64
+	IsBot        int64
+	SemanticHash string
+	UpdatedAt    time.Time
+}
+
+func (q *Queries) ListPRReviewThreads(ctx context.Context, prUrl string) ([]ListPRReviewThreadsRow, error) {
 	rows, err := q.db.QueryContext(ctx, listPRReviewThreads, prUrl)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []PRReviewThread{}
+	items := []ListPRReviewThreadsRow{}
 	for rows.Next() {
-		var i PRReviewThread
+		var i ListPRReviewThreadsRow
 		if err := rows.Scan(
 			&i.PRURL,
 			&i.ThreadID,
+			&i.ReviewID,
+			&i.Path,
+			&i.Line,
+			&i.Resolved,
+			&i.IsBot,
+			&i.SemanticHash,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUnresolvedPRReviewThreadsByReview = `-- name: ListUnresolvedPRReviewThreadsByReview :many
+SELECT pr_url, thread_id, review_id, path, line, resolved, is_bot, semantic_hash, updated_at
+FROM pr_review_threads
+WHERE pr_url = ? AND review_id = ? AND resolved = 0
+ORDER BY updated_at, thread_id
+`
+
+type ListUnresolvedPRReviewThreadsByReviewParams struct {
+	PRURL    string
+	ReviewID string
+}
+
+type ListUnresolvedPRReviewThreadsByReviewRow struct {
+	PRURL        string
+	ThreadID     string
+	ReviewID     string
+	Path         string
+	Line         int64
+	Resolved     int64
+	IsBot        int64
+	SemanticHash string
+	UpdatedAt    time.Time
+}
+
+func (q *Queries) ListUnresolvedPRReviewThreadsByReview(ctx context.Context, arg ListUnresolvedPRReviewThreadsByReviewParams) ([]ListUnresolvedPRReviewThreadsByReviewRow, error) {
+	rows, err := q.db.QueryContext(ctx, listUnresolvedPRReviewThreadsByReview, arg.PRURL, arg.ReviewID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUnresolvedPRReviewThreadsByReviewRow{}
+	for rows.Next() {
+		var i ListUnresolvedPRReviewThreadsByReviewRow
+		if err := rows.Scan(
+			&i.PRURL,
+			&i.ThreadID,
+			&i.ReviewID,
 			&i.Path,
 			&i.Line,
 			&i.Resolved,
@@ -71,9 +141,10 @@ func (q *Queries) ListPRReviewThreads(ctx context.Context, prUrl string) ([]PRRe
 }
 
 const upsertPRReviewThread = `-- name: UpsertPRReviewThread :exec
-INSERT INTO pr_review_threads (pr_url, thread_id, path, line, resolved, is_bot, semantic_hash, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO pr_review_threads (pr_url, thread_id, review_id, path, line, resolved, is_bot, semantic_hash, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (pr_url, thread_id) DO UPDATE SET
+    review_id = excluded.review_id,
     path = excluded.path,
     line = excluded.line,
     resolved = excluded.resolved,
@@ -85,6 +156,7 @@ ON CONFLICT (pr_url, thread_id) DO UPDATE SET
 type UpsertPRReviewThreadParams struct {
 	PRURL        string
 	ThreadID     string
+	ReviewID     string
 	Path         string
 	Line         int64
 	Resolved     int64
@@ -98,6 +170,7 @@ func (q *Queries) UpsertPRReviewThread(ctx context.Context, arg UpsertPRReviewTh
 	_, err := q.db.ExecContext(ctx, upsertPRReviewThread,
 		arg.PRURL,
 		arg.ThreadID,
+		arg.ReviewID,
 		arg.Path,
 		arg.Line,
 		arg.Resolved,

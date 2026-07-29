@@ -79,7 +79,7 @@ func (m *Manager) ApplyReviewBatch(ctx context.Context, workerID domain.SessionI
 		if r.GithubReviewID != "" {
 			safeReviewID := domain.SanitizeControlChars(r.GithubReviewID)
 			fmt.Fprintf(&msg, "\nGitHub review: %s", safeReviewID)
-			fmt.Fprintf(&msg, "\nOnce you have addressed it, reply on GitHub review %s with how you addressed it, then resolve the review comment threads you addressed.", safeReviewID)
+			fmt.Fprintf(&msg, "\nOnce you have addressed it, run `ao review --addressed --run %s --review-id %s --body -` with a short reply body on stdin. AO will reply to and resolve the matching review comment threads.", domain.SanitizeControlChars(r.RunID), safeReviewID)
 		}
 		if r.Body != "" {
 			fmt.Fprintf(&msg, "\n\nReview body:\n%s\n", domain.SanitizeControlChars(r.Body))
@@ -281,7 +281,7 @@ func (m *Manager) ApplyReviewResult(ctx context.Context, workerID domain.Session
 	if r.GithubReviewID != "" {
 		safeReviewID := domain.SanitizeControlChars(r.GithubReviewID)
 		msg += fmt.Sprintf("\nGitHub review: %s", safeReviewID)
-		msg += fmt.Sprintf("\n\nOnce you have addressed it, reply on GitHub review %s with how you addressed it, then resolve the review comment threads you addressed.", safeReviewID)
+		msg += fmt.Sprintf("\n\nOnce you have addressed it, run `ao review --addressed --run %s --review-id %s --body -` with a short reply body on stdin. AO will reply to and resolve the matching review comment threads.", domain.SanitizeControlChars(r.RunID), safeReviewID)
 	}
 	if r.Body != "" {
 		msg += "\n\nReview body:\n" + domain.SanitizeControlChars(r.Body)

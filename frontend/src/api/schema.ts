@@ -625,6 +625,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/reviews/addressed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Signal that review feedback was addressed and resolve matching provider review threads */
+        post: operations["addressedReview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/reviews/cancel": {
         parameters: {
             query?: never;
@@ -816,6 +833,21 @@ export interface components {
             name?: null | string;
             path: string;
             projectId?: null | string;
+        };
+        AddressedReviewInput: {
+            /** @description Reply body posted before AO resolves matching review threads. */
+            body?: string;
+            /** @description Provider review id fallback when run id does not carry one. */
+            reviewId?: string;
+            /** @description Review run id whose feedback was addressed. */
+            runId?: string;
+        };
+        AddressedReviewResponse: {
+            ok: boolean;
+            replied: number;
+            resolved: number;
+            reviewId?: string;
+            runId?: string;
         };
         AgentConfig: {
             model?: string;
@@ -3640,6 +3672,69 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ListReviewsResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    addressedReview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddressedReviewInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddressedReviewResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Unprocessable Entity */

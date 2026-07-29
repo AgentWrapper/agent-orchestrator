@@ -288,7 +288,21 @@ func (s *Store) ListPRReviewThreads(ctx context.Context, prURL string) ([]domain
 	}
 	out := make([]domain.PullRequestReviewThread, 0, len(rows))
 	for _, th := range rows {
-		out = append(out, reviewThreadFromGen(th))
+		out = append(out, reviewThreadFromListRow(th))
+	}
+	return out, nil
+}
+
+// ListUnresolvedPRReviewThreadsByReview returns unresolved threads for one
+// submitted provider review id.
+func (s *Store) ListUnresolvedPRReviewThreadsByReview(ctx context.Context, prURL, reviewID string) ([]domain.PullRequestReviewThread, error) {
+	rows, err := s.qr.ListUnresolvedPRReviewThreadsByReview(ctx, gen.ListUnresolvedPRReviewThreadsByReviewParams{PRURL: prURL, ReviewID: reviewID})
+	if err != nil {
+		return nil, fmt.Errorf("list unresolved pr review threads %s review %s: %w", prURL, reviewID, err)
+	}
+	out := make([]domain.PullRequestReviewThread, 0, len(rows))
+	for _, th := range rows {
+		out = append(out, reviewThreadFromUnresolvedByReviewRow(th))
 	}
 	return out, nil
 }
@@ -509,16 +523,24 @@ func commentFromGen(c gen.PRComment) domain.PullRequestComment {
 
 func genReviewThreadParams(prURL string, th domain.PullRequestReviewThread) gen.UpsertPRReviewThreadParams {
 	return gen.UpsertPRReviewThreadParams{
-		PRURL: prURL, ThreadID: th.ThreadID, Path: th.Path,
+		PRURL: prURL, ThreadID: th.ThreadID, ReviewID: th.ReviewID, Path: th.Path,
 		Line: int64(th.Line), Resolved: boolInt(th.Resolved),
 		IsBot: boolInt(th.IsBot), SemanticHash: th.SemanticHash,
 		UpdatedAt: th.UpdatedAt,
 	}
 }
 
-func reviewThreadFromGen(th gen.PRReviewThread) domain.PullRequestReviewThread {
+func reviewThreadFromListRow(th gen.ListPRReviewThreadsRow) domain.PullRequestReviewThread {
 	return domain.PullRequestReviewThread{
-		ThreadID: th.ThreadID, Path: th.Path, Line: int(th.Line),
+		ThreadID: th.ThreadID, ReviewID: th.ReviewID, Path: th.Path, Line: int(th.Line),
+		Resolved: th.Resolved != 0, IsBot: th.IsBot != 0,
+		SemanticHash: th.SemanticHash, UpdatedAt: th.UpdatedAt,
+	}
+}
+
+func reviewThreadFromUnresolvedByReviewRow(th gen.ListUnresolvedPRReviewThreadsByReviewRow) domain.PullRequestReviewThread {
+	return domain.PullRequestReviewThread{
+		ThreadID: th.ThreadID, ReviewID: th.ReviewID, Path: th.Path, Line: int(th.Line),
 		Resolved: th.Resolved != 0, IsBot: th.IsBot != 0,
 		SemanticHash: th.SemanticHash, UpdatedAt: th.UpdatedAt,
 	}

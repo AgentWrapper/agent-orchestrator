@@ -86,6 +86,28 @@ type reviewSubmitOptions struct {
 	reviews  string
 }
 
+type reviewAddressedOptions struct {
+	addressed bool
+	session   string
+	runID     string
+	reviewID  string
+	body      string
+}
+
+type addressedReviewRequest struct {
+	RunID    string `json:"runId,omitempty"`
+	ReviewID string `json:"reviewId,omitempty"`
+	Body     string `json:"body,omitempty"`
+}
+
+type addressedReviewResponse struct {
+	OK       bool   `json:"ok"`
+	RunID    string `json:"runId,omitempty"`
+	ReviewID string `json:"reviewId,omitempty"`
+	Replied  int    `json:"replied"`
+	Resolved int    `json:"resolved"`
+}
+
 type reviewSessionOptions struct {
 	session string
 }
@@ -95,15 +117,60 @@ type reviewListOptions struct {
 }
 
 func newReviewCommand(ctx *commandContext) *cobra.Command {
+	var opts reviewAddressedOptions
 	cmd := &cobra.Command{
 		Use:   "review",
 		Short: "Manage AO code reviews of a worker's PR",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !opts.addressed {
+				return usageError{errors.New("usage: review requires a subcommand or --addressed")}
+			}
+			return ctx.addressReview(cmd, opts)
+		},
 	}
+	cmd.Flags().SetNormalizeFunc(func(_ *pflag.FlagSet, name string) pflag.NormalizedName {
+		return pflag.NormalizedName(strings.ReplaceAll(name, "_", "-"))
+	})
+	cmd.Flags().BoolVar(&opts.addressed, "addressed", false, "Signal that review feedback has been addressed")
+	cmd.Flags().StringVar(&opts.session, "session", "", "Session id (default: AO_SESSION_ID)")
+	cmd.Flags().StringVar(&opts.runID, "run", "", "Review run id being addressed (required)")
+	cmd.Flags().StringVar(&opts.reviewID, "review-id", "", "Provider review id fallback")
+	cmd.Flags().StringVar(&opts.body, "body", "", "Reply body: a path to a Markdown file, or - to read from stdin")
 	cmd.AddCommand(newReviewListCommand(ctx))
 	cmd.AddCommand(newReviewSubmitCommand(ctx))
 	cmd.AddCommand(newReviewCancelCommand(ctx))
 	cmd.AddCommand(newReviewTriggerCommand(ctx))
 	return cmd
+}
+
+func (c *commandContext) addressReview(cmd *cobra.Command, opts reviewAddressedOptions) error {
+	session := strings.TrimSpace(opts.session)
+	if session == "" {
+		session = strings.TrimSpace(os.Getenv("AO_SESSION_ID"))
+	}
+	if session == "" {
+		return usageError{errors.New("usage: --session is required when AO_SESSION_ID is not set")}
+	}
+	runID := strings.TrimSpace(opts.runID)
+	if runID == "" {
+		return usageError{errors.New("usage: --run is required")}
+	}
+	var body string
+	if path := strings.TrimSpace(opts.body); path != "" {
+		raw, err := readReviewBody(cmd, path)
+		if err != nil {
+			return err
+		}
+		body = raw
+	}
+	path := "sessions/" + url.PathEscape(session) + "/reviews/addressed"
+	var res addressedReviewResponse
+	if err := c.postJSON(cmd.Context(), path, addressedReviewRequest{RunID: runID, ReviewID: strings.TrimSpace(opts.reviewID), Body: body}, &res); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintf(cmd.OutOrStdout(), "addressed review feedback for %s (%d resolved)\n", session, res.Resolved)
+	return err
 }
 
 func newReviewListCommand(ctx *commandContext) *cobra.Command {
@@ -178,19 +245,11 @@ func (c *commandContext) submitReview(cmd *cobra.Command, args []string, opts re
 	}
 	var body string
 	if path := strings.TrimSpace(opts.body); path != "" {
-		var raw []byte
-		var err error
-		if path == "-" {
-			// Read the review from stdin so the reviewer never has to write a file
-			// into its checkout (where it could be committed onto the worker branch).
-			raw, err = io.ReadAll(cmd.InOrStdin())
-		} else {
-			raw, err = os.ReadFile(path)
-		}
+		raw, err := readReviewBody(cmd, path)
 		if err != nil {
-			return usageError{fmt.Errorf("read review body: %w", err)}
+			return err
 		}
-		body = string(raw)
+		body = raw
 	}
 	reviewID := strings.TrimSpace(opts.reviewID)
 	path := "sessions/" + url.PathEscape(session) + "/reviews/submit"
@@ -200,6 +259,22 @@ func (c *commandContext) submitReview(cmd *cobra.Command, args []string, opts re
 	}
 	_, err := fmt.Fprintf(cmd.OutOrStdout(), "recorded %s review for %s\n", res.Review.Verdict, session)
 	return err
+}
+
+func readReviewBody(cmd *cobra.Command, path string) (string, error) {
+	var raw []byte
+	var err error
+	if path == "-" {
+		// Read the review from stdin so the agent never has to write a file
+		// into its checkout (where it could be committed onto the worker branch).
+		raw, err = io.ReadAll(cmd.InOrStdin())
+	} else {
+		raw, err = os.ReadFile(path)
+	}
+	if err != nil {
+		return "", usageError{fmt.Errorf("read review body: %w", err)}
+	}
+	return string(raw), nil
 }
 
 func (c *commandContext) submitReviewBatch(cmd *cobra.Command, session string, opts reviewSubmitOptions) error {

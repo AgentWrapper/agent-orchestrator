@@ -581,7 +581,7 @@ func TestWriteSCMObservationPersistsMetadataChecksReviewsAndComments(t *testing.
 	}
 	checks := []domain.PullRequestCheck{{Name: "build", CommitHash: "h1", Status: domain.PRCheckFailed, Conclusion: "failure", URL: "ci", Details: "99", LogTail: "boom", CreatedAt: now}}
 	reviews := []domain.PullRequestReview{{ID: "review-1", Author: "reviewer", State: domain.ReviewChangesRequest, URL: "https://github.com/o/r/pull/1#pullrequestreview-1", Body: "please fix the nil check", SubmittedAt: now}}
-	threads := []domain.PullRequestReviewThread{{ThreadID: "t1", Path: "main.go", Line: 7, SemanticHash: "th", UpdatedAt: now}}
+	threads := []domain.PullRequestReviewThread{{ThreadID: "t1", ReviewID: "review-1", Path: "main.go", Line: 7, SemanticHash: "th", UpdatedAt: now}}
 	comments := []domain.PullRequestComment{{ThreadID: "t1", ID: "c1", Author: "reviewer", File: "main.go", Line: 7, Body: "fix", URL: "comment", CreatedAt: now}}
 
 	if err := s.WriteSCMObservation(ctx, pr, checks, reviews, threads, comments, ports.ReviewWriteReplace); err != nil {
@@ -599,8 +599,15 @@ func TestWriteSCMObservationPersistsMetadataChecksReviewsAndComments(t *testing.
 		t.Fatalf("checks not persisted: %+v", gotChecks)
 	}
 	gotThreads, _ := s.ListPRReviewThreads(ctx, pr.URL)
-	if len(gotThreads) != 1 || gotThreads[0].ThreadID != "t1" || gotThreads[0].SemanticHash != "th" {
+	if len(gotThreads) != 1 || gotThreads[0].ThreadID != "t1" || gotThreads[0].ReviewID != "review-1" || gotThreads[0].SemanticHash != "th" {
 		t.Fatalf("threads not persisted: %+v", gotThreads)
+	}
+	unresolved, err := s.ListUnresolvedPRReviewThreadsByReview(ctx, pr.URL, "review-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(unresolved) != 1 || unresolved[0].ThreadID != "t1" {
+		t.Fatalf("unresolved review threads = %+v", unresolved)
 	}
 	gotReviews, _ := s.ListPRReviews(ctx, pr.URL)
 	if len(gotReviews) != 1 || gotReviews[0].ID != "review-1" || gotReviews[0].URL != "https://github.com/o/r/pull/1#pullrequestreview-1" || gotReviews[0].Body != "please fix the nil check" {
@@ -655,8 +662,8 @@ func TestWriteSCMObservationMergeUpdatesFetchedReviewWindow(t *testing.T) {
 	pr := domain.PullRequest{URL: "https://github.com/o/r/pull/1", SessionID: r.ID, Number: 1, UpdatedAt: now}
 
 	initialThreads := []domain.PullRequestReviewThread{
-		{ThreadID: "older", Path: "old.go", Line: 1, Resolved: false, SemanticHash: "old", UpdatedAt: now},
-		{ThreadID: "latest", Path: "main.go", Line: 7, Resolved: false, SemanticHash: "latest-v1", UpdatedAt: now},
+		{ThreadID: "older", ReviewID: "review-old", Path: "old.go", Line: 1, Resolved: false, SemanticHash: "old", UpdatedAt: now},
+		{ThreadID: "latest", ReviewID: "review-latest", Path: "main.go", Line: 7, Resolved: false, SemanticHash: "latest-v1", UpdatedAt: now},
 	}
 	initialComments := []domain.PullRequestComment{
 		{ThreadID: "older", ID: "older-c1", Author: "ann", Body: "old", CreatedAt: now},
@@ -667,8 +674,8 @@ func TestWriteSCMObservationMergeUpdatesFetchedReviewWindow(t *testing.T) {
 	}
 
 	mergedThreads := []domain.PullRequestReviewThread{
-		{ThreadID: "latest", Path: "main.go", Line: 8, Resolved: true, SemanticHash: "latest-v2", UpdatedAt: now.Add(time.Second)},
-		{ThreadID: "new", Path: "new.go", Line: 2, Resolved: false, SemanticHash: "new", UpdatedAt: now.Add(time.Second)},
+		{ThreadID: "latest", ReviewID: "review-latest-2", Path: "main.go", Line: 8, Resolved: true, SemanticHash: "latest-v2", UpdatedAt: now.Add(time.Second)},
+		{ThreadID: "new", ReviewID: "review-new", Path: "new.go", Line: 2, Resolved: false, SemanticHash: "new", UpdatedAt: now.Add(time.Second)},
 	}
 	mergedComments := []domain.PullRequestComment{
 		{ThreadID: "latest", ID: "latest-c2", Author: "bob", Body: "after", CreatedAt: now.Add(time.Second)},
@@ -692,7 +699,7 @@ func TestWriteSCMObservationMergeUpdatesFetchedReviewWindow(t *testing.T) {
 	if byThread["older"].SemanticHash != "old" {
 		t.Fatalf("older thread not preserved: %#v", byThread["older"])
 	}
-	if byThread["latest"].SemanticHash != "latest-v2" || !byThread["latest"].Resolved || byThread["latest"].Line != 8 {
+	if byThread["latest"].SemanticHash != "latest-v2" || byThread["latest"].ReviewID != "review-latest-2" || !byThread["latest"].Resolved || byThread["latest"].Line != 8 {
 		t.Fatalf("latest thread not updated: %#v", byThread["latest"])
 	}
 	if byThread["new"].SemanticHash != "new" {

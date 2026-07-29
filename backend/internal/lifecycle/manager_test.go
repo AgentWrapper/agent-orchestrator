@@ -1282,7 +1282,7 @@ func TestApplyReviewResultSendsAndDedupsThroughPRSignature(t *testing.T) {
 		t.Fatalf("outcome/messages = %q/%v, want sent once", outcome, msg.msgs)
 	}
 	got := msg.msgs[0]
-	for _, want := range []string{"[AO reviewer]", "PR: " + result.PRURL, "Verdict: changes_requested", "Review body:\nfix the bug", "GitHub review: 98[2J765"} {
+	for _, want := range []string{"[AO reviewer]", "PR: " + result.PRURL, "Verdict: changes_requested", "Review body:\nfix the bug", "GitHub review: 98[2J765", "ao review --addressed --run run-1 --review-id 98[2J765 --body -"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("AO review nudge missing %q: %q", want, got)
 		}
@@ -1366,9 +1366,11 @@ func TestApplyReviewBatchSendsCombinedAndDedups(t *testing.T) {
 		"submitted 2 review(s) requesting changes",
 		"PR: https://github.com/o/r/pull/1",
 		"GitHub review: 101",
+		"ao review --addressed --run run-1 --review-id 101 --body -",
 		"Review body:\nfix auth",
 		"PR: https://github.com/o/r/pull/2",
 		"GitHub review: 102",
+		"ao review --addressed --run run-2 --review-id 102 --body -",
 		"Review body:\nfix tests",
 	} {
 		if !strings.Contains(got, want) {

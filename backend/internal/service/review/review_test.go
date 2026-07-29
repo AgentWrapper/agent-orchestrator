@@ -3,6 +3,7 @@ package review
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -15,6 +16,9 @@ type fakeStore struct {
 	ok        bool
 	batchRuns []domain.ReviewRun
 	prs       []domain.PullRequest
+	pr        domain.PullRequest
+	prOK      bool
+	threads   []domain.PullRequestReviewThread
 
 	updateCalls int
 	markCalls   int
@@ -91,6 +95,37 @@ func (f *fakeStore) ListPRsBySession(context.Context, domain.SessionID) ([]domai
 	return out, nil
 }
 
+func (f *fakeStore) GetPR(_ context.Context, url string) (domain.PullRequest, bool, error) {
+	if f.prOK && f.pr.URL == url {
+		return f.pr, true, nil
+	}
+	return domain.PullRequest{}, false, nil
+}
+
+func (f *fakeStore) ListUnresolvedPRReviewThreadsByReview(_ context.Context, prURL, reviewID string) ([]domain.PullRequestReviewThread, error) {
+	out := make([]domain.PullRequestReviewThread, 0, len(f.threads))
+	for _, th := range f.threads {
+		if th.ReviewID == reviewID && !th.Resolved {
+			out = append(out, th)
+		}
+	}
+	return out, nil
+}
+
+type fakeReviewFeedbackActions struct {
+	calls []string
+}
+
+func (f *fakeReviewFeedbackActions) ReplyToReviewThread(_ context.Context, threadID, body string) error {
+	f.calls = append(f.calls, "reply:"+threadID+":"+body)
+	return nil
+}
+
+func (f *fakeReviewFeedbackActions) ResolveReviewThread(_ context.Context, threadID string) error {
+	f.calls = append(f.calls, "resolve:"+threadID)
+	return nil
+}
+
 type fakeReducer struct {
 	outcome    lifecycle.ReviewDeliveryOutcome
 	err        error
@@ -132,6 +167,48 @@ func TestSubmitPersistsThenAppliesThenStampsDelivered(t *testing.T) {
 	}
 	if run.Status != domain.ReviewRunDelivered || run.DeliveredAt == nil || !run.DeliveredAt.Equal(now) {
 		t.Fatalf("run not stamped delivered: %+v", run)
+	}
+}
+
+func TestAddressedRepliesThenResolvesOnlyTargetReviewThreads(t *testing.T) {
+	st := &fakeStore{
+		ok: true,
+		run: domain.ReviewRun{
+			ID:             "run-1",
+			SessionID:      "mer-1",
+			PRURL:          "https://github.com/o/r/pull/7",
+			TargetSHA:      "abc123",
+			Status:         domain.ReviewRunDelivered,
+			Verdict:        domain.VerdictChangesRequested,
+			GithubReviewID: "review-1",
+		},
+		prOK: true,
+		pr: domain.PullRequest{
+			URL:      "https://github.com/o/r/pull/7",
+			Provider: "github",
+			Host:     "github.com",
+			Repo:     "o/r",
+			Number:   7,
+		},
+		threads: []domain.PullRequestReviewThread{
+			{ThreadID: "thread-1", ReviewID: "review-1"},
+			{ThreadID: "thread-2", ReviewID: "review-2"},
+			{ThreadID: "thread-3", ReviewID: "review-1", Resolved: true},
+		},
+	}
+	actions := &fakeReviewFeedbackActions{}
+	svc := New(nil, st, WithReviewFeedbackActions(actions))
+
+	res, err := svc.Addressed(context.Background(), "mer-1", AddressedInput{RunID: "run-1", Body: "fixed"})
+	if err != nil {
+		t.Fatalf("Addressed: %v", err)
+	}
+	if res.Resolved != 1 || res.Replied != 1 || res.ReviewID != "review-1" {
+		t.Fatalf("result = %+v", res)
+	}
+	wantCalls := []string{"reply:thread-1:fixed", "resolve:thread-1"}
+	if !reflect.DeepEqual(actions.calls, wantCalls) {
+		t.Fatalf("calls = %#v, want %#v", actions.calls, wantCalls)
 	}
 }
 

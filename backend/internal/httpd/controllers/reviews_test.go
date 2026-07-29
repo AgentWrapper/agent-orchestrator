@@ -25,6 +25,7 @@ type fakeReviewService struct {
 	cancel     reviewcore.CancelResult
 	list       reviewcore.SessionReviews
 	submitted  []reviewsvc.SubmittedReview
+	addressed  reviewsvc.AddressedInput
 }
 
 func (f *fakeReviewService) Trigger(context.Context, domain.SessionID) (reviewcore.TriggerResult, error) {
@@ -57,6 +58,11 @@ func (f *fakeReviewService) SubmitMany(_ context.Context, _ domain.SessionID, re
 	return runs, nil
 }
 
+func (f *fakeReviewService) Addressed(_ context.Context, _ domain.SessionID, in reviewsvc.AddressedInput) (reviewsvc.AddressedResult, error) {
+	f.addressed = in
+	return reviewsvc.AddressedResult{RunID: in.RunID, ReviewID: in.ReviewID, Replied: 1, Resolved: 1}, nil
+}
+
 func (f *fakeReviewService) List(context.Context, domain.SessionID) (reviewcore.SessionReviews, error) {
 	return f.list, nil
 }
@@ -81,6 +87,23 @@ func TestReviewsTrigger_MissingReviewerBinaryReturns422WithCause(t *testing.T) {
 	mustJSON(t, body, &got)
 	if !strings.Contains(got.Message, "claude") || !strings.Contains(got.Message, ports.ErrAgentBinaryNotFound.Error()) {
 		t.Fatalf("message = %q, want reviewer binary cause", got.Message)
+	}
+}
+
+func TestReviewsAddressedPostsSignal(t *testing.T) {
+	svc := &fakeReviewService{}
+	srv := newReviewTestServer(t, svc)
+
+	body, status, headers := doRequest(t, srv, "POST", "/api/v1/sessions/mer-1/reviews/addressed", `{"runId":"run-1","reviewId":"review-1","body":"fixed"}`)
+	assertJSON(t, headers)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d body=%s", status, body)
+	}
+	if svc.addressed.RunID != "run-1" || svc.addressed.ReviewID != "review-1" || svc.addressed.Body != "fixed" {
+		t.Fatalf("addressed = %+v", svc.addressed)
+	}
+	if !strings.Contains(string(body), `"resolved":1`) {
+		t.Fatalf("body = %s", body)
 	}
 }
 
