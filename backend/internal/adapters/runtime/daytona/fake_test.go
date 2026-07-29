@@ -37,6 +37,13 @@ type fakeClient struct {
 	// startsAs lets tests make StartSandbox leave the sandbox in a given state
 	// (default: started immediately).
 	startsAs SandboxState
+
+	// settleAfterGets/settleTo simulate Daytona's async transitions: after N
+	// GetSandbox calls, any sandbox in a transitional state settles to
+	// settleTo. Zero means states never settle on their own.
+	settleAfterGets int
+	settleTo        SandboxState
+	getCalls        int
 }
 
 type execCall struct {
@@ -121,6 +128,10 @@ func (f *fakeClient) GetSandbox(_ context.Context, id string) (Sandbox, error) {
 	sb, ok := f.sandboxes[id]
 	if !ok {
 		return Sandbox{}, fmt.Errorf("%w: %s", ErrSandboxNotFound, id)
+	}
+	f.getCalls++
+	if f.settleAfterGets > 0 && f.getCalls >= f.settleAfterGets && sb.State.Transitional() {
+		sb.State = f.settleTo
 	}
 	return *sb, nil
 }

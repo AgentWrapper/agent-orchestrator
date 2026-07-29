@@ -404,7 +404,7 @@ func (w *Workspace) Destroy(ctx context.Context, info ports.WorkspaceInfo) error
 		}
 		return fmt.Errorf("daytona workspace: %s: %w", name, ports.ErrWorkspaceDirty)
 	}
-	if err := w.client.DeleteSandbox(ctx, sb.ID); err != nil {
+	if err := w.deleteAndWait(ctx, sb.ID); err != nil {
 		return fmt.Errorf("daytona workspace: delete sandbox %s: %w", sb.ID, err)
 	}
 	return nil
@@ -426,7 +426,7 @@ func (w *Workspace) ForceDestroy(ctx context.Context, info ports.WorkspaceInfo) 
 	if !found {
 		return nil
 	}
-	if err := w.client.DeleteSandbox(ctx, sb.ID); err != nil {
+	if err := w.deleteAndWait(ctx, sb.ID); err != nil {
 		return fmt.Errorf("daytona workspace: delete sandbox %s: %w", sb.ID, err)
 	}
 	return nil
@@ -586,6 +586,13 @@ func (w *Workspace) Park(ctx context.Context, info ports.WorkspaceInfo) error {
 		return nil
 	}
 	if err := w.client.StopSandbox(ctx, sb.ID); err != nil {
+		return fmt.Errorf("daytona workspace: park %s: %w", name, err)
+	}
+	// Daytona's stop is async (the sandbox reports `started`, then `stopping`,
+	// while the toolbox proxy 502s — observed live). Wait for the steady state
+	// so "parked" means parked to callers and their next probe; tolerate the
+	// lingering `started` reads from before the stop is applied.
+	if _, err := w.waitForState(ctx, sb.ID, StateStopped, w.startTimeout, StateStarted); err != nil {
 		return fmt.Errorf("daytona workspace: park %s: %w", name, err)
 	}
 	return nil

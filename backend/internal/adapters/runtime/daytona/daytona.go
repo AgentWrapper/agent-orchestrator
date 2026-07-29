@@ -130,7 +130,19 @@ func (r *core) sandboxForHandle(ctx context.Context, id string) (Sandbox, bool, 
 
 // ensureStarted wakes a stopped/archived sandbox and waits for started.
 // Already-running sandboxes return immediately.
+//
+// A transitional state settles FIRST, then the steady state is acted on. This
+// ordering is load-bearing (caught live): the list endpoint lags GetSandbox,
+// so a freshly-parked sandbox can still read `stopping` here — waiting for
+// `started` on that would spin until timeout without ever issuing the start,
+// because stopping settles into stopped.
 func (r *core) ensureStarted(ctx context.Context, sb Sandbox) (Sandbox, error) {
+	if sb.State.Transitional() {
+		var err error
+		if sb, err = r.waitForSettled(ctx, sb.ID, r.startTimeout); err != nil {
+			return sb, err
+		}
+	}
 	switch sb.State {
 	case StateStarted:
 		return sb, nil
@@ -138,17 +150,86 @@ func (r *core) ensureStarted(ctx context.Context, sb Sandbox) (Sandbox, error) {
 		if err := r.client.StartSandbox(ctx, sb.ID); err != nil {
 			return sb, fmt.Errorf("daytona runtime: start sandbox %s: %w", sb.ID, err)
 		}
+		// Tolerate still seeing the pre-start steady state: Daytona applies
+		// state transitions asynchronously, so the first polls after
+		// StartSandbox can still report stopped/archived.
+		return r.waitForState(ctx, sb.ID, StateStarted, r.startTimeout, StateStopped, StateArchived)
 	case StateError, StateBuildFailed:
 		return sb, fmt.Errorf("daytona runtime: sandbox %s is in state %s: %s", sb.ID, sb.State, sb.ErrorReason)
-	case StateDestroyed, StateDestroying:
-		return sb, fmt.Errorf("daytona runtime: sandbox %s is destroyed", sb.ID)
+	default:
+		return sb, fmt.Errorf("daytona runtime: sandbox %s cannot be started from state %s", sb.ID, sb.State)
 	}
-	return r.waitForState(ctx, sb.ID, StateStarted, r.startTimeout)
+}
+
+// deleteAndWait deletes a sandbox and waits until Daytona stops reporting it
+// (deletion is async: the API 200s while the sandbox is still listed). AO's
+// teardown paths treat a returned destroy as "gone", so the adapter owns the
+// wait rather than every caller re-discovering the lag.
+func (r *core) deleteAndWait(ctx context.Context, sandboxID string) error {
+	if err := r.client.DeleteSandbox(ctx, sandboxID); err != nil {
+		if errors.Is(err, ErrSandboxNotFound) {
+			return nil
+		}
+		return err
+	}
+	deadline := time.Now().Add(r.startTimeout)
+	for {
+		sb, err := r.client.GetSandbox(ctx, sandboxID)
+		switch {
+		case errors.Is(err, ErrSandboxNotFound):
+			return nil
+		case err != nil:
+			return fmt.Errorf("daytona: confirm delete of sandbox %s: %w", sandboxID, err)
+		case sb.State == StateDestroyed:
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("daytona: sandbox %s still %s after delete", sandboxID, sb.State)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(statePollInterval):
+		}
+	}
+}
+
+// waitForSettled polls until the sandbox leaves every transitional state,
+// whatever it settles into.
+func (r *core) waitForSettled(ctx context.Context, sandboxID string, timeout time.Duration) (Sandbox, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		sb, err := r.client.GetSandbox(ctx, sandboxID)
+		if err != nil {
+			return Sandbox{}, fmt.Errorf("daytona runtime: poll sandbox %s: %w", sandboxID, err)
+		}
+		if !sb.State.Transitional() {
+			return sb, nil
+		}
+		if time.Now().After(deadline) {
+			return sb, fmt.Errorf("daytona runtime: sandbox %s stuck in transitional state %s after %s", sandboxID, sb.State, timeout)
+		}
+		select {
+		case <-ctx.Done():
+			return sb, ctx.Err()
+		case <-time.After(statePollInterval):
+		}
+	}
 }
 
 // waitForState polls until the sandbox reaches want, a terminal error state,
-// or the timeout elapses.
-func (r *core) waitForState(ctx context.Context, sandboxID string, want SandboxState, timeout time.Duration) (Sandbox, error) {
+// or the timeout elapses. States listed in tolerate are treated like
+// transitional ones — kept polling through — for the window where an async
+// state change was requested but the sandbox still reports its origin state.
+func (r *core) waitForState(ctx context.Context, sandboxID string, want SandboxState, timeout time.Duration, tolerate ...SandboxState) (Sandbox, error) {
+	tolerated := func(s SandboxState) bool {
+		for _, t := range tolerate {
+			if s == t {
+				return true
+			}
+		}
+		return false
+	}
 	deadline := time.Now().Add(timeout)
 	for {
 		sb, err := r.client.GetSandbox(ctx, sandboxID)
@@ -160,7 +241,7 @@ func (r *core) waitForState(ctx context.Context, sandboxID string, want SandboxS
 			return sb, nil
 		case sb.State == StateError || sb.State == StateBuildFailed:
 			return sb, fmt.Errorf("daytona runtime: sandbox %s entered state %s: %s", sandboxID, sb.State, sb.ErrorReason)
-		case !sb.State.Transitional() && sb.State != want:
+		case !sb.State.Transitional() && !tolerated(sb.State):
 			return sb, fmt.Errorf("daytona runtime: sandbox %s settled in state %s, want %s", sandboxID, sb.State, want)
 		}
 		if time.Now().After(deadline) {
@@ -383,6 +464,22 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 		var execErr *execError
 		if errors.As(err, &execErr) && sessionMissingOutput(execErr.output) {
 			return false, nil
+		}
+		// A sandbox observed `started` can be mid-stop by the time the exec
+		// lands (Daytona stop is async; the toolbox proxy 502s during it —
+		// seen live). Re-read the state: if it left `started`, answer from the
+		// fresh state instead of surfacing a probe error for a healthy park.
+		if fresh, freshErr := r.client.GetSandbox(ctx, sb.ID); freshErr == nil && fresh.State != StateStarted {
+			switch fresh.State {
+			case StateStopped, StateArchived, StateStopping, StateArchiving:
+				return true, nil // parked mid-probe
+			case StateError, StateBuildFailed, StateDestroyed, StateDestroying:
+				return false, nil
+			default:
+				if fresh.State.Transitional() {
+					return true, nil
+				}
+			}
 		}
 		return false, fmt.Errorf("daytona runtime: probe session %s: %w", id, err)
 	}

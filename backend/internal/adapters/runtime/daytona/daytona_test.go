@@ -368,6 +368,30 @@ func TestRestartFallsBackToNewSessionAfterPark(t *testing.T) {
 	}
 }
 
+func TestRestartWakesSandboxStillReportedStopping(t *testing.T) {
+	// Live regression (PR #3254): the list endpoint lags GetSandbox, so a
+	// freshly-parked sandbox can be listed as `stopping`. ensureStarted must
+	// settle that into `stopped` and THEN issue the start — the old code
+	// waited for `started` without ever starting, and timed out.
+	fc := newFakeClient()
+	fc.seedSandbox("s1", StateStopping)
+	fc.settleAfterGets = 2
+	fc.settleTo = StateStopped
+	fc.onExec("tmux respawn-pane", ExecResult{ExitCode: 1, Result: "can't find pane: s1:0.0"}, nil)
+	rt := newTestRuntime(t, fc)
+
+	if _, err := rt.Restart(context.Background(), ports.RuntimeHandle{ID: "s1"}, ports.RuntimeConfig{
+		SessionID:     "s1",
+		WorkspacePath: "/w",
+		Argv:          []string{"claude"},
+	}); err != nil {
+		t.Fatalf("Restart: %v", err)
+	}
+	if len(fc.started) != 1 {
+		t.Fatalf("StartSandbox calls = %d, want 1 (wake must be issued after the state settles)", len(fc.started))
+	}
+}
+
 func TestIsSupervisedProcessAlive(t *testing.T) {
 	table := `  1     0 /sbin/init
    40     1 tmux server
