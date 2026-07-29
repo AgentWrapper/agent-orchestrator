@@ -1,8 +1,10 @@
 package cloud
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,6 +17,7 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/auth"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/postgres"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/tenancy"
@@ -52,7 +55,7 @@ func TestControlPlaneOrgIsolationThroughExistingAPI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("issue token B: %v", err)
 	}
-	server := httptest.NewServer(NewHandler(Config{RequestTimeout: time.Second}, store, issuer, nil))
+	server := httptest.NewServer(NewHandler(Config{RequestTimeout: time.Second}, store, issuer, nil, cdc.NewBroadcaster()))
 	t.Cleanup(server.Close)
 
 	assertProjectNames(t, server.URL, tokenA.AccessToken, orgA.ID, []string{"A project"})
@@ -95,6 +98,114 @@ func TestControlPlaneOrgIsolationThroughExistingAPI(t *testing.T) {
 
 	if _, err := store.EventsAfter(context.Background(), 0, 10); err == nil {
 		t.Fatalf("unscoped change_log read succeeded, want fail-closed error")
+	}
+}
+
+func TestControlPlaneMountsReadOnlyAPISurface(t *testing.T) {
+	ctx := context.Background()
+	store := openTestPostgresStore(ctx, t)
+	user, orgs, err := store.UpsertGoogleUser(ctx, auth.GoogleProfile{Subject: "google-readonly", Email: "readonly@example.com"})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	issuer, err := auth.NewIssuer(auth.IssuerConfig{Secret: "test-secret", Issuer: "ao-cloud"})
+	if err != nil {
+		t.Fatalf("issuer: %v", err)
+	}
+	token, err := issuer.Issue(user.ID, []string{orgs[0].ID})
+	if err != nil {
+		t.Fatalf("issue token: %v", err)
+	}
+	server := httptest.NewServer(NewHandler(Config{RequestTimeout: time.Second}, store, issuer, nil, cdc.NewBroadcaster()))
+	t.Cleanup(server.Close)
+
+	req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/projects", strings.NewReader(`{"path":"/tmp/cloud"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
+	req.Header.Set("X-AO-Org-ID", orgs[0].ID)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusOK {
+		t.Fatalf("POST /api/v1/projects status = %d, want non-success", resp.StatusCode)
+	}
+}
+
+func TestControlPlaneEventsReceivesLivePostgresChange(t *testing.T) {
+	ctx := context.Background()
+	store := openTestPostgresStore(ctx, t)
+	user, orgs, err := store.UpsertGoogleUser(ctx, auth.GoogleProfile{Subject: "google-events", Email: "events@example.com"})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	org := orgs[0]
+	issuer, err := auth.NewIssuer(auth.IssuerConfig{Secret: "test-secret", Issuer: "ao-cloud"})
+	if err != nil {
+		t.Fatalf("issuer: %v", err)
+	}
+	token, err := issuer.Issue(user.ID, []string{org.ID})
+	if err != nil {
+		t.Fatalf("issue token: %v", err)
+	}
+	events := cdc.NewBroadcaster()
+	server := httptest.NewServer(NewHandler(Config{RequestTimeout: time.Second}, store, issuer, nil, events))
+	t.Cleanup(server.Close)
+
+	reqCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, server.URL+"/api/v1/events?after=0", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
+	req.Header.Set("X-AO-Org-ID", org.ID)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /events: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /events status = %d, want 200", resp.StatusCode)
+	}
+	waitForSubscriber(t, events)
+
+	projectID := "live-project"
+	if err := store.UpsertProject(tenancy.WithScope(ctx, tenancy.Scope{UserID: user.ID, OrgID: org.ID}), domain.ProjectRecord{
+		ID:           projectID,
+		Path:         "/tmp/live-project",
+		DisplayName:  "Live project",
+		RegisteredAt: time.Now().UTC(),
+		Kind:         domain.ProjectKindSingleRepo,
+	}); err != nil {
+		t.Fatalf("seed live project: %v", err)
+	}
+	session, err := store.CreateSession(tenancy.WithScope(ctx, tenancy.Scope{UserID: user.ID, OrgID: org.ID}), domain.SessionRecord{
+		ProjectID:   domain.ProjectID(projectID),
+		Kind:        domain.KindWorker,
+		Harness:     domain.HarnessCodex,
+		DisplayName: "Live session",
+		Activity: domain.Activity{
+			State:          domain.ActivityIdle,
+			LastActivityAt: time.Now().UTC(),
+		},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("seed live session: %v", err)
+	}
+	poller := cdc.NewPoller(store.AdminChangeLogSource(), events, cdc.PollerConfig{})
+	if err := poller.Poll(ctx); err != nil {
+		t.Fatalf("poll change_log: %v", err)
+	}
+
+	if got := readSSEDataLine(t, resp); !strings.Contains(got, string(session.ID)) {
+		t.Fatalf("live SSE data = %q, want session id %q", got, session.ID)
 	}
 }
 
@@ -148,6 +259,41 @@ func TestPostgresRefreshTokenRotationIsAtomic(t *testing.T) {
 	}
 	if successes != 1 {
 		t.Fatalf("successful refresh consumptions = %d, want 1", successes)
+	}
+}
+
+func waitForSubscriber(t *testing.T, events *cdc.Broadcaster) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if events.SubscriberCount() > 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for event subscriber")
+}
+
+func readSSEDataLine(t *testing.T, resp *http.Response) string {
+	t.Helper()
+	lines := make(chan string, 1)
+	go func() {
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if strings.HasPrefix(line, "data: ") {
+				lines <- strings.TrimPrefix(line, "data: ")
+				return
+			}
+		}
+		lines <- fmt.Sprintf("scanner ended: %v", scanner.Err())
+	}()
+	select {
+	case line := <-lines:
+		return line
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for SSE data")
+		return ""
 	}
 }
 

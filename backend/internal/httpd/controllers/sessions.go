@@ -146,6 +146,12 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Post("/orchestrators/{id}/done", c.completeOrchestrator)
 }
 
+// RegisterReadOnly mounts only session read routes.
+func (c *SessionsController) RegisterReadOnly(r chi.Router) {
+	r.Get("/sessions", c.list)
+	r.Get("/sessions/{sessionId}", c.get)
+}
+
 func (c *SessionsController) list(w http.ResponseWriter, r *http.Request) {
 	if c.Svc == nil {
 		apispec.NotImplemented(w, r, "GET", "/api/v1/sessions")

@@ -122,6 +122,26 @@ func (a *API) Register(root chi.Router) {
 	})
 }
 
+// RegisterReadOnly mounts the cloud Phase 1 API surface: project/session read
+// paths plus the durable/live CDC event stream.
+func (a *API) RegisterReadOnly(root chi.Router) {
+	timeout := a.cfg.RequestTimeout
+	if timeout <= 0 {
+		timeout = config.DefaultRequestTimeout
+	}
+
+	root.Route("/api/v1", func(r chi.Router) {
+		r.Get("/openapi.yaml", apispec.ServeYAML)
+
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.Timeout(timeout))
+			a.projects.RegisterReadOnly(r)
+			a.sessions.RegisterReadOnly(r)
+		})
+		a.events.Register(r)
+	})
+}
+
 // notFoundJSON returns the locked envelope for unmatched routes. Chi's default
 // 404 is a text/plain body; the API surface must answer JSON so consumers can
 // parse it uniformly.

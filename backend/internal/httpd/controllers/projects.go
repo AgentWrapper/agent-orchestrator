@@ -33,6 +33,12 @@ func (c *ProjectsController) Register(r chi.Router) {
 	r.Delete("/projects/{id}", c.remove)
 }
 
+// RegisterReadOnly mounts only project read routes.
+func (c *ProjectsController) RegisterReadOnly(r chi.Router) {
+	r.Get("/projects", c.list)
+	r.Get("/projects/{id}", c.get)
+}
+
 func (c *ProjectsController) list(w http.ResponseWriter, r *http.Request) {
 	if c.Mgr == nil {
 		apispec.NotImplemented(w, r, "GET", "/api/v1/projects")
