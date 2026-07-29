@@ -66,7 +66,7 @@ func (p *Plugin) Manifest() adapters.Manifest {
 }
 
 // GetConfigSpec reports the per-project agent config keys Droid understands.
-// Model is honored via the runtime --settings file (see permissionSettingsArgs)
+// Model is honored via the runtime --settings file (see runtimeSettingsArgs)
 // rather than an argv flag, since interactive droid has no --model flag.
 func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 	if err := ctx.Err(); err != nil {
@@ -87,11 +87,12 @@ func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 //
 //	droid [--settings <path>] [--append-system-prompt[-file] <x>] [prompt]
 //
-// The prompt is delivered as a positional argument (in command). Droid resolves
-// its model and other defaults from the user's own settings; only the autonomy
-// level is overridden, and only for non-default permission modes (see
-// permissionSettingsArgs). System-prompt text/file is appended (not replaced),
-// matching Droid's --append-system-prompt semantics.
+// The prompt is delivered as a positional argument (in command). Both the
+// permission autonomy level and any role-specific model override are written
+// to the runtime --settings file when set (see runtimeSettingsArgs); when
+// neither is set, Droid resolves everything from the user's own settings.
+// System-prompt text/file is appended (not replaced), matching Droid's
+// --append-system-prompt semantics.
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	binary, err := p.droidBinary(ctx)
 	if err != nil {
@@ -101,7 +102,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	cmd = make([]string, 0, 6)
 	cmd = append(cmd, binary)
 
-	settingsArgs, err := permissionSettingsArgs(cfg.SessionID, cfg.Permissions, cfg.Config.Model)
+	settingsArgs, err := runtimeSettingsArgs(cfg.SessionID, cfg.Permissions, cfg.Config.Model)
 	if err != nil {
 		return nil, err
 	}
@@ -122,10 +123,9 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 
 // GetRestoreCommand rebuilds the argv that continues an existing Droid session:
 // `droid [--settings <path>] -r <agentSessionId>`. It re-applies the permission
-// autonomy (resume otherwise reverts to the configured default) but not the
-// prompt, which the session already carries. ok is false when the hook-derived
-// native session id has not landed yet, so callers fall back to fresh launch
-// behavior — mirroring the Codex and opencode adapters.
+// autonomy and any model override (resume otherwise reverts to the configured
+// default) but not the prompt, which the session already carries. ok is false
+// when the hook-derived
 func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig) (cmd []string, ok bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
@@ -142,7 +142,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 
 	cmd = make([]string, 0, 5)
 	cmd = append(cmd, binary)
-	settingsArgs, err := permissionSettingsArgs(cfg.Session.ID, cfg.Permissions, cfg.Config.Model)
+	settingsArgs, err := runtimeSettingsArgs(cfg.Session.ID, cfg.Permissions, cfg.Config.Model)
 	if err != nil {
 		return nil, false, err
 	}
@@ -188,16 +188,22 @@ func droidAutonomyLevel(mode ports.PermissionMode) string {
 	}
 }
 
-// permissionSettingsArgs renders a non-default permission mode as a
-// `--settings <path>` argv pair, writing a process-scoped runtime settings file
-// that overrides only sessionDefaultSettings.autonomyLevel. The default mode
-// returns nil (no flag, no file) so Droid uses the user's own settings.
+// runtimeSettingsArgs renders a non-default permission mode and/or a model
+// override as a `--settings <path>` argv pair, writing a process-scoped
+// runtime settings file. It returns nil (no flag, no file) only when neither
+// value is set, so Droid falls back entirely to the user's own settings.
 //
 // Interactive `droid` exposes no per-launch permission flag (--auto and
-// --skip-permissions-unsafe exist only on `droid exec`), so autonomy must be
-// delivered through settings. The file is written under the OS temp dir, keyed
-// by session id, rather than into the worktree so it never lands in a commit.
-func permissionSettingsArgs(sessionID string, mode ports.PermissionMode, model string) ([]string, error) {
+// --skip-permissions-unsafe exist only on `droid exec`) and no interactive
+// --model flag either, so both autonomy and model must be delivered through
+// settings. The file is written under the OS temp dir, keyed by session id,
+// rather than into the worktree so it never lands in a commit.
+//
+// NOTE: Droid applies --settings as an overlay at org-level precedence, not a
+// full replacement of the user's own settings file. Writing {"model": ...}
+// alone (default permissions, no autonomy override) does not clobber
+// ~/.factory/settings.json — this is load-bearing for the model-only case.
+func runtimeSettingsArgs(sessionID string, mode ports.PermissionMode, model string) ([]string, error) {
 	level := droidAutonomyLevel(mode)
 	model = strings.TrimSpace(model)
 	if level == "" && model == "" {

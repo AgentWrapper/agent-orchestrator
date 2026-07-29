@@ -104,6 +104,124 @@ func TestGetLaunchCommandBypassWritesSettings(t *testing.T) {
 	}
 }
 
+func TestGetLaunchCommandModelOnlyDefaultPermissions(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "droid"}
+	settingsPath := runtimeSettingsPath("mer-model-1")
+	t.Cleanup(func() { _ = os.Remove(settingsPath) })
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		SessionID: "mer-model-1",
+		Prompt:    "use opus",
+		Config:    ports.AgentConfig{Model: "claude-opus-4-5"},
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	want := []string{"droid", "--settings", settingsPath, "use opus"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read settings file: %v", err)
+	}
+	var parsed map[string]json.RawMessage
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("parse settings file: %v", err)
+	}
+	var model string
+	if err := json.Unmarshal(parsed["model"], &model); err != nil {
+		t.Fatalf("model field: %v", err)
+	}
+	if model != "claude-opus-4-5" {
+		t.Fatalf("model = %q, want claude-opus-4-5", model)
+	}
+	if _, ok := parsed["sessionDefaultSettings"]; ok {
+		t.Fatalf("default permissions should not write sessionDefaultSettings, got %s", data)
+	}
+}
+
+func TestGetLaunchCommandModelAndNonDefaultPermission(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "droid"}
+	settingsPath := runtimeSettingsPath("mer-model-2")
+	t.Cleanup(func() { _ = os.Remove(settingsPath) })
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		SessionID:   "mer-model-2",
+		Prompt:      "refactor with opus",
+		Permissions: ports.PermissionModeBypassPermissions,
+		Config:      ports.AgentConfig{Model: "claude-opus-4-5"},
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	want := []string{"droid", "--settings", settingsPath, "refactor with opus"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read settings file: %v", err)
+	}
+	var parsed struct {
+		Model                  string `json:"model"`
+		SessionDefaultSettings struct {
+			AutonomyLevel string `json:"autonomyLevel"`
+		} `json:"sessionDefaultSettings"`
+	}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("parse settings file: %v", err)
+	}
+	if parsed.Model != "claude-opus-4-5" {
+		t.Fatalf("model = %q, want claude-opus-4-5", parsed.Model)
+	}
+	if parsed.SessionDefaultSettings.AutonomyLevel != "high" {
+		t.Fatalf("autonomyLevel = %q, want high", parsed.SessionDefaultSettings.AutonomyLevel)
+	}
+}
+
+func TestGetRestoreCommandForwardsModel(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "droid"}
+	settingsPath := runtimeSettingsPath("mer-model-3")
+	t.Cleanup(func() { _ = os.Remove(settingsPath) })
+
+	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Config: ports.AgentConfig{Model: "claude-opus-4-5"},
+		Session: ports.SessionRef{
+			ID: "mer-model-3",
+			Metadata: map[string]string{
+				ports.MetadataKeyAgentSessionID: "droid-ses-model",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !ok {
+		t.Fatal("ok=false, want true")
+	}
+	want := []string{"droid", "--settings", settingsPath, "-r", "droid-ses-model"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read settings file: %v", err)
+	}
+	var parsed struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("parse settings file: %v", err)
+	}
+	if parsed.Model != "claude-opus-4-5" {
+		t.Fatalf("model = %q, want claude-opus-4-5", parsed.Model)
+	}
+}
+
 func TestGetLaunchCommandAutonomyLevels(t *testing.T) {
 	for _, tc := range []struct {
 		mode  ports.PermissionMode
