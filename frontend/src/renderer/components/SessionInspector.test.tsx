@@ -7,10 +7,11 @@ import { SessionInspector } from "./SessionInspector";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
 import type { PRState, PullRequestFacts, WorkspaceSession } from "../types/workspace";
 
-const { getMock, navigateMock, patchMock, postMock } = vi.hoisted(() => ({
+const { getMock, navigateMock, patchMock, putMock, postMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
 	navigateMock: vi.fn(),
 	patchMock: vi.fn(),
+	putMock: vi.fn(),
 	postMock: vi.fn(),
 }));
 
@@ -23,6 +24,7 @@ vi.mock("../lib/api-client", () => ({
 		GET: getMock,
 		PATCH: patchMock,
 		POST: postMock,
+		PUT: putMock,
 	},
 	apiErrorMessage: (error: unknown, fallback = "Request failed") => {
 		if (error instanceof Error) return error.message;
@@ -161,6 +163,7 @@ beforeEach(() => {
 	navigateMock.mockReset();
 	patchMock.mockReset();
 	postMock.mockReset();
+	putMock.mockReset();
 	getMock.mockResolvedValue({ data: { reviewerHandleId: "", reviews: [] }, error: undefined });
 	patchMock.mockResolvedValue({ data: { ok: true }, error: undefined, response: { status: 200 } });
 	postMock.mockResolvedValue({ data: { ok: true, sessionId: "sess-1" }, error: undefined });
@@ -893,6 +896,24 @@ describe("SessionInspector reviews tab", () => {
 		expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/reviews/trigger", {
 			params: { path: { sessionId: "sess-1" } },
 			body: { harness: "opencode" },
+		});
+	});
+
+	it("turns off sending review findings to the agent", async () => {
+		mockCommonGets([], "reviewer-pane", [reviewState(3, "up_to_date", "sha-1")]);
+		postMock.mockResolvedValue({ data: {} });
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsTab();
+
+		// Delivery is the pre-existing behaviour, so the switch starts on.
+		const toggle = await screen.findByRole("switch", { name: "Send review findings to the agent" });
+		expect(toggle).toBeChecked();
+
+		await userEvent.click(toggle);
+		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}/config", {
+			params: { path: { id: "ws-1" } },
+			body: { config: { reviewers: [{ harness: "codex" }], reviewAutoInjectOff: true } },
 		});
 	});
 

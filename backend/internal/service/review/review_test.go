@@ -19,6 +19,19 @@ type fakeStore struct {
 	updateCalls int
 	markCalls   int
 	markedIDs   []string
+
+	// session/project back the auto-inject lookup; the zero values keep delivery
+	// on, matching the behaviour before the opt-out existed.
+	session domain.SessionRecord
+	project domain.ProjectRecord
+}
+
+func (f *fakeStore) GetSession(context.Context, domain.SessionID) (domain.SessionRecord, bool, error) {
+	return f.session, true, nil
+}
+
+func (f *fakeStore) GetProject(context.Context, string) (domain.ProjectRecord, bool, error) {
+	return f.project, true, nil
 }
 
 func (f *fakeStore) GetReviewRun(_ context.Context, id string) (domain.ReviewRun, bool, error) {

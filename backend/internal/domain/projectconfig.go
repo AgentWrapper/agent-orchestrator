@@ -51,6 +51,13 @@ type ProjectConfig struct {
 	// list falls back to claude-code (see ResolveReviewerHarness).
 	Reviewers []ReviewerConfig `json:"reviewers,omitempty"`
 
+	// ReviewAutoInjectOff stops AO handing a completed review's findings to the
+	// worker agent. Delivery has always been unconditional; this is the opt-out,
+	// so an absent value keeps that behaviour and only an explicit true disables
+	// it. Reviews are still recorded and shown either way — the switch is about
+	// whether the worker gets told.
+	ReviewAutoInjectOff bool `json:"reviewAutoInjectOff,omitempty"`
+
 	// TrackerIntake controls issue-driven worker spawning. It is opt-in and
 	// read-only toward the tracker in v1: matching issues spawn sessions, but the
 	// tracker is not commented on or transitioned.

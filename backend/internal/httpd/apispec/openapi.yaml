@@ -3021,6 +3021,8 @@ components:
           items:
             type: string
           type: array
+        reviewAutoInjectOff:
+          type: boolean
         reviewers:
           items:
             $ref: '#/components/schemas/DomainReviewerConfig'

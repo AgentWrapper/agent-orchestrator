@@ -48,6 +48,8 @@ type Store interface {
 	UpdateReviewRunResult(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string) (bool, error)
 	MarkReviewRunDelivered(ctx context.Context, id string, deliveredAt time.Time) (bool, error)
 	ListPRsBySession(ctx context.Context, id domain.SessionID) ([]domain.PullRequest, error)
+	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
+	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
 }
 
 // Reducer is the lifecycle reaction boundary used after a review result has
@@ -224,6 +226,14 @@ func (s *Service) deliverSubmitted(ctx context.Context, workerID domain.SessionI
 	if len(deliverable) == 0 {
 		return nil, nil
 	}
+	// Handing findings to the worker is the project's call. Runs stay recorded
+	// and visible when it is off — only the nudge is withheld, and they are left
+	// undelivered so turning it back on still hands them over.
+	if off, err := s.autoInjectDisabled(ctx, workerID); err != nil {
+		return nil, err
+	} else if off {
+		return nil, nil
+	}
 	results := reviewResults(workerID, deliverable)
 	var outcome lifecycle.ReviewDeliveryOutcome
 	if len(results) == 1 && results[0].BatchID == "" {
@@ -251,6 +261,20 @@ func (s *Service) deliverSubmitted(ctx context.Context, workerID domain.SessionI
 		}
 	}
 	return delivered, nil
+}
+
+// autoInjectDisabled reports whether the worker's project opted out of handing
+// review findings to the agent.
+func (s *Service) autoInjectDisabled(ctx context.Context, workerID domain.SessionID) (bool, error) {
+	worker, ok, err := s.store.GetSession(ctx, workerID)
+	if err != nil || !ok {
+		return false, err
+	}
+	proj, ok, err := s.store.GetProject(ctx, string(worker.ProjectID))
+	if err != nil || !ok {
+		return false, err
+	}
+	return proj.Config.ReviewAutoInjectOff, nil
 }
 
 func (s *Service) deliverableRuns(ctx context.Context, workerID domain.SessionID, runs []domain.ReviewRun) ([]domain.ReviewRun, error) {

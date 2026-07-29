@@ -771,6 +771,24 @@ function ReviewsView({
 			}
 		},
 	});
+	// Auto-inject is the existing behaviour — a completed review's findings are
+	// handed to the worker agent — so the stored flag is an opt-out and the switch
+	// shows its inverse.
+	const autoInjectOff = Boolean(projectConfigQuery.data?.reviewAutoInjectOff);
+	const setAutoInject = useMutation({
+		mutationFn: async (enabled: boolean) => {
+			const current = projectConfigQuery.data;
+			if (!current) return;
+			const { error } = await apiClient.PUT("/api/v1/projects/{id}/config", {
+				params: { path: { id: session.workspaceId } },
+				body: { config: { ...current, reviewAutoInjectOff: !enabled } },
+			});
+			if (error) throw new Error(apiErrorMessage(error, "Unable to save the review setting"));
+		},
+		onSuccess: () => {
+			void queryClient.invalidateQueries({ queryKey: ["project-config", session.workspaceId] });
+		},
+	});
 	const cancelReview = useMutation({
 		mutationFn: async () => {
 			const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/cancel", {
@@ -831,6 +849,10 @@ function ReviewsView({
 					notice={reviewNotice}
 					reviewerOverride={reviewerOverride}
 					onReviewerOverrideChange={setReviewerOverride}
+					autoInject={!autoInjectOff}
+					autoInjectPending={setAutoInject.isPending}
+					autoInjectError={setAutoInject.error}
+					onAutoInjectChange={(next) => setAutoInject.mutate(next)}
 					session={session}
 				/>
 			</Section>
@@ -1004,6 +1026,10 @@ function ReviewPanel({
 	notice,
 	reviewerOverride,
 	onReviewerOverrideChange,
+	autoInject,
+	autoInjectPending,
+	autoInjectError,
+	onAutoInjectChange,
 	onTrigger,
 	onCancel,
 	onOpenTerminal,
@@ -1019,6 +1045,10 @@ function ReviewPanel({
 	notice: string | null;
 	reviewerOverride: ReviewerHarness | "";
 	onReviewerOverrideChange: (next: ReviewerHarness | "") => void;
+	autoInject: boolean;
+	autoInjectPending: boolean;
+	autoInjectError: unknown;
+	onAutoInjectChange: (next: boolean) => void;
 	onTrigger: () => void;
 	onCancel: () => void;
 	onOpenTerminal?: OpenReviewerTerminal;
@@ -1103,6 +1133,22 @@ function ReviewPanel({
 					))
 				)}
 			</div>
+			<label className="flex min-w-0 items-center gap-2 border-t border-border pt-2.5">
+				<Switch
+					aria-label="Send review findings to the agent"
+					checked={autoInject}
+					disabled={autoInjectPending}
+					onCheckedChange={onAutoInjectChange}
+				/>
+				<span className="min-w-0 flex-1 text-2xs leading-snug text-passive">
+					Send findings to the agent when a review finishes
+				</span>
+			</label>
+			{autoInjectError ? (
+				<p className="m-0 rounded-md border border-error/28 bg-error/8 px-2.5 py-2 text-sm-md leading-normal text-error">
+					{apiErrorMessage(autoInjectError, "Unable to save the review setting")}
+				</p>
+			) : null}
 			{/* Running is the one state worth interrupting the panel for, so it gets a
 			    live strip above the actions rather than only a word on a button. */}
 			{reviewRunning ? (
