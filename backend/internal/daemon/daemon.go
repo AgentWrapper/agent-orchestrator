@@ -146,7 +146,7 @@ func Run() error {
 	// selected runtime, routed git/scratch workspaces, the per-session agent
 	// resolver (AO_AGENT validated here for compatibility), and the agent
 	// messenger, then mount it on the API.
-	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, log)
+	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, lcStack.reengagement, messenger, telemetrySink, agents, log)
 	if err != nil {
 		stop()
 		lcStack.Stop()
@@ -278,12 +278,6 @@ func Run() error {
 	if reconcileErr := lcStack.ReconcileRuntime(ctx); reconcileErr != nil {
 		log.Error("reconcile agent processes on boot failed", "err", reconcileErr)
 	}
-
-	// Redeliver any worker_idle events left pending across the restart, now that
-	// sessions (and their orchestrators) have been reconciled. Off the critical
-	// boot path (a store read plus a possible pane write per pending project);
-	// the recovery sweep is the backstop if it does not finish before shutdown.
-	go lcStack.LCM.DispatchAllPendingWorkerIdleEvents(ctx)
 
 	// ponytail: 5s tolerates a brief frontend restart; tune if dev hot-reload trips it.
 	const supervisorGrace = 5 * time.Second

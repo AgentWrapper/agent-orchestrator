@@ -591,6 +591,51 @@ paths:
       summary: Fetch one orchestrator session
       tags:
       - sessions
+  /api/v1/orchestrators/{id}/done:
+    post:
+      operationId: completeOrchestrator
+      parameters:
+      - description: Orchestrator session identifier, e.g. project-orchestrator.
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Orchestrator session identifier, e.g. project-orchestrator.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompleteOrchestratorResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Declare an orchestrator complete and stop automatic re-engagement
+      tags:
+      - sessions
   /api/v1/projects:
     get:
       operationId: listProjects
@@ -2345,6 +2390,16 @@ components:
       required:
       - sessionId
       - reason
+      type: object
+    CompleteOrchestratorResponse:
+      properties:
+        ok:
+          type: boolean
+        sessionId:
+          type: string
+      required:
+      - ok
+      - sessionId
       type: object
     ControllersSessionView:
       properties:

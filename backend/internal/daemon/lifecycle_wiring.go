@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
-	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/activitydispatch"
@@ -20,6 +19,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	activityobserver "github.com/aoagents/agent-orchestrator/backend/internal/observe/activity"
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe/reaper"
+	"github.com/aoagents/agent-orchestrator/backend/internal/orchestratorloop"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	reviewcore "github.com/aoagents/agent-orchestrator/backend/internal/review"
 	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
@@ -38,37 +38,41 @@ type lifecycleStack struct {
 	// LCM is the Lifecycle Manager (the canonical write path). It is exposed so
 	// startSession can share the same reducer the reaper drives, rather than
 	// standing up a second store+LCM pair that would diverge under writes.
-	LCM           *lifecycle.Manager
-	runtimeReaper *reaper.Reaper
-	reaperDone    <-chan struct{}
-	activityDone  <-chan struct{}
-	scmDone       <-chan struct{}
-	trackerDone   <-chan struct{}
-	sweepDone     <-chan struct{}
+	LCM              *lifecycle.Manager
+	runtimeReaper    *reaper.Reaper
+	reaperDone       <-chan struct{}
+	activityDone     <-chan struct{}
+	scmDone          <-chan struct{}
+	trackerDone      <-chan struct{}
+	reengagementDone <-chan struct{}
+	reengagement     *orchestratorloop.Manager
 }
-
-// workerIdleSweepInterval is the low-frequency recovery cadence that redelivers
-// any worker_idle events left pending by a missed event-driven trigger.
-const workerIdleSweepInterval = 2 * time.Minute
 
 // startLifecycle constructs the Lifecycle Manager over the store and starts the
 // reaper. The goroutine stops when ctx is cancelled; Stop waits for it to drain.
 // The messenger is the per-daemon agent messenger the LCM uses to nudge agents
 // in response to SCM observations (CI failure, review feedback, merge conflict).
 func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runtime, messenger ports.AgentMessenger, notifier notificationSink, telemetry ports.EventSink, agents ports.AgentResolver, logger *slog.Logger) *lifecycleStack {
+	steering := activeTurnSteering(agents)
+	reengagement := orchestratorloop.New(store, messenger, notifier, orchestratorloop.Config{
+		Logger:       logger,
+		SteersActive: steering,
+	})
 	lcm := lifecycle.New(store, messenger,
 		lifecycle.WithNotificationSink(notifier),
 		lifecycle.WithTelemetry(telemetry),
-		lifecycle.WithActiveSteering(activeTurnSteering(agents)),
+		lifecycle.WithActiveSteering(steering),
+		lifecycle.WithOrchestratorReengagement(reengagement),
 	)
 	rp := reaper.New(lcm, store, runtime, reaper.Config{Logger: logger})
 	activityPoller := activityobserver.New(store, lcm, runtime, agents, activityobserver.Config{Logger: logger})
 	return &lifecycleStack{
-		LCM:           lcm,
-		runtimeReaper: rp,
-		reaperDone:    rp.Start(ctx),
-		activityDone:  activityPoller.Start(ctx),
-		sweepDone:     startWorkerIdleSweep(ctx, lcm),
+		LCM:              lcm,
+		runtimeReaper:    rp,
+		reaperDone:       rp.Start(ctx),
+		activityDone:     activityPoller.Start(ctx),
+		reengagement:     reengagement,
+		reengagementDone: reengagement.Start(ctx),
 	}
 }
 
@@ -98,26 +102,6 @@ func activeTurnSteering(agents ports.AgentResolver) func(domain.AgentHarness) bo
 	}
 }
 
-// startWorkerIdleSweep runs the low-frequency recovery sweep that redelivers
-// pending worker_idle events. The goroutine exits on ctx cancellation.
-func startWorkerIdleSweep(ctx context.Context, lcm *lifecycle.Manager) <-chan struct{} {
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		t := time.NewTicker(workerIdleSweepInterval)
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-				lcm.DispatchAllPendingWorkerIdleEvents(ctx)
-			}
-		}
-	}()
-	return done
-}
-
 // Stop waits for the reaper goroutine to exit. The caller must cancel the ctx
 // passed to startLifecycle before calling Stop.
 func (l *lifecycleStack) Stop() {
@@ -125,14 +109,14 @@ func (l *lifecycleStack) Stop() {
 	if l.activityDone != nil {
 		<-l.activityDone
 	}
-	if l.sweepDone != nil {
-		<-l.sweepDone
-	}
 	if l.scmDone != nil {
 		<-l.scmDone
 	}
 	if l.trackerDone != nil {
 		<-l.trackerDone
+	}
+	if l.reengagementDone != nil {
+		<-l.reengagementDone
 	}
 }
 
@@ -160,7 +144,7 @@ type sessionLifecycle interface {
 // LCM, the per-session agent resolver, and the agent messenger. The returned
 // service is mounted at httpd APIDeps.Sessions. It also returns the manager so
 // the caller can wire Reconcile into the boot sequence.
-func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, agents ports.AgentResolver, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
+func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, reengagement *orchestratorloop.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, agents ports.AgentResolver, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
 	gitWS, err := gitworktree.New(gitworktree.Options{
 		// Per-session worktrees live under the data dir, so a single AO_DATA_DIR
 		// override moves all durable per-user state together.
@@ -211,13 +195,14 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		tracker = t
 	}
 	sessionSvc := sessionsvc.NewWithDeps(sessionsvc.Deps{
-		Manager:   mgr,
-		Store:     store,
-		PRClaimer: store,
-		SCM:       scmProvider,
-		DataDir:   cfg.DataDir,
-		Tracker:   tracker,
-		Telemetry: telemetry,
+		Manager:      mgr,
+		Store:        store,
+		PRClaimer:    store,
+		SCM:          scmProvider,
+		DataDir:      cfg.DataDir,
+		Tracker:      tracker,
+		Telemetry:    telemetry,
+		Reengagement: reengagement,
 		// no_signal only makes sense for harnesses whose adapters install
 		// activity hooks; the deriver registry is the source of truth for that.
 		SignalCapable: activitydispatch.SupportsHarness,
