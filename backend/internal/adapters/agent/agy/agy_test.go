@@ -26,6 +26,31 @@ func TestGetLaunchCommand(t *testing.T) {
 		Permissions:   ports.PermissionModeBypassPermissions,
 		Prompt:        "fix this",
 		WorkspacePath: "/tmp/ws",
+		Config:        ports.AgentConfig{Model: "gemini-3-pro"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"agy",
+		"--add-dir", "/tmp/ws",
+		"--dangerously-skip-permissions",
+		"--model", "gemini-3-pro",
+		"--prompt-interactive", "fix this",
+	}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetLaunchCommandNoModel(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "agy"}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Permissions:   ports.PermissionModeBypassPermissions,
+		Prompt:        "fix this",
+		WorkspacePath: "/tmp/ws",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -58,6 +83,7 @@ func TestGetRestoreCommand(t *testing.T) {
 
 	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
 		Permissions: ports.PermissionModeBypassPermissions,
+		Config:      ports.AgentConfig{Model: "gemini-3-flash"},
 		Session: ports.SessionRef{
 			Metadata:      map[string]string{ports.MetadataKeyAgentSessionID: "native-id-123"},
 			WorkspacePath: "/tmp/ws",
@@ -74,6 +100,7 @@ func TestGetRestoreCommand(t *testing.T) {
 		"agy",
 		"--add-dir", "/tmp/ws",
 		"--dangerously-skip-permissions",
+		"--model", "gemini-3-flash",
 		"--conversation", "native-id-123",
 	}
 	if !reflect.DeepEqual(cmd, want) {
@@ -210,5 +237,24 @@ func TestAuthStatus(t *testing.T) {
 	}
 	if status != ports.AgentAuthStatusAuthorized {
 		t.Errorf("AuthStatus() = %v, want AgentAuthStatusAuthorized", status)
+	}
+}
+
+func TestGetConfigSpecReportsModelField(t *testing.T) {
+	plugin := &Plugin{}
+
+	spec, err := plugin.GetConfigSpec(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ports.ConfigField{
+		{
+			Key:         "model",
+			Type:        ports.ConfigFieldString,
+			Description: "Model override passed to `agy --model` (e.g. gemini-3-pro).",
+		},
+	}
+	if !reflect.DeepEqual(spec.Fields, want) {
+		t.Fatalf("config fields\nwant: %#v\n got: %#v", want, spec.Fields)
 	}
 }

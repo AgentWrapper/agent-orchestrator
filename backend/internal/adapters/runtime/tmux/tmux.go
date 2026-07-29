@@ -490,10 +490,24 @@ func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, m
 	}
 	enterCtx := ctx
 	if message != "" {
-		for _, chunk := range chunks(message, r.chunkSize) {
-			if _, err := r.run(ctx, sendKeysLiteralArgs(id, chunk)...); err != nil {
+		messageChunks := chunks(message, r.chunkSize)
+		sendCtx := ctx
+		var finishCancel context.CancelFunc
+		for i, chunk := range messageChunks {
+			if _, err := r.run(sendCtx, sendKeysLiteralArgs(id, chunk)...); err != nil {
+				if finishCancel != nil {
+					finishCancel()
+				}
 				return fmt.Errorf("tmux runtime: send message %s: %w", id, err)
 			}
+			if i == 0 {
+				completionBudget := sendCompletionBudget(len(messageChunks), r.timeout, r.enterDelay)
+				enterCtx, finishCancel = context.WithTimeout(context.WithoutCancel(ctx), completionBudget)
+				sendCtx = enterCtx
+			}
+		}
+		if finishCancel != nil {
+			defer finishCancel()
 		}
 		// Give the target TUI a moment to accept the pasted text before the
 		// trailing Enter, mirroring conpty's ptyInputEnterDelay. Without it a
@@ -505,9 +519,9 @@ func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, m
 		// the Enter are detached from the caller's cancellation (bounded by
 		// their own timeout instead): abandoning mid-pause would strand an
 		// unsubmitted draft that a retried send would then double-paste.
-		var cancel context.CancelFunc
-		enterCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), r.enterDelay+5*time.Second)
-		defer cancel()
+		// Errors reported by tmux after it accepts a chunk still return to the
+		// caller; they are not retried because AO cannot safely distinguish
+		// whether tmux applied the failed command.
 		if r.enterDelay > 0 {
 			select {
 			case <-enterCtx.Done():
@@ -520,6 +534,10 @@ func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, m
 		return fmt.Errorf("tmux runtime: send enter %s: %w", id, err)
 	}
 	return nil
+}
+
+func sendCompletionBudget(chunkCount int, commandTimeout, enterDelay time.Duration) time.Duration {
+	return time.Duration(chunkCount)*commandTimeout + enterDelay
 }
 
 // Interrupt sends Ctrl-C to the foreground process without destroying the tmux

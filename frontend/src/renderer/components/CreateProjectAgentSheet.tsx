@@ -43,6 +43,7 @@ type CreateProjectAgentSheetProps = {
 	open: boolean;
 	path: string | null;
 	repositorySetupNeeded?: boolean;
+	repositorySetupWarning?: string | null;
 };
 
 type SheetError = {
@@ -95,6 +96,7 @@ export function CreateProjectAgentSheet({
 	open,
 	path,
 	repositorySetupNeeded = false,
+	repositorySetupWarning = null,
 }: CreateProjectAgentSheetProps) {
 	const queryClient = useQueryClient();
 	const agentsQuery = useQuery({
@@ -259,7 +261,12 @@ export function CreateProjectAgentSheet({
 
 						{repositorySetupNeeded && (
 							<div className="rounded-lg border border-[var(--color-border-agents-sheet)] bg-[var(--color-bg-agents-sheet-control)]/80 px-3 py-2.5 text-xs leading-body-md text-[var(--color-text-agents-sheet-description)]">
-								If this folder needs Git setup, AO will initialize it and create the first commit before starting.
+								<p>If this folder needs Git setup, AO will initialize it and create the first commit before starting.</p>
+								{repositorySetupWarning && (
+									<p className="mt-2 text-warning">
+										{repositorySetupWarning}
+									</p>
+								)}
 							</div>
 						)}
 

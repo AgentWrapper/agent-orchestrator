@@ -5,6 +5,7 @@
 package ports
 
 import (
+	"context"
 	"errors"
 	"time"
 )
@@ -86,6 +87,20 @@ type SCMChanged struct {
 	CI bool
 	// Review is true when review decision, threads, or comments changed.
 	Review bool
+}
+
+// SCMIdentity describes the account authenticated with the SCM provider.
+type SCMIdentity struct {
+	// Login is the provider login/name of the authenticated account.
+	Login string
+	// Human is true when the provider identifies the account as a human user.
+	Human bool
+}
+
+// SCMIdentityResolver lazily resolves the account authenticated with the
+// active SCM provider.
+type SCMIdentityResolver interface {
+	AuthenticatedIdentity(ctx context.Context) (SCMIdentity, error)
 }
 
 // SCMPRObservation carries provider-neutral PR metadata.

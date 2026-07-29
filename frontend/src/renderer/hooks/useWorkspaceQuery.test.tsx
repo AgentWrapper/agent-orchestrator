@@ -42,13 +42,13 @@ beforeEach(() => {
 });
 
 describe("useWorkspaceQuery", () => {
-	it("returns an empty workspace list while the daemon base URL is untrusted", async () => {
+	it("rejects workspace reads while the daemon base URL is untrusted", async () => {
 		hasTrustedApiBaseUrlMock.mockReturnValue(false);
 
 		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
 
-		await waitFor(() => expect(result.current.isSuccess).toBe(true));
-		expect(result.current.data).toEqual([]);
+		await waitFor(() => expect(result.current.isError).toBe(true));
+		expect(result.current.error).toEqual(new Error("AO daemon API is not ready"));
 		expect(getMock).not.toHaveBeenCalled();
 	});
 

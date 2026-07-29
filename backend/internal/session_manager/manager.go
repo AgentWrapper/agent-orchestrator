@@ -2019,6 +2019,7 @@ func (m *Manager) confirmActive(ctx context.Context, guard *sessionguard.Guard, 
 			return
 		}
 		if attempt >= m.sendConfirm.maxAttempts {
+			m.logger.Warn("send: activity confirmation budget exhausted", "sessionID", id, "attempts", attempt)
 			return
 		}
 		// Timed out with budget remaining: the previous Enter did not land.

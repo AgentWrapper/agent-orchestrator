@@ -126,6 +126,12 @@ describe("TerminalPane empty states", () => {
 // Initial-replay cover (issue #3160): xterm stays mounted and ingesting behind
 // a blank cover so the pane is revealed already drawn at the tail.
 describe("TerminalPane replay cover", () => {
+	beforeEach(() => {
+		// The cover is scoped to an attachment that is actually expecting a
+		// replay, so these cases have to be in a connecting/attached state.
+		terminalState.value = "connecting";
+	});
+
 	it("covers the terminal while the attachment is still buffering the replay", () => {
 		replaySettled.value = false;
 		const view = renderPane({ ...worker, terminalHandleId: "term-1" });
@@ -156,6 +162,20 @@ describe("TerminalPane replay cover", () => {
 			// The label is delayed, so a session switch that resolves quickly never
 			// flashes a spinner — the whole point of a blank cover.
 			expect(screen.queryByText("Loading latest output…")).not.toBeInTheDocument();
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("stays out of the way while the pane is visibly reattaching", () => {
+		replaySettled.value = false;
+		terminalState.value = "reattaching";
+		const view = renderPane({ ...worker, terminalHandleId: "term-1" });
+		try {
+			// An open timeout lifts the cover and the backoff reconnect would pull
+			// it straight back down; the banner explains this window better.
+			expect(screen.queryByTestId("terminal-replay-cover")).not.toBeInTheDocument();
+			expect(screen.getByText("Terminal disconnected — reattaching…")).toBeInTheDocument();
 		} finally {
 			view.restore();
 		}

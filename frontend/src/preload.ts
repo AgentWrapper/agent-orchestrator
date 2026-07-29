@@ -41,6 +41,7 @@ export type ImportRepoScan = {
 export type ImportFolderScan = {
 	path: string;
 	repos: ImportRepoScan[];
+	setupWarning?: string;
 };
 
 const api = {
@@ -138,6 +139,7 @@ const api = {
 		getStatus: () => ipcRenderer.invoke("daemon:getStatus") as Promise<DaemonStatus>,
 		start: () => ipcRenderer.invoke("daemon:start") as Promise<DaemonStatus>,
 		stop: () => ipcRenderer.invoke("daemon:stop") as Promise<DaemonStatus>,
+		restart: () => ipcRenderer.invoke("daemon:restart") as Promise<DaemonStatus>,
 		onStatus: (listener: (status: DaemonStatus) => void) => {
 			const wrapped = (_event: Electron.IpcRendererEvent, status: DaemonStatus) => listener(status);
 			ipcRenderer.on("daemon:status", wrapped);

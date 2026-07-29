@@ -165,8 +165,15 @@ function xterm256ColorToRgb(index: number): [number, number, number] | null {
 function createTerminalOutputNormalizer(theme: () => Theme): (data: Uint8Array) => Uint8Array | string {
 	const decoder = new TextDecoder();
 	let pendingText = "";
+	let decoderActive = false;
 	return (data) => {
-		if (theme() !== "light") return data;
+		if (theme() !== "light") {
+			if (!decoderActive && pendingText === "") return data;
+			const decoded = pendingText + decoder.decode(data, { stream: true });
+			pendingText = "";
+			return decoded;
+		}
+		decoderActive = true;
 		const decoded = pendingText + decoder.decode(data, { stream: true });
 		const { complete, pending } = splitIncompleteSgrTail(decoded);
 		pendingText = pending;

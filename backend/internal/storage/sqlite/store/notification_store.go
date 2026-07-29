@@ -14,6 +14,12 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/gen"
 )
 
+// SessionHasUnreadNotification reports whether user attention is already
+// pending for the session.
+func (s *Store) SessionHasUnreadNotification(ctx context.Context, id domain.SessionID) (bool, error) {
+	return s.qr.SessionHasUnreadNotification(ctx, id)
+}
+
 // CreateNotification inserts one unread notification. It returns created=false
 // when the unread dedupe index already has a matching row.
 func (s *Store) CreateNotification(ctx context.Context, rec domain.NotificationRecord) (domain.NotificationRecord, bool, error) {

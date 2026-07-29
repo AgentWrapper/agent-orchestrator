@@ -225,6 +225,18 @@ describe("XtermTerminal", () => {
 		expect(terminalWrittenText(1)).toBe("λ");
 		expect(terminalWrittenText(2)).toBe("\x1b[48;2;229;231;235mpanel");
 	});
+	it("preserves a split UTF-8 character when the theme changes from light to dark", () => {
+		let terminalHandle: { write: (data: Uint8Array, done?: () => void) => void } | null = null;
+		const { rerender } = render(<XtermTerminal theme="light" onReady={(terminal) => (terminalHandle = terminal)} />);
+		const encoded = new TextEncoder().encode("\u03bb");
+
+		terminalHandle!.write(encoded.slice(0, 1));
+		rerender(<XtermTerminal theme="dark" onReady={(terminal) => (terminalHandle = terminal)} />);
+		terminalHandle!.write(encoded.slice(1));
+
+		expect(terminalWrittenText(0)).toBe("");
+		expect(terminalWrittenText(1)).toBe("\u03bb");
+	});
 	it("does not buffer complete non-SGR CSI sequences in light mode", () => {
 		let terminalHandle: { write: (data: Uint8Array, done?: () => void) => void } | null = null;
 		render(<XtermTerminal theme="light" onReady={(terminal) => (terminalHandle = terminal)} />);
