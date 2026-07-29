@@ -75,6 +75,103 @@ function available(builds: Array<DownloadBuild | null>): DownloadBuild[] {
   return builds.filter((item): item is DownloadBuild => item !== null);
 }
 
+// Inline code style matches the changelog PR badge (bg-muted + font-mono) so the
+// shell snippets read as code without pulling in the MDX renderer.
+function Code({ children }: { children: string }) {
+  return (
+    <code className="break-all rounded bg-muted px-1.5 py-0.5 font-mono text-[0.85em] text-foreground">
+      {children}
+    </code>
+  );
+}
+
+// macOS Gatekeeper can refuse a first launch with "the developer cannot be
+// verified" even though every build we ship is Developer ID signed, hardened,
+// notarized, and stapled. Gatekeeper still does an online notarization-ticket
+// lookup against api.apple-cloudkit.com when the download carries Chrome's
+// com.apple.quarantine flag, and a VPN, corporate firewall, or DNS filter that
+// blocks that request surfaces the same dialog as genuine malware. Without this
+// note the app reads as unsigned, so users trash it instead of retrying.
+function MacUnblockNotice() {
+  return (
+    <section className="mt-16">
+      <div className="mb-6 max-w-2xl">
+        <h2 className="text-2xl font-semibold text-foreground">
+          If macOS blocks the app on first launch
+        </h2>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">
+          macOS may say Agent Orchestrator{" "}
+          <span className="text-foreground">
+            cannot be opened because the developer cannot be verified
+          </span>
+          . Every macOS build is signed with our Apple Developer ID and notarized
+          by Apple. This dialog usually means Gatekeeper could not reach Apple to
+          confirm the notarization, which a VPN, company firewall, or DNS filter
+          can block. Either step below opens it.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+        <article className="flex flex-col rounded-2xl bg-card p-5 sm:p-6">
+          <h3 className="text-base font-semibold text-foreground">
+            Open it from Finder
+          </h3>
+          <ol className="mt-4 list-decimal space-y-2 pl-5 text-sm leading-6 text-muted-foreground">
+            <li>
+              Unzip the download, then drag{" "}
+              <Code>Agent Orchestrator.app</Code> into your{" "}
+              <Code>Applications</Code> folder.
+            </li>
+            <li>
+              Right-click (or Control-click) the app and choose{" "}
+              <span className="text-foreground">Open</span>. Do not double-click
+              it, as that only offers Move to Trash.
+            </li>
+            <li>
+              Choose <span className="text-foreground">Open</span> again in the
+              prompt. macOS remembers the choice, so this is a one-time step.
+            </li>
+          </ol>
+        </article>
+
+        <article className="flex flex-col rounded-2xl bg-card p-5 sm:p-6">
+          <h3 className="text-base font-semibold text-foreground">
+            Or use the Terminal
+          </h3>
+          <p className="mt-4 text-sm leading-6 text-muted-foreground">
+            Clear the quarantine flag that your browser attached to the
+            download:
+          </p>
+          <div className="mt-3 overflow-x-auto rounded-xl bg-muted p-3">
+            <pre className="whitespace-pre font-mono text-xs leading-6 text-foreground">
+              <code>
+                xattr -dr com.apple.quarantine &quot;/Applications/Agent
+                Orchestrator.app&quot;
+              </code>
+            </pre>
+          </div>
+          <p className="mt-4 text-sm leading-6 text-muted-foreground">
+            Downloading with <Code>curl</Code> avoids the flag entirely, because
+            it never marks the file as quarantined:
+          </p>
+          <div className="mt-3 overflow-x-auto rounded-xl bg-muted p-3">
+            <pre className="whitespace-pre font-mono text-xs leading-6 text-foreground">
+              <code>
+                {`curl -L -o ao.zip \\\n  ${DOWNLOAD_URL_MAC_ARM64}\nditto -x -k ao.zip .\nmv "Agent Orchestrator.app" /Applications/`}
+              </code>
+            </pre>
+          </div>
+          <p className="mt-3 text-sm leading-6 text-muted-foreground">
+            Use <Code>ditto</Code> rather than double-clicking the zip so the
+            bundle&apos;s internal symlinks survive extraction. On an Intel Mac,
+            swap <Code>arm64</Code> for <Code>x64</Code>.
+          </p>
+        </article>
+      </div>
+    </section>
+  );
+}
+
 export default async function DownloadPage() {
   const releases = await getReleases();
   const stable = releases.find(
@@ -299,6 +396,8 @@ export default async function DownloadPage() {
               </section>
             ))}
           </div>
+
+          <MacUnblockNotice />
         </div>
       </section>
     </main>
