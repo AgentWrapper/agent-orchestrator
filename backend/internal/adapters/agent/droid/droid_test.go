@@ -71,13 +71,14 @@ func TestGetLaunchCommandDefaultPerms(t *testing.T) {
 
 func TestGetLaunchCommandBypassWritesSettings(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "droid"}
-	settingsPath := runtimeSettingsPath("mer-2")
-	t.Cleanup(func() { _ = os.Remove(settingsPath) })
+	dataDir := t.TempDir()
+	settingsPath := runtimeSettingsPath(dataDir, "mer-2")
 
 	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 		SessionID:   "mer-2",
 		Prompt:      "refactor auth",
 		Permissions: ports.PermissionModeBypassPermissions,
+		DataDir:     dataDir,
 	})
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -106,13 +107,14 @@ func TestGetLaunchCommandBypassWritesSettings(t *testing.T) {
 
 func TestGetLaunchCommandModelOnlyDefaultPermissions(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "droid"}
-	settingsPath := runtimeSettingsPath("mer-model-1")
-	t.Cleanup(func() { _ = os.Remove(settingsPath) })
+	dataDir := t.TempDir()
+	settingsPath := runtimeSettingsPath(dataDir, "mer-model-1")
 
 	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 		SessionID: "mer-model-1",
 		Prompt:    "use opus",
 		Config:    ports.AgentConfig{Model: "claude-opus-4-5"},
+		DataDir:   dataDir,
 	})
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -144,14 +146,15 @@ func TestGetLaunchCommandModelOnlyDefaultPermissions(t *testing.T) {
 
 func TestGetLaunchCommandModelAndNonDefaultPermission(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "droid"}
-	settingsPath := runtimeSettingsPath("mer-model-2")
-	t.Cleanup(func() { _ = os.Remove(settingsPath) })
+	dataDir := t.TempDir()
+	settingsPath := runtimeSettingsPath(dataDir, "mer-model-2")
 
 	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 		SessionID:   "mer-model-2",
 		Prompt:      "refactor with opus",
 		Permissions: ports.PermissionModeBypassPermissions,
 		Config:      ports.AgentConfig{Model: "claude-opus-4-5"},
+		DataDir:     dataDir,
 	})
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -184,11 +187,12 @@ func TestGetLaunchCommandModelAndNonDefaultPermission(t *testing.T) {
 
 func TestGetRestoreCommandForwardsModel(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "droid"}
-	settingsPath := runtimeSettingsPath("mer-model-3")
-	t.Cleanup(func() { _ = os.Remove(settingsPath) })
+	dataDir := t.TempDir()
+	settingsPath := runtimeSettingsPath(dataDir, "mer-model-3")
 
 	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
-		Config: ports.AgentConfig{Model: "claude-opus-4-5"},
+		Config:  ports.AgentConfig{Model: "claude-opus-4-5"},
+		DataDir: dataDir,
 		Session: ports.SessionRef{
 			ID: "mer-model-3",
 			Metadata: map[string]string{

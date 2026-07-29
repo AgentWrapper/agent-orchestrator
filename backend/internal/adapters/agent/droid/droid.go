@@ -102,7 +102,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	cmd = make([]string, 0, 6)
 	cmd = append(cmd, binary)
 
-	settingsArgs, err := runtimeSettingsArgs(cfg.SessionID, cfg.Permissions, cfg.Config.Model)
+	settingsArgs, err := runtimeSettingsArgs(cfg.DataDir, cfg.SessionID, cfg.Permissions, cfg.Config.Model)
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +125,8 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 // `droid [--settings <path>] -r <agentSessionId>`. It re-applies the permission
 // autonomy and any model override (resume otherwise reverts to the configured
 // default) but not the prompt, which the session already carries. ok is false
-// when the hook-derived
+// when the hook-derived native session id has not landed yet, so callers fall
+// back to fresh launch behavior — mirroring the Codex and opencode adapters.
 func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig) (cmd []string, ok bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
@@ -142,7 +143,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 
 	cmd = make([]string, 0, 5)
 	cmd = append(cmd, binary)
-	settingsArgs, err := runtimeSettingsArgs(cfg.Session.ID, cfg.Permissions, cfg.Config.Model)
+	settingsArgs, err := runtimeSettingsArgs(cfg.DataDir, cfg.Session.ID, cfg.Permissions, cfg.Config.Model)
 	if err != nil {
 		return nil, false, err
 	}
@@ -203,7 +204,7 @@ func droidAutonomyLevel(mode ports.PermissionMode) string {
 // full replacement of the user's own settings file. Writing {"model": ...}
 // alone (default permissions, no autonomy override) does not clobber
 // ~/.factory/settings.json — this is load-bearing for the model-only case.
-func runtimeSettingsArgs(sessionID string, mode ports.PermissionMode, model string) ([]string, error) {
+func runtimeSettingsArgs(dataDir, sessionID string, mode ports.PermissionMode, model string) ([]string, error) {
 	level := droidAutonomyLevel(mode)
 	model = strings.TrimSpace(model)
 	if level == "" && model == "" {
@@ -223,22 +224,27 @@ func runtimeSettingsArgs(sessionID string, mode ports.PermissionMode, model stri
 		return nil, fmt.Errorf("droid: encode runtime settings: %w", err)
 	}
 
-	path := runtimeSettingsPath(sessionID)
+	path := runtimeSettingsPath(dataDir, sessionID)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, fmt.Errorf("droid: create runtime settings dir: %w", err)
+	}
 	if err := hookutil.AtomicWriteFile(path, append(blob, '\n'), 0o600); err != nil {
 		return nil, fmt.Errorf("droid: write runtime settings: %w", err)
 	}
 	return []string{"--settings", path}, nil
 }
 
-// runtimeSettingsPath is the deterministic temp-dir path for a session's
-// process-scoped runtime settings file. A stable name keyed by session id means
-// relaunches overwrite rather than accumulate files.
-func runtimeSettingsPath(sessionID string) string {
+// runtimeSettingsPath is the deterministic path for a session's process-scoped
+// runtime settings file, rooted under the AO data directory rather than the OS
+// temp dir (AGENTS.md / docs/architecture.md require app state under
+// ~/.ao / AO_DATA_DIR). A stable name keyed by session id means relaunches
+// overwrite rather than accumulate files.
+func runtimeSettingsPath(dataDir, sessionID string) string {
 	name := sanitizeSessionID(sessionID)
 	if name == "" {
 		name = "default"
 	}
-	return filepath.Join(os.TempDir(), "ao-droid-"+name+"-settings.json")
+	return filepath.Join(dataDir, "agent-runtime", "droid", "ao-droid-"+name+"-settings.json")
 }
 
 // sanitizeSessionID keeps only filename-safe characters so the session id can
