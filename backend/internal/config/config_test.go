@@ -153,7 +153,7 @@ func TestLoadInvalid(t *testing.T) {
 }
 
 func TestLoadAllowedOrigins(t *testing.T) {
-	t.Run("default includes the packaged renderer origin", func(t *testing.T) {
+	t.Run("default includes the packaged Tauri renderer origin", func(t *testing.T) {
 		t.Setenv("AO_ALLOWED_ORIGINS", "")
 		cfg, err := Load()
 		if err != nil {
@@ -161,12 +161,12 @@ func TestLoadAllowedOrigins(t *testing.T) {
 		}
 		found := false
 		for _, origin := range cfg.AllowedOrigins {
-			if origin == "app://renderer" {
+			if origin == "tauri://localhost" {
 				found = true
 			}
 		}
 		if !found {
-			t.Errorf("AllowedOrigins = %v, want app://renderer included", cfg.AllowedOrigins)
+			t.Errorf("AllowedOrigins = %v, want tauri://localhost included", cfg.AllowedOrigins)
 		}
 	})
 

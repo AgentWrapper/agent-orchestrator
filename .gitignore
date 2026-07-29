@@ -1,4 +1,4 @@
-# Node / Electron
+# Node
 node_modules/
 .pnpm/
 dist/
@@ -62,12 +62,6 @@ Thumbs.db
 
 # Personal local overrides (not for the team)
 .envrc.local
-
-# electron-forge / vite build output
-.vite/
-dist-electron/
-# electron-builder debug dump, written to the cwd on every NSIS build
-builder-debug.yml
 
 # playwright artifacts
 frontend/test-results/

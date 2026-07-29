@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { BrowserNavState, BrowserRect } from "../../main/browser-view-host";
+import type { BrowserNavState, BrowserRect } from "../../shared/bridge-types";
 import type { BrowserAnnotationCancelPayload, BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
 import { normalizeBrowserURL } from "../lib/browser-url";
 import { OPEN_DIALOG_OR_MENU_SELECTOR } from "../lib/dom-selectors";

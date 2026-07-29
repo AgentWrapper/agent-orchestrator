@@ -14,8 +14,9 @@ import (
 // boundary between it and hostile browser content running on the same
 // machine: the allowlist must never contain "*" or the opaque "null" origin
 // (every file:// page and sandboxed iframe on any website presents "null").
-// The packaged Electron renderer is served from app://renderer specifically
-// so it has a distinct, unforgeable origin this allowlist can name.
+// The packaged Tauri renderer is served from tauri://localhost (macOS/Linux)
+// or http://tauri.localhost (Windows) specifically so it has a distinct,
+// unforgeable origin this allowlist can name.
 //
 // Requests without an Origin header (the CLI, curl, health probes) pass
 // through untouched. Requests bearing an Origin outside the allowlist are

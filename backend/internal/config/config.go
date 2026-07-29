@@ -62,13 +62,12 @@ type TelemetryConfig struct {
 // DefaultAllowedOrigins are the browser origins the daemon's CORS boundary
 // trusts, beyond loopback-served content (which the middleware always trusts —
 // local pages can reach the no-auth daemon directly anyway). The daemon has no
-// auth, so every entry must be an origin web content cannot present:
-// app://renderer is the packaged Electron renderer, served from a custom
-// scheme only the desktop app registers — no website can bear it. The opaque
+// auth, so every entry must be an origin web content cannot present: the
+// tauri:// / http://tauri.localhost origins are served from a custom scheme
+// only the desktop app registers — no website can bear them. The opaque
 // "null" origin (file:// pages, sandboxed iframes on any website) must never
 // be added.
 var DefaultAllowedOrigins = []string{
-	"app://renderer",
 	"tauri://localhost",
 	"http://tauri.localhost",
 }

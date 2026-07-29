@@ -1,4 +1,4 @@
-import type { AoBridge } from "../preload";
+import type { AoBridge } from "../shared/bridge-types";
 
 declare global {
 	interface Window {

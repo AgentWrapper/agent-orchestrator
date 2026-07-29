@@ -4,12 +4,12 @@ Read and follow [`AGENTS.md`](AGENTS.md) for repository layout, commands, coding
 
 ## App state lives under `~/.ao` only
 
-All app state, the daemon's data dir, `running.json`, worktrees, and the Electron
-supervisor's `userData` (Chromium cache, cookies, local/session storage, crash
+All app state, the daemon's data dir, `running.json`, worktrees, and the Tauri
+supervisor's webview data dir (cache, cookies, local/session storage, crash
 dumps), must resolve under `~/.ao` (overridable via `AO_DATA_DIR`/`AO_RUN_FILE`).
 Never write to or read from `~/Library/Application Support` or any other OS-default
-app-data location. `frontend/src/main.ts` pins Electron's `userData` to
-`~/.ao/electron`; do not remove that override. See the hard rule in `AGENTS.md`.
+app-data location. `frontend/src-tauri/src/paths.rs` pins the webview data dir to
+`~/.ao/tauri`; do not remove that override. See the hard rule in `AGENTS.md`.
 
 ## Design System
 

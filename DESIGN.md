@@ -1,6 +1,6 @@
 # Design System — ReverbCode
 
-> Source of truth for the ReverbCode desktop UI (Electron + React 19 + Tailwind v4
+> Source of truth for the ReverbCode desktop UI (Tauri + React 19 + Tailwind v4
 >
 > - Radix/shadcn + xterm, in `frontend/src/renderer`). Read this before any visual
 >   or UI change. Created by `/design-consultation` on 2026-06-09.
@@ -51,7 +51,7 @@ resizable`, react-resizable-panels v4 `collapsible` panel + imperative API,
 
 ## Product Context
 
-- **What this is:** ReverbCode is an Electron desktop app for supervising many parallel
+- **What this is:** ReverbCode is a Tauri desktop app for supervising many parallel
   AI coding-agent sessions, backed by a Go daemon (`backend/`). The `ao` CLI is the
   thin client over the same daemon.
 - **Who it's for:** professional software engineers running multiple coding agents at

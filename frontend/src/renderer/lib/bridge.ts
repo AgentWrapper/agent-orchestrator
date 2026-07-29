@@ -139,7 +139,7 @@ export const aoBridge: AoBridge = isTauri
 			daemon: {
 				getStatus: async () => ({
 					state: "stopped",
-					message: "Electron preload is not available in browser preview.",
+					message: "The native Tauri bridge is not available in browser preview.",
 				}),
 				start: async () => ({ state: "starting" }),
 				stop: async () => ({ state: "stopped" }),

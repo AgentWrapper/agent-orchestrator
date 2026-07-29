@@ -3,11 +3,10 @@
 	"productName": "Agent Orchestrator",
 	"version": "0.10.3",
 	"private": true,
-	"description": "Electron + TypeScript frontend for the agent-orchestrator rewrite",
+	"description": "Tauri + TypeScript frontend for the agent-orchestrator rewrite",
 	"author": "Agent Orchestrator",
 	"license": "MIT",
 	"homepage": "https://github.com/aoagents/agent-orchestrator",
-	"main": ".vite/build/main.js",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/aoagents/agent-orchestrator"
@@ -15,13 +14,8 @@
 	"scripts": {
 		"build:daemon": "node ./scripts/build-daemon.mjs",
 		"predev": "npm run build:daemon",
-		"dev": "electron-forge start",
+		"dev": "tauri dev",
 		"dev:web": "VITE_NO_ELECTRON=1 vite --config vite.renderer.config.ts",
-		"prepackage": "npm run build:daemon",
-		"package": "electron-forge package",
-		"premake": "npm run build:daemon",
-		"make": "electron-forge make",
-		"publish": "npm run build:daemon && electron-forge publish",
 		"typecheck": "tsc --noEmit",
 		"typecheck:e2e": "tsc --noEmit -p tsconfig.e2e.json",
 		"test": "vitest run --config vite.renderer.config.ts",
@@ -35,13 +29,6 @@
 		"build:browser-annotate": "vite build --config src/browser-annotate/vite.config.ts"
 	},
 	"devDependencies": {
-		"@electron-forge/cli": "^7.8.0",
-		"@electron-forge/maker-base": "^7.8.0",
-		"@electron-forge/maker-deb": "^7.8.0",
-		"@electron-forge/maker-rpm": "^7.8.0",
-		"@electron-forge/maker-zip": "^7.8.0",
-		"@electron-forge/plugin-vite": "^7.8.0",
-		"@electron-forge/publisher-github": "^7.8.0",
 		"@playwright/test": "^1.60.0",
 		"@tailwindcss/vite": "^4.3.0",
 		"@tanstack/router-plugin": "^1.168.18",
@@ -49,12 +36,11 @@
 		"@testing-library/jest-dom": "^6.9.1",
 		"@testing-library/react": "^16.3.2",
 		"@testing-library/user-event": "^14.6.1",
+		"@types/node": "^24.13.3",
 		"@types/react": "^19.2.17",
 		"@types/react-dom": "^19.2.3",
 		"@types/semver": "^7.7.1",
 		"@vitejs/plugin-react": "^6.0.2",
-		"app-builder-lib": "^26.15.3",
-		"electron": "^33.0.0",
 		"jsdom": "^29.1.1",
 		"openapi-typescript": "^7.13.0",
 		"playwright": "^1.60.0",
@@ -84,7 +70,6 @@
 		"class-variance-authority": "^0.7.1",
 		"clsx": "^2.1.1",
 		"cmdk": "^1.1.1",
-		"electron-updater": "^6.8.9",
 		"gsap": "^3.15.0",
 		"lucide-react": "^1.17.0",
 		"openapi-fetch": "^0.17.0",
@@ -97,9 +82,5 @@
 		"semver": "^7.8.5",
 		"tailwind-merge": "^3.6.0",
 		"zustand": "^5.0.14"
-	},
-	"optionalDependencies": {
-		"electron-installer-debian": "^3.2.0",
-		"electron-installer-redhat": "^3.4.0"
 	}
 }

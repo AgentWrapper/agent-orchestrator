@@ -4,7 +4,7 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { aoBridge } from "../lib/bridge";
 import { migrationOfferQueryKey } from "../hooks/useMigrationOffer";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
-import type { MigrationState, MigrationStatus } from "../../main/app-state";
+import type { MigrationState, MigrationStatus } from "../../shared/bridge-types";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 

@@ -1,7 +1,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { CheckCircle2, ChevronRight, Folder, FolderPlus, X, XCircle } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { ImportFolderScan } from "../../preload";
+import type { ImportFolderScan } from "../../shared/bridge-types";
 import { aoBridge } from "../lib/bridge";
 import { cn } from "../lib/utils";
 import type { ProjectKind } from "../types/workspace";

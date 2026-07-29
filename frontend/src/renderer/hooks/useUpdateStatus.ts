@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { UpdateStatus } from "../../main/update-settings";
+import type { UpdateStatus } from "../../shared/bridge-types";
 import { aoBridge } from "../lib/bridge";
 
 /**

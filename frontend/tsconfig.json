@@ -6,7 +6,7 @@
 		"moduleResolution": "Bundler",
 		"lib": ["ES2022", "DOM", "DOM.Iterable"],
 		"jsx": "react-jsx",
-		"types": ["vite/client", "vitest/globals"],
+		"types": ["vite/client", "vitest/globals", "node"],
 		"strict": true,
 		"esModuleInterop": true,
 		"allowSyntheticDefaultImports": true,
@@ -26,10 +26,6 @@
 	"include": [
 		"src/**/*.ts",
 		"src/**/*.tsx",
-		"forge.config.ts",
-		"makers/**/*.ts",
-		"vite.main.config.ts",
-		"vite.preload.config.ts",
 		"vite.renderer.config.ts",
 		"playwright.config.ts"
 	],

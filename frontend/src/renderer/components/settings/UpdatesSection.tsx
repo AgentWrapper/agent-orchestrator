@@ -5,7 +5,7 @@ import { aoBridge } from "../../lib/bridge";
 import { formatTimeCompact } from "../../lib/format-time";
 import { useUpdateStatus } from "../../hooks/useUpdateStatus";
 import { useUiStore } from "../../stores/ui-store";
-import type { UpdateChannel, UpdateSettings, UpdateState, UpdateStatus } from "../../../main/update-settings";
+import type { UpdateChannel, UpdateSettings, UpdateState, UpdateStatus } from "../../../shared/bridge-types";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
