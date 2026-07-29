@@ -2275,7 +2275,8 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	flex: 1;
 }
 
-.browser-panel__annotate-btn[aria-pressed="true"] {
+.browser-panel__annotate-btn[aria-pressed="true"],
+.browser-panel__text-edit-btn[aria-pressed="true"] {
 	background: var(--accent-weak);
 	color: var(--fg);
 }

@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useBrowserView, type BrowserNavState } from "./useBrowserView";
+import type { BrowserTextEditCancelPayload, BrowserTextEditSubmitPayload } from "../../shared/browser-annotations";
 
 type Listener = (state: BrowserNavState) => void;
 type TabsListener = (state: import("../../main/browser-view-host").BrowserTabsState) => void;
@@ -28,6 +29,8 @@ function setupBridge() {
 	const listeners = new Set<Listener>();
 	const tabsListeners = new Set<TabsListener>();
 	const activityListeners = new Set<ActivityListener>();
+	const textEditSubmitListeners = new Set<(payload: BrowserTextEditSubmitPayload) => void>();
+	const textEditCancelListeners = new Set<(payload: BrowserTextEditCancelPayload) => void>();
 	const bridge = {
 		stateFor(viewId: string): BrowserNavState {
 			return {
@@ -39,14 +42,16 @@ function setupBridge() {
 				isLoading: false,
 			};
 		},
-		ensure: vi.fn(async (sessionId: string): Promise<BrowserNavState> => ({
-			viewId: `42:${sessionId}`,
-			url: "",
-			title: "",
-			canGoBack: false,
-			canGoForward: false,
-			isLoading: false,
-		})),
+		ensure: vi.fn(
+			async (sessionId: string): Promise<BrowserNavState> => ({
+				viewId: `42:${sessionId}`,
+				url: "",
+				title: "",
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			}),
+		),
 		setBounds: vi.fn(),
 		capture: vi.fn(async () => "data:image/jpeg;base64,snapshot"),
 		requestMirror: vi.fn(async () => false),
@@ -73,6 +78,7 @@ function setupBridge() {
 		})),
 		destroy: vi.fn(),
 		setAnnotationMode: vi.fn(async () => undefined),
+		setTextEditMode: vi.fn(async () => undefined),
 		onNavState: vi.fn((listener: Listener) => {
 			listeners.add(listener);
 			return () => listeners.delete(listener);
@@ -87,6 +93,18 @@ function setupBridge() {
 		}),
 		onAnnotationSubmit: vi.fn(() => () => undefined),
 		onAnnotationCancel: vi.fn(() => () => undefined),
+		onTextEditSubmit: vi.fn((listener: (payload: BrowserTextEditSubmitPayload) => void) => {
+			textEditSubmitListeners.add(listener);
+			return () => {
+				textEditSubmitListeners.delete(listener);
+			};
+		}),
+		onTextEditCancel: vi.fn((listener: (payload: BrowserTextEditCancelPayload) => void) => {
+			textEditCancelListeners.add(listener);
+			return () => {
+				textEditCancelListeners.delete(listener);
+			};
+		}),
 		emit(state: BrowserNavState) {
 			listeners.forEach((listener) => listener(state));
 		},
@@ -95,6 +113,12 @@ function setupBridge() {
 		},
 		emitActivity(state: Parameters<ActivityListener>[0]) {
 			activityListeners.forEach((listener) => listener(state));
+		},
+		emitTextEditSubmit(payload: BrowserTextEditSubmitPayload) {
+			textEditSubmitListeners.forEach((listener) => listener(payload));
+		},
+		emitTextEditCancel(payload: BrowserTextEditCancelPayload) {
+			textEditCancelListeners.forEach((listener) => listener(payload));
 		},
 	};
 	window.ao = { ...window.ao!, browser: bridge };
@@ -298,7 +322,9 @@ describe("useBrowserView", () => {
 				vi.advanceTimersByTime(300);
 			});
 			expect(bridge.setBounds).toHaveBeenCalledWith(
-				expect.objectContaining({ rect: expect.objectContaining({ x: 240, width: 320 }) }),
+				expect.objectContaining({
+					rect: expect.objectContaining({ x: 240, width: 320 }),
+				}),
 			);
 		} finally {
 			vi.useRealTimers();
@@ -331,6 +357,63 @@ describe("useBrowserView", () => {
 			visible: false,
 		});
 		expect(bridge.destroy).not.toHaveBeenCalled();
+	});
+
+	it("enables text edit mode and disables annotation mode", async () => {
+		const bridge = setupBridge();
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
+
+		await act(async () => {
+			await result.current.setAnnotationMode(true);
+		});
+		await act(async () => {
+			await result.current.setTextEditMode(true);
+		});
+
+		expect(bridge.setAnnotationMode).toHaveBeenCalledWith({
+			viewId: "42:sess-1",
+			enabled: false,
+		});
+		expect(bridge.setTextEditMode).toHaveBeenCalledWith({
+			viewId: "42:sess-1",
+			enabled: true,
+		});
+		expect(result.current.annotationMode).toBe(false);
+		expect(result.current.textEditMode).toBe(true);
+	});
+
+	it("clears text edit mode when the preview submits or cancels", async () => {
+		const bridge = setupBridge();
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
+
+		await act(async () => {
+			await result.current.setTextEditMode(true);
+		});
+		act(() =>
+			bridge.emitTextEditSubmit({
+				viewId: "42:sess-1",
+				oldText: "Before",
+				newText: "After",
+				context: {
+					url: "http://localhost:5173/",
+					tag: "h1",
+					classes: [],
+					selector: "h1",
+					rect: { x: 0, y: 0, width: 120, height: 40 },
+					nearbyText: [],
+					computedStyle: {},
+				},
+			}),
+		);
+		expect(result.current.textEditMode).toBe(false);
+
+		await act(async () => {
+			await result.current.setTextEditMode(true);
+		});
+		act(() => bridge.emitTextEditCancel({ viewId: "42:sess-1", reason: "cancel" }));
+		expect(result.current.textEditMode).toBe(false);
 	});
 
 	it("parks the view and mirrors frames while a modal dialog is open, then restores it on close", async () => {
@@ -579,12 +662,26 @@ describe("useBrowserView", () => {
 		const bridge = setupBridge();
 		const { rerender } = renderHook(
 			({ previewUrl, previewRevision }) =>
-				useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false, previewUrl, previewRevision }),
-			{ initialProps: { previewUrl: "http://localhost:5173/", previewRevision: 1 } },
+				useBrowserView({
+					sessionId: "sess-1",
+					active: true,
+					poppedOut: false,
+					previewUrl,
+					previewRevision,
+				}),
+			{
+				initialProps: {
+					previewUrl: "http://localhost:5173/",
+					previewRevision: 1,
+				},
+			},
 		);
 
 		await waitFor(() =>
-			expect(bridge.navigate).toHaveBeenCalledWith({ viewId: "42:sess-1", url: "http://localhost:5173/" }),
+			expect(bridge.navigate).toHaveBeenCalledWith({
+				viewId: "42:sess-1",
+				url: "http://localhost:5173/",
+			}),
 		);
 		expect(bridge.navigate).toHaveBeenCalledTimes(1);
 
@@ -599,9 +696,15 @@ describe("useBrowserView", () => {
 		await waitFor(() => expect(bridge.navigate).toHaveBeenCalledTimes(2));
 
 		// A changed target with a fresh revision navigates to the new URL.
-		rerender({ previewUrl: "file:///tmp/preview/index.html", previewRevision: 3 });
+		rerender({
+			previewUrl: "file:///tmp/preview/index.html",
+			previewRevision: 3,
+		});
 		await waitFor(() =>
-			expect(bridge.navigate).toHaveBeenCalledWith({ viewId: "42:sess-1", url: "file:///tmp/preview/index.html" }),
+			expect(bridge.navigate).toHaveBeenCalledWith({
+				viewId: "42:sess-1",
+				url: "file:///tmp/preview/index.html",
+			}),
 		);
 		expect(bridge.navigate).toHaveBeenCalledTimes(3);
 	});
@@ -641,7 +744,13 @@ describe("useBrowserView", () => {
 	it("navigates legacy preview URLs when the daemon omits preview revisions", async () => {
 		const bridge = setupBridge();
 		const { result, rerender } = renderHook(
-			({ previewUrl }) => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false, previewUrl }),
+			({ previewUrl }) =>
+				useBrowserView({
+					sessionId: "sess-1",
+					active: true,
+					poppedOut: false,
+					previewUrl,
+				}),
 			{ initialProps: { previewUrl: undefined as string | undefined } },
 		);
 		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
@@ -649,14 +758,19 @@ describe("useBrowserView", () => {
 
 		rerender({ previewUrl: "http://localhost:5173/" });
 		await waitFor(() =>
-			expect(bridge.navigate).toHaveBeenCalledWith({ viewId: "42:sess-1", url: "http://localhost:5173/" }),
+			expect(bridge.navigate).toHaveBeenCalledWith({
+				viewId: "42:sess-1",
+				url: "http://localhost:5173/",
+			}),
 		);
 		expect(bridge.navigate).toHaveBeenCalledTimes(1);
 
 		rerender({ previewUrl: "http://localhost:5173/" });
 		expect(bridge.navigate).toHaveBeenCalledTimes(1);
 
-		rerender({ previewUrl: "C:\\Users\\Lenovo\\Downloads\\sm5\\paper_explainer.html" });
+		rerender({
+			previewUrl: "C:\\Users\\Lenovo\\Downloads\\sm5\\paper_explainer.html",
+		});
 		await waitFor(() =>
 			expect(bridge.navigate).toHaveBeenCalledWith({
 				viewId: "42:sess-1",
@@ -670,8 +784,19 @@ describe("useBrowserView", () => {
 		const bridge = setupBridge();
 		const { rerender } = renderHook(
 			({ previewUrl, previewRevision }) =>
-				useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false, previewUrl, previewRevision }),
-			{ initialProps: { previewUrl: "http://localhost:5173/" as string | undefined, previewRevision: 1 } },
+				useBrowserView({
+					sessionId: "sess-1",
+					active: true,
+					poppedOut: false,
+					previewUrl,
+					previewRevision,
+				}),
+			{
+				initialProps: {
+					previewUrl: "http://localhost:5173/" as string | undefined,
+					previewRevision: 1,
+				},
+			},
 		);
 		await waitFor(() => expect(bridge.navigate).toHaveBeenCalledTimes(1));
 
@@ -746,7 +871,10 @@ describe("useBrowserView", () => {
 				vi.advanceTimersByTime(300);
 			});
 			expect(bridge.setBounds).toHaveBeenLastCalledWith(
-				expect.objectContaining({ visible: true, rect: expect.objectContaining({ width: 320 }) }),
+				expect.objectContaining({
+					visible: true,
+					rect: expect.objectContaining({ width: 320 }),
+				}),
 			);
 
 			// Terminal pane enters fullscreen: the slot is not inside it, so the
@@ -771,7 +899,10 @@ describe("useBrowserView", () => {
 				vi.advanceTimersByTime(300);
 			});
 			expect(bridge.setBounds).toHaveBeenLastCalledWith(
-				expect.objectContaining({ visible: true, rect: expect.objectContaining({ x: 12, width: 320 }) }),
+				expect.objectContaining({
+					visible: true,
+					rect: expect.objectContaining({ x: 12, width: 320 }),
+				}),
 			);
 		} finally {
 			vi.useRealTimers();
@@ -806,7 +937,10 @@ describe("useBrowserView", () => {
 
 		await waitFor(() =>
 			expect(bridge.setBounds).toHaveBeenLastCalledWith(
-				expect.objectContaining({ visible: true, rect: expect.objectContaining({ width: 320 }) }),
+				expect.objectContaining({
+					visible: true,
+					rect: expect.objectContaining({ width: 320 }),
+				}),
 			),
 		);
 	});

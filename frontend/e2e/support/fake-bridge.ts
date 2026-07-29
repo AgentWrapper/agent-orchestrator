@@ -62,7 +62,10 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					getVersion: async () => version,
 					chooseDirectory: async () => null,
 					openExternal: async () => undefined,
-					scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
+					scanImportFolder: async ({ path }: { path: string }) => ({
+						path,
+						repos: [],
+					}),
 					onNewSessionShortcut: unsubscribe,
 					onKeyboardShortcutsHelp: unsubscribe,
 					onNewShellTerminalShortcut: unsubscribe,
@@ -78,7 +81,10 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					onFullScreen: () => () => undefined,
 				},
 				theme: { set: async () => undefined },
-				menu: { action: async () => undefined, notifyShellFocus: () => undefined },
+				menu: {
+					action: async () => undefined,
+					notifyShellFocus: () => undefined,
+				},
 				clipboard: {
 					writeText: async () => undefined,
 					readText: async () => "",
@@ -127,8 +133,11 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					// to these whenever SessionView mounts with window.ao.browser present, so
 					// an incomplete browser shape would crash the session-detail/preview specs.
 					setAnnotationMode: async () => undefined,
+					setTextEditMode: async () => undefined,
 					onAnnotationSubmit: unsubscribe,
 					onAnnotationCancel: unsubscribe,
+					onTextEditSubmit: unsubscribe,
+					onTextEditCancel: unsubscribe,
 					onNavState: unsubscribe,
 					onTabsState: unsubscribe,
 					onAgentActivity: unsubscribe,
@@ -142,7 +151,12 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					setMigration: async () => undefined,
 				},
 				updateSettings: {
-					get: async () => ({ enabled: false, channel: "latest", nightlyAck: false, feature: null }),
+					get: async () => ({
+						enabled: false,
+						channel: "latest",
+						nightlyAck: false,
+						feature: null,
+					}),
 					set: async () => undefined,
 				},
 				keybindings: {
@@ -253,7 +267,10 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 		({ version, daemonPort, projectId, projectName, platform, workers }) => {
 			if (platform) {
 				try {
-					Object.defineProperty(navigator, "platform", { get: () => platform, configurable: true });
+					Object.defineProperty(navigator, "platform", {
+						get: () => platform,
+						configurable: true,
+					});
 				} catch {
 					/* ignore */
 				}
@@ -273,7 +290,10 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 				status: w.status ?? "working",
 				createdAt: nowIso,
 				updatedAt: new Date().toISOString(),
-				activity: { state: w.activity ?? "active", lastActivityAt: new Date().toISOString() },
+				activity: {
+					state: w.activity ?? "active",
+					lastActivityAt: new Date().toISOString(),
+				},
 				previewUrl: w.previewUrl,
 				previewRevision: w.previewRevision,
 				prs: [],
@@ -396,7 +416,11 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					if (!s) return;
 					s.status = status;
 					s.displayStatus = undefined;
-					if (activity) s.activity = { state: activity, lastActivityAt: new Date().toISOString() };
+					if (activity)
+						s.activity = {
+							state: activity,
+							lastActivityAt: new Date().toISOString(),
+						};
 					touch(s);
 					pushWorkspaces();
 				},
@@ -444,7 +468,10 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					getVersion: async () => version,
 					chooseDirectory: async () => null,
 					openExternal: async () => undefined,
-					scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
+					scanImportFolder: async ({ path }: { path: string }) => ({
+						path,
+						repos: [],
+					}),
 					onNewSessionShortcut: unsubscribe,
 					onKeyboardShortcutsHelp: unsubscribe,
 					onNewShellTerminalShortcut: unsubscribe,
@@ -460,8 +487,14 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					onFullScreen: () => () => undefined,
 				},
 				theme: { set: async () => undefined },
-				menu: { action: async () => undefined, notifyShellFocus: () => undefined },
-				clipboard: { writeText: async () => undefined, readText: async () => "" },
+				menu: {
+					action: async () => undefined,
+					notifyShellFocus: () => undefined,
+				},
+				clipboard: {
+					writeText: async () => undefined,
+					readText: async () => "",
+				},
 				daemon: {
 					getStatus: async () => status,
 					start: async () => status,
@@ -505,16 +538,27 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					// to these whenever SessionView mounts with window.ao.browser present, so
 					// an incomplete browser shape would crash the session-detail/preview specs.
 					setAnnotationMode: async () => undefined,
+					setTextEditMode: async () => undefined,
 					onAnnotationSubmit: unsubscribe,
 					onAnnotationCancel: unsubscribe,
+					onTextEditSubmit: unsubscribe,
+					onTextEditCancel: unsubscribe,
 					onNavState: unsubscribe,
 					onTabsState: unsubscribe,
 					onAgentActivity: unsubscribe,
 				},
 				notifications: { show: async () => undefined, onClick: unsubscribe },
-				appState: { getMigration: async () => ({ status: "completed" }), setMigration: async () => undefined },
+				appState: {
+					getMigration: async () => ({ status: "completed" }),
+					setMigration: async () => undefined,
+				},
 				updateSettings: {
-					get: async () => ({ enabled: false, channel: "latest", nightlyAck: false, feature: null }),
+					get: async () => ({
+						enabled: false,
+						channel: "latest",
+						nightlyAck: false,
+						feature: null,
+					}),
 					set: async () => undefined,
 				},
 				keybindings: {

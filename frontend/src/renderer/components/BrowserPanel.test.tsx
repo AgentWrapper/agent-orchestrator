@@ -1,12 +1,18 @@
-import { act, render, renderHook, screen, waitFor } from "@testing-library/react";
+import { act, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BrowserPanel, BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
 import { useBrowserView, type BrowserNavState } from "../hooks/useBrowserView";
 import type { WorkspaceSession } from "../types/workspace";
-import type { BrowserAnnotationCancelPayload, BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
+import type {
+	BrowserAnnotationCancelPayload,
+	BrowserAnnotationSubmitPayload,
+	BrowserTextEditCancelPayload,
+	BrowserTextEditSubmitPayload,
+} from "../../shared/browser-annotations";
 
 const postMock = vi.hoisted(() => vi.fn());
+const invalidateQueriesMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../lib/api-client", () => ({
 	apiClient: { POST: postMock },
@@ -14,6 +20,10 @@ vi.mock("../lib/api-client", () => ({
 		typeof error === "object" && error !== null && "message" in error
 			? String((error as { message: unknown }).message)
 			: fallback,
+}));
+
+vi.mock("@tanstack/react-query", () => ({
+	useQueryClient: () => ({ invalidateQueries: invalidateQueriesMock }),
 }));
 
 const hookState = vi.hoisted(() => ({
@@ -25,10 +35,13 @@ const hookState = vi.hoisted(() => ({
 	selectTab: vi.fn(),
 	closeTab: vi.fn(),
 	setAnnotationMode: vi.fn(),
+	setTextEditMode: vi.fn(),
 	tabs: [{ id: "t1", url: "", title: "", active: true }],
 	activeTabId: "t1",
 	tabNotice: "",
 	agentBrowserActive: false,
+	annotationMode: false,
+	textEditMode: false,
 	previewUrl: undefined as string | undefined,
 	navState: {
 		viewId: "42:sess-1",
@@ -58,8 +71,10 @@ vi.mock("../hooks/useBrowserView", () => ({
 			agentBrowserActive: hookState.agentBrowserActive,
 			selectTab: hookState.selectTab,
 			closeTab: hookState.closeTab,
-			annotationMode: false,
+			annotationMode: hookState.annotationMode,
 			setAnnotationMode: hookState.setAnnotationMode,
+			textEditMode: hookState.textEditMode,
+			setTextEditMode: hookState.setTextEditMode,
 		};
 	},
 }));
@@ -89,6 +104,28 @@ function annotationPayload(instruction: string): BrowserAnnotationSubmitPayload 
 			rect: { x: 0, y: 0, width: 80, height: 30 },
 			nearbyText: [],
 			computedStyle: {},
+		},
+	};
+}
+
+function textEditPayload(overrides: Partial<BrowserTextEditSubmitPayload> = {}): BrowserTextEditSubmitPayload {
+	const baseContext: BrowserTextEditSubmitPayload["context"] = {
+		url: "http://localhost:5173/",
+		tag: "h1",
+		classes: [],
+		selector: "h1",
+		rect: { x: 0, y: 0, width: 120, height: 40 },
+		nearbyText: [],
+		computedStyle: {},
+	};
+	return {
+		viewId: "42:sess-1",
+		oldText: "Draft",
+		newText: "Published",
+		...overrides,
+		context: {
+			...baseContext,
+			...(overrides.context ?? {}),
 		},
 	};
 }
@@ -127,6 +164,8 @@ function PersistentBrowserPanelView({
 describe("BrowserPanel", () => {
 	const annotationSubmitListeners = new Set<(payload: BrowserAnnotationSubmitPayload) => void>();
 	const annotationCancelListeners = new Set<(payload: BrowserAnnotationCancelPayload) => void>();
+	const textEditSubmitListeners = new Set<(payload: BrowserTextEditSubmitPayload) => void>();
+	const textEditCancelListeners = new Set<(payload: BrowserTextEditCancelPayload) => void>();
 
 	beforeEach(() => {
 		hookState.navigate.mockReset();
@@ -138,10 +177,18 @@ describe("BrowserPanel", () => {
 		hookState.closeTab.mockReset();
 		hookState.setAnnotationMode.mockReset();
 		hookState.setAnnotationMode.mockResolvedValue(undefined);
+		hookState.setTextEditMode.mockReset();
+		hookState.setTextEditMode.mockResolvedValue(undefined);
+		hookState.annotationMode = false;
+		hookState.textEditMode = false;
 		postMock.mockReset();
 		postMock.mockResolvedValue({ data: {} });
+		invalidateQueriesMock.mockReset();
+		invalidateQueriesMock.mockResolvedValue(undefined);
 		annotationSubmitListeners.clear();
 		annotationCancelListeners.clear();
+		textEditSubmitListeners.clear();
+		textEditCancelListeners.clear();
 		window.ao!.browser.onAnnotationSubmit = vi.fn((listener: (payload: BrowserAnnotationSubmitPayload) => void) => {
 			annotationSubmitListeners.add(listener);
 			return () => {
@@ -152,6 +199,18 @@ describe("BrowserPanel", () => {
 			annotationCancelListeners.add(listener);
 			return () => {
 				annotationCancelListeners.delete(listener);
+			};
+		});
+		window.ao!.browser.onTextEditSubmit = vi.fn((listener: (payload: BrowserTextEditSubmitPayload) => void) => {
+			textEditSubmitListeners.add(listener);
+			return () => {
+				textEditSubmitListeners.delete(listener);
+			};
+		});
+		window.ao!.browser.onTextEditCancel = vi.fn((listener: (payload: BrowserTextEditCancelPayload) => void) => {
+			textEditCancelListeners.add(listener);
+			return () => {
+				textEditCancelListeners.delete(listener);
 			};
 		});
 		hookState.previewUrl = undefined;
@@ -256,7 +315,10 @@ describe("BrowserPanel", () => {
 	});
 
 	it("enables annotation mode from the toolbar when a page is loaded", async () => {
-		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/",
+		};
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
 		await userEvent.click(screen.getByRole("button", { name: /annotate/i }));
@@ -307,8 +369,318 @@ describe("BrowserPanel", () => {
 		expect(screen.getByRole("button", { name: /annotate/i })).toBeDisabled();
 	});
 
+	it("enables text edit mode from the toolbar when a page is loaded", async () => {
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/",
+		};
+		render(
+			<BrowserPanel
+				active
+				onTogglePopOut={() => undefined}
+				poppedOut={false}
+				session={{ ...session, previewUrl: "http://localhost:5173/" }}
+			/>,
+		);
+
+		await userEvent.click(screen.getByRole("button", { name: /edit page text/i }));
+
+		expect(hookState.setTextEditMode).toHaveBeenCalledWith(true);
+	});
+
+	it("disables text edit mode for loaded pages outside the session preview origin", () => {
+		hookState.navState = {
+			...hookState.navState,
+			url: "https://example.com/",
+		};
+		render(
+			<BrowserPanel
+				active
+				onTogglePopOut={() => undefined}
+				poppedOut={false}
+				session={{ ...session, previewUrl: "http://localhost:5173/" }}
+			/>,
+		);
+
+		expect(screen.getByRole("button", { name: /edit page text/i })).toBeDisabled();
+	});
+
+	it("disables text edit mode for file URLs that are not the session preview file", () => {
+		hookState.navState = {
+			...hookState.navState,
+			url: "file:///workspace/other.html",
+		};
+		render(
+			<BrowserPanel
+				active
+				onTogglePopOut={() => undefined}
+				poppedOut={false}
+				session={{ ...session, previewUrl: "file:///workspace/index.html" }}
+			/>,
+		);
+
+		expect(screen.getByRole("button", { name: /edit page text/i })).toBeDisabled();
+	});
+
+	it("applies submitted text edits to the session workspace", async () => {
+		postMock.mockResolvedValueOnce({
+			data: {
+				status: "applied",
+				sessionId: "sess-1",
+				path: "src/App.tsx",
+				line: 12,
+				occurrence: 0,
+				candidates: [],
+			},
+		});
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/",
+		};
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		act(() => {
+			textEditSubmitListeners.forEach((listener) => listener(textEditPayload()));
+		});
+
+		expect(await screen.findByText("Applied")).toBeInTheDocument();
+		expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/workspace/text-edit", {
+			params: { path: { sessionId: "sess-1" } },
+			body: {
+				oldText: "Draft",
+				newText: "Published",
+				url: "http://localhost:5173/",
+				selector: "h1",
+				tag: "h1",
+			},
+		});
+		expect(invalidateQueriesMock).toHaveBeenCalledWith({
+			queryKey: ["session-workspace-files", "sess-1"],
+		});
+		expect(invalidateQueriesMock).toHaveBeenCalledWith({
+			queryKey: ["session-workspace-file", "sess-1"],
+		});
+	});
+
+	it("ignores stale text edit responses on the same URL", async () => {
+		let resolveFirst: (value: unknown) => void = () => undefined;
+		const firstResponse = new Promise((resolve) => {
+			resolveFirst = resolve;
+		});
+		postMock.mockReturnValueOnce(firstResponse).mockResolvedValueOnce({
+			data: {
+				status: "applied",
+				sessionId: "sess-1",
+				path: "src/App.tsx",
+				line: 12,
+				occurrence: 0,
+				candidates: [],
+			},
+		});
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/",
+		};
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		act(() => {
+			textEditSubmitListeners.forEach((listener) =>
+				listener(textEditPayload({ oldText: "First draft", newText: "First final" })),
+			);
+			textEditSubmitListeners.forEach((listener) =>
+				listener(textEditPayload({ oldText: "Second draft", newText: "Second final" })),
+			);
+		});
+
+		expect(await screen.findByText("Applied")).toBeInTheDocument();
+		await act(async () => {
+			resolveFirst({
+				data: {
+					status: "ambiguous",
+					sessionId: "sess-1",
+					candidates: [
+						{
+							path: "src/Stale.tsx",
+							occurrence: 0,
+							line: 3,
+							snippet: "<h1>First draft</h1>",
+							reason: "text_match",
+						},
+					],
+				},
+			});
+			await firstResponse;
+		});
+
+		expect(screen.queryByTestId("browser-text-edit-candidates")).not.toBeInTheDocument();
+		expect(screen.getByText("Applied")).toBeInTheDocument();
+	});
+
+	it("lets the user choose a source file when a text edit is ambiguous", async () => {
+		postMock
+			.mockResolvedValueOnce({
+				data: {
+					status: "ambiguous",
+					sessionId: "sess-1",
+					candidates: [
+						{
+							path: "src/App.tsx",
+							occurrence: 0,
+							line: 4,
+							snippet: "<h1>Draft</h1>",
+							reason: "exact text match",
+						},
+						{
+							path: "src/Home.tsx",
+							occurrence: 2,
+							line: 9,
+							snippet: "<button>Draft</button>",
+							reason: "exact text match",
+						},
+					],
+				},
+			})
+			.mockResolvedValueOnce({
+				data: {
+					status: "applied",
+					sessionId: "sess-1",
+					path: "src/Home.tsx",
+					line: 9,
+					occurrence: 2,
+					candidates: [],
+				},
+			});
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/",
+		};
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		act(() => {
+			textEditSubmitListeners.forEach((listener) =>
+				listener(
+					textEditPayload({
+						context: {
+							url: "http://localhost:5173/",
+							tag: "button",
+							classes: [],
+							selector: "button",
+							rect: { x: 8, y: 16, width: 120, height: 32 },
+							nearbyText: [],
+							computedStyle: {},
+						},
+					}),
+				),
+			);
+		});
+
+		const picker = await screen.findByTestId("browser-text-edit-candidates");
+		expect(within(picker).getByText("Choose source file")).toBeInTheDocument();
+		await userEvent.click(
+			screen.getByRole("button", {
+				name: /apply edit to src\/home\.tsx line 9/i,
+			}),
+		);
+
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
+		expect(postMock.mock.calls[1][1]).toMatchObject({
+			params: { path: { sessionId: "sess-1" } },
+			body: {
+				oldText: "Draft",
+				newText: "Published",
+				url: "http://localhost:5173/",
+				selector: "button",
+				tag: "button",
+				target: { path: "src/Home.tsx", occurrence: 2 },
+			},
+		});
+		expect(await screen.findByText("Applied")).toBeInTheDocument();
+	});
+
+	it("clears an ambiguous text edit when the session changes", async () => {
+		postMock.mockResolvedValueOnce({
+			data: {
+				status: "ambiguous",
+				sessionId: "sess-1",
+				candidates: [
+					{
+						path: "src/App.tsx",
+						occurrence: 0,
+						line: 4,
+						snippet: "<h1>Draft</h1>",
+						reason: "exact text match",
+					},
+				],
+			},
+		});
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/",
+		};
+		const { rerender } = render(
+			<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />,
+		);
+
+		act(() => {
+			textEditSubmitListeners.forEach((listener) => listener(textEditPayload()));
+		});
+		expect(await screen.findByTestId("browser-text-edit-candidates")).toBeInTheDocument();
+
+		rerender(
+			<BrowserPanel
+				active
+				onTogglePopOut={() => undefined}
+				poppedOut={false}
+				session={{ ...session, id: "sess-2" }}
+			/>,
+		);
+
+		await waitFor(() => expect(screen.queryByTestId("browser-text-edit-candidates")).not.toBeInTheDocument());
+	});
+
+	it("clears an ambiguous text edit when the browser URL changes", async () => {
+		postMock.mockResolvedValueOnce({
+			data: {
+				status: "ambiguous",
+				sessionId: "sess-1",
+				candidates: [
+					{
+						path: "src/App.tsx",
+						occurrence: 0,
+						line: 4,
+						snippet: "<h1>Draft</h1>",
+						reason: "exact text match",
+					},
+				],
+			},
+		});
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/",
+		};
+		const { rerender } = render(
+			<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />,
+		);
+
+		act(() => {
+			textEditSubmitListeners.forEach((listener) => listener(textEditPayload()));
+		});
+		expect(await screen.findByTestId("browser-text-edit-candidates")).toBeInTheDocument();
+
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/settings",
+		};
+		rerender(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		await waitFor(() => expect(screen.queryByTestId("browser-text-edit-candidates")).not.toBeInTheDocument());
+	});
+
 	it("sends submitted annotation instructions to the session agent", async () => {
-		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/",
+		};
 		render(
 			<BrowserPanel
 				active
@@ -352,7 +724,10 @@ describe("BrowserPanel", () => {
 	});
 
 	it("sends a follow-up annotation without waiting for an activity-state cycle", async () => {
-		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/",
+		};
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
 		act(() => {
@@ -385,7 +760,10 @@ describe("BrowserPanel", () => {
 				}),
 			)
 			.mockResolvedValueOnce({ data: {} });
-		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/",
+		};
 		render(
 			<BrowserPanel
 				active
@@ -429,7 +807,10 @@ describe("BrowserPanel", () => {
 				}),
 			)
 			.mockResolvedValueOnce({ data: {} });
-		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/",
+		};
 		const { rerender } = render(<PersistentBrowserPanelView currentSession={session} visible />);
 
 		act(() => {
@@ -465,7 +846,10 @@ describe("BrowserPanel", () => {
 				}),
 			)
 			.mockResolvedValueOnce({ data: {} });
-		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/",
+		};
 		const { rerender } = render(
 			<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />,
 		);
@@ -513,7 +897,10 @@ describe("BrowserPanel", () => {
 	});
 
 	it("sends submitted annotations while the session status is working", async () => {
-		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/",
+		};
 		render(
 			<BrowserPanel
 				active
@@ -579,8 +966,13 @@ describe("BrowserPanel", () => {
 	});
 
 	it("shows annotation send errors", async () => {
-		postMock.mockResolvedValue({ error: { message: "AO daemon is not ready." } });
-		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		postMock.mockResolvedValue({
+			error: { message: "AO daemon is not ready." },
+		});
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/",
+		};
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
 		act(() => {
@@ -608,7 +1000,10 @@ describe("BrowserPanel", () => {
 		postMock
 			.mockResolvedValueOnce({ error: { message: "AO daemon is not ready." } })
 			.mockResolvedValueOnce({ data: {} });
-		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/",
+		};
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 		const payload = annotationPayload("Keep my original annotation request.");
 
@@ -637,7 +1032,10 @@ describe("BrowserPanel", () => {
 	});
 
 	it("clears picking state when the page cancels annotation mode", async () => {
-		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		hookState.navState = {
+			...hookState.navState,
+			url: "http://localhost:5173/",
+		};
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
 		await userEvent.click(screen.getByRole("button", { name: /annotate/i }));

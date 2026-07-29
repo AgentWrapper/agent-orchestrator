@@ -128,6 +128,10 @@ func (f *fakeSessionService) GetWorkspaceFile(context.Context, domain.SessionID,
 	return sessionsvc.WorkspaceFileDetail{}, nil
 }
 
+func (f *fakeSessionService) ApplyWorkspaceTextEdit(context.Context, domain.SessionID, sessionsvc.WorkspaceTextEditInput) (sessionsvc.WorkspaceTextEditResult, error) {
+	return sessionsvc.WorkspaceTextEditResult{}, nil
+}
+
 type fakeAgentCatalog struct{}
 
 var _ controllers.AgentCatalog = (*fakeAgentCatalog)(nil)

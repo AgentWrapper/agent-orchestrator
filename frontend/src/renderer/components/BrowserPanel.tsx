@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
 	ArrowLeft,
 	ArrowRight,
@@ -8,12 +9,18 @@ import {
 	Maximize2,
 	Minimize2,
 	MousePointer2,
+	PencilLine,
 	RefreshCw,
 	X,
 } from "lucide-react";
+import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { useBrowserView, type BrowserViewModel } from "../hooks/useBrowserView";
-import { formatBrowserAnnotationMessage, type BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
+import {
+	formatBrowserAnnotationMessage,
+	type BrowserAnnotationSubmitPayload,
+	type BrowserTextEditSubmitPayload,
+} from "../../shared/browser-annotations";
 import type { WorkspaceSession } from "../types/workspace";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -34,6 +41,82 @@ type BrowserPanelProps = {
 };
 
 type AnnotationStatus = "idle" | "picking" | "queued" | "sending" | "sent" | "error";
+type WorkspaceTextEditCandidate = components["schemas"]["WorkspaceTextEditCandidate"];
+type WorkspaceTextEditTarget = components["schemas"]["WorkspaceTextEditTarget"];
+type TextEditStatus = "idle" | "picking" | "saving" | "applied" | "ambiguous" | "error";
+type TextEditState = {
+	status: TextEditStatus;
+	message: string;
+	candidates: WorkspaceTextEditCandidate[];
+	pending: BrowserTextEditSubmitPayload | null;
+};
+
+const idleTextEditState: TextEditState = {
+	status: "idle",
+	message: "",
+	candidates: [],
+	pending: null,
+};
+
+function isBrowserTextEditURLSupported(currentURL: string, previewURL?: string): boolean {
+	const current = parseBrowserTextEditURL(currentURL);
+	if (!current) return false;
+	if (current.protocol === "file:") {
+		const preview = parseBrowserTextEditURL(previewURL);
+		return Boolean(preview && preview.protocol === "file:" && browserFileURLsMatch(current, preview));
+	}
+	if (current.protocol !== "http:" && current.protocol !== "https:") return false;
+	const preview = parseBrowserTextEditURL(previewURL);
+	return Boolean(
+		preview &&
+			preview.protocol === current.protocol &&
+			preview.host === current.host &&
+			isLocalBrowserTextEditHost(current.hostname),
+	);
+}
+
+function parseBrowserTextEditURL(raw?: string): URL | null {
+	const trimmed = raw?.trim();
+	if (!trimmed) return null;
+	try {
+		return new URL(trimmed);
+	} catch {
+		return null;
+	}
+}
+
+function isLocalBrowserTextEditHost(hostname: string): boolean {
+	const normalized = hostname.trim().toLowerCase().replace(/\.$/, "");
+	const ipv4Parts = normalized.split(".");
+	return (
+		normalized === "localhost" ||
+		normalized.endsWith(".localhost") ||
+		normalized === "::1" ||
+		normalized === "[::1]" ||
+		(ipv4Parts.length === 4 &&
+			ipv4Parts[0] === "127" &&
+			ipv4Parts.every((part) => /^\d+$/.test(part) && Number(part) >= 0 && Number(part) <= 255))
+	);
+}
+
+function browserFileURLsMatch(current: URL, preview: URL): boolean {
+	const currentFile = browserFileURLParts(current);
+	const previewFile = browserFileURLParts(preview);
+	return Boolean(currentFile && previewFile && currentFile.host === previewFile.host && currentFile.path === previewFile.path);
+}
+
+function browserFileURLParts(url: URL): { host: string; path: string } | null {
+	const host = url.hostname.trim().toLowerCase();
+	if (host && host !== "localhost") return null;
+	try {
+		return {
+			host: "",
+			path: decodeURIComponent(url.pathname),
+		};
+	} catch {
+		return null;
+	}
+}
 
 export type BrowserAnnotationQueueModel = {
 	status: AnnotationStatus;
@@ -218,11 +301,13 @@ export function BrowserPanel({ session, active, poppedOut, onTogglePopOut }: Bro
 }
 
 export function BrowserPanelView({
+	session,
 	poppedOut,
 	onTogglePopOut,
 	browserView,
 	annotationQueue,
 }: BrowserPanelProps & { annotationQueue: BrowserAnnotationQueueModel; browserView: BrowserViewModel }) {
+	const queryClient = useQueryClient();
 	const {
 		viewId,
 		navState,
@@ -242,17 +327,138 @@ export function BrowserPanelView({
 		agentBrowserActive,
 		annotationMode,
 		setAnnotationMode,
+		textEditMode,
+		setTextEditMode,
 	} = browserView;
 	const [urlInput, setUrlInput] = useState(navState.url);
-	const { beginPicking, cancelPicking, enqueue, error, failPicking, queuedCount, retryQueued, status } =
-		annotationQueue;
+	const {
+		beginPicking,
+		cancelPicking,
+		enqueue,
+		error,
+		failPicking,
+		queuedCount,
+		retryQueued,
+		status: annotationStatus,
+	} = annotationQueue;
+	const [textEditState, setTextEditState] = useState<TextEditState>(idleTextEditState);
 	const showStaticPreview = !window.ao?.browser && navState.url !== "";
 	const canAnnotate = Boolean(window.ao?.browser && viewId && navState.url);
-	const canRetryAnnotation = status === "error" && queuedCount > 0;
+	const canTextEdit = Boolean(
+		window.ao?.browser && viewId && isBrowserTextEditURLSupported(navState.url, session.previewUrl),
+	);
+	const canRetryAnnotation = annotationStatus === "error" && queuedCount > 0;
+	const textEditActive = textEditMode || textEditState.status === "picking";
+	const textEditScopeRef = useRef({ sessionId: session.id, url: navState.url });
+	const textEditRequestRef = useRef(0);
 
 	useEffect(() => {
 		setUrlInput(navState.url);
 	}, [navState.url]);
+
+	useEffect(() => {
+		textEditScopeRef.current = { sessionId: session.id, url: navState.url };
+		textEditRequestRef.current += 1;
+	}, [navState.url, session.id]);
+
+	const applyTextEdit = useCallback(
+		async (payload: BrowserTextEditSubmitPayload, target?: WorkspaceTextEditTarget) => {
+			const requestGeneration = ++textEditRequestRef.current;
+			const requestSessionId = session.id;
+			const requestURL = payload.context.url;
+			const requestIsCurrent = () =>
+				textEditRequestRef.current === requestGeneration &&
+				textEditScopeRef.current.sessionId === requestSessionId &&
+				textEditScopeRef.current.url === requestURL;
+			setTextEditState({
+				status: "saving",
+				message: "",
+				candidates: [],
+				pending: payload,
+			});
+			try {
+				const { data, error } = await apiClient.POST("/api/v1/sessions/{sessionId}/workspace/text-edit", {
+					params: { path: { sessionId: requestSessionId } },
+					body: {
+						oldText: payload.oldText,
+						newText: payload.newText,
+						url: payload.context.url,
+						selector: payload.context.selector,
+						tag: payload.context.tag,
+						...(target ? { target } : {}),
+					},
+				});
+				if (error) {
+					if (!requestIsCurrent()) return;
+					setTextEditState({
+						status: "error",
+						message: apiErrorMessage(error, "Unable to apply text edit."),
+						candidates: [],
+						pending: null,
+					});
+					return;
+				}
+				if (!data) {
+					if (!requestIsCurrent()) return;
+					setTextEditState({
+						status: "error",
+						message: "Text edit response was empty.",
+						candidates: [],
+						pending: null,
+					});
+					return;
+				}
+				if (data.status === "applied") {
+					void queryClient.invalidateQueries({
+						queryKey: ["session-workspace-files", requestSessionId],
+					});
+					void queryClient.invalidateQueries({
+						queryKey: ["session-workspace-file", requestSessionId],
+					});
+					if (!requestIsCurrent()) return;
+					setTextEditState({
+						status: "applied",
+						message: "Applied",
+						candidates: [],
+						pending: null,
+					});
+					return;
+				}
+				if (data.status === "ambiguous") {
+					if (!requestIsCurrent()) return;
+					setTextEditState({
+						status: "ambiguous",
+						message: data.message || "Choose source file",
+						candidates: data.candidates,
+						pending: payload,
+					});
+					return;
+				}
+				const fallback =
+					data.status === "conflict"
+						? "Selected text changed. Pick the text again."
+						: data.status === "not_found"
+							? "Could not find that text in workspace files."
+							: "This text edit is not supported.";
+				if (!requestIsCurrent()) return;
+				setTextEditState({
+					status: "error",
+					message: data.message || fallback,
+					candidates: [],
+					pending: null,
+				});
+			} catch (error) {
+				if (!requestIsCurrent()) return;
+				setTextEditState({
+					status: "error",
+					message: apiErrorMessage(error, "Unable to apply text edit."),
+					candidates: [],
+					pending: null,
+				});
+			}
+		},
+		[queryClient, session.id],
+	);
 
 	useEffect(() => {
 		const offSubmit = window.ao?.browser.onAnnotationSubmit((payload) => {
@@ -269,6 +475,37 @@ export function BrowserPanelView({
 		};
 	}, [cancelPicking, enqueue, viewId]);
 
+	useEffect(() => {
+		const offSubmit = window.ao?.browser.onTextEditSubmit((payload) => {
+			if (payload.viewId !== viewId) return;
+			void applyTextEdit(payload);
+		});
+		const offCancel = window.ao?.browser.onTextEditCancel((payload) => {
+			if (payload.viewId !== viewId) return;
+			setTextEditState(idleTextEditState);
+		});
+		return () => {
+			offSubmit?.();
+			offCancel?.();
+		};
+	}, [applyTextEdit, viewId]);
+
+	useEffect(() => {
+		if (navState.url) return;
+		setTextEditState(idleTextEditState);
+	}, [navState.url]);
+
+	useEffect(() => {
+		setTextEditState(idleTextEditState);
+	}, [session.id]);
+
+	useEffect(() => {
+		if (!textEditState.pending || !navState.url) return;
+		if (textEditState.pending.context.url !== navState.url) {
+			setTextEditState(idleTextEditState);
+		}
+	}, [navState.url, textEditState.pending]);
+
 	const submit = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
 		const nextURL = urlInput.trim();
@@ -276,15 +513,16 @@ export function BrowserPanelView({
 	};
 
 	const toggleAnnotationMode = async () => {
-		if (!canAnnotate || status === "sending") return;
+		if (!canAnnotate || annotationStatus === "sending") return;
 		if (canRetryAnnotation) {
 			retryQueued();
 			return;
 		}
-		const next = !(annotationMode || status === "picking");
+		const next = !(annotationMode || annotationStatus === "picking");
 		try {
 			await setAnnotationMode(next);
 			if (next) {
+				setTextEditState(idleTextEditState);
 				beginPicking();
 			} else {
 				cancelPicking();
@@ -294,19 +532,68 @@ export function BrowserPanelView({
 		}
 	};
 
+	const toggleTextEditMode = async () => {
+		if (!canTextEdit || textEditState.status === "saving") return;
+		const next = !textEditActive;
+		try {
+			await setTextEditMode(next);
+			if (next) {
+				cancelPicking();
+				setTextEditState({
+					status: "picking",
+					message: "",
+					candidates: [],
+					pending: null,
+				});
+			} else {
+				setTextEditState(idleTextEditState);
+			}
+		} catch (error) {
+			setTextEditState({
+				status: "error",
+				message: error instanceof Error ? error.message : "Unable to start text edit.",
+				candidates: [],
+				pending: null,
+			});
+		}
+	};
+
+	const chooseTextEditCandidate = (candidate: WorkspaceTextEditCandidate) => {
+		if (!textEditState.pending || textEditState.status === "saving") return;
+		void applyTextEdit(textEditState.pending, {
+			path: candidate.path,
+			occurrence: candidate.occurrence,
+			line: candidate.line,
+			snippet: candidate.snippet,
+			matchCount: candidate.matchCount,
+		});
+	};
+
 	const annotationStatusLabel =
-		status === "picking"
+		annotationStatus === "picking"
 			? "Pick element"
-			: status === "queued"
+			: annotationStatus === "queued"
 				? queuedCount > 1
 					? `Queued (${queuedCount})`
 					: "Queued"
-				: status === "sending"
+				: annotationStatus === "sending"
 					? "Sending"
-					: status === "sent"
+					: annotationStatus === "sent"
 						? "Sent"
-						: status === "error"
+						: annotationStatus === "error"
 							? error
+							: "";
+	const textEditStatusLabel =
+		textEditState.status === "picking"
+			? "Pick text"
+			: textEditState.status === "saving"
+				? "Saving"
+				: textEditState.status === "applied"
+					? "Applied"
+					: textEditState.status === "ambiguous"
+						? "Choose source file"
+						: textEditState.status === "error"
+							? textEditState.message
 							: "";
 
 	return (
@@ -356,13 +643,13 @@ export function BrowserPanelView({
 					aria-label={
 						canRetryAnnotation
 							? "Retry annotation"
-							: annotationMode || status === "picking"
+							: annotationMode || annotationStatus === "picking"
 								? "Cancel annotation"
 								: "Annotate page"
 					}
-					aria-pressed={annotationMode || status === "picking"}
+					aria-pressed={annotationMode || annotationStatus === "picking"}
 					className="browser-panel__annotate-btn"
-					disabled={!canAnnotate || status === "sending"}
+					disabled={!canAnnotate || annotationStatus === "sending"}
 					onClick={() => void toggleAnnotationMode()}
 					size="icon-sm"
 					title={canRetryAnnotation ? "Retry annotation" : "Annotate page"}
@@ -371,10 +658,34 @@ export function BrowserPanelView({
 				>
 					<MousePointer2 aria-hidden="true" className="h-4 w-4" />
 				</Button>
+				<Button
+					aria-label={textEditActive ? "Cancel text edit" : "Edit page text"}
+					aria-pressed={textEditActive}
+					className="browser-panel__text-edit-btn"
+					disabled={!canTextEdit || textEditState.status === "saving"}
+					onClick={() => void toggleTextEditMode()}
+					size="icon-sm"
+					title={textEditActive ? "Cancel text edit" : "Edit page text"}
+					type="button"
+					variant="ghost"
+				>
+					<PencilLine aria-hidden="true" className="h-4 w-4" />
+				</Button>
+				{textEditStatusLabel ? (
+					<span
+						className={
+							textEditState.status === "error"
+								? "browser-panel__annotation-status browser-panel__annotation-status--error"
+								: "browser-panel__annotation-status"
+						}
+					>
+						{textEditStatusLabel}
+					</span>
+				) : null}
 				{annotationStatusLabel ? (
 					<span
 						className={
-							status === "error"
+							annotationStatus === "error"
 								? "browser-panel__annotation-status browser-panel__annotation-status--error"
 								: "browser-panel__annotation-status"
 						}
@@ -489,6 +800,46 @@ export function BrowserPanelView({
 					>
 						{navState.error}
 					</p>
+				) : null}
+				{textEditState.status === "ambiguous" && textEditState.pending ? (
+					<div
+						className={cn(
+							"absolute left-2.5 top-2.5 z-10 w-[min(420px,calc(100%-1.25rem))] overflow-hidden rounded-md",
+							"border border-border bg-surface shadow-lg",
+						)}
+						data-testid="browser-text-edit-candidates"
+					>
+						<div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
+							<div className="min-w-0 text-xs font-semibold text-foreground">Choose source file</div>
+							<Button
+								aria-label="Cancel text edit source selection"
+								onClick={() => setTextEditState(idleTextEditState)}
+								size="icon-sm"
+								type="button"
+								variant="ghost"
+							>
+								<X aria-hidden="true" className="size-icon-sm" />
+							</Button>
+						</div>
+						<div className="max-h-72 overflow-y-auto py-1">
+							{textEditState.candidates.map((candidate) => (
+								<button
+									aria-label={`Apply edit to ${candidate.path} line ${candidate.line}`}
+									className="block w-full min-w-0 px-3 py-2 text-left hover:bg-interactive-hover focus-visible:bg-interactive-hover focus-visible:outline-none"
+									key={`${candidate.path}:${candidate.occurrence}`}
+									onClick={() => chooseTextEditCandidate(candidate)}
+									type="button"
+								>
+									<span className="block truncate font-mono text-xs font-semibold text-foreground">
+										{candidate.path}:{candidate.line}
+									</span>
+									<span className="mt-1 block max-h-10 overflow-hidden font-mono text-xs leading-tight text-muted-foreground">
+										{candidate.snippet}
+									</span>
+								</button>
+							))}
+						</div>
+					</div>
 				) : null}
 			</div>
 		</div>

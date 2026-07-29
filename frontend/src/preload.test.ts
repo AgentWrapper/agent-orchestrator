@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { FOCUS_TERMINAL_SHORTCUT_CHANNEL, KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEXT_SESSION_SHORTCUT_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL, OPEN_SETTINGS_SHORTCUT_CHANNEL, PREVIOUS_SESSION_SHORTCUT_CHANNEL } from "./shared/shortcuts";
+import {
+	FOCUS_TERMINAL_SHORTCUT_CHANNEL,
+	KEYBOARD_SHORTCUTS_HELP_CHANNEL,
+	NEXT_SESSION_SHORTCUT_CHANNEL,
+	NEW_SESSION_SHORTCUT_CHANNEL,
+	OPEN_SETTINGS_SHORTCUT_CHANNEL,
+	PREVIOUS_SESSION_SHORTCUT_CHANNEL,
+} from "./shared/shortcuts";
 import type { AoBridge } from "./preload";
 
 const electronMocks = vi.hoisted(() => {
@@ -100,5 +107,34 @@ describe("preload keybinding recording bridge", () => {
 
 		expect(electronMocks.invoke).toHaveBeenNthCalledWith(1, "keybindings:setRecording", true);
 		expect(electronMocks.invoke).toHaveBeenNthCalledWith(2, "keybindings:setRecording", false);
+	});
+});
+
+describe("preload browser text edit bridge", () => {
+	it("sets mode and delivers submitted/canceled events through disposable listeners", async () => {
+		const submit = vi.fn();
+		const cancel = vi.fn();
+		const bridge = exposedBridge();
+
+		await bridge.browser.setTextEditMode({ viewId: "1:ao-1", enabled: true });
+		const disposeSubmit = bridge.browser.onTextEditSubmit(submit);
+		const submitWrapped = electronMocks.listeners.get("browser:textEdit:submitted");
+		const disposeCancel = bridge.browser.onTextEditCancel(cancel);
+		const cancelWrapped = electronMocks.listeners.get("browser:textEdit:canceled");
+
+		expect(electronMocks.invoke).toHaveBeenCalledWith("browser:textEdit:setMode", { viewId: "1:ao-1", enabled: true });
+		submitWrapped?.({}, { viewId: "1:ao-1", oldText: "Draft", newText: "Published" });
+		cancelWrapped?.({}, { viewId: "1:ao-1", reason: "escape" });
+		expect(submit).toHaveBeenCalledWith({
+			viewId: "1:ao-1",
+			oldText: "Draft",
+			newText: "Published",
+		});
+		expect(cancel).toHaveBeenCalledWith({ viewId: "1:ao-1", reason: "escape" });
+
+		disposeSubmit();
+		disposeCancel();
+		expect(electronMocks.off).toHaveBeenCalledWith("browser:textEdit:submitted", submitWrapped);
+		expect(electronMocks.off).toHaveBeenCalledWith("browser:textEdit:canceled", cancelWrapped);
 	});
 });

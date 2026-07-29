@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -375,6 +376,386 @@ func TestGetWorkspaceFileReturnsContentAndDiff(t *testing.T) {
 	}
 	if !strings.Contains(got.Diff, "-hello") || !strings.Contains(got.Diff, "+updated") {
 		t.Fatalf("diff did not include expected old/new lines:\n%s", got.Diff)
+	}
+}
+
+func TestApplyWorkspaceTextEditUniqueSourceMatch(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "src/App.tsx", "export function App() {\n\treturn <h1>Welcome to AO</h1>;\n}\n")
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add app")
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:       "ao-1",
+		Metadata: domain.SessionMetadata{WorkspacePath: repo, PreviewURL: "http://localhost:5173/"},
+	}
+
+	got, err := (&Service{store: st}).ApplyWorkspaceTextEdit(context.Background(), "ao-1", WorkspaceTextEditInput{
+		OldText: "Welcome to AO",
+		NewText: "Ship faster with AO",
+		URL:     "http://localhost:5173/",
+		Tag:     "h1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != WorkspaceTextEditApplied {
+		t.Fatalf("status = %q, want applied: %+v", got.Status, got)
+	}
+	if got.Path != "src/App.tsx" || got.Occurrence != 0 || got.Line != 2 {
+		t.Fatalf("location = %s occurrence=%d line=%d, want src/App.tsx occurrence 0 line 2", got.Path, got.Occurrence, got.Line)
+	}
+	content, err := os.ReadFile(filepath.Join(repo, "src", "App.tsx"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "export function App() {\n\treturn <h1>Ship faster with AO</h1>;\n}\n" {
+		t.Fatalf("content = %q", content)
+	}
+}
+
+func TestApplyWorkspaceTextEditAmbiguousMatchReturnsCandidates(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "src/Footer.tsx", "export function Footer() {\n\treturn <span>Draft copy</span>;\n}\n")
+	writeWorkspaceFile(t, repo, "src/Header.tsx", "export function Header() {\n\treturn <h1>Draft copy</h1>;\n}\n")
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add duplicate copy")
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:       "ao-1",
+		Metadata: domain.SessionMetadata{WorkspacePath: repo, PreviewURL: "http://localhost:5173/"},
+	}
+
+	got, err := (&Service{store: st}).ApplyWorkspaceTextEdit(context.Background(), "ao-1", WorkspaceTextEditInput{
+		OldText: "Draft copy",
+		NewText: "Published copy",
+		URL:     "http://localhost:5173/",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != WorkspaceTextEditAmbiguous {
+		t.Fatalf("status = %q, want ambiguous: %+v", got.Status, got)
+	}
+	if len(got.Candidates) != 2 {
+		t.Fatalf("candidate count = %d, want 2: %+v", len(got.Candidates), got.Candidates)
+	}
+	if got.Candidates[0].Path != "src/Footer.tsx" || got.Candidates[1].Path != "src/Header.tsx" {
+		t.Fatalf("candidate order = %+v, want sorted paths", got.Candidates)
+	}
+	if got.Candidates[0].Occurrence != 0 || got.Candidates[0].Line != 2 || got.Candidates[0].Snippet == "" {
+		t.Fatalf("first candidate = %+v, want occurrence 0 line 2 with snippet", got.Candidates[0])
+	}
+	content, err := os.ReadFile(filepath.Join(repo, "src", "Header.tsx"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(content), "Published copy") {
+		t.Fatalf("ambiguous edit should not write files, got %q", content)
+	}
+}
+
+func TestApplyWorkspaceTextEditSelectedCandidateAndConflict(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "src/App.tsx", "<button>Save</button>\n<button>Save</button>\n")
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add buttons")
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:       "ao-1",
+		Metadata: domain.SessionMetadata{WorkspacePath: repo, PreviewURL: "http://localhost:5173/"},
+	}
+	svc := &Service{store: st}
+
+	got, err := svc.ApplyWorkspaceTextEdit(context.Background(), "ao-1", WorkspaceTextEditInput{
+		OldText: "Save",
+		NewText: "Submit",
+		URL:     "http://localhost:5173/settings",
+		Target:  &WorkspaceTextEditTarget{Path: "src/App.tsx", Occurrence: 1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != WorkspaceTextEditApplied || got.Path != "src/App.tsx" || got.Occurrence != 1 || got.Line != 2 {
+		t.Fatalf("result = %+v, want selected second occurrence applied on line 2", got)
+	}
+	content, err := os.ReadFile(filepath.Join(repo, "src", "App.tsx"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "<button>Save</button>\n<button>Submit</button>\n" {
+		t.Fatalf("content = %q", content)
+	}
+
+	got, err = svc.ApplyWorkspaceTextEdit(context.Background(), "ao-1", WorkspaceTextEditInput{
+		OldText: "Save",
+		NewText: "Submit",
+		URL:     "http://localhost:5173/settings",
+		Target:  &WorkspaceTextEditTarget{Path: "src/App.tsx", Occurrence: 1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != WorkspaceTextEditConflict {
+		t.Fatalf("status = %q, want conflict after selected old text changed: %+v", got.Status, got)
+	}
+}
+
+func TestApplyWorkspaceTextEditRejectsDifferentFilePreviewURL(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "index.html", "<h1>Preview copy</h1>\n")
+	writeWorkspaceFile(t, repo, "other.html", "<h1>Preview copy</h1>\n")
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add pages")
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID: "ao-1",
+		Metadata: domain.SessionMetadata{
+			WorkspacePath: repo,
+			PreviewURL:    testFileURL(t, filepath.Join(repo, "index.html")),
+		},
+	}
+
+	got, err := (&Service{store: st}).ApplyWorkspaceTextEdit(context.Background(), "ao-1", WorkspaceTextEditInput{
+		OldText: "Preview copy",
+		NewText: "Edited copy",
+		URL:     testFileURL(t, filepath.Join(repo, "other.html")),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != WorkspaceTextEditUnsupported {
+		t.Fatalf("status = %q, want unsupported for non-preview file URL: %+v", got.Status, got)
+	}
+	content, err := os.ReadFile(filepath.Join(repo, "other.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "<h1>Preview copy</h1>\n" {
+		t.Fatalf("non-preview file should not be edited, got %q", content)
+	}
+}
+
+func TestApplyWorkspaceTextEditSelectedCandidateConflictsWhenMatchSetDrifts(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "src/App.tsx", "<button>Cancel</button>\n<button>Save</button>\n<button>Save</button>\n")
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add buttons")
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:       "ao-1",
+		Metadata: domain.SessionMetadata{WorkspacePath: repo, PreviewURL: "http://localhost:5173/"},
+	}
+	svc := &Service{store: st}
+
+	found, err := svc.ApplyWorkspaceTextEdit(context.Background(), "ao-1", WorkspaceTextEditInput{
+		OldText: "Save",
+		NewText: "Submit",
+		URL:     "http://localhost:5173/",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found.Status != WorkspaceTextEditAmbiguous || len(found.Candidates) != 2 {
+		t.Fatalf("initial result = %+v, want two candidates", found)
+	}
+	selected := found.Candidates[1]
+	writeWorkspaceFile(t, repo, "src/App.tsx", "<button>Save</button>\n<button>Cancel</button>\n<button>Save</button>\n<button>Save</button>\n")
+
+	got, err := svc.ApplyWorkspaceTextEdit(context.Background(), "ao-1", WorkspaceTextEditInput{
+		OldText: "Save",
+		NewText: "Submit",
+		URL:     "http://localhost:5173/",
+		Target: &WorkspaceTextEditTarget{
+			Path:       selected.Path,
+			Occurrence: selected.Occurrence,
+			Line:       selected.Line,
+			Snippet:    selected.Snippet,
+			MatchCount: selected.MatchCount,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != WorkspaceTextEditConflict {
+		t.Fatalf("status = %q, want conflict after new matching text shifted selected occurrence: %+v", got.Status, got)
+	}
+	content, err := os.ReadFile(filepath.Join(repo, "src", "App.tsx"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(content), "Submit") {
+		t.Fatalf("drifted selected candidate should not edit file, got %q", content)
+	}
+}
+
+func TestApplyWorkspaceTextEditSelectedCandidateSkipsGeneratedPaths(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "dist/App.js", `console.log("Draft copy")`)
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add built asset")
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:       "ao-1",
+		Metadata: domain.SessionMetadata{WorkspacePath: repo, PreviewURL: "http://localhost:5173/"},
+	}
+
+	got, err := (&Service{store: st}).ApplyWorkspaceTextEdit(context.Background(), "ao-1", WorkspaceTextEditInput{
+		OldText: "Draft copy",
+		NewText: "Published copy",
+		URL:     "http://localhost:5173/",
+		Target:  &WorkspaceTextEditTarget{Path: "dist/App.js", Occurrence: 0},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != WorkspaceTextEditUnsupported {
+		t.Fatalf("status = %q, want unsupported for generated target: %+v", got.Status, got)
+	}
+	content, err := os.ReadFile(filepath.Join(repo, "dist", "App.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != `console.log("Draft copy")` {
+		t.Fatalf("generated file should not be edited, got %q", content)
+	}
+}
+
+func testFileURL(t *testing.T, rawPath string) string {
+	t.Helper()
+	abs, err := filepath.Abs(rawPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.ToSlash(abs)
+	if filepath.VolumeName(abs) != "" {
+		path = "/" + path
+	}
+	return (&url.URL{Scheme: "file", Path: path}).String()
+}
+
+func TestApplyWorkspaceTextEditRejectsUnrelatedURL(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "src/App.tsx", "<h1>Draft copy</h1>\n")
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add app")
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:       "ao-1",
+		Metadata: domain.SessionMetadata{WorkspacePath: repo, PreviewURL: "http://localhost:5173/"},
+	}
+
+	got, err := (&Service{store: st}).ApplyWorkspaceTextEdit(context.Background(), "ao-1", WorkspaceTextEditInput{
+		OldText: "Draft copy",
+		NewText: "Published copy",
+		URL:     "https://example.com/",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != WorkspaceTextEditUnsupported {
+		t.Fatalf("status = %q, want unsupported for unrelated URL: %+v", got.Status, got)
+	}
+	content, err := os.ReadFile(filepath.Join(repo, "src", "App.tsx"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "<h1>Draft copy</h1>\n" {
+		t.Fatalf("unrelated page should not edit workspace, got %q", content)
+	}
+}
+
+func TestApplyWorkspaceTextEditSkipsGeneratedSourceMatches(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "backend/internal/httpd/apispec/openapi.yaml", "title: Draft copy\n")
+	writeWorkspaceFile(t, repo, "backend/internal/storage/sqlite/gen/sessions.sql.go", "const title = \"Draft copy\"\n")
+	writeWorkspaceFile(t, repo, "frontend/src/api/schema.ts", "export const title = \"Draft copy\";\n")
+	writeWorkspaceFile(t, repo, "src/App.tsx", "<h1>Draft copy</h1>\n")
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add generated artifacts")
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:       "ao-1",
+		Metadata: domain.SessionMetadata{WorkspacePath: repo, PreviewURL: "http://localhost:5173/"},
+	}
+
+	got, err := (&Service{store: st}).ApplyWorkspaceTextEdit(context.Background(), "ao-1", WorkspaceTextEditInput{
+		OldText: "Draft copy",
+		NewText: "Published copy",
+		URL:     "http://localhost:5173/",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != WorkspaceTextEditApplied || got.Path != "src/App.tsx" {
+		t.Fatalf("result = %+v, want generated matches skipped and src/App.tsx applied", got)
+	}
+	content, err := os.ReadFile(filepath.Join(repo, "backend", "internal", "httpd", "apispec", "openapi.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "title: Draft copy\n" {
+		t.Fatalf("generated OpenAPI file should not be edited, got %q", content)
+	}
+}
+
+func TestApplyWorkspaceTextEditCapsAmbiguousCandidates(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	for i := 0; i < maxWorkspaceTextEditCandidates+1; i++ {
+		writeWorkspaceFile(t, repo, fmt.Sprintf("src/copy-%02d.txt", i), "Common heading\n")
+	}
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add common copy")
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:       "ao-1",
+		Metadata: domain.SessionMetadata{WorkspacePath: repo, PreviewURL: "http://localhost:5173/"},
+	}
+
+	got, err := (&Service{store: st}).ApplyWorkspaceTextEdit(context.Background(), "ao-1", WorkspaceTextEditInput{
+		OldText: "Common heading",
+		NewText: "Specific heading",
+		URL:     "http://localhost:5173/",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != WorkspaceTextEditAmbiguous {
+		t.Fatalf("status = %q, want ambiguous for capped candidates: %+v", got.Status, got)
+	}
+	if len(got.Candidates) != maxWorkspaceTextEditCandidates {
+		t.Fatalf("candidate count = %d, want capped %d", len(got.Candidates), maxWorkspaceTextEditCandidates)
+	}
+	if !strings.Contains(got.Message, "Too many") {
+		t.Fatalf("message = %q, want too-many explanation", got.Message)
+	}
+}
+
+func TestApplyWorkspaceTextEditSelectedCandidateMissingFileIsConflict(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "src/App.tsx", "<h1>Draft copy</h1>\n")
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add app")
+	if err := os.Remove(filepath.Join(repo, "src", "App.tsx")); err != nil {
+		t.Fatal(err)
+	}
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:       "ao-1",
+		Metadata: domain.SessionMetadata{WorkspacePath: repo, PreviewURL: "http://localhost:5173/"},
+	}
+
+	got, err := (&Service{store: st}).ApplyWorkspaceTextEdit(context.Background(), "ao-1", WorkspaceTextEditInput{
+		OldText: "Draft copy",
+		NewText: "Published copy",
+		URL:     "http://localhost:5173/",
+		Target:  &WorkspaceTextEditTarget{Path: "src/App.tsx", Occurrence: 0},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != WorkspaceTextEditConflict {
+		t.Fatalf("status = %q, want conflict for missing selected file: %+v", got.Status, got)
 	}
 }
 

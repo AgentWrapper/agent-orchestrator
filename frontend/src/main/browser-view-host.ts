@@ -15,6 +15,11 @@ import type {
 	BrowserAnnotationPageCancelPayload,
 	BrowserAnnotationPageSubmitPayload,
 	BrowserAnnotationSubmitPayload,
+	BrowserTextEditCancelPayload,
+	BrowserTextEditModeInput,
+	BrowserTextEditPageCancelPayload,
+	BrowserTextEditPageSubmitPayload,
+	BrowserTextEditSubmitPayload,
 } from "../shared/browser-annotations";
 import { attachAppShortcuts } from "./app-shortcuts";
 import type { KeybindingOverrides } from "../shared/shortcuts";
@@ -151,6 +156,7 @@ type BrowserEntry = {
 	view: BrowserViewLike;
 	state: BrowserNavState;
 	annotationEnabled: boolean;
+	textEditEnabled: boolean;
 	refGeneration: number;
 	refs: Map<string, { backendNodeId: number; generation: number }>;
 	consoleMessages: BrowserLogEntry[];
@@ -370,6 +376,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			view,
 			state,
 			annotationEnabled: false,
+			textEditEnabled: false,
 			refGeneration: 0,
 			refs: new Map(),
 			consoleMessages: [],
@@ -560,6 +567,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 
 	const navigateEntry = async (entry: BrowserEntry, url: string): Promise<BrowserNavState> => {
 		cancelAnnotation(options, entry, "navigation");
+		cancelTextEdit(options, entry, "navigation");
 		const normalized = normalizeBrowserURL(url);
 		if (!isAllowedBrowserURL(normalized.href, options.rendererOrigin)) {
 			throw new Error("Unsupported browser URL");
@@ -569,7 +577,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		} catch (err) {
 			if ((err as { errorCode?: number })?.errorCode === -3) return pushNavState(options, entry);
 			entry.view.setVisible?.(false);
-			entry.state = { ...readNavState(entry), error: String((err as Error)?.message || "Unable to load page") };
+			entry.state = {
+				...readNavState(entry),
+				error: String((err as Error)?.message || "Unable to load page"),
+			};
 			options.mainWindow.webContents.send("browser:navState", entry.state);
 			return entry.state;
 		}
@@ -587,6 +598,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		if (!session) throw browserError("BROWSER_TARGET_UNAVAILABLE", "Browser target is unavailable");
 		const entry = activeEntry(session);
 		cancelAnnotation(options, entry, "navigation");
+		cancelTextEdit(options, entry, "navigation");
 		session.visible = false;
 		session.parked = false;
 		session.bounds = OFFSCREEN_BOUNDS;
@@ -652,7 +664,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		const session = entries.get(viewId);
 		if (!session) return emptyNavState(viewId);
 		const entry = activeEntry(session);
-		if (cancelForNavigation) cancelAnnotation(options, entry, "navigation");
+		if (cancelForNavigation) {
+			cancelAnnotation(options, entry, "navigation");
+			cancelTextEdit(options, entry, "navigation");
+		}
 		action(entry.view.webContents);
 		return pushNavState(options, entry);
 	};
@@ -663,7 +678,32 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		if (!session) return;
 		const entry = activeEntry(session);
 		entry.annotationEnabled = input.enabled;
-		entry.view.webContents.send("browser:annotation:setMode", { enabled: input.enabled });
+		if (input.enabled) {
+			entry.textEditEnabled = false;
+			entry.view.webContents.send("browser:textEdit:setMode", {
+				enabled: false,
+			});
+		}
+		entry.view.webContents.send("browser:annotation:setMode", {
+			enabled: input.enabled,
+		});
+	};
+
+	const setTextEditMode = (event: IpcMainInvokeEvent, input: BrowserTextEditModeInput): void => {
+		if (!isRendererOwned(event, input.viewId)) return;
+		const session = entries.get(input.viewId);
+		if (!session) return;
+		const entry = activeEntry(session);
+		entry.textEditEnabled = input.enabled;
+		if (input.enabled) {
+			entry.annotationEnabled = false;
+			entry.view.webContents.send("browser:annotation:setMode", {
+				enabled: false,
+			});
+		}
+		entry.view.webContents.send("browser:textEdit:setMode", {
+			enabled: input.enabled,
+		});
 	};
 
 	const forwardAnnotationSubmit = (
@@ -704,6 +744,43 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			reason: payload?.reason ?? "cancel",
 		};
 		options.mainWindow.webContents.send("browser:annotation:canceled", forwarded);
+	};
+
+	const forwardTextEditSubmit = (event: IpcMainEvent, payload: BrowserTextEditPageSubmitPayload | undefined): void => {
+		const entry = tabsByWebContentsId.get(event.sender.id);
+		const viewId = entry?.state.viewId;
+		if (
+			!viewId ||
+			!entry ||
+			!entry.textEditEnabled ||
+			!payload ||
+			typeof payload.oldText !== "string" ||
+			typeof payload.newText !== "string" ||
+			typeof payload.context !== "object" ||
+			payload.context === null
+		) {
+			return;
+		}
+		entry.textEditEnabled = false;
+		const forwarded: BrowserTextEditSubmitPayload = {
+			viewId,
+			oldText: payload.oldText,
+			newText: payload.newText,
+			context: payload.context,
+		};
+		options.mainWindow.webContents.send("browser:textEdit:submitted", forwarded);
+	};
+
+	const forwardTextEditCancel = (event: IpcMainEvent, payload: BrowserTextEditPageCancelPayload | undefined): void => {
+		const entry = tabsByWebContentsId.get(event.sender.id);
+		const viewId = entry?.state.viewId;
+		if (!viewId || !entry || !entry.textEditEnabled) return;
+		entry.textEditEnabled = false;
+		const forwarded: BrowserTextEditCancelPayload = {
+			viewId,
+			reason: payload?.reason ?? "cancel",
+		};
+		options.mainWindow.webContents.send("browser:textEdit:canceled", forwarded);
 	};
 
 	const handle = <Args extends unknown[], Result>(
@@ -769,6 +846,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			: emptyTabsState(input.viewId);
 	});
 	handle("browser:annotation:setMode", (event, input: BrowserAnnotationModeInput) => setAnnotationMode(event, input));
+	handle("browser:textEdit:setMode", (event, input: BrowserTextEditModeInput) => setTextEditMode(event, input));
 	on("browser:destroy", (event, viewId: string) => {
 		if (isRendererOwned(event, viewId)) destroy(viewId);
 	});
@@ -777,6 +855,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	);
 	on("browser:annotation:cancel", (event, payload: BrowserAnnotationPageCancelPayload) =>
 		forwardAnnotationCancel(event, payload),
+	);
+	on("browser:textEdit:submit", (event, payload: BrowserTextEditPageSubmitPayload) =>
+		forwardTextEditSubmit(event, payload),
+	);
+	on("browser:textEdit:cancel", (event, payload: BrowserTextEditPageCancelPayload) =>
+		forwardTextEditCancel(event, payload),
 	);
 
 	return {
@@ -1085,6 +1169,7 @@ function wireNavEvents(
 	contents.on("did-start-loading", () => {
 		invalidateRefs(entry);
 		cancelAnnotation(options, entry, "navigation");
+		cancelTextEdit(options, entry, "navigation");
 		update();
 	});
 	contents.on("did-stop-loading", update);
@@ -1109,7 +1194,24 @@ function cancelAnnotation(
 	if (!entry.annotationEnabled) return;
 	entry.annotationEnabled = false;
 	entry.view.webContents.send("browser:annotation:setMode", { enabled: false });
-	options.mainWindow.webContents.send("browser:annotation:canceled", { viewId: entry.state.viewId, reason });
+	options.mainWindow.webContents.send("browser:annotation:canceled", {
+		viewId: entry.state.viewId,
+		reason,
+	});
+}
+
+function cancelTextEdit(
+	options: BrowserViewHostOptions,
+	entry: BrowserEntry,
+	reason: BrowserTextEditCancelPayload["reason"],
+): void {
+	if (!entry.textEditEnabled) return;
+	entry.textEditEnabled = false;
+	entry.view.webContents.send("browser:textEdit:setMode", { enabled: false });
+	options.mainWindow.webContents.send("browser:textEdit:canceled", {
+		viewId: entry.state.viewId,
+		reason,
+	});
 }
 
 function pushNavState(options: BrowserViewHostOptions, entry: BrowserEntry): BrowserNavState {

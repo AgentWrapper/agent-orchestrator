@@ -174,6 +174,10 @@ var schemaNames = map[string]string{
 	"ControllersListWorkspaceFilesResponse":       "ListWorkspaceFilesResponse",
 	"ControllersWorkspaceFileSummary":             "WorkspaceFileSummary",
 	"ControllersWorkspaceFileResponse":            "WorkspaceFileResponse",
+	"ControllersWorkspaceTextEditRequest":         "WorkspaceTextEditRequest",
+	"ControllersWorkspaceTextEditTarget":          "WorkspaceTextEditTarget",
+	"ControllersWorkspaceTextEditResponse":        "WorkspaceTextEditResponse",
+	"ControllersWorkspaceTextEditCandidate":       "WorkspaceTextEditCandidate",
 	"ControllersKillSessionResponse":              "KillSessionResponse",
 	"ControllersRollbackSessionResponse":          "RollbackSessionResponse",
 	"ControllersSendSessionMessageRequest":        "SendSessionMessageRequest",
@@ -260,6 +264,7 @@ var schemaNames = map[string]string{
 	"ProjectUpdateSettingsInput":        "UpdateProjectSettingsInput",
 	"ProjectWorkspaceRepo":              "WorkspaceRepo",
 	"SessionWorkspaceFileStatus":        "WorkspaceFileStatus",
+	"SessionWorkspaceTextEditStatus":    "WorkspaceTextEditStatus",
 }
 
 // markRequestBodyRequired sets requestBody.required: true on the operation's
@@ -933,6 +938,19 @@ func sessionOperations() []operation {
 			pathParams: []any{controllers.SessionIDParam{}, controllers.WorkspaceFileQuery{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.WorkspaceFileResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/workspace/text-edit", id: "applySessionWorkspaceTextEdit", tag: "sessions",
+			summary:    "Apply a browser inline text edit to a session workspace file",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.WorkspaceTextEditRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.WorkspaceTextEditResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
