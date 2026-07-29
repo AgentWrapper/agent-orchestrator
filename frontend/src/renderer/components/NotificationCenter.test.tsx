@@ -131,9 +131,11 @@ function notificationQueryResult(
 		isFetchNextPageError: boolean;
 		isFetchingNextPage: boolean;
 		isLoading: boolean;
+		unreadCount: number;
 	}> = {},
 ) {
-	const hasNextPage = overrides.hasNextPage ?? false;
+	const { unreadCount = unreadNotifications.length, ...queryOverrides } = overrides;
+	const hasNextPage = queryOverrides.hasNextPage ?? false;
 	const notifications = status === "unread" ? unreadNotifications : status === "all" ? allNotifications : [];
 	return {
 		data: {
@@ -142,7 +144,7 @@ function notificationQueryResult(
 				{
 					notifications,
 					nextCursor: hasNextPage ? "older" : undefined,
-					unreadCount: unreadNotifications.length,
+					unreadCount,
 					unresolvedCount: 2,
 				},
 			],
@@ -153,7 +155,7 @@ function notificationQueryResult(
 		isFetchNextPageError: false,
 		isFetchingNextPage: false,
 		isLoading: false,
-		...overrides,
+		...queryOverrides,
 	};
 }
 
@@ -247,6 +249,21 @@ describe("NotificationCenter", () => {
 	it("opens once on click without a hover/focus remount and dismisses outside", async () => {
 		renderNotificationCenter();
 		const trigger = screen.getByRole("button", { name: /unread notifications/ });
+		expect(trigger).toHaveClass("reverb-topbar__control--icon", "size-topbar-control");
+		expect(trigger.querySelector("svg")).toHaveClass("size-icon-lg");
+		expect(screen.getByText("2")).toHaveClass(
+			"right-px",
+			"top-px",
+			"h-3",
+			"min-w-3",
+			"px-0.5",
+			"text-[7px]",
+			"leading-none",
+			"bg-accent",
+			"text-accent-foreground",
+			"ring-1",
+			"ring-background",
+		);
 		fireEvent.mouseEnter(trigger);
 		fireEvent.focus(trigger);
 		expect(screen.queryByRole("dialog", { name: "Notifications" })).not.toBeInTheDocument();
@@ -256,6 +273,29 @@ describe("NotificationCenter", () => {
 		expect(screen.queryByText(/last 7 days/i)).not.toBeInTheDocument();
 		fireEvent.pointerDown(document.body);
 		await waitFor(() => expect(screen.queryByRole("dialog", { name: "Notifications" })).not.toBeInTheDocument());
+	});
+
+	it("caps large unread counts inside the compact notification control", () => {
+		notificationQueryMock.mockImplementation((status: NotificationListStatus) =>
+			notificationQueryResult(status, { unreadCount: 101 }),
+		);
+		renderNotificationCenter();
+
+		const badge = screen.getByText("99+");
+		expect(badge).toHaveClass(
+			"right-px",
+			"top-px",
+			"h-3",
+			"min-w-3",
+			"px-0.5",
+			"text-[7px]",
+			"leading-none",
+			"bg-accent",
+			"text-accent-foreground",
+			"ring-1",
+			"ring-background",
+		);
+		expect(badge).not.toHaveClass("-right-0.5", "-top-0.5", "min-w-4", "text-[9px]", "leading-4");
 	});
 
 	it("supports tab navigation inside the panel and restores focus to the bell", async () => {

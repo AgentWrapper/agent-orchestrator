@@ -12,6 +12,7 @@ import {
 	Files as FilesIcon,
 	GitPullRequest,
 	GitMerge,
+	PanelRightClose,
 	Play,
 	Terminal,
 	Trash2,
@@ -49,6 +50,7 @@ import { Switch } from "./ui/switch";
 import { appI18n } from "../i18n";
 import type { MessageKey } from "../i18n";
 import { usesPreviewWorkspaceData as usePreviewData } from "../lib/preview-mode";
+import { TopbarButton } from "./TopbarButton";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
@@ -56,9 +58,13 @@ type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
 type ReviewRunFacts = components["schemas"]["ReviewRun"];
 type OpenReviewerTerminal = (target: { handleId: string; harness: string }) => void;
 
-export type InspectorView = "summary" | "browser" | "files";
+export type InspectorView = "summary" | "reviews" | "browser" | "files";
 
-const VIEW_DEFS: { id: InspectorView; labelKey: "inspector.summary" | "inspector.browser" | "inspector.files"; icon: ReactNode }[] = [
+const VIEW_DEFS: {
+	id: InspectorView;
+	labelKey: "inspector.summary" | "inspector.reviews" | "inspector.browser" | "inspector.files";
+	icon: ReactNode;
+}[] = [
 	{
 		id: "summary",
 		labelKey: "inspector.summary",
@@ -70,6 +76,15 @@ const VIEW_DEFS: { id: InspectorView; labelKey: "inspector.summary" | "inspector
 				<circle cx="4" cy="7" r="1" />
 				<circle cx="4" cy="12" r="1" />
 				<circle cx="4" cy="17" r="1" />
+			</svg>
+		),
+	},
+	{
+		id: "reviews",
+		labelKey: "inspector.reviews",
+		icon: (
+			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+				<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
 			</svg>
 		),
 	},
@@ -144,6 +159,7 @@ export function SessionInspector({
 	browserAnnotationQueue,
 	isInspectorVisible = true,
 	onToggleBrowserPopOut,
+	onToggleVisibility,
 	onOpenFiles,
 	filesView,
 	browserView,
@@ -156,6 +172,7 @@ export function SessionInspector({
 	browserAnnotationQueue?: BrowserAnnotationQueueModel;
 	isInspectorVisible?: boolean;
 	onToggleBrowserPopOut?: (next: boolean) => void;
+	onToggleVisibility?: () => void;
 	onOpenFiles?: () => void;
 	filesView?: ReactNode;
 	browserView?: BrowserViewModel;
@@ -191,45 +208,68 @@ export function SessionInspector({
 
 	return (
 		<aside className={inspectorShellClass} aria-label={t("inspector.aria")}>
-			<div className="flex h-inspector-tabs shrink-0 items-center gap-1 border-b border-border px-2.5" role="tablist">
-				{views.map((entry) => (
-					<button
-						aria-label={entry.label}
-						key={entry.id}
-						type="button"
-						role="tab"
-						aria-selected={view === entry.id}
-						className={cn(
-							"inline-flex h-control-md shrink-0 items-center justify-center gap-1.5 rounded-md px-1.5 text-sm-md font-semibold text-passive transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground",
-							view === entry.id && "bg-interactive-active text-foreground",
-						)}
-						onClick={() => setView(entry.id)}
-						title={entry.label}
-					>
-						<span className="relative inline-flex shrink-0 [&_svg]:size-icon-md">
-							{entry.icon}
-							{entry.id === "browser" && browserUnseen ? (
-								<span aria-hidden="true" className="absolute -right-1 -top-1 inline-flex size-dot-sm">
-									{/* Pinging halo + solid core: a glowing beacon that draws the eye to
-									    a link that arrived in the terminal, cleared once the tab opens. */}
-									<span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
-									<span className="relative inline-flex size-dot-sm rounded-full bg-primary ring-2 ring-background" />
+			<div
+				className={cn(
+					"session-inspector__topbar flex h-topbar-primary shrink-0 items-center border-b border-border",
+					isInspectorVisible ? "gap-1 pl-2.5" : "justify-center",
+				)}
+			>
+				{isInspectorVisible ? (
+					<div className="flex min-w-0 flex-1 items-center gap-1" role="tablist">
+						{views.map((entry) => (
+							<button
+								aria-label={entry.label}
+								key={entry.id}
+								type="button"
+								role="tab"
+								aria-selected={view === entry.id}
+								className={cn(
+									"relative inline-flex h-control-md shrink-0 items-center justify-center gap-1.5 rounded-md px-1.5 font-semibold text-passive transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground",
+									view === entry.id && "bg-interactive-active text-foreground",
+								)}
+								onClick={() => setView(entry.id)}
+								title={entry.label}
+							>
+								<span className="inline-flex shrink-0 @min-[316px]/inspector:hidden [&_svg]:size-icon-md">
+									{entry.icon}
 								</span>
-							) : null}
-						</span>
-						<span className="truncate @max-[350px]/inspector:hidden">
-							{entry.id === "files" && filesChangedCount !== undefined
-								? t("files.tabCount", { count: filesChangedCount })
-								: entry.label}
-						</span>
-					</button>
-				))}
+								<span className="truncate text-caption @max-[315px]/inspector:hidden">
+									{entry.id === "files" && filesChangedCount !== undefined
+										? t("files.tabCount", { count: filesChangedCount })
+										: entry.label}
+								</span>
+								{entry.id === "browser" && browserUnseen ? (
+									<span aria-hidden="true" className="absolute right-0 top-0 inline-flex size-dot-sm">
+										{/* Pinging halo + solid core: a glowing beacon that draws the eye to
+										    a link that arrived in the terminal, cleared once the tab opens. */}
+										<span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
+										<span className="relative inline-flex size-dot-sm rounded-full bg-primary ring-2 ring-background" />
+									</span>
+								) : null}
+							</button>
+						))}
+					</div>
+				) : null}
+				{isInspectorVisible ? (
+					<TopbarButton
+						aria-expanded="true"
+						aria-label={t("shell.closeInspector")}
+						className="session-inspector__toggle ml-1.5 shrink-0 border border-transparent focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent"
+						onClick={onToggleVisibility}
+						title={t("shell.closeInspectorTitle")}
+						variant="icon"
+					>
+						<PanelRightClose className="size-icon-lg" aria-hidden="true" />
+					</TopbarButton>
+				) : null}
 			</div>
 
 			<div
+				aria-hidden={!isInspectorVisible}
 				className={cn(
 					inspectorBodyBaseClass,
 					view !== "browser" && view !== "files" && inspectorScrollableBodyClass,
+					!isInspectorVisible && "invisible pointer-events-none",
 					// Browser and Files own their viewport spacing. Keep their body
 					// padding out of the class list entirely so a shorthand `p-3`
 					// cannot win over `p-0` through generated utility ordering.
@@ -238,8 +278,14 @@ export function SessionInspector({
 						"session-inspector__body--browser p-0 overflow-hidden [&>[role=tabpanel]]:border-0 [&>[role=tabpanel]]:rounded-none",
 					view === "files" && "p-0 overflow-hidden [&>[role=tabpanel]]:h-full",
 				)}
+				inert={!isInspectorVisible}
 			>
-				{view === "summary" ? <SummaryView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : null}
+				{view === "summary" ? <SummaryView session={session} /> : null}
+				{view === "reviews" ? (
+					<div role="tabpanel">
+						<ReviewsSection onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} />
+					</div>
+				) : null}
 				{view === "browser" ? (
 					<BrowserView
 						browserPoppedOut={browserPoppedOut}
@@ -291,13 +337,7 @@ function Section({
 	);
 }
 
-function SummaryView({
-	session,
-	onOpenReviewerTerminal,
-}: {
-	session: WorkspaceSession;
-	onOpenReviewerTerminal?: OpenReviewerTerminal;
-}) {
+function SummaryView({ session }: { session: WorkspaceSession }) {
 	const { t } = useTranslation();
 	const query = useSessionScmSummary(session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, query.data);
@@ -318,8 +358,6 @@ function SummaryView({
 					)}
 				</div>
 			</Section>
-
-			{hasPRs ? <ReviewsSection onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : null}
 
 			{showCompletion ? <CompletionControls session={session} /> : null}
 
@@ -875,7 +913,9 @@ function ReviewsSection({
 			setReviewNotice(null);
 		},
 		onSuccess: ({ data, reused }) => {
-			void queryClient.invalidateQueries({ queryKey: ["session-reviews", session.id] });
+			void queryClient.invalidateQueries({
+				queryKey: ["session-reviews", session.id],
+			});
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 			const started = data?.reviews?.find((review) => review.status === "running" && review.latestRun);
 			if (reused || !started?.latestRun) {
@@ -897,7 +937,9 @@ function ReviewsSection({
 		},
 		onSuccess: () => {
 			setReviewNotice(null);
-			void queryClient.invalidateQueries({ queryKey: ["session-reviews", session.id] });
+			void queryClient.invalidateQueries({
+				queryKey: ["session-reviews", session.id],
+			});
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 		},
 	});

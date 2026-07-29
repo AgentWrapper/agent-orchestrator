@@ -1,28 +1,48 @@
-import { ChevronLeft, ChevronRight, Maximize2, Minimize2, Minus, Plus, Shield } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type ReactNode, type WheelEvent } from "react";
+import {
+	ChevronLeft,
+	ChevronRight,
+	Maximize2,
+	Minimize2,
+	Plus,
+	Search,
+	Shield,
+	Terminal as TerminalIcon,
+	X,
+} from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type WheelEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { defaultShortcutBindings, shortcutBindingLabel } from "../../shared/shortcuts";
 import { useOverflowScroll } from "../hooks/useOverflowScroll";
 import { useTruncatedText } from "../hooks/useTruncatedText";
 import type { ShellTerminal } from "../hooks/useShellTerminals";
 import { TERMINAL_FONT_SIZE_DEFAULT, TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from "../lib/design-tokens";
-import { getAgentActivityView } from "../lib/session-presentation";
-import { isLinuxPlatform, isMacPlatform } from "../lib/platform";
 import { aoBridge } from "../lib/bridge";
+import { isMacPlatform } from "../lib/platform";
 import { handleTerminalTabListKeyDown } from "../lib/terminal-tabs";
 import { cn } from "../lib/utils";
-import { useUiStore, type Theme } from "../stores/ui-store";
+import type { Theme } from "../stores/ui-store";
 import type { TerminalTarget } from "../types/terminal";
 import { isOrchestratorSession, type WorkspaceSession } from "../types/workspace";
 import { ShellTerminalTab } from "./ShellTerminalTab";
 import { TerminalPane } from "./TerminalPane";
-import { AgentAvatar } from "./AgentAvatar";
-import { SessionTopbarPortal } from "./SessionTopbarPortal";
-import { Button } from "./ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { Input } from "./ui/input";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuSeparator,
+	DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
 
 type CenterPaneProps = {
 	session?: WorkspaceSession;
+	/** Tabs pinned to the originating session's private layout. */
+	projectSessions?: WorkspaceSession[];
+	availableProjectSessions?: WorkspaceSession[];
+	tabOwnerSessionId?: string;
+	onAddProjectSession?: (session: WorkspaceSession) => void;
+	onCloseProjectSession?: (session: WorkspaceSession) => void;
+	onSelectProjectSession?: (session: WorkspaceSession) => void;
 	theme: Theme;
 	daemonReady: boolean;
 	terminalTarget?: TerminalTarget;
@@ -33,17 +53,15 @@ type CenterPaneProps = {
 	onSelectShellTerminal?: (handleId: string) => void;
 	onCloseShellTerminal?: (handleId: string) => void;
 	onRenameShellTerminal?: (handleId: string, title: string) => void;
-	/** Opens a new shell tab in this session's worktree (the button at the end of the tab bar). */
+	/** Opens a new standalone shell tab (the "+" at the end of the tab bar). */
 	onNewShellTerminal?: () => void;
-	/** Session actions consolidated into the terminal bar by SessionView. */
-	topbarActions?: ReactNode;
 };
 
 const terminalFontSizeStorageKey = "ao.terminal.fontSize";
 const WHEEL_ZOOM_THRESHOLD = 80;
 const WHEEL_ZOOM_RESET_MS = 250;
+const COMPACT_SESSION_LIMIT = 5;
 const isMac = isMacPlatform();
-const isLinux = isLinuxPlatform();
 const newTerminalShortcutLabel = shortcutBindingLabel(defaultShortcutBindings("new-shell-terminal", isMac)[0], isMac);
 
 function clampTerminalFontSize(size: number): number {
@@ -60,6 +78,12 @@ function initialTerminalFontSize(): number {
 
 export function CenterPane({
 	session,
+	projectSessions,
+	availableProjectSessions = [],
+	tabOwnerSessionId,
+	onAddProjectSession,
+	onCloseProjectSession,
+	onSelectProjectSession,
 	theme,
 	daemonReady,
 	terminalTarget,
@@ -70,7 +94,6 @@ export function CenterPane({
 	onCloseShellTerminal,
 	onRenameShellTerminal,
 	onNewShellTerminal,
-	topbarActions,
 }: CenterPaneProps) {
 	const { t } = useTranslation();
 	const paneRef = useRef<HTMLDivElement | null>(null);
@@ -78,22 +101,35 @@ export function CenterPane({
 	const lastWheelZoomAtRef = useRef(0);
 	const [fontSize, setFontSize] = useState(initialTerminalFontSize);
 	const [isFullscreen, setIsFullscreen] = useState(false);
-	const [terminalBounds, setTerminalBounds] = useState({ leftInset: 0, rightInset: 0, width: 0 });
-	const isSidebarOpen = useUiStore((state) => state.isSidebarOpen);
-	const tabOverflowWatch = `${session?.id ?? ""}|${shellTerminals.map((terminal) => terminal.handleId).join("|")}`;
+	const [isTabLauncherOpen, setIsTabLauncherOpen] = useState(false);
+	const [showAllSessions, setShowAllSessions] = useState(false);
+	const [sessionSearch, setSessionSearch] = useState("");
+	const sessionTabs = projectSessions?.length ? projectSessions : session ? [session] : [];
+	const effectiveTabOwnerSessionId = tabOwnerSessionId ?? session?.id;
+	const hasMoreSessions = availableProjectSessions.length > COMPACT_SESSION_LIMIT;
+	const normalizedSessionSearch = sessionSearch.trim().toLowerCase();
+	const filteredSessions = normalizedSessionSearch
+		? availableProjectSessions.filter((candidate) =>
+				`${candidate.title} ${candidate.workspaceName}`.toLowerCase().includes(normalizedSessionSearch),
+			)
+		: availableProjectSessions;
+	const expandedSessionList = showAllSessions || normalizedSessionSearch.length > 0;
+	const visibleSessions = expandedSessionList ? filteredSessions : filteredSessions.slice(0, COMPACT_SESSION_LIMIT);
+	const tabOverflowWatch = `${sessionTabs.map((item) => item.id).join("|")}|${shellTerminals
+		.map((terminal) => terminal.handleId)
+		.join("|")}`;
 	const tabsOverflow = useOverflowScroll<HTMLDivElement>(tabOverflowWatch);
 	const target = terminalTarget ?? { kind: "worker" };
-	const sessionTabLabel = session
-		? isOrchestratorSession(session)
-			? t("shell.orchestrator")
-			: session.title
-		: t("terminal.noSession");
 	const activeTerminalLabel =
 		target.kind === "shell"
 			? (shellTerminals.find((shell) => shell.handleId === target.handleId)?.title ?? target.title)
 			: target.kind === "reviewer"
 				? `${t("terminal.reviewer")} · ${target.harness}`
-				: sessionTabLabel;
+				: session
+					? isOrchestratorSession(session)
+						? t("shell.orchestrator")
+						: session.title
+					: t("terminal.noSession");
 
 	useEffect(() => {
 		const handleFullscreenChange = () => setIsFullscreen(document.fullscreenElement === paneRef.current);
@@ -115,33 +151,6 @@ export function CenterPane({
 		);
 		return () => aoBridge.app.setCloseShellTerminalShortcutEnabled(false);
 	}, [target.kind, onCloseShellTerminal]);
-
-	useEffect(() => {
-		const pane = paneRef.current;
-		if (!pane) return;
-		const workspaceSurface = pane.closest<HTMLElement>(".center-panel-surface");
-		const measure = () => {
-			const paneRect = pane.getBoundingClientRect();
-			// leftInset/rightInset are kept for the terminal region width calculation
-			// but no longer used for viewport-alignment padding (topbar is inside the surface).
-			const workspaceRect = workspaceSurface?.getBoundingClientRect() ?? paneRect;
-			const next = {
-				leftInset: workspaceRect.left,
-				rightInset: Math.max(0, window.innerWidth - workspaceRect.right),
-				width: paneRect.width,
-			};
-			setTerminalBounds((current) =>
-				current.leftInset === next.leftInset && current.rightInset === next.rightInset && current.width === next.width
-					? current
-					: next,
-			);
-		};
-		measure();
-		const observer = new ResizeObserver(measure);
-		observer.observe(pane);
-		if (workspaceSurface) observer.observe(workspaceSurface);
-		return () => observer.disconnect();
-	}, []);
 
 	const updateFontSize = useCallback((delta: number) => {
 		setFontSize((current) => {
@@ -187,151 +196,161 @@ export function CenterPane({
 		[updateFontSize],
 	);
 
-	const terminalTopbar = (
-		<div className="flex h-inspector-tabs w-full shrink-0 items-stretch bg-sidebar">
-
-			<div className="session-topbar-surface flex min-w-0 flex-1" data-testid="session-workspace-topbar">
-				<div
-					className={cn(
-						"flex min-w-0 shrink items-center pr-1.5",
-						!isFullscreen && !isSidebarOpen && isMac && "session-topbar-titlebar-clearance-mac",
-						!isFullscreen && !isSidebarOpen && isLinux && "session-topbar-titlebar-clearance-linux",
-					)}
-					data-testid="session-terminal-region"
-					style={{
-						width: terminalBounds.width > 0 ? terminalBounds.width : "100%",
-					}}
-				>
-					<div className="flex h-full min-w-flex-min flex-1 items-center">
-						{tabsOverflow.canScrollLeft ? (
-							<button
-								aria-label={t("terminal.scrollTabsLeft")}
-								className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
-								onClick={() => tabsOverflow.scrollByDirection(-1)}
-								title={t("terminal.scrollTabsLeft")}
-								type="button"
-							>
-								<ChevronLeft aria-hidden="true" className="size-icon-md" />
-							</button>
-						) : null}
-						{/* The permanent agent tab plus shells opened in this session's worktree. */}
-						<div
-							ref={tabsOverflow.ref}
-							aria-label={t("terminal.tabsAria")}
-							className="scrollbar-none flex min-w-flex-min flex-1 self-stretch items-center overflow-x-auto"
-							onKeyDown={handleTerminalTabListKeyDown}
-							role="tablist"
-						>
-							{session ? (
-								<SessionPaneTab
-									isActive={target.kind !== "shell"}
-									label={sessionTabLabel}
-									onSelect={onSelectSessionTerminal}
-									session={session}
-								/>
-							) : (
-								<SessionPaneTab isActive={target.kind !== "shell"} label={sessionTabLabel} />
-							)}
-							{shellTerminals.map((shell) => (
-								<ShellTerminalTab
-									key={shell.handleId}
-									appearance="connected"
-									isActive={target.kind === "shell" && target.handleId === shell.handleId}
-									onClose={() => onCloseShellTerminal?.(shell.handleId)}
-									onRename={onRenameShellTerminal ? (title) => onRenameShellTerminal(shell.handleId, title) : undefined}
-									onSelect={() => onSelectShellTerminal?.(shell.handleId)}
-									shell={shell}
-								/>
-							))}
-						</div>
-						{tabsOverflow.canScrollRight ? (
-							<button
-								aria-label={t("terminal.scrollTabsRight")}
-								className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
-								onClick={() => tabsOverflow.scrollByDirection(1)}
-								title={t("terminal.scrollTabsRight")}
-								type="button"
-							>
-								<ChevronRight aria-hidden="true" className="size-icon-md" />
-							</button>
-						) : null}
-						{!session || !isOrchestratorSession(session) ? (
-							<Tooltip>
-								<TooltipTrigger asChild>
-									<Button
-										aria-label={t("shortcut.new-shell-terminal")}
-										className="shrink-0 text-muted-foreground"
-										disabled={!onNewShellTerminal}
-										onClick={onNewShellTerminal}
-										size="icon-sm"
-										type="button"
-										variant="outline"
-									>
-										<Plus aria-hidden="true" className="size-icon-md" />
-									</Button>
-								</TooltipTrigger>
-								<TooltipContent>{t("terminal.newWithShortcut", { shortcut: newTerminalShortcutLabel })}</TooltipContent>
-							</Tooltip>
-						) : null}
-					</div>
-					<div
-						aria-label={t("terminal.controlsAria")}
-						className="ml-1.5 flex shrink-0 items-center gap-0.5 border-l border-border/70 pl-1.5"
-						role="toolbar"
-					>
-						<TerminalControl
-							disabled={fontSize <= TERMINAL_FONT_SIZE_MIN}
-							label={t("terminal.decreaseFontSize")}
-							onClick={() => updateFontSize(-1)}
-						>
-							<Minus aria-hidden="true" className="size-icon-sm" />
-						</TerminalControl>
-						<span
-							aria-label={t("terminal.fontSizeAria", { size: fontSize })}
-							className="w-font-size-label text-center font-mono text-micro tabular-nums text-muted-foreground"
-						>
-							{fontSize}px
-						</span>
-						<TerminalControl
-							disabled={fontSize >= TERMINAL_FONT_SIZE_MAX}
-							label={t("terminal.increaseFontSize")}
-							onClick={() => updateFontSize(1)}
-						>
-							<Plus aria-hidden="true" className="size-icon-sm" />
-						</TerminalControl>
-						<div aria-hidden="true" className="mx-1 h-4 w-px bg-border/70" />
-						<TerminalControl
-							isPressed={isFullscreen}
-							label={isFullscreen ? t("terminal.exitFullscreen") : t("terminal.fullscreen")}
-							onClick={() => void toggleFullscreen()}
-						>
-							{isFullscreen ? (
-								<Minimize2 aria-hidden="true" className="size-icon-md" />
-							) : (
-								<Maximize2 aria-hidden="true" className="size-icon-md" />
-							)}
-						</TerminalControl>
-					</div>
-				</div>
-				{isFullscreen ? null : (
-					<div
-						className="ml-auto flex shrink-0 items-center px-3"
-						data-testid="session-action-region"
-					>
-						{topbarActions}
-					</div>
-				)}
-			</div>
-		</div>
-	);
-
 	return (
 		<div
 			ref={paneRef}
-			className="terminal-pane-frame flex h-full min-h-0 min-w-flex-min flex-col"
+			className="terminal-pane-frame flex h-full min-h-0 min-w-flex-min flex-col px-px"
 			onWheelCapture={handleWheelZoom}
 		>
-			{isFullscreen ? terminalTopbar : <SessionTopbarPortal>{terminalTopbar}</SessionTopbarPortal>}
+			<div className="flex h-inspector-tabs shrink-0 items-center border-b border-border px-1.5">
+				<div className="flex min-w-flex-min flex-1 items-center gap-3">
+					<button
+						aria-label={t("terminal.scrollTabsLeft")}
+						className={cn(
+							"inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-0",
+							!tabsOverflow.canScrollLeft && "hidden",
+						)}
+						disabled={!tabsOverflow.canScrollLeft}
+						onClick={() => tabsOverflow.scrollByDirection(-1)}
+						title={t("terminal.scrollTabsLeft")}
+						type="button"
+					>
+						<ChevronLeft aria-hidden="true" className="size-icon-md" />
+					</button>
+					{/* Each originating session owns a private set of pinned worker and
+					    shell tabs. The + menu is the only way to add to that layout. */}
+					<div
+						ref={tabsOverflow.ref}
+						className="scrollbar-none flex min-w-flex-min flex-1 items-center gap-3 overflow-x-auto"
+						onKeyDown={handleTerminalTabListKeyDown}
+						role="tablist"
+						aria-label={t("terminal.tabsAria")}
+					>
+						{sessionTabs.length > 0
+							? sessionTabs.map((projectSession) => {
+									const isCurrent = projectSession.id === session?.id;
+									return (
+										<SessionPaneTab
+											key={projectSession.id}
+											isActive={isCurrent && target.kind !== "shell"}
+											label={isOrchestratorSession(projectSession) ? t("shell.orchestrator") : projectSession.title}
+											onSelect={isCurrent ? onSelectSessionTerminal : () => onSelectProjectSession?.(projectSession)}
+											onClose={
+												projectSession.id !== effectiveTabOwnerSessionId
+													? () => onCloseProjectSession?.(projectSession)
+													: undefined
+											}
+										/>
+									);
+								})
+							: !session && <span className="font-mono text-control text-passive">{t("terminal.noSession")}</span>}
+						{shellTerminals.map((shell) => (
+							<ShellTerminalTab
+								key={shell.handleId}
+								appearance="connected"
+								isActive={target.kind === "shell" && target.handleId === shell.handleId}
+								onClose={() => onCloseShellTerminal?.(shell.handleId)}
+								onRename={onRenameShellTerminal ? (title) => onRenameShellTerminal(shell.handleId, title) : undefined}
+								onSelect={() => onSelectShellTerminal?.(shell.handleId)}
+								shell={shell}
+							/>
+						))}
+					</div>
+					<button
+						aria-label={t("terminal.scrollTabsRight")}
+						className={cn(
+							"inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-0",
+							!tabsOverflow.canScrollRight && "hidden",
+						)}
+						disabled={!tabsOverflow.canScrollRight}
+						onClick={() => tabsOverflow.scrollByDirection(1)}
+						title={t("terminal.scrollTabsRight")}
+						type="button"
+					>
+						<ChevronRight aria-hidden="true" className="size-icon-md" />
+					</button>
+					<DropdownMenu
+						open={isTabLauncherOpen}
+						onOpenChange={(open) => {
+							setIsTabLauncherOpen(open);
+							if (!open) {
+								setShowAllSessions(false);
+								setSessionSearch("");
+							}
+						}}
+					>
+						<DropdownMenuTrigger asChild>
+							<button
+								aria-label={t("terminal.addTab")}
+								className="inline-flex h-control-sm shrink-0 items-center gap-px rounded-sm px-1 text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+								title={t("terminal.newWithShortcut", { shortcut: newTerminalShortcutLabel })}
+								type="button"
+							>
+								<Plus aria-hidden="true" className="size-icon-md" />
+							</button>
+						</DropdownMenuTrigger>
+						<DropdownMenuContent align="start" className="w-72">
+							<DropdownMenuItem onSelect={onNewShellTerminal}>
+								<TerminalIcon aria-hidden="true" />
+								{t("workbench.terminal")}
+							</DropdownMenuItem>
+							<DropdownMenuSeparator />
+							{hasMoreSessions ? (
+								<div className="relative px-1 pb-1">
+									<Search
+										aria-hidden="true"
+										className="pointer-events-none absolute top-1/2 left-3 size-icon-md -translate-y-[calc(50%+2px)] text-passive"
+									/>
+									<Input
+										aria-label={t("terminal.searchSessions")}
+										className="h-control-board pl-8"
+										onChange={(event) => setSessionSearch(event.target.value)}
+										onKeyDown={(event) => event.stopPropagation()}
+										placeholder={t("terminal.searchSessions")}
+										value={sessionSearch}
+									/>
+								</div>
+							) : null}
+							<div className={cn(expandedSessionList && "h-52 overflow-y-auto overscroll-contain")}>
+								{visibleSessions.length > 0 ? (
+									visibleSessions.map((candidate) => {
+										const isOpen = sessionTabs.some((tab) => tab.id === candidate.id);
+										return (
+											<DropdownMenuItem
+												key={candidate.id}
+												disabled={isOpen}
+												onSelect={() => onAddProjectSession?.(candidate)}
+											>
+												<span className="size-2 shrink-0 rounded-full bg-passive" aria-hidden="true" />
+												<span className="min-w-0 flex-1 truncate">{candidate.title}</span>
+												<span className="max-w-20 truncate text-micro text-passive">
+											{isOpen ? t("inspector.open") : candidate.workspaceName}
+												</span>
+											</DropdownMenuItem>
+										);
+									})
+								) : (
+									<DropdownMenuItem disabled>{t("terminal.noSessionsFound")}</DropdownMenuItem>
+								)}
+							</div>
+							{hasMoreSessions && !expandedSessionList ? (
+								<>
+									<DropdownMenuSeparator />
+									<DropdownMenuItem
+										className="justify-center text-foreground"
+										onSelect={(event) => {
+											event.preventDefault();
+											setShowAllSessions(true);
+										}}
+									>
+										{t("terminal.showAllSessions")}
+									</DropdownMenuItem>
+								</>
+							) : null}
+						</DropdownMenuContent>
+					</DropdownMenu>
+				</div>
+			</div>
 			{target.kind === "reviewer" ? (
 				<div className="flex h-toolbar shrink-0 items-center gap-3 border-b border-border px-4">
 					<button
@@ -350,11 +369,7 @@ export function CenterPane({
 					<span className="ml-auto truncate font-mono text-xs text-passive">{target.harness}</span>
 				</div>
 			) : null}
-			<div
-				aria-label={t("terminal.panelAria", { title: activeTerminalLabel })}
-				className="relative min-h-0 flex-1"
-				role="tabpanel"
-			>
+			<div aria-label={t("terminal.panelAria", { title: activeTerminalLabel })} className="relative min-h-0 flex-1" role="tabpanel">
 				<TerminalPane
 					daemonReady={daemonReady}
 					fontSize={fontSize}
@@ -362,6 +377,50 @@ export function CenterPane({
 					terminalTarget={target}
 					theme={theme}
 				/>
+				{/* Display controls float over the terminal's top-right corner with no
+				    chrome of their own, so they read as part of the terminal itself. */}
+				<div className="absolute right-3 top-2 z-10 flex shrink-0 items-center gap-3 font-mono text-passive/70">
+					<button
+						aria-label={t("terminal.decreaseFontSize")}
+						className="inline-flex size-control-sm items-center justify-center rounded-sm bg-transparent text-control leading-none transition-[background,color,opacity] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-passive"
+						disabled={fontSize <= TERMINAL_FONT_SIZE_MIN}
+						onClick={() => updateFontSize(-1)}
+						title={t("terminal.decreaseFontSize")}
+						type="button"
+					>
+						-
+					</button>
+					<span
+						aria-label={t("terminal.fontSizeAria", { size: fontSize })}
+						className="w-font-size-label text-center text-xs font-semibold text-muted-foreground"
+					>
+						{fontSize}px
+					</span>
+					<button
+						aria-label={t("terminal.increaseFontSize")}
+						className="inline-flex size-control-sm items-center justify-center rounded-sm bg-transparent text-control leading-none transition-[background,color,opacity] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-passive"
+						disabled={fontSize >= TERMINAL_FONT_SIZE_MAX}
+						onClick={() => updateFontSize(1)}
+						title={t("terminal.increaseFontSize")}
+						type="button"
+					>
+						+
+					</button>
+					<button
+						aria-label={isFullscreen ? t("terminal.exitFullscreenAria") : t("terminal.openFullscreenAria")}
+						aria-pressed={isFullscreen}
+						className="ml-1.5 inline-flex size-control-sm items-center justify-center rounded-sm bg-transparent text-control leading-none transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+						onClick={() => void toggleFullscreen()}
+						title={isFullscreen ? t("terminal.exitFullscreen") : t("terminal.fullscreen")}
+						type="button"
+					>
+						{isFullscreen ? (
+							<Minimize2 className="size-icon-md" aria-hidden="true" />
+						) : (
+							<Maximize2 className="size-icon-md" aria-hidden="true" />
+						)}
+					</button>
+				</div>
 			</div>
 		</div>
 	);
@@ -371,34 +430,30 @@ type SessionPaneTabProps = {
 	label: string;
 	isActive: boolean;
 	onSelect?: () => void;
-	session?: WorkspaceSession;
+	onClose?: () => void;
 };
 
-// The session's permanent anchor tab. It is intentionally more substantial
-// than auxiliary shells and is the only terminal tab branded by the harness.
-function SessionPaneTab({ label, isActive, onSelect, session }: SessionPaneTabProps) {
+// Shared tab chrome: the open tab is highlighted with the same rounded
+// background as the inspector rail tabs (Summary · Reviews · Browser), and
+// the full label only becomes the hover tooltip when the tab strip is
+// crowded enough to truncate it.
+function SessionPaneTab({ label, isActive, onSelect, onClose }: SessionPaneTabProps) {
 	const { t } = useTranslation();
 	const { ref, isTruncated } = useTruncatedText<HTMLButtonElement>(label);
-	const activity = session ? getAgentActivityView(session.activity, t) : undefined;
 	return (
 		<span
-			data-terminal-role="primary"
 			className={cn(
-				"group relative inline-flex min-w-shell-tab-min self-stretch items-center gap-1.5 border-r border-border bg-surface px-3 text-foreground transition-colors",
-				isActive
-					? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
-					: "text-muted-foreground hover:bg-raised hover:text-foreground",
+				"session-pane-tab group inline-flex items-center rounded-md transition-colors",
+				isActive ? "bg-interactive-active" : "hover:bg-interactive-hover/60",
 			)}
 		>
-			{session ? <AgentAvatar className="size-icon-base" decorative provider={session.provider} /> : null}
 			<button
 				ref={ref}
 				aria-current={isActive}
-				aria-label={activity ? `${label} · ${activity.label}` : label}
 				aria-selected={isActive}
 				className={cn(
-					"inline-flex min-w-flex-min max-w-shell-tab-max items-center gap-1.5 text-control font-medium leading-none transition-colors",
-					isActive ? "text-foreground" : "text-passive group-hover:text-foreground",
+					"session-pane-tab__label min-w-flex-min max-w-shell-tab-max truncate font-mono font-semibold transition-colors",
+					isActive ? "text-foreground" : "text-passive/60 hover:text-passive",
 				)}
 				onClick={onSelect}
 				role="tab"
@@ -406,51 +461,21 @@ function SessionPaneTab({ label, isActive, onSelect, session }: SessionPaneTabPr
 				title={isTruncated ? label : t("terminal.sessionAria")}
 				type="button"
 			>
-				<span className="truncate">{label}</span>
-				{activity ? (
-					<span
-						aria-hidden="true"
-						className="inline-flex shrink-0 self-center items-center"
-						style={{ color: activity.tone }}
-						title={activity.label}
-					>
-						<span
-							className={cn("size-1.5 rounded-full", activity.breathe && "animate-status-pulse")}
-							style={{ background: activity.tone }}
-						/>
-					</span>
-				) : null}
+				{label}
 			</button>
-		</span>
-	);
-}
-
-type TerminalControlProps = {
-	children: ReactNode;
-	disabled?: boolean;
-	isPressed?: boolean;
-	label: string;
-	onClick: () => void;
-};
-
-function TerminalControl({ children, disabled, isPressed, label, onClick }: TerminalControlProps) {
-	return (
-		<Tooltip>
-			<TooltipTrigger asChild>
-				<Button
-					aria-label={label}
-					aria-pressed={isPressed}
-					className="size-control-sm p-0 text-passive"
-					disabled={disabled}
-					onClick={onClick}
-					size="icon-sm"
+			{onClose ? (
+				<button
+					aria-label={t("terminal.closeSessionTab", { label })}
+					className="inline-flex size-control-xs shrink-0 items-center justify-center rounded-sm text-passive opacity-0 transition-[background,color,opacity] group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-interactive-hover hover:text-foreground focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+					onClick={(event) => {
+						event.stopPropagation();
+						onClose();
+					}}
 					type="button"
-					variant="ghost"
 				>
-					{children}
-				</Button>
-			</TooltipTrigger>
-			<TooltipContent>{label}</TooltipContent>
-		</Tooltip>
+					<X aria-hidden="true" className="size-icon-sm" />
+				</button>
+			) : null}
+		</span>
 	);
 }

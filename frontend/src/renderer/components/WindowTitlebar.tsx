@@ -104,7 +104,7 @@ export function WindowTitlebar({
 	if (!isWindows) return null;
 
 	return (
-		<header className="window-titlebar">
+		<div className="window-titlebar">
 			{/* Sidebar collapse toggle — same ui-store path as the macOS TitlebarNav
 			    cluster, so it stays in sync with the SidebarProvider. The brand
 			    logo + name stay in the sidebar header instead of duplicating here. */}
@@ -118,7 +118,7 @@ export function WindowTitlebar({
 			>
 				<PanelLeft aria-hidden="true" className="window-titlebar__toggle-icon" />
 			</button>
-			<nav className="window-titlebar__menus">
+			<nav aria-label={t("titlebar.applicationMenu")} className="window-titlebar__menus">
 				<TopMenu id="file" label={t("titlebar.file")} openMenu={openMenu} setOpenMenu={setOpenMenu}>
 					<DropdownMenuItem onSelect={() => void navigate({ to: "/settings" })}>{t("shell.settings")}</DropdownMenuItem>
 					<DropdownMenuSeparator />
@@ -191,6 +191,6 @@ export function WindowTitlebar({
 					<DropdownMenuItem onSelect={act("help.about")}>{t("titlebar.about")}</DropdownMenuItem>
 				</TopMenu>
 			</nav>
-		</header>
+		</div>
 	);
 }

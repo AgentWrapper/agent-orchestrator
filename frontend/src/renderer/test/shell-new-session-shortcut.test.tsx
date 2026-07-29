@@ -291,20 +291,23 @@ beforeEach(() => {
 });
 
 describe("shell workspace startup", () => {
-	it("places the topbar host inside the center panel surface on session routes", async () => {
+	it("leaves the session topbar to the route inside the center panel surface", async () => {
 		shellMocks.state.routeParams = { sessionId: "sess-1" };
 		await renderShell();
 
-		const host = screen.getByTestId("session-topbar-host");
 		const sidebar = screen.getByTestId("sidebar");
-		// Host now lives inside center-panel-surface (after the sidebar in DOM order).
-		expect(host.compareDocumentPosition(sidebar) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
-		expect(host).toHaveClass("h-inspector-tabs");
-		// Sidebar uses the same topbar offset as non-session routes (no longer "session").
-		expect(sidebar).not.toHaveAttribute("data-topbar-offset", "session");
-		expect(document.querySelector(".center-panel-shell--session > .center-panel-surface")).toBeInTheDocument();
-		// Host must be a descendant of the session surface.
-		expect(document.querySelector(".center-panel-shell--session > .center-panel-surface")?.contains(host)).toBe(true);
+		const sessionSurface = document.querySelector(".center-panel-shell--session > .center-panel-surface");
+
+		// The shared shell no longer owns a portal host for session chrome. The
+		// session route renders its topbar directly in its terminal column so the
+		// header stops at the inspector divider.
+		expect(screen.queryByTestId("session-topbar-host")).not.toBeInTheDocument();
+		expect(sessionSurface).toBeInTheDocument();
+		if (!sessionSurface) throw new Error("Expected the session center-panel surface");
+		expect(sessionSurface.compareDocumentPosition(sidebar) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+		// Non-macOS session routes keep the full toolbar clearance; Linux's fixed
+		// navigation cluster remains 40px tall in native fullscreen.
+		expect(sidebar).toHaveAttribute("data-topbar-offset", "toolbar");
 	});
 
 	it("forces a confirmed fetch and preserves a collapsed sidebar preference", async () => {

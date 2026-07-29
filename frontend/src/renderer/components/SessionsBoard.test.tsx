@@ -5,13 +5,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { appI18n } from "../i18n";
 
-const { navigateMock, notificationShowMock, postMock, workspaceQueryMock, boardActionsInPanelMock } = vi.hoisted(() => ({
-	navigateMock: vi.fn(),
-	notificationShowMock: vi.fn(),
-	postMock: vi.fn(),
-	workspaceQueryMock: vi.fn(),
-	boardActionsInPanelMock: vi.fn(() => false),
-}));
+const { navigateMock, notificationShowMock, postMock, workspaceQueryMock, boardActionsInPanelMock } = vi.hoisted(
+	() => ({
+		navigateMock: vi.fn(),
+		notificationShowMock: vi.fn(),
+		postMock: vi.fn(),
+		workspaceQueryMock: vi.fn(),
+		boardActionsInPanelMock: vi.fn(() => false),
+	}),
+);
 
 vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => navigateMock,
@@ -59,7 +61,7 @@ function renderBoard(projectId?: string) {
 function renderBoardWithClient(queryClient: QueryClient, projectId?: string) {
 	return render(
 		<QueryClientProvider client={queryClient}>
-			<TooltipProvider>
+			<TooltipProvider delayDuration={0}>
 				<SessionsBoard projectId={projectId} />
 			</TooltipProvider>
 		</QueryClientProvider>,
@@ -119,7 +121,7 @@ describe("SessionsBoard", () => {
 		expect(screen.queryByText(/reload agents/i)).not.toBeInTheDocument();
 	});
 
-	it("shows the project name in the in-panel board chrome when actions live in the panel", () => {
+	it("keeps in-panel board identity and actions compact", async () => {
 		boardActionsInPanelMock.mockReturnValue(true);
 		workspaceQueryMock.mockReturnValue({
 			data: [
@@ -149,14 +151,19 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		expect(screen.getByText("solkit-ui")).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "New task" })).toBeInTheDocument();
+		expect(screen.getByText("Board")).toBeInTheDocument();
+		expect(screen.queryByText("solkit-ui")).not.toBeInTheDocument();
+		const newTask = screen.getByRole("button", { name: "New task" });
+		expect(newTask).toHaveClass("reverb-topbar__control--icon");
+		expect(newTask.textContent).toBe("");
+		await userEvent.hover(newTask);
+		expect(await screen.findByRole("tooltip")).toHaveTextContent("New task");
 	});
 
 	it.each([
-		["active", "Working", "bg-status-working", true],
-		["idle", "Idle", "bg-status-idle", false],
-	] as const)("shows %s orchestrator activity in the in-panel board toolbar", (state, label, tone, pulses) => {
+		["active", "Working", true],
+		["idle", "Idle", false],
+	] as const)("shows %s orchestrator activity in the in-panel board toolbar", (state, label, pulses) => {
 		boardActionsInPanelMock.mockReturnValue(true);
 		workspaceQueryMock.mockReturnValue({
 			data: [
@@ -188,10 +195,12 @@ describe("SessionsBoard", () => {
 		renderBoard("p1");
 
 		const button = screen.getByRole("button", { name: `Orchestrator, ${label}` });
-		const indicator = button.querySelector("span.size-dot-sm") as HTMLElement;
+		const indicator = screen.getByText(label).querySelector(".reverb-topbar__status-dot") as HTMLElement;
 		expect(indicator).toHaveAttribute("aria-hidden", "true");
-		expect(indicator).toHaveClass(tone);
-		expect(indicator).toHaveClass(pulses ? "animate-status-pulse" : "size-dot-sm");
+		expect(indicator).toHaveClass("reverb-topbar__status-dot");
+		expect(button).toHaveClass("reverb-topbar__control--icon");
+		expect(button.textContent).toBe("");
+		if (pulses) expect(indicator).toHaveClass("animate-status-pulse");
 		if (!pulses) expect(indicator).not.toHaveClass("animate-status-pulse");
 	});
 
@@ -350,7 +359,9 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 		const idleCard = screen.getByText("idle-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
-		const noSignalCard = screen.getByText("no-signal-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
+		const noSignalCard = screen
+			.getByText("no-signal-card-task")
+			.closest('[data-testid="board-session-card"]') as HTMLElement;
 		const draftCard = screen.getByText("draft-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
 
 		expect(within(idleCard).getByText("Idle").closest("span")).toHaveClass("text-status-idle");
