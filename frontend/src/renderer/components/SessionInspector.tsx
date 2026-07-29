@@ -1120,7 +1120,16 @@ function ReviewPanel({
 			.map((pr) => pr.url),
 	);
 	const openReviewStates = reviewStates.filter((reviewState) => openPRURLs.has(reviewState.prUrl));
-	const latest = openReviewStates.find((review) => review.latestRun)?.latestRun;
+	// Whichever PR happens to come first is not the reviewer to name. With one PR
+	// reviewed earlier by claude-code and another running under codex, taking the
+	// first run reported the wrong agent as the one working. Prefer the run
+	// actually in flight, then the newest recorded one.
+	const runningRun = openReviewStates.find((review) => review.status === "running")?.latestRun;
+	const newestRun = openReviewStates
+		.map((review) => review.latestRun)
+		.filter((run): run is NonNullable<typeof run> => Boolean(run))
+		.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+	const latest = runningRun ?? newestRun;
 	const harness = latest?.harness || config?.reviewers?.[0]?.harness || "claude-code";
 	const terminalEnabled = Boolean(reviewerHandleId && onOpenTerminal);
 	const reviewRunning = openReviewStates.some((reviewState) => reviewState.status === "running");

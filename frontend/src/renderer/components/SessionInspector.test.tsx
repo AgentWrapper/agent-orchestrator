@@ -917,6 +917,32 @@ describe("SessionInspector reviews tab", () => {
 		});
 	});
 
+	it("names the reviewer that is actually running, not whichever PR comes first", async () => {
+		// One PR reviewed earlier by claude-code, another running under codex.
+		const done = {
+			...reviewState(3, "up_to_date", "sha-a"),
+			latestRun: { ...approvedReview, id: "run-done", harness: "claude-code", status: "complete" },
+		};
+		const running = {
+			...reviewState(4, "running", "sha-b"),
+			latestRun: {
+				...approvedReview,
+				id: "run-live",
+				harness: "codex",
+				status: "running",
+				verdict: "",
+				createdAt: "2026-01-02T00:00:00Z",
+			},
+		};
+		mockCommonGets([], "reviewer-pane", [done, running]);
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open"), pr(4, "open")])} />);
+		await openReviewsTab();
+
+		expect(await screen.findByText("codex is reviewing this change…")).toBeInTheDocument();
+		expect(screen.queryByText("claude-code is reviewing this change…")).not.toBeInTheDocument();
+	});
+
 	it("hides the previous verdict after the current head review completes", async () => {
 		const current = {
 			...reviewState(3, "up_to_date", "sha-current"),
