@@ -306,6 +306,7 @@ describe("Sidebar", () => {
 
 		await user.click(screen.getByRole("button", { name: "Remove" }));
 		await waitFor(() => expect(onRemoveProject).toHaveBeenCalledTimes(1));
+		expect(navigateMock).toHaveBeenCalledWith({ to: "/" });
 	});
 
 	it("does not remove the project when cancellation is clicked in the ConfirmDialog", async () => {

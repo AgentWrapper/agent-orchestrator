@@ -149,7 +149,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const [restoreErrors, setRestoreErrors] = useState<Record<string, string>>({});
 	const [restoreUnavailableSession, setRestoreUnavailableSession] = useState<WorkspaceSession | undefined>();
 	const [terminationSession, setTerminationSession] = useState<WorkspaceSession | undefined>();
-	const terminateSession = useTerminateSession({ onSuccess: () => setTerminationSession(undefined) });
+	const terminateSession = useTerminateSession();
 	const activeProjectIdRef = useRef(projectId);
 	activeProjectIdRef.current = projectId;
 	useEffect(() => {
@@ -425,11 +425,14 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				/>
 			)}
 			<SessionTerminationDialog
-				busy={terminateSession.isPending}
-				error={terminateSession.error instanceof Error ? terminateSession.error.message : null}
-				onConfirm={() => terminationSession && terminateSession.mutate(terminationSession)}
+				onConfirm={() => {
+					if (!terminationSession) return;
+					const target = terminationSession;
+					setTerminationSession(undefined);
+					terminateSession.mutate(target);
+				}}
 				onOpenChange={(open) => {
-					if (!open && !terminateSession.isPending) setTerminationSession(undefined);
+					if (!open) setTerminationSession(undefined);
 				}}
 				open={terminationSession !== undefined}
 				session={terminationSession}

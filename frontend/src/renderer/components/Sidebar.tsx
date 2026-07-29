@@ -468,7 +468,7 @@ function ProjectItem({
 			await onRemoveProject(workspace.id);
 			setConfirmOpen(false);
 			// The route for a removed project no longer resolves; fall back home.
-			if (selection.activeProjectId === workspace.id) selection.goHome();
+			selection.goHome();
 		} catch (err) {
 			const message = err instanceof Error ? err.message : "Could not remove project";
 			setRemoveError(message);

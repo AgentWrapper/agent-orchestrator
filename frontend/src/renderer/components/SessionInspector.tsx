@@ -21,7 +21,7 @@ import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSession
 import { useTerminateSession } from "../hooks/useTerminateSession";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
-import { canonicalTrackerIssueId, sortedPRs } from "../types/workspace";
+import { canonicalTrackerIssueId, findProjectOrchestrator, sortedPRs } from "../types/workspace";
 import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session-presentation";
 import { aoBridge } from "../lib/bridge";
 import { BrowserPanelView, type BrowserAnnotationQueueModel } from "./BrowserPanel";
@@ -377,12 +377,7 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const [confirmOpen, setConfirmOpen] = useState(false);
-	const terminate = useTerminateSession({
-		onSuccess: (terminated) => {
-			setConfirmOpen(false);
-			void navigate({ to: "/projects/$projectId", params: { projectId: terminated.workspaceId } });
-		},
-	});
+	const terminate = useTerminateSession();
 	const policy = useMutation({
 		mutationFn: async (terminateOnPrMerge: boolean) => {
 			if (usePreviewData) return;
@@ -408,8 +403,22 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 		},
 	});
 	const policyError = policy.error instanceof Error ? policy.error.message : null;
-	const terminateError = terminate.error instanceof Error ? terminate.error.message : null;
 	const canTerminateNow = session.status === "merged";
+
+	const confirmTermination = () => {
+		const workspaces = queryClient.getQueryData<WorkspaceSummary[]>(workspaceQueryKey) ?? [];
+		const orchestrator = findProjectOrchestrator(workspaces, session.workspaceId);
+		setConfirmOpen(false);
+		terminate.mutate(session);
+		if (orchestrator) {
+			void navigate({
+				to: "/projects/$projectId/sessions/$sessionId",
+				params: { projectId: session.workspaceId, sessionId: orchestrator.id },
+			});
+			return;
+		}
+		void navigate({ to: "/projects/$projectId", params: { projectId: session.workspaceId } });
+	};
 
 	if (session.isTerminated === true) return null;
 
@@ -452,12 +461,8 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 				</>
 			)}
 			<SessionTerminationDialog
-				busy={terminate.isPending}
-				error={terminateError}
-				onConfirm={() => terminate.mutate(session)}
-				onOpenChange={(open) => {
-					if (!terminate.isPending) setConfirmOpen(open);
-				}}
+				onConfirm={confirmTermination}
+				onOpenChange={setConfirmOpen}
 				open={confirmOpen}
 				session={session}
 			/>
