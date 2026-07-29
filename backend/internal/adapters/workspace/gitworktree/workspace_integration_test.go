@@ -62,6 +62,46 @@ func TestWorkspaceIntegrationCreateRestoreDestroy(t *testing.T) {
 	}
 }
 
+func TestWorkspaceIntegrationCreateRecoversInterruptedInitialization(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := setupOriginClone(t, git, tmp)
+	root := filepath.Join(tmp, "managed")
+	ws, err := New(Options{Binary: git, ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	cfg := ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/interrupted"}
+	path := filepath.Join(ws.managedRoot, "proj", "sess")
+
+	runGit(t, git, repo, "worktree", "add", "--no-checkout", "-b", cfg.Branch, path, "origin/main")
+	runGit(t, git, repo, "worktree", "lock", "--reason", "initializing", path)
+	gitFile, err := os.ReadFile(filepath.Join(path, ".git"))
+	if err != nil {
+		t.Fatalf("read worktree gitfile: %v", err)
+	}
+	gitDir := strings.TrimSpace(strings.TrimPrefix(string(gitFile), "gitdir: "))
+	if err := os.WriteFile(filepath.Join(gitDir, "HEAD"), []byte("ref: refs/heads/ao-interrupted-invalid\n"), 0o644); err != nil {
+		t.Fatalf("invalidate worktree HEAD: %v", err)
+	}
+
+	info, err := ws.Create(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if info.Path != path || info.Branch != cfg.Branch {
+		t.Fatalf("info = %#v, want path %q branch %q", info, path, cfg.Branch)
+	}
+	head := strings.TrimSpace(string(runGitOutput(t, git, path, "rev-parse", "--verify", "HEAD")))
+	if head == "" {
+		t.Fatal("recreated worktree has no valid HEAD")
+	}
+	status := string(runGitOutput(t, git, repo, "worktree", "list", "--porcelain"))
+	if strings.Contains(status, "locked initializing") {
+		t.Fatalf("recreated worktree remains locked as initializing:\n%s", status)
+	}
+}
+
 func TestWorkspaceIntegrationDestroyRefusesLockedWorktree(t *testing.T) {
 	git := requireGit(t)
 	tmp := t.TempDir()
@@ -500,6 +540,16 @@ func setupOriginClone(t *testing.T, git, tmp string) string {
 func runGit(t *testing.T, git, dir string, args ...string) {
 	t.Helper()
 	run(t, git, append([]string{"-C", dir}, args...)...)
+}
+
+func runGitOutput(t *testing.T, git, dir string, args ...string) []byte {
+	t.Helper()
+	cmd := exec.Command(git, append([]string{"-C", dir}, args...)...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s -C %s %s: %v\n%s", git, dir, strings.Join(args, " "), err, out)
+	}
+	return out
 }
 
 func run(t *testing.T, binary string, args ...string) {

@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -695,6 +696,21 @@ func (w *Workspace) existingWorktree(ctx context.Context, repo, path string, cfg
 			// says nothing about what the caller asked for.
 			return ports.WorkspaceInfo{}, false, nil
 		}
+		if _, err := w.run(ctx, w.binary, revParseHeadArgs(path)...); err != nil {
+			if rec.Locked && rec.LockReason == "initializing" {
+				if cleanupErr := w.removeIncompleteInitialization(ctx, repo, rec); cleanupErr != nil {
+					return ports.WorkspaceInfo{}, false, errors.Join(
+						fmt.Errorf("gitworktree: registered worktree %q is not ready: %w", path, err),
+						cleanupErr,
+					)
+				}
+				return ports.WorkspaceInfo{}, false, nil
+			}
+			return ports.WorkspaceInfo{}, false, fmt.Errorf(
+				"gitworktree: refusing to reuse registered worktree %q because HEAD is not ready: %w",
+				path, err,
+			)
+		}
 		branch := rec.Branch
 		if branch == "" {
 			branch = cfg.Branch
@@ -765,6 +781,7 @@ func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch, baseBra
 	if err != nil {
 		return err
 	}
+	_, registrationExisted := findWorktree(records, path)
 	if conflict, ok := findWorktreeByBranch(records, branch); ok && filepath.Clean(conflict.Path) != filepath.Clean(path) {
 		return fmt.Errorf("%w: %q is checked out at %q", ErrBranchCheckedOutElsewhere, branch, conflict.Path)
 	}
@@ -784,7 +801,8 @@ func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch, baseBra
 	}
 	if localBranch {
 		if _, err := w.run(ctx, w.binary, worktreeAddBranchArgs(repo, path, branch, force)...); err != nil {
-			return fmt.Errorf("gitworktree: worktree add existing branch %q: %w", branch, err)
+			addErr := fmt.Errorf("gitworktree: worktree add existing branch %q: %w", branch, err)
+			return errors.Join(addErr, w.cleanupFailedInitialization(ctx, repo, path, registrationExisted))
 		}
 		return nil
 	}
@@ -803,7 +821,43 @@ func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch, baseBra
 		return err
 	}
 	if err := w.addNewBranchWorktree(ctx, repo, branch, path, baseRef, force); err != nil {
-		return fmt.Errorf("gitworktree: worktree add branch %q from %q: %w", branch, baseRef, err)
+		addErr := fmt.Errorf("gitworktree: worktree add branch %q from %q: %w", branch, baseRef, err)
+		return errors.Join(addErr, w.cleanupFailedInitialization(ctx, repo, path, registrationExisted))
+	}
+	return nil
+}
+
+func (w *Workspace) cleanupFailedInitialization(ctx context.Context, repo, path string, registrationExisted bool) error {
+	if registrationExisted {
+		return nil
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	records, err := w.listRecords(cleanupCtx, repo)
+	if err != nil {
+		return fmt.Errorf("gitworktree: inspect failed worktree initialization %q: %w", path, err)
+	}
+	rec, ok := findWorktree(records, path)
+	if !ok || !rec.Locked || rec.LockReason != "initializing" {
+		return nil
+	}
+	if _, err := w.run(cleanupCtx, w.binary, revParseHeadArgs(path)...); err == nil {
+		return nil
+	}
+	return w.removeIncompleteInitialization(cleanupCtx, repo, rec)
+}
+
+func (w *Workspace) removeIncompleteInitialization(ctx context.Context, repo string, rec worktreeRecord) error {
+	if !rec.Locked || rec.LockReason != "initializing" {
+		return fmt.Errorf("gitworktree: refusing to remove worktree %q without an initializing lock", rec.Path)
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	if _, err := w.run(cleanupCtx, w.binary, worktreeUnlockArgs(repo, rec.Path)...); err != nil {
+		return fmt.Errorf("gitworktree: unlock incomplete initialization %q: %w", rec.Path, err)
+	}
+	if _, err := w.run(cleanupCtx, w.binary, worktreeForceRemoveArgs(repo, rec.Path)...); err != nil {
+		return fmt.Errorf("gitworktree: remove incomplete initialization %q: %w", rec.Path, err)
 	}
 	return nil
 }

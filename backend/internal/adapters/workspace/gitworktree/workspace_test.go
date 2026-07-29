@@ -82,14 +82,17 @@ func TestParseWorktreePorcelain(t *testing.T) {
 		"worktree /bare",
 		"bare",
 		"",
+		"worktree /initializing",
+		"locked initializing",
+		"",
 	}, "\n")
 
 	recs, err := parseWorktreePorcelain(input)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if len(recs) != 4 {
-		t.Fatalf("len = %d, want 4: %#v", len(recs), recs)
+	if len(recs) != 5 {
+		t.Fatalf("len = %d, want 5: %#v", len(recs), recs)
 	}
 	if recs[1].Path != "/managed/proj/sess1" || recs[1].Branch != "feature/test" {
 		t.Fatalf("normal record = %#v", recs[1])
@@ -99,6 +102,9 @@ func TestParseWorktreePorcelain(t *testing.T) {
 	}
 	if !recs[3].Bare {
 		t.Fatalf("bare record = %#v", recs[3])
+	}
+	if !recs[4].Locked || recs[4].LockReason != "initializing" {
+		t.Fatalf("initializing record = %#v", recs[4])
 	}
 }
 
@@ -205,6 +211,8 @@ func TestCreateReusesRegisteredWorktreeAtExpectedPath(t *testing.T) {
 			return nil, nil
 		case strings.Contains(joined, "worktree list --porcelain"):
 			return []byte("worktree " + path + "\nbranch refs/heads/ao/proj-orchestrator\n"), nil
+		case strings.Contains(joined, "rev-parse --verify HEAD"):
+			return []byte("abc123\n"), nil
 		default:
 			t.Fatalf("unexpected git invocation: %v", args)
 			return nil, nil
@@ -217,6 +225,196 @@ func TestCreateReusesRegisteredWorktreeAtExpectedPath(t *testing.T) {
 	}
 	if info.Path != path || info.Branch != "ao/proj-orchestrator" {
 		t.Fatalf("info = %#v, want path %q branch ao/proj-orchestrator", info, path)
+	}
+}
+
+func TestCreateRecoversInterruptedInitializingWorktree(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	path := filepath.Join(ws.managedRoot, "proj", "sess")
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatalf("create incomplete worktree path: %v", err)
+	}
+	cfg := ports.WorkspaceConfig{
+		ProjectID: "proj",
+		SessionID: "sess",
+		Branch:    "feature/test",
+	}
+
+	initializing := true
+	var calls []string
+	ws.run = func(_ context.Context, binary string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		calls = append(calls, joined)
+		switch {
+		case strings.Contains(joined, "check-ref-format"):
+			return nil, nil
+		case strings.Contains(joined, "worktree list --porcelain"):
+			if initializing {
+				return []byte("worktree " + path + "\nbranch refs/heads/feature/test\nlocked initializing\n"), nil
+			}
+			return []byte("worktree " + repo + "\nbranch refs/heads/main\n"), nil
+		case strings.Contains(joined, "rev-parse --verify HEAD"):
+			return nil, commandError{args: append([]string{binary}, args...), err: errors.New("exit status 128")}
+		case strings.Contains(joined, "worktree unlock "+path):
+			return nil, nil
+		case strings.Contains(joined, "worktree remove --force "+path):
+			initializing = false
+			return nil, nil
+		case strings.Contains(joined, "rev-parse --verify --quiet refs/heads/feature/test"):
+			return nil, nil
+		case strings.Contains(joined, "worktree add "+path+" feature/test"):
+			return nil, nil
+		default:
+			t.Fatalf("unexpected git invocation: %v", args)
+			return nil, nil
+		}
+	}
+
+	info, err := ws.Create(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if info.Path != path || info.Branch != cfg.Branch {
+		t.Fatalf("info = %#v, want path %q branch %q", info, path, cfg.Branch)
+	}
+	got := strings.Join(calls, "\n")
+	if !strings.Contains(got, "worktree unlock "+path) ||
+		!strings.Contains(got, "worktree remove --force "+path) {
+		t.Fatalf("Create did not remove the interrupted initialization:\n%s", got)
+	}
+	if strings.Contains(got, "worktree prune") {
+		t.Fatalf("Create used repo-wide prune:\n%s", got)
+	}
+}
+
+func TestCreateRefusesInvalidWorktreeWithoutInitializingLock(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	path := filepath.Join(ws.managedRoot, "proj", "sess")
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatalf("create invalid worktree path: %v", err)
+	}
+	cfg := ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/test"}
+
+	var calls []string
+	ws.run = func(_ context.Context, binary string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		calls = append(calls, joined)
+		switch {
+		case strings.Contains(joined, "check-ref-format"):
+			return nil, nil
+		case strings.Contains(joined, "worktree list --porcelain"):
+			return []byte("worktree " + path + "\nbranch refs/heads/feature/test\n"), nil
+		case strings.Contains(joined, "rev-parse --verify HEAD"):
+			return nil, commandError{args: append([]string{binary}, args...), err: errors.New("exit status 128")}
+		default:
+			t.Fatalf("unexpected git invocation: %v", args)
+			return nil, nil
+		}
+	}
+
+	_, err = ws.Create(context.Background(), cfg)
+	if err == nil || !strings.Contains(err.Error(), "refusing to reuse") {
+		t.Fatalf("Create error = %v, want safe reuse refusal", err)
+	}
+	got := strings.Join(calls, "\n")
+	if strings.Contains(got, "worktree remove") ||
+		strings.Contains(got, "worktree unlock") ||
+		strings.Contains(got, "worktree prune") {
+		t.Fatalf("Create mutated an invalid worktree without an initializing lock:\n%s", got)
+	}
+}
+
+func TestAddWorktreeCleansInitializationCreatedByFailedAttempt(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	path := filepath.Join(root, "proj", "sess")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	listCalls := 0
+	ws.run = func(callCtx context.Context, binary string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "worktree list --porcelain"):
+			listCalls++
+			if listCalls == 1 {
+				return []byte("worktree " + repo + "\nbranch refs/heads/main\n"), nil
+			}
+			if callCtx.Err() != nil {
+				t.Fatalf("cleanup inherited cancelled context: %v", callCtx.Err())
+			}
+			return []byte("worktree " + path + "\nbranch refs/heads/feature/test\nlocked initializing\n"), nil
+		case strings.Contains(joined, "rev-parse --verify --quiet refs/heads/feature/test"):
+			return nil, nil
+		case strings.Contains(joined, "worktree add "+path+" feature/test"):
+			cancel()
+			return nil, commandError{args: append([]string{binary}, args...), err: context.Canceled}
+		case strings.Contains(joined, "rev-parse --verify HEAD"):
+			return nil, commandError{args: append([]string{binary}, args...), err: errors.New("exit status 128")}
+		case strings.Contains(joined, "worktree unlock "+path):
+			return nil, nil
+		case strings.Contains(joined, "worktree remove --force "+path):
+			return nil, nil
+		default:
+			t.Fatalf("unexpected git invocation: %v", args)
+			return nil, nil
+		}
+	}
+
+	err = ws.addWorktree(ctx, repo, path, "feature/test", "main")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("addWorktree error = %v, want context.Canceled", err)
+	}
+	if listCalls != 2 {
+		t.Fatalf("worktree list calls = %d, want initial inspection plus cleanup inspection", listCalls)
+	}
+}
+
+func TestFailedAttemptCleanupDoesNotRemoveWorktreeThatBecameReady(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	path := filepath.Join(root, "proj", "sess")
+	var calls []string
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		calls = append(calls, joined)
+		switch {
+		case strings.Contains(joined, "worktree list --porcelain"):
+			return []byte("worktree " + path + "\nHEAD abc123\nbranch refs/heads/feature/test\nlocked initializing\n"), nil
+		case strings.Contains(joined, "rev-parse --verify HEAD"):
+			return []byte("abc123\n"), nil
+		default:
+			t.Fatalf("unexpected git invocation: %v", args)
+			return nil, nil
+		}
+	}
+
+	if err := ws.cleanupFailedInitialization(context.Background(), repo, path, false); err != nil {
+		t.Fatalf("cleanupFailedInitialization: %v", err)
+	}
+	got := strings.Join(calls, "\n")
+	if strings.Contains(got, "worktree unlock") ||
+		strings.Contains(got, "worktree remove") ||
+		strings.Contains(got, "worktree prune") {
+		t.Fatalf("cleanup removed a worktree that became ready:\n%s", got)
 	}
 }
 
