@@ -796,3 +796,53 @@ func TestHooks_DaemonErrorIsSwallowed(t *testing.T) {
 		t.Errorf("expected the failure surfaced to stderr, got %q", errOut)
 	}
 }
+
+// TestHooks_RemoteAPIBase covers the sandbox hooks path: with AO_API_BASE set
+// (no run-file, no loopback daemon), the activity report goes to that base
+// with the AO_API_TOKEN bearer header — how agents inside a cloud sandbox
+// reach the calling daemon (docs/cloud/daytona-runtime.md).
+func TestHooks_RemoteAPIBase(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	setConfigEnv(t) // isolate AO_DATA_DIR; deliberately no run-file written
+
+	var gotAuth string
+	capture := &activityCapture{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/activity") {
+			http.NotFound(w, r)
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		capture.body = string(body)
+		capture.path = r.URL.Path
+		capture.hits++
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("AO_API_BASE", srv.URL+"/") // trailing slash must not double up
+	t.Setenv("AO_API_TOKEN", "sandbox-token-1")
+
+	_, errOut, err := executeCLI(t, Deps{
+		In: strings.NewReader(`{"reason":"logout"}`),
+		// ProcessAlive would fail the loopback path; the remote base must not
+		// consult it at all.
+		ProcessAlive: func(int) bool { t.Error("remote base must not probe the local daemon"); return false },
+	}, "hooks", "claude-code", "session-end")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if capture.hits != 1 {
+		t.Fatalf("remote base was not called (hits=%d, stderr=%s)", capture.hits, errOut)
+	}
+	if capture.path != "/api/v1/sessions/ao-7/activity" {
+		t.Errorf("path = %q, want /api/v1/sessions/ao-7/activity", capture.path)
+	}
+	if gotAuth != "Bearer sandbox-token-1" {
+		t.Errorf("Authorization = %q, want Bearer sandbox-token-1", gotAuth)
+	}
+	if got := capturedState(t, capture); got != "exited" {
+		t.Errorf("state = %q, want exited", got)
+	}
+}
