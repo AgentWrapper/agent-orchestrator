@@ -20,6 +20,7 @@ import (
 const (
 	defaultAccessTTL  = 15 * time.Minute
 	defaultRefreshTTL = 30 * 24 * time.Hour
+	defaultAudience   = "ao-cloud"
 )
 
 var errInvalidToken = errors.New("invalid token")
@@ -28,6 +29,7 @@ var errInvalidToken = errors.New("invalid token")
 type Issuer struct {
 	secret     []byte
 	issuer     string
+	audience   string
 	accessTTL  time.Duration
 	refreshTTL time.Duration
 	now        func() time.Time
@@ -37,6 +39,7 @@ type Issuer struct {
 type IssuerConfig struct {
 	Secret     string
 	Issuer     string
+	Audience   string
 	AccessTTL  time.Duration
 	RefreshTTL time.Duration
 	Now        func() time.Time
@@ -51,12 +54,16 @@ func NewIssuer(cfg IssuerConfig) (*Issuer, error) {
 	i := &Issuer{
 		secret:     []byte(cfg.Secret),
 		issuer:     cfg.Issuer,
+		audience:   cfg.Audience,
 		accessTTL:  cfg.AccessTTL,
 		refreshTTL: cfg.RefreshTTL,
 		now:        cfg.Now,
 	}
 	if i.issuer == "" {
 		i.issuer = "ao-cloud"
+	}
+	if i.audience == "" {
+		i.audience = defaultAudience
 	}
 	if i.accessTTL <= 0 {
 		i.accessTTL = defaultAccessTTL
@@ -82,11 +89,12 @@ func (i *Issuer) Issue(subject string, orgIDs []string) (TokenPair, error) {
 	now := i.now().UTC()
 	expires := now.Add(i.accessTTL)
 	access, err := i.sign(jwtClaims{
-		Issuer:  i.issuer,
-		Subject: subject,
-		OrgIDs:  orgIDs,
-		Issued:  now.Unix(),
-		Expires: expires.Unix(),
+		Issuer:   i.issuer,
+		Audience: i.audience,
+		Subject:  subject,
+		OrgIDs:   orgIDs,
+		Issued:   now.Unix(),
+		Expires:  expires.Unix(),
 	})
 	if err != nil {
 		return TokenPair{}, err
@@ -107,6 +115,9 @@ func (i *Issuer) VerifyAccessToken(token string) (tenancy.Claims, error) {
 	if claims.Expires <= i.now().UTC().Unix() {
 		return tenancy.Claims{}, errInvalidToken
 	}
+	if claims.Audience != i.audience {
+		return tenancy.Claims{}, errInvalidToken
+	}
 	if claims.Subject == "" || len(claims.OrgIDs) == 0 {
 		return tenancy.Claims{}, errInvalidToken
 	}
@@ -117,11 +128,12 @@ func (i *Issuer) VerifyAccessToken(token string) (tenancy.Claims, error) {
 func (i *Issuer) RefreshTokenTTL() time.Duration { return i.refreshTTL }
 
 type jwtClaims struct {
-	Issuer  string   `json:"iss"`
-	Subject string   `json:"sub"`
-	OrgIDs  []string `json:"orgs"`
-	Issued  int64    `json:"iat"`
-	Expires int64    `json:"exp"`
+	Issuer   string   `json:"iss"`
+	Audience string   `json:"aud"`
+	Subject  string   `json:"sub"`
+	OrgIDs   []string `json:"orgs"`
+	Issued   int64    `json:"iat"`
+	Expires  int64    `json:"exp"`
 }
 
 func (i *Issuer) sign(claims jwtClaims) (string, error) {

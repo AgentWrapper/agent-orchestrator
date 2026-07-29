@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,33 +23,7 @@ import (
 
 func TestControlPlaneOrgIsolationThroughExistingAPI(t *testing.T) {
 	ctx := context.Background()
-	ctr, err := tcpostgres.Run(ctx,
-		"postgres:16-alpine",
-		tcpostgres.WithDatabase("ao_cloud_test"),
-		tcpostgres.WithUsername("ao"),
-		tcpostgres.WithPassword("ao"),
-		testcontainers.WithWaitStrategy(wait.ForListeningPort("5432/tcp")),
-	)
-	if err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "docker") {
-			t.Skipf("docker unavailable for postgres integration test: %v", err)
-		}
-		t.Fatalf("start postgres: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := ctr.Terminate(context.Background()); err != nil {
-			t.Logf("terminate postgres container: %v", err)
-		}
-	})
-	dsn, err := ctr.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatalf("postgres connection string: %v", err)
-	}
-	store, err := postgres.Open(dsn)
-	if err != nil {
-		t.Fatalf("open postgres store: %v", err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
+	store := openTestPostgresStore(ctx, t)
 
 	userA, orgsA, err := store.UpsertGoogleUser(ctx, auth.GoogleProfile{Subject: "google-a", Email: "a@example.com", DisplayName: "Org A Owner"})
 	if err != nil {
@@ -76,7 +52,7 @@ func TestControlPlaneOrgIsolationThroughExistingAPI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("issue token B: %v", err)
 	}
-	server := httptest.NewServer(NewHandler(Config{RequestTimeout: time.Second}, store, issuer))
+	server := httptest.NewServer(NewHandler(Config{RequestTimeout: time.Second}, store, issuer, nil))
 	t.Cleanup(server.Close)
 
 	assertProjectNames(t, server.URL, tokenA.AccessToken, orgA.ID, []string{"A project"})
@@ -98,6 +74,113 @@ func TestControlPlaneOrgIsolationThroughExistingAPI(t *testing.T) {
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("cross-org request status = %d, want 403", resp.StatusCode)
 	}
+
+	if _, err := store.DB().ExecContext(ctx, `DELETE FROM org_members WHERE user_id = $1 AND org_id = $2`, userA.ID, orgA.ID); err != nil {
+		t.Fatalf("delete membership: %v", err)
+	}
+	req, err = http.NewRequest(http.MethodGet, server.URL+"/api/v1/projects", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+tokenA.AccessToken)
+	req.Header.Set("X-AO-Org-ID", orgA.ID)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("stale membership request status = %d, want 403", resp.StatusCode)
+	}
+
+	if _, err := store.EventsAfter(context.Background(), 0, 10); err == nil {
+		t.Fatalf("unscoped change_log read succeeded, want fail-closed error")
+	}
+}
+
+func TestPostgresRefreshTokenRotationIsAtomic(t *testing.T) {
+	ctx := context.Background()
+	store := openTestPostgresStore(ctx, t)
+	user, _, err := store.UpsertGoogleUser(ctx, auth.GoogleProfile{Subject: "google-refresh", Email: "refresh@example.com"})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	now := time.Now().UTC()
+	tokenHash := auth.HashRefreshToken("refresh-token")
+	if err := store.StoreRefreshToken(ctx, auth.APIToken{
+		ID:        "refresh-token-id",
+		UserID:    user.ID,
+		TokenHash: tokenHash,
+		Kind:      "refresh",
+		ExpiresAt: now.Add(time.Hour),
+		CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("store refresh token: %v", err)
+	}
+
+	const workers = 16
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	var successes int32
+	errs := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, _, ok, err := store.ConsumeRefreshToken(ctx, tokenHash, now.Add(time.Second))
+			if err != nil {
+				errs <- err
+				return
+			}
+			if ok {
+				atomic.AddInt32(&successes, 1)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("consume refresh token: %v", err)
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("successful refresh consumptions = %d, want 1", successes)
+	}
+}
+
+func openTestPostgresStore(ctx context.Context, t *testing.T) *postgres.Store {
+	t.Helper()
+	ctr, err := tcpostgres.Run(ctx,
+		"postgres:16-alpine",
+		tcpostgres.WithDatabase("ao_cloud_test"),
+		tcpostgres.WithUsername("ao"),
+		tcpostgres.WithPassword("ao"),
+		testcontainers.WithWaitStrategy(wait.ForListeningPort("5432/tcp")),
+	)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "docker") {
+			t.Skipf("docker unavailable for postgres integration test: %v", err)
+		}
+		t.Fatalf("start postgres: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := ctr.Terminate(context.Background()); err != nil {
+			t.Logf("terminate postgres container: %v", err)
+		}
+	})
+	dsn, err := ctr.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		t.Fatalf("postgres connection string: %v", err)
+	}
+	store, err := postgres.Open(dsn)
+	if err != nil {
+		t.Fatalf("open postgres store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	return store
 }
 
 func seedProjectAndSession(ctx context.Context, t *testing.T, store *postgres.Store, projectName, sessionName string, now time.Time) {

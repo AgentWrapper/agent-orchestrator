@@ -1,6 +1,7 @@
 package tenancy
 
 import (
+	"context"
 	"net/http"
 	"slices"
 	"strings"
@@ -19,13 +20,18 @@ type TokenVerifier interface {
 	VerifyAccessToken(token string) (Claims, error)
 }
 
+// MembershipStore checks current organization membership at request time.
+type MembershipStore interface {
+	IsOrgMember(ctx context.Context, userID, orgID string) (bool, error)
+}
+
 // Middleware authenticates a bearer access token and scopes the request to the
 // selected organization. X-AO-Org-ID is optional when the token has exactly one
 // org membership.
-func Middleware(verifier TokenVerifier) func(http.Handler) http.Handler {
+func Middleware(verifier TokenVerifier, memberships MembershipStore) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if verifier == nil {
+			if verifier == nil || memberships == nil {
 				envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "AUTH_NOT_CONFIGURED",
 					"Cloud authentication is not configured", nil)
 				return
@@ -52,6 +58,16 @@ func Middleware(verifier TokenVerifier) func(http.Handler) http.Handler {
 				return
 			}
 			if !slices.Contains(claims.OrgIDs, orgID) {
+				envelope.WriteAPIError(w, r, http.StatusForbidden, "forbidden", "ORG_FORBIDDEN",
+					"Token is not authorized for this org", nil)
+				return
+			}
+			ok, err := memberships.IsOrgMember(r.Context(), claims.Subject, orgID)
+			if err != nil {
+				envelope.WriteError(w, r, err)
+				return
+			}
+			if !ok {
 				envelope.WriteAPIError(w, r, http.StatusForbidden, "forbidden", "ORG_FORBIDDEN",
 					"Token is not authorized for this org", nil)
 				return

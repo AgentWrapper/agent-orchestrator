@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -105,12 +106,32 @@ func (p *HTTPGoogleProvider) Exchange(ctx context.Context, code string) (GoogleP
 		return GoogleProfile{}, fmt.Errorf("google id token verification failed: %s", infoResp.Status)
 	}
 	var info struct {
-		Subject string `json:"sub"`
-		Email   string `json:"email"`
-		Name    string `json:"name"`
+		Issuer        string          `json:"iss"`
+		Audience      string          `json:"aud"`
+		Subject       string          `json:"sub"`
+		Email         string          `json:"email"`
+		EmailVerified json.RawMessage `json:"email_verified"`
+		Name          string          `json:"name"`
 	}
 	if err := json.NewDecoder(infoResp.Body).Decode(&info); err != nil {
 		return GoogleProfile{}, err
 	}
+	if info.Audience != p.cfg.ClientID {
+		return GoogleProfile{}, fmt.Errorf("google id token audience mismatch")
+	}
+	if info.Issuer != "accounts.google.com" && info.Issuer != "https://accounts.google.com" {
+		return GoogleProfile{}, fmt.Errorf("google id token issuer mismatch")
+	}
+	if !googleEmailVerified(info.EmailVerified) {
+		return GoogleProfile{}, fmt.Errorf("google email is not verified")
+	}
+	if info.Subject == "" || info.Email == "" {
+		return GoogleProfile{}, fmt.Errorf("google id token missing subject or email")
+	}
 	return GoogleProfile{Subject: info.Subject, Email: info.Email, DisplayName: info.Name}, nil
+}
+
+func googleEmailVerified(raw json.RawMessage) bool {
+	raw = bytes.TrimSpace(raw)
+	return bytes.Equal(raw, []byte("true")) || bytes.Equal(raw, []byte(`"true"`))
 }
