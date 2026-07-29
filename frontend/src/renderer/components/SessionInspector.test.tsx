@@ -736,7 +736,7 @@ describe("SessionInspector reviews tab", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open"), pr(4, "open"), pr(5, "draft")])} />);
 		await openReviewsTab();
 
-		expect(screen.getByText("AO code reviews")).toBeInTheDocument();
+		expect(screen.getByText("codex")).toBeInTheDocument();
 		expect(await screen.findByText("Reviewable change 3")).toBeInTheDocument();
 		expect(screen.getByText("#3 · Not run")).toBeInTheDocument();
 		expect(screen.getByText("Reviewable change 4")).toBeInTheDocument();
@@ -752,7 +752,7 @@ describe("SessionInspector reviews tab", () => {
 	});
 
 	it.each([
-		["needs_review", "changes_requested", "Changes requested", "Run review", true],
+		["needs_review", "changes_requested", "Not run on this commit", "Run review", true],
 		["running", "approved", "Reviewing...", "Cancel review", false],
 	] as const)(
 		"shows only the latest available AO review run while the current head is %s",
@@ -787,7 +787,10 @@ describe("SessionInspector reviews tab", () => {
 			if (showsPreviousRun) {
 				expect(screen.queryByText("#3 · Not run")).not.toBeInTheDocument();
 				expect(screen.getByText(/^#3 · /)).toBeInTheDocument();
-				expect(screen.queryByText(/Previous:/)).not.toBeInTheDocument();
+				// The head moved on, so the old verdict must be labelled as previous
+				// rather than presented as the state of the current commit.
+				expect(screen.getByText(/Previous:/)).toBeInTheDocument();
+				expect(screen.getByText("Changes requested")).toBeInTheDocument();
 				expect(screen.getByText("Previous review summary with actionable detail.")).toBeInTheDocument();
 				expect(screen.getByRole("link", { name: "View previous review" })).toHaveAttribute(
 					"href",
@@ -797,9 +800,74 @@ describe("SessionInspector reviews tab", () => {
 				expect(screen.queryByText("Previous review summary with actionable detail.")).not.toBeInTheDocument();
 				expect(screen.queryByRole("link", { name: "View previous review" })).not.toBeInTheDocument();
 			}
+			// A run in flight gets its own live strip naming the harness, not just a
+			// word on the button.
+			if (status === "running") {
+				expect(screen.getByText("codex is reviewing this change…")).toBeInTheDocument();
+			} else {
+				expect(screen.queryByText(/is reviewing this change/)).not.toBeInTheDocument();
+			}
 			expect(screen.getByRole("button", { name: actionLabel })).toBeInTheDocument();
 		},
 	);
+
+	it("lists PR reviewers in the Pull request pane and resolves its threads", async () => {
+		mockCommonGets([], "reviewer-pane", [reviewState(3, "up_to_date", "sha-1")]);
+		const previous = getMock.getMockImplementation()!;
+		getMock.mockImplementation(async (path: string, opts?: unknown) => {
+			if (path === "/api/v1/sessions/{sessionId}/pr") {
+				return {
+					data: {
+						prs: [
+							{
+								number: 3,
+								title: "Reviewable change 3",
+								url: "https://example.com/pr/3",
+								htmlUrl: "https://example.com/pr/3",
+								state: "open",
+								ci: { state: "passing", failingChecks: [], prUrl: "https://example.com/pr/3" },
+								mergeability: {
+									state: "mergeable",
+									reasons: [],
+									prUrl: "https://example.com/pr/3",
+									conflictFiles: [],
+								},
+								review: {
+									decision: "changes_requested",
+									hasUnresolvedHumanComments: true,
+									reviews: [
+										{
+											reviewerId: "maya",
+											verdict: "changes_requested",
+											submittedAt: "2026-01-01T00:00:00Z",
+											body: "Tear down the listener on unmount.",
+											reviewUrl: "https://example.com/pr/3#pullrequestreview-1",
+										},
+									],
+									unresolvedBy: [{ reviewerId: "maya", count: 2, links: [] }],
+								},
+							},
+						],
+					},
+				};
+			}
+			return previous(path, opts);
+		});
+		postMock.mockResolvedValue({ data: { ok: true, resolved: 2 } });
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsTab();
+		await userEvent.click(screen.getByRole("tab", { name: /Pull request/ }));
+
+		expect(await screen.findByText("maya")).toBeInTheDocument();
+		expect(screen.getByText("Tear down the listener on unmount.")).toBeInTheDocument();
+		expect(screen.getByText(/2 unresolved/)).toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("button", { name: "Resolve 2 threads" }));
+		expect(postMock).toHaveBeenCalledWith("/api/v1/prs/{id}/resolve-comments", {
+			params: { path: { id: "3" } },
+		});
+	});
 
 	it("hides the previous verdict after the current head review completes", async () => {
 		const current = {
@@ -900,7 +968,7 @@ describe("SessionInspector reviews tab", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsTab();
 
-		expect(await screen.findByText("AO code reviews")).toBeInTheDocument();
+		expect(await screen.findByText("codex")).toBeInTheDocument();
 		expect(screen.queryByText("Pull request reviews")).not.toBeInTheDocument();
 	});
 
@@ -916,11 +984,22 @@ describe("SessionInspector reviews tab", () => {
 		expect(screen.getByRole("button", { name: "Re-run review" })).toBeEnabled();
 	});
 
-	it("shows the no-PR empty state when the session has no PRs", async () => {
+	it("hides the Reviews tab entirely when the session has no PRs", async () => {
 		mockCommonGets();
 		renderWithQuery(<SessionInspector session={session([])} />);
-		await userEvent.click(screen.getByRole("tab", { name: /Reviews/ }));
 
-		expect(await screen.findByText("No pull request opened yet.")).toBeInTheDocument();
+		await screen.findByRole("tab", { name: /Summary/ });
+		expect(screen.queryByRole("tab", { name: /Reviews/ })).not.toBeInTheDocument();
+	});
+
+	it("falls back to Summary when a controlled Reviews view has no PR to show", async () => {
+		mockCommonGets();
+		renderWithQuery(<SessionInspector session={session([])} view="reviews" />);
+
+		expect(await screen.findByRole("tab", { name: /Summary/ })).toHaveAttribute("aria-selected", "true");
+		expect(screen.queryByRole("tab", { name: /Reviews/ })).not.toBeInTheDocument();
+		// Summary has its own "No pull request opened yet." line, so assert on the
+		// reviews panel's own content instead of that shared string.
+		expect(screen.queryByRole("button", { name: /run review/i })).not.toBeInTheDocument();
 	});
 });
