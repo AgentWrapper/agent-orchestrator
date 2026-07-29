@@ -1152,6 +1152,26 @@ function ReviewPanel({
 		}
 	}
 
+	// Reviewers lead the panel now: you pick who reviewed, then read their verdict
+	// on each PR. Nesting the tabs inside a PR row meant expanding a row before
+	// you could compare agents at all.
+	const allRuns = [...runsByPR.values()].flat().sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+	const reviewerTabs: string[] = [];
+	for (const run of allRuns) {
+		const name = run.harness || "reviewer";
+		if (!reviewerTabs.includes(name)) reviewerTabs.push(name);
+	}
+	const newestReviewer = reviewerTabs[0] ?? "";
+	const [activeReviewer, setActiveReviewer] = useState(newestReviewer);
+	const [followedReviewer, setFollowedReviewer] = useState(newestReviewer);
+	// Running a new agent should land you on its tab, synced during render so no
+	// frame shows the tab you were reading before.
+	if (newestReviewer !== followedReviewer) {
+		setFollowedReviewer(newestReviewer);
+		setActiveReviewer(newestReviewer);
+	}
+	const selectedReviewer = reviewerTabs.includes(activeReviewer) ? activeReviewer : newestReviewer;
+
 	const runDisabled =
 		isTriggering ||
 		openReviewStates.length === 0 ||
@@ -1186,6 +1206,28 @@ function ReviewPanel({
 					/>
 				</div>
 			</div>
+			{reviewerTabs.length > 0 ? (
+				<div className="flex min-w-0 flex-wrap items-center gap-1" role="tablist" aria-label="Reviewers">
+					{reviewerTabs.map((name) => (
+						<button
+							aria-selected={name === selectedReviewer}
+							className={cn(
+								"inline-flex h-control-md min-w-0 items-center gap-1.5 rounded-md px-1.5 text-2xs font-medium transition-colors",
+								name === selectedReviewer
+									? "bg-interactive-active text-foreground"
+									: "text-passive hover:bg-interactive-hover hover:text-foreground",
+							)}
+							key={name}
+							onClick={() => setActiveReviewer(name)}
+							role="tab"
+							type="button"
+						>
+							<AgentAvatar className="size-icon-sm" decorative provider={name} />
+							<span className="truncate">{name}</span>
+						</button>
+					))}
+				</div>
+			) : null}
 			<div className="flex flex-col divide-y divide-border">
 				{openReviewStates.length === 0 ? (
 					<p className={cn(inspectorEmptyClass, "py-1")}>No open pull requests to review.</p>
@@ -1198,7 +1240,11 @@ function ReviewPanel({
 							meta={aoReviewMeta(reviewState)}
 							title={reviewState.title?.trim() || `PR #${reviewState.prNumber}`}
 						>
-							<ReviewRunTabs reviewState={reviewState} runs={runsByPR.get(reviewState.prUrl) ?? []} />
+							<ReviewerRuns
+								reviewState={reviewState}
+								reviewer={selectedReviewer}
+								runs={runsByPR.get(reviewState.prUrl) ?? []}
+							/>
 						</ReviewDisclosure>
 					))
 				)}
@@ -1421,74 +1467,42 @@ function githubVerdict(verdict: string): { label: string; tone: "neutral" | "run
 }
 
 /**
- * Every reviewer that has run against one PR, as a tab each.
+ * One reviewer's verdict on one PR.
  *
- * Switching the agent is only useful if you can compare, so each agent keeps its
- * own tab with its passes newest-first, rather than the newest verdict burying
- * whatever ran before it. A single reviewer shows no tabs — there is nothing to
- * switch between.
+ * The reviewer behind the PR's current verdict keeps the usual row, which is
+ * what demotes a verdict left behind by an earlier commit to "Previous:". Other
+ * reviewers show their own passes, newest first.
  */
-function ReviewRunTabs({ reviewState, runs }: { reviewState: PRReviewState; runs: ReviewRunFacts[] }) {
-	const byHarness = new Map<string, ReviewRunFacts[]>();
-	for (const run of [...runs].sort((a, b) => b.createdAt.localeCompare(a.createdAt))) {
-		const harness = run.harness || "reviewer";
-		byHarness.set(harness, [...(byHarness.get(harness) ?? []), run]);
-	}
-	// Newest run first, so the agent you just ran leads.
-	const harnesses = [...byHarness.keys()];
-	const newest = harnesses[0] ?? "";
-	const [active, setActive] = useState(newest);
-	const [followed, setFollowed] = useState(newest);
-	// Running a new agent should land you on its tab rather than leaving you on
-	// whichever one you were reading. Synced during render, not in an effect, so
-	// there is no frame showing the stale tab.
-	if (newest !== followed) {
-		setFollowed(newest);
-		setActive(newest);
-	}
-	const selected = byHarness.has(active) ? active : newest;
+function ReviewerRuns({
+	reviewState,
+	reviewer,
+	runs,
+}: {
+	reviewState: PRReviewState;
+	reviewer: string;
+	runs: ReviewRunFacts[];
+}) {
+	const mine = runs
+		.filter((run) => (run.harness || "reviewer") === reviewer)
+		.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+	const currentHarness = (reviewState.latestRun ?? reviewState.previousRun)?.harness;
 
-	// Before any run is recorded — or against a daemon that predates the run
-	// history — fall back to the state's own verdict.
-	if (harnesses.length === 0) {
+	// Nothing has run anywhere yet, so there is no reviewer to be selected — the
+	// PR's own state is the only thing to show.
+	if (reviewer === "" || reviewer === currentHarness) {
 		return <AoReviewRow reviewState={reviewState} />;
 	}
-	// The harness behind the PR's current verdict keeps AoReviewRow, which is what
-	// demotes a verdict left behind by an earlier commit to "Previous:". Other
-	// tabs are plain run lists.
-	const currentHarness = (reviewState.latestRun ?? reviewState.previousRun)?.harness;
-	const body = (harness: string) =>
-		harness === currentHarness ? (
-			<AoReviewRow reviewState={reviewState} />
-		) : (
-			<ReviewRunList reviewState={reviewState} runs={byHarness.get(harness) ?? []} />
-		);
-
-	return (
-		<div className="flex min-w-0 flex-col gap-2.5">
-			<div className="flex min-w-0 flex-wrap items-center gap-1" role="tablist" aria-label="Reviewers">
-				{harnesses.map((harness) => (
-					<button
-						aria-selected={harness === selected}
-						className={cn(
-							"inline-flex h-control-md min-w-0 items-center gap-1.5 rounded-md px-1.5 text-2xs font-medium transition-colors",
-							harness === selected
-								? "bg-interactive-active text-foreground"
-								: "text-passive hover:bg-interactive-hover hover:text-foreground",
-						)}
-						key={harness}
-						onClick={() => setActive(harness)}
-						role="tab"
-						type="button"
-					>
-						<AgentAvatar className="size-icon-sm" decorative provider={harness} />
-						<span className="truncate">{harness}</span>
-					</button>
-				))}
-			</div>
-			{body(selected)}
-		</div>
-	);
+	if (mine.length === 0) {
+		// A PR nothing has run against still shows its own state — "Not run" is the
+		// answer, and hiding it behind a reviewer filter would lose it. Only when
+		// other reviewers have covered this PR is the selected one's absence the
+		// more useful thing to say.
+		if (runs.length === 0) {
+			return <AoReviewRow reviewState={reviewState} />;
+		}
+		return <p className={cn(inspectorEmptyClass, "m-0")}>{`${reviewer} has not reviewed this PR.`}</p>;
+	}
+	return <ReviewRunList reviewState={reviewState} runs={mine} />;
 }
 
 /** One reviewer's passes for a PR, newest first. */

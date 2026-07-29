@@ -739,7 +739,8 @@ describe("SessionInspector reviews tab", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open"), pr(4, "open"), pr(5, "draft")])} />);
 		await openReviewsTab();
 
-		expect(screen.getByText("codex")).toBeInTheDocument();
+		// The reviewer names the panel and also has its own tab, so it appears twice.
+		expect(screen.getAllByText("codex").length).toBeGreaterThan(0);
 		expect(await screen.findByText("Reviewable change 3")).toBeInTheDocument();
 		expect(screen.getByText("#3 · Not run")).toBeInTheDocument();
 		expect(screen.getByText("Reviewable change 4")).toBeInTheDocument();
