@@ -117,6 +117,9 @@ type BrowserEntry = {
 	view: BrowserViewLike;
 	state: BrowserNavState;
 	annotationEnabled: boolean;
+	bounds: BrowserRect;
+	rendererVisible: boolean;
+	rendererParked: boolean;
 };
 
 const OFFSCREEN_BOUNDS: BrowserRect = { x: -10_000, y: -10_000, width: 0, height: 0 };
@@ -176,6 +179,16 @@ export function scaleBoundsForZoom(rect: BrowserRect, zoomFactor: number): Brows
 		width: rect.width * zoomFactor,
 		height: rect.height * zoomFactor,
 	};
+}
+
+function applyEntryBounds(entry: BrowserEntry): void {
+	if (!entry.rendererVisible) {
+		entry.view.setVisible?.(false);
+		entry.view.setBounds(OFFSCREEN_BOUNDS);
+		return;
+	}
+	entry.view.setBounds(entry.bounds);
+	entry.view.setVisible?.(entry.rendererParked || (entry.bounds.width > 0 && entry.bounds.height > 0));
 }
 
 export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserViewHost {
@@ -238,7 +251,14 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		options.mainWindow.contentView.addChildView(view);
 
 		const state: BrowserNavState = emptyNavState(viewId);
-		const entry = { view, state, annotationEnabled: false };
+		const entry = {
+			view,
+			state,
+			annotationEnabled: false,
+			bounds: OFFSCREEN_BOUNDS,
+			rendererVisible: false,
+			rendererParked: false,
+		};
 		entries.set(viewId, entry);
 		viewIdsByWebContentsId.set(view.webContents.id, viewId);
 		hardenWebContents(view.webContents, options, entry);
@@ -267,22 +287,27 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			const scaled = scaleBoundsForZoom(rect, zoomFactor);
 			const width = Math.max(1, Math.round(scaled.width));
 			const height = Math.max(1, Math.round(scaled.height));
-			entry.view.setBounds({ x: OFFSCREEN_BOUNDS.x, y: 0, width, height });
-			entry.view.setVisible?.(true);
+			entry.bounds = { x: OFFSCREEN_BOUNDS.x, y: 0, width, height };
+			entry.rendererVisible = true;
+			entry.rendererParked = true;
+			applyEntryBounds(entry);
 			return;
 		}
 		if (!visible) {
-			entry.view.setVisible?.(false);
-			entry.view.setBounds(OFFSCREEN_BOUNDS);
+			entry.bounds = OFFSCREEN_BOUNDS;
+			entry.rendererVisible = false;
+			entry.rendererParked = false;
+			applyEntryBounds(entry);
 			forgetIfFocused(viewId);
 			return;
 		}
 		// The renderer measures the slot in page-zoomed CSS pixels, while
 		// WebContentsView bounds are window coordinates. Convert before clamping so
 		// Cmd+/Cmd- page zoom does not detach the native view from its React slot.
-		const bounds = clampBoundsToWindow(scaleBoundsForZoom(rect, zoomFactor), options.mainWindow.getContentBounds());
-		entry.view.setBounds(bounds);
-		entry.view.setVisible?.(bounds.width > 0 && bounds.height > 0);
+		entry.bounds = clampBoundsToWindow(scaleBoundsForZoom(rect, zoomFactor), options.mainWindow.getContentBounds());
+		entry.rendererVisible = true;
+		entry.rendererParked = false;
+		applyEntryBounds(entry);
 	};
 
 	const navigate = async ({ viewId, url }: BrowserNavigateInput): Promise<BrowserNavState> => {
@@ -301,7 +326,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			options.mainWindow.webContents.send("browser:navState", entry.state);
 			return entry.state;
 		}
-		entry.view.setVisible?.(true);
+		applyEntryBounds(entry);
 		return pushNavState(options, entry);
 	};
 
@@ -312,8 +337,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	const clear = async (viewId: string): Promise<BrowserNavState> => {
 		const entry = ensure(viewId);
 		cancelAnnotation(options, entry, "navigation");
-		entry.view.setVisible?.(false);
-		entry.view.setBounds(OFFSCREEN_BOUNDS);
+		entry.rendererVisible = false;
+		entry.rendererParked = false;
+		entry.bounds = OFFSCREEN_BOUNDS;
+		applyEntryBounds(entry);
 		forgetIfFocused(viewId);
 		await entry.view.webContents.loadURL("about:blank");
 		entry.view.webContents.clearHistory();
@@ -568,7 +595,7 @@ function wireNavEvents(contents: BrowserWebContents, options: BrowserViewHostOpt
 		pushNavState(options, entry);
 	};
 	contents.on("did-navigate", () => {
-		entry.view.setVisible?.(true);
+		applyEntryBounds(entry);
 		update();
 	});
 	contents.on("did-navigate-in-page", update);
@@ -580,6 +607,9 @@ function wireNavEvents(contents: BrowserWebContents, options: BrowserViewHostOpt
 	contents.on("did-stop-loading", update);
 	contents.on("did-fail-load", (_event, errorCode, errorDescription) => {
 		if (errorCode === -3) return;
+		entry.rendererVisible = false;
+		entry.rendererParked = false;
+		entry.bounds = OFFSCREEN_BOUNDS;
 		entry.view.setVisible?.(false);
 		entry.state = { ...readNavState(entry), error: String(errorDescription || "Unable to load page") };
 		options.mainWindow.webContents.send("browser:navState", entry.state);

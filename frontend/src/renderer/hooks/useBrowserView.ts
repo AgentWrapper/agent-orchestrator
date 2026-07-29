@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { BrowserNavState, BrowserRect } from "../../main/browser-view-host";
 import type { BrowserAnnotationCancelPayload, BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
 import { OPEN_DIALOG_OR_MENU_SELECTOR } from "../lib/dom-selectors";
@@ -209,21 +209,23 @@ export function useBrowserView({
 		(node: HTMLDivElement | null) => {
 			observerRef.current?.disconnect();
 			slotNodeRef.current = node;
-			if (node) {
-				const observer = new ResizeObserver(scheduleMeasure);
-				observer.observe(node);
-				// Also track the resizable-panel column: while the inspector
-				// collapse/expand animates, the slot's own width stays pinned by
-				// `min-w-[280px]` (so a slot-only observer never fires), but the
-				// column's width changes every frame. Observing it re-measures
-				// through the whole animation so the view never lags behind.
-				const column = node.closest("[data-panel]");
-				if (column) observer.observe(column);
-				observerRef.current = observer;
+			if (!node) {
+				sendHiddenBounds();
+				return;
 			}
+			const observer = new ResizeObserver(scheduleMeasure);
+			observer.observe(node);
+			// Also track the resizable-panel column: while the inspector
+			// collapse/expand animates, the slot's own width stays pinned by
+			// `min-w-[280px]` (so a slot-only observer never fires), but the
+			// column's width changes every frame. Observing it re-measures
+			// through the whole animation so the view never lags behind.
+			const column = node.closest("[data-panel]");
+			if (column) observer.observe(column);
+			observerRef.current = observer;
 			scheduleMeasure();
 		},
-		[scheduleMeasure],
+		[scheduleMeasure, sendHiddenBounds],
 	);
 
 	useEffect(() => {
@@ -271,7 +273,7 @@ export function useBrowserView({
 		});
 	}, []);
 
-	useEffect(() => {
+	useLayoutEffect(() => {
 		if (navState.url && active) {
 			scheduleSettleMeasure();
 		} else {

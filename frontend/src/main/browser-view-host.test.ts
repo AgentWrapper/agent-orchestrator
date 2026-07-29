@@ -126,6 +126,7 @@ function setupHost() {
 		shellSend,
 		view,
 		webContents,
+		webContentsListeners,
 	};
 }
 
@@ -338,6 +339,30 @@ describe("browser:setBounds", () => {
 
 		expect(view.setBounds).toHaveBeenLastCalledWith({ x: 125, y: 25, width: 400, height: 300 });
 		expect(view.setVisible).toHaveBeenLastCalledWith(true);
+	});
+
+	it("does not let a hidden page navigation grant native visibility", async () => {
+		const { emit, invoke, view, webContentsListeners } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		emit("browser:setBounds", 1, {
+			viewId: "1:sess-1",
+			rect: { x: 100, y: 20, width: 320, height: 240 },
+			visible: true,
+		});
+		expect(view.setVisible).toHaveBeenLastCalledWith(true);
+		emit("browser:setBounds", 1, {
+			viewId: "1:sess-1",
+			rect: { x: 0, y: 0, width: 0, height: 0 },
+			visible: false,
+		});
+
+		view.setBounds.mockClear();
+		view.setVisible.mockClear();
+		webContentsListeners.get("did-navigate")?.();
+
+		expect(view.setVisible).not.toHaveBeenCalledWith(true);
+		expect(view.setVisible).toHaveBeenLastCalledWith(false);
 	});
 });
 
