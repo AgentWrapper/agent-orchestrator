@@ -7,24 +7,34 @@
 
 @source "../../packages/ui/src/**/*.{ts,tsx}";
 
+.ao-cloud-app {
+  color-scheme: dark;
+  letter-spacing: normal;
+}
+
+.ao-cloud-app * {
+  scrollbar-color: rgb(255 255 255 / 12%) transparent;
+  scrollbar-width: thin;
+}
+
 /*
  * Blog code blocks - force dark theme
  * Note: !important is required to override Shiki's inline styles
  */
 .blog-code-block > div {
-	background: #282c34;
-	border-color: #3e4451;
+  background: #282c34;
+  border-color: #3e4451;
 }
 
 .blog-code-block pre {
-	background: #282c34;
+  background: #282c34;
 }
 
 /* Hide light theme, show dark theme */
 .blog-code-block .dark\:hidden {
-	display: none;
+  display: none;
 }
 
 .blog-code-block .hidden.dark\:block {
-	display: block;
+  display: block;
 }

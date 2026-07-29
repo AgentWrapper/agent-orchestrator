@@ -36,14 +36,33 @@ export function CloudTerminal({ api, sessionId }: CloudTerminalProps) {
     const terminal = new Terminal({
       cursorBlink: true,
       convertEol: false,
-      fontFamily: "var(--font-ibm-plex-mono), monospace",
+      fontFamily:
+        '"JetBrainsMono Nerd Font Mono", "FiraCode Nerd Font Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
       fontSize: 13,
       scrollback: 10_000,
       theme: {
-        background: "#0a0b0d",
-        foreground: "#f4f5f7",
-        cursor: "#4d8dff",
-        selectionBackground: "#4d8dff55",
+        background: "#101317",
+        foreground: "#d7d7d2",
+        cursor: "#36c2b4",
+        cursorAccent: "#101317",
+        selectionBackground: "#4d8dff4d",
+        selectionInactiveBackground: "#80808033",
+        black: "#1f2329",
+        red: "#f05d5e",
+        green: "#44c97a",
+        yellow: "#e5c34b",
+        blue: "#5b9cff",
+        magenta: "#c678dd",
+        cyan: "#56b6c2",
+        white: "#d7dae0",
+        brightBlack: "#7f8792",
+        brightRed: "#ff7b7c",
+        brightGreen: "#62df91",
+        brightYellow: "#f2d66d",
+        brightBlue: "#79b1ff",
+        brightMagenta: "#d99aee",
+        brightCyan: "#79d4df",
+        brightWhite: "#f4f5f7",
       },
     });
     const fit = new FitAddon();
@@ -132,14 +151,16 @@ export function CloudTerminal({ api, sessionId }: CloudTerminalProps) {
   }, [api, sessionId]);
 
   return (
-    <div className="relative h-full min-h-0 bg-[#0a0b0d]">
-      <div
-        className="absolute right-3 top-2 z-10 font-mono text-[10px] uppercase tracking-[0.12em] text-white/40"
-        aria-live="polite"
-      >
-        {connection}
-      </div>
-      <div ref={hostRef} className="h-full min-h-[24rem] p-2 pt-7" />
+    <div className="relative h-full min-h-0 bg-[#101317]">
+      {connection !== "connected" && (
+        <div
+          className="absolute right-3 top-2 z-10 rounded-md bg-[#15171b] px-2 py-1 font-mono text-[10px] uppercase tracking-[0.05em] text-[#9ba1aa]"
+          aria-live="polite"
+        >
+          {connection}
+        </div>
+      )}
+      <div ref={hostRef} className="h-full min-h-0 p-2" />
     </div>
   );
 }

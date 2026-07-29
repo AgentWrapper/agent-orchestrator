@@ -27,6 +27,7 @@ export interface CloudSession {
     | "working"
     | "needs_input"
     | "pr_open"
+    | "review_pending"
     | "ci_failed"
     | "changes_requested"
     | "approved"
