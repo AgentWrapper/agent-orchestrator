@@ -27,6 +27,8 @@ import (
 //go:embed migrations/*.sql
 var migrations embed.FS
 
+const migrationTableName = "ao_schema_migrations"
+
 // Store persists AO Cloud state in PostgreSQL.
 type Store struct {
 	pool *pgxpool.Pool
@@ -50,13 +52,32 @@ func Migrate(ctx context.Context, databaseURL string) error {
 	defer func() {
 		_, _ = db.ExecContext(context.Background(), "SELECT pg_advisory_unlock(624829104271)")
 	}()
+	if _, err := db.ExecContext(ctx, `
+		DO $$
+		BEGIN
+			IF to_regclass('public.goose_db_version') IS NOT NULL
+				AND to_regclass('public.ao_schema_migrations') IS NULL THEN
+				ALTER TABLE public.goose_db_version RENAME TO ao_schema_migrations;
+			END IF;
+		END
+		$$
+	`); err != nil {
+		return fmt.Errorf("normalize cloud migration table: %w", err)
+	}
 	goose.SetBaseFS(migrations)
 	defer goose.SetBaseFS(nil)
+	goose.SetTableName(migrationTableName)
 	if err := goose.SetDialect("postgres"); err != nil {
 		return fmt.Errorf("set goose dialect: %w", err)
 	}
 	if err := goose.UpContext(ctx, db, "migrations"); err != nil {
 		return fmt.Errorf("apply cloud migrations: %w", err)
+	}
+	if _, err := db.ExecContext(
+		ctx,
+		"ALTER TABLE IF EXISTS public."+migrationTableName+" ENABLE ROW LEVEL SECURITY",
+	); err != nil {
+		return fmt.Errorf("secure cloud migration table: %w", err)
 	}
 	return nil
 }
