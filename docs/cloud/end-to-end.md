@@ -218,6 +218,27 @@ AO cloud Daytona bridge delivered activity.
 daytona@3dcd75f3-5035-489f-82b4-c7687d4dff24:~/ao/agent-orchestrator-8$
 ```
 
+## Desktop dev-mode cloud tasks
+
+The desktop dev app has a Developer Mode setting for testing this path from the
+product UI.
+
+1. Start `ao-cloud` with Daytona as above. For local UI testing, `AO_CLOUD_PORT`
+   can be any free port; set the same value in Settings as `AO Cloud URL`.
+2. Start the Electron dev app.
+3. Open Settings, enable Developer Mode, then enable `AO Cloud tasks`.
+4. Set `AO Cloud URL` to the local control-plane URL, for example
+   `http://127.0.0.1:3022`.
+5. Click `Connect & register`. This uses `/auth/dev/token` and registers the
+   configured cloud project through `/api/v1/cloud/projects`.
+6. Use `New task`. When `AO Cloud tasks` is enabled and ready, the same dialog
+   spawns the worker through `ao-cloud` and the board/sidebar polling includes
+   cloud projects and sessions.
+
+Current limitation: this dev UI path shows cloud project/session status, but it
+does not attach the desktop terminal pane to Daytona yet. A cloud terminal bridge
+is still needed for interactive TTY parity.
+
 Tunnel reachability note: ngrok, Cloudflare quick tunnels, and localtunnel all
 served `/healthz` from the maintainer machine, but Daytona sandbox `curl` calls
 to those URLs reset before reaching `ao-cloud`. The bridge is what makes local
