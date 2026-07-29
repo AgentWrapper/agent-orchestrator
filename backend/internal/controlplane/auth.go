@@ -24,10 +24,24 @@ type tenantContextKey struct{}
 // sandbox id for a per-sandbox bus token, which may only act for that sandbox.
 type busScopeKey struct{}
 
+// userIDContextKey carries the authenticated human user id (Clerk sub), distinct
+// from the tenant (which is the org id for org members).
+type userIDContextKey struct{}
+
 // TenantFromContext returns the authenticated tenant id set by the auth
 // middleware, or "" if none.
 func TenantFromContext(ctx context.Context) string {
 	if v, ok := ctx.Value(tenantContextKey{}).(string); ok {
+		return v
+	}
+	return ""
+}
+
+// UserIDFromContext returns the authenticated human user id (Clerk sub) set by
+// the auth middleware, or "" if none. For a solo user this equals the tenant;
+// for an org member it is the individual, while the tenant is the org.
+func UserIDFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(userIDContextKey{}).(string); ok {
 		return v
 	}
 	return ""
@@ -41,9 +55,17 @@ func BusScopeFromContext(ctx context.Context) (sandbox string, scoped bool) {
 	return v, ok
 }
 
-// Authenticator resolves the tenant id for a request, or an error to reject it.
+// Identity is the authenticated caller: Tenant is the multi-tenant scope (Clerk
+// org_id when present, else the user's own sub) and UserID is the human (Clerk
+// sub). For a solo user Tenant == UserID; for an org member they differ.
+type Identity struct {
+	Tenant string
+	UserID string
+}
+
+// Authenticator resolves the caller's Identity for a request, or an error to reject it.
 type Authenticator interface {
-	Authenticate(r *http.Request) (tenantID string, err error)
+	Authenticate(r *http.Request) (Identity, error)
 }
 
 // DevAuthenticator is the no-Clerk fallback for local dev/tests: it trusts an
@@ -52,12 +74,19 @@ type Authenticator interface {
 // active authenticator.
 type DevAuthenticator struct{}
 
-// Authenticate resolves the tenant from the `X-AO-Tenant` header, defaulting to "dev-tenant".
-func (DevAuthenticator) Authenticate(r *http.Request) (string, error) {
-	if t := strings.TrimSpace(r.Header.Get("X-AO-Tenant")); t != "" {
-		return t, nil
+// Authenticate resolves the tenant from `X-AO-Tenant` (default "dev-tenant") and
+// the user from `X-AO-User` (default: the tenant), so tests can exercise distinct
+// users within a tenant.
+func (DevAuthenticator) Authenticate(r *http.Request) (Identity, error) {
+	tenant := strings.TrimSpace(r.Header.Get("X-AO-Tenant"))
+	if tenant == "" {
+		tenant = "dev-tenant"
 	}
-	return "dev-tenant", nil
+	user := strings.TrimSpace(r.Header.Get("X-AO-User"))
+	if user == "" {
+		user = tenant
+	}
+	return Identity{Tenant: tenant, UserID: user}, nil
 }
 
 // ClerkAuthenticator verifies a Clerk-issued RS256 JWT against Clerk's JWKS and
@@ -84,11 +113,12 @@ func NewClerkAuthenticator(ctx context.Context, jwksURL, issuer string) (*ClerkA
 	return &ClerkAuthenticator{keys: kf, issuer: strings.TrimSpace(issuer)}, nil
 }
 
-// Authenticate verifies the request's Clerk JWT and returns its tenant id.
-func (c *ClerkAuthenticator) Authenticate(r *http.Request) (string, error) {
+// Authenticate verifies the request's Clerk JWT and returns its Identity. UserID
+// is the `sub` (required); Tenant is `org_id` when present, else the same `sub`.
+func (c *ClerkAuthenticator) Authenticate(r *http.Request) (Identity, error) {
 	raw := bearerToken(r)
 	if raw == "" {
-		return "", fmt.Errorf("missing bearer token")
+		return Identity{}, fmt.Errorf("missing bearer token")
 	}
 	opts := []jwt.ParserOption{jwt.WithValidMethods([]string{"RS256"}), jwt.WithExpirationRequired()}
 	if c.issuer != "" {
@@ -96,21 +126,22 @@ func (c *ClerkAuthenticator) Authenticate(r *http.Request) (string, error) {
 	}
 	tok, err := jwt.Parse(raw, c.keys.Keyfunc, opts...)
 	if err != nil || !tok.Valid {
-		return "", fmt.Errorf("invalid token: %w", err)
+		return Identity{}, fmt.Errorf("invalid token: %w", err)
 	}
 	claims, ok := tok.Claims.(jwt.MapClaims)
 	if !ok {
-		return "", fmt.Errorf("unexpected claims")
+		return Identity{}, fmt.Errorf("unexpected claims")
 	}
-	// Clerk leeway: reject tokens whose `nbf` is in the future beyond a small skew
-	// is already handled by the parser; here we just pick the tenant.
+	sub, _ := claims["sub"].(string)
+	sub = strings.TrimSpace(sub)
+	if sub == "" {
+		return Identity{}, fmt.Errorf("token has no sub")
+	}
+	tenant := sub
 	if org, _ := claims["org_id"].(string); strings.TrimSpace(org) != "" {
-		return org, nil
+		tenant = strings.TrimSpace(org)
 	}
-	if sub, _ := claims["sub"].(string); strings.TrimSpace(sub) != "" {
-		return sub, nil
-	}
-	return "", fmt.Errorf("token has no org_id or sub")
+	return Identity{Tenant: tenant, UserID: sub}, nil
 }
 
 func bearerToken(r *http.Request) string {
@@ -122,16 +153,19 @@ func bearerToken(r *http.Request) string {
 	return ""
 }
 
-// authMiddleware authenticates each request and injects the tenant id, or 401s.
-func authMiddleware(a Authenticator) func(http.Handler) http.Handler {
+// authMiddleware authenticates each request, injects tenant + user id, records
+// the user (best-effort, throttled), or 401s.
+func (s *Server) authMiddleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			tenant, err := a.Authenticate(r)
-			if err != nil || tenant == "" {
+			id, err := s.auth.Authenticate(r)
+			if err != nil || id.Tenant == "" {
 				writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 				return
 			}
-			ctx := context.WithValue(r.Context(), tenantContextKey{}, tenant)
+			s.recordUser(id)
+			ctx := context.WithValue(r.Context(), tenantContextKey{}, id.Tenant)
+			ctx = context.WithValue(ctx, userIDContextKey{}, id.UserID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -146,8 +180,9 @@ func busAuthMiddleware(a Authenticator, signer *BusTokenSigner) func(http.Handle
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Prefer a full user token (unrestricted within its tenant → no scope).
-			if tenant, err := a.Authenticate(r); err == nil && tenant != "" {
-				ctx := context.WithValue(r.Context(), tenantContextKey{}, tenant)
+			if id, err := a.Authenticate(r); err == nil && id.Tenant != "" {
+				ctx := context.WithValue(r.Context(), tenantContextKey{}, id.Tenant)
+				ctx = context.WithValue(ctx, userIDContextKey{}, id.UserID)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}

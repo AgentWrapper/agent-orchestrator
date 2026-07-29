@@ -66,6 +66,9 @@ type CloudSession struct { //nolint:revive // name intentionally disambiguates a
 	// TenantID scopes a session to an authenticated tenant in the multi-tenant
 	// control plane. Empty for the single-user local daemon (one implicit tenant).
 	TenantID string `json:"tenantId,omitempty"`
+	// CreatedByUserID is the Clerk user id (sub) of the human who spawned this
+	// sandbox, linking it to a users row. Empty for the local daemon.
+	CreatedByUserID string `json:"createdByUserId,omitempty"`
 }
 
 // Provisioning-status constants.
@@ -249,6 +252,9 @@ type SpawnInput struct {
 	Kind string
 	// TenantID scopes the session to a tenant (control plane). Empty = local daemon.
 	TenantID string
+	// CreatedByUserID is the Clerk user id (sub) of the human spawning this
+	// session; persisted on the CloudSession to link the sandbox to a user.
+	CreatedByUserID string
 	// Credential is the harness credential the CALLER supplies at spawn time
 	// (e.g. the desktop app reads the user's current Claude credential and passes
 	// it here). When set it is injected into the sandbox verbatim as the harness's
@@ -322,15 +328,16 @@ func (s *Supervisor) SpawnCloud(ctx context.Context, in SpawnInput) (*SpawnResul
 	// Register immediately as provisioning so the board shows a card right away.
 	s.mu.Lock()
 	s.sessions[sandboxID] = &CloudSession{
-		LocalProjectID: in.LocalProjectID,
-		Harness:        in.Harness,
-		Kind:           in.Kind,
-		OrchestratorID: in.OrchestratorID,
-		IdempotencyKey: in.IdempotencyKey,
-		SandboxID:      sandboxID,
-		Status:         StatusProvisioning,
-		DisplayName:    in.DisplayName,
-		TenantID:       in.TenantID,
+		LocalProjectID:  in.LocalProjectID,
+		Harness:         in.Harness,
+		Kind:            in.Kind,
+		OrchestratorID:  in.OrchestratorID,
+		IdempotencyKey:  in.IdempotencyKey,
+		SandboxID:       sandboxID,
+		Status:          StatusProvisioning,
+		DisplayName:     in.DisplayName,
+		TenantID:        in.TenantID,
+		CreatedByUserID: in.CreatedByUserID,
 	}
 	s.mu.Unlock()
 	s.save()

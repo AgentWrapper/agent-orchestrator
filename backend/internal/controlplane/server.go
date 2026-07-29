@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -29,12 +31,19 @@ type Server struct {
 	// busSigner verifies per-sandbox bus tokens on the bus endpoints (nil when no
 	// signing key is configured; sandboxes then get no outbound channel).
 	busSigner *BusTokenSigner
+	// users records humans who authenticate (nil ⇒ user tracking disabled). Kept
+	// separate from the session registry (sup's Store) so user-scoped state can
+	// extend independently.
+	users UserStore
+	// userSeen throttles per-user upserts (see recordUser).
+	userSeen   map[string]time.Time
+	userSeenMu sync.Mutex
 }
 
 // NewServer wires the control plane. sup must be built with a tenant-scoped
-// Store (SQLStore) and the single Daytona key. busSigner may be nil (bus tokens
-// disabled).
-func NewServer(sup *cloud.Supervisor, auth Authenticator, busSigner *BusTokenSigner, log *slog.Logger) *Server {
+// Store (SQLStore) and the single Daytona key. users records humans who sign in
+// (may be nil to disable). busSigner may be nil (bus tokens disabled).
+func NewServer(sup *cloud.Supervisor, auth Authenticator, users UserStore, busSigner *BusTokenSigner, log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -46,6 +55,8 @@ func NewServer(sup *cloud.Supervisor, auth Authenticator, busSigner *BusTokenSig
 		locations: locations,
 		hub:       NewHub(locations, newSupervisorRelay(sup), log),
 		busSigner: busSigner,
+		users:     users,
+		userSeen:  map[string]time.Time{},
 	}
 	// Keep the federated-bus location registry in sync with cloud sessions: a
 	// ready sandbox session is reachable inbound via its preview URL, so file it
@@ -86,7 +97,7 @@ func (s *Server) Handler() http.Handler {
 	})
 
 	r.Group(func(r chi.Router) {
-		r.Use(authMiddleware(s.auth))
+		r.Use(s.authMiddleware())
 		r.Get("/api/v1/cloud/capabilities", s.capabilities)
 		r.Post("/api/v1/cloud/sessions", s.spawn)
 		r.Get("/api/v1/cloud/sessions", s.list)
@@ -187,16 +198,17 @@ func (s *Server) spawn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := s.sup.SpawnCloud(r.Context(), cloud.SpawnInput{
-		Harness:        in.Harness,
-		LocalProjectID: in.LocalProjectID,
-		ProjectPath:    in.ProjectPath,
-		RemoteURL:      in.RemoteURL,
-		Prompt:         in.Prompt,
-		DisplayName:    in.DisplayName,
-		Branch:         in.Branch,
-		Kind:           in.Kind,
-		TenantID:       tenant,
-		Credential:     in.Credential,
+		Harness:         in.Harness,
+		LocalProjectID:  in.LocalProjectID,
+		ProjectPath:     in.ProjectPath,
+		RemoteURL:       in.RemoteURL,
+		Prompt:          in.Prompt,
+		DisplayName:     in.DisplayName,
+		Branch:          in.Branch,
+		Kind:            in.Kind,
+		TenantID:        tenant,
+		CreatedByUserID: UserIDFromContext(r.Context()),
+		Credential:      in.Credential,
 	})
 	if err != nil {
 		s.writeErr(w, err)

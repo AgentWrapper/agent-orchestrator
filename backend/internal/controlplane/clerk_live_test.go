@@ -26,17 +26,17 @@ func TestLiveClerkVerify(t *testing.T) {
 		t.Fatalf("build authenticator: %v", err)
 	}
 
-	// Positive: the real token verifies and yields a non-empty tenant.
+	// Positive: the real token verifies and yields a non-empty tenant + user id.
 	rGood := httptest.NewRequest(http.MethodGet, "/", nil)
 	rGood.Header.Set("Authorization", "Bearer "+tok)
-	tenant, err := auth.Authenticate(rGood)
+	id, err := auth.Authenticate(rGood)
 	if err != nil {
 		t.Fatalf("real Clerk token REJECTED by production verifier: %v", err)
 	}
-	if tenant == "" {
-		t.Fatal("verified token produced an empty tenant")
+	if id.Tenant == "" || id.UserID == "" {
+		t.Fatalf("verified token produced an empty identity: %+v", id)
 	}
-	t.Logf("PASS positive: real Clerk JWT verified via live JWKS → tenant=%q", tenant)
+	t.Logf("PASS positive: real Clerk JWT verified via live JWKS → tenant=%q user=%q", id.Tenant, id.UserID)
 
 	// Negative: malformed token rejected.
 	rGarbage := httptest.NewRequest(http.MethodGet, "/", nil)

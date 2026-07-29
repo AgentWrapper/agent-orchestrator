@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 
@@ -44,6 +45,9 @@ func OpenPostgresStore(dsn string) (*PostgresStore, error) {
 // Close closes the underlying database connection.
 func (s *PostgresStore) Close() error { return s.db.Close() }
 
+// schemaSQL is applied idempotently on every boot (no migration framework). New
+// columns on existing tables use ALTER ... ADD COLUMN IF NOT EXISTS so a
+// already-deployed database picks them up without a manual migration.
 const schemaSQL = `
 CREATE TABLE IF NOT EXISTS cloud_sessions (
 	sandbox_id       TEXT PRIMARY KEY,
@@ -55,15 +59,31 @@ CREATE TABLE IF NOT EXISTS cloud_sessions (
 	preview_url      TEXT NOT NULL DEFAULT '',
 	status           TEXT NOT NULL DEFAULT '',
 	error            TEXT NOT NULL DEFAULT '',
-	display_name     TEXT NOT NULL DEFAULT ''
+	display_name     TEXT NOT NULL DEFAULT '',
+	created_by_user_id TEXT NOT NULL DEFAULT ''
 );
+ALTER TABLE cloud_sessions ADD COLUMN IF NOT EXISTS created_by_user_id TEXT NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS idx_cloud_sessions_tenant ON cloud_sessions(tenant_id);
+
+-- Humans who authenticate to the control plane. Extensible: metadata (JSONB) and
+-- future user-scoped tables key on user_id; cloud_sessions.created_by_user_id
+-- already links a sandbox back to its creator.
+CREATE TABLE IF NOT EXISTS users (
+	user_id    TEXT PRIMARY KEY,
+	tenant_id  TEXT NOT NULL DEFAULT '',
+	email      TEXT NOT NULL DEFAULT '',
+	name       TEXT NOT NULL DEFAULT '',
+	metadata   JSONB NOT NULL DEFAULT '{}',
+	first_seen TIMESTAMPTZ NOT NULL DEFAULT now(),
+	last_seen  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_users_tenant ON users(tenant_id);
 `
 
 // Load returns all persisted cloud sessions.
 func (s *PostgresStore) Load() ([]cloud.CloudSession, error) {
 	rows, err := s.db.Query(`SELECT sandbox_id, tenant_id, session_id, local_project_id, project_id,
-		harness, preview_url, status, error, display_name FROM cloud_sessions`)
+		harness, preview_url, status, error, display_name, created_by_user_id FROM cloud_sessions`)
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +92,7 @@ func (s *PostgresStore) Load() ([]cloud.CloudSession, error) {
 	for rows.Next() {
 		var c cloud.CloudSession
 		if err := rows.Scan(&c.SandboxID, &c.TenantID, &c.SessionID, &c.LocalProjectID, &c.ProjectID,
-			&c.Harness, &c.PreviewURL, &c.Status, &c.Error, &c.DisplayName); err != nil {
+			&c.Harness, &c.PreviewURL, &c.Status, &c.Error, &c.DisplayName, &c.CreatedByUserID); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -91,17 +111,32 @@ func (s *PostgresStore) Save(sessions []cloud.CloudSession) error {
 		return err
 	}
 	stmt, err := tx.Prepare(`INSERT INTO cloud_sessions
-		(sandbox_id, tenant_id, session_id, local_project_id, project_id, harness, preview_url, status, error, display_name)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`)
+		(sandbox_id, tenant_id, session_id, local_project_id, project_id, harness, preview_url, status, error, display_name, created_by_user_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = stmt.Close() }()
 	for _, c := range sessions {
 		if _, err := stmt.Exec(c.SandboxID, c.TenantID, c.SessionID, c.LocalProjectID, c.ProjectID,
-			c.Harness, c.PreviewURL, c.Status, c.Error, c.DisplayName); err != nil {
+			c.Harness, c.PreviewURL, c.Status, c.Error, c.DisplayName, c.CreatedByUserID); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
+}
+
+// UpsertUser records a human sign-in: inserts the user or refreshes tenant +
+// last_seen. Implements UserStore. first_seen is preserved on conflict.
+func (s *PostgresStore) UpsertUser(ctx context.Context, u User) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO users (user_id, tenant_id, email, name, last_seen)
+		VALUES ($1, $2, $3, $4, now())
+		ON CONFLICT (user_id) DO UPDATE SET
+			tenant_id = EXCLUDED.tenant_id,
+			email     = CASE WHEN EXCLUDED.email <> '' THEN EXCLUDED.email ELSE users.email END,
+			name      = CASE WHEN EXCLUDED.name  <> '' THEN EXCLUDED.name  ELSE users.name  END,
+			last_seen = now()`,
+		u.UserID, u.TenantID, u.Email, u.Name)
+	return err
 }

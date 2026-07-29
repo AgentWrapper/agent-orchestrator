@@ -12,11 +12,11 @@ import (
 // stubAuth is an Authenticator whose result is fixed.
 type stubAuth struct{ tenant string }
 
-func (s stubAuth) Authenticate(*http.Request) (string, error) {
+func (s stubAuth) Authenticate(*http.Request) (Identity, error) {
 	if s.tenant == "" {
-		return "", errUnauth
+		return Identity{}, errUnauth
 	}
-	return s.tenant, nil
+	return Identity{Tenant: s.tenant, UserID: s.tenant}, nil
 }
 
 var errUnauth = &authErr{}
