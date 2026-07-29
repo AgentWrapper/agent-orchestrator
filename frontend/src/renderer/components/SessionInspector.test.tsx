@@ -811,7 +811,7 @@ describe("SessionInspector reviews tab", () => {
 		},
 	);
 
-	it("lists PR reviewers in the Pull request pane and resolves its threads", async () => {
+	it("lists PR reviewers and the unresolved count in the Pull request pane", async () => {
 		mockCommonGets([], "reviewer-pane", [reviewState(3, "up_to_date", "sha-1")]);
 		const previous = getMock.getMockImplementation()!;
 		getMock.mockImplementation(async (path: string, opts?: unknown) => {
@@ -853,8 +853,6 @@ describe("SessionInspector reviews tab", () => {
 			}
 			return previous(path, opts);
 		});
-		postMock.mockResolvedValue({ data: { ok: true, resolved: 2 } });
-
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsTab();
 		await userEvent.click(screen.getByRole("tab", { name: /Pull request/ }));
@@ -862,11 +860,9 @@ describe("SessionInspector reviews tab", () => {
 		expect(await screen.findByText("maya")).toBeInTheDocument();
 		expect(screen.getByText("Tear down the listener on unmount.")).toBeInTheDocument();
 		expect(screen.getByText(/2 unresolved/)).toBeInTheDocument();
-
-		await userEvent.click(screen.getByRole("button", { name: "Resolve 2 threads" }));
-		expect(postMock).toHaveBeenCalledWith("/api/v1/prs/{id}/resolve-comments", {
-			params: { path: { id: "3" } },
-		});
+		// Resolving is not offered while pr.ActionManager is nil in production and
+		// the route answers 501 — the count is information, not an action.
+		expect(screen.queryByRole("button", { name: /Resolve/ })).not.toBeInTheDocument();
 	});
 
 	it("hides the previous verdict after the current head review completes", async () => {

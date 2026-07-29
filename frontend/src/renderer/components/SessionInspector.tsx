@@ -3,7 +3,6 @@ import { useNavigate } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
 import {
 	ArrowUpRight,
-	Check,
 	ChevronDown,
 	ChevronRight,
 	Files as FilesIcon,
@@ -793,12 +792,7 @@ function ReviewsView({
 			</div>
 			{pane === "github" ? (
 				<Section surface>
-					<GithubReviewPanel
-						isLoading={scmSummary.isLoading}
-						prs={githubReviews}
-						sessionId={session.id}
-						unresolvedTotal={unresolvedTotal}
-					/>
+					<GithubReviewPanel isLoading={scmSummary.isLoading} prs={githubReviews} unresolvedTotal={unresolvedTotal} />
 				</Section>
 			) : (
 			<Section surface>
@@ -1113,38 +1107,20 @@ function ReviewPanel({
 /**
  * Reviews left on the PR by humans and bots, as opposed to AO's own runs.
  *
- * Resolving is all-or-nothing for now: the endpoint takes an optional list of
- * comment ids, but the session summary only carries file/line/url per thread, so
- * there is nothing to address an individual thread with yet.
+ * Resolving from here is not offered: POST /api/v1/prs/{id}/resolve-comments is
+ * backed by pr.ActionManager, which production deliberately leaves nil, so the
+ * route answers 501. The unresolved count is still worth showing — it is the
+ * reason a PR is blocked — but the action has to wait for that dependency.
  */
 function GithubReviewPanel({
 	prs,
-	sessionId,
 	unresolvedTotal,
 	isLoading,
 }: {
 	prs: SessionPRSummary[];
-	sessionId: string;
 	unresolvedTotal: number;
 	isLoading: boolean;
 }) {
-	const queryClient = useQueryClient();
-	const [resolveError, setResolveError] = useState<string | null>(null);
-	const resolveAll = useMutation({
-		mutationFn: async (prNumber: number) => {
-			const { error } = await apiClient.POST("/api/v1/prs/{id}/resolve-comments", {
-				params: { path: { id: String(prNumber) } },
-			});
-			if (error) throw new Error(apiErrorMessage(error, "Unable to resolve review threads"));
-		},
-		onMutate: () => setResolveError(null),
-		onError: (error: unknown) => setResolveError(apiErrorMessage(error, "Unable to resolve review threads")),
-		onSuccess: () => {
-			void queryClient.invalidateQueries({ queryKey: ["session-scm-summary", sessionId] });
-			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-		},
-	});
-
 	if (isLoading) {
 		return <p className={inspectorEmptyClass}>Loading reviews...</p>;
 	}
@@ -1154,11 +1130,6 @@ function GithubReviewPanel({
 
 	return (
 		<div className="flex flex-col gap-3">
-			{resolveError ? (
-				<p className="m-0 rounded-md border border-error/28 bg-error/8 px-2.5 py-2 text-sm-md leading-normal text-error">
-					{resolveError}
-				</p>
-			) : null}
 			<div className="flex flex-col divide-y divide-border">
 				{prs.map((pr, index) => {
 					const entries = pr.review?.reviews ?? [];
@@ -1174,19 +1145,6 @@ function GithubReviewPanel({
 							{entries.map((entry) => (
 								<GithubReviewRow entry={entry} key={`${entry.reviewerId}:${entry.submittedAt}`} />
 							))}
-							{unresolved > 0 ? (
-								<Button
-									className="gap-1.5 self-start [&_svg]:size-icon-sm"
-									disabled={resolveAll.isPending}
-									onClick={() => resolveAll.mutate(pr.number)}
-									size="sm"
-									type="button"
-									variant="outline"
-								>
-									<Check aria-hidden="true" />
-									{resolveAll.isPending ? "Resolving..." : `Resolve ${unresolved} thread${unresolved === 1 ? "" : "s"}`}
-								</Button>
-							) : null}
 						</ReviewDisclosure>
 					);
 				})}
