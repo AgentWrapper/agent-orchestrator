@@ -71,8 +71,15 @@ func TestHookPATH(t *testing.T) {
 			name:       "project PATH override is the base",
 			executable: exeOK,
 			daemonPATH: "/usr/bin",
-			projectEnv: map[string]string{"PATH": "/proj/bin"},
-			want:       daemonDir + sep + "/proj/bin",
+			projectEnv: map[string]string{"PATH": "/proj/bin", EnvDataDir: "/home/me/.ao/data"},
+			want:       daemonDir + sep + "/home/me/.ao/bin" + sep + "/proj/bin",
+		},
+		{
+			name:       "wrapper bin precedes inherited PATH when data dir is known",
+			executable: exeOK,
+			daemonPATH: "/usr/bin",
+			projectEnv: map[string]string{EnvDataDir: "/home/me/.ao/data"},
+			want:       daemonDir + sep + "/home/me/.ao/bin" + sep + "/usr/bin",
 		},
 		{
 			name:       "empty base PATH yields the daemon dir alone",

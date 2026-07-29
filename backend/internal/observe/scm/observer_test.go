@@ -915,6 +915,58 @@ func TestPoll_DiscoversCrossForkPRFromUpstreamRemote(t *testing.T) {
 	}
 }
 
+func TestPoll_DiscoversPRAfterProjectOriginTransfer(t *testing.T) {
+	dir := t.TempDir()
+	mustGit(t, "init", dir)
+	mustGit(t, "-C", dir, "remote", "add", "origin", "https://github.com/new-owner/r.git")
+
+	movedRepo := ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "new-owner", Name: "r", Repo: "new-owner/r"}
+	store := &fakeStore{
+		sessions: []domain.SessionRecord{{ID: "p-1", ProjectID: "p", Metadata: domain.SessionMetadata{Branch: "ao/p-1/root"}}},
+		projects: map[string]domain.ProjectRecord{"p": {
+			ID:            "p",
+			Path:          dir,
+			RepoOriginURL: "https://github.com/old-owner/r.git",
+		}},
+		prs:    map[domain.SessionID][]domain.PullRequest{},
+		checks: map[string][]domain.PullRequestCheck{},
+	}
+	movedObs := ports.SCMObservation{
+		Fetched: true, Provider: "github", Host: "github.com", Repo: "new-owner/r",
+		PR:           ports.SCMPRObservation{URL: "https://github.com/new-owner/r/pull/3250", Number: 3250, State: "open", SourceBranch: "ao/p-1/fix", HeadRepo: "new-owner/r", TargetBranch: "main", HeadSHA: "sha1", Title: "PR"},
+		CI:           ports.SCMCIObservation{Summary: string(domain.CIPassing), HeadSHA: "sha1"},
+		Review:       ports.SCMReviewObservation{Decision: string(domain.ReviewNone)},
+		Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeMergeable), Mergeable: true},
+	}
+	provider := &fakeProvider{
+		repoGuards: map[string]ports.SCMGuardResult{prKey(movedRepo, 0): {ETag: "moved"}},
+		openPRs: map[string][]ports.SCMPRObservation{
+			prKey(movedRepo, 0): {{URL: "https://github.com/new-owner/r/pull/3250", Number: 3250, SourceBranch: "ao/p-1/fix", HeadRepo: "new-owner/r", TargetBranch: "main", HeadSHA: "sha1"}},
+		},
+		observations: map[string]ports.SCMObservation{prKey(movedRepo, 3250): movedObs},
+	}
+	lc := &fakeLifecycle{}
+	obs := newTestObserver(store, provider, lc, time.Unix(1, 0).UTC())
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.projects["p"].RepoOriginURL; got != "https://github.com/new-owner/r.git" {
+		t.Fatalf("project origin = %q, want moved origin", got)
+	}
+	if len(store.writes) == 0 {
+		t.Fatal("expected moved-repo PR write")
+	}
+	if got := store.writes[0].pr.Repo; got != "new-owner/r" {
+		t.Fatalf("written repo = %q, want new-owner/r", got)
+	}
+	if got := store.writes[0].pr.SessionID; got != "p-1" {
+		t.Fatalf("session id = %q, want p-1", got)
+	}
+	if len(lc.observed) != 1 {
+		t.Fatalf("lifecycle observations = %d, want 1", len(lc.observed))
+	}
+}
+
 // A PR on a scanned upstream remote whose head lives in some third-party fork
 // (not this project's origin) must never be attributed, even though its branch
 // name matches a session. Scanning extra remotes stays safe.

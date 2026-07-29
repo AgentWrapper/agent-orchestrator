@@ -4003,6 +4003,7 @@ func pathPinManager(executable func() (string, error)) (*Manager, *fakeStore, *f
 	m := New(Deps{
 		Runtime: rt, Agents: fakeAgents{}, Workspace: &fakeWorkspace{}, Store: st,
 		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		DataDir:  filepath.Join(string(os.PathSeparator), "ao", "data"),
 		LookPath: lookPath, Executable: executable,
 		Logger: slog.New(slog.NewTextHandler(logBuf, nil)),
 	})
@@ -4017,7 +4018,7 @@ func pathPinManager(executable func() (string, error)) (*Manager, *fakeStore, *f
 // kills activity tracking).
 func TestSpawnAndRestore_PinHookPATHToDaemonBinary(t *testing.T) {
 	daemonExe := filepath.Join(t.TempDir(), "ao")
-	want := filepath.Dir(daemonExe) + string(os.PathListSeparator) + "/usr/bin"
+	want := strings.Join([]string{filepath.Dir(daemonExe), filepath.Join(string(os.PathSeparator), "ao", "bin"), "/usr/bin"}, string(os.PathListSeparator))
 	executable := func() (string, error) { return daemonExe, nil }
 
 	cases := []struct {
@@ -4094,7 +4095,7 @@ func TestSpawn_ProjectPATHIsPinBase(t *testing.T) {
 	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
 		t.Fatal(err)
 	}
-	want := filepath.Dir(daemonExe) + string(os.PathListSeparator) + "/proj/bin"
+	want := strings.Join([]string{filepath.Dir(daemonExe), filepath.Join(string(os.PathSeparator), "ao", "bin"), "/proj/bin"}, string(os.PathListSeparator))
 	if got := rt.lastCfg.Env["PATH"]; got != want {
 		t.Fatalf("runtime env PATH = %q, want %q", got, want)
 	}
@@ -4123,7 +4124,7 @@ func TestSpawnAndRestore_PrependsResolvedBinaryAndNodeDirsToRuntimePATH(t *testi
 			t.Fatal(err)
 		}
 	}
-	want := strings.Join([]string{binDir, nodeDir, filepath.Dir(daemonExe), "/usr/bin"}, string(os.PathListSeparator))
+	want := strings.Join([]string{binDir, nodeDir, filepath.Dir(daemonExe), filepath.Join(home, ".ao", "bin"), "/usr/bin"}, string(os.PathListSeparator))
 
 	for _, operation := range []string{"spawn", "restore"} {
 		t.Run(operation, func(t *testing.T) {
@@ -4138,6 +4139,7 @@ func TestSpawnAndRestore_PrependsResolvedBinaryAndNodeDirsToRuntimePATH(t *testi
 			m := New(Deps{
 				Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{path: "/ws/mer-1"},
 				Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+				DataDir: filepath.Join(home, ".ao", "data"),
 				LookPath: func(name string) (string, error) {
 					if name == "node" {
 						return "", exec.ErrNotFound
@@ -4182,6 +4184,7 @@ func TestSpawn_DoesNotAddNodeRuntimeForNativeBinary(t *testing.T) {
 	m := New(Deps{
 		Runtime: rt, Agents: singleAgent{agent: launchArgvAgent{argv: []string{agentBin}}}, Workspace: &fakeWorkspace{},
 		Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		DataDir: filepath.Join(string(os.PathSeparator), "ao", "data"),
 		LookPath: func(name string) (string, error) {
 			if name == "node" {
 				nodeLookups++

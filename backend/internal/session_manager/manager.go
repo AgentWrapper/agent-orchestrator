@@ -2647,7 +2647,7 @@ func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issu
 		env[EnvBrowserCapability] = m.browserCapabilities.Token(id)
 	}
 	env[EnvBrowserRuntimeToken] = ""
-	path, err := HookPATH(m.executable, os.Getenv, projectEnv)
+	path, err := HookPATH(m.executable, os.Getenv, env)
 	if err != nil {
 		m.logger.Warn("session PATH not pinned to the daemon binary; `ao hooks` callbacks may resolve to a different ao and activity tracking will stall",
 			"session", id, "error", err)
@@ -2658,12 +2658,14 @@ func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issu
 }
 
 // HookPATH builds the PATH value pinned into a spawned session: the daemon
-// executable's directory prepended to the base PATH (the project's PATH
-// override when set, else the daemon's inherited PATH — matching what the
-// runtime would have exported anyway). An error means the pin cannot be
-// applied: the executable is unresolvable, or is not named "ao", in which case
-// prepending its directory would not change what `ao` resolves to. Exported so
-// the reviewer launcher can pin its pane's PATH the same way.
+// executable's directory first, AO's wrapper bin second, then the base PATH (the
+// project's PATH override when set, else the daemon's inherited PATH — matching
+// what the runtime would have exported anyway). This keeps bare `ao` hook
+// commands tied to the running daemon while letting AO's gh/git wrappers beat
+// Homebrew/system binaries. An error means the daemon pin cannot be applied: the
+// executable is unresolvable, or is not named "ao", in which case prepending its
+// directory would not change what `ao` resolves to. Exported so the reviewer
+// launcher can pin its pane's PATH the same way.
 func HookPATH(executable func() (string, error), getenv func(string) string, projectEnv map[string]string) (string, error) {
 	exe, err := executable()
 	if err != nil {
@@ -2681,10 +2683,39 @@ func HookPATH(executable func() (string, error), getenv func(string) string, pro
 		base = getenv("PATH")
 	}
 	dir := filepath.Dir(exe)
-	if base == "" {
-		return dir, nil
+	parts := []string{dir}
+	if wrapperDir := hookWrapperBinDir(projectEnv, getenv); wrapperDir != "" && !samePath(dir, wrapperDir) {
+		parts = append(parts, wrapperDir)
 	}
-	return dir + string(os.PathListSeparator) + base, nil
+	if base != "" {
+		parts = append(parts, base)
+	}
+	return strings.Join(parts, string(os.PathListSeparator)), nil
+}
+
+func hookWrapperBinDir(env map[string]string, getenv func(string) string) string {
+	if dataDir := strings.TrimSpace(env[EnvDataDir]); dataDir != "" && filepath.Base(filepath.Clean(dataDir)) == "data" {
+		return filepath.Join(filepath.Dir(filepath.Clean(dataDir)), "bin")
+	}
+	if runFile := strings.TrimSpace(getenv("AO_RUN_FILE")); runFile != "" {
+		return filepath.Join(filepath.Dir(filepath.Clean(runFile)), "bin")
+	}
+	if home := strings.TrimSpace(getenv("HOME")); home != "" {
+		return filepath.Join(home, ".ao", "bin")
+	}
+	if home := strings.TrimSpace(getenv("USERPROFILE")); home != "" {
+		return filepath.Join(home, ".ao", "bin")
+	}
+	return ""
+}
+
+func samePath(a, b string) bool {
+	cleanA := filepath.Clean(a)
+	cleanB := filepath.Clean(b)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(cleanA, cleanB)
+	}
+	return cleanA == cleanB
 }
 
 // provisionWorkspace applies the project's per-workspace setup after the

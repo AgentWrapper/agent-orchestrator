@@ -497,14 +497,7 @@ func (o *Observer) discoverSubjects(ctx context.Context) (map[string]*subject, [
 			if !found || !p.ArchivedAt.IsZero() {
 				continue
 			}
-			if p.RepoOriginURL == "" && p.Path != "" {
-				if url := resolveGitOriginURL(p.Path); url != "" {
-					p.RepoOriginURL = url
-					if err := o.store.UpsertProject(ctx, p); err != nil {
-						o.logger.Warn("scm observer: backfill origin URL persist failed", "project", p.ID, "err", err)
-					}
-				}
-			}
+			p = o.refreshProjectOriginURL(ctx, p)
 			projects[sess.ProjectID] = p
 			proj = p
 			if origin, ok := o.provider.ParseRepository(p.RepoOriginURL); ok {
@@ -550,6 +543,34 @@ func (o *Observer) discoverSubjects(ctx context.Context) (map[string]*subject, [
 		}
 	}
 	return out, sessionRepos, nil
+}
+
+func (o *Observer) refreshProjectOriginURL(ctx context.Context, p domain.ProjectRecord) domain.ProjectRecord {
+	if strings.TrimSpace(p.Path) == "" {
+		return p
+	}
+	url := resolveGitOriginURLFunc(p.Path)
+	if strings.TrimSpace(url) == "" {
+		return p
+	}
+	current, currentOK := o.provider.ParseRepository(url)
+	if !currentOK {
+		return p
+	}
+	if persisted, persistedOK := o.provider.ParseRepository(p.RepoOriginURL); persistedOK && sameRepoIdentity(persisted, current) {
+		return p
+	}
+	p.RepoOriginURL = url
+	if err := o.store.UpsertProject(ctx, p); err != nil {
+		o.logger.Warn("scm observer: refresh origin URL persist failed", "project", p.ID, "err", err)
+	}
+	return p
+}
+
+func sameRepoIdentity(a, b ports.SCMRepo) bool {
+	return strings.EqualFold(a.Provider, b.Provider) &&
+		strings.EqualFold(a.Host, b.Host) &&
+		strings.EqualFold(repoFullName(a), repoFullName(b))
 }
 
 // resolveScanRepos returns the deduped set of repos whose open-PR lists should be
@@ -1486,6 +1507,8 @@ func resolveGitOriginURL(path string) string {
 	}
 	return strings.TrimSpace(string(out))
 }
+
+var resolveGitOriginURLFunc = resolveGitOriginURL
 
 // gitRemoteURLs lists the fetch URL of every git remote configured at path. It
 // returns nil on any error (missing repo, no git, no remotes). The observer uses
