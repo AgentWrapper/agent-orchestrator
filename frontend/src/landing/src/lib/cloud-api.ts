@@ -72,6 +72,12 @@ export class CloudAPI {
     this.accessToken = accessToken;
   }
 
+  async me() {
+    return this.request<{ sandboxProvider: "daytona" | "fly" }>(
+      "/api/cloud/v1/me",
+    );
+  }
+
   async repositories() {
     return this.request<{ repositories: CloudRepository[] }>(
       "/api/cloud/v1/repositories",

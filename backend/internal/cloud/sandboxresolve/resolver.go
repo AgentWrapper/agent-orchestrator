@@ -24,6 +24,7 @@ type Resolver struct {
 	defaultAPIURL   string
 	defaultTarget   string
 	defaultProvider cloudsandbox.Provider
+	flyProvider     cloudsandbox.Provider
 }
 
 // New creates a sandbox provider resolver.
@@ -32,6 +33,7 @@ func New(
 	cipher *cloudsecrets.Cipher,
 	defaultAPIURL, defaultTarget string,
 	defaultProvider cloudsandbox.Provider,
+	flyProvider cloudsandbox.Provider,
 ) *Resolver {
 	return &Resolver{
 		store:           store,
@@ -39,6 +41,7 @@ func New(
 		defaultAPIURL:   defaultAPIURL,
 		defaultTarget:   defaultTarget,
 		defaultProvider: defaultProvider,
+		flyProvider:     flyProvider,
 	}
 }
 
@@ -47,6 +50,12 @@ func (r *Resolver) Resolve(
 	ctx context.Context,
 	sandbox clouddomain.Sandbox,
 ) (cloudsandbox.Provider, error) {
+	if sandbox.Provider == "fly" {
+		if r.flyProvider == nil {
+			return nil, fmt.Errorf("fly sandbox provider is not configured")
+		}
+		return r.flyProvider, nil
+	}
 	if sandbox.Provider != "daytona" {
 		return nil, fmt.Errorf("unsupported sandbox provider %q", sandbox.Provider)
 	}

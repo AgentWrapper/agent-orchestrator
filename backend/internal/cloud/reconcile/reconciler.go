@@ -158,24 +158,23 @@ func (r *Reconciler) reconcileSandbox(ctx context.Context, sandbox clouddomain.S
 			if (sandbox.ObservedState == "provisioning" || sandbox.ObservedState == "failed" || staleBootstrap) &&
 				len(r.workerBinary) > 0 {
 				bootstrapper, ok := provider.(cloudsandbox.Bootstrapper)
-				if !ok {
-					return r.fail(ctx, sandbox, errors.New("sandbox provider cannot bootstrap AO worker"))
-				}
-				if err := bootstrapper.BootstrapWorker(
-					ctx,
-					environment.ID,
-					cloudsandbox.WorkerBootstrap{
-						Binary: r.workerBinary,
-						Environment: map[string]string{
-							"AO_CLOUD_PUBLIC_URL": r.publicURL,
-							"AO_CLOUD_SESSION_ID": string(sandbox.SessionID),
-							"AO_WORKSPACE_DIR":    "/workspace/repository",
+				if ok {
+					if err := bootstrapper.BootstrapWorker(
+						ctx,
+						environment.ID,
+						cloudsandbox.WorkerBootstrap{
+							Binary: r.workerBinary,
+							Environment: map[string]string{
+								"AO_CLOUD_PUBLIC_URL": r.publicURL,
+								"AO_CLOUD_SESSION_ID": string(sandbox.SessionID),
+								"AO_WORKSPACE_DIR":    "/workspace/repository",
+							},
 						},
-					},
-				); err != nil {
-					return r.fail(ctx, sandbox, err)
+					); err != nil {
+						return r.fail(ctx, sandbox, err)
+					}
+					return r.observe(ctx, sandbox, string(environment.ID), "bootstrapping", "", 30*time.Second)
 				}
-				return r.observe(ctx, sandbox, string(environment.ID), "bootstrapping", "", 30*time.Second)
 			}
 			state := sandbox.ObservedState
 			if state != "running" {
@@ -214,16 +213,17 @@ func (r *Reconciler) provision(
 	if err != nil {
 		return r.fail(ctx, sandbox, err)
 	}
+	provisioningPayload, _ := json.Marshal(map[string]string{"provider": sandbox.Provider})
 	_, _ = r.store.AppendEvent(
 		ctx,
 		sandbox.AccountID,
 		sandbox.SessionID,
 		"sandbox.provisioning",
-		json.RawMessage(`{"provider":"daytona"}`),
+		provisioningPayload,
 	)
 
-	// The current Daytona tier's largest approved profile is 4 vCPU, 8 GiB RAM
-	// and 10 GiB disk.
+	// Cloud V1 currently caps provider resources at 4 vCPU, 8 GiB RAM, and
+	// 10 GiB persistent disk.
 	environment, err := provider.Create(ctx, cloudsandbox.Spec{
 		Name:            "ao-" + string(sandbox.SessionID),
 		SessionID:       sandbox.SessionID,

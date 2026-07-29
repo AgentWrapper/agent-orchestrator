@@ -82,6 +82,17 @@ type fakeBootstrapProvider struct {
 	bootstrap cloudsandbox.WorkerBootstrap
 }
 
+type fakeBakedWorkerProvider struct {
+	fakeProvider
+}
+
+func (*fakeBakedWorkerProvider) Get(
+	context.Context,
+	cloudsandbox.ID,
+) (cloudsandbox.Environment, error) {
+	return cloudsandbox.Environment{ID: "provider-one", State: "started"}, nil
+}
+
 func (*fakeBootstrapProvider) Get(
 	context.Context,
 	cloudsandbox.ID,
@@ -174,6 +185,35 @@ func TestStaleBootstrapWithoutHeartbeatRetriesWorker(t *testing.T) {
 	}
 	if provider.bootstrap.Environment["AO_WORKSPACE_DIR"] != "/workspace/repository" {
 		t.Fatalf("bootstrap environment = %#v", provider.bootstrap.Environment)
+	}
+	if store.state != "bootstrapping" || store.id != "provider-one" {
+		t.Fatalf("observation = %q %q", store.state, store.id)
+	}
+}
+
+func TestBakedWorkerProviderDoesNotRequireBootstrapCapability(t *testing.T) {
+	store := &fakeStore{claimed: []clouddomain.Sandbox{{
+		SessionID:             "session-one",
+		AccountID:             "account-one",
+		Provider:              "fly",
+		ProviderEnvironmentID: "provider-one",
+		DesiredState:          "running",
+		ObservedState:         "provisioning",
+		CreatedAt:             time.Now(),
+	}}}
+	provider := &fakeBakedWorkerProvider{}
+	reconciler := New(
+		store,
+		fakeResolver{provider: provider},
+		"https://cloud.example",
+		"",
+		time.Second,
+		[]byte("unused-for-baked-provider"),
+		nil,
+	)
+
+	if err := reconciler.reconcileOnce(context.Background()); err != nil {
+		t.Fatalf("reconcileOnce() error = %v", err)
 	}
 	if store.state != "bootstrapping" || store.id != "provider-one" {
 		t.Fatalf("observation = %q %q", store.state, store.id)

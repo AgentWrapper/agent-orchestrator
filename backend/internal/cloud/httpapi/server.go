@@ -54,19 +54,20 @@ type store interface {
 
 // Server serves the authenticated AO Cloud HTTP and WebSocket APIs.
 type Server struct {
-	store         store
-	events        *cloudevents.Service
-	auth          *cloudauth.Verifier
-	workerTokens  *cloudworker.TokenManager
-	secretCipher  *cloudsecrets.Cipher
-	daytonaAPIURL string
-	daytonaTarget string
-	workerHub     *cloudworkerhub.Hub
-	localGitHub   *cloudlocalgh.Client
-	webOrigin     string
-	webOriginHost string
-	log           *slog.Logger
-	handler       http.Handler
+	store           store
+	events          *cloudevents.Service
+	auth            *cloudauth.Verifier
+	workerTokens    *cloudworker.TokenManager
+	secretCipher    *cloudsecrets.Cipher
+	sandboxProvider string
+	daytonaAPIURL   string
+	daytonaTarget   string
+	workerHub       *cloudworkerhub.Hub
+	localGitHub     *cloudlocalgh.Client
+	webOrigin       string
+	webOriginHost   string
+	log             *slog.Logger
+	handler         http.Handler
 }
 
 // New creates an AO Cloud API server.
@@ -76,6 +77,7 @@ func New(
 	auth *cloudauth.Verifier,
 	workerTokens *cloudworker.TokenManager,
 	secretCipher *cloudsecrets.Cipher,
+	sandboxProvider string,
 	daytonaAPIURL, daytonaTarget string,
 	workerHub *cloudworkerhub.Hub,
 	localGitHub *cloudlocalgh.Client,
@@ -86,17 +88,18 @@ func New(
 		log = slog.Default()
 	}
 	server := &Server{
-		store:         store,
-		events:        events,
-		auth:          auth,
-		workerTokens:  workerTokens,
-		secretCipher:  secretCipher,
-		daytonaAPIURL: strings.TrimRight(daytonaAPIURL, "/"),
-		daytonaTarget: daytonaTarget,
-		workerHub:     workerHub,
-		localGitHub:   localGitHub,
-		webOrigin:     strings.TrimRight(webOrigin, "/"),
-		log:           log,
+		store:           store,
+		events:          events,
+		auth:            auth,
+		workerTokens:    workerTokens,
+		secretCipher:    secretCipher,
+		sandboxProvider: sandboxProvider,
+		daytonaAPIURL:   strings.TrimRight(daytonaAPIURL, "/"),
+		daytonaTarget:   daytonaTarget,
+		workerHub:       workerHub,
+		localGitHub:     localGitHub,
+		webOrigin:       strings.TrimRight(webOrigin, "/"),
+		log:             log,
 	}
 	if parsed, err := url.Parse(server.webOrigin); err == nil {
 		server.webOriginHost = parsed.Host
@@ -195,7 +198,8 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 			"email":       principal.Email,
 			"displayName": principal.DisplayName,
 		},
-		"account": account,
+		"account":         account,
+		"sandboxProvider": s.sandboxProvider,
 	})
 }
 
@@ -315,7 +319,8 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		Branch:               strings.TrimSpace(input.Branch),
 		Prompt:               input.Prompt,
 		Resource:             input.Resource,
-		ProviderConnectionID: input.ProviderConnectionID,
+		Provider:             s.sandboxProvider,
+		ProviderConnectionID: providerConnectionID(s.sandboxProvider, input.ProviderConnectionID),
 	})
 	if errors.Is(err, cloudpostgres.ErrProjectNotFound) {
 		writeError(w, r, http.StatusNotFound, "PROJECT_NOT_FOUND", "The cloud project does not exist.")
@@ -334,6 +339,13 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusOK
 	}
 	writeJSON(w, status, result)
+}
+
+func providerConnectionID(provider, connectionID string) string {
+	if provider != "daytona" {
+		return ""
+	}
+	return connectionID
 }
 
 func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {

@@ -220,6 +220,7 @@ type CreateSessionInput struct {
 	Branch               string
 	Prompt               string
 	Resource             clouddomain.ResourceProfile
+	Provider             string
 	ProviderConnectionID string
 }
 
@@ -243,6 +244,9 @@ func (s *Store) CreateSession(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	if input.Provider == "" {
+		input.Provider = "daytona"
+	}
 	payload, err := json.Marshal(input)
 	if err != nil {
 		return CreateSessionResult{}, fmt.Errorf("encode session command: %w", err)
@@ -327,7 +331,7 @@ func (s *Store) CreateSession(
 			session_id, account_id, provider, provider_connection_id,
 			desired_state, observed_state, resource_profile
 		)
-		SELECT $1, $2, 'daytona', connection.id, 'running', 'requested', $3
+		SELECT $1, $2, $5, connection.id, 'running', 'requested', $3
 		FROM (SELECT 1) seed
 		LEFT JOIN ao_provider_connections connection
 			ON connection.account_id = $2
@@ -338,7 +342,7 @@ func (s *Store) CreateSession(
 			COALESCE(provider_connection_id::text, ''),
 			desired_state, observed_state, resource_profile, worker_last_seen_at,
 			last_error, reconcile_after, created_at, updated_at
-	`, session.ID, accountID, resourceJSON, input.ProviderConnectionID).Scan(
+	`, session.ID, accountID, resourceJSON, input.ProviderConnectionID, input.Provider).Scan(
 		&sandbox.SessionID,
 		&sandbox.AccountID,
 		&sandbox.Provider,

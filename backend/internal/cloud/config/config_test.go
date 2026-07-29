@@ -24,6 +24,9 @@ func TestLoadRequiresCloudSecrets(t *testing.T) {
 	if cfg.DaytonaWorkerSnapshot != "daytona-large" {
 		t.Fatalf("DaytonaWorkerSnapshot = %q", cfg.DaytonaWorkerSnapshot)
 	}
+	if cfg.SandboxProvider != "daytona" {
+		t.Fatalf("SandboxProvider = %q", cfg.SandboxProvider)
+	}
 	if cfg.DatabaseDirectURL != cfg.DatabaseURL {
 		t.Fatalf("DatabaseDirectURL = %q, want runtime fallback", cfg.DatabaseDirectURL)
 	}
@@ -44,5 +47,27 @@ func TestLoadRejectsInvalidTarget(t *testing.T) {
 
 	if _, err := Load(); err == nil {
 		t.Fatal("Load() error = nil, want invalid target")
+	}
+}
+
+func TestLoadAcceptsFlyWithoutDaytonaKey(t *testing.T) {
+	t.Setenv("AO_DATABASE_URL", "postgres://example")
+	t.Setenv("AO_SUPABASE_URL", "https://project.supabase.co")
+	t.Setenv("AO_SUPABASE_ANON_KEY", "anon")
+	t.Setenv("AO_SANDBOX_PROVIDER", "fly")
+	t.Setenv("AO_DAYTONA_API_KEY", "")
+	t.Setenv("AO_FLY_API_TOKEN", "fly-token")
+	t.Setenv("AO_FLY_APP", "ao-workers")
+	t.Setenv("AO_FLY_REGION", "bom")
+	t.Setenv("AO_FLY_WORKER_IMAGE", "registry.fly.io/ao-workers:worker")
+	t.Setenv("AO_ENCRYPTION_KEY", "0000000000000000000000000000000000000000000000000000000000000000")
+	t.Setenv("AO_WORKER_SIGNING_KEY", "1111111111111111111111111111111111111111111111111111111111111111")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.SandboxProvider != "fly" || cfg.FlyRegion != "bom" {
+		t.Fatalf("Fly config = %#v", cfg)
 	}
 }

@@ -10,7 +10,7 @@ loopback daemon, SQLite, worktrees, and Electron lifecycle unchanged.
 Vercel web app
     → Render ao-cloud
     → Supabase Auth + PostgreSQL
-    → Daytona sandbox per session
+    → Fly Machine or Daytona sandbox per session
     → ao-worker + Claude Code/Codex/Cursor
 ```
 
@@ -21,7 +21,7 @@ Prerequisites:
 - Go, Node.js, npm, PostgreSQL 17, Docker
 - authenticated `gh` CLI for the development Git credential broker
 - Supabase project with Email Auth enabled
-- Daytona API key
+- Fly organization/app token or Daytona API key
 
 Create local databases once:
 
@@ -39,7 +39,8 @@ openssl rand -hex 32
 openssl rand -hex 32
 ```
 
-Build the Linux worker used for local-to-Daytona validation:
+Build the Linux worker used for local-to-Daytona validation (Fly runs the
+published worker image directly):
 
 ```bash
 npm run cloud:build-worker
@@ -121,6 +122,24 @@ set `AO_DAYTONA_WORKER_SNAPSHOT` to that snapshot. Both local development and
 the Render control-plane image set `AO_WORKER_BINARY_PATH`; the reconciler
 uploads that versioned binary into the sandbox so worker and control-plane
 protocol changes deploy together.
+
+## Fly Machines
+
+Set `AO_SANDBOX_PROVIDER=fly` to provision one private Fly Machine and encrypted
+10-GiB volume per session. The control plane needs:
+
+```text
+AO_FLY_API_URL=https://api.machines.dev/v1
+AO_FLY_API_TOKEN=<org- or app-scoped token>
+AO_FLY_APP=<worker app>
+AO_FLY_REGION=<region>
+AO_FLY_WORKER_IMAGE=registry.fly.io/<worker app>:<tag>
+```
+
+Publish `ao-cloud/docker/worker.Dockerfile` to the Fly app's private registry.
+The image entrypoint prepares the mounted workspace as root, then drops to the
+unprivileged `ao` user before starting the worker. Pausing suspends the Machine
+so the one-time bootstrap credential is never reused.
 
 ## Tests
 

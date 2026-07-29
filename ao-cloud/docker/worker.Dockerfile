@@ -9,7 +9,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o
 FROM ubuntu:24.04
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl git jq openssh-client \
+    && apt-get install -y --no-install-recommends ca-certificates curl git gosu jq openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --create-home --uid 10001 --shell /bin/bash ao \
@@ -33,8 +33,10 @@ RUN curl -fsSL https://claude.ai/install.sh | bash \
 
 USER root
 COPY --from=build /out/ao-worker /usr/local/bin/ao-worker
-RUN ln -s /usr/local/bin/ao-worker /usr/local/bin/ao
+COPY ao-cloud/docker/worker-entrypoint.sh /usr/local/bin/worker-entrypoint
+RUN chmod 0755 /usr/local/bin/worker-entrypoint \
+    && ln -s /usr/local/bin/ao-worker /usr/local/bin/ao
 
-USER ao
+USER root
 WORKDIR /workspace
-ENTRYPOINT ["/usr/local/bin/ao-worker"]
+ENTRYPOINT ["/usr/local/bin/worker-entrypoint"]

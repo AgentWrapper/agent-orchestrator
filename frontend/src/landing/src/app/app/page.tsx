@@ -122,6 +122,9 @@ export default function CloudAppPage() {
   const [sessions, setSessions] = useState<CloudSession[]>([]);
   const [repositories, setRepositories] = useState<CloudRepository[]>([]);
   const [connections, setConnections] = useState<ProviderConnection[]>([]);
+  const [sandboxProvider, setSandboxProvider] = useState<"daytona" | "fly">(
+    "daytona",
+  );
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
     null,
   );
@@ -137,17 +140,24 @@ export default function CloudAppPage() {
   const refresh = useCallback(async () => {
     if (!api) return;
     try {
-      const [projectData, sessionData, repositoryData, connectionData] =
-        await Promise.all([
-          api.projects(),
-          api.sessions(),
-          api.repositories(),
-          api.providerConnections(),
-        ]);
+      const [
+        projectData,
+        sessionData,
+        repositoryData,
+        connectionData,
+        runtimeData,
+      ] = await Promise.all([
+        api.projects(),
+        api.sessions(),
+        api.repositories(),
+        api.providerConnections(),
+        api.me(),
+      ]);
       setProjects(projectData.projects);
       setSessions(sessionData.sessions);
       setRepositories(repositoryData.repositories);
       setConnections(connectionData.providerConnections);
+      setSandboxProvider(runtimeData.sandboxProvider);
       setError(null);
     } catch (refreshError) {
       setError(
@@ -469,7 +479,12 @@ export default function CloudAppPage() {
 
           <div className="min-h-0 flex-1">
             {view === "settings" ? (
-              <CloudSettings api={api} connections={connections} run={run} />
+              <CloudSettings
+                api={api}
+                connections={connections}
+                sandboxProvider={sandboxProvider}
+                run={run}
+              />
             ) : view === "session" && selectedSession ? (
               <CloudTerminal api={api} sessionId={selectedSession.id} />
             ) : (
@@ -663,10 +678,12 @@ function SessionBoard({
 function CloudSettings({
   api,
   connections,
+  sandboxProvider,
   run,
 }: {
   api: CloudAPI;
   connections: ProviderConnection[];
+  sandboxProvider: "daytona" | "fly";
   run: (operation: () => Promise<unknown>) => Promise<void>;
 }) {
   const [apiKey, setAPIKey] = useState("");
@@ -717,62 +734,84 @@ function CloudSettings({
           </div>
         </section>
 
-        <section>
-          <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-white/35">
-            Sandbox provider
-          </p>
-          <h2 className="mt-2 text-base">Daytona</h2>
-          <p className="mt-2 text-sm leading-6 text-white/45">
-            Credentials are validated by AO Cloud, encrypted outside session
-            environments, and never returned to this browser.
-          </p>
-          {daytonaConnections.map((connection) => (
-            <div
-              key={connection.id}
-              className="mt-4 flex items-center border border-white/10 bg-[#15171b] px-3 py-2 text-sm"
-            >
-              <span>{connection.label}</span>
-              <span className="ml-auto font-mono text-[10px] uppercase text-[#74b98a]">
-                {connection.validationState}
+        {sandboxProvider === "fly" ? (
+          <section>
+            <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-white/35">
+              Sandbox provider
+            </p>
+            <h2 className="mt-2 text-base">Fly Machines</h2>
+            <p className="mt-2 text-sm leading-6 text-white/45">
+              AO Cloud provisions one isolated Fly Machine and persistent volume
+              per session. Infrastructure credentials stay in the hosted control
+              plane and are never returned to this browser.
+            </p>
+            <div className="mt-4 flex items-center rounded-lg border border-white/10 bg-[#15171b] px-3 py-2 text-sm">
+              <span>Deployment-managed connection</span>
+              <span className="ml-auto font-mono text-[10px] uppercase text-[#9ad97a]">
+                Active
               </span>
             </div>
-          ))}
-          <form
-            className="mt-5 space-y-3"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void run(() =>
-                api.connectDaytona({
-                  label: "personal",
-                  apiKey,
-                  apiUrl: "https://app.daytona.io/api",
-                  target,
-                }),
-              ).then(() => setAPIKey(""));
-            }}
-          >
-            <input
-              className={field}
-              type="password"
-              value={apiKey}
-              onChange={(event) => setAPIKey(event.target.value)}
-              placeholder="Daytona API key"
-              autoComplete="off"
-              required
-            />
-            <select
-              className={field}
-              value={target}
-              onChange={(event) => setTarget(event.target.value as "us" | "eu")}
+          </section>
+        ) : (
+          <section>
+            <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-white/35">
+              Sandbox provider
+            </p>
+            <h2 className="mt-2 text-base">Daytona</h2>
+            <p className="mt-2 text-sm leading-6 text-white/45">
+              Credentials are validated by AO Cloud, encrypted outside session
+              environments, and never returned to this browser.
+            </p>
+            {daytonaConnections.map((connection) => (
+              <div
+                key={connection.id}
+                className="mt-4 flex items-center border border-white/10 bg-[#15171b] px-3 py-2 text-sm"
+              >
+                <span>{connection.label}</span>
+                <span className="ml-auto font-mono text-[10px] uppercase text-[#74b98a]">
+                  {connection.validationState}
+                </span>
+              </div>
+            ))}
+            <form
+              className="mt-5 space-y-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void run(() =>
+                  api.connectDaytona({
+                    label: "personal",
+                    apiKey,
+                    apiUrl: "https://app.daytona.io/api",
+                    target,
+                  }),
+                ).then(() => setAPIKey(""));
+              }}
             >
-              <option value="us">United States</option>
-              <option value="eu">Europe</option>
-            </select>
-            <button className={primaryButton} type="submit">
-              Save and validate
-            </button>
-          </form>
-        </section>
+              <input
+                className={field}
+                type="password"
+                value={apiKey}
+                onChange={(event) => setAPIKey(event.target.value)}
+                placeholder="Daytona API key"
+                autoComplete="off"
+                required
+              />
+              <select
+                className={field}
+                value={target}
+                onChange={(event) =>
+                  setTarget(event.target.value as "us" | "eu")
+                }
+              >
+                <option value="us">United States</option>
+                <option value="eu">Europe</option>
+              </select>
+              <button className={primaryButton} type="submit">
+                Save and validate
+              </button>
+            </form>
+          </section>
+        )}
       </div>
     </div>
   );

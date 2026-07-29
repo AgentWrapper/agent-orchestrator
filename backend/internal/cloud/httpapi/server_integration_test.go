@@ -59,6 +59,7 @@ func integrationAPI(t *testing.T) (*httptest.Server, *cloudpostgres.Store) {
 		cloudauth.NewVerifier(authServer.URL, "anon", authServer.Client()),
 		cloudworker.NewTokenManager([]byte("01234567890123456789012345678901")),
 		secretCipher,
+		"daytona",
 		"https://app.daytona.io/api",
 		"us",
 		cloudworkerhub.New(),

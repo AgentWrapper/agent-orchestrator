@@ -21,10 +21,16 @@ type Config struct {
 	DatabaseDirectURL     string
 	SupabaseURL           string
 	SupabaseAnonKey       string
+	SandboxProvider       string
 	DaytonaAPIURL         string
 	DaytonaAPIKey         string
 	DaytonaTarget         string
 	DaytonaWorkerSnapshot string
+	FlyAPIURL             string
+	FlyAPIToken           string
+	FlyApp                string
+	FlyRegion             string
+	FlyWorkerImage        string
 	EncryptionKey         []byte
 	WorkerSigningKey      []byte
 	ReconcileInterval     time.Duration
@@ -53,10 +59,16 @@ func Load() (Config, error) {
 		DatabaseDirectURL:     strings.TrimSpace(os.Getenv("AO_DATABASE_DIRECT_URL")),
 		SupabaseURL:           strings.TrimRight(os.Getenv("AO_SUPABASE_URL"), "/"),
 		SupabaseAnonKey:       os.Getenv("AO_SUPABASE_ANON_KEY"),
+		SandboxProvider:       envOr("AO_SANDBOX_PROVIDER", "daytona"),
 		DaytonaAPIURL:         strings.TrimRight(envOr("AO_DAYTONA_API_URL", "https://app.daytona.io/api"), "/"),
 		DaytonaAPIKey:         os.Getenv("AO_DAYTONA_API_KEY"),
 		DaytonaTarget:         envOr("AO_DAYTONA_TARGET", "us"),
 		DaytonaWorkerSnapshot: envOr("AO_DAYTONA_WORKER_SNAPSHOT", "daytona-large"),
+		FlyAPIURL:             strings.TrimRight(envOr("AO_FLY_API_URL", "https://api.machines.dev/v1"), "/"),
+		FlyAPIToken:           strings.TrimSpace(os.Getenv("AO_FLY_API_TOKEN")),
+		FlyApp:                strings.TrimSpace(os.Getenv("AO_FLY_APP")),
+		FlyRegion:             envOr("AO_FLY_REGION", "iad"),
+		FlyWorkerImage:        strings.TrimSpace(os.Getenv("AO_FLY_WORKER_IMAGE")),
 		EncryptionKey:         encryptionKey,
 		WorkerSigningKey:      workerSigningKey,
 		ReconcileInterval:     2 * time.Second,
@@ -81,7 +93,6 @@ func (c Config) Validate() error {
 		"AO_DATABASE_URL":      c.DatabaseURL,
 		"AO_SUPABASE_URL":      c.SupabaseURL,
 		"AO_SUPABASE_ANON_KEY": c.SupabaseAnonKey,
-		"AO_DAYTONA_API_KEY":   c.DaytonaAPIKey,
 	} {
 		if strings.TrimSpace(value) == "" {
 			missing = append(missing, name)
@@ -96,10 +107,32 @@ func (c Config) Validate() error {
 	if len(c.WorkerSigningKey) < 32 {
 		return errors.New("AO_WORKER_SIGNING_KEY must decode to at least 32 bytes")
 	}
-	switch c.DaytonaTarget {
-	case "us", "eu":
+	switch c.SandboxProvider {
+	case "daytona":
+		if strings.TrimSpace(c.DaytonaAPIKey) == "" {
+			return errors.New("AO_DAYTONA_API_KEY is required when AO_SANDBOX_PROVIDER=daytona")
+		}
+		switch c.DaytonaTarget {
+		case "us", "eu":
+		default:
+			return fmt.Errorf("AO_DAYTONA_TARGET must be us or eu, got %q", c.DaytonaTarget)
+		}
+	case "fly":
+		missingFly := make([]string, 0, 3)
+		for name, value := range map[string]string{
+			"AO_FLY_API_TOKEN":    c.FlyAPIToken,
+			"AO_FLY_APP":          c.FlyApp,
+			"AO_FLY_WORKER_IMAGE": c.FlyWorkerImage,
+		} {
+			if strings.TrimSpace(value) == "" {
+				missingFly = append(missingFly, name)
+			}
+		}
+		if len(missingFly) > 0 {
+			return fmt.Errorf("missing required Fly configuration: %s", strings.Join(missingFly, ", "))
+		}
 	default:
-		return fmt.Errorf("AO_DAYTONA_TARGET must be us or eu, got %q", c.DaytonaTarget)
+		return fmt.Errorf("AO_SANDBOX_PROVIDER must be daytona or fly, got %q", c.SandboxProvider)
 	}
 	return nil
 }

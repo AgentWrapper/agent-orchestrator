@@ -13,6 +13,8 @@ services:
         sync: false
       - key: AO_WEB_PUBLIC_URL
         sync: false
+      - key: AO_SANDBOX_PROVIDER
+        value: fly
       - key: AO_DATABASE_URL
         sync: false
       - key: AO_DATABASE_DIRECT_URL
@@ -28,6 +30,16 @@ services:
       - key: AO_DAYTONA_TARGET
         value: us
       - key: AO_DAYTONA_WORKER_SNAPSHOT
+        sync: false
+      - key: AO_FLY_API_URL
+        value: https://api.machines.dev/v1
+      - key: AO_FLY_API_TOKEN
+        sync: false
+      - key: AO_FLY_APP
+        sync: false
+      - key: AO_FLY_REGION
+        sync: false
+      - key: AO_FLY_WORKER_IMAGE
         sync: false
       - key: AO_WORKER_BINARY_PATH
         value: /usr/local/bin/ao-worker
