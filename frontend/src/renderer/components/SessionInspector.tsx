@@ -35,6 +35,7 @@ import { cn } from "../lib/utils";
 import { PRSummaryMeta, PRSummaryParts } from "./PRSummaryDisplay";
 import { StatusPill } from "./StatusPill";
 import { SessionTerminationDialog } from "./SessionTerminationDialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Switch } from "./ui/switch";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
@@ -692,6 +693,14 @@ function scmTimelineStates(session: WorkspaceSession): ScmTimelineState[] {
 	return states;
 }
 
+/** Reviewer harnesses AO ships. A separate vocabulary from worker agents: a
+    reviewer-only tool must not become a valid worker, so this is not the agents
+    list. Typed from the generated schema, so the spec stays the source. */
+type ReviewerHarness = NonNullable<components["schemas"]["ControllersTriggerReviewRequest"]["harness"]>;
+const REVIEWER_HARNESSES: ReviewerHarness[] = ["claude-code", "codex", "opencode"];
+// Radix Select has no empty-string value, so "use the project's" needs a token.
+const PROJECT_REVIEWER = "__project__";
+
 function ReviewsView({
 	session,
 	onOpenReviewerTerminal,
@@ -731,10 +740,16 @@ function ReviewsView({
 			return projectConfig(data?.project);
 		},
 	});
+	// Empty means "whatever the project configured"; picking one overrides this
+	// pass only, so the choice never silently edits project config.
+	const [reviewerOverride, setReviewerOverride] = useState<ReviewerHarness | "">("");
 	const triggerReview = useMutation({
 		mutationFn: async () => {
+			// No override sends no body at all, leaving the default path on the wire
+			// exactly as it was.
 			const { data, error, response } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/trigger", {
 				params: { path: { sessionId: session.id } },
+				...(reviewerOverride ? { body: { harness: reviewerOverride } } : {}),
 			});
 			if (error) throw new Error(apiErrorMessage(error, "Unable to start review"));
 			return { data, reused: response?.status === 200 };
@@ -814,6 +829,8 @@ function ReviewsView({
 					reviewerHandleId={reviewsQuery.data?.reviewerHandleId ?? ""}
 					reviewStates={reviewStates}
 					notice={reviewNotice}
+					reviewerOverride={reviewerOverride}
+					onReviewerOverrideChange={setReviewerOverride}
 					session={session}
 				/>
 			</Section>
@@ -985,6 +1002,8 @@ function ReviewPanel({
 	isCancelling,
 	error,
 	notice,
+	reviewerOverride,
+	onReviewerOverrideChange,
 	onTrigger,
 	onCancel,
 	onOpenTerminal,
@@ -998,6 +1017,8 @@ function ReviewPanel({
 	isCancelling: boolean;
 	error: unknown;
 	notice: string | null;
+	reviewerOverride: ReviewerHarness | "";
+	onReviewerOverrideChange: (next: ReviewerHarness | "") => void;
 	onTrigger: () => void;
 	onCancel: () => void;
 	onOpenTerminal?: OpenReviewerTerminal;
@@ -1042,10 +1063,29 @@ function ReviewPanel({
 					{notice}
 				</p>
 			) : null}
-			<p className={cn(inspectorEmptyClass, "inline-flex min-w-0 items-center gap-1.5")}>
-				<AgentAvatar className="size-icon-sm" decorative provider={harness} />
-				<span className="truncate font-mono font-medium text-foreground">{harness}</span>
-			</p>
+			<div className="flex min-w-0 items-center gap-2">
+				<p className={cn(inspectorEmptyClass, "inline-flex min-w-0 flex-1 items-center gap-1.5")}>
+					<AgentAvatar className="size-icon-sm" decorative provider={harness} />
+					<span className="truncate font-mono font-medium text-foreground">{harness}</span>
+				</p>
+				<Select
+					disabled={reviewRunning}
+					onValueChange={(next) => onReviewerOverrideChange(next === PROJECT_REVIEWER ? "" : (next as ReviewerHarness))}
+					value={reviewerOverride === "" ? PROJECT_REVIEWER : reviewerOverride}
+				>
+					<SelectTrigger aria-label="Reviewer agent" className="h-control-md w-auto shrink-0 gap-1.5 text-2xs">
+						<SelectValue />
+					</SelectTrigger>
+					<SelectContent>
+						<SelectItem value={PROJECT_REVIEWER}>Project default</SelectItem>
+						{REVIEWER_HARNESSES.map((option) => (
+							<SelectItem key={option} value={option}>
+								{option}
+							</SelectItem>
+						))}
+					</SelectContent>
+				</Select>
+			</div>
 			<div className="flex flex-col divide-y divide-border">
 				{openReviewStates.length === 0 ? (
 					<p className={cn(inspectorEmptyClass, "py-1")}>No open pull requests to review.</p>

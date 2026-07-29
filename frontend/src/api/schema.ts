@@ -900,6 +900,10 @@ export interface components {
             data: string;
             mimeType?: string;
         };
+        ControllersTriggerReviewRequest: {
+            /** @enum {string} */
+            harness?: "claude-code" | "codex" | "opencode";
+        };
         DegradedProject: {
             id: string;
             /** @enum {string} */
@@ -3875,7 +3879,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ControllersTriggerReviewRequest"];
+            };
+        };
         responses: {
             /** @description OK */
             200: {

@@ -618,6 +618,9 @@ func reviewOperations() []operation {
 			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/reviews/trigger", id: "triggerReview", tag: "reviews",
 			summary:    "Trigger a code review of a worker's PR",
 			pathParams: []any{controllers.SessionIDParam{}},
+			// Optional: an empty body runs under the project's configured reviewer.
+			reqBody:         controllers.TriggerReviewRequest{},
+			optionalReqBody: true,
 			resps: []respUnit{
 				{http.StatusOK, controllers.TriggerReviewResponse{}},
 				{http.StatusCreated, controllers.TriggerReviewResponse{}},

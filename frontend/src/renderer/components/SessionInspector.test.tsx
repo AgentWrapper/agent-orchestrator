@@ -879,6 +879,23 @@ describe("SessionInspector reviews tab", () => {
 		});
 	});
 
+	it("sends the chosen reviewer as a one-off override", async () => {
+		mockCommonGets([], "reviewer-pane", [reviewState(3, "needs_review", "sha-1")]);
+		postMock.mockResolvedValue({ data: { reviewerHandleId: "", reviews: [] }, response: { status: 201 } });
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsTab();
+
+		await userEvent.click(await screen.findByRole("combobox", { name: "Reviewer agent" }));
+		await userEvent.click(await screen.findByRole("option", { name: "opencode" }));
+		await userEvent.click(screen.getByRole("button", { name: "Run review" }));
+
+		expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/reviews/trigger", {
+			params: { path: { sessionId: "sess-1" } },
+			body: { harness: "opencode" },
+		});
+	});
+
 	it("hides the previous verdict after the current head review completes", async () => {
 		const current = {
 			...reviewState(3, "up_to_date", "sha-current"),

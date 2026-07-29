@@ -1863,6 +1863,11 @@ paths:
         schema:
           description: Session identifier, e.g. project-1.
           type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControllersTriggerReviewRequest'
       responses:
         "200":
           content:
@@ -2495,6 +2500,15 @@ components:
           type: string
       required:
       - data
+      type: object
+    ControllersTriggerReviewRequest:
+      properties:
+        harness:
+          enum:
+          - claude-code
+          - codex
+          - opencode
+          type: string
       type: object
     DegradedProject:
       properties:

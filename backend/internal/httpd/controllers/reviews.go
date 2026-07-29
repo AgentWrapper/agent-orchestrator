@@ -99,7 +99,13 @@ func (c *ReviewsController) trigger(w http.ResponseWriter, r *http.Request) {
 		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/reviews/trigger")
 		return
 	}
-	res, err := c.Svc.Trigger(r.Context(), sessionID(r))
+	// Body is optional: omitting it runs under the project's configured reviewer.
+	var in TriggerReviewRequest
+	if err := decodeJSON(r, &in); err != nil && !isEmptyBody(err) {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	res, err := c.Svc.Trigger(r.Context(), sessionID(r), in.Harness)
 	if err != nil {
 		writeReviewError(w, r, err)
 		return

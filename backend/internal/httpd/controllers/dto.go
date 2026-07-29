@@ -731,6 +731,13 @@ type MergePRResponse struct {
 	Method   string `json:"method"`
 }
 
+// TriggerReviewRequest is the optional body of the review trigger routes. An
+// empty harness keeps the project's configured reviewer; setting one overrides
+// it for this pass only, without editing project config.
+type TriggerReviewRequest struct {
+	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,opencode"`
+}
+
 // ResolveCommentsRequest is the optional body of POST /api/v1/prs/{id}/resolve-comments.
 type ResolveCommentsRequest struct {
 	CommentIDs []string `json:"commentIds,omitempty"`
