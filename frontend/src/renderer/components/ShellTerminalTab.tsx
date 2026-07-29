@@ -133,8 +133,27 @@ export function ShellTerminalTab({ shell, isActive, onSelect, onClose, onRename 
 			<button
 				aria-label={`Close terminal ${shell.title}`}
 				className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-passive opacity-0 transition-[background,color,opacity] group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
-				onClick={(event) => {
+				onMouseDown={(event) => {
+					// Close on mousedown so a focused rename input cannot blur and
+					// re-render before click — that swallows the gesture, the pane
+					// falls back to the session tab, and the shell tab stays open.
+					if (event.button !== 0) return;
+					event.preventDefault();
 					event.stopPropagation();
+					lastClickAtRef.current = 0;
+					onClose();
+				}}
+				onClick={(event) => {
+					// Pointer already closed on mousedown; keep click from selecting
+					// the tab or starting a rename via the container handlers.
+					event.preventDefault();
+					event.stopPropagation();
+				}}
+				onKeyDown={(event) => {
+					if (event.key !== "Enter" && event.key !== " ") return;
+					event.preventDefault();
+					event.stopPropagation();
+					lastClickAtRef.current = 0;
 					onClose();
 				}}
 				onDoubleClick={(event) => event.stopPropagation()}

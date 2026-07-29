@@ -123,9 +123,13 @@ vi.mock("../hooks/useDaemonStatus", () => ({
 
 // The shell layout opens standalone terminals; this suite only covers the
 // shortcut subscriptions, so the mutation is stubbed rather than driven.
-vi.mock("../hooks/useShellTerminals", () => ({
-	useOpenShellTerminal: () => ({ mutate: shellMocks.openShellTerminal }),
-}));
+vi.mock("../hooks/useShellTerminals", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../hooks/useShellTerminals")>();
+	return {
+		...actual,
+		useOpenShellTerminal: () => ({ mutate: shellMocks.openShellTerminal }),
+	};
+});
 
 vi.mock("../hooks/useAgentsQuery", () => ({
 	agentsQueryKey: ["agents"],

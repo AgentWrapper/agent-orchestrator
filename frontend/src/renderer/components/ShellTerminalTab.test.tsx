@@ -82,6 +82,28 @@ describe("ShellTerminalTab rename", () => {
 		fireEvent.click(screen.getByRole("button", { name: "ao" }));
 		expect(onSelect).toHaveBeenCalled();
 	});
+
+	it("closes on a single click without selecting or entering rename", () => {
+		const { onSelect, onClose, onRename } = renderTab();
+		const close = screen.getByRole("button", { name: "Close terminal ao" });
+		fireEvent.mouseDown(close, { button: 0 });
+		expect(onClose).toHaveBeenCalledOnce();
+		fireEvent.click(close);
+		expect(onClose).toHaveBeenCalledOnce();
+		expect(onSelect).not.toHaveBeenCalled();
+		expect(onRename).not.toHaveBeenCalled();
+		expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+	});
+
+	it("closes on a single click even while the tab is being renamed", () => {
+		const { onClose } = renderTab();
+		fireEvent.doubleClick(screen.getByRole("button", { name: "ao" }));
+		expect(screen.getByRole("textbox", { name: /rename terminal/i })).toBeInTheDocument();
+
+		const close = screen.getByRole("button", { name: "Close terminal ao" });
+		fireEvent.mouseDown(close, { button: 0 });
+		expect(onClose).toHaveBeenCalledOnce();
+	});
 });
 
 describe("ShellTerminalTab rename gesture per platform", () => {

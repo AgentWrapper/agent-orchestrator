@@ -432,7 +432,19 @@ function SessionPaneTab({ label, isActive, onSelect, onClose }: SessionPaneTabPr
 				<button
 					aria-label={`Close session tab ${label}`}
 					className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-passive opacity-0 transition-[background,color,opacity] group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-interactive-hover hover:text-foreground focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+					onMouseDown={(event) => {
+						if (event.button !== 0) return;
+						event.preventDefault();
+						event.stopPropagation();
+						onClose();
+					}}
 					onClick={(event) => {
+						event.preventDefault();
+						event.stopPropagation();
+					}}
+					onKeyDown={(event) => {
+						if (event.key !== "Enter" && event.key !== " ") return;
+						event.preventDefault();
 						event.stopPropagation();
 						onClose();
 					}}

@@ -1,6 +1,6 @@
 import { createFileRoute, Outlet, useMatchRoute, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { isCancelledError, useQueryClient } from "@tanstack/react-query";
-import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useRef, useState, startTransition } from "react";
 import { CommandPalette } from "../components/CommandPalette";
 import { CenterPanelShell } from "../components/CenterPanelShell";
 import { DaemonFailureBanner } from "../components/DaemonFailureBanner";
@@ -16,7 +16,7 @@ import { TitlebarNav } from "../components/TitlebarNav";
 import { WindowTitlebar } from "../components/WindowTitlebar";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
-import { useOpenShellTerminal } from "../hooks/useShellTerminals";
+import { beginOpenShellTerminalActivation, isLatestOpenShellTerminalActivation, useOpenShellTerminal } from "../hooks/useShellTerminals";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorCode, apiErrorMessage, hasTrustedApiBaseUrl } from "../lib/api-client";
@@ -559,17 +559,22 @@ function ShellLayout() {
 	useEffect(() => {
 		if (handledShellNonceRef.current === newShellTerminalNonce) return;
 		handledShellNonceRef.current = newShellTerminalNonce;
+		const activationGeneration = beginOpenShellTerminalActivation();
 		openShellTerminal.mutate(
 			{
 				projectId: tabOwnerSession?.workspaceId ?? scopedProjectId,
 				sessionId: tabOwnerSessionId ?? routeParams.sessionId,
+				activationGeneration,
 			},
 			{
-				onSuccess: (shell) => {
-					setActiveShellTerminal(shell.handleId);
-					if (!routeParams.sessionId) {
-						void navigate({ to: "/terminals" });
-					}
+				onSuccess: (shell, variables) => {
+					if (!isLatestOpenShellTerminalActivation(variables.activationGeneration)) return;
+					startTransition(() => {
+						setActiveShellTerminal(shell.handleId);
+						if (!routeParams.sessionId) {
+							void navigate({ to: "/terminals" });
+						}
+					});
 				},
 			},
 		);
