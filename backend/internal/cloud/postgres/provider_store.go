@@ -126,5 +126,44 @@ func (s *Store) ProviderConnectionSecret(
 	return encryptedSecret, nonce, config, label, nil
 }
 
+// ProviderConnectionSecretByProvider returns encrypted credentials for an
+// account-owned provider connection identified by provider and label.
+func (s *Store) ProviderConnectionSecretByProvider(
+	ctx context.Context,
+	accountID clouddomain.AccountID,
+	provider, label string,
+) (encryptedSecret, nonce []byte, config json.RawMessage, err error) {
+	err = s.pool.QueryRow(ctx, `
+		SELECT encrypted_secret, secret_nonce, config
+		FROM ao_provider_connections
+		WHERE account_id = $1
+			AND provider = $2
+			AND label = $3
+			AND validation_state = 'valid'
+	`, accountID, provider, label).Scan(&encryptedSecret, &nonce, &config)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil, nil, ErrProviderConnectionNotFound
+	}
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("load provider connection by provider: %w", err)
+	}
+	return encryptedSecret, nonce, config, nil
+}
+
+// DeleteProviderConnection deletes one account-owned provider connection.
+func (s *Store) DeleteProviderConnection(
+	ctx context.Context,
+	accountID clouddomain.AccountID,
+	provider, label string,
+) error {
+	if _, err := s.pool.Exec(ctx, `
+		DELETE FROM ao_provider_connections
+		WHERE account_id = $1 AND provider = $2 AND label = $3
+	`, accountID, provider, label); err != nil {
+		return fmt.Errorf("delete provider connection: %w", err)
+	}
+	return nil
+}
+
 // ErrProviderConnectionNotFound indicates that a provider connection does not exist.
 var ErrProviderConnectionNotFound = errors.New("cloud provider connection not found")

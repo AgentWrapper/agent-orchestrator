@@ -3,6 +3,7 @@
 import {
   Cloud,
   FolderGit2,
+  KeyRound,
   LoaderCircle,
   LogOut,
   Pause,
@@ -18,11 +19,18 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   CloudAPI,
+  type AgentCredentialType,
+  type CloudAgent,
   type CloudProject,
   type CloudRepository,
   type CloudSession,
   type ProviderConnection,
 } from "@/lib/cloud-api";
+import {
+  CLOUD_AGENTS,
+  connectedAgentIDs,
+  defaultConnectedAgent,
+} from "@/lib/cloud-agent-connections";
 import { useAuth } from "../auth/AuthProvider";
 import { CloudTerminal } from "./CloudTerminal";
 
@@ -103,6 +111,10 @@ export default function CloudAppPage() {
 
   const selectedProject = projects.find(({ id }) => id === selectedProjectId);
   const selectedSession = sessions.find(({ id }) => id === selectedSessionId);
+  const daytonaConnections = connections.filter(
+    ({ provider }) => provider === "daytona",
+  );
+  const defaultAgent = defaultConnectedAgent(connections);
   const visibleSessions = selectedProjectId
     ? sessions.filter(({ projectId }) => projectId === selectedProjectId)
     : sessions;
@@ -289,24 +301,26 @@ export default function CloudAppPage() {
                   setView("session");
                 }}
                 onCreateOrchestrator={
-                  selectedProjectId
+                  selectedProjectId && defaultAgent
                     ? () =>
                         void run(() =>
                           api.createSession(
                             {
                               projectId: selectedProjectId,
                               kind: "orchestrator",
-                              harness: "claude-code",
+                              harness: defaultAgent,
                               displayName: "Orchestrator",
                               prompt:
                                 "Coordinate this project and wait for instructions.",
-                              providerConnectionId: connections[0]?.id,
+                              providerConnectionId: daytonaConnections[0]?.id,
                             },
                             crypto.randomUUID(),
                           ),
                         )
                     : undefined
                 }
+                agentAvailable={Boolean(defaultAgent)}
+                onOpenSettings={() => setView("settings")}
               />
             )}
           </div>
@@ -327,7 +341,12 @@ export default function CloudAppPage() {
       {showSessionForm && selectedProjectId && (
         <SessionForm
           projectId={selectedProjectId}
-          providerConnectionId={connections[0]?.id}
+          providerConnectionId={daytonaConnections[0]?.id}
+          connections={connections}
+          onOpenSettings={() => {
+            setShowSessionForm(false);
+            setView("settings");
+          }}
           onClose={() => setShowSessionForm(false)}
           onSubmit={(input) =>
             run(() => api.createSession(input, crypto.randomUUID())).then(() =>
@@ -345,11 +364,15 @@ function SessionBoard({
   projects,
   onSelect,
   onCreateOrchestrator,
+  agentAvailable,
+  onOpenSettings,
 }: {
   sessions: CloudSession[];
   projects: CloudProject[];
   onSelect: (session: CloudSession) => void;
   onCreateOrchestrator?: () => void;
+  agentAvailable: boolean;
+  onOpenSettings: () => void;
 }) {
   const columns = [
     [
@@ -388,7 +411,7 @@ function SessionBoard({
             environment and it can create isolated workers with normal AO
             commands.
           </p>
-          {onCreateOrchestrator && (
+          {onCreateOrchestrator ? (
             <button
               className={`${primaryButton} mt-5`}
               onClick={onCreateOrchestrator}
@@ -396,7 +419,12 @@ function SessionBoard({
               <Play className="size-3.5" />
               Start orchestrator
             </button>
-          )}
+          ) : !agentAvailable ? (
+            <button className={`${button} mt-5`} onClick={onOpenSettings}>
+              <KeyRound className="size-3.5" />
+              Connect an agent
+            </button>
+          ) : null}
         </div>
       </div>
     );
@@ -498,64 +526,215 @@ function CloudSettings({
 }) {
   const [apiKey, setAPIKey] = useState("");
   const [target, setTarget] = useState<"us" | "eu">("us");
+  const connectedAgents = new Map(
+    connections
+      .filter(
+        ({ provider, validationState }) =>
+          provider !== "daytona" && validationState === "valid",
+      )
+      .map((connection) => [connection.provider, connection]),
+  );
+  const daytonaConnections = connections.filter(
+    ({ provider }) => provider === "daytona",
+  );
   return (
     <div className="h-full overflow-auto p-6">
-      <div className="max-w-xl">
-        <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-white/35">
-          Sandbox provider
-        </p>
-        <h2 className="mt-2 text-base">Daytona</h2>
-        <p className="mt-2 text-sm leading-6 text-white/45">
-          Credentials are validated by AO Cloud, encrypted outside session
-          environments, and never returned to this browser.
-        </p>
-        {connections.map((connection) => (
-          <div
-            key={connection.id}
-            className="mt-4 flex items-center border border-white/10 bg-[#15171b] px-3 py-2 text-sm"
-          >
-            <span>{connection.label}</span>
-            <span className="ml-auto font-mono text-[10px] uppercase text-[#74b98a]">
-              {connection.validationState}
-            </span>
+      <div className="max-w-2xl space-y-10">
+        <section>
+          <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-white/35">
+            Coding agents
+          </p>
+          <h2 className="mt-2 text-base">Provider connections</h2>
+          <p className="mt-2 max-w-xl text-sm leading-6 text-white/45">
+            Credentials are encrypted in AO Cloud and delivered only to an
+            authenticated worker during bootstrap. Disconnected agents remain
+            unavailable when creating sessions.
+          </p>
+          <p className="mt-2 max-w-xl text-xs leading-5 text-white/35">
+            API keys and setup tokens are reused until you revoke or replace
+            them. If a provider expires a credential, choose Re-authenticate to
+            securely replace it; AO never returns the saved secret to this
+            browser.
+          </p>
+          <div className="mt-5 divide-y divide-white/10 border-y border-white/10">
+            {CLOUD_AGENTS.map((agent) => (
+              <AgentConnectionRow
+                key={agent.id}
+                agent={agent}
+                connection={connectedAgents.get(agent.id)}
+                run={run}
+                connect={(credentialType, secret) =>
+                  api.connectAgent(agent.id, { credentialType, secret })
+                }
+                disconnect={() => api.disconnectAgent(agent.id)}
+              />
+            ))}
           </div>
-        ))}
+        </section>
+
+        <section>
+          <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-white/35">
+            Sandbox provider
+          </p>
+          <h2 className="mt-2 text-base">Daytona</h2>
+          <p className="mt-2 text-sm leading-6 text-white/45">
+            Credentials are validated by AO Cloud, encrypted outside session
+            environments, and never returned to this browser.
+          </p>
+          {daytonaConnections.map((connection) => (
+            <div
+              key={connection.id}
+              className="mt-4 flex items-center border border-white/10 bg-[#15171b] px-3 py-2 text-sm"
+            >
+              <span>{connection.label}</span>
+              <span className="ml-auto font-mono text-[10px] uppercase text-[#74b98a]">
+                {connection.validationState}
+              </span>
+            </div>
+          ))}
+          <form
+            className="mt-5 space-y-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void run(() =>
+                api.connectDaytona({
+                  label: "personal",
+                  apiKey,
+                  apiUrl: "https://app.daytona.io/api",
+                  target,
+                }),
+              ).then(() => setAPIKey(""));
+            }}
+          >
+            <input
+              className={field}
+              type="password"
+              value={apiKey}
+              onChange={(event) => setAPIKey(event.target.value)}
+              placeholder="Daytona API key"
+              autoComplete="off"
+              required
+            />
+            <select
+              className={field}
+              value={target}
+              onChange={(event) => setTarget(event.target.value as "us" | "eu")}
+            >
+              <option value="us">United States</option>
+              <option value="eu">Europe</option>
+            </select>
+            <button className={primaryButton} type="submit">
+              Save and validate
+            </button>
+          </form>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function AgentConnectionRow({
+  agent,
+  connection,
+  run,
+  connect,
+  disconnect,
+}: {
+  agent: (typeof CLOUD_AGENTS)[number];
+  connection?: ProviderConnection;
+  run: (operation: () => Promise<unknown>) => Promise<void>;
+  connect: (
+    credentialType: AgentCredentialType,
+    secret: string,
+  ) => Promise<unknown>;
+  disconnect: () => Promise<unknown>;
+}) {
+  const [credentialType, setCredentialType] = useState<AgentCredentialType>(
+    (connection?.config.credentialType as AgentCredentialType | undefined) ??
+      agent.credentialTypes[0].id,
+  );
+  const [secret, setSecret] = useState("");
+  const [replacing, setReplacing] = useState(false);
+  const connected = Boolean(connection);
+  const selectedCredential =
+    agent.credentialTypes.find(({ id }) => id === credentialType) ??
+    agent.credentialTypes[0];
+
+  return (
+    <div className="py-4">
+      <div className="flex items-center gap-3">
+        <div className="grid size-8 place-items-center rounded-md bg-white/5">
+          <TerminalSquare className="size-4 text-white/55" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-sm">{agent.label}</p>
+          <p
+            className={`font-mono text-[10px] uppercase ${
+              connected ? "text-[#74b98a]" : "text-white/30"
+            }`}
+          >
+            {connected ? "Connected" : "Not available"}
+          </p>
+        </div>
+        {connected && (
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              className={button}
+              onClick={() => setReplacing((value) => !value)}
+            >
+              {replacing ? "Cancel" : "Re-authenticate"}
+            </button>
+            <button
+              type="button"
+              className={button}
+              onClick={() => void run(disconnect)}
+            >
+              Disconnect
+            </button>
+          </div>
+        )}
+      </div>
+      {(!connected || replacing) && (
         <form
-          className="mt-5 space-y-3"
+          className="mt-3 grid gap-2 pl-11 sm:grid-cols-[170px_minmax(0,1fr)_auto]"
           onSubmit={(event) => {
             event.preventDefault();
-            void run(() =>
-              api.connectDaytona({
-                label: "personal",
-                apiKey,
-                apiUrl: "https://app.daytona.io/api",
-                target,
-              }),
-            ).then(() => setAPIKey(""));
+            void run(() => connect(credentialType, secret)).then(() => {
+              setSecret("");
+              setReplacing(false);
+            });
           }}
         >
+          <select
+            className={field}
+            value={credentialType}
+            onChange={(event) =>
+              setCredentialType(event.target.value as AgentCredentialType)
+            }
+            aria-label={`${agent.label} credential type`}
+          >
+            {agent.credentialTypes.map((credential) => (
+              <option key={credential.id} value={credential.id}>
+                {credential.label}
+              </option>
+            ))}
+          </select>
           <input
             className={field}
             type="password"
-            value={apiKey}
-            onChange={(event) => setAPIKey(event.target.value)}
-            placeholder="Daytona API key"
+            value={secret}
+            onChange={(event) => setSecret(event.target.value)}
+            placeholder={selectedCredential.placeholder}
+            aria-label={`${agent.label} credential`}
             autoComplete="off"
             required
           />
-          <select
-            className={field}
-            value={target}
-            onChange={(event) => setTarget(event.target.value as "us" | "eu")}
-          >
-            <option value="us">United States</option>
-            <option value="eu">Europe</option>
-          </select>
           <button className={primaryButton} type="submit">
-            Save and validate
+            Connect
           </button>
         </form>
-      </div>
+      )}
     </div>
   );
 }
@@ -658,11 +837,15 @@ function ProjectForm({
 function SessionForm({
   projectId,
   providerConnectionId,
+  connections,
+  onOpenSettings,
   onClose,
   onSubmit,
 }: {
   projectId: string;
   providerConnectionId?: string;
+  connections: ProviderConnection[];
+  onOpenSettings: () => void;
   onClose: () => void;
   onSubmit: (input: {
     projectId: string;
@@ -675,13 +858,17 @@ function SessionForm({
 }) {
   const [displayName, setDisplayName] = useState("");
   const [prompt, setPrompt] = useState("");
-  const [harness, setHarness] = useState("claude-code");
+  const availableAgents = connectedAgentIDs(connections);
+  const [harness, setHarness] = useState<CloudAgent | "">(
+    defaultConnectedAgent(connections) ?? "",
+  );
   return (
     <Overlay title="New cloud worker" onClose={onClose}>
       <form
         className="space-y-4 p-4"
         onSubmit={(event) => {
           event.preventDefault();
+          if (!harness) return;
           void onSubmit({
             projectId,
             kind: "worker",
@@ -703,12 +890,34 @@ function SessionForm({
         <select
           className={field}
           value={harness}
-          onChange={(event) => setHarness(event.target.value)}
+          onChange={(event) =>
+            setHarness(event.target.value as CloudAgent | "")
+          }
+          aria-label="Coding agent"
+          required
         >
-          <option value="claude-code">Claude Code</option>
-          <option value="codex">Codex</option>
-          <option value="cursor">Cursor</option>
+          <option value="" disabled>
+            Select coding agent
+          </option>
+          {CLOUD_AGENTS.map((agent) => {
+            const available = availableAgents.has(agent.id);
+            return (
+              <option key={agent.id} value={agent.id} disabled={!available}>
+                {agent.label}
+                {available ? "" : " — Not available"}
+              </option>
+            );
+          })}
         </select>
+        {availableAgents.size === 0 && (
+          <button
+            type="button"
+            className="text-left text-xs text-[#e8c14a] hover:underline"
+            onClick={onOpenSettings}
+          >
+            Connect a coding agent in Cloud settings.
+          </button>
+        )}
         <textarea
           className="min-h-32 w-full resize-y rounded-md border border-border bg-background p-3 text-sm outline-none focus:border-[#4d8dff]"
           value={prompt}
@@ -720,7 +929,7 @@ function SessionForm({
           <button type="button" className={button} onClick={onClose}>
             Cancel
           </button>
-          <button type="submit" className={primaryButton}>
+          <button type="submit" className={primaryButton} disabled={!harness}>
             Spawn worker
           </button>
         </div>

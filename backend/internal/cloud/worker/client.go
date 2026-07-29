@@ -18,14 +18,23 @@ import (
 	cloudworkerhub "github.com/aoagents/agent-orchestrator/backend/internal/cloud/workerhub"
 )
 
+// AgentCredential contains the session-scoped coding-agent credential delivered
+// to a worker during bootstrap.
+type AgentCredential struct {
+	Provider       string `json:"provider"`
+	CredentialType string `json:"credentialType"`
+	Secret         string `json:"secret"`
+}
+
 // BootstrapResponse contains worker credentials and the session launch specification.
 type BootstrapResponse struct {
-	WorkerToken string                         `json:"workerToken"`
-	WorkerID    string                         `json:"workerId"`
-	Epoch       int64                          `json:"epoch"`
-	ExpiresIn   int                            `json:"expiresIn"`
-	SessionID   string                         `json:"sessionId"`
-	Launch      cloudpostgres.WorkerLaunchSpec `json:"launch"`
+	WorkerToken     string                         `json:"workerToken"`
+	WorkerID        string                         `json:"workerId"`
+	Epoch           int64                          `json:"epoch"`
+	ExpiresIn       int                            `json:"expiresIn"`
+	SessionID       string                         `json:"sessionId"`
+	Launch          cloudpostgres.WorkerLaunchSpec `json:"launch"`
+	AgentCredential *AgentCredential               `json:"agentCredential,omitempty"`
 }
 
 // Client communicates with the AO Cloud worker API.

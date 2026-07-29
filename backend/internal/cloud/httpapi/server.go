@@ -46,6 +46,8 @@ type store interface {
 	WorkerConnectionCurrent(context.Context, clouddomain.AccountID, clouddomain.SessionID, string, int64) (bool, error)
 	UpsertProviderConnection(context.Context, clouddomain.AccountID, string, string, []byte, []byte, json.RawMessage) (cloudpostgres.ProviderConnection, error)
 	ListProviderConnections(context.Context, clouddomain.AccountID) ([]cloudpostgres.ProviderConnection, error)
+	ProviderConnectionSecretByProvider(context.Context, clouddomain.AccountID, string, string) ([]byte, []byte, json.RawMessage, error)
+	DeleteProviderConnection(context.Context, clouddomain.AccountID, string, string) error
 	IssueAccessTicket(context.Context, clouddomain.AccountID, clouddomain.SessionID, string, []string, time.Duration) (string, error)
 	SessionSCM(context.Context, clouddomain.AccountID, clouddomain.SessionID) (*cloudpostgres.SessionSCM, error)
 }
@@ -152,6 +154,8 @@ func (s *Server) routes() http.Handler {
 			protected.Post("/sessions/{sessionId}/terminal-ticket", s.issueTerminalTicket)
 			protected.Get("/provider-connections", s.listProviderConnections)
 			protected.Put("/provider-connections/daytona", s.putDaytonaConnection)
+			protected.Put("/provider-connections/agents/{agent}", s.putAgentConnection)
+			protected.Delete("/provider-connections/agents/{agent}", s.deleteAgentConnection)
 			protected.Get("/repositories", s.listRepositories)
 		})
 	})
@@ -283,6 +287,24 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		input.Resource.Disk < 3 || input.Resource.Disk > 10 {
 		writeError(w, r, http.StatusBadRequest, "INVALID_RESOURCE_PROFILE", "Resource profile exceeds Cloud V1 limits.")
 		return
+	}
+	credential, err := s.loadAgentCredential(r.Context(), account.ID, input.Harness)
+	if errors.Is(err, errAgentConnectionRequired) {
+		writeError(
+			w,
+			r,
+			http.StatusBadRequest,
+			"AGENT_CONNECTION_REQUIRED",
+			"Connect "+input.Harness+" before creating a cloud session.",
+		)
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "validate agent connection", err)
+		return
+	}
+	if credential != nil {
+		credential.Secret = ""
 	}
 	result, err := s.store.CreateSession(r.Context(), account.ID, cloudpostgres.CreateSessionInput{
 		IdempotencyKey:       idempotencyKey,
@@ -482,6 +504,33 @@ func (s *Server) workerBootstrap(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "consume worker bootstrap", err)
 		return
 	}
+	launchSpec, err := s.store.WorkerLaunchSpec(r.Context(), ticket.AccountID, ticket.SessionID)
+	if err != nil {
+		s.internalError(w, r, "load worker launch spec", err)
+		return
+	}
+	agentCredential, err := s.loadAgentCredential(
+		r.Context(),
+		ticket.AccountID,
+		launchSpec.Session.Harness,
+	)
+	if errors.Is(err, errAgentConnectionRequired) {
+		writeError(
+			w,
+			r,
+			http.StatusBadRequest,
+			"AGENT_CONNECTION_REQUIRED",
+			"The coding-agent connection required by this session is unavailable.",
+		)
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "load worker agent credential", err)
+		return
+	}
+	if agentCredential != nil {
+		defer func() { agentCredential.Secret = "" }()
+	}
 	epoch := time.Now().UnixNano()
 	workerID := cloudworker.NextWorkerID(ticket.SessionID, epoch)
 	if err := s.store.MarkWorkerSeen(
@@ -494,11 +543,6 @@ func (s *Server) workerBootstrap(w http.ResponseWriter, r *http.Request) {
 		input.Capabilities,
 	); err != nil {
 		s.internalError(w, r, "register worker", err)
-		return
-	}
-	launchSpec, err := s.store.WorkerLaunchSpec(r.Context(), ticket.AccountID, ticket.SessionID)
-	if err != nil {
-		s.internalError(w, r, "load worker launch spec", err)
 		return
 	}
 	token, err := s.workerTokens.Issue(cloudworker.Claims{
@@ -514,13 +558,14 @@ func (s *Server) workerBootstrap(w http.ResponseWriter, r *http.Request) {
 	}
 	payload, _ := json.Marshal(map[string]any{"workerId": workerID, "epoch": epoch})
 	_, _ = s.events.Append(r.Context(), ticket.AccountID, ticket.SessionID, "worker.connected", payload)
-	writeJSON(w, http.StatusOK, map[string]any{
-		"workerToken": token,
-		"workerId":    workerID,
-		"epoch":       epoch,
-		"expiresIn":   900,
-		"sessionId":   ticket.SessionID,
-		"launch":      launchSpec,
+	writeJSON(w, http.StatusOK, cloudworker.BootstrapResponse{
+		WorkerToken:     token,
+		WorkerID:        workerID,
+		Epoch:           epoch,
+		ExpiresIn:       900,
+		SessionID:       string(ticket.SessionID),
+		Launch:          launchSpec,
+		AgentCredential: agentCredential,
 	})
 }
 
@@ -912,6 +957,149 @@ func (s *Server) listProviderConnections(w http.ResponseWriter, r *http.Request)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"providerConnections": connections})
 }
+
+const maxAgentCredentialBytes = 64 << 10
+
+type agentConnectionConfig struct {
+	CredentialType string `json:"credentialType"`
+}
+
+func (s *Server) putAgentConnection(w http.ResponseWriter, r *http.Request) {
+	account, _ := accountFromContext(r.Context())
+	agent := strings.TrimSpace(chi.URLParam(r, "agent"))
+	if _, ok := agentCredentialTypes[agent]; !ok {
+		writeError(w, r, http.StatusBadRequest, "INVALID_AGENT", "The selected coding agent is not supported.")
+		return
+	}
+	var input struct {
+		CredentialType string `json:"credentialType"`
+		Secret         string `json:"secret"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	input.CredentialType = strings.TrimSpace(input.CredentialType)
+	secret := []byte(strings.TrimSpace(input.Secret))
+	input.Secret = ""
+	defer clearBytes(secret)
+	if !validAgentCredentialType(agent, input.CredentialType) {
+		writeError(w, r, http.StatusBadRequest, "INVALID_CREDENTIAL_TYPE", "credentialType is not supported for this coding agent.")
+		return
+	}
+	if len(secret) == 0 || len(secret) > maxAgentCredentialBytes {
+		writeError(w, r, http.StatusBadRequest, "INVALID_AGENT_CREDENTIAL", "A non-empty coding-agent credential of at most 64 KiB is required.")
+		return
+	}
+	associatedData := string(account.ID) + ":" + agent + ":default"
+	encrypted, nonce, err := s.secretCipher.Encrypt(secret, associatedData)
+	if err != nil {
+		s.internalError(w, r, "encrypt agent connection", err)
+		return
+	}
+	config, _ := json.Marshal(agentConnectionConfig{CredentialType: input.CredentialType})
+	connection, err := s.store.UpsertProviderConnection(
+		r.Context(),
+		account.ID,
+		agent,
+		"default",
+		encrypted,
+		nonce,
+		config,
+	)
+	if err != nil {
+		s.internalError(w, r, "save agent connection", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"providerConnection": connection})
+}
+
+func (s *Server) deleteAgentConnection(w http.ResponseWriter, r *http.Request) {
+	account, _ := accountFromContext(r.Context())
+	agent := strings.TrimSpace(chi.URLParam(r, "agent"))
+	if _, ok := agentCredentialTypes[agent]; !ok {
+		writeError(w, r, http.StatusBadRequest, "INVALID_AGENT", "The selected coding agent is not supported.")
+		return
+	}
+	if err := s.store.DeleteProviderConnection(r.Context(), account.ID, agent, "default"); err != nil {
+		s.internalError(w, r, "delete agent connection", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+var agentCredentialTypes = map[string]map[string]struct{}{
+	"claude-code": {
+		"oauth_token": {},
+		"api_key":     {},
+	},
+	"codex": {
+		"api_key":      {},
+		"access_token": {},
+	},
+	"cursor": {
+		"api_key": {},
+	},
+}
+
+func validAgentCredentialType(agent, credentialType string) bool {
+	credentialTypes, ok := agentCredentialTypes[agent]
+	if !ok {
+		return false
+	}
+	_, ok = credentialTypes[credentialType]
+	return ok
+}
+
+func (s *Server) loadAgentCredential(
+	ctx context.Context,
+	accountID clouddomain.AccountID,
+	harness string,
+) (*cloudworker.AgentCredential, error) {
+	if _, ok := agentCredentialTypes[harness]; !ok {
+		return nil, nil
+	}
+	encrypted, nonce, configJSON, err := s.store.ProviderConnectionSecretByProvider(
+		ctx,
+		accountID,
+		harness,
+		"default",
+	)
+	if errors.Is(err, cloudpostgres.ErrProviderConnectionNotFound) {
+		return nil, errAgentConnectionRequired
+	}
+	if err != nil {
+		return nil, err
+	}
+	var config agentConnectionConfig
+	if err := json.Unmarshal(configJSON, &config); err != nil ||
+		!validAgentCredentialType(harness, config.CredentialType) {
+		return nil, errAgentConnectionRequired
+	}
+	plaintext, err := s.secretCipher.Decrypt(
+		encrypted,
+		nonce,
+		string(accountID)+":"+harness+":default",
+	)
+	if err != nil || len(plaintext) == 0 {
+		clearBytes(plaintext)
+		return nil, errAgentConnectionRequired
+	}
+	credential := &cloudworker.AgentCredential{
+		Provider:       harness,
+		CredentialType: config.CredentialType,
+		Secret:         string(plaintext),
+	}
+	clearBytes(plaintext)
+	return credential, nil
+}
+
+func clearBytes(value []byte) {
+	for index := range value {
+		value[index] = 0
+	}
+}
+
+var errAgentConnectionRequired = errors.New("coding-agent connection required")
 
 func (s *Server) listRepositories(w http.ResponseWriter, r *http.Request) {
 	if s.localGitHub == nil {

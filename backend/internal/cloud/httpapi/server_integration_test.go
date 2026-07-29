@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -332,5 +333,327 @@ func TestWorkerAndBrowserTerminalReplayLiveRouting(t *testing.T) {
 	}
 	if command.Type != "input" || command.Data != input {
 		t.Fatalf("worker command = %#v", command)
+	}
+}
+
+func TestAgentProviderConnectionValidationAndAccountIsolation(t *testing.T) {
+	server, _ := integrationAPI(t)
+	for _, token := range []string{"user-one", "user-two"} {
+		response := requestJSON(
+			t,
+			server,
+			http.MethodDelete,
+			"/api/cloud/v1/provider-connections/agents/cursor",
+			token,
+			nil,
+			nil,
+		)
+		response.Body.Close()
+		if response.StatusCode != http.StatusNoContent {
+			t.Fatalf("initial %s delete status = %d", token, response.StatusCode)
+		}
+	}
+
+	for _, test := range []struct {
+		name   string
+		agent  string
+		body   map[string]any
+		status int
+		code   string
+	}{
+		{
+			name:   "unknown agent",
+			agent:  "other",
+			body:   map[string]any{"credentialType": "api_key", "secret": "secret"},
+			status: http.StatusBadRequest,
+			code:   "INVALID_AGENT",
+		},
+		{
+			name:   "unsupported credential type",
+			agent:  "cursor",
+			body:   map[string]any{"credentialType": "oauth_token", "secret": "secret"},
+			status: http.StatusBadRequest,
+			code:   "INVALID_CREDENTIAL_TYPE",
+		},
+		{
+			name:   "empty secret",
+			agent:  "claude-code",
+			body:   map[string]any{"credentialType": "api_key", "secret": " \n "},
+			status: http.StatusBadRequest,
+			code:   "INVALID_AGENT_CREDENTIAL",
+		},
+		{
+			name:   "oversized secret",
+			agent:  "codex",
+			body:   map[string]any{"credentialType": "api_key", "secret": strings.Repeat("x", maxAgentCredentialBytes+1)},
+			status: http.StatusBadRequest,
+			code:   "INVALID_AGENT_CREDENTIAL",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := requestJSON(
+				t,
+				server,
+				http.MethodPut,
+				"/api/cloud/v1/provider-connections/agents/"+test.agent,
+				"user-one",
+				test.body,
+				nil,
+			)
+			defer response.Body.Close()
+			if response.StatusCode != test.status {
+				t.Fatalf("status = %d, want %d", response.StatusCode, test.status)
+			}
+			var body struct {
+				Code string `json:"code"`
+			}
+			if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if body.Code != test.code {
+				t.Fatalf("code = %q, want %q", body.Code, test.code)
+			}
+		})
+	}
+
+	put := requestJSON(
+		t,
+		server,
+		http.MethodPut,
+		"/api/cloud/v1/provider-connections/agents/cursor",
+		"user-one",
+		map[string]any{"credentialType": "api_key", "secret": "  cursor-secret  "},
+		nil,
+	)
+	defer put.Body.Close()
+	if put.StatusCode != http.StatusOK {
+		t.Fatalf("put status = %d", put.StatusCode)
+	}
+	encodedPut, err := io.ReadAll(put.Body)
+	if err != nil {
+		t.Fatalf("read put response: %v", err)
+	}
+	if bytes.Contains(encodedPut, []byte("cursor-secret")) ||
+		bytes.Contains(encodedPut, []byte("encryptedSecret")) {
+		t.Fatalf("put response exposed credential material: %s", encodedPut)
+	}
+
+	otherAccountList := requestJSON(
+		t,
+		server,
+		http.MethodGet,
+		"/api/cloud/v1/provider-connections",
+		"user-two",
+		nil,
+		nil,
+	)
+	defer otherAccountList.Body.Close()
+	var otherListBody struct {
+		ProviderConnections []cloudpostgres.ProviderConnection `json:"providerConnections"`
+	}
+	if err := json.NewDecoder(otherAccountList.Body).Decode(&otherListBody); err != nil {
+		t.Fatalf("decode other account list: %v", err)
+	}
+	for _, connection := range otherListBody.ProviderConnections {
+		if connection.Provider == "cursor" && connection.Label == "default" {
+			t.Fatalf("other account can see user-one connection")
+		}
+	}
+
+	otherDelete := requestJSON(
+		t,
+		server,
+		http.MethodDelete,
+		"/api/cloud/v1/provider-connections/agents/cursor",
+		"user-two",
+		nil,
+		nil,
+	)
+	defer otherDelete.Body.Close()
+	if otherDelete.StatusCode != http.StatusNoContent {
+		t.Fatalf("other account delete status = %d", otherDelete.StatusCode)
+	}
+
+	userList := requestJSON(
+		t,
+		server,
+		http.MethodGet,
+		"/api/cloud/v1/provider-connections",
+		"user-one",
+		nil,
+		nil,
+	)
+	defer userList.Body.Close()
+	var userListBody struct {
+		ProviderConnections []cloudpostgres.ProviderConnection `json:"providerConnections"`
+	}
+	if err := json.NewDecoder(userList.Body).Decode(&userListBody); err != nil {
+		t.Fatalf("decode user account list: %v", err)
+	}
+	found := false
+	for _, connection := range userListBody.ProviderConnections {
+		if connection.Provider == "cursor" && connection.Label == "default" {
+			found = true
+			var config agentConnectionConfig
+			if err := json.Unmarshal(connection.Config, &config); err != nil {
+				t.Fatalf("decode connection config: %v", err)
+			}
+			if config.CredentialType != "api_key" {
+				t.Fatalf("credential type = %q", config.CredentialType)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("user-one cursor connection was deleted by user-two")
+	}
+}
+
+func TestAgentConnectionGatesSessionAndBootstrapsCredential(t *testing.T) {
+	server, store := integrationAPI(t)
+	deleteResponse := requestJSON(
+		t,
+		server,
+		http.MethodDelete,
+		"/api/cloud/v1/provider-connections/agents/claude-code",
+		"user-one",
+		nil,
+		nil,
+	)
+	deleteResponse.Body.Close()
+	if deleteResponse.StatusCode != http.StatusNoContent {
+		t.Fatalf("initial delete status = %d", deleteResponse.StatusCode)
+	}
+
+	projectResponse := requestJSON(
+		t,
+		server,
+		http.MethodPost,
+		"/api/cloud/v1/projects",
+		"user-one",
+		map[string]any{
+			"displayName":   "Credential bootstrap",
+			"repositoryUrl": "https://github.com/example/" + uuid.NewString(),
+			"defaultBranch": "main",
+		},
+		nil,
+	)
+	defer projectResponse.Body.Close()
+	var projectBody struct {
+		Project struct {
+			ID string `json:"id"`
+		} `json:"project"`
+	}
+	if err := json.NewDecoder(projectResponse.Body).Decode(&projectBody); err != nil {
+		t.Fatalf("decode project: %v", err)
+	}
+	sessionInput := map[string]any{
+		"projectId":   projectBody.Project.ID,
+		"kind":        "worker",
+		"harness":     "claude-code",
+		"displayName": "credential-bootstrap",
+		"prompt":      "Test credentials",
+	}
+	missing := requestJSON(
+		t,
+		server,
+		http.MethodPost,
+		"/api/cloud/v1/sessions",
+		"user-one",
+		sessionInput,
+		map[string]string{"Idempotency-Key": uuid.NewString()},
+	)
+	defer missing.Body.Close()
+	if missing.StatusCode != http.StatusBadRequest {
+		t.Fatalf("missing connection status = %d, want 400", missing.StatusCode)
+	}
+	var missingBody struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(missing.Body).Decode(&missingBody); err != nil {
+		t.Fatalf("decode missing connection response: %v", err)
+	}
+	if missingBody.Code != "AGENT_CONNECTION_REQUIRED" {
+		t.Fatalf("missing connection code = %q", missingBody.Code)
+	}
+
+	put := requestJSON(
+		t,
+		server,
+		http.MethodPut,
+		"/api/cloud/v1/provider-connections/agents/claude-code",
+		"user-one",
+		map[string]any{"credentialType": "oauth_token", "secret": "claude-oauth-secret"},
+		nil,
+	)
+	put.Body.Close()
+	if put.StatusCode != http.StatusOK {
+		t.Fatalf("put connection status = %d", put.StatusCode)
+	}
+	created := requestJSON(
+		t,
+		server,
+		http.MethodPost,
+		"/api/cloud/v1/sessions",
+		"user-one",
+		sessionInput,
+		map[string]string{"Idempotency-Key": uuid.NewString()},
+	)
+	defer created.Body.Close()
+	if created.StatusCode != http.StatusCreated {
+		t.Fatalf("created session status = %d", created.StatusCode)
+	}
+	var createdBody struct {
+		Session struct {
+			ID clouddomain.SessionID `json:"id"`
+		} `json:"session"`
+	}
+	if err := json.NewDecoder(created.Body).Decode(&createdBody); err != nil {
+		t.Fatalf("decode session: %v", err)
+	}
+	account, err := store.EnsureAccount(context.Background(), tokenID("user-one"), "User One")
+	if err != nil {
+		t.Fatalf("EnsureAccount() error = %v", err)
+	}
+	ticket, err := store.IssueAccessTicket(
+		context.Background(),
+		account.ID,
+		createdBody.Session.ID,
+		"worker_bootstrap",
+		[]string{"worker:connect"},
+		time.Minute,
+	)
+	if err != nil {
+		t.Fatalf("IssueAccessTicket() error = %v", err)
+	}
+	bootstrap := requestJSON(
+		t,
+		server,
+		http.MethodPost,
+		"/api/cloud/v1/worker/bootstrap",
+		"",
+		map[string]any{
+			"bootstrapToken": ticket,
+			"version":        "test",
+			"capabilities":   []string{"pty.v1"},
+		},
+		nil,
+	)
+	defer bootstrap.Body.Close()
+	if bootstrap.StatusCode != http.StatusOK {
+		t.Fatalf("bootstrap status = %d", bootstrap.StatusCode)
+	}
+	var bootstrapBody cloudworker.BootstrapResponse
+	if err := json.NewDecoder(bootstrap.Body).Decode(&bootstrapBody); err != nil {
+		t.Fatalf("decode bootstrap: %v", err)
+	}
+	if bootstrapBody.AgentCredential == nil {
+		t.Fatal("bootstrap agentCredential = nil")
+	}
+	if *bootstrapBody.AgentCredential != (cloudworker.AgentCredential{
+		Provider:       "claude-code",
+		CredentialType: "oauth_token",
+		Secret:         "claude-oauth-secret",
+	}) {
+		t.Fatalf("bootstrap agentCredential = %#v", bootstrapBody.AgentCredential)
 	}
 }

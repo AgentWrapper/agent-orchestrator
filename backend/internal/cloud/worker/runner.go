@@ -24,19 +24,21 @@ import (
 
 // Runner prepares a cloud workspace and runs its configured agent.
 type Runner struct {
-	client       *Client
-	bootstrap    BootstrapResponse
-	workspaceDir string
-	dataDir      string
+	client            *Client
+	bootstrap         BootstrapResponse
+	workspaceDir      string
+	dataDir           string
+	credentialCommand func(context.Context, string, []string, io.Reader) error
 }
 
 // NewRunner creates a worker runner from bootstrap launch data.
 func NewRunner(client *Client, bootstrap BootstrapResponse, workspaceDir, dataDir string) *Runner {
 	return &Runner{
-		client:       client,
-		bootstrap:    bootstrap,
-		workspaceDir: workspaceDir,
-		dataDir:      dataDir,
+		client:            client,
+		bootstrap:         bootstrap,
+		workspaceDir:      workspaceDir,
+		dataDir:           dataDir,
+		credentialCommand: runCredentialCommand,
 	}
 }
 
@@ -83,9 +85,15 @@ func (r *Runner) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("resolve prompt delivery: %w", err)
 	}
+	credentialEnvironmentName, err := r.prepareAgentCredential(ctx, hookEnvironment)
+	if err != nil {
+		return err
+	}
+	defer clearEnvironmentSecret(hookEnvironment, credentialEnvironmentName)
 	command := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	command.Dir = r.workspaceDir
 	command.Env = append(os.Environ(), envList(hookEnvironment)...)
+	clearEnvironmentSecret(hookEnvironment, credentialEnvironmentName)
 	terminal, err := pty.Start(command)
 	if err != nil {
 		return fmt.Errorf("start agent PTY: %w", err)
@@ -288,6 +296,101 @@ func resolveAgent(harness string) (ports.Agent, error) {
 		return nil, fmt.Errorf("adapter %q cannot launch an agent", harness)
 	}
 	return agent, nil
+}
+
+func (r *Runner) prepareAgentCredential(
+	ctx context.Context,
+	environment map[string]string,
+) (string, error) {
+	harness := r.bootstrap.Launch.Session.Harness
+	credential := r.bootstrap.AgentCredential
+	if credential == nil {
+		switch harness {
+		case "claude-code", "codex", "cursor":
+			return "", fmt.Errorf("agent credential for %s is required", harness)
+		default:
+			return "", nil
+		}
+	}
+	defer func() { credential.Secret = "" }()
+	if credential.Provider != harness {
+		return "", fmt.Errorf(
+			"agent credential provider %q does not match session harness %q",
+			credential.Provider,
+			harness,
+		)
+	}
+	if credential.Secret == "" {
+		return "", fmt.Errorf("agent credential for %s is empty", harness)
+	}
+	switch harness {
+	case "claude-code":
+		switch credential.CredentialType {
+		case "oauth_token":
+			environment["CLAUDE_CODE_OAUTH_TOKEN"] = credential.Secret
+			return "CLAUDE_CODE_OAUTH_TOKEN", nil
+		case "api_key":
+			environment["ANTHROPIC_API_KEY"] = credential.Secret
+			return "ANTHROPIC_API_KEY", nil
+		}
+	case "cursor":
+		if credential.CredentialType == "api_key" {
+			environment["CURSOR_API_KEY"] = credential.Secret
+			return "CURSOR_API_KEY", nil
+		}
+	case "codex":
+		var option string
+		switch credential.CredentialType {
+		case "api_key":
+			option = "--with-api-key"
+		case "access_token":
+			option = "--with-access-token"
+		default:
+			return "", fmt.Errorf(
+				"credential type %q is not supported for %s",
+				credential.CredentialType,
+				harness,
+			)
+		}
+		if err := r.credentialCommand(
+			ctx,
+			"codex",
+			[]string{"login", option},
+			strings.NewReader(credential.Secret),
+		); err != nil {
+			return "", err
+		}
+		return "", nil
+	}
+	return "", fmt.Errorf(
+		"credential type %q is not supported for %s",
+		credential.CredentialType,
+		harness,
+	)
+}
+
+func runCredentialCommand(
+	ctx context.Context,
+	name string,
+	arguments []string,
+	stdin io.Reader,
+) error {
+	command := exec.CommandContext(ctx, name, arguments...)
+	command.Stdin = stdin
+	command.Stdout = io.Discard
+	command.Stderr = io.Discard
+	if err := command.Run(); err != nil {
+		return fmt.Errorf("%s %s failed: %w", name, strings.Join(arguments, " "), err)
+	}
+	return nil
+}
+
+func clearEnvironmentSecret(environment map[string]string, name string) {
+	if name == "" {
+		return
+	}
+	environment[name] = ""
+	delete(environment, name)
 }
 
 func workerEnvironment(token string) map[string]string {

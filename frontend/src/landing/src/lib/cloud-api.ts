@@ -41,12 +41,19 @@ export interface CloudSession {
 
 export interface ProviderConnection {
   id: string;
-  provider: "daytona";
+  provider: "daytona" | "claude-code" | "codex" | "cursor";
   label: string;
-  config: { apiUrl?: string; target?: "us" | "eu" };
+  config: {
+    apiUrl?: string;
+    target?: "us" | "eu";
+    credentialType?: AgentCredentialType;
+  };
   validationState: "pending" | "valid" | "invalid";
   validatedAt?: string;
 }
+
+export type CloudAgent = "claude-code" | "codex" | "cursor";
+export type AgentCredentialType = "oauth_token" | "api_key" | "access_token";
 
 type FetchOptions = Omit<RequestInit, "body"> & {
   body?: unknown;
@@ -136,6 +143,23 @@ export class CloudAPI {
     );
   }
 
+  async connectAgent(
+    agent: CloudAgent,
+    input: { credentialType: AgentCredentialType; secret: string },
+  ) {
+    return this.request<{ providerConnection: ProviderConnection }>(
+      `/api/cloud/v1/provider-connections/agents/${encodeURIComponent(agent)}`,
+      { method: "PUT", body: input },
+    );
+  }
+
+  async disconnectAgent(agent: CloudAgent) {
+    return this.request<void>(
+      `/api/cloud/v1/provider-connections/agents/${encodeURIComponent(agent)}`,
+      { method: "DELETE" },
+    );
+  }
+
   async terminalTicket(sessionId: string) {
     return this.request<{ ticket: string; expiresIn: number }>(
       `/api/cloud/v1/sessions/${encodeURIComponent(sessionId)}/terminal-ticket`,
@@ -175,6 +199,7 @@ export class CloudAPI {
           `AO Cloud request failed (${failure?.code ?? response.status}).`,
       );
     }
+    if (response.status === 204) return undefined as T;
     return (await response.json()) as T;
   }
 }
