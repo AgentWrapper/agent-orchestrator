@@ -35,7 +35,7 @@ import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSession
 import { useRestoreSession } from "../hooks/useRestoreSession";
 import { useTerminateSession } from "../hooks/useTerminateSession";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
-import { useMergePR, isPRMergeable, mergeDisabledReason } from "../lib/pr-actions";	
+import { useMergePR, isPRMergeable, mergeDisabledReason } from "../lib/pr-actions";
 import { NotificationCenter } from "./NotificationCenter";
 import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyStates";
 import { OrchestratorIcon } from "./icons";
@@ -907,7 +907,7 @@ function ArchiveSessionItem({
 	const issueId = canonicalTrackerIssueId(session.issueId);
 	const prSummaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
 	const branch = session.branch || "";
-	const prMetadata = 
+	const prMetadata =
 		prSummaries.length > 0 ? (
 			<div className="flex flex-col gap-1">
 				{groupPRsByLifecycle(prSummaries).map((group) => (
