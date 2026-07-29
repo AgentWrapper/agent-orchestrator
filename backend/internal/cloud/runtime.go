@@ -28,6 +28,7 @@ type cloudRuntimeStack struct {
 	sessions *sessionsvc.Service
 	activity *lifecycle.Manager
 	runtime  *daytona.Runtime
+	bridge   *daytonaActivityBridge
 }
 
 func newCloudRuntimeStack(cfg Config, store *postgres.Store, issuer *auth.Issuer, log *slog.Logger) (*cloudRuntimeStack, error) {
@@ -54,6 +55,7 @@ func newCloudRuntimeStack(cfg Config, store *postgres.Store, issuer *auth.Issuer
 	}
 	messenger := cloudRuntimeMessenger{store: store, runtime: rt}
 	lcm := lifecycle.New(store, messenger)
+	bridge := newDaytonaActivityBridge(client, lcm, log)
 	ws, err := daytona.NewWorkspace(daytona.WorkspaceOptions{
 		Client:             client,
 		Snapshot:           cfg.Daytona.Snapshot,
@@ -121,15 +123,17 @@ func newCloudRuntimeStack(cfg Config, store *postgres.Store, issuer *auth.Issuer
 		Logger: log,
 	})
 	lcm.SetCompletionTerminator(mgr)
+	commander := cloudSessionManager{base: mgr, bridge: bridge}
 	return &cloudRuntimeStack{
 		sessions: sessionsvc.NewWithDeps(sessionsvc.Deps{
-			Manager:       mgr,
+			Manager:       commander,
 			Store:         store,
 			DataDir:       cfg.DataDir,
 			SignalCapable: func(h domain.AgentHarness) bool { return h == domain.HarnessClaudeCode },
 		}),
 		activity: lcm,
 		runtime:  rt,
+		bridge:   bridge,
 	}, nil
 }
 
@@ -248,11 +252,15 @@ func (a cloudClaudeAgent) AugmentRuntimeEnv(env map[string]string, _ string) {
 			env[key] = value
 		}
 	}
+	if value := strings.TrimSpace(os.Getenv("AO_CLOUD_ACTIVITY_ACTIVE_GRACE_SECONDS")); value != "" {
+		env["AO_CLOUD_ACTIVITY_ACTIVE_GRACE_SECONDS"] = value
+	}
 	orgID := strings.TrimSpace(env["AO_CLOUD_ORG_ID"])
 	sessionID := strings.TrimSpace(env[sessionmanager.EnvSessionID])
 	if a.issuer == nil || strings.TrimSpace(a.publicAPIBase) == "" || orgID == "" || sessionID == "" {
 		return
 	}
+	env["AO_CLOUD_ACTIVITY_SPOOL"] = cloudActivitySpoolPath(sessionID)
 	token, _, err := a.issuer.IssueSessionToken(orgID, sessionID, 24*time.Hour)
 	if err != nil {
 		return
@@ -273,8 +281,12 @@ func (a cloudClaudeAgent) GetLaunchCommand(ctx context.Context, cfg ports.Launch
 	if cfg.Prompt != "" {
 		claude = append(claude, "-p", cfg.Prompt)
 	}
-	script := "printf '{}' | ao hooks claude-code user-prompt-submit >/tmp/ao-hooks-user-prompt-submit.log 2>&1 || true; " +
+	script := cloudActivityShellPrelude() +
+		"ao_cloud_emit_activity active user-prompt-submit; " +
+		"printf '{}' | ao hooks claude-code user-prompt-submit >/tmp/ao-hooks-user-prompt-submit.log 2>&1 || true; " +
+		"if [ -n \"${AO_CLOUD_ACTIVITY_ACTIVE_GRACE_SECONDS:-}\" ]; then sleep \"$AO_CLOUD_ACTIVITY_ACTIVE_GRACE_SECONDS\" 2>/dev/null || true; fi; " +
 		cloudShellJoin(claude) + "; status=$?; " +
+		"ao_cloud_emit_activity idle stop; " +
 		"printf '{}' | ao hooks claude-code stop >/tmp/ao-hooks-stop.log 2>&1 || true; " +
 		"exit $status"
 	return []string{"sh", "-lc", script}, nil
@@ -321,4 +333,53 @@ func cloudShellJoin(argv []string) string {
 
 func cloudShellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+type cloudSessionManager struct {
+	base   *sessionmanager.Manager
+	bridge *daytonaActivityBridge
+}
+
+func (m cloudSessionManager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, int, int, error) {
+	rec, promptBytes, systemPromptBytes, err := m.base.Spawn(ctx, cfg)
+	if err == nil && m.bridge != nil {
+		m.bridge.Start(ctx, rec)
+	}
+	return rec, promptBytes, systemPromptBytes, err
+}
+
+func (m cloudSessionManager) RestoreWithMode(ctx context.Context, id domain.SessionID) (sessionmanager.RestoreResult, error) {
+	res, err := m.base.RestoreWithMode(ctx, id)
+	if err == nil && m.bridge != nil {
+		m.bridge.Start(ctx, res.Session)
+	}
+	return res, err
+}
+
+func (m cloudSessionManager) ResumeAgentWithMode(ctx context.Context, id domain.SessionID) (sessionmanager.RestoreResult, error) {
+	res, err := m.base.ResumeAgentWithMode(ctx, id)
+	if err == nil && m.bridge != nil {
+		m.bridge.Start(ctx, res.Session)
+	}
+	return res, err
+}
+
+func (m cloudSessionManager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
+	return m.base.Kill(ctx, id)
+}
+
+func (m cloudSessionManager) RetireForReplacement(ctx context.Context, id domain.SessionID) error {
+	return m.base.RetireForReplacement(ctx, id)
+}
+
+func (m cloudSessionManager) Send(ctx context.Context, id domain.SessionID, message string) error {
+	return m.base.Send(ctx, id, message)
+}
+
+func (m cloudSessionManager) Cleanup(ctx context.Context, project domain.ProjectID) (sessionmanager.CleanupResult, error) {
+	return m.base.Cleanup(ctx, project)
+}
+
+func (m cloudSessionManager) RollbackSpawn(ctx context.Context, id domain.SessionID) (deleted, killed bool, err error) {
+	return m.base.RollbackSpawn(ctx, id)
 }

@@ -20,6 +20,7 @@ func TestCloudClaudeAgentAugmentsRuntimeEnvWithSessionToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "oauth-token")
+	t.Setenv("AO_CLOUD_ACTIVITY_ACTIVE_GRACE_SECONDS", "3")
 	env := map[string]string{
 		sessionmanager.EnvSessionID: "sess-1",
 		"AO_CLOUD_ORG_ID":           "org-1",
@@ -32,6 +33,12 @@ func TestCloudClaudeAgentAugmentsRuntimeEnvWithSessionToken(t *testing.T) {
 	}
 	if env["CLAUDE_CODE_OAUTH_TOKEN"] != "oauth-token" {
 		t.Fatalf("CLAUDE_CODE_OAUTH_TOKEN not forwarded")
+	}
+	if env["AO_CLOUD_ACTIVITY_SPOOL"] != "/tmp/ao-cloud-activity-sess-1.ndjson" {
+		t.Fatalf("AO_CLOUD_ACTIVITY_SPOOL = %q", env["AO_CLOUD_ACTIVITY_SPOOL"])
+	}
+	if env["AO_CLOUD_ACTIVITY_ACTIVE_GRACE_SECONDS"] != "3" {
+		t.Fatalf("AO_CLOUD_ACTIVITY_ACTIVE_GRACE_SECONDS = %q", env["AO_CLOUD_ACTIVITY_ACTIVE_GRACE_SECONDS"])
 	}
 	claims, err := issuer.VerifyAccessToken(env["AO_API_TOKEN"])
 	if err != nil {
@@ -54,8 +61,11 @@ func TestCloudClaudeAgentLaunchUsesPrintModeForInitialPrompt(t *testing.T) {
 		t.Fatalf("cmd = %#v", cmd)
 	}
 	for _, want := range []string{
+		"ao_cloud_emit_activity active user-prompt-submit",
 		"printf '{}' | ao hooks claude-code user-prompt-submit",
+		"AO_CLOUD_ACTIVITY_ACTIVE_GRACE_SECONDS",
 		"'claude' '--permission-mode' 'bypassPermissions' '-p' 'say hi'",
+		"ao_cloud_emit_activity idle stop",
 		"printf '{}' | ao hooks claude-code stop",
 	} {
 		if !strings.Contains(cmd[2], want) {

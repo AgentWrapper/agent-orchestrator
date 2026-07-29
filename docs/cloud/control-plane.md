@@ -98,11 +98,16 @@ export AO_CLOUD_API_BASE='https://your-tunnel-or-public-cloud-url'
 export DAYTONA_API_KEY='...'
 export AO_DAYTONA_SNAPSHOT='ao-agent-sandbox:dev'
 export CLAUDE_CODE_OAUTH_TOKEN='...'
+# Optional local-demo helper: keeps active visible while polling.
+export AO_CLOUD_ACTIVITY_ACTIVE_GRACE_SECONDS=6
 ```
 
-`AO_CLOUD_API_BASE` must be reachable from Daytona sandboxes. `ao-cloud` passes
-it as `AO_API_BASE` and mints a per-session `AO_API_TOKEN` for in-sandbox
-`ao hooks` calls.
+For production, `AO_CLOUD_API_BASE` must be reachable from Daytona sandboxes.
+`ao-cloud` passes it as `AO_API_BASE` and mints a per-session `AO_API_TOKEN`
+for in-sandbox `ao hooks` calls. For local E2E environments where Daytona
+egress to quick tunnels resets, the Daytona activity bridge also reads the
+sandbox-local activity spool over Daytona's toolbox API and applies those
+events through the same lifecycle manager.
 
 ## Run
 

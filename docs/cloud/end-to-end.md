@@ -2,9 +2,9 @@
 
 Status: Phase 1+2 integration wiring is present on `cloud/integration`.
 
-This runbook starts `ao-cloud`, exposes it to Daytona through a tunnel, creates
-a dev-auth org, spawns a Claude Code session in a Daytona sandbox, and verifies
-that in-sandbox `ao hooks` activity reaches the control plane.
+This runbook starts `ao-cloud`, creates a dev-auth org, spawns a Claude Code
+session in a Daytona sandbox, and verifies that sandbox activity reaches the
+control plane.
 
 ## Required inputs
 
@@ -18,8 +18,9 @@ Also required:
 
 - A Daytona snapshot containing tmux, git, Claude Code, and `/usr/local/bin/ao`.
   Build/push instructions are in `docs/cloud/daytona-runtime.md`.
-- A reachable public HTTPS base URL for the local `ao-cloud` API. For local
-  testing, use `cloudflared` or `ngrok` as shown below.
+- A base URL for `ao-cloud` in `AO_CLOUD_API_BASE`. In production this must be a
+  public HTTPS URL reachable from Daytona sandboxes. Local E2E can use the
+  Daytona activity bridge when tunnel egress is blocked.
 - For production auth testing: Google OAuth web client id/secret and redirect
   URL. For local e2e without Google creds, set `AO_CLOUD_DEV_AUTH=1`.
 
@@ -35,6 +36,10 @@ docker run --rm --name ao-cloud-postgres \
 ```
 
 ## Start a tunnel
+
+This is the preferred production-like callback path. `ao-cloud` still injects
+`AO_CLOUD_API_BASE` into each sandbox as `AO_API_BASE`, with a per-session
+`AO_API_TOKEN`, so `ao hooks` can POST directly to the control plane.
 
 Cloudflare quick tunnel:
 
@@ -52,6 +57,12 @@ ngrok http 3011
 
 Copy the printed `https://...ngrok-free.app` URL into `AO_CLOUD_API_BASE`.
 
+If Daytona egress to quick-tunnel domains resets, local E2E can still validate
+activity with the Daytona bridge. Set `AO_CLOUD_API_BASE` to the local URL
+(`http://127.0.0.1:3011`) and continue; direct sandbox POSTs will fail, but the
+control plane will read the sandbox activity spool through Daytona's toolbox API
+and apply those events through the same lifecycle manager.
+
 ## Start ao-cloud with Daytona runtime
 
 ```bash
@@ -67,13 +78,18 @@ export AO_CLOUD_DEV_AUTH=1
 export DAYTONA_API_KEY
 export AO_DAYTONA_SNAPSHOT='ao-agent-sandbox:dev'
 export CLAUDE_CODE_OAUTH_TOKEN
+# Optional: makes active -> idle visible in local polling demos.
+export AO_CLOUD_ACTIVITY_ACTIVE_GRACE_SECONDS=6
 
 go run ./cmd/ao-cloud
 ```
 
 `AO_CLOUD_API_BASE` is injected into each sandbox as `AO_API_BASE`. `ao-cloud`
 mints a per-session JWT and injects it as `AO_API_TOKEN`; the token is accepted
-only for `POST /api/v1/sessions/{that-session}/activity`.
+only for `POST /api/v1/sessions/{that-session}/activity`. For Daytona sessions,
+`ao-cloud` also watches a sandbox-local activity spool over Daytona's toolbox
+API as a fallback for local E2E environments where sandbox-to-tunnel traffic is
+blocked.
 
 ## Authenticate and create the default org
 
@@ -154,55 +170,59 @@ Live run on 2026-07-29 with maintainer-provided Daytona and Claude credentials:
 ```text
 Postgres: local Homebrew postgres on 127.0.0.1:54329
 ao-cloud: 127.0.0.1:3021
-tunnel 1: ngrok https://0fee-...ngrok-free.app
-tunnel 2: localtunnel https://lovely-onions-buy.loca.lt
+AO_CLOUD_API_BASE: http://127.0.0.1:3021
+activity fallback: Daytona toolbox activity bridge
+AO_CLOUD_ACTIVITY_ACTIVE_GRACE_SECONDS=6
 auth: AO_CLOUD_DEV_AUTH=1
 project: agent-orchestrator registered through /api/v1/cloud/projects
 ```
 
-Successful parts of the loop:
+Successful loop:
 
 ```text
-spawn_elapsed_seconds=17
-session.id=agent-orchestrator-6
-terminalHandleId=agent-orchestrator-6
-branch=ao/agent-orchestrator-6/root
-initial status=idle
+spawn_elapsed_seconds=18
+session.id=agent-orchestrator-8
+terminalHandleId=agent-orchestrator-8
+branch=ao/agent-orchestrator-8/root
+```
+
+Activity observed through the control-plane API:
+
+```text
+poll_02=2026-07-29T22:22:27Z
+{
+  "id": "agent-orchestrator-8",
+  "status": "working",
+  "activity": {
+    "state": "active",
+    "lastActivityAt": "2026-07-29T15:22:26-07:00"
+  }
+}
+
+poll_11=2026-07-29T22:22:36Z
+{
+  "id": "agent-orchestrator-8",
+  "status": "idle",
+  "activity": {
+    "state": "idle",
+    "lastActivityAt": "2026-07-29T15:22:35-07:00"
+  }
+}
 ```
 
 Direct Daytona pane inspection confirmed the real Claude process ran in the
 sandbox and answered the prompt:
 
 ```text
-AO cloud Daytona hooks are connected.
-daytona@b3c67f44-678c-47f7-b2fe-4e962aab05da:~/ao/agent-orchestrator-6$
+AO cloud Daytona bridge delivered activity.
+daytona@3dcd75f3-5035-489f-82b4-c7687d4dff24:~/ao/agent-orchestrator-8$
 ```
 
-The remaining blocker is sandbox-to-local tunnel reachability. From the same
-Daytona sandbox, unauthenticated `curl` to the public tunnel URL reset before
-reaching `ao-cloud`; the in-sandbox `ao hooks` calls failed the same way:
-
-```text
-curl -i https://<ngrok-url>/healthz
-curl: (35) Recv failure: Connection reset by peer
-
-ao hooks claude-code user-prompt-submit:
-Post "https://<ngrok-url>/api/v1/sessions/agent-orchestrator-6/activity":
-read tcp 172.20.0.11:34060->3.14.182.203:443: read: connection reset by peer
-
-ao hooks claude-code stop:
-Post "https://<ngrok-url>/api/v1/sessions/agent-orchestrator-6/activity":
-read tcp 172.20.0.11:58424->3.134.125.175:443: read: connection reset by peer
-```
-
-The ngrok and localtunnel URLs both served `/healthz` from the maintainer
-machine, but reset from the Daytona sandbox. A follow-up isolated ngrok test
-served only a local `/healthz` endpoint, then launched a disposable Daytona
-session that ran `curl` against the fresh ngrok URL; the sandbox again reported
-`curl: (35) Recv failure: Connection reset by peer`, while local requests to
-the same URL returned `HTTP/2 200`. Until a tunnel or deployed
-`AO_CLOUD_API_BASE` is reachable from Daytona, the final activity transition
-cannot complete; the session remains `no_signal` even though Claude ran.
+Tunnel reachability note: ngrok, Cloudflare quick tunnels, and localtunnel all
+served `/healthz` from the maintainer machine, but Daytona sandbox `curl` calls
+to those URLs reset before reaching `ao-cloud`. The bridge is what makes local
+E2E reproducible in that network shape; production should use a deployed
+`AO_CLOUD_API_BASE` or a tunnel known to be reachable from Daytona.
 
 Local verification completed:
 
@@ -215,6 +235,5 @@ npm run frontend:typecheck
 PASS
 ```
 
-Maintainer still needs to provide a tunnel or deployed cloud URL reachable from
-Daytona. For production auth validation, provide real Google OAuth client
-credentials; until then, use `AO_CLOUD_DEV_AUTH=1`.
+For production auth validation, provide real Google OAuth client credentials;
+until then, use `AO_CLOUD_DEV_AUTH=1`.
