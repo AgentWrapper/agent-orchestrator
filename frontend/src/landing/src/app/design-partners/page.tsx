@@ -1,6 +1,7 @@
 import { AGENT_HARNESSES, COMPANY } from "@ao/shared/constants";
 import type { Metadata } from "next";
 import Image from "next/image";
+import { preload } from "react-dom";
 import {
   formatStatPlus,
   getGitHubRepoStats,
@@ -139,6 +140,12 @@ const phases: RoadmapPhase[] = [
   },
 ];
 
+const DESIGN_PARTNER_IMAGES = [
+  "/design-partners/hero-car-engine-olive.png",
+  "/design-partners/shared-workspace-olive.png",
+  ...phases.map((phase) => phase.image),
+];
+
 function ArrowIcon({ className = "" }: { className?: string }) {
   return (
     <svg
@@ -183,6 +190,11 @@ function TextLink({
 }
 
 export default async function DesignPartnersPage() {
+  // Emitted before the stats await so the browser can fetch artwork in parallel.
+  for (const image of DESIGN_PARTNER_IMAGES) {
+    preload(image, { as: "image" });
+  }
+
   const repo = await getGitHubRepoStats();
   const stars = repo?.stars ?? FALLBACK_STATS.stars;
   const forks = repo?.forks ?? FALLBACK_STATS.forks;
