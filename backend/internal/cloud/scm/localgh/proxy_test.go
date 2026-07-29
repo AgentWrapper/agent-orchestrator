@@ -1,6 +1,9 @@
 package localgh
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestProxyURLAcceptsOnlyGitHubOwnerRepository(t *testing.T) {
 	got, err := ProxyURL("https://cloud.example", "https://github.com/aoagents/agent-orchestrator.git")
@@ -13,5 +16,15 @@ func TestProxyURLAcceptsOnlyGitHubOwnerRepository(t *testing.T) {
 	}
 	if _, err := ProxyURL("https://cloud.example", "https://example.com/repo"); err == nil {
 		t.Fatal("ProxyURL(non-GitHub) error = nil")
+	}
+}
+
+func TestStaticTokenSource(t *testing.T) {
+	token, err := StaticTokenSource(" hosted-token ").Token(context.Background())
+	if err != nil {
+		t.Fatalf("Token() error = %v", err)
+	}
+	if token != "hosted-token" {
+		t.Fatalf("Token() = %q", token)
 	}
 }

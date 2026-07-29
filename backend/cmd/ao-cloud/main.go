@@ -54,8 +54,16 @@ func run(log *slog.Logger) error {
 	workerTokens := cloudworker.NewTokenManager(cfg.WorkerSigningKey)
 	workerHub := cloudworkerhub.New()
 	var localGitHub *cloudlocalgh.Client
-	if cfg.AllowLocalGitHub {
+	switch {
+	case cfg.GitHubToken != "":
+		localGitHub = cloudlocalgh.NewWithTokenSource(
+			cloudlocalgh.StaticTokenSource(cfg.GitHubToken),
+			nil,
+		)
+	case cfg.AllowLocalGitHub:
 		localGitHub = cloudlocalgh.New(nil)
+	}
+	if localGitHub != nil {
 		scmObserver := cloudscm.New(store, localGitHub, eventService, 30*time.Second, log)
 		go func() {
 			if err := scmObserver.Run(ctx); err != nil {

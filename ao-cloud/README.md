@@ -95,7 +95,11 @@ AO-authenticated repository proxy scoped to the session's registered
 repository.
 
 This mode works only while the control plane runs on the developer machine.
-Render requires the planned GitHub App credential source.
+For a temporary Render deployment, set `AO_GITHUB_TOKEN` to a fine-grained
+token limited to the repositories AO may use. The token remains in Render and
+the control plane's Git proxy; sandboxes receive only scoped worker
+credentials. Replace this fallback with the planned GitHub App before a
+multi-user production launch.
 
 ## Daytona
 
@@ -148,7 +152,8 @@ provider resources.
 4. Set `AO_WEB_PUBLIC_URL` to the final Vercel origin.
 5. Set `AO_DATABASE_URL` to Supabase's pooled PostgreSQL URL.
 6. Generate 64-character hexadecimal encryption and worker-signing keys.
-7. Use a production Daytona key and GitHub App mode.
+7. Set `AO_GITHUB_TOKEN` to a fine-grained token for temporary testing, or use
+   GitHub App mode when available.
 8. Verify `/readyz` before allowing web traffic.
 
 Render builds `ao-cloud/docker/control-plane.Dockerfile`. The service keeps

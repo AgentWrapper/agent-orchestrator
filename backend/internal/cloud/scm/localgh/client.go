@@ -31,6 +31,19 @@ func (TokenSource) Token(ctx context.Context) (string, error) {
 	return token, nil
 }
 
+// StaticTokenSource supplies a server-managed GitHub token for temporary hosted
+// deployments until the GitHub App credential source is enabled.
+type StaticTokenSource string
+
+// Token returns the configured token without exposing it to sandboxes.
+func (s StaticTokenSource) Token(context.Context) (string, error) {
+	token := strings.TrimSpace(string(s))
+	if token == "" {
+		return "", fmt.Errorf("configured GitHub token is empty")
+	}
+	return token, nil
+}
+
 // Repository describes a GitHub repository available to the current user.
 type Repository struct {
 	FullName      string `json:"fullName"`
