@@ -33,6 +33,18 @@ type Notification struct {
 	CreatedAt time.Time
 }
 
+type OrchestratorReengagement struct {
+	SessionID            string
+	AttemptCount         int64
+	NextAttemptAt        time.Time
+	LastAttemptAt        sql.NullTime
+	ProgressSinceAttempt bool
+	AttentionNotified    bool
+	State                string
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+}
+
 type PR struct {
 	URL                      string
 	SessionID                domain.SessionID

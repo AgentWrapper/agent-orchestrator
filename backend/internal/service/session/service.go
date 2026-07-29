@@ -105,6 +105,10 @@ type scmProvider interface {
 	FetchReviewThreads(ctx context.Context, ref ports.SCMPRRef) (ports.SCMReviewObservation, error)
 }
 
+type orchestratorReengagement interface {
+	Complete(ctx context.Context, id domain.SessionID) error
+}
+
 // Service is the controller-facing session service. It delegates command-side
 // session operations to the internal sessionmanager.Manager and owns read-model
 // assembly, including user-facing display status derivation.
@@ -117,6 +121,7 @@ type Service struct {
 	clock               func() time.Time
 	dataDir             string
 	telemetry           ports.EventSink
+	reengagement        orchestratorReengagement
 	orchestratorLocksMu sync.Mutex
 	orchestratorLocks   map[domain.ProjectID]*sync.Mutex
 	// signalCapable reports whether a harness has a hook pipeline that can
@@ -135,14 +140,15 @@ func New(manager *sessionmanager.Manager, store Store) *Service {
 // path keeps existing tests and callers small; daemon wiring uses NewWithDeps
 // to supply SCM observation for PR claiming.
 type Deps struct {
-	Manager   commander
-	Store     Store
-	PRClaimer ports.PRClaimer
-	SCM       scmProvider
-	Tracker   ports.Tracker
-	Clock     func() time.Time
-	DataDir   string
-	Telemetry ports.EventSink
+	Manager      commander
+	Store        Store
+	PRClaimer    ports.PRClaimer
+	SCM          scmProvider
+	Tracker      ports.Tracker
+	Clock        func() time.Time
+	DataDir      string
+	Telemetry    ports.EventSink
+	Reengagement orchestratorReengagement
 	// SignalCapable gates the no_signal status downgrade per harness; daemon
 	// wiring passes activitydispatch.SupportsHarness. Left nil, no session is
 	// ever downgraded to no_signal.
@@ -151,7 +157,7 @@ type Deps struct {
 
 // NewWithDeps wires a session service with optional PR-claim dependencies.
 func NewWithDeps(d Deps) *Service {
-	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, tracker: d.Tracker, clock: d.Clock, dataDir: d.DataDir, signalCapable: d.SignalCapable, telemetry: d.Telemetry}
+	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, tracker: d.Tracker, clock: d.Clock, dataDir: d.DataDir, signalCapable: d.SignalCapable, telemetry: d.Telemetry, reengagement: d.Reengagement}
 	if s.prClaimer == nil {
 		if w, ok := d.Store.(ports.PRClaimer); ok {
 			s.prClaimer = w
@@ -161,6 +167,25 @@ func NewWithDeps(d Deps) *Service {
 		s.clock = time.Now
 	}
 	return s
+}
+
+// CompleteOrchestrator durably suppresses further automated re-engagement for
+// an orchestrator session.
+func (s *Service) CompleteOrchestrator(ctx context.Context, id domain.SessionID) error {
+	rec, ok, err := s.store.GetSession(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	if rec.Kind != domain.KindOrchestrator {
+		return apierr.Invalid("NOT_ORCHESTRATOR", "Session is not an orchestrator", nil)
+	}
+	if s.reengagement == nil {
+		return apierr.Internal("REENGAGEMENT_UNAVAILABLE", "Orchestrator re-engagement is unavailable")
+	}
+	return s.reengagement.Complete(ctx, id)
 }
 
 // Spawn creates a session and returns the API-facing read model plus
