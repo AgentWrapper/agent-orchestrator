@@ -629,6 +629,13 @@ type OrchestratorResponse struct {
 	ProjectName string           `json:"projectName,omitempty"`
 }
 
+// CompleteOrchestratorResponse is returned after the orchestrator declares its
+// assigned work complete.
+type CompleteOrchestratorResponse struct {
+	OK        bool             `json:"ok"`
+	SessionID domain.SessionID `json:"sessionId"`
+}
+
 // ListAgentsResponse is the body of GET /api/v1/agents.
 type ListAgentsResponse = agentsvc.Inventory
 

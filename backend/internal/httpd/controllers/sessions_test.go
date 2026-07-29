@@ -38,6 +38,7 @@ type fakeSessionService struct {
 	claimErr        error
 	listPRErr       error
 	workspaceErr    error
+	completedID     domain.SessionID
 }
 
 type fakeManagedPreviewServer struct {
@@ -176,6 +177,11 @@ func (f *fakeSessionService) SetTerminateOnPRMerge(_ context.Context, id domain.
 	s.TerminateOnPRMerge = terminate
 	f.sessions[id] = s
 	return s, nil
+}
+
+func (f *fakeSessionService) CompleteOrchestrator(_ context.Context, id domain.SessionID) error {
+	f.completedID = id
+	return nil
 }
 
 func (f *fakeSessionService) Restore(_ context.Context, id domain.SessionID) (sessionsvc.RestoreOutcome, error) {
@@ -1472,6 +1478,31 @@ func TestSessionsAPI_ListOrchestratorsOnly(t *testing.T) {
 	}
 	if _, ok := got["ao-1"]; ok {
 		t.Fatalf("worker session leaked into orchestrator list: %#v", got)
+	}
+}
+
+func TestSessionsAPI_CompleteOrchestrator(t *testing.T) {
+	svc := newFakeSessionService()
+	now := time.Now().UTC()
+	svc.sessions["ao-orch"] = domain.Session{SessionRecord: domain.SessionRecord{
+		ID: "ao-orch", ProjectID: "ao", Kind: domain.KindOrchestrator,
+		Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
+		CreatedAt: now, UpdatedAt: now,
+	}}
+	srv := newSessionTestServer(t, svc)
+	body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/orchestrators/ao-orch/done", "")
+	if status != http.StatusOK {
+		t.Fatalf("complete orchestrator = %d, want 200; body=%s", status, body)
+	}
+	if svc.completedID != "ao-orch" {
+		t.Fatalf("completed id = %q, want ao-orch", svc.completedID)
+	}
+	var got controllers.CompleteOrchestratorResponse
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.OK || got.SessionID != "ao-orch" {
+		t.Fatalf("response = %#v", got)
 	}
 }
 

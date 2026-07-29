@@ -586,8 +586,12 @@ function MergeLaneColumn({
 	onOpen: (s: WorkspaceSession) => void;
 	onTerminate: (s: WorkspaceSession) => void;
 }) {
-	const mergedSessions = sessions.filter((session) => session.status === "merged");
-	const readySessions = sessions.filter((session) => session.status !== "merged");
+	const mergedSessions = sessions
+		.filter((session) => session.status === "merged")
+		.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+	const readySessions = sessions
+		.filter((session) => session.status !== "merged")
+		.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 
 	return (
 		<SplitLaneColumn
