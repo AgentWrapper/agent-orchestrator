@@ -5,6 +5,9 @@ Electron renderer sends sanitized PostHog events directly, and the Go daemon can
 persist allowlisted events locally and fan them out to PostHog when remote
 telemetry is enabled.
 
+For cost-control runbooks, including the v2 PostHog event namespace and legacy
+ingestion drop rules, see [posthog-cost-controls.md](posthog-cost-controls.md).
+
 ## What is collected
 
 - App activation events: `ao.app.active` from the renderer and user-context

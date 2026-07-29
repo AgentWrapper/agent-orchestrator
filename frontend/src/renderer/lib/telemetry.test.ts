@@ -3,6 +3,7 @@ import { PostHog } from "posthog-js/dist/module.full.no-external";
 import {
 	buildPostHogConfig,
 	buildTelemetryContext,
+	postHogEventName,
 	reserveCapture,
 	reserveDailyActiveCapture,
 	reserveRouteViewCapture,
@@ -72,12 +73,21 @@ describe("telemetry sanitizers", () => {
 			app_version: "1.2.3-nightly.20260707",
 			ao_version: "1.2.3-nightly.20260707",
 			platform: "linux",
+			telemetry_schema_version: 2,
 		});
 		expect(buildTelemetryContext("", "darwin")).toMatchObject({
 			app_version: "unknown",
 			ao_version: "unknown",
 			platform: "darwin",
+			telemetry_schema_version: 2,
 		});
+	});
+
+	it("uses v2 PostHog event names for streams that have noisy legacy producers", () => {
+		expect(postHogEventName("ao.app.active")).toBe("ao.v2.app.active");
+		expect(postHogEventName("ao.renderer.route_viewed")).toBe("ao.v2.renderer.route_viewed");
+		expect(postHogEventName("ao.renderer.api_error")).toBe("ao.v2.renderer.api_error");
+		expect(postHogEventName("ao.session.spawned")).toBe("ao.session.spawned");
 	});
 
 	it("forces renderer events to stay anonymous in PostHog", () => {
