@@ -303,9 +303,10 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 						reviewerId: "prateek",
 						count: 2,
 						reviewUrl: "https://github.com/acme-inc/ao-demo/pull/318#pullrequestreview-3101",
+						// Two comments, two separate threads — resolving addresses threads.
 						links: [
-							{ file: "frontend/src/renderer/components/TerminalPane.tsx", line: 84 },
-							{ file: "frontend/src/renderer/styles.css", line: 219 },
+							{ threadId: "PRRT_demo318_a", file: "frontend/src/renderer/components/TerminalPane.tsx", line: 84 },
+							{ threadId: "PRRT_demo318_b", file: "frontend/src/renderer/styles.css", line: 219 },
 						],
 					},
 				],
