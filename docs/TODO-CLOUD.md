@@ -55,8 +55,8 @@ No local/cloud database synchronization is part of Cloud V1.
 - [ ] Re-test Daytona outbound HTTPS from a fresh sandbox and document provider
       egress requirements; the 2026-07-30 US container test reset TLS
       connections even with `networkBlockAll=false`
-- [ ] Raise or replace the current Daytona 10-GiB disk limit so AO's selected
-      40-GiB default can be allocated
+- [ ] Revisit larger disk profiles if the Daytona tier is raised beyond the
+      current 10-GiB limit
 - [ ] AWS-native customer-hosted sandbox adapter
 - [ ] Additional managed sandbox providers
 - [ ] Customer-owned persistent host/BYOM mode

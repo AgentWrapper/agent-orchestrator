@@ -36,7 +36,7 @@ func TestCreateMapsProviderNeutralSpec(t *testing.T) {
 			"target":"us",
 			"cpu":4,
 			"memory":8,
-			"disk":40
+			"disk":10
 		}`))
 	}))
 	defer server.Close()
@@ -52,7 +52,7 @@ func TestCreateMapsProviderNeutralSpec(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	if environment.ID != "sandbox-one" || environment.Resource.Disk != 40 {
+	if environment.ID != "sandbox-one" || environment.Resource.Disk != 10 {
 		t.Fatalf("environment = %#v", environment)
 	}
 }

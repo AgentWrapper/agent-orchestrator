@@ -219,9 +219,8 @@ func (r *Reconciler) provision(
 		json.RawMessage(`{"provider":"daytona"}`),
 	)
 
-	// The current Daytona account's largest general snapshot is 4 vCPU, 8 GiB
-	// RAM and 10 GiB disk. AO retains the requested profile durably and uses the
-	// deployment-approved snapshot until a 40-GiB custom snapshot is available.
+	// The current Daytona tier's largest approved profile is 4 vCPU, 8 GiB RAM
+	// and 10 GiB disk.
 	environment, err := provider.Create(ctx, cloudsandbox.Spec{
 		Name:            "ao-" + string(sandbox.SessionID),
 		SessionID:       sandbox.SessionID,

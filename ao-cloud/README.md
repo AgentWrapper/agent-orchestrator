@@ -107,8 +107,8 @@ DAYTONA_TARGET=us
 ```
 
 The current account exposes `daytona-large` at 4 vCPU, 8 GiB memory, and 10 GiB
-disk. AO retains the requested 40-GiB profile, but a custom snapshot/account
-limit is required before Daytona can actually allocate 40 GiB.
+disk. AO uses that as the initial default and enforces the same 10-GiB ceiling
+until the Daytona tier changes.
 
 Production should build and publish
 `ao-cloud/docker/worker.Dockerfile`, create a Daytona snapshot from it, and

@@ -1258,7 +1258,8 @@ plan-specific limits require operational validation and are tracked in
 
 ### 9. Resource profile
 
-The default Daytona sandbox profile is **4 vCPU, 8 GB RAM, and 40 GB disk**.
+The default Daytona sandbox profile is **4 vCPU, 8 GB RAM, and 10 GB disk** for
+the current Daytona tier.
 Users may select another deployment-approved profile. AO enforces minimums,
 maximums, concurrency, and spending limits rather than accepting arbitrary
 provider values from the browser.

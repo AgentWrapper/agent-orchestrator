@@ -67,7 +67,7 @@ type ResourceProfile struct {
 
 // DefaultResourceProfile returns the standard sandbox resource request.
 func DefaultResourceProfile() ResourceProfile {
-	return ResourceProfile{CPU: 4, Memory: 8, Disk: 40}
+	return ResourceProfile{CPU: 4, Memory: 8, Disk: 10}
 }
 
 // Sandbox records desired and observed state for a session environment.

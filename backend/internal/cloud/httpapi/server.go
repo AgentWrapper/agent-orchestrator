@@ -280,7 +280,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if input.Resource.CPU < 1 || input.Resource.CPU > 4 ||
 		input.Resource.Memory < 1 || input.Resource.Memory > 8 ||
-		input.Resource.Disk < 3 || input.Resource.Disk > 40 {
+		input.Resource.Disk < 3 || input.Resource.Disk > 10 {
 		writeError(w, r, http.StatusBadRequest, "INVALID_RESOURCE_PROFILE", "Resource profile exceeds Cloud V1 limits.")
 		return
 	}
