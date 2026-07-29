@@ -396,11 +396,9 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 					}
 				/>
 			)}
-			{/* p-2 keeps the xterm content off the pane edges; the host fills the
-			    remaining content box, so FitAddon still measures it correctly and
-			    the absolute overlays (empty state, banner) keep covering the
-			    full padding box. */}
-			<div className="relative min-h-0 flex-1 p-2">
+			{/* xterm fills the content box edge-to-edge; FitAddon measures this host
+			    directly. Overlays (empty state, banner, replay cover) stay absolute. */}
+			<div className="relative min-h-0 flex-1">
 				<XtermTerminal
 					ariaLabel={terminalTarget?.kind === "shell" ? "Shell terminal" : "Session terminal"}
 					fontSize={fontSize}
@@ -420,7 +418,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 				)}
 				{showReplayCover && <ReplayCover />}
 				{banner && (
-					<div className="absolute inset-x-3 top-2 rounded-md border border-border bg-surface/95 px-3 py-1.5 font-mono text-caption text-muted-foreground">
+					<div className="absolute inset-x-2 top-1 rounded-md border border-border bg-surface/95 px-3 py-1.5 font-mono text-caption text-muted-foreground">
 						{banner}
 					</div>
 				)}

@@ -130,8 +130,7 @@ describe("CenterPane toolbar session label", () => {
 	it("uses the inspector tab height for the terminal header", () => {
 		render(<CenterPane session={worker} theme="dark" daemonReady />);
 
-		const header = screen.getByText("TERMINAL").parentElement?.parentElement;
-		expect(header).toHaveClass("h-inspector-tabs");
+		expect(screen.getByTestId("terminal-tab-bar")).toHaveClass("h-inspector-tabs");
 	});
 
 	it("lets tabs shrink into a scrollable strip instead of overflowing onto the controls", () => {
@@ -146,14 +145,14 @@ describe("CenterPane toolbar session label", () => {
 			expect(tab).toHaveClass("min-w-flex-min");
 			expect(tab).not.toHaveClass("min-w-0");
 		}
-		// jsdom reports no overflow, so the indicator stays mounted but disabled to preserve focus.
-		expect(screen.getByRole("button", { name: "Scroll tabs right" })).toBeDisabled();
+		// jsdom reports no overflow, so scroll indicators stay out of the tab bar.
+		expect(screen.queryByRole("button", { name: "Scroll tabs right" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Scroll tabs left" })).not.toBeInTheDocument();
 
 		// The display controls float over the terminal body, not the tab bar,
 		// so tabs and controls can never overlap.
-		const tabBarRow = screen.getByText("TERMINAL").closest("div")?.parentElement;
-		expect(tabBarRow).not.toBeNull();
-		expect(tabBarRow?.contains(screen.getByRole("button", { name: /fullscreen/i }))).toBe(false);
+		const tabBarRow = screen.getByTestId("terminal-tab-bar");
+		expect(tabBarRow.contains(screen.getByRole("button", { name: /fullscreen/i }))).toBe(false);
 	});
 
 	it("reveals scroll chevrons only when the tab strip actually overflows", () => {
@@ -165,13 +164,13 @@ describe("CenterPane toolbar session label", () => {
 		Object.defineProperty(scrollRegion, "scrollWidth", { value: 500, configurable: true });
 		fireEvent.scroll(scrollRegion);
 
-		expect(screen.getByRole("button", { name: "Scroll tabs right" })).toBeEnabled();
-		expect(screen.getByRole("button", { name: "Scroll tabs left" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Scroll tabs right" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Scroll tabs left" })).not.toBeInTheDocument();
 
 		Object.defineProperty(scrollRegion, "scrollLeft", { value: 400, configurable: true });
 		fireEvent.scroll(scrollRegion);
-		expect(screen.getByRole("button", { name: "Scroll tabs left" })).toBeEnabled();
-		expect(screen.getByRole("button", { name: "Scroll tabs right" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Scroll tabs left" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Scroll tabs right" })).not.toBeInTheDocument();
 	});
 
 	it("scrolls the tab strip horizontally with the mouse wheel", () => {

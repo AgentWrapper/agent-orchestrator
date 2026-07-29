@@ -171,24 +171,22 @@ export function CenterPane({
 			className="terminal-pane-frame flex h-full min-h-0 min-w-flex-min flex-col"
 			onWheelCapture={handleWheelZoom}
 		>
-			<div className="flex h-inspector-tabs shrink-0 items-center border-b border-border px-5">
-				<div className="flex min-w-flex-min flex-1 items-center gap-3">
-					<span className="shrink-0 font-mono text-caption font-semibold uppercase tracking-wide-lg text-muted-foreground">
-						TERMINAL
-					</span>
-					<button
-						aria-label="Scroll tabs left"
-						className={cn(
-							"inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-0",
-							!tabsOverflow.canScrollLeft && "invisible",
-						)}
-						disabled={!tabsOverflow.canScrollLeft}
-						onClick={() => tabsOverflow.scrollByDirection(-1)}
-						title="Scroll tabs left"
-						type="button"
-					>
-						<ChevronLeft aria-hidden="true" className="size-icon-md" />
-					</button>
+			<div
+				className="flex h-inspector-tabs shrink-0 items-center border-b border-border px-2.5"
+				data-testid="terminal-tab-bar"
+			>
+				<div className="flex min-w-flex-min flex-1 items-center gap-2">
+					{tabsOverflow.canScrollLeft ? (
+						<button
+							aria-label="Scroll tabs left"
+							className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+							onClick={() => tabsOverflow.scrollByDirection(-1)}
+							title="Scroll tabs left"
+							type="button"
+						>
+							<ChevronLeft aria-hidden="true" className="size-icon-md" />
+						</button>
+					) : null}
 					{/* Each originating session owns a private set of pinned worker and
 					    shell tabs. The + menu is the only way to add to that layout. */}
 					<div
@@ -232,19 +230,17 @@ export function CenterPane({
 							/>
 						))}
 					</div>
-					<button
-						aria-label="Scroll tabs right"
-						className={cn(
-							"inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-0",
-							!tabsOverflow.canScrollRight && "invisible",
-						)}
-						disabled={!tabsOverflow.canScrollRight}
-						onClick={() => tabsOverflow.scrollByDirection(1)}
-						title="Scroll tabs right"
-						type="button"
-					>
-						<ChevronRight aria-hidden="true" className="size-icon-md" />
-					</button>
+					{tabsOverflow.canScrollRight ? (
+						<button
+							aria-label="Scroll tabs right"
+							className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+							onClick={() => tabsOverflow.scrollByDirection(1)}
+							title="Scroll tabs right"
+							type="button"
+						>
+							<ChevronRight aria-hidden="true" className="size-icon-md" />
+						</button>
+					) : null}
 					<DropdownMenu
 						open={isTabLauncherOpen}
 						onOpenChange={(open) => {
@@ -355,7 +351,7 @@ export function CenterPane({
 				/>
 				{/* Display controls float over the terminal's top-right corner with no
 				    chrome of their own, so they read as part of the terminal itself. */}
-				<div className="absolute right-3 top-2 z-10 flex shrink-0 items-center gap-3 font-mono text-passive/70">
+				<div className="absolute right-2 top-1 z-10 flex shrink-0 items-center gap-3 font-mono text-passive/70">
 					<button
 						aria-label="Decrease terminal font size"
 						className="inline-flex size-control-sm items-center justify-center rounded-sm bg-transparent text-control leading-none transition-[background,color,opacity] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-passive"
