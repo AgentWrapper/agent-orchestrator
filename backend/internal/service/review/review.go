@@ -121,7 +121,7 @@ type AddressedFeedback struct {
 }
 
 // AddressedResult reports how many matching unresolved review threads AO
-// replied to and resolved through the SCM provider.
+// replied to and resolved through the configured review feedback action port.
 type AddressedResult struct {
 	Resolved int
 }

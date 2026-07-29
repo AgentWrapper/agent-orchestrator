@@ -71,7 +71,7 @@ type AddressedReviewInput struct {
 	Body     string `json:"body" description:"Reply AO should post before resolving the matching review threads."`
 }
 
-// AddressedReviewResponse reports the provider-owned resolution result.
+// AddressedReviewResponse reports the backend-owned resolution result.
 type AddressedReviewResponse struct {
 	Resolved int `json:"resolved"`
 }
