@@ -93,11 +93,11 @@ func (i *Ingestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, er
 	result := IngestResult{BindingID: source.Source.BindingID}
 	info, err := os.Stat(source.Source.ArtifactPath)
 	if err != nil || !info.Mode().IsRegular() {
-		return i.retrySource(ctx, source.Source, domain.UsageErrorArtifactMissing, now, err)
+		return i.retrySource(ctx, source.Source, domain.UsageErrorArtifactMissing, now, nil)
 	}
 	identity, err := usagesvc.SourceIdentity(source.Source.ArtifactPath)
 	if err != nil {
-		return i.retrySource(ctx, source.Source, domain.UsageErrorSourceReadFailed, now, err)
+		return i.retrySource(ctx, source.Source, domain.UsageErrorSourceReadFailed, now, nil)
 	}
 	if source.Source.FileIdentity != identity || info.Size() < source.Source.ByteOffset {
 		return i.replaceSource(ctx, source, identity, now)
@@ -129,7 +129,7 @@ func (i *Ingestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, er
 		source.Source.LastErrorCode,
 	)
 	if err != nil {
-		return i.retrySource(ctx, source.Source, domain.UsageErrorSourceReadFailed, now, err)
+		return i.retrySource(ctx, source.Source, domain.UsageErrorSourceReadFailed, now, nil)
 	}
 	stableFinalTail := false
 	finalizationSettled := source.Source.NextRetryAt != nil && !source.Source.NextRetryAt.After(now)

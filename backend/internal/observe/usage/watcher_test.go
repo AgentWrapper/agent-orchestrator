@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,6 +29,20 @@ func TestTranscriptWatcherExistingRootWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertNoTranscriptEvent(t, watcher.Events(), ignored)
+}
+
+func TestTranscriptWatcherErrorsRedactRootPath(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "private-transcript-root")
+	if err := os.WriteFile(root, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := NewTranscriptWatcher([]string{root})
+	if err == nil {
+		t.Fatal("expected file transcript root to be rejected")
+	}
+	if strings.Contains(err.Error(), root) {
+		t.Fatalf("watcher error exposed transcript root: %v", err)
+	}
 }
 
 func TestTranscriptWatcherResolvesSymlinkedRoot(t *testing.T) {

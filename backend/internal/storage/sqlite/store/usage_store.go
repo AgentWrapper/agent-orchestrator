@@ -80,6 +80,23 @@ func (s *Store) UpdateUsageBindingState(ctx context.Context, id int64, state dom
 	return n > 0, nil
 }
 
+// UpdateUsageBindingErrorCode refreshes binding diagnostics without changing
+// lifecycle state chosen by a concurrent finalization or ingestion pass.
+func (s *Store) UpdateUsageBindingErrorCode(ctx context.Context, id int64, lastErrorCode string, at time.Time) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	n, err := s.qw.UpdateUsageBindingErrorCode(ctx, gen.UpdateUsageBindingErrorCodeParams{
+		ID:            id,
+		LastErrorCode: lastErrorCode,
+		LastSeenAt:    timeOrNow(at),
+		UpdatedAt:     timeOrNow(at),
+	})
+	if err != nil {
+		return false, fmt.Errorf("update usage binding %d error code: %w", id, err)
+	}
+	return n > 0, nil
+}
+
 // CompleteUsageBindingIfSettled atomically completes a finalizing binding only
 // when every registered source generation is complete.
 func (s *Store) CompleteUsageBindingIfSettled(ctx context.Context, bindingID int64, at time.Time) (bool, error) {
@@ -102,7 +119,7 @@ func (s *Store) InsertUsageSource(ctx context.Context, rec domain.UsageSourceRec
 	defer s.writeMu.Unlock()
 	row, err := s.qw.InsertUsageSource(ctx, usageSourceInsertParams(rec))
 	if err != nil {
-		return domain.UsageSourceRecord{}, fmt.Errorf("insert usage source for binding %d path %q generation %d: %w", rec.BindingID, rec.ArtifactPath, rec.Generation, err)
+		return domain.UsageSourceRecord{}, fmt.Errorf("insert usage source for binding %d generation %d: %w", rec.BindingID, rec.Generation, err)
 	}
 	return usageSourceFromGen(row), nil
 }
@@ -308,7 +325,10 @@ func (s *Store) ApplyUsageChunk(ctx context.Context, sourceID, expectedOffset in
 			UpdatedAt:                 timeOrNow(nextState.UpdatedAt),
 		})
 	})
-	return result, err
+	if err != nil {
+		return domain.ApplyUsageChunkResult{}, err
+	}
+	return result, nil
 }
 
 // ListUsageModelAggregates returns model-level aggregate rows for a session.

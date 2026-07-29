@@ -12,8 +12,18 @@ ON CONFLICT (session_id, harness, native_root_id) DO UPDATE SET
         WHEN excluded.source_cli_version <> '' THEN excluded.source_cli_version
         ELSE usage_bindings.source_cli_version
     END,
-    state = excluded.state,
-    last_error_code = excluded.last_error_code,
+    state = CASE
+        WHEN usage_bindings.state IN ('finalizing', 'complete', 'partial')
+          AND excluded.state IN ('discovering', 'active')
+        THEN usage_bindings.state
+        ELSE excluded.state
+    END,
+    last_error_code = CASE
+        WHEN usage_bindings.state IN ('finalizing', 'complete', 'partial')
+          AND excluded.state IN ('discovering', 'active')
+        THEN usage_bindings.last_error_code
+        ELSE excluded.last_error_code
+    END,
     last_seen_at = excluded.last_seen_at,
     updated_at = excluded.updated_at
 RETURNING *;
@@ -198,6 +208,13 @@ WHERE id = ?;
 -- name: UpdateUsageBindingState :execrows
 UPDATE usage_bindings SET
     state = ?,
+    last_error_code = ?,
+    last_seen_at = ?,
+    updated_at = ?
+WHERE id = ?;
+
+-- name: UpdateUsageBindingErrorCode :execrows
+UPDATE usage_bindings SET
     last_error_code = ?,
     last_seen_at = ?,
     updated_at = ?

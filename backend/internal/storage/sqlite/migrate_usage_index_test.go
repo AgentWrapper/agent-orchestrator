@@ -70,4 +70,7 @@ func TestModelUsageEventsHasUsageSourceIndex(t *testing.T) {
 	if indexColumns.Next() {
 		t.Fatal("idx_model_usage_events_usage_source has unexpected extra columns")
 	}
+	if err := indexColumns.Err(); err != nil {
+		t.Fatal(err)
+	}
 }
