@@ -15,12 +15,21 @@ export const metadata: Metadata = {
     siteName: COMPANY.NAME,
     title: `Privacy Policy | ${COMPANY.NAME}`,
     description,
+    images: [
+      {
+        url: `${COMPANY.MARKETING_URL}/og-image.png`,
+        width: 1200,
+        height: 630,
+        alt: `${COMPANY.NAME} privacy policy`,
+      },
+    ],
   },
   twitter: {
     card: "summary",
     site: "@aoagents",
     title: `Privacy Policy | ${COMPANY.NAME}`,
     description,
+    images: [`${COMPANY.MARKETING_URL}/og-image.png`],
   },
   alternates: {
     canonical: `${COMPANY.MARKETING_URL}/privacy/`,
