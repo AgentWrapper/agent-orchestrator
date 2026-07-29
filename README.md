@@ -108,7 +108,7 @@ AO ships adapters for 23 worker agent harnesses:
   <a href="https://aoagents.dev/docs/plugins/agents"><img src="docs/assets/readme/logos/crush.png" alt="" width="16" height="16" valign="middle" /> <code>crush</code></a> ·
   <a href="https://aoagents.dev/docs/plugins/agents/cursor"><img src="docs/assets/readme/logos/cursor.svg" alt="" width="16" height="16" valign="middle" /> <code>cursor</code></a> ·
   <a href="https://aoagents.dev/docs/plugins/agents"><img src="docs/assets/readme/logos/qwen.png" alt="" width="16" height="16" valign="middle" /> <code>qwen</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="docs/assets/readme/logos/copilot.png" alt="" width="16" height="16" valign="middle" /> <code>copilot</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="docs/assets/readme/logos/copilot.svg" alt="" width="16" height="16" valign="middle" /> <code>copilot</code></a> ·
   <a href="https://aoagents.dev/docs/plugins/agents"><img src="docs/assets/readme/logos/goose.svg" alt="" width="16" height="16" valign="middle" /> <code>goose</code></a> ·
   <a href="https://aoagents.dev/docs/plugins/agents"><img src="docs/assets/readme/logos/auggie.svg" alt="" width="16" height="16" valign="middle" /> <code>auggie</code></a> ·
   <a href="https://aoagents.dev/docs/plugins/agents"><img src="docs/assets/readme/logos/continue.png" alt="" width="16" height="16" valign="middle" /> <code>continue</code></a> ·
