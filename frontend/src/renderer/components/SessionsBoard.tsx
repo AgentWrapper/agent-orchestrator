@@ -40,8 +40,14 @@ import { OrchestratorIcon } from "./icons";
 import { OrchestratorActivityIndicator } from "./OrchestratorActivityIndicator";
 import { AgentAvatar } from "./AgentAvatar";
 import { TopbarButton, TopbarKillError, topbarProjectLabelClass } from "./TopbarButton";
-import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
+import {
+	canRestoreTerminatedSession,
+	isSharedBoardId,
+	removeSharedSession,
+	sandboxIdFromBoardId,
+} from "../lib/cloud-sessions";
+import { apiClient } from "../lib/api-client";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { formatTimeCompact } from "../lib/format-time";
 import { aoBridge } from "../lib/bridge";
@@ -91,7 +97,6 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const sessions = workspaces.flatMap((w) => workerSessions(w.sessions));
 	const orchestrator = projectId ? newestActiveOrchestrator(workspaces[0]?.sessions ?? []) : undefined;
 	const orchestratorActivityLabel = orchestrator ? getAgentActivityView(orchestrator.activity).label : undefined;
-	const [isSpawning, setIsSpawning] = useState(false);
 	const [spawnError, setSpawnError] = useState<string | null>(null);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const orchestratorStartupError = useUiStore((state) =>
@@ -101,6 +106,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
 	const setOrchestratorStartupError = useUiStore((state) => state.setOrchestratorStartupError);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
+	const requestOrchestratorLaunch = useUiStore((state) => state.requestOrchestratorLaunch);
 	const isProjectRestarting = projectId ? restartingProjectIds.has(projectId) : false;
 	const health = workspace ? orchestratorHealth(workspace, isProjectRestarting) : { state: "ok" as const };
 	const visibleSpawnError = spawnError ?? orchestratorStartupError;
@@ -198,9 +204,26 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 		}
 	};
 
-	const openOrchestrator = async () => {
+	// Remove an archived CLOUD/SHARED session that can't be restored (its sandbox
+	// is gone). Shared imports are dropped from local storage; an owned terminated
+	// session is forgotten on the control plane (a second DELETE past teardown).
+	// Local sessions never take this path — they use Restore.
+	const removeArchivedSession = async (event: MouseEvent<HTMLButtonElement>, session: WorkspaceSession) => {
+		event.stopPropagation();
+		const sandboxId = sandboxIdFromBoardId(session.id);
+		if (!sandboxId) return;
+		if (isSharedBoardId(session.id)) {
+			removeSharedSession(sandboxId);
+		} else {
+			await apiClient.DELETE("/api/v1/cloud/sessions/{sandboxId}", { params: { path: { sandboxId } } }).catch(() => undefined);
+		}
+		await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+	};
+
+	const openOrchestrator = () => {
 		if (!projectId || isProjectRestarting) return;
 		if (orchestrator) {
+			// Already running → attach immediately (fast path).
 			void navigate({
 				to: "/projects/$projectId/sessions/$sessionId",
 				params: { projectId, sessionId: orchestrator.id },
@@ -213,25 +236,12 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			}
 			return;
 		}
+		// No orchestrator yet → route through the global launcher so the user gets
+		// the Local | Cloud choice (same as the topbar/sidebar and the worker New
+		// Task path). It owns the spawn, navigation, and error UI.
 		setSpawnError(null);
 		setOrchestratorStartupError(projectId, null);
-		setIsSpawning(true);
-		try {
-			const sessionId = await spawnOrchestrator(projectId, "board");
-			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-			setOrchestratorStartupError(projectId, null);
-			void navigate({
-				to: "/projects/$projectId/sessions/$sessionId",
-				params: { projectId, sessionId },
-			});
-		} catch (err) {
-			// Never fail silently: the daemon's message (e.g. a worktree/branch
-			// conflict) is the only actionable signal the user gets.
-			console.error("Failed to spawn orchestrator:", err);
-			setSpawnError(err instanceof Error ? err.message : "Could not spawn orchestrator");
-		} finally {
-			setIsSpawning(false);
-		}
+		requestOrchestratorLaunch(projectId);
 	};
 
 	const restartOrchestrator = async () => {
@@ -264,19 +274,13 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			</TopbarButton>
 			<TopbarButton
 				aria-label={orchestratorActivityLabel ? `Orchestrator, ${orchestratorActivityLabel}` : "Spawn Orchestrator"}
-				disabled={isSpawning || isProjectRestarting}
-				onClick={() => void openOrchestrator()}
+				disabled={isProjectRestarting}
+				onClick={() => openOrchestrator()}
 				variant="primary"
 			>
 				<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
 				{orchestrator ? <OrchestratorActivityIndicator session={orchestrator} /> : null}
-				{isProjectRestarting
-					? "Restarting..."
-					: isSpawning
-						? "Spawning..."
-						: orchestrator
-							? "Orchestrator"
-							: "Spawn Orchestrator"}
+				{isProjectRestarting ? "Restarting..." : orchestrator ? "Orchestrator" : "Spawn Orchestrator"}
 			</TopbarButton>
 		</>
 	) : boardOwnsNotificationCenter ? (
@@ -327,10 +331,10 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				) : showProjectEmpty ? (
 					<ProjectBoardEmpty
 						hasOrchestrator={orchestrator !== undefined}
-						isSpawning={isSpawning}
+						isSpawning={false}
 						isProjectRestarting={isProjectRestarting}
 						onNewTask={() => projectId && requestNewTask(projectId)}
-						onOpenOrchestrator={() => void openOrchestrator()}
+						onOpenOrchestrator={() => openOrchestrator()}
 						spawnError={visibleSpawnError}
 					/>
 				) : (
@@ -403,6 +407,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 									key={s.id}
 									session={s}
 									restoreAction={(event) => void restoreArchivedSession(event, s)}
+									removeAction={(event) => void removeArchivedSession(event, s)}
 									restoreError={restoreErrors[s.id]}
 									isRestoring={restoringSessionId === s.id}
 									isRestoreDisabled={restoringSessionId !== undefined}
@@ -760,7 +765,8 @@ function SessionCard({
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
-	const showTerminate = interactive && session.isTerminated !== true && onTerminate;
+	// Read-only shared session: the viewer can't terminate someone else's session.
+	const showTerminate = interactive && session.isTerminated !== true && !session.readonly && onTerminate;
 	const keepTerminateVisible = session.status === "merged";
 	const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
 		if (!interactive || !onOpen) return;
@@ -864,16 +870,22 @@ function SessionCard({
 function ArchiveSessionItem({
 	session,
 	restoreAction,
+	removeAction,
 	restoreError,
 	isRestoring,
 	isRestoreDisabled,
 }: {
 	session: WorkspaceSession;
 	restoreAction: (event: MouseEvent<HTMLButtonElement>) => void;
+	removeAction: (event: MouseEvent<HTMLButtonElement>) => void;
 	restoreError?: string;
 	isRestoring: boolean;
 	isRestoreDisabled: boolean;
 }) {
+	// Local terminated sessions restore (worktree persists); cloud/shared ones
+	// can't (their sandbox is gone) so they offer Remove instead. Single seam:
+	// canRestoreTerminatedSession (see cloud-sessions.ts).
+	const restorable = canRestoreTerminatedSession(session.id);
 	const badge = getSessionStatusView(session.status);
 	const issueId = canonicalTrackerIssueId(session.issueId);
 	const prSummaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
@@ -888,13 +900,15 @@ function ArchiveSessionItem({
 		) : (
 			<span>no PR yet</span>
 		);
-	const restoreButton = (
+	const actionButton = restorable ? (
 		<ArchiveRestoreButton
 			isDisabled={isRestoreDisabled}
 			isRestoring={isRestoring}
 			label={`Restore ${session.title}`}
 			onClick={restoreAction}
 		/>
+	) : (
+		<ArchiveRemoveButton label={`Remove ${session.title}`} onClick={removeAction} />
 	);
 
 	return (
@@ -904,7 +918,7 @@ function ArchiveSessionItem({
 				<span className="ml-auto shrink-0 font-mono text-2xs text-passive">
 					{formatTimeCompact(session.updatedAt)}
 				</span>
-				{restoreButton}
+				{actionButton}
 			</div>
 			<div className="min-h-0 flex-1 px-3 pb-2 pt-1.5 text-left">
 				<div className="line-clamp-2 text-control font-medium leading-snug text-foreground">{session.title}</div>
@@ -964,6 +978,33 @@ function ArchiveRestoreButton({
 				</button>
 			</TooltipTrigger>
 			<TooltipContent side="top">{isRestoring ? "Restoring session" : "Restore session"}</TooltipContent>
+		</Tooltip>
+	);
+}
+
+// Remove action for an archived cloud/shared session that can't be restored (its
+// sandbox is gone): drops the dead card. Trash icon distinguishes it from the
+// Restore (rotate) action so the two archive states read differently at a glance.
+function ArchiveRemoveButton({
+	label,
+	onClick,
+}: {
+	label: string;
+	onClick: (event: MouseEvent<HTMLButtonElement>) => void;
+}) {
+	return (
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<button
+					aria-label={label}
+					className="grid size-control-board-sm shrink-0 place-items-center rounded-md text-passive transition-colors hover:bg-interactive-hover hover:text-destructive focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+					onClick={onClick}
+					type="button"
+				>
+					<Trash2 className="size-icon-md" aria-hidden="true" />
+				</button>
+			</TooltipTrigger>
+			<TooltipContent side="top">Remove from board</TooltipContent>
 		</Tooltip>
 	);
 }

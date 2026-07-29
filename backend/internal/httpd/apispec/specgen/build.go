@@ -336,6 +336,7 @@ func operations() []operation {
 	ops = append(ops, devOperations()...)
 	ops = append(ops, mobileOperations()...)
 	ops = append(ops, shellTerminalOperations()...)
+	ops = append(ops, cloudOperations()...)
 	return ops
 }
 
@@ -587,6 +588,102 @@ func pushOperations() []operation {
 			pathParams: []any{controllers.PushDeviceTokenParam{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.UnregisterPushDeviceResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
+}
+
+// cloudOperations declares the /cloud endpoints. Must stay 1:1 with the routes
+// CloudController.Register mounts (enforced by the parity test).
+func cloudOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/cloud/capabilities", id: "cloudCapabilities", tag: "cloud",
+			summary: "Report whether cloud sandboxes are available and which harnesses",
+			resps: []respUnit{
+				{http.StatusOK, controllers.CloudCapabilitiesResponse{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/cloud/sessions", id: "spawnCloudSession", tag: "cloud",
+			summary: "Start a worker session in a fresh cloud sandbox",
+			reqBody: controllers.CloudSpawnRequest{},
+			resps: []respUnit{
+				{http.StatusCreated, controllers.CloudSpawnResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/cloud/sessions", id: "listCloudSessions", tag: "cloud",
+			summary: "List live cloud sessions",
+			resps: []respUnit{
+				{http.StatusOK, controllers.CloudSessionsResponse{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/cloud/sessions/{sandboxId}/status", id: "cloudSessionStatus", tag: "cloud",
+			summary:    "Fetch a cloud session's live view from its sandbox",
+			pathParams: []any{controllers.CloudSandboxIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.SessionResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/cloud/sessions/{sandboxId}/view-url", id: "cloudSessionViewURL", tag: "cloud",
+			summary:    "Mint a fresh signed preview URL for a cloud sandbox",
+			pathParams: []any{controllers.CloudSandboxIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.CloudViewURLResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/cloud/sessions/{sandboxId}/share", id: "shareCloudSession", tag: "cloud",
+			summary:    "Mint a read-only share token for a cloud session",
+			pathParams: []any{controllers.CloudSandboxIDParam{}},
+			reqBody:    controllers.CloudShareRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.CloudShareResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodDelete, path: "/api/v1/cloud/sessions/{sandboxId}", id: "terminateCloudSession", tag: "cloud",
+			summary:    "Tear down a cloud sandbox",
+			pathParams: []any{controllers.CloudSandboxIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.CloudTerminateResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/cloud/proxy", id: "cloudProxy", tag: "cloud",
+			summary: "Relay a REST call to a cloud sandbox from the backend",
+			reqBody: controllers.CloudProxyRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.CloudProxyResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/cloud/shared-proxy", id: "cloudSharedProxy", tag: "cloud",
+			summary: "Read-only relay to a shared cloud sandbox session (no tenant-ownership check)",
+			reqBody: controllers.CloudProxyRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.CloudProxyResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},

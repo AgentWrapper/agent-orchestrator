@@ -393,28 +393,28 @@ describe("CommandPalette actions", () => {
 		});
 	});
 
-	it("spawns only once when Open orchestrator is selected twice (in-flight guard)", async () => {
+	it("routes Open orchestrator through the global launcher (Local|Cloud) and closes the palette", async () => {
 		ctx.params = { projectId: "proj-2" };
-		spawnMock.mockReturnValueOnce(new Promise<string>(() => {}));
-		renderPalette();
-		act(() => useUiStore.getState().setCommandPaletteOpen(true));
-		await screen.findByPlaceholderText(/search projects/i);
-		const item = screen.getByText("Open orchestrator");
-		fireEvent.click(item);
-		fireEvent.click(item);
-		expect(spawnMock).toHaveBeenCalledTimes(1);
-	});
-
-	it("keeps the palette open and shows an error when spawning an orchestrator fails", async () => {
-		ctx.params = { projectId: "proj-2" };
-		spawnMock.mockRejectedValueOnce(new Error("daemon down"));
 		renderPalette();
 		act(() => useUiStore.getState().setCommandPaletteOpen(true));
 		await screen.findByPlaceholderText(/search projects/i);
 		fireEvent.click(screen.getByText("Open orchestrator"));
-		expect(await screen.findByRole("alert")).toHaveTextContent("daemon down");
-		expect(spawnMock).toHaveBeenCalledWith("proj-2", "command_palette");
-		expect(useUiStore.getState().isCommandPaletteOpen).toBe(true);
+		// Delegates to the global orchestrator launcher (which owns the
+		// Local|Cloud choice, spawn, navigation, and errors) — no inline spawn.
+		await waitFor(() => expect(useUiStore.getState().orchestratorLaunchRequest?.projectId).toBe("proj-2"));
+		expect(spawnMock).not.toHaveBeenCalled();
+		expect(useUiStore.getState().isCommandPaletteOpen).toBe(false);
+	});
+
+	it("does not spawn inline or surface spawn errors in the palette (handled by the launcher)", async () => {
+		ctx.params = { projectId: "proj-2" };
+		renderPalette();
+		act(() => useUiStore.getState().setCommandPaletteOpen(true));
+		await screen.findByPlaceholderText(/search projects/i);
+		fireEvent.click(screen.getByText("Open orchestrator"));
+		await waitFor(() => expect(useUiStore.getState().isCommandPaletteOpen).toBe(false));
+		expect(spawnMock).not.toHaveBeenCalled();
+		expect(screen.queryByRole("alert")).toBeNull();
 	});
 
 	it("toggles the theme and closes", async () => {

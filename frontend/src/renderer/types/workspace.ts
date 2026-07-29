@@ -162,6 +162,27 @@ export type WorkspaceSession = {
 	 * done server-side, so {@link status} already reflects all of these.
 	 */
 	prs: PullRequestFacts[];
+	/**
+	 * Set only for CLOUD sessions (running in a per-session Daytona sandbox): the
+	 * signed preview URL of that sandbox's daemon. When present, the terminal mux
+	 * routes here instead of the local daemon — so a cloud worker is an ordinary
+	 * board card whose terminal happens to stream from its sandbox. Absent = a
+	 * local session (indistinguishable otherwise).
+	 */
+	cloudPreviewUrl?: string;
+	/**
+	 * Set for sessions a teammate SHARED with this user (model A, client-side
+	 * readonly): write actions are hidden and the terminal input is disabled.
+	 */
+	readonly?: boolean;
+	/**
+	 * A CLOUD session whose sandbox is still provisioning (async): the card is a
+	 * placeholder ("Provisioning cloud sandbox…") until the sandbox session goes
+	 * live, at which point it's replaced by the real card. No terminal/actions yet.
+	 */
+	provisioning?: boolean;
+	/** Set when cloud provisioning FAILED — the card shows the error + a dismiss. */
+	provisionError?: string;
 };
 
 // Tracker providers whose ids the intake daemon stamps sessions with, in

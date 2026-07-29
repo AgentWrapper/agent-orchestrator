@@ -5,6 +5,7 @@ package registry
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agy"
@@ -81,6 +82,50 @@ func Build() (*adapters.Registry, error) {
 	return reg, nil
 }
 
+// AllowedHarnessesEnv scopes a daemon to a subset of harnesses. The agent-host
+// supervisor sets it when the daemon runs inside a per-harness cloud sandbox:
+// a sandbox that hosts claude-code sessions must not be able to spawn — or
+// even advertise in the catalog — any other harness, so a compromised or
+// shared sandbox is bounded to the one credential it already holds.
+// Comma-separated manifest ids; unset/empty = every shipped adapter (local
+// behavior, byte-identical).
+const AllowedHarnessesEnv = "AO_AGENT_HOST_HARNESSES"
+
+// BuildAllowed returns a registry containing only the named harnesses. Names
+// are manifest ids, trimmed, case-insensitive; an unknown or empty allowlist
+// entry is an error — a misconfigured sandbox must fail fast, not silently
+// host nothing.
+func BuildAllowed(csv string) (*adapters.Registry, error) {
+	want := map[string]bool{}
+	for _, raw := range strings.Split(csv, ",") {
+		name := strings.ToLower(strings.TrimSpace(raw))
+		if name == "" {
+			continue
+		}
+		want[name] = false
+	}
+	if len(want) == 0 {
+		return Build()
+	}
+	reg := adapters.NewRegistry()
+	for _, a := range Constructors() {
+		id := a.Manifest().ID
+		if _, ok := want[id]; !ok {
+			continue
+		}
+		if err := reg.Register(a); err != nil {
+			return nil, fmt.Errorf("register agent adapter %q: %w", id, err)
+		}
+		want[id] = true
+	}
+	for name, found := range want {
+		if !found {
+			return nil, fmt.Errorf("agent-host allowlist names unknown harness %q (%s)", name, AllowedHarnessesEnv)
+		}
+	}
+	return reg, nil
+}
+
 // HarnessAgent pairs a session harness with the adapter that drives it. The
 // harness is the adapter's manifest id, which is also the domain.AgentHarness
 // value a session carries and the `--harness` flag users pass.
@@ -108,4 +153,22 @@ func Harnessed() []HarnessAgent {
 		})
 	}
 	return out
+}
+
+// HarnessedAllowed is Harnessed() filtered to an allowlist (see BuildAllowed).
+// The agent catalog consumes it so a scoped agent-host never ADVERTISES a
+// harness it cannot spawn — advertising invites the desktop default-selection
+// to route work at a sandbox that would only reject it.
+func HarnessedAllowed(csv string) ([]HarnessAgent, error) {
+	scoped, err := BuildAllowed(csv)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]HarnessAgent, 0)
+	for _, h := range Harnessed() {
+		if _, ok := scoped.Get(string(h.Harness)); ok {
+			out = append(out, h)
+		}
+	}
+	return out, nil
 }

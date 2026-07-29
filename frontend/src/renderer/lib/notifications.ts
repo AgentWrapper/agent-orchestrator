@@ -2,6 +2,12 @@ import type { InfiniteData, QueryClient } from "@tanstack/react-query";
 import type { components } from "../../api/schema";
 import { aoBridge } from "./bridge";
 import { apiClient, apiErrorMessage, getApiBaseUrl, subscribeApiBaseUrl } from "./api-client";
+import {
+	fetchCloudNotifications,
+	markAllCloudNotificationsRead,
+	markCloudNotificationRead,
+	parseCloudNotifId,
+} from "./cloud-notifications";
 
 export type NotificationDTO = components["schemas"]["NotificationResponse"];
 export type NotificationsPage = components["schemas"]["ListNotificationsResponse"];
@@ -32,15 +38,26 @@ export async function fetchNotificationsPage(status: NotificationListStatus, cur
 		},
 	});
 	if (error) throw new Error(apiErrorMessage(error, "Could not load notifications"));
-	const notifications = sortNotifications(data?.notifications ?? []);
+	const local = data?.notifications ?? [];
+	// Fan in each cloud sandbox's notifications on the first page (cursor pagination
+	// is local-only). Remapped into board-space so they navigate to the cloud card.
+	const cloud = cursor ? [] : await fetchCloudNotifications(status);
+	const notifications = sortNotifications([...local, ...cloud]);
+	const localUnread = data?.unreadCount ?? local.filter((item) => item.status === "unread").length;
+	const cloudUnread = cloud.filter((item) => item.status === "unread").length;
 	return {
 		notifications,
 		nextCursor: data?.nextCursor,
-		unreadCount: data?.unreadCount ?? notifications.filter((item) => item.status === "unread").length,
+		unreadCount: localUnread + cloudUnread,
 	};
 }
 
 export async function markNotificationRead(id: string): Promise<NotificationDTO> {
+	// Cloud notification → route the read to its own sandbox daemon (via proxy).
+	if (parseCloudNotifId(id)) {
+		await markCloudNotificationRead(id);
+		return { id, status: "read" } as NotificationDTO;
+	}
 	const { data, error } = await apiClient.PATCH("/api/v1/notifications/{id}", {
 		params: { path: { id } },
 		body: { status: "read" },
@@ -51,7 +68,8 @@ export async function markNotificationRead(id: string): Promise<NotificationDTO>
 }
 
 export async function markAllNotificationsRead(): Promise<number> {
-	const { data, error } = await apiClient.POST("/api/v1/notifications/read-all");
+	// Mark-all spans the local daemon AND every cloud sandbox.
+	const [{ data, error }] = await Promise.all([apiClient.POST("/api/v1/notifications/read-all"), markAllCloudNotificationsRead()]);
 	if (error) throw new Error(apiErrorMessage(error, "Could not mark notifications read"));
 	return data?.updatedCount ?? 0;
 }

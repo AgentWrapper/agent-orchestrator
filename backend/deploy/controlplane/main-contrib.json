@@ -1,0 +1,280 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.45.15.27210",
+      "templateHash": "3895305998857922350"
+    }
+  },
+  "parameters": {
+    "namePrefix": {
+      "type": "string",
+      "defaultValue": "aocphi",
+      "minLength": 3,
+      "maxLength": 10,
+      "metadata": {
+        "description": "Short prefix for resource names (lowercase, 3-10 chars)."
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Azure region."
+      }
+    },
+    "containerImage": {
+      "type": "string",
+      "metadata": {
+        "description": "Full container image ref already pushed to the ACR."
+      }
+    },
+    "registryServer": {
+      "type": "string",
+      "metadata": {
+        "description": "ACR login server, e.g. aocphiacr.azurecr.io"
+      }
+    },
+    "acrUsername": {
+      "type": "string",
+      "metadata": {
+        "description": "ACR admin username."
+      }
+    },
+    "acrPassword": {
+      "type": "securestring",
+      "metadata": {
+        "description": "ACR admin password."
+      }
+    },
+    "postgresAdminPassword": {
+      "type": "securestring",
+      "metadata": {
+        "description": "Postgres admin password."
+      }
+    },
+    "daytonaApiKey": {
+      "type": "securestring",
+      "metadata": {
+        "description": "The single Daytona provisioning API key (injected as a CA secret)."
+      }
+    },
+    "claudeCredentials": {
+      "type": "securestring",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Claude Code credential JSON (read from Key Vault at deploy) injected into claude-code sandboxes so the harness can authenticate headlessly."
+      }
+    },
+    "githubToken": {
+      "type": "securestring",
+      "defaultValue": "",
+      "metadata": {
+        "description": "GitHub token for cloning private repos into sandboxes (optional)."
+      }
+    },
+    "clerkJwksUrl": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Clerk JWKS URL. Empty = DEV auth (X-AO-Tenant) — do NOT use in prod."
+      }
+    },
+    "clerkIssuer": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Expected Clerk token issuer (optional)."
+      }
+    }
+  },
+  "variables": {
+    "pgAdmin": "aoadmin",
+    "pgDbName": "ao_controlplane",
+    "pgFqdn": "[format('{0}-pg.postgres.database.azure.com', parameters('namePrefix'))]",
+    "pgDsn": "[format('postgres://{0}:{1}@{2}:5432/{3}?sslmode=require', variables('pgAdmin'), parameters('postgresAdminPassword'), variables('pgFqdn'), variables('pgDbName'))]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.OperationalInsights/workspaces",
+      "apiVersion": "2023-09-01",
+      "name": "[format('{0}-logs', parameters('namePrefix'))]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "sku": {
+          "name": "PerGB2018"
+        },
+        "retentionInDays": 30
+      }
+    },
+    {
+      "type": "Microsoft.DBforPostgreSQL/flexibleServers",
+      "apiVersion": "2024-08-01",
+      "name": "[format('{0}-pg', parameters('namePrefix'))]",
+      "location": "[parameters('location')]",
+      "sku": {
+        "name": "Standard_B1ms",
+        "tier": "Burstable"
+      },
+      "properties": {
+        "version": "16",
+        "administratorLogin": "[variables('pgAdmin')]",
+        "administratorLoginPassword": "[parameters('postgresAdminPassword')]",
+        "storage": {
+          "storageSizeGB": 32
+        },
+        "backup": {
+          "backupRetentionDays": 7
+        },
+        "highAvailability": {
+          "mode": "Disabled"
+        }
+      }
+    },
+    {
+      "type": "Microsoft.DBforPostgreSQL/flexibleServers/firewallRules",
+      "apiVersion": "2024-08-01",
+      "name": "[format('{0}/{1}', format('{0}-pg', parameters('namePrefix')), 'AllowAzureServices')]",
+      "properties": {
+        "startIpAddress": "0.0.0.0",
+        "endIpAddress": "0.0.0.0"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', format('{0}-pg', parameters('namePrefix')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.DBforPostgreSQL/flexibleServers/databases",
+      "apiVersion": "2024-08-01",
+      "name": "[format('{0}/{1}', format('{0}-pg', parameters('namePrefix')), variables('pgDbName'))]",
+      "properties": {
+        "charset": "UTF8",
+        "collation": "en_US.utf8"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', format('{0}-pg', parameters('namePrefix')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.App/managedEnvironments",
+      "apiVersion": "2024-03-01",
+      "name": "[format('{0}-env', parameters('namePrefix'))]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "appLogsConfiguration": {
+          "destination": "log-analytics",
+          "logAnalyticsConfiguration": {
+            "customerId": "[reference(resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-logs', parameters('namePrefix'))), '2023-09-01').customerId]",
+            "sharedKey": "[listKeys(resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-logs', parameters('namePrefix'))), '2023-09-01').primarySharedKey]"
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-logs', parameters('namePrefix')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.App/containerApps",
+      "apiVersion": "2024-03-01",
+      "name": "[format('{0}-controlplane', parameters('namePrefix'))]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "managedEnvironmentId": "[resourceId('Microsoft.App/managedEnvironments', format('{0}-env', parameters('namePrefix')))]",
+        "configuration": {
+          "ingress": {
+            "external": true,
+            "targetPort": 8080,
+            "transport": "auto",
+            "allowInsecure": false
+          },
+          "registries": [
+            {
+              "server": "[parameters('registryServer')]",
+              "username": "[parameters('acrUsername')]",
+              "passwordSecretRef": "acr-password"
+            }
+          ],
+          "secrets": [
+            {
+              "name": "acr-password",
+              "value": "[parameters('acrPassword')]"
+            },
+            {
+              "name": "daytona-api-key",
+              "value": "[parameters('daytonaApiKey')]"
+            },
+            {
+              "name": "controlplane-db",
+              "value": "[variables('pgDsn')]"
+            },
+            {
+              "name": "github-token",
+              "value": "[if(empty(parameters('githubToken')), 'unset', parameters('githubToken'))]"
+            },
+            {
+              "name": "claude-credentials",
+              "value": "[if(empty(parameters('claudeCredentials')), 'unset', parameters('claudeCredentials'))]"
+            }
+          ]
+        },
+        "template": {
+          "containers": [
+            {
+              "name": "controlplane",
+              "image": "[parameters('containerImage')]",
+              "resources": {
+                "cpu": "[json('0.5')]",
+                "memory": "1Gi"
+              },
+              "env": [
+                {
+                  "name": "CONTROLPLANE_ADDR",
+                  "value": ":8080"
+                },
+                {
+                  "name": "DAYTONA_API_KEY",
+                  "secretRef": "daytona-api-key"
+                },
+                {
+                  "name": "CONTROLPLANE_DB",
+                  "secretRef": "controlplane-db"
+                },
+                {
+                  "name": "GITHUB_TOKEN",
+                  "secretRef": "github-token"
+                },
+                {
+                  "name": "AO_CLAUDE_CREDENTIALS_JSON",
+                  "secretRef": "claude-credentials"
+                },
+                {
+                  "name": "CLERK_JWKS_URL",
+                  "value": "[parameters('clerkJwksUrl')]"
+                },
+                {
+                  "name": "CLERK_ISSUER",
+                  "value": "[parameters('clerkIssuer')]"
+                }
+              ]
+            }
+          ],
+          "scale": {
+            "minReplicas": 0,
+            "maxReplicas": 3
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.App/managedEnvironments', format('{0}-env', parameters('namePrefix')))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "controlPlaneFqdn": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.App/containerApps', format('{0}-controlplane', parameters('namePrefix'))), '2024-03-01').configuration.ingress.fqdn]"
+    }
+  }
+}

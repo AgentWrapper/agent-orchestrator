@@ -4,8 +4,9 @@ import { type CSSProperties, useCallback, useEffect, useRef, useState } from "re
 import { CommandPalette } from "../components/CommandPalette";
 import { CenterPanelShell } from "../components/CenterPanelShell";
 import { DaemonFailureBanner } from "../components/DaemonFailureBanner";
-import { NotificationRuntime } from "../components/NotificationCenter";
+import { NotificationRuntime, ShareDeepLinkRuntime } from "../components/NotificationCenter";
 import { GlobalNewTaskDialog } from "../components/GlobalNewTaskDialog";
+import { GlobalOrchestratorLaunchDialog } from "../components/GlobalOrchestratorLaunchDialog";
 import { KeyboardShortcutsDialog } from "../components/KeyboardShortcutsDialog";
 import { KeyboardShortcutsSettingsDialog } from "../components/settings/KeyboardShortcutsSettingsDialog";
 import { ShellTopbar } from "../components/ShellTopbar";
@@ -606,7 +607,9 @@ function ShellLayout() {
 	return (
 		<ShellProvider value={{ daemonStatus, workspaceStartupState, createProject, initializeProjectRepository }}>
 			<NotificationRuntime />
+			<ShareDeepLinkRuntime />
 			<GlobalNewTaskDialog />
+			<GlobalOrchestratorLaunchDialog />
 			<KeyboardShortcutsDialog
 				open={isKeyboardShortcutsOpen}
 				onOpenChange={setIsKeyboardShortcutsOpen}

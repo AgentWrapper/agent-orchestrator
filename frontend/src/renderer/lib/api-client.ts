@@ -50,6 +50,35 @@ export function setApiDaemonStatus(nextStatus: DaemonStatus): void {
 	daemonStatus = nextStatus;
 }
 
+// ── Cloud control plane ──────────────────────────────────────────────────────
+// Cloud calls (`/api/v1/cloud/*`) can target the hosted, multi-tenant control
+// plane instead of the local daemon. When this URL is unset (the default),
+// cloud calls stay on the local daemon exactly as before — nothing changes.
+// When set, cloud requests are rebased onto the control plane and carry a Clerk
+// Bearer token. Local (per-session) calls always stay on the daemon.
+const CLOUD_PATH_PREFIX = "/api/v1/cloud";
+const explicitControlPlaneUrl = import.meta.env.VITE_AO_CONTROL_PLANE_URL as string | undefined;
+let controlPlaneBaseUrl: string | null = explicitControlPlaneUrl?.replace(/\/+$/, "") || null;
+
+export function getControlPlaneBaseUrl(): string | null {
+	return controlPlaneBaseUrl;
+}
+
+export function setControlPlaneBaseUrl(nextBaseUrl: string | null): void {
+	controlPlaneBaseUrl = nextBaseUrl?.replace(/\/+$/, "") || null;
+}
+
+// A Clerk JWT provider, registered once Clerk mounts (see CloudAuthBridge in
+// main.tsx). Returns a fresh session token, or null when signed out / Clerk is
+// not configured. The token is attached ONLY to control-plane cloud calls — it
+// is never sent to the local daemon.
+type CloudAuthTokenGetter = () => Promise<string | null>;
+let cloudAuthTokenGetter: CloudAuthTokenGetter | null = null;
+
+export function setCloudAuthTokenGetter(getter: CloudAuthTokenGetter | null): void {
+	cloudAuthTokenGetter = getter;
+}
+
 // Route templates from the generated OpenAPI schema (frontend/src/api/schema.ts).
 // Operation strings sent to telemetry must never contain raw IDs (project IDs
 // are user-chosen strings), so we match each request path against these
@@ -171,8 +200,13 @@ function reportApiError(operation: string, category: ApiErrorCategory, status?: 
 }
 
 async function runtimeFetch(input: Request): Promise<Response> {
-	const operation = normalizeApiOperation(input.method, new URL(input.url).pathname);
-	const baseUrl = runtimeApiBaseUrl;
+	const url = new URL(input.url);
+	const operation = normalizeApiOperation(input.method, url.pathname);
+
+	// Cloud calls route to the control plane when one is configured; everything
+	// else (and cloud, when no control plane is set) stays on the local daemon.
+	const cloudBase = url.pathname.startsWith(CLOUD_PATH_PREFIX) ? controlPlaneBaseUrl : null;
+	const baseUrl = cloudBase ?? runtimeApiBaseUrl;
 	if (baseUrl === null) {
 		reportApiError(operation, "daemon_unavailable", 503);
 		return new Response(JSON.stringify({ message: daemonFailureMessage(daemonStatus), code: daemonStatus.code }), {
@@ -181,14 +215,29 @@ async function runtimeFetch(input: Request): Promise<Response> {
 		});
 	}
 
+	// Attach the Clerk Bearer token ONLY to control-plane cloud calls — never to
+	// the local daemon. A signed-out / unconfigured Clerk yields no header, so
+	// local-only usage is unaffected.
+	let authHeader: string | null = null;
+	if (cloudBase !== null && cloudAuthTokenGetter !== null) {
+		try {
+			const token = await cloudAuthTokenGetter();
+			if (token) authHeader = `Bearer ${token}`;
+		} catch {
+			// Signed out or Clerk unavailable — proceed unauthenticated; the
+			// control plane returns 401 and the UI prompts sign-in.
+		}
+	}
+
 	const send = async (): Promise<Response> => {
+		// Empty base = "use the request URL as-is" (daemon calls before a port is
+		// known). Never a cloud call, so no auth header applies here.
 		if (!baseUrl) {
 			return fetch(input);
 		}
 
-		const url = new URL(input.url);
 		const target = new URL(url.pathname + url.search + url.hash, baseUrl);
-		if (target.href === input.url) {
+		if (target.href === input.url && authHeader === null) {
 			return fetch(input);
 		}
 
@@ -198,10 +247,12 @@ async function runtimeFetch(input: Request): Promise<Response> {
 		// "The duplex member must be specified" for any request with a body, so
 		// every POST would fail in the packaged app. API bodies are small JSON;
 		// buffering sidesteps streaming-duplex semantics entirely.
+		const headers = new Headers(input.headers);
+		if (authHeader !== null) headers.set("Authorization", authHeader);
 		const body = input.method === "GET" || input.method === "HEAD" ? undefined : await input.arrayBuffer();
 		return fetch(target, {
 			method: input.method,
-			headers: input.headers,
+			headers,
 			body,
 			signal: input.signal,
 			credentials: input.credentials,

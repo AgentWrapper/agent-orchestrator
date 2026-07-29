@@ -7,6 +7,7 @@ export const ORCHESTRATOR_SPAWN_SOURCES = [
 	"settings",
 	"restart",
 	"command_palette",
+	"launch_dialog",
 ] as const;
 
 export type OrchestratorSpawnSource = (typeof ORCHESTRATOR_SPAWN_SOURCES)[number];

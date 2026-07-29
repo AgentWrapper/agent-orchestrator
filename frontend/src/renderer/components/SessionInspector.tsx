@@ -5,9 +5,11 @@ import {
 	ArrowUpRight,
 	ChevronDown,
 	ChevronRight,
+	Eye,
 	Files as FilesIcon,
 	GitPullRequest,
 	Play,
+	Share2,
 	Shield,
 	Terminal,
 	Trash2,
@@ -27,6 +29,9 @@ import { aoBridge } from "../lib/bridge";
 import { BrowserPanelView, type BrowserAnnotationQueueModel } from "./BrowserPanel";
 import type { BrowserViewModel } from "../hooks/useBrowserView";
 import { useUiStore } from "../stores/ui-store";
+import { ShareSessionDialog } from "./ShareSessionDialog";
+import { sandboxIdFromBoardId } from "../lib/cloud-sessions";
+import { sessionApi } from "../lib/session-api";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
@@ -281,14 +286,45 @@ function Section({
 	);
 }
 
+function ShareControl({ session }: { session: WorkspaceSession }) {
+	const [open, setOpen] = useState(false);
+	return (
+		<Section title="Collaboration">
+			<Button className="w-full" onClick={() => setOpen(true)} size="sm" type="button" variant="outline">
+				<Share2 className="size-3.5" aria-hidden="true" />
+				Share session
+			</Button>
+			<p className="mt-1.5 text-2xs leading-normal text-passive">Let a teammate watch this cloud session live, read-only.</p>
+			<ShareSessionDialog session={session} open={open} onOpenChange={setOpen} />
+		</Section>
+	);
+}
+
 function SummaryView({ session }: { session: WorkspaceSession }) {
 	const query = useSessionScmSummary(session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, query.data);
 	const prSectionTitle = prSummaries.length > 1 ? `Pull requests (${prSummaries.length})` : "Pull request";
 	const issueId = canonicalTrackerIssueId(session.issueId);
 
+	// Owned cloud session (has a sandbox + not a readonly import) → shareable.
+	// Explicitly exclude terminated/exited sessions: their sandbox is gone, so a
+	// share would fail (and the backend rejects it with 409). Belt-and-suspenders
+	// with the missing cloudPreviewUrl a terminated card already has.
+	const isDead = session.isTerminated === true || session.status === "terminated" || session.activity?.state === "exited";
+	const shareableSandboxId =
+		!session.readonly && session.cloudPreviewUrl && !isDead ? sandboxIdFromBoardId(session.id) : null;
+
 	return (
 		<div role="tabpanel">
+			{session.readonly ? (
+				<div className="mb-3 flex items-center gap-2 rounded-md border border-border bg-muted/40 px-2.5 py-1.5 text-2xs text-passive">
+					<Eye className="size-3.5 shrink-0" aria-hidden="true" />
+					<span>Shared with you · read-only. The owner controls this session.</span>
+				</div>
+			) : null}
+
+			{shareableSandboxId ? <ShareControl session={session} /> : null}
+
 			<Section title={prSectionTitle}>
 				{prSummaries.length === 0 ? (
 					<p className={inspectorEmptyClass}>No pull request opened yet.</p>
@@ -326,8 +362,9 @@ function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
 	const resume = useMutation({
 		mutationFn: async () => {
 			if (usePreviewData) return;
-			const { data, error, response } = await apiClient.POST("/api/v1/sessions/{sessionId}/resume-agent", {
-				params: { path: { sessionId: session.id } },
+			const { client, sessionId: routedId } = sessionApi(session.id);
+			const { data, error, response } = await client.POST("/api/v1/sessions/{sessionId}/resume-agent", {
+				params: { path: { sessionId: routedId } },
 			});
 			if (error) throw new Error(apiErrorMessage(error, `Failed to resume agent (${response.status})`));
 			return data;
@@ -348,6 +385,8 @@ function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
 		},
 	});
 
+	// Read-only shared session: the viewer can't drive the owner's agent.
+	if (session.readonly) return null;
 	if (session.isTerminated === true || session.activity?.state !== "exited") return null;
 
 	const error = resume.error instanceof Error ? resume.error.message : null;
@@ -386,8 +425,9 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 	const policy = useMutation({
 		mutationFn: async (terminateOnPrMerge: boolean) => {
 			if (usePreviewData) return;
-			const { error, response } = await apiClient.PATCH("/api/v1/sessions/{sessionId}/merge-policy", {
-				params: { path: { sessionId: session.id } },
+			const { client, sessionId: routedId } = sessionApi(session.id);
+			const { error, response } = await client.PATCH("/api/v1/sessions/{sessionId}/merge-policy", {
+				params: { path: { sessionId: routedId } },
 				body: { terminateOnPrMerge },
 			});
 			if (error) throw new Error(apiErrorMessage(error, `Failed to update merge policy (${response.status})`));
@@ -411,6 +451,8 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 	const terminateError = terminate.error instanceof Error ? terminate.error.message : null;
 	const canTerminateNow = session.status === "merged";
 
+	// Read-only shared session: no terminate / merge-policy controls for the viewer.
+	if (session.readonly) return null;
 	if (session.isTerminated === true) return null;
 
 	return (
@@ -709,8 +751,9 @@ function ReviewsView({
 		},
 		queryFn: async () => {
 			if (usePreviewData) return mockReviewsResponse(session);
-			const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/reviews", {
-				params: { path: { sessionId: session.id } },
+			const { client, sessionId: routedId } = sessionApi(session.id);
+			const { data, error } = await client.GET("/api/v1/sessions/{sessionId}/reviews", {
+				params: { path: { sessionId: routedId } },
 			});
 			if (error) throw new Error(apiErrorMessage(error, "Unable to load reviews"));
 			return data ?? ({ reviewerHandleId: "", reviews: [] } satisfies ReviewsResponse);
@@ -730,8 +773,9 @@ function ReviewsView({
 	});
 	const triggerReview = useMutation({
 		mutationFn: async () => {
-			const { data, error, response } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/trigger", {
-				params: { path: { sessionId: session.id } },
+			const { client, sessionId: routedId } = sessionApi(session.id);
+			const { data, error, response } = await client.POST("/api/v1/sessions/{sessionId}/reviews/trigger", {
+				params: { path: { sessionId: routedId } },
 			});
 			if (error) throw new Error(apiErrorMessage(error, "Unable to start review"));
 			return { data, reused: response?.status === 200 };
@@ -755,8 +799,9 @@ function ReviewsView({
 	});
 	const cancelReview = useMutation({
 		mutationFn: async () => {
-			const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/cancel", {
-				params: { path: { sessionId: session.id } },
+			const { client, sessionId: routedId } = sessionApi(session.id);
+			const { error } = await client.POST("/api/v1/sessions/{sessionId}/reviews/cancel", {
+				params: { path: { sessionId: routedId } },
 			});
 			if (error) throw new Error(apiErrorMessage(error, "Unable to cancel review"));
 		},
@@ -989,17 +1034,21 @@ function ReviewPanel({
 				)}
 			</div>
 			<div className="-mx-4 -mb-3 mt-3 flex items-center justify-center gap-1 border-t border-border px-4 pb-3 pt-3">
-				<Button
-					className={cn("gap-1.5 [&_svg]:size-icon-sm", reviewRunning ? "text-error" : "text-success")}
-					disabled={reviewRunning ? isCancelling : runDisabled}
-					onClick={reviewRunning ? onCancel : onTrigger}
-					size="sm"
-					type="button"
-					variant="ghost"
-				>
-					{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
-					{reviewRunning ? (isCancelling ? "Cancelling..." : "Cancel review") : runAction}
-				</Button>
+				{/* Read-only shared session: viewer can open the reviewer terminal but
+				    can't start/cancel the owner's reviews. */}
+				{session.readonly ? null : (
+					<Button
+						className={cn("gap-1.5 [&_svg]:size-icon-sm", reviewRunning ? "text-error" : "text-success")}
+						disabled={reviewRunning ? isCancelling : runDisabled}
+						onClick={reviewRunning ? onCancel : onTrigger}
+						size="sm"
+						type="button"
+						variant="ghost"
+					>
+						{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
+						{reviewRunning ? (isCancelling ? "Cancelling..." : "Cancel review") : runAction}
+					</Button>
+				)}
 				{reviewHasRun ? (
 					<Button
 						className="gap-1.5 [&_svg]:size-icon-sm"

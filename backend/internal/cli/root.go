@@ -187,6 +187,7 @@ func NewRootCommand(deps Deps) *cobra.Command {
 	root.AddCommand(newAgentCommand(ctx))
 	root.AddCommand(newSpawnCommand(ctx))
 	root.AddCommand(newSendCommand(ctx))
+	root.AddCommand(newFleetCommand(ctx))
 	root.AddCommand(newPreviewCommand(ctx))
 	root.AddCommand(newHooksCommand(ctx))
 	root.AddCommand(newAgentProcessCommand(ctx))

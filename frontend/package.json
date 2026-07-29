@@ -58,6 +58,8 @@
 		"vitest": "^4.1.8"
 	},
 	"dependencies": {
+		"@clerk/clerk-react": "^5.61.9",
+		"@fontsource/jetbrains-mono": "^5.3.0",
 		"@radix-ui/react-dialog": "^1.1.16",
 		"@radix-ui/react-slot": "^1.2.5",
 		"@radix-ui/react-tabs": "^1.1.14",

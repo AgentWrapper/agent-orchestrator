@@ -15,6 +15,8 @@ import {
 	XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { importSharedSession, sharedBoardId, SHARED_PROJECT_ID } from "../lib/cloud-sessions";
+import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import {
 	useMarkAllNotificationsReadMutation,
 	useMarkNotificationReadMutation,
@@ -76,6 +78,31 @@ function useNotificationTargetNavigation() {
 	);
 
 	return { openPrimary, openSession };
+}
+
+// Global runtime: an ao://share/<token> deep link arrives from main → import the
+// shared session and jump to it. Malformed links are ignored. Mounted once.
+export function ShareDeepLinkRuntime() {
+	const queryClient = useQueryClient();
+	const navigate = useNavigate();
+
+	useEffect(() => {
+		return aoBridge.deepLinks.onShareLink((token) => {
+			let sandboxId: string;
+			try {
+				sandboxId = importSharedSession(token).sandboxId;
+			} catch {
+				return; // not a valid share link — nothing to open
+			}
+			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			void navigate({
+				to: "/projects/$projectId/sessions/$sessionId",
+				params: { projectId: SHARED_PROJECT_ID, sessionId: sharedBoardId(sandboxId) },
+			});
+		});
+	}, [navigate, queryClient]);
+
+	return null;
 }
 
 export function NotificationRuntime() {

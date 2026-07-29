@@ -14,7 +14,6 @@ import {
 import { iconForCommand } from "../lib/command-palette-icons";
 import { isDialogOrMenuOpen } from "../lib/dom-selectors";
 import { isMacPlatform } from "../lib/platform";
-import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { useShell } from "../lib/shell-context";
 import { findProjectOrchestrator, hasConfiguredOrchestratorAgent } from "../types/workspace";
 import { useUiStore } from "../stores/ui-store";
@@ -131,12 +130,12 @@ export function CommandPalette() {
 				}
 				return;
 			}
-			const sessionId = await spawnOrchestrator(projectId, "command_palette");
-			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-			navigateToTarget({ to: "/projects/$projectId/sessions/$sessionId", params: { projectId, sessionId } });
+			// No orchestrator yet → route through the global launcher for the
+			// Local | Cloud choice (consistent with the topbar/sidebar/board).
+			useUiStore.getState().requestOrchestratorLaunch(projectId);
 			closePalette();
 		},
-		[workspaces, navigateToTarget, queryClient, closePalette, blockedByRestart],
+		[workspaces, navigateToTarget, closePalette, blockedByRestart],
 	);
 
 	const runAction = useCallback(

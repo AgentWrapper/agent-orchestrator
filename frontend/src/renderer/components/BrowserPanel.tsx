@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { ArrowLeft, ArrowRight, Globe2, Maximize2, Minimize2, MousePointer2, RefreshCw, X } from "lucide-react";
-import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { apiErrorMessage } from "../lib/api-client";
+import { sessionApi } from "../lib/session-api";
 import { useBrowserView, type BrowserViewModel } from "../hooks/useBrowserView";
 import { formatBrowserAnnotationMessage, type BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
 import type { WorkspaceSession } from "../types/workspace";
@@ -71,8 +72,9 @@ export function useBrowserAnnotationQueue({
 			let failureMessage = "Unable to send annotation.";
 			try {
 				const message = formatBrowserAnnotationMessage(payload);
-				const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/send", {
-					params: { path: { sessionId: sendSessionId } },
+				const { client, sessionId: routedId } = sessionApi(sendSessionId);
+				const { error } = await client.POST("/api/v1/sessions/{sessionId}/send", {
+					params: { path: { sessionId: routedId } },
 					body: { message },
 				});
 				if (error) {

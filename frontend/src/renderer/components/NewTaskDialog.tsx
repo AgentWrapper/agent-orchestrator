@@ -8,10 +8,13 @@ import { Label } from "./ui/label";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { aoBridge } from "../lib/bridge";
 import { captureRendererEvent } from "../lib/telemetry";
 import type { AgentProvider } from "../types/workspace";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { useImageAttachments } from "../hooks/useImageAttachments";
+import { cloudCapabilities, refreshCloudSessions, cloudBoardId } from "../lib/cloud-sessions";
+import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { cn } from "../lib/utils";
 
 type Project = components["schemas"]["Project"];
@@ -37,6 +40,9 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 	const [isSubmitting, setIsSubmitting] = useState(false);
 	const [error, setError] = useState<string | undefined>();
 	const [isDragging, setIsDragging] = useState(false);
+	// Where this session runs: locally (default) or in a per-session Daytona
+	// sandbox. Cloud sessions survive app/laptop shutdown and are shareable.
+	const [runTarget, setRunTarget] = useState<"local" | "cloud">("local");
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const {
 		attachments,
@@ -71,6 +77,18 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 	const isScratchProject = projectQuery.data?.kind === "scratch";
 	const agentCatalog = agentsQuery.data;
 
+	// Cloud eligibility: the daemon has a Daytona key AND the harness this task
+	// would use has a verified cloud recipe. Otherwise the Local/Cloud toggle hides.
+	const cloudCapsQuery = useQuery({
+		queryKey: ["cloud-capabilities"],
+		enabled: open,
+		queryFn: cloudCapabilities,
+		staleTime: 60_000,
+	});
+	const effectiveHarness = (agentTouched && agent ? agent : defaultWorkerAgent) || "";
+	const cloudEligible = Boolean(cloudCapsQuery.data?.configured) && cloudCapsQuery.data!.harnesses.includes(effectiveHarness);
+	const runInCloud = runTarget === "cloud" && cloudEligible;
+
 	useEffect(() => {
 		if (!open) {
 			setTitle("");
@@ -81,6 +99,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 			setError(undefined);
 			setIsSubmitting(false);
 			setIsDragging(false);
+			setRunTarget("local");
 			clearAttachments();
 		}
 	}, [open, clearAttachments]);
@@ -107,6 +126,37 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 		setError(undefined);
 		void captureRendererEvent("ao.renderer.task_create_requested", { project_id: projectId });
 		try {
+			// Cloud: provision a per-session sandbox and start the worker in it. The
+			// card then behaves like any local session (its state/terminal stream from
+			// the sandbox). Provisioning blocks for ~15-20s.
+			if (runInCloud) {
+				// Spawn-time credential injection: pass our CURRENT local credential
+				// so the control plane needs no stored copy. undefined → it falls back.
+				const credential = (await aoBridge.cloud.getHarnessCredential(effectiveHarness)) ?? undefined;
+				const { data, error: apiError } = await apiClient.POST("/api/v1/cloud/sessions", {
+					body: {
+						harness: effectiveHarness,
+						localProjectId: projectId,
+						projectPath: projectQuery.data?.path ?? "",
+						// The control plane can't read our local path — send the git remote so
+						// the sandbox clones real code instead of an empty repo.
+						remoteUrl: projectQuery.data?.repo ?? "",
+						kind: "worker",
+						prompt: cleanPrompt,
+						displayName: cleanTitle.slice(0, 20),
+						branch: !isScratchProject && cleanBranch ? cleanBranch : undefined,
+						credential,
+					},
+				});
+				if (apiError) throw new Error(apiErrorMessage(apiError, "Unable to start cloud task"));
+				if (!data?.sandboxId) throw new Error("Cloud task returned no sandbox");
+				void captureRendererEvent("ao.renderer.task_create_succeeded", { project_id: projectId });
+				await refreshCloudSessions();
+				await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+				onCreated(cloudBoardId(data.sandboxId));
+				onOpenChange(false);
+				return;
+			}
 			const body: components["schemas"]["SpawnSessionRequest"] = {
 				projectId,
 				kind: "worker",
@@ -335,16 +385,47 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 							</div>
 						)}
 
-						<div className="flex items-center justify-end gap-2 pt-1">
-							<Dialog.Close asChild>
-								<Button type="button" variant="ghost" disabled={isSubmitting}>
-									Cancel
+						<div className="flex items-center justify-between gap-2 pt-1">
+							{cloudEligible ? (
+								<div className="inline-flex items-center rounded-md border border-border p-0.5 text-xs" role="group" aria-label="Run location">
+									<button
+										type="button"
+										onClick={() => setRunTarget("local")}
+										disabled={isSubmitting}
+										className={cn(
+											"rounded px-2.5 py-1 font-medium transition-colors",
+											runTarget === "local" ? "bg-interactive-active text-foreground" : "text-passive hover:text-foreground",
+										)}
+									>
+										Local
+									</button>
+									<button
+										type="button"
+										onClick={() => setRunTarget("cloud")}
+										disabled={isSubmitting}
+										className={cn(
+											"rounded px-2.5 py-1 font-medium transition-colors",
+											runTarget === "cloud" ? "bg-interactive-active text-foreground" : "text-passive hover:text-foreground",
+										)}
+										title="Run in a per-session cloud sandbox — survives app/laptop shutdown and is shareable"
+									>
+										Cloud
+									</button>
+								</div>
+							) : (
+								<span />
+							)}
+							<div className="flex items-center gap-2">
+								<Dialog.Close asChild>
+									<Button type="button" variant="ghost" disabled={isSubmitting}>
+										Cancel
+									</Button>
+								</Dialog.Close>
+								<Button type="submit" disabled={isSubmitting || !projectId}>
+									{isSubmitting ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : null}
+									{isSubmitting ? (runInCloud ? "Provisioning sandbox…" : "Starting…") : runInCloud ? "Start in cloud" : "Start task"}
 								</Button>
-							</Dialog.Close>
-							<Button type="submit" disabled={isSubmitting || !projectId}>
-								{isSubmitting ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : null}
-								{isSubmitting ? "Starting..." : "Start task"}
-							</Button>
+							</div>
 						</div>
 					</form>
 				</Dialog.Content>

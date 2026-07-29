@@ -31,6 +31,34 @@ type spawnOptions struct {
 	claimPR        string
 	noTakeover     bool
 	skipAgentCheck bool
+	cloud          bool
+}
+
+// cloudSpawnRequest mirrors the daemon's POST /api/v1/cloud/sessions body (and
+// the control plane's bus/provision body).
+type cloudSpawnRequest struct {
+	Harness        string `json:"harness"`
+	LocalProjectID string `json:"localProjectId"`
+	ProjectPath    string `json:"projectPath"`
+	Prompt         string `json:"prompt,omitempty"`
+	DisplayName    string `json:"displayName,omitempty"`
+	Branch         string `json:"branch,omitempty"`
+	Kind           string `json:"kind,omitempty"`
+	// RemoteURL + Credential are populated only on the control-plane delegation
+	// path (in-sandbox spawn): the CP can't read the caller's local repo/keychain.
+	RemoteURL  string `json:"remoteUrl,omitempty"`
+	Credential string `json:"credential,omitempty"`
+	// OrchestratorID is the delegating session's own id (AO_SESSION_ID), so the
+	// new worker sandbox reports idle back to it over the bus (Task 4).
+	OrchestratorID string `json:"orchestratorId,omitempty"`
+	// IdempotencyKey lets the delegation POST be safely retried after a network
+	// reset without provisioning a second sandbox (see cloud.SpawnInput).
+	IdempotencyKey string `json:"idempotencyKey,omitempty"`
+}
+
+type cloudSpawnResult struct {
+	SandboxID string `json:"sandboxId"`
+	Status    string `json:"status"`
 }
 
 // spawnRequest mirrors the daemon's SpawnSessionRequest body for
@@ -111,6 +139,55 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 					return err
 				}
 			}
+			// Cloud: provision a per-session Daytona sandbox and run the session in
+			// it (survives app/laptop shutdown; shareable). This is the capability an
+			// orchestrator uses to spin up cloud workers/sessions on demand. Claiming
+			// a PR at spawn isn't supported for cloud yet (the sandbox clones fresh).
+			//
+			// An orchestrator running INSIDE a cloud sandbox (agent-host mode) is
+			// keyless — its local daemon can't reach the provider — so a plain
+			// `ao spawn` there must delegate to the control plane too. Detect that
+			// by both sandbox env markers being set and treat it as --cloud, so the
+			// orchestrator's prompt need not carry the flag. (#2 auto-delegate.)
+			inSandbox := os.Getenv("AO_CONTROL_PLANE_URL") != "" && os.Getenv("AO_AGENT_HOST_HARNESSES") != ""
+			if opts.cloud || inSandbox {
+				if opts.claimPR != "" {
+					return usageError{fmt.Errorf("--claim-pr is not supported with --cloud")}
+				}
+				creq := cloudSpawnRequest{
+					Harness:        opts.harness,
+					LocalProjectID: opts.project,
+					ProjectPath:    project.Path,
+					Prompt:         opts.prompt,
+					DisplayName:    name,
+					Branch:         opts.branch,
+					Kind:           opts.kind,
+				}
+				var cres cloudSpawnResult
+				// Delegation: when AO_CONTROL_PLANE_URL is set (an in-sandbox
+				// orchestrator, or a laptop in vendor-pays mode), the local daemon is
+				// keyless and can't reach the cloud provider — ask the control plane to
+				// provision. Derive the git remote + read our own harness credential so
+				// they propagate to the new sandbox (the CP stores neither). (Task 2.)
+				if cpURL := strings.TrimSpace(os.Getenv("AO_CONTROL_PLANE_URL")); cpURL != "" {
+					creq.RemoteURL = gitOriginURL(project.Path)
+					creq.Credential = readLocalHarnessCredential(opts.harness)
+					// So the worker reports idle back to THIS orchestrator over the
+					// bus. Use the bus ROUTING KEY (this sandbox's id = AO_DAEMON_ID),
+					// not the in-sandbox session id, which isn't unique across sandboxes.
+					creq.OrchestratorID = strings.TrimSpace(os.Getenv("AO_DAEMON_ID"))
+					// Stable idempotency key so retrying a reset delegation can't
+					// double-provision (sandbox→control-plane egress is flaky).
+					creq.IdempotencyKey = newIdempotencyKey()
+					if err := postToControlPlaneRetry(cmd.Context(), cpURL, os.Getenv("AO_BUS_TOKEN"), "/api/v1/cloud/bus/provision", creq, &cres); err != nil {
+						return err
+					}
+				} else if err := ctx.postJSON(cmd.Context(), "cloud/sessions", creq, &cres); err != nil {
+					return err
+				}
+				_, err = fmt.Fprintf(cmd.OutOrStdout(), "spawning cloud session in sandbox %s (%s)\n", cres.SandboxID, cres.Status)
+				return err
+			}
 			claimRef := ""
 			if opts.claimPR != "" {
 				claimRef, err = ctx.resolvePRRef(cmd.Context(), opts.claimPR, project)
@@ -176,6 +253,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.claimPR, "claim-pr", "", "Immediately claim an existing PR for the spawned session")
 	f.BoolVar(&opts.noTakeover, "no-takeover", false, "Refuse if another active session owns the claimed PR (requires --claim-pr)")
 	f.BoolVar(&opts.skipAgentCheck, "skip-agent-check", false, "Skip advisory agent catalog install/auth preflight before spawning")
+	f.BoolVar(&opts.cloud, "cloud", false, "Run the session in a per-session cloud sandbox (survives app/laptop shutdown; shareable). Requires the daemon to have DAYTONA_API_KEY configured")
 	return cmd
 }
 

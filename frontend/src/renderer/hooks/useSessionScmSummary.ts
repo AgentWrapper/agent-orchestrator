@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import type { components } from "../../api/schema";
-import { apiClient } from "../lib/api-client";
+import { sessionApi } from "../lib/session-api";
 import { mockSessionScmSummaries } from "../lib/mock-data";
 
 export type SessionPRSummary = components["schemas"]["SessionPRSummary"];
@@ -11,8 +11,9 @@ export const sessionScmSummaryQueryKey = (sessionId?: string) =>
 const usePreviewData = import.meta.env.VITE_NO_ELECTRON === "1";
 
 export async function fetchSessionScmSummary(sessionId: string): Promise<SessionPRSummary[]> {
-	const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/pr", {
-		params: { path: { sessionId } },
+	const { client, sessionId: routedId } = sessionApi(sessionId);
+	const { data, error } = await client.GET("/api/v1/sessions/{sessionId}/pr", {
+		params: { path: { sessionId: routedId } },
 	});
 	if (error) throw error;
 	return data?.prs ?? [];

@@ -21,6 +21,7 @@ vi.mock("../../lib/api-client", () => ({
 	apiClient: { GET: getMock, POST: vi.fn() },
 	apiErrorMessage: (e: unknown) => (e instanceof Error ? e.message : "error"),
 	hasTrustedApiBaseUrl: () => true,
+	getControlPlaneBaseUrl: () => null,
 }));
 
 vi.mock("../../lib/bridge", () => ({
@@ -112,6 +113,7 @@ beforeEach(() => {
 		orchestratorReplacementErrors: {},
 		orchestratorStartupErrors: {},
 		restartingProjectIds: new Set(),
+		orchestratorLaunchRequest: null,
 	});
 });
 
@@ -229,16 +231,18 @@ describe("project board with no sessions", () => {
 		expect(columnCount()).toBe(0);
 	});
 
-	it("surfaces the daemon error when spawning the orchestrator fails", async () => {
+	it("delegates orchestrator spawn to the global launcher (Local|Cloud), not an inline spawn", async () => {
 		respondWith([project], []);
-		spawnOrchestratorMock.mockRejectedValue(new Error("branch is already checked out in another worktree"));
 		renderBoard(<SessionsBoard projectId="proj-1" />);
 
 		await screen.findByText("No worker sessions yet");
 		const [spawnButton] = screen.getAllByRole("button", { name: "Spawn Orchestrator" });
 		await userEvent.click(spawnButton);
 
-		expect(await screen.findByText(/branch is already checked out/)).toBeInTheDocument();
+		// The board no longer spawns inline; it routes to the global orchestrator
+		// launcher, which owns the Local|Cloud choice, spawn, navigation, and errors.
+		expect(spawnOrchestratorMock).not.toHaveBeenCalled();
+		await waitFor(() => expect(useUiStore.getState().orchestratorLaunchRequest?.projectId).toBe("proj-1"));
 	});
 
 	it("opens project settings instead of spawning when no orchestrator agent is configured", async () => {
@@ -332,15 +336,12 @@ describe("project board with no sessions", () => {
 		expect(screen.queryByText(/Project added, but orchestrator did not start/)).not.toBeInTheDocument();
 	});
 
-	it("clears a stale spawn error when switching projects", async () => {
+	it("clears a stale orchestrator startup error when switching projects", async () => {
 		const otherProject: Project = { id: "proj-2", name: "other-app", path: "/repo/other-app" };
 		respondWith([project, otherProject], []);
-		spawnOrchestratorMock.mockRejectedValue(new Error("branch is already checked out in another worktree"));
+		useUiStore.getState().setOrchestratorStartupError("proj-1", "branch is already checked out in another worktree");
 		const { rerender } = renderBoard(<SessionsBoard projectId="proj-1" />);
 
-		await screen.findByText("No worker sessions yet");
-		const [spawnButton] = screen.getAllByRole("button", { name: "Spawn Orchestrator" });
-		await userEvent.click(spawnButton);
 		await screen.findByText(/branch is already checked out/);
 
 		rerender(

@@ -11,7 +11,8 @@ trigger: "Using the ao CLI in an AO workspace: spawning workers, managing sessio
 | Command | What it does | When to use | Details |
 |---|---|---|---|
 | `spawn` | Spawn a worker agent in a fresh git worktree | Starting a new task or issue | [commands/spawn.md](commands/spawn.md) |
-| `session` | Manage agent sessions (list, kill, rename, restore, etc.) | Inspecting or controlling running/terminated sessions | [commands/session.md](commands/session.md) |
+| `session` | Manage agent sessions (list, kill, rename, restore, etc.) — LOCAL only | Inspecting or controlling this daemon's sessions | [commands/session.md](commands/session.md) |
+| `fleet` | List agent sessions across ALL locations (local + cloud) with status | Seeing every worker you own and what it's doing — use this, not `session ls`, when any agent may be in the cloud | - |
 | `project` | Register, inspect, configure, or remove projects | Setting up or managing repos AO knows about | [commands/project.md](commands/project.md) |
 | `orchestrator` | List orchestrator sessions | Viewing which sessions are orchestrators | [commands/orchestrator.md](commands/orchestrator.md) |
 | `review` | Submit a reviewer result for a worker's PR | Completing a code review loop | [commands/review.md](commands/review.md) |
@@ -24,6 +25,32 @@ trigger: "Using the ao CLI in an AO workspace: spawning workers, managing sessio
 | `import` | Import projects from a legacy AO install | Migrating from the old flat-file store | [commands/import.md](commands/import.md) |
 | `version` | Print version information | Checking installed version | - |
 | `completion` | Generate shell completion scripts | Setting up tab completion | - |
+
+## Seeing your agents across local + cloud
+
+Workers can run **locally** (this daemon) or in **cloud sandboxes**. A cloud
+worker is invisible to `ao session ls` — that only lists the local daemon. To see
+**every** agent you own and what it's doing, wherever it runs, use:
+
+```
+ao fleet
+```
+
+It lists each session with its LOCATION (local / cloud:<sandbox>), KIND, STATUS,
+and PROJECT — merging local and cloud. **Always use `ao fleet` (not `ao session
+ls`) when any of your workers might be in the cloud** — including when you (the
+orchestrator) are running locally but spawned cloud workers. This works the same
+whether you run locally or inside a sandbox.
+
+Coordination is location-agnostic — you address agents by session id:
+
+- `ao spawn` starts a worker; in a cloud context it provisions a **cloud
+  sandbox** automatically (no extra flag) and prints the new session id.
+- `ao send --session <id> --message "..."` reaches a worker **wherever it
+  lives** — the id from `ao fleet` routes to the right location.
+- Cloud workers report back to you automatically when they go idle.
+
+You never manage sandboxes or URLs — discover with `ao fleet`, address by id.
 
 ## Conventions
 

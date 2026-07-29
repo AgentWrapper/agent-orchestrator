@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Loader2 } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "@tanstack/react-router";
 import type { PanelImperativeHandle, PanelSize } from "react-resizable-panels";
@@ -8,6 +9,7 @@ import { SessionFilesView } from "./SessionFilesView";
 import { SessionInspector } from "./SessionInspector";
 import { ShellTopbar } from "./ShellTopbar";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resizable";
+import { Button } from "./ui/button";
 import { useResolvedTheme, useUiStore, type InspectorView } from "../stores/ui-store";
 import { useShell } from "../lib/shell-context";
 import { useBrowserView } from "../hooks/useBrowserView";
@@ -18,10 +20,17 @@ import {
 	useShellTerminals,
 } from "../hooks/useShellTerminals";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
+import { refreshCloudSessions, removeSharedSession, sandboxIdFromBoardId } from "../lib/cloud-sessions";
 import { hidesShellTopbar } from "../lib/platform";
 import { isOrchestratorSession, sessionIsActive, workerSessions, type WorkspaceSession } from "../types/workspace";
 import type { TerminalTarget } from "../types/terminal";
 import { matchesRendererShortcut } from "../stores/keybindings-store";
+
+// How long to show the cloud "connecting…" state before offering an escape. A
+// live cloud/shared session resolves in a few seconds (registry fetch + sandbox
+// status/proxy round-trip); this is generous headroom over that so a slow but
+// healthy connect isn't cut off prematurely.
+const CLOUD_CONNECT_TIMEOUT_MS = 20_000;
 
 const INSPECTOR_MIN_PERCENT = 22;
 const INSPECTOR_MAX_PERCENT = 45;
@@ -41,6 +50,74 @@ function previewRevealKey(previewUrl?: string, previewRevision?: number): string
 	if (!target) return "";
 	if (typeof previewRevision === "number") return `revision:${previewRevision}`;
 	return `url:${target}`;
+}
+
+// The connecting state for a cloud/shared board id whose session card hasn't
+// resolved yet. A live session resolves in a few seconds, but a shared session
+// whose sandbox was stopped or removed NEVER resolves — without a bound the
+// spinner runs forever and traps the user (no card, no error, no way back).
+// After CLOUD_CONNECT_TIMEOUT_MS we surface an escape: retry, drop the dead
+// shared import, or return to the board. Its own component so the timer hook
+// lives at a stable hook position (the parent early-returns here).
+function CloudSessionConnecting({ boardSessionId, sandboxId }: { boardSessionId: string; sandboxId: string }) {
+	const navigate = useNavigate();
+	const isShared = boardSessionId.startsWith("shared-");
+	const [attempt, setAttempt] = useState(0);
+	const [timedOut, setTimedOut] = useState(false);
+	useEffect(() => {
+		setTimedOut(false);
+		const timer = window.setTimeout(() => setTimedOut(true), CLOUD_CONNECT_TIMEOUT_MS);
+		return () => window.clearTimeout(timer);
+	}, [attempt]);
+
+	if (!timedOut) {
+		return (
+			<div className="grid h-full place-items-center p-6 text-center font-mono text-xs text-passive">
+				<div className="flex items-center gap-2">
+					<Loader2 className="size-4 animate-spin" aria-hidden="true" />
+					Connecting to cloud session…
+				</div>
+			</div>
+		);
+	}
+
+	return (
+		<div className="grid h-full place-items-center p-6 text-center">
+			<div className="flex max-w-sm flex-col items-center gap-3 font-mono text-xs text-passive">
+				<p className="text-foreground">This is taking longer than expected.</p>
+				<p>
+					The cloud sandbox may have been stopped or removed. If it is just a slow connection, retry.
+				</p>
+				<div className="mt-1 flex flex-wrap items-center justify-center gap-2">
+					<Button
+						size="sm"
+						variant="outline"
+						onClick={() => {
+							void refreshCloudSessions();
+							setAttempt((a) => a + 1);
+						}}
+					>
+						Retry
+					</Button>
+					{isShared ? (
+						<Button
+							size="sm"
+							variant="outline"
+							onClick={() => {
+								removeSharedSession(sandboxId);
+								void navigate({ to: "/" });
+							}}
+						>
+							Remove shared session
+						</Button>
+					) : null}
+					<Button size="sm" variant="ghost" onClick={() => void navigate({ to: "/" })}>
+						Back to projects
+					</Button>
+				</div>
+			</div>
+		</div>
+	);
 }
 
 type SessionViewProps = {
@@ -407,6 +484,15 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 	);
 
 	if (!session && !workspaceQuery.isLoading) {
+		// A cloud/shared board id (cloud-/shared-<sandboxId>) that isn't merged into
+		// the board yet — its card resolves asynchronously (registry fetch + sandbox
+		// status/proxy round-trip, a few seconds). Show a connecting state, not the
+		// "not found" error, so opening a share link / freshly-spawned cloud session
+		// doesn't flash an error before the terminal loads.
+		const sandboxId = sandboxIdFromBoardId(sessionId);
+		if (sandboxId) {
+			return <CloudSessionConnecting boardSessionId={sessionId} sandboxId={sandboxId} />;
+		}
 		return (
 			<div className="grid h-full place-items-center p-6 text-center font-mono text-xs text-passive">
 				Session not found. It may have been cleaned up — pick another from the sidebar.

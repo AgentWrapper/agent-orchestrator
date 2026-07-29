@@ -29,13 +29,18 @@ import {
 import { listFeatureBuilds, getActiveFeatureBuild } from "./main/feature-builds";
 import { readUpdateSettings, type UpdateSettings, type UpdateStatus } from "./main/update-settings";
 import { readKeybindingOverrides, writeKeybindingOverrides } from "./main/keybinding-settings";
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { closeSync, existsSync, openSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
+
+// Promisified execFile for the few short, bounded CLI reads main needs (e.g.
+// reading a harness credential from the macOS Keychain for spawn-time injection).
+const execFileAsync = promisify(execFile);
 import { type DaemonLaunchSpec, resolveDaemonLaunch } from "./shared/daemon-launch";
 import { createListenPortScanner, defaultRunFilePath, parseRunFile } from "./shared/daemon-discovery";
 import type { DaemonStatus } from "./shared/daemon-status";
@@ -134,6 +139,29 @@ const RENDERER_SCHEME = "app";
 const RENDERER_HOST = "renderer";
 const RENDERER_ORIGIN = `${RENDERER_SCHEME}://${RENDERER_HOST}`;
 
+// The Clerk + OAuth-provider hosts the "Continue with Google" (and other social)
+// sign-in redirect chain navigates through: app → Clerk Frontend API →
+// provider consent → back to our origin. These full-page navigations must be
+// allowed to complete IN the window; every other off-origin navigation stays
+// blocked. Kept host-suffix based so it works for any Clerk instance/provider.
+function isOAuthRedirectURL(raw: string): boolean {
+	try {
+		const h = new URL(raw).hostname.toLowerCase();
+		return (
+			h === "accounts.dev" ||
+			h.endsWith(".accounts.dev") || // *.clerk.accounts.dev (Clerk dev FAPI)
+			h === "clerk.com" ||
+			h.endsWith(".clerk.com") ||
+			h === "accounts.google.com" ||
+			h === "oauth2.googleapis.com" ||
+			h.endsWith(".githubusercontent.com") || // GitHub OAuth avatars/redirects
+			h === "github.com" // GitHub OAuth (if enabled later)
+		);
+	} catch {
+		return false;
+	}
+}
+
 // The packaged renderer is served from a custom standard scheme, not file://.
 // A file:// page has the opaque "null" origin, which the daemon must never
 // trust (every sandboxed iframe on any website also presents "null"), so its
@@ -148,6 +176,80 @@ protocol.registerSchemesAsPrivileged([
 		privileges: { standard: true, secure: true, supportFetchAPI: true },
 	},
 ]);
+
+// ── Deep links: ao://share/<token> ──────────────────────────────────────────
+// A shared-session link opens (or focuses) AO and auto-imports the session, so a
+// teammate just clicks the link. The token is the readonly payload the Go daemon
+// minted; we only relay it to the renderer, which imports + navigates.
+const SHARE_SCHEME = "ao";
+let pendingShareToken: string | null = null;
+
+function parseShareDeepLink(url: string | undefined): string | null {
+	if (!url) return null;
+	try {
+		const u = new URL(url);
+		if (u.protocol !== `${SHARE_SCHEME}:`) return null;
+		const fromQuery = u.searchParams.get("token");
+		if (fromQuery) return fromQuery;
+		const rest = decodeURIComponent(u.pathname.replace(/^\/+/, ""));
+		if (u.hostname === "share") return rest || null; // ao://share/<token>
+		if (!u.hostname && rest.startsWith("share/")) return rest.slice("share/".length) || null; // ao:///share/<token>
+		return null;
+	} catch {
+		return null;
+	}
+}
+
+function deliverShareToken(token: string | null): void {
+	if (!token) return;
+	// Never log the token itself — it embeds a signed sandbox URL (a bearer secret).
+	console.log("[deeplink] share link received");
+	const win = mainWindow;
+	if (win && !win.webContents.isLoading()) {
+		if (win.isMinimized()) win.restore();
+		win.show();
+		win.focus();
+		win.webContents.send("share:deeplink", token);
+	} else {
+		pendingShareToken = token; // flushed on did-finish-load (see createWindow)
+	}
+}
+
+function firstShareUrlInArgv(argv: string[]): string | undefined {
+	return argv.find((arg) => arg.startsWith(`${SHARE_SCHEME}://`));
+}
+
+// macOS delivers deep links via open-url (both cold-start and while running); the
+// listener must exist before app "ready", so register it at module load.
+app.on("open-url", (event, url) => {
+	event.preventDefault();
+	deliverShareToken(parseShareDeepLink(url));
+});
+
+// Windows/Linux deliver the URL as an argv entry to a second launch; hold a
+// single-instance lock so that launch focuses THIS window and hands us the URL.
+// (macOS uses open-url above, so skip it there.)
+if (process.platform !== "darwin") {
+	if (!app.requestSingleInstanceLock()) {
+		app.quit();
+	} else {
+		app.on("second-instance", (_event, argv) => {
+			deliverShareToken(parseShareDeepLink(firstShareUrlInArgv(argv)));
+		});
+	}
+}
+
+// Register AO as the ao:// handler with the OS. In dev (`electron .`) the exec
+// path + script must be passed so LaunchServices resolves back to us.
+function registerShareProtocol(): void {
+	if (process.defaultApp) {
+		if (process.argv.length >= 2) {
+			app.setAsDefaultProtocolClient(SHARE_SCHEME, process.execPath, [path.resolve(process.argv[1])]);
+		}
+	} else {
+		app.setAsDefaultProtocolClient(SHARE_SCHEME);
+	}
+}
 
 // Maps app://renderer/<path> to the built renderer in dist/. Paths without a
 // file extension are client-side routes and fall back to index.html (SPA).
@@ -289,9 +391,27 @@ function createWindow(): void {
 	});
 
 	mainWindow.webContents.on("will-navigate", (event, url) => {
-		if (url !== mainWindow?.webContents.getURL()) {
-			event.preventDefault();
+		const current = mainWindow?.webContents.getURL() ?? "";
+		if (url === current) return;
+		try {
+			const target = new URL(url);
+			// Allow navigation to the app's OWN origin — dev: the Vite server on
+			// localhost; packaged: the app:// scheme. This is critical for OAuth: the
+			// Clerk handshake redirects BACK to our origin (…/?__clerk_handshake=…),
+			// and blocking it here is exactly what left sign-in on a blank page.
+			if (
+				url.startsWith(RENDERER_ORIGIN) ||
+				target.hostname === "localhost" ||
+				target.hostname === "127.0.0.1"
+			) {
+				return;
+			}
+			// Allow the OAuth redirect chain OUT to Clerk / provider hosts.
+			if (isOAuthRedirectURL(url)) return;
+		} catch {
+			/* unparseable → block below */
 		}
+		event.preventDefault();
 	});
 
 	// Application shortcuts are handled here so they fire no matter which web
@@ -320,6 +440,14 @@ function createWindow(): void {
 	});
 
 	void mainWindow.loadURL(rendererUrl());
+
+	// Flush any deep-link token that arrived before the renderer was ready.
+	mainWindow.webContents.once("did-finish-load", () => {
+		if (!pendingShareToken) return;
+		const token = pendingShareToken;
+		pendingShareToken = null;
+		mainWindow?.webContents.send("share:deeplink", token);
+	});
 
 	if (isDev && process.env.AO_OPEN_DEVTOOLS === "1") {
 		mainWindow.webContents.once("did-frame-finish-load", () => {
@@ -1081,6 +1209,54 @@ function stopDaemon(): DaemonStatus {
 	return daemonStatus;
 }
 
+// The daemon's data dir — where the bus credentials file lives, matching the
+// AO_DATA_DIR the daemon resolves (dev: ~/.ao/dev/data, prod: ~/.ao/data).
+function daemonDataDir(): string {
+	if (process.env.AO_DATA_DIR) return process.env.AO_DATA_DIR;
+	if (isDev) return path.join(os.homedir(), ".ao", DEV_STATE_SUBDIR, "data");
+	return path.join(os.homedir(), ".ao", "data");
+}
+
+function busCredentialsPath(): string {
+	return path.join(daemonDataDir(), "bus-credentials.json");
+}
+
+// Where each harness's local credential lives, mirroring the Go supervisor's
+// resolveLocalCredential order (macOS Keychain first, then the on-disk file).
+// Used for spawn-time credential injection: the app reads the user's CURRENT
+// credential and passes it in the cloud-spawn body, so the hosted control plane
+// never stores a copy. The value is a secret — never log it.
+const HARNESS_CRED_LOCATIONS: Record<string, { keychainService?: string; homePath?: string }> = {
+	"claude-code": { keychainService: "Claude Code-credentials", homePath: ".claude/.credentials.json" },
+};
+
+async function readHarnessCredential(harness: string): Promise<string | null> {
+	const loc = HARNESS_CRED_LOCATIONS[harness];
+	if (!loc) return null;
+	if (process.platform === "darwin" && loc.keychainService) {
+		try {
+			const { stdout } = await execFileAsync(
+				"security",
+				["find-generic-password", "-s", loc.keychainService, "-w"],
+				{ timeout: 5000 },
+			);
+			const value = stdout.trim();
+			if (value) return value;
+		} catch {
+			// Not in the Keychain (or the CLI failed) — fall back to the file.
+		}
+	}
+	if (loc.homePath) {
+		try {
+			const raw = (await readFile(path.join(os.homedir(), loc.homePath), "utf8")).trim();
+			if (raw) return raw;
+		} catch {
+			// No on-disk credential either.
+		}
+	}
+	return null;
+}
+
 function reportDaemonRestartFailure(error: unknown): DaemonStatus {
 	setDaemonStatus({
 		state: "error",
@@ -1140,6 +1316,25 @@ async function restartDaemon(): Promise<DaemonStatus> {
 ipcMain.handle("daemon:getStatus", () => refreshDaemonStatus());
 ipcMain.handle("daemon:start", () => startDaemon());
 ipcMain.handle("daemon:stop", () => stopDaemon());
+ipcMain.handle("cloud:getHarnessCredential", (_event, harness: string) => readHarnessCredential(harness));
+// The renderer mints a bus token from the control plane (with the user's Clerk
+// JWT) and hands it here; we drop it where the local daemon's bus client reads
+// it. This is how a LOCAL daemon joins the federated bus (Task 1: laptop-in-loop).
+ipcMain.handle(
+	"cloud:setBusCredentials",
+	async (_event, creds: { controlPlaneUrl: string; token: string; tenant?: string }) => {
+		const target = busCredentialsPath();
+		await mkdir(path.dirname(target), { recursive: true });
+		await writeFile(
+			target,
+			JSON.stringify({ controlPlaneUrl: creds.controlPlaneUrl, token: creds.token, tenant: creds.tenant ?? "" }),
+			{ mode: 0o600 },
+		);
+	},
+);
+ipcMain.handle("cloud:clearBusCredentials", async () => {
+	await rm(busCredentialsPath(), { force: true });
+});
 ipcMain.handle("daemon:restart", async () => {
 	try {
 		return await restartDaemon();
@@ -1452,8 +1647,13 @@ app.whenReady().then(async () => {
 	}
 
 	registerRendererProtocol();
+	registerShareProtocol();
 	applyRuntimeAppIcon();
 	createWindow();
+	// Windows/Linux cold start: the ao:// URL is in our own argv.
+	if (process.platform !== "darwin") {
+		deliverShareToken(parseShareDeepLink(firstShareUrlInArgv(process.argv)));
+	}
 	void startDaemon();
 	initAutoUpdates();
 

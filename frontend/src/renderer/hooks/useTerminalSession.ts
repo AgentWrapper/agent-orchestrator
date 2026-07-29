@@ -17,6 +17,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getApiBaseUrl } from "../lib/api-client";
 import { captureRendererEvent } from "../lib/telemetry";
 import { createTerminalMux, muxUrlFromApiBase, type TerminalMux } from "../lib/terminal-mux";
+import { refreshPreviewUrl, sandboxIdFromBoardId } from "../lib/cloud-sessions";
 import { sessionIsActive, type WorkspaceSession } from "../types/workspace";
 import { workspaceQueryKey } from "./useWorkspaceQuery";
 
@@ -134,9 +135,22 @@ const REPLAY_MAX_BYTES = 1024 * 1024;
 // QUIET_MS would uncover panes that were about to draw.
 const REPLAY_FIRST_BYTE_MS = 250;
 
-function defaultCreateMux(): TerminalMux {
+function defaultCreateMux(session?: WorkspaceSession, overrideBase?: string | null): TerminalMux {
 	// Resolved per connect, not per hook: a daemon restart can change the port.
-	return createTerminalMux(muxUrlFromApiBase(getApiBaseUrl()));
+	// A CLOUD session's mux streams from its sandbox daemon (cloudPreviewUrl), a
+	// direct WebSocket that is NOT subject to browser CORS; a local session uses
+	// the local daemon's base URL. overrideBase is a freshly re-minted signed
+	// preview URL used after a long outage may have expired the stored one.
+	const base = overrideBase ?? session?.cloudPreviewUrl ?? getApiBaseUrl();
+	return createTerminalMux(muxUrlFromApiBase(base));
+}
+
+// The sandbox id of an OWNED cloud session (board id "cloud-<id>"), or null for a
+// shared import ("shared-<id>", whose view-url endpoint is owner-scoped) or a
+// local session. Only an owned session can re-mint its own signed preview URL.
+function ownedCloudSandboxId(session?: WorkspaceSession): string | null {
+	if (!session?.cloudPreviewUrl || !session.id.startsWith("cloud-")) return null;
+	return sandboxIdFromBoardId(session.id);
 }
 
 export function useTerminalSession(session: WorkspaceSession | undefined, options: UseTerminalSessionOptions) {
@@ -184,6 +198,10 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		// A resize re-assert held back until the replay flushes; see the resize
 		// handler for why it cannot fire during the burst.
 		replayPendingReassert: null as (() => void) | null,
+		// A re-minted signed preview URL for an owned cloud session, set when a
+		// reattach re-mints after the stored URL may have expired. Preferred as the
+		// mux base for the next connect; cleared on a successful open.
+		freshPreviewUrl: null as string | null,
 		// The current attachment's flush, published so teardown can land buffered
 		// bytes instead of discarding them (the closure lives inside connect).
 		flushReplay: null as (() => void) | null,
@@ -287,8 +305,12 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			return;
 		}
 		transition("reattaching");
-		// Not ready → no timer; the daemonReady effect reconnects when it flips.
-		if (!optionsRef.current.daemonReady) {
+		// A cloud session's mux targets its sandbox directly, so local daemon
+		// readiness must not block its reattach (internet loss to the sandbox is
+		// invisible to daemonReady). A local session waits for the local daemon:
+		// no timer here; the daemonReady effect reconnects when it flips.
+		const isCloud = Boolean(sessionRef.current?.cloudPreviewUrl);
+		if (!isCloud && !optionsRef.current.daemonReady) {
 			return;
 		}
 		if (r.retryTimer) {
@@ -298,6 +320,23 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		r.attempts += 1;
 		r.retryTimer = setTimeout(() => {
 			r.retryTimer = null;
+			const sandboxId = ownedCloudSandboxId(sessionRef.current);
+			// After a couple of failed attempts, a long outage may have outlived the
+			// signed preview URL's TTL — re-mint before reconnecting (owned sessions
+			// only; a viewer can't call the owner-scoped view-url). Best-effort: on
+			// failure, reconnect with the current URL.
+			if (sandboxId && r.attempts >= 2) {
+				void refreshPreviewUrl(sandboxId)
+					.then((fresh) => {
+						if (runtime.current.detached) return;
+						if (fresh) runtime.current.freshPreviewUrl = fresh;
+						connectRef.current();
+					})
+					.catch(() => {
+						if (!runtime.current.detached) connectRef.current();
+					});
+				return;
+			}
 			connectRef.current();
 		}, delay);
 	}, [transition]);
@@ -316,7 +355,9 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		r.inputReady = false;
 		teardownMux();
 
-		const mux = (optionsRef.current.createMux ?? defaultCreateMux)();
+		const mux = optionsRef.current.createMux
+			? optionsRef.current.createMux()
+			: defaultCreateMux(sessionRef.current, r.freshPreviewUrl);
 		r.mux = mux;
 
 		// Streaming decoder so a multi-byte sequence split across chunks decodes
@@ -401,6 +442,9 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				clearOpenTimer(generation);
 				r.inputReady = true;
 				r.attempts = 0;
+				// Recovered: drop any re-minted URL so the store (refreshed by the
+				// workspace poll) is the source of truth for the next connect.
+				r.freshPreviewUrl = null;
 				setError(undefined);
 				transition("attached");
 				// Bound the gate from here: the daemon fires onOpen from setPTY and
@@ -606,7 +650,10 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			r.firstAttach = true;
 			setError(undefined);
 			if (handle) {
-				if (optionsRef.current.daemonReady) {
+				// A cloud session's mux targets its sandbox directly, so it connects
+				// regardless of local daemon readiness; a local session waits.
+				const isCloud = Boolean(sessionRef.current?.cloudPreviewUrl);
+				if (isCloud || optionsRef.current.daemonReady) {
 					transition("connecting");
 					connect();
 				} else {

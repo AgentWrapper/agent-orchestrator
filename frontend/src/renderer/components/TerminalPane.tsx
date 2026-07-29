@@ -5,7 +5,7 @@ import type { TerminalTarget } from "../types/terminal";
 import { sessionIsActive, type WorkspaceSession } from "../types/workspace";
 import { useUiStore, type Theme } from "../stores/ui-store";
 import { useTerminalSession, type AttachableTerminal, type TerminalSessionState } from "../hooks/useTerminalSession";
-import { apiClient } from "../lib/api-client";
+import { sessionApi } from "../lib/session-api";
 import { createUrlWatcher, type UrlWatcher } from "../lib/detect-urls";
 import { cn } from "../lib/utils";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
@@ -300,8 +300,9 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 			setInspectorOpenForSession(linkSessionId, true);
 			void (async () => {
 				try {
-					const { error: previewError } = await apiClient.POST("/api/v1/sessions/{sessionId}/preview", {
-						params: { path: { sessionId: linkSessionId } },
+					const { client, sessionId: routedId } = sessionApi(linkSessionId);
+					const { error: previewError } = await client.POST("/api/v1/sessions/{sessionId}/preview", {
+						params: { path: { sessionId: routedId } },
 						body: { url: uri },
 					});
 					if (previewError) {
@@ -408,6 +409,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 					onLinkOpen={handleLinkOpen}
 					onReady={handleReady}
 					paneScrollsByKeyboard={providerScrollsByKeyboard(provider)}
+					readOnly={Boolean(session?.readonly)}
 					theme={theme}
 				/>
 				{showEmptyState && (

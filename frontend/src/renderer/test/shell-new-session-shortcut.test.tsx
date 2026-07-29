@@ -133,7 +133,7 @@ vi.mock("../hooks/useAgentsQuery", () => ({
 	refreshAgents: vi.fn(),
 }));
 
-vi.mock("../components/NotificationCenter", () => ({ NotificationRuntime: () => null }));
+vi.mock("../components/NotificationCenter", () => ({ NotificationRuntime: () => null, ShareDeepLinkRuntime: () => null }));
 vi.mock("../components/CommandPalette", () => ({ CommandPalette: () => null }));
 vi.mock("../components/OrchestratorReplacementDialog", () => ({ OrchestratorReplacementDialog: () => null }));
 vi.mock("../components/ShellTopbar", () => ({ ShellTopbar: () => null }));
@@ -181,6 +181,12 @@ vi.mock("../components/GlobalNewTaskDialog", async () => {
 		},
 	};
 });
+
+// Inert stub: the real dialog uses useQuery, which this file's partial
+// react-query mock does not provide. The shell shortcut tests don't exercise it.
+vi.mock("../components/GlobalOrchestratorLaunchDialog", () => ({
+	GlobalOrchestratorLaunchDialog: () => null,
+}));
 
 vi.mock("../components/Sidebar", async () => {
 	const { useUiStore: useStore } = await vi.importActual<typeof import("../stores/ui-store")>("../stores/ui-store");
