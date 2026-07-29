@@ -21,8 +21,8 @@ export function SessionTerminationPopover({
 			<PopoverContent
 				align="end"
 				aria-label={`Terminate ${session?.title ?? "session"}?`}
-				avoidCollisions={false}
 				className="w-64 max-w-[calc(100vw-1rem)] p-3 shadow-lg"
+				collisionPadding={8}
 				onClick={(event) => event.stopPropagation()}
 				role="dialog"
 				side="bottom"
