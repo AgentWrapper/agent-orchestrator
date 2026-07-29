@@ -78,7 +78,7 @@ func TestBootstrapWorkerUploadsAndLaunchesBinary(t *testing.T) {
 		switch r.URL.Path {
 		case "/sandbox-one/files/upload":
 			uploaded = true
-			if r.URL.Query().Get("path") != "/home/daytona/.local/bin/ao-worker" {
+			if r.URL.Query().Get("path") != "/home/ao/.local/bin/ao-worker" {
 				t.Fatalf("upload path = %q", r.URL.Query().Get("path"))
 			}
 			if err := r.ParseMultipartForm(1 << 20); err != nil {
@@ -100,8 +100,16 @@ func TestBootstrapWorkerUploadsAndLaunchesBinary(t *testing.T) {
 			}
 			if strings.Contains(input.Command, "mkdir -p") {
 				prepared = true
+				if !strings.Contains(input.Command, "/home/ao/.ao/worker") ||
+					!strings.Contains(input.Command, "/workspace") {
+					t.Fatalf("prepare command = %q", input.Command)
+				}
 			} else {
 				launched = true
+				if !strings.Contains(input.Command, "/home/ao/.local/bin/ao-worker") ||
+					!strings.Contains(input.Command, "/home/ao/.ao/worker.log") {
+					t.Fatalf("launch command = %q", input.Command)
+				}
 				if input.Environment["AO_WORKER_BOOTSTRAP_TOKEN"] != "ticket" {
 					t.Fatalf("execute environment = %#v", input.Environment)
 				}

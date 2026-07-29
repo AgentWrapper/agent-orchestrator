@@ -113,6 +113,9 @@ func TestProvisionIssuesScopedBootstrapAndLabelsSandbox(t *testing.T) {
 	if provider.created.Environment["AO_WORKER_BOOTSTRAP_TOKEN"] != "one-use-ticket" {
 		t.Fatalf("worker environment = %#v", provider.created.Environment)
 	}
+	if provider.created.Environment["AO_WORKSPACE_DIR"] != "/workspace/repository" {
+		t.Fatalf("workspace environment = %#v", provider.created.Environment)
+	}
 	if provider.created.Labels["ao.session_id"] != "session-one" {
 		t.Fatalf("labels = %#v", provider.created.Labels)
 	}

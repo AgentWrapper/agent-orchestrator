@@ -166,7 +166,7 @@ func (r *Reconciler) reconcileSandbox(ctx context.Context, sandbox clouddomain.S
 						Environment: map[string]string{
 							"AO_CLOUD_PUBLIC_URL": r.publicURL,
 							"AO_CLOUD_SESSION_ID": string(sandbox.SessionID),
-							"AO_WORKSPACE_DIR":    "/home/daytona/workspace/repository",
+							"AO_WORKSPACE_DIR":    "/workspace/repository",
 						},
 					},
 				); err != nil {
@@ -230,7 +230,7 @@ func (r *Reconciler) provision(
 			"AO_CLOUD_PUBLIC_URL":       r.publicURL,
 			"AO_CLOUD_SESSION_ID":       string(sandbox.SessionID),
 			"AO_WORKER_BOOTSTRAP_TOKEN": ticket,
-			"AO_WORKSPACE_DIR":          "/home/daytona/workspace/repository",
+			"AO_WORKSPACE_DIR":          "/workspace/repository",
 		},
 		Labels: map[string]string{
 			"ao.session_id": string(sandbox.SessionID),

@@ -169,7 +169,7 @@ func (c *Client) BootstrapWorker(
 	}
 	destination := spec.Destination
 	if destination == "" {
-		destination = "/home/daytona/.local/bin/ao-worker"
+		destination = "/home/ao/.local/bin/ao-worker"
 	}
 	var prepareResponse struct {
 		ExitCode int    `json:"exitCode"`
@@ -177,7 +177,7 @@ func (c *Client) BootstrapWorker(
 	}
 	if err := c.doToolboxJSON(ctx, id, http.MethodPost, "/process/execute", map[string]any{
 		"command": "mkdir -p " + shellQuote(filepath.Dir(destination)) +
-			" /home/daytona/.ao/worker /home/daytona/workspace",
+			" /home/ao/.ao/worker /workspace",
 		"timeout": 10,
 	}, &prepareResponse); err != nil {
 		return fmt.Errorf("prepare AO worker directories: %w", err)
@@ -202,9 +202,9 @@ func (c *Client) BootstrapWorker(
 		return fmt.Errorf("upload AO worker: %w", err)
 	}
 	command := "chmod 0755 " + shellQuote(destination) +
-		" && ln -sf " + shellQuote(destination) + " /home/daytona/.local/bin/ao" +
+		" && ln -sf " + shellQuote(destination) + " /home/ao/.local/bin/ao" +
 		" && nohup " + shellQuote(destination) +
-		" >/home/daytona/.ao/worker.log 2>&1 </dev/null &"
+		" >/home/ao/.ao/worker.log 2>&1 </dev/null &"
 	var executeResponse struct {
 		ExitCode int    `json:"exitCode"`
 		Result   string `json:"result"`
