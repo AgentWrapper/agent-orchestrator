@@ -96,7 +96,10 @@ if (process.platform === "win32") {
 // inside ~/.ao alongside the daemon's data dir and running.json. sessionData and
 // crashDumps derive from userData, so this one override reparents them all.
 // Must run before app ready.
-app.setPath("userData", path.join(os.homedir(), ".ao", "electron"));
+const electronUserDataPath = process.env.AO_ELECTRON_USER_DATA_DIR?.trim()
+	? path.resolve(process.env.AO_ELECTRON_USER_DATA_DIR)
+	: path.join(os.homedir(), ".ao", "electron");
+app.setPath("userData", electronUserDataPath);
 
 let mainWindow: BrowserWindow | null = null;
 let daemonProcess: ChildProcess | null = null;
