@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -188,7 +189,8 @@ func (w *Workspace) Create(ctx context.Context, cfg ports.WorkspaceConfig) (port
 	if err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
-	if !found {
+	createdHere := !found
+	if createdHere {
 		sb, err = w.createSandbox(ctx, name, cfg)
 		if err != nil {
 			return ports.WorkspaceInfo{}, err
@@ -202,10 +204,16 @@ func (w *Workspace) Create(ctx context.Context, cfg ports.WorkspaceConfig) (port
 	path := w.workspacePath(name)
 	branch, err := w.provisionCheckout(ctx, sb, path, cfg, remote)
 	if err != nil {
-		// The sandbox without a checkout is useless; tear it down so a retried
-		// spawn does not find a half-provisioned sandbox.
-		if delErr := w.client.DeleteSandbox(context.WithoutCancel(ctx), sb.ID); delErr != nil {
-			w.logger.Warn("daytona workspace: cleanup after failed provision", "sandbox", sb.ID, "error", delErr)
+		// A sandbox THIS call created has no checkout worth keeping; tear it
+		// down so a retried spawn does not find a half-provisioned sandbox. An
+		// adopted sandbox is left alone: it may hold a prior provision's
+		// checkout (possibly with uncommitted work), and the failure here may
+		// be transient — deleting it would be the one destructive path in the
+		// adapter (flagged in review).
+		if createdHere {
+			if delErr := w.client.DeleteSandbox(context.WithoutCancel(ctx), sb.ID); delErr != nil {
+				w.logger.Warn("daytona workspace: cleanup after failed provision", "sandbox", sb.ID, "error", delErr)
+			}
 		}
 		return ports.WorkspaceInfo{}, err
 	}
@@ -259,11 +267,23 @@ func (w *Workspace) createSandbox(ctx context.Context, name string, cfg ports.Wo
 
 // provisionCheckout clones the repo (base branch when set) and creates or
 // checks out the session branch, returning the effective branch name. An
-// existing valid checkout is reused (idempotent retry after a partial spawn).
+// existing valid checkout is reused (idempotent retry after a partial spawn)
+// after reconciling it onto the session branch.
 func (w *Workspace) provisionCheckout(ctx context.Context, sb Sandbox, path string, cfg ports.WorkspaceConfig, remote RepoRemote) (string, error) {
-	// Already provisioned? (`git -C path rev-parse` succeeds only for a repo.)
-	if _, err := w.exec(ctx, sb.ID, "git -C "+shellQuote(path)+" rev-parse --is-inside-work-tree"); err == nil {
-		return w.currentBranch(ctx, sb.ID, path)
+	// Already provisioned? Only a definitive git failure (execError: not a
+	// repo) means "not provisioned"; a transport failure aborts inconclusively
+	// — otherwise a transient toolbox hiccup against a healthy checkout would
+	// route into a doomed re-clone (flagged in review).
+	probeErr := func() error {
+		_, err := w.exec(ctx, sb.ID, "git -C "+shellQuote(path)+" rev-parse --is-inside-work-tree")
+		return err
+	}()
+	if probeErr == nil {
+		return w.reconcileExistingCheckout(ctx, sb, path, cfg, remote)
+	}
+	var execErr *execError
+	if !errors.As(probeErr, &execErr) {
+		return "", fmt.Errorf("daytona workspace: probe checkout %s: %w", path, probeErr)
 	}
 
 	baseBranch := cfg.BaseBranch
@@ -281,6 +301,9 @@ func (w *Workspace) provisionCheckout(ctx context.Context, sb Sandbox, path stri
 	}); err != nil {
 		return "", fmt.Errorf("daytona workspace: clone %s: %w", remote.URL, err)
 	}
+	if err := w.seedGitCredentials(ctx, sb.ID, remote); err != nil {
+		return "", err
+	}
 	if err := w.configureGitIdentity(ctx, sb.ID, path); err != nil {
 		return "", err
 	}
@@ -290,19 +313,86 @@ func (w *Workspace) provisionCheckout(ctx context.Context, sb Sandbox, path stri
 		// Scratch-style session: stay on the cloned branch.
 		return w.currentBranch(ctx, sb.ID, path)
 	}
-	if err := validateBranchName(branch); err != nil {
+	return branch, w.checkoutSessionBranch(ctx, sb.ID, path, branch)
+}
+
+// reconcileExistingCheckout reuses a surviving checkout but makes sure the
+// session branch is actually checked out: a prior provision can die between
+// clone and checkout (daemon crash), and returning the cloned base branch
+// would silently run the session on base (flagged in review).
+func (w *Workspace) reconcileExistingCheckout(ctx context.Context, sb Sandbox, path string, cfg ports.WorkspaceConfig, remote RepoRemote) (string, error) {
+	if cfg.Branch == "" {
+		return w.currentBranch(ctx, sb.ID, path)
+	}
+	current, err := w.currentBranch(ctx, sb.ID, path)
+	if err != nil {
 		return "", err
 	}
-	// Prefer resuming an existing remote branch (restore of a prior session);
-	// otherwise create the session branch from the cloned base.
-	script := "cd " + shellQuote(path) + " && " +
-		"if git fetch origin " + shellQuote(branch) + " >/dev/null 2>&1; then " +
-		"git checkout -B " + shellQuote(branch) + " FETCH_HEAD; else " +
-		"git checkout -B " + shellQuote(branch) + "; fi"
-	if _, err := w.execWithTimeout(ctx, sb.ID, script, w.createTimeout); err != nil {
-		return "", fmt.Errorf("daytona workspace: checkout branch %s: %w", branch, err)
+	if current == cfg.Branch {
+		return cfg.Branch, nil
 	}
-	return branch, nil
+	if err := w.seedGitCredentials(ctx, sb.ID, remote); err != nil {
+		return "", err
+	}
+	if err := w.checkoutSessionBranch(ctx, sb.ID, path, cfg.Branch); err != nil {
+		return "", err
+	}
+	return cfg.Branch, nil
+}
+
+// seedGitCredentials stores the repo credentials inside the sandbox via the
+// toolbox credentials API (body-only, like the clone) so in-sandbox git
+// network operations — checkoutSessionBranch's ls-remote/fetch and the
+// agent's own pushes — authenticate against private remotes.
+func (w *Workspace) seedGitCredentials(ctx context.Context, sandboxID string, remote RepoRemote) error {
+	if remote.Username == "" && remote.Password == "" {
+		return nil
+	}
+	host := ""
+	if u, err := url.Parse(remote.URL); err == nil {
+		host = u.Host
+	}
+	if err := w.client.GitSetCredentials(ctx, sandboxID, GitCredentialsRequest{
+		Username: remote.Username,
+		Password: remote.Password,
+		Host:     host,
+		Protocol: "https",
+	}); err != nil {
+		return fmt.Errorf("daytona workspace: seed git credentials: %w", err)
+	}
+	return nil
+}
+
+// checkoutSessionBranch resumes the remote session branch when it exists, or
+// creates it from the current HEAD (the cloned base). Branch existence is
+// decided by `git ls-remote --exit-code` — exit 2 is definitively "no such
+// ref" — because a bare fetch-and-fallback conflates auth/network failures
+// with branch-missing and would silently restart a restored session from base
+// (flagged in review). Script exit codes: 3 = path gone, 6 = fetch/checkout
+// failed, 7 = remote unverifiable (auth/network).
+func (w *Workspace) checkoutSessionBranch(ctx context.Context, sandboxID, path, branch string) error {
+	if err := validateBranchName(branch); err != nil {
+		return err
+	}
+	b := shellQuote(branch)
+	script := "cd " + shellQuote(path) + " || exit 3; " +
+		"git ls-remote --exit-code --heads origin " + b + " >/dev/null 2>&1; rc=$?; " +
+		"if [ \"$rc\" -eq 0 ]; then { git fetch origin " + b + " && git checkout -B " + b + " FETCH_HEAD; } || exit 6; " +
+		"elif [ \"$rc\" -eq 2 ]; then git checkout -B " + b + " || exit 6; " +
+		"else exit 7; fi"
+	if _, err := w.execWithTimeout(ctx, sandboxID, script, w.createTimeout); err != nil {
+		var execErr *execError
+		if errors.As(err, &execErr) {
+			switch execErr.exitCode {
+			case 3:
+				return fmt.Errorf("daytona workspace: checkout branch %s: %w", branch, ports.ErrWorkspaceStale)
+			case 7:
+				return fmt.Errorf("daytona workspace: checkout branch %s: cannot verify remote branch (network or credentials): %w", branch, err)
+			}
+		}
+		return fmt.Errorf("daytona workspace: checkout branch %s: %w", branch, err)
+	}
+	return nil
 }
 
 func (w *Workspace) configureGitIdentity(ctx context.Context, sandboxID, path string) error {
@@ -358,7 +448,14 @@ func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (por
 	}
 	path := w.workspacePath(name)
 	if _, err := w.exec(ctx, sb.ID, "git -C "+shellQuote(path)+" rev-parse --is-inside-work-tree"); err != nil {
-		return ports.WorkspaceInfo{}, fmt.Errorf("daytona workspace: restore %s: checkout missing: %w: %w", name, ports.ErrWorkspaceStale, err)
+		// Stale only on a definitive git failure; a toolbox transport error is
+		// an inconclusive probe, matching the execError-gated stale checks in
+		// isDirty/StashUncommitted (review consistency note).
+		var execErr *execError
+		if errors.As(err, &execErr) {
+			return ports.WorkspaceInfo{}, fmt.Errorf("daytona workspace: restore %s: checkout missing: %w: %w", name, ports.ErrWorkspaceStale, err)
+		}
+		return ports.WorkspaceInfo{}, fmt.Errorf("daytona workspace: restore %s: probe checkout: %w", name, err)
 	}
 	branch, err := w.currentBranch(ctx, sb.ID, path)
 	if err != nil {
@@ -394,7 +491,18 @@ func (w *Workspace) Destroy(ctx context.Context, info ports.WorkspaceInfo) error
 	}
 	dirty, err := w.isDirty(ctx, sb.ID, info.Path)
 	if err != nil {
-		return err
+		// A stale checkout (path gone / not a repo) has nothing to protect:
+		// proceed to teardown, mirroring gitworktree's success on an
+		// unregistered path. Returning the error instead made the session
+		// unkillable — the kill path only special-cases ErrWorkspaceDirty, so
+		// every retry failed identically while the sandbox kept billing
+		// (review finding 1). Transport errors still abort: they are
+		// inconclusive, and the sandbox might hold uncommitted work.
+		if !errors.Is(err, ports.ErrWorkspaceStale) {
+			return err
+		}
+		w.logger.Warn("daytona workspace: stale checkout at destroy; deleting sandbox", "sandbox", sb.ID, "path", info.Path, "error", err)
+		dirty = false
 	}
 	if dirty {
 		if wasParked {

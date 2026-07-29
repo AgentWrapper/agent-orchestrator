@@ -21,6 +21,7 @@ type fakeClient struct {
 	execHandlers []execHandler
 
 	gitClones []GitCloneRequest
+	gitCreds  []GitCredentialsRequest
 
 	createErr error
 	listErr   error
@@ -228,6 +229,16 @@ func (f *fakeClient) GitClone(_ context.Context, sandboxID string, req GitCloneR
 		return fmt.Errorf("%w: %s", ErrSandboxNotFound, sandboxID)
 	}
 	f.gitClones = append(f.gitClones, req)
+	return nil
+}
+
+func (f *fakeClient) GitSetCredentials(_ context.Context, sandboxID string, req GitCredentialsRequest) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.sandboxes[sandboxID]; !ok {
+		return fmt.Errorf("%w: %s", ErrSandboxNotFound, sandboxID)
+	}
+	f.gitCreds = append(f.gitCreds, req)
 	return nil
 }
 

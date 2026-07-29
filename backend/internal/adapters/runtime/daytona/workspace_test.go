@@ -323,3 +323,127 @@ func TestParkStopsStartedSandbox(t *testing.T) {
 		t.Errorf("second park must no-op, stopped=%v", fc.stopped)
 	}
 }
+
+// -- review 4803249501 regressions --
+
+func TestWorkspaceDestroyStaleCheckoutStillDeletesSandbox(t *testing.T) {
+	// Finding 1: a stale checkout (path gone / not a repo) has nothing to
+	// protect. Returning the stale error made the session unkillable (the kill
+	// path only special-cases ErrWorkspaceDirty) and leaked a billing sandbox.
+	fc := newFakeClient()
+	id := fc.seedSandbox("s1", StateStarted)
+	fc.onExec("status --porcelain", ExecResult{ExitCode: 128, Result: "fatal: not a git repository"}, nil)
+	ws := newTestWorkspace(t, fc)
+	if err := ws.Destroy(context.Background(), ports.WorkspaceInfo{SessionID: "s1", Path: "/home/daytona/ao/s1"}); err != nil {
+		t.Fatalf("Destroy: %v", err)
+	}
+	if len(fc.deleted) != 1 || fc.deleted[0] != id {
+		t.Errorf("deleted = %v, want [%s]", fc.deleted, id)
+	}
+
+	t.Run("transport error still aborts", func(t *testing.T) {
+		fc := newFakeClient()
+		fc.seedSandbox("s1", StateStarted)
+		fc.onExec("status --porcelain", ExecResult{}, errors.New("toolbox 502"))
+		ws := newTestWorkspace(t, fc)
+		if err := ws.Destroy(context.Background(), ports.WorkspaceInfo{SessionID: "s1", Path: "/p"}); err == nil {
+			t.Fatal("want error on inconclusive dirty probe")
+		}
+		if len(fc.deleted) != 0 {
+			t.Errorf("must not delete on an inconclusive probe, deleted=%v", fc.deleted)
+		}
+	})
+}
+
+func TestWorkspaceCreateReusedCheckoutReconcilesBranch(t *testing.T) {
+	// Finding 2: a provision that died between clone and checkout leaves the
+	// checkout on the base branch; reuse must move it to the session branch.
+	fc := newFakeClient()
+	fc.seedSandbox("s1", StateStarted)
+	fc.onExec("rev-parse --abbrev-ref HEAD", ExecResult{Result: "develop\n"}, nil)
+	ws := newTestWorkspace(t, fc)
+	info, err := ws.Create(context.Background(), ports.WorkspaceConfig{
+		SessionID: "s1", Branch: "ao/s1/root", BaseBranch: "develop",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if info.Branch != "ao/s1/root" {
+		t.Errorf("branch = %q, want session branch", info.Branch)
+	}
+	if got := fc.commandsMatching("checkout -B 'ao/s1/root'"); len(got) != 1 {
+		t.Errorf("expected branch reconcile checkout, commands: %v", fc.commands())
+	}
+	if len(fc.gitClones) != 0 {
+		t.Errorf("reuse must not re-clone")
+	}
+}
+
+func TestWorkspaceCreateProbeTransportErrorAbortsWithoutDeleting(t *testing.T) {
+	// Finding 3: a transient toolbox failure on the provisioned-probe must not
+	// route into re-clone/cleanup, and an ADOPTED sandbox must never be
+	// deleted by the failure path (it may hold uncommitted work).
+	fc := newFakeClient()
+	fc.seedSandbox("s1", StateStarted)
+	fc.onExec("rev-parse --is-inside-work-tree", ExecResult{}, errors.New("toolbox 502"))
+	ws := newTestWorkspace(t, fc)
+	_, err := ws.Create(context.Background(), ports.WorkspaceConfig{SessionID: "s1", Branch: "b"})
+	if err == nil || !strings.Contains(err.Error(), "probe checkout") {
+		t.Fatalf("err = %v, want inconclusive probe error", err)
+	}
+	if len(fc.deleted) != 0 {
+		t.Errorf("adopted sandbox must survive a failed provision, deleted=%v", fc.deleted)
+	}
+	if len(fc.gitClones) != 0 {
+		t.Errorf("must not clone after an inconclusive probe")
+	}
+}
+
+func TestCheckoutSessionBranchSeparatesMissingFromUnverifiable(t *testing.T) {
+	// Finding 4: fetch failure must not be read as branch-missing — that
+	// silently restarts a restored session from base.
+	t.Run("unverifiable remote fails hard", func(t *testing.T) {
+		fc := newFakeClient()
+		fc.seedSandbox("s1", StateStarted)
+		fc.onExec("rev-parse --is-inside-work-tree", ExecResult{ExitCode: 128}, nil)
+		fc.onExec("ls-remote", ExecResult{ExitCode: 7}, nil)
+		ws := newTestWorkspace(t, fc)
+		_, err := ws.Create(context.Background(), ports.WorkspaceConfig{SessionID: "s1", Branch: "ao/s1/root"})
+		if err == nil || !strings.Contains(err.Error(), "cannot verify remote branch") {
+			t.Fatalf("err = %v, want unverifiable-remote failure", err)
+		}
+	})
+	t.Run("clone credentials are seeded for in-sandbox git", func(t *testing.T) {
+		fc := newFakeClient()
+		fc.onExec("rev-parse --is-inside-work-tree", ExecResult{ExitCode: 128}, nil)
+		ws, err := NewWorkspace(WorkspaceOptions{
+			Client:   fc,
+			Snapshot: "snap",
+			ResolveRepo: func(context.Context, ports.WorkspaceConfig) (RepoRemote, error) {
+				return RepoRemote{URL: "https://github.com/acme/private.git", Username: "x-access-token", Password: "tok"}, nil
+			},
+		})
+		if err != nil {
+			t.Fatalf("NewWorkspace: %v", err)
+		}
+		if _, err := ws.Create(context.Background(), ports.WorkspaceConfig{SessionID: "s1", Branch: "b"}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if len(fc.gitCreds) != 1 || fc.gitCreds[0].Host != "github.com" || fc.gitCreds[0].Password != "tok" {
+			t.Errorf("gitCreds = %+v, want seeded github.com credentials", fc.gitCreds)
+		}
+	})
+}
+
+func TestWorkspaceRestoreTransportErrorIsNotStale(t *testing.T) {
+	// Finding 5: a toolbox hiccup during the restore probe must surface as an
+	// inconclusive error, not report the checkout stale.
+	fc := newFakeClient()
+	fc.seedSandbox("s1", StateStarted)
+	fc.onExec("rev-parse --is-inside-work-tree", ExecResult{}, errors.New("toolbox 502"))
+	ws := newTestWorkspace(t, fc)
+	_, err := ws.Restore(context.Background(), ports.WorkspaceConfig{SessionID: "s1", Branch: "b"})
+	if err == nil || errors.Is(err, ports.ErrWorkspaceStale) {
+		t.Fatalf("err = %v, want non-stale inconclusive error", err)
+	}
+}

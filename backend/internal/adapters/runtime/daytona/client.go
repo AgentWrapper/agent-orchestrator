@@ -132,6 +132,19 @@ type Client interface {
 	// GitClone clones a repository inside the sandbox via the toolbox git API
 	// (credentials travel in the request body, never on a command line).
 	GitClone(ctx context.Context, sandboxID string, req GitCloneRequest) error
+	// GitSetCredentials stores git credentials inside the sandbox
+	// (toolbox `POST /git/credentials`) so subsequent in-sandbox git
+	// network operations — the adapter's fetch/ls-remote and the agent's own
+	// pushes — authenticate against the host. Body-only, like GitClone.
+	GitSetCredentials(ctx context.Context, sandboxID string, req GitCredentialsRequest) error
+}
+
+// GitCredentialsRequest mirrors the toolbox GitAuthenticateRequest body.
+type GitCredentialsRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Host     string `json:"host,omitempty"`
+	Protocol string `json:"protocol,omitempty"`
 }
 
 // GitCloneRequest mirrors the toolbox `POST /git/clone` body (fields we use).
@@ -331,6 +344,14 @@ func (c *apiClient) Exec(ctx context.Context, sandboxID string, req ExecRequest)
 
 func (c *apiClient) GitClone(ctx context.Context, sandboxID string, req GitCloneRequest) error {
 	u, err := c.toolboxURL(ctx, sandboxID, "git", "clone")
+	if err != nil {
+		return err
+	}
+	return c.do(ctx, http.MethodPost, u, req, nil)
+}
+
+func (c *apiClient) GitSetCredentials(ctx context.Context, sandboxID string, req GitCredentialsRequest) error {
+	u, err := c.toolboxURL(ctx, sandboxID, "git", "credentials")
 	if err != nil {
 		return err
 	}
