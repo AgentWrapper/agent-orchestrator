@@ -1,3 +1,4 @@
+//nolint:revive // Store methods satisfy existing service interfaces; interface docs live at call sites.
 package postgres
 
 import (
@@ -31,7 +32,7 @@ ORDER BY updated_at DESC, url
 	if err != nil {
 		return nil, fmt.Errorf("list pr facts: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []domain.PRFacts
 	for rows.Next() {
 		var state domain.PRState
@@ -61,7 +62,7 @@ ORDER BY updated_at DESC, url
 	if err != nil {
 		return nil, fmt.Errorf("list prs by session: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []domain.PullRequest
 	for rows.Next() {
 		var state domain.PRState

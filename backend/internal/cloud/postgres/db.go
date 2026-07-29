@@ -9,6 +9,7 @@ import (
 
 	"github.com/pressly/goose/v3"
 
+	// pgx stdlib registers the database/sql "pgx" driver used by Open.
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 

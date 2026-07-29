@@ -17,13 +17,6 @@ func nullTime(t time.Time) sql.NullTime {
 	return sql.NullTime{Time: t.UTC(), Valid: true}
 }
 
-func nullString(s string) sql.NullString {
-	if s == "" {
-		return sql.NullString{}
-	}
-	return sql.NullString{String: s, Valid: true}
-}
-
 func marshalProjectConfig(config domain.ProjectConfig) (any, error) {
 	if config.IsZero() {
 		return nil, nil

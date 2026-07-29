@@ -1,3 +1,4 @@
+//nolint:revive // Store methods satisfy existing service interfaces; interface docs live at call sites.
 package postgres
 
 import (
@@ -60,7 +61,7 @@ ORDER BY repo_name
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []domain.SessionWorktreeRecord
 	for rows.Next() {
 		rec, err := scanWorktree(rows)

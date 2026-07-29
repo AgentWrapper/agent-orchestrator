@@ -199,16 +199,19 @@ type Store interface {
 	PollDeviceCode(ctx context.Context, deviceCodeHash string, now time.Time) (DeviceCode, User, []Org, bool, error)
 }
 
+// User is the cloud identity persisted after Google login.
 type User struct {
 	ID    string
 	Email string
 }
 
+// Org is an organization the authenticated user can access.
 type Org struct {
 	ID   string
 	Name string
 }
 
+// APIToken is a stored opaque token digest, including refresh tokens.
 type APIToken struct {
 	ID        string
 	UserID    string
@@ -218,6 +221,7 @@ type APIToken struct {
 	CreatedAt time.Time
 }
 
+// DeviceCode is the server-side state for CLI/desktop device authorization.
 type DeviceCode struct {
 	ID             string
 	DeviceCodeHash string
