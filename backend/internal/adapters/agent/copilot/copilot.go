@@ -72,6 +72,23 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
+// GetConfigSpec reports the per-project agent config keys the GitHub Copilot
+// CLI understands: a model override passed via --model.
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.ConfigSpec{}, err
+	}
+	return ports.ConfigSpec{
+		Fields: []ports.ConfigField{
+			{
+				Key:         "model",
+				Type:        ports.ConfigFieldString,
+				Description: "Model override passed to `copilot --model` (e.g. claude-sonnet-4.5).",
+			},
+		},
+	}, nil
+}
+
 // GetLaunchCommand builds the argv to start a new interactive Copilot session:
 //
 //	copilot [permission flags] [--agent ao-<session>] [--interactive <prompt>]
@@ -89,6 +106,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 
 	cmd = append(cmd, binary)
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	appendModelFlag(&cmd, cfg.Config)
 	if agentName := copilotAgentName(cfg.SessionID, cfg.SystemPrompt, cfg.SystemPromptFile); agentName != "" {
 		cmd = append(cmd, "--agent="+agentName)
 	}
@@ -133,6 +151,10 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 
 	cmd = append(cmd, binary)
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	// Deliberately does not forward cfg.Config.Model: --model + --resume
+	// composition is unverified against a real copilot install (see #2895
+	// and appendModelFlag). Pinned by
+	// TestGetRestoreCommandDoesNotForwardModelOverride.
 	if agentName := copilotAgentName(cfg.Session.ID, cfg.SystemPrompt, cfg.SystemPromptFile); agentName != "" {
 		cmd = append(cmd, "--agent="+agentName)
 	}
@@ -316,5 +338,26 @@ func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
 		*cmd = append(*cmd, "--allow-all-tools")
 	case ports.PermissionModeBypassPermissions:
 		*cmd = append(*cmd, "--allow-all")
+	}
+}
+
+// appendModelFlag appends `--model <trimmed>` when cfg.Model is set,
+// mirroring the Codex adapter's pattern (see #2869) and taking the full
+// ports.AgentConfig for consistency with the sibling adapters. A blank or
+// whitespace-only value is omitted so Copilot falls back to its own default
+// resolution (COPILOT_MODEL env, or its configured default) exactly as an
+// unconfigured launch would.
+//
+// Restore-path note: this is intentionally NOT called from
+// GetRestoreCommand. An attempt to verify `--model` + `--resume`
+// composition against a real copilot install was inconclusive: the test
+// account is on the Copilot Free plan, which only grants access to "auto"
+// regardless of --model, on both launch and resume. That makes the plan
+// itself a confound, not evidence either way about whether --resume
+// honors --model. Left as a fast-follow pending verification from an
+// account with paid-plan model access (see #2895).
+func appendModelFlag(cmd *[]string, cfg ports.AgentConfig) {
+	if trimmed := strings.TrimSpace(cfg.Model); trimmed != "" {
+		*cmd = append(*cmd, "--model", trimmed)
 	}
 }

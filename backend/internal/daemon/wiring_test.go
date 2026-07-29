@@ -260,8 +260,12 @@ func TestWiring_StartSessionSpawnsScratchWithoutGitRepo(t *testing.T) {
 		t.Fatalf("scratch branch = %q, want empty", session.Metadata.Branch)
 	}
 	wantWorkspace := filepath.Join(dataDir, "worktrees", "scratch", "workers", string(session.ID))
-	if runtime.lastCfg.WorkspacePath != wantWorkspace {
-		t.Fatalf("runtime workspace = %q, want %q", runtime.lastCfg.WorkspacePath, wantWorkspace)
+	physicalWorkspace, err := filepath.EvalSymlinks(wantWorkspace)
+	if err != nil {
+		t.Fatalf("resolve scratch workspace %q: %v", wantWorkspace, err)
+	}
+	if runtime.lastCfg.WorkspacePath != physicalWorkspace {
+		t.Fatalf("runtime workspace = %q, want %q", runtime.lastCfg.WorkspacePath, physicalWorkspace)
 	}
 	if _, err := os.Stat(wantWorkspace); err != nil {
 		t.Fatalf("scratch workspace not created at %q: %v", wantWorkspace, err)
@@ -615,6 +619,10 @@ type fakeSessionLifecycle struct {
 	restoreErr       error
 }
 
+func (f *fakeSessionLifecycle) Kill(_ context.Context, _ domain.SessionID) (bool, error) {
+	return false, nil
+}
+
 func (f *fakeSessionLifecycle) Reconcile(_ context.Context) error {
 	f.reconcileCalled = true
 	return f.reconcileErr
@@ -624,6 +632,8 @@ func (f *fakeSessionLifecycle) RestoreAll(_ context.Context) error {
 	f.restoreAllCalled = true
 	return f.restoreErr
 }
+
+func (f *fakeSessionLifecycle) SetShellTerminalCloser(sessionmanager.ShellTerminalCloser) {}
 
 // TestWiring_SessionLifecycleInterfaceInvokedByDaemon asserts the
 // sessionLifecycle interface is satisfied by *sessionmanager.Manager (compile

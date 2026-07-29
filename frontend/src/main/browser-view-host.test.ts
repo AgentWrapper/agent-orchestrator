@@ -167,6 +167,18 @@ describe("normalizeBrowserURL", () => {
 
 	it("defaults ordinary bare hosts to https", () => {
 		expect(normalizeBrowserURL("example.com").href).toBe("https://example.com/");
+		expect(normalizeBrowserURL("example.com/path?q=1").href).toBe("https://example.com/path?q=1");
+		expect(normalizeBrowserURL("192.168.1.5:8080").href).toBe("https://192.168.1.5:8080/");
+	});
+
+	it("routes non-URL input to a web search", () => {
+		expect(normalizeBrowserURL("hi").href).toBe("https://www.google.com/search?q=hi");
+		expect(normalizeBrowserURL("how do i center a div").href).toBe(
+			"https://www.google.com/search?q=how%20do%20i%20center%20a%20div",
+		);
+		// A dot-less token with a trailing colon is text, not a scheme, once it
+		// carries whitespace, so it still searches rather than throwing on new URL().
+		expect(normalizeBrowserURL("time: now").href).toBe("https://www.google.com/search?q=time%3A%20now");
 	});
 
 	it("allows file:// preview targets without mangling the scheme", () => {

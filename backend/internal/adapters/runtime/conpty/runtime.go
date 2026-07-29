@@ -162,6 +162,24 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 	return clientIsAlive(sess.addr)
 }
 
+// IsSupervisedProcessAlive uses the pty-host's child status. For a supervised
+// launch that child is the AO supervisor, whose lifetime matches the managed
+// agent process.
+func (r *Runtime) IsSupervisedProcessAlive(ctx context.Context, handle ports.RuntimeHandle, _ ports.SupervisedProcessRef) (bool, error) {
+	sess := r.resolve(handle.ID)
+	if sess == nil {
+		return false, nil
+	}
+	status, hostAlive, err := clientStatus(sess.addr)
+	if err != nil {
+		return false, err
+	}
+	if !hostAlive {
+		return false, nil
+	}
+	return status.Alive, nil
+}
+
 // SendMessage chunks message and writes it to the pty-host followed by Enter.
 func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, message string) error {
 	sess := r.resolve(handle.ID)

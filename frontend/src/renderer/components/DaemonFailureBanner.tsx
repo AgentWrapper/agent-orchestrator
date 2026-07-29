@@ -12,10 +12,17 @@ export function DaemonFailureBanner({ status }: { status: DaemonStatus }) {
 function DaemonFailureContent({ status }: { status: DaemonStatus }) {
 	const [detailsOpen, setDetailsOpen] = useState(false);
 	const [copied, setCopied] = useState(false);
+	const [restarting, setRestarting] = useState(false);
+	const [restartError, setRestartError] = useState<string | null>(null);
 	const copiedTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const details = status.details?.trim();
 	const hint = daemonFailureHint(status);
 	const title = daemonFailureTitle(status);
+	const canRestart =
+		status.code === "not_ready" ||
+		status.code === "spawn_failed" ||
+		status.code === "exited" ||
+		status.code === "daemon_unreachable";
 	useEffect(() => {
 		setCopied(false);
 		return () => {
@@ -37,6 +44,20 @@ function DaemonFailureContent({ status }: { status: DaemonStatus }) {
 			copiedTimeout.current = null;
 		}, 2_000);
 	};
+	const restartDaemon = async () => {
+		setRestarting(true);
+		setRestartError(null);
+		try {
+			const nextStatus = await aoBridge.daemon.restart();
+			if (nextStatus.state === "error" || nextStatus.state === "stopped") {
+				setRestartError(daemonFailureMessage(nextStatus));
+			}
+		} catch (error) {
+			setRestartError(error instanceof Error ? error.message : "Could not restart the AO daemon.");
+		} finally {
+			setRestarting(false);
+		}
+	};
 	return (
 		<section
 			aria-live="assertive"
@@ -49,6 +70,17 @@ function DaemonFailureContent({ status }: { status: DaemonStatus }) {
 					<p className="font-medium text-(--color-text-import-title)">{title}</p>
 					<p className="mt-0.5 wrap-break-word text-[var(--color-text-import-muted)]">{daemonFailureMessage(status)}</p>
 					{hint ? <p className="mt-1 text-[var(--color-text-import-muted)]">{hint}</p> : null}
+					{canRestart ? (
+						<button
+							type="button"
+							className="mt-2 inline-flex h-control-md items-center rounded-md bg-accent-strong px-3 font-semibold text-accent-foreground transition-[filter,opacity] hover:brightness-110 disabled:cursor-wait disabled:opacity-60"
+							disabled={restarting}
+							onClick={() => void restartDaemon()}
+						>
+							{restarting ? "Restarting…" : "Restart daemon"}
+						</button>
+					) : null}
+					{restartError ? <p className="mt-2 text-error">{restartError}</p> : null}
 					{details ? (
 						<div className="mt-2 flex items-center gap-3">
 							<button

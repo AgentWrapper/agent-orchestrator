@@ -49,6 +49,7 @@ export const aoBridge: AoBridge =
 			}),
 			start: async () => ({ state: "starting" }),
 			stop: async () => ({ state: "stopped" }),
+			restart: async () => ({ state: "starting" }),
 			onStatus: () => () => undefined,
 		},
 		telemetry: {
@@ -132,9 +133,15 @@ export const aoBridge: AoBridge =
 			get: async () => ({ enabled: false, channel: "latest", nightlyAck: false, feature: null }),
 			set: async () => undefined,
 		},
+		keybindings: {
+			get: async () => ({}),
+			set: async (overrides) => overrides,
+			setRecording: async () => undefined,
+		},
 		updates: {
 			getStatus: async () => ({ state: "idle" }),
 			check: async () => undefined,
+			returnHome: async () => undefined,
 			download: async () => undefined,
 			install: async () => undefined,
 			onStatus: () => () => undefined,

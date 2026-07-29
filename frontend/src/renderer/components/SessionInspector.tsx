@@ -1,22 +1,40 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
-import { ArrowUpRight, Files as FilesIcon, GitPullRequest, Play, Shield, Terminal, X } from "lucide-react";
+import {
+	ArrowUpRight,
+	ChevronDown,
+	ChevronRight,
+	Files as FilesIcon,
+	GitPullRequest,
+	Play,
+	Shield,
+	Terminal,
+	Trash2,
+	X,
+} from "lucide-react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
+import { useTerminateSession } from "../hooks/useTerminateSession";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
-import type { WorkspaceSession } from "../types/workspace";
+import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { canonicalTrackerIssueId, sortedPRs } from "../types/workspace";
 import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session-presentation";
+import { aoBridge } from "../lib/bridge";
 import { BrowserPanelView, type BrowserAnnotationQueueModel } from "./BrowserPanel";
 import type { BrowserViewModel } from "../hooks/useBrowserView";
+import { useUiStore } from "../stores/ui-store";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
 import { PRSummaryMeta, PRSummaryParts } from "./PRSummaryDisplay";
 import { StatusPill } from "./StatusPill";
+import { CodexIcon } from "./icons";
+import { SessionTerminationDialog } from "./SessionTerminationDialog";
+import { Switch } from "./ui/switch";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
@@ -78,32 +96,18 @@ const prStateTone: Record<SessionPRSummary["state"], string> = {
 
 const inspectorShellClass = "@container/inspector flex h-full min-h-0 flex-col overflow-hidden";
 
-const inspectorBodyClass = "min-h-0 flex-1 overflow-y-auto p-5 pb-10 @max-[300px]/inspector:px-3.5";
+const inspectorBodyClass = "min-h-0 flex-1 overflow-y-auto p-3 pb-4 @max-[300px]/inspector:px-2.5";
 
-const inspectorEmptyClass = "text-xs text-muted-foreground leading-normal";
+const inspectorEmptyClass = "text-xs text-settings-muted leading-normal";
 
 const kvRowClass =
 	"flex items-center gap-2.5 px-1 py-1.5 text-md-sm @max-[300px]/inspector:flex-col @max-[300px]/inspector:items-start @max-[300px]/inspector:gap-1";
 
-const kvKeyClass = "w-kv-label shrink-0 text-muted-foreground @max-[300px]/inspector:w-auto";
+const kvKeyClass = "w-kv-label shrink-0 text-settings-muted @max-[300px]/inspector:w-auto";
 
-const kvValueClass = "min-w-0 truncate text-foreground @max-[300px]/inspector:w-full";
+const kvValueClass = "min-w-0 truncate text-settings-label @max-[300px]/inspector:w-full";
 
 const kvValueMonoClass = "font-mono text-sm-md";
-
-const reviewerStatusTone: Record<"neutral" | "running" | "success" | "danger", string> = {
-	neutral: "bg-raised text-muted-foreground",
-	running: "bg-working/12 text-working",
-	success: "bg-success/14 text-success",
-	danger: "bg-error/14 text-error",
-};
-
-const reviewerDotTone: Record<"neutral" | "running" | "success" | "danger", string> = {
-	neutral: "bg-passive",
-	running: "bg-working",
-	success: "bg-success",
-	danger: "bg-error",
-};
 
 const reviewerVerdictTone: Record<"neutral" | "running" | "success" | "danger", string> = {
 	neutral: "text-muted-foreground",
@@ -111,6 +115,29 @@ const reviewerVerdictTone: Record<"neutral" | "running" | "success" | "danger", 
 	success: "text-success",
 	danger: "text-error",
 };
+
+function VerdictBadge({ label, tone }: { label: string; tone: "neutral" | "running" | "success" | "danger" }) {
+	return (
+		<span
+			className={cn(
+				"inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-2xs font-medium",
+				reviewerVerdictTone[tone],
+			)}
+		>
+			<span className="size-1.5 shrink-0 rounded-full bg-current" />
+			{label}
+		</span>
+	);
+}
+
+// The AO reviewer runs on a configurable harness; show its own mark where we
+// have one (codex today) and fall back to the generic shield otherwise.
+function ReviewerHarnessIcon({ harness, className }: { harness: string; className?: string }) {
+	if (harness === "codex") {
+		return <CodexIcon aria-hidden="true" className={className} />;
+	}
+	return <Shield aria-hidden="true" className={className} />;
+}
 
 /**
  * Tabbed inspector rail beside the terminal (Summary · Reviews · Browser).
@@ -143,6 +170,10 @@ export function SessionInspector({
 }) {
 	const [internalView, setInternalView] = useState<InspectorView>("summary");
 	const view = viewProp ?? internalView;
+	// Badge the Browser tab when a preview target arrived without us opening it.
+	const browserUnseen = useUiStore((state) =>
+		session ? Boolean(state.inspectorSessions[session.id]?.browserUnseen) : false,
+	);
 	const setView = (next: InspectorView) => {
 		setInternalView(next);
 		onViewChange?.(next);
@@ -161,21 +192,33 @@ export function SessionInspector({
 
 	return (
 		<aside className={inspectorShellClass} aria-label="Session inspector">
-			<div className="flex h-inspector-tabs shrink-0 items-center gap-1 border-b border-border px-3" role="tablist">
+			<div className="flex h-inspector-tabs shrink-0 items-center gap-1 border-b border-border px-2.5" role="tablist">
 				{VIEWS.map((entry) => (
 					<button
+						aria-label={entry.label}
 						key={entry.id}
 						type="button"
 						role="tab"
 						aria-selected={view === entry.id}
 						className={cn(
-							"inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md p-1.5 text-sm-md font-semibold text-passive transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground",
+							"inline-flex h-control-md shrink-0 items-center justify-center gap-1.5 rounded-md px-1.5 text-sm-md font-semibold text-passive transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground",
 							view === entry.id && "bg-interactive-active text-foreground",
 						)}
 						onClick={() => setView(entry.id)}
+						title={entry.label}
 					>
-						<span className="inline-flex shrink-0 [&_svg]:size-icon-md">{entry.icon}</span>
-						<span className="truncate">{entry.label}</span>
+						<span className="relative inline-flex shrink-0 [&_svg]:size-icon-md">
+							{entry.icon}
+							{entry.id === "browser" && browserUnseen ? (
+								<span aria-hidden="true" className="absolute -right-1 -top-1 inline-flex size-dot-sm">
+									{/* Pinging halo + solid core: a glowing beacon that draws the eye to
+									    a link that arrived in the terminal, cleared once the tab opens. */}
+									<span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
+									<span className="relative inline-flex size-dot-sm rounded-full bg-primary ring-2 ring-background" />
+								</span>
+							) : null}
+						</span>
+						<span className="truncate @max-[350px]/inspector:hidden">{entry.label}</span>
 					</button>
 				))}
 			</div>
@@ -219,15 +262,21 @@ function Section({
 	action?: ReactNode;
 	children: ReactNode;
 	className?: string;
+	/** Accepted for call-site compatibility; all sections use the settings-row box. */
+	surface?: boolean;
 	title: string;
 }) {
+	// Boxed sections match the settings page row surface (bg + radius) with the
+	// uppercase muted kicker kept inside the card, as in the inspector refs.
 	return (
-		<section className={cn("mb-6", className)} data-testid="inspector-section">
-			<div className="mb-3 flex items-center justify-between text-2xs font-semibold uppercase tracking-wide-lg text-passive">
-				<span>{title}</span>
-				{action ?? null}
+		<section className={cn("mb-2.5 last:mb-0", className)} data-testid="inspector-section">
+			<div className="overflow-hidden rounded-settings-row bg-settings-row px-3.5 py-3">
+				<div className="mb-2 flex items-center justify-between gap-2 text-2xs font-bold uppercase tracking-settings-section text-settings-muted">
+					<span>{title}</span>
+					{action ?? null}
+				</div>
+				{children}
 			</div>
-			{children}
 		</section>
 	);
 }
@@ -244,7 +293,7 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 				{prSummaries.length === 0 ? (
 					<p className={inspectorEmptyClass}>No pull request opened yet.</p>
 				) : (
-					<div className="flex flex-col gap-2">
+					<div className="flex flex-col gap-1.5">
 						{prSummaries.map((pr) => (
 							<PRSummaryCard key={pr.number} pr={pr} />
 						))}
@@ -252,11 +301,14 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 				)}
 			</Section>
 
+			{session.kind !== "orchestrator" ? <CompletionControls session={session} /> : null}
+
 			<Section title="Activity">
-				<ActivityTimeline session={session} />
+				<ActivityTimeline prs={prSummaries} session={session} />
+				<ResumeAgentControl session={session} />
 			</Section>
 
-			<Section className="border-t border-border pt-5" title="Overview">
+			<Section title="Overview">
 				<dl className="flex flex-col gap-1">
 					<Row k="Agent" v={session.provider} mono />
 					{issueId && <Row k="Issue" v={issueId} mono />}
@@ -269,13 +321,173 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 	);
 }
 
+function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
+	const queryClient = useQueryClient();
+	const resume = useMutation({
+		mutationFn: async () => {
+			if (usePreviewData) return;
+			const { data, error, response } = await apiClient.POST("/api/v1/sessions/{sessionId}/resume-agent", {
+				params: { path: { sessionId: session.id } },
+			});
+			if (error) throw new Error(apiErrorMessage(error, `Failed to resume agent (${response.status})`));
+			return data;
+		},
+		onSuccess: async (data) => {
+			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			if (data?.resumeMode === "saved_prompt") {
+				void aoBridge.notifications
+					.show({
+						id: `resume-agent-fallback:${session.id}:${Date.now()}`,
+						title: "Started from saved prompt",
+						body: "AO could not resume the native agent session, so it started a new conversation from the saved prompt.",
+					})
+					.catch((err) => {
+						console.warn("Unable to show resume fallback notification", err);
+					});
+			}
+		},
+	});
+
+	if (session.isTerminated === true || session.activity?.state !== "exited") return null;
+
+	const error = resume.error instanceof Error ? resume.error.message : null;
+	return (
+		<div className="mt-3 border-t border-(--color-border-settings-input) pt-3">
+			<Button
+				className="w-full"
+				disabled={resume.isPending}
+				onClick={() => resume.mutate()}
+				size="sm"
+				type="button"
+				variant="outline"
+			>
+				<Play className="size-icon-sm" aria-hidden="true" />
+				{resume.isPending ? "Resuming agent…" : "Resume agent"}
+			</Button>
+			{error ? (
+				<p className="mt-2 text-2xs leading-normal text-error" role="status">
+					{error}
+				</p>
+			) : null}
+		</div>
+	);
+}
+
+function CompletionControls({ session }: { session: WorkspaceSession }) {
+	const navigate = useNavigate();
+	const queryClient = useQueryClient();
+	const [confirmOpen, setConfirmOpen] = useState(false);
+	const terminate = useTerminateSession({
+		onSuccess: (terminated) => {
+			setConfirmOpen(false);
+			void navigate({ to: "/projects/$projectId", params: { projectId: terminated.workspaceId } });
+		},
+	});
+	const policy = useMutation({
+		mutationFn: async (terminateOnPrMerge: boolean) => {
+			if (usePreviewData) return;
+			const { error, response } = await apiClient.PATCH("/api/v1/sessions/{sessionId}/merge-policy", {
+				params: { path: { sessionId: session.id } },
+				body: { terminateOnPrMerge },
+			});
+			if (error) throw new Error(apiErrorMessage(error, `Failed to update merge policy (${response.status})`));
+		},
+		onMutate: async (terminateOnPrMerge) => {
+			await queryClient.cancelQueries({ queryKey: workspaceQueryKey });
+			const previous = queryClient.getQueryData<WorkspaceSummary[]>(workspaceQueryKey);
+			queryClient.setQueryData<WorkspaceSummary[]>(workspaceQueryKey, (current) =>
+				updateSessionMergePolicy(current, session.id, terminateOnPrMerge),
+			);
+			return { previous };
+		},
+		onError: (_error, _next, context) => {
+			if (context?.previous) queryClient.setQueryData(workspaceQueryKey, context.previous);
+		},
+		onSettled: () => {
+			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+		},
+	});
+	const policyError = policy.error instanceof Error ? policy.error.message : null;
+	const terminateError = terminate.error instanceof Error ? terminate.error.message : null;
+	const canTerminateNow = session.status === "merged";
+
+	if (session.isTerminated === true) return null;
+
+	return (
+		<Section title="Completion">
+			{canTerminateNow ? (
+					<div className="flex items-center justify-between gap-3 py-1">
+					<span className="min-w-0 text-xs font-medium text-settings-label">Terminate</span>
+					<button
+						aria-label="Terminate session"
+						className="inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-colors hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+						onClick={() => {
+							terminate.reset();
+							setConfirmOpen(true);
+						}}
+						type="button"
+					>
+						<Trash2 className="size-icon-sm" aria-hidden="true" />
+					</button>
+				</div>
+			) : (
+				<>
+					<div className="flex items-center justify-between gap-3 py-1">
+						<label className="min-w-0 text-xs font-medium text-settings-label" htmlFor={`merge-policy-${session.id}`}>
+							Terminate on merge
+						</label>
+						<Switch
+							aria-label="Terminate session when pull requests merge"
+							checked={Boolean(session.terminateOnPrMerge)}
+							disabled={policy.isPending}
+							id={`merge-policy-${session.id}`}
+							onCheckedChange={(checked) => policy.mutate(checked)}
+						/>
+					</div>
+					{policyError ? (
+						<p className="mt-1 text-2xs leading-normal text-error" role="status">
+							{policyError}
+						</p>
+					) : null}
+				</>
+			)}
+			<SessionTerminationDialog
+				busy={terminate.isPending}
+				error={terminateError}
+				onConfirm={() => terminate.mutate(session)}
+				onOpenChange={(open) => {
+					if (!terminate.isPending) setConfirmOpen(open);
+				}}
+				open={confirmOpen}
+				session={session}
+			/>
+		</Section>
+	);
+}
+
+function updateSessionMergePolicy(
+	workspaces: WorkspaceSummary[] | undefined,
+	sessionId: string,
+	terminateOnPrMerge: boolean,
+): WorkspaceSummary[] | undefined {
+	return workspaces?.map((workspace) => ({
+		...workspace,
+		sessions: workspace.sessions.map((candidate) =>
+			candidate.id === sessionId ? { ...candidate, terminateOnPrMerge } : candidate,
+		),
+	}));
+}
+
 function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 	return (
-		<div className="rounded-md border border-border bg-surface px-3 py-2.5">
+		<div className="rounded-lg border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-2.5 py-1.5">
 			<div className="flex items-center gap-2">
-				<GitPullRequest className="size-icon-md shrink-0 text-passive" aria-hidden="true" />
-				<span className="text-md-sm font-medium text-foreground">PR #{pr.number}</span>
-				<Badge variant="outline" className={cn("h-5 px-1.5 text-micro font-medium", prStateTone[pr.state])}>
+				<GitPullRequest className="size-icon-md shrink-0 text-settings-muted" aria-hidden="true" />
+				<span className="text-md-sm font-medium text-settings-label">PR #{pr.number}</span>
+				<Badge
+					variant="outline"
+					className={cn("h-5 px-1.5 text-[9px] leading-none font-medium", prStateTone[pr.state])}
+				>
 					{pr.state}
 				</Badge>
 				<a
@@ -288,9 +500,9 @@ function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 					<ArrowUpRight aria-hidden="true" className="size-icon-2xs" strokeWidth={2} />
 				</a>
 			</div>
-			{pr.title ? <div className="mt-2 text-xs font-medium leading-snug text-foreground">{pr.title}</div> : null}
-			<PRSummaryMeta className="mt-1.5" pr={pr} />
-			<PRSummaryParts className="mt-2" pr={pr} variant="stacked" />
+			{pr.title ? <div className="mt-1.5 text-xs font-medium leading-snug text-settings-label">{pr.title}</div> : null}
+			<PRSummaryMeta className="mt-1" pr={pr} />
+			<PRSummaryParts className="mt-1.5" pr={pr} variant="stacked" />
 		</div>
 	);
 }
@@ -304,41 +516,51 @@ const timelineNodeTone: Record<TimelineTone, string> = {
 	warn: "bg-warning shadow-timeline-dot",
 };
 
-function ActivityTimeline({ session }: { session: WorkspaceSession }) {
-	const events: { tone: TimelineTone; node: ReactNode; ts: string | null }[] = [];
+function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: WorkspaceSession }) {
+	const history: { tone: TimelineTone; node: ReactNode; ts: string | null }[] = [];
 
-	events.push({
+	history.push({
 		tone: "neutral",
 		node: <>Created workspace</>,
 		ts: formatTimeCompact(session.createdAt ?? session.updatedAt),
 	});
 
-	const prs = sortedPRs(session);
 	for (const pr of prs.filter((pr) => pr.state === "draft")) {
-		events.push({
+		history.push({
 			tone: "neutral",
-			node: (
-				<>
-					Draft <b>PR #{pr.number}</b>
-				</>
-			),
-			ts: null,
+			node: <PRTimelineLink pr={pr} verb="Draft" />,
+			ts: prStateTime(pr),
 		});
 	}
 
 	for (const pr of prs.filter((pr) => pr.state !== "draft")) {
-		events.push({
+		history.push({
 			tone: "neutral",
-			node: (
-				<>
-					Opened <b>PR #{pr.number}</b>
-				</>
-			),
-			ts: null,
+			node: <PRTimelineLink pr={pr} verb="Opened" />,
+			ts: prCreatedTime(pr),
 		});
 	}
 
-	events.push({
+	for (const pr of prs.filter((pr) => pr.state === "merged")) {
+		history.push({
+			tone: "good",
+			node: <PRTimelineLink pr={pr} verb="Merged" />,
+			ts: prStateTime(pr),
+		});
+	}
+
+	if (session.status === "merged") {
+		history.push({
+			tone: "good",
+			node: <>Done</>,
+			ts: latestMergedTime(prs),
+		});
+	}
+
+	// Current activity is a live reading, not a historical event. Keep it above
+	// the optional reverse-chronological history and do not imply that its last
+	// hook time is when the state transition occurred.
+	const current = {
 		tone: "now",
 		node: (
 			<span className="inline-flex flex-wrap items-center gap-1.5">
@@ -357,33 +579,24 @@ function ActivityTimeline({ session }: { session: WorkspaceSession }) {
 				))}
 			</span>
 		),
-		ts: session.activity?.lastActivityAt ? formatTimeCompact(session.activity.lastActivityAt) : null,
-	});
-
-	for (const pr of prs.filter((pr) => pr.state === "merged")) {
-		events.push({
-			tone: "good",
-			node: (
-				<>
-					Merged <b>PR #{pr.number}</b>
-				</>
-			),
-			ts: null,
-		});
-	}
-
-	if (session.status === "merged") {
-		events.push({
-			tone: "good",
-			node: <>Done</>,
-			ts: formatTimeCompact(session.updatedAt),
-		});
-	}
+		ts: null,
+	} satisfies { tone: TimelineTone; node: ReactNode; ts: null };
+	const events = [current, ...history.reverse()];
 
 	return (
-		<div className="relative pl-5 before:absolute before:top-1 before:bottom-1.5 before:left-1.25 before:w-px before:bg-border before:content-['']">
+		<div className="relative pl-5">
 			{events.map((event, index) => (
 				<div key={index} className="relative pb-4 last:pb-0" data-testid="inspector-timeline-event">
+					{index < events.length - 1 ? (
+						<span
+							aria-hidden="true"
+							className={cn(
+								"absolute -bottom-[10.5px] -left-3.5 w-px bg-border",
+								event.tone === "now" ? "top-1/2" : "top-[10.5px]",
+							)}
+							data-testid="inspector-timeline-connector"
+						/>
+					) : null}
 					<div className="relative flex min-h-icon-xs items-center">
 						<span
 							aria-hidden="true"
@@ -400,6 +613,43 @@ function ActivityTimeline({ session }: { session: WorkspaceSession }) {
 			))}
 		</div>
 	);
+}
+
+function PRTimelineLink({ pr, verb }: { pr: SessionPRSummary; verb: "Draft" | "Opened" | "Merged" }) {
+	return (
+		<a
+			aria-label={`${verb} PR #${pr.number}`}
+			className="inline-flex min-w-0 items-center gap-1 rounded-xs text-foreground underline-offset-2 transition-colors hover:text-accent hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent/50"
+			href={prBrowserUrl(pr)}
+			rel="noopener noreferrer"
+			target="_blank"
+		>
+			<span>{verb} </span>
+			<b>PR #{pr.number}</b>
+			<ArrowUpRight aria-hidden="true" className="size-icon-2xs shrink-0" strokeWidth={2} />
+		</a>
+	);
+}
+
+function prStateTime(pr: SessionPRSummary): string | null {
+	return pr.stateChangedAt ? formatTimeCompact(pr.stateChangedAt) : null;
+}
+
+function prCreatedTime(pr: SessionPRSummary): string | null {
+	return pr.createdAt ? formatTimeCompact(pr.createdAt) : null;
+}
+
+function latestMergedTime(prs: SessionPRSummary[]): string | null {
+	let latest: { timestamp: string; milliseconds: number } | undefined;
+	for (const pr of prs) {
+		if (pr.state !== "merged" || !pr.stateChangedAt) continue;
+		const milliseconds = Date.parse(pr.stateChangedAt);
+		if (!Number.isFinite(milliseconds)) continue;
+		if (!latest || milliseconds > latest.milliseconds) {
+			latest = { timestamp: pr.stateChangedAt, milliseconds };
+		}
+	}
+	return latest ? formatTimeCompact(latest.timestamp) : null;
 }
 
 type ScmTimelineState = "ci_failed" | "changes_requested" | "conflict";
@@ -520,7 +770,8 @@ function ReviewsView({
 
 	return (
 		<div role="tabpanel">
-			<Section title="Reviews">
+			{/* AO code reviews lead: the flow is run AO review first, then raise the PR for others. */}
+			<Section surface title="AO code reviews">
 				<ReviewPanel
 					config={projectConfigQuery.data}
 					error={reviewsQuery.error ?? triggerReview.error ?? cancelReview.error}
@@ -536,6 +787,41 @@ function ReviewsView({
 					session={session}
 				/>
 			</Section>
+		</div>
+	);
+}
+
+// One expandable PR row for AO review state. The header carries PR identity and
+// update context; verdicts live in the expanded row below.
+function ReviewDisclosure({
+	title,
+	meta,
+	defaultOpen,
+	children,
+}: {
+	title: string;
+	meta: string;
+	defaultOpen: boolean;
+	children: ReactNode;
+}) {
+	const [open, setOpen] = useState(defaultOpen);
+	return (
+		<div className="py-2 first:pt-0.5 last:pb-0.5">
+			<button
+				aria-expanded={open}
+				className="-mx-1.5 flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1.5 text-left transition-colors hover:bg-interactive-hover/30"
+				onClick={() => setOpen((current) => !current)}
+				type="button"
+			>
+				{open ? (
+					<ChevronDown className="size-icon-sm shrink-0 text-passive" aria-hidden="true" />
+				) : (
+					<ChevronRight className="size-icon-sm shrink-0 text-passive" aria-hidden="true" />
+				)}
+				<span className="min-w-0 flex-1 truncate text-sm-md font-semibold text-foreground">{title}</span>
+				<span className="shrink-0 font-mono text-2xs text-passive">{meta}</span>
+			</button>
+			{open ? <div className="ml-2 mt-2.5 flex flex-col gap-4 border-l border-border/60 pl-3.5">{children}</div> : null}
 		</div>
 	);
 }
@@ -658,8 +944,8 @@ function ReviewPanel({
 	const latest = openReviewStates.find((review) => review.latestRun)?.latestRun;
 	const harness = latest?.harness || config?.reviewers?.[0]?.harness || "claude-code";
 	const terminalEnabled = Boolean(reviewerHandleId && onOpenTerminal);
-	const aggregateVerdict = sessionReviewVerdict(openReviewStates);
 	const reviewRunning = openReviewStates.some((reviewState) => reviewState.status === "running");
+	const reviewHasRun = reviewRunning || Boolean(latest);
 	const runAction = reviewSessionRunAction(openReviewStates, isTriggering);
 	const openReviewerTerminal = () => {
 		if (!terminalEnabled) return;
@@ -671,7 +957,7 @@ function ReviewPanel({
 		openReviewStates.every((reviewState) => reviewState.status === "ineligible");
 
 	return (
-		<div className="flex flex-col gap-4">
+		<div className="flex flex-col gap-3">
 			{error ? (
 				<p className="m-0 rounded-md border border-error/28 bg-error/8 px-2.5 py-2 text-sm-md leading-normal text-error">
 					{apiErrorMessage(error, "Review request failed")}
@@ -682,120 +968,120 @@ function ReviewPanel({
 					{notice}
 				</p>
 			) : null}
-			<div className="inline-flex min-w-0 items-center gap-2 font-mono text-control font-semibold text-foreground">
-				<Shield aria-hidden="true" className="size-icon-lg shrink-0 text-passive" />
-				<span className="min-w-0 truncate">{harness}</span>
-				<span className="font-sans text-sm-md font-medium text-passive">reviewer</span>
+			<p className={cn(inspectorEmptyClass, "inline-flex min-w-0 items-center gap-1.5")}>
+				<ReviewerHarnessIcon className="size-icon-sm shrink-0 text-passive" harness={harness} />
+				<span className="truncate font-mono font-medium text-foreground">{harness}</span>
+			</p>
+			<div className="flex flex-col divide-y divide-border">
+				{openReviewStates.length === 0 ? (
+					<p className={cn(inspectorEmptyClass, "py-1")}>No open pull requests to review.</p>
+				) : (
+					openReviewStates.map((reviewState, index) => (
+						<ReviewDisclosure
+							key={`${reviewState.prUrl}:${reviewState.targetSha}`}
+							defaultOpen={index === 0}
+							meta={aoReviewMeta(reviewState)}
+							title={reviewState.title?.trim() || `PR #${reviewState.prNumber}`}
+						>
+							<AoReviewRow reviewState={reviewState} />
+						</ReviewDisclosure>
+					))
+				)}
 			</div>
-			<div className="flex flex-col gap-3 overflow-hidden rounded-lg border border-border bg-surface p-3 @max-[300px]/inspector:overflow-hidden">
-				<div className="flex min-w-0 items-center justify-between gap-2.5 @max-[300px]/inspector:flex-col @max-[300px]/inspector:items-start">
-					<span className="min-w-0 truncate text-xs font-semibold text-muted-foreground">Pull requests</span>
-					<span
-						className={cn(
-							"inline-flex h-control-xs max-w-inspector-status-chip shrink-0 items-center gap-1 overflow-hidden truncate rounded-md px-2 text-2xs font-semibold leading-none @max-[300px]/inspector:max-w-full",
-							reviewerStatusTone[aggregateVerdict.tone],
-						)}
-					>
-						{aggregateVerdict.label}
-					</span>
-				</div>
-				<div className="flex flex-col gap-0 overflow-hidden rounded-md border border-border bg-surface-faint">
-					{openReviewStates.length === 0 ? (
-						<p className={cn(inspectorEmptyClass, "p-3")}>No open pull requests to review.</p>
-					) : null}
-					{openReviewStates.map((reviewState) => (
-						<ReviewStateRow key={`${reviewState.prUrl}:${reviewState.targetSha}`} reviewState={reviewState} />
-					))}
-				</div>
-				<div className="grid grid-cols-2 gap-2.5 pt-1 has-[:only-child]:grid-cols-1 @max-[300px]/inspector:grid-cols-1">
-					<button
-						className={cn(
-							"inline-flex h-control-xl min-w-0 items-center justify-center gap-2 overflow-hidden truncate rounded-md border px-2.5 text-xs font-semibold transition-[background,border-color,color] duration-fast hover:bg-interactive-hover hover:text-foreground disabled:cursor-not-allowed disabled:opacity-45 [&_svg]:size-icon-md [&_svg]:shrink-0",
-							reviewRunning
-								? "border-error/42 bg-error/10 text-error"
-								: "border-success/42 bg-success/10 text-success-bright",
-						)}
-						disabled={reviewRunning ? isCancelling : runDisabled}
-						onClick={reviewRunning ? onCancel : onTrigger}
-						type="button"
-					>
-						{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
-						{reviewRunning ? (isCancelling ? "Cancelling..." : "Cancel review") : runAction}
-					</button>
-					<button
-						className="inline-flex h-control-xl min-w-0 items-center justify-center gap-2 overflow-hidden truncate rounded-md border border-border bg-raised px-2.5 text-xs font-semibold text-muted-foreground transition-[background,border-color,color] duration-fast hover:bg-interactive-hover hover:text-foreground disabled:cursor-not-allowed disabled:opacity-45 [&_svg]:size-icon-md [&_svg]:shrink-0"
+			<div className="-mx-4 -mb-3 mt-3 flex items-center justify-center gap-1 border-t border-border px-4 pb-3 pt-3">
+				<Button
+					className={cn("gap-1.5 [&_svg]:size-icon-sm", reviewRunning ? "text-error" : "text-success")}
+					disabled={reviewRunning ? isCancelling : runDisabled}
+					onClick={reviewRunning ? onCancel : onTrigger}
+					size="sm"
+					type="button"
+					variant="ghost"
+				>
+					{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
+					{reviewRunning ? (isCancelling ? "Cancelling..." : "Cancel review") : runAction}
+				</Button>
+				{reviewHasRun ? (
+					<Button
+						className="gap-1.5 [&_svg]:size-icon-sm"
 						disabled={!terminalEnabled}
 						onClick={openReviewerTerminal}
+						size="sm"
 						type="button"
+						variant="ghost"
 					>
 						<Terminal aria-hidden="true" />
 						Open terminal
-					</button>
-				</div>
-			</div>
-		</div>
-	);
-}
-
-function ReviewStateRow({ reviewState }: { reviewState: PRReviewState }) {
-	const verdict = reviewVerdict(reviewState);
-	const previousVerdict = previousReviewVerdict(reviewState);
-	const title = reviewState.title?.trim() || `PR #${reviewState.prNumber}`;
-	return (
-		<div
-			className={cn(
-				"grid min-h-row-md grid-cols-[minmax(0,1fr)_auto] items-center gap-2.5 border-0 border-b border-border bg-transparent p-3 last:border-b-0",
-				reviewState.status === "ineligible" && "opacity-70",
-			)}
-		>
-			<div className="inline-flex min-w-0 items-center gap-2">
-				<span className={cn("size-dot-sm shrink-0 rounded-full", reviewerDotTone[verdict.tone])} />
-				<div className="grid min-w-0 grid-cols-[auto_auto] items-baseline gap-x-1.5 gap-y-1 text-xs font-semibold text-foreground [&_svg]:hidden">
-					<GitPullRequest aria-hidden="true" />
-					<a
-						className="col-span-full min-w-0 truncate no-underline hover:underline"
-						href={reviewState.prUrl}
-						target="_blank"
-						rel="noopener noreferrer"
-					>
-						{title}
-					</a>
-					<span className="col-start-1 font-mono text-caption text-passive">#{reviewState.prNumber}</span>
-				</div>
-			</div>
-			<div className="flex flex-col items-end gap-1 whitespace-nowrap">
-				<span className={cn("text-caption font-semibold", reviewerVerdictTone[verdict.tone])}>{verdict.label}</span>
-				{previousVerdict ? (
-					<span className={cn("text-2xs font-medium", reviewerVerdictTone[previousVerdict.tone])}>
-						Previous: {previousVerdict.label}
-					</span>
+					</Button>
 				) : null}
 			</div>
 		</div>
 	);
 }
 
-function sessionReviewVerdict(reviewStates: PRReviewState[]): {
+function aoReviewMeta(reviewState: PRReviewState): string {
+	const displayRun = reviewState.latestRun ?? reviewState.previousRun;
+	if (displayRun?.createdAt) {
+		return `#${reviewState.prNumber} · ${formatTimeCompact(displayRun.createdAt)}`;
+	}
+	if (!displayRun && reviewVerdict(reviewState).label === "Not run") {
+		return `#${reviewState.prNumber} · Not run`;
+	}
+	return `#${reviewState.prNumber}`;
+}
+
+function AoReviewRow({ reviewState }: { reviewState: PRReviewState }) {
+	const displayRun = reviewState.latestRun ?? reviewState.previousRun;
+	const verdict = displayRun ? runReviewVerdict(displayRun) : reviewVerdict(reviewState);
+	const summary = displayRun?.body?.trim();
+	const reviewUrl = aoReviewCommentUrl(displayRun);
+	const reviewLinkLabel = reviewState.latestRun ? "View review" : "View previous review";
+	return (
+		<div className={cn("flex min-w-0 flex-col gap-2", reviewState.status === "ineligible" && "opacity-70")}>
+			<VerdictBadge label={verdict.label} tone={verdict.tone} />
+			{summary ? <p className="whitespace-pre-wrap break-words text-2xs leading-relaxed text-passive">{summary}</p> : null}
+			{reviewUrl ? (
+				<a
+					className="inline-flex items-center gap-0.5 self-start text-2xs font-medium text-passive no-underline transition-colors hover:text-foreground"
+					href={reviewUrl}
+					target="_blank"
+					rel="noopener noreferrer"
+				>
+					{reviewLinkLabel}
+					<ArrowUpRight aria-hidden="true" className="size-3 shrink-0" />
+				</a>
+			) : null}
+		</div>
+	);
+}
+
+function runReviewVerdict(run: NonNullable<PRReviewState["latestRun"]>): {
 	label: string;
 	tone: "neutral" | "running" | "success" | "danger";
 } {
-	if (reviewStates.some((reviewState) => reviewState.status === "running")) {
-		return { label: "Reviewing...", tone: "running" };
-	}
-	if (reviewStates.some((reviewState) => reviewState.latestRun?.status === "failed")) {
+	if (run.status === "failed") {
 		return { label: "Failed", tone: "danger" };
 	}
-	if (reviewStates.some((reviewState) => reviewState.latestRun?.status === "cancelled")) {
+	if (run.status === "cancelled") {
 		return { label: "Cancelled", tone: "neutral" };
 	}
-	if (reviewStates.some((reviewState) => reviewState.status === "changes_requested")) {
-		return { label: "Changes requested", tone: "danger" };
+	if (run.status === "running") {
+		return { label: "Reviewing...", tone: "running" };
 	}
-	const eligibleReviews = reviewStates.filter((reviewState) => reviewState.status !== "ineligible");
-	if (eligibleReviews.length > 0 && eligibleReviews.every((reviewState) => reviewState.status === "up_to_date")) {
-		return { label: "Approved", tone: "success" };
+	switch (run.verdict) {
+		case "approved":
+			return { label: "Approved", tone: "success" };
+		case "changes_requested":
+			return { label: "Changes requested", tone: "danger" };
+		default:
+			return { label: "Not run", tone: "neutral" };
 	}
-	return { label: "Not run", tone: "neutral" };
+}
+
+// GitHub anchors a posted review at #pullrequestreview-<id> on the PR page; we
+// only have that link once the run has been delivered to GitHub.
+function aoReviewCommentUrl(run: PRReviewState["latestRun"]): string | null {
+	if (!run?.prUrl || !run.githubReviewId) return null;
+	return `${run.prUrl}#pullrequestreview-${run.githubReviewId}`;
 }
 
 function reviewVerdict(reviewState: PRReviewState): {
@@ -820,21 +1106,6 @@ function reviewVerdict(reviewState: PRReviewState): {
 			return { label: "Not run", tone: "neutral" };
 	}
 	return { label: "Not run", tone: "neutral" };
-}
-
-function previousReviewVerdict(reviewState: PRReviewState): {
-	label: string;
-	tone: "success" | "danger";
-} | null {
-	if (reviewState.status !== "needs_review" && reviewState.status !== "running") return null;
-	switch (reviewState.previousRun?.verdict) {
-		case "approved":
-			return { label: "Approved", tone: "success" };
-		case "changes_requested":
-			return { label: "Changes requested", tone: "danger" };
-		default:
-			return null;
-	}
 }
 
 function reviewSessionRunAction(reviewStates: PRReviewState[], isTriggering: boolean): string {

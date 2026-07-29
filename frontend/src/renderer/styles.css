@@ -4,9 +4,8 @@
 @custom-media --layout-narrow (width <= 680px); /* --breakpoint-layout-narrow */
 
 /*
- * Design system — see DESIGN_TOKENS.md. emdash-matched: flat near-black
- * neutral ramp, hairline borders, system font, refined-blue accent (not emdash's
- * jade). Dark is primary (:root); light is the supported override
+ * Design system — see DESIGN_TOKENS.md. Flat near-black neutral ramp, hairline
+ * borders, system font, refined-blue accent. Dark is primary (:root); light is the supported override
  * (:root[data-theme="light"]). apply-initial-theme runs before CSS load; the
  * Zustand theme toggle updates data-theme on <html>.
  */
@@ -69,8 +68,9 @@
 	--spacing-8: var(--space-8);
 	--spacing-10: var(--space-10);
 
-	/* Z-index — z-chrome, z-titlebar, z-overlay */
+	/* Z-index — z-chrome, z-sidebar-preview, z-titlebar, z-overlay */
 	--z-index-chrome: var(--z-chrome);
+	--z-index-sidebar-preview: var(--z-sidebar-preview);
 	--z-index-titlebar: var(--z-titlebar);
 	--z-index-overlay: var(--z-overlay);
 
@@ -163,6 +163,10 @@
 
 	/* Layout — toolbar offset for fixed sidebar below topbar */
 	--spacing-toolbar: var(--size-toolbar);
+	--spacing-titlebar-content-offset: var(--size-titlebar-content-offset);
+	--spacing-titlebar-cluster-left: var(--size-titlebar-cluster-left);
+	/* Fullscreen has no traffic lights — park the cluster at the panel inset. */
+	--spacing-titlebar-cluster-left-fullscreen: var(--size-center-panel-inset);
 	--spacing-traffic-light-clearance: var(--size-traffic-light-clearance);
 	--spacing-traffic-light-clearance-fullscreen: var(--size-traffic-light-clearance-fullscreen);
 	--spacing-control-xs: var(--size-control-xs);
@@ -213,6 +217,8 @@
 	--color-accent-foreground: var(--bridge-accent-fg);
 	--color-accent-weak: var(--bridge-accent-weak);
 	--color-accent-dim: var(--bridge-accent-dim);
+	--color-accent-strong: var(--bridge-accent-strong);
+	--color-danger-strong: var(--bridge-danger-strong);
 	--color-ring: var(--bridge-accent);
 
 	--color-border: var(--bridge-border);
@@ -223,6 +229,16 @@
 	--color-success-bright: var(--color-success-bright);
 	--color-warning: var(--bridge-warning);
 	--color-error: var(--bridge-danger);
+	--color-status-working: var(--bridge-status-working);
+	--color-status-needs-you: var(--bridge-status-needs-you);
+	--color-status-in-review: var(--bridge-status-in-review);
+	--color-status-ready: var(--bridge-status-ready);
+	--color-status-merged: var(--bridge-status-merged);
+	--color-status-idle: var(--bridge-status-idle);
+	--color-status-exited: var(--bridge-status-exited);
+	--color-status-terminated: var(--bridge-status-terminated);
+	--color-status-terminated-foreground: var(--bridge-status-terminated-foreground);
+	--color-status-unknown: var(--bridge-status-unknown);
 	--color-destructive: var(--bridge-danger);
 	--color-destructive-foreground: var(--color-accent-foreground);
 
@@ -264,6 +280,22 @@
 	width: min(var(--size-dialog-orchestrator), calc(100vw - var(--space-8)));
 }
 
+@utility w-command-palette {
+	width: min(var(--size-command-palette), calc(100vw - var(--space-8)));
+}
+
+@utility max-h-command-palette-list {
+	max-height: min(var(--size-command-palette-list-max), var(--size-command-palette-list-vh));
+}
+
+@utility top-command-palette {
+	top: var(--size-command-palette-top);
+}
+
+@utility max-w-command-subtitle {
+	max-width: var(--size-command-subtitle-max);
+}
+
 @utility grid-cols-notification {
 	grid-template-columns: var(--size-notification-icon) minmax(0, 1fr) auto;
 }
@@ -294,6 +326,11 @@
 		0 0 8px var(--color-working);
 }
 
+@utility session-card-terminated {
+	border-color: color-mix(in srgb, var(--color-status-terminated) 32%, var(--color-border));
+	background-color: color-mix(in srgb, var(--color-status-terminated) 7%, var(--color-bg-secondary));
+}
+
 @utility bg-surface-faint {
 	background-color: color-mix(in srgb, var(--color-bg-primary) 35%, transparent);
 }
@@ -304,6 +341,10 @@
 
 @utility bg-settings-accent {
 	background-color: var(--color-settings-accent);
+}
+
+@utility text-settings-accent {
+	color: var(--color-settings-accent);
 }
 
 @utility bg-settings-switch-on {
@@ -339,8 +380,8 @@
 	width: 100%;
 	background-color: var(--color-bg-sidebar);
 	padding-top: var(--size-center-panel-inset);
-	padding-right: var(--size-center-panel-inset);
-	padding-bottom: var(--size-center-panel-inset);
+	padding-right: var(--size-center-panel-inline-inset);
+	padding-bottom: var(--size-center-panel-bottom-inset);
 	padding-left: 0;
 }
 
@@ -354,6 +395,58 @@
 	border: 1px solid var(--color-border-strong);
 	background-color: var(--color-bg-primary);
 }
+
+/* A fully hidden sidebar no longer contributes a left layout gutter. Restore
+ * the shared frame inset while transient hover previews overlay this surface. */
+.sidebar-hidden .center-panel-shell {
+	padding-left: var(--size-center-panel-inline-inset);
+}
+
+/* macOS + Linux: one uniform inset on every side (matches the near-flush top
+ * that keeps Board/Terminal titles level with the fixed TitlebarNav). Two
+ * classes so it also wins over the `.sidebar-hidden` left gutter above. */
+.center-panel-shell.center-panel-shell--mac {
+	padding: var(--size-center-panel-inset-mac);
+}
+
+.center-panel-shell.center-panel-shell--mac.center-panel-shell--fullscreen {
+	padding: 0;
+}
+
+.center-panel-titlebar {
+	padding-left: 1.125rem; /* matches former px-4.5 */
+}
+
+.center-panel-shell--mac .center-panel-titlebar {
+	height: var(--size-traffic-light-clearance);
+	min-height: var(--size-traffic-light-clearance);
+}
+
+/* On macOS the titlebar controls stay fixed when the sidebar is off-canvas.
+ * Pad the title past that cluster so it sits next to the buttons. Fullscreen
+ * drops the traffic-light reserve so title sits next to the left-edge buttons. */
+.center-panel-shell--titlebar-clearance .center-panel-titlebar {
+	padding-left: calc(var(--size-titlebar-content-offset) - var(--size-center-panel-inset-mac));
+}
+
+/* Linux clears the cluster from its own left edge (no traffic-light row). */
+.center-panel-shell--linux.center-panel-shell--titlebar-clearance .center-panel-titlebar {
+	padding-left: calc(var(--size-titlebar-content-offset-linux) - var(--size-center-panel-inset-mac));
+}
+
+/* Fullscreen: the shell is flush, so measure from the cluster's own left edge. */
+.center-panel-shell--titlebar-clearance-fullscreen .center-panel-titlebar {
+	padding-left: calc(
+		var(--size-center-panel-inset) + var(--size-titlebar-cluster-width) + var(--size-titlebar-content-gap)
+	);
+}
+
+/* Windows: the frameless window's custom titlebar already supplies top chrome,
+ * so drop the framed panel's top inset to give content more height. */
+.platform-windows .center-panel-shell {
+	padding-top: 0;
+}
+
 @utility settings-row-bar {
 	display: flex;
 	height: var(--size-settings-row);
@@ -401,16 +494,30 @@ button.settings-row-bar {
 
 @utility settings-menu-surface {
 	display: flex;
-	min-width: 11rem;
-	width: max-content;
-	max-width: min(18rem, calc(100vw - 2rem));
+	width: min(var(--size-settings-menu-width), calc(100vw - 2rem));
+	min-width: var(--size-settings-menu-min-width);
+	max-height: var(--size-select-menu-max);
 	flex-direction: column;
+	overflow-x: hidden;
+	overflow-y: auto;
+	overscroll-behavior: contain;
 	border-radius: var(--radius-settings-panel);
 	border: 1px solid var(--color-border-settings-menu);
 	background-color: var(--color-bg-settings-menu);
 	padding: var(--space-2);
 	gap: var(--space-1_5);
 	box-shadow: var(--elevation-md);
+}
+
+@utility settings-agent-menu-surface {
+	min-width: var(--size-settings-agent-menu-min-width);
+	padding: var(--space-3);
+	gap: var(--space-2);
+}
+
+@utility settings-agent-menu-item {
+	padding-inline: var(--space-4);
+	padding-block: var(--space-3);
 }
 
 @utility settings-field-label {
@@ -443,6 +550,55 @@ button.settings-row-bar {
 	}
 }
 
+@utility settings-inline-input {
+	width: auto;
+	max-width: min(var(--size-settings-inline-input-max), var(--size-settings-inline-input-max-percent));
+	min-width: var(--size-settings-inline-input-min);
+	flex: 0 1 auto;
+	height: var(--size-settings-inline-input-height);
+	border: 1px solid var(--color-border-settings-input);
+	border-radius: var(--radius-lg);
+	background-color: var(--color-bg-settings-input);
+	padding-inline: calc(var(--spacing) * 2.5);
+	font-size: var(--font-size-base);
+	line-height: 1.25rem;
+	color: var(--color-text-settings-input);
+	text-align: right;
+	outline: none;
+	box-shadow: none;
+	transition-property: border-color, box-shadow, color;
+	transition-duration: var(--duration-normal);
+
+	&::placeholder {
+		color: var(--color-text-settings-placeholder);
+	}
+
+	&:hover {
+		color: var(--color-text-settings-row);
+	}
+
+	&:focus-visible {
+		border-color: var(--bridge-accent);
+		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+		color: var(--color-text-settings-row);
+		outline: none;
+	}
+}
+
+@utility settings-row-value {
+	min-width: 0;
+	max-width: min(var(--size-settings-row-value-max), var(--size-settings-row-value-max-percent));
+	flex: 0 1 auto;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	text-align: right;
+	/* Match settings-option-trigger (Refresh / agent selects) size. */
+	font-size: var(--font-size-base);
+	line-height: 1.25rem;
+	color: var(--color-text-settings-muted);
+}
+
 @utility settings-footer-button {
 	display: inline-flex;
 	height: var(--size-settings-action-height);
@@ -468,6 +624,24 @@ button.settings-row-bar {
 
 	&:focus-visible {
 		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+	}
+}
+
+@utility settings-footer-button-primary {
+	border-color: transparent;
+	background-color: var(--color-settings-accent);
+	padding-inline: var(--size-settings-footer-button-padding-x);
+	color: var(--color-settings-footer-button-primary-fg);
+	transition-property: opacity;
+	transition-duration: var(--duration-normal);
+
+	&:hover {
+		opacity: 0.9;
+	}
+
+	&:disabled {
+		cursor: not-allowed;
+		opacity: 0.5;
 	}
 }
 
@@ -709,6 +883,54 @@ select {
 	height: 0;
 }
 
+.board-scrollbar::-webkit-scrollbar {
+	width: 4px;
+	height: 4px;
+}
+
+.board-scrollbar::-webkit-scrollbar-button {
+	display: none;
+	width: 0;
+	height: 0;
+}
+
+.board-scrollbar::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+.board-scrollbar::-webkit-scrollbar-thumb {
+	min-height: 8px;
+	border-radius: 999px;
+	background-color: color-mix(in srgb, var(--color-scrollbar) 24%, transparent);
+}
+
+.board-scrollbar:hover::-webkit-scrollbar-thumb,
+.board-scrollbar:focus-within::-webkit-scrollbar-thumb,
+.board-scrollbar:active::-webkit-scrollbar-thumb {
+	background-color: color-mix(in srgb, var(--color-scrollbar) 42%, transparent);
+}
+
+.board-scrollbar::-webkit-scrollbar-thumb:hover {
+	background-color: color-mix(in srgb, var(--color-scrollbar) 56%, transparent);
+}
+
+.board-scrollbar::-webkit-scrollbar-corner {
+	background: transparent;
+}
+
+@supports (-moz-appearance: none) {
+	.board-scrollbar {
+		scrollbar-width: thin;
+		scrollbar-color: color-mix(in srgb, var(--color-scrollbar) 24%, transparent) transparent;
+	}
+
+	.board-scrollbar:hover,
+	.board-scrollbar:focus-within,
+	.board-scrollbar:active {
+		scrollbar-color: color-mix(in srgb, var(--color-scrollbar) 42%, transparent) transparent;
+	}
+}
+
 .session-files-diff-scrollbar {
 	scrollbar-width: thin;
 	scrollbar-color: var(--color-scrollbar) transparent;
@@ -751,6 +973,78 @@ select {
 	50% {
 		opacity: 0.35;
 	}
+}
+
+@keyframes ao-startup-logo-breathe {
+	0%,
+	100% {
+		opacity: 0.86;
+		transform: translateY(0);
+	}
+	50% {
+		opacity: 1;
+		transform: translateY(-2px);
+	}
+}
+
+@keyframes ao-startup-status-in {
+	from {
+		opacity: 0;
+		filter: blur(2px);
+		transform: translateY(3px);
+	}
+	to {
+		opacity: 1;
+		filter: blur(0);
+		transform: translateY(0);
+	}
+}
+
+@keyframes ao-startup-dot-pulse {
+	0%,
+	70%,
+	100% {
+		opacity: 0.25;
+		transform: translateY(0);
+	}
+	35% {
+		opacity: 1;
+		transform: translateY(-3px);
+	}
+}
+
+.ao-startup-screen {
+	position: relative;
+	flex: 1 1 0%;
+	min-width: 0;
+	min-height: 0;
+}
+
+.ao-startup-logo {
+	animation: ao-startup-logo-breathe 3.2s ease-in-out infinite;
+	filter: drop-shadow(0 7px 20px rgb(0 0 0 / 0.28));
+}
+
+.ao-startup-status {
+	display: inline-block;
+	animation: ao-startup-status-in 240ms ease-out;
+}
+
+.ao-startup-dots span {
+	width: 4px;
+	height: 4px;
+	animation: ao-startup-dot-pulse 1.4s ease-in-out infinite;
+	border-radius: var(--radius-full);
+	background: var(--color-accent);
+	opacity: 0.25;
+}
+
+.ao-startup-dots span:nth-child(2) {
+	animation-delay: 160ms;
+}
+
+.ao-startup-dots span:nth-child(3) {
+	animation-delay: 320ms;
 }
 
 @keyframes overlay-in {
@@ -803,6 +1097,12 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 }
 
 @media (prefers-reduced-motion: reduce) {
+	.ao-startup-logo,
+	.ao-startup-status,
+	.ao-startup-dots span {
+		animation: none;
+	}
+
 	.sidebar-expanded-chrome {
 		transition: none;
 	}
@@ -1009,38 +1309,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	min-width: 0;
 	align-items: center;
 	gap: 13px;
-}
-
-/* ── macOS titlebar cluster (TitlebarNav) ─────────────────────────────────
- * In-flow inside the Sidebar header, below the traffic lights while windowed.
- * In native fullscreen the header drops the clearance pad so this cluster
- * moves up. The toggle is pinned in a --size-sidebar-icon column so its screen
- * position never changes during the width animation; history arrows are
- * absolute to the right and fade with .sidebar-expanded-chrome. */
-.titlebar-nav {
-	position: relative;
-	display: flex;
-	height: var(--size-control-md);
-	flex-shrink: 0;
-	align-items: center;
-	margin-bottom: var(--space-2);
-}
-
-.titlebar-nav__toggle-slot {
-	display: flex;
-	width: var(--size-sidebar-icon);
-	flex-shrink: 0;
-	align-items: center;
-	justify-content: center;
-}
-
-.titlebar-nav__history {
-	position: absolute;
-	top: 0;
-	left: var(--size-sidebar-icon);
-	display: flex;
-	align-items: center;
-	gap: var(--space-1);
 }
 
 /* Windows custom title bar (WindowTitlebar): the app paints the sidebar toggle
