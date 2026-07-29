@@ -912,7 +912,9 @@ function ReviewDisclosure({
 			<div className="py-2 first:pt-0.5 last:pb-0.5">
 				<div className="flex min-w-0 items-center gap-2 px-1.5 py-1.5">
 					<span className="min-w-0 flex-1 truncate text-sm-md font-semibold text-foreground">{title}</span>
-					<span className="shrink-0 font-mono text-2xs text-passive">{meta}</span>
+					<span className="min-w-0 shrink truncate font-mono text-2xs text-passive" title={meta}>
+					{meta}
+				</span>
 				</div>
 				<div className="ml-2 mt-2.5 flex flex-col gap-4 border-l border-border/60 pl-3.5">{children}</div>
 			</div>
@@ -922,7 +924,7 @@ function ReviewDisclosure({
 		<div className="py-2 first:pt-0.5 last:pb-0.5">
 			<button
 				aria-expanded={open}
-				className="-mx-1.5 flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1.5 text-left transition-colors hover:bg-interactive-hover/30"
+				className="-mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-center gap-2 rounded-md px-1.5 py-1.5 text-left transition-colors hover:bg-interactive-hover/30"
 				onClick={() => setOpen((current) => !current)}
 				type="button"
 			>
@@ -932,7 +934,9 @@ function ReviewDisclosure({
 					<ChevronRight className="size-icon-sm shrink-0 text-passive" aria-hidden="true" />
 				)}
 				<span className="min-w-0 flex-1 truncate text-sm-md font-semibold text-foreground">{title}</span>
-				<span className="shrink-0 font-mono text-2xs text-passive">{meta}</span>
+				<span className="min-w-0 shrink truncate font-mono text-2xs text-passive" title={meta}>
+					{meta}
+				</span>
 			</button>
 			{open ? <div className="ml-2 mt-2.5 flex flex-col gap-4 border-l border-border/60 pl-3.5">{children}</div> : null}
 		</div>
@@ -951,6 +955,11 @@ function mockProjectConfig(): ProjectConfig {
 		reviewers: [{ harness: "codex" }],
 	};
 }
+
+// Preview-only pins so the Reviews tab can be seen mid-run and with a verdict
+// left behind by an earlier commit — neither follows from a PR's review decision.
+const MOCK_RUNNING_PR = 322;
+const MOCK_STALE_PR = 324;
 
 function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
 	return {
@@ -978,6 +987,51 @@ function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
 							verdict: pr.review === "approved" ? "approved" : "changes_requested",
 						}
 					: undefined;
+			const run = (over: Record<string, unknown>) => ({
+				batchId: `demo-batch-${session.id}`,
+				body: "",
+				createdAt: reviewedAt,
+				githubReviewId: "",
+				harness: "codex",
+				id: `demo-review-run-${pr.number}`,
+				prUrl: pr.url,
+				reviewId: `demo-review-${pr.number}`,
+				sessionId: session.id,
+				status: "complete",
+				targetSha,
+				verdict: "",
+				...over,
+			});
+			// A couple of PRs are pinned to states the review decision alone cannot
+			// produce, so the preview shows every shape the panel can render.
+			if (pr.number === MOCK_RUNNING_PR) {
+				return {
+					latestRun: run({ status: "running", id: `demo-review-run-${pr.number}-live` }),
+					prNumber: pr.number,
+					prUrl: pr.url,
+					status: "running",
+					targetSha,
+					title: mockReviewTitle(pr.number),
+				};
+			}
+			if (pr.number === MOCK_STALE_PR) {
+				// Reviewed, then a new commit landed: the verdict is about code that
+				// has since changed, so the panel demotes it to "Previous".
+				return {
+					previousRun: run({
+						status: "delivered",
+						verdict: "changes_requested",
+						githubReviewId: `${pr.number}09`,
+						body: "Demo review asked for a tighter activity sample before the last commit.",
+						targetSha: `${targetSha}-old`,
+					}),
+					prNumber: pr.number,
+					prUrl: pr.url,
+					status: "needs_review",
+					targetSha,
+					title: mockReviewTitle(pr.number),
+				};
+			}
 			return {
 				latestRun,
 				prNumber: pr.number,
