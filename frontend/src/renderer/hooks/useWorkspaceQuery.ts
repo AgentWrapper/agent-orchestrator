@@ -12,6 +12,7 @@ import {
 	type CloudSessionRef,
 } from "../lib/cloud-sessions";
 import { mockWorkspaces } from "../lib/mock-data";
+import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import { captureRendererEvent } from "../lib/telemetry";
 import {
 	type PRState,
@@ -40,7 +41,6 @@ function toPullRequestFacts(pr: components["schemas"]["SessionPRFacts"]): PullRe
 }
 
 export const workspaceQueryKey = ["workspaces"] as const;
-const usePreviewData = import.meta.env.VITE_NO_ELECTRON === "1";
 const reportedUnknownSessionFields = new Set<string>();
 
 function reportUnknownSessionField(field: "status" | "activity", value?: string): void {
@@ -98,13 +98,13 @@ function toWorkspaceSession(
 type FakeAgentSeam = { snapshot: () => WorkspaceSummary[] };
 
 async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
-	if (usePreviewData) {
+	if (usesPreviewWorkspaceData) {
 		const fake =
 			typeof window !== "undefined" ? (window as unknown as { __aoFakeAgent?: FakeAgentSeam }).__aoFakeAgent : undefined;
 		return fake ? fake.snapshot() : mockWorkspaces;
 	}
 	if (!hasTrustedApiBaseUrl()) {
-		return [];
+		throw new Error("AO daemon API is not ready");
 	}
 
 	const [{ data: projectsData, error: projectsError }, { data: sessionsData, error: sessionsError }] = await Promise.all([
@@ -134,7 +134,7 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 // sandbox daemon (via the Go daemon's cloud endpoints); the card carries
 // cloudPreviewUrl so its terminal routes there. Best-effort per tick.
 async function mergeCloudSessions(workspaces: WorkspaceSummary[]): Promise<void> {
-	if (usePreviewData) return;
+	if (usesPreviewWorkspaceData) return;
 	await refreshCloudSessions();
 	const refs = getCloudSessions();
 	if (refs.length === 0) return;

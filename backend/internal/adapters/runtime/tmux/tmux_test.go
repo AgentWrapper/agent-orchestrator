@@ -21,6 +21,7 @@ type fakeRunner struct {
 	calls   []runnerCall
 	outputs [][]byte
 	err     error
+	hook    func(context.Context, int) error
 }
 
 type runnerCall struct {
@@ -29,12 +30,17 @@ type runnerCall struct {
 	args []string
 }
 
-func (f *fakeRunner) Run(_ context.Context, env []string, name string, args ...string) ([]byte, error) {
+func (f *fakeRunner) Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
 	f.calls = append(f.calls, runnerCall{env: append([]string(nil), env...), name: name, args: append([]string(nil), args...)})
 	var out []byte
 	if len(f.outputs) > 0 {
 		out = f.outputs[0]
 		f.outputs = f.outputs[1:]
+	}
+	if f.hook != nil {
+		if err := f.hook(ctx, len(f.calls)); err != nil {
+			return out, err
+		}
 	}
 	if f.err != nil {
 		return out, f.err
@@ -988,6 +994,72 @@ func TestSendMessageEnterSurvivesCallerCancel(t *testing.T) {
 	}
 	if got, want := fr.calls[1].args, sendEnterArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Enter args = %#v, want %#v", got, want)
+	}
+}
+
+func TestSendMessageRemainingChunksSurviveCallerCancel(t *testing.T) {
+	r, fr := newTestRuntime(5)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	secondChunkStarted := make(chan struct{})
+	callerCancelled := make(chan struct{})
+	go func() {
+		<-secondChunkStarted
+		cancel()
+		close(callerCancelled)
+	}()
+	fr.hook = func(runCtx context.Context, call int) error {
+		if call != 2 {
+			return nil
+		}
+		close(secondChunkStarted)
+		<-callerCancelled
+		return runCtx.Err()
+	}
+
+	if err := r.SendMessage(ctx, ports.RuntimeHandle{ID: "sess-1"}, "helloworld"); err != nil {
+		t.Fatalf("SendMessage cancelled after first chunk: %v", err)
+	}
+	if ctx.Err() != context.Canceled {
+		t.Fatalf("caller context error = %v, want context.Canceled", ctx.Err())
+	}
+	if len(fr.calls) != 3 {
+		t.Fatalf("calls = %d, want 3 (two chunks + Enter)", len(fr.calls))
+	}
+	if got, want := fr.calls[1].args, sendKeysLiteralArgs("sess-1", "world"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("chunk 2 args = %#v, want %#v", got, want)
+	}
+	if got, want := fr.calls[2].args, sendEnterArgs("sess-1"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("Enter args = %#v, want %#v", got, want)
+	}
+}
+
+func TestSendMessageCompletionBudgetScalesWithChunks(t *testing.T) {
+	const commandTimeout = 5 * time.Second
+	const enterDelay = 300 * time.Millisecond
+	if got, want := sendCompletionBudget(1, commandTimeout, enterDelay), 5*time.Second+enterDelay; got != want {
+		t.Fatalf("single-chunk completion budget = %s, want %s", got, want)
+	}
+	if got, want := sendCompletionBudget(4, commandTimeout, enterDelay), 20*time.Second+enterDelay; got != want {
+		t.Fatalf("four-chunk completion budget = %s, want %s", got, want)
+	}
+}
+
+func TestSendMessageCancellationBeforeFirstChunkAborts(t *testing.T) {
+	r, fr := newTestRuntime(5)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	fr.hook = func(runCtx context.Context, _ int) error {
+		return runCtx.Err()
+	}
+
+	err := r.SendMessage(ctx, ports.RuntimeHandle{ID: "sess-1"}, "helloworld")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("SendMessage error = %v, want context.Canceled", err)
+	}
+	if len(fr.calls) != 1 {
+		t.Fatalf("calls = %d, want 1 (first chunk attempt only)", len(fr.calls))
 	}
 }
 

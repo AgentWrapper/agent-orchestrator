@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/activitydispatch"
@@ -46,12 +45,7 @@ type lifecycleStack struct {
 	activityDone  <-chan struct{}
 	scmDone       <-chan struct{}
 	trackerDone   <-chan struct{}
-	sweepDone     <-chan struct{}
 }
-
-// workerIdleSweepInterval is the low-frequency recovery cadence that redelivers
-// any worker_idle events left pending by a missed event-driven trigger.
-const workerIdleSweepInterval = 2 * time.Minute
 
 // startLifecycle constructs the Lifecycle Manager over the store and starts the
 // reaper. The goroutine stops when ctx is cancelled; Stop waits for it to drain.
@@ -70,7 +64,6 @@ func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runt
 		runtimeReaper: rp,
 		reaperDone:    rp.Start(ctx),
 		activityDone:  activityPoller.Start(ctx),
-		sweepDone:     startWorkerIdleSweep(ctx, lcm),
 	}
 }
 
@@ -100,35 +93,12 @@ func activeTurnSteering(agents ports.AgentResolver) func(domain.AgentHarness) bo
 	}
 }
 
-// startWorkerIdleSweep runs the low-frequency recovery sweep that redelivers
-// pending worker_idle events. The goroutine exits on ctx cancellation.
-func startWorkerIdleSweep(ctx context.Context, lcm *lifecycle.Manager) <-chan struct{} {
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		t := time.NewTicker(workerIdleSweepInterval)
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-				lcm.DispatchAllPendingWorkerIdleEvents(ctx)
-			}
-		}
-	}()
-	return done
-}
-
 // Stop waits for the reaper goroutine to exit. The caller must cancel the ctx
 // passed to startLifecycle before calling Stop.
 func (l *lifecycleStack) Stop() {
 	<-l.reaperDone
 	if l.activityDone != nil {
 		<-l.activityDone
-	}
-	if l.sweepDone != nil {
-		<-l.sweepDone
 	}
 	if l.scmDone != nil {
 		<-l.scmDone
