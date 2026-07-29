@@ -117,9 +117,10 @@ until the Daytona tier changes.
 
 Production should build and publish
 `ao-cloud/docker/worker.Dockerfile`, create a Daytona snapshot from it, and
-set `AO_DAYTONA_WORKER_SNAPSHOT` to that snapshot. During local development,
-`AO_WORKER_BINARY_PATH` lets the reconciler upload the compiled worker into a
-standard Daytona sandbox.
+set `AO_DAYTONA_WORKER_SNAPSHOT` to that snapshot. Both local development and
+the Render control-plane image set `AO_WORKER_BINARY_PATH`; the reconciler
+uploads that versioned binary into the sandbox so worker and control-plane
+protocol changes deploy together.
 
 ## Tests
 

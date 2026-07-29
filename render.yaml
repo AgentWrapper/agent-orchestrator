@@ -29,6 +29,8 @@ services:
         value: us
       - key: AO_DAYTONA_WORKER_SNAPSHOT
         sync: false
+      - key: AO_WORKER_BINARY_PATH
+        value: /usr/local/bin/ao-worker
       - key: AO_GITHUB_TOKEN
         sync: false
       - key: AO_ENCRYPTION_KEY
