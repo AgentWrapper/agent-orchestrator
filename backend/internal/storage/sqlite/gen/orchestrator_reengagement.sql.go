@@ -14,10 +14,11 @@ import (
 const completeOrchestratorReengagement = `-- name: CompleteOrchestratorReengagement :execrows
 INSERT INTO orchestrator_reengagements (
     session_id, attempt_count, next_attempt_at, progress_since_attempt,
-    state, created_at, updated_at
-) VALUES (?, 0, ?, 0, 'completed', ?, ?)
+    attention_notified, state, created_at, updated_at
+) VALUES (?, 0, ?, 0, 1, 'completed', ?, ?)
 ON CONFLICT(session_id) DO UPDATE SET
     progress_since_attempt = 0,
+    attention_notified = 1,
     state = 'completed',
     updated_at = excluded.updated_at
 `
@@ -45,8 +46,8 @@ func (q *Queries) CompleteOrchestratorReengagement(ctx context.Context, arg Comp
 const ensureOrchestratorReengagement = `-- name: EnsureOrchestratorReengagement :exec
 INSERT INTO orchestrator_reengagements (
     session_id, attempt_count, next_attempt_at, progress_since_attempt,
-    state, created_at, updated_at
-) VALUES (?, 0, ?, 0, 'active', ?, ?)
+    attention_notified, state, created_at, updated_at
+) VALUES (?, 0, ?, 0, 0, 'active', ?, ?)
 ON CONFLICT(session_id) DO NOTHING
 `
 
@@ -69,7 +70,7 @@ func (q *Queries) EnsureOrchestratorReengagement(ctx context.Context, arg Ensure
 
 const getOrchestratorReengagement = `-- name: GetOrchestratorReengagement :one
 SELECT session_id, attempt_count, next_attempt_at, last_attempt_at,
-    progress_since_attempt, state, created_at, updated_at
+    progress_since_attempt, attention_notified, state, created_at, updated_at
 FROM orchestrator_reengagements
 WHERE session_id = ?
 `
@@ -83,6 +84,7 @@ func (q *Queries) GetOrchestratorReengagement(ctx context.Context, sessionID str
 		&i.NextAttemptAt,
 		&i.LastAttemptAt,
 		&i.ProgressSinceAttempt,
+		&i.AttentionNotified,
 		&i.State,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -92,7 +94,7 @@ func (q *Queries) GetOrchestratorReengagement(ctx context.Context, sessionID str
 
 const listDueOrchestratorReengagements = `-- name: ListDueOrchestratorReengagements :many
 SELECT session_id, attempt_count, next_attempt_at, last_attempt_at,
-    progress_since_attempt, state, created_at, updated_at
+    progress_since_attempt, attention_notified, state, created_at, updated_at
 FROM orchestrator_reengagements
 WHERE state = 'active' AND next_attempt_at <= ?
 ORDER BY next_attempt_at, session_id
@@ -113,6 +115,7 @@ func (q *Queries) ListDueOrchestratorReengagements(ctx context.Context, nextAtte
 			&i.NextAttemptAt,
 			&i.LastAttemptAt,
 			&i.ProgressSinceAttempt,
+			&i.AttentionNotified,
 			&i.State,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -128,6 +131,67 @@ func (q *Queries) ListDueOrchestratorReengagements(ctx context.Context, nextAtte
 		return nil, err
 	}
 	return items, nil
+}
+
+const listPendingOrchestratorAttention = `-- name: ListPendingOrchestratorAttention :many
+SELECT session_id, attempt_count, next_attempt_at, last_attempt_at,
+    progress_since_attempt, attention_notified, state, created_at, updated_at
+FROM orchestrator_reengagements
+WHERE state = 'exhausted' AND attention_notified = 0
+ORDER BY updated_at, session_id
+`
+
+func (q *Queries) ListPendingOrchestratorAttention(ctx context.Context) ([]OrchestratorReengagement, error) {
+	rows, err := q.db.QueryContext(ctx, listPendingOrchestratorAttention)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OrchestratorReengagement{}
+	for rows.Next() {
+		var i OrchestratorReengagement
+		if err := rows.Scan(
+			&i.SessionID,
+			&i.AttemptCount,
+			&i.NextAttemptAt,
+			&i.LastAttemptAt,
+			&i.ProgressSinceAttempt,
+			&i.AttentionNotified,
+			&i.State,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const markOrchestratorAttentionNotified = `-- name: MarkOrchestratorAttentionNotified :execrows
+UPDATE orchestrator_reengagements SET
+    attention_notified = 1,
+    updated_at = ?
+WHERE session_id = ? AND state = 'exhausted' AND attention_notified = 0
+`
+
+type MarkOrchestratorAttentionNotifiedParams struct {
+	UpdatedAt time.Time
+	SessionID string
+}
+
+func (q *Queries) MarkOrchestratorAttentionNotified(ctx context.Context, arg MarkOrchestratorAttentionNotifiedParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markOrchestratorAttentionNotified, arg.UpdatedAt, arg.SessionID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const markOrchestratorReengagementProgress = `-- name: MarkOrchestratorReengagementProgress :execrows
@@ -160,7 +224,7 @@ UPDATE orchestrator_reengagements SET
     updated_at = ?
 WHERE session_id = ? AND state = 'active'
 RETURNING session_id, attempt_count, next_attempt_at, last_attempt_at,
-    progress_since_attempt, state, created_at, updated_at
+    progress_since_attempt, attention_notified, state, created_at, updated_at
 `
 
 type RecordOrchestratorReengagementAttemptParams struct {
@@ -186,6 +250,7 @@ func (q *Queries) RecordOrchestratorReengagementAttempt(ctx context.Context, arg
 		&i.NextAttemptAt,
 		&i.LastAttemptAt,
 		&i.ProgressSinceAttempt,
+		&i.AttentionNotified,
 		&i.State,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -196,8 +261,8 @@ func (q *Queries) RecordOrchestratorReengagementAttempt(ctx context.Context, arg
 const scheduleOrchestratorReengagement = `-- name: ScheduleOrchestratorReengagement :exec
 INSERT INTO orchestrator_reengagements (
     session_id, attempt_count, next_attempt_at, progress_since_attempt,
-    state, created_at, updated_at
-) VALUES (?, 0, ?, 0, 'active', ?, ?)
+    attention_notified, state, created_at, updated_at
+) VALUES (?, 0, ?, 0, 0, 'active', ?, ?)
 ON CONFLICT(session_id) DO UPDATE SET
     attempt_count = CASE
         WHEN orchestrator_reengagements.progress_since_attempt THEN 0
@@ -208,6 +273,10 @@ ON CONFLICT(session_id) DO UPDATE SET
         ELSE orchestrator_reengagements.next_attempt_at
     END,
     progress_since_attempt = 0,
+    attention_notified = CASE
+        WHEN orchestrator_reengagements.progress_since_attempt THEN 0
+        ELSE orchestrator_reengagements.attention_notified
+    END,
     state = CASE
         WHEN orchestrator_reengagements.state = 'exhausted'
             AND orchestrator_reengagements.progress_since_attempt THEN 'active'

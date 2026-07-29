@@ -39,6 +39,7 @@ type OrchestratorReengagement struct {
 	NextAttemptAt        time.Time
 	LastAttemptAt        sql.NullTime
 	ProgressSinceAttempt bool
+	AttentionNotified    bool
 	State                string
 	CreatedAt            time.Time
 	UpdatedAt            time.Time

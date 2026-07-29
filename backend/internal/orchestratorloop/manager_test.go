@@ -2,6 +2,7 @@ package orchestratorloop
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -64,6 +65,7 @@ func (s *fakeStore) ScheduleOrchestratorReengagement(_ context.Context, id domai
 		state.AttemptCount = 0
 		state.NextAttemptAt = next
 		state.State = domain.OrchestratorReengagementActive
+		state.AttentionNotified = false
 	}
 	if state.NextAttemptAt.IsZero() {
 		state.NextAttemptAt = next
@@ -114,12 +116,38 @@ func (s *fakeStore) RecordOrchestratorReengagementAttempt(_ context.Context, id 
 	return state, nil
 }
 
+func (s *fakeStore) ListPendingOrchestratorAttention(context.Context) ([]domain.OrchestratorReengagement, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []domain.OrchestratorReengagement
+	for _, state := range s.states {
+		if state.State == domain.OrchestratorReengagementExhausted && !state.AttentionNotified {
+			out = append(out, state)
+		}
+	}
+	return out, nil
+}
+
+func (s *fakeStore) MarkOrchestratorAttentionNotified(_ context.Context, id domain.SessionID, now time.Time) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state, ok := s.states[id]
+	if !ok || state.State != domain.OrchestratorReengagementExhausted || state.AttentionNotified {
+		return false, nil
+	}
+	state.AttentionNotified = true
+	state.UpdatedAt = now
+	s.states[id] = state
+	return true, nil
+}
+
 func (s *fakeStore) CompleteOrchestratorReengagement(_ context.Context, id domain.SessionID, now time.Time) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	state := s.states[id]
 	state.SessionID = id
 	state.State = domain.OrchestratorReengagementCompleted
+	state.AttentionNotified = true
 	state.UpdatedAt = now
 	s.states[id] = state
 	return true, nil
@@ -136,11 +164,12 @@ func (m *fakeMessenger) Send(_ context.Context, _ domain.SessionID, message stri
 
 type fakeNotifications struct {
 	intents []ports.NotificationIntent
+	err     error
 }
 
 func (n *fakeNotifications) Notify(_ context.Context, intent ports.NotificationIntent) error {
 	n.intents = append(n.intents, intent)
-	return nil
+	return n.err
 }
 
 func testManager(store *fakeStore, messenger *fakeMessenger, notifications *fakeNotifications, now time.Time) *Manager {
@@ -209,11 +238,52 @@ func TestTickExhaustsAndNotifiesAfterBoundedAttempts(t *testing.T) {
 	if len(notifications.intents) != 1 || notifications.intents[0].Type != domain.NotificationNeedsInput {
 		t.Fatalf("notifications = %#v", notifications.intents)
 	}
+	if !store.states["orch"].AttentionNotified {
+		t.Fatal("successful terminal notification was not recorded")
+	}
 	if err := manager.Tick(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if len(messenger.messages) != 1 {
 		t.Fatalf("exhausted loop sent again: %d messages", len(messenger.messages))
+	}
+}
+
+func TestTickRetriesDurablePendingAttentionAfterFailure(t *testing.T) {
+	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	rec := domain.SessionRecord{ID: "orch", ProjectID: "p", DisplayName: "coordinator", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now.Add(-time.Hour)}}
+	store := &fakeStore{
+		sessions: map[domain.SessionID]domain.SessionRecord{"orch": rec},
+		states: map[domain.SessionID]domain.OrchestratorReengagement{
+			"orch": {SessionID: "orch", AttemptCount: 3, LastAttemptAt: now.Add(-time.Minute), State: domain.OrchestratorReengagementExhausted},
+		},
+	}
+	notifications := &fakeNotifications{err: errors.New("temporary notification failure")}
+	manager := testManager(store, &fakeMessenger{}, notifications, now)
+
+	if err := manager.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if store.states["orch"].AttentionNotified {
+		t.Fatal("failed notification was marked delivered")
+	}
+
+	notifications.err = nil
+	if err := manager.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !store.states["orch"].AttentionNotified {
+		t.Fatal("retried notification was not marked delivered")
+	}
+	if len(notifications.intents) != 2 {
+		t.Fatalf("notification attempts = %d, want 2", len(notifications.intents))
+	}
+
+	if err := manager.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(notifications.intents) != 2 {
+		t.Fatalf("delivered notification retried again: %d attempts", len(notifications.intents))
 	}
 }
 

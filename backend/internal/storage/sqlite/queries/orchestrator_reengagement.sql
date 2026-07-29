@@ -1,8 +1,8 @@
 -- name: ScheduleOrchestratorReengagement :exec
 INSERT INTO orchestrator_reengagements (
     session_id, attempt_count, next_attempt_at, progress_since_attempt,
-    state, created_at, updated_at
-) VALUES (?, 0, ?, 0, 'active', ?, ?)
+    attention_notified, state, created_at, updated_at
+) VALUES (?, 0, ?, 0, 0, 'active', ?, ?)
 ON CONFLICT(session_id) DO UPDATE SET
     attempt_count = CASE
         WHEN orchestrator_reengagements.progress_since_attempt THEN 0
@@ -13,6 +13,10 @@ ON CONFLICT(session_id) DO UPDATE SET
         ELSE orchestrator_reengagements.next_attempt_at
     END,
     progress_since_attempt = 0,
+    attention_notified = CASE
+        WHEN orchestrator_reengagements.progress_since_attempt THEN 0
+        ELSE orchestrator_reengagements.attention_notified
+    END,
     state = CASE
         WHEN orchestrator_reengagements.state = 'exhausted'
             AND orchestrator_reengagements.progress_since_attempt THEN 'active'
@@ -24,8 +28,8 @@ WHERE orchestrator_reengagements.state <> 'completed';
 -- name: EnsureOrchestratorReengagement :exec
 INSERT INTO orchestrator_reengagements (
     session_id, attempt_count, next_attempt_at, progress_since_attempt,
-    state, created_at, updated_at
-) VALUES (?, 0, ?, 0, 'active', ?, ?)
+    attention_notified, state, created_at, updated_at
+) VALUES (?, 0, ?, 0, 0, 'active', ?, ?)
 ON CONFLICT(session_id) DO NOTHING;
 
 -- name: MarkOrchestratorReengagementProgress :execrows
@@ -36,14 +40,14 @@ WHERE session_id = ? AND state <> 'completed';
 
 -- name: ListDueOrchestratorReengagements :many
 SELECT session_id, attempt_count, next_attempt_at, last_attempt_at,
-    progress_since_attempt, state, created_at, updated_at
+    progress_since_attempt, attention_notified, state, created_at, updated_at
 FROM orchestrator_reengagements
 WHERE state = 'active' AND next_attempt_at <= ?
 ORDER BY next_attempt_at, session_id;
 
 -- name: GetOrchestratorReengagement :one
 SELECT session_id, attempt_count, next_attempt_at, last_attempt_at,
-    progress_since_attempt, state, created_at, updated_at
+    progress_since_attempt, attention_notified, state, created_at, updated_at
 FROM orchestrator_reengagements
 WHERE session_id = ?;
 
@@ -57,14 +61,28 @@ UPDATE orchestrator_reengagements SET
     updated_at = ?
 WHERE session_id = ? AND state = 'active'
 RETURNING session_id, attempt_count, next_attempt_at, last_attempt_at,
-    progress_since_attempt, state, created_at, updated_at;
+    progress_since_attempt, attention_notified, state, created_at, updated_at;
+
+-- name: ListPendingOrchestratorAttention :many
+SELECT session_id, attempt_count, next_attempt_at, last_attempt_at,
+    progress_since_attempt, attention_notified, state, created_at, updated_at
+FROM orchestrator_reengagements
+WHERE state = 'exhausted' AND attention_notified = 0
+ORDER BY updated_at, session_id;
+
+-- name: MarkOrchestratorAttentionNotified :execrows
+UPDATE orchestrator_reengagements SET
+    attention_notified = 1,
+    updated_at = ?
+WHERE session_id = ? AND state = 'exhausted' AND attention_notified = 0;
 
 -- name: CompleteOrchestratorReengagement :execrows
 INSERT INTO orchestrator_reengagements (
     session_id, attempt_count, next_attempt_at, progress_since_attempt,
-    state, created_at, updated_at
-) VALUES (?, 0, ?, 0, 'completed', ?, ?)
+    attention_notified, state, created_at, updated_at
+) VALUES (?, 0, ?, 0, 1, 'completed', ?, ?)
 ON CONFLICT(session_id) DO UPDATE SET
     progress_since_attempt = 0,
+    attention_notified = 1,
     state = 'completed',
     updated_at = excluded.updated_at;

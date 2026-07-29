@@ -88,6 +88,32 @@ func (s *Store) RecordOrchestratorReengagementAttempt(ctx context.Context, id do
 	return orchestratorReengagementFromRow(row), nil
 }
 
+// ListPendingOrchestratorAttention returns exhausted loops whose terminal
+// human-attention notification has not been delivered.
+func (s *Store) ListPendingOrchestratorAttention(ctx context.Context) ([]domain.OrchestratorReengagement, error) {
+	rows, err := s.qr.ListPendingOrchestratorAttention(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.OrchestratorReengagement, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, orchestratorReengagementFromRow(row))
+	}
+	return out, nil
+}
+
+// MarkOrchestratorAttentionNotified records successful delivery of the
+// terminal human-attention notification.
+func (s *Store) MarkOrchestratorAttentionNotified(ctx context.Context, id domain.SessionID, now time.Time) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.MarkOrchestratorAttentionNotified(ctx, gen.MarkOrchestratorAttentionNotifiedParams{
+		SessionID: string(id),
+		UpdatedAt: now,
+	})
+	return rows > 0, err
+}
+
 // CompleteOrchestratorReengagement permanently marks a session's loop complete.
 func (s *Store) CompleteOrchestratorReengagement(ctx context.Context, id domain.SessionID, now time.Time) (bool, error) {
 	s.writeMu.Lock()
@@ -112,6 +138,7 @@ func orchestratorReengagementFromRow(row gen.OrchestratorReengagement) domain.Or
 		NextAttemptAt:        row.NextAttemptAt,
 		LastAttemptAt:        lastAttempt,
 		ProgressSinceAttempt: row.ProgressSinceAttempt,
+		AttentionNotified:    row.AttentionNotified,
 		State:                domain.OrchestratorReengagementState(row.State),
 		CreatedAt:            row.CreatedAt,
 		UpdatedAt:            row.UpdatedAt,

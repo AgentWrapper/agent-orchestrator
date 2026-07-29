@@ -23,6 +23,7 @@ type OrchestratorReengagement struct {
 	NextAttemptAt        time.Time
 	LastAttemptAt        time.Time
 	ProgressSinceAttempt bool
+	AttentionNotified    bool
 	State                OrchestratorReengagementState
 	CreatedAt            time.Time
 	UpdatedAt            time.Time

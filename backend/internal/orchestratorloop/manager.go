@@ -4,6 +4,7 @@ package orchestratorloop
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -36,6 +37,8 @@ type Store interface {
 	MarkOrchestratorReengagementProgress(ctx context.Context, id domain.SessionID, now time.Time) error
 	ListDueOrchestratorReengagements(ctx context.Context, now time.Time) ([]domain.OrchestratorReengagement, error)
 	RecordOrchestratorReengagementAttempt(ctx context.Context, id domain.SessionID, next, now time.Time, maxAttempts int) (domain.OrchestratorReengagement, error)
+	ListPendingOrchestratorAttention(ctx context.Context) ([]domain.OrchestratorReengagement, error)
+	MarkOrchestratorAttentionNotified(ctx context.Context, id domain.SessionID, now time.Time) (bool, error)
 	CompleteOrchestratorReengagement(ctx context.Context, id domain.SessionID, now time.Time) (bool, error)
 }
 
@@ -151,7 +154,7 @@ func (m *Manager) Tick(ctx context.Context) error {
 			m.logger.Error("orchestrator re-engagement: attempt failed", "session", item.SessionID, "err", err)
 		}
 	}
-	return nil
+	return m.deliverPendingAttention(ctx, now)
 }
 
 func (m *Manager) ensureIdleOrchestrators(ctx context.Context, now time.Time) error {
@@ -204,21 +207,55 @@ func (m *Manager) attempt(ctx context.Context, item domain.OrchestratorReengagem
 	m.logger.Info("orchestrator re-engagement sent", "session", rec.ID, "attempt", updated.AttemptCount)
 	if updated.State == domain.OrchestratorReengagementExhausted {
 		m.logger.Warn("orchestrator re-engagement exhausted; human attention required", "session", rec.ID)
-		if m.notifications != nil {
-			return m.notifications.Notify(ctx, ports.NotificationIntent{
-				Type:               domain.NotificationNeedsInput,
-				SessionID:          rec.ID,
-				ProjectID:          rec.ProjectID,
-				CreatedAt:          now,
-				SessionDisplayName: rec.DisplayName,
-			})
+	}
+	return nil
+}
+
+func (m *Manager) deliverPendingAttention(ctx context.Context, now time.Time) error {
+	pending, err := m.store.ListPendingOrchestratorAttention(ctx)
+	if err != nil {
+		return fmt.Errorf("list pending orchestrator attention: %w", err)
+	}
+	for _, item := range pending {
+		if err := m.deliverAttention(ctx, item, now); err != nil {
+			m.logger.Error("orchestrator re-engagement: deliver human attention failed", "session", item.SessionID, "err", err)
 		}
 	}
 	return nil
 }
 
+func (m *Manager) deliverAttention(ctx context.Context, item domain.OrchestratorReengagement, now time.Time) error {
+	if m.notifications == nil {
+		return errors.New("notification sink is unavailable")
+	}
+	rec, ok, err := m.store.GetSession(ctx, item.SessionID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+	createdAt := item.LastAttemptAt
+	if createdAt.IsZero() {
+		createdAt = now
+	}
+	if err := m.notifications.Notify(ctx, ports.NotificationIntent{
+		Type:               domain.NotificationNeedsInput,
+		SessionID:          rec.ID,
+		ProjectID:          rec.ProjectID,
+		CreatedAt:          createdAt,
+		SessionDisplayName: rec.DisplayName,
+	}); err != nil {
+		return err
+	}
+	_, err = m.store.MarkOrchestratorAttentionNotified(ctx, rec.ID, now)
+	return err
+}
+
 // Complete durably suppresses further re-engagement for an orchestrator.
 func (m *Manager) Complete(ctx context.Context, id domain.SessionID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
 		return err
