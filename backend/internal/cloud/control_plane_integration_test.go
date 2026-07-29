@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/moby/moby/api/types/network"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -304,7 +305,9 @@ func openTestPostgresStore(ctx context.Context, t *testing.T) *postgres.Store {
 		tcpostgres.WithDatabase("ao_cloud_test"),
 		tcpostgres.WithUsername("ao"),
 		tcpostgres.WithPassword("ao"),
-		testcontainers.WithWaitStrategy(wait.ForListeningPort("5432/tcp")),
+		testcontainers.WithWaitStrategy(wait.ForSQL("5432/tcp", "pgx", func(host string, port network.Port) string {
+			return fmt.Sprintf("postgres://ao:ao@%s:%s/ao_cloud_test?sslmode=disable", host, port.Port())
+		}).WithStartupTimeout(60*time.Second)),
 	)
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "docker") {
