@@ -1,12 +1,14 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -15,6 +17,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/tmux"
 	telemetryadapter "github.com/aoagents/agent-orchestrator/backend/internal/adapters/telemetry"
+	trackerlinear "github.com/aoagents/agent-orchestrator/backend/internal/adapters/tracker/linear"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -394,6 +397,52 @@ func TestTrackerTokenSourcePrefersAOGitHubToken(t *testing.T) {
 		t.Fatalf("token = %q, want AO_GITHUB_TOKEN", token)
 	}
 }
+
+func TestLazyLinearTrackerWarnsWhenCredentialIsMissing(t *testing.T) {
+	t.Setenv("AO_LINEAR_API_KEY", "")
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+
+	_, err := newLazyLinearTracker(logger).List(context.Background(), domain.TrackerScope{
+		Provider: domain.TrackerProviderLinear,
+		Native:   "team:team-id",
+	}, domain.ListFilter{State: domain.ListOpen, Assignee: "alice"})
+	if !errors.Is(err, trackerlinear.ErrNoAPIKey) {
+		t.Fatalf("List error = %v, want ErrNoAPIKey", err)
+	}
+	if !strings.Contains(logs.String(), "no usable Linear API key") {
+		t.Fatalf("diagnostic warning missing from logs:\n%s", logs.String())
+	}
+}
+
+func TestLazyLinearTrackerWarnsWhenCredentialIsRejected(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	tracker := &lazyLinearTracker{logger: logger, tracker: authFailTracker{}}
+
+	_, err := tracker.List(context.Background(), domain.TrackerScope{
+		Provider: domain.TrackerProviderLinear,
+		Native:   "team:team-id",
+	}, domain.ListFilter{State: domain.ListOpen, Assignee: "alice"})
+	if !errors.Is(err, trackerlinear.ErrAuthFailed) {
+		t.Fatalf("List error = %v, want ErrAuthFailed", err)
+	}
+	if !strings.Contains(logs.String(), "Linear API key was rejected") {
+		t.Fatalf("diagnostic warning missing from logs:\n%s", logs.String())
+	}
+}
+
+type authFailTracker struct{}
+
+func (authFailTracker) Get(context.Context, domain.TrackerID) (domain.Issue, error) {
+	return domain.Issue{}, trackerlinear.ErrAuthFailed
+}
+
+func (authFailTracker) List(context.Context, domain.TrackerScope, domain.ListFilter) ([]domain.Issue, error) {
+	return nil, trackerlinear.ErrAuthFailed
+}
+
+func (authFailTracker) Preflight(context.Context) error { return trackerlinear.ErrAuthFailed }
 
 type captureRuntimeSender struct {
 	handle  ports.RuntimeHandle

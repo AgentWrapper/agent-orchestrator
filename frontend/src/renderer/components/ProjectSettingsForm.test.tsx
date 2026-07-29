@@ -518,6 +518,74 @@ describe("ProjectSettingsForm", () => {
 		});
 	});
 
+	it("saves Linear tracker intake with an explicit project scope and assignee", async () => {
+		getMock.mockResolvedValue({
+			data: {
+				status: "ok",
+				project: {
+					id: "proj-1",
+					name: "Project One",
+					kind: "single_repo",
+					path: "/repo/project-one",
+					repo: "git@github.com:acme/project-one.git",
+					defaultBranch: "main",
+					config: {
+						worker: { agent: "codex" },
+						orchestrator: { agent: "claude-code" },
+					},
+				},
+			},
+			error: undefined,
+		});
+
+		renderSettings();
+		await userEvent.click(await screen.findByLabelText("Enable issue intake"));
+		await userEvent.selectOptions(screen.getByLabelText("Tracker provider"), "linear");
+		await userEvent.selectOptions(screen.getByLabelText("Linear scope type"), "project");
+		await userEvent.type(screen.getByLabelText("Linear scope ID"), "project-id");
+		await userEvent.type(screen.getByLabelText("Assignee"), "Alice");
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		const body = putMock.mock.calls[0]?.[1]?.body;
+		expect(body.config.trackerIntake).toEqual({
+			enabled: true,
+			provider: "linear",
+			scope: "project:project-id",
+			assignee: "Alice",
+		});
+	});
+
+	it("blocks Linear intake without an explicit scope", async () => {
+		getMock.mockResolvedValue({
+			data: {
+				status: "ok",
+				project: {
+					id: "proj-1",
+					name: "Project One",
+					kind: "single_repo",
+					path: "/repo/project-one",
+					repo: "git@github.com:acme/project-one.git",
+					defaultBranch: "main",
+					config: {
+						worker: { agent: "codex" },
+						orchestrator: { agent: "claude-code" },
+					},
+				},
+			},
+			error: undefined,
+		});
+
+		renderSettings();
+		await userEvent.click(await screen.findByLabelText("Enable issue intake"));
+		await userEvent.selectOptions(screen.getByLabelText("Tracker provider"), "linear");
+		await userEvent.type(screen.getByLabelText("Assignee"), "Alice");
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		expect(await screen.findAllByText("Enabling Linear intake requires a team or project ID.")).toHaveLength(2);
+		expect(putMock).not.toHaveBeenCalled();
+	});
+
 	it("blocks save when intake is enabled with no assignee", async () => {
 		getMock.mockResolvedValue({
 			data: {

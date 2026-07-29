@@ -15,7 +15,7 @@ import (
 // Only fields with a live consumer are modeled: DefaultBranch, Env, Symlinks,
 // PostCreate, AgentConfig, prompt rules, and the role overrides are consumed at
 // spawn; SessionPrefix feeds the display prefix. Settings whose consumers do not
-// yet exist (tracker/SCM per-project config) are intentionally absent and land in
+// yet exist (SCM per-project config) are intentionally absent and land in
 // focused follow-up PRs alongside the code that reads them.
 type ProjectConfig struct {
 	// DefaultBranch is the base branch new session worktrees are created from.

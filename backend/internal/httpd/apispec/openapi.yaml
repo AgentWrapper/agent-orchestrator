@@ -4240,8 +4240,11 @@ components:
         provider:
           enum:
           - github
+          - linear
           type: string
         repo:
+          type: string
+        scope:
           type: string
       type: object
     TriggerReviewResponse:

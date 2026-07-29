@@ -61,6 +61,33 @@ func TestProjectSetConfig_TrackerIntakeFlags(t *testing.T) {
 	}
 }
 
+func TestProjectSetConfig_LinearTrackerIntakeFlags(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := projectServer(t, http.StatusOK, `{"project":{"id":"demo","path":"/repo/demo"}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "set-config", "demo",
+		"--tracker-intake",
+		"--tracker-provider", "linear",
+		"--tracker-scope", "team:team-id",
+		"--tracker-assignee", "Alice")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	var got setConfigRequest
+	if err := json.Unmarshal(capture.body, &got); err != nil {
+		t.Fatalf("decode request: %v\nbody=%s", err, capture.body)
+	}
+	if !got.Config.TrackerIntake.Enabled ||
+		got.Config.TrackerIntake.Provider != "linear" ||
+		got.Config.TrackerIntake.Scope != "team:team-id" ||
+		got.Config.TrackerIntake.Assignee != "Alice" {
+		t.Fatalf("tracker intake request = %#v", got.Config.TrackerIntake)
+	}
+}
+
 func TestProjectSetConfig_TrackerIntakeJSON(t *testing.T) {
 	cfg := setConfigEnv(t)
 	srv, capture := projectServer(t, http.StatusOK, `{"project":{"id":"demo","path":"/repo/demo"}}`)
@@ -91,6 +118,24 @@ func TestBuildProjectConfigTrackerIntakeFlags(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !got.TrackerIntake.Enabled || got.TrackerIntake.Provider != "github" || got.TrackerIntake.Repo != "acme/demo" || got.TrackerIntake.Assignee != "alice" {
+		t.Fatalf("tracker intake config = %#v", got.TrackerIntake)
+	}
+}
+
+func TestBuildProjectConfigLinearTrackerIntakeFlags(t *testing.T) {
+	got, err := buildProjectConfig(projectSetConfigOptions{
+		trackerIntake:   true,
+		trackerProvider: "linear",
+		trackerScope:    "project:project-id",
+		trackerAssignee: "Alice",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.TrackerIntake.Enabled ||
+		got.TrackerIntake.Provider != "linear" ||
+		got.TrackerIntake.Scope != "project:project-id" ||
+		got.TrackerIntake.Assignee != "Alice" {
 		t.Fatalf("tracker intake config = %#v", got.TrackerIntake)
 	}
 }

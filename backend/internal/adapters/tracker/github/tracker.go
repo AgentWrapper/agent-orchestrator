@@ -270,7 +270,7 @@ func mapStateFromGitHub(state, reason string, labels []string) domain.Normalized
 // that GitHub's /issues endpoint conflates into the response are filtered
 // out client-side. GitHub pagination is followed until no next link remains;
 // ListFilter.Limit, when set, caps the total accumulated issue count.
-func (t *Tracker) List(ctx context.Context, repo domain.TrackerRepo, filter domain.ListFilter) ([]domain.Issue, error) {
+func (t *Tracker) List(ctx context.Context, repo domain.TrackerScope, filter domain.ListFilter) ([]domain.Issue, error) {
 	if repo.Provider != domain.TrackerProviderGitHub {
 		return nil, fmt.Errorf("%w: provider=%q", ErrWrongProvider, repo.Provider)
 	}

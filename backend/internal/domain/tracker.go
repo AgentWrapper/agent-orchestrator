@@ -8,11 +8,14 @@ import (
 // TrackerProvider identifies an issue-tracker provider implementation.
 type TrackerProvider string
 
-// TrackerProviderGitHub is the only supported issue-tracker provider.
-const TrackerProviderGitHub TrackerProvider = "github"
+// Supported issue-tracker providers.
+const (
+	TrackerProviderGitHub TrackerProvider = "github"
+	TrackerProviderLinear TrackerProvider = "linear"
+)
 
-// TrackerID identifies one issue. Native is the provider's own canonical form
-// ("owner/repo#123" for GitHub) and is parsed by the adapter.
+// TrackerID identifies one issue. Native is the provider's own canonical form:
+// "owner/repo#123" for GitHub and the stable issue UUID for Linear.
 type TrackerID struct {
 	Provider TrackerProvider `json:"provider"`
 	Native   string          `json:"native"`
@@ -44,10 +47,10 @@ type Issue struct {
 	Assignees []string             `json:"assignees,omitempty"`
 }
 
-// TrackerRepo identifies a repository for cross-issue queries like Tracker.List.
-// Native is the provider's canonical owner/project form, e.g. "owner/repo" for
-// GitHub.
-type TrackerRepo struct {
+// TrackerScope identifies a provider-native scope for cross-issue queries like
+// Tracker.List. Native is "owner/repo" for GitHub and "team:<id>" or
+// "project:<id>" for Linear.
+type TrackerScope struct {
 	Provider TrackerProvider `json:"provider"`
 	Native   string          `json:"native"`
 }
@@ -84,10 +87,12 @@ type ListFilter struct {
 type TrackerIntakeConfig struct {
 	Enabled bool `json:"enabled,omitempty"`
 	// Provider defaults to github when Enabled is true.
-	Provider TrackerProvider `json:"provider,omitempty" enum:"github"`
+	Provider TrackerProvider `json:"provider,omitempty" enum:"github,linear"`
 	// Repo is the GitHub-native repository key ("owner/repo"). When empty, the
 	// intake loop derives it from the project's repo origin URL. GitHub only.
 	Repo string `json:"repo,omitempty"`
+	// Scope is required for Linear and uses "team:<id>" or "project:<id>".
+	Scope string `json:"scope,omitempty"`
 	// Assignee narrows eligible issues to one assignee. Provider-specific values
 	// such as "*" are passed through unchanged.
 	Assignee string `json:"assignee,omitempty"`
@@ -108,10 +113,13 @@ func (c TrackerIntakeConfig) Validate() error {
 		return nil
 	}
 	c = c.WithDefaults()
-	if c.Enabled && c.Provider != TrackerProviderGitHub {
+	if c.Provider != TrackerProviderGitHub && c.Provider != TrackerProviderLinear {
 		return fmt.Errorf("trackerIntake.provider: unsupported provider %q", c.Provider)
 	}
 	if err := validateNoWhitespaceField("trackerIntake.repo", c.Repo); err != nil {
+		return err
+	}
+	if err := validateNoWhitespaceField("trackerIntake.scope", c.Scope); err != nil {
 		return err
 	}
 	if err := validateNoWhitespaceField("trackerIntake.assignee", c.Assignee); err != nil {
@@ -119,6 +127,20 @@ func (c TrackerIntakeConfig) Validate() error {
 	}
 	if strings.TrimSpace(c.Assignee) == "" {
 		return fmt.Errorf("trackerIntake: assignee is required when enabled")
+	}
+	switch c.Provider {
+	case TrackerProviderGitHub:
+		if c.Scope != "" {
+			return fmt.Errorf("trackerIntake.scope: only valid for linear")
+		}
+	case TrackerProviderLinear:
+		if c.Repo != "" {
+			return fmt.Errorf("trackerIntake.repo: only valid for github")
+		}
+		kind, native, ok := strings.Cut(c.Scope, ":")
+		if !ok || (kind != "team" && kind != "project") || native == "" {
+			return fmt.Errorf(`trackerIntake.scope: linear scope must be "team:<id>" or "project:<id>"`)
+		}
 	}
 	return nil
 }

@@ -30,7 +30,14 @@ import { cn } from "../lib/utils";
 import { newestActiveOrchestrator } from "../types/workspace";
 import { AgentAvatar } from "./AgentAvatar";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
-import { buildIntake, deriveGitHubRepo, IntakeFields, type IntakeForm, intakeNeedsRule } from "./IntakeFields";
+import {
+	buildIntake,
+	deriveGitHubRepo,
+	IntakeFields,
+	type IntakeForm,
+	intakeNeedsRule,
+	intakeNeedsScope,
+} from "./IntakeFields";
 import { AgentSelectMenuItem } from "./settings/AgentSelectMenuItem";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import { SettingsPageShell } from "./settings/SettingsPageShell";
@@ -110,7 +117,9 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		permissions: config.agentConfig?.permissions ?? "",
 		reviewerHarness: config.reviewers?.[0]?.harness ?? "",
 		intakeEnabled: intake.enabled ?? false,
+		intakeProvider: intake.provider ?? "github",
 		intakeRepo: intake.repo ?? "",
+		intakeScope: intake.scope ?? "",
 		intakeAssignee: intake.assignee ?? "",
 	});
 	const [savedAt, setSavedAt] = useState<number | null>(null);
@@ -127,14 +136,18 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 
 	const intakeForm: IntakeForm = {
 		enabled: form.intakeEnabled,
+		provider: form.intakeProvider,
 		repo: form.intakeRepo,
+		scope: form.intakeScope,
 		assignee: form.intakeAssignee,
 	};
 	const patchIntake = (patch: Partial<IntakeForm>) =>
 		setForm((f) => ({
 			...f,
 			intakeEnabled: patch.enabled ?? f.intakeEnabled,
+			intakeProvider: patch.provider ?? f.intakeProvider,
 			intakeRepo: patch.repo ?? f.intakeRepo,
+			intakeScope: patch.scope ?? f.intakeScope,
 			intakeAssignee: patch.assignee ?? f.intakeAssignee,
 		}));
 	const effectiveIntakeRepo = form.intakeRepo.trim() || deriveGitHubRepo(project.repo);
@@ -217,7 +230,11 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					return;
 				}
 				if (intakeIncomplete) {
-					setValidationError("Enabling intake requires an assignee.");
+					setValidationError(
+						intakeNeedsScope(intakeForm)
+							? "Enabling Linear intake requires a team or project ID."
+							: "Enabling intake requires an assignee.",
+					);
 					return;
 				}
 				setValidationError(null);
@@ -373,7 +390,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						variant="settings"
 						form={intakeForm}
 						onChange={patchIntake}
-						repoPreview={{ value: effectiveIntakeRepo }}
+						repoPreview={form.intakeProvider === "github" ? { value: effectiveIntakeRepo } : undefined}
 					/>
 					<SaveChangesFooter
 						isPending={mutation.isPending}
