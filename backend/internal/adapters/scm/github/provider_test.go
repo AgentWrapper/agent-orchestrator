@@ -1473,3 +1473,62 @@ func TestFetchReviewThreadsFetchesOneOlderPageWhenOldestUnresolved(t *testing.T)
 		t.Fatalf("threads order = %#v", review.Threads)
 	}
 }
+
+func TestResolveReviewThread(t *testing.T) {
+	t.Run("resolves the thread and sends its node id", func(t *testing.T) {
+		f := newFakeGH(t)
+		f.on(http.MethodPost, "/graphql", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"resolveReviewThread": map[string]any{
+						"thread": map[string]any{"id": "THREAD_1", "isResolved": true},
+					},
+				},
+			})
+		})
+		p := newProviderForTest(t, f)
+
+		if err := p.ResolveReviewThread(ctx(), "THREAD_1"); err != nil {
+			t.Fatalf("ResolveReviewThread: %v", err)
+		}
+		calls := f.calls()
+		if len(calls) != 1 {
+			t.Fatalf("want 1 call, got %d", len(calls))
+		}
+		if !strings.Contains(calls[0].Body, "resolveReviewThread") || !strings.Contains(calls[0].Body, "THREAD_1") {
+			t.Fatalf("mutation body missing thread id: %s", calls[0].Body)
+		}
+	})
+
+	t.Run("rejects an empty thread id without calling GitHub", func(t *testing.T) {
+		f := newFakeGH(t)
+		p := newProviderForTest(t, f)
+
+		if err := p.ResolveReviewThread(ctx(), "  "); err == nil {
+			t.Fatal("want an error for a blank thread id")
+		}
+		if len(f.calls()) != 0 {
+			t.Fatalf("want no calls, got %d", len(f.calls()))
+		}
+	})
+
+	t.Run("errors when GitHub reports the thread still unresolved", func(t *testing.T) {
+		f := newFakeGH(t)
+		f.on(http.MethodPost, "/graphql", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"resolveReviewThread": map[string]any{
+						"thread": map[string]any{"id": "THREAD_1", "isResolved": false},
+					},
+				},
+			})
+		})
+		p := newProviderForTest(t, f)
+
+		if err := p.ResolveReviewThread(ctx(), "THREAD_1"); err == nil {
+			t.Fatal("want an error when the thread is still unresolved")
+		}
+	})
+}

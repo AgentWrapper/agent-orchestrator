@@ -1244,6 +1244,7 @@ export interface components {
         SessionPRReviewCommentLink: {
             file?: string;
             line?: number;
+            threadId?: string;
             url?: string;
         };
         SessionPRReviewEntry: {

@@ -3377,6 +3377,8 @@ components:
           type: string
         line:
           type: integer
+        threadId:
+          type: string
         url:
           type: string
       type: object

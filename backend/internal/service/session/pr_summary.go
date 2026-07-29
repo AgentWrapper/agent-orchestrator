@@ -91,6 +91,9 @@ type PRReviewCommentLink struct {
 	URL  string
 	File string
 	Line int
+	// ThreadID is the review thread the comment belongs to, which is what
+	// GitHub's resolve mutation addresses. Several comments can share one.
+	ThreadID string
 }
 
 // PRMergeabilitySummary describes whether a PR can be merged and why.
@@ -233,9 +236,10 @@ func summarizeReview(pr domain.PullRequest, comments []domain.PullRequestComment
 		byReviewer[reviewer]++
 		isBot[reviewer] = c.IsBot
 		links[reviewer] = append(links[reviewer], PRReviewCommentLink{
-			URL:  c.URL,
-			File: c.File,
-			Line: c.Line,
+			URL:      c.URL,
+			File:     c.File,
+			Line:     c.Line,
+			ThreadID: c.ThreadID,
 		})
 	}
 	latestReviews := latestChangesRequestedReviews(reviews)
