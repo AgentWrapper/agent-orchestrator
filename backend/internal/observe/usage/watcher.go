@@ -258,12 +258,16 @@ func (w *TranscriptWatcher) rebuildLocked() error {
 func (w *TranscriptWatcher) desiredWatchSetLocked() (map[string]struct{}, error) {
 	result := make(map[string]struct{})
 	for _, root := range w.roots {
-		info, err := os.Stat(root)
+		walkRoot, err := resolveTranscriptRoot(root)
+		if err != nil {
+			return nil, fmt.Errorf("resolve transcript root %q: %w", root, err)
+		}
+		info, err := os.Stat(walkRoot)
 		switch {
 		case err == nil && !info.IsDir():
 			return nil, fmt.Errorf("transcript root %q is not a directory", root)
 		case err == nil:
-			if err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+			if err := filepath.WalkDir(walkRoot, func(path string, entry fs.DirEntry, walkErr error) error {
 				if walkErr != nil {
 					return walkErr
 				}
@@ -292,6 +296,10 @@ func (w *TranscriptWatcher) withinDesiredRoot(path string) bool {
 		if pathWithin(path, root) {
 			return true
 		}
+		resolved, err := resolveTranscriptRoot(root)
+		if err == nil && pathWithin(path, resolved) {
+			return true
+		}
 	}
 	return false
 }
@@ -299,6 +307,10 @@ func (w *TranscriptWatcher) withinDesiredRoot(path string) bool {
 func (w *TranscriptWatcher) directoryRelevant(path string) bool {
 	for _, root := range w.roots {
 		if pathWithin(path, root) || pathWithin(root, path) {
+			return true
+		}
+		resolved, err := resolveTranscriptRoot(root)
+		if err == nil && (pathWithin(path, resolved) || pathWithin(resolved, path)) {
 			return true
 		}
 	}
@@ -343,6 +355,27 @@ func normalizeTranscriptRoots(roots []string) ([]string, error) {
 	}
 	sort.Strings(result)
 	return result, nil
+}
+
+func resolveTranscriptRoot(path string) (string, error) {
+	info, err := os.Lstat(path)
+	switch {
+	case err == nil && info.Mode()&os.ModeSymlink != 0:
+		resolved, err := filepath.EvalSymlinks(path)
+		if errors.Is(err, os.ErrNotExist) {
+			return filepath.Clean(path), nil
+		}
+		if err != nil {
+			return "", err
+		}
+		return filepath.Clean(resolved), nil
+	case err == nil:
+		return filepath.Clean(path), nil
+	case errors.Is(err, os.ErrNotExist):
+		return filepath.Clean(path), nil
+	default:
+		return "", err
+	}
 }
 
 func nearestExistingDirectory(path string) (string, error) {
