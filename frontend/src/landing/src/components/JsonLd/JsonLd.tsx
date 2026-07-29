@@ -43,7 +43,6 @@ export function OrganizationJsonLd() {
 			"@type": "ContactPoint",
 			contactType: "customer support",
 			email: supportEmail,
-			url: `${COMPANY.MARKETING_URL}/contact`,
 			availableLanguage: "English",
 		},
 		address: {

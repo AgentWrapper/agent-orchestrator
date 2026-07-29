@@ -1,33 +1,34 @@
+import { COMPANY } from "@ao/shared/constants";
 import type { Metadata } from "next";
 
-const LAST_UPDATED = "29 July 2026";
+const LAST_UPDATED = "30 July 2026";
 
 const description =
-  "How Agent Orchestrator handles your data: the AO Mobile companion app, the desktop app and CLI, and aoagents.dev. No accounts, no data sales, and anonymous telemetry you can turn off.";
+  "How Agent Orchestrator handles data in AO Mobile, the desktop app and CLI, and aoagents.dev: local-first operation, optional analytics, and waitlist email processing.";
 
 export const metadata: Metadata = {
-  title: "Privacy Policy - Agent Orchestrator",
+  title: "Privacy Policy",
   description,
   openGraph: {
     type: "article",
-    url: "https://aoagents.dev/privacy/",
-    siteName: "Agent Orchestrator",
-    title: "Privacy Policy - Agent Orchestrator",
+    url: `${COMPANY.MARKETING_URL}/privacy/`,
+    siteName: COMPANY.NAME,
+    title: `Privacy Policy | ${COMPANY.NAME}`,
     description,
   },
   twitter: {
     card: "summary",
     site: "@aoagents",
-    title: "Privacy Policy - Agent Orchestrator",
+    title: `Privacy Policy | ${COMPANY.NAME}`,
     description,
   },
   alternates: {
-    canonical: "https://aoagents.dev/privacy/",
+    canonical: `${COMPANY.MARKETING_URL}/privacy/`,
   },
 };
 
-const ISSUES_URL = "https://github.com/AgentWrapper/agent-orchestrator/issues";
-const DISCORD_URL = "https://discord.com/invite/UZv7JjxbwG";
+const ISSUES_URL = COMPANY.REPORT_ISSUE_URL;
+const DISCORD_URL = COMPANY.DISCORD_URL;
 
 function Section({
   id,
@@ -95,7 +96,7 @@ const toc = [
   { id: "mobile", label: "AO Mobile app" },
   { id: "desktop", label: "Desktop app & CLI" },
   { id: "website", label: "This website" },
-  { id: "not-collected", label: "What we never collect" },
+  { id: "not-collected", label: "Data we do not collect" },
   { id: "third-parties", label: "Third-party services" },
   { id: "security", label: "Storage & security" },
   { id: "retention", label: "Retention & deletion" },
@@ -120,14 +121,16 @@ export default function PrivacyPage() {
         <div className="mt-9 rounded-[8px] border border-border bg-card/50 p-6 sm:p-7">
           <p className="text-[15px] leading-[1.75] text-muted-foreground sm:text-[16px]">
             <Strong>The short version.</Strong> Agent Orchestrator runs on your
-            own machine. There are no accounts, no sign-ups, and no profiles. We
-            never see your source code, your prompts, your agent output, your
-            terminal contents, your repository names, or your file paths, and we
-            never sell or rent data to anyone. The desktop app sends{" "}
+            own machine. No account is required, and no hosted AO service stores
+            your work. We never see your source code, prompts, agent output,
+            terminal contents, repository names, or file paths, and we never
+            sell or rent data to anyone. The desktop app sends{" "}
             <Strong>anonymous, redacted usage telemetry</Strong> so we can tell
-            whether releases are stable — you can turn it off. The mobile app
-            sends <Strong>no telemetry at all</Strong> and talks only to the
-            server you point it at.
+            whether releases are stable — you can turn it off. Website analytics
+            stay off until you accept them. If you voluntarily join the
+            Windows/Linux waitlist, we process the email you submit only for
+            that purpose. The mobile app sends <Strong>no telemetry at all</Strong>{" "}
+            and talks only to the server you point it at.
           </p>
         </div>
 
@@ -269,9 +272,10 @@ export default function PrivacyPage() {
             </p>
             <Bullets>
               <Bullet>
-                App activation (capped to once per day per install), screen or
-                route views grouped into coarse surface names, and coarse UI
-                actions such as creating a task or starting a session.
+                App activation (capped to one event per six-hour UTC slot per
+                install and channel), screen or route views grouped into coarse
+                surface names, and coarse UI actions such as creating a task or
+                starting a session.
               </Bullet>
               <Bullet>
                 Operational events from the local daemon: command invocation,
@@ -353,10 +357,20 @@ export default function PrivacyPage() {
             <p>
               aoagents.dev is a static site and runs no advertising. It uses
               PostHog analytics cookies to understand site usage and improve the
-              experience. The consent banner lets you accept analytics or opt
-              out, and stores that preference in your browser's local storage.
-              Session recording is disabled on the marketing site. Fonts are
-              self-hosted. Other services involved when you browse are:
+              experience, but analytics collection is disabled by default until
+              you select <Strong>Accept</Strong>. Selecting opt-out keeps
+              collection disabled. The choice is stored in your browser's local
+              storage, no PostHog person profile is created, and session
+              recording is disabled on the marketing site.
+            </p>
+            <p>
+              The optional Windows/Linux waitlist is separate from analytics.
+              When you submit it, the email address and requested platform are
+              sent to PostHog solely to manage that waitlist, even if you opted
+              out of site analytics. The form discloses this before submission,
+              and submitting it does not enable analytics for later browsing.
+              Fonts are self-hosted. Other services involved when you browse
+              are:
             </p>
             <Bullets>
               <Bullet>
@@ -377,7 +391,7 @@ export default function PrivacyPage() {
             </p>
           </Section>
 
-          <Section id="not-collected" title="What we never collect">
+          <Section id="not-collected" title="Data we do not collect">
             <Bullets>
               <Bullet>
                 Your source code, diffs, commits, or repository contents.
@@ -395,7 +409,9 @@ export default function PrivacyPage() {
                 API keys, tokens, passwords, or any other credential.
               </Bullet>
               <Bullet>
-                Names, email addresses, or any account or contact information.
+                Names or account information. The only email address we collect
+                is one you voluntarily submit through the optional
+                Windows/Linux waitlist.
               </Bullet>
               <Bullet>Precise location data.</Bullet>
               <Bullet>
@@ -417,7 +433,8 @@ export default function PrivacyPage() {
             <Bullets>
               <Bullet>
                 <Strong>PostHog</Strong> — product analytics for the desktop
-                app, CLI, and website (
+                app, CLI, and website, plus storage of voluntarily submitted
+                Windows/Linux waitlist emails (
                 <Ext href="https://posthog.com/privacy">privacy policy</Ext>).
               </Bullet>
               <Bullet>
@@ -500,6 +517,12 @@ export default function PrivacyPage() {
                 identifier tied to you personally, we generally cannot link them
                 back to an individual.
               </Bullet>
+              <Bullet>
+                <Strong>Waitlist emails.</Strong> Retained in PostHog while
+                needed to notify you about Windows or Linux availability, then
+                deleted. You may request earlier deletion using the private
+                contact address below.
+              </Bullet>
             </Bullets>
           </Section>
 
@@ -515,10 +538,11 @@ export default function PrivacyPage() {
               hands: delete the app, delete <Code>~/.ao</Code>, and it is gone.
               For the anonymous telemetry, the most direct way to exercise
               control is to turn it off using the settings described above. If
-              you believe we hold data about you and want it removed, open an
-              issue and we will act on it. We do not sell or share personal
-              information as those terms are defined under US state privacy
-              laws.
+              you submitted a waitlist email or believe we hold other data about
+              you, contact us privately at{" "}
+              <Ext href={COMPANY.MAIL_TO}>{COMPANY.MAIL_TO.replace("mailto:", "")}</Ext>{" "}
+              and we will act on the request. We do not sell or share personal
+              information as those terms are defined under US state privacy laws.
             </p>
           </Section>
 
@@ -540,8 +564,11 @@ export default function PrivacyPage() {
 
           <Section id="contact" title="Contact">
             <p>
-              Questions, corrections, or privacy requests are handled in the
-              open, in the project's public repository:
+              Send privacy requests or information you do not want to make
+              public to{" "}
+              <Ext href={COMPANY.MAIL_TO}>{COMPANY.MAIL_TO.replace("mailto:", "")}</Ext>.
+              General questions and corrections can also use these public
+              channels:
             </p>
             <Bullets>
               <Bullet>
