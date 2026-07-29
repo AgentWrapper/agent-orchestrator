@@ -26,7 +26,7 @@ import { getAgentActivityView } from "../lib/session-presentation";
 import { isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { StatusPill } from "./StatusPill";
 import { TopbarButton, TopbarKillError, topbarHeaderClass, topbarProjectLabelClass } from "./TopbarButton";
-import { SessionTerminationDialog } from "./SessionTerminationDialog";
+import { SessionTerminationPopover } from "./SessionTerminationPopover";
 
 const isMac = isMacPlatform();
 const boardActionsInPanel = usesBoardActionsInPanel();
@@ -313,30 +313,29 @@ export function TopbarKillButton({
 	};
 
 	return (
-		<>
-			<div className="inline-flex items-center gap-1.5" style={noDragStyle}>
-				<TopbarButton
-					aria-label={isPending ? "Killing..." : "Kill session"}
-					disabled={isPending}
-					onClick={() => {
-						clearTerminateSessionState(queryClient, session.id);
-						setConfirmOpen(true);
-					}}
-					title="Kill session"
-					variant="kill"
-				>
-					<Trash2 className="size-icon-lg" aria-hidden="true" />
-					{isPending ? "Killing..." : "Kill"}
-				</TopbarButton>
-				{error ? <TopbarKillError>{error}</TopbarKillError> : null}
-			</div>
-			<SessionTerminationDialog
+		<div className="inline-flex items-center gap-1.5" style={noDragStyle}>
+			<SessionTerminationPopover
 				onConfirm={confirmKill}
 				onOpenChange={setConfirmOpen}
 				open={confirmOpen}
 				session={session}
+				trigger={
+					<TopbarButton
+						aria-label={isPending ? "Killing..." : "Kill session"}
+						disabled={isPending}
+						onClick={() => {
+							clearTerminateSessionState(queryClient, session.id);
+						}}
+						title="Kill session"
+						variant="kill"
+					>
+						<Trash2 className="size-icon-lg" aria-hidden="true" />
+						{isPending ? "Killing..." : "Kill"}
+					</TopbarButton>
+				}
 			/>
-		</>
+			{error ? <TopbarKillError>{error}</TopbarKillError> : null}
+		</div>
 	);
 }
 

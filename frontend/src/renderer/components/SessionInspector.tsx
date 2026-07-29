@@ -33,7 +33,7 @@ import { cn } from "../lib/utils";
 import { PRSummaryMeta, PRSummaryParts } from "./PRSummaryDisplay";
 import { StatusPill } from "./StatusPill";
 import { CodexIcon } from "./icons";
-import { SessionTerminationDialog } from "./SessionTerminationDialog";
+import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { Switch } from "./ui/switch";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
@@ -425,19 +425,24 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 	return (
 		<Section title="Completion">
 			{canTerminateNow ? (
-					<div className="flex items-center justify-between gap-3 py-1">
+				<div className="flex items-center justify-between gap-3 py-1">
 					<span className="min-w-0 text-xs font-medium text-settings-label">Terminate</span>
-					<button
-						aria-label="Terminate session"
-						className="inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-colors hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-						onClick={() => {
-							clearTerminateSessionState(queryClient, session.id);
-							setConfirmOpen(true);
-						}}
-						type="button"
-					>
-						<Trash2 className="size-icon-sm" aria-hidden="true" />
-					</button>
+					<SessionTerminationPopover
+						onConfirm={confirmTermination}
+						onOpenChange={setConfirmOpen}
+						open={confirmOpen}
+						session={session}
+						trigger={
+							<button
+								aria-label="Terminate session"
+								className="inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-colors hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+								onClick={() => clearTerminateSessionState(queryClient, session.id)}
+								type="button"
+							>
+								<Trash2 className="size-icon-sm" aria-hidden="true" />
+							</button>
+						}
+					/>
 				</div>
 			) : (
 				<>
@@ -460,12 +465,6 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 					) : null}
 				</>
 			)}
-			<SessionTerminationDialog
-				onConfirm={confirmTermination}
-				onOpenChange={setConfirmOpen}
-				open={confirmOpen}
-				session={session}
-			/>
 		</Section>
 	);
 }

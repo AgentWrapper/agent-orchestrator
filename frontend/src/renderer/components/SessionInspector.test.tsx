@@ -271,7 +271,9 @@ describe("SessionInspector completion controls", () => {
 		).not.toBeInTheDocument();
 		await userEvent.click(screen.getByRole("button", { name: "Terminate session" }));
 		expect(screen.getByRole("dialog", { name: "Terminate do the thing?" })).toBeInTheDocument();
-		await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Terminate session" }));
+		await userEvent.click(
+			within(screen.getByRole("dialog")).getByRole("button", { name: "Yes, terminate session" }),
+		);
 
 		expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/kill", {
 			params: { path: { sessionId: "sess-1" } },
@@ -288,7 +290,9 @@ describe("SessionInspector completion controls", () => {
 		renderWithQuery(<SessionInspector session={session([pr(7, "merged")], { status: "merged" })} />);
 
 		await userEvent.click(screen.getByRole("button", { name: "Terminate session" }));
-		await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Terminate session" }));
+		await userEvent.click(
+			within(screen.getByRole("dialog")).getByRole("button", { name: "Yes, terminate session" }),
+		);
 
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();

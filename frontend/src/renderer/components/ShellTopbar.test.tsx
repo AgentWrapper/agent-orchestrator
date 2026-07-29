@@ -146,7 +146,7 @@ function renderKill(session: WorkspaceSession = worker, orchestratorId?: string)
 
 async function clickKillDialogConfirm() {
 	const dialog = await screen.findByRole("dialog", { name: "Terminate do the thing?" });
-	await userEvent.click(within(dialog).getByRole("button", { name: "Terminate session" }));
+	await userEvent.click(within(dialog).getByRole("button", { name: "Yes, terminate session" }));
 }
 
 beforeEach(() => {
@@ -328,16 +328,18 @@ describe("ShellTopbar inspector state", () => {
 });
 
 describe("TopbarKillButton", () => {
-	it("opens the shared confirmation modal before killing an active session", async () => {
+	it("opens a compact confirmation card below the kill control", async () => {
 		renderKill();
 
-		await userEvent.click(screen.getByRole("button", { name: "Kill session" }));
+		const killButton = screen.getByRole("button", { name: "Kill session" });
+		await userEvent.click(killButton);
 		expect(postMock).not.toHaveBeenCalled();
-		expect(screen.getByRole("dialog", { name: "Terminate do the thing?" })).toHaveClass(
-			"left-[50%]",
-			"top-[50%]",
-			"bg-settings-dialog",
-		);
+		expect(killButton).toHaveAttribute("aria-expanded", "true");
+		const confirmation = screen.getByRole("dialog", { name: "Terminate do the thing?" });
+		expect(confirmation).toHaveClass("w-64", "bg-popover", "p-3");
+		expect(confirmation).toHaveAttribute("data-side", "bottom");
+		expect(within(confirmation).getByRole("button", { name: "No" })).toBeInTheDocument();
+		expect(within(confirmation).getByRole("button", { name: "Yes, terminate session" })).toHaveTextContent("Yes");
 
 		await clickKillDialogConfirm();
 
@@ -352,7 +354,7 @@ describe("TopbarKillButton", () => {
 		renderKill();
 
 		await userEvent.click(screen.getByRole("button", { name: "Kill session" }));
-		await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+		await userEvent.click(screen.getByRole("button", { name: "No" }));
 
 		expect(screen.getByRole("button", { name: "Kill session" })).toBeInTheDocument();
 		expect(postMock).not.toHaveBeenCalled();

@@ -1001,7 +1001,7 @@ describe("SessionsBoard", () => {
 		await userEvent.click(terminateButton);
 		expect(navigateMock).not.toHaveBeenCalled();
 		const dialog = screen.getByRole("dialog", { name: "Terminate merged worker?" });
-		await userEvent.click(within(dialog).getByRole("button", { name: "Terminate session" }));
+		await userEvent.click(within(dialog).getByRole("button", { name: "Yes, terminate session" }));
 
 		await waitFor(() =>
 			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/kill", {
@@ -1032,7 +1032,9 @@ describe("SessionsBoard", () => {
 		renderBoard("p1");
 
 		await userEvent.click(screen.getByRole("button", { name: "Terminate worker one" }));
-		await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Terminate session" }));
+		await userEvent.click(
+			within(screen.getByRole("dialog")).getByRole("button", { name: "Yes, terminate session" }),
+		);
 
 		expect(screen.getByRole("button", { name: "Killing worker one" })).toBeDisabled();
 		expect(screen.getByRole("button", { name: "Killing worker one" })).toHaveClass("opacity-100");
@@ -1053,7 +1055,9 @@ describe("SessionsBoard", () => {
 		renderBoard("p1");
 
 		await userEvent.click(screen.getByRole("button", { name: "Terminate merged worker" }));
-		await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Terminate session" }));
+		await userEvent.click(
+			within(screen.getByRole("dialog")).getByRole("button", { name: "Yes, terminate session" }),
+		);
 
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();

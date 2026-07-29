@@ -56,7 +56,7 @@ import { isLinuxPlatform, isMacPlatform, usesBoardActionsInPanel } from "../lib/
 import { useUiStore } from "../stores/ui-store";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
-import { SessionTerminationDialog } from "./SessionTerminationDialog";
+import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { DaemonStartupLoader } from "./DaemonStartupLoader";
 import { useShellMaybe } from "../lib/shell-context";
 
@@ -153,7 +153,6 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const [restoringSessionId, setRestoringSessionId] = useState<string | undefined>();
 	const [restoreErrors, setRestoreErrors] = useState<Record<string, string>>({});
 	const [restoreUnavailableSession, setRestoreUnavailableSession] = useState<WorkspaceSession | undefined>();
-	const [terminationSession, setTerminationSession] = useState<WorkspaceSession | undefined>();
 	const terminateSession = useTerminateSession();
 	const activeProjectIdRef = useRef(projectId);
 	activeProjectIdRef.current = projectId;
@@ -161,7 +160,6 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 		setRestoringSessionId(undefined);
 		setRestoreErrors({});
 		setRestoreUnavailableSession(undefined);
-		setTerminationSession(undefined);
 	}, [projectId]);
 
 	const openSession = (session: WorkspaceSession) =>
@@ -354,10 +352,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 									col={col}
 									sessions={byZone.get(col.zone) ?? []}
 									onOpen={openSession}
-									onTerminate={(session) => {
-										clearTerminateSessionState(queryClient, session.id);
-										setTerminationSession(session);
-									}}
+									onTerminate={(session) => terminateSession.mutate(session)}
 								/>
 							))}
 						</div>
@@ -429,19 +424,6 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 					}}
 				/>
 			)}
-			<SessionTerminationDialog
-				onConfirm={() => {
-					if (!terminationSession) return;
-					const target = terminationSession;
-					setTerminationSession(undefined);
-					terminateSession.mutate(target);
-				}}
-				onOpenChange={(open) => {
-					if (!open) setTerminationSession(undefined);
-				}}
-				open={terminationSession !== undefined}
-				session={terminationSession}
-			/>
 		</div>
 	);
 }
@@ -767,6 +749,8 @@ function SessionCard({
 	onTerminate?: () => void;
 	interactive?: boolean;
 }) {
+	const queryClient = useQueryClient();
+	const [confirmOpen, setConfirmOpen] = useState(false);
 	const badge = getSessionStatusView(session.status);
 	const issueId = canonicalTrackerIssueId(session.issueId);
 	const branch = session.branch || "";
@@ -802,28 +786,39 @@ function SessionCard({
 			data-session-id={session.id}
 		>
 			{showTerminate ? (
-				<button
-					aria-label={termination.isPending ? `Killing ${session.title}` : `Terminate ${session.title}`}
-					className={cn(
-						"absolute right-2 top-1.5 z-10 inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-[color,background-color,opacity] hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
-						keepTerminateVisible || termination.isPending
-							? "opacity-100"
-							: "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100",
-					)}
-					onClick={(event) => {
-						event.stopPropagation();
+				<SessionTerminationPopover
+					onConfirm={() => {
+						setConfirmOpen(false);
 						onTerminate();
 					}}
-					disabled={termination.isPending}
-					title={termination.isPending ? "Killing session" : "Terminate session"}
-					type="button"
-				>
-					{termination.isPending ? (
-						<LoaderCircle className="size-icon-sm animate-spin" aria-hidden="true" />
-					) : (
-						<Trash2 className="size-icon-sm" aria-hidden="true" />
-					)}
-				</button>
+					onOpenChange={setConfirmOpen}
+					open={confirmOpen}
+					session={session}
+					trigger={
+						<button
+							aria-label={termination.isPending ? `Killing ${session.title}` : `Terminate ${session.title}`}
+							className={cn(
+								"absolute right-2 top-1.5 z-10 inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-[color,background-color,opacity] hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+								keepTerminateVisible || termination.isPending
+									? "opacity-100"
+									: "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100",
+							)}
+							onClick={(event) => {
+								event.stopPropagation();
+								clearTerminateSessionState(queryClient, session.id);
+							}}
+							disabled={termination.isPending}
+							title={termination.isPending ? "Killing session" : "Terminate session"}
+							type="button"
+						>
+							{termination.isPending ? (
+								<LoaderCircle className="size-icon-sm animate-spin" aria-hidden="true" />
+							) : (
+								<Trash2 className="size-icon-sm" aria-hidden="true" />
+							)}
+						</button>
+					}
+				/>
 			) : null}
 			<div className="flex items-start gap-2.5 px-3.5 pb-2.5 pt-3">
 				<AgentAvatar className="mt-0.5" provider={session.provider} />
