@@ -1,6 +1,6 @@
 "use client";
 
-import { signInWithGoogle, signOut, type Session } from "@ao/auth/client";
+import { signOut, type Session } from "@ao/auth/client";
 import {
   createContext,
   useCallback,
@@ -83,23 +83,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = useCallback(async () => {
     setError(null);
-    const client = getSupabaseBrowserClient();
-    if (!client) {
-      setError("AO Cloud login is not configured for this deployment.");
-      return;
-    }
-
-    const callbackUrl = new URL("/auth/callback", window.location.origin);
-
-    try {
-      const { error: loginError } = await signInWithGoogle(
-        client,
-        callbackUrl.toString(),
-      );
-      if (loginError) setError(loginError.message);
-    } catch (loginError) {
-      setError(errorMessage(loginError));
-    }
+    window.location.assign("/auth");
   }, []);
 
   const logout = useCallback(async () => {

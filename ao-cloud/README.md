@@ -20,7 +20,7 @@ Prerequisites:
 
 - Go, Node.js, npm, PostgreSQL 17, Docker
 - authenticated `gh` CLI for the development Git credential broker
-- Supabase project with Google Auth enabled
+- Supabase project with Email Auth enabled
 - Daytona API key
 
 Create local databases once:
@@ -69,19 +69,20 @@ Daytona, encryption, worker-signing, and Git credentials remain server-side.
 
 ## Supabase configuration
 
-1. Enable Google under Authentication → Providers.
-2. Configure the Google client ID and secret in the Supabase dashboard.
-3. Add local redirect:
+1. Keep Email enabled under Authentication → Providers.
+2. Add local redirect:
 
    ```text
    http://127.0.0.1:5174/auth/callback
    ```
 
-4. Add the Vercel callback after deployment.
-5. Obtain the pooled runtime and direct migration PostgreSQL URLs from the
+3. Add the Vercel callback after deployment.
+4. Obtain the pooled runtime and direct migration PostgreSQL URLs from the
    Supabase Connect panel.
-6. Set `AO_DATABASE_URL` to the runtime connection and apply/verify migrations
+5. Set `AO_DATABASE_URL` to the runtime connection and apply/verify migrations
    with the direct connection before production rollout.
+
+Google OAuth can be enabled later without changing AO's account model.
 
 The control plane validates HS256 Supabase access tokens through
 `/auth/v1/user`. It does not locally trust or expose the legacy JWT signing
@@ -186,7 +187,6 @@ to the Supabase Auth redirect allowlist.
 
 ## Current external blockers
 
-- Google Auth is disabled in the supplied Supabase project.
 - No Supabase PostgreSQL connection URL/password was supplied, so hosted schema
   migration cannot yet be applied or verified; local PostgreSQL is verified.
 - Daytona lifecycle create/get/delete is verified, as are worker upload and

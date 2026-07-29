@@ -30,7 +30,7 @@ Implemented on `feat/cloud-agent-v1`:
 - reusable existing Claude Code, Codex, Cursor, and other AO agent adapters;
 - local-development GitHub repository listing and scoped Git smart-HTTP proxy
   backed by the host's `gh` login;
-- real Supabase Google login/logout UI, cloud project/session/provider flows,
+- real Supabase email login/signup/logout UI, cloud project/session/provider flows,
   and xterm terminal surface;
 - control-plane and complete three-agent worker images;
 - Render and Vercel deployment configuration/documentation.
@@ -47,7 +47,6 @@ Verified locally:
 
 External completion blockers:
 
-- Google Auth remains disabled in the supplied Supabase project;
 - a Supabase PostgreSQL connection URL/password was not supplied, so the hosted
   schema cannot yet be applied or verified;
 - the tested Daytona sandbox reset all outbound HTTPS connections, including
@@ -762,8 +761,8 @@ Use a standards-based identity boundary so the provider can be replaced.
 For the fastest testable first setup, the recommendation is:
 
 - Supabase-hosted PostgreSQL plus Supabase Auth;
-- Google login enabled initially;
-- optional email/password after email verification and recovery are configured;
+- email/password enabled initially;
+- Google OAuth can be added later;
 - Go verifies access tokens using issuer/JWKS;
 - AO authorization remains in AO tables, not only in identity-provider claims.
 
@@ -1091,8 +1090,7 @@ Recommended Supabase path:
 - [ ] server-only PostgreSQL connection string
 - [ ] server-only service-role key only if an approved flow requires it
 - [ ] JWT issuer/JWKS details
-- [ ] Google OAuth enabled in Supabase
-- [ ] Google OAuth client ID and secret configured in Supabase, not committed
+- [ ] Supabase Email Auth enabled
 - [ ] allowed local and deployed callback URLs
 
 Alternative path:
@@ -1170,10 +1168,10 @@ closed when accidentally prefixed/exposed to frontend builds.
 
 ### 1. Initial identity and database provider
 
-Use **Supabase PostgreSQL + Supabase Auth + Google login** for the first
+Use **Supabase PostgreSQL + Supabase Email Auth** for the first
 AO-managed cloud deployment. Keep identity behind an AO interface and keep the
 database schema standard PostgreSQL so this choice does not become a permanent
-domain dependency.
+domain dependency. Google OAuth can be enabled later.
 
 ### 2. Personal account scope first
 

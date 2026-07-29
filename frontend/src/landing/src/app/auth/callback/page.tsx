@@ -69,7 +69,7 @@ export default function AuthCallbackPage() {
           className="mt-2 text-sm text-muted-foreground"
           role={error ? "alert" : undefined}
         >
-          {error ?? "Verifying your Google account…"}
+          {error ?? "Verifying your account…"}
         </p>
         {error && (
           <a

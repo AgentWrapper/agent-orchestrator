@@ -146,7 +146,7 @@ export default function CloudAppPage() {
             className={`${primaryButton} mt-5`}
             onClick={() => void login()}
           >
-            Continue with Google
+            Continue with email
           </button>
         </section>
       </main>
