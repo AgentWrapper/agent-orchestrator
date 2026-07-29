@@ -207,8 +207,11 @@ adapter's default `WorkspaceRoot`).
 Build from the repo root and register (Daytona requires amd64 + pinned tags):
 
 ```bash
-docker build --platform linux/amd64 \
-  -f test/daytona-snapshot/Dockerfile -t ao-agent-sandbox:<version> .
+# --provenance/--sbom off: the Daytona CLI cannot inspect buildx attestation
+# manifest lists ("failed to check image architecture") — verified live.
+docker buildx build --provenance=false --sbom=false --platform linux/amd64 \
+  -f test/daytona-snapshot/Dockerfile -t ao-agent-sandbox:<version> --load .
+daytona login --api-key $DAYTONA_API_KEY   # the CLI ignores the env var for push
 daytona snapshot push ao-agent-sandbox:<version> --name ao-agent-sandbox:<version>
 # or: docker push ghcr.io/<org>/ao-agent-sandbox:<version> && \
 #     daytona snapshot create ao-agent-sandbox:<version> --image ghcr.io/<org>/ao-agent-sandbox:<version>
