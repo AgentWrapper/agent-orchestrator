@@ -76,7 +76,7 @@ function available(builds: Array<DownloadBuild | null>): DownloadBuild[] {
 }
 
 // Inline code style matches the changelog PR badge (bg-muted + font-mono) so the
-// shell snippets read as code without pulling in the MDX renderer.
+// file and folder names read as code without pulling in the MDX renderer.
 function Code({ children }: { children: string }) {
   return (
     <code className="break-all rounded bg-muted px-1.5 py-0.5 font-mono text-[0.85em] text-foreground">
@@ -85,13 +85,18 @@ function Code({ children }: { children: string }) {
   );
 }
 
-// macOS Gatekeeper can refuse a first launch with "the developer cannot be
-// verified" even though every build we ship is Developer ID signed, hardened,
-// notarized, and stapled. Gatekeeper still does an online notarization-ticket
-// lookup against api.apple-cloudkit.com when the download carries Chrome's
-// com.apple.quarantine flag, and a VPN, corporate firewall, or DNS filter that
-// blocks that request surfaces the same dialog as genuine malware. Without this
-// note the app reads as unsigned, so users trash it instead of retrying.
+// macOS can refuse a first launch with "the developer cannot be verified" even
+// though every build we ship is Developer ID signed, hardened, notarized, and
+// stapled (verified on the published assets). Right-click + Open is the
+// documented way through it and is safe: the user still gets an explicit consent
+// prompt and Gatekeeper still evaluates the signature.
+//
+// Deliberately NOT documented here: `xattr -dr com.apple.quarantine`. It tells
+// every visitor to strip quarantine from an app before macOS has evaluated it,
+// which is bad advice on a public page regardless of this bug, and it would hide
+// the underlying cause instead of surfacing it. The cause is still under
+// investigation, so this copy stays symptom-only and asks people to report the
+// diagnostics we need rather than asserting a mechanism we have not confirmed.
 function MacUnblockNotice() {
   return (
     <section className="mt-16">
@@ -105,9 +110,8 @@ function MacUnblockNotice() {
             cannot be opened because the developer cannot be verified
           </span>
           . Every macOS build is signed with our Apple Developer ID and notarized
-          by Apple. This dialog usually means Gatekeeper could not reach Apple to
-          confirm the notarization, which a VPN, company firewall, or DNS filter
-          can block. Either step below opens it.
+          by Apple, so this is not a sign the download is unsafe. Opening it from
+          Finder the first time gets you through it.
         </p>
       </div>
 
@@ -136,35 +140,29 @@ function MacUnblockNotice() {
 
         <article className="flex flex-col rounded-2xl bg-card p-5 sm:p-6">
           <h3 className="text-base font-semibold text-foreground">
-            Or use the Terminal
+            If that does not work
           </h3>
           <p className="mt-4 text-sm leading-6 text-muted-foreground">
-            Clear the quarantine flag that your browser attached to the
-            download:
+            Please report it so we can find the cause rather than work around it.
+            Including this output helps most:
           </p>
           <div className="mt-3 overflow-x-auto rounded-xl bg-muted p-3">
             <pre className="whitespace-pre font-mono text-xs leading-6 text-foreground">
               <code>
-                xattr -dr com.apple.quarantine &quot;/Applications/Agent
-                Orchestrator.app&quot;
+                {`sw_vers\ncodesign -dvvv "/Applications/Agent Orchestrator.app"\nspctl -a -t exec -vvv "/Applications/Agent Orchestrator.app"\nlog show --last 10m --predicate 'subsystem == "com.apple.syspolicy"'`}
               </code>
             </pre>
           </div>
           <p className="mt-4 text-sm leading-6 text-muted-foreground">
-            Downloading with <Code>curl</Code> avoids the flag entirely, because
-            it never marks the file as quarantined:
-          </p>
-          <div className="mt-3 overflow-x-auto rounded-xl bg-muted p-3">
-            <pre className="whitespace-pre font-mono text-xs leading-6 text-foreground">
-              <code>
-                {`curl -L -o ao.zip \\\n  ${DOWNLOAD_URL_MAC_ARM64}\nditto -x -k ao.zip .\nmv "Agent Orchestrator.app" /Applications/`}
-              </code>
-            </pre>
-          </div>
-          <p className="mt-3 text-sm leading-6 text-muted-foreground">
-            Use <Code>ditto</Code> rather than double-clicking the zip so the
-            bundle&apos;s internal symlinks survive extraction. On an Intel Mac,
-            swap <Code>arm64</Code> for <Code>x64</Code>.
+            The last command is the useful one: it is macOS stating its own
+            reason for refusing the app.{" "}
+            <a
+              href={COMPANY.REPORT_ISSUE_URL}
+              className="text-foreground underline underline-offset-4 hover:opacity-75"
+            >
+              Open an issue
+            </a>{" "}
+            with it attached.
           </p>
         </article>
       </div>
