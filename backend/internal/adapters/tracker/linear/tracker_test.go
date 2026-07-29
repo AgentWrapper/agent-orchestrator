@@ -154,7 +154,7 @@ func TestListTeamScopePaginatesAndAppliesFilters(t *testing.T) {
 			t.Errorf("scope = %#v, want team-id", req.Variables["scope"])
 		}
 		wantFilter := map[string]any{
-			"state": map[string]any{"type": map[string]any{"nin": []any{"completed", "canceled"}}},
+			"state": map[string]any{"type": map[string]any{"nin": []any{"completed", "canceled", "duplicate"}}},
 			"assignee": map[string]any{
 				"name": map[string]any{"eqIgnoreCase": "Alice"},
 			},
@@ -169,7 +169,8 @@ func TestListTeamScopePaginatesAndAppliesFilters(t *testing.T) {
 			_, _ = io.WriteString(w, `{"data":{"team":{"issues":{
 				"nodes":[
 					{"id":"issue-1","title":"Open","description":"","url":"https://linear.app/i/1","state":{"type":"unstarted","name":"Todo"},"labels":{"nodes":[{"name":"agent-ready"}]},"assignee":{"name":"Alice"}},
-					{"id":"issue-2","title":"Done","description":"","url":"https://linear.app/i/2","state":{"type":"completed","name":"Done"},"labels":{"nodes":[]},"assignee":{"name":"Alice"}}
+					{"id":"issue-2","title":"Done","description":"","url":"https://linear.app/i/2","state":{"type":"completed","name":"Done"},"labels":{"nodes":[]},"assignee":{"name":"Alice"}},
+					{"id":"issue-duplicate","title":"Duplicate","description":"","url":"https://linear.app/i/duplicate","state":{"type":"duplicate","name":"Duplicate"},"labels":{"nodes":[{"name":"agent-ready"}]},"assignee":{"name":"Alice"}}
 				],
 				"pageInfo":{"hasNextPage":true,"endCursor":"next"}
 			}}}}`)

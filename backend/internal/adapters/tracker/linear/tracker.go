@@ -258,7 +258,7 @@ func mapState(stateType, name string) domain.NormalizedIssueState {
 	switch strings.ToLower(strings.TrimSpace(stateType)) {
 	case "completed":
 		return domain.IssueDone
-	case "canceled", "cancelled":
+	case "canceled", "cancelled", "duplicate":
 		return domain.IssueCancelled
 	case "started":
 		if strings.Contains(strings.ToLower(name), "review") {
@@ -301,11 +301,12 @@ func matchesFilter(issue domain.Issue, filter domain.ListFilter) bool {
 
 func serverFilter(filter domain.ListFilter) map[string]any {
 	out := make(map[string]any)
+	closedTypes := []string{"completed", "canceled", "duplicate"}
 	switch filter.State {
 	case domain.ListOpen:
-		out["state"] = map[string]any{"type": map[string]any{"nin": []string{"completed", "canceled"}}}
+		out["state"] = map[string]any{"type": map[string]any{"nin": closedTypes}}
 	case domain.ListClosed:
-		out["state"] = map[string]any{"type": map[string]any{"in": []string{"completed", "canceled"}}}
+		out["state"] = map[string]any{"type": map[string]any{"in": closedTypes}}
 	}
 	switch assignee := strings.TrimSpace(filter.Assignee); {
 	case assignee == "*":
