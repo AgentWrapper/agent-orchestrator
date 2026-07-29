@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-window-set-overlay"
+description = "Enables the window_set_overlay command without any pre-configured scope."
+commands.allow = ["window_set_overlay"]
+
+[[permission]]
+identifier = "deny-window-set-overlay"
+description = "Denies the window_set_overlay command without any pre-configured scope."
+commands.deny = ["window_set_overlay"]

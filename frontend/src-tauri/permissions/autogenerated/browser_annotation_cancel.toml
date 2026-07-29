@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-browser-annotation-cancel"
+description = "Enables the browser_annotation_cancel command without any pre-configured scope."
+commands.allow = ["browser_annotation_cancel"]
+
+[[permission]]
+identifier = "deny-browser-annotation-cancel"
+description = "Denies the browser_annotation_cancel command without any pre-configured scope."
+commands.deny = ["browser_annotation_cancel"]

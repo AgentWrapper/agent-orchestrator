@@ -5,7 +5,12 @@ Wave 1: [T1 scaffold src-tauri (M0), T2 `ao daemon ensure` Go (M1), T3 CORS taur
 → Wave 3: [T6 comandos Rust misc] + verificação cega T4/T5
 → Wave 4a: [T7 PASS (FAIL do verificador em preload/src/main era falso positivo — diffs do T4; arbitrado), T8 PASS]
    Checkpoint commit d6ab73e80 no branch tauri-migration (T1–T8).
-→ Wave 4b: [T9 painel browser (despachado; spike primeiro)]
+→ Wave 4b: [T9 painel browser — tentativa 1 BLOCKED no spike (deadlock de main thread no
+   próprio spike, diagnosticado e corrigido pelo orquestrador: ~50fps em release,
+   commit a7b23fbdf); tentativa 2 DONE mas verificação opus reprovou com 7 achados
+   (ACL brick, capture síncrono na main thread, mirror:// sem escopo, normalizer morto,
+   teste vácuo, keylogging no forward, hang do canvasMirror); T9b (fixes) em execução
+   — spec tasks/specs/T9b-browser-panel-fixes.md]
 → Wave 5: [T10 updater] → Wave 6: [T11 CI/release] → Wave 7: [T12 cleanup Electron, só após validação manual]
 
 Specs completas em tasks/specs/T4..T12. Handoff: um orquestrador novo precisa apenas de

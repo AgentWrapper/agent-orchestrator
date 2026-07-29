@@ -1,0 +1,10 @@
+{
+	"$schema": "../gen/schemas/desktop-schema.json",
+	"identifier": "browser-panel",
+	"description": "Capabilities for the child `browser-*` webviews that host untrusted/remote page content. This is intentionally the narrowest possible allow-list: only the annotate-preload init script's own messages (submit/cancel) and its shortcut-forwarding call are reachable from inside a browser panel — every other command (daemon, settings, terminal, ...) stays unreachable even though the panel loads arbitrary remote URLs.",
+	"webviews": ["browser-*"],
+	"remote": {
+		"urls": ["http://*", "https://*", "file://*"]
+	},
+	"permissions": ["allow-browser-annotation-submit", "allow-browser-annotation-cancel", "allow-browser-forward-shortcut"]
+}

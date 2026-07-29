@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-browser-go-back"
+description = "Enables the browser_go_back command without any pre-configured scope."
+commands.allow = ["browser_go_back"]
+
+[[permission]]
+identifier = "deny-browser-go-back"
+description = "Denies the browser_go_back command without any pre-configured scope."
+commands.deny = ["browser_go_back"]

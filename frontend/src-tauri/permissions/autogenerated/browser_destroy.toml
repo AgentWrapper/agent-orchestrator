@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-browser-destroy"
+description = "Enables the browser_destroy command without any pre-configured scope."
+commands.allow = ["browser_destroy"]
+
+[[permission]]
+identifier = "deny-browser-destroy"
+description = "Denies the browser_destroy command without any pre-configured scope."
+commands.deny = ["browser_destroy"]

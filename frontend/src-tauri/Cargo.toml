@@ -64,3 +64,6 @@ features = ["jpeg"]
 [target.'cfg(target_os = "linux")'.dependencies.webkit2gtk]
 version = "2"
 features = ["v2_40"]
+
+[dev-dependencies]
+tauri = { version = "2", features = ["unstable", "test"] }

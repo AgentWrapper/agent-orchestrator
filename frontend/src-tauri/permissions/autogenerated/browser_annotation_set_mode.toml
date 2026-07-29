@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-browser-annotation-set-mode"
+description = "Enables the browser_annotation_set_mode command without any pre-configured scope."
+commands.allow = ["browser_annotation_set_mode"]
+
+[[permission]]
+identifier = "deny-browser-annotation-set-mode"
+description = "Denies the browser_annotation_set_mode command without any pre-configured scope."
+commands.deny = ["browser_annotation_set_mode"]

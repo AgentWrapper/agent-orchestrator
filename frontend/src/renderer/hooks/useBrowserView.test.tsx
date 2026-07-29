@@ -544,11 +544,15 @@ describe("useBrowserView", () => {
 		rerender({ previewUrl: "http://localhost:5173/" });
 		expect(bridge.navigate).toHaveBeenCalledTimes(1);
 
+		// `normalizeBrowserURL` wiring (fix 5, tasks/specs/T9b-browser-panel-fixes.md):
+		// a raw Windows filesystem path is now normalized to a `file://` URL in the
+		// renderer before it reaches `browser.navigate`, matching Electron's
+		// pre-IPC main-process normalization.
 		rerender({ previewUrl: "C:\\Users\\Lenovo\\Downloads\\sm5\\paper_explainer.html" });
 		await waitFor(() =>
 			expect(bridge.navigate).toHaveBeenCalledWith({
 				viewId: "42:sess-1",
-				url: "C:\\Users\\Lenovo\\Downloads\\sm5\\paper_explainer.html",
+				url: "file:///C:/Users/Lenovo/Downloads/sm5/paper_explainer.html",
 			}),
 		);
 		expect(bridge.navigate).toHaveBeenCalledTimes(2);
@@ -567,6 +571,33 @@ describe("useBrowserView", () => {
 		rerender({ previewUrl: undefined, previewRevision: 2 });
 		await waitFor(() => expect(bridge.clear).toHaveBeenCalledWith("42:sess-1"));
 		expect(bridge.navigate).toHaveBeenCalledTimes(1);
+	});
+
+	it("normalizes omnibox-style input (bare host, no scheme) before calling browser.navigate", async () => {
+		// Fix 5, tasks/specs/T9b-browser-panel-fixes.md: `normalizeBrowserURL`
+		// (src/renderer/lib/browser-url.ts) was ported but never wired up, so raw
+		// input like "example.com" reached `browser.navigate` unnormalized and
+		// `tauri::Url::parse` on the Rust side rejected it. `navigate()` must now
+		// normalize before calling the bridge.
+		const bridge = setupBridge();
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
+
+		await act(async () => {
+			await result.current.navigate("example.com");
+		});
+		expect(bridge.navigate).toHaveBeenCalledWith({ viewId: "42:sess-1", url: "https://example.com/" });
+	});
+
+	it("rejects navigate() for input normalizeBrowserURL treats as a search query, without calling the bridge", async () => {
+		const bridge = setupBridge();
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
+
+		// A blank/whitespace-only instruction is the one input normalizeBrowserURL
+		// actually throws on (bare words become a search URL instead of an error).
+		await expect(result.current.navigate("   ")).rejects.toThrow();
+		expect(bridge.navigate).not.toHaveBeenCalled();
 	});
 
 	it("does not navigate or clear without a preview URL at revision zero", async () => {

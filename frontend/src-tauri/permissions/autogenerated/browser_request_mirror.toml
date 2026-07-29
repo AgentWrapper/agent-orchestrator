@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-browser-request-mirror"
+description = "Enables the browser_request_mirror command without any pre-configured scope."
+commands.allow = ["browser_request_mirror"]
+
+[[permission]]
+identifier = "deny-browser-request-mirror"
+description = "Denies the browser_request_mirror command without any pre-configured scope."
+commands.deny = ["browser_request_mirror"]

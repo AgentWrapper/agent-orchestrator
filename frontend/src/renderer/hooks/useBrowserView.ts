@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BrowserNavState, BrowserRect } from "../../main/browser-view-host";
 import type { BrowserAnnotationCancelPayload, BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
+import { normalizeBrowserURL } from "../lib/browser-url";
 import { OPEN_DIALOG_OR_MENU_SELECTOR } from "../lib/dom-selectors";
 
 export type { BrowserNavState };
@@ -289,6 +290,9 @@ export function useBrowserView({
 		(id: string) => {
 			const token = ++mirrorTokenRef.current;
 			const live = () => mirrorTokenRef.current === token && modalOpenRef.current && viewIdRef.current === id;
+			// Electron path: `requestMirror` arms `session.setDisplayMediaRequestHandler`
+			// to silently hand back this panel's own WebContentsView frame, so
+			// `getDisplayMedia` never shows the OS picker.
 			const streamMirror = async (): Promise<boolean> => {
 				if (!navigator.mediaDevices?.getDisplayMedia) return false;
 				const granted = await window.ao?.browser.requestMirror?.(id).catch(() => false);
@@ -302,6 +306,66 @@ export function useBrowserView({
 				mirrorStreamRef.current = stream;
 				setMirrorStream(stream);
 				return true;
+			};
+			// Tauri path: there is no `setDisplayMediaRequestHandler` equivalent, so
+			// `getDisplayMedia` would surface the real OS screen-share picker instead
+			// of this panel's own content. Rust streams JPEG frames at 5-10fps to the
+			// `mirror://<viewId>/frame` custom URI scheme instead (see
+			// `browser::mirror` in src-tauri); paint each frame onto an offscreen
+			// canvas and feed `canvas.captureStream()` as the mirror MediaStream.
+			const canvasMirror = async (): Promise<boolean> => {
+				if (typeof HTMLCanvasElement.prototype.captureStream !== "function") return false;
+				const granted = await window.ao?.browser.requestMirror?.(id).catch(() => false);
+				if (!granted || !live()) return false;
+				const canvas = document.createElement("canvas");
+				const ctx = canvas.getContext("2d");
+				if (!ctx) return false;
+				let gotFrame = false;
+				const drawFrame = () =>
+					new Promise<boolean>((resolve) => {
+						const img = new Image();
+						// Same-origin as the renderer (see `browser::mirror::protocol_handler`'s
+						// `Access-Control-Allow-Origin` restricted to the tauri:// origins) so
+						// `captureStream`/canvas reads never taint on a SecurityError; belt-and-
+						// suspenders with the try/catch below, which falls back to
+						// `frameMirror` instead of hanging forever if it throws anyway.
+						img.crossOrigin = "anonymous";
+						img.onload = () => {
+							if (!live()) return resolve(false);
+							try {
+								if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
+									canvas.width = img.naturalWidth || canvas.width || 1;
+									canvas.height = img.naturalHeight || canvas.height || 1;
+								}
+								ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+								if (!gotFrame) {
+									gotFrame = true;
+									stopMirrorStream();
+									const stream = canvas.captureStream(10);
+									mirrorStreamRef.current = stream;
+									setMirrorStream(stream);
+								}
+								resolve(true);
+							} catch {
+								// `captureStream`/`drawImage` threw (e.g. a tainted-canvas
+								// SecurityError) — never leave this promise pending forever;
+								// resolve(false) lets `canvasMirror` bail out and `tick()` fall
+								// back to `frameMirror` instead of hanging the mirror pipeline.
+								resolve(false);
+							}
+						};
+						img.onerror = () => resolve(false);
+						img.src = `mirror://${id}/frame?t=${Date.now()}`;
+					});
+				while (live()) {
+					const ok = await drawFrame();
+					if (!ok && !gotFrame) return false;
+					if (!live()) break;
+					await new Promise((resolve) => {
+						window.setTimeout(resolve, 100);
+					});
+				}
+				return gotFrame;
 			};
 			const frameMirror = async () => {
 				while (live()) {
@@ -317,6 +381,8 @@ export function useBrowserView({
 			const tick = async () => {
 				const streamed = await streamMirror().catch(() => false);
 				if (streamed || !live()) return;
+				const canvased = await canvasMirror().catch(() => false);
+				if (canvased || !live()) return;
 				await frameMirror();
 			};
 			void tick();
@@ -457,7 +523,20 @@ export function useBrowserView({
 				}));
 				return Promise.resolve();
 			}
-			return withView((id) => window.ao!.browser.navigate({ viewId: id, url }));
+			// Omnibox/search-fallback normalization (ported from Electron's main
+			// process, see `normalizeBrowserURL`): under Tauri there is no main
+			// process to run this before the IPC call, so raw input like
+			// "example.com" or a bare search term must be normalized here in the
+			// renderer before it reaches `browser.navigate` — otherwise the Rust
+			// side's `tauri::Url::parse` rejects anything without an explicit
+			// scheme.
+			let normalized: string;
+			try {
+				normalized = normalizeBrowserURL(url).toString();
+			} catch (error) {
+				return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+			}
+			return withView((id) => window.ao!.browser.navigate({ viewId: id, url: normalized }));
 		},
 		[hasNativeBrowser, withView],
 	);

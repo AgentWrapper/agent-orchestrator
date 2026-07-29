@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-telemetry-get-bootstrap"
+description = "Enables the telemetry_get_bootstrap command without any pre-configured scope."
+commands.allow = ["telemetry_get_bootstrap"]
+
+[[permission]]
+identifier = "deny-telemetry-get-bootstrap"
+description = "Denies the telemetry_get_bootstrap command without any pre-configured scope."
+commands.deny = ["telemetry_get_bootstrap"]

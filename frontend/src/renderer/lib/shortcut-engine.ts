@@ -60,15 +60,35 @@ function shortcutChannelFor(chord: ShortcutChord, overrides: KeybindingOverrides
 	return null;
 }
 
-function handleKeydown(event: KeyboardEvent): void {
-	if (event.repeat) return;
+function dispatchChord(chord: ShortcutChord): string | null {
 	// Let the settings dialog's capture listener receive application-owned
 	// chords while the user is recording a replacement binding.
-	if (recording) return;
-	const channel = shortcutChannelFor(keyboardEventChord(event), overridesGetter() ?? {});
-	if (!channel) return;
-	event.preventDefault();
+	if (recording) return null;
+	const channel = shortcutChannelFor(chord, overridesGetter() ?? {});
+	if (!channel) return null;
 	emit(channel);
+	return channel;
+}
+
+function handleKeydown(event: KeyboardEvent): void {
+	if (event.repeat) return;
+	const channel = dispatchChord(keyboardEventChord(event));
+	if (channel) event.preventDefault();
+}
+
+/**
+ * Entry point for chords captured inside a child `browser-*` webview and
+ * forwarded to the main window via Rust (`browser_forward_shortcut` ->
+ * `browser://forward-shortcut`, see `tauri-bridge.ts`). The child webview's
+ * keydowns never reach this window's own `keydown` listener, so this is the
+ * only way those chords reach the shared matching table. Unlike
+ * `handleKeydown`, there is no DOM event to `preventDefault()` on — the
+ * child page already decided synchronously whether to keep handling the key
+ * itself (documented deviation from Electron's `before-input-event`, which
+ * could suppress the key before the child page saw it at all).
+ */
+export function handleForwardedChord(chord: ShortcutChord): void {
+	dispatchChord(chord);
 }
 
 /**

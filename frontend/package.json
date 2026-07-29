@@ -29,9 +29,10 @@
 		"test:e2e:renderer": "playwright test --grep \"@T0|@P0\"",
 		"api:ts": "openapi-typescript ../backend/internal/httpd/apispec/openapi.yaml -o src/api/schema.ts",
 		"tauri": "tauri",
-		"tauri:dev": "tauri dev",
-		"tauri:build": "tauri build",
-		"build:renderer:tauri": "vite build --config vite.renderer.config.ts --outDir dist-tauri --emptyOutDir"
+		"tauri:dev": "npm run build:browser-annotate && tauri dev",
+		"tauri:build": "npm run build:browser-annotate && tauri build",
+		"build:renderer:tauri": "vite build --config vite.renderer.config.ts --outDir dist-tauri --emptyOutDir",
+		"build:browser-annotate": "vite build --config src/browser-annotate/vite.config.ts"
 	},
 	"devDependencies": {
 		"@electron-forge/cli": "^7.8.0",

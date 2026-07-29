@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-browser-annotation-submit"
+description = "Enables the browser_annotation_submit command without any pre-configured scope."
+commands.allow = ["browser_annotation_submit"]
+
+[[permission]]
+identifier = "deny-browser-annotation-submit"
+description = "Denies the browser_annotation_submit command without any pre-configured scope."
+commands.deny = ["browser_annotation_submit"]

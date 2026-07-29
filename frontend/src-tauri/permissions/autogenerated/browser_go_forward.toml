@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-browser-go-forward"
+description = "Enables the browser_go_forward command without any pre-configured scope."
+commands.allow = ["browser_go_forward"]
+
+[[permission]]
+identifier = "deny-browser-go-forward"
+description = "Denies the browser_go_forward command without any pre-configured scope."
+commands.deny = ["browser_go_forward"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-browser-reload"
+description = "Enables the browser_reload command without any pre-configured scope."
+commands.allow = ["browser_reload"]
+
+[[permission]]
+identifier = "deny-browser-reload"
+description = "Denies the browser_reload command without any pre-configured scope."
+commands.deny = ["browser_reload"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-terminal-save-dropped-file"
+description = "Enables the terminal_save_dropped_file command without any pre-configured scope."
+commands.allow = ["terminal_save_dropped_file"]
+
+[[permission]]
+identifier = "deny-terminal-save-dropped-file"
+description = "Denies the terminal_save_dropped_file command without any pre-configured scope."
+commands.deny = ["terminal_save_dropped_file"]

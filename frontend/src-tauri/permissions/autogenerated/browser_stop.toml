@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-browser-stop"
+description = "Enables the browser_stop command without any pre-configured scope."
+commands.allow = ["browser_stop"]
+
+[[permission]]
+identifier = "deny-browser-stop"
+description = "Denies the browser_stop command without any pre-configured scope."
+commands.deny = ["browser_stop"]

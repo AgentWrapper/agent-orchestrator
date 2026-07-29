@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-menu-action"
+description = "Enables the menu_action command without any pre-configured scope."
+commands.allow = ["menu_action"]
+
+[[permission]]
+identifier = "deny-menu-action"
+description = "Denies the menu_action command without any pre-configured scope."
+commands.deny = ["menu_action"]

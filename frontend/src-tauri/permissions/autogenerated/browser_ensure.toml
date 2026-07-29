@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-browser-ensure"
+description = "Enables the browser_ensure command without any pre-configured scope."
+commands.allow = ["browser_ensure"]
+
+[[permission]]
+identifier = "deny-browser-ensure"
+description = "Denies the browser_ensure command without any pre-configured scope."
+commands.deny = ["browser_ensure"]

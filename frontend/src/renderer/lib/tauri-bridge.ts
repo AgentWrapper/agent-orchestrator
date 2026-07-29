@@ -13,9 +13,14 @@ import {
 	PREVIOUS_SESSION_SHORTCUT_CHANNEL,
 	type KeybindingOverrides,
 } from "../../shared/shortcuts";
-import type { AoBridge } from "../../shared/bridge-types";
-import { browserFallback, updatesFallback, featureBuildsFallback } from "./bridge";
-import { initShortcutEngine, on as onShortcut, setRecording as setEngineRecording } from "./shortcut-engine";
+import type {
+	BrowserAnnotationCancelPayload,
+	BrowserAnnotationSubmitPayload,
+} from "../../shared/browser-annotations";
+import type { AoBridge, BrowserNavState } from "../../shared/bridge-types";
+import type { ShortcutChord } from "../../shared/shortcuts";
+import { updatesFallback, featureBuildsFallback } from "./bridge";
+import { handleForwardedChord, initShortcutEngine, on as onShortcut, setRecording as setEngineRecording } from "./shortcut-engine";
 
 // Cache of the persisted keybinding overrides, kept in sync with the Rust
 // store so the (synchronous, per-keydown) shortcut engine can read it without
@@ -45,6 +50,11 @@ export function createTauriBridge(): AoBridge {
 	// events.
 	initShortcutEngine(() => cachedKeybindingOverrides);
 	refreshCachedKeybindingOverrides();
+	// Chords captured inside a child `browser-*` webview never reach this
+	// window's own `keydown` listener (see shortcut-engine.ts), so Rust
+	// (`browser_forward_shortcut`) re-emits them here for the shared matching
+	// table to see.
+	subscribe<ShortcutChord>("browser://forward-shortcut", handleForwardedChord);
 	return {
 		app: {
 			getVersion: () => invoke("app_get_version"),
@@ -94,9 +104,29 @@ export function createTauriBridge(): AoBridge {
 		telemetry: {
 			getBootstrap: () => invoke("telemetry_get_bootstrap"),
 		},
-		// TODO(M4): browser namespace is not yet backed by a Rust command; reuse
-		// the browser-fallback stub until the WebContentsView-equivalent lands.
-		browser: browserFallback,
+		browser: {
+			ensure: (sessionId) => invoke("browser_ensure", { sessionId }),
+			setBounds: (input) => {
+				invoke("browser_set_bounds", { input }).catch(() => undefined);
+			},
+			navigate: (input) => invoke("browser_navigate", { input }),
+			clear: (viewId) => invoke("browser_clear", { viewId }),
+			capture: (viewId) => invoke("browser_capture", { viewId }),
+			requestMirror: (viewId) => invoke("browser_request_mirror", { viewId }),
+			goBack: (viewId) => invoke("browser_go_back", { viewId }),
+			goForward: (viewId) => invoke("browser_go_forward", { viewId }),
+			reload: (viewId) => invoke("browser_reload", { viewId }),
+			stop: (viewId) => invoke("browser_stop", { viewId }),
+			destroy: (viewId) => {
+				invoke("browser_destroy", { viewId }).catch(() => undefined);
+			},
+			setAnnotationMode: (input) => invoke("browser_annotation_set_mode", { input }),
+			onNavState: (listener) => subscribe<BrowserNavState>("browser://nav-state", listener),
+			onAnnotationSubmit: (listener) =>
+				subscribe<BrowserAnnotationSubmitPayload>("browser://annotation-submitted", listener),
+			onAnnotationCancel: (listener) =>
+				subscribe<BrowserAnnotationCancelPayload>("browser://annotation-canceled", listener),
+		},
 		notifications: {
 			show: (notification) => invoke("notifications_show", { notification }),
 			onClick: (listener) => subscribe<string>("notifications://click", listener),

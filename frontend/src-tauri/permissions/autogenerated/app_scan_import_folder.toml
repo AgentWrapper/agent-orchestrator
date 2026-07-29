@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-app-scan-import-folder"
+description = "Enables the app_scan_import_folder command without any pre-configured scope."
+commands.allow = ["app_scan_import_folder"]
+
+[[permission]]
+identifier = "deny-app-scan-import-folder"
+description = "Denies the app_scan_import_folder command without any pre-configured scope."
+commands.deny = ["app_scan_import_folder"]

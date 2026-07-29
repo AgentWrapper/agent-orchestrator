@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-daemon-stop"
+description = "Enables the daemon_stop command without any pre-configured scope."
+commands.allow = ["daemon_stop"]
+
+[[permission]]
+identifier = "deny-daemon-stop"
+description = "Denies the daemon_stop command without any pre-configured scope."
+commands.deny = ["daemon_stop"]

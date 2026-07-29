@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-browser-set-bounds"
+description = "Enables the browser_set_bounds command without any pre-configured scope."
+commands.allow = ["browser_set_bounds"]
+
+[[permission]]
+identifier = "deny-browser-set-bounds"
+description = "Denies the browser_set_bounds command without any pre-configured scope."
+commands.deny = ["browser_set_bounds"]
