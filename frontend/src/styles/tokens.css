@@ -77,6 +77,10 @@
 	--color-overlay-subtle: rgb(255 255 255 / 0.018);
 	--color-overlay-faint: rgb(255 255 255 / 0.02);
 	--color-scrollbar: rgb(255 255 255 / 0.12);
+	/* The board lanes need a thumb you can actually spot — at the shared 0.12 it
+	   sat at the border's contrast, so a scrollable lane looked like a full one. */
+	--color-scrollbar-board: rgb(255 255 255 / 0.26);
+	--color-scrollbar-board-hover: rgb(255 255 255 / 0.45);
 	--color-scrim: rgb(0 0 0 / 0.55);
 	--blur-overlay: 1px;
 
@@ -96,6 +100,7 @@
 	/* Scale — dense UI chrome uses half-steps between base sizes */
 	--font-size-2xs: 10.5px; /* uppercase meta, board footers */
 	--font-size-xs: 10px; /* micro labels, tight pills */
+	--font-size-nano: 8px; /* smallest chrome text — sidebar search label */
 	--font-size-caption: 11px; /* badges, kanban labels */
 	--font-size-sm-md: 11.5px; /* inspector tabs, status pills */
 	--font-size-sm: 12px; /* secondary chrome / Tailwind text-xs */
@@ -548,6 +553,8 @@
 	--color-overlay-subtle: rgb(0 0 0 / 0.02);
 	--color-overlay-faint: rgb(0 0 0 / 0.03);
 	--color-scrollbar: rgb(0 0 0 / 0.12);
+	--color-scrollbar-board: rgb(0 0 0 / 0.26);
+	--color-scrollbar-board-hover: rgb(0 0 0 / 0.45);
 	--color-scrim: rgb(0 0 0 / 0.45);
 
 	--elevation-sm: 0 1px 0 rgb(0 0 0 / 0.06);

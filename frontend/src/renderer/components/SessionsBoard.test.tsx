@@ -4,13 +4,15 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 
-const { navigateMock, notificationShowMock, postMock, workspaceQueryMock, boardActionsInPanelMock } = vi.hoisted(() => ({
-	navigateMock: vi.fn(),
-	notificationShowMock: vi.fn(),
-	postMock: vi.fn(),
-	workspaceQueryMock: vi.fn(),
-	boardActionsInPanelMock: vi.fn(() => false),
-}));
+const { navigateMock, notificationShowMock, postMock, workspaceQueryMock, boardActionsInPanelMock, scmSummaryMock } =
+	vi.hoisted(() => ({
+		navigateMock: vi.fn(),
+		notificationShowMock: vi.fn(),
+		postMock: vi.fn(),
+		workspaceQueryMock: vi.fn(),
+		boardActionsInPanelMock: vi.fn(() => false),
+		scmSummaryMock: vi.fn((): { data: unknown } => ({ data: undefined })),
+	}));
 
 vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => navigateMock,
@@ -19,6 +21,10 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("../hooks/useWorkspaceQuery", () => ({
 	workspaceQueryKey: ["workspaces"],
 	useWorkspaceQuery: workspaceQueryMock,
+}));
+
+vi.mock("../hooks/useSessionScmSummary", () => ({
+	useSessionScmSummary: scmSummaryMock,
 }));
 
 vi.mock("../lib/api-client", () => ({
@@ -70,6 +76,7 @@ beforeEach(() => {
 	notificationShowMock.mockReset().mockResolvedValue(undefined);
 	postMock.mockReset().mockResolvedValue({ data: {} });
 	workspaceQueryMock.mockReset().mockReturnValue({ data: [], isError: false });
+	scmSummaryMock.mockReset().mockReturnValue({ data: undefined });
 	window.localStorage.removeItem("ao.board.archive.layout");
 	boardActionsInPanelMock.mockReset().mockReturnValue(false);
 });
@@ -208,15 +215,18 @@ describe("SessionsBoard", () => {
 		const idleCard = screen
 			.getByText("brand-font-pipeline")
 			.closest('[data-testid="board-session-card"]') as HTMLElement;
-		expect(within(idleCard).getByText("Idle")).toBeInTheDocument();
+		// The Idle lane header already names the stage, so the card omits a redundant
+		// "Idle" pill — and must never mislabel the idle session as Working.
+		expect(within(idleCard).queryByText("Idle")).toBeNull();
+		expect(within(idleCard).queryByText("Working")).toBeNull();
+		expect(screen.getByRole("region", { name: "Idle sessions" })).toContainElement(idleCard);
 		const terminateButton = within(idleCard).getByRole("button", { name: "Terminate brand-font-pipeline" });
 		expect(terminateButton).toHaveClass("opacity-0", "group-hover:opacity-100", "group-focus-within:opacity-100");
 		expect(terminateButton.querySelector("svg")).toHaveClass("lucide-trash-2");
-		expect(within(idleCard).getByText("Idle").parentElement).toHaveClass("flex", "justify-between");
 		expect(within(idleCard).getByText("brand-font-pipeline")).toHaveClass("font-semibold", "line-clamp-2");
 	});
 
-	it("uses distinct card badge tones for idle, no signal, and draft PR sessions", () => {
+	it("omits the status pill on cards since the column names the stage", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
 				{
@@ -271,12 +281,109 @@ describe("SessionsBoard", () => {
 		const noSignalCard = screen.getByText("no-signal-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
 		const draftCard = screen.getByText("draft-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
 
-		expect(within(idleCard).getByText("Idle").closest("span")).toHaveClass("text-status-idle");
-		expect(within(noSignalCard).getByText("No signal").closest("span")).toHaveClass("text-status-unknown");
-		expect(within(draftCard).getByText("Draft PR").closest("span")).toHaveClass("text-status-in-review");
+		// The column header names the stage, so no card repeats a status pill —
+		// idle, no signal and draft alike carry no status word.
+		expect(within(idleCard).queryByText("Idle")).toBeNull();
+		expect(within(noSignalCard).queryByText("No signal")).toBeNull();
+		expect(within(draftCard).queryByText("Draft PR")).toBeNull();
 	});
 
-	it("places an exited live session in Needs you with an Exited badge", () => {
+	it("keeps the status in the card's accessible name (sr-only) though the pill is hidden", () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					boardSession({
+						id: "s-cr",
+						title: "changes-task",
+						status: "changes_requested",
+						activity: { state: "waiting_input", lastActivityAt: "2026-01-01T00:00:00Z" },
+					}),
+				]),
+			],
+			isError: false,
+		});
+
+		renderBoard("p1");
+
+		const card = screen.getByText("changes-task").closest('[data-testid="board-session-card"]') as HTMLElement;
+		// No visible status pill…
+		expect(within(card).queryByText("Changes requested")).toBeNull();
+		// …but a screen reader still hears why the task needs attention.
+		expect(within(card).getByText("Status: Changes requested")).toHaveClass("sr-only");
+	});
+
+	it("shows the diff totals from the SCM PR summary (production shape, no changedFiles)", () => {
+		// Production sessions carry no `changedFiles`; the diff must be derived from
+		// the PR summaries the SCM hook returns, or the packaged app shows nothing.
+		scmSummaryMock.mockReturnValue({
+			data: [
+				{
+					url: "https://github.com/acme/radic/pull/512",
+					htmlUrl: "https://github.com/acme/radic/pull/512",
+					number: 512,
+					title: "diff-summary-task",
+					state: "open",
+					provider: "github",
+					repo: "acme/radic",
+					author: "agent",
+					sourceBranch: "ao/s-diff",
+					targetBranch: "main",
+					headSha: "abc123",
+					additions: 128,
+					deletions: 47,
+					changedFiles: 6,
+					ci: { state: "passing", failingChecks: [] },
+					review: { decision: "none", hasUnresolvedHumanComments: false, unresolvedBy: [] },
+					mergeability: {
+						state: "mergeable",
+						reasons: [],
+						prUrl: "https://github.com/acme/radic/pull/512",
+						conflictFiles: [],
+					},
+					createdAt: "2026-01-01T00:00:00Z",
+					stateChangedAt: "2026-01-01T00:00:00Z",
+					updatedAt: "2026-01-01T00:00:00Z",
+					observedAt: "2026-01-01T00:00:00Z",
+					ciObservedAt: "2026-01-01T00:00:00Z",
+					reviewObservedAt: "2026-01-01T00:00:00Z",
+				},
+			],
+		});
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					boardSession({
+						id: "s-diff",
+						title: "diff-summary-task",
+						status: "pr_open",
+						activity: { state: "idle", lastActivityAt: "2026-01-01T00:00:00Z" },
+						// No changedFiles — exactly what fetchWorkspaces() returns in production.
+						prs: [
+							{
+								number: 512,
+								url: "https://github.com/acme/radic/pull/512",
+								state: "open",
+								ci: "passing",
+								review: "none",
+								mergeability: "mergeable",
+								reviewComments: false,
+								updatedAt: "2026-01-01T00:00:00Z",
+							},
+						],
+					}),
+				]),
+			],
+			isError: false,
+		});
+
+		renderBoard("p1");
+
+		const card = screen.getByText("diff-summary-task").closest('[data-testid="board-session-card"]') as HTMLElement;
+		expect(within(card).getByText("+128")).toBeInTheDocument();
+		expect(within(card).getByText("−47")).toBeInTheDocument();
+	});
+
+	it("places an exited live session in Needs you", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
 				workspaceWithSessions([
@@ -303,7 +410,7 @@ describe("SessionsBoard", () => {
 		const needsYouColumn = screen.getByText("Needs you").closest("section") as HTMLElement;
 		expect(needsYouColumn.firstElementChild).toHaveClass("h-12");
 		expect(within(needsYouColumn).getByText("agent-exited-task")).toBeInTheDocument();
-		expect(within(needsYouColumn).getByText("Exited").closest("span")).toHaveClass("text-status-exited");
+		expect(within(needsYouColumn).queryByText("Exited")).toBeNull();
 	});
 
 	it("renders an idle-first work lane with a separate lower working section", () => {
@@ -359,18 +466,20 @@ describe("SessionsBoard", () => {
 		const reviewRegion = screen.getByRole("region", { name: "In review sessions" });
 		const workSummary = within(workLane).getByRole("group", { name: "Idle / Working lane summary" });
 
-		expect(within(workSummary).getByText("Idle").querySelector("span")).toHaveClass("bg-status-idle");
-		expect(within(workSummary).getByText("Working").querySelector("span")).toHaveClass("bg-status-working");
-		expect(workSummary).toHaveClass("font-mono", "text-2xs", "uppercase");
-		expect(workSummary.parentElement).toHaveClass("h-12");
-		expect(workingRegion.firstElementChild).toHaveClass("py-2.5");
+		// The column header names only the lane the column starts with; "Working" is
+		// named once, on the section that actually holds the working cards.
+		// Titles carry their own weight and a colour bar rather than a glyph.
+		expect(within(workSummary).getByText("Idle")).toHaveClass("font-mono", "text-xs", "uppercase");
+		expect(within(workSummary).queryByText("Working")).toBeNull();
+		expect(workSummary.parentElement).toHaveClass("h-12", "border-b");
 		expect(within(workLane).getByLabelText("2 idle sessions")).toHaveTextContent("2");
-		expect(within(workLane).getByLabelText("1 working session")).toHaveTextContent("1");
+		expect(within(workingRegion).getByText("Working")).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: /idle sessions/i })).not.toBeInTheDocument();
-		expect(idleRegion).toHaveClass("flex-[3]");
-		expect(workingRegion.className).toContain("flex-[2]");
-		expect(workingRegion.className).toContain("border-t");
-		expect(workingRegion.className).not.toContain("rounded-t");
+		// Lanes are sized by their content, so a short Idle lane leaves no dead
+		// space above the Working header.
+		expect(idleRegion.className).not.toContain("flex-[3]");
+		expect(workingRegion.className).not.toContain("flex-[2]");
+		expect(workingRegion.firstElementChild?.className).toContain("border-y");
 		expect(within(idleRegion).getByText("idle-no-pr-task")).toBeInTheDocument();
 		expect(within(idleRegion).getByText("second-idle-task")).toBeInTheDocument();
 		expect(within(workingRegion).getByText("active-task")).toBeInTheDocument();
@@ -378,9 +487,10 @@ describe("SessionsBoard", () => {
 		expect(within(workLane).queryByText("idle-with-pr-task")).not.toBeInTheDocument();
 
 		const idleCard = screen.getByText("idle-no-pr-task").closest('[data-testid="board-session-card"]') as HTMLElement;
-		const badge = within(idleCard).getByText("Idle").closest("span");
-		expect(badge).toHaveClass("text-status-idle");
-		expect(badge).not.toHaveClass("text-status-working");
+		// Under the Idle lane the card drops its redundant status pill and must not
+		// fall back to a Working label.
+		expect(within(idleCard).queryByText("Idle")).toBeNull();
+		expect(within(idleCard).queryByText("Working")).toBeNull();
 	});
 
 	it("lets idle sessions fill the lane when no working sessions exist", () => {
@@ -403,8 +513,12 @@ describe("SessionsBoard", () => {
 		const workLane = screen.getByRole("region", { name: "Idle / Working sessions" });
 		const idleRegion = within(workLane).getByRole("region", { name: "Idle sessions" });
 		expect(within(workLane).getByLabelText("1 idle session")).toHaveTextContent("1");
-		expect(within(workLane).getByLabelText("0 working sessions")).toHaveTextContent("0");
-		expect(idleRegion).toHaveClass("flex-1");
+		// Only Idle has work, so the header names Idle alone rather than showing an
+		// empty Working half.
+		expect(within(workLane).queryByLabelText("0 working sessions")).not.toBeInTheDocument();
+		const idleOnlySummary = within(workLane).getByRole("group", { name: "Idle / Working lane summary" });
+		expect(within(idleOnlySummary).getByText("Idle")).toBeInTheDocument();
+		expect(within(idleOnlySummary).queryByText("Working")).toBeNull();
 		expect(within(idleRegion).getByText("idle-task")).toBeInTheDocument();
 		expect(within(workLane).queryByRole("region", { name: "Working sessions" })).not.toBeInTheDocument();
 	});
@@ -434,11 +548,15 @@ describe("SessionsBoard", () => {
 
 		const workLane = screen.getByRole("region", { name: "Idle / Working sessions" });
 		const workingRegion = within(workLane).getByRole("region", { name: "Working sessions" });
-		expect(within(workLane).getByLabelText("0 idle sessions")).toHaveTextContent("0");
 		expect(within(workLane).getByLabelText("2 working sessions")).toHaveTextContent("2");
+		// Working is the only lane with work, so Idle is absent from the header.
+		expect(within(workLane).queryByLabelText("0 idle sessions")).not.toBeInTheDocument();
+		const workingOnlySummary = within(workLane).getByRole("group", { name: "Idle / Working lane summary" });
+		expect(within(workingOnlySummary).getByText("Working")).toBeInTheDocument();
+		expect(within(workingOnlySummary).queryByText("Idle")).toBeNull();
 		expect(within(workLane).queryByRole("region", { name: "Idle sessions" })).not.toBeInTheDocument();
-		expect(workingRegion).toHaveClass("flex-1");
-		expect(workingRegion).not.toHaveClass("flex-[2]", "border-t");
+		// Standalone: no repeated sub-header, since the column header already names it.
+		expect(workingRegion.className).not.toContain("border-y");
 		expect(within(workingRegion).getByText("first-working-task")).toBeInTheDocument();
 		expect(within(workingRegion).getByText("second-working-task")).toBeInTheDocument();
 	});
@@ -555,7 +673,8 @@ describe("SessionsBoard", () => {
 		expect(screen.getByText("github:INT-17")).toBeInTheDocument();
 		const prStatus = screen.getByLabelText("#42 merged");
 		expect(prStatus).toHaveTextContent("PR#42merged");
-		const divider = terminatedCard!.querySelector(".mx-3.my-px.h-px.bg-border");
+		// Archive cards now use the board card's divider inset.
+		const divider = terminatedCard!.querySelector(".mx-3\\.5.my-px.h-px.bg-border");
 		expect(divider).not.toBeNull();
 		expect(divider!.compareDocumentPosition(prStatus) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
 		expect(
@@ -818,12 +937,13 @@ describe("SessionsBoard", () => {
 		const mergeLane = screen.getByRole("region", { name: "Ready to merge / Merged sessions" });
 		const mergedRegion = within(mergeLane).getByRole("region", { name: "Merged sessions" });
 		const mergeSummary = within(mergeLane).getByRole("group", { name: "Ready to merge / Merged lane summary" });
-		expect(within(mergeSummary).getByText("Ready to merge").querySelector("span")).toHaveClass("bg-status-ready");
-		expect(within(mergeSummary).getByText("Merged").querySelector("span")).toHaveClass("bg-status-merged");
-		expect(within(mergeLane).getByLabelText("0 ready to merge sessions")).toHaveTextContent("0");
+		expect(within(mergeSummary).getByText("Merged")).toHaveClass("font-mono", "text-xs", "uppercase");
 		expect(within(mergeLane).getByLabelText("1 merged session")).toHaveTextContent("1");
+		// Nothing is ready to merge, so that half is dropped from the header too.
+		expect(within(mergeLane).queryByLabelText("0 ready to merge sessions")).not.toBeInTheDocument();
+		expect(within(mergeSummary).queryByText("Ready to merge")).toBeNull();
 		expect(within(mergeLane).queryByRole("region", { name: "Ready to merge sessions" })).not.toBeInTheDocument();
-		expect(mergedRegion).toHaveClass("flex-1");
+		expect(mergedRegion.className).not.toContain("border-y");
 		expect(within(mergedRegion).getByText("merged worker")).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: /archive/i })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Restore merged worker" })).not.toBeInTheDocument();
@@ -855,11 +975,11 @@ describe("SessionsBoard", () => {
 		const readyRegion = within(mergeLane).getByRole("region", { name: "Ready to merge sessions" });
 		const mergedRegion = within(mergeLane).getByRole("region", { name: "Merged sessions" });
 		expect(within(mergeLane).getByLabelText("1 ready to merge session")).toHaveTextContent("1");
-		expect(within(mergeLane).getByLabelText("1 merged session")).toHaveTextContent("1");
-		expect(readyRegion).toHaveClass("flex-[3]");
-		expect(mergedRegion.className).toContain("flex-[2]");
-		expect(mergedRegion.className).toContain("border-t");
-		expect(mergedRegion.className).not.toContain("rounded-t");
+		expect(within(mergedRegion).getByText("Merged")).toBeInTheDocument();
+		// Content-sized lanes: no fixed ratio reserving height for a short lane.
+		expect(readyRegion.className).not.toContain("flex-[3]");
+		expect(mergedRegion.className).not.toContain("flex-[2]");
+		expect(mergedRegion.firstElementChild?.className).toContain("border-y");
 		expect(within(readyRegion).getByText("ready worker")).toBeInTheDocument();
 		expect(within(mergedRegion).getByText("merged worker")).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: /archive/i })).not.toBeInTheDocument();
@@ -886,7 +1006,9 @@ describe("SessionsBoard", () => {
 		const laneScrollers = screen
 			.getAllByTestId("board-column")
 			.flatMap((column) => Array.from(column.querySelectorAll<HTMLElement>(".overflow-y-auto")));
-		expect(laneScrollers).toHaveLength(6);
+		// One scroller per column: the split lanes share theirs so the lower lane
+		// can sit directly under the upper one.
+		expect(laneScrollers).toHaveLength(4);
 		for (const scroller of laneScrollers) {
 			expect(scroller).toHaveClass("board-scrollbar", "overflow-y-auto");
 		}
