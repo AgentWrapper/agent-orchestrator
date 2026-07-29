@@ -11,19 +11,12 @@ import { useNavigate } from "@tanstack/react-router";
 import {
 	AlertTriangle,
 	Check,
-	CircleCheck,
-	CirclePause,
 	Copy,
 	GitBranch,
-	GitMerge,
-	LayoutGrid,
-	LoaderCircle,
 	Plus,
 	RotateCcw,
 	RotateCw,
-	Rows3,
 	Trash2,
-	type LucideIcon,
 } from "lucide-react";
 import {
 	type SessionStatus,
@@ -37,6 +30,7 @@ import {
 import {
 	attentionZone,
 	boardAttentionZoneOrder,
+	getAgentActivityView,
 	getAttentionZoneView,
 	getAttentionZoneViewForZone,
 	getSessionStatusView,
@@ -52,6 +46,7 @@ import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery
 import { NotificationCenter } from "./NotificationCenter";
 import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyStates";
 import { OrchestratorIcon } from "./icons";
+import { OrchestratorActivityIndicator } from "./OrchestratorActivityIndicator";
 import { AgentAvatar } from "./AgentAvatar";
 import { TopbarButton, TopbarKillError, topbarProjectLabelClass } from "./TopbarButton";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
@@ -59,12 +54,15 @@ import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { formatTimeCompact } from "../lib/format-time";
 import { aoBridge } from "../lib/bridge";
+import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import { cn } from "../lib/utils";
 import { isLinuxPlatform, isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { useUiStore } from "../stores/ui-store";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { SessionTerminationDialog } from "./SessionTerminationDialog";
+import { DaemonStartupLoader } from "./DaemonStartupLoader";
+import { useShellMaybe } from "../lib/shell-context";
 
 type SessionsBoardProps = {
 	/** When set, the board shows only this project's sessions. */
@@ -75,21 +73,14 @@ type SessionsBoardProps = {
 // when its SCM outcome remains `merged`.
 type Column = AttentionZoneView;
 const COLUMNS: Column[] = boardAttentionZoneOrder.map((zone) => getAttentionZoneViewForZone(zone));
-type ArchiveLayout = "rows" | "grid";
-const archiveLayoutStorageKey = "ao.board.archive.layout";
 const archiveHeightStorageKey = "ao.board.archive.height";
 
-// The archive opens showing a couple of cards, not every one it holds — it sits
+// The archive opens showing a couple of rows, not every card it holds — it sits
 // under the lanes and used to push them off screen when a project had a long
-// history. Past the default it scrolls, and the drag handle overrides both.
-const ARCHIVE_DEFAULT_HEIGHT: Record<ArchiveLayout, number> = { rows: 336, grid: 226 };
+// history. Past the default it scrolls, and the drag handle overrides it.
+const ARCHIVE_DEFAULT_HEIGHT = 226;
 const ARCHIVE_MIN_HEIGHT = 112;
 const archiveMaxHeight = () => (typeof window === "undefined" ? 640 : Math.round(window.innerHeight * 0.7));
-
-function initialArchiveLayout(): ArchiveLayout {
-	if (typeof window === "undefined") return "grid";
-	return window.localStorage?.getItem(archiveLayoutStorageKey) === "rows" ? "rows" : "grid";
-}
 
 function initialArchiveHeight(): number | undefined {
 	if (typeof window === "undefined") return undefined;
@@ -110,6 +101,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const queryClient = useQueryClient();
 	const restoreSessionById = useRestoreSession();
 	const workspaceQuery = useWorkspaceQuery();
+	const shell = useShellMaybe();
 	// Evaluated at render so platform mocks in tests can flip the in-panel chrome.
 	const boardActionsInPanel = usesBoardActionsInPanel();
 	/** Bell lives in the board action row when the shell topbar does not host it. */
@@ -121,6 +113,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const boardLabel = workspace?.name ?? (projectId ? "" : "Board");
 	const sessions = workspaces.flatMap((w) => workerSessions(w.sessions));
 	const orchestrator = projectId ? newestActiveOrchestrator(workspaces[0]?.sessions ?? []) : undefined;
+	const orchestratorActivityLabel = orchestrator ? getAgentActivityView(orchestrator.activity).label : undefined;
 	const [isSpawning, setIsSpawning] = useState(false);
 	const [spawnError, setSpawnError] = useState<string | null>(null);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
@@ -163,13 +156,19 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	// query has resolved, so the welcome never flashes over real data): the
 	// global board teaches the app before any project exists, and a fresh
 	// project board invites the first task instead of showing four zeros.
-	const isLoaded = workspaceQuery.isSuccess;
+	const isDaemonReady = usesPreviewWorkspaceData || (shell ? shell.daemonStatus.state === "ready" : true);
+	const daemonHasFailed = Boolean(shell?.daemonStatus.code);
+	const workspaceStartupState = shell?.workspaceStartupState ?? "ready";
+	const isLoaded = isDaemonReady && workspaceStartupState === "ready" && workspaceQuery.isSuccess;
+	const showStartup =
+		shell !== null &&
+		!daemonHasFailed &&
+		(!isDaemonReady || workspaceStartupState === "loading" || (!workspaceQuery.isSuccess && !workspaceQuery.isError));
 	const showWelcome = !projectId && isLoaded && all.length === 0;
 	const showProjectEmpty = projectId !== undefined && isLoaded && workspaces.length > 0 && sessions.length === 0;
 	// Archived sessions cost one quiet line under the board until expanded.
 	const [archiveExpanded, setArchiveExpanded] = useState(false);
-	const [archiveLayout, setArchiveLayout] = useState<ArchiveLayout>(initialArchiveLayout);
-	// undefined = follow the layout's default; a number = the user dragged it.
+	// undefined = the default height; a number = the user dragged it.
 	const [archiveHeight, setArchiveHeight] = useState<number | undefined>(initialArchiveHeight);
 	const archiveResizeRef = useRef<{ startY: number; startHeight: number } | null>(null);
 	const [restoringSessionId, setRestoringSessionId] = useState<string | undefined>();
@@ -198,7 +197,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 		setArchiveHeight(next);
 		window.localStorage?.setItem(archiveHeightStorageKey, String(next));
 	};
-	const resolvedArchiveHeight = archiveHeight ?? ARCHIVE_DEFAULT_HEIGHT[archiveLayout];
+	const resolvedArchiveHeight = archiveHeight ?? ARCHIVE_DEFAULT_HEIGHT;
 	const startArchiveResize = (event: ReactPointerEvent<HTMLDivElement>) => {
 		event.preventDefault();
 		archiveResizeRef.current = { startY: event.clientY, startHeight: resolvedArchiveHeight };
@@ -224,11 +223,6 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			event.preventDefault();
 			commitArchiveHeight(resolvedArchiveHeight - step);
 		}
-	};
-
-	const chooseArchiveLayout = (layout: ArchiveLayout) => {
-		window.localStorage?.setItem(archiveLayoutStorageKey, layout);
-		setArchiveLayout(layout);
 	};
 
 	const restoreArchivedSession = async (event: MouseEvent<HTMLButtonElement>, session: WorkspaceSession) => {
@@ -329,12 +323,13 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				New task
 			</TopbarButton>
 			<TopbarButton
-				aria-label={orchestrator ? "Orchestrator" : "Spawn Orchestrator"}
+				aria-label={orchestratorActivityLabel ? `Orchestrator, ${orchestratorActivityLabel}` : "Spawn Orchestrator"}
 				disabled={isSpawning || isProjectRestarting}
 				onClick={() => void openOrchestrator()}
 				variant="primary"
 			>
 				<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
+				{orchestrator ? <OrchestratorActivityIndicator session={orchestrator} /> : null}
 				{isProjectRestarting
 					? "Restarting..."
 					: isSpawning
@@ -355,7 +350,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			    Win/Linux keep the crumb and actions in the framed ShellTopbar.
 			    Welcome skips the row — a dangling "Board" above the import
 			    chooser was review feedback on #2432. */}
-			{!showWelcome && boardActionsInPanel && (boardLabel || actions) ? (
+			{!showWelcome && !showStartup && boardActionsInPanel && (boardLabel || actions) ? (
 				<div
 					className="center-panel-titlebar flex h-toolbar shrink-0 items-center gap-2 border-b border-border-strong pr-4.5"
 					style={dragStyle}
@@ -383,7 +378,9 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						) : null}
 					</div>
 				) : null}
-				{workspaceQuery.isError ? (
+				{showStartup ? (
+					<DaemonStartupLoader />
+				) : workspaceStartupState === "error" || workspaceQuery.isError ? (
 					<p className="py-10 text-center text-xs text-passive">Could not load sessions.</p>
 				) : showWelcome ? (
 					<BoardWelcome />
@@ -475,45 +472,16 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 							<span className="font-mono text-2xs font-medium uppercase tracking-wide-sm">Archive</span>
 							<span className="ml-1.5 font-mono text-micro text-passive">{archived.length}</span>
 						</button>
-						{archiveExpanded && (
-							<div
-								aria-label="Archive layout"
-								className="ml-auto flex shrink-0 items-center rounded-md border border-border bg-surface-faint p-0.5"
-								role="group"
-							>
-								<ArchiveLayoutButton
-									active={archiveLayout === "rows"}
-									icon={Rows3}
-									label="Rows"
-									onClick={() => chooseArchiveLayout("rows")}
-								/>
-								<ArchiveLayoutButton
-									active={archiveLayout === "grid"}
-									icon={LayoutGrid}
-									label="Columns"
-									onClick={() => chooseArchiveLayout("grid")}
-								/>
-							</div>
-						)}
 					</div>
 					{archiveExpanded && (
 						<div
 							aria-label="Archived sessions"
 							style={{ height: resolvedArchiveHeight }}
-							className={cn(
-								"board-scrollbar gap-2.5 overflow-y-auto pb-3",
-								// The card is identical in both modes — the toggle only decides
-								// how many sit on a line.
-								//
-								// content-start + auto-rows-min keep the cards at their own
-								// height: a grid defaults to stretching its rows over the
-								// container, so dragging the panel taller inflated every card
-								// instead of leaving the new room empty. Same reason the flex
-								// mode pins shrink-0 on its children.
-								archiveLayout === "grid"
-									? "grid auto-rows-min grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] content-start"
-									: "flex flex-col [&>*]:shrink-0",
-							)}
+							// auto-rows-min + content-start keep cards at their own height: a
+							// grid stretches its rows over the container by default, so dragging
+							// the panel taller inflated every card instead of leaving the new
+							// room empty.
+							className="board-scrollbar grid auto-rows-min grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] content-start gap-2.5 overflow-y-auto pb-3"
 							role="list"
 						>
 							{archived.map((s) => (
@@ -649,7 +617,6 @@ type SplitLaneTone = {
 	titleClassName: string;
 	color: string;
 	dotGlow: boolean;
-	icon: LucideIcon;
 };
 
 const idleLaneTone: SplitLaneTone = {
@@ -660,7 +627,6 @@ const idleLaneTone: SplitLaneTone = {
 	titleClassName: "text-status-idle",
 	color: "var(--color-status-idle)",
 	dotGlow: false,
-	icon: CirclePause,
 };
 
 const workingLaneTone: SplitLaneTone = {
@@ -671,7 +637,6 @@ const workingLaneTone: SplitLaneTone = {
 	titleClassName: "text-status-working",
 	color: "var(--color-status-working)",
 	dotGlow: true,
-	icon: LoaderCircle,
 };
 
 const readyLaneTone: SplitLaneTone = {
@@ -682,7 +647,6 @@ const readyLaneTone: SplitLaneTone = {
 	titleClassName: "text-status-ready",
 	color: "var(--color-status-ready)",
 	dotGlow: true,
-	icon: GitMerge,
 };
 
 const mergedLaneTone: SplitLaneTone = {
@@ -693,7 +657,6 @@ const mergedLaneTone: SplitLaneTone = {
 	titleClassName: "text-status-merged",
 	color: "var(--color-status-merged)",
 	dotGlow: false,
-	icon: CircleCheck,
 };
 
 function WorkLaneColumn({
@@ -1149,38 +1112,6 @@ function ArchiveRestoreError({ message }: { message?: string }) {
 			{message}
 		</div>
 	) : null;
-}
-
-function ArchiveLayoutButton({
-	active,
-	icon: Icon,
-	label,
-	onClick,
-}: {
-	active: boolean;
-	icon: typeof Rows3;
-	label: string;
-	onClick: () => void;
-}) {
-	return (
-		<Tooltip>
-			<TooltipTrigger asChild>
-				<button
-					aria-label={label}
-					aria-pressed={active}
-					className={cn(
-						"grid size-control-sm place-items-center rounded-sm text-passive transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
-						active && "bg-interactive-active text-foreground",
-					)}
-					onClick={onClick}
-					type="button"
-				>
-					<Icon className="size-icon-sm" aria-hidden="true" />
-				</button>
-			</TooltipTrigger>
-			<TooltipContent side="top">{label}</TooltipContent>
-		</Tooltip>
-	);
 }
 
 type BoardPRLifecycleStatus = { label: "closed" | "open" | "draft" | "merged"; className: string };

@@ -712,6 +712,18 @@ describe("SessionInspector reviews tab", () => {
 		await openReviewsTab();
 
 		expect(await screen.findByText("claude-code")).toBeInTheDocument();
+		expect(screen.queryByText("reviewer")).not.toBeInTheDocument();
+	});
+
+	it("places not-run status beside the PR number without an aggregate status chip", async () => {
+		mockCommonGets([], "", [reviewState(3, "needs_review", "abc123")]);
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsTab();
+
+		expect(await screen.findByText("Reviewable change 3")).toBeInTheDocument();
+		expect(screen.getByText("#3 · Not run")).toBeInTheDocument();
+		expect(screen.getAllByText("Not run")).toHaveLength(1);
 	});
 
 	it("shows eligible and up-to-date open PR review rows", async () => {
@@ -726,7 +738,7 @@ describe("SessionInspector reviews tab", () => {
 
 		expect(screen.getByText("AO code reviews")).toBeInTheDocument();
 		expect(await screen.findByText("Reviewable change 3")).toBeInTheDocument();
-		expect(screen.getByText("#3")).toBeInTheDocument();
+		expect(screen.getByText("#3 · Not run")).toBeInTheDocument();
 		expect(screen.getByText("Reviewable change 4")).toBeInTheDocument();
 		expect(screen.queryByText("Reviewable change 5")).not.toBeInTheDocument();
 		// PR #3 is expanded by default, so its verdict is visible.
@@ -740,11 +752,11 @@ describe("SessionInspector reviews tab", () => {
 	});
 
 	it.each([
-		["needs_review", "changes_requested", "Changes requested", "Not run", "Run review"],
-		["running", "approved", "Approved", "Reviewing...", "Cancel review"],
+		["needs_review", "changes_requested", "Changes requested", "Run review", true],
+		["running", "approved", "Reviewing...", "Cancel review", false],
 	] as const)(
-		"shows the previous verdict while the current head is %s without changing its current status",
-		async (status, previousVerdict, previousLabel, currentLabel, actionLabel) => {
+		"shows only the latest available AO review run while the current head is %s",
+		async (status, previousVerdict, runLabel, actionLabel, showsPreviousRun) => {
 			const current = {
 				...reviewState(3, status, "sha-current"),
 				previousRun: {
@@ -752,6 +764,8 @@ describe("SessionInspector reviews tab", () => {
 					id: "run-previous",
 					status: "delivered",
 					verdict: previousVerdict,
+					body: "Previous review summary with actionable detail.",
+					githubReviewId: "98765",
 					targetSha: "sha-previous",
 				},
 			};
@@ -769,8 +783,20 @@ describe("SessionInspector reviews tab", () => {
 			renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 			await openReviewsTab();
 
-			const previous = await screen.findByText(`Previous: ${previousLabel}`);
-			expect(within(previous.parentElement as HTMLElement).getByText(currentLabel)).toBeInTheDocument();
+			expect(await screen.findByText(runLabel)).toBeInTheDocument();
+			if (showsPreviousRun) {
+				expect(screen.queryByText("#3 · Not run")).not.toBeInTheDocument();
+				expect(screen.getByText(/^#3 · /)).toBeInTheDocument();
+				expect(screen.queryByText(/Previous:/)).not.toBeInTheDocument();
+				expect(screen.getByText("Previous review summary with actionable detail.")).toBeInTheDocument();
+				expect(screen.getByRole("link", { name: "View previous review" })).toHaveAttribute(
+					"href",
+					"https://example.com/pr/3#pullrequestreview-98765",
+				);
+			} else {
+				expect(screen.queryByText("Previous review summary with actionable detail.")).not.toBeInTheDocument();
+				expect(screen.queryByRole("link", { name: "View previous review" })).not.toBeInTheDocument();
+			}
 			expect(screen.getByRole("button", { name: actionLabel })).toBeInTheDocument();
 		},
 	);
@@ -862,82 +888,14 @@ describe("SessionInspector reviews tab", () => {
 		await openReviewsTab();
 
 		expect(await screen.findByText("codex")).toBeInTheDocument();
-		expect(screen.getByText("reviewer")).toBeInTheDocument();
+		expect(screen.queryByText("reviewer")).not.toBeInTheDocument();
 		expect(screen.queryByText("sess-1")).not.toBeInTheDocument();
 		expect(screen.queryByText("review session")).not.toBeInTheDocument();
 		expect(screen.getAllByText("Changes requested")).not.toHaveLength(0);
 	});
 
-	function prSummaryWithReviews(reviews: unknown[]) {
-		return {
-			url: "https://example.com/pr/3",
-			htmlUrl: "https://example.com/pr/3",
-			number: 3,
-			title: "Fix the dashboard",
-			state: "open",
-			provider: "github",
-			repo: "o/r",
-			author: "dev",
-			sourceBranch: "feat",
-			targetBranch: "main",
-			headSha: "abc123",
-			additions: 1,
-			deletions: 0,
-			changedFiles: 1,
-			ci: { state: "passing", failingChecks: [] },
-			review: { decision: "changes_requested", hasUnresolvedHumanComments: false, unresolvedBy: [], reviews },
-			mergeability: { state: "mergeable", reasons: [], prUrl: "https://example.com/pr/3" },
-			updatedAt: "2026-06-15T00:00:00Z",
-			observedAt: "2026-06-15T00:00:00Z",
-			ciObservedAt: "2026-06-15T00:00:00Z",
-			reviewObservedAt: "2026-06-15T00:00:00Z",
-		};
-	}
-
-	const mockReviewsTabGets = (prs: unknown[]) => {
-		getMock.mockImplementation(async (path: string) => {
-			if (path === "/api/v1/sessions/{sessionId}/reviews") return { data: { reviewerHandleId: "", reviews: [] } };
-			if (path === "/api/v1/projects/{id}") {
-				return { data: { status: "ok", project: { id: "ws-1", config: { reviewers: [{ harness: "codex" }] } } } };
-			}
-			if (path === "/api/v1/sessions/{sessionId}/pr") return { data: { sessionId: "sess-1", prs } };
-			return { data: undefined };
-		});
-	};
-
-	it("renders GitHub review summaries under a Pull request reviews section", async () => {
-		mockReviewsTabGets([
-			prSummaryWithReviews([
-				{
-					reviewerId: "alice",
-					verdict: "changes_requested",
-					body: "please fix the nil check",
-					submittedAt: "2026-06-15T00:00:00Z",
-					isBot: false,
-				},
-				{
-					reviewerId: "review-bot",
-					verdict: "approved",
-					body: "automated approval",
-					submittedAt: "2026-06-15T00:00:00Z",
-					isBot: true,
-				},
-			]),
-		]);
-
-		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
-		await openReviewsTab();
-
-		expect(await screen.findByText("Pull request reviews")).toBeInTheDocument();
-		expect(screen.getByText("please fix the nil check")).toBeInTheDocument();
-		expect(screen.getByText("automated approval")).toBeInTheDocument();
-		expect(screen.getByText("alice")).toBeInTheDocument();
-		expect(screen.getByText("review-bot · bot")).toBeInTheDocument();
-		expect(screen.getByText("AO code reviews")).toBeInTheDocument();
-	});
-
-	it("omits the Pull request reviews section when no PR has review summaries", async () => {
-		mockReviewsTabGets([prSummaryWithReviews([])]);
+	it("omits pull request review summaries from the Reviews tab", async () => {
+		mockCommonGets([], "", [reviewState(3, "needs_review", "abc123")]);
 
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsTab();

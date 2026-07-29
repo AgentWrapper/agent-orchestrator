@@ -5957,6 +5957,8 @@ func TestSend_ConfirmBudgetCapsRetries(t *testing.T) {
 		Activity: domain.Activity{State: domain.ActivityIdle}}
 	msg := &fakeMessenger{}
 	m := newSendTestManager(t, signalingAgent{}, msg, st)
+	var logBuf bytes.Buffer
+	m.logger = slog.New(slog.NewTextHandler(&logBuf, nil))
 
 	if err := m.Send(context.Background(), "s1", "stuck prompt"); err != nil {
 		t.Fatalf("Send: %v", err)
@@ -5966,6 +5968,13 @@ func TestSend_ConfirmBudgetCapsRetries(t *testing.T) {
 	}
 	if got := st.sessions["s1"].Activity.State; got == domain.ActivityActive {
 		t.Fatalf("Activity.State = active, want unchanged (session never went active)")
+	}
+	logText := logBuf.String()
+	if !strings.Contains(logText, "level=WARN") ||
+		!strings.Contains(logText, "activity confirmation budget exhausted") ||
+		!strings.Contains(logText, "sessionID=s1") ||
+		!strings.Contains(logText, "attempts=3") {
+		t.Fatalf("log = %q, want exhausted confirmation warning with session and attempt count", logText)
 	}
 }
 
