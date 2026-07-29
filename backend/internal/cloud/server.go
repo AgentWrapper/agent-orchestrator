@@ -238,8 +238,14 @@ func cloudProjectHandler(store *postgres.Store) http.HandlerFunc {
 		if permissions == "" {
 			permissions = domain.PermissionModeBypassPermissions
 		}
+		orgID, err := tenancy.OrgIDFromContext(r.Context())
+		if err != nil {
+			envelope.WriteError(w, r, err)
+			return
+		}
 		cfg := domain.ProjectConfig{
 			DefaultBranch: strings.TrimSpace(in.DefaultBranch),
+			Env:           map[string]string{"AO_CLOUD_ORG_ID": orgID},
 			Worker: domain.RoleOverride{
 				Harness:     worker,
 				AgentConfig: domain.AgentConfig{Permissions: permissions},

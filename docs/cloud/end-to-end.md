@@ -149,16 +149,56 @@ done
 
 ## Worker-run result
 
-This worker could not execute the live Daytona/Claude loop because the required
-live inputs were absent in the environment:
+Live run on 2026-07-29 with maintainer-provided Daytona and Claude credentials:
 
 ```text
-DAYTONA_API_KEY=missing
-CLAUDE_CODE_OAUTH_TOKEN=missing
-AO_CLOUD_GOOGLE_CLIENT_ID=missing
-AO_CLOUD_GOOGLE_CLIENT_SECRET=missing
-AO_CLOUD_API_BASE=missing
+Postgres: local Homebrew postgres on 127.0.0.1:54329
+ao-cloud: 127.0.0.1:3021
+tunnel 1: ngrok https://0fee-...ngrok-free.app
+tunnel 2: localtunnel https://lovely-onions-buy.loca.lt
+auth: AO_CLOUD_DEV_AUTH=1
+project: agent-orchestrator registered through /api/v1/cloud/projects
 ```
+
+Successful parts of the loop:
+
+```text
+spawn_elapsed_seconds=17
+session.id=agent-orchestrator-6
+terminalHandleId=agent-orchestrator-6
+branch=ao/agent-orchestrator-6/root
+initial status=idle
+```
+
+Direct Daytona pane inspection confirmed the real Claude process ran in the
+sandbox and answered the prompt:
+
+```text
+AO cloud Daytona hooks are connected.
+daytona@b3c67f44-678c-47f7-b2fe-4e962aab05da:~/ao/agent-orchestrator-6$
+```
+
+The remaining blocker is sandbox-to-local tunnel reachability. From the same
+Daytona sandbox, unauthenticated `curl` to the public tunnel URL reset before
+reaching `ao-cloud`; the in-sandbox `ao hooks` calls failed the same way:
+
+```text
+curl -i https://<ngrok-url>/healthz
+curl: (35) Recv failure: Connection reset by peer
+
+ao hooks claude-code user-prompt-submit:
+Post "https://<ngrok-url>/api/v1/sessions/agent-orchestrator-6/activity":
+read tcp 172.20.0.11:34060->3.14.182.203:443: read: connection reset by peer
+
+ao hooks claude-code stop:
+Post "https://<ngrok-url>/api/v1/sessions/agent-orchestrator-6/activity":
+read tcp 172.20.0.11:58424->3.134.125.175:443: read: connection reset by peer
+```
+
+The ngrok and localtunnel URLs both served `/healthz` from the maintainer
+machine, but reset from the Daytona sandbox. Until a tunnel or deployed
+`AO_CLOUD_API_BASE` is reachable from Daytona, the final activity transition
+cannot complete; the session remains `no_signal` even though Claude ran.
 
 Local verification completed:
 
@@ -172,5 +212,6 @@ PASS
 ```
 
 Maintainer still needs to provide the Daytona API key, Claude Code token, and a
-tunnel URL to run the live loop above. For production auth validation, provide
-real Google OAuth client credentials; until then, use `AO_CLOUD_DEV_AUTH=1`.
+tunnel or deployed cloud URL reachable from Daytona. For production auth
+validation, provide real Google OAuth client credentials; until then, use
+`AO_CLOUD_DEV_AUTH=1`.

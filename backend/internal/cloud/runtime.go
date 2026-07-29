@@ -48,7 +48,7 @@ func newCloudRuntimeStack(cfg Config, store *postgres.Store, issuer *auth.Issuer
 	if err != nil {
 		return nil, err
 	}
-	agents, err := newCloudAgentResolver()
+	agents, err := newCloudAgentResolver(issuer, cfg.PublicAPIBase)
 	if err != nil {
 		return nil, err
 	}
@@ -187,15 +187,17 @@ func (m cloudRuntimeMessenger) Send(ctx context.Context, id domain.SessionID, me
 }
 
 type cloudAgentResolver struct {
-	base ports.AgentResolver
+	base          ports.AgentResolver
+	issuer        *auth.Issuer
+	publicAPIBase string
 }
 
-func newCloudAgentResolver() (ports.AgentResolver, error) {
+func newCloudAgentResolver(issuer *auth.Issuer, publicAPIBase string) (ports.AgentResolver, error) {
 	reg, err := agentregistry.Build()
 	if err != nil {
 		return nil, err
 	}
-	return cloudAgentResolver{base: registryResolver{reg: reg}}, nil
+	return cloudAgentResolver{base: registryResolver{reg: reg}, issuer: issuer, publicAPIBase: publicAPIBase}, nil
 }
 
 func (r cloudAgentResolver) Agent(harness domain.AgentHarness) (ports.Agent, bool) {
@@ -204,7 +206,7 @@ func (r cloudAgentResolver) Agent(harness domain.AgentHarness) (ports.Agent, boo
 		return nil, false
 	}
 	if harness == domain.HarnessClaudeCode {
-		return cloudClaudeAgent{Agent: agent}, true
+		return cloudClaudeAgent{Agent: agent, issuer: r.issuer, publicAPIBase: r.publicAPIBase}, true
 	}
 	return cloudNoLocalPrepAgent{Agent: agent}, true
 }
@@ -232,25 +234,50 @@ func (a cloudNoLocalPrepAgent) GetAgentHooks(ctx context.Context, _ ports.Worksp
 
 type cloudClaudeAgent struct {
 	ports.Agent
+	issuer        *auth.Issuer
+	publicAPIBase string
 }
 
 func (a cloudClaudeAgent) GetAgentHooks(ctx context.Context, _ ports.WorkspaceHookConfig) error {
 	return ctx.Err()
 }
 
+func (a cloudClaudeAgent) AugmentRuntimeEnv(env map[string]string, _ string) {
+	for _, key := range []string{"CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"} {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			env[key] = value
+		}
+	}
+	orgID := strings.TrimSpace(env["AO_CLOUD_ORG_ID"])
+	sessionID := strings.TrimSpace(env[sessionmanager.EnvSessionID])
+	if a.issuer == nil || strings.TrimSpace(a.publicAPIBase) == "" || orgID == "" || sessionID == "" {
+		return
+	}
+	token, _, err := a.issuer.IssueSessionToken(orgID, sessionID, 24*time.Hour)
+	if err != nil {
+		return
+	}
+	env["AO_API_BASE"] = a.publicAPIBase
+	env["AO_API_TOKEN"] = token
+}
+
 func (a cloudClaudeAgent) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) ([]string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	cmd := []string{"claude"}
-	appendCloudClaudePermissionFlags(&cmd, cfg.Permissions)
+	claude := []string{"claude"}
+	appendCloudClaudePermissionFlags(&claude, cfg.Permissions)
 	if cfg.SystemPrompt != "" {
-		cmd = append(cmd, "--append-system-prompt", cfg.SystemPrompt)
+		claude = append(claude, "--append-system-prompt", cfg.SystemPrompt)
 	}
 	if cfg.Prompt != "" {
-		cmd = append(cmd, "--", cfg.Prompt)
+		claude = append(claude, "-p", cfg.Prompt)
 	}
-	return cmd, nil
+	script := "printf '{}' | ao hooks claude-code user-prompt-submit >/tmp/ao-hooks-user-prompt-submit.log 2>&1 || true; " +
+		cloudShellJoin(claude) + "; status=$?; " +
+		"printf '{}' | ao hooks claude-code stop >/tmp/ao-hooks-stop.log 2>&1 || true; " +
+		"exit $status"
+	return []string{"sh", "-lc", script}, nil
 }
 
 func (a cloudClaudeAgent) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig) ([]string, bool, error) {
@@ -282,4 +309,16 @@ func appendCloudClaudePermissionFlags(cmd *[]string, permissions ports.Permissio
 	case ports.PermissionModeBypassPermissions:
 		*cmd = append(*cmd, "--permission-mode", "bypassPermissions")
 	}
+}
+
+func cloudShellJoin(argv []string) string {
+	parts := make([]string, 0, len(argv))
+	for _, arg := range argv {
+		parts = append(parts, cloudShellQuote(arg))
+	}
+	return strings.Join(parts, " ")
+}
+
+func cloudShellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
