@@ -12,6 +12,7 @@ vi.mock("../../lib/api-client", () => ({
 	apiClient: { GET: getMock, POST: vi.fn() },
 	apiErrorMessage: (e: unknown) => (e instanceof Error ? e.message : "error"),
 	hasTrustedApiBaseUrl: () => true,
+	getControlPlaneBaseUrl: () => null,
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => {

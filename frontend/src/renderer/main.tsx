@@ -17,6 +17,8 @@ import { TelemetryBoundary } from "./components/TelemetryBoundary";
 import { initTelemetry } from "./lib/telemetry";
 import { startDaemonFailureTelemetry } from "./lib/daemon-telemetry";
 import { setCloudAuthTokenGetter, getControlPlaneBaseUrl } from "./lib/api-client";
+import { setCloudSignedIn } from "./stores/cloud-auth-store";
+import { workspaceQueryKey } from "./hooks/useWorkspaceQuery";
 import { aoBridge } from "./lib/bridge";
 
 // Publishable keys are public by design (Clerk embeds them in client code). The
@@ -40,6 +42,15 @@ function CloudAuthBridge(): null {
 		});
 		return () => setCloudAuthTokenGetter(null);
 	}, [getToken]);
+
+	// Publish sign-in state to the shared store and force an immediate board
+	// refetch on any transition, so cloud sessions appear on sign-in / vanish on
+	// sign-out at once (not after the 15s workspace poll). Local sessions are
+	// untouched — only the cloud merge is gated on auth.
+	React.useEffect(() => {
+		setCloudSignedIn(Boolean(isSignedIn));
+		void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+	}, [isSignedIn]);
 
 	// Keep the local daemon's bus credentials in sync with the Clerk session so a
 	// LOCAL orchestrator/worker can take part in the federated bus. Mints a

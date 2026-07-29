@@ -3,21 +3,28 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
-const { captureRendererEventMock, getMock, postMock, hasTrustedApiBaseUrlMock } = vi.hoisted(() => ({
-	captureRendererEventMock: vi.fn().mockResolvedValue(undefined),
-	getMock: vi.fn(),
-	postMock: vi.fn(),
-	hasTrustedApiBaseUrlMock: vi.fn(() => true),
-}));
+const { captureRendererEventMock, getMock, postMock, hasTrustedApiBaseUrlMock, controlPlaneUrlMock } = vi.hoisted(
+	() => ({
+		captureRendererEventMock: vi.fn().mockResolvedValue(undefined),
+		getMock: vi.fn(),
+		postMock: vi.fn(),
+		hasTrustedApiBaseUrlMock: vi.fn(() => true),
+		// Default: no control plane configured → cloud fetch is NOT auth-gated
+		// (cloud comes from the local daemon). Tests override to exercise gating.
+		controlPlaneUrlMock: vi.fn<() => string | null>(() => null),
+	}),
+);
 
 vi.mock("../lib/api-client", () => ({
 	apiClient: { GET: getMock, POST: postMock },
 	hasTrustedApiBaseUrl: hasTrustedApiBaseUrlMock,
+	getControlPlaneBaseUrl: controlPlaneUrlMock,
 }));
 
 vi.mock("../lib/telemetry", () => ({ captureRendererEvent: captureRendererEventMock }));
 
 import { useWorkspaceQuery } from "./useWorkspaceQuery";
+import { setCloudSignedIn } from "../stores/cloud-auth-store";
 
 function wrapper({ children }: { children: ReactNode }) {
 	// The hook pins its own retry policy; retryDelay 0 keeps the error tests fast.
@@ -41,6 +48,8 @@ beforeEach(() => {
 	getMock.mockReset();
 	postMock.mockReset().mockResolvedValue({ data: undefined, error: undefined });
 	hasTrustedApiBaseUrlMock.mockReset().mockReturnValue(true);
+	controlPlaneUrlMock.mockReset().mockReturnValue(null);
+	setCloudSignedIn(false);
 	// The cloud-session registry reads imported shares from localStorage; clear it
 	// so shared imports never leak between tests.
 	if (typeof localStorage !== "undefined") localStorage.clear();
@@ -424,5 +433,43 @@ describe("useWorkspaceQuery cloud-session merge", () => {
 		await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
 		expect(result.current.data?.some((w) => w.id === "cloud-sessions")).toBe(false);
+	});
+
+	it("signed OUT with a control plane configured: no cloud fetch, only local sessions", async () => {
+		controlPlaneUrlMock.mockReturnValue("https://cp.example.com");
+		setCloudSignedIn(false);
+		// Local project + a would-be owned cloud session that must NOT be fetched.
+		routeCloud({
+			projects: [{ id: "runbookai", name: "runbookai", path: "/p" }],
+			owned: [ownedRef],
+			statusResult: liveDto,
+		});
+
+		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
+		await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+		// Local project renders; no cloud card; the cloud list was never queried.
+		expect(result.current.data?.some((w) => w.id === "runbookai")).toBe(true);
+		expect(result.current.data?.some((w) => w.id === "cloud-sessions")).toBe(false);
+		const proj = result.current.data?.find((w) => w.id === "runbookai");
+		expect(proj?.sessions.some((s) => s.id === "cloud-sb-1")).toBe(false);
+		expect(getMock).not.toHaveBeenCalledWith("/api/v1/cloud/sessions");
+	});
+
+	it("signed IN with a control plane configured: cloud sessions fetched and shown", async () => {
+		controlPlaneUrlMock.mockReturnValue("https://cp.example.com");
+		setCloudSignedIn(true);
+		routeCloud({
+			projects: [{ id: "runbookai", name: "runbookai", path: "/p" }],
+			owned: [ownedRef],
+			statusResult: liveDto,
+		});
+
+		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
+		await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+		const proj = result.current.data?.find((w) => w.id === "runbookai");
+		expect(proj?.sessions.some((s) => s.id === "cloud-sb-1")).toBe(true);
+		expect(getMock).toHaveBeenCalledWith("/api/v1/cloud/sessions");
 	});
 });

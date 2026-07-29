@@ -8,7 +8,8 @@
 // reaches it over the same HTTP API (apiClient) it uses for local sessions —
 // /api/v1/cloud/*. The app's global API base URL NEVER changes, which is what
 // makes local and cloud sessions indistinguishable in the UI.
-import { apiClient } from "./api-client";
+import { apiClient, getControlPlaneBaseUrl } from "./api-client";
+import { isCloudSignedIn } from "../stores/cloud-auth-store";
 
 export type CloudSessionRef = {
 	sessionId: string;
@@ -202,6 +203,19 @@ export function removeSharedSession(sandboxId: string): void {
 /** Pull the live cloud-session registry from the Go daemon, plus any imported
  *  shared sessions. */
 export async function refreshCloudSessions(): Promise<void> {
+	// Gate cloud sessions on a signed-in control-plane session. When a control
+	// plane is configured but the user is signed out, show NO cloud sessions
+	// (owned or shared) — they all need a Clerk token, and firing the calls would
+	// just 401 every tick. Local sessions are unaffected (different code path).
+	// When no control plane is configured, cloud sessions come from the LOCAL
+	// daemon (no sign-in needed), so don't gate.
+	if (getControlPlaneBaseUrl() && !isCloudSignedIn()) {
+		if (refs.length > 0) {
+			refs = [];
+			emit();
+		}
+		return;
+	}
 	let owned: CloudSessionRef[] = [];
 	try {
 		const { data } = await apiClient.GET("/api/v1/cloud/sessions");
