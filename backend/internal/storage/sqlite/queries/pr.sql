@@ -1,6 +1,6 @@
 -- name: UpsertPR :exec
 INSERT INTO pr (
-    url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at,
+    url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, state_changed_at,
     provider, host, repo, source_branch, target_branch, head_sha, title,
     additions, deletions, changed_files, author, base_sha, merge_commit_sha,
     is_draft, is_merged, is_closed,
@@ -8,9 +8,19 @@ INSERT INTO pr (
     created_at_provider, updated_at_provider, merged_at_provider, closed_at_provider,
     metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (url) DO UPDATE SET
     number = excluded.number,
+    state_changed_at = CASE
+        WHEN pr.pr_state != excluded.pr_state THEN
+            CASE
+                WHEN excluded.pr_state = 'merged' THEN COALESCE(excluded.merged_at_provider, excluded.updated_at_provider, excluded.observed_at, excluded.updated_at)
+                WHEN excluded.pr_state = 'closed' THEN COALESCE(excluded.closed_at_provider, excluded.updated_at_provider, excluded.observed_at, excluded.updated_at)
+                ELSE COALESCE(excluded.updated_at_provider, excluded.observed_at, excluded.updated_at)
+            END
+        WHEN pr.state_changed_at IS NULL THEN excluded.state_changed_at
+        ELSE pr.state_changed_at
+    END,
     pr_state = excluded.pr_state,
     review_decision = excluded.review_decision,
     ci_state = excluded.ci_state,
@@ -49,12 +59,17 @@ ON CONFLICT (url) DO UPDATE SET
 
 -- name: UpsertLegacyPR :exec
 INSERT INTO pr (
-    url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at,
+    url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, state_changed_at,
     is_draft, is_merged, is_closed
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (url) DO UPDATE SET
     number = excluded.number,
+    state_changed_at = CASE
+        WHEN pr.pr_state != excluded.pr_state THEN excluded.updated_at
+        WHEN pr.state_changed_at IS NULL THEN excluded.state_changed_at
+        ELSE pr.state_changed_at
+    END,
     pr_state = excluded.pr_state,
     review_decision = excluded.review_decision,
     ci_state = excluded.ci_state,
@@ -127,10 +142,15 @@ WHERE pr.session_id = ?
 ORDER BY pr.updated_at DESC;
 
 -- name: ClaimPRForSession :exec
-INSERT INTO pr (url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO pr (url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, state_changed_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (url) DO UPDATE SET
     session_id = excluded.session_id,
+    state_changed_at = CASE
+        WHEN pr.pr_state != excluded.pr_state THEN excluded.updated_at
+        WHEN pr.state_changed_at IS NULL THEN excluded.state_changed_at
+        ELSE pr.state_changed_at
+    END,
     review_decision = excluded.review_decision,
     updated_at = excluded.updated_at;
 

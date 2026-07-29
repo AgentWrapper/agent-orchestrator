@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -21,6 +22,12 @@ const reviewerTaskMessagePrefix = "Read and follow the AO review task in `"
 // It is the side of the engine that talks to the reviewer registry and runtime;
 // the engine owns the orchestration and persistence.
 type Launcher interface {
+	// Preflight checks whether the reviewer for the given harness is available
+	// to run (binary on PATH, etc.) without starting a runtime pane. It runs
+	// only when a reviewer launch is actually required, after ReviewRun rows
+	// have been created. On failure the engine's Trigger() calls failRuns() to
+	// mark those rows as failed, matching the existing Spawn failure semantics.
+	Preflight(ctx context.Context, harness domain.ReviewerHarness, workspacePath string) error
 	// Spawn launches a fresh reviewer and returns the runtime handle id of the
 	// live pane (stable per worker, reused across passes).
 	Spawn(ctx context.Context, spec LaunchSpec) (handleID string, err error)
@@ -72,6 +79,41 @@ type preLaunchReviewer interface {
 // NewLauncher builds the production reviewer launcher.
 func NewLauncher(reviewers ports.ReviewerResolver, runtime reviewerRuntime, dataDir string) Launcher {
 	return &agentLauncher{reviewers: reviewers, runtime: runtime, dataDir: dataDir}
+}
+
+// Preflight checks whether the reviewer for the given harness can be launched
+// without starting a runtime pane. It uses the same source of truth as Spawn:
+// resolve the adapter, build the real ReviewCommand, and validate the
+// executable. The only difference from Spawn is that Preflight stops before
+// runtime.Create().
+func (l *agentLauncher) Preflight(ctx context.Context, harness domain.ReviewerHarness, workspacePath string) error {
+	reviewer, ok := l.reviewers.Reviewer(harness)
+	if !ok {
+		return fmt.Errorf("no reviewer adapter for harness %q", harness)
+	}
+	cmd, err := reviewer.ReviewCommand(ctx, ports.ReviewInvocation{WorkspacePath: workspacePath})
+	if err != nil {
+		return fmt.Errorf("reviewer command: %w", err)
+	}
+	if len(cmd.Argv) == 0 {
+		return fmt.Errorf("reviewer produced empty command")
+	}
+	// Unwrap any leading env KEY=value ... prefix so the real binary is
+	// validated. Mirrors launchBinary in the session manager, which already
+	// skips the same prefix to validate the worker agent binary.
+	bin := cmd.Argv[0]
+	if filepath.Base(bin) == "env" {
+		for _, arg := range cmd.Argv[1:] {
+			if !strings.Contains(arg, "=") {
+				bin = arg
+				break
+			}
+		}
+	}
+	if _, err := exec.LookPath(bin); err != nil {
+		return fmt.Errorf("reviewer binary %q not found: %w", bin, err)
+	}
+	return nil
 }
 
 // reviewerHandleID is the stable runtime handle for a worker's reviewer pane, so

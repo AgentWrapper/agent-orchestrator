@@ -164,6 +164,8 @@ type fakeLauncher struct {
 	cancelledHarness domain.ReviewerHarness
 	specs            []LaunchSpec
 	handles          []string
+	preflightErr     error
+	preflighted      bool
 }
 
 func (f *fakeLauncher) Spawn(_ context.Context, spec LaunchSpec) (string, error) {
@@ -192,6 +194,10 @@ func (f *fakeLauncher) Cancel(_ context.Context, handleID string, harness domain
 	f.cancelledHandle = handleID
 	f.cancelledHarness = harness
 	return f.cancelErr
+}
+func (f *fakeLauncher) Preflight(_ context.Context, _ domain.ReviewerHarness, _ string) error {
+	f.preflighted = true
+	return f.preflightErr
 }
 
 func liveWorker() domain.SessionRecord {
@@ -477,6 +483,9 @@ func TestTriggerNotifiesLiveReviewerOnNewCommit(t *testing.T) {
 	}
 	if !launcher.notified || launcher.spawned {
 		t.Fatalf("expected notify on live reviewer: %+v", launcher)
+	}
+	if launcher.preflighted {
+		t.Fatal("expected preflight not to run when reusing a live pane")
 	}
 	if launcher.gotHandle != "review-mer-1" {
 		t.Fatalf("notify handle = %q", launcher.gotHandle)
@@ -765,6 +774,9 @@ func TestTriggerSkipsApprovedAndRunningCurrentHead(t *testing.T) {
 	if res.Created || len(res.CreatedRuns) != 0 || launcher.spawned || launcher.notified {
 		t.Fatalf("expected no new work: res=%+v launcher=%+v", res, launcher)
 	}
+	if launcher.preflighted {
+		t.Fatal("expected preflight not to run")
+	}
 	if len(res.Reviews) != 2 || res.Reviews[0].Status != ReviewStateUpToDate || res.Reviews[1].Status != ReviewStateRunning {
 		t.Fatalf("review states = %+v", res.Reviews)
 	}
@@ -832,5 +844,58 @@ func TestListReturnsHandleAndRuns(t *testing.T) {
 	}
 	if got.ReviewerHandleID != "review-mer-1" || len(got.Runs) != 1 {
 		t.Fatalf("list = %+v", got)
+	}
+}
+
+func TestTriggerPreflightFailureRecordsFailedRun(t *testing.T) {
+	store := &fakeStore{}
+	launcher := &fakeLauncher{preflightErr: fmt.Errorf("codex: %w", ports.ErrAgentBinaryNotFound)}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	_, err := eng.Trigger(context.Background(), "mer-1")
+	if err == nil {
+		t.Fatal("expected error from preflight, got nil")
+	}
+	if !errors.Is(err, ports.ErrAgentBinaryNotFound) {
+		t.Fatalf("err = %v, want wrapped ErrAgentBinaryNotFound", err)
+	}
+	if !launcher.preflighted {
+		t.Fatal("expected Preflight to be called")
+	}
+	if launcher.spawned {
+		t.Fatal("expected no spawn attempt when preflight fails")
+	}
+	if len(store.runs) != 1 {
+		t.Fatalf("expected 1 review run (failed), got %d", len(store.runs))
+	}
+	run := store.runs[0]
+	if run.Status != domain.ReviewRunFailed || run.Verdict != domain.VerdictNone {
+		t.Fatalf("run = %+v, want failed with no verdict", run)
+	}
+	if !strings.Contains(run.Body, "codex") || !strings.Contains(run.Body, ports.ErrAgentBinaryNotFound.Error()) {
+		t.Fatalf("run body = %q, want preflight cause", run.Body)
+	}
+}
+
+func TestTriggerProceedsNormallyAfterSuccessfulPreflight(t *testing.T) {
+	store := &fakeStore{}
+	launcher := &fakeLauncher{handle: "review-mer-1"}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.Trigger(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if !launcher.preflighted {
+		t.Fatal("expected Preflight to be called")
+	}
+	if !res.Created || res.ReviewerHandleID != "review-mer-1" {
+		t.Fatalf("result = %+v", res)
+	}
+	if !launcher.spawned {
+		t.Fatal("expected spawn after successful preflight")
+	}
+	if len(store.runs) != 1 {
+		t.Fatalf("expected 1 review run, got %d", len(store.runs))
 	}
 }

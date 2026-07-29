@@ -1,7 +1,7 @@
 import * as React from "react";
 import { cn } from "../../lib/utils";
 
-// Mono pill badges, like emdash. Color is rare and meaningful (DESIGN.md → Color).
+// Mono pill badges. Color is rare and meaningful (DESIGN.md → Color).
 type BadgeVariant = "neutral" | "outline" | "accent" | "success" | "warning" | "error";
 
 export function Badge({

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -269,7 +270,7 @@ func TestGetAgentHooksInstallsSystemPromptPlugin(t *testing.T) {
 	text := string(data)
 	for _, want := range []string{
 		ampPluginSentinel,
-		promptFile,
+		strconv.Quote(promptFile),
 		"agent.start",
 		"display: false",
 		"readFile(systemPromptFile",
@@ -358,7 +359,7 @@ func TestGetAgentHooksSystemPromptFileTakesPrecedenceOverInline(t *testing.T) {
 		t.Fatalf("read plugin: %v", err)
 	}
 	text := string(data)
-	if !strings.Contains(text, promptFile) {
+	if !strings.Contains(text, strconv.Quote(promptFile)) {
 		t.Fatalf("plugin missing prompt file path:\n%s", text)
 	}
 	if strings.Contains(text, "inline rules") {

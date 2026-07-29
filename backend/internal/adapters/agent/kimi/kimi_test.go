@@ -32,13 +32,84 @@ func TestManifest(t *testing.T) {
 	}
 }
 
-func TestGetConfigSpecEmpty(t *testing.T) {
+func TestGetConfigSpecAdvertisesModelField(t *testing.T) {
 	spec, err := (&Plugin{}).GetConfigSpec(context.Background())
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if len(spec.Fields) != 0 {
-		t.Fatalf("expected no fields, got %d", len(spec.Fields))
+	if len(spec.Fields) != 1 {
+		t.Fatalf("expected 1 field, got %d", len(spec.Fields))
+	}
+	if spec.Fields[0].Key != "model" || spec.Fields[0].Type != ports.ConfigFieldString {
+		t.Fatalf("field = %#v, want model/string", spec.Fields[0])
+	}
+}
+
+func TestGetLaunchCommandAppendsModelFlagWhenConfigured(t *testing.T) {
+	p := &Plugin{resolvedBinary: "kimi"}
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config: ports.AgentConfig{Model: "k2.5"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"kimi", "--model", "k2.5"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+}
+
+func TestGetLaunchCommandOmitsModelFlagWhenBlank(t *testing.T) {
+	p := &Plugin{resolvedBinary: "kimi"}
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config: ports.AgentConfig{Model: "   "},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"kimi"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+}
+
+func TestGetLaunchCommandModelFlagComposesWithApprovalFlags(t *testing.T) {
+	p := &Plugin{resolvedBinary: "kimi"}
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Permissions: ports.PermissionModeBypassPermissions,
+		Config:      ports.AgentConfig{Model: "k2.5"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"kimi", "-y", "--model", "k2.5"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+}
+
+// Mirrors the issue #2890 harness note: --model + --session composition is
+// unverified against a real kimi install, so appendModelFlag is intentionally
+// not wired into GetRestoreCommand. This test locks that decision in so a
+// future "just mirror Copilot/Codex" edit doesn't silently forward the model
+// override on restore without re-verifying first.
+func TestGetRestoreCommandDoesNotForwardModelOverride(t *testing.T) {
+	p := &Plugin{resolvedBinary: "kimi"}
+	cmd, ok, err := p.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Session: ports.SessionRef{
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "01HZABC"},
+		},
+		Config: ports.AgentConfig{Model: "k2.5"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("ok=false, want true")
+	}
+	want := []string{"kimi", "--session", "01HZABC"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v (model override must not be forwarded on restore)", cmd, want)
 	}
 }
 

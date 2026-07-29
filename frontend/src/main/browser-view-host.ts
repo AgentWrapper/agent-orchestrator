@@ -16,6 +16,7 @@ import type {
 	BrowserAnnotationSubmitPayload,
 } from "../shared/browser-annotations";
 import { attachAppShortcuts } from "./app-shortcuts";
+import type { KeybindingOverrides } from "../shared/shortcuts";
 
 export type BrowserRect = Pick<Rectangle, "x" | "y" | "width" | "height">;
 
@@ -98,6 +99,8 @@ export type BrowserViewHostOptions = {
 	// Platform flag for application shortcuts forwarded from each preview view
 	// to the shell. Defaults to non-mac when omitted (tests).
 	isMac?: boolean;
+	getKeybindingOverrides?: () => KeybindingOverrides;
+	isKeybindingRecording?: () => boolean;
 };
 
 export type BrowserViewHost = {
@@ -243,7 +246,14 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		// The preview is a separate WebContentsView, so renderer-window keydown
 		// listeners never see keys typed here. Forward application shortcuts to the
 		// shell renderer so they still work with the panel focused.
-		attachAppShortcuts(view.webContents, Boolean(options.isMac), options.mainWindow.webContents, true);
+		attachAppShortcuts(
+			view.webContents,
+			Boolean(options.isMac),
+			options.mainWindow.webContents,
+			true,
+			options.getKeybindingOverrides,
+			options.isKeybindingRecording,
+		);
 		view.webContents.on("focus", () => {
 			lastFocusedViewId = viewId;
 		});
@@ -466,8 +476,30 @@ function withDefaultScheme(raw: string): string {
 	if (isWindowsAbsolutePath(raw) || isPosixAbsolutePath(raw)) return localPathToFileURL(raw);
 	if (/^https?:\/\//i.test(raw)) return raw;
 	if (isLocalhostLike(raw)) return `http://${raw}`;
-	if (/^[a-zA-Z][a-zA-Z\d+.-]*:/.test(raw)) return raw;
-	return `https://${raw}`;
+	// A single token with no whitespace can be a destination: an explicit scheme
+	// (file:, mailto:, ...) or a bare hostname we default to https. Anything else —
+	// whitespace-containing text, or a lone word that is not a hostname — is a
+	// search query, not a URL (Chrome-style omnibox behavior).
+	if (!/\s/.test(raw)) {
+		if (/^[a-zA-Z][a-zA-Z\d+.-]*:/.test(raw)) return raw;
+		if (looksLikeHost(raw)) return `https://${raw}`;
+	}
+	return searchURL(raw);
+}
+
+// Treat input as a navigable host when the authority (the part before any
+// path/query/fragment) is an IPv6 literal, carries an explicit :port, or has a
+// dot (a domain). Bare words like "hi" fail this and become a search instead.
+function looksLikeHost(raw: string): boolean {
+	const host = raw.split(/[/?#]/, 1)[0];
+	if (host === "") return false;
+	if (host.startsWith("[") && host.includes("]")) return true;
+	if (/:\d+$/.test(host)) return true;
+	return host.includes(".");
+}
+
+function searchURL(query: string): string {
+	return `https://www.google.com/search?q=${encodeURIComponent(query)}`;
 }
 
 function isWindowsAbsolutePath(raw: string): boolean {

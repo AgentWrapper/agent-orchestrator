@@ -1,8 +1,9 @@
 import { QueryClient } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { NotificationDTO } from "./notifications";
+import type { NotificationDTO, NotificationsCache } from "./notifications";
 
 const {
+	apiGetMock,
 	getApiBaseUrlMock,
 	onStatusMock,
 	removeStatusMock,
@@ -10,6 +11,7 @@ const {
 	subscribeApiBaseUrlMock,
 	unsubscribeBaseUrlMock,
 } = vi.hoisted(() => ({
+	apiGetMock: vi.fn(),
 	getApiBaseUrlMock: vi.fn(() => "http://127.0.0.1:3001"),
 	onStatusMock: vi.fn(),
 	removeStatusMock: vi.fn(),
@@ -19,7 +21,7 @@ const {
 }));
 
 vi.mock("./api-client", () => ({
-	apiClient: {},
+	apiClient: { GET: apiGetMock },
 	apiErrorMessage: () => "Request failed",
 	getApiBaseUrl: getApiBaseUrlMock,
 	subscribeApiBaseUrl: subscribeApiBaseUrlMock,
@@ -32,7 +34,19 @@ vi.mock("./bridge", () => ({
 	},
 }));
 
-import { createNotificationsTransport, mergeUnreadNotification, unreadNotificationsQueryKey } from "./notifications";
+import {
+	createNotificationsTransport,
+	fetchNotificationsPage,
+	getCachedNotifications,
+	getCachedUnreadCount,
+	keepLatestNotificationsPage,
+	markAllCachedNotificationsRead,
+	markCachedNotificationRead,
+	mergeUnreadNotification,
+	NOTIFICATION_PAGE_SIZE,
+	recentNotificationsQueryKey,
+	unreadNotificationsQueryKey,
+} from "./notifications";
 
 class EventSourceStub {
 	static instances: EventSourceStub[] = [];
@@ -82,7 +96,15 @@ function queryClient() {
 	return new QueryClient({ defaultOptions: { queries: { retry: false } } });
 }
 
+// A covered or background Electron window still reports "visible" on Windows
+// and Linux, so visibility and focus have to be stubbed independently.
+function setWindowState({ focused, visible }: { focused: boolean; visible: boolean }) {
+	vi.spyOn(document, "visibilityState", "get").mockReturnValue(visible ? "visible" : "hidden");
+	vi.spyOn(document, "hasFocus").mockReturnValue(focused);
+}
+
 beforeEach(() => {
+	apiGetMock.mockReset();
 	EventSourceStub.instances = [];
 	getApiBaseUrlMock.mockReset().mockReturnValue("http://127.0.0.1:3001");
 	onStatusMock.mockReset().mockReturnValue(removeStatusMock);
@@ -95,16 +117,130 @@ beforeEach(() => {
 
 afterEach(() => {
 	delete (globalThis as unknown as { EventSource?: unknown }).EventSource;
+	vi.restoreAllMocks();
 });
 
 describe("notification cache helpers", () => {
+	it.each([
+		{ cursor: "previous", nextCursor: "older", status: "all" as const, unreadCount: 4 },
+		{ cursor: "", nextCursor: undefined, status: "unread" as const, unreadCount: 1 },
+	])("requests a bounded $status page", async ({ cursor, nextCursor, status, unreadCount }) => {
+		apiGetMock.mockResolvedValue({
+			data: { notifications: [notification()], nextCursor, unreadCount },
+		});
+
+		await expect(fetchNotificationsPage(status, cursor)).resolves.toEqual({
+			notifications: [notification()],
+			nextCursor,
+			unreadCount,
+		});
+
+		expect(apiGetMock).toHaveBeenCalledWith("/api/v1/notifications", {
+			params: {
+				query: {
+					cursor: cursor || undefined,
+					limit: NOTIFICATION_PAGE_SIZE,
+					status,
+				},
+			},
+		});
+	});
+
 	it("merges unread notifications by id", () => {
 		const qc = queryClient();
 
 		expect(mergeUnreadNotification(qc, notification())).toBe(true);
 		expect(mergeUnreadNotification(qc, notification())).toBe(false);
 
-		expect(qc.getQueryData<NotificationDTO[]>(unreadNotificationsQueryKey)).toHaveLength(1);
+		expect(getCachedNotifications(qc.getQueryData<NotificationsCache>(unreadNotificationsQueryKey))).toHaveLength(1);
+		expect(getCachedUnreadCount(qc.getQueryData<NotificationsCache>(unreadNotificationsQueryKey))).toBe(1);
+	});
+
+	it("removes acknowledged notifications from Unread and keeps them in All", () => {
+		const qc = queryClient();
+		const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
+		mergeUnreadNotification(qc, notification());
+		qc.setQueryData<NotificationsCache>(recentNotificationsQueryKey, {
+			pageParams: [""],
+			pages: [{ notifications: [notification()], unreadCount: 1 }],
+		});
+		markCachedNotificationRead(qc, notification({ status: "read" }));
+
+		expect(getCachedNotifications(qc.getQueryData<NotificationsCache>(unreadNotificationsQueryKey))).toEqual([]);
+		expect(getCachedUnreadCount(qc.getQueryData<NotificationsCache>(unreadNotificationsQueryKey))).toBe(0);
+		expect(getCachedNotifications(qc.getQueryData<NotificationsCache>(recentNotificationsQueryKey))).toEqual([
+			expect.objectContaining({ id: "ntf_1", status: "read" }),
+		]);
+		expect(invalidateSpy).toHaveBeenCalledWith({
+			queryKey: unreadNotificationsQueryKey,
+			exact: true,
+			refetchType: "active",
+		});
+
+		mergeUnreadNotification(qc, notification({ id: "ntf_2" }));
+		markAllCachedNotificationsRead(qc);
+		expect(getCachedNotifications(qc.getQueryData<NotificationsCache>(unreadNotificationsQueryKey))).toEqual([]);
+		expect(getCachedUnreadCount(qc.getQueryData<NotificationsCache>(unreadNotificationsQueryKey))).toBe(0);
+	});
+
+	it("deduplicates and updates notifications across cached pages", () => {
+		const qc = queryClient();
+		qc.setQueryData<NotificationsCache>(unreadNotificationsQueryKey, {
+			pageParams: ["", "older"],
+			pages: [
+				{ notifications: [notification({ id: "new" })], nextCursor: "older", unreadCount: 2 },
+				{ notifications: [notification({ id: "old" })], unreadCount: 2 },
+			],
+		});
+
+		expect(mergeUnreadNotification(qc, notification({ id: "old", title: "updated" }))).toBe(false);
+		expect(getCachedNotifications(qc.getQueryData<NotificationsCache>(unreadNotificationsQueryKey))).toHaveLength(2);
+		expect(
+			getCachedNotifications(qc.getQueryData<NotificationsCache>(unreadNotificationsQueryKey)).find(
+				(item) => item.id === "old",
+			)?.title,
+		).toBe("updated");
+		expect(getCachedUnreadCount(qc.getQueryData<NotificationsCache>(unreadNotificationsQueryKey))).toBe(2);
+	});
+
+	it("caps and rebases the cache when live events grow the newest page past 100", () => {
+		const qc = queryClient();
+		const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
+		const firstPage = Array.from({ length: NOTIFICATION_PAGE_SIZE }, (_, index) =>
+			notification({ id: `ntf_${index + 1}` }),
+		);
+		qc.setQueryData<NotificationsCache>(unreadNotificationsQueryKey, {
+			pageParams: [""],
+			pages: [{ notifications: firstPage, unreadCount: firstPage.length }],
+		});
+
+		mergeUnreadNotification(qc, notification({ id: "ntf_live" }));
+
+		expect(getCachedNotifications(qc.getQueryData<NotificationsCache>(unreadNotificationsQueryKey))).toHaveLength(
+			NOTIFICATION_PAGE_SIZE,
+		);
+		expect(invalidateSpy).toHaveBeenCalledWith({
+			queryKey: unreadNotificationsQueryKey,
+			exact: true,
+			refetchType: "active",
+		});
+	});
+
+	it("drops older pages after the panel closes while keeping the latest page", () => {
+		const qc = queryClient();
+		qc.setQueryData<NotificationsCache>(unreadNotificationsQueryKey, {
+			pageParams: ["", "older"],
+			pages: [
+				{ notifications: [notification({ id: "new" })], nextCursor: "older", unreadCount: 2 },
+				{ notifications: [notification({ id: "old" })], unreadCount: 2 },
+			],
+		});
+
+		keepLatestNotificationsPage(qc);
+
+		const cache = qc.getQueryData<NotificationsCache>(unreadNotificationsQueryKey);
+		expect(cache?.pages).toHaveLength(1);
+		expect(getCachedNotifications(cache).map((item) => item.id)).toEqual(["new"]);
 	});
 });
 
@@ -119,6 +255,7 @@ describe("createNotificationsTransport", () => {
 		expect(EventSourceStub.instances).toHaveLength(1);
 		expect(EventSourceStub.instances[0].url).toBe("http://127.0.0.1:3001/api/v1/notifications/stream");
 		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: unreadNotificationsQueryKey });
+		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: recentNotificationsQueryKey });
 	});
 
 	it("merges live notifications and shows one toast for a new id", () => {
@@ -129,7 +266,8 @@ describe("createNotificationsTransport", () => {
 		source.dispatch("notification_created", notification());
 		source.dispatch("notification_created", notification());
 
-		expect(qc.getQueryData<NotificationDTO[]>(unreadNotificationsQueryKey)).toHaveLength(1);
+		expect(getCachedNotifications(qc.getQueryData<NotificationsCache>(unreadNotificationsQueryKey))).toHaveLength(1);
+		expect(getCachedNotifications(qc.getQueryData<NotificationsCache>(recentNotificationsQueryKey))).toHaveLength(1);
 		expect(showNotificationMock).toHaveBeenCalledTimes(1);
 		expect(showNotificationMock).toHaveBeenCalledWith({
 			id: "ntf_1",
@@ -137,6 +275,48 @@ describe("createNotificationsTransport", () => {
 			body: "The agent is waiting for your response.",
 		});
 	});
+
+	it("suppresses the needs_input toast for the session the user is already watching", () => {
+		setWindowState({ focused: true, visible: true });
+		const qc = queryClient();
+		createNotificationsTransport(qc, () => "mer-1").connect();
+
+		EventSourceStub.instances[0].dispatch("notification_created", notification());
+
+		expect(getCachedNotifications(qc.getQueryData<NotificationsCache>(unreadNotificationsQueryKey))).toHaveLength(1);
+		expect(showNotificationMock).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		{
+			activeSessionId: "other-session",
+			focused: true,
+			reason: "the notification is for a different session",
+			visible: true,
+		},
+		{ activeSessionId: "mer-1", focused: true, reason: "the window is hidden", visible: false },
+		{ activeSessionId: "mer-1", focused: false, reason: "the window is visible but unfocused", visible: true },
+		{ activeSessionId: undefined, focused: true, reason: "no session is open", visible: true },
+	])("still shows the needs_input toast when $reason", ({ activeSessionId, focused, visible }) => {
+		setWindowState({ focused, visible });
+		createNotificationsTransport(queryClient(), () => activeSessionId).connect();
+
+		EventSourceStub.instances[0].dispatch("notification_created", notification());
+
+		expect(showNotificationMock).toHaveBeenCalledTimes(1);
+	});
+
+	it.each(["ready_to_merge", "pr_merged", "pr_closed_unmerged"] as const)(
+		"still shows the %s toast for the focused active session",
+		(type) => {
+			setWindowState({ focused: true, visible: true });
+			createNotificationsTransport(queryClient(), () => "mer-1").connect();
+
+			EventSourceStub.instances[0].dispatch("notification_created", notification({ type }));
+
+			expect(showNotificationMock).toHaveBeenCalledTimes(1);
+		},
+	);
 
 	it("reconnects when the API base URL changes", () => {
 		createNotificationsTransport(queryClient()).connect();

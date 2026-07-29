@@ -3,9 +3,11 @@ package vibe
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -126,6 +128,63 @@ func TestVibeSessionLogAuthStatusAuthorizedWithAssistantMessage(t *testing.T) {
 	}
 	if !ok || status != ports.AgentAuthStatusAuthorized {
 		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusAuthorized)
+	}
+}
+
+func TestVibeKeychainAuthStatus(t *testing.T) {
+	if runtime.GOOS == "darwin" {
+		t.Skip("This test only runs on non-Darwin platforms")
+	}
+
+	// 1. Create a temp directory for the fake security binary
+	tmpDir := t.TempDir()
+
+	// 2. Write a fake `security` script/binary that creates a sentinel file
+	//    when invoked — proving it was called
+	sentinelFile := filepath.Join(tmpDir, "security_was_called")
+
+	var fakeSecurityScript string
+	var scriptContent string
+	if runtime.GOOS == "windows" {
+		fakeSecurityScript = filepath.Join(tmpDir, "security.bat")
+		scriptContent = fmt.Sprintf("echo called > %s\r\n", sentinelFile)
+	} else {
+		fakeSecurityScript = filepath.Join(tmpDir, "security")
+		scriptContent = fmt.Sprintf("#!/bin/sh\ntouch %s\n", sentinelFile)
+	}
+
+	err := os.WriteFile(fakeSecurityScript, []byte(scriptContent), 0o755)
+	if err != nil {
+		t.Fatalf("failed to write fake security executable: %v", err)
+	}
+
+	// 3. Prepend our fake binary dir to PATH
+	originalPath := os.Getenv("PATH")
+	t.Cleanup(func() { os.Setenv("PATH", originalPath) })
+	os.Setenv("PATH", tmpDir+string(os.PathListSeparator)+originalPath)
+
+	// 4. Call the function
+	status, ok, err := vibeKeychainAuthStatus(
+		context.Background(),
+		"test-env-var",
+	)
+
+	// 5. Assert return values
+	if status != ports.AgentAuthStatusUnknown {
+		t.Errorf("status = %q, want %q", status, ports.AgentAuthStatusUnknown)
+	}
+	if ok {
+		t.Errorf("ok = true, want false")
+	}
+	if err != nil {
+		t.Errorf("err = %v, want nil", err)
+	}
+
+	// 6. CRITICAL: Assert sentinel was NOT created
+	//    This proves security was never invoked
+	_, statErr := os.Stat(sentinelFile)
+	if !os.IsNotExist(statErr) {
+		t.Errorf("security binary was invoked but should have been skipped on non-Darwin")
 	}
 }
 

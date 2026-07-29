@@ -2,6 +2,7 @@ package tmux
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -121,6 +122,106 @@ func TestRuntimeIntegrationExactSessionParsing(t *testing.T) {
 		_ = r.Destroy(ctx, h)
 		t.Fatal("prefix handle reported alive; tmux session matching is not exact")
 	}
+}
+
+func TestRuntimeIntegrationSupervisedExitKeepsInteractiveShell(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux unavailable")
+	}
+
+	ctx := context.Background()
+	id := strings.ReplaceAll(t.Name(), "/", "_")
+	const launchID = "launch-1"
+	r := New(Options{Timeout: 5 * time.Second})
+	tmuxID := SessionName(id)
+	workspace := t.TempDir()
+	_ = r.Destroy(ctx, ports.RuntimeHandle{ID: tmuxID})
+	t.Cleanup(func() { _ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: tmuxID}) })
+
+	// Re-run this test binary as a long-lived helper with the same controlled
+	// command-line identity as AO's supervisor. The CLI package separately tests
+	// that the real supervisor waits for and reports its child.
+	h, err := r.Create(ctx, ports.RuntimeConfig{
+		SessionID:     domain.SessionID(id),
+		WorkspacePath: workspace,
+		Argv:          []string{os.Args[0], "-test.run=TestSupervisorProcessHelper", "--", "agent-process", "supervise", "--session", id, "--launch", launchID, "--"},
+		Env:           map[string]string{"AO_TMUX_SUPERVISOR_HELPER": "1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := ports.SupervisedProcessRef{SessionID: domain.SessionID(id), LaunchID: launchID}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		alive, probeErr := r.IsSupervisedProcessAlive(ctx, h, ref)
+		if probeErr != nil {
+			t.Fatal(probeErr)
+		}
+		if alive {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("supervised workload did not appear in the tmux process tree")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	// The helper exits normally, matching Codex /exit or EOF. The launch shell
+	// must then execute AO's keep-alive interactive shell.
+	deadline = time.Now().Add(5 * time.Second)
+	for {
+		alive, probeErr := r.IsSupervisedProcessAlive(ctx, h, ref)
+		if probeErr != nil {
+			t.Fatal(probeErr)
+		}
+		if !alive {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("supervised workload remained alive after normal exit")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if alive, err := r.IsAlive(ctx, h); err != nil || !alive {
+		t.Fatalf("tmux after workload exit = (%v, %v), want (true, nil)", alive, err)
+	}
+	if err := r.SendMessage(ctx, h, "echo shell-after-agent-exit"); err != nil {
+		t.Fatal(err)
+	}
+	out := waitForOutput(t, r, h, "shell-after-agent-exit", 5*time.Second)
+	if !strings.Contains(out, "shell-after-agent-exit") {
+		t.Fatalf("post-exit shell output = %q", out)
+	}
+
+	restarted, err := r.Restart(ctx, h, ports.RuntimeConfig{
+		SessionID:     domain.SessionID(id),
+		WorkspacePath: workspace,
+		Argv:          []string{"sh", "-c", "echo managed-agent-resumed"},
+	})
+	if err != nil {
+		t.Fatalf("Restart: %v", err)
+	}
+	if restarted != h {
+		t.Fatalf("restart handle = %+v, want existing handle %+v", restarted, h)
+	}
+	out = waitForOutput(t, r, restarted, "managed-agent-resumed", 5*time.Second)
+	if !strings.Contains(out, "managed-agent-resumed") {
+		t.Fatalf("restart output = %q, want managed-agent-resumed", out)
+	}
+	if err := r.SendMessage(ctx, restarted, "echo shell-after-managed-resume"); err != nil {
+		t.Fatal(err)
+	}
+	out = waitForOutput(t, r, restarted, "shell-after-managed-resume", 5*time.Second)
+	if !strings.Contains(out, "shell-after-managed-resume") {
+		t.Fatalf("post-resume shell output = %q", out)
+	}
+}
+
+func TestSupervisorProcessHelper(t *testing.T) {
+	if os.Getenv("AO_TMUX_SUPERVISOR_HELPER") != "1" {
+		return
+	}
+	time.Sleep(2 * time.Second)
 }
 
 // waitForOutput polls GetOutput until out contains want or the deadline passes.

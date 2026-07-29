@@ -1,6 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-// prettier-ignore
-import { FOCUS_TERMINAL_SHORTCUT_CHANNEL, KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEXT_SESSION_SHORTCUT_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL, NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL, OPEN_SETTINGS_SHORTCUT_CHANNEL, PREVIOUS_SESSION_SHORTCUT_CHANNEL } from "./shared/shortcuts";
+import { FOCUS_TERMINAL_SHORTCUT_CHANNEL, KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEXT_SESSION_SHORTCUT_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL, NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL, OPEN_SETTINGS_SHORTCUT_CHANNEL, PREVIOUS_SESSION_SHORTCUT_CHANNEL, type KeybindingOverrides } from "./shared/shortcuts";
 import type { BrowserNavState, BrowserRect } from "./main/browser-view-host";
 import type { DaemonStatus } from "./shared/daemon-status";
 import type { TelemetryBootstrap } from "./shared/telemetry";
@@ -42,6 +41,7 @@ export type ImportRepoScan = {
 export type ImportFolderScan = {
 	path: string;
 	repos: ImportRepoScan[];
+	setupWarning?: string;
 };
 
 const api = {
@@ -67,7 +67,7 @@ const api = {
 				ipcRenderer.off(KEYBOARD_SHORTCUTS_HELP_CHANNEL, wrapped);
 			};
 		},
-		// Fired by the main process when Ctrl+` is pressed in any web contents,
+		// Fired by the main process when Ctrl+Shift+` is pressed in any web contents,
 		// including while focus is inside a terminal pane.
 		onNewShellTerminalShortcut: (listener: () => void) => {
 			const wrapped = () => listener();
@@ -112,6 +112,14 @@ const api = {
 	window: {
 		setOverlay: (overlay: { color: string; symbolColor: string }) =>
 			ipcRenderer.invoke("window:setOverlay", overlay) as Promise<void>,
+		isFullScreen: () => ipcRenderer.invoke("window:isFullScreen") as Promise<boolean>,
+		onFullScreen: (listener: (fullScreen: boolean) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, fullScreen: boolean) => listener(fullScreen);
+			ipcRenderer.on("window:fullscreen", wrapped);
+			return () => {
+				ipcRenderer.off("window:fullscreen", wrapped);
+			};
+		},
 	},
 	theme: {
 		// Propagate the app's theme preference to Electron's nativeTheme so embedded
@@ -131,6 +139,7 @@ const api = {
 		getStatus: () => ipcRenderer.invoke("daemon:getStatus") as Promise<DaemonStatus>,
 		start: () => ipcRenderer.invoke("daemon:start") as Promise<DaemonStatus>,
 		stop: () => ipcRenderer.invoke("daemon:stop") as Promise<DaemonStatus>,
+		restart: () => ipcRenderer.invoke("daemon:restart") as Promise<DaemonStatus>,
 		onStatus: (listener: (status: DaemonStatus) => void) => {
 			const wrapped = (_event: Electron.IpcRendererEvent, status: DaemonStatus) => listener(status);
 			ipcRenderer.on("daemon:status", wrapped);
@@ -199,9 +208,16 @@ const api = {
 		get: () => ipcRenderer.invoke("updateSettings:get") as Promise<UpdateSettings>,
 		set: (settings: UpdateSettings) => ipcRenderer.invoke("updateSettings:set", settings) as Promise<void>,
 	},
+	keybindings: {
+		get: () => ipcRenderer.invoke("keybindings:get") as Promise<KeybindingOverrides>,
+		set: (overrides: KeybindingOverrides) =>
+			ipcRenderer.invoke("keybindings:set", overrides) as Promise<KeybindingOverrides>,
+		setRecording: (active: boolean) => ipcRenderer.invoke("keybindings:setRecording", active) as Promise<void>,
+	},
 	updates: {
 		getStatus: () => ipcRenderer.invoke("updates:getStatus") as Promise<UpdateStatus>,
 		check: (options?: UpdateCheckOptions) => ipcRenderer.invoke("updates:check", options) as Promise<void>,
+		returnHome: (requestId?: string) => ipcRenderer.invoke("updates:returnHome", requestId) as Promise<void>,
 		download: (requestId?: string) => ipcRenderer.invoke("updates:download", requestId) as Promise<void>,
 		install: () => ipcRenderer.invoke("updates:install") as Promise<void>,
 		onStatus: (listener: (status: UpdateStatus) => void) => {
