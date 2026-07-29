@@ -679,11 +679,11 @@ func spawnDiffBaseRefCandidates(defaultBranch string) []string {
 		seen[ref] = struct{}{}
 		refs = append(refs, ref)
 	}
-	add(defaultBranch)
 	if !strings.HasPrefix(defaultBranch, "origin/") && !strings.HasPrefix(defaultBranch, "refs/") {
 		add("origin/" + defaultBranch)
 		add("refs/remotes/origin/" + defaultBranch)
 	}
+	add(defaultBranch)
 	return refs
 }
 

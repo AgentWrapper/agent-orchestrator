@@ -882,6 +882,42 @@ func TestSpawnRecordsDiffBaseForSingleRepoSessions(t *testing.T) {
 	}
 }
 
+func TestSpawnRecordsRemoteTrackingDiffBaseWhenLocalDefaultBranchLags(t *testing.T) {
+	m, st, _, ws := newManager()
+	repo := newManagerGitRepo(t)
+	localMain := strings.TrimSpace(runManagerGit(t, repo, "rev-parse", "HEAD"))
+	runManagerGit(t, repo, "switch", "-c", "upstream-main")
+	if err := os.WriteFile(filepath.Join(repo, "upstream.txt"), []byte("upstream\n"), 0o644); err != nil {
+		t.Fatalf("write upstream file: %v", err)
+	}
+	runManagerGit(t, repo, "add", "upstream.txt")
+	runManagerGit(t, repo, "commit", "-m", "upstream change")
+	originMain := strings.TrimSpace(runManagerGit(t, repo, "rev-parse", "HEAD"))
+	runManagerGit(t, repo, "update-ref", "refs/remotes/origin/main", originMain)
+	runManagerGit(t, repo, "switch", "-c", "ao/work")
+	runManagerGit(t, repo, "branch", "-f", "main", localMain)
+	cfg := testRoleAgents()
+	cfg.DefaultBranch = "main"
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: repo, Config: cfg}
+	ws.path = repo
+
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Metadata.DiffBaseSHA != originMain || rec.Metadata.DiffBaseRef != "origin/main" {
+		t.Fatalf("spawn diff base = sha:%q ref:%q, want %s origin/main", rec.Metadata.DiffBaseSHA, rec.Metadata.DiffBaseRef, originMain)
+	}
+}
+
+func TestSpawnDiffBaseRefCandidatesPreferRemoteTrackingDefault(t *testing.T) {
+	got := spawnDiffBaseRefCandidates("main")
+	want := []string{"origin/main", "refs/remotes/origin/main", "main"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("spawn diff candidates = %#v, want %#v", got, want)
+	}
+}
+
 func TestSpawn_WrapsSupervisedAgentAndPersistsGeneration(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}

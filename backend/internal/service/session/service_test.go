@@ -28,6 +28,7 @@ func (f *fakeTelemetrySink) Close(context.Context) error { return nil }
 type fakeStore struct {
 	sessions  map[domain.SessionID]domain.SessionRecord
 	pr        map[domain.SessionID]domain.PRFacts
+	prs       map[domain.SessionID][]domain.PullRequest
 	projects  map[string]domain.ProjectRecord
 	worktrees map[domain.SessionID][]domain.SessionWorktreeRecord
 	checks    map[string][]domain.PullRequestCheck
@@ -41,6 +42,7 @@ func newFakeStore() *fakeStore {
 	return &fakeStore{
 		sessions:  map[domain.SessionID]domain.SessionRecord{},
 		pr:        map[domain.SessionID]domain.PRFacts{},
+		prs:       map[domain.SessionID][]domain.PullRequest{},
 		projects:  map[string]domain.ProjectRecord{},
 		worktrees: map[domain.SessionID][]domain.SessionWorktreeRecord{},
 		checks:    map[string][]domain.PullRequestCheck{},
@@ -168,11 +170,14 @@ func (f *fakeStore) GetDisplayPRFactsForSession(_ context.Context, id domain.Ses
 }
 
 func (f *fakeStore) ListPRsBySession(_ context.Context, id domain.SessionID) ([]domain.PullRequest, error) {
+	if prs, ok := f.prs[id]; ok {
+		return append([]domain.PullRequest(nil), prs...), nil
+	}
 	pr, ok := f.pr[id]
 	if !ok {
 		return nil, nil
 	}
-	return []domain.PullRequest{{URL: pr.URL, SessionID: id, Number: pr.Number, Draft: pr.Draft, Merged: pr.Merged, Closed: pr.Closed, CI: pr.CI, Review: pr.Review, Mergeability: pr.Mergeability, UpdatedAt: pr.UpdatedAt}}, nil
+	return []domain.PullRequest{{URL: pr.URL, SessionID: id, Number: pr.Number, Draft: pr.Draft, Merged: pr.Merged, Closed: pr.Closed, CI: pr.CI, Review: pr.Review, Mergeability: pr.Mergeability, UpdatedAt: pr.UpdatedAt, TargetBranch: pr.TargetBranch}}, nil
 }
 
 func (f *fakeStore) ListPRFactsForSession(_ context.Context, id domain.SessionID) ([]domain.PRFacts, error) {
@@ -405,6 +410,154 @@ func TestWorkspaceFilesIncludeCommittedBranchDiffAgainstRecordedBase(t *testing.
 	}
 }
 
+func TestWorkspaceFilesRecomputesRecordedRefAfterBaseMoves(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	runGit(t, repo, "branch", "-M", "main")
+	oldBase := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	runGit(t, repo, "switch", "-c", "ao/work")
+	writeWorkspaceFile(t, repo, "agent.go", "package main\n")
+	runGit(t, repo, "add", "agent.go")
+	runGit(t, repo, "commit", "-m", "agent change")
+	runGit(t, repo, "switch", "main")
+	writeWorkspaceFile(t, repo, "mainonly.go", "package main\n")
+	runGit(t, repo, "add", "mainonly.go")
+	runGit(t, repo, "commit", "-m", "main moved")
+	newBase := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	runGit(t, repo, "switch", "ao/work")
+	runGit(t, repo, "rebase", "main")
+
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID: "ao-1",
+		Metadata: domain.SessionMetadata{
+			WorkspacePath: repo,
+			DiffBaseSHA:   oldBase,
+			DiffBaseRef:   "main",
+		},
+	}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.CompareBaseSHA != newBase {
+		t.Fatalf("compare base = %q, want recomputed merge base %q", files.CompareBaseSHA, newBase)
+	}
+	byPath := map[string]WorkspaceFileSummary{}
+	for _, file := range files.Files {
+		byPath[file.Path] = file
+	}
+	if byPath["agent.go"].Status != WorkspaceFileAdded {
+		t.Fatalf("agent.go status = %q, want added", byPath["agent.go"].Status)
+	}
+	if got := byPath["mainonly.go"]; got.Status != WorkspaceFileUnmodified || got.Additions != 0 || got.Deletions != 0 {
+		t.Fatalf("mainonly.go = %#v, want unmodified after recomputing base", got)
+	}
+}
+
+func TestWorkspaceFilesPRFallbackPrefersDefaultTargetPR(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	runGit(t, repo, "branch", "-M", "main")
+	rootBase := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	runGit(t, repo, "switch", "-c", "ao/root")
+	writeWorkspaceFile(t, repo, "lower.go", "package main\n")
+	runGit(t, repo, "add", "lower.go")
+	runGit(t, repo, "commit", "-m", "lower stack change")
+	childBase := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	writeWorkspaceFile(t, repo, "upper.go", "package main\n")
+	runGit(t, repo, "add", "upper.go")
+	runGit(t, repo, "commit", "-m", "upper stack change")
+
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{DefaultBranch: "main"}}
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:        "ao-1",
+		ProjectID: "mer",
+		Metadata:  domain.SessionMetadata{WorkspacePath: repo},
+	}
+	st.prs["ao-1"] = []domain.PullRequest{
+		{URL: "child", SessionID: "ao-1", Number: 2, TargetBranch: "ao/root", BaseSHA: childBase, UpdatedAt: time.Unix(200, 0)},
+		{URL: "root", SessionID: "ao-1", Number: 1, TargetBranch: "main", BaseSHA: rootBase, UpdatedAt: time.Unix(100, 0)},
+	}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.CompareBaseSHA != rootBase || files.CompareBaseRef != "main" {
+		t.Fatalf("compare base = sha:%q ref:%q, want root PR %s main", files.CompareBaseSHA, files.CompareBaseRef, rootBase)
+	}
+	byPath := map[string]WorkspaceFileSummary{}
+	for _, file := range files.Files {
+		byPath[file.Path] = file
+	}
+	if byPath["lower.go"].Status != WorkspaceFileAdded || byPath["upper.go"].Status != WorkspaceFileAdded {
+		t.Fatalf("stack files = lower:%#v upper:%#v, want both visible from root PR base", byPath["lower.go"], byPath["upper.go"])
+	}
+}
+
+func TestWorkspaceFilesReportCommittedDeletionsAgainstRecordedBase(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	base := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	runGit(t, repo, "switch", "-c", "ao/work")
+	runGit(t, repo, "rm", "src/app.go")
+	runGit(t, repo, "commit", "-m", "delete app")
+
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:       "ao-1",
+		Metadata: domain.SessionMetadata{WorkspacePath: repo, DiffBaseSHA: base, DiffBaseRef: "main"},
+	}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byPath := map[string]WorkspaceFileSummary{}
+	for _, file := range files.Files {
+		byPath[file.Path] = file
+	}
+	if byPath["src/app.go"].Status != WorkspaceFileDeleted {
+		t.Fatalf("src/app.go summary = %#v, want deleted", byPath["src/app.go"])
+	}
+
+	detail, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "src/app.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !detail.Deleted || detail.Status != WorkspaceFileDeleted || !strings.Contains(detail.Diff, "deleted file mode") {
+		t.Fatalf("deleted detail = %#v diff:\n%s", detail, detail.Diff)
+	}
+}
+
+func TestWorkspaceFilesKeepBaseStatusWhenCommittedAddedFileIsModified(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	base := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	runGit(t, repo, "switch", "-c", "ao/work")
+	writeWorkspaceFile(t, repo, "new.go", "package main\n")
+	runGit(t, repo, "add", "new.go")
+	runGit(t, repo, "commit", "-m", "add file")
+	writeWorkspaceFile(t, repo, "new.go", "package main\n\nfunc Later() {}\n")
+
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:       "ao-1",
+		Metadata: domain.SessionMetadata{WorkspacePath: repo, DiffBaseSHA: base, DiffBaseRef: "main"},
+	}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byPath := map[string]WorkspaceFileSummary{}
+	for _, file := range files.Files {
+		byPath[file.Path] = file
+	}
+	if byPath["new.go"].Status != WorkspaceFileAdded {
+		t.Fatalf("new.go status = %q, want added from base diff despite HEAD status", byPath["new.go"].Status)
+	}
+}
+
 func TestWorkspaceFilesReportRenamesAgainstRecordedBase(t *testing.T) {
 	repo := newWorkspaceRepo(t)
 	base := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
@@ -505,6 +658,73 @@ func TestWorkspaceFilesIncludeWorkspaceProjectChildRepoDiffs(t *testing.T) {
 	}
 	if detail.CompareMode != WorkspaceCompareBase || detail.CompareBaseSHA != childBase {
 		t.Fatalf("child detail compare = mode:%q sha:%q, want base %s", detail.CompareMode, detail.CompareBaseSHA, childBase)
+	}
+	if detail.CompareBaseRef != "" {
+		t.Fatalf("child detail compare ref = %q, want empty because worktree rows store only a SHA", detail.CompareBaseRef)
+	}
+}
+
+func TestWorkspaceProjectCompareModeStaysBaseWithPartialFallback(t *testing.T) {
+	root := newWorkspaceRepo(t)
+	rootBase := strings.TrimSpace(runGit(t, root, "rev-parse", "HEAD"))
+	runGit(t, root, "switch", "-c", "ao/work")
+	writeWorkspaceFile(t, root, "root.go", "package main\n")
+	runGit(t, root, "add", "root.go")
+	runGit(t, root, "commit", "-m", "root change")
+	child := filepath.Join(root, "api")
+	if err := os.MkdirAll(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, child, "init")
+	runGit(t, child, "config", "user.email", "ao@example.com")
+	runGit(t, child, "config", "user.name", "AO Tests")
+	writeWorkspaceFile(t, child, "scratch.go", "package api\n")
+	runGit(t, child, "add", ".")
+	runGit(t, child, "commit", "-m", "initial child")
+	writeWorkspaceFile(t, child, "scratch.go", "package api\n\nfunc Dirty() {}\n")
+
+	st := newFakeStore()
+	st.projects["ws"] = domain.ProjectRecord{ID: "ws", Kind: domain.ProjectKindWorkspace, Config: domain.ProjectConfig{DefaultBranch: "missing-main"}}
+	st.sessions["ws-1"] = domain.SessionRecord{
+		ID:        "ws-1",
+		ProjectID: "ws",
+		Metadata:  domain.SessionMetadata{WorkspacePath: root},
+	}
+	st.worktrees["ws-1"] = []domain.SessionWorktreeRecord{
+		{SessionID: "ws-1", RepoName: domain.RootWorkspaceRepoName, WorktreePath: root, BaseSHA: rootBase},
+		{SessionID: "ws-1", RepoName: "api", WorktreePath: child, BaseSHA: "missing-base"},
+	}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ws-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.CompareMode != WorkspaceCompareBase {
+		t.Fatalf("workspace compare mode = %q, want base when at least one repo resolved", files.CompareMode)
+	}
+	if files.CompareBaseSHA != "" {
+		t.Fatalf("workspace compare sha = %q, want empty for mixed repo bases", files.CompareBaseSHA)
+	}
+}
+
+func TestAppendWorkspaceFilesWithCapEnforcesGlobalLimit(t *testing.T) {
+	existing := make([]WorkspaceFileSummary, maxWorkspaceFiles-1)
+	added := []WorkspaceFileSummary{{Path: "one.go"}, {Path: "two.go"}}
+
+	got, truncated := appendWorkspaceFilesWithCap(existing, added, false)
+	if len(got) != maxWorkspaceFiles || !truncated {
+		t.Fatalf("len,truncated = %d,%v; want %d,true", len(got), truncated, maxWorkspaceFiles)
+	}
+	if got[len(got)-1].Path != "one.go" {
+		t.Fatalf("last appended path = %q, want one.go", got[len(got)-1].Path)
+	}
+}
+
+func TestWorkspaceBaseRefCandidatesPreferRemoteDefault(t *testing.T) {
+	got := workspaceBaseRefCandidates("main")
+	want := []string{"origin/main", "refs/remotes/origin/main", "main"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("workspace base candidates = %#v, want %#v", got, want)
 	}
 }
 

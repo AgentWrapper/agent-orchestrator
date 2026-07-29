@@ -116,10 +116,11 @@ func (s *Service) ListWorkspaceFiles(ctx context.Context, id domain.SessionID) (
 	if projectKind == domain.ProjectKindWorkspace {
 		return s.listWorkspaceProjectFiles(ctx, rec, project)
 	}
-	compare, err := s.resolveWorkspaceCompare(ctx, rec, rec.Metadata.WorkspacePath, rec.Metadata.DiffBaseSHA, rec.Metadata.DiffBaseRef, defaultBranchForProject(project, projectOK))
+	prs, err := s.workspaceComparePRs(ctx, rec.ID)
 	if err != nil {
 		return WorkspaceFiles{}, err
 	}
+	compare := resolveWorkspaceCompare(ctx, rec.Metadata.WorkspacePath, rec.Metadata.DiffBaseSHA, rec.Metadata.DiffBaseRef, defaultBranchForProject(project, projectOK), prs)
 	files, truncated, err := workspaceFileSummaries(ctx, rec.Metadata.WorkspacePath, "", nil, compare)
 	if err != nil {
 		return WorkspaceFiles{}, err
@@ -160,10 +161,11 @@ func (s *Service) GetWorkspaceFile(ctx context.Context, id domain.SessionID, raw
 	if projectKind == domain.ProjectKindWorkspace {
 		return s.getWorkspaceProjectFile(ctx, rec, project, rel)
 	}
-	compare, err := s.resolveWorkspaceCompare(ctx, rec, rec.Metadata.WorkspacePath, rec.Metadata.DiffBaseSHA, rec.Metadata.DiffBaseRef, defaultBranchForProject(project, projectOK))
+	prs, err := s.workspaceComparePRs(ctx, rec.ID)
 	if err != nil {
 		return WorkspaceFileDetail{}, err
 	}
+	compare := resolveWorkspaceCompare(ctx, rec.Metadata.WorkspacePath, rec.Metadata.DiffBaseSHA, rec.Metadata.DiffBaseRef, defaultBranchForProject(project, projectOK), prs)
 	return workspaceFileDetail(ctx, id, rec.Metadata.WorkspacePath, "", rel, compare)
 }
 
@@ -216,31 +218,42 @@ func (c workspaceCompareTarget) gitBase() string {
 	return "HEAD"
 }
 
-func (s *Service) resolveWorkspaceCompare(ctx context.Context, rec domain.SessionRecord, root, recordedSHA, recordedRef, defaultBranch string) (workspaceCompareTarget, error) {
+func (s *Service) workspaceComparePRs(ctx context.Context, id domain.SessionID) ([]domain.PullRequest, error) {
+	if s.store == nil {
+		return nil, nil
+	}
+	prs, err := s.store.ListPRsBySession(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("list PRs for compare base: %w", err)
+	}
+	return prs, nil
+}
+
+func resolveWorkspaceCompare(ctx context.Context, root, recordedSHA, recordedRef, defaultBranch string, prs []domain.PullRequest) workspaceCompareTarget {
 	recordedSHA = strings.TrimSpace(recordedSHA)
 	recordedRef = strings.TrimSpace(recordedRef)
-	if recordedSHA != "" && gitCommitExists(ctx, root, recordedSHA) {
-		return workspaceCompareTarget{BaseSHA: recordedSHA, BaseRef: recordedRef, Mode: WorkspaceCompareBase}, nil
-	}
-	if s.store != nil {
-		prs, err := s.store.ListPRsBySession(ctx, rec.ID)
-		if err != nil {
-			return workspaceCompareTarget{}, fmt.Errorf("list PRs for compare base: %w", err)
-		}
-		for _, pr := range prs {
-			baseSHA := strings.TrimSpace(pr.BaseSHA)
-			if baseSHA == "" || !gitCommitExists(ctx, root, baseSHA) {
-				continue
+	if recordedRef != "" && recordedRef != "HEAD" {
+		for _, ref := range workspaceBaseRefCandidates(recordedRef) {
+			if sha, ok := gitMergeBase(ctx, root, ref); ok {
+				return workspaceCompareTarget{BaseSHA: sha, BaseRef: ref, Mode: WorkspaceCompareBase}
 			}
-			return workspaceCompareTarget{BaseSHA: baseSHA, BaseRef: strings.TrimSpace(pr.TargetBranch), Mode: WorkspaceCompareBase}, nil
+		}
+	}
+	if recordedSHA != "" && gitCommitExists(ctx, root, recordedSHA) {
+		return workspaceCompareTarget{BaseSHA: recordedSHA, BaseRef: recordedRef, Mode: WorkspaceCompareBase}
+	}
+	if pr, ok := selectWorkspaceComparePR(prs, defaultBranch); ok {
+		baseSHA := strings.TrimSpace(pr.BaseSHA)
+		if gitCommitExists(ctx, root, baseSHA) {
+			return workspaceCompareTarget{BaseSHA: baseSHA, BaseRef: strings.TrimSpace(pr.TargetBranch), Mode: WorkspaceCompareBase}
 		}
 	}
 	for _, ref := range workspaceBaseRefCandidates(defaultBranch) {
 		if sha, ok := gitMergeBase(ctx, root, ref); ok {
-			return workspaceCompareTarget{BaseSHA: sha, BaseRef: ref, Mode: WorkspaceCompareBase}, nil
+			return workspaceCompareTarget{BaseSHA: sha, BaseRef: ref, Mode: WorkspaceCompareBase}
 		}
 	}
-	return workspaceCompareTarget{Mode: WorkspaceCompareHeadFallback}, nil
+	return workspaceCompareTarget{Mode: WorkspaceCompareHeadFallback}
 }
 
 func workspaceBaseRefCandidates(defaultBranch string) []string {
@@ -261,12 +274,67 @@ func workspaceBaseRefCandidates(defaultBranch string) []string {
 		seen[ref] = struct{}{}
 		refs = append(refs, ref)
 	}
-	add(defaultBranch)
 	if !strings.HasPrefix(defaultBranch, "origin/") && !strings.HasPrefix(defaultBranch, "refs/") {
 		add("origin/" + defaultBranch)
 		add("refs/remotes/origin/" + defaultBranch)
 	}
+	add(defaultBranch)
 	return refs
+}
+
+func selectWorkspaceComparePR(prs []domain.PullRequest, defaultBranch string) (domain.PullRequest, bool) {
+	if len(prs) == 0 {
+		return domain.PullRequest{}, false
+	}
+	defaultBranch = strings.TrimSpace(defaultBranch)
+	candidates := append([]domain.PullRequest(nil), prs...)
+	sort.SliceStable(candidates, func(i, j int) bool {
+		leftDefault := prTargetsDefaultBranch(candidates[i], defaultBranch)
+		rightDefault := prTargetsDefaultBranch(candidates[j], defaultBranch)
+		if leftDefault != rightDefault {
+			return leftDefault
+		}
+		leftOpen := !candidates[i].Merged && !candidates[i].Closed
+		rightOpen := !candidates[j].Merged && !candidates[j].Closed
+		if leftOpen != rightOpen {
+			return leftOpen
+		}
+		leftCreated := candidates[i].CreatedAtProvider
+		rightCreated := candidates[j].CreatedAtProvider
+		if !leftCreated.IsZero() && !rightCreated.IsZero() && !leftCreated.Equal(rightCreated) {
+			return leftCreated.Before(rightCreated)
+		}
+		if candidates[i].Number != candidates[j].Number {
+			if candidates[i].Number == 0 {
+				return false
+			}
+			if candidates[j].Number == 0 {
+				return true
+			}
+			return candidates[i].Number < candidates[j].Number
+		}
+		return candidates[i].URL < candidates[j].URL
+	})
+	for _, pr := range candidates {
+		if strings.TrimSpace(pr.BaseSHA) != "" {
+			return pr, true
+		}
+	}
+	return domain.PullRequest{}, false
+}
+
+func prTargetsDefaultBranch(pr domain.PullRequest, defaultBranch string) bool {
+	target := strings.TrimSpace(pr.TargetBranch)
+	if target == "" || defaultBranch == "" {
+		return false
+	}
+	if target == defaultBranch {
+		return true
+	}
+	if !strings.HasPrefix(defaultBranch, "origin/") && !strings.HasPrefix(defaultBranch, "refs/") {
+		return target == "origin/"+defaultBranch || target == "refs/heads/"+defaultBranch || target == "refs/remotes/origin/"+defaultBranch
+	}
+	return false
 }
 
 func gitCommitExists(ctx context.Context, root, rev string) bool {
@@ -289,10 +357,11 @@ func (s *Service) listWorkspaceProjectFiles(ctx context.Context, rec domain.Sess
 		return WorkspaceFiles{}, fmt.Errorf("list workspace project rows: %w", err)
 	}
 	if len(rows) == 0 {
-		compare, err := s.resolveWorkspaceCompare(ctx, rec, rec.Metadata.WorkspacePath, rec.Metadata.DiffBaseSHA, rec.Metadata.DiffBaseRef, defaultBranchForProject(project, true))
+		prs, err := s.workspaceComparePRs(ctx, rec.ID)
 		if err != nil {
 			return WorkspaceFiles{}, err
 		}
+		compare := resolveWorkspaceCompare(ctx, rec.Metadata.WorkspacePath, rec.Metadata.DiffBaseSHA, rec.Metadata.DiffBaseRef, defaultBranchForProject(project, true), prs)
 		files, truncated, err := workspaceFileSummaries(ctx, rec.Metadata.WorkspacePath, "", nil, compare)
 		if err != nil {
 			return WorkspaceFiles{}, err
@@ -319,16 +388,13 @@ func (s *Service) listWorkspaceProjectFiles(ctx context.Context, rec domain.Sess
 		if prefix == "" {
 			exclude = childPrefixes
 		}
-		compare, err := s.resolveWorkspaceCompare(ctx, rec, row.WorktreePath, row.BaseSHA, defaultBranch, defaultBranch)
-		if err != nil {
-			return WorkspaceFiles{}, err
-		}
+		compare := resolveWorkspaceCompare(ctx, row.WorktreePath, row.BaseSHA, "", defaultBranch, nil)
 		compares = append(compares, compare)
 		repoFiles, repoTruncated, err := workspaceFileSummaries(ctx, row.WorktreePath, prefix, exclude, compare)
 		if err != nil {
 			return WorkspaceFiles{}, err
 		}
-		files = append(files, repoFiles...)
+		files, truncated = appendWorkspaceFilesWithCap(files, repoFiles, truncated)
 		truncated = truncated || repoTruncated
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
@@ -349,21 +415,34 @@ func (s *Service) getWorkspaceProjectFile(ctx context.Context, rec domain.Sessio
 		return WorkspaceFileDetail{}, fmt.Errorf("list workspace project rows: %w", err)
 	}
 	if len(rows) == 0 {
-		compare, err := s.resolveWorkspaceCompare(ctx, rec, rec.Metadata.WorkspacePath, rec.Metadata.DiffBaseSHA, rec.Metadata.DiffBaseRef, defaultBranchForProject(project, true))
+		prs, err := s.workspaceComparePRs(ctx, rec.ID)
 		if err != nil {
 			return WorkspaceFileDetail{}, err
 		}
+		compare := resolveWorkspaceCompare(ctx, rec.Metadata.WorkspacePath, rec.Metadata.DiffBaseSHA, rec.Metadata.DiffBaseRef, defaultBranchForProject(project, true), prs)
 		return workspaceFileDetail(ctx, rec.ID, rec.Metadata.WorkspacePath, "", rel, compare)
 	}
 	row, prefix, repoRel, ok := workspaceProjectFileTarget(rec.Metadata.WorkspacePath, rows, rel)
 	if !ok {
 		return WorkspaceFileDetail{}, apierr.NotFound("WORKSPACE_FILE_NOT_FOUND", "Workspace file not found")
 	}
-	compare, err := s.resolveWorkspaceCompare(ctx, rec, row.WorktreePath, row.BaseSHA, defaultBranchForProject(project, true), defaultBranchForProject(project, true))
-	if err != nil {
-		return WorkspaceFileDetail{}, err
-	}
+	compare := resolveWorkspaceCompare(ctx, row.WorktreePath, row.BaseSHA, "", defaultBranchForProject(project, true), nil)
 	return workspaceFileDetail(ctx, rec.ID, row.WorktreePath, prefix, repoRel, compare)
+}
+
+func appendWorkspaceFilesWithCap(files, repoFiles []WorkspaceFileSummary, truncated bool) ([]WorkspaceFileSummary, bool) {
+	remaining := maxWorkspaceFiles - len(files)
+	if remaining <= 0 {
+		if len(repoFiles) > 0 {
+			truncated = true
+		}
+		return files, truncated
+	}
+	if len(repoFiles) > remaining {
+		files = append(files, repoFiles[:remaining]...)
+		return files, true
+	}
+	return append(files, repoFiles...), truncated
 }
 
 func workspaceFileSummaries(ctx context.Context, root, prefix string, excludePrefixes []string, compare workspaceCompareTarget) ([]WorkspaceFileSummary, bool, error) {
@@ -528,12 +607,20 @@ func aggregateWorkspaceCompare(compares []workspaceCompareTarget) workspaceCompa
 	if len(compares) == 0 {
 		return workspaceCompareTarget{Mode: WorkspaceCompareHeadFallback}
 	}
-	mode := WorkspaceCompareBase
-	baseSHA := compares[0].BaseSHA
-	baseRef := compares[0].BaseRef
+	baseFound := false
+	fallbackFound := false
+	baseSHA := ""
+	baseRef := ""
 	for _, compare := range compares {
 		if compare.Mode != WorkspaceCompareBase {
-			return workspaceCompareTarget{Mode: WorkspaceCompareHeadFallback}
+			fallbackFound = true
+			continue
+		}
+		if !baseFound {
+			baseFound = true
+			baseSHA = compare.BaseSHA
+			baseRef = compare.BaseRef
+			continue
 		}
 		if compare.BaseSHA != baseSHA {
 			baseSHA = ""
@@ -542,7 +629,14 @@ func aggregateWorkspaceCompare(compares []workspaceCompareTarget) workspaceCompa
 			baseRef = ""
 		}
 	}
-	return workspaceCompareTarget{BaseSHA: baseSHA, BaseRef: baseRef, Mode: mode}
+	if !baseFound {
+		return workspaceCompareTarget{Mode: WorkspaceCompareHeadFallback}
+	}
+	if fallbackFound {
+		baseSHA = ""
+		baseRef = ""
+	}
+	return workspaceCompareTarget{BaseSHA: baseSHA, BaseRef: baseRef, Mode: WorkspaceCompareBase}
 }
 
 func workspacePathExcluded(rel string, prefixes []string) bool {
@@ -738,9 +832,6 @@ func workspaceGitFiles(ctx context.Context, root string, extraPaths map[string]s
 		}
 		paths = append(paths, rel)
 	}
-	for _, part := range parts {
-		addPath(part)
-	}
 	extra := make([]string, 0, len(extraPaths))
 	for rel := range extraPaths {
 		extra = append(extra, rel)
@@ -748,6 +839,9 @@ func workspaceGitFiles(ctx context.Context, root string, extraPaths map[string]s
 	sort.Strings(extra)
 	for _, rel := range extra {
 		addPath(rel)
+	}
+	for _, part := range parts {
+		addPath(part)
 	}
 	return paths, truncated, nil
 }
@@ -791,9 +885,15 @@ func workspaceChangeMaps(ctx context.Context, root, base string) (workspaceChang
 		previous[rel] = prev
 	}
 	for rel, status := range statusStatuses {
+		if _, ok := statuses[rel]; ok {
+			continue
+		}
 		statuses[rel] = status
 	}
 	for rel, prev := range statusPrevious {
+		if _, ok := previous[rel]; ok {
+			continue
+		}
 		previous[rel] = prev
 	}
 	for rel, status := range statuses {
