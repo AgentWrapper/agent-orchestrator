@@ -40,7 +40,7 @@ export const DOWNLOAD_URL_LINUX = "https://github.com/AgentWrapper/agent-orchest
 
 export const AGENT_HARNESSES = 23;
 export const TAGLINE = "Stop babysitting agents. Start merging real work.";
-export const HERO_SUBHEADLINE = "Run a fleet of coding agents while keeping branches, reviews, and CI failures managable.";
+export const HERO_SUBHEADLINE = "Run a fleet of coding agents. Keep branches, reviews, and CI failures manageable.";
 export const HERO_SECONDARY_SUBHEADLINE = "Isolated workspaces for Claude Code, Codex, and any CLI agent. Review every change from one dashboard. Free and open source.";
 
 export const NAV_ITEMS = [
