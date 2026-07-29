@@ -1356,8 +1356,8 @@ ipcMain.handle("notifications:show", (_event, notification: { id: string; title:
 
 // Auto-update only runs for packaged builds reading the GitHub Releases feed
 // (see forge.config.ts publishers). In dev there is no feed, so it is skipped.
-// A live updater additionally requires a signed + notarized build — see
-// frontend/docs/desktop-release.md.
+// A live updater additionally requires a signed + notarized build, which this
+// repo does not produce.
 function initAutoUpdates(): void {
 	if (!app.isPackaged) return;
 	const runFile = runFilePath();
