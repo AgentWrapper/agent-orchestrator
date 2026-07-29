@@ -5,7 +5,6 @@ import { getChangelogEntries } from "@/lib/changelog";
 import { getComparisonPages } from "@/lib/compare";
 import { getAllDocSlugs } from "@/lib/docs";
 import { getAllLegalSlugs, getLegalPage } from "@/lib/legal";
-import { themeListings } from "@/lib/marketplace";
 import { getAllPeople } from "@/lib/people";
 
 export const dynamic = "force-static";
@@ -21,24 +20,6 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 			priority: 1.0,
 		},
 		{
-			url: `${baseUrl}/marketplace`,
-			lastModified: new Date(),
-			changeFrequency: "weekly",
-			priority: 0.8,
-		},
-		{
-			url: `${baseUrl}/marketplace/themes`,
-			lastModified: new Date(),
-			changeFrequency: "weekly",
-			priority: 0.8,
-		},
-		{
-			url: `${baseUrl}/marketplace/agents`,
-			lastModified: new Date(),
-			changeFrequency: "weekly",
-			priority: 0.7,
-		},
-		{
 			url: `${baseUrl}/blog`,
 			lastModified: new Date(),
 			changeFrequency: "daily",
@@ -51,58 +32,10 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 			priority: 0.9,
 		},
 		{
-			url: `${baseUrl}/pricing`,
-			lastModified: new Date(),
-			changeFrequency: "monthly",
-			priority: 0.9,
-		},
-		{
-			url: `${baseUrl}/team`,
-			lastModified: new Date(),
-			changeFrequency: "monthly",
-			priority: 0.8,
-		},
-		{
-			url: `${baseUrl}/join-us`,
-			lastModified: new Date(),
-			changeFrequency: "monthly",
-			priority: 0.7,
-		},
-		{
-			url: `${baseUrl}/compare`,
-			lastModified: new Date(),
-			changeFrequency: "weekly",
-			priority: 0.9,
-		},
-		{
-			url: `${baseUrl}/community`,
-			lastModified: new Date(),
-			changeFrequency: "monthly",
-			priority: 0.5,
-		},
-		{
 			url: `${baseUrl}/llms.txt`,
 			lastModified: new Date(),
 			changeFrequency: "weekly",
 			priority: 0.3,
-		},
-		{
-			url: `${baseUrl}/enterprise`,
-			lastModified: new Date(),
-			changeFrequency: "monthly",
-			priority: 0.8,
-		},
-		{
-			url: `${baseUrl}/roadmap`,
-			lastModified: new Date(),
-			changeFrequency: "weekly",
-			priority: 0.7,
-		},
-		{
-			url: `${baseUrl}/contact`,
-			lastModified: new Date(),
-			changeFrequency: "monthly",
-			priority: 0.6,
 		},
 	];
 
@@ -151,13 +84,6 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 		};
 	});
 
-	const themePages: MetadataRoute.Sitemap = themeListings.map((theme) => ({
-		url: `${baseUrl}/marketplace/themes/${theme.slug}`,
-		lastModified: new Date(),
-		changeFrequency: "monthly" as const,
-		priority: 0.6,
-	}));
-
 	const docsPages: MetadataRoute.Sitemap = getAllDocSlugs().map((slug) => ({
 		url: `${baseUrl}/docs${slug.length ? `/${slug.join("/")}` : ""}`,
 		lastModified: new Date(),
@@ -173,6 +99,5 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 		...teamPages,
 		...comparisonPages,
 		...legalPages,
-		...themePages,
 	];
 }
