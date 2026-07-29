@@ -19,7 +19,7 @@ export function GET() {
       url: baseUrl,
     },
     version: "1.0.0",
-    documentationUrl: `${COMPANY.DOCS_URL}/mcp-server`,
+    documentationUrl: COMPANY.DOCS_URL,
     capabilities: {
       streaming: true,
       pushNotifications: false,

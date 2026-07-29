@@ -57,7 +57,7 @@ export function GET() {
     "",
     "## Learn more",
     "",
-    `- [Docs](${docsUrl}) and [docs llms.txt](${docsUrl}/llms.txt)`,
+    `- [Docs](${docsUrl})`,
     `- [Site llms.txt](${baseUrl}/llms.txt)`,
     `- [GitHub](${COMPANY.GITHUB_URL})`,
   ];

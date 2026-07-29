@@ -27,7 +27,7 @@ export async function GET() {
 			"## Docs",
 			"",
 			`- [Documentation](${docsUrl})`,
-			`- [Getting Started](${docsUrl}/getting-started)`,
+			`- [Quickstart](${docsUrl}/quickstart)`,
 			`- [GitHub](${COMPANY.GITHUB_URL})`,
 		].join("\n"),
 	);
