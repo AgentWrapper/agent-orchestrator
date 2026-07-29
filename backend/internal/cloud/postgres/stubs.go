@@ -1,3 +1,4 @@
+//nolint:revive // Store methods satisfy existing service interfaces; interface docs live at call sites.
 package postgres
 
 import (

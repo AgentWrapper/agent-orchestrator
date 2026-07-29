@@ -37,6 +37,7 @@ type HTTPGoogleProvider struct {
 	client *http.Client
 }
 
+// NewHTTPGoogleProvider returns a Google OAuth provider backed by HTTP.
 func NewHTTPGoogleProvider(cfg GoogleConfig, client *http.Client) *HTTPGoogleProvider {
 	if client == nil {
 		client = http.DefaultClient
@@ -44,6 +45,7 @@ func NewHTTPGoogleProvider(cfg GoogleConfig, client *http.Client) *HTTPGooglePro
 	return &HTTPGoogleProvider{cfg: cfg, client: client}
 }
 
+// AuthCodeURL returns the Google authorization URL for the supplied state.
 func (p *HTTPGoogleProvider) AuthCodeURL(state string) string {
 	v := url.Values{}
 	v.Set("client_id", p.cfg.ClientID)
@@ -56,6 +58,7 @@ func (p *HTTPGoogleProvider) AuthCodeURL(state string) string {
 	return "https://accounts.google.com/o/oauth2/v2/auth?" + v.Encode()
 }
 
+// Exchange exchanges an OAuth authorization code for a verified Google profile.
 func (p *HTTPGoogleProvider) Exchange(ctx context.Context, code string) (GoogleProfile, error) {
 	if p.cfg.ClientID == "" || p.cfg.ClientSecret == "" || p.cfg.RedirectURL == "" {
 		return GoogleProfile{}, fmt.Errorf("google oauth is not configured")
@@ -75,7 +78,7 @@ func (p *HTTPGoogleProvider) Exchange(ctx context.Context, code string) (GoogleP
 	if err != nil {
 		return GoogleProfile{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode/100 != 2 {
 		return GoogleProfile{}, fmt.Errorf("google token exchange failed: %s", resp.Status)
 	}
@@ -89,7 +92,7 @@ func (p *HTTPGoogleProvider) Exchange(ctx context.Context, code string) (GoogleP
 		return GoogleProfile{}, fmt.Errorf("google token response missing id_token")
 	}
 	infoURL := "https://oauth2.googleapis.com/tokeninfo?id_token=" + url.QueryEscape(tokenResp.IDToken)
-	infoReq, err := http.NewRequestWithContext(ctx, http.MethodGet, infoURL, nil)
+	infoReq, err := http.NewRequestWithContext(ctx, http.MethodGet, infoURL, http.NoBody)
 	if err != nil {
 		return GoogleProfile{}, err
 	}
@@ -97,7 +100,7 @@ func (p *HTTPGoogleProvider) Exchange(ctx context.Context, code string) (GoogleP
 	if err != nil {
 		return GoogleProfile{}, err
 	}
-	defer infoResp.Body.Close()
+	defer func() { _ = infoResp.Body.Close() }()
 	if infoResp.StatusCode/100 != 2 {
 		return GoogleProfile{}, fmt.Errorf("google id token verification failed: %s", infoResp.Status)
 	}

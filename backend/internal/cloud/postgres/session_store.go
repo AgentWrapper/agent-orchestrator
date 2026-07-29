@@ -1,3 +1,4 @@
+//nolint:revive // Store methods satisfy existing service interfaces; interface docs live at call sites.
 package postgres
 
 import (
@@ -159,7 +160,7 @@ func (s *Store) querySession(ctx context.Context, where string, args ...any) (do
 }
 
 func scanSessions(rows *sql.Rows) ([]domain.SessionRecord, error) {
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []domain.SessionRecord
 	for rows.Next() {
 		rec, err := scanSession(rows)

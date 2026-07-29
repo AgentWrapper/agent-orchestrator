@@ -20,6 +20,7 @@ type Handler struct {
 	Now    func() time.Time
 }
 
+// Register mounts cloud authentication routes.
 func (h *Handler) Register(r chi.Router) {
 	r.Get("/auth/google/login", h.googleLogin)
 	r.Get("/auth/google/callback", h.googleCallback)

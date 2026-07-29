@@ -48,6 +48,7 @@ func NewLocalEnvelopeManager(keyMaterial, keyID string) (*LocalEnvelopeManager, 
 	return &LocalEnvelopeManager{key: sum[:], keyID: keyID}, nil
 }
 
+// Encrypt encrypts plaintext using local AES-256-GCM key material.
 func (m *LocalEnvelopeManager) Encrypt(_ context.Context, plaintext []byte) (Ciphertext, error) {
 	block, err := aes.NewCipher(m.key)
 	if err != nil {
@@ -65,6 +66,7 @@ func (m *LocalEnvelopeManager) Encrypt(_ context.Context, plaintext []byte) (Cip
 	return Ciphertext{Algorithm: "AES-256-GCM", KeyID: m.keyID, Nonce: nonce, Body: body}, nil
 }
 
+// Decrypt decrypts ciphertext produced by Encrypt.
 func (m *LocalEnvelopeManager) Decrypt(_ context.Context, ciphertext Ciphertext) ([]byte, error) {
 	if ciphertext.Algorithm != "AES-256-GCM" {
 		return nil, fmt.Errorf("unsupported secret algorithm %q", ciphertext.Algorithm)

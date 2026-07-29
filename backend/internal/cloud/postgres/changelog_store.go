@@ -1,3 +1,4 @@
+//nolint:revive // Store methods satisfy existing service interfaces; interface docs live at call sites.
 package postgres
 
 import (
@@ -36,7 +37,7 @@ LIMIT $3
 	if err != nil {
 		return nil, fmt.Errorf("read change_log: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []cdc.Event
 	for rows.Next() {
 		var e cdc.Event

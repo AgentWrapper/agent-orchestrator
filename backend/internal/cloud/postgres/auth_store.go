@@ -1,3 +1,4 @@
+//nolint:revive // Store methods satisfy existing service interfaces; interface docs live at call sites.
 package postgres
 
 import (
@@ -209,7 +210,7 @@ ORDER BY o.created_at, o.id
 	if err != nil {
 		return nil, fmt.Errorf("list user orgs: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []auth.Org
 	for rows.Next() {
 		var org auth.Org

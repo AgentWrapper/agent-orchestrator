@@ -26,6 +26,7 @@ type Config struct {
 	RequestTimeout time.Duration
 }
 
+// LoadConfig resolves ao-cloud configuration from the environment.
 func LoadConfig() (Config, error) {
 	cfg := Config{
 		Host:           envDefault("AO_CLOUD_HOST", defaultHost),
@@ -57,6 +58,7 @@ func LoadConfig() (Config, error) {
 	return cfg, nil
 }
 
+// Addr returns the host:port listen address for ao-cloud.
 func (c Config) Addr() string {
 	return net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
 }
