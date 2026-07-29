@@ -256,10 +256,28 @@ export function CenterPane({
 						}}
 					>
 						<DropdownMenuTrigger asChild>
+							{/* Plain left click is the old one-click "new terminal"; the session
+							    launcher lives behind right click (and ArrowDown for keyboards). */}
 							<button
-								aria-label="Add tab"
+								aria-label="New terminal"
 								className="inline-flex h-control-sm shrink-0 items-center gap-px rounded-sm px-1 text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
-								title="Add tab"
+								onClick={onNewShellTerminal}
+								onContextMenu={(event) => {
+									event.preventDefault();
+									setIsTabLauncherOpen(true);
+								}}
+								onKeyDown={(event) => {
+									// Activate ourselves so Radix cannot claim Enter/Space for the menu.
+									if (event.key === "Enter" || event.key === " ") {
+										event.preventDefault();
+										onNewShellTerminal?.();
+									}
+								}}
+								onPointerDown={(event) => {
+									// Suppress Radix's open-on-primary-pointerdown; click adds a terminal.
+									if (event.button === 0) event.preventDefault();
+								}}
+								title="New terminal (Ctrl+Shift+`). Right-click to add a session tab."
 								type="button"
 							>
 								<Plus aria-hidden="true" className="size-icon-md" />

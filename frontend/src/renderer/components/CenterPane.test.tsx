@@ -57,7 +57,28 @@ describe("CenterPane toolbar session label", () => {
 		expect(onSelectProjectSession).toHaveBeenCalledWith(secondWorker);
 	});
 
-	it("adds workers and terminals only through the tab launcher", () => {
+	it("opens a terminal on left click without showing the launcher", () => {
+		const onNewShellTerminal = vi.fn();
+		render(
+			<CenterPane
+				session={worker}
+				projectSessions={[worker]}
+				availableProjectSessions={[secondWorker]}
+				onNewShellTerminal={onNewShellTerminal}
+				theme="dark"
+				daemonReady
+			/>,
+		);
+
+		const trigger = screen.getByRole("button", { name: "New terminal" });
+		fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+		fireEvent.click(trigger);
+
+		expect(onNewShellTerminal).toHaveBeenCalledOnce();
+		expect(screen.queryByRole("menuitem", { name: /review the change/ })).not.toBeInTheDocument();
+	});
+
+	it("adds workers and terminals through the right-click launcher", () => {
 		const onAddProjectSession = vi.fn();
 		const onNewShellTerminal = vi.fn();
 		render(
@@ -73,11 +94,11 @@ describe("CenterPane toolbar session label", () => {
 		);
 
 		expect(screen.queryByRole("button", { name: "review the change" })).not.toBeInTheDocument();
-		fireEvent.pointerDown(screen.getByRole("button", { name: "Add tab" }), { button: 0, ctrlKey: false });
+		fireEvent.contextMenu(screen.getByRole("button", { name: "New terminal" }));
 		fireEvent.click(screen.getByRole("menuitem", { name: /review the change/ }));
 		expect(onAddProjectSession).toHaveBeenCalledWith(secondWorker);
 
-		fireEvent.pointerDown(screen.getByRole("button", { name: "Add tab" }), { button: 0, ctrlKey: false });
+		fireEvent.contextMenu(screen.getByRole("button", { name: "New terminal" }));
 		fireEvent.click(screen.getByRole("menuitem", { name: "Terminal" }));
 		expect(onNewShellTerminal).toHaveBeenCalledOnce();
 	});
@@ -98,7 +119,7 @@ describe("CenterPane toolbar session label", () => {
 			/>,
 		);
 
-		fireEvent.pointerDown(screen.getByRole("button", { name: "Add tab" }), { button: 0, ctrlKey: false });
+		fireEvent.contextMenu(screen.getByRole("button", { name: "New terminal" }));
 		const search = screen.getByRole("textbox", { name: "Search sessions" });
 		const terminal = screen.getByRole("menuitem", { name: "Terminal" });
 		expect(terminal.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
