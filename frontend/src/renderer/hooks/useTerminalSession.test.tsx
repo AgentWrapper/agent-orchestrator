@@ -7,6 +7,31 @@ import type { WorkspaceSession } from "../types/workspace";
 import { useTerminalSession, type AttachableTerminal } from "./useTerminalSession";
 import { workspaceQueryKey } from "./useWorkspaceQuery";
 
+// Re-minting the signed preview URL on reconnect (owned cloud sessions) calls
+// refreshPreviewUrl; mock it so the reattach tests don't hit the network. The
+// rest of cloud-sessions (sandboxIdFromBoardId) stays real.
+const { refreshPreviewUrlMock } = vi.hoisted(() => ({
+	refreshPreviewUrlMock: vi.fn(async () => "https://3001-fresh.daytonaproxy01.net"),
+}));
+vi.mock("../lib/cloud-sessions", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../lib/cloud-sessions")>();
+	return { ...actual, refreshPreviewUrl: refreshPreviewUrlMock };
+});
+
+// An OWNED cloud session: board id "cloud-<sandboxId>" + a sandbox preview URL.
+const cloudSession: WorkspaceSession = {
+	id: "cloud-sb1",
+	terminalHandleId: "handle-1",
+	workspaceId: "cloud-sessions",
+	workspaceName: "Cloud",
+	title: "cloud worker",
+	provider: "claude-code",
+	status: "working",
+	updatedAt: "now",
+	cloudPreviewUrl: "https://3001-orig.daytonaproxy01.net",
+	prs: [],
+};
+
 const session: WorkspaceSession = {
 	id: "sess-1",
 	terminalHandleId: "handle-1",
@@ -158,6 +183,7 @@ function setup({ daemonReady = true, attachedSession = session as WorkspaceSessi
 
 beforeEach(() => {
 	vi.useFakeTimers();
+	refreshPreviewUrlMock.mockClear();
 });
 
 afterEach(() => {
@@ -616,5 +642,41 @@ describe("useTerminalSession", () => {
 		act(() => muxes[0].emitConnection("closed"));
 		act(() => void vi.advanceTimersByTime(60_000));
 		expect(muxes).toHaveLength(1);
+	});
+});
+
+describe("useTerminalSession cloud reattach", () => {
+	it("reattaches a cloud session even when the local daemon is not ready", () => {
+		const { view, muxes } = setup({ daemonReady: false, attachedSession: cloudSession });
+		act(() => muxes[0].emitOpened("handle-1"));
+		expect(view.result.current.state).toBe("attached");
+		act(() => muxes[0].emitConnection("closed"));
+		expect(view.result.current.state).toBe("reattaching");
+		act(() => void vi.advanceTimersByTime(500)); // RETRY_BASE_MS
+		// Reconnected despite daemonReady=false: a cloud mux targets the sandbox
+		// directly, so local daemon readiness must not gate its reattach.
+		expect(muxes).toHaveLength(2);
+	});
+
+	it("does NOT connect a LOCAL session while the daemon is down (contrast)", () => {
+		const { view, muxes } = setup({ daemonReady: false }); // default = local session
+		// Gated on the local daemon: no connect, no mux — it waits until ready.
+		expect(muxes).toHaveLength(0);
+		expect(view.result.current.state).toBe("reattaching");
+	});
+
+	it("re-mints the signed preview URL after repeated owned-cloud reattach failures", () => {
+		const { muxes } = setup({ daemonReady: false, attachedSession: cloudSession });
+		act(() => muxes[0].emitOpened("handle-1"));
+		// Drop #1: first attempt → reconnect after 500ms, no re-mint yet.
+		act(() => muxes[0].emitConnection("closed"));
+		act(() => void vi.advanceTimersByTime(500));
+		expect(muxes).toHaveLength(2);
+		expect(refreshPreviewUrlMock).not.toHaveBeenCalled();
+		// Drop #2: attempt count reaches 2 → re-mint the (possibly expired) URL
+		// before reconnecting.
+		act(() => muxes[1].emitConnection("closed"));
+		act(() => void vi.advanceTimersByTime(1000)); // RETRY_BASE_MS * 2^1
+		expect(refreshPreviewUrlMock).toHaveBeenCalledWith("sb1");
 	});
 });
