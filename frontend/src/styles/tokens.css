@@ -43,6 +43,18 @@
 	--color-border: rgb(255 255 255 / 0.06);
 	--color-border-strong: rgb(255 255 255 / 0.1);
 
+	/* Reverb workspace bar — a restrained navy layer above the neutral work
+	   surface. These roles stay separate from window chrome so Electron's
+	   native titlebar color contract can remain unchanged. */
+	--color-bg-topbar: #151b28;
+	--color-bg-topbar-raised: #1c2638;
+	--color-bg-topbar-context: #101a2d;
+	--color-border-topbar: rgb(151 178 224 / 0.14);
+	--color-border-topbar-strong: rgb(151 178 224 / 0.22);
+	--color-text-topbar: #edf2fa;
+	--color-text-topbar-muted: #a7b2c3;
+	--color-text-topbar-passive: #78869c;
+
 	/* Accent — refined blue (primary actions, focus, active session) */
 	--color-accent: #4d8dff;
 	--color-accent-foreground: #ffffff;
@@ -211,8 +223,21 @@
 	--size-control-board-sm: 30px;
 	--size-control-board: 36px;
 	--size-table-head: var(--space-10);
-	--size-toolbar: 56px;
-	--size-inspector-tabs: 48px;
+	/* Reverb's route-level workspace bar and pane-level secondary rows. Keep
+	   the old names as compatibility aliases while route mounts migrate. */
+	--size-topbar-primary: 40px;
+	--size-topbar-secondary: 36px;
+	--size-topbar-control: 28px;
+	--size-toolbar: var(--size-topbar-primary);
+	--size-inspector-tabs: var(--size-topbar-secondary);
+	--size-topbar-context-max: 32rem;
+	--size-topbar-state-max: 24rem;
+	--size-topbar-state-min: 9rem;
+	--space-topbar-x: 20px;
+	--space-topbar-zone: 10px;
+	--space-topbar-group: 4px;
+	--radius-topbar-context: 8px;
+	--radius-topbar-control: 7px;
 	--size-row-md: 52px;
 	--size-browser-url: 29px;
 	--size-browser-min: 320px;
@@ -235,7 +260,7 @@
 		var(--size-titlebar-cluster-left-linux) + var(--size-titlebar-cluster-width) + var(--size-titlebar-content-gap)
 	);
 	/* Clears the macOS traffic-light row used by the fixed titlebar controls. */
-	--size-traffic-light-clearance: 44px;
+	--size-traffic-light-clearance: 40px;
 	--size-traffic-light-clearance-fullscreen: var(--space-2);
 	--size-resize-handle: 7px;
 	--size-resize-handle-offset: 3px;
@@ -263,6 +288,8 @@
 	--size-flex-min: 0px;
 	/* Keeps terminal tabs usable after title truncation while leaving room for several tabs. */
 	--size-shell-tab-min: 64px;
+	/* Keeps added session tabs aligned with the owning tab in the secondary strip. */
+	--size-session-pane-tab-max: 112px;
 	/* Caps a standalone shell terminal's tab label so several open shells stay
 	   readable side by side instead of one long path crowding out the rest. */
 	--size-shell-tab-max: 140px;
@@ -517,6 +544,16 @@
 
 	--color-border: #e3e3e5;
 	--color-border-strong: #d4d4d6;
+
+	/* Reverb workspace bar — light theme */
+	--color-bg-topbar: #eef1f6;
+	--color-bg-topbar-raised: #ffffff;
+	--color-bg-topbar-context: #e3e8f0;
+	--color-border-topbar: rgb(42 62 91 / 0.13);
+	--color-border-topbar-strong: rgb(42 62 91 / 0.2);
+	--color-text-topbar: #172033;
+	--color-text-topbar-muted: #526077;
+	--color-text-topbar-passive: #626f83;
 
 	--color-accent: #2563eb;
 	--color-accent-foreground: #ffffff;

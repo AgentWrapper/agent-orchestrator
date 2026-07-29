@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { NotificationDTO } from "../lib/notifications";
 import { useUiStore } from "../stores/ui-store";
 import { NotificationCenter, NotificationRuntime } from "./NotificationCenter";
+import { TooltipProvider } from "./ui/tooltip";
 
 const { connectMock, fetchNextPageMock, markAllMock, markReadMock, navigateMock, notificationQueryMock, paramsMock } =
 	vi.hoisted(() => ({
@@ -76,7 +77,9 @@ function renderNotificationCenter() {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	return render(
 		<QueryClientProvider client={queryClient}>
-			<NotificationCenter />
+			<TooltipProvider delayDuration={0}>
+				<NotificationCenter />
+			</TooltipProvider>
 		</QueryClientProvider>,
 	);
 }
@@ -96,17 +99,20 @@ function notificationQueryResult(
 		isFetchNextPageError: boolean;
 		isFetchingNextPage: boolean;
 		isLoading: boolean;
+		items: NotificationDTO[];
+		unreadCount: number;
 	}> = {},
 ) {
+	const { items = notifications, unreadCount = 2, ...queryOverrides } = overrides;
 	const hasNextPage = overrides.hasNextPage ?? false;
 	return {
 		data: {
 			pageParams: [""],
 			pages: [
 				{
-					notifications: status === "unread" ? notifications.filter((item) => item.status === "unread") : notifications,
+					notifications: status === "unread" ? items.filter((item) => item.status === "unread") : items,
 					nextCursor: hasNextPage ? "older" : undefined,
-					unreadCount: 2,
+					unreadCount,
 				},
 			],
 		},
@@ -116,7 +122,7 @@ function notificationQueryResult(
 		isFetchNextPageError: false,
 		isFetchingNextPage: false,
 		isLoading: false,
-		...overrides,
+		...queryOverrides,
 	};
 }
 
@@ -187,6 +193,9 @@ describe("NotificationCenter", () => {
 	it("opens once on click without a hover/focus remount and dismisses outside", async () => {
 		renderNotificationCenter();
 		const trigger = screen.getByRole("button", { name: /unread notifications/ });
+		expect(trigger).toHaveClass("reverb-topbar__control--icon");
+		expect(trigger.querySelector("svg")).toHaveClass("size-icon-lg");
+		expect(screen.getByText("2")).toHaveClass("right-px", "top-px", "h-3", "min-w-3", "text-[7px]");
 		fireEvent.mouseEnter(trigger);
 		fireEvent.focus(trigger);
 		expect(screen.queryByText("Mark all read")).not.toBeInTheDocument();
@@ -199,6 +208,32 @@ describe("NotificationCenter", () => {
 		await waitFor(() => expect(screen.queryByText("Mark all read")).not.toBeInTheDocument());
 	});
 
+	it("keeps large unread counts compact and inside the notification control", () => {
+		notificationQueryMock.mockImplementation((status: "unread" | "all") =>
+			notificationQueryResult(status, { unreadCount: 101 }),
+		);
+		renderNotificationCenter();
+
+		const badge = screen.getByText("99+");
+		expect(badge).toHaveClass("right-px", "top-px", "h-3", "min-w-3", "text-[7px]", "leading-none");
+		expect(badge).not.toHaveClass("-right-0.5", "-top-0.5", "min-w-4", "leading-4");
+	});
+
+	it("shows only a tooltip when no notifications are available", async () => {
+		notificationQueryMock.mockImplementation((status: "unread" | "all") =>
+			notificationQueryResult(status, { items: [], unreadCount: 0 }),
+		);
+		renderNotificationCenter();
+
+		const trigger = screen.getByRole("button", { name: "Notifications" });
+		await userEvent.hover(trigger);
+		expect(await screen.findByRole("tooltip")).toHaveTextContent("No notifications right now");
+
+		await userEvent.click(trigger);
+		expect(screen.queryByRole("dialog", { name: "Notifications" })).not.toBeInTheDocument();
+		expect(screen.queryByText("You're all caught up.")).not.toBeInTheDocument();
+	});
+
 	it("supports tab navigation inside the panel and restores focus to the bell", async () => {
 		renderNotificationCenter();
 		const trigger = screen.getByRole("button", { name: /unread notifications/ });
@@ -209,6 +244,20 @@ describe("NotificationCenter", () => {
 		expect(panel).toContainElement(document.activeElement as HTMLElement | null);
 		await userEvent.keyboard("{Escape}");
 		await waitFor(() => expect(trigger).toHaveFocus());
+	});
+
+	it("keeps the popover header compact without changing its controls", async () => {
+		renderNotificationCenter();
+		await clickOpen();
+
+		const title = screen.getByText("Notifications");
+		const header = title.parentElement;
+		const controls = title.nextElementSibling;
+		expect(header).toHaveClass("pt-2.5");
+		expect(controls).toHaveClass("mt-1");
+		expect(screen.getByRole("tab", { name: /Unread/ })).toHaveClass("h-control-md");
+		expect(screen.getByRole("tab", { name: "All" })).toHaveClass("h-control-md");
+		expect(screen.getByRole("button", { name: "Mark all notifications read" })).toHaveClass("h-control-sm", "mb-0.5");
 	});
 
 	it("keeps read notifications in chronological order in All while Unread stays focused", async () => {
@@ -225,29 +274,36 @@ describe("NotificationCenter", () => {
 		expect(rows[1]).toHaveTextContent("PR #67 is ready to merge");
 	});
 
-	it("opens a PR from its title and the related AO session from the row action", async () => {
+	it("opens the whole notification at its primary PR or session target", async () => {
 		renderNotificationCenter();
 		await clickOpen();
 
-		const titleLink = screen.getByRole("link", { name: "PR #67 is ready to merge" });
-		expect(titleLink).toHaveAttribute("href", "https://github.com/acme/app/pull/67");
-		await userEvent.click(titleLink);
+		expect(screen.queryByRole("link", { name: "PR #67 is ready to merge" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Open related session" })).not.toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "PR #67 is ready to merge — Open pull request" }));
+		expect(markReadMock).toHaveBeenNthCalledWith(1, "ntf_2");
 		expect(window.open).toHaveBeenCalledWith("https://github.com/acme/app/pull/67", "_blank", "noopener,noreferrer");
+		expect(markReadMock.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(window.open).mock.invocationCallOrder[0]);
 
 		await clickOpen();
-		await userEvent.click(screen.getByRole("button", { name: "Open related session" }));
+		await userEvent.click(screen.getByRole("button", { name: "Checkout flow needs input — Open session" }));
+		expect(markReadMock).toHaveBeenNthCalledWith(2, "ntf_1");
 		expect(navigateMock).toHaveBeenCalledWith({
 			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId: "proj-1", sessionId: "sess-2" },
+			params: { projectId: "proj-1", sessionId: "sess-1" },
 		});
+		expect(markReadMock.mock.invocationCallOrder[1]).toBeLessThan(navigateMock.mock.invocationCallOrder[0]);
 	});
 
 	it("marks one or every unread notification without removing history itself", async () => {
 		renderNotificationCenter();
 		await clickOpen();
+		vi.mocked(window.open).mockClear();
 
 		await userEvent.click(screen.getAllByRole("button", { name: "Mark notification read" })[0]);
 		expect(markReadMock).toHaveBeenCalledWith("ntf_2");
+		expect(window.open).not.toHaveBeenCalled();
+		expect(navigateMock).not.toHaveBeenCalled();
 
 		await userEvent.click(screen.getByRole("button", { name: "Mark all notifications read" }));
 		expect(markAllMock).toHaveBeenCalledTimes(1);

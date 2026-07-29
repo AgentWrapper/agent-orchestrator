@@ -6,12 +6,10 @@ import {
 	Check,
 	CheckCheck,
 	CircleAlert,
-	ExternalLink,
 	GitMerge,
 	GitPullRequest,
 	Inbox,
 	LoaderCircle,
-	SquareTerminal,
 	XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -37,6 +35,7 @@ import { captureRendererEvent } from "../lib/telemetry";
 import { cn } from "../lib/utils";
 import { TopbarButton } from "./TopbarButton";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 type NotificationCenterProps = {
 	style?: React.CSSProperties;
@@ -75,7 +74,7 @@ function useNotificationTargetNavigation() {
 		[openSession],
 	);
 
-	return { openPrimary, openSession };
+	return { openPrimary };
 }
 
 export function NotificationRuntime() {
@@ -129,7 +128,8 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 	const all = useMemo(() => getCachedNotifications(allQuery.data), [allQuery.data]);
 	const unreadCount = getCachedUnreadCount(unreadQuery.data);
 	const visibleNotifications = view === "unread" ? unread : all;
-	const { openPrimary, openSession } = useNotificationTargetNavigation();
+	const { openPrimary } = useNotificationTargetNavigation();
+	const hasNoNotifications = !unreadQuery.isLoading && !unreadQuery.isError && unreadCount === 0;
 
 	const markOneRead = async (id: string) => {
 		setActionError(null);
@@ -164,12 +164,10 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 	};
 
 	const openAndDismiss = (notification: NotificationDTO) => {
+		// Start acknowledgement while the click still owns the user gesture so PR
+		// targets can open synchronously without being blocked as a popup.
+		if (notification.status === "unread") void markOneRead(notification.id);
 		openPrimary(notification);
-		setPanelOpen(false);
-	};
-
-	const openSessionAndDismiss = (notification: NotificationDTO) => {
-		openSession(notification);
 		setPanelOpen(false);
 	};
 
@@ -180,36 +178,51 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 		void notificationsQuery.fetchNextPage();
 	};
 
+	useEffect(() => {
+		if (hasNoNotifications) setOpen(false);
+	}, [hasNoNotifications]);
+
+	const trigger = (
+		<TopbarButton
+			aria-label={unreadCount > 0 ? `${unreadCount} unread notifications` : "Notifications"}
+			className="relative"
+			style={style}
+			variant="icon"
+		>
+			{unreadCount > 0 ? (
+				<BellRing className="size-icon-lg fill-current text-foreground" aria-hidden="true" />
+			) : (
+				<Bell className="size-icon-lg" aria-hidden="true" />
+			)}
+			{unreadCount > 0 ? (
+				<span className="pointer-events-none absolute right-px top-px grid h-3 min-w-3 place-items-center rounded-full bg-accent px-0.5 font-mono text-[7px] font-semibold leading-none text-accent-foreground shadow-sm ring-1 ring-background">
+					{unreadCount > 99 ? "99+" : unreadCount}
+				</span>
+			) : null}
+		</TopbarButton>
+	);
+
+	if (hasNoNotifications) {
+		return (
+			<Tooltip>
+				<TooltipTrigger asChild>{trigger}</TooltipTrigger>
+				<TooltipContent side="bottom">No notifications right now</TooltipContent>
+			</Tooltip>
+		);
+	}
+
 	return (
 		<Popover onOpenChange={setPanelOpen} open={open}>
-			<PopoverTrigger asChild>
-				<TopbarButton
-					aria-label={unreadCount > 0 ? `${unreadCount} unread notifications` : "Notifications"}
-					className="relative"
-					style={style}
-					variant="icon"
-				>
-					{unreadCount > 0 ? (
-						<BellRing className="size-5 fill-current text-foreground" aria-hidden="true" />
-					) : (
-						<Bell className="size-5" aria-hidden="true" />
-					)}
-					{unreadCount > 0 ? (
-						<span className="pointer-events-none absolute -right-0.5 -top-0.5 grid min-w-4 place-items-center rounded-full bg-foreground px-1 font-mono text-[9px] font-semibold leading-4 text-background shadow-sm">
-							{unreadCount > 99 ? "99+" : unreadCount}
-						</span>
-					) : null}
-				</TopbarButton>
-			</PopoverTrigger>
+			<PopoverTrigger asChild>{trigger}</PopoverTrigger>
 			<PopoverContent
 				align="end"
 				aria-label="Notifications"
 				className="w-notification-width max-w-[calc(100vw-1rem)] overflow-hidden rounded-panel border-border-strong p-0 shadow-xl"
 				sideOffset={8}
 			>
-				<div className="border-b border-border bg-[var(--color-overlay-subtle)] px-4 pt-3.5">
+				<div className="border-b border-border bg-[var(--color-overlay-subtle)] px-4 pt-2.5">
 					<p className="text-subtitle font-semibold tracking-tight text-foreground">Notifications</p>
-					<div className="mt-2 flex items-end justify-between gap-4">
+					<div className="mt-1 flex items-end justify-between gap-4">
 						<div aria-label="Notification filters" className="flex items-end gap-5" role="tablist">
 							<NotificationTab
 								active={view === "unread"}
@@ -221,7 +234,7 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 						</div>
 						<button
 							aria-label="Mark all notifications read"
-							className="mb-1 inline-flex h-control-sm items-center gap-1.5 rounded-md px-1.5 text-caption font-medium text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+							className="mb-0.5 inline-flex h-control-sm items-center gap-1.5 rounded-md px-1.5 text-caption font-medium text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
 							disabled={unreadCount === 0 || markAllRead.isPending}
 							onClick={() => void markAll()}
 							type="button"
@@ -264,7 +277,6 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 								notification={notification}
 								onMarkRead={markOneRead}
 								onOpenPrimary={openAndDismiss}
-								onOpenSession={openSessionAndDismiss}
 							/>
 						))}
 						{notificationsQuery.isFetchNextPageError ? (
@@ -312,7 +324,7 @@ function NotificationTab({
 		<button
 			aria-selected={active}
 			className={cn(
-				"relative inline-flex h-control-lg items-center gap-0.5 border-b-2 px-0.5 text-control font-medium transition-colors",
+				"relative inline-flex h-control-md items-center gap-0.5 border-b-2 px-0.5 text-control font-medium transition-colors",
 				active ? "border-foreground text-foreground" : "border-transparent text-passive hover:text-muted-foreground",
 			)}
 			onClick={onClick}
@@ -352,13 +364,11 @@ function NotificationItem({
 	notification,
 	onMarkRead,
 	onOpenPrimary,
-	onOpenSession,
 }: {
 	disabled: boolean;
 	notification: NotificationDTO;
 	onMarkRead: (id: string) => Promise<void>;
 	onOpenPrimary: (notification: NotificationDTO) => void;
-	onOpenSession: (notification: NotificationDTO) => void;
 }) {
 	const Icon = notificationIcon(notification.type);
 	const isUnread = notification.status === "unread";
@@ -366,68 +376,43 @@ function NotificationItem({
 	return (
 		<div
 			className={cn(
-				"group grid grid-cols-notification gap-3 px-4 py-3 transition-[background-color,opacity] duration-fast hover:bg-interactive-hover",
+				"group flex min-w-0 transition-[background-color,opacity] duration-fast hover:bg-interactive-hover",
 				!isUnread && "opacity-55 hover:opacity-80",
 			)}
 			role="listitem"
 		>
-			<div
-				className={cn(
-					"mt-0.5 grid size-notification-icon place-items-center rounded-md bg-surface",
-					notificationIconClass(notification.type),
-				)}
+			<button
+				aria-label={`${notification.title} — ${isPR ? "Open pull request" : "Open session"}`}
+				className="flex min-w-0 flex-1 items-start gap-3 px-4 py-3 text-left focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent/60"
+				onClick={() => onOpenPrimary(notification)}
+				title={isPR ? "Open pull request" : "Open session"}
+				type="button"
 			>
-				<Icon className="size-icon-base" aria-hidden="true" />
-			</div>
-			<div className="min-w-0">
-				<div className="flex min-w-0 items-start gap-2">
-					{isPR ? (
-						<a
-							className="inline-flex min-w-0 items-start gap-1 text-left text-control font-medium leading-snug text-foreground underline decoration-border-strong underline-offset-3 transition-colors hover:text-accent hover:decoration-accent/60"
-							href={notification.target.prUrl}
-							onClick={(event) => {
-								event.preventDefault();
-								onOpenPrimary(notification);
-							}}
-							rel="noreferrer"
-							target="_blank"
-							title="Open pull request"
-						>
-							<span className="break-words">{notification.title}</span>
-							<ExternalLink className="mt-0.5 size-3 shrink-0" aria-hidden="true" />
-						</a>
-					) : (
-						<button
-							className="min-w-0 break-words text-left text-control font-medium leading-snug text-foreground transition-colors hover:text-accent hover:underline"
-							onClick={() => onOpenPrimary(notification)}
-							title="Open session"
-							type="button"
-						>
-							{notification.title}
-						</button>
+				<span
+					className={cn(
+						"mt-0.5 grid size-notification-icon shrink-0 place-items-center rounded-md bg-surface",
+						notificationIconClass(notification.type),
 					)}
-					<time className="shrink-0 font-mono text-[9px] text-passive" dateTime={notification.createdAt}>
-						{formatTimeCompact(notification.createdAt)}
-					</time>
-				</div>
-				{notification.body ? (
-					<p className="mt-0.5 whitespace-pre-wrap break-words text-caption leading-snug text-muted-foreground">
-						{notification.body}
-					</p>
-				) : null}
-			</div>
-			<div className="flex items-start gap-0.5">
-				{isPR && notification.sessionId ? (
-					<button
-						aria-label="Open related session"
-						className="grid size-control-md place-items-center rounded-md text-passive transition-colors hover:bg-interactive-active hover:text-foreground"
-						onClick={() => onOpenSession(notification)}
-						title="Open related session"
-						type="button"
-					>
-						<SquareTerminal className="size-icon-md" aria-hidden="true" />
-					</button>
-				) : null}
+				>
+					<Icon className="size-icon-base" aria-hidden="true" />
+				</span>
+				<span className="min-w-0 flex-1">
+					<span className="flex min-w-0 items-start gap-2">
+						<span className="min-w-0 flex-1 break-words text-control font-medium leading-snug text-foreground transition-colors group-hover:text-accent">
+							{notification.title}
+						</span>
+						<time className="shrink-0 font-mono text-[9px] text-passive" dateTime={notification.createdAt}>
+							{formatTimeCompact(notification.createdAt)}
+						</time>
+					</span>
+					{notification.body ? (
+						<span className="mt-0.5 block whitespace-pre-wrap break-words text-caption leading-snug text-muted-foreground">
+							{notification.body}
+						</span>
+					) : null}
+				</span>
+			</button>
+			<div className="flex shrink-0 items-start py-3 pr-4">
 				{isUnread ? (
 					<button
 						aria-label="Mark notification read"

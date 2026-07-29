@@ -34,9 +34,16 @@ describe("CenterPane toolbar session label", () => {
 			createdAt: "2026-07-22T00:00:00Z",
 		}));
 
-	it("shows the session display name for a worker", () => {
+	it("shows the active session as a compact padded tab without a generic Terminal label", () => {
 		render(<CenterPane session={worker} theme="dark" daemonReady />);
-		expect(screen.getByText("do the thing")).toBeInTheDocument();
+		const sessionTab = screen.getByRole("button", { name: "do the thing" });
+		expect(sessionTab).toHaveAttribute("aria-current", "true");
+		expect(sessionTab).toHaveClass("session-pane-tab__label");
+		expect(sessionTab.parentElement).toHaveClass("session-pane-tab", "bg-interactive-active");
+		expect(sessionTab.closest(".h-inspector-tabs")).toHaveClass("px-1.5");
+		expect(document.querySelector('button[aria-label="Scroll tabs left"]')).toHaveClass("hidden");
+		expect(sessionTab.closest(".terminal-pane-frame")).toHaveClass("px-px");
+		expect(screen.queryByRole("button", { name: "Terminal" })).not.toBeInTheDocument();
 		expect(screen.queryByText("sess-1")).not.toBeInTheDocument();
 	});
 
@@ -55,6 +62,32 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.getByRole("button", { name: "do the thing" })).toHaveAttribute("aria-current", "true");
 		fireEvent.click(screen.getByRole("button", { name: "review the change" }));
 		expect(onSelectProjectSession).toHaveBeenCalledWith(secondWorker);
+	});
+
+	it("uses the same compact frame for Orchestrator and added session tabs", () => {
+		const orchestratorSession = {
+			...worker,
+			id: "sess-orch",
+			title: "orchestrator",
+			kind: "orchestrator",
+		} satisfies WorkspaceSession;
+		const dummySession = { ...secondWorker, title: "dummy-session" } satisfies WorkspaceSession;
+		const dummyTwo = { ...secondWorker, id: "sess-3", title: "dummy-2" } satisfies WorkspaceSession;
+
+		render(
+			<CenterPane
+				session={orchestratorSession}
+				projectSessions={[orchestratorSession, dummySession, dummyTwo]}
+				theme="dark"
+				daemonReady
+			/>,
+		);
+
+		for (const label of ["Orchestrator", "dummy-session", "dummy-2"]) {
+			expect(screen.getByRole("button", { name: label }).parentElement).toHaveClass("session-pane-tab");
+		}
+		expect(screen.getByRole("button", { name: "Close session tab dummy-session" })).toHaveClass("size-control-xs");
+		expect(screen.getByRole("button", { name: "Close session tab dummy-2" })).toHaveClass("size-control-xs");
 	});
 
 	it("adds workers and terminals only through the tab launcher", () => {
@@ -117,21 +150,43 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.queryByRole("menuitem", { name: /Worker 1/ })).not.toBeInTheDocument();
 	});
 
-	it("shows 'Orchestrator' for an orchestrator session", () => {
+	it("uses a compact Orchestrator tab for an orchestrator session", () => {
 		render(<CenterPane session={{ ...worker, id: "sess-orch", kind: "orchestrator" }} theme="dark" daemonReady />);
-		expect(screen.getByText("Orchestrator")).toBeInTheDocument();
+		const orchestratorTab = screen.getByRole("button", { name: "Orchestrator" });
+		expect(orchestratorTab).toHaveAttribute("aria-current", "true");
+		expect(orchestratorTab).toHaveClass("session-pane-tab__label");
+		expect(screen.queryByRole("button", { name: "Terminal" })).not.toBeInTheDocument();
 	});
 
 	it("shows 'No session' when there is no session", () => {
 		render(<CenterPane theme="dark" daemonReady />);
 		expect(screen.getByText("No session")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Terminal" })).not.toBeInTheDocument();
 	});
 
 	it("uses the inspector tab height for the terminal header", () => {
 		render(<CenterPane session={worker} theme="dark" daemonReady />);
 
-		const header = screen.getByText("TERMINAL").parentElement?.parentElement;
+		const header = screen.getByRole("button", { name: "do the thing" }).closest(".h-inspector-tabs");
 		expect(header).toHaveClass("h-inspector-tabs");
+	});
+
+	it("uses the session tab to return from a selected shell", () => {
+		const onSelectSessionTerminal = vi.fn();
+		render(
+			<CenterPane
+				session={worker}
+				terminalTarget={{ kind: "shell", handleId: "h-1", title: "Shell" }}
+				onSelectSessionTerminal={onSelectSessionTerminal}
+				theme="dark"
+				daemonReady
+			/>,
+		);
+
+		const sessionTab = screen.getByRole("button", { name: "do the thing" });
+		expect(sessionTab).toHaveAttribute("aria-current", "false");
+		fireEvent.click(sessionTab);
+		expect(onSelectSessionTerminal).toHaveBeenCalledOnce();
 	});
 
 	it("lets tabs shrink into a scrollable strip instead of overflowing onto the controls", () => {
@@ -146,12 +201,14 @@ describe("CenterPane toolbar session label", () => {
 			expect(tab).toHaveClass("min-w-flex-min");
 			expect(tab).not.toHaveClass("min-w-0");
 		}
-		// jsdom reports no overflow, so the indicator stays mounted but disabled to preserve focus.
-		expect(screen.getByRole("button", { name: "Scroll tabs right" })).toBeDisabled();
+		// jsdom reports no overflow, so the inactive indicator stays mounted without reserving layout space.
+		const rightScrollButton = document.querySelector('button[aria-label="Scroll tabs right"]');
+		expect(rightScrollButton).toBeDisabled();
+		expect(rightScrollButton).toHaveClass("hidden");
 
 		// The display controls float over the terminal body, not the tab bar,
 		// so tabs and controls can never overlap.
-		const tabBarRow = screen.getByText("TERMINAL").closest("div")?.parentElement;
+		const tabBarRow = screen.getByRole("button", { name: "do the thing" }).closest("div")?.parentElement;
 		expect(tabBarRow).not.toBeNull();
 		expect(tabBarRow?.contains(screen.getByRole("button", { name: /fullscreen/i }))).toBe(false);
 	});
@@ -166,12 +223,12 @@ describe("CenterPane toolbar session label", () => {
 		fireEvent.scroll(scrollRegion);
 
 		expect(screen.getByRole("button", { name: "Scroll tabs right" })).toBeEnabled();
-		expect(screen.getByRole("button", { name: "Scroll tabs left" })).toBeDisabled();
+		expect(document.querySelector('button[aria-label="Scroll tabs left"]')).toHaveClass("hidden");
 
 		Object.defineProperty(scrollRegion, "scrollLeft", { value: 400, configurable: true });
 		fireEvent.scroll(scrollRegion);
 		expect(screen.getByRole("button", { name: "Scroll tabs left" })).toBeEnabled();
-		expect(screen.getByRole("button", { name: "Scroll tabs right" })).toBeDisabled();
+		expect(document.querySelector('button[aria-label="Scroll tabs right"]')).toHaveClass("hidden");
 	});
 
 	it("scrolls the tab strip horizontally with the mouse wheel", () => {

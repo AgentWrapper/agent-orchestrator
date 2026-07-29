@@ -76,6 +76,8 @@ vi.mock("../lib/bridge", () => ({
 	},
 }));
 
+vi.mock("./ShellTopbar", () => ({ ShellTopbar: () => null }));
+
 function renderForm() {
 	const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	render(

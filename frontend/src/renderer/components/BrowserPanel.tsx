@@ -272,40 +272,43 @@ export function BrowserPanelView({
 			role="tabpanel"
 		>
 			<form
-				className="flex shrink-0 min-w-0 items-center gap-1 border-b border-border bg-surface p-1.5"
+				className="flex h-topbar-secondary min-w-0 shrink-0 items-center gap-0.5 border-b border-border bg-surface px-1 py-0.5"
 				onSubmit={submit}
 			>
 				<Button
 					aria-label="Back"
+					className="size-control-sm!"
 					disabled={!navState.canGoBack}
 					onClick={() => void goBack()}
 					size="icon-sm"
 					type="button"
 					variant="ghost"
 				>
-					<ArrowLeft aria-hidden="true" className="size-icon-base" />
+					<ArrowLeft aria-hidden="true" className="size-icon-sm" />
 				</Button>
 				<Button
 					aria-label="Forward"
+					className="size-control-sm!"
 					disabled={!navState.canGoForward}
 					onClick={() => void goForward()}
 					size="icon-sm"
 					type="button"
 					variant="ghost"
 				>
-					<ArrowRight aria-hidden="true" className="size-icon-base" />
+					<ArrowRight aria-hidden="true" className="size-icon-sm" />
 				</Button>
 				<Button
 					aria-label={navState.isLoading ? "Stop" : "Reload"}
+					className="size-control-sm!"
 					onClick={() => void (navState.isLoading ? stop() : reload())}
 					size="icon-sm"
 					type="button"
 					variant="ghost"
 				>
 					{navState.isLoading ? (
-						<X aria-hidden="true" className="size-icon-base" />
+						<X aria-hidden="true" className="size-icon-sm" />
 					) : (
-						<RefreshCw aria-hidden="true" className="size-icon-base" />
+						<RefreshCw aria-hidden="true" className="size-icon-sm" />
 					)}
 				</Button>
 				<Button
@@ -317,7 +320,7 @@ export function BrowserPanelView({
 								: "Annotate page"
 					}
 					aria-pressed={annotationMode || status === "picking"}
-					className="browser-panel__annotate-btn"
+					className="browser-panel__annotate-btn size-control-sm!"
 					disabled={!canAnnotate || status === "sending"}
 					onClick={() => void toggleAnnotationMode()}
 					size="icon-sm"
@@ -325,7 +328,7 @@ export function BrowserPanelView({
 					type="button"
 					variant="ghost"
 				>
-					<MousePointer2 aria-hidden="true" className="h-4 w-4" />
+					<MousePointer2 aria-hidden="true" className="size-icon-sm" />
 				</Button>
 				{annotationStatusLabel ? (
 					<span
@@ -341,11 +344,11 @@ export function BrowserPanelView({
 				<div className="relative min-w-0 flex-1">
 					<Globe2
 						aria-hidden="true"
-						className="pointer-events-none absolute left-2.25 top-1/2 size-icon-md -translate-y-1/2 text-passive"
+						className="pointer-events-none absolute left-1.75 top-1/2 size-icon-sm -translate-y-1/2 text-passive"
 					/>
 					<Input
 						aria-label="Browser URL"
-						className="h-browser-url pl-browser-url font-mono text-xs"
+						className="h-control-sm! pl-6 font-mono text-caption"
 						onChange={(event) => setUrlInput(event.target.value)}
 						placeholder="localhost:5173"
 						value={urlInput}
@@ -353,15 +356,16 @@ export function BrowserPanelView({
 				</div>
 				<Button
 					aria-label={poppedOut ? "Return to panel" : "Pop out"}
+					className="size-control-sm!"
 					onClick={() => onTogglePopOut(!poppedOut)}
 					size="icon-sm"
 					type="button"
 					variant="ghost"
 				>
 					{poppedOut ? (
-						<Minimize2 aria-hidden="true" className="size-icon-base" />
+						<Minimize2 aria-hidden="true" className="size-icon-sm" />
 					) : (
-						<Maximize2 aria-hidden="true" className="size-icon-base" />
+						<Maximize2 aria-hidden="true" className="size-icon-sm" />
 					)}
 				</Button>
 			</form>

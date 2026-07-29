@@ -5,11 +5,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useUiStore } from "../stores/ui-store";
 import type { SessionActivityState, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { ShellTopbar, TopbarKillButton } from "./ShellTopbar";
+import { TooltipProvider } from "./ui/tooltip";
 
 const { navigateMock, onKilledMock, paramsMock, postMock, spawnMock, useWorkspaceQueryMock } = vi.hoisted(() => ({
 	navigateMock: vi.fn(),
 	onKilledMock: vi.fn(),
-	paramsMock: { projectId: undefined as string | undefined, sessionId: undefined as string | undefined },
+	paramsMock: {
+		projectId: undefined as string | undefined,
+		sessionId: undefined as string | undefined,
+	},
 	postMock: vi.fn(),
 	spawnMock: vi.fn(),
 	useWorkspaceQueryMock: vi.fn(),
@@ -49,7 +53,9 @@ vi.mock("../lib/telemetry", () => ({
 	captureRendererException: vi.fn(),
 }));
 vi.mock("./NewTaskDialog", () => ({ NewTaskDialog: () => null }));
-vi.mock("./NotificationCenter", () => ({ NotificationCenter: () => null }));
+vi.mock("./NotificationCenter", () => ({
+	NotificationCenter: () => <button aria-label="Notifications" type="button" />,
+}));
 
 const worker: WorkspaceSession = {
 	id: "sess-1",
@@ -106,17 +112,37 @@ function renderTopbarSessions(sessions: WorkspaceSession[], sessionId: string) {
 			sessions,
 		},
 	];
-	useWorkspaceQueryMock.mockReturnValue({ data, isError: false, isLoading: false });
+	useWorkspaceQueryMock.mockReturnValue({
+		data,
+		isError: false,
+		isLoading: false,
+	});
 	paramsMock.projectId = sessions[0].workspaceId;
 	paramsMock.sessionId = sessionId;
 	const queryClient = new QueryClient();
 	const topbar = () => (
 		<QueryClientProvider client={queryClient}>
-			<ShellTopbar />
+			<TooltipProvider delayDuration={0}>
+				<ShellTopbar />
+			</TooltipProvider>
 		</QueryClientProvider>
 	);
 	const result = render(topbar());
-	return { ...result, queryClient, rerenderTopbar: () => result.rerender(topbar()) };
+	return {
+		...result,
+		queryClient,
+		rerenderTopbar: () => result.rerender(topbar()),
+	};
+}
+
+function renderSurface(surfaceOverride?: "global-settings" | "project-settings" | "standalone-terminals") {
+	return render(
+		<QueryClientProvider client={new QueryClient()}>
+			<TooltipProvider delayDuration={0}>
+				<ShellTopbar surfaceOverride={surfaceOverride} />
+			</TooltipProvider>
+		</QueryClientProvider>,
+	);
 }
 
 function renderKill(session: WorkspaceSession = worker, orchestratorId?: string) {
@@ -128,7 +154,9 @@ function renderKill(session: WorkspaceSession = worker, orchestratorId?: string)
 	});
 	render(
 		<QueryClientProvider client={queryClient}>
-			<TopbarKillButton session={session} orchestratorId={orchestratorId} onKilled={onKilledMock} />
+			<TooltipProvider delayDuration={0}>
+				<TopbarKillButton session={session} orchestratorId={orchestratorId} onKilled={onKilledMock} />
+			</TooltipProvider>
 		</QueryClientProvider>,
 	);
 	return queryClient;
@@ -145,22 +173,42 @@ beforeEach(() => {
 	paramsMock.projectId = undefined;
 	paramsMock.sessionId = undefined;
 	postMock.mockReset();
-	postMock.mockResolvedValue({ data: { ok: true, sessionId: "sess-1" }, error: undefined });
+	postMock.mockResolvedValue({
+		data: { ok: true, sessionId: "sess-1" },
+		error: undefined,
+	});
 	useWorkspaceQueryMock.mockReset();
-	useWorkspaceQueryMock.mockReturnValue({ data: [], isError: false, isLoading: false });
+	useWorkspaceQueryMock.mockReturnValue({
+		data: [],
+		isError: false,
+		isLoading: false,
+	});
 	useUiStore.setState({ inspectorSessions: {} });
 });
 
-describe("ShellTopbar status pill", () => {
+describe("ShellTopbar activity status", () => {
 	it.each([
 		["active", "Working"],
 		["idle", "Idle"],
 		["waiting_input", "Input Needed"],
 		["exited", "Exited"],
 	] as const)("renders %s activity as %s", (state: SessionActivityState, label) => {
-		renderTopbar(sessionWith({ activity: { state, lastActivityAt: "2026-06-10T00:00:00Z" } }));
+		renderTopbar(
+			sessionWith({
+				activity: { state, lastActivityAt: "2026-06-10T00:00:00Z" },
+			}),
+		);
 
 		expect(screen.getByText(label)).toBeInTheDocument();
+	});
+
+	it("separates the worktree from a plain, non-pill activity label", () => {
+		renderTopbar(sessionWith());
+
+		const status = screen.getByText("Working");
+		expect(status).toHaveClass("reverb-topbar__activity");
+		expect(status.previousElementSibling).toHaveClass("reverb-topbar__state-divider");
+		expect(status).not.toHaveClass("rounded-md");
 	});
 
 	it.each([
@@ -199,9 +247,9 @@ describe("ShellTopbar status pill", () => {
 
 describe("ShellTopbar orchestrator actions", () => {
 	it.each([
-		["active", "Working", "bg-status-working", true],
-		["waiting_input", "Input Needed", "bg-status-needs-you", false],
-	] as const)("shows %s orchestrator activity on the project board", (state, label, tone, pulses) => {
+		["active", "Working", true],
+		["waiting_input", "Input Needed", false],
+	] as const)("shows %s orchestrator activity in the project-board context", (state, label, pulses) => {
 		renderTopbarSessions(
 			[
 				{
@@ -212,20 +260,30 @@ describe("ShellTopbar orchestrator actions", () => {
 			"",
 		);
 
-		const button = screen.getByRole("button", { name: `Orchestrator, ${label}` });
-		const indicator = button.querySelector("span.size-dot-sm") as HTMLElement;
-		expect(indicator).toHaveAttribute("aria-hidden", "true");
-		expect(indicator).toHaveClass(tone);
-		expect(indicator).toHaveClass(pulses ? "animate-status-pulse" : "size-dot-sm");
+		const status = screen.getByText(label);
+		const indicator = status.querySelector("span");
+		expect(screen.getByRole("button", { name: "Orchestrator" })).toBeInTheDocument();
+		expect(indicator).toHaveClass("reverb-topbar__status-dot");
+		if (pulses) expect(indicator).toHaveClass("animate-status-pulse");
 		if (!pulses) expect(indicator).not.toHaveClass("animate-status-pulse");
 	});
 
-	it("marks Kanban as the primary action on orchestrator sessions", () => {
+	it("keeps orchestrator-session actions compact and explains them on hover", async () => {
 		renderTopbar(orchestrator);
 
-		expect(screen.getByRole("button", { name: "Open Kanban" })).toHaveClass("bg-accent-strong");
-		expect(screen.getByRole("button", { name: "New task" })).toHaveClass("bg-raised");
-		expect(screen.getByRole("button", { name: "New task" })).not.toHaveClass("bg-accent-strong");
+		const actions = within(screen.getByRole("group", { name: "Page actions" })).getAllByRole("button");
+		expect(actions.map((button) => button.getAttribute("aria-label"))).toEqual(["New task", "Open Board"]);
+		for (const action of actions) {
+			expect(action).toHaveClass("reverb-topbar__control--icon");
+			expect(action.textContent).toBe("");
+		}
+		const separator = document.querySelector(".reverb-topbar__utility-separator");
+		expect(separator).toBeInTheDocument();
+		expect(screen.getByRole("group", { name: "Page actions" }).nextElementSibling).toBe(separator);
+		expect(separator?.nextElementSibling).toBe(screen.getByRole("group", { name: "Global utilities" }));
+
+		await userEvent.hover(screen.getByRole("button", { name: "Open Board" }));
+		expect(await screen.findByRole("tooltip")).toHaveTextContent("Open board");
 	});
 
 	it("opens project settings instead of spawning when no orchestrator agent is configured", async () => {
@@ -245,7 +303,9 @@ describe("ShellTopbar orchestrator actions", () => {
 		paramsMock.sessionId = "sess-1";
 		render(
 			<QueryClientProvider client={new QueryClient()}>
-				<ShellTopbar />
+				<TooltipProvider delayDuration={0}>
+					<ShellTopbar />
+				</TooltipProvider>
 			</QueryClientProvider>,
 		);
 
@@ -259,52 +319,127 @@ describe("ShellTopbar orchestrator actions", () => {
 	});
 });
 
-describe("ShellTopbar inspector state", () => {
-	it("treats missing worker inspector state as open", async () => {
+describe("ShellTopbar route variants", () => {
+	it("renders a safe unavailable state without live session actions", () => {
+		paramsMock.projectId = "proj-1";
+		paramsMock.sessionId = "removed-session";
+		useWorkspaceQueryMock.mockReturnValue({
+			data: [
+				{
+					id: "proj-1",
+					name: "my-app",
+					path: "/repo/my-app",
+					orchestratorAgent: "claude-code",
+					sessions: [],
+				},
+			],
+			isError: false,
+			isLoading: false,
+		});
+
+		renderSurface();
+
+		expect(screen.getByText("Session unavailable")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Open orchestrator" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /inspector panel/i })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Kill session" })).not.toBeInTheDocument();
+	});
+
+	it("renders a close action for global settings", async () => {
+		renderSurface("global-settings");
+
+		expect(screen.queryByText("Reverb")).not.toBeInTheDocument();
+		expect(screen.getByText("Settings")).toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Close settings" }));
+
+		expect(navigateMock).toHaveBeenCalledWith({ to: "/" });
+	});
+
+	it("renders compact project settings context without a redundant Board action", () => {
+		paramsMock.projectId = "proj-1";
+		useWorkspaceQueryMock.mockReturnValue({
+			data: [
+				{
+					id: "proj-1",
+					name: "my-app",
+					path: "/repo/my-app",
+					orchestratorAgent: "claude-code",
+					sessions: [],
+				},
+			],
+			isError: false,
+			isLoading: false,
+		});
+
+		renderSurface("project-settings");
+
+		expect(screen.getByText("my-app")).toBeInTheDocument();
+		expect(screen.getByText("/repo/my-app")).toHaveClass("reverb-topbar__state-label", "font-mono");
+		expect(screen.queryByRole("button", { name: "Back to Board" })).not.toBeInTheDocument();
+	});
+
+	it("renders the standalone terminal identity and action", () => {
+		renderSurface("standalone-terminals");
+
+		expect(screen.getByText("Terminals")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "New terminal" })).toBeInTheDocument();
+	});
+});
+
+describe("ShellTopbar session controls", () => {
+	it("keeps compact session actions in order without visible labels", () => {
 		renderTopbarSessions([worker], "sess-1");
 
-		const toggle = screen.getByRole("button", { name: "Close inspector panel" });
-		expect(toggle).toHaveAttribute("aria-pressed", "true");
-
-		await userEvent.click(toggle);
-
-		expect(useUiStore.getState().inspectorSessions["sess-1"]).toEqual({ isOpen: false, view: "summary" });
+		const actions = within(screen.getByRole("group", { name: "Page actions" })).getAllByRole("button");
+		const labels = actions.map((button) => button.getAttribute("aria-label"));
+		expect(labels).toEqual(["Kill session", "Open orchestrator"]);
+		for (const action of actions) {
+			expect(action).toHaveClass("reverb-topbar__control--icon");
+			expect(action).not.toHaveAttribute("data-priority");
+			expect(action.textContent).toBe("");
+		}
+		expect(screen.queryByRole("button", { name: /inspector panel/i })).not.toBeInTheDocument();
+		expect(document.querySelector(".reverb-topbar__utility-separator")).not.toBeInTheDocument();
 	});
 
-	it("routes aria-pressed to the current worker session", () => {
-		useUiStore.setState({
-			inspectorSessions: {
-				"sess-1": { isOpen: true, view: "summary" },
-				"sess-2": { isOpen: false, view: "summary" },
-			},
-		});
-		const view = renderTopbarSessions([worker, secondWorker], "sess-1");
+	it("explains the icon-only orchestrator control on hover", async () => {
+		renderTopbarSessions([worker], "sess-1");
 
-		expect(screen.getByRole("button", { name: "Close inspector panel" })).toHaveAttribute("aria-pressed", "true");
-
-		paramsMock.sessionId = "sess-2";
-		view.rerenderTopbar();
-
-		expect(screen.getByRole("button", { name: "Open inspector panel" })).toHaveAttribute("aria-pressed", "false");
+		await userEvent.hover(screen.getByRole("button", { name: "Open orchestrator" }));
+		expect(await screen.findByRole("tooltip")).toHaveTextContent("Open orchestrator");
 	});
 
-	it("toggles only the current worker session", async () => {
-		useUiStore.setState({
-			inspectorSessions: {
-				"sess-1": { isOpen: false, view: "summary" },
-				"sess-2": { isOpen: true, view: "browser" },
-			},
-		});
-		renderTopbarSessions([worker, secondWorker], "sess-1");
+	it("moves the closed inspector reopen control after Notifications", async () => {
+		useUiStore.getState().setInspectorOpen("sess-1", false);
+		renderTopbarSessions([worker], "sess-1");
 
-		await userEvent.click(screen.getByRole("button", { name: "Open inspector panel" }));
+		const utilities = screen.getByRole("group", { name: "Global utilities" });
+		const labels = within(utilities)
+			.getAllByRole("button")
+			.map((button) => button.getAttribute("aria-label"));
+		expect(labels).toEqual(["Notifications", "Open inspector panel"]);
+		expect(utilities.querySelector(".reverb-topbar__zone-divider")).toBeInTheDocument();
 
+		await userEvent.click(within(utilities).getByRole("button", { name: "Open inspector panel" }));
 		expect(useUiStore.getState().inspectorSessions["sess-1"]?.isOpen).toBe(true);
-		expect(useUiStore.getState().inspectorSessions["sess-2"]).toEqual({ isOpen: true, view: "browser" });
+	});
+
+	it("never renders an inspector reopen control for orchestrator sessions", () => {
+		useUiStore.getState().setInspectorOpen("orch-1", false);
+		renderTopbar(orchestrator);
+
+		expect(screen.queryByRole("button", { name: "Open inspector panel" })).not.toBeInTheDocument();
 	});
 });
 
 describe("TopbarKillButton", () => {
+	it("explains the icon-only kill control on hover", async () => {
+		renderKill();
+
+		await userEvent.hover(screen.getByRole("button", { name: "Kill session" }));
+		expect(await screen.findByRole("tooltip")).toHaveTextContent("Kill session");
+	});
+
 	it("arms a confirmation before killing an active session", async () => {
 		renderKill();
 
@@ -330,7 +465,10 @@ describe("TopbarKillButton", () => {
 	});
 
 	it("surfaces the daemon error when the kill fails", async () => {
-		postMock.mockResolvedValue({ data: undefined, error: { message: "session not found" } });
+		postMock.mockResolvedValue({
+			data: undefined,
+			error: { message: "session not found" },
+		});
 		renderKill();
 
 		await userEvent.click(screen.getByRole("button", { name: "Kill session" }));
@@ -341,13 +479,18 @@ describe("TopbarKillButton", () => {
 
 	it("clears a stale daemon error before retrying the kill", async () => {
 		postMock
-			.mockResolvedValueOnce({ data: undefined, error: { message: "session not found" } })
+			.mockResolvedValueOnce({
+				data: undefined,
+				error: { message: "session not found" },
+			})
 			.mockReturnValue(new Promise(() => {}));
 		renderKill();
 
 		await userEvent.click(screen.getByRole("button", { name: "Kill session" }));
 		const dialog = await screen.findByRole("dialog", { name: "Kill session?" });
-		const confirm = within(dialog).getByRole("button", { name: "Kill session" });
+		const confirm = within(dialog).getByRole("button", {
+			name: "Kill session",
+		});
 
 		await userEvent.click(confirm);
 		expect(await screen.findByText("session not found")).toBeInTheDocument();
