@@ -674,15 +674,15 @@ type NotificationTarget struct {
 
 // NotificationResponse is one stored notification returned by the API.
 type NotificationResponse struct {
-	ID        string             `json:"id"`
-	SessionID string             `json:"sessionId"`
-	ProjectID string             `json:"projectId"`
-	PRURL     string             `json:"prUrl"`
-	Type      string             `json:"type" enum:"needs_input,ready_to_merge,pr_merged,pr_closed_unmerged"`
-	Title     string             `json:"title"`
-	Body      string             `json:"body"`
-	Status    string             `json:"status" enum:"unread,read" description:"Seen state. unread means the user has not opened the notification panel since it arrived."`
-	CreatedAt time.Time          `json:"createdAt"`
+	ID        string    `json:"id"`
+	SessionID string    `json:"sessionId"`
+	ProjectID string    `json:"projectId"`
+	PRURL     string    `json:"prUrl"`
+	Type      string    `json:"type" enum:"needs_input,ready_to_merge,pr_merged,pr_closed_unmerged"`
+	Title     string    `json:"title"`
+	Body      string    `json:"body"`
+	Status    string    `json:"status" enum:"unread,read" description:"Seen state. unread means the user has not opened the notification panel since it arrived."`
+	CreatedAt time.Time `json:"createdAt"`
 	// ResolvedAt is set by AO when the underlying issue goes away (the session
 	// received its input, the PR stopped waiting on a merge). Absent means the
 	// issue is still open. There is no user-facing action that sets it.
