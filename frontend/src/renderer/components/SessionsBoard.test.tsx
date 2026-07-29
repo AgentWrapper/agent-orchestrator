@@ -198,7 +198,7 @@ describe("SessionsBoard", () => {
 		const [headerOrchestrator, emptyStateOrchestrator] = screen.getAllByRole("button", { name: "Spawn Orchestrator" });
 		expect(headerOrchestrator).toHaveClass("bg-raised");
 		expect(headerOrchestrator).not.toHaveClass("bg-primary");
-		expect(emptyStateOrchestrator).toHaveClass("bg-primary");
+		expect(emptyStateOrchestrator).toHaveClass("bg-accent-strong");
 		expect(emptyStateOrchestrator).not.toHaveClass("bg-raised");
 	});
 

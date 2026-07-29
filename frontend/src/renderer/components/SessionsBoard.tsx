@@ -751,11 +751,17 @@ function SessionCard({
 	onOpen,
 	onTerminate,
 	interactive = true,
+	restoreAction,
+	isRestoring = false,
+	isRestoreDisabled = false,
 }: {
 	session: WorkspaceSession;
 	onOpen?: () => void;
 	onTerminate?: () => void;
 	interactive?: boolean;
+	restoreAction?: (event: MouseEvent<HTMLButtonElement>) => void;
+	isRestoring?: boolean;
+	isRestoreDisabled?: boolean;
 }) {
 	const badge = getSessionStatusView(session.status);
 	const issueId = canonicalTrackerIssueId(session.issueId);
@@ -836,44 +842,27 @@ function SessionCard({
 						<span className="size-dot-sm shrink-0 rounded-full bg-current" />
 						{badge.label}
 					</span>
-					{issueId && (
-						<span
-							className="inline-flex max-w-branch-chip items-center truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent"
-							title={`Intake issue: ${issueId}`}
-						>
-							{issueId}
-						</span>
-					)}
-					<span className="ml-auto shrink-0 font-mono text-2xs tracking-wide-xs text-passive">
-						{agentLabel(session.provider)}
+					<span
+						className="shrink-0 whitespace-nowrap font-mono text-2xs text-passive"
+						title={`Updated ${session.updatedAt}`}
+					>
+						{formatTimeCompact(session.updatedAt)}
 					</span>
 				</div>
-				<div
-					className={cn(
-						"px-3.25 text-control font-medium leading-snug tracking-tight text-foreground",
-						showBranch ? "pb-2" : "pb-3",
-						"line-clamp-2 overflow-hidden",
-					)}
-				>
-					{session.title}
-				</div>
-				{showBranch && <div className="px-3.25 pb-2.5 font-mono text-2xs text-passive">{branch}</div>}
-			</div>
-			{restoreError && (
-				<div className="border-t border-border px-3.25 py-1.5 text-2xs text-destructive">{restoreError}</div>
-			)}
-			<div
-				className={cn("border-t border-border px-3.25 py-2 font-mono text-2xs text-passive", restoreAction && "pr-20")}
-				onClick={(event) => event.stopPropagation()}
-			>
-				{prSummaries.length === 0 ? (
-					"no PR yet"
-				) : (
-					<div className="flex flex-col gap-1">
+				{prSummaries.length > 0 && (
+					<div className="flex flex-col gap-1 font-mono text-2xs text-passive">
 						{groupPRsByLifecycle(prSummaries).map((group) => (
 							<BoardPRGroup group={group} key={group.status.label} linksInteractive={interactive} />
 						))}
 					</div>
+				)}
+				{issueId && (
+					<span
+						className="inline-flex max-w-branch-chip items-center self-start truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent"
+						title={`Intake issue: ${issueId}`}
+					>
+						{issueId}
+					</span>
 				)}
 			</div>
 			{restoreAction && (
@@ -883,11 +872,117 @@ function SessionCard({
 					className={cn(
 						"absolute bottom-1.5 right-2 z-10 inline-flex h-control-xs items-center justify-center rounded-sm border border-accent bg-accent px-2.5 text-2xs font-semibold text-accent-foreground opacity-0 shadow-sm transition-opacity duration-normal ease-out disabled:cursor-not-allowed",
 						!isRestoreDisabled &&
-							"hover:opacity-90 focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100",
+						"hover:opacity-90 focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100",
 						isRestoring && "opacity-100",
 					)}
 					disabled={isRestoreDisabled}
 					onClick={restoreAction}
+					type="button"
+				>
+					{isRestoring ? "Restoring" : "Restore"}
+				</button>
+			)}
+		</div>
+	);
+}
+
+function ArchiveSessionItem({
+	session,
+	restoreAction,
+	restoreError,
+	isRestoring,
+	isRestoreDisabled,
+}: {
+	session: WorkspaceSession;
+	restoreAction: (event: MouseEvent<HTMLButtonElement>) => void;
+	restoreError?: string;
+	isRestoring: boolean;
+	isRestoreDisabled: boolean;
+}) {
+	const badge = getSessionStatusView(session.status);
+	const issueId = canonicalTrackerIssueId(session.issueId);
+	const prSummaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
+	const branch = session.branch || "";
+	const prMetadata =
+		prSummaries.length > 0 ? (
+			<div className="flex flex-col gap-1">
+				{groupPRsByLifecycle(prSummaries).map((group) => (
+					<BoardPRGroup group={group} key={group.status.label} linksInteractive={false} />
+				))}
+			</div>
+		) : (
+			<span>no PR yet</span>
+		);
+	const restoreButton = (
+		<ArchiveRestoreButton
+			isDisabled={isRestoreDisabled}
+			isRestoring={isRestoring}
+			label={`Restore ${session.title}`}
+			onClick={restoreAction}
+		/>
+	);
+
+	return (
+		<div className="flex min-h-28 flex-col overflow-hidden rounded-md border border-border bg-surface" role="listitem">
+			<div className="flex min-w-0 items-center gap-2 px-3 pt-2">
+				<ArchiveStatus badge={badge} />
+				<span className="ml-auto shrink-0 font-mono text-2xs text-passive">
+					{formatTimeCompact(session.updatedAt)}
+				</span>
+				{restoreButton}
+			</div>
+			<div className="min-h-0 flex-1 px-3 pb-2 pt-1.5 text-left">
+				<div className="line-clamp-2 text-control font-medium leading-snug text-foreground">{session.title}</div>
+				<div className="mt-1 flex min-w-0 items-center gap-2">
+					<AgentAvatar provider={session.provider} />
+					{issueId && (
+						<span className="max-w-branch-chip truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent">
+							{issueId}
+						</span>
+					)}
+				</div>
+				{branch && (
+					<div className="mt-2 flex min-w-0 items-center gap-1 font-mono text-2xs text-passive">
+						<span className="truncate">{branch}</span>
+						<CopyActionButton label={`branch ${branch}`} value={branch} />
+					</div>
+				)}
+			</div>
+			<div aria-hidden="true" className="mx-3 my-px h-px bg-border" />
+			<div className="px-3 py-1.5 font-mono text-2xs text-passive">{prMetadata}</div>
+			<ArchiveRestoreError message={restoreError} />
+		</div>
+	);
+}
+
+function ArchiveStatus({ badge }: { badge: SessionStatusView }) {
+	return (
+		<span className={cn("inline-flex shrink-0 items-center gap-1.5 text-caption font-medium", badge.className)}>
+			<span className="size-dot-sm rounded-full bg-current" aria-hidden="true" />
+			{badge.label}
+		</span>
+	);
+}
+
+function ArchiveRestoreButton({
+	label,
+	onClick,
+	isRestoring,
+	isDisabled,
+}: {
+	label: string;
+	onClick: (event: MouseEvent<HTMLButtonElement>) => void;
+	isRestoring: boolean;
+	isDisabled: boolean;
+}) {
+	return (
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<button
+					aria-label={label}
+					className="grid size-control-board-sm shrink-0 place-items-center rounded-md text-passive transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:cursor-not-allowed disabled:opacity-35"
+					disabled={isDisabled}
+					onClick={onClick}
 					type="button"
 				>
 					<RotateCcw className={cn("size-icon-md", isRestoring && "animate-spin")} aria-hidden="true" />
