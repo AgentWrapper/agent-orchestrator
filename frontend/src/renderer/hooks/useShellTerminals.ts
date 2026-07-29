@@ -276,14 +276,14 @@ export function useCloseShellTerminal() {
 			queryClient.setQueryData<ShellTerminal[]>(shellTerminalsQueryKey, (current) => {
 				const list = current ?? [];
 				if (list.some((shell) => shell.handleId === handleId)) return list;
-				const index = context.previous?.findIndex((shell) => shell.handleId === handleId) ?? list.length;
+				const index = context?.previous?.findIndex((shell) => shell.handleId === handleId) ?? list.length;
 				const next = [...list];
 				next.splice(Math.min(Math.max(index, 0), next.length), 0, restored);
 				return next;
 			});
 			if (usePreviewData) {
 				if (previewShellTerminals.some((s) => s.handleId === handleId)) return;
-				const index = context.previous?.findIndex((s) => s.handleId === handleId) ?? previewShellTerminals.length;
+				const index = context?.previous?.findIndex((s) => s.handleId === handleId) ?? previewShellTerminals.length;
 				const next = [...previewShellTerminals];
 				next.splice(Math.min(Math.max(index, 0), next.length), 0, restored);
 				previewShellTerminals = next;
