@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Suspense, type ComponentType, type PropsWithChildren } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { KeybindingOverrides } from "../../shared/shortcuts";
 import { useUiStore } from "../stores/ui-store";
 import type { WorkspaceSummary } from "../types/workspace";
 
@@ -14,6 +15,7 @@ const shellMocks = vi.hoisted(() => {
 		nextSessionListener: undefined as (() => void) | undefined,
 		focusTerminalListener: undefined as (() => void) | undefined,
 		routeParams: {} as { projectId?: string; sessionId?: string },
+		routeSearch: {} as { tabOwner?: string },
 		workspaces: [] as WorkspaceSummary[],
 	};
 	return {
@@ -47,6 +49,9 @@ const shellMocks = vi.hoisted(() => {
 			state.focusTerminalListener = listener;
 			return vi.fn();
 		}),
+		getKeybindings: vi.fn(async () => ({})),
+		setKeybindings: vi.fn(async (overrides: KeybindingOverrides) => overrides),
+		setKeybindingRecording: vi.fn(async () => undefined),
 		queryClient: {
 			ensureQueryData: vi.fn(),
 			fetchQuery: vi.fn(),
@@ -68,6 +73,7 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
 	useMatchRoute: () => () => false,
 	useNavigate: () => shellMocks.navigate,
 	useParams: () => shellMocks.state.routeParams,
+	useSearch: () => shellMocks.state.routeSearch,
 }));
 
 vi.mock("../lib/bridge", () => ({
@@ -80,6 +86,11 @@ vi.mock("../lib/bridge", () => ({
 			onPreviousSessionShortcut: shellMocks.onPreviousSessionShortcut,
 			onNextSessionShortcut: shellMocks.onNextSessionShortcut,
 			onFocusTerminalShortcut: shellMocks.onFocusTerminalShortcut,
+		},
+		keybindings: {
+			get: shellMocks.getKeybindings,
+			set: shellMocks.setKeybindings,
+			setRecording: shellMocks.setKeybindingRecording,
 		},
 		window: {},
 	},
@@ -175,11 +186,17 @@ const workspaces = [
 		name: "Project One",
 		path: "/one",
 		sessions: [
-			{ id: "sess-1", status: "working" },
-			{ id: "sess-2", status: "terminated" },
-			{ id: "sess-merged-terminated", status: "merged", isTerminated: true },
-			{ id: "sess-3", status: "idle" },
+			{ id: "sess-1", workspaceId: "proj-1", status: "working" },
+			{ id: "sess-2", workspaceId: "proj-1", status: "terminated" },
+			{ id: "sess-merged-terminated", workspaceId: "proj-1", status: "merged", isTerminated: true },
+			{ id: "sess-3", workspaceId: "proj-1", status: "idle" },
 		],
+	},
+	{
+		id: "proj-2",
+		name: "Project Two",
+		path: "/two",
+		sessions: [{ id: "sess-cross", workspaceId: "proj-2", status: "working" }],
 	},
 ] as unknown as WorkspaceSummary[];
 
@@ -225,6 +242,7 @@ beforeEach(() => {
 	shellMocks.state.nextSessionListener = undefined;
 	shellMocks.state.focusTerminalListener = undefined;
 	shellMocks.state.routeParams = {};
+	shellMocks.state.routeSearch = {};
 	shellMocks.state.workspaces = workspaces;
 	useUiStore.setState({
 		createProjectNonce: 0,
@@ -297,6 +315,34 @@ describe("shell new-shell-terminal shortcut subscription", () => {
 
 		expect(shellMocks.openShellTerminal).toHaveBeenCalledWith(
 			expect.objectContaining({ projectId: "proj-1" }),
+			expect.anything(),
+		);
+	});
+
+	// Regression: a terminal opened from a session view must carry the session
+	// id, not just its owning project's, so the daemon can resolve the
+	// session's own worktree instead of the registered project root.
+	it("scopes the terminal to the session in scope", async () => {
+		shellMocks.state.routeParams = { sessionId: "sess-1" };
+		await renderShell();
+
+		pressNewShellTerminal();
+
+		expect(shellMocks.openShellTerminal).toHaveBeenCalledWith(
+			expect.objectContaining({ projectId: "proj-1", sessionId: "sess-1" }),
+			expect.anything(),
+		);
+	});
+
+	it("scopes the terminal to the originating session while viewing one of its pinned tabs", async () => {
+		shellMocks.state.routeParams = { projectId: "proj-2", sessionId: "sess-cross" };
+		shellMocks.state.routeSearch = { tabOwner: "sess-1" };
+		await renderShell();
+
+		pressNewShellTerminal();
+
+		expect(shellMocks.openShellTerminal).toHaveBeenCalledWith(
+			expect.objectContaining({ projectId: "proj-1", sessionId: "sess-1" }),
 			expect.anything(),
 		);
 	});

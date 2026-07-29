@@ -17,6 +17,7 @@ import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { useUiStore } from "../stores/ui-store";
 import { OrchestratorIcon } from "./icons";
+import { OrchestratorActivityIndicator } from "./OrchestratorActivityIndicator";
 import { getAgentActivityView } from "../lib/session-presentation";
 import { isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { StatusPill } from "./StatusPill";
@@ -70,6 +71,7 @@ export function ShellTopbar() {
 	const project = projectId ? all.find((workspace) => workspace.id === projectId) : undefined;
 	const projectLabel = project?.name ?? session?.workspaceName ?? (projectId ? "" : "Board");
 	const orchestrator = projectId ? findProjectOrchestrator(all, projectId) : undefined;
+	const orchestratorActivityLabel = orchestrator ? getAgentActivityView(orchestrator.activity).label : undefined;
 	const isProjectRestarting = projectId ? restartingProjectIds.has(projectId) : false;
 
 	const openBoard = () =>
@@ -149,8 +151,8 @@ export function ShellTopbar() {
 				) : isSessionRoute ? (
 					<div className="flex min-w-0 items-center gap-3">
 						{session?.branch ? (
-							<div className="inline-flex min-w-0 items-center gap-1.5 font-mono text-brand leading-none text-foreground">
-								<GitBranch className="size-4 shrink-0" aria-hidden="true" />
+							<div className="inline-flex min-w-0 items-center gap-1 font-mono text-2xs leading-none text-passive">
+								<GitBranch className="size-icon-2xs shrink-0" aria-hidden="true" />
 								<span className="truncate">{session.branch}</span>
 							</div>
 						) : null}
@@ -185,13 +187,14 @@ export function ShellTopbar() {
 							New task
 						</TopbarButton>
 						<TopbarButton
-							aria-label={orchestrator ? "Orchestrator" : "Spawn Orchestrator"}
+							aria-label={orchestratorActivityLabel ? `Orchestrator, ${orchestratorActivityLabel}` : "Spawn Orchestrator"}
 							disabled={isSpawning || isProjectRestarting}
 							onClick={() => void openOrchestrator()}
 							style={noDragStyle}
 							variant="primary"
 						>
 							<OrchestratorIcon className="size-icon-lg" aria-hidden="true" />
+							{orchestrator ? <OrchestratorActivityIndicator session={orchestrator} /> : null}
 							{isProjectRestarting
 								? "Restarting…"
 								: isSpawning

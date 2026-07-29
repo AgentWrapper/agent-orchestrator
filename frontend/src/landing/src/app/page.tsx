@@ -1,4 +1,4 @@
-import { COMPANY } from "@superset/shared/constants";
+import { COMPANY } from "@ao/shared/constants";
 import type { Metadata } from "next";
 import dynamic from "next/dynamic";
 import {
@@ -6,7 +6,8 @@ import {
   HomeWebPageJsonLd,
   OrganizationJsonLd,
 } from "@/components/JsonLd";
-import { FAQ_ITEMS } from "./components/FAQSection";
+import { getGitHubRepoStats } from "@/lib/github-stats";
+import { FAQ_ITEMS } from "./components/FAQSection/constants";
 import { HeroSection } from "./components/HeroSection";
 
 const TrustedBySection = dynamic(() =>
@@ -31,45 +32,15 @@ export const metadata: Metadata = {
   },
 };
 
-interface GitHubRepoResponse {
-  stargazers_count?: number;
-}
-
-function getGitHubApiUrl() {
-  const match = COMPANY.GITHUB_URL.match(/github\.com\/([^/]+\/[^/]+)/);
-  return match ? `https://api.github.com/repos/${match[1]}` : null;
-}
-
-async function getGitHubStars(): Promise<number | null> {
-  const apiUrl = getGitHubApiUrl();
-  if (!apiUrl) return null;
-
-  try {
-    const response = await fetch(apiUrl, {
-      headers: { Accept: "application/vnd.github.v3+json" },
-      next: { revalidate: 3600 },
-    });
-
-    if (!response.ok) return null;
-
-    const data = (await response.json()) as GitHubRepoResponse;
-    return typeof data.stargazers_count === "number"
-      ? data.stargazers_count
-      : null;
-  } catch {
-    return null;
-  }
-}
-
 export default async function Home() {
-  const stars = await getGitHubStars();
+  const stats = await getGitHubRepoStats();
 
   return (
     <main className="flex flex-col bg-background">
       <FAQPageJsonLd items={FAQ_ITEMS} />
       <HomeWebPageJsonLd />
       <OrganizationJsonLd />
-      <HeroSection initialStars={stars} />
+      <HeroSection initialStars={stats?.stars ?? null} />
       <TrustedBySection />
       <FeaturesSection />
       <VideoSection />

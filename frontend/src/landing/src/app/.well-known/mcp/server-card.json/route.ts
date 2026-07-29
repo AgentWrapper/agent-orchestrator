@@ -1,4 +1,4 @@
-import { COMPANY } from "@superset/shared/constants";
+import { COMPANY } from "@ao/shared/constants";
 import { MCP_SERVER_URL } from "@/lib/llms";
 
 

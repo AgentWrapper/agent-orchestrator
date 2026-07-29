@@ -138,6 +138,44 @@ func (q *Queries) SelectShellTerminalsByAppRunID(ctx context.Context, appRunID s
 	return items, nil
 }
 
+const selectShellTerminalsBySessionID = `-- name: SelectShellTerminalsBySessionID :many
+SELECT handle_id, project_id, working_dir, title, app_run_id, created_at, session_id
+FROM shell_terminals
+WHERE session_id = ?
+ORDER BY created_at
+`
+
+func (q *Queries) SelectShellTerminalsBySessionID(ctx context.Context, sessionID sql.NullString) ([]ShellTerminal, error) {
+	rows, err := q.db.QueryContext(ctx, selectShellTerminalsBySessionID, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ShellTerminal{}
+	for rows.Next() {
+		var i ShellTerminal
+		if err := rows.Scan(
+			&i.HandleID,
+			&i.ProjectID,
+			&i.WorkingDir,
+			&i.Title,
+			&i.AppRunID,
+			&i.CreatedAt,
+			&i.SessionID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const selectShellTerminalsFromPreviousAppRuns = `-- name: SelectShellTerminalsFromPreviousAppRuns :many
 SELECT handle_id, project_id, working_dir, title, app_run_id, created_at, session_id
 FROM shell_terminals

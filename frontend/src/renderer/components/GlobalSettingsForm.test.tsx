@@ -21,6 +21,9 @@ const {
 	openExternal,
 	featListBuilds,
 	featGetActive,
+	getKeybindings,
+	setKeybindings,
+	setKeybindingRecording,
 } = vi.hoisted(() => ({
 	getUpdate: vi.fn(),
 	setUpdate: vi.fn(),
@@ -37,6 +40,9 @@ const {
 	openExternal: vi.fn(),
 	featListBuilds: vi.fn(),
 	featGetActive: vi.fn(),
+	getKeybindings: vi.fn(),
+	setKeybindings: vi.fn(),
+	setKeybindingRecording: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => {
@@ -53,6 +59,11 @@ vi.mock("../lib/bridge", () => ({
 		clipboard: { writeText },
 		daemon: { getStatus: getDaemonStatus },
 		updateSettings: { get: getUpdate, set: setUpdate },
+		keybindings: {
+			get: getKeybindings,
+			set: setKeybindings,
+			setRecording: setKeybindingRecording,
+		},
 		updates: {
 			getStatus: updGetStatus,
 			check: updCheck,
@@ -92,6 +103,9 @@ beforeEach(() => {
 		getDaemonStatus,
 		featListBuilds,
 		featGetActive,
+		getKeybindings,
+		setKeybindings,
+		setKeybindingRecording,
 	]) {
 		m.mockReset();
 	}
@@ -109,6 +123,9 @@ beforeEach(() => {
 	openExternal.mockResolvedValue(undefined);
 	featListBuilds.mockResolvedValue([]);
 	featGetActive.mockResolvedValue(null);
+	getKeybindings.mockResolvedValue({});
+	setKeybindings.mockImplementation(async (overrides) => overrides);
+	setKeybindingRecording.mockResolvedValue(undefined);
 	// Feature Releases lives behind Developer Mode; reset to the default (off).
 	useUiStore.getState().setDeveloperMode(false);
 });

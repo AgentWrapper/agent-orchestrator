@@ -1,6 +1,7 @@
 "use client";
 
-import { COMPANY, HERO_SUBHEADLINE, TAGLINE } from "@superset/shared/constants";
+import { COMPANY, HERO_SUBHEADLINE, TAGLINE } from "@ao/shared/constants";
+import { Star } from "lucide-react";
 import { useState } from "react";
 import { FaGithub } from "react-icons/fa";
 import { isMacPlatform, usePlatform } from "../../hooks/useOS";
@@ -60,15 +61,27 @@ export function HeroSection({ initialStars }: HeroSectionProps) {
 
             <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-4 mt-6 sm:mt-8">
               <DownloadButton className="rounded-3xl" />
-              <button
-                type="button"
-                className="px-4 py-2.5 sm:px-6 sm:py-3 rounded-3xl text-sm sm:text-base tracking-[-0.5px] font-normal bg-background border border-border text-foreground hover:bg-muted transition-colors flex items-center gap-2"
-                onClick={() => window.open(COMPANY.GITHUB_URL, "_blank")}
+              <a
+                href={COMPANY.GITHUB_URL}
+                target="_blank"
+                rel="noopener noreferrer"
                 aria-label={githubButtonLabel}
+                className="inline-flex items-center gap-2.5 rounded-3xl border border-border bg-background px-5 py-2.5 sm:py-3 text-sm sm:text-base font-normal tracking-[-0.5px] text-foreground transition-colors hover:bg-muted"
               >
-                {githubButtonLabel}
-                <FaGithub className="size-4" />
-              </button>
+                <FaGithub className="size-4" aria-hidden="true" />
+                <span>Star on GitHub</span>
+                {initialStars !== null ? (
+                  <span className="flex items-center gap-1 pl-0.5 text-muted-foreground">
+                    <Star
+                      className="size-3.5 fill-yellow-400 text-yellow-400"
+                      aria-hidden="true"
+                    />
+                    <span className="tabular-nums">
+                      {formatStarCount(initialStars)}
+                    </span>
+                  </span>
+                ) : null}
+              </a>
             </div>
 
             {showInstallCommand ? (

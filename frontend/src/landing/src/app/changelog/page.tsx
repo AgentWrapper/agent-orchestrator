@@ -1,4 +1,4 @@
-import { COMPANY } from "@superset/shared/constants";
+import { COMPANY } from "@ao/shared/constants";
 import { ExternalLink } from "lucide-react";
 import type { Metadata } from "next";
 import { FaGithub } from "react-icons/fa";
@@ -33,7 +33,7 @@ export const metadata: Metadata = {
 };
 
 export default async function ChangelogPage() {
-  const entries = getChangelogEntries();
+  const entries = await getChangelogEntries();
 
   return (
     <main className="relative min-h-screen">

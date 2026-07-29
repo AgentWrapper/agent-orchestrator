@@ -198,6 +198,28 @@ describe("ShellTopbar status pill", () => {
 });
 
 describe("ShellTopbar orchestrator actions", () => {
+	it.each([
+		["active", "Working", "bg-status-working", true],
+		["waiting_input", "Input Needed", "bg-status-needs-you", false],
+	] as const)("shows %s orchestrator activity on the project board", (state, label, tone, pulses) => {
+		renderTopbarSessions(
+			[
+				{
+					...orchestrator,
+					activity: { state, lastActivityAt: "2026-06-10T00:00:00Z" },
+				},
+			],
+			"",
+		);
+
+		const button = screen.getByRole("button", { name: `Orchestrator, ${label}` });
+		const indicator = button.querySelector("span.size-dot-sm") as HTMLElement;
+		expect(indicator).toHaveAttribute("aria-hidden", "true");
+		expect(indicator).toHaveClass(tone);
+		expect(indicator).toHaveClass(pulses ? "animate-status-pulse" : "size-dot-sm");
+		if (!pulses) expect(indicator).not.toHaveClass("animate-status-pulse");
+	});
+
 	it("marks Kanban as the primary action on orchestrator sessions", () => {
 		renderTopbar(orchestrator);
 

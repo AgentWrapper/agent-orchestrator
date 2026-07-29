@@ -3,7 +3,7 @@ import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import { ChevronRight, LayoutDashboard, MoreVertical, Pencil, Plus, RefreshCw, Search, Settings, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { UpdateStatus } from "../../main/update-settings";
-import { APP_SHORTCUTS, shortcutKeys } from "../../shared/shortcuts";
+import { effectiveShortcutBindings, shortcutBindingLabel } from "../../shared/shortcuts";
 import {
 	hasConfiguredOrchestratorAgent,
 	newestActiveOrchestrator,
@@ -48,6 +48,7 @@ import { OrchestratorIcon } from "./icons";
 import aoLogo from "../../../assets/ao-logo.svg";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
+import { useKeybindingsStore } from "../stores/keybindings-store";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CreateProjectInput } from "./CreateProjectFlow";
 import { ResizeHandle } from "./ResizeHandle";
@@ -69,10 +70,10 @@ const HOVER_ACTION_CLASS =
 // Mirrors the daemon's display-name cap (maxDisplayNameLen) and the spawn
 // `--name` flag, so inline edits never round-trip a value the API would reject.
 const MAX_DISPLAY_NAME_LEN = 20;
-const SIDEBAR_DEFAULT_WIDTH = 240;
-const SIDEBAR_MIN_WIDTH = 200;
-const SIDEBAR_MAX_WIDTH = 420;
-const SIDEBAR_COLLAPSE_THRESHOLD = SIDEBAR_MIN_WIDTH;
+export const SIDEBAR_DEFAULT_WIDTH = 240;
+export const SIDEBAR_MIN_WIDTH = 200;
+export const SIDEBAR_MAX_WIDTH = 420;
+export const SIDEBAR_COLLAPSE_THRESHOLD = SIDEBAR_MIN_WIDTH;
 
 type SidebarProps = {
 	/** Hide the sidebar's right edge stroke on the welcome board inset chrome. */
@@ -230,7 +231,7 @@ export function Sidebar({
             36px board button wrapping the 22px accent mark. */}
 				<div
 					className={cn(
-						"flex shrink-0 items-center gap-2.5 px-1.5 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:pb-2",
+						"flex shrink-0 items-center gap-1.5 px-1.5 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:pb-2",
 						commandPaletteEnabled ? "pb-2" : "pb-3",
 					)}
 				>
@@ -248,14 +249,14 @@ export function Sidebar({
 								onClick={selection.goHome}
 								type="button"
 							>
-								<img src={aoLogo} alt="" aria-hidden="true" className="h-5.5 w-5.5 rounded-md object-cover" />
+								<img src={aoLogo} alt="" aria-hidden="true" className="h-5.5 w-5.5 -translate-y-[3px] rounded-md object-cover" />
 							</button>
 						</TooltipTrigger>
 						<TooltipContent side="right" hidden={state !== "collapsed"}>
 							Orchestrator board
 						</TooltipContent>
 					</Tooltip>
-					<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate text-sm font-bold tracking-tight-lg text-foreground group-data-[collapsible=icon]:hidden">
+					<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate text-sm font-bold leading-tight tracking-tight-lg text-foreground group-data-[collapsible=icon]:hidden">
 						Agent Orchestrator
 					</span>
 					{isNightly && (
@@ -334,26 +335,34 @@ export function Sidebar({
 						daemon {daemonStatus.state}
 					</span>
 				)}
-				<div className="sidebar-expanded-chrome relative flex w-full min-w-46.5 flex-col gap-1 transition-[opacity,transform] duration-150 ease-out group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:-translate-x-2 group-data-[collapsible=icon]:opacity-0">
-					<RestartToUpdateRow status={updateStatus} />
+				<div
+					aria-hidden={isCollapsed || undefined}
+					className="sidebar-expanded-chrome relative flex w-full min-w-46.5 flex-col gap-1 transition-[opacity,transform] duration-150 ease-out group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:-translate-x-2 group-data-[collapsible=icon]:opacity-0"
+				>
+					<RestartToUpdateRow status={updateStatus} tabIndex={isCollapsed ? -1 : 0} />
 					<button
 						aria-label="Settings"
 						className="flex w-full items-center justify-center gap-2.5 rounded-settings-row bg-interactive-hover px-2.5 py-2.5 text-control font-medium text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-lg [&_svg]:shrink-0"
 						onClick={() => selection.goGlobalSettings()}
+						tabIndex={isCollapsed ? -1 : 0}
 						type="button"
 					>
 						<Settings aria-hidden="true" />
 						<span className="tracking-tight">Settings</span>
 					</button>
 				</div>
-				<div className="pointer-events-none absolute inset-x-1.5 bottom-0 top-auto flex min-h-row-md flex-col items-center justify-end gap-1 opacity-0 transition-opacity duration-150 ease-out group-data-[collapsible=icon]:pointer-events-auto group-data-[collapsible=icon]:opacity-100">
-					<RestartToUpdateRailButton status={updateStatus} />
+				<div
+					aria-hidden={!isCollapsed || undefined}
+					className="pointer-events-none absolute inset-x-1.5 bottom-0 top-auto flex min-h-row-md flex-col items-center justify-end gap-1 opacity-0 transition-opacity duration-150 ease-out group-data-[collapsible=icon]:pointer-events-auto group-data-[collapsible=icon]:opacity-100"
+				>
+					<RestartToUpdateRailButton status={updateStatus} tabIndex={isCollapsed ? 0 : -1} />
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<button
 								aria-label="Settings"
 								className="grid size-control-board place-items-center rounded-settings-row bg-interactive-hover text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-base"
 								onClick={() => selection.goGlobalSettings()}
+								tabIndex={isCollapsed ? 0 : -1}
 								type="button"
 							>
 								<Settings aria-hidden="true" />
@@ -722,7 +731,7 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 // the main-process evaluator flags it escalated. Clicking installs immediately;
 // the row itself is the prompt, so no confirmation dialog. Renders nothing in
 // every other update state.
-function RestartToUpdateRow({ status }: { status: UpdateStatus }) {
+function RestartToUpdateRow({ status, tabIndex }: { status: UpdateStatus; tabIndex: number }) {
 	if (status.state !== "downloaded") return null;
 	const escalated = status.escalated === true;
 	return (
@@ -735,6 +744,7 @@ function RestartToUpdateRow({ status }: { status: UpdateStatus }) {
 					: "text-passive hover:bg-interactive-hover hover:text-foreground [&_svg]:text-passive",
 			)}
 			onClick={() => void aoBridge.updates.install()}
+			tabIndex={tabIndex}
 			type="button"
 		>
 			<RefreshCw aria-hidden="true" className="size-icon-lg shrink-0" />
@@ -756,7 +766,7 @@ function RestartToUpdateRow({ status }: { status: UpdateStatus }) {
 
 // Icon-rail variant of RestartToUpdateRow for the collapsed sidebar: icon-only
 // with the two-line copy in the tooltip.
-function RestartToUpdateRailButton({ status }: { status: UpdateStatus }) {
+function RestartToUpdateRailButton({ status, tabIndex }: { status: UpdateStatus; tabIndex: number }) {
 	if (status.state !== "downloaded") return null;
 	const escalated = status.escalated === true;
 	return (
@@ -771,6 +781,7 @@ function RestartToUpdateRailButton({ status }: { status: UpdateStatus }) {
 							: "text-passive hover:bg-interactive-hover hover:text-foreground",
 					)}
 					onClick={() => void aoBridge.updates.install()}
+					tabIndex={tabIndex}
 					type="button"
 				>
 					<RefreshCw aria-hidden="true" />
@@ -784,12 +795,9 @@ function RestartToUpdateRailButton({ status }: { status: UpdateStatus }) {
 }
 
 function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
-	const paletteShortcut = APP_SHORTCUTS.find((shortcut) => shortcut.id === "command-palette");
-	const shortcutLabel = paletteShortcut
-		? shortcutKeys(paletteShortcut, isMac).join(isMac ? "" : "+")
-		: isMac
-			? "⌘K"
-			: "Ctrl+K";
+	const overrides = useKeybindingsStore((state) => state.overrides);
+	const paletteBinding = effectiveShortcutBindings("command-palette", isMac, overrides)[0];
+	const shortcutLabel = paletteBinding ? shortcutBindingLabel(paletteBinding, isMac) : "Unassigned";
 	const { state } = useSidebar();
 	const isCollapsed = state === "collapsed";
 	return (
