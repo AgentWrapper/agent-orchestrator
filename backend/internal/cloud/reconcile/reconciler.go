@@ -152,7 +152,10 @@ func (r *Reconciler) reconcileSandbox(ctx context.Context, sandbox clouddomain.S
 			}
 			return r.observe(ctx, sandbox, string(environment.ID), "bootstrapping", "", 2*time.Second)
 		case "started", "running", "ready":
-			if (sandbox.ObservedState == "provisioning" || sandbox.ObservedState == "failed") &&
+			staleBootstrap := sandbox.ObservedState == "bootstrapping" &&
+				sandbox.WorkerLastSeenAt == nil &&
+				time.Since(sandbox.CreatedAt) >= 30*time.Second
+			if (sandbox.ObservedState == "provisioning" || sandbox.ObservedState == "failed" || staleBootstrap) &&
 				len(r.workerBinary) > 0 {
 				bootstrapper, ok := provider.(cloudsandbox.Bootstrapper)
 				if !ok {
@@ -172,7 +175,7 @@ func (r *Reconciler) reconcileSandbox(ctx context.Context, sandbox clouddomain.S
 				); err != nil {
 					return r.fail(ctx, sandbox, err)
 				}
-				return r.observe(ctx, sandbox, string(environment.ID), "bootstrapping", "", 5*time.Second)
+				return r.observe(ctx, sandbox, string(environment.ID), "bootstrapping", "", 30*time.Second)
 			}
 			state := sandbox.ObservedState
 			if state != "running" {

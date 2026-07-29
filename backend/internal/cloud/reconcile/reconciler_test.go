@@ -77,6 +77,27 @@ func (*fakeProvider) Pause(context.Context, cloudsandbox.ID) error  { return nil
 func (*fakeProvider) Resume(context.Context, cloudsandbox.ID) error { return nil }
 func (*fakeProvider) Delete(context.Context, cloudsandbox.ID) error { return nil }
 
+type fakeBootstrapProvider struct {
+	fakeProvider
+	bootstrap cloudsandbox.WorkerBootstrap
+}
+
+func (*fakeBootstrapProvider) Get(
+	context.Context,
+	cloudsandbox.ID,
+) (cloudsandbox.Environment, error) {
+	return cloudsandbox.Environment{ID: "provider-one", State: "started"}, nil
+}
+
+func (f *fakeBootstrapProvider) BootstrapWorker(
+	_ context.Context,
+	_ cloudsandbox.ID,
+	spec cloudsandbox.WorkerBootstrap,
+) error {
+	f.bootstrap = spec
+	return nil
+}
+
 type fakeResolver struct {
 	provider cloudsandbox.Provider
 }
@@ -121,5 +142,40 @@ func TestProvisionIssuesScopedBootstrapAndLabelsSandbox(t *testing.T) {
 	}
 	if len(store.events) != 1 || store.events[0] != "sandbox.provisioning" {
 		t.Fatalf("events = %#v", store.events)
+	}
+}
+
+func TestStaleBootstrapWithoutHeartbeatRetriesWorker(t *testing.T) {
+	store := &fakeStore{claimed: []clouddomain.Sandbox{{
+		SessionID:             "session-one",
+		AccountID:             "account-one",
+		Provider:              "daytona",
+		ProviderEnvironmentID: "provider-one",
+		DesiredState:          "running",
+		ObservedState:         "bootstrapping",
+		CreatedAt:             time.Now().Add(-time.Minute),
+	}}}
+	provider := &fakeBootstrapProvider{}
+	reconciler := New(
+		store,
+		fakeResolver{provider: provider},
+		"https://cloud.example",
+		"ao-worker-v1",
+		time.Second,
+		[]byte("worker"),
+		nil,
+	)
+
+	if err := reconciler.reconcileOnce(context.Background()); err != nil {
+		t.Fatalf("reconcileOnce() error = %v", err)
+	}
+	if string(provider.bootstrap.Binary) != "worker" {
+		t.Fatalf("bootstrap = %#v", provider.bootstrap)
+	}
+	if provider.bootstrap.Environment["AO_WORKSPACE_DIR"] != "/workspace/repository" {
+		t.Fatalf("bootstrap environment = %#v", provider.bootstrap.Environment)
+	}
+	if store.state != "bootstrapping" || store.id != "provider-one" {
+		t.Fatalf("observation = %q %q", store.state, store.id)
 	}
 }
