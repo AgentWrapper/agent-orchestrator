@@ -448,16 +448,19 @@ paths:
     get:
       operationId: listNotifications
       parameters:
-      - description: Notification status filter. Defaults to unread; all includes
+      - description: Notification filter. Defaults to unread (unseen); unresolved
+          returns notifications whose underlying issue is still open; all includes
           read history.
         in: query
         name: status
         schema:
-          description: Notification status filter. Defaults to unread; all includes
+          description: Notification filter. Defaults to unread (unseen); unresolved
+            returns notifications whose underlying issue is still open; all includes
             read history.
           enum:
           - unread
           - all
+          - unresolved
           type: string
       - description: Maximum notifications to return. Defaults to 100.
         in: query
@@ -3054,9 +3057,12 @@ components:
           type: array
         unreadCount:
           type: integer
+        unresolvedCount:
+          type: integer
       required:
       - notifications
       - unreadCount
+      - unresolvedCount
       type: object
     ListProjectsResponse:
       properties:
@@ -3202,9 +3208,16 @@ components:
           type: string
         projectId:
           type: string
+        resolvedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
         sessionId:
           type: string
         status:
+          description: Seen state. unread means the user has not opened the notification
+            panel since it arrived.
           enum:
           - unread
           - read

@@ -30,6 +30,7 @@ import (
 
 type notificationSink interface {
 	Notify(context.Context, ports.NotificationIntent) error
+	Resolve(context.Context, ports.NotificationResolution) error
 }
 
 // lifecycleStack owns the runtime reaper goroutine started with the lifecycle

@@ -11,12 +11,14 @@ import (
 )
 
 type fakeStore struct {
-	rows         []domain.NotificationRecord
-	listStatus   ListStatus
-	listBeforeAt time.Time
-	listBeforeID string
-	listLimit    int
-	unreadCount  int64
+	rows            []domain.NotificationRecord
+	listStatus      ListStatus
+	listBeforeAt    time.Time
+	listBeforeID    string
+	listLimit       int
+	unreadCount     int64
+	unresolvedCount int64
+
 	markRow      domain.NotificationRecord
 	markOK       bool
 	markAllCount int64
@@ -43,6 +45,10 @@ func (f *fakeStore) ListNotifications(
 
 func (f *fakeStore) CountUnreadNotifications(context.Context) (int64, error) {
 	return f.unreadCount, f.err
+}
+
+func (f *fakeStore) CountUnresolvedNotifications(context.Context) (int64, error) {
+	return f.unresolvedCount, f.err
 }
 
 func (f *fakeStore) MarkNotificationRead(_ context.Context, _ string) (domain.NotificationRecord, bool, error) {

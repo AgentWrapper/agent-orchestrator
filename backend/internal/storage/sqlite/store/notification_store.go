@@ -21,14 +21,16 @@ func (s *Store) SessionHasUnreadNotification(ctx context.Context, id domain.Sess
 }
 
 // CreateNotification inserts one unread notification. It returns created=false
-// when the unread dedupe index already has a matching row.
+// when the open dedupe index already has a matching row — open meaning unseen
+// or still unresolved, so a notification the user has already looked at is not
+// re-raised while its underlying issue is unchanged.
 func (s *Store) CreateNotification(ctx context.Context, rec domain.NotificationRecord) (domain.NotificationRecord, bool, error) {
 	if err := rec.Validate(); err != nil {
 		return domain.NotificationRecord{}, false, err
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	if existing, ok, err := s.getUnreadNotificationByDedupe(ctx, rec); err != nil {
+	if existing, ok, err := s.getOpenNotificationByDedupe(ctx, rec); err != nil {
 		return domain.NotificationRecord{}, false, err
 	} else if ok {
 		return existing, false, nil
@@ -46,7 +48,7 @@ func (s *Store) CreateNotification(ctx context.Context, rec domain.NotificationR
 	})
 	if err != nil {
 		if isSQLiteUnique(err) {
-			if existing, ok, lookupErr := s.getUnreadNotificationByDedupe(ctx, rec); lookupErr != nil {
+			if existing, ok, lookupErr := s.getOpenNotificationByDedupe(ctx, rec); lookupErr != nil {
 				return domain.NotificationRecord{}, false, lookupErr
 			} else if ok {
 				return existing, false, nil
@@ -69,13 +71,20 @@ func (s *Store) ListNotifications(
 		rows []gen.Notification
 		err  error
 	)
-	if status == domain.NotificationListUnread {
+	switch status {
+	case domain.NotificationListUnread:
 		rows, err = s.qr.ListUnreadNotificationsPage(ctx, gen.ListUnreadNotificationsPageParams{
 			BeforeID:        beforeID,
 			BeforeCreatedAt: beforeCreatedAt,
 			PageLimit:       int64(limit),
 		})
-	} else {
+	case domain.NotificationListUnresolved:
+		rows, err = s.qr.ListUnresolvedNotificationsPage(ctx, gen.ListUnresolvedNotificationsPageParams{
+			BeforeID:        beforeID,
+			BeforeCreatedAt: beforeCreatedAt,
+			PageLimit:       int64(limit),
+		})
+	default:
 		rows, err = s.qr.ListNotificationsPage(ctx, gen.ListNotificationsPageParams{
 			BeforeID:        beforeID,
 			BeforeCreatedAt: beforeCreatedAt,
@@ -96,6 +105,76 @@ func (s *Store) CountUnreadNotifications(ctx context.Context) (int64, error) {
 		return 0, fmt.Errorf("count unread notifications: %w", err)
 	}
 	return count, nil
+}
+
+// CountUnresolvedNotifications returns how many notifications still have an
+// open underlying issue, independently from the bounded history page.
+func (s *Store) CountUnresolvedNotifications(ctx context.Context) (int64, error) {
+	count, err := s.qr.CountUnresolvedNotifications(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("count unresolved notifications: %w", err)
+	}
+	return count, nil
+}
+
+// ResolveSessionNotifications marks every open notification of one type on a
+// session resolved and returns the rows it changed.
+func (s *Store) ResolveSessionNotifications(
+	ctx context.Context,
+	id domain.SessionID,
+	typ domain.NotificationType,
+	at time.Time,
+) ([]domain.NotificationRecord, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.ResolveSessionNotificationsByType(ctx, gen.ResolveSessionNotificationsByTypeParams{
+		ResolvedAt: nullTime(at),
+		SessionID:  id,
+		Type:       typ,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("resolve session notifications %s/%s: %w", id, typ, err)
+	}
+	return notificationsFromGen(rows), nil
+}
+
+// ResolvePRNotifications marks every open notification of one type on a PR
+// resolved and returns the rows it changed.
+func (s *Store) ResolvePRNotifications(
+	ctx context.Context,
+	prURL string,
+	typ domain.NotificationType,
+	at time.Time,
+) ([]domain.NotificationRecord, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.ResolvePRNotificationsByType(ctx, gen.ResolvePRNotificationsByTypeParams{
+		ResolvedAt: nullTime(at),
+		PRURL:      prURL,
+		Type:       typ,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("resolve pr notifications %s/%s: %w", prURL, typ, err)
+	}
+	return notificationsFromGen(rows), nil
+}
+
+// ReconcileResolvedNotifications closes open notifications whose resolving
+// transition happened while the daemon was down, by re-reading the durable
+// session and PR facts. Without it a restart can strand a needs-input row in
+// the unresolved list forever.
+func (s *Store) ReconcileResolvedNotifications(ctx context.Context, at time.Time) ([]domain.NotificationRecord, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	needsInput, err := s.qw.ResolveStaleNeedsInputNotifications(ctx, nullTime(at))
+	if err != nil {
+		return nil, fmt.Errorf("reconcile needs-input notifications: %w", err)
+	}
+	readyToMerge, err := s.qw.ResolveStaleReadyToMergeNotifications(ctx, nullTime(at))
+	if err != nil {
+		return nil, fmt.Errorf("reconcile ready-to-merge notifications: %w", err)
+	}
+	return notificationsFromGen(append(needsInput, readyToMerge...)), nil
 }
 
 // MarkNotificationRead marks one unread notification read.
@@ -123,8 +202,8 @@ func (s *Store) MarkAllNotificationsRead(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
-func (s *Store) getUnreadNotificationByDedupe(ctx context.Context, rec domain.NotificationRecord) (domain.NotificationRecord, bool, error) {
-	row, err := s.qw.GetUnreadNotificationByDedupe(ctx, gen.GetUnreadNotificationByDedupeParams{
+func (s *Store) getOpenNotificationByDedupe(ctx context.Context, rec domain.NotificationRecord) (domain.NotificationRecord, bool, error) {
+	row, err := s.qw.GetOpenNotificationByDedupe(ctx, gen.GetOpenNotificationByDedupeParams{
 		SessionID: rec.SessionID,
 		Type:      rec.Type,
 		PRURL:     rec.PRURL,
@@ -133,7 +212,7 @@ func (s *Store) getUnreadNotificationByDedupe(ctx context.Context, rec domain.No
 		return domain.NotificationRecord{}, false, nil
 	}
 	if err != nil {
-		return domain.NotificationRecord{}, false, fmt.Errorf("lookup unread notification dedupe: %w", err)
+		return domain.NotificationRecord{}, false, fmt.Errorf("lookup open notification dedupe: %w", err)
 	}
 	return notificationFromGen(row), true, nil
 }
@@ -145,15 +224,16 @@ func isSQLiteUnique(err error) bool {
 
 func notificationFromGen(row gen.Notification) domain.NotificationRecord {
 	return domain.NotificationRecord{
-		ID:        row.ID,
-		SessionID: row.SessionID,
-		ProjectID: row.ProjectID,
-		PRURL:     row.PRURL,
-		Type:      row.Type,
-		Title:     row.Title,
-		Body:      row.Body,
-		Status:    row.Status,
-		CreatedAt: row.CreatedAt,
+		ID:         row.ID,
+		SessionID:  row.SessionID,
+		ProjectID:  row.ProjectID,
+		PRURL:      row.PRURL,
+		Type:       row.Type,
+		Title:      row.Title,
+		Body:       row.Body,
+		Status:     row.Status,
+		CreatedAt:  row.CreatedAt,
+		ResolvedAt: timeFromNull(row.ResolvedAt),
 	}
 }
 

@@ -42,7 +42,11 @@ func (m *Manager) List(ctx context.Context, filter ListFilter) (ListPage, error)
 		filter.Status = ListUnread
 	}
 	if !filter.Status.Valid() {
-		return ListPage{}, apierr.Invalid("INVALID_NOTIFICATION_STATUS", "Notification status must be unread or all", nil)
+		return ListPage{}, apierr.Invalid(
+			"INVALID_NOTIFICATION_STATUS",
+			"Notification status must be unread, unresolved, or all",
+			nil,
+		)
 	}
 	limit := normalizeLimit(filter.Limit)
 	beforeCreatedAt, beforeID, err := decodeCursor(filter.Cursor)
@@ -57,6 +61,10 @@ func (m *Manager) List(ctx context.Context, filter ListFilter) (ListPage, error)
 	if err != nil {
 		return ListPage{}, err
 	}
+	unresolvedCount, err := m.store.CountUnresolvedNotifications(ctx)
+	if err != nil {
+		return ListPage{}, err
+	}
 	hasMore := len(rows) > limit
 	if hasMore {
 		rows = rows[:limit]
@@ -65,7 +73,7 @@ func (m *Manager) List(ctx context.Context, filter ListFilter) (ListPage, error)
 	for _, row := range rows {
 		out = append(out, notificationFromRecord(row))
 	}
-	page := ListPage{Notifications: out, UnreadCount: int(unreadCount)}
+	page := ListPage{Notifications: out, UnreadCount: int(unreadCount), UnresolvedCount: int(unresolvedCount)}
 	if hasMore {
 		page.NextCursor = encodeCursor(rows[len(rows)-1])
 	}

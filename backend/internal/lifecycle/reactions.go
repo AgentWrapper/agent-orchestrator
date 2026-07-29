@@ -361,7 +361,24 @@ func (m *Manager) ApplySCMObservation(ctx context.Context, id domain.SessionID, 
 		return err
 	}
 	m.emitNotification(ctx, intent)
+	m.resolveNotifications(ctx, readyToMergeResolutions(id, o, m.clock())...)
 	return nil
+}
+
+// readyToMergeResolutions reports the ready-to-merge notification this
+// observation made stale. The PR either got merged/closed, or stopped being
+// mergeable — either way the "this is ready for you to merge" ping no longer
+// describes anything the user can act on.
+func readyToMergeResolutions(id domain.SessionID, o ports.SCMObservation, now time.Time) []ports.NotificationResolution {
+	if scmObservationIsReadyToMerge(o) {
+		return nil
+	}
+	return []ports.NotificationResolution{{
+		Type:       domain.NotificationReadyToMerge,
+		SessionID:  id,
+		PRURL:      firstSCMNonEmpty(o.PR.URL, o.PR.HTMLURL),
+		ResolvedAt: timeOr(o.ObservedAt, now),
+	}}
 }
 
 func (m *Manager) notificationIntentForCurrentSCM(ctx context.Context, id domain.SessionID, o ports.SCMObservation) (*ports.NotificationIntent, error) {

@@ -2,9 +2,7 @@ import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-q
 import {
 	fetchNotificationsPage,
 	markAllCachedNotificationsRead,
-	markCachedNotificationRead,
 	markAllNotificationsRead,
-	markNotificationRead,
 	notificationsQueryKey,
 	recentNotificationsQueryKey,
 	type NotificationListStatus,
@@ -22,16 +20,10 @@ export function useNotificationsQuery(status: NotificationListStatus, enabled = 
 	});
 }
 
-export function useMarkNotificationReadMutation() {
-	const queryClient = useQueryClient();
-	return useMutation({
-		mutationFn: markNotificationRead,
-		onSuccess: (notification) => {
-			markCachedNotificationRead(queryClient, notification);
-		},
-	});
-}
-
+/**
+ * Opening the notification panel is the acknowledgement — there is no manual
+ * "mark all read" control any more, so this mutation is fired on open.
+ */
 export function useMarkAllNotificationsReadMutation() {
 	const queryClient = useQueryClient();
 	return useMutation({

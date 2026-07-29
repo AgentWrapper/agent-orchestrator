@@ -1052,6 +1052,7 @@ export interface components {
             nextCursor?: string;
             notifications: components["schemas"]["NotificationResponse"][];
             unreadCount: number;
+            unresolvedCount: number;
         };
         ListProjectsResponse: {
             projects: components["schemas"]["ProjectSummary"][];
@@ -1113,8 +1114,13 @@ export interface components {
             id: string;
             prUrl: string;
             projectId: string;
+            /** Format: date-time */
+            resolvedAt?: null | string;
             sessionId: string;
-            /** @enum {string} */
+            /**
+             * @description Seen state. unread means the user has not opened the notification panel since it arrived.
+             * @enum {string}
+             */
             status: "unread" | "read";
             target: components["schemas"]["NotificationTarget"];
             title: string;
@@ -2191,8 +2197,8 @@ export interface operations {
     listNotifications: {
         parameters: {
             query?: {
-                /** @description Notification status filter. Defaults to unread; all includes read history. */
-                status?: "unread" | "all";
+                /** @description Notification filter. Defaults to unread (unseen); unresolved returns notifications whose underlying issue is still open; all includes read history. */
+                status?: "unread" | "all" | "unresolved";
                 /** @description Maximum notifications to return. Defaults to 100. */
                 limit?: number;
                 /** @description Opaque cursor returned by the previous page. */

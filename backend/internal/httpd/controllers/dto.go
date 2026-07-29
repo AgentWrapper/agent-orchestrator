@@ -650,7 +650,7 @@ type AgentInfo = agentsvc.Info
 
 // ListNotificationsQuery is the query string accepted by GET /api/v1/notifications.
 type ListNotificationsQuery struct {
-	Status string `query:"status,omitempty" enum:"unread,all" description:"Notification status filter. Defaults to unread; all includes read history."`
+	Status string `query:"status,omitempty" enum:"unread,all,unresolved" description:"Notification filter. Defaults to unread (unseen); unresolved returns notifications whose underlying issue is still open; all includes read history."`
 	Limit  int    `query:"limit,omitempty" minimum:"1" maximum:"100" description:"Maximum notifications to return. Defaults to 100."`
 	Cursor string `query:"cursor,omitempty" description:"Opaque cursor returned by the previous page."`
 }
@@ -681,16 +681,21 @@ type NotificationResponse struct {
 	Type      string             `json:"type" enum:"needs_input,ready_to_merge,pr_merged,pr_closed_unmerged"`
 	Title     string             `json:"title"`
 	Body      string             `json:"body"`
-	Status    string             `json:"status" enum:"unread,read"`
+	Status    string             `json:"status" enum:"unread,read" description:"Seen state. unread means the user has not opened the notification panel since it arrived."`
 	CreatedAt time.Time          `json:"createdAt"`
-	Target    NotificationTarget `json:"target"`
+	// ResolvedAt is set by AO when the underlying issue goes away (the session
+	// received its input, the PR stopped waiting on a merge). Absent means the
+	// issue is still open. There is no user-facing action that sets it.
+	ResolvedAt *time.Time         `json:"resolvedAt,omitempty"`
+	Target     NotificationTarget `json:"target"`
 }
 
 // ListNotificationsResponse is one history page from GET /api/v1/notifications.
 type ListNotificationsResponse struct {
-	Notifications []NotificationResponse `json:"notifications"`
-	NextCursor    string                 `json:"nextCursor,omitempty"`
-	UnreadCount   int                    `json:"unreadCount"`
+	Notifications   []NotificationResponse `json:"notifications"`
+	NextCursor      string                 `json:"nextCursor,omitempty"`
+	UnreadCount     int                    `json:"unreadCount"`
+	UnresolvedCount int                    `json:"unresolvedCount"`
 }
 
 // MarkNotificationReadRequest is the body of PATCH /api/v1/notifications/{id}.
