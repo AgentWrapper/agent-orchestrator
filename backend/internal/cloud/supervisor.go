@@ -791,6 +791,12 @@ func (s *Supervisor) Terminate(ctx context.Context, sandboxID string) error {
 	if sess == nil {
 		return nil
 	}
+	// Idempotent: a DELETE on an already-terminated session is the board's
+	// "Remove" — forget the tombstone rather than trying to delete a gone sandbox
+	// again (which would error). First DELETE kills → tombstone; second forgets.
+	if sess.Status == StatusTerminated {
+		return s.Remove(ctx, sandboxID)
+	}
 	s.mu.Lock()
 	if cur := s.sessions[sandboxID]; cur != nil {
 		cur.Status = StatusTerminated
@@ -805,7 +811,13 @@ func (s *Supervisor) Terminate(ctx context.Context, sandboxID string) error {
 	if err != nil {
 		return err
 	}
-	return client.Delete(ctx, sandboxID)
+	// Tolerate a delete error: the goal is the sandbox gone, and it may already be
+	// (idle-reaped, or a retsplit of a failed teardown). The tombstone stands
+	// either way; log and succeed so the caller isn't handed a 500.
+	if err := client.Delete(ctx, sandboxID); err != nil {
+		s.logf("terminate: sandbox %s delete failed (tombstone kept): %v", shortID(sandboxID), err)
+	}
+	return nil
 }
 
 // Remove drops a session from the registry entirely (board cleanup). Deletes the

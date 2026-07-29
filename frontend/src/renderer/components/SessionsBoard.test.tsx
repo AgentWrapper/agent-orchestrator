@@ -566,6 +566,21 @@ describe("SessionsBoard", () => {
 		expect(screen.queryByRole("group", { name: "Archive layout" })).not.toBeInTheDocument();
 	});
 
+	it("offers Remove (not Restore) for a terminated shared/cloud session, whose sandbox can't be restored", async () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([terminatedSession({ id: "shared-sbX", title: "shared dead" })])],
+			isError: false,
+			isSuccess: true,
+		});
+		renderBoard("p1");
+		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+
+		// Consistent Archive placement (a terminated card), but the action reflects
+		// that a cloud/shared sandbox is gone: Remove, never a Restore that fails.
+		expect(screen.getByRole("button", { name: "Remove shared dead" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Restore shared dead" })).not.toBeInTheDocument();
+	});
+
 	it("renders archived sessions as a grid even when rows were previously saved", async () => {
 		window.localStorage.setItem("ao.board.archive.layout", "rows");
 		workspaceQueryMock.mockReturnValue({

@@ -176,13 +176,34 @@ async function mergeCloudSessions(workspaces: WorkspaceSummary[]): Promise<void>
 	);
 }
 
+// A shared session has no owner-reported status, so "terminated" is inferred: the
+// viewer only sees that its live view stopped resolving. Distinguish a real
+// termination from a transient network blip by requiring several consecutive
+// failures before archiving it as ended. Keyed by sandboxId; reset on any
+// success. Module-level so it persists across the per-tick merge calls.
+const SHARED_ENDED_AFTER_FAILURES = 3;
+const sharedFetchState = new Map<string, { failures: number; lastCard: WorkspaceSession | null }>();
+
+/** Test-only: clear the shared-session failure debounce between cases. */
+export function __resetSharedFetchStateForTest(): void {
+	sharedFetchState.clear();
+}
+
+/** Test-only: pre-seed a sandbox's consecutive-failure count so a single failing
+ *  merge can deterministically trip the ended-card threshold. */
+export function __seedSharedFailuresForTest(sandboxId: string, failures: number): void {
+	sharedFetchState.set(sandboxId, { failures, lastCard: null });
+}
+
 // buildCloudCard resolves a cloud ref into a board card, or null when there is
-// nothing to show. Owned sessions always yield a card: archived when terminated,
-// a placeholder while provisioning, and a registry-only fallback when the live
-// view is briefly unavailable (durable source; the owner can re-mint). A SHARED
-// session yields null when its live view can't be fetched — the viewer then gets
-// SessionView's bounded "connecting → Retry / Remove shared session" escape
-// instead of a stale card that reattaches the terminal to a dead sandbox forever.
+// nothing to show yet. Owned sessions always yield a card: archived when
+// terminated, a placeholder while provisioning, and a registry-only fallback when
+// the live view is briefly unavailable (durable source; the owner can re-mint).
+// A SHARED session, whose sandbox the viewer doesn't own, is inferred terminated
+// after SHARED_ENDED_AFTER_FAILURES consecutive live-view failures and archived
+// as an ended card — consistent with a terminated owned/local session (an Archive
+// entry, not connectable) rather than vanishing. During a brief blip below the
+// threshold it keeps its last-known card so it doesn't flicker off the board.
 async function buildCloudCard(
 	ref: CloudSessionRef,
 	projectId: string,
@@ -202,9 +223,26 @@ async function buildCloudCard(
 		dto = undefined;
 	}
 	if (dto) {
-		return toWorkspaceSession(dto, projectId, projectName, { previewUrl: ref.previewUrl, boardId, readonly: ref.readonly });
+		const card = toWorkspaceSession(dto, projectId, projectName, {
+			previewUrl: ref.previewUrl,
+			boardId,
+			readonly: ref.readonly,
+		});
+		if (ref.shared) sharedFetchState.set(ref.sandboxId, { failures: 0, lastCard: card });
+		return card;
 	}
-	return ref.shared ? null : cloudRefCard(ref, projectId, projectName, boardId);
+	if (!ref.shared) {
+		return cloudRefCard(ref, projectId, projectName, boardId); // owned: durable registry fallback
+	}
+	// Shared, live view unavailable: debounce before declaring the session ended.
+	const prev = sharedFetchState.get(ref.sandboxId) ?? { failures: 0, lastCard: null };
+	const failures = prev.failures + 1;
+	if (failures >= SHARED_ENDED_AFTER_FAILURES) {
+		sharedFetchState.set(ref.sandboxId, { failures, lastCard: null });
+		return terminatedCard(ref, projectId, projectName, boardId); // ended → Archive (consistent)
+	}
+	sharedFetchState.set(ref.sandboxId, { failures, lastCard: prev.lastCard });
+	return prev.lastCard; // keep last-known during a blip (or null before first success)
 }
 
 // A card built from control-plane registry fields alone, used when the live

@@ -23,7 +23,7 @@ vi.mock("../lib/api-client", () => ({
 
 vi.mock("../lib/telemetry", () => ({ captureRendererEvent: captureRendererEventMock }));
 
-import { useWorkspaceQuery } from "./useWorkspaceQuery";
+import { useWorkspaceQuery, __resetSharedFetchStateForTest, __seedSharedFailuresForTest } from "./useWorkspaceQuery";
 import { setCloudSignedIn } from "../stores/cloud-auth-store";
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -50,6 +50,7 @@ beforeEach(() => {
 	hasTrustedApiBaseUrlMock.mockReset().mockReturnValue(true);
 	controlPlaneUrlMock.mockReset().mockReturnValue(null);
 	setCloudSignedIn(false);
+	__resetSharedFetchStateForTest();
 	// The cloud-session registry reads imported shares from localStorage; clear it
 	// so shared imports never leak between tests.
 	if (typeof localStorage !== "undefined") localStorage.clear();
@@ -482,14 +483,14 @@ describe("useWorkspaceQuery cloud-session merge", () => {
 		expect(shared?.sessions.map((s) => s.id)).toContain("shared-shX");
 	});
 
-	it("renders NO card for a shared session whose sandbox is unreachable (escape UI takes over)", async () => {
+	function importDeadShare(sandboxId: string) {
 		localStorage.setItem(
 			"ao.sharedSessions",
 			JSON.stringify([
 				{
 					v: 1,
 					previewUrl: "https://3001-dead.daytonaproxy01.net",
-					sandboxId: "shDead",
+					sandboxId,
 					sessionId: "runbookai-1",
 					harness: "claude-code",
 					projectName: "runbookai",
@@ -499,13 +500,35 @@ describe("useWorkspaceQuery cloud-session merge", () => {
 		);
 		postMock.mockResolvedValue({ data: { ok: false, status: 502 }, error: undefined });
 		routeCloud({ projects: [], owned: [] });
+	}
 
+	it("shows NO card on a single shared-sandbox failure (debounced, not yet ended)", async () => {
+		importDeadShare("shBlip");
 		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
 		await waitFor(() => expect(result.current.isSuccess).toBe(true));
-
-		// No stale card and no empty group — SessionView's connecting/Remove escape
-		// handles a dead shared sandbox instead of a perpetual terminal reattach.
+		// One failure is below the threshold: no card (SessionView's connecting
+		// escape covers it) and no premature "ended" archive.
 		expect(result.current.data?.some((w) => w.id === "shared-with-me")).toBe(false);
+	});
+
+	it("archives a shared session as an ended card once the failure threshold is reached (consistent with terminated)", async () => {
+		importDeadShare("shDead");
+		// Pre-seed the debounce to one below threshold so this single failing merge
+		// trips it deterministically (avoids racing react-query refetch timing).
+		__seedSharedFailuresForTest("shDead", 2);
+
+		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
+		await waitFor(() => {
+			const card = result.current.data
+				?.find((w) => w.id === "shared-with-me")
+				?.sessions.find((s) => s.id === "shared-shDead");
+			expect(card?.status).toBe("terminated");
+		});
+		const card = result.current.data
+			?.find((w) => w.id === "shared-with-me")
+			?.sessions.find((s) => s.id === "shared-shDead");
+		expect(card?.isTerminated).toBe(true);
+		expect(card?.cloudPreviewUrl).toBeUndefined(); // no live URL → terminal won't reattach
 	});
 
 	it("signed IN with a control plane configured: cloud sessions fetched and shown", async () => {

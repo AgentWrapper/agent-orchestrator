@@ -307,7 +307,12 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 	const issueId = canonicalTrackerIssueId(session.issueId);
 
 	// Owned cloud session (has a sandbox + not a readonly import) → shareable.
-	const shareableSandboxId = !session.readonly && session.cloudPreviewUrl ? sandboxIdFromBoardId(session.id) : null;
+	// Explicitly exclude terminated/exited sessions: their sandbox is gone, so a
+	// share would fail (and the backend rejects it with 409). Belt-and-suspenders
+	// with the missing cloudPreviewUrl a terminated card already has.
+	const isDead = session.isTerminated === true || session.status === "terminated" || session.activity?.state === "exited";
+	const shareableSandboxId =
+		!session.readonly && session.cloudPreviewUrl && !isDead ? sandboxIdFromBoardId(session.id) : null;
 
 	return (
 		<div role="tabpanel">

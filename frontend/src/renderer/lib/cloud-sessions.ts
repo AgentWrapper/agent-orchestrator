@@ -87,6 +87,27 @@ export function sandboxIdFromBoardId(boardSessionId: string): string | null {
 	return null;
 }
 
+/** Whether a board id is an OWNED cloud session ("cloud-<id>"), vs shared or local. */
+export function isOwnedCloudBoardId(boardSessionId: string): boolean {
+	return boardSessionId.startsWith("cloud-");
+}
+
+/** Whether a board id is an imported SHARED session ("shared-<id>"). */
+export function isSharedBoardId(boardSessionId: string): boolean {
+	return boardSessionId.startsWith("shared-");
+}
+
+// Whether a terminated session can be RESTORED (relaunched) from its archived
+// card. The extensibility seam for cloud restore: today only LOCAL sessions are
+// restorable — a local kill leaves the git worktree on disk to relaunch into,
+// whereas a cloud terminate deletes the whole sandbox (nothing to restore into).
+// When a future "cloud restore = re-provision from saved prompt" lands, flip the
+// owned-cloud branch here (and only here); shared imports can never restore (the
+// viewer doesn't own the sandbox).
+export function canRestoreTerminatedSession(boardSessionId: string): boolean {
+	return sandboxIdFromBoardId(boardSessionId) === null; // local only, for now
+}
+
 let refs: CloudSessionRef[] = [];
 const listeners = new Set<() => void>();
 
