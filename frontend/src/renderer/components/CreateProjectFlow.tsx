@@ -81,6 +81,13 @@ export function CreateProjectFlow({
 				setRepositorySetup(preflight.setupCode);
 				setRepositorySetupWarning(preflight.setupWarning);
 			}
+			if (path && kind === "workspace") {
+				const scan = await aoBridge.app.scanImportFolder({ path, mode: "workspace" });
+				if (scan.setupWarning) {
+					setRepositorySetupWarning(scan.setupWarning);
+					setRepositorySetup("NOT_A_GIT_REPO");
+				}
+			}
 			if (path) {
 				setModePickerOpen(false);
 				setSelectedPath(path);

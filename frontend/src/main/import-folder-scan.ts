@@ -246,16 +246,22 @@ export async function scanImportFolder(
 		};
 	}
 
-	const entries = (await readdir(rootPath, { withFileTypes: true }))
-		.filter((entry) => entry.isDirectory() && !IMPORT_SCAN_SKIP_DIRS.has(entry.name))
-		.slice(0, IMPORT_SCAN_MAX_ENTRIES);
-	const repos = await mapLimited(entries, IMPORT_SCAN_CONCURRENCY, (entry) =>
-		scanGitRepo(path.join(rootPath, entry.name), rootPath, options),
+	const [entries, ancestorWarning] = await Promise.all([
+		readdir(rootPath, { withFileTypes: true }),
+		ancestorRepositorySetupWarning(rootPath, options),
+	]);
+	const repos = await mapLimited(
+		entries
+			.filter((entry) => entry.isDirectory() && !IMPORT_SCAN_SKIP_DIRS.has(entry.name))
+			.slice(0, IMPORT_SCAN_MAX_ENTRIES),
+		IMPORT_SCAN_CONCURRENCY,
+		(entry) => scanGitRepo(path.join(rootPath, entry.name), rootPath, options),
 	);
 	return {
 		path: rootPath,
 		repos: repos
 			.filter((repo): repo is GitRepoScanResult => repo !== null)
 			.sort((a, b) => a.name.localeCompare(b.name)),
+		...(ancestorWarning ? { setupWarning: ancestorWarning } : {}),
 	};
 }

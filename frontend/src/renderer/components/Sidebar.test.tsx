@@ -674,7 +674,7 @@ describe("Sidebar", () => {
 		const user = userEvent.setup();
 		const onCreateProject = vi.fn().mockRejectedValue(new Error("AO daemon is not ready.")) as CreateProjectHandler;
 		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/workspace");
-		window.ao!.app.scanImportFolder = vi.fn();
+		window.ao!.app.scanImportFolder = vi.fn().mockResolvedValue({ path: "/repo/workspace", repos: [] });
 		renderSidebar({ onCreateProject });
 
 		await user.click(screen.getByLabelText("New project"));
@@ -684,7 +684,9 @@ describe("Sidebar", () => {
 		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
 
 		expect(await screen.findByText("AO daemon is not ready.")).toBeInTheDocument();
-		expect(window.ao!.app.scanImportFolder).not.toHaveBeenCalled();
+		// scanImportFolder is called once during the ancestor-repo preflight (chooseDirectory),
+		// but not again from the error-recovery path (shouldScanCreateFailure returns false for this error)
+		expect(window.ao!.app.scanImportFolder).toHaveBeenCalledTimes(1);
 	});
 
 	it("opens global settings from the footer menu when no project is selected", async () => {
