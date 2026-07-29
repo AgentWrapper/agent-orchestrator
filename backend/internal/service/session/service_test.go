@@ -664,6 +664,69 @@ func TestWorkspaceFilesIncludeWorkspaceProjectChildRepoDiffs(t *testing.T) {
 	}
 }
 
+func TestWorkspaceProjectChildRepoRecomputesBaseAfterRebase(t *testing.T) {
+	root := newWorkspaceRepo(t)
+	rootBase := strings.TrimSpace(runGit(t, root, "rev-parse", "HEAD"))
+	child := filepath.Join(root, "api")
+	if err := os.MkdirAll(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, child, "init")
+	runGit(t, child, "config", "user.email", "ao@example.com")
+	runGit(t, child, "config", "user.name", "AO Tests")
+	writeWorkspaceFile(t, child, "service.go", "package api\n")
+	runGit(t, child, "add", ".")
+	runGit(t, child, "commit", "-m", "initial child")
+	runGit(t, child, "branch", "-M", "main")
+	oldChildBase := strings.TrimSpace(runGit(t, child, "rev-parse", "HEAD"))
+	runGit(t, child, "switch", "-c", "ao/work")
+	writeWorkspaceFile(t, child, "agent.go", "package api\n\nfunc Agent() {}\n")
+	runGit(t, child, "add", "agent.go")
+	runGit(t, child, "commit", "-m", "agent change")
+	runGit(t, child, "switch", "main")
+	writeWorkspaceFile(t, child, "baseonly.go", "package api\n\nfunc BaseOnly() {}\n")
+	runGit(t, child, "add", "baseonly.go")
+	runGit(t, child, "commit", "-m", "base moved")
+	newChildBase := strings.TrimSpace(runGit(t, child, "rev-parse", "HEAD"))
+	runGit(t, child, "switch", "ao/work")
+	runGit(t, child, "rebase", "main")
+
+	st := newFakeStore()
+	st.projects["ws"] = domain.ProjectRecord{ID: "ws", Kind: domain.ProjectKindWorkspace, Config: domain.ProjectConfig{DefaultBranch: "main"}}
+	st.sessions["ws-1"] = domain.SessionRecord{
+		ID:        "ws-1",
+		ProjectID: "ws",
+		Metadata:  domain.SessionMetadata{WorkspacePath: root},
+	}
+	st.worktrees["ws-1"] = []domain.SessionWorktreeRecord{
+		{SessionID: "ws-1", RepoName: domain.RootWorkspaceRepoName, WorktreePath: root, BaseSHA: rootBase},
+		{SessionID: "ws-1", RepoName: "api", WorktreePath: child, BaseSHA: oldChildBase},
+	}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ws-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byPath := map[string]WorkspaceFileSummary{}
+	for _, file := range files.Files {
+		byPath[file.Path] = file
+	}
+	if byPath["api/agent.go"].Status != WorkspaceFileAdded {
+		t.Fatalf("api/agent.go status = %q, want added", byPath["api/agent.go"].Status)
+	}
+	if got := byPath["api/baseonly.go"]; got.Status != WorkspaceFileUnmodified || got.Additions != 0 || got.Deletions != 0 {
+		t.Fatalf("api/baseonly.go = %#v, want unmodified after recomputing child base", got)
+	}
+
+	detail, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ws-1", "api/agent.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.CompareMode != WorkspaceCompareBase || detail.CompareBaseSHA != newChildBase || detail.CompareBaseRef != "main" {
+		t.Fatalf("child detail compare = mode:%q sha:%q ref:%q, want base %s main", detail.CompareMode, detail.CompareBaseSHA, detail.CompareBaseRef, newChildBase)
+	}
+}
+
 func TestWorkspaceProjectCompareModeStaysBaseWithPartialFallback(t *testing.T) {
 	root := newWorkspaceRepo(t)
 	rootBase := strings.TrimSpace(runGit(t, root, "rev-parse", "HEAD"))

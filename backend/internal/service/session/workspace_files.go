@@ -256,6 +256,19 @@ func resolveWorkspaceCompare(ctx context.Context, root, recordedSHA, recordedRef
 	return workspaceCompareTarget{Mode: WorkspaceCompareHeadFallback}
 }
 
+func resolveWorkspaceProjectCompare(ctx context.Context, root, recordedSHA, defaultBranch string) workspaceCompareTarget {
+	for _, ref := range workspaceBaseRefCandidates(defaultBranch) {
+		if sha, ok := gitMergeBase(ctx, root, ref); ok {
+			return workspaceCompareTarget{BaseSHA: sha, BaseRef: ref, Mode: WorkspaceCompareBase}
+		}
+	}
+	recordedSHA = strings.TrimSpace(recordedSHA)
+	if recordedSHA != "" && gitCommitExists(ctx, root, recordedSHA) {
+		return workspaceCompareTarget{BaseSHA: recordedSHA, Mode: WorkspaceCompareBase}
+	}
+	return workspaceCompareTarget{Mode: WorkspaceCompareHeadFallback}
+}
+
 func workspaceBaseRefCandidates(defaultBranch string) []string {
 	defaultBranch = strings.TrimSpace(defaultBranch)
 	if defaultBranch == "" {
@@ -388,7 +401,7 @@ func (s *Service) listWorkspaceProjectFiles(ctx context.Context, rec domain.Sess
 		if prefix == "" {
 			exclude = childPrefixes
 		}
-		compare := resolveWorkspaceCompare(ctx, row.WorktreePath, row.BaseSHA, "", defaultBranch, nil)
+		compare := resolveWorkspaceProjectCompare(ctx, row.WorktreePath, row.BaseSHA, defaultBranch)
 		compares = append(compares, compare)
 		repoFiles, repoTruncated, err := workspaceFileSummaries(ctx, row.WorktreePath, prefix, exclude, compare)
 		if err != nil {
@@ -426,7 +439,7 @@ func (s *Service) getWorkspaceProjectFile(ctx context.Context, rec domain.Sessio
 	if !ok {
 		return WorkspaceFileDetail{}, apierr.NotFound("WORKSPACE_FILE_NOT_FOUND", "Workspace file not found")
 	}
-	compare := resolveWorkspaceCompare(ctx, row.WorktreePath, row.BaseSHA, "", defaultBranchForProject(project, true), nil)
+	compare := resolveWorkspaceProjectCompare(ctx, row.WorktreePath, row.BaseSHA, defaultBranchForProject(project, true))
 	return workspaceFileDetail(ctx, rec.ID, row.WorktreePath, prefix, repoRel, compare)
 }
 
