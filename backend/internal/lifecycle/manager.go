@@ -838,6 +838,7 @@ func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error
 	if err != nil || !ok || rec.IsTerminated {
 		return err
 	}
+	launchID := rec.Metadata.RuntimeLaunchID
 	m.mu.Lock()
 	finalizer := m.usageFinalizer
 	m.mu.Unlock()
@@ -847,7 +848,7 @@ func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error
 		}
 	}
 	return m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
-		if cur.IsTerminated {
+		if cur.IsTerminated || cur.Metadata.RuntimeLaunchID != launchID {
 			return cur, false
 		}
 		cur.IsTerminated = true

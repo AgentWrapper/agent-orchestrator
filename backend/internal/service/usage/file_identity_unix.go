@@ -15,7 +15,7 @@ func sourceFileID(file *os.File) (string, error) {
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
-		return "", fmt.Errorf("unsupported file identity metadata for %q", file.Name())
+		return "", fmt.Errorf("unsupported file identity metadata")
 	}
 	return fmt.Sprintf("unix:%x:%x", stat.Dev, stat.Ino), nil
 }

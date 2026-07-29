@@ -166,7 +166,7 @@ func (w *TranscriptWatcher) handleEvent(event fsnotify.Event) (string, bool, err
 		return emit, discovery, nil
 	}
 	if err := w.rebuildLocked(); err != nil {
-		return emit, discovery, fmt.Errorf("rebuild transcript watcher after %s: %w", event, err)
+		return emit, discovery, fmt.Errorf("rebuild transcript watcher after %s: %w", event.Op, err)
 	}
 	return emit, discovery, nil
 }
@@ -204,7 +204,7 @@ func (w *TranscriptWatcher) rebuildLocked() error {
 		paths := unwatchedPaths(desired, w.watched)
 		for _, path := range paths {
 			if err := w.watcher.Add(path); err != nil {
-				return fmt.Errorf("watch directory %q: %w", path, err)
+				return fmt.Errorf("watch transcript directory: %w", redactFilesystemError(err))
 			}
 			w.watched[path] = struct{}{}
 			addedPaths = append(addedPaths, path)
@@ -231,7 +231,7 @@ func (w *TranscriptWatcher) rebuildLocked() error {
 		}
 		if err := w.watcher.Remove(path); err != nil &&
 			!errors.Is(err, fsnotify.ErrNonExistentWatch) {
-			return fmt.Errorf("remove stale watch %q: %w", path, err)
+			return fmt.Errorf("remove stale transcript watch: %w", redactFilesystemError(err))
 		}
 		delete(w.watched, path)
 		removedStale = true
@@ -248,7 +248,7 @@ func (w *TranscriptWatcher) rebuildLocked() error {
 				continue
 			}
 			if err := w.watcher.Add(path); err != nil {
-				return fmt.Errorf("refresh watch directory %q: %w", path, err)
+				return fmt.Errorf("refresh transcript watch: %w", redactFilesystemError(err))
 			}
 		}
 	}
@@ -260,12 +260,12 @@ func (w *TranscriptWatcher) desiredWatchSetLocked() (map[string]struct{}, error)
 	for _, root := range w.roots {
 		walkRoot, err := resolveTranscriptRoot(root)
 		if err != nil {
-			return nil, fmt.Errorf("resolve transcript root %q: %w", root, err)
+			return nil, fmt.Errorf("resolve transcript root: %w", redactFilesystemError(err))
 		}
 		info, err := os.Stat(walkRoot)
 		switch {
 		case err == nil && !info.IsDir():
-			return nil, fmt.Errorf("transcript root %q is not a directory", root)
+			return nil, errors.New("transcript root is not a directory")
 		case err == nil:
 			if err := filepath.WalkDir(walkRoot, func(path string, entry fs.DirEntry, walkErr error) error {
 				if walkErr != nil {
@@ -276,16 +276,16 @@ func (w *TranscriptWatcher) desiredWatchSetLocked() (map[string]struct{}, error)
 				}
 				return nil
 			}); err != nil {
-				return nil, fmt.Errorf("walk transcript root %q: %w", root, err)
+				return nil, fmt.Errorf("walk transcript root: %w", redactFilesystemError(err))
 			}
 		case errors.Is(err, os.ErrNotExist):
 			ancestor, ancestorErr := nearestExistingDirectory(root)
 			if ancestorErr != nil {
-				return nil, fmt.Errorf("locate ancestor for transcript root %q: %w", root, ancestorErr)
+				return nil, fmt.Errorf("locate transcript root ancestor: %w", redactFilesystemError(ancestorErr))
 			}
 			result[ancestor] = struct{}{}
 		default:
-			return nil, fmt.Errorf("inspect transcript root %q: %w", root, err)
+			return nil, fmt.Errorf("inspect transcript root: %w", redactFilesystemError(err))
 		}
 	}
 	return result, nil
@@ -344,7 +344,7 @@ func normalizeTranscriptRoots(roots []string) ([]string, error) {
 		}
 		absolute, err := filepath.Abs(root)
 		if err != nil {
-			return nil, fmt.Errorf("normalize transcript root %q: %w", root, err)
+			return nil, fmt.Errorf("normalize transcript root: %w", redactFilesystemError(err))
 		}
 		absolute = filepath.Clean(absolute)
 		if _, ok := seen[absolute]; ok {
@@ -384,18 +384,31 @@ func nearestExistingDirectory(path string) (string, error) {
 		info, err := os.Stat(current)
 		if err == nil {
 			if !info.IsDir() {
-				return "", fmt.Errorf("%q is not a directory", current)
+				return "", errors.New("transcript root ancestor is not a directory")
 			}
 			return current, nil
 		}
 		if !errors.Is(err, os.ErrNotExist) {
-			return "", err
+			return "", redactFilesystemError(err)
 		}
 		parent := filepath.Dir(current)
 		if parent == current {
-			return "", fmt.Errorf("no existing ancestor for %q", path)
+			return "", errors.New("no existing transcript root ancestor")
 		}
 		current = parent
+	}
+}
+
+func redactFilesystemError(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, os.ErrNotExist):
+		return os.ErrNotExist
+	case errors.Is(err, os.ErrPermission):
+		return os.ErrPermission
+	default:
+		return errors.New("filesystem operation failed")
 	}
 }
 

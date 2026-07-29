@@ -1,23 +1,20 @@
 package usage
 
 import (
-	"bufio"
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-const sourceIdentityRecordBytes = 64 << 10
 const (
 	maxUsageMetadataBytes = 256
 	maxUsagePathBytes     = 4096
@@ -73,6 +70,7 @@ type collectorStore interface {
 	ListUsageBindingsForSession(context.Context, domain.SessionID) ([]domain.UsageBindingRecord, error)
 	ListUsageDiscoveryBindings(context.Context, int64) ([]domain.UsageBindingRecord, error)
 	UpdateUsageBindingState(context.Context, int64, domain.UsageBindingState, string, time.Time) (bool, error)
+	UpdateUsageBindingErrorCode(context.Context, int64, string, time.Time) (bool, error)
 	CompleteUsageBindingIfSettled(context.Context, int64, time.Time) (bool, error)
 	InsertUsageSource(context.Context, domain.UsageSourceRecord) (domain.UsageSourceRecord, error)
 	ListUsageSourcesForBinding(context.Context, int64) ([]domain.UsageSourceRecord, error)
@@ -87,6 +85,7 @@ type Collector struct {
 	roots                SourceRoots
 	notifySourcesChanged func(reconcile bool)
 	now                  func() time.Time
+	mu                   sync.Mutex
 }
 
 // NewCollector constructs a transcript source registrar.
@@ -109,6 +108,9 @@ func (c *Collector) FinalizeSession(ctx context.Context, sessionID domain.Sessio
 // RecordHook registers transcript metadata and updates collection lifecycle for
 // one native hook callback.
 func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, signal HookSignal) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	session, ok, err := c.store.GetSession(ctx, sessionID)
 	if err != nil {
 		return err
@@ -217,7 +219,7 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 		if c.codexDiscoveryStillPending(signal.Event, signal.TranscriptPath, mainPath) {
 			sourceErrorCode = domain.UsageErrorSourceDiscoveryPending
 		}
-		if _, err := c.store.UpdateUsageBindingState(ctx, binding.ID, state, sourceErrorCode, now); err != nil {
+		if _, err := c.store.UpdateUsageBindingErrorCode(ctx, binding.ID, sourceErrorCode, now); err != nil {
 			return err
 		}
 	} else {
@@ -279,6 +281,9 @@ func finalizingEvent(event string) bool {
 // BackfillActive discovers transcript files only for live/resumable AO
 // sessions. It deliberately does not import terminated session history.
 func (c *Collector) BackfillActive(ctx context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	sessions, err := c.store.ListAllSessions(ctx)
 	if err != nil {
 		return err
@@ -371,6 +376,9 @@ func (c *Collector) backfillSession(ctx context.Context, session domain.SessionR
 // A negative limit reconciles every eligible binding; zero uses the bounded
 // default.
 func (c *Collector) ReconcileSources(ctx context.Context, limit int64) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if limit == 0 {
 		limit = defaultDiscoveryLimit
 	}
@@ -647,15 +655,15 @@ func (c *Collector) validateSourcePath(harness domain.AgentHarness, path string)
 		return "", "", 0, errors.New(domain.UsageErrorArtifactPathRejected)
 	}
 	if !filepath.IsAbs(path) || strings.ToLower(filepath.Ext(path)) != ".jsonl" {
-		return "", "", 0, fmt.Errorf("%s: %w", path, errors.New(domain.UsageErrorArtifactPathRejected))
+		return "", "", 0, errors.New(domain.UsageErrorArtifactPathRejected)
 	}
 	resolved, err := filepath.EvalSymlinks(filepath.Clean(path))
 	if err != nil {
-		return "", "", 0, fmt.Errorf("%s: %w", path, err)
+		return "", "", 0, errors.New(domain.UsageErrorArtifactMissing)
 	}
 	info, err := os.Stat(resolved)
 	if err != nil || !info.Mode().IsRegular() {
-		return "", "", 0, fmt.Errorf("%s: %w", path, errors.New(domain.UsageErrorArtifactMissing))
+		return "", "", 0, errors.New(domain.UsageErrorArtifactMissing)
 	}
 	roots := c.allowedRoots(harness)
 	allowed := false
@@ -674,7 +682,7 @@ func (c *Collector) validateSourcePath(harness domain.AgentHarness, path string)
 		}
 	}
 	if !allowed {
-		return "", "", 0, fmt.Errorf("%s: %w", path, errors.New(domain.UsageErrorArtifactPathRejected))
+		return "", "", 0, errors.New(domain.UsageErrorArtifactPathRejected)
 	}
 	identity, err := SourceIdentity(resolved)
 	if err != nil {
@@ -785,26 +793,18 @@ func boundedUsageMetadata(value string) string {
 	return value
 }
 
-// SourceIdentity combines the filesystem's stable file id with the provider's
-// first record. The file id distinguishes replacements that happen to begin
-// with the same native session metadata, while the record hash defends against
-// unsupported filesystems reusing an id.
+// SourceIdentity returns the filesystem's stable file id. Transcript contents
+// are append-only and therefore cannot participate in identity without making a
+// newly created or partially written first record look like file replacement.
 func SourceIdentity(path string) (string, error) {
 	file, err := os.Open(path) //nolint:gosec // validated provider-owned path.
 	if err != nil {
-		return "", err
+		return "", errors.New(domain.UsageErrorSourceReadFailed)
 	}
 	defer func() { _ = file.Close() }()
 	fileID, err := sourceFileID(file)
 	if err != nil {
-		return "", err
+		return "", errors.New(domain.UsageErrorSourceReadFailed)
 	}
-	reader := bufio.NewReaderSize(file, sourceIdentityRecordBytes)
-	first, err := reader.ReadSlice('\n')
-	if err != nil && !errors.Is(err, bufio.ErrBufferFull) && !errors.Is(err, io.EOF) {
-		if len(first) == 0 {
-			return "", err
-		}
-	}
-	return fmt.Sprintf("%s:sha256:%x", fileID, sha256.Sum256(first)), nil
+	return fileID, nil
 }

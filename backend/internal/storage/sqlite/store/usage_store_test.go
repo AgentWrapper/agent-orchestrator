@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -106,6 +107,66 @@ func TestUsageBindingAndSourceIdempotency(t *testing.T) {
 	}
 	if len(bindings) != 1 || len(sources) != 1 || len(aggregates) != 0 {
 		t.Fatalf("rows = bindings:%d sources:%d aggregates:%d, want 1/1/0", len(bindings), len(sources), len(aggregates))
+	}
+}
+
+func TestUsageBindingUpsertDoesNotRegressSettledLifecycle(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	sess := seedUsageSession(t, s, domain.HarnessCodex)
+	now := time.Unix(1700000000, 0).UTC()
+	binding, err := s.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
+		SessionID:     sess.ID,
+		Harness:       sess.Harness,
+		NativeRootID:  "root-thread",
+		State:         domain.UsageBindingFinalizing,
+		LastErrorCode: "finalizing-warning",
+		FirstSeenAt:   now,
+		LastSeenAt:    now,
+		UpdatedAt:     now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
+		SessionID:    sess.ID,
+		Harness:      sess.Harness,
+		NativeRootID: "root-thread",
+		State:        domain.UsageBindingActive,
+		FirstSeenAt:  now,
+		LastSeenAt:   now.Add(time.Second),
+		UpdatedAt:    now.Add(time.Second),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != binding.ID || got.State != domain.UsageBindingFinalizing || got.LastErrorCode != "finalizing-warning" {
+		t.Fatalf("stale upsert regressed binding: %+v", got)
+	}
+}
+
+func TestInsertUsageSourceErrorRedactsArtifactPath(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	sess := seedUsageSession(t, s, domain.HarnessCodex)
+	now := time.Unix(1700000000, 0).UTC()
+	source := seedUsageSource(t, s, sess, now)
+	secretPath := "/private/transcripts/customer-session.jsonl"
+
+	_, err := s.InsertUsageSource(ctx, domain.UsageSourceRecord{
+		BindingID:     source.BindingID,
+		Kind:          domain.UsageSourceCodexRollout,
+		ArtifactPath:  secretPath,
+		ParserVersion: "",
+		State:         domain.UsageSourcePending,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	})
+	if err == nil {
+		t.Fatal("expected invalid source insert to fail")
+	}
+	if strings.Contains(err.Error(), secretPath) {
+		t.Fatalf("store error exposed artifact path: %v", err)
 	}
 }
 
@@ -214,10 +275,24 @@ func TestApplyUsageChunkRejectsConflictsAndPreservesCursor(t *testing.T) {
 	}
 
 	conflict := usageEvent("event-1", "different-hash", now, domain.UsageTokenMetrics{InputTokens: 11, UncachedInputTokens: 11, OutputTokens: 1}, nil)
-	if _, err := s.ApplyUsageChunk(ctx, source.ID, 50, domain.SourceCursorState{ByteOffset: 80, State: domain.UsageSourceActive, UpdatedAt: now}, []domain.ModelUsageEvent{conflict}); !errors.Is(err, domain.ErrUsageSourceEventConflict) {
+	result, err := s.ApplyUsageChunk(ctx, source.ID, 50, domain.SourceCursorState{ByteOffset: 80, State: domain.UsageSourceActive, UpdatedAt: now}, []domain.ModelUsageEvent{
+		usageEvent("event-2", "hash-2", now, domain.UsageTokenMetrics{InputTokens: 4, UncachedInputTokens: 4, OutputTokens: 1}, nil),
+		conflict,
+	})
+	if !errors.Is(err, domain.ErrUsageSourceEventConflict) {
 		t.Fatalf("conflict err = %v, want ErrUsageSourceEventConflict", err)
 	}
+	if result.InsertedEvents != 0 || result.DuplicateEvents != 0 {
+		t.Fatalf("rolled-back result = %+v, want zero counters", result)
+	}
 	assertUsageSourceOffset(t, s, source.ID, 50)
+	aggregates, err := s.ListUsageModelAggregates(ctx, sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(aggregates) != 1 || aggregates[0].EventCount != 1 {
+		t.Fatalf("rolled-back chunk persisted events: %+v", aggregates)
+	}
 
 	bad := usageEvent("event-2", "hash-2", now, domain.UsageTokenMetrics{
 		InputTokens:         10,

@@ -598,11 +598,15 @@ type fakeUsageFinalizer struct {
 	calls         int
 	sawTerminated bool
 	err           error
+	onFinalize    func(domain.SessionID) error
 }
 
 func (f *fakeUsageFinalizer) FinalizeSession(_ context.Context, id domain.SessionID) error {
 	f.calls++
 	f.sawTerminated = f.store.sessions[id].IsTerminated
+	if f.onFinalize != nil {
+		return f.onFinalize(id)
+	}
 	return f.err
 }
 
@@ -626,6 +630,26 @@ func TestMarkTerminatedFinalizesUsageBeforeLifecycleTransition(t *testing.T) {
 	}
 	if finalizer.calls != 1 {
 		t.Fatalf("already terminated session finalized %d times, want once", finalizer.calls)
+	}
+}
+
+func TestMarkTerminatedDoesNotTerminateNewRuntimeGeneration(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Metadata.RuntimeLaunchID = "launch-old"
+	st.sessions[rec.ID] = rec
+	finalizer := &fakeUsageFinalizer{store: st}
+	finalizer.onFinalize = func(id domain.SessionID) error {
+		return m.MarkSpawned(ctx, id, domain.SessionMetadata{RuntimeLaunchID: "launch-new"})
+	}
+	m.SetUsageFinalizer(finalizer)
+
+	if err := m.MarkTerminated(ctx, rec.ID); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions[rec.ID]
+	if got.IsTerminated || got.Metadata.RuntimeLaunchID != "launch-new" {
+		t.Fatalf("stale termination changed new runtime generation: %+v", got)
 	}
 }
 

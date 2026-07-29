@@ -884,6 +884,34 @@ func (q *Queries) ReactivateUsageSource(ctx context.Context, arg ReactivateUsage
 	return result.RowsAffected()
 }
 
+const updateUsageBindingErrorCode = `-- name: UpdateUsageBindingErrorCode :execrows
+UPDATE usage_bindings SET
+    last_error_code = ?,
+    last_seen_at = ?,
+    updated_at = ?
+WHERE id = ?
+`
+
+type UpdateUsageBindingErrorCodeParams struct {
+	LastErrorCode string
+	LastSeenAt    time.Time
+	UpdatedAt     time.Time
+	ID            int64
+}
+
+func (q *Queries) UpdateUsageBindingErrorCode(ctx context.Context, arg UpdateUsageBindingErrorCodeParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateUsageBindingErrorCode,
+		arg.LastErrorCode,
+		arg.LastSeenAt,
+		arg.UpdatedAt,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const updateUsageBindingState = `-- name: UpdateUsageBindingState :execrows
 UPDATE usage_bindings SET
     state = ?,
@@ -990,8 +1018,18 @@ ON CONFLICT (session_id, harness, native_root_id) DO UPDATE SET
         WHEN excluded.source_cli_version <> '' THEN excluded.source_cli_version
         ELSE usage_bindings.source_cli_version
     END,
-    state = excluded.state,
-    last_error_code = excluded.last_error_code,
+    state = CASE
+        WHEN usage_bindings.state IN ('finalizing', 'complete', 'partial')
+          AND excluded.state IN ('discovering', 'active')
+        THEN usage_bindings.state
+        ELSE excluded.state
+    END,
+    last_error_code = CASE
+        WHEN usage_bindings.state IN ('finalizing', 'complete', 'partial')
+          AND excluded.state IN ('discovering', 'active')
+        THEN usage_bindings.last_error_code
+        ELSE excluded.last_error_code
+    END,
     last_seen_at = excluded.last_seen_at,
     updated_at = excluded.updated_at
 RETURNING id, session_id, harness, native_root_id, initial_model_id, source_cli_version, state, last_error_code, first_seen_at, last_seen_at, updated_at

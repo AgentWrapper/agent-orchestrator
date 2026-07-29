@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -74,6 +75,65 @@ func TestCollectorRegistersFinalizesAndReactivatesSource(t *testing.T) {
 	sources, _ = store.ListUsageSourcesForBinding(context.Background(), bindings[0].ID)
 	if sources[0].State != domain.UsageSourceActive {
 		t.Fatalf("reactivated source state = %s", sources[0].State)
+	}
+}
+
+func TestCollectorSerializesFinalizationAgainstEarlierHook(t *testing.T) {
+	store := collectorTestStore(t)
+	session := collectorTestSession(t, store, domain.HarnessCodex, "native-serialized", false)
+	root := filepath.Join(t.TempDir(), "sessions")
+	path := filepath.Join(root, "rollout-native-serialized.jsonl")
+	writeUsageFixture(t, path, `{"type":"session_meta"}`+"\n")
+
+	collector := NewCollector(store, SourceRoots{CodexSessions: root}, nil)
+	now := time.Unix(1700000000, 0).UTC()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var first sync.Once
+	collector.now = func() time.Time {
+		block := false
+		first.Do(func() {
+			block = true
+			close(entered)
+		})
+		if block {
+			<-release
+		}
+		return now
+	}
+
+	ordinaryDone := make(chan error, 1)
+	go func() {
+		ordinaryDone <- collector.RecordHook(context.Background(), session.ID, HookSignal{
+			Event:           "notification",
+			NativeSessionID: "native-serialized",
+			TranscriptPath:  path,
+		})
+	}()
+	<-entered
+
+	finalDone := make(chan error, 1)
+	go func() {
+		finalDone <- collector.RecordHook(context.Background(), session.ID, HookSignal{
+			Event:           "process-exited",
+			NativeSessionID: "native-serialized",
+			TranscriptPath:  path,
+		})
+	}()
+	close(release)
+	if err := <-ordinaryDone; err != nil {
+		t.Fatalf("ordinary hook: %v", err)
+	}
+	if err := <-finalDone; err != nil {
+		t.Fatalf("final hook: %v", err)
+	}
+
+	binding, ok, err := store.GetUsageBinding(context.Background(), session.ID, session.Harness, "native-serialized")
+	if err != nil || !ok {
+		t.Fatalf("binding ok=%v err=%v", ok, err)
+	}
+	if binding.State != domain.UsageBindingFinalizing {
+		t.Fatalf("binding state=%s, want finalizing", binding.State)
 	}
 }
 
@@ -702,6 +762,44 @@ func TestSourceIdentityChangesWhenFileIsReplacedWithSameFirstRecord(t *testing.T
 	}
 	if first == second {
 		t.Fatalf("replacement identity = %q, want a new file generation", second)
+	}
+}
+
+func TestSourceIdentityDoesNotChangeAsFirstRecordIsWritten(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "session.jsonl")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	emptyIdentity, err := SourceIdentity(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"type":"session_meta"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writtenIdentity, err := SourceIdentity(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if emptyIdentity != writtenIdentity {
+		t.Fatalf("identity changed while first record was written: %q != %q", emptyIdentity, writtenIdentity)
+	}
+}
+
+func TestValidateSourcePathRedactsArtifactPath(t *testing.T) {
+	allowedRoot := t.TempDir()
+	secretRoot := t.TempDir()
+	secretPath := filepath.Join(secretRoot, "private-session.jsonl")
+	writeUsageFixture(t, secretPath, `{"type":"session_meta"}`+"\n")
+	collector := NewCollector(nil, SourceRoots{CodexSessions: allowedRoot}, nil)
+
+	_, _, _, err := collector.validateSourcePath(domain.HarnessCodex, secretPath)
+	if err == nil {
+		t.Fatal("expected path outside provider root to be rejected")
+	}
+	if strings.Contains(err.Error(), secretPath) {
+		t.Fatalf("validation error exposed artifact path: %v", err)
 	}
 }
 
