@@ -18,6 +18,8 @@ import (
 // branches on; unknown values flow through unmodified).
 type SandboxState string
 
+// Daytona sandbox states: steady (started/stopped/archived/paused/error/
+// destroyed) plus the transitional states Transitional() reports.
 const (
 	StateCreating        SandboxState = "creating"
 	StateStarting        SandboxState = "starting"

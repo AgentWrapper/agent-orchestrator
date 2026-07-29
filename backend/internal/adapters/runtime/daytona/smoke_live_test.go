@@ -17,6 +17,7 @@ package daytona
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -124,7 +125,7 @@ func TestLive_ClientSandboxLifecycle(t *testing.T) {
 		if n > 0 {
 			seen.Write(buf[:n])
 		}
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
