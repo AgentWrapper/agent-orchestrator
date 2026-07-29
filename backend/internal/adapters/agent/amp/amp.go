@@ -115,6 +115,9 @@ func (p *Plugin) PromptReadinessHints(ctx context.Context, _ ports.LaunchConfig)
 // GetRestoreCommand rebuilds the argv that continues an existing Amp session
 // when plugin-derived native session metadata is available. Until that metadata
 // exists, ok is false and callers fall back to fresh launch behavior.
+//
+// cfg.Config.Model is intentionally not forwarded here either, for the same
+// reason it is dropped in GetLaunchCommand above.
 func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig) (cmd []string, ok bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
