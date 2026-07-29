@@ -277,6 +277,7 @@ describe("global board first launch", () => {
 		lastShell = {
 			daemonStatus: { state: "stopped", code: "exited" } as ShellContextValue["daemonStatus"],
 			workspaceStartupState: "loading",
+			workspaceLive: false,
 			createProject: createProjectMock,
 			initializeProjectRepository: initializeProjectRepositoryMock,
 		};

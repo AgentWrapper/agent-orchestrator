@@ -13,6 +13,7 @@ type WorkspaceSnapshot = {
 
 type ReadableStorage = Pick<Storage, "getItem">;
 type WritableStorage = Pick<Storage, "setItem">;
+type IdleCallbackWindow = Window & Partial<Pick<Window, "requestIdleCallback" | "cancelIdleCallback">>;
 
 function browserStorage(): Storage | null {
 	if (typeof window === "undefined") return null;
@@ -252,20 +253,49 @@ export function startWorkspaceSnapshotPersistence(
 	storage: WritableStorage | null = browserStorage(),
 ): () => void {
 	let lastSavedData = queryClient.getQueryData<WorkspaceSummary[]>(workspaceQueryKey);
+	let pendingData: WorkspaceSummary[] | undefined;
+	let cancelScheduledWrite: (() => void) | undefined;
 
-	const persistCurrent = () => {
-		const workspaces = queryClient.getQueryData<WorkspaceSummary[]>(workspaceQueryKey);
+	const discardPending = () => {
+		cancelScheduledWrite?.();
+		cancelScheduledWrite = undefined;
+		pendingData = undefined;
+	};
+
+	const flush = (workspaces = pendingData ?? queryClient.getQueryData<WorkspaceSummary[]>(workspaceQueryKey)) => {
+		discardPending();
 		if (workspaces === undefined) return;
 		writeWorkspaceSnapshot(workspaces, storage);
 		lastSavedData = workspaces;
 	};
 
+	const schedule = (workspaces: WorkspaceSummary[]) => {
+		pendingData = workspaces;
+		if (cancelScheduledWrite) return;
+
+		const idleWindow = typeof window === "undefined" ? undefined : (window as IdleCallbackWindow);
+		if (idleWindow?.requestIdleCallback && idleWindow.cancelIdleCallback) {
+			const handle = idleWindow.requestIdleCallback(() => flush(), { timeout: 500 });
+			cancelScheduledWrite = () => idleWindow.cancelIdleCallback?.(handle);
+			return;
+		}
+
+		const handle = setTimeout(() => flush(), 0);
+		cancelScheduledWrite = () => clearTimeout(handle);
+	};
+
+	const persistCurrent = () => flush();
+
 	const unsubscribe = queryClient.getQueryCache().subscribe((event) => {
 		if (!isWorkspaceQuery(event.query.queryKey)) return;
 		const workspaces = event.query.state.data;
-		if (!Array.isArray(workspaces) || workspaces === lastSavedData) return;
-		writeWorkspaceSnapshot(workspaces as WorkspaceSummary[], storage);
-		lastSavedData = workspaces as WorkspaceSummary[];
+		if (!Array.isArray(workspaces)) return;
+		if (workspaces === lastSavedData) {
+			discardPending();
+			return;
+		}
+		if (workspaces === pendingData) return;
+		schedule(workspaces as WorkspaceSummary[]);
 	});
 
 	if (typeof window !== "undefined") {
@@ -275,6 +305,7 @@ export function startWorkspaceSnapshotPersistence(
 
 	return () => {
 		unsubscribe();
+		flush();
 		if (typeof window !== "undefined") {
 			window.removeEventListener("beforeunload", persistCurrent);
 			window.removeEventListener("pagehide", persistCurrent);

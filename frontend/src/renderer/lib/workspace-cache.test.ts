@@ -1,5 +1,5 @@
 import { QueryClient } from "@tanstack/react-query";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import type { WorkspaceSummary } from "../types/workspace";
 import {
@@ -46,6 +46,10 @@ describe("workspace snapshot cache", () => {
 
 	beforeEach(() => {
 		storage = memoryStorage();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
 	});
 
 	it("round-trips a versioned workspace snapshot", () => {
@@ -122,15 +126,34 @@ describe("workspace snapshot cache", () => {
 	});
 
 	it("persists query changes, including a real empty daemon response", () => {
+		vi.useFakeTimers();
 		const queryClient = new QueryClient();
 		const stop = startWorkspaceSnapshotPersistence(queryClient, storage);
 
 		queryClient.setQueryData(workspaceQueryKey, workspaces);
+		expect(readWorkspaceSnapshot(storage)).toBeNull();
+		vi.runOnlyPendingTimers();
 		expect(readWorkspaceSnapshot(storage)?.workspaces).toEqual(workspaces);
 
 		queryClient.setQueryData(workspaceQueryKey, []);
+		vi.runOnlyPendingTimers();
 		expect(readWorkspaceSnapshot(storage)?.workspaces).toEqual([]);
 
+		stop();
+	});
+
+	it("persists the rolled-back state instead of a pending optimistic update", () => {
+		vi.useFakeTimers();
+		const queryClient = new QueryClient();
+		queryClient.setQueryData(workspaceQueryKey, workspaces);
+		const stop = startWorkspaceSnapshotPersistence(queryClient, storage);
+		const optimistic = [{ ...workspaces[0]!, name: "Optimistic name" }];
+
+		queryClient.setQueryData(workspaceQueryKey, optimistic);
+		queryClient.setQueryData(workspaceQueryKey, workspaces);
+		vi.runOnlyPendingTimers();
+
+		expect(readWorkspaceSnapshot(storage)?.workspaces).toEqual(workspaces);
 		stop();
 	});
 

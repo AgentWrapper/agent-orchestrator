@@ -63,6 +63,17 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 
 	if (projectsError || sessionsError) throw projectsError ?? sessionsError;
 
+	const sessions = sessionsData?.sessions ?? [];
+	const sessionsByProject = new Map<string, typeof sessions>();
+	for (const session of sessions) {
+		const projectSessions = sessionsByProject.get(session.projectId);
+		if (projectSessions) {
+			projectSessions.push(session);
+		} else {
+			sessionsByProject.set(session.projectId, [session]);
+		}
+	}
+
 	return (projectsData?.projects ?? []).map((project) => {
 		const kind = toProjectKind(project.kind);
 		return {
@@ -71,38 +82,36 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 			kind,
 			path: project.path,
 			orchestratorAgent: project.orchestratorAgent ? toAgentProvider(project.orchestratorAgent) : undefined,
-			sessions: (sessionsData?.sessions ?? [])
-				.filter((session) => session.projectId === project.id)
-				.map((session) => {
-					const status = toSessionStatus(session.status, session.isTerminated);
-					const scmStatus = session.scmStatus ? toSessionStatus(session.scmStatus) : undefined;
-					const activity = toSessionActivity(session.activity);
-					if (status === "unknown") reportUnknownSessionField("status", session.status);
-					if (!activity || activity.state === "unknown") {
-						reportUnknownSessionField("activity", session.activity?.state);
-					}
-					return {
-						id: session.id,
-						terminalHandleId: session.terminalHandleId,
-						workspaceId: project.id,
-						workspaceName: project.name,
-						title: session.displayName ?? session.issueId ?? session.id,
-						issueId: session.issueId,
-						provider: toAgentProvider(session.harness),
-						kind: session.kind === "orchestrator" ? "orchestrator" : session.kind === "worker" ? "worker" : undefined,
-						branch: session.branch || undefined,
-						status,
-						scmStatus,
-						isTerminated: session.isTerminated,
-						terminateOnPrMerge: session.terminateOnPrMerge ?? false,
-						createdAt: session.createdAt,
-						updatedAt: session.updatedAt,
-						activity,
-						previewUrl: session.previewUrl,
-						previewRevision: session.previewRevision,
-						prs: (session.prs ?? []).map(toPullRequestFacts),
-					};
-				}),
+			sessions: (sessionsByProject.get(project.id) ?? []).map((session) => {
+				const status = toSessionStatus(session.status, session.isTerminated);
+				const scmStatus = session.scmStatus ? toSessionStatus(session.scmStatus) : undefined;
+				const activity = toSessionActivity(session.activity);
+				if (status === "unknown") reportUnknownSessionField("status", session.status);
+				if (!activity || activity.state === "unknown") {
+					reportUnknownSessionField("activity", session.activity?.state);
+				}
+				return {
+					id: session.id,
+					terminalHandleId: session.terminalHandleId,
+					workspaceId: project.id,
+					workspaceName: project.name,
+					title: session.displayName ?? session.issueId ?? session.id,
+					issueId: session.issueId,
+					provider: toAgentProvider(session.harness),
+					kind: session.kind === "orchestrator" ? "orchestrator" : session.kind === "worker" ? "worker" : undefined,
+					branch: session.branch || undefined,
+					status,
+					scmStatus,
+					isTerminated: session.isTerminated,
+					terminateOnPrMerge: session.terminateOnPrMerge ?? false,
+					createdAt: session.createdAt,
+					updatedAt: session.updatedAt,
+					activity,
+					previewUrl: session.previewUrl,
+					previewRevision: session.previewRevision,
+					prs: (session.prs ?? []).map(toPullRequestFacts),
+				};
+			}),
 		};
 	});
 }

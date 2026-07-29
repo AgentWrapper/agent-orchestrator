@@ -74,9 +74,11 @@ const shellMocks = vi.hoisted(() => {
 		getKeybindings: vi.fn(async () => ({})),
 		setKeybindings: vi.fn(async (overrides: KeybindingOverrides) => overrides),
 		setKeybindingRecording: vi.fn(async () => undefined),
+		refreshDaemonStatus: vi.fn(),
 		queryClient: {
 			ensureQueryData: vi.fn(),
 			fetchQuery: vi.fn(),
+			getQueryData: vi.fn(),
 			getQueryState: vi.fn(() => ({ dataUpdatedAt: 0 })),
 			getQueryCache: vi.fn(() => ({
 				subscribe: (
@@ -136,6 +138,10 @@ vi.mock("../hooks/useWorkspaceQuery", () => ({
 
 vi.mock("../hooks/useDaemonStatus", () => ({
 	useDaemonStatus: () => shellMocks.state.daemonStatus,
+}));
+
+vi.mock("../lib/daemon-status", () => ({
+	refreshDaemonStatus: shellMocks.refreshDaemonStatus,
 }));
 
 // The shell layout opens standalone terminals; this suite only covers the
@@ -219,6 +225,9 @@ vi.mock("../components/Sidebar", async () => {
 
 import { Route } from "../routes/_shell";
 const ShellRoute = Route.options.component as ComponentType;
+const shellLoader = Route.options.loader as unknown as (input: {
+	context: { queryClient: typeof shellMocks.queryClient };
+}) => Promise<WorkspaceSummary[]>;
 
 const workspaces = [
 	{
@@ -281,7 +290,9 @@ beforeEach(() => {
 	shellMocks.onNextSessionShortcut.mockClear();
 	shellMocks.onFocusTerminalShortcut.mockClear();
 	shellMocks.queryClient.fetchQuery.mockReset().mockResolvedValue([]);
+	shellMocks.queryClient.getQueryData.mockReset().mockReturnValue(undefined);
 	shellMocks.queryClient.invalidateQueries.mockReset();
+	shellMocks.refreshDaemonStatus.mockReset().mockResolvedValue(shellMocks.state.daemonStatus);
 	shellMocks.state.newSessionListener = undefined;
 	shellMocks.state.keyboardShortcutsListener = undefined;
 	shellMocks.state.openSettingsListener = undefined;
@@ -307,6 +318,17 @@ beforeEach(() => {
 		isSidebarOpen: true,
 		newTaskRequest: null,
 		newShellTerminalNonce: 0,
+	});
+});
+
+describe("shell loader", () => {
+	it("returns a restored snapshot without waiting for daemon status", async () => {
+		shellMocks.queryClient.getQueryData.mockReturnValue(workspaces);
+		shellMocks.refreshDaemonStatus.mockReturnValue(new Promise(() => {}));
+
+		await expect(shellLoader({ context: { queryClient: shellMocks.queryClient } })).resolves.toBe(workspaces);
+		expect(shellMocks.refreshDaemonStatus).toHaveBeenCalledOnce();
+		expect(shellMocks.queryClient.ensureQueryData).not.toHaveBeenCalled();
 	});
 });
 

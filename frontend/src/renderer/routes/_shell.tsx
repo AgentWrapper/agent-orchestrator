@@ -47,11 +47,14 @@ export const Route = createFileRoute("/_shell")({
 	// children); pairs with the router's defaultPreload: "intent" so a hovered
 	// nav target is warm before the click.
 	loader: async ({ context }) => {
-		const status = await refreshDaemonStatus().catch(() => undefined);
 		const cached = context.queryClient.getQueryData<WorkspaceSummary[]>(workspaceQueryKey);
 		// A restored snapshot should paint immediately. The shell invalidates it
 		// in the background as soon as the daemon reports a trusted ready port.
-		if (cached !== undefined) return cached;
+		if (cached !== undefined) {
+			void refreshDaemonStatus().catch(() => undefined);
+			return cached;
+		}
+		const status = await refreshDaemonStatus().catch(() => undefined);
 		if (usesPreviewWorkspaceData || (status?.state === "ready" && status.port && hasTrustedApiBaseUrl())) {
 			return context.queryClient.ensureQueryData(workspaceQueryOptions);
 		}

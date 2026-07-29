@@ -103,6 +103,7 @@ describe("SessionsBoard", () => {
 		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 		const shell: ShellContextValue = {
 			daemonStatus: { state: "ready", port: 7777 } as ShellContextValue["daemonStatus"],
+			workspaceStartupState: "error",
 			workspaceLive: false,
 			createProject: vi.fn(),
 			initializeProjectRepository: vi.fn(),
