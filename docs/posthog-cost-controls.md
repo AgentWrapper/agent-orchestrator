@@ -65,6 +65,57 @@ events to well under 250k, before organic adoption of current builds. That is a
 10x+ reduction while keeping renderer DAU, current v2 CLI DAU, current v2
 command adoption, and reliability events.
 
+## Abuse Controls
+
+The PostHog project token is public in shipped desktop apps. Treat it like a
+write-only routing key, not as an abuse boundary: an attacker can call
+PostHog's capture endpoint directly with that token and bypass every
+client-side or daemon-side limiter in AO.
+
+Use layered controls:
+
+1. Set PostHog billing limits for Product Analytics, Error Tracking, and
+   Session Replay. This is the hard stop that prevents a surprise bill if a
+   token is abused or a new event loops unexpectedly.
+2. Keep the ingestion drop rules above enabled. They block the known legacy
+   firehose before events are stored or billed.
+3. Add a PostHog transformation for emergency abuse filtering. The
+   transformation should return `null` for obviously invalid payloads, unknown
+   event families, or event names outside AO's allowlist. Dropped events are
+   unrecoverable, so do not use this for normal sampling of DAU events.
+4. Keep current-client caps in AO:
+   - renderer captures are bounded per event name per minute and per day
+   - daemon remote exports are bounded per event name per minute and per day
+   - burst-prone daemon failures are aggregated before export
+
+Those steps protect cost from normal bugs and known old clients, but they do
+not fully protect a public project token from deliberate abuse.
+
+The stronger standard pattern is to send telemetry through an AO-owned
+collection proxy instead of sending directly to PostHog:
+
+1. Ship future apps with `VITE_AO_POSTHOG_HOST` and
+   `AO_TELEMETRY_POSTHOG_HOST` pointing at an AO telemetry collector, not
+   directly at `https://us.i.posthog.com`.
+2. Put edge rate limits in front of the collector:
+   - per source IP
+   - per install ID / `distinct_id`
+   - per event name
+   - per request body size
+3. Validate the event allowlist and required properties at the collector.
+4. Drop or sample low-value diagnostic events at the collector before they
+   reach PostHog.
+5. Forward accepted events to PostHog with the real project token stored only
+   in collector configuration.
+6. Rotate the PostHog project token after the collector path is live. Keep
+   old-token ingestion rules restrictive so old apps can still contribute
+   renderer DAU where needed, but cannot burn spend through CLI automation.
+
+Do not rely on IP limiting alone. Many real users can share one NAT or VPN IP,
+and one attacker can rotate IPs. IP limits are useful as an edge backstop, but
+the primary product-specific limits should be per install ID, per event name,
+and per time window.
+
 ## Dashboard Migration
 
 For current DAU, use this active-user event set:
