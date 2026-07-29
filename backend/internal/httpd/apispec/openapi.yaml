@@ -899,6 +899,11 @@ paths:
         schema:
           description: PR number.
           type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolveCommentsRequest'
       responses:
         "200":
           content:
@@ -3085,6 +3090,13 @@ components:
       - ok
       - sessionId
       - displayName
+      type: object
+    ResolveCommentsRequest:
+      properties:
+        commentIds:
+          items:
+            type: string
+          type: array
       type: object
     ResolveCommentsResponse:
       properties:

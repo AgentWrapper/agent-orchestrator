@@ -92,9 +92,14 @@ func Build() ([]byte, error) {
 		}
 		if op.reqBody != nil {
 			// AddReqStructure leaves requestBody.required absent, which
-			// OpenAPI reads as optional. These bodies are mandatory, so force
-			// it — otherwise validators/generators treat the body as skippable.
-			oc.AddReqStructure(op.reqBody, openapi.WithCustomize(markRequestBodyRequired))
+			// OpenAPI reads as optional. Most of these bodies are mandatory, so
+			// force it — otherwise validators/generators treat the body as
+			// skippable. Ops that genuinely accept an empty body opt out.
+			if op.optionalReqBody {
+				oc.AddReqStructure(op.reqBody)
+			} else {
+				oc.AddReqStructure(op.reqBody, openapi.WithCustomize(markRequestBodyRequired))
+			}
 		}
 		for _, resp := range op.resps {
 			opts := []openapi.ContentOption{openapi.WithHTTPStatus(resp.status)}
@@ -319,8 +324,11 @@ type operation struct {
 	tag                       string
 	pathParams                []any // path/query param containers (e.g. ProjectIDParam)
 	reqBody                   any   // JSON request body struct, nil when the op takes none
-	resps                     []respUnit
-	contentTypes              map[int]string // optional non-JSON response content types by status
+	// optionalReqBody declares the body without marking it required, for the
+	// handlers that accept an empty body as a meaningful default.
+	optionalReqBody bool
+	resps           []respUnit
+	contentTypes    map[int]string // optional non-JSON response content types by status
 }
 
 func operations() []operation {
@@ -1043,7 +1051,11 @@ func prOperations() []operation {
 			method: http.MethodPost, path: "/api/v1/prs/{id}/resolve-comments", id: "resolveComments", tag: "prs",
 			summary:    "Resolve review threads on a pull request",
 			pathParams: []any{controllers.PRIDParam{}},
-			reqBody:    nil, // body is optional: omitting it resolves all unresolved threads
+			// Declared but optional: omitting the body resolves every unresolved
+			// thread, while sending ids resolves only those. Leaving it undeclared
+			// meant generated clients could not target individual threads at all.
+			reqBody:         controllers.ResolveCommentsRequest{},
+			optionalReqBody: true,
 			resps: []respUnit{
 				{http.StatusOK, controllers.ResolveCommentsResponse{}},
 				{http.StatusNotFound, envelope.APIError{}},

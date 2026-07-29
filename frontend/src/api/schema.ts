@@ -1142,6 +1142,9 @@ export interface components {
             ok: boolean;
             sessionId: string;
         };
+        ResolveCommentsRequest: {
+            commentIds?: string[];
+        };
         ResolveCommentsResponse: {
             ok: boolean;
             resolved: number;
@@ -2658,7 +2661,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ResolveCommentsRequest"];
+            };
+        };
         responses: {
             /** @description OK */
             200: {
