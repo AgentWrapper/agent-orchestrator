@@ -47,9 +47,10 @@ type RepoRemote struct {
 type WorkspaceOptions struct {
 	// Client talks to Daytona. Required.
 	Client Client
-	// Snapshot is the Daytona snapshot sandboxes are created from. It must have
-	// tmux, git, and the agent harness (agent CLIs + `ao` Linux binary)
-	// preinstalled; see docs/cloud/daytona-runtime.md. Required for Create.
+	// Snapshot is the Daytona snapshot sandboxes are created from. Production
+	// snapshots must have tmux, git, and the agent harness (agent CLIs + `ao`
+	// Linux binary) preinstalled; see docs/cloud/daytona-runtime.md. Empty
+	// falls back to Daytona's default snapshot (useful only for smoke tests).
 	Snapshot string
 	// Target picks the Daytona region ("us"/"eu"); empty uses the org default.
 	Target string
@@ -174,9 +175,6 @@ func (w *Workspace) Create(ctx context.Context, cfg ports.WorkspaceConfig) (port
 	name, err := sessionName(cfg.SessionID)
 	if err != nil {
 		return ports.WorkspaceInfo{}, err
-	}
-	if w.opts.Snapshot == "" {
-		return ports.WorkspaceInfo{}, errors.New("daytona workspace: snapshot is required to create sandboxes")
 	}
 	remote, err := w.opts.ResolveRepo(ctx, cfg)
 	if err != nil {
