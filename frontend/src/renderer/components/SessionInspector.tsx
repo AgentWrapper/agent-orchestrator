@@ -1139,18 +1139,17 @@ function ReviewPanel({
 		if (!terminalEnabled) return;
 		onOpenTerminal?.({ handleId: reviewerHandleId, harness });
 	};
-	// The two runs a PR's state already shows are not history; drop them so the
-	// control only offers passes you cannot otherwise see.
-	const shownRunIds = new Set(
-		openReviewStates.flatMap((state) => [state.latestRun?.id, state.previousRun?.id].filter(Boolean) as string[]),
-	);
-	const earlierRunsByPR = new Map<string, ReviewRunFacts[]>();
+	// Every recorded pass per PR, so each reviewer keeps its own tab. Falls back
+	// to the state's own runs against a daemon that predates the runs field.
+	const runsByPR = new Map<string, ReviewRunFacts[]>();
 	for (const run of runs) {
-		if (shownRunIds.has(run.id)) continue;
-		earlierRunsByPR.set(run.prUrl, [...(earlierRunsByPR.get(run.prUrl) ?? []), run]);
+		runsByPR.set(run.prUrl, [...(runsByPR.get(run.prUrl) ?? []), run]);
 	}
-	for (const [, list] of earlierRunsByPR) {
-		list.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+	if (runs.length === 0) {
+		for (const state of openReviewStates) {
+			const fallback = [state.latestRun, state.previousRun].filter(Boolean) as ReviewRunFacts[];
+			if (fallback.length > 0) runsByPR.set(state.prUrl, fallback);
+		}
 	}
 
 	const runDisabled =
@@ -1199,8 +1198,7 @@ function ReviewPanel({
 							meta={aoReviewMeta(reviewState)}
 							title={reviewState.title?.trim() || `PR #${reviewState.prNumber}`}
 						>
-							<AoReviewRow reviewState={reviewState} />
-							<ReviewHistory runs={earlierRunsByPR.get(reviewState.prUrl) ?? []} />
+							<ReviewRunTabs reviewState={reviewState} runs={runsByPR.get(reviewState.prUrl) ?? []} />
 						</ReviewDisclosure>
 					))
 				)}
@@ -1423,67 +1421,111 @@ function githubVerdict(verdict: string): { label: string; tone: "neutral" | "run
 }
 
 /**
- * Earlier passes for one PR, newest first, grouped by the reviewer that ran
- * them. Switching the agent otherwise loses the previous one's verdict: the
- * review state carries only the current and previous run, so a third pass pushes
- * the first out entirely.
+ * Every reviewer that has run against one PR, as a tab each.
+ *
+ * Switching the agent is only useful if you can compare, so each agent keeps its
+ * own tab with its passes newest-first, rather than the newest verdict burying
+ * whatever ran before it. A single reviewer shows no tabs — there is nothing to
+ * switch between.
  */
-function ReviewHistory({ runs }: { runs: ReviewRunFacts[] }) {
-	const [open, setOpen] = useState(false);
-	if (runs.length === 0) return null;
-
+function ReviewRunTabs({ reviewState, runs }: { reviewState: PRReviewState; runs: ReviewRunFacts[] }) {
 	const byHarness = new Map<string, ReviewRunFacts[]>();
-	for (const run of runs) {
+	for (const run of [...runs].sort((a, b) => b.createdAt.localeCompare(a.createdAt))) {
 		const harness = run.harness || "reviewer";
 		byHarness.set(harness, [...(byHarness.get(harness) ?? []), run]);
 	}
+	// Newest run first, so the agent you just ran leads.
+	const harnesses = [...byHarness.keys()];
+	const newest = harnesses[0] ?? "";
+	const [active, setActive] = useState(newest);
+	const [followed, setFollowed] = useState(newest);
+	// Running a new agent should land you on its tab rather than leaving you on
+	// whichever one you were reading. Synced during render, not in an effect, so
+	// there is no frame showing the stale tab.
+	if (newest !== followed) {
+		setFollowed(newest);
+		setActive(newest);
+	}
+	const selected = byHarness.has(active) ? active : newest;
+
+	// Before any run is recorded — or against a daemon that predates the run
+	// history — fall back to the state's own verdict.
+	if (harnesses.length === 0) {
+		return <AoReviewRow reviewState={reviewState} />;
+	}
+	// The harness behind the PR's current verdict keeps AoReviewRow, which is what
+	// demotes a verdict left behind by an earlier commit to "Previous:". Other
+	// tabs are plain run lists.
+	const currentHarness = (reviewState.latestRun ?? reviewState.previousRun)?.harness;
+	const body = (harness: string) =>
+		harness === currentHarness ? (
+			<AoReviewRow reviewState={reviewState} />
+		) : (
+			<ReviewRunList reviewState={reviewState} runs={byHarness.get(harness) ?? []} />
+		);
 
 	return (
-		<div className="flex flex-col gap-2">
-			<button
-				aria-expanded={open}
-				className="inline-flex items-center gap-1.5 self-start text-2xs font-medium text-passive transition-colors hover:text-foreground"
-				onClick={() => setOpen((current) => !current)}
-				type="button"
-			>
-				{open ? (
-					<ChevronDown aria-hidden="true" className="size-icon-2xs shrink-0" />
-				) : (
-					<ChevronRight aria-hidden="true" className="size-icon-2xs shrink-0" />
-				)}
-				{`Earlier ${runs.length === 1 ? "pass" : "passes"} (${runs.length})`}
-			</button>
-			{open ? (
-				<div className="flex flex-col gap-3">
-					{[...byHarness.entries()].map(([harness, harnessRuns]) => (
-						<div className="flex min-w-0 flex-col gap-1.5" key={harness}>
-							<span className="inline-flex min-w-0 items-center gap-1.5">
-								<AgentAvatar className="size-icon-sm" decorative provider={harness} />
-								<span className="truncate text-2xs font-medium text-foreground">{harness}</span>
-							</span>
-							{harnessRuns.map((run) => {
-								const verdict = runReviewVerdict(run);
-								const body = run.status === "cancelled" || run.status === "failed" ? "" : run.body?.trim();
-								return (
-									<div className="flex min-w-0 flex-col gap-1 pl-5" key={run.id}>
-										<span className="inline-flex min-w-0 items-center gap-2">
-											<VerdictBadge label={verdict.label} tone={verdict.tone} />
-											<span className="shrink-0 font-mono text-micro text-passive">
-												{formatTimeCompact(run.createdAt)}
-											</span>
-										</span>
-										{body ? (
-											<p className="m-0 line-clamp-3 whitespace-pre-wrap break-words text-micro leading-relaxed text-passive">
-												{body}
-											</p>
-										) : null}
-									</div>
-								);
-							})}
-						</div>
-					))}
-				</div>
-			) : null}
+		<div className="flex min-w-0 flex-col gap-2.5">
+			<div className="flex min-w-0 flex-wrap items-center gap-1" role="tablist" aria-label="Reviewers">
+				{harnesses.map((harness) => (
+					<button
+						aria-selected={harness === selected}
+						className={cn(
+							"inline-flex h-control-md min-w-0 items-center gap-1.5 rounded-md px-1.5 text-2xs font-medium transition-colors",
+							harness === selected
+								? "bg-interactive-active text-foreground"
+								: "text-passive hover:bg-interactive-hover hover:text-foreground",
+						)}
+						key={harness}
+						onClick={() => setActive(harness)}
+						role="tab"
+						type="button"
+					>
+						<AgentAvatar className="size-icon-sm" decorative provider={harness} />
+						<span className="truncate">{harness}</span>
+					</button>
+				))}
+			</div>
+			{body(selected)}
+		</div>
+	);
+}
+
+/** One reviewer's passes for a PR, newest first. */
+function ReviewRunList({ reviewState, runs }: { reviewState: PRReviewState; runs: ReviewRunFacts[] }) {
+	return (
+		<div className={cn("flex min-w-0 flex-col gap-3", reviewState.status === "ineligible" && "opacity-70")}>
+			{runs.map((run, index) => {
+				const verdict = runReviewVerdict(run);
+				// A terminated run's body is the reason it stopped, not findings.
+				const body = run.status === "cancelled" || run.status === "failed" ? "" : run.body?.trim();
+				const url = aoReviewCommentUrl(run);
+				return (
+					<div className="flex min-w-0 flex-col gap-1.5" key={run.id}>
+						<span className="inline-flex min-w-0 items-center gap-2">
+							<VerdictBadge label={verdict.label} tone={verdict.tone} />
+							<span className="shrink-0 font-mono text-micro text-passive">{formatTimeCompact(run.createdAt)}</span>
+							{index > 0 ? <span className="shrink-0 text-micro text-passive">earlier pass</span> : null}
+						</span>
+						{body ? (
+							<p className="m-0 whitespace-pre-wrap break-words text-2xs leading-relaxed text-muted-foreground">
+								{body}
+							</p>
+						) : null}
+						{url ? (
+							<a
+								className="inline-flex items-center gap-0.5 self-start text-2xs font-medium text-passive no-underline transition-colors hover:text-foreground"
+								href={url}
+								target="_blank"
+								rel="noopener noreferrer"
+							>
+								View review
+								<ArrowUpRight aria-hidden="true" className="size-3 shrink-0" />
+							</a>
+						) : null}
+					</div>
+				);
+			})}
 		</div>
 	);
 }

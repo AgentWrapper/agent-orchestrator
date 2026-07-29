@@ -943,6 +943,55 @@ describe("SessionInspector reviews tab", () => {
 		expect(screen.queryByText("claude-code is reviewing this change…")).not.toBeInTheDocument();
 	});
 
+	it("gives each reviewer its own tab and lands on the one just run", async () => {
+		const state = {
+			...reviewState(3, "changes_requested", "sha-1"),
+			latestRun: {
+				...approvedReview,
+				id: "run-codex",
+				harness: "codex",
+				verdict: "changes_requested",
+				body: "codex asked for tests.",
+				createdAt: "2026-01-03T00:00:00Z",
+			},
+		};
+		mockCommonGets([], "reviewer-pane", [state]);
+		const previous = getMock.getMockImplementation()!;
+		getMock.mockImplementation(async (path: string, opts?: unknown) => {
+			if (path === "/api/v1/sessions/{sessionId}/reviews") {
+				return {
+					data: {
+						reviewerHandleId: "reviewer-pane",
+						reviews: [state],
+						runs: [
+							state.latestRun,
+							{
+								...approvedReview,
+								id: "run-claude",
+								harness: "claude-code",
+								verdict: "approved",
+								body: "claude-code found nothing blocking.",
+								createdAt: "2026-01-01T00:00:00Z",
+							},
+						],
+					},
+				};
+			}
+			return previous(path, opts);
+		});
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsTab();
+
+		// The newest run leads, so its verdict is what you see first.
+		expect(await screen.findByText("codex asked for tests.")).toBeInTheDocument();
+		expect(screen.queryByText("claude-code found nothing blocking.")).not.toBeInTheDocument();
+
+		// The other reviewer is one click away, not buried.
+		await userEvent.click(screen.getByRole("tab", { name: /claude-code/ }));
+		expect(await screen.findByText("claude-code found nothing blocking.")).toBeInTheDocument();
+	});
+
 	it("hides the previous verdict after the current head review completes", async () => {
 		const current = {
 			...reviewState(3, "up_to_date", "sha-current"),
