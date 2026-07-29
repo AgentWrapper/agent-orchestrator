@@ -8,6 +8,7 @@ import (
 	"runtime"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/conpty"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/daytona"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/tmux"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -24,9 +25,13 @@ type Runtime interface {
 	GetOutput(ctx context.Context, handle ports.RuntimeHandle, lines int) (string, error)
 }
 
-// Compile-time assertions: both adapters must implement the union interface.
+// Compile-time assertions: every runtime adapter must implement the union
+// interface. daytona is not part of platform selection below — cloud sessions
+// pick it per-session (control-plane wiring, phase 3) — but it must satisfy
+// the same contract the daemon wires.
 var _ Runtime = (*tmux.Runtime)(nil)
 var _ Runtime = (*conpty.Runtime)(nil)
+var _ Runtime = (*daytona.Runtime)(nil)
 
 // New returns the per-platform runtime: tmux on Darwin/Linux, conpty on Windows.
 // log is accepted for signature stability with callers but is currently unused.
