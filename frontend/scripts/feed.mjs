@@ -7,8 +7,9 @@
 // already-published nightly can be retro-flagged by re-running the feed job
 // with --important set (or editing the yml and running
 // `gh release upload TAG nightly*.yml --clobber`).
-import { readdirSync, writeFileSync } from "node:fs";
+import { readdirSync, writeFileSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { writeBlockmap } from "./blockmap.mjs";
 
 // selectInstallers picks the versioned, auto-updatable installers from a release
@@ -37,8 +38,10 @@ export function feedFilename(channel, platform) {
 
 // buildYml serializes one platform's feed. files is [{ url, sha512, size }];
 // for mac the arm64 entry comes first. The deprecated top-level path/sha512
-// point at files[0]. blockMapSize is never written (forces sidecar differential).
-// When important is true, emits `important: true` after releaseDate so the
+// point at files[0]. blockMapSize is never written (forces sidecar
+// differential on win/linux; mac has no sidecar at all — see #3034 — so it
+// always takes electron-updater's full-download path regardless). When
+// important is true, emits `important: true` after releaseDate so the
 // in-app update prompt is escalated.
 export function buildYml(version, files, releaseDate, important = false) {
 	const lines = [`version: ${version}`, "files:"];
@@ -56,7 +59,8 @@ export function buildYml(version, files, releaseDate, important = false) {
 
 // generateFeeds writes the yml + sidecar blockmaps for every platform present in
 // dir. version may carry +build metadata (nightly); strip it for the yml.
-async function generateFeeds(dir, rawVersion, channel, releaseDate, important = false) {
+// mac zips skip the blockmap sidecar entirely (see hashFile) — see #3034.
+export async function generateFeeds(dir, rawVersion, channel, releaseDate, important = false) {
 	const version = rawVersion.split("+")[0];
 	const sel = selectInstallers(readdirSync(dir), version);
 	const groups = [
@@ -68,7 +72,8 @@ async function generateFeeds(dir, rawVersion, channel, releaseDate, important = 
 		if (names.length === 0) continue;
 		const files = [];
 		for (const name of names) {
-			const { sha512, size } = await writeBlockmap(join(dir, name));
+			const { sha512, size } =
+				platform === "mac" ? hashFile(join(dir, name)) : await writeBlockmap(join(dir, name));
 			files.push({ url: name, sha512, size });
 		}
 		writeFileSync(join(dir, feedFilename(channel, platform)), buildYml(version, files, releaseDate, important));
@@ -87,4 +92,20 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 		process.stderr.write(`${err.stack || err}\n`);
 		process.exit(1);
 	});
+}
+
+// hashFile computes the same {sha512, size} shape writeBlockmap returns, but
+// without writing a .blockmap sidecar file. Used for mac zips specifically:
+// Squirrel.Mac's ShipIt install step runs `ditto` against the extracted
+// update cache, which fails when the cache lacks AppleDouble ("._*") metadata
+// — content @electron-forge/maker-zip's output never had, unlike
+// electron-builder's ditto-based zips. A sidecar-driven differential update
+// against that mismatched format is the likely corruption source (issue
+// #3034). Skipping the sidecar for mac forces electron-updater's MacUpdater
+// onto a full-zip download every time instead of a diff.
+export function hashFile(filePath) {
+	const data = readFileSync(filePath);
+	const sha512 = createHash("sha512").update(data).digest("base64");
+	const size = statSync(filePath).size;
+	return { sha512, size };
 }
