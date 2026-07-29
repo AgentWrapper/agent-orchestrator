@@ -20,7 +20,7 @@ export async function generateMetadata({
   const doc = getDocPage(slug ?? []);
   if (!doc) return { title: "Docs" };
   return {
-    title: `${doc.title} | Agent Orchestrator Docs`,
+    title: `${doc.title} · Docs`,
     description: doc.description,
     alternates: { canonical: doc.url },
     openGraph: {

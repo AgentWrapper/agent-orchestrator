@@ -15,6 +15,7 @@ Agent Orchestrator is a long-running Go daemon that supervises multiple parallel
 - [Observation Loops](#observation-loops)
 - [HTTP Layer](#http-layer)
 - [Terminal Multiplexing](#terminal-multiplexing)
+- [Browser Runtime Bridge](#browser-runtime-bridge)
 
 ---
 
@@ -831,6 +832,27 @@ sequenceDiagram
     WS->>Mux: Detach
     Mux->>Runtime: Close PTY
 ```
+
+## Browser Runtime Bridge
+
+Browser automation uses a dedicated local socket (`browser.sock` on Unix,
+`ao-browser[-dev]` named pipe on Windows) between the daemon and Electron. The
+daemon owns command authorization/correlation; Electron owns the actual browser
+targets. Commands never use the supervisor liveness socket and never enable an
+unauthenticated remote-debugging port.
+
+Electron attaches its debugger directly to the selected session's
+`WebContentsView`, so the protocol transport cannot enumerate or attach to the
+AO renderer or a different session. The loopback `/api/v1/browser` surface is
+blocked entirely on the opt-in LAN listener.
+
+Request observation is an explicit, temporary browser command rather than a
+standing debugger feature. Capture is off by default, bound to the active tab
+that starts it, limited to 200 in-memory metadata entries, and automatically
+expires within at most five minutes. AO never requests or stores request or
+response bodies; it allowlists safe headers and redacts URL credentials,
+fragments, and query values. Closing the tab, ending the session, or shutting
+down Electron disables and discards the capture.
 
 ---
 

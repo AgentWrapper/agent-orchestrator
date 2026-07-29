@@ -19,6 +19,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	activityobserver "github.com/aoagents/agent-orchestrator/backend/internal/observe/activity"
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe/reaper"
+	"github.com/aoagents/agent-orchestrator/backend/internal/orchestratorloop"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	reviewcore "github.com/aoagents/agent-orchestrator/backend/internal/review"
 	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
@@ -37,12 +38,14 @@ type lifecycleStack struct {
 	// LCM is the Lifecycle Manager (the canonical write path). It is exposed so
 	// startSession can share the same reducer the reaper drives, rather than
 	// standing up a second store+LCM pair that would diverge under writes.
-	LCM           *lifecycle.Manager
-	runtimeReaper *reaper.Reaper
-	reaperDone    <-chan struct{}
-	activityDone  <-chan struct{}
-	scmDone       <-chan struct{}
-	trackerDone   <-chan struct{}
+	LCM              *lifecycle.Manager
+	runtimeReaper    *reaper.Reaper
+	reaperDone       <-chan struct{}
+	activityDone     <-chan struct{}
+	scmDone          <-chan struct{}
+	trackerDone      <-chan struct{}
+	reengagementDone <-chan struct{}
+	reengagement     *orchestratorloop.Manager
 }
 
 // startLifecycle constructs the Lifecycle Manager over the store and starts the
@@ -50,18 +53,26 @@ type lifecycleStack struct {
 // The messenger is the per-daemon agent messenger the LCM uses to nudge agents
 // in response to SCM observations (CI failure, review feedback, merge conflict).
 func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runtime, messenger ports.AgentMessenger, notifier notificationSink, telemetry ports.EventSink, agents ports.AgentResolver, logger *slog.Logger) *lifecycleStack {
+	steering := activeTurnSteering(agents)
+	reengagement := orchestratorloop.New(store, messenger, notifier, orchestratorloop.Config{
+		Logger:       logger,
+		SteersActive: steering,
+	})
 	lcm := lifecycle.New(store, messenger,
 		lifecycle.WithNotificationSink(notifier),
 		lifecycle.WithTelemetry(telemetry),
-		lifecycle.WithActiveSteering(activeTurnSteering(agents)),
+		lifecycle.WithActiveSteering(steering),
+		lifecycle.WithOrchestratorReengagement(reengagement),
 	)
 	rp := reaper.New(lcm, store, runtime, reaper.Config{Logger: logger})
 	activityPoller := activityobserver.New(store, lcm, runtime, agents, activityobserver.Config{Logger: logger})
 	return &lifecycleStack{
-		LCM:           lcm,
-		runtimeReaper: rp,
-		reaperDone:    rp.Start(ctx),
-		activityDone:  activityPoller.Start(ctx),
+		LCM:              lcm,
+		runtimeReaper:    rp,
+		reaperDone:       rp.Start(ctx),
+		activityDone:     activityPoller.Start(ctx),
+		reengagement:     reengagement,
+		reengagementDone: reengagement.Start(ctx),
 	}
 }
 
@@ -104,6 +115,9 @@ func (l *lifecycleStack) Stop() {
 	if l.trackerDone != nil {
 		<-l.trackerDone
 	}
+	if l.reengagementDone != nil {
+		<-l.reengagementDone
+	}
 }
 
 // sessionLifecycle is the narrow surface of sessionmanager.Manager used for
@@ -130,7 +144,7 @@ type sessionLifecycle interface {
 // LCM, the per-session agent resolver, and the agent messenger. The returned
 // service is mounted at httpd APIDeps.Sessions. It also returns the manager so
 // the caller can wire Reconcile into the boot sequence.
-func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, agents ports.AgentResolver, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
+func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, reengagement *orchestratorloop.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, agents ports.AgentResolver, previewLifecycle sessionmanager.PreviewLifecycle, browserLifecycle sessionmanager.BrowserLifecycle, browserCapabilities sessionmanager.BrowserCapabilityIssuer, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
 	gitWS, err := gitworktree.New(gitworktree.Options{
 		// Per-session worktrees live under the data dir, so a single AO_DATA_DIR
 		// override moves all durable per-user state together.
@@ -155,14 +169,17 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		Projects: store,
 	})
 	mgr := sessionmanager.New(sessionmanager.Deps{
-		Runtime:   runtime,
-		Agents:    agents,
-		Workspace: ws,
-		Store:     store,
-		Messenger: messenger,
-		Lifecycle: lcm,
-		DataDir:   cfg.DataDir,
-		Logger:    log,
+		Runtime:             runtime,
+		Agents:              agents,
+		Workspace:           ws,
+		Store:               store,
+		Messenger:           messenger,
+		Lifecycle:           lcm,
+		Preview:             previewLifecycle,
+		Browser:             browserLifecycle,
+		BrowserCapabilities: browserCapabilities,
+		DataDir:             cfg.DataDir,
+		Logger:              log,
 	})
 	scmProvider, err := newGitHubSCMProvider(log)
 	if err != nil {
@@ -181,13 +198,14 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		tracker = t
 	}
 	sessionSvc := sessionsvc.NewWithDeps(sessionsvc.Deps{
-		Manager:   mgr,
-		Store:     store,
-		PRClaimer: store,
-		SCM:       scmProvider,
-		DataDir:   cfg.DataDir,
-		Tracker:   tracker,
-		Telemetry: telemetry,
+		Manager:      mgr,
+		Store:        store,
+		PRClaimer:    store,
+		SCM:          scmProvider,
+		DataDir:      cfg.DataDir,
+		Tracker:      tracker,
+		Telemetry:    telemetry,
+		Reengagement: reengagement,
 		// no_signal only makes sense for harnesses whose adapters install
 		// activity hooks; the deriver registry is the source of truth for that.
 		SignalCapable: activitydispatch.SupportsHarness,

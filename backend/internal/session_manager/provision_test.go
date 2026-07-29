@@ -3,6 +3,8 @@ package sessionmanager
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -10,6 +12,10 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
+
+type fixedBrowserCapability string
+
+func (f fixedBrowserCapability) Token(_ domain.SessionID) string { return string(f) }
 
 func TestSpawnEnvProjectVarsCannotOverrideInternal(t *testing.T) {
 	env := spawnEnv("mer-1", "mer", "issue-9", "/data", map[string]string{
@@ -25,6 +31,19 @@ func TestSpawnEnvProjectVarsCannotOverrideInternal(t *testing.T) {
 	}
 	if env[EnvProjectID] != "mer" {
 		t.Fatalf("AO_PROJECT_ID = %q, want mer (internal wins)", env[EnvProjectID])
+	}
+}
+
+func TestRuntimeEnvInjectsBrowserCapability(t *testing.T) {
+	manager := &Manager{
+		dataDir:             "/data",
+		browserCapabilities: fixedBrowserCapability("capability-1"),
+		executable:          func() (string, error) { return filepath.Join("/opt", "aod", "ao"), nil },
+		logger:              slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	env := manager.runtimeEnv("mer-1", "mer", "", nil)
+	if env[EnvBrowserCapability] != "capability-1" {
+		t.Fatalf("%s = %q", EnvBrowserCapability, env[EnvBrowserCapability])
 	}
 }
 
