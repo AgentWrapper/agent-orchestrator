@@ -93,6 +93,7 @@ func (r *Reaper) ReapSessionContainers(ctx context.Context, id domain.SessionID)
 	}
 
 	removed := 0
+	var errs []error
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -109,13 +110,16 @@ func (r *Reaper) ReapSessionContainers(ctx context.Context, id domain.SessionID)
 		}
 		if _, err := r.run.Output(ctx, "docker", "rm", "-f", containerID); err != nil {
 			// One container's removal failing must not abort the rest — each
-			// container is independent. Surface the error but keep going, and
-			// report the partial count so the caller can log what happened.
-			return removed, fmt.Errorf("dockerreap: remove container %s (session %s): %w", containerID, sessionID, err)
+			// container is independent. Accumulate the error and keep going so a
+			// single stuck/permission-denied container never leaks its siblings;
+			// the caller sees the joined error plus the true partial-removal
+			// count.
+			errs = append(errs, fmt.Errorf("dockerreap: remove container %s (session %s): %w", containerID, sessionID, err))
+			continue
 		}
 		removed++
 	}
-	return removed, nil
+	return removed, errors.Join(errs...)
 }
 
 // isDockerUnavailable reports whether err indicates the docker CLI itself is

@@ -153,3 +153,33 @@ func TestReapSessionContainers_PartialRemovalReportsCountAndError(t *testing.T) 
 		t.Fatalf("removed = %d, want 1 (the container that did succeed)", removed)
 	}
 }
+
+// TestReapSessionContainers_MiddleFailureDoesNotAbortRemaining is the
+// regression for the comment/code contradiction: a stuck container in the
+// middle of the list must not leave later containers unreaped. A 2-container
+// test with the failure last can't distinguish "kept going" from "aborted" —
+// this needs 3, with the failure in the middle.
+func TestReapSessionContainers_MiddleFailureDoesNotAbortRemaining(t *testing.T) {
+	fr := &fakeRunner{t: t, script: []fakeCall{
+		{out: []byte("aaa\t\nbbb\t\nccc\t\n")},
+		{out: nil}, // rm aaa succeeds
+		{err: errors.New("rm bbb: container is running")}, // rm bbb fails
+		{out: nil}, // rm ccc must still be attempted
+	}}
+	r := newWithRunner(fr)
+
+	removed, err := r.ReapSessionContainers(context.Background(), domain.SessionID("sess-1"))
+	if err == nil {
+		t.Fatal("expected the middle failure to surface")
+	}
+	if removed != 2 {
+		t.Fatalf("removed = %d, want 2 (aaa and ccc must both succeed despite bbb failing)", removed)
+	}
+	if len(fr.calls) != 4 {
+		t.Fatalf("calls = %d, want 4 (list + 3 rm attempts, ccc must still be attempted after bbb fails)", len(fr.calls))
+	}
+	lastCall := fr.calls[3]
+	if !strings.Contains(strings.Join(lastCall, " "), "ccc") {
+		t.Fatalf("expected the 4th call to still target ccc, got %v", lastCall)
+	}
+}

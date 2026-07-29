@@ -60,6 +60,7 @@ func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runt
 	lcm := lifecycle.New(store, messenger,
 		lifecycle.WithNotificationSink(notifier),
 		lifecycle.WithTelemetry(telemetry),
+		lifecycle.WithContainerReaper(dockerreap.New(), store),
 		lifecycle.WithActiveSteering(activeTurnSteering(agents)),
 	)
 	rp := reaper.New(lcm, store, runtime, reaper.Config{Logger: logger})
@@ -186,15 +187,14 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		Projects: store,
 	})
 	mgr := sessionmanager.New(sessionmanager.Deps{
-		Runtime:    runtime,
-		Agents:     agents,
-		Workspace:  ws,
-		Store:      store,
-		Messenger:  messenger,
-		Lifecycle:  lcm,
-		Containers: dockerreap.New(),
-		DataDir:    cfg.DataDir,
-		Logger:     log,
+		Runtime:   runtime,
+		Agents:    agents,
+		Workspace: ws,
+		Store:     store,
+		Messenger: messenger,
+		Lifecycle: lcm,
+		DataDir:   cfg.DataDir,
+		Logger:    log,
 	})
 	scmProvider, err := newGitHubSCMProvider(log)
 	if err != nil {

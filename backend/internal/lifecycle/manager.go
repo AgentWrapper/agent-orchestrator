@@ -48,6 +48,20 @@ type notificationSink interface {
 	Notify(ctx context.Context, intent ports.NotificationIntent) error
 }
 
+// projectConfigLoader resolves a project's config so MarkTerminated can check
+// the ContainerReap opt-out before reaping. A load failure must not fall
+// through to reaping - see containerReaper below.
+type projectConfigLoader interface {
+	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
+}
+
+// containerReaper removes a terminated session's Docker containers (the
+// container leg of #2652). Optional: nil wiring means container reaping is
+// skipped entirely at the lifecycle layer.
+type containerReaper interface {
+	ReapSessionContainers(ctx context.Context, id domain.SessionID) (int, error)
+}
+
 type sessionTerminator interface {
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 }
@@ -68,6 +82,16 @@ func WithNotificationSink(sink notificationSink) Option {
 // WithTelemetry wires lifecycle activity transitions to the shared telemetry sink.
 func WithTelemetry(sink ports.EventSink) Option {
 	return func(m *Manager) { m.telemetry = sink }
+}
+
+// WithContainerReaper wires the container leg of #2652: MarkTerminated will
+// force-remove the terminated session's ao.session-labeled Docker containers,
+// unless the project opts out via ProjectConfig.ContainerReap.Disabled.
+func WithContainerReaper(reaper containerReaper, projects projectConfigLoader) Option {
+	return func(m *Manager) {
+		m.containers = reaper
+		m.projects = projects
+	}
 }
 
 // WithActiveSteering supplies the adapter-provided active-turn steering
@@ -93,6 +117,8 @@ type Manager struct {
 	// completionTerminator is late-bound because Session Manager itself depends
 	// on this lifecycle reducer. It is required before the SCM observer starts.
 	completionTerminator sessionTerminator
+	containers           containerReaper
+	projects             projectConfigLoader
 
 	mu        sync.Mutex
 	window    time.Duration
@@ -818,7 +844,7 @@ func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, metadata
 
 // MarkTerminated marks a session terminated without tearing down external resources.
 func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error {
-	return m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
+	err := m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
 		if cur.IsTerminated {
 			return cur, false
 		}
@@ -827,6 +853,49 @@ func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error
 		delete(m.flights, id) // runs under m.mu (mutate holds it)
 		return cur, true
 	})
+	if err != nil {
+		return err
+	}
+	m.reapSessionContainers(ctx, id)
+	return nil
+}
+
+// reapSessionContainers is the container leg of #2652 (the container-owning
+// counterpart to session_manager.Manager's cleanupAgentWorkspace): every
+// MarkTerminated call - Kill, daemon-shutdown teardown, Cleanup,
+// RetireForReplacement, and tracker-driven termination - funnels through
+// here, so this single hook covers every terminal-state path rather than
+// only explicit ao session kill. Best-effort: logged on failure, never
+// returned, matching the rest of AO's terminal-state teardown. A project-load
+// error skips reaping rather than guessing - the package's stated bias is to
+// spare on ambiguity, not to reap on it.
+func (m *Manager) reapSessionContainers(ctx context.Context, id domain.SessionID) {
+	if m.containers == nil {
+		return
+	}
+	if m.projects != nil {
+		rec, ok, err := m.store.GetSession(ctx, id)
+		if err != nil || !ok {
+			slog.Default().Warn("lifecycle: container reap: session lookup failed, skipping", "session", id, "err", err)
+			return
+		}
+		project, ok, err := m.projects.GetProject(ctx, string(rec.ProjectID))
+		if err != nil {
+			slog.Default().Warn("lifecycle: container reap: project lookup failed, skipping rather than guessing", "session", id, "project", rec.ProjectID, "err", err)
+			return
+		}
+		if ok && project.Config.ContainerReap.Disabled {
+			return
+		}
+	}
+	removed, err := m.containers.ReapSessionContainers(ctx, id)
+	if err != nil {
+		slog.Default().Warn("lifecycle: container reap failed", "session", id, "err", err)
+		return
+	}
+	if removed > 0 {
+		slog.Default().Info("lifecycle: reaped session containers", "session", id, "removed", removed)
+	}
 }
 
 // sameActivity reports whether two activity signals describe the same state.
