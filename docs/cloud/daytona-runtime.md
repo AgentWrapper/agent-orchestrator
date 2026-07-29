@@ -187,13 +187,42 @@ here as the adapter's requirements):
 2. Minting + validating the per-session `AO_API_TOKEN` (scope: that session's
    activity/hook routes only). The loopback listener stays unauthenticated and
    unchanged; the token authenticates only the cloud-facing surface.
-3. An `ao` Linux binary inside the sandbox snapshot (or a bootstrap download
-   URL) so hook commands resolve. The adapter prepends its directory to the
-   session `PATH` exactly like local spawns do.
+3. An `ao` Linux binary inside the sandbox snapshot so hook commands resolve —
+   the repo's snapshot image (`test/daytona-snapshot/Dockerfile`, §5a) builds
+   it from source and installs it at `/usr/local/bin/ao`.
 4. Agent credentials as env vars at `Runtime.Create` (`cfg.Env`), e.g.
    `CLAUDE_CODE_OAUTH_TOKEN` — the adapter passes `cfg.Env` into the tmux
    launch line inside the sandbox verbatim (same export mechanics as the tmux
    adapter, quoted, `PATH` last).
+
+## 5a. The agent snapshot
+
+`test/daytona-snapshot/Dockerfile` builds the custom Daytona snapshot the
+adapter expects: tmux, git, `ps` (procps — the #2802 liveness walk needs it),
+node + the Claude Code CLI (pin via `--build-arg CLAUDE_CODE_VERSION=<x.y.z>`),
+and the `ao` Linux binary built from this repo (stage 1, CGO-free), under the
+Daytona-convention `daytona` user with home `/home/daytona` (matching the
+adapter's default `WorkspaceRoot`).
+
+Build from the repo root and register (Daytona requires amd64 + pinned tags):
+
+```bash
+docker build --platform linux/amd64 \
+  -f test/daytona-snapshot/Dockerfile -t ao-agent-sandbox:<version> .
+daytona snapshot push ao-agent-sandbox:<version> --name ao-agent-sandbox:<version>
+# or: docker push ghcr.io/<org>/ao-agent-sandbox:<version> && \
+#     daytona snapshot create ao-agent-sandbox:<version> --image ghcr.io/<org>/ao-agent-sandbox:<version>
+```
+
+Point the adapter (or the live tests' `AO_DAYTONA_SNAPSHOT`) at the snapshot
+name. The real-agent demo then runs without any runtime package installs:
+
+```bash
+cd backend
+DAYTONA_API_KEY=… AO_DAYTONA_SNAPSHOT=ao-agent-sandbox:<version> \
+AO_DAYTONA_AGENT_ARGV='["claude","-p","say hello"]' CLAUDE_CODE_OAUTH_TOKEN=… \
+go test ./internal/adapters/runtime/daytona/ -run TestLive -v
+```
 
 ## 5. Idle/suspend mapping and the cost model
 
