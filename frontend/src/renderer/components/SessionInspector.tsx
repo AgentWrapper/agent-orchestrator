@@ -910,13 +910,15 @@ function ReviewDisclosure({
 	if (!collapsible) {
 		return (
 			<div className="py-2 first:pt-0.5 last:pb-0.5">
-				<div className="flex min-w-0 items-center gap-2 px-1.5 py-1.5">
-					<span className="min-w-0 flex-1 truncate text-sm-md font-semibold text-foreground">{title}</span>
-					<span className="min-w-0 shrink truncate font-mono text-2xs text-passive" title={meta}>
-					{meta}
-				</span>
+				<div className="flex min-w-0 flex-col gap-1 px-1.5 py-1">
+					<span className="line-clamp-2 text-sm-md font-semibold leading-snug text-foreground" title={title}>
+						{title}
+					</span>
+					<span className="truncate font-mono text-micro text-passive" title={meta}>
+						{meta}
+					</span>
 				</div>
-				<div className="ml-2 mt-2.5 flex flex-col gap-4 border-l border-border/60 pl-3.5">{children}</div>
+				<div className="mt-2 flex flex-col gap-3 pl-1.5">{children}</div>
 			</div>
 		);
 	}
@@ -933,12 +935,16 @@ function ReviewDisclosure({
 				) : (
 					<ChevronRight className="size-icon-sm shrink-0 text-passive" aria-hidden="true" />
 				)}
-				<span className="min-w-0 flex-1 truncate text-sm-md font-semibold text-foreground">{title}</span>
-				<span className="min-w-0 shrink truncate font-mono text-2xs text-passive" title={meta}>
-					{meta}
+				<span className="flex min-w-0 flex-1 flex-col gap-0.5">
+					<span className="truncate text-sm-md font-semibold leading-snug text-foreground" title={title}>
+						{title}
+					</span>
+					<span className="truncate font-mono text-micro text-passive" title={meta}>
+						{meta}
+					</span>
 				</span>
 			</button>
-			{open ? <div className="ml-2 mt-2.5 flex flex-col gap-4 border-l border-border/60 pl-3.5">{children}</div> : null}
+			{open ? <div className="mt-2 flex flex-col gap-3 pl-1.5">{children}</div> : null}
 		</div>
 	);
 }
@@ -1149,11 +1155,12 @@ function ReviewPanel({
 					{notice}
 				</p>
 			) : null}
-			<div className="flex min-w-0 items-center gap-2">
-				<p className={cn(inspectorEmptyClass, "inline-flex min-w-0 flex-1 items-center gap-1.5")}>
-					<AgentAvatar className="size-icon-sm" decorative provider={harness} />
-					<span className="truncate font-mono font-medium text-foreground">{harness}</span>
-				</p>
+			<div className="flex min-w-0 items-center gap-2.5">
+				<AgentAvatar className="size-icon-lg shrink-0" decorative provider={harness} />
+				<div className="flex min-w-0 flex-1 flex-col">
+					<span className="truncate text-sm-md font-semibold leading-tight text-foreground">{harness}</span>
+					<span className="text-2xs leading-tight text-passive">AO reviewer</span>
+				</div>
 				<div className="shrink-0">
 					<ReviewerSelect
 						ariaLabel="Reviewer agent"
@@ -1183,15 +1190,19 @@ function ReviewPanel({
 					))
 				)}
 			</div>
-			<label className="flex min-w-0 items-center gap-2 border-t border-border pt-2.5">
+			<label className="-mx-4 flex min-w-0 cursor-pointer items-start gap-2.5 border-t border-border px-4 pt-3">
 				<Switch
 					aria-label="Send review findings to the agent"
 					checked={autoInject}
+					className="mt-0.5 shrink-0"
 					disabled={autoInjectPending}
 					onCheckedChange={onAutoInjectChange}
 				/>
-				<span className="min-w-0 flex-1 text-2xs leading-snug text-passive">
-					Send findings to the agent when a review finishes
+				<span className="flex min-w-0 flex-1 flex-col gap-0.5">
+					<span className="text-2xs font-medium leading-tight text-foreground">Send findings to the agent</span>
+					<span className="text-micro leading-snug text-passive">
+						The worker is told what the review found as soon as it finishes.
+					</span>
 				</span>
 			</label>
 			{autoInjectError ? (
@@ -1211,14 +1222,20 @@ function ReviewPanel({
 			) : null}
 			<div
 				className={cn(
-					"-mx-4 -mb-3 flex items-center gap-2 border-t border-border px-4 pb-3 pt-3",
+					"-mx-4 -mb-3 flex items-center justify-center gap-2 border-t border-border px-4 pb-3 pt-3",
 					reviewRunning ? "mt-0 border-t-0" : "mt-3",
 				)}
 			>
 				{/* The review action carries the panel, so it gets real button weight
 				    instead of reading as one more link next to Open terminal. */}
+				{/* Same accent as the Orchestrator action, so the two primary buttons in
+				    the app read as the same kind of thing. */}
 				<Button
-					className="shrink-0 gap-1.5 [&_svg]:size-icon-sm"
+					className={cn(
+						"shrink-0 gap-1.5 [&_svg]:size-icon-sm",
+						!reviewRunning &&
+							"border-transparent bg-accent-strong text-accent-foreground hover:opacity-100 hover:brightness-110 active:brightness-95",
+					)}
 					disabled={reviewRunning ? isCancelling : runDisabled}
 					onClick={reviewRunning ? onCancel : onTrigger}
 					size="sm"
@@ -1238,7 +1255,7 @@ function ReviewPanel({
 						variant="ghost"
 					>
 						<Terminal aria-hidden="true" />
-						Open terminal
+						Terminal
 					</Button>
 				) : null}
 			</div>
@@ -1418,7 +1435,7 @@ function AoReviewRow({ reviewState }: { reviewState: PRReviewState }) {
 	const reviewUrl = aoReviewCommentUrl(displayRun);
 	const reviewLinkLabel = reviewState.latestRun ? "View review" : "View previous review";
 	return (
-		<div className={cn("flex min-w-0 flex-col gap-2", reviewState.status === "ineligible" && "opacity-70")}>
+		<div className={cn("flex min-w-0 flex-col gap-1.5", reviewState.status === "ineligible" && "opacity-70")}>
 			<VerdictBadge label={isStale ? "Not run on this commit" : verdict.label} tone={isStale ? "neutral" : verdict.tone} />
 			{previousVerdict ? (
 				<p className="m-0 inline-flex min-w-0 items-center gap-1.5 text-2xs text-passive">
@@ -1429,7 +1446,9 @@ function AoReviewRow({ reviewState }: { reviewState: PRReviewState }) {
 					</span>
 				</p>
 			) : null}
-			{summary ? <p className="whitespace-pre-wrap break-words text-2xs leading-relaxed text-passive">{summary}</p> : null}
+			{summary ? (
+				<p className="m-0 whitespace-pre-wrap break-words text-2xs leading-relaxed text-muted-foreground">{summary}</p>
+			) : null}
 			{reviewUrl ? (
 				<a
 					className="inline-flex items-center gap-0.5 self-start text-2xs font-medium text-passive no-underline transition-colors hover:text-foreground"
