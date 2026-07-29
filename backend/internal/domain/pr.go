@@ -103,6 +103,7 @@ type PullRequestComment struct {
 // PullRequestReviewThread is one normalized review thread for a pull request.
 type PullRequestReviewThread struct {
 	ThreadID     string
+	ReviewID     string
 	Path         string
 	Line         int
 	Resolved     bool

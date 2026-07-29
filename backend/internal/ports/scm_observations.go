@@ -232,6 +232,9 @@ type SCMReviewSummaryObservation struct {
 type SCMReviewThreadObservation struct {
 	// ID is the provider's stable review thread identifier.
 	ID string
+	// ReviewID is the provider's stable submitted-review identifier that
+	// introduced this thread, when the provider exposes it.
+	ReviewID string
 	// Path is the file path the thread is anchored to.
 	Path string
 	// Line is the line number the thread is anchored to when supplied.

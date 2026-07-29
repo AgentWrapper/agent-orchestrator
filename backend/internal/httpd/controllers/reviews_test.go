@@ -19,12 +19,14 @@ import (
 )
 
 type fakeReviewService struct {
-	triggerErr error
-	cancelErr  error
-	trigger    reviewcore.TriggerResult
-	cancel     reviewcore.CancelResult
-	list       reviewcore.SessionReviews
-	submitted  []reviewsvc.SubmittedReview
+	triggerErr   error
+	cancelErr    error
+	trigger      reviewcore.TriggerResult
+	cancel       reviewcore.CancelResult
+	list         reviewcore.SessionReviews
+	submitted    []reviewsvc.SubmittedReview
+	addressed    reviewsvc.AddressedFeedback
+	addressedErr error
 }
 
 func (f *fakeReviewService) Trigger(context.Context, domain.SessionID) (reviewcore.TriggerResult, error) {
@@ -55,6 +57,14 @@ func (f *fakeReviewService) SubmitMany(_ context.Context, _ domain.SessionID, re
 		runs = append(runs, domain.ReviewRun{ID: review.RunID, Verdict: review.Verdict, Body: review.Body, GithubReviewID: review.GithubReviewID})
 	}
 	return runs, nil
+}
+
+func (f *fakeReviewService) Addressed(_ context.Context, _ domain.SessionID, in reviewsvc.AddressedFeedback) (reviewsvc.AddressedResult, error) {
+	f.addressed = in
+	if f.addressedErr != nil {
+		return reviewsvc.AddressedResult{}, f.addressedErr
+	}
+	return reviewsvc.AddressedResult{Resolved: 2}, nil
 }
 
 func (f *fakeReviewService) List(context.Context, domain.SessionID) (reviewcore.SessionReviews, error) {
@@ -172,4 +182,29 @@ func TestReviewsSubmitAcceptsBatchedReviews(t *testing.T) {
 			t.Fatalf("body missing %s: %s", want, body)
 		}
 	}
+}
+
+func TestReviewsAddressedPostsIntent(t *testing.T) {
+	svc := &fakeReviewService{}
+	srv := newReviewTestServer(t, svc)
+
+	body, status, headers := doRequest(t, srv, "POST", "/api/v1/sessions/worker-1/reviews/addressed", `{"runId":"run-1","reviewId":"review-1","body":"addressed"}`)
+	assertJSON(t, headers)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d body=%s", status, body)
+	}
+	if svc.addressed.RunID != "run-1" || svc.addressed.ReviewID != "review-1" || svc.addressed.Body != "addressed" {
+		t.Fatalf("addressed = %+v", svc.addressed)
+	}
+	if !strings.Contains(string(body), `"resolved":2`) {
+		t.Fatalf("body = %s", body)
+	}
+}
+
+func TestReviewsAddressedNothingToResolveReturns422(t *testing.T) {
+	srv := newReviewTestServer(t, &fakeReviewService{addressedErr: reviewsvc.ErrNothingToResolve})
+
+	body, status, headers := doRequest(t, srv, "POST", "/api/v1/sessions/worker-1/reviews/addressed", `{"runId":"run-1","body":"addressed"}`)
+	assertJSON(t, headers)
+	assertErrorCode(t, body, status, http.StatusUnprocessableEntity, "NOTHING_TO_RESOLVE")
 }

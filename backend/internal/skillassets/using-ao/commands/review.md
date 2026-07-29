@@ -31,6 +31,7 @@ ao review submit [worker-session-id] [flags]
 | `--run string` | Review run id | Required |
 | `--session string` | Worker session id (or pass it as the positional argument) | - |
 | `--verdict string` | Review verdict: `approved` or `changes_requested` | Required |
+| `--addressed` | Reply to and resolve provider review feedback addressed by this run through the AO backend | - |
 
 ## Examples
 
@@ -42,4 +43,9 @@ ao review submit mer-3 --run review-run-1 --verdict approved
 ```bash
 # Submit a changes-requested review with a body from stdin
 echo "Please fix the null check on line 42." | ao review submit --session mer-3 --run review-run-1 --verdict changes_requested --body -
+```
+
+```bash
+# After addressing feedback, ask AO to reply and resolve the matching provider review threads
+echo "Addressed by adding the nil check and regression test." | ao review submit --addressed --session mer-3 --run review-run-1 --review-id PRR_kwDOExample --body -
 ```

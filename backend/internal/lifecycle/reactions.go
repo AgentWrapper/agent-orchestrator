@@ -78,8 +78,9 @@ func (m *Manager) ApplyReviewBatch(ctx context.Context, workerID domain.SessionI
 		}
 		if r.GithubReviewID != "" {
 			safeReviewID := domain.SanitizeControlChars(r.GithubReviewID)
+			safeRunID := domain.SanitizeControlChars(r.RunID)
 			fmt.Fprintf(&msg, "\nGitHub review: %s", safeReviewID)
-			fmt.Fprintf(&msg, "\nOnce you have addressed it, reply on GitHub review %s with how you addressed it, then resolve the review comment threads you addressed.", safeReviewID)
+			fmt.Fprintf(&msg, "\nOnce you have addressed it, call AO so the backend can reply and resolve the provider review threads: echo \"<how you addressed it>\" | ao review submit --addressed --session %s --run %s --review-id %s --body -", domain.SanitizeControlChars(string(workerID)), safeRunID, safeReviewID)
 		}
 		if r.Body != "" {
 			fmt.Fprintf(&msg, "\n\nReview body:\n%s\n", domain.SanitizeControlChars(r.Body))
@@ -280,8 +281,9 @@ func (m *Manager) ApplyReviewResult(ctx context.Context, workerID domain.Session
 	msg := fmt.Sprintf("[AO reviewer] AO's internal code reviewer submitted a review.\n\nPR: %s\nVerdict: %s", domain.SanitizeControlChars(r.PRURL), domain.SanitizeControlChars(string(r.Verdict)))
 	if r.GithubReviewID != "" {
 		safeReviewID := domain.SanitizeControlChars(r.GithubReviewID)
+		safeRunID := domain.SanitizeControlChars(r.RunID)
 		msg += fmt.Sprintf("\nGitHub review: %s", safeReviewID)
-		msg += fmt.Sprintf("\n\nOnce you have addressed it, reply on GitHub review %s with how you addressed it, then resolve the review comment threads you addressed.", safeReviewID)
+		msg += fmt.Sprintf("\n\nOnce you have addressed it, call AO so the backend can reply and resolve the provider review threads: echo \"<how you addressed it>\" | ao review submit --addressed --session %s --run %s --review-id %s --body -", domain.SanitizeControlChars(string(workerID)), safeRunID, safeReviewID)
 	}
 	if r.Body != "" {
 		msg += "\n\nReview body:\n" + domain.SanitizeControlChars(r.Body)

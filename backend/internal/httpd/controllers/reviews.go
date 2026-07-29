@@ -64,6 +64,18 @@ type SubmitReviewInput struct {
 	Reviews        []SubmitReviewItem `json:"reviews,omitempty" description:"Batched review results recorded by one reviewer CLI command."`
 }
 
+// AddressedReviewInput is the body of POST /api/v1/sessions/{sessionId}/reviews/addressed.
+type AddressedReviewInput struct {
+	RunID    string `json:"runId" description:"Review run id whose feedback was addressed."`
+	ReviewID string `json:"reviewId,omitempty" description:"Provider review id to resolve. Defaults from the review run when omitted."`
+	Body     string `json:"body" description:"Reply AO should post before resolving the matching review threads."`
+}
+
+// AddressedReviewResponse reports the provider-owned resolution result.
+type AddressedReviewResponse struct {
+	Resolved int `json:"resolved"`
+}
+
 // ReviewsController owns the session-scoped /reviews routes. A nil Svc returns 501.
 type ReviewsController struct {
 	Svc reviewsvc.Manager
@@ -75,6 +87,7 @@ func (c *ReviewsController) Register(r chi.Router) {
 	r.Post("/sessions/{sessionId}/reviews/trigger", c.trigger)
 	r.Post("/sessions/{sessionId}/reviews/cancel", c.cancel)
 	r.Post("/sessions/{sessionId}/reviews/submit", c.submit)
+	r.Post("/sessions/{sessionId}/reviews/addressed", c.addressed)
 }
 
 func (c *ReviewsController) list(w http.ResponseWriter, r *http.Request) {
@@ -181,8 +194,28 @@ func (c *ReviewsController) submit(w http.ResponseWriter, r *http.Request) {
 	envelope.WriteJSON(w, http.StatusOK, ReviewRunResponse{Review: first, Reviews: runs})
 }
 
+func (c *ReviewsController) addressed(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/reviews/addressed")
+		return
+	}
+	var in AddressedReviewInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_BODY", "Invalid request body", nil)
+		return
+	}
+	res, err := c.Svc.Addressed(r.Context(), sessionID(r), reviewsvc.AddressedFeedback{RunID: in.RunID, ReviewID: in.ReviewID, Body: in.Body})
+	if err != nil {
+		writeReviewError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, AddressedReviewResponse{Resolved: res.Resolved})
+}
+
 func writeReviewError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, reviewsvc.ErrNothingToResolve):
+		envelope.WriteAPIError(w, r, http.StatusUnprocessableEntity, "unprocessable", "NOTHING_TO_RESOLVE", err.Error(), nil)
 	case errors.Is(err, reviewsvc.ErrInvalid):
 		envelope.WriteAPIError(w, r, http.StatusUnprocessableEntity, "unprocessable", "REVIEW_INVALID", err.Error(), nil)
 	case errors.Is(err, reviewsvc.ErrNotFound):

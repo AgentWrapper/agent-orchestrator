@@ -581,7 +581,7 @@ func TestWriteSCMObservationPersistsMetadataChecksReviewsAndComments(t *testing.
 	}
 	checks := []domain.PullRequestCheck{{Name: "build", CommitHash: "h1", Status: domain.PRCheckFailed, Conclusion: "failure", URL: "ci", Details: "99", LogTail: "boom", CreatedAt: now}}
 	reviews := []domain.PullRequestReview{{ID: "review-1", Author: "reviewer", State: domain.ReviewChangesRequest, URL: "https://github.com/o/r/pull/1#pullrequestreview-1", Body: "please fix the nil check", SubmittedAt: now}}
-	threads := []domain.PullRequestReviewThread{{ThreadID: "t1", Path: "main.go", Line: 7, SemanticHash: "th", UpdatedAt: now}}
+	threads := []domain.PullRequestReviewThread{{ThreadID: "t1", ReviewID: "review-1", Path: "main.go", Line: 7, SemanticHash: "th", UpdatedAt: now}}
 	comments := []domain.PullRequestComment{{ThreadID: "t1", ID: "c1", Author: "reviewer", File: "main.go", Line: 7, Body: "fix", URL: "comment", CreatedAt: now}}
 
 	if err := s.WriteSCMObservation(ctx, pr, checks, reviews, threads, comments, ports.ReviewWriteReplace); err != nil {
@@ -599,8 +599,15 @@ func TestWriteSCMObservationPersistsMetadataChecksReviewsAndComments(t *testing.
 		t.Fatalf("checks not persisted: %+v", gotChecks)
 	}
 	gotThreads, _ := s.ListPRReviewThreads(ctx, pr.URL)
-	if len(gotThreads) != 1 || gotThreads[0].ThreadID != "t1" || gotThreads[0].SemanticHash != "th" {
+	if len(gotThreads) != 1 || gotThreads[0].ThreadID != "t1" || gotThreads[0].ReviewID != "review-1" || gotThreads[0].SemanticHash != "th" {
 		t.Fatalf("threads not persisted: %+v", gotThreads)
+	}
+	gotThreadsByReview, err := s.ListPRReviewThreadsByReview(ctx, pr.URL, "review-1")
+	if err != nil {
+		t.Fatalf("ListPRReviewThreadsByReview: %v", err)
+	}
+	if len(gotThreadsByReview) != 1 || gotThreadsByReview[0].ThreadID != "t1" {
+		t.Fatalf("threads by review not persisted: %+v", gotThreadsByReview)
 	}
 	gotReviews, _ := s.ListPRReviews(ctx, pr.URL)
 	if len(gotReviews) != 1 || gotReviews[0].ID != "review-1" || gotReviews[0].URL != "https://github.com/o/r/pull/1#pullrequestreview-1" || gotReviews[0].Body != "please fix the nil check" {

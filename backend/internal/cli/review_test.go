@@ -143,6 +143,52 @@ func TestReviewSubmitUsesSessionFlag(t *testing.T) {
 	}
 }
 
+func TestReviewSubmitAddressedPostsRequestWithStdinBodyAndEnvSession(t *testing.T) {
+	cfg := setConfigEnv(t)
+	t.Setenv("AO_SESSION_ID", "worker-env")
+	srv, capture := reviewServer(t, http.StatusOK, `{"resolved":2}`)
+	writeRunFileFor(t, cfg, srv)
+
+	deps := aliveDeps()
+	deps.In = strings.NewReader("implemented the requested changes")
+	out, errOut, err := executeCLI(t, deps,
+		"review", "submit", "--addressed", "--run", "run-1", "--review_id", "review-1", "--body", "-")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if capture.method != http.MethodPost || capture.path != "/api/v1/sessions/worker-env/reviews/addressed" {
+		t.Fatalf("request = %s %s", capture.method, capture.path)
+	}
+	var req addressedReviewRequest
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if req.RunID != "run-1" || req.ReviewID != "review-1" || req.Body != "implemented the requested changes" {
+		t.Fatalf("request = %+v", req)
+	}
+	if !strings.Contains(out, "resolved 2 review thread(s) for worker-env") {
+		t.Fatalf("stdout = %q", out)
+	}
+}
+
+func TestReviewSubmitAddressedMissingRunIsUsageError(t *testing.T) {
+	setConfigEnv(t)
+	t.Setenv("AO_SESSION_ID", "worker-env")
+	_, _, err := executeCLI(t, aliveDeps(), "review", "submit", "--addressed", "--body", "-")
+	if got := ExitCode(err); got != 2 {
+		t.Fatalf("exit code = %d, want 2 (usage); err=%v", got, err)
+	}
+}
+
+func TestReviewSubmitAddressedMissingBodyIsUsageError(t *testing.T) {
+	setConfigEnv(t)
+	t.Setenv("AO_SESSION_ID", "worker-env")
+	_, _, err := executeCLI(t, aliveDeps(), "review", "submit", "--addressed", "--run", "run-1")
+	if got := ExitCode(err); got != 2 {
+		t.Fatalf("exit code = %d, want 2 (usage); err=%v", got, err)
+	}
+}
+
 func TestReviewSubmitTooManyArgsIsUsageError(t *testing.T) {
 	setConfigEnv(t)
 	_, _, err := executeCLI(t, aliveDeps(), "review", "submit", "mer-1", "mer-2")

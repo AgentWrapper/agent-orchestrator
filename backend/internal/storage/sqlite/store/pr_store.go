@@ -293,6 +293,20 @@ func (s *Store) ListPRReviewThreads(ctx context.Context, prURL string) ([]domain
 	return out, nil
 }
 
+// ListPRReviewThreadsByReview returns review threads attached to one provider
+// review on a PR, oldest first.
+func (s *Store) ListPRReviewThreadsByReview(ctx context.Context, prURL, reviewID string) ([]domain.PullRequestReviewThread, error) {
+	rows, err := s.qr.ListPRReviewThreadsByReview(ctx, gen.ListPRReviewThreadsByReviewParams{PRURL: prURL, ReviewID: reviewID})
+	if err != nil {
+		return nil, fmt.Errorf("list pr review threads for %s review %s: %w", prURL, reviewID, err)
+	}
+	out := make([]domain.PullRequestReviewThread, 0, len(rows))
+	for _, th := range rows {
+		out = append(out, reviewThreadFromGen(th))
+	}
+	return out, nil
+}
+
 // ListPRReviews returns a PR's submitted reviews, oldest first.
 func (s *Store) ListPRReviews(ctx context.Context, prURL string) ([]domain.PullRequestReview, error) {
 	rows, err := s.qr.ListPRReviews(ctx, prURL)
@@ -509,7 +523,7 @@ func commentFromGen(c gen.PRComment) domain.PullRequestComment {
 
 func genReviewThreadParams(prURL string, th domain.PullRequestReviewThread) gen.UpsertPRReviewThreadParams {
 	return gen.UpsertPRReviewThreadParams{
-		PRURL: prURL, ThreadID: th.ThreadID, Path: th.Path,
+		PRURL: prURL, ThreadID: th.ThreadID, ReviewID: th.ReviewID, Path: th.Path,
 		Line: int64(th.Line), Resolved: boolInt(th.Resolved),
 		IsBot: boolInt(th.IsBot), SemanticHash: th.SemanticHash,
 		UpdatedAt: th.UpdatedAt,
@@ -518,7 +532,7 @@ func genReviewThreadParams(prURL string, th domain.PullRequestReviewThread) gen.
 
 func reviewThreadFromGen(th gen.PRReviewThread) domain.PullRequestReviewThread {
 	return domain.PullRequestReviewThread{
-		ThreadID: th.ThreadID, Path: th.Path, Line: int(th.Line),
+		ThreadID: th.ThreadID, ReviewID: th.ReviewID, Path: th.Path, Line: int(th.Line),
 		Resolved: th.Resolved != 0, IsBot: th.IsBot != 0,
 		SemanticHash: th.SemanticHash, UpdatedAt: th.UpdatedAt,
 	}

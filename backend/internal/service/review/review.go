@@ -21,6 +21,7 @@ var (
 	ErrInvalid             = reviewcore.ErrInvalid
 	ErrNotFound            = reviewcore.ErrNotFound
 	ErrAgentBinaryNotFound = ports.ErrAgentBinaryNotFound
+	ErrNothingToResolve    = fmt.Errorf("%w: no unresolved review threads to resolve", ErrInvalid)
 )
 
 // Manager is the reviews surface the HTTP controller depends on.
@@ -29,6 +30,7 @@ type Manager interface {
 	Cancel(ctx context.Context, workerID domain.SessionID) (reviewcore.CancelResult, error)
 	Submit(ctx context.Context, workerID domain.SessionID, runID string, verdict domain.ReviewVerdict, body, githubReviewID string) (domain.ReviewRun, error)
 	SubmitMany(ctx context.Context, workerID domain.SessionID, reviews []SubmittedReview) ([]domain.ReviewRun, error)
+	Addressed(ctx context.Context, sessionID domain.SessionID, in AddressedFeedback) (AddressedResult, error)
 	List(ctx context.Context, workerID domain.SessionID) (reviewcore.SessionReviews, error)
 }
 
@@ -37,6 +39,7 @@ type Service struct {
 	engine    *reviewcore.Engine
 	store     Store
 	lifecycle Reducer
+	scm       ports.SCMReviewActions
 	clock     func() time.Time
 }
 
@@ -48,6 +51,7 @@ type Store interface {
 	UpdateReviewRunResult(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string) (bool, error)
 	MarkReviewRunDelivered(ctx context.Context, id string, deliveredAt time.Time) (bool, error)
 	ListPRsBySession(ctx context.Context, id domain.SessionID) ([]domain.PullRequest, error)
+	ListPRReviewThreadsByReview(ctx context.Context, prURL, reviewID string) ([]domain.PullRequestReviewThread, error)
 }
 
 // Reducer is the lifecycle reaction boundary used after a review result has
@@ -68,6 +72,11 @@ func WithLifecycleReducer(r Reducer) Option {
 // WithClock overrides the service clock for tests.
 func WithClock(clock func() time.Time) Option {
 	return func(s *Service) { s.clock = clock }
+}
+
+// WithSCMReviewActions wires provider-owned review-thread side effects.
+func WithSCMReviewActions(actions ports.SCMReviewActions) Option {
+	return func(s *Service) { s.scm = actions }
 }
 
 // New wraps a core review engine as the API-facing service.
@@ -99,6 +108,20 @@ type SubmittedReview struct {
 	Verdict        domain.ReviewVerdict
 	Body           string
 	GithubReviewID string
+}
+
+// AddressedFeedback is the intent submitted by an agent after it addressed
+// review feedback in code.
+type AddressedFeedback struct {
+	RunID    string
+	ReviewID string
+	Body     string
+}
+
+// AddressedResult reports how many matching unresolved review threads AO
+// replied to and resolved through the SCM provider.
+type AddressedResult struct {
+	Resolved int
 }
 
 // Submit records a reviewer's result for a specific worker review pass.
@@ -156,6 +179,68 @@ func (s *Service) SubmitMany(ctx context.Context, workerID domain.SessionID, rev
 		}
 	}
 	return runs, nil
+}
+
+// Addressed resolves review feedback through AO-owned SCM provider calls.
+func (s *Service) Addressed(ctx context.Context, sessionID domain.SessionID, in AddressedFeedback) (AddressedResult, error) {
+	if sessionID == "" {
+		return AddressedResult{}, fmt.Errorf("%w: session id is required", ErrInvalid)
+	}
+	runID := in.RunID
+	if runID == "" {
+		return AddressedResult{}, fmt.Errorf("%w: review run id is required", ErrInvalid)
+	}
+	body := in.Body
+	if body == "" {
+		return AddressedResult{}, fmt.Errorf("%w: addressed body is required", ErrInvalid)
+	}
+	if s.store == nil {
+		return AddressedResult{}, fmt.Errorf("review service store is not configured")
+	}
+	if s.scm == nil {
+		return AddressedResult{}, fmt.Errorf("review service scm actions are not configured")
+	}
+	run, ok, err := s.store.GetReviewRun(ctx, runID)
+	if err != nil {
+		return AddressedResult{}, err
+	}
+	if !ok {
+		return AddressedResult{}, fmt.Errorf("%w: review run %q", ErrNotFound, runID)
+	}
+	if run.SessionID != sessionID {
+		return AddressedResult{}, fmt.Errorf("%w: review run %q does not belong to session %q", ErrInvalid, runID, sessionID)
+	}
+	reviewID := firstNonEmpty(in.ReviewID, run.GithubReviewID)
+	if reviewID == "" {
+		return AddressedResult{}, fmt.Errorf("%w: review id is required", ErrInvalid)
+	}
+	if run.PRURL == "" {
+		return AddressedResult{}, fmt.Errorf("%w: review run %q has no pull request", ErrInvalid, runID)
+	}
+	threads, err := s.store.ListPRReviewThreadsByReview(ctx, run.PRURL, reviewID)
+	if err != nil {
+		return AddressedResult{}, err
+	}
+	if len(threads) == 0 {
+		return AddressedResult{}, fmt.Errorf("%w: no review threads for review %q", ErrNotFound, reviewID)
+	}
+	resolved := 0
+	for _, th := range threads {
+		if th.Resolved {
+			continue
+		}
+		if err := s.scm.ReplyToReviewThread(ctx, th.ThreadID, body); err != nil {
+			return AddressedResult{}, err
+		}
+		if err := s.scm.ResolveReviewThread(ctx, th.ThreadID); err != nil {
+			return AddressedResult{}, err
+		}
+		resolved++
+	}
+	if resolved == 0 {
+		return AddressedResult{}, ErrNothingToResolve
+	}
+	return AddressedResult{Resolved: resolved}, nil
 }
 
 func (s *Service) submitOne(ctx context.Context, workerID domain.SessionID, review SubmittedReview) (domain.ReviewRun, error) {
@@ -297,6 +382,15 @@ func (s *Service) currentHeadsByPR(ctx context.Context, workerID domain.SessionI
 		current[pr.URL] = pr.HeadSHA
 	}
 	return current, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // List returns a worker's review state.

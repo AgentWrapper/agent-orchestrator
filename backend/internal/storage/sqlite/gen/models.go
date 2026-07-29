@@ -134,6 +134,7 @@ type PRReviewThread struct {
 	IsBot        int64
 	SemanticHash string
 	UpdatedAt    time.Time
+	ReviewID     string
 }
 
 type Project struct {

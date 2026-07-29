@@ -77,13 +77,24 @@ type submitReviewRequest struct {
 	Reviews        []submitReviewItem `json:"reviews,omitempty"`
 }
 
+type addressedReviewRequest struct {
+	RunID    string `json:"runId"`
+	ReviewID string `json:"reviewId,omitempty"`
+	Body     string `json:"body"`
+}
+
+type addressedReviewResponse struct {
+	Resolved int `json:"resolved"`
+}
+
 type reviewSubmitOptions struct {
-	session  string
-	runID    string
-	verdict  string
-	body     string
-	reviewID string
-	reviews  string
+	session   string
+	runID     string
+	verdict   string
+	body      string
+	reviewID  string
+	reviews   string
+	addressed bool
 }
 
 type reviewSessionOptions struct {
@@ -154,6 +165,7 @@ func newReviewSubmitCommand(ctx *commandContext) *cobra.Command {
 	cmd.Flags().StringVar(&opts.body, "body", "", "Review body: a path to a Markdown file, or - to read from stdin (so nothing is written into the worktree)")
 	cmd.Flags().StringVar(&opts.reviewID, "review-id", "", "Id of the GitHub PR review just posted (the .id from the gh api POST that created the review)")
 	cmd.Flags().StringVar(&opts.reviews, "reviews", "", "JSON review results array or object: a path, or - to read from stdin")
+	cmd.Flags().BoolVar(&opts.addressed, "addressed", false, "Reply to and resolve provider review feedback addressed by this run")
 	return cmd
 }
 
@@ -162,8 +174,14 @@ func (c *commandContext) submitReview(cmd *cobra.Command, args []string, opts re
 	if len(args) == 1 {
 		session = strings.TrimSpace(args[0])
 	}
+	if session == "" && opts.addressed {
+		session = strings.TrimSpace(os.Getenv("AO_SESSION_ID"))
+	}
 	if session == "" {
 		return usageError{errors.New("usage: worker session id is required (positional or --session)")}
+	}
+	if opts.addressed {
+		return c.submitAddressedReview(cmd, session, opts)
 	}
 	if strings.TrimSpace(opts.reviews) != "" {
 		return c.submitReviewBatch(cmd, session, opts)
@@ -178,19 +196,11 @@ func (c *commandContext) submitReview(cmd *cobra.Command, args []string, opts re
 	}
 	var body string
 	if path := strings.TrimSpace(opts.body); path != "" {
-		var raw []byte
 		var err error
-		if path == "-" {
-			// Read the review from stdin so the reviewer never has to write a file
-			// into its checkout (where it could be committed onto the worker branch).
-			raw, err = io.ReadAll(cmd.InOrStdin())
-		} else {
-			raw, err = os.ReadFile(path)
-		}
+		body, err = readReviewBody(cmd, path)
 		if err != nil {
-			return usageError{fmt.Errorf("read review body: %w", err)}
+			return err
 		}
-		body = string(raw)
 	}
 	reviewID := strings.TrimSpace(opts.reviewID)
 	path := "sessions/" + url.PathEscape(session) + "/reviews/submit"
@@ -199,6 +209,34 @@ func (c *commandContext) submitReview(cmd *cobra.Command, args []string, opts re
 		return err
 	}
 	_, err := fmt.Fprintf(cmd.OutOrStdout(), "recorded %s review for %s\n", res.Review.Verdict, session)
+	return err
+}
+
+func (c *commandContext) submitAddressedReview(cmd *cobra.Command, session string, opts reviewSubmitOptions) error {
+	if strings.TrimSpace(opts.reviews) != "" || strings.TrimSpace(opts.verdict) != "" {
+		return usageError{errors.New("usage: --addressed cannot be combined with --reviews or --verdict")}
+	}
+	runID := strings.TrimSpace(opts.runID)
+	if runID == "" {
+		return usageError{errors.New("usage: --run is required")}
+	}
+	bodyPath := strings.TrimSpace(opts.body)
+	if bodyPath == "" {
+		return usageError{errors.New("usage: --body is required with --addressed")}
+	}
+	body, err := readReviewBody(cmd, bodyPath)
+	if err != nil {
+		return err
+	}
+	if body == "" {
+		return usageError{errors.New("usage: --body is required with --addressed")}
+	}
+	path := "sessions/" + url.PathEscape(session) + "/reviews/addressed"
+	var res addressedReviewResponse
+	if err := c.postJSON(cmd.Context(), path, addressedReviewRequest{RunID: runID, ReviewID: strings.TrimSpace(opts.reviewID), Body: body}, &res); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(cmd.OutOrStdout(), "resolved %d review thread(s) for %s\n", res.Resolved, session)
 	return err
 }
 
@@ -338,4 +376,20 @@ func readReviewItems(cmd *cobra.Command, path string) ([]submitReviewItem, error
 		return nil, usageError{errors.New("usage: --reviews requires at least one review result")}
 	}
 	return reviews, nil
+}
+
+func readReviewBody(cmd *cobra.Command, path string) (string, error) {
+	var raw []byte
+	var err error
+	if path == "-" {
+		// Read the review from stdin so the reviewer never has to write a file
+		// into its checkout (where it could be committed onto the worker branch).
+		raw, err = io.ReadAll(cmd.InOrStdin())
+	} else {
+		raw, err = os.ReadFile(path)
+	}
+	if err != nil {
+		return "", usageError{fmt.Errorf("read review body: %w", err)}
+	}
+	return string(raw), nil
 }

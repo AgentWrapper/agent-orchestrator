@@ -562,7 +562,7 @@ func buildReviewThreadsQuery(ref ports.SCMPRRef, beforeCursor string, includeRev
 	return fmt.Sprintf(`query{
 repo: repository(owner:%s,name:%s){ pullRequest(number:%d){ reviewDecision%s reviewThreads(last:%d, before:%s){ nodes{
   id isResolved path line
-  comments(first:%d){ nodes{ id body url author{ login __typename } } }
+  comments(first:%d){ nodes{ id body url pullRequestReview{ id } author{ login __typename } } }
 } pageInfo{ hasPreviousPage startCursor } } } }
 }`, graphQLString(ref.Repo.Owner), graphQLString(ref.Repo.Name), ref.Number, reviewSelection, githubReviewThreadPageSize, before, githubReviewCommentLimitPerThread)
 }
@@ -605,6 +605,10 @@ func scmThreadFromGraphQL(th map[string]any) ports.SCMReviewThreadObservation {
 	allCommentsBot := len(commentNodes) > 0
 	for _, cn := range commentNodes {
 		author, _ := cn["author"].(map[string]any)
+		if out.ReviewID == "" {
+			review, _ := cn["pullRequestReview"].(map[string]any)
+			out.ReviewID = str(review["id"])
+		}
 		isBot := isBotAuthor(author)
 		if !isBot {
 			allCommentsBot = false
