@@ -18,7 +18,7 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
-import { useTerminateSession } from "../hooks/useTerminateSession";
+import { clearTerminateSessionState, useTerminateSession } from "../hooks/useTerminateSession";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { canonicalTrackerIssueId, findProjectOrchestrator, sortedPRs } from "../types/workspace";
@@ -431,7 +431,7 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 						aria-label="Terminate session"
 						className="inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-colors hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
 						onClick={() => {
-							terminate.reset();
+							clearTerminateSessionState(queryClient, session.id);
 							setConfirmOpen(true);
 						}}
 						type="button"

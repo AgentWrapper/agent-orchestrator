@@ -6,6 +6,7 @@ import {
 	Check,
 	Copy,
 	GitBranch,
+	LoaderCircle,
 	Plus,
 	RotateCcw,
 	RotateCw,
@@ -32,7 +33,11 @@ import {
 } from "../lib/session-presentation";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { useRestoreSession } from "../hooks/useRestoreSession";
-import { useTerminateSession } from "../hooks/useTerminateSession";
+import {
+	clearTerminateSessionState,
+	useTerminateSession,
+	useTerminateSessionState,
+} from "../hooks/useTerminateSession";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { NotificationCenter } from "./NotificationCenter";
 import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyStates";
@@ -350,7 +355,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 									sessions={byZone.get(col.zone) ?? []}
 									onOpen={openSession}
 									onTerminate={(session) => {
-										terminateSession.reset();
+										clearTerminateSessionState(queryClient, session.id);
 										setTerminationSession(session);
 									}}
 								/>
@@ -767,6 +772,7 @@ function SessionCard({
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
+	const termination = useTerminateSessionState(session.id);
 	const showTerminate = interactive && session.isTerminated !== true && onTerminate;
 	const keepTerminateVisible = session.status === "merged";
 	const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -797,10 +803,10 @@ function SessionCard({
 		>
 			{showTerminate ? (
 				<button
-					aria-label={`Terminate ${session.title}`}
+					aria-label={termination.isPending ? `Killing ${session.title}` : `Terminate ${session.title}`}
 					className={cn(
 						"absolute right-2 top-1.5 z-10 inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-[color,background-color,opacity] hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
-						keepTerminateVisible
+						keepTerminateVisible || termination.isPending
 							? "opacity-100"
 							: "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100",
 					)}
@@ -808,10 +814,15 @@ function SessionCard({
 						event.stopPropagation();
 						onTerminate();
 					}}
-					title="Terminate session"
+					disabled={termination.isPending}
+					title={termination.isPending ? "Killing session" : "Terminate session"}
 					type="button"
 				>
-					<Trash2 className="size-icon-sm" aria-hidden="true" />
+					{termination.isPending ? (
+						<LoaderCircle className="size-icon-sm animate-spin" aria-hidden="true" />
+					) : (
+						<Trash2 className="size-icon-sm" aria-hidden="true" />
+					)}
 				</button>
 			) : null}
 			<div className="flex items-start gap-2.5 px-3.5 pb-2.5 pt-3">
@@ -864,6 +875,11 @@ function SessionCard({
 					</span>
 				)}
 			</div>
+			{termination.error ? (
+				<div className="border-t border-border px-3.5 py-1.5 text-2xs text-destructive" role="alert">
+					{termination.error}
+				</div>
+			) : null}
 		</div>
 	);
 }

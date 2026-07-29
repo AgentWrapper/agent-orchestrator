@@ -11,7 +11,12 @@ import {
 	type WorkspaceSession,
 } from "../types/workspace";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
-import { useTerminateSession, useTerminateSessionState } from "../hooks/useTerminateSession";
+import {
+	clearTerminateSessionState,
+	useProjectTerminateSessionStates,
+	useTerminateSession,
+	useTerminateSessionState,
+} from "../hooks/useTerminateSession";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { useUiStore } from "../stores/ui-store";
@@ -209,6 +214,7 @@ export function ShellTopbar() {
 					<>
 						{isOrchestrator ? (
 							<>
+								<ProjectTerminationFeedback projectId={projectId} />
 								<TopbarButton
 									aria-label="New task"
 									disabled={isProjectRestarting}
@@ -296,6 +302,7 @@ export function TopbarKillButton({
 	onKilled: (workspaceId: string, orchestratorId?: string) => void;
 }) {
 	const [confirmOpen, setConfirmOpen] = useState(false);
+	const queryClient = useQueryClient();
 	const kill = useTerminateSession();
 	const { error, isPending } = useTerminateSessionState(session.id);
 
@@ -312,7 +319,7 @@ export function TopbarKillButton({
 					aria-label={isPending ? "Killing..." : "Kill session"}
 					disabled={isPending}
 					onClick={() => {
-						kill.reset();
+						clearTerminateSessionState(queryClient, session.id);
 						setConfirmOpen(true);
 					}}
 					title="Kill session"
@@ -330,6 +337,32 @@ export function TopbarKillButton({
 				session={session}
 			/>
 		</>
+	);
+}
+
+function ProjectTerminationFeedback({ projectId }: { projectId: string | undefined }) {
+	const states = useProjectTerminateSessionStates(projectId);
+	if (states.length === 0) return null;
+
+	return (
+		<div aria-label="Session termination status" className="flex max-w-content-max items-center gap-2">
+			{states.map((state) =>
+				state.error ? (
+					<TopbarKillError className="max-w-48 truncate" key={state.session.id} title={state.error}>
+						{state.session.title}: {state.error}
+					</TopbarKillError>
+				) : (
+					<span
+						className="max-w-40 truncate text-caption text-muted-foreground"
+						key={state.session.id}
+						role="status"
+						title={`Killing ${state.session.title}…`}
+					>
+						Killing {state.session.title}…
+					</span>
+				),
+			)}
+		</div>
 	);
 }
 function SessionStatusPill({ session }: { session: WorkspaceSession }) {

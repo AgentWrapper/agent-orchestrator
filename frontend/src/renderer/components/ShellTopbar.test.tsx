@@ -402,6 +402,34 @@ describe("TopbarKillButton", () => {
 		resolveKill({ data: { ok: true, sessionId: "sess-1" }, error: undefined });
 	});
 
+	it("shows pending and failure feedback after navigating to the orchestrator", async () => {
+		let finishKill!: (value: {
+			data: undefined;
+			error: { message: string };
+			response: { status: number };
+		}) => void;
+		postMock.mockReturnValue(
+			new Promise((resolve) => {
+				finishKill = resolve;
+			}),
+		);
+		const view = renderTopbarSessions([worker, orchestrator], worker.id);
+
+		await userEvent.click(screen.getByRole("button", { name: "Kill session" }));
+		await clickKillDialogConfirm();
+		paramsMock.sessionId = orchestrator.id;
+		view.rerenderTopbar();
+
+		expect(screen.getByRole("status")).toHaveTextContent("Killing do the thing");
+		finishKill({
+			data: undefined,
+			error: { message: "runtime teardown failed" },
+			response: { status: 500 },
+		});
+
+		expect(await screen.findByRole("alert")).toHaveTextContent("do the thing: runtime teardown failed");
+	});
+
 	it("falls back to the project board when no orchestrator is available", async () => {
 		renderKill();
 
