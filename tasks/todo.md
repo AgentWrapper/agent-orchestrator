@@ -35,6 +35,23 @@ Contrato ensure: {"port","pid","mode":"attached|spawned|takeover"}.
 - [x] T5 — daemon Rust — verificado às cegas: PASS (41 testes)
 - [x] T6 — comandos Rust settings/misc/import-scan — verificado às cegas: PASS (76 testes) — M0–M2 completos
 
+## Status final (2026-07-29)
+MIGRAÇÃO COMPLETA — M0–M7 verificados às cegas, branch tauri-migration (7 commits,
+d6ab73e80..d1fb87950). Todas as suítes verdes: go test ./... + golangci-lint 0 issues,
+cargo test 137 + clippy -D warnings limpo, typecheck/typecheck:e2e, vitest 958,
+`tauri build --debug --no-bundle` ok, smoke E2E (boot → daemon spawn → healthz →
+auto-stop no quit) validado.
+
+Follow-ups decididos/flagados (não bloqueiam):
+- `ao start` (backend/internal/cli/start.go) ainda busca nomes de artefatos Electron —
+  decisão de time sobre repontar para os artefatos Tauri.
+- Captura/mirror Win/Linux: stubs com degradação graceful; implementar com runners nativos.
+- Rename cosmético `VITE_NO_ELECTRON` → ex. `VITE_PREVIEW_MODE` (cross-cutting, e2e usa).
+- Automação de retirement de feature builds (o cleanup antigo foi deletado junto).
+- Pubkey do updater em tauri.conf.json é placeholder; CI injeta a real via secret
+  `TAURI_UPDATER_PUBKEY` (falha alto se ausente). Configurar secrets antes do 1º release.
+- Teste negativo do wizard (dev esconde) ausente.
+
 ## Review
 - T7: `moveToApplicationsFolder` (macOS "move app to /Applications" prompt) foi
   descartado deliberadamente — não portado para o Tauri shell. Decisão tomada
