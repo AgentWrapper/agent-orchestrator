@@ -808,32 +808,14 @@ function ReviewsView({
 	const unresolvedTotal = prSummaries
 		.filter((pr) => pr.state === "open")
 		.reduce((total, pr) => total + (pr.review?.unresolvedBy ?? []).reduce((n, r) => n + r.count, 0), 0);
-	// AO reviews and the humans/bots on the PR answer different questions, and
-	// stacking them meant scrolling past one to reach the other.
-	const [pane, setPane] = useState<"ao" | "github">("ao");
+	const githubReviewCount = githubReviews.reduce((n, pr) => n + (pr.review?.reviews?.length ?? 0), 0);
 
 	return (
 		<div role="tabpanel">
-			<div className="mb-2.5 flex items-center gap-1" role="tablist" aria-label="Review source">
-				<ReviewPaneTab active={pane === "ao"} label="AO" onClick={() => setPane("ao")} count={reviewStates.length} />
-				<ReviewPaneTab
-					active={pane === "github"}
-					label="Pull request"
-					onClick={() => setPane("github")}
-					count={githubReviews.reduce((n, pr) => n + (pr.review?.reviews?.length ?? 0), 0)}
-				/>
-			</div>
-			{pane === "github" ? (
-				<Section surface>
-					<GithubReviewPanel
-						isLoading={scmSummary.isLoading}
-						prs={githubReviews}
-						sessionId={session.id}
-						unresolvedTotal={unresolvedTotal}
-					/>
-				</Section>
-			) : (
-			<Section surface>
+			{/* One panel, two sources, in the order they happen: AO's own reviewer runs
+			    first, then whatever humans and bots leave on the PR. Tabs hid one
+			    behind the other when the point is to read them together. */}
+			<Section surface title="Agent review">
 				<ReviewPanel
 					config={projectConfigQuery.data}
 					error={reviewsQuery.error ?? triggerReview.error ?? cancelReview.error}
@@ -856,41 +838,18 @@ function ReviewsView({
 					session={session}
 				/>
 			</Section>
-			)}
+			<Section surface title={`Reviews on the pull request${githubReviewCount > 0 ? ` (${githubReviewCount})` : ""}`}>
+				<GithubReviewPanel
+					isLoading={scmSummary.isLoading}
+					prs={githubReviews}
+					sessionId={session.id}
+					unresolvedTotal={unresolvedTotal}
+				/>
+			</Section>
 		</div>
 	);
 }
 
-function ReviewPaneTab({
-	active,
-	label,
-	count,
-	onClick,
-}: {
-	active: boolean;
-	label: string;
-	count: number;
-	onClick: () => void;
-}) {
-	return (
-		<button
-			aria-selected={active}
-			className={cn(
-				"inline-flex h-control-md items-center gap-1.5 rounded-md px-2 text-2xs font-semibold transition-colors",
-				active ? "bg-interactive-active text-foreground" : "text-passive hover:bg-interactive-hover hover:text-foreground",
-			)}
-			onClick={onClick}
-			role="tab"
-			type="button"
-		>
-			{label}
-			<span className="font-mono text-micro tabular-nums text-passive">{count}</span>
-		</button>
-	);
-}
-
-// One expandable PR row for AO review state. The header carries PR identity and
-// update context; verdicts live in the expanded row below.
 function ReviewDisclosure({
 	title,
 	meta,
@@ -1157,10 +1116,9 @@ function ReviewPanel({
 			) : null}
 			<div className="flex min-w-0 items-center gap-2.5">
 				<AgentAvatar className="size-icon-lg shrink-0" decorative provider={harness} />
-				<div className="flex min-w-0 flex-1 flex-col">
-					<span className="truncate text-sm-md font-semibold leading-tight text-foreground">{harness}</span>
-					<span className="text-2xs leading-tight text-passive">AO reviewer</span>
-				</div>
+				<span className="min-w-0 flex-1 truncate text-sm-md font-semibold leading-tight text-foreground">
+					{harness}
+				</span>
 				<div className="shrink-0">
 					<ReviewerSelect
 						ariaLabel="Reviewer agent"
@@ -1194,7 +1152,7 @@ function ReviewPanel({
 				<Switch
 					aria-label="Send review findings to the agent"
 					checked={autoInject}
-					className="mt-0.5 shrink-0"
+					className="mt-0.5 shrink-0 data-[state=checked]:bg-accent-strong"
 					disabled={autoInjectPending}
 					onCheckedChange={onAutoInjectChange}
 				/>

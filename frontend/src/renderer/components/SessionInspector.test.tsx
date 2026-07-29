@@ -868,8 +868,8 @@ describe("SessionInspector reviews tab", () => {
 		});
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsTab();
-		await userEvent.click(screen.getByRole("tab", { name: /Pull request/ }));
 
+		// Both sources sit in one panel now, so the PR reviews need no navigation.
 		expect(await screen.findByText("maya")).toBeInTheDocument();
 		expect(screen.getByText("Tear down the listener on unmount.")).toBeInTheDocument();
 		expect(screen.getByText(/2 unresolved/)).toBeInTheDocument();
