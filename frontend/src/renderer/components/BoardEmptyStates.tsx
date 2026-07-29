@@ -68,7 +68,7 @@ export function ProjectBoardEmpty({
 									? "Orchestrator"
 									: "Spawn Orchestrator"}
 					</TopbarButton>
-					<TopbarButton aria-label="New task" disabled={isProjectRestarting} onClick={onNewTask} variant="accent">
+					<TopbarButton aria-label="New task" disabled={isProjectRestarting} onClick={onNewTask} variant="primary">
 						<Plus className="size-icon-md" aria-hidden="true" />
 						New task
 					</TopbarButton>

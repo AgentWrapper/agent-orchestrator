@@ -213,7 +213,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				aria-label="New task"
 				disabled={isProjectRestarting}
 				onClick={() => projectId && requestNewTask(projectId)}
-				variant="accent"
+				variant={isBoardEmpty ? "accent" : "accent"}
 			>
 				<Plus className="size-icon-md" aria-hidden="true" />
 				New task
@@ -491,11 +491,11 @@ function SessionCard({
 	};
 	const cardBodyProps = interactive
 		? {
-				onClick: onOpen,
-				onKeyDown: handleKeyDown,
-				role: "button",
-				tabIndex: 0,
-			}
+			onClick: onOpen,
+			onKeyDown: handleKeyDown,
+			role: "button",
+			tabIndex: 0,
+		}
 		: {};
 	return (
 		<div
@@ -559,7 +559,7 @@ function SessionCard({
 					className={cn(
 						"absolute bottom-1.5 right-2 z-10 inline-flex h-control-xs items-center justify-center rounded-sm border border-accent bg-accent px-2.5 text-2xs font-semibold text-accent-foreground opacity-0 shadow-sm transition-opacity duration-normal ease-out disabled:cursor-not-allowed",
 						!isRestoreDisabled &&
-							"hover:opacity-90 focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100",
+						"hover:opacity-90 focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100",
 						isRestoring && "opacity-100",
 					)}
 					disabled={isRestoreDisabled}

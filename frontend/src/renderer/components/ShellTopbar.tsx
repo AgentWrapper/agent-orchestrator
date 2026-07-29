@@ -7,6 +7,7 @@ import {
 	findProjectOrchestrator,
 	isOrchestratorSession,
 	sessionIsActive,
+	workerSessions,
 	type WorkspaceSession,
 } from "../types/workspace";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
@@ -68,7 +69,7 @@ export function ShellTopbar() {
 	const isProjectBoardRoute = !isSessionRoute && Boolean(projectId);
 	const isRootBoardRoute = !isSessionRoute && !isProjectBoardRoute;
 	const project = projectId ? all.find((workspace) => workspace.id === projectId) : undefined;
-	const isBoardEmpty = isProjectBoardRoute && (project?.sessions.filter((s) => s.kind === "worker").length ?? 0) === 0;
+	const isBoardEmpty = isProjectBoardRoute && workerSessions(project?.sessions ?? []).length === 0;
 	const projectLabel = project?.name ?? session?.workspaceName ?? (projectId ? "" : "Board");
 	const boardHeaderActionVariant = isBoardEmpty ? "accent" : "primary";
 	const orchestrator = projectId ? findProjectOrchestrator(all, projectId) : undefined;
@@ -176,7 +177,7 @@ export function ShellTopbar() {
 							disabled={isProjectRestarting}
 							onClick={openNewTask}
 							style={noDragStyle}
-							variant="accent"
+							variant={boardHeaderActionVariant}
 						>
 							<Plus className="size-icon-md" aria-hidden="true" />
 							New task
@@ -243,7 +244,7 @@ export function ShellTopbar() {
 								disabled={isSpawning || isProjectRestarting}
 								onClick={() => void openOrchestrator()}
 								style={noDragStyle}
-								variant="accent"
+								variant="primary" /** worker session pages keep primary variant */
 							>
 								<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
 								{isProjectRestarting ? "Restarting…" : isSpawning ? "Spawning…" : "Orchestrator"}
