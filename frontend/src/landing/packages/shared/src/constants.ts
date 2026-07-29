@@ -6,7 +6,7 @@ export const COMPANY = {
   GITHUB_URL: "https://github.com/AgentWrapper/agent-orchestrator",
   GITHUB_REPO: "AgentWrapper/agent-orchestrator",
   STATUS_URL: "https://status.aoagents.dev",
-  TRUST_URL: "https://aoagents.dev/privacy",
+  TRUST_URL: "https://aoagents.dev/privacy/",
   MAIL_TO: "mailto:hello@aoagents.dev",
   X_URL: "https://twitter.com/aoagents",
   LINKEDIN_URL: "https://linkedin.com/company/aoagents",
