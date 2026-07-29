@@ -255,7 +255,41 @@ that ladder:
   (after `StashUncommitted` captured work as a git ref — which for cloud
   sessions can be pushed to the remote as a preserve ref; see limitations).
 
-## 6. Phase-2 scope, limitations, follow-ups
+## 6. Live validation results (2026-07-28, real Daytona account)
+
+The full live suite passes against production Daytona using the maintainer's
+test org, the pushed `ao-agent-sandbox:dev` snapshot, and a real
+`CLAUDE_CODE_OAUTH_TOKEN` (all credentials via env; never committed):
+
+| Test | Result | What it proves |
+| --- | --- | --- |
+| `TestLive_ClientSandboxLifecycle` | PASS, 4.4s | sandbox create→started in ~2–3s, exec, PTY-WebSocket byte round-trip + resize, delete |
+| `TestLive_RuntimeSessionLifecycle` | PASS, 14.4s | workspace create (sandbox + clone) → tmux agent → scrollback → send round-trip → park (stop) → wake (`Restart`, same handle) → synchronous teardown |
+| `TestLive_RealAgentSession` | PASS, 13.6s | **real Claude Code, authenticated with no browser flow** via `CLAUDE_CODE_OAUTH_TOKEN` boot-env injection, answered a prompt; keep-alive shell held after agent exit |
+
+Observed behaviors that shaped the adapter (each now regression-tested):
+
+- **Stop/delete are async**: the API 200s while state lags (`stopping` /
+  still-listed); the toolbox proxy 502s mid-stop. Park waits for `stopped`,
+  destroys wait for gone, and a failed liveness exec re-reads sandbox state
+  before reporting.
+- **The list endpoint trails `GET /sandbox/{id}`**: a freshly-parked sandbox
+  can be listed as `stopping`, so wake settles the state first, then starts —
+  otherwise the start is never issued (reproduced twice before the fix).
+- Daytona's current default snapshot (`daytonaio/sandbox:0.8.0`) already
+  ships tmux, so even snapshot-less smoke runs work; the custom snapshot is
+  still required for agent CLIs + `ao` and is 0.21 GB vs 7.6 GB.
+
+**Validated at the port level, pending daemon wiring (phase 3):** terminal
+streaming is proven over the PTY WebSocket (`Attach`/`Stream` contract), but
+in-app rendering needs the daemon to select this runtime per session —
+`runtimeselect.New()` still picks tmux/conpty by OS, so merging this PR
+changes nothing for local installs. **Confirmed gap:** activity/hook events
+cannot reach a loopback-only local daemon from the sandbox; the CLI side
+(`AO_API_BASE` + bearer) is unit-tested, and the control plane must provide
+the reachable base + per-session tokens (§4).
+
+## 6a. Phase-2 scope, limitations, follow-ups
 
 - The adapter lives in `backend/internal/adapters/runtime/daytona/` and is not
   yet wired into `runtimeselect` platform selection (cloud sessions are
