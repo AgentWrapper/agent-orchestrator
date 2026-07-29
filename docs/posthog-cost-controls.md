@@ -65,6 +65,52 @@ events to well under 250k, before organic adoption of current builds. That is a
 10x+ reduction while keeping renderer DAU, current v2 CLI DAU, current v2
 command adoption, and reliability events.
 
+## Follow-up: Failure-only Internal CLI Telemetry
+
+Successful background polling commands are not useful enough to justify
+billable PostHog volume. Do not track routine successful executions for
+internal/read-only commands such as:
+
+- `ao status`
+- `ao session ls`
+- `ao session get`
+- `ao project ls`
+- `ao project get`
+- `ao orchestrator ls`
+- `ao hooks`
+- `ao pty-host`
+
+Keep meaningful failures, because they are reliability signal. A future
+failure-only event should use a separate v2 name such as `ao.v2.cli.failed`
+instead of reusing `ao.v2.cli.invoked`.
+
+Safe properties:
+
+- `command_path`, for example `ao session ls`
+- `actor_type`, for example `renderer`, `user`, `agent`, or `system`
+- `error_category`, for example `daemon_unavailable`, `timeout`, or
+  `backend_5xx`
+- `error_code`, when it is a stable code such as `CONNECTION_REFUSED`
+- `app_version` / `ao_version`
+- `telemetry_schema_version`
+
+Do not send raw error messages, stack traces, local paths, project names,
+repository URLs, prompts, terminal output, access tokens, request payloads, or
+other user content.
+
+Do not treat expected outcomes as serious telemetry failures: user-cancelled
+operations, dialogs closed by the user, already-removed projects, transient
+polling failures while AO is starting, intentionally deleted resources, and
+commands that succeed after automatic retry.
+
+Repeated failures from polling should be deduplicated. Emit the same
+`ao.v2.cli.failed` shape at most once per install and time window, then include
+`occurrence_count`, `window_start`, and `window_end` so 48 identical failures
+cost one event while still showing the true magnitude.
+
+The rule of thumb is: drop successful background polling events, but preserve
+meaningful user-impacting failures as safe, rate-limited error telemetry.
+
 ## Abuse Controls
 
 The PostHog project token is public in shipped desktop apps. Treat it like a

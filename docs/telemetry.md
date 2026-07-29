@@ -91,6 +91,17 @@ The per-command daily cap keeps invocation frequency off PostHog, and the CLI
 reservation state is persisted under the AO data dir so a daemon restart does
 not re-emit every polling command for the same day.
 
+Routine successful internal/read-only commands are not reliability signal by
+themselves and should not be reintroduced as uncapped success telemetry. For
+commands such as `ao status`, `ao session ls`, `ao session get`,
+`ao project ls`, `ao project get`, `ao orchestrator ls`, `ao hooks`, and
+`ao pty-host`, prefer tracking only meaningful user-impacting failures through
+a separate, rate-limited event such as `ao.v2.cli.failed`. That event should
+carry safe enum-like fields such as `command_path`, `actor_type`,
+`error_category`, and stable `error_code`; it must not include raw error
+messages, stack traces, local paths, project names, repository URLs, prompts,
+terminal output, tokens, or request payloads.
+
 `ao.renderer.route_viewed` is capped at once per coarse surface per UTC day per
 renderer install. This preserves surface adoption and retention signal while
 dropping repeated navigation churn inside the same surface.
