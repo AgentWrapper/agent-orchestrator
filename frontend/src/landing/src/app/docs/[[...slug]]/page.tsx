@@ -27,7 +27,7 @@ export async function generateMetadata({
       title: `${doc.title} | Agent Orchestrator Docs`,
       description: doc.description,
       url: doc.url,
-      images: ["/opengraph-image"],
+      images: ["/og-image.png"],
     },
   };
 }

@@ -36,7 +36,7 @@ export function OrganizationJsonLd() {
 		"@type": "Organization",
 		name: COMPANY.NAME,
 		url: COMPANY.MARKETING_URL,
-		logo: `${COMPANY.MARKETING_URL}/logo.png`,
+		logo: `${COMPANY.MARKETING_URL}/ao-logo.svg`,
 		description: "Run 10+ parallel coding agents on your machine",
 		email: supportEmail,
 		contactPoint: {
@@ -124,7 +124,7 @@ export function ArticleJsonLd({
 			name: COMPANY.NAME,
 			logo: {
 				"@type": "ImageObject",
-				url: `${COMPANY.MARKETING_URL}/logo.png`,
+				url: `${COMPANY.MARKETING_URL}/ao-logo.svg`,
 			},
 		},
 		datePublished: publishedTime,
@@ -177,7 +177,7 @@ export function ComparisonJsonLd({
 			name: COMPANY.NAME,
 			logo: {
 				"@type": "ImageObject",
-				url: `${COMPANY.MARKETING_URL}/logo.png`,
+				url: `${COMPANY.MARKETING_URL}/ao-logo.svg`,
 			},
 		},
 		datePublished: publishedTime,
