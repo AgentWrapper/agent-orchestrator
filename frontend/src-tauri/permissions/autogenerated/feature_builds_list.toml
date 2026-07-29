@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-feature-builds-list"
+description = "Enables the feature_builds_list command without any pre-configured scope."
+commands.allow = ["feature_builds_list"]
+
+[[permission]]
+identifier = "deny-feature-builds-list"
+description = "Denies the feature_builds_list command without any pre-configured scope."
+commands.deny = ["feature_builds_list"]

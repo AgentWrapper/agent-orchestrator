@@ -35,5 +35,14 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "endpoints": [
+        "https://github.com/AgentWrapper/agent-orchestrator/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENDMDNDRDEyMjU0NDA5MUUKUldRZUNVUWxFczBEek1Vb3U2bmFnVEJVbkF6MjR5ZXhZeEZ1NjNVSWNKOHh2dGtYQkhHNG14U2MK"
+    }
   }
 }

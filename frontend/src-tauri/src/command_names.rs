@@ -34,6 +34,7 @@ pub const ALL_COMMAND_NAMES: &[&str] = &[
     "app_state_set_migration",
     "update_settings_get",
     "update_settings_set",
+    "update_settings_has_decision",
     "app_scan_import_folder",
     "terminal_save_dropped_file",
     "telemetry_get_bootstrap",
@@ -59,6 +60,13 @@ pub const ALL_COMMAND_NAMES: &[&str] = &[
     "browser_annotation_submit",
     "browser_annotation_cancel",
     "browser_forward_shortcut",
+    "updates_get_status",
+    "updates_check",
+    "updates_return_home",
+    "updates_download",
+    "updates_install",
+    "feature_builds_list",
+    "feature_builds_get_active",
 ];
 
 /// The 3 commands invoked directly from inside an untrusted child

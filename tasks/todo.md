@@ -9,8 +9,10 @@ Wave 1: [T1 scaffold src-tauri (M0), T2 `ao daemon ensure` Go (M1), T3 CORS taur
    próprio spike, diagnosticado e corrigido pelo orquestrador: ~50fps em release,
    commit a7b23fbdf); tentativa 2 DONE mas verificação opus reprovou com 7 achados
    (ACL brick, capture síncrono na main thread, mirror:// sem escopo, normalizer morto,
-   teste vácuo, keylogging no forward, hang do canvasMirror); T9b (fixes) em execução
-   — spec tasks/specs/T9b-browser-panel-fixes.md]
+   teste vácuo, keylogging no forward, hang do canvasMirror); T9b corrigiu os 7,
+   re-verificação opus: PASS; hardening extra do orquestrador (capability por webview
+   label + is_browser_label no validate_caller). Checkpoint 39273ea68 (M4). Pendência
+   Win/Linux: captura nativa stub até CI com runners nativos (T11).]
 → Wave 5: [T10 updater] → Wave 6: [T11 CI/release] → Wave 7: [T12 cleanup Electron, só após validação manual]
 
 Specs completas em tasks/specs/T4..T12. Handoff: um orquestrador novo precisa apenas de

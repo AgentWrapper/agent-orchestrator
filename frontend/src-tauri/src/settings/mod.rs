@@ -325,7 +325,11 @@ fn coerce_feature(raw: Option<&Value>) -> Value {
     }
 }
 
-fn coerce_update_settings(raw: &Value) -> Value {
+// pub(crate): reused by the updater module (see src/updater/mod.rs) so the
+// updater's runtime channel/feature logic reads and writes the exact same
+// coerced shape as these commands, instead of re-implementing the migration
+// rules a second time.
+pub(crate) fn coerce_update_settings(raw: &Value) -> Value {
     let obj = raw.as_object();
     let enabled = obj.and_then(|o| o.get("enabled")).and_then(Value::as_bool).unwrap_or(false);
     let channel = obj.and_then(|o| o.get("channel")).and_then(Value::as_str);
@@ -340,7 +344,7 @@ fn coerce_update_settings(raw: &Value) -> Value {
     })
 }
 
-fn read_update_settings(state_dir: &Path) -> Value {
+pub(crate) fn read_update_settings(state_dir: &Path) -> Value {
     let raw = match std::fs::read_to_string(state_dir.join(UPDATE_SETTINGS_FILE_NAME)) {
         Ok(raw) => raw,
         Err(_) => return coerce_update_settings(&Value::Null),
@@ -351,7 +355,7 @@ fn read_update_settings(state_dir: &Path) -> Value {
     }
 }
 
-fn write_update_settings(state_dir: &Path, settings: &Value) -> Result<Value, String> {
+pub(crate) fn write_update_settings(state_dir: &Path, settings: &Value) -> Result<Value, String> {
     let next = coerce_update_settings(settings);
     let data = format!("{}\n", serde_json::to_string_pretty(&next).map_err(|e| e.to_string())?);
     atomic_write(state_dir, UPDATE_SETTINGS_FILE_NAME, "update-settings", &data).map_err(|e| e.to_string())?;
@@ -361,6 +365,16 @@ fn write_update_settings(state_dir: &Path, settings: &Value) -> Result<Value, St
 #[tauri::command]
 pub async fn update_settings_get() -> Result<serde_json::Value, String> {
     Ok(read_update_settings(&paths::ao_data_dir()))
+}
+
+/// True once `update-settings.json` has been written at least once (i.e. the
+/// user has made an opt-in/channel decision, even if that decision was "off").
+/// Ported from auto-updater.ts's `ensureUpdatePrefs`, which gates the
+/// first-run wizard on `existsSync(update-settings.json)` rather than on the
+/// (always-present) coerced default shape.
+#[tauri::command]
+pub async fn update_settings_has_decision() -> Result<bool, String> {
+    Ok(paths::ao_data_dir().join(UPDATE_SETTINGS_FILE_NAME).exists())
 }
 
 #[tauri::command]

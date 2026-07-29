@@ -27,6 +27,7 @@
     "allow-app-state-set-migration",
     "allow-update-settings-get",
     "allow-update-settings-set",
+    "allow-update-settings-has-decision",
     "allow-app-scan-import-folder",
     "allow-terminal-save-dropped-file",
     "allow-telemetry-get-bootstrap",
@@ -51,6 +52,13 @@
     "allow-browser-annotation-set-mode",
     "allow-browser-annotation-submit",
     "allow-browser-annotation-cancel",
-    "allow-browser-forward-shortcut"
+    "allow-browser-forward-shortcut",
+    "allow-updates-get-status",
+    "allow-updates-check",
+    "allow-updates-return-home",
+    "allow-updates-download",
+    "allow-updates-install",
+    "allow-feature-builds-list",
+    "allow-feature-builds-get-active"
   ]
 }

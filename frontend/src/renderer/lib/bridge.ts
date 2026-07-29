@@ -161,6 +161,7 @@ export const aoBridge: AoBridge = isTauri
 			updateSettings: {
 				get: async () => ({ enabled: false, channel: "latest", nightlyAck: false, feature: null }),
 				set: async () => undefined,
+				hasDecision: async () => true,
 			},
 			keybindings: {
 				get: async () => ({}),

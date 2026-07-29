@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-update-settings-has-decision"
+description = "Enables the update_settings_has_decision command without any pre-configured scope."
+commands.allow = ["update_settings_has_decision"]
+
+[[permission]]
+identifier = "deny-update-settings-has-decision"
+description = "Denies the update_settings_has_decision command without any pre-configured scope."
+commands.deny = ["update_settings_has_decision"]

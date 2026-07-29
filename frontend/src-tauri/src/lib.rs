@@ -6,6 +6,7 @@ mod misc;
 mod paths;
 mod settings;
 mod shell_env;
+mod updater;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -14,11 +15,14 @@ pub fn run() {
         .manage(browser::BrowserRegistry::default())
         .manage(browser::mirror::MirrorFrames::default())
         .manage(browser::mirror::MirrorLoops::default())
+        .manage(updater::UpdaterState::default())
+        .manage(updater::PendingInstall::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}))
         // Serves the latest captured frame for a mirrored browser panel at
         // `mirror://<viewId>/frame` (see browser/mirror.rs) — the renderer's
@@ -28,6 +32,7 @@ pub fn run() {
         .register_uri_scheme_protocol("mirror", browser::mirror::protocol_handler)
         .setup(|app| {
             misc::init(&app.handle().clone());
+            updater::start_automatic_check_timer(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -42,6 +47,7 @@ pub fn run() {
             settings::app_state_set_migration,
             settings::update_settings_get,
             settings::update_settings_set,
+            settings::update_settings_has_decision,
             misc::app_scan_import_folder,
             misc::terminal_save_dropped_file,
             misc::telemetry_get_bootstrap,
@@ -67,6 +73,13 @@ pub fn run() {
             browser::annotate::browser_annotation_submit,
             browser::annotate::browser_annotation_cancel,
             browser::annotate::browser_forward_shortcut,
+            updater::updates_get_status,
+            updater::updates_check,
+            updater::updates_return_home,
+            updater::updates_download,
+            updater::updates_install,
+            updater::feature_builds_list,
+            updater::feature_builds_get_active,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -100,6 +113,7 @@ mod acl_coverage_tests {
             "app_state_set_migration",
             "update_settings_get",
             "update_settings_set",
+            "update_settings_has_decision",
             "app_scan_import_folder",
             "terminal_save_dropped_file",
             "telemetry_get_bootstrap",
@@ -125,6 +139,13 @@ mod acl_coverage_tests {
             "browser_annotation_submit",
             "browser_annotation_cancel",
             "browser_forward_shortcut",
+            "updates_get_status",
+            "updates_check",
+            "updates_return_home",
+            "updates_download",
+            "updates_install",
+            "feature_builds_list",
+            "feature_builds_get_active",
         ];
         assert_eq!(ALL_COMMAND_NAMES, invoke_handler_commands);
     }

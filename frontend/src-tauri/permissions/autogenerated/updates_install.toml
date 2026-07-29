@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-updates-install"
+description = "Enables the updates_install command without any pre-configured scope."
+commands.allow = ["updates_install"]
+
+[[permission]]
+identifier = "deny-updates-install"
+description = "Denies the updates_install command without any pre-configured scope."
+commands.deny = ["updates_install"]

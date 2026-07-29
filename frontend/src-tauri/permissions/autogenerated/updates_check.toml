@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-updates-check"
+description = "Enables the updates_check command without any pre-configured scope."
+commands.allow = ["updates_check"]
+
+[[permission]]
+identifier = "deny-updates-check"
+description = "Denies the updates_check command without any pre-configured scope."
+commands.deny = ["updates_check"]

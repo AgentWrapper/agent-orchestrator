@@ -191,6 +191,14 @@ export interface AoBridge {
 	updateSettings: {
 		get: () => Promise<UpdateSettings>;
 		set: (settings: UpdateSettings) => Promise<void>;
+		/**
+		 * True once the user has made an opt-in decision (settings file exists on
+		 * disk). Optional: only implemented by the Tauri bridge (see T10's
+		 * first-run update wizard), since Electron's equivalent flow
+		 * (`ensureUpdatePrefs`) is a native `dialog.showMessageBox` sequence run
+		 * from the main process instead of a renderer bridge call.
+		 */
+		hasDecision?: () => Promise<boolean>;
 	};
 	keybindings: {
 		get: () => Promise<KeybindingOverrides>;

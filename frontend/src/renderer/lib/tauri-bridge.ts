@@ -17,9 +17,15 @@ import type {
 	BrowserAnnotationCancelPayload,
 	BrowserAnnotationSubmitPayload,
 } from "../../shared/browser-annotations";
-import type { AoBridge, BrowserNavState } from "../../shared/bridge-types";
+import type {
+	AoBridge,
+	BrowserNavState,
+	FeatureBuild,
+	UpdateCheckOptions,
+	UpdateSettings,
+	UpdateStatus,
+} from "../../shared/bridge-types";
 import type { ShortcutChord } from "../../shared/shortcuts";
-import { updatesFallback, featureBuildsFallback } from "./bridge";
 import { handleForwardedChord, initShortcutEngine, on as onShortcut, setRecording as setEngineRecording } from "./shortcut-engine";
 
 // Cache of the persisted keybinding overrides, kept in sync with the Rust
@@ -82,7 +88,7 @@ export function createTauriBridge(): AoBridge {
 			onFullScreen: (listener) => subscribe<boolean>("window://fullscreen", listener),
 		},
 		theme: {
-			set: (preference) => invoke("theme_set", { preference }),
+			set: (preference) => invoke("theme_set", { theme: preference }),
 		},
 		menu: {
 			action: (action) => invoke("menu_action", { action }),
@@ -133,29 +139,39 @@ export function createTauriBridge(): AoBridge {
 		},
 		appState: {
 			getMigration: () => invoke("app_state_get_migration"),
-			setMigration: (migration) => invoke("app_state_set_migration", { migration }),
+			setMigration: (migration) => invoke("app_state_set_migration", { value: migration }),
 		},
 		updateSettings: {
-			get: () => invoke("update_settings_get"),
-			set: (settings) => invoke("update_settings_set", { settings }),
+			get: () => invoke<UpdateSettings>("update_settings_get"),
+			set: (settings) => invoke("update_settings_set", { value: settings }),
+			hasDecision: () => invoke<boolean>("update_settings_has_decision"),
 		},
 		keybindings: {
 			get: () => invoke("keybindings_get"),
 			set: async (overrides) => {
-				const next = await invoke<KeybindingOverrides>("keybindings_set", { overrides });
+				const next = await invoke<KeybindingOverrides>("keybindings_set", { value: overrides });
 				cachedKeybindingOverrides = next;
 				return next;
 			},
 			setRecording: (active) => {
 				setEngineRecording(active);
-				return invoke("keybindings_set_recording", { active });
+				return invoke("keybindings_set_recording", { recording: active });
 			},
 		},
-		// TODO(M5): updates namespace is not yet backed by a Rust command; reuse
-		// the updates-fallback stub until electron-updater's Tauri equivalent lands.
-		updates: updatesFallback,
-		// TODO(M5): featureBuilds namespace is not yet backed by a Rust command;
-		// reuse the feature-builds fallback stub until it lands.
-		featureBuilds: featureBuildsFallback,
+		updates: {
+			getStatus: () => invoke<UpdateStatus>("updates_get_status"),
+			check: (options?: UpdateCheckOptions) => invoke("updates_check", { options: options ?? null }),
+			returnHome: (requestId?: string) => invoke("updates_return_home", { requestId: requestId ?? null }),
+			download: (requestId?: string) => invoke("updates_download", { requestId: requestId ?? null }),
+			install: () => invoke("updates_install"),
+			onStatus: (listener: (status: UpdateStatus) => void) => subscribe<UpdateStatus>("updates://status", listener),
+		},
+		featureBuilds: {
+			list: () => invoke<FeatureBuild[]>("feature_builds_list"),
+			getActive: async () => {
+				const pr = await invoke<number | null>("feature_builds_get_active");
+				return pr === null ? null : { pr };
+			},
+		},
 	} satisfies AoBridge;
 }

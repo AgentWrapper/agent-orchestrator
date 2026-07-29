@@ -2,6 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { MigrationPopup } from "../components/MigrationPopup";
 import { SessionsBoard } from "../components/SessionsBoard";
+import { UpdateWizard } from "../components/UpdateWizard";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 
 export const Route = createFileRoute("/_shell/")({
@@ -28,6 +29,7 @@ function ShellIndex() {
 	return (
 		<>
 			<MigrationPopup />
+			<UpdateWizard />
 			<SessionsBoard />
 		</>
 	);
