@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -203,7 +204,7 @@ func (c *Client) BootstrapWorker(
 	}
 	command := "chmod 0755 " + shellQuote(destination) +
 		" && ln -sf " + shellQuote(destination) + " /home/ao/.local/bin/ao" +
-		" && nohup " + shellQuote(destination) +
+		" && " + shellEnvironment(spec.Environment) + "nohup " + shellQuote(destination) +
 		" >/home/ao/.ao/worker.log 2>&1 </dev/null &"
 	var executeResponse struct {
 		ExitCode int    `json:"exitCode"`
@@ -335,6 +336,22 @@ func toEnvironment(response sandboxResponse) cloudsandbox.Environment {
 
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func shellEnvironment(values map[string]string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(values))
+	for name := range values {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	arguments := make([]string, 0, len(names))
+	for _, name := range names {
+		arguments = append(arguments, shellQuote(name+"="+values[name]))
+	}
+	return "env " + strings.Join(arguments, " ") + " "
 }
 
 // HTTPError reports a non-successful Daytona API response.

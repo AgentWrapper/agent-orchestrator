@@ -110,6 +110,9 @@ func TestBootstrapWorkerUploadsAndLaunchesBinary(t *testing.T) {
 					!strings.Contains(input.Command, "/home/ao/.ao/worker.log") {
 					t.Fatalf("launch command = %q", input.Command)
 				}
+				if !strings.Contains(input.Command, "env 'AO_WORKER_BOOTSTRAP_TOKEN=ticket' nohup") {
+					t.Fatalf("launch environment command = %q", input.Command)
+				}
 				if input.Environment["AO_WORKER_BOOTSTRAP_TOKEN"] != "ticket" {
 					t.Fatalf("execute environment = %#v", input.Environment)
 				}
@@ -131,5 +134,16 @@ func TestBootstrapWorkerUploadsAndLaunchesBinary(t *testing.T) {
 	}
 	if !prepared || !uploaded || !launched {
 		t.Fatalf("prepared=%v uploaded=%v launched=%v", prepared, uploaded, launched)
+	}
+}
+
+func TestShellEnvironmentSortsAndQuotesValues(t *testing.T) {
+	got := shellEnvironment(map[string]string{
+		"SECOND": "two words",
+		"FIRST":  "value'one",
+	})
+	want := "env 'FIRST=value'\"'\"'one' 'SECOND=two words' "
+	if got != want {
+		t.Fatalf("shellEnvironment() = %q, want %q", got, want)
 	}
 }
