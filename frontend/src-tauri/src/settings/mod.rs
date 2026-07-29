@@ -23,7 +23,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::paths;
 
 fn now_suffix() -> String {
-    let millis = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
     format!("{}-{millis}", std::process::id())
 }
 
@@ -81,11 +84,23 @@ fn normalized_key(key: &str) -> String {
 }
 
 /// Port of `shortcutBindingValidationError` (frontend/src/shared/shortcuts.ts).
-fn shortcut_binding_validation_error(binding: &ShortcutBinding, is_mac: bool) -> Option<&'static str> {
+fn shortcut_binding_validation_error(
+    binding: &ShortcutBinding,
+    is_mac: bool,
+) -> Option<&'static str> {
     let key = normalized_key(&binding.key);
 
     const MODIFIER_KEYS: [&str; 11] = [
-        "alt", "altgraph", "capslock", "control", "dead", "meta", "numlock", "process", "scrolllock", "shift",
+        "alt",
+        "altgraph",
+        "capslock",
+        "control",
+        "dead",
+        "meta",
+        "numlock",
+        "process",
+        "scrolllock",
+        "shift",
         "unidentified",
     ];
     if MODIFIER_KEYS.contains(&key.as_str()) {
@@ -104,10 +119,13 @@ fn shortcut_binding_validation_error(binding: &ShortcutBinding, is_mac: bool) ->
         }
     }
 
-    if is_mac && binding.meta && !binding.ctrl && !binding.alt {
-        if ["a", "c", "h", "m", "q", "s", "v", "w", "x", "z"].contains(&key.as_str()) {
-            return Some("That shortcut is reserved by macOS or standard editing commands.");
-        }
+    if is_mac
+        && binding.meta
+        && !binding.ctrl
+        && !binding.alt
+        && ["a", "c", "h", "m", "q", "s", "v", "w", "x", "z"].contains(&key.as_str())
+    {
+        return Some("That shortcut is reserved by macOS or standard editing commands.");
     }
 
     if !is_mac && binding.alt && !binding.ctrl && !binding.meta && key == "f4" {
@@ -144,7 +162,10 @@ fn coerce_binding(raw: &Value, is_mac: bool) -> Option<ShortcutBinding> {
 }
 
 /// Port of `coerceKeybindingOverrides`.
-pub fn coerce_keybinding_overrides(raw: &Value, is_mac: bool) -> HashMap<String, Vec<ShortcutBinding>> {
+pub fn coerce_keybinding_overrides(
+    raw: &Value,
+    is_mac: bool,
+) -> HashMap<String, Vec<ShortcutBinding>> {
     let mut overrides = HashMap::new();
     let Some(source) = raw.as_object() else {
         return overrides;
@@ -153,8 +174,11 @@ pub fn coerce_keybinding_overrides(raw: &Value, is_mac: bool) -> HashMap<String,
         let Some(raw_bindings) = source.get(*id).and_then(Value::as_array) else {
             continue;
         };
-        let bindings: Vec<ShortcutBinding> =
-            raw_bindings.iter().take(2).filter_map(|b| coerce_binding(b, is_mac)).collect();
+        let bindings: Vec<ShortcutBinding> = raw_bindings
+            .iter()
+            .take(2)
+            .filter_map(|b| coerce_binding(b, is_mac))
+            .collect();
         // Preserve an intentional empty array as "unassigned". If a non-empty
         // persisted value contains no valid bindings, omit it so defaults recover.
         if !raw_bindings.is_empty() && bindings.is_empty() {
@@ -186,8 +210,17 @@ fn write_keybinding_overrides(
     overrides: &Value,
 ) -> Result<HashMap<String, Vec<ShortcutBinding>>, String> {
     let next = coerce_keybinding_overrides(overrides, is_mac_runtime());
-    let data = format!("{}\n", serde_json::to_string_pretty(&next).map_err(|e| e.to_string())?);
-    atomic_write(state_dir, KEYBINDING_SETTINGS_FILE_NAME, "keybindings", &data).map_err(|e| e.to_string())?;
+    let data = format!(
+        "{}\n",
+        serde_json::to_string_pretty(&next).map_err(|e| e.to_string())?
+    );
+    atomic_write(
+        state_dir,
+        KEYBINDING_SETTINGS_FILE_NAME,
+        "keybindings",
+        &data,
+    )
+    .map_err(|e| e.to_string())?;
     Ok(next)
 }
 
@@ -234,12 +267,18 @@ fn now_iso() -> String {
     // `Date#toISOString()`. Avoids pulling in a chrono/time dependency
     // (Cargo.toml is frozen for this task) by formatting manually from the
     // UNIX epoch offset.
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
     let secs = now.as_secs();
     let millis = now.subsec_millis();
     let days = secs / 86_400;
     let time_of_day = secs % 86_400;
-    let (hh, mm, ss) = (time_of_day / 3600, (time_of_day % 3600) / 60, time_of_day % 60);
+    let (hh, mm, ss) = (
+        time_of_day / 3600,
+        (time_of_day % 3600) / 60,
+        time_of_day % 60,
+    );
 
     // Civil-from-days (Howard Hinnant's algorithm), proleptic Gregorian.
     let z = days as i64 + 719_468;
@@ -262,7 +301,10 @@ fn read_app_state(state_dir: &Path) -> Option<Value> {
 }
 
 fn write_app_state(state_dir: &Path, marker: &Value) -> Result<(), String> {
-    let data = format!("{}\n", serde_json::to_string_pretty(marker).map_err(|e| e.to_string())?);
+    let data = format!(
+        "{}\n",
+        serde_json::to_string_pretty(marker).map_err(|e| e.to_string())?
+    );
     atomic_write(state_dir, APP_STATE_FILE_NAME, "app-state", &data).map_err(|e| e.to_string())
 }
 
@@ -301,7 +343,9 @@ pub async fn app_state_get_migration() -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
-pub async fn app_state_set_migration(value: serde_json::Value) -> Result<serde_json::Value, String> {
+pub async fn app_state_set_migration(
+    value: serde_json::Value,
+) -> Result<serde_json::Value, String> {
     update_migration(&paths::ao_data_dir(), &value)?;
     Ok(value)
 }
@@ -331,10 +375,20 @@ fn coerce_feature(raw: Option<&Value>) -> Value {
 // rules a second time.
 pub(crate) fn coerce_update_settings(raw: &Value) -> Value {
     let obj = raw.as_object();
-    let enabled = obj.and_then(|o| o.get("enabled")).and_then(Value::as_bool).unwrap_or(false);
+    let enabled = obj
+        .and_then(|o| o.get("enabled"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let channel = obj.and_then(|o| o.get("channel")).and_then(Value::as_str);
-    let channel = if channel == Some("nightly") { "nightly" } else { "latest" };
-    let nightly_ack = obj.and_then(|o| o.get("nightlyAck")).and_then(Value::as_bool).unwrap_or(false);
+    let channel = if channel == Some("nightly") {
+        "nightly"
+    } else {
+        "latest"
+    };
+    let nightly_ack = obj
+        .and_then(|o| o.get("nightlyAck"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let feature = coerce_feature(obj.and_then(|o| o.get("feature")));
     json!({
         "enabled": enabled,
@@ -357,8 +411,17 @@ pub(crate) fn read_update_settings(state_dir: &Path) -> Value {
 
 pub(crate) fn write_update_settings(state_dir: &Path, settings: &Value) -> Result<Value, String> {
     let next = coerce_update_settings(settings);
-    let data = format!("{}\n", serde_json::to_string_pretty(&next).map_err(|e| e.to_string())?);
-    atomic_write(state_dir, UPDATE_SETTINGS_FILE_NAME, "update-settings", &data).map_err(|e| e.to_string())?;
+    let data = format!(
+        "{}\n",
+        serde_json::to_string_pretty(&next).map_err(|e| e.to_string())?
+    );
+    atomic_write(
+        state_dir,
+        UPDATE_SETTINGS_FILE_NAME,
+        "update-settings",
+        &data,
+    )
+    .map_err(|e| e.to_string())?;
     Ok(next)
 }
 
@@ -374,7 +437,9 @@ pub async fn update_settings_get() -> Result<serde_json::Value, String> {
 /// (always-present) coerced default shape.
 #[tauri::command]
 pub async fn update_settings_has_decision() -> Result<bool, String> {
-    Ok(paths::ao_data_dir().join(UPDATE_SETTINGS_FILE_NAME).exists())
+    Ok(paths::ao_data_dir()
+        .join(UPDATE_SETTINGS_FILE_NAME)
+        .exists())
 }
 
 #[tauri::command]
@@ -398,7 +463,10 @@ mod tests {
         let dir = std::env::temp_dir().join(format!(
             "{prefix}-{}-{}",
             std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -421,7 +489,14 @@ mod tests {
             let mut expected = HashMap::new();
             expected.insert(
                 "focus-terminal".to_string(),
-                vec![ShortcutBinding { key: "j".into(), code: None, ctrl: true, meta: false, shift: false, alt: false }],
+                vec![ShortcutBinding {
+                    key: "j".into(),
+                    code: None,
+                    ctrl: true,
+                    meta: false,
+                    shift: false,
+                    alt: false,
+                }],
             );
             assert_eq!(overrides, expected);
         }
@@ -462,7 +537,14 @@ mod tests {
             let mut expected = HashMap::new();
             expected.insert(
                 "focus-terminal".to_string(),
-                vec![ShortcutBinding { key: "q".into(), code: None, ctrl: false, meta: true, shift: false, alt: false }],
+                vec![ShortcutBinding {
+                    key: "q".into(),
+                    code: None,
+                    ctrl: false,
+                    meta: true,
+                    shift: false,
+                    alt: false,
+                }],
             );
             assert_eq!(overrides, expected);
         }
@@ -496,8 +578,14 @@ mod tests {
         fn atomic_write_leaves_no_temp_file_behind() {
             let dir = tempdir("ao-keybindings-atomic");
             write_keybinding_overrides(&dir, &json!({})).unwrap();
-            let entries: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name()).collect();
-            assert_eq!(entries, vec![std::ffi::OsString::from(KEYBINDING_SETTINGS_FILE_NAME)]);
+            let entries: Vec<_> = std::fs::read_dir(&dir)
+                .unwrap()
+                .map(|e| e.unwrap().file_name())
+                .collect();
+            assert_eq!(
+                entries,
+                vec![std::ffi::OsString::from(KEYBINDING_SETTINGS_FILE_NAME)]
+            );
         }
     }
 
@@ -551,7 +639,10 @@ mod tests {
             update_migration(&dir, &json!({ "status": "failed", "error": "x" })).unwrap();
             let marker = read_app_state(&dir).unwrap();
             assert_eq!(marker["appPath"], json!("/A.app"));
-            assert_eq!(marker["migration"], json!({ "status": "failed", "error": "x" }));
+            assert_eq!(
+                marker["migration"],
+                json!({ "status": "failed", "error": "x" })
+            );
         }
     }
 
@@ -590,7 +681,10 @@ mod tests {
             let dir = tempdir("ao-update-settings-channel");
             std::fs::write(
                 dir.join(UPDATE_SETTINGS_FILE_NAME),
-                serde_json::to_string(&json!({ "enabled": true, "channel": "weird", "nightlyAck": false })).unwrap(),
+                serde_json::to_string(
+                    &json!({ "enabled": true, "channel": "weird", "nightlyAck": false }),
+                )
+                .unwrap(),
             )
             .unwrap();
             assert_eq!(read_update_settings(&dir)["channel"], json!("latest"));
@@ -601,7 +695,10 @@ mod tests {
             let dir = tempdir("ao-update-settings-legacy");
             std::fs::write(
                 dir.join(UPDATE_SETTINGS_FILE_NAME),
-                serde_json::to_string(&json!({ "enabled": true, "channel": "nightly", "nightlyAck": true })).unwrap(),
+                serde_json::to_string(
+                    &json!({ "enabled": true, "channel": "nightly", "nightlyAck": true }),
+                )
+                .unwrap(),
             )
             .unwrap();
             let settings = read_update_settings(&dir);
@@ -636,8 +733,14 @@ mod tests {
             let dir = tempdir("ao-update-settings-atomic");
             write_update_settings(&dir, &json!({ "enabled": true, "channel": "latest", "nightlyAck": false, "feature": null }))
                 .unwrap();
-            let entries: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name()).collect();
-            assert_eq!(entries, vec![std::ffi::OsString::from(UPDATE_SETTINGS_FILE_NAME)]);
+            let entries: Vec<_> = std::fs::read_dir(&dir)
+                .unwrap()
+                .map(|e| e.unwrap().file_name())
+                .collect();
+            assert_eq!(
+                entries,
+                vec![std::ffi::OsString::from(UPDATE_SETTINGS_FILE_NAME)]
+            );
         }
     }
 

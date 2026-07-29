@@ -60,7 +60,9 @@ struct PrState {
 pub fn parse_feature_build(version: &str) -> Option<i64> {
     let re_pos = version.find("-pr")?;
     let rest = &version[re_pos + 3..];
-    let digits_end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+    let digits_end = rest
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(rest.len());
     if digits_end == 0 {
         return None;
     }
@@ -118,7 +120,7 @@ fn chrono_parse_ms(s: &str) -> Option<i64> {
     fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
         let y = if m <= 2 { y - 1 } else { y };
         let era = if y >= 0 { y } else { y - 399 } / 400;
-        let yoe = (y - era * 400) as i64;
+        let yoe = y - era * 400;
         let mp = (m + 9) % 12;
         let doy = (153 * mp + 2) / 5 + d - 1;
         let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
@@ -129,7 +131,11 @@ fn chrono_parse_ms(s: &str) -> Option<i64> {
     Some(secs * 1000 + (second * 1000.0) as i64)
 }
 
-async fn fetch_json<T: for<'de> Deserialize<'de>>(client: &reqwest::Client, url: &str, user_agent: &str) -> Result<T, String> {
+async fn fetch_json<T: for<'de> Deserialize<'de>>(
+    client: &reqwest::Client,
+    url: &str,
+    user_agent: &str,
+) -> Result<T, String> {
     let res = client
         .get(url)
         .header("Accept", "application/vnd.github+json")
@@ -144,7 +150,14 @@ async fn fetch_json<T: for<'de> Deserialize<'de>>(client: &reqwest::Client, url:
     res.json::<T>().await.map_err(|e| e.to_string())
 }
 
-async fn is_pr_open(client: &reqwest::Client, api_base: &str, owner: &str, repo: &str, pr: i64, user_agent: &str) -> bool {
+async fn is_pr_open(
+    client: &reqwest::Client,
+    api_base: &str,
+    owner: &str,
+    repo: &str,
+    pr: i64,
+    user_agent: &str,
+) -> bool {
     let url = format!("{api_base}/repos/{owner}/{repo}/pulls/{pr}");
     match fetch_json::<PrState>(client, &url, user_agent).await {
         Ok(state) => state.state == "open",
@@ -188,7 +201,9 @@ async fn collect_feature_builds_from(
             continue;
         }
         let body = rel.body.unwrap_or_default();
-        let Some(marker) = parse_marker(&body) else { continue };
+        let Some(marker) = parse_marker(&body) else {
+            continue;
+        };
         candidates.push(Candidate {
             build: FeatureBuild {
                 pr: marker.pr,
@@ -209,7 +224,11 @@ async fn collect_feature_builds_from(
 
     let unique_prs: Vec<i64> = {
         let mut seen = std::collections::HashSet::new();
-        candidates.iter().map(|c| c.build.pr).filter(|pr| seen.insert(*pr)).collect()
+        candidates
+            .iter()
+            .map(|c| c.build.pr)
+            .filter(|pr| seen.insert(*pr))
+            .collect()
     };
 
     let mut open_map: HashMap<i64, bool> = HashMap::new();
@@ -232,7 +251,7 @@ async fn collect_feature_builds_from(
     }
 
     let mut results: Vec<Candidate> = best_by_pr.into_values().collect();
-    results.sort_by(|a, b| b.published_ms.cmp(&a.published_ms));
+    results.sort_by_key(|c| std::cmp::Reverse(c.published_ms));
 
     Ok(results.into_iter().map(|c| c.build).collect())
 }
@@ -243,12 +262,18 @@ mod tests {
 
     #[test]
     fn parse_feature_build_returns_pr_for_a_feature_build_version() {
-        assert_eq!(parse_feature_build("0.2.0-pr2270.202607061200+abc1234"), Some(2270));
+        assert_eq!(
+            parse_feature_build("0.2.0-pr2270.202607061200+abc1234"),
+            Some(2270)
+        );
     }
 
     #[test]
     fn parse_feature_build_strips_a_leading_v() {
-        assert_eq!(parse_feature_build("v0.2.0-pr2270.202607061200"), Some(2270));
+        assert_eq!(
+            parse_feature_build("v0.2.0-pr2270.202607061200"),
+            Some(2270)
+        );
     }
 
     #[test]
@@ -259,7 +284,10 @@ mod tests {
     #[test]
     fn parse_feature_build_returns_none_for_a_nightly_version() {
         assert_eq!(parse_feature_build("0.3.0-nightly.202607060000"), None);
-        assert_eq!(parse_feature_build("0.3.0-nightly.202607060000+abc1234"), None);
+        assert_eq!(
+            parse_feature_build("0.3.0-nightly.202607060000+abc1234"),
+            None
+        );
     }
 
     #[test]
@@ -272,8 +300,14 @@ mod tests {
         // The TS regex `/-pr(\d+)\.\d{12}/` is unanchored, so a longer digit
         // run (e.g. an extra trailing digit before a build-metadata suffix)
         // still matches on the TS side; the Rust port must not be stricter.
-        assert_eq!(parse_feature_build("0.2.0-pr2270.2026070612001"), Some(2270));
-        assert_eq!(parse_feature_build("0.2.0-pr2270.2026070612001+abc1234"), Some(2270));
+        assert_eq!(
+            parse_feature_build("0.2.0-pr2270.2026070612001"),
+            Some(2270)
+        );
+        assert_eq!(
+            parse_feature_build("0.2.0-pr2270.2026070612001+abc1234"),
+            Some(2270)
+        );
     }
 
     #[test]
@@ -341,7 +375,8 @@ mod tests {
     use tokio::net::TcpListener;
 
     const DAY_MS: i64 = 24 * 60 * 60 * 1000;
-    const DEFAULT_MARKER: &str = r#"<!-- ao-feature-build: {"pr":2270,"base":"main","sha":"abc1234","slug":"pr2270"} -->"#;
+    const DEFAULT_MARKER: &str =
+        r#"<!-- ao-feature-build: {"pr":2270,"base":"main","sha":"abc1234","slug":"pr2270"} -->"#;
 
     fn iso_ms_ago(ms_ago: i64) -> String {
         // Render an RFC3339 timestamp `ms_ago` milliseconds before "now" (test epoch).
@@ -350,7 +385,10 @@ mod tests {
     }
 
     fn now_epoch_ms() -> i64 {
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64
     }
 
     fn epoch_ms_to_iso(ms: i64) -> String {
@@ -421,7 +459,13 @@ mod tests {
                         Err(_) => return,
                     };
                     let req = String::from_utf8_lossy(&buf[..n]);
-                    let path = req.lines().next().unwrap_or("").split_whitespace().nth(1).unwrap_or("");
+                    let path = req
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .split_whitespace()
+                        .nth(1)
+                        .unwrap_or("");
                     let body = if path.contains("/releases") {
                         releases_body
                     } else if let Some(pr_str) = path.rsplit('/').next() {
@@ -445,10 +489,22 @@ mod tests {
     }
 
     fn release_json(rel: &MockRelease) -> serde_json::Value {
-        json_release(rel.tag_name, rel.name, rel.prerelease, &rel.published_at, rel.body)
+        json_release(
+            rel.tag_name,
+            rel.name,
+            rel.prerelease,
+            &rel.published_at,
+            rel.body,
+        )
     }
 
-    fn json_release(tag_name: &str, name: &str, prerelease: bool, published_at: &str, body: Option<&str>) -> serde_json::Value {
+    fn json_release(
+        tag_name: &str,
+        name: &str,
+        prerelease: bool,
+        published_at: &str,
+        body: Option<&str>,
+    ) -> serde_json::Value {
         serde_json::json!({
             "tag_name": tag_name,
             "name": name,
@@ -458,17 +514,23 @@ mod tests {
         })
     }
 
-    async fn collect_against(releases: Vec<serde_json::Value>, pr_states: StdHashMap<i64, &'static str>) -> Result<Vec<FeatureBuild>, String> {
+    async fn collect_against(
+        releases: Vec<serde_json::Value>,
+        pr_states: StdHashMap<i64, &'static str>,
+    ) -> Result<Vec<FeatureBuild>, String> {
         let base = spawn_mock(serde_json::to_string(&releases).unwrap(), pr_states).await;
         let client = reqwest::Client::new();
-        collect_feature_builds_from(&client, &base, "owner", "repo", "ao-test", now_epoch_ms()).await
+        collect_feature_builds_from(&client, &base, "owner", "repo", "ao-test", now_epoch_ms())
+            .await
     }
 
     #[tokio::test]
     async fn excludes_non_prerelease_releases() {
         let mut rel = make_release(iso_ms_ago(DAY_MS));
         rel.prerelease = false;
-        let result = collect_against(vec![release_json(&rel)], StdHashMap::new()).await.unwrap();
+        let result = collect_against(vec![release_json(&rel)], StdHashMap::new())
+            .await
+            .unwrap();
         assert!(result.is_empty());
     }
 
@@ -492,7 +554,13 @@ mod tests {
     #[tokio::test]
     async fn excludes_releases_with_a_null_body() {
         let result = collect_against(
-            vec![json_release("v0.2.0-pr2270.202607061200", "Feature build pr2270", true, &iso_ms_ago(DAY_MS), None)],
+            vec![json_release(
+                "v0.2.0-pr2270.202607061200",
+                "Feature build pr2270",
+                true,
+                &iso_ms_ago(DAY_MS),
+                None,
+            )],
             StdHashMap::new(),
         )
         .await
@@ -504,7 +572,12 @@ mod tests {
     async fn excludes_releases_published_more_than_7_days_ago() {
         let mut states = StdHashMap::new();
         states.insert(2270, "open");
-        let result = collect_against(vec![release_json(&make_release(iso_ms_ago(8 * DAY_MS)))], states).await.unwrap();
+        let result = collect_against(
+            vec![release_json(&make_release(iso_ms_ago(8 * DAY_MS)))],
+            states,
+        )
+        .await
+        .unwrap();
         assert!(result.is_empty());
     }
 
@@ -512,7 +585,12 @@ mod tests {
     async fn keeps_a_release_published_within_the_7_day_window() {
         let mut states = StdHashMap::new();
         states.insert(2270, "open");
-        let result = collect_against(vec![release_json(&make_release(iso_ms_ago(6 * DAY_MS)))], states).await.unwrap();
+        let result = collect_against(
+            vec![release_json(&make_release(iso_ms_ago(6 * DAY_MS)))],
+            states,
+        )
+        .await
+        .unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].pr, 2270);
     }
@@ -521,7 +599,12 @@ mod tests {
     async fn excludes_builds_whose_pr_is_closed() {
         let mut states = StdHashMap::new();
         states.insert(2270, "closed");
-        let result = collect_against(vec![release_json(&make_release(iso_ms_ago(DAY_MS)))], states).await.unwrap();
+        let result = collect_against(
+            vec![release_json(&make_release(iso_ms_ago(DAY_MS)))],
+            states,
+        )
+        .await
+        .unwrap();
         assert!(result.is_empty());
     }
 
@@ -529,7 +612,12 @@ mod tests {
     async fn excludes_builds_whose_pr_is_merged() {
         let mut states = StdHashMap::new();
         states.insert(2270, "merged");
-        let result = collect_against(vec![release_json(&make_release(iso_ms_ago(DAY_MS)))], states).await.unwrap();
+        let result = collect_against(
+            vec![release_json(&make_release(iso_ms_ago(DAY_MS)))],
+            states,
+        )
+        .await
+        .unwrap();
         assert!(result.is_empty());
     }
 
@@ -538,7 +626,12 @@ mod tests {
         let mut states = StdHashMap::new();
         states.insert(2270, "open");
         let published_at = iso_ms_ago(DAY_MS);
-        let result = collect_against(vec![release_json(&make_release(published_at.clone()))], states).await.unwrap();
+        let result = collect_against(
+            vec![release_json(&make_release(published_at.clone()))],
+            states,
+        )
+        .await
+        .unwrap();
         assert_eq!(result.len(), 1);
         let build = &result[0];
         assert_eq!(build.pr, 2270);
@@ -558,8 +651,20 @@ mod tests {
         let newer = iso_ms_ago(DAY_MS);
         let result = collect_against(
             vec![
-                json_release("v0.2.0-pr2270.202607050000", "Feature build pr2270 old", true, &older, Some(DEFAULT_MARKER)),
-                json_release("v0.2.0-pr2270.202607061200", "Feature build pr2270 new", true, &newer, Some(DEFAULT_MARKER)),
+                json_release(
+                    "v0.2.0-pr2270.202607050000",
+                    "Feature build pr2270 old",
+                    true,
+                    &older,
+                    Some(DEFAULT_MARKER),
+                ),
+                json_release(
+                    "v0.2.0-pr2270.202607061200",
+                    "Feature build pr2270 new",
+                    true,
+                    &newer,
+                    Some(DEFAULT_MARKER),
+                ),
             ],
             states,
         )

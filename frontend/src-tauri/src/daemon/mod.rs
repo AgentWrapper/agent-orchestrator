@@ -90,11 +90,19 @@ impl DaemonStatus {
     }
 
     fn starting() -> Self {
-        DaemonStatus { state: "starting".to_string(), ..Default::default() }
+        DaemonStatus {
+            state: "starting".to_string(),
+            ..Default::default()
+        }
     }
 
     fn error(code: &str, message: impl Into<String>) -> Self {
-        DaemonStatus { state: "error".to_string(), code: Some(code.to_string()), message: Some(message.into()), ..Default::default() }
+        DaemonStatus {
+            state: "error".to_string(),
+            code: Some(code.to_string()),
+            message: Some(message.into()),
+            ..Default::default()
+        }
     }
 }
 
@@ -158,7 +166,11 @@ pub fn resolve_daemon_launch(
     home_dir: &str,
     is_windows: bool,
 ) -> Option<DaemonLaunchSpec> {
-    if let Some(configured) = env.get("AO_DAEMON_COMMAND").map(|s| s.trim()).filter(|s| !s.is_empty()) {
+    if let Some(configured) = env
+        .get("AO_DAEMON_COMMAND")
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
         return Some(DaemonLaunchSpec {
             command: configured.to_string(),
             args: vec![],
@@ -171,7 +183,11 @@ pub fn resolve_daemon_launch(
     if !is_packaged {
         return Some(DaemonLaunchSpec {
             command: "go".to_string(),
-            args: vec!["run".to_string(), "./cmd/ao".to_string(), "daemon".to_string()],
+            args: vec![
+                "run".to_string(),
+                "./cmd/ao".to_string(),
+                "daemon".to_string(),
+            ],
             cwd: join_path(&[app_path, "..", "backend"]),
             shell: false,
             source: LaunchSource::Dev,
@@ -179,7 +195,11 @@ pub fn resolve_daemon_launch(
     }
 
     Some(DaemonLaunchSpec {
-        command: join_path(&[resources_path, "daemon", bundled_daemon_binary_name(is_windows)]),
+        command: join_path(&[
+            resources_path,
+            "daemon",
+            bundled_daemon_binary_name(is_windows),
+        ]),
         args: vec!["daemon".to_string()],
         cwd: join_path(&[home_dir, ".ao"]),
         shell: false,
@@ -226,8 +246,16 @@ fn platform_is_windows() -> bool {
     cfg!(target_os = "windows")
 }
 
-async fn resolve_launch_for_app(app: &AppHandle, env: &HashMap<String, String>) -> Result<DaemonLaunchSpec, DaemonStatus> {
-    let home_dir = dirs::home_dir().ok_or_else(|| DaemonStatus::error(failure_code::NOT_CONFIGURED, "Could not resolve the home directory."))?;
+async fn resolve_launch_for_app(
+    app: &AppHandle,
+    env: &HashMap<String, String>,
+) -> Result<DaemonLaunchSpec, DaemonStatus> {
+    let home_dir = dirs::home_dir().ok_or_else(|| {
+        DaemonStatus::error(
+            failure_code::NOT_CONFIGURED,
+            "Could not resolve the home directory.",
+        )
+    })?;
 
     let dev_backend_dir = detect_dev_backend_dir();
     let is_packaged = dev_backend_dir.is_none();
@@ -249,7 +277,12 @@ async fn resolve_launch_for_app(app: &AppHandle, env: &HashMap<String, String>) 
         &home_dir.to_string_lossy(),
         platform_is_windows(),
     )
-    .ok_or_else(|| DaemonStatus::error(failure_code::NOT_CONFIGURED, "Could not resolve the daemon launch command."))?;
+    .ok_or_else(|| {
+        DaemonStatus::error(
+            failure_code::NOT_CONFIGURED,
+            "Could not resolve the daemon launch command.",
+        )
+    })?;
 
     // Use the backend dir we actually found (rather than the TS's naive
     // `appPath/../backend` guess) as the dev cwd, per this task's explicit
@@ -309,7 +342,13 @@ pub fn supervisor_pipe_from_run_file(rfp: Option<&str>) -> String {
     }
     let sanitized: String = dir
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect();
     format!("{DEFAULT_PIPE}-{sanitized}")
 }
@@ -322,7 +361,10 @@ pub fn supervisor_addr(run_file_path: Option<&str>, is_windows: bool) -> Option<
         return Some(supervisor_pipe_from_run_file(run_file_path));
     }
     run_file_path.map(|rfp| {
-        let dir = Path::new(rfp).parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+        let dir = Path::new(rfp)
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
         format!("{dir}/supervise.sock")
     })
 }
@@ -368,7 +410,9 @@ async fn run_login_shell(shell_path: &str, args: &[String]) -> Result<Option<Str
     cmd.kill_on_drop(true);
     let child = cmd.spawn().map_err(|e| e.to_string())?;
     match timeout(SHELL_ENV_TIMEOUT, child.wait_with_output()).await {
-        Ok(Ok(output)) if output.status.success() => Ok(Some(String::from_utf8_lossy(&output.stdout).into_owned())),
+        Ok(Ok(output)) if output.status.success() => {
+            Ok(Some(String::from_utf8_lossy(&output.stdout).into_owned()))
+        }
         Ok(Ok(_)) => Ok(None),
         Ok(Err(e)) => Err(e.to_string()),
         // Timed out: kill_on_drop(true) cleans up the still-running child when
@@ -381,9 +425,13 @@ async fn probe_shell_env() -> Option<HashMap<String, String>> {
     if platform_is_windows() {
         return None;
     }
-    let runner: ShellRunner = Arc::new(|shell_path: String, args: Vec<String>| -> BoxFuture<'static, Result<Option<String>, String>> {
-        Box::pin(async move { run_login_shell(&shell_path, &args).await })
-    });
+    let runner: ShellRunner = Arc::new(
+        |shell_path: String,
+         args: Vec<String>|
+         -> BoxFuture<'static, Result<Option<String>, String>> {
+            Box::pin(async move { run_login_shell(&shell_path, &args).await })
+        },
+    );
     let process_env: HashMap<String, String> = std::env::vars().collect();
     resolve_shell_env(&process_env, &runner).await
 }
@@ -391,7 +439,12 @@ async fn probe_shell_env() -> Option<HashMap<String, String>> {
 /// Port of `daemonEnv()`: dev isolation defaults (only when unset), the
 /// per-launch `AO_APP_RUN_ID`, then (on unix) the shell-probed PATH/TERM via
 /// `build_daemon_env`; Windows keeps the old behavior of no shell probe.
-fn build_env_for_ensure(spec: &DaemonLaunchSpec, shell_env: Option<&HashMap<String, String>>, app_run_id: &str, home_dir: &Path) -> HashMap<String, String> {
+fn build_env_for_ensure(
+    spec: &DaemonLaunchSpec,
+    shell_env: Option<&HashMap<String, String>>,
+    app_run_id: &str,
+    home_dir: &Path,
+) -> HashMap<String, String> {
     let process_env: HashMap<String, String> = std::env::vars().collect();
 
     let mut overrides: HashMap<String, String> = HashMap::new();
@@ -403,7 +456,10 @@ fn build_env_for_ensure(spec: &DaemonLaunchSpec, shell_env: Option<&HashMap<Stri
             overrides.insert("AO_PORT".to_string(), "3002".to_string());
         }
         if !process_env.contains_key("AO_RUN_FILE") {
-            overrides.insert("AO_RUN_FILE".to_string(), format!("{home}/.ao/dev/running.json"));
+            overrides.insert(
+                "AO_RUN_FILE".to_string(),
+                format!("{home}/.ao/dev/running.json"),
+            );
         }
         if !process_env.contains_key("AO_DATA_DIR") {
             overrides.insert("AO_DATA_DIR".to_string(), format!("{home}/.ao/dev/data"));
@@ -457,7 +513,10 @@ fn build_ensure_command(spec: &DaemonLaunchSpec) -> Command {
     }
 }
 
-async fn run_ensure(spec: &DaemonLaunchSpec, env: HashMap<String, String>) -> Result<EnsureResult, DaemonStatus> {
+async fn run_ensure(
+    spec: &DaemonLaunchSpec,
+    env: HashMap<String, String>,
+) -> Result<EnsureResult, DaemonStatus> {
     let mut cmd = build_ensure_command(spec);
     cmd.current_dir(&spec.cwd);
     cmd.env_clear();
@@ -467,14 +526,27 @@ async fn run_ensure(spec: &DaemonLaunchSpec, env: HashMap<String, String>) -> Re
     cmd.stderr(Stdio::piped());
     cmd.kill_on_drop(true);
 
-    let child = cmd
-        .spawn()
-        .map_err(|e| DaemonStatus::error(failure_code::BINARY_MISSING, format!("Failed to launch the AO daemon ({}): {e}", spec.command)))?;
+    let child = cmd.spawn().map_err(|e| {
+        DaemonStatus::error(
+            failure_code::BINARY_MISSING,
+            format!("Failed to launch the AO daemon ({}): {e}", spec.command),
+        )
+    })?;
 
     let output = match timeout(ENSURE_TIMEOUT, child.wait_with_output()).await {
         Ok(Ok(o)) => o,
-        Ok(Err(e)) => return Err(DaemonStatus::error(failure_code::SPAWN_FAILED, format!("ao daemon ensure failed: {e}"))),
-        Err(_) => return Err(DaemonStatus::error(failure_code::DAEMON_UNREACHABLE, "ao daemon ensure timed out after 30s")),
+        Ok(Err(e)) => {
+            return Err(DaemonStatus::error(
+                failure_code::SPAWN_FAILED,
+                format!("ao daemon ensure failed: {e}"),
+            ))
+        }
+        Err(_) => {
+            return Err(DaemonStatus::error(
+                failure_code::DAEMON_UNREACHABLE,
+                "ao daemon ensure timed out after 30s",
+            ))
+        }
     };
 
     if !output.status.success() {
@@ -489,8 +561,18 @@ async fn run_ensure(spec: &DaemonLaunchSpec, env: HashMap<String, String>) -> Re
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let line = stdout.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
-    serde_json::from_str::<EnsureResult>(line).map_err(|e| DaemonStatus::error(failure_code::SPAWN_FAILED, format!("could not parse ensure output {line:?}: {e}")))
+    let line = stdout
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("")
+        .trim();
+    serde_json::from_str::<EnsureResult>(line).map_err(|e| {
+        DaemonStatus::error(
+            failure_code::SPAWN_FAILED,
+            format!("could not parse ensure output {line:?}: {e}"),
+        )
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -501,9 +583,16 @@ async fn run_ensure(spec: &DaemonLaunchSpec, env: HashMap<String, String>) -> Re
 
 async fn terminate_process_group(pid: u32) {
     if platform_is_windows() {
-        let _ = Command::new("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"]).status().await;
+        let _ = Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .status()
+            .await;
     } else {
-        let _ = Command::new("kill").arg("-TERM").arg(format!("-{pid}")).status().await;
+        let _ = Command::new("kill")
+            .arg("-TERM")
+            .arg(format!("-{pid}"))
+            .status()
+            .await;
     }
 }
 
@@ -515,7 +604,11 @@ async fn wait_for_daemon_down(port: Option<u16>, budget: Duration) -> bool {
     let deadline = tokio::time::Instant::now() + budget;
     loop {
         let connected = matches!(
-            tokio::time::timeout(Duration::from_millis(300), tokio::net::TcpStream::connect(("127.0.0.1", port))).await,
+            tokio::time::timeout(
+                Duration::from_millis(300),
+                tokio::net::TcpStream::connect(("127.0.0.1", port))
+            )
+            .await,
             Ok(Ok(_))
         );
         if !connected {
@@ -544,7 +637,10 @@ impl Default for DaemonStateInner {
         // One id per app launch: pid + a monotonic timestamp is enough entropy
         // for a same-machine, single-process-lifetime identifier without
         // pulling in a uuid dependency (Cargo.toml is frozen for this task).
-        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
         DaemonStateInner {
             status: DaemonStatus::stopped(),
             app_run_id: format!("apprun-{}-{nanos}", std::process::id()),
@@ -582,7 +678,10 @@ pub async fn daemon_get_status(state: State<'_, DaemonState>) -> Result<serde_js
 }
 
 #[tauri::command]
-pub async fn daemon_start(app: AppHandle, state: State<'_, DaemonState>) -> Result<serde_json::Value, String> {
+pub async fn daemon_start(
+    app: AppHandle,
+    state: State<'_, DaemonState>,
+) -> Result<serde_json::Value, String> {
     let status = start_daemon(&app, &state).await;
     emit_status(&app, &status).await;
     serde_json::to_value(status).map_err(|e| e.to_string())
@@ -646,7 +745,10 @@ async fn start_daemon(app: &AppHandle, state: &State<'_, DaemonState>) -> Daemon
 }
 
 #[tauri::command]
-pub async fn daemon_stop(app: AppHandle, state: State<'_, DaemonState>) -> Result<serde_json::Value, String> {
+pub async fn daemon_stop(
+    app: AppHandle,
+    state: State<'_, DaemonState>,
+) -> Result<serde_json::Value, String> {
     let (pid, port) = {
         let mut inner = state.0.lock().await;
         // Dropping the link closes the fd; the daemon detects EOF and
@@ -668,7 +770,10 @@ pub async fn daemon_stop(app: AppHandle, state: State<'_, DaemonState>) -> Resul
 }
 
 #[tauri::command]
-pub async fn daemon_restart(app: AppHandle, state: State<'_, DaemonState>) -> Result<serde_json::Value, String> {
+pub async fn daemon_restart(
+    app: AppHandle,
+    state: State<'_, DaemonState>,
+) -> Result<serde_json::Value, String> {
     daemon_stop(app.clone(), state.clone()).await?;
     daemon_start(app, state).await
 }
@@ -682,7 +787,10 @@ mod tests {
     use super::*;
 
     fn env(pairs: &[(&str, &str)]) -> HashMap<String, String> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     mod resolve_daemon_launch_tests {
@@ -690,7 +798,15 @@ mod tests {
 
         #[test]
         fn uses_ao_daemon_command_when_configured() {
-            let spec = resolve_daemon_launch(&env(&[("AO_DAEMON_COMMAND", "/tmp/ao daemon")]), false, "/resources", "/app", "/home/user", false).unwrap();
+            let spec = resolve_daemon_launch(
+                &env(&[("AO_DAEMON_COMMAND", "/tmp/ao daemon")]),
+                false,
+                "/resources",
+                "/app",
+                "/home/user",
+                false,
+            )
+            .unwrap();
             assert_eq!(
                 spec,
                 DaemonLaunchSpec {
@@ -705,12 +821,24 @@ mod tests {
 
         #[test]
         fn runs_the_backend_daemon_from_source_in_dev_without_an_explicit_command() {
-            let spec = resolve_daemon_launch(&HashMap::new(), false, "/resources", "/repo/frontend", "/home/user", false).unwrap();
+            let spec = resolve_daemon_launch(
+                &HashMap::new(),
+                false,
+                "/resources",
+                "/repo/frontend",
+                "/home/user",
+                false,
+            )
+            .unwrap();
             assert_eq!(
                 spec,
                 DaemonLaunchSpec {
                     command: "go".to_string(),
-                    args: vec!["run".to_string(), "./cmd/ao".to_string(), "daemon".to_string()],
+                    args: vec![
+                        "run".to_string(),
+                        "./cmd/ao".to_string(),
+                        "daemon".to_string()
+                    ],
                     cwd: "/repo/frontend/../backend".to_string(),
                     shell: false,
                     source: LaunchSource::Dev,
@@ -720,11 +848,20 @@ mod tests {
 
         #[test]
         fn uses_the_bundled_daemon_binary_for_packaged_macos_linux_builds() {
-            let spec = resolve_daemon_launch(&HashMap::new(), true, "/Applications/Agent Orchestrator.app/Contents/Resources", "/app", "/Users/alice", false).unwrap();
+            let spec = resolve_daemon_launch(
+                &HashMap::new(),
+                true,
+                "/Applications/Agent Orchestrator.app/Contents/Resources",
+                "/app",
+                "/Users/alice",
+                false,
+            )
+            .unwrap();
             assert_eq!(
                 spec,
                 DaemonLaunchSpec {
-                    command: "/Applications/Agent Orchestrator.app/Contents/Resources/daemon/ao".to_string(),
+                    command: "/Applications/Agent Orchestrator.app/Contents/Resources/daemon/ao"
+                        .to_string(),
                     args: vec!["daemon".to_string()],
                     cwd: "/Users/alice/.ao".to_string(),
                     shell: false,
@@ -735,7 +872,15 @@ mod tests {
 
         #[test]
         fn uses_the_bundled_daemon_exe_for_packaged_windows_builds() {
-            let spec = resolve_daemon_launch(&HashMap::new(), true, "C:\\Program Files\\AO\\resources", "C:\\Program Files\\AO\\resources\\app.asar", "C:\\Users\\alice", true).unwrap();
+            let spec = resolve_daemon_launch(
+                &HashMap::new(),
+                true,
+                "C:\\Program Files\\AO\\resources",
+                "C:\\Program Files\\AO\\resources\\app.asar",
+                "C:\\Users\\alice",
+                true,
+            )
+            .unwrap();
             assert_eq!(
                 spec,
                 DaemonLaunchSpec {
@@ -759,12 +904,18 @@ mod tests {
 
         #[test]
         fn defaults_when_the_run_file_lives_directly_under_dot_ao() {
-            assert_eq!(supervisor_pipe_from_run_file(Some("C:\\Users\\alice\\.ao\\running.json")), DEFAULT_PIPE);
+            assert_eq!(
+                supervisor_pipe_from_run_file(Some("C:\\Users\\alice\\.ao\\running.json")),
+                DEFAULT_PIPE
+            );
         }
 
         #[test]
         fn defaults_when_the_parent_dir_is_the_current_dir_marker() {
-            assert_eq!(supervisor_pipe_from_run_file(Some(".\\running.json")), DEFAULT_PIPE);
+            assert_eq!(
+                supervisor_pipe_from_run_file(Some(".\\running.json")),
+                DEFAULT_PIPE
+            );
         }
 
         #[test]

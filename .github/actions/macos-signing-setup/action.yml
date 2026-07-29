@@ -1,7 +1,10 @@
 name: macOS signing setup
 description: >
-  Import the Developer ID certificate into a keychain and stage App Store Connect
-  API-key notarization credentials for a subsequent electron-forge publish.
+  Stage Developer ID signing + App Store Connect API-key notarization
+  credentials for a subsequent `tauri build` (Tauri's macOS bundler, per
+  https://v2.tauri.app/distribute/sign/macos/, imports the certificate into
+  its own temporary keychain itself from APPLE_CERTIFICATE /
+  APPLE_CERTIFICATE_PASSWORD — no separate keychain-import action needed).
 inputs:
   csc-link:
     description: Base64 of the Developer ID Application .p12
@@ -24,20 +27,24 @@ inputs:
 runs:
   using: composite
   steps:
-    # Imports the .p12 into a temporary keychain so @electron/osx-sign can find
-    # the identity (forge, unlike electron-builder, does not decode CSC_LINK).
-    - uses: apple-actions/import-codesign-certs@v3
-      with:
-        p12-file-base64: ${{ inputs.csc-link }}
-        p12-password: ${{ inputs.csc-key-password }}
-    # Decode the .p8 to a file and export notarization env for the Publish step.
-    # @electron/notarize's appleApiKey is a FILE PATH, so we must materialize it.
-    # Inputs are passed via env (never interpolated into the script body) so a
-    # value's special characters cannot break or inject into the shell. Decoding
-    # is done with node (portable; avoids BSD-vs-GNU base64 flag differences on
-    # the macOS runner).
+    # Exports Tauri's macOS signing + notarization env vars (see
+    # https://v2.tauri.app/distribute/sign/macos/) for the Build step:
+    #   APPLE_CERTIFICATE          base64 .p12 (Tauri decodes it itself)
+    #   APPLE_CERTIFICATE_PASSWORD password for the .p12
+    #   APPLE_SIGNING_IDENTITY     "Developer ID Application: <Holder> (<TEAMID>)"
+    #   APPLE_API_KEY               App Store Connect API key ID
+    #   APPLE_API_ISSUER            App Store Connect issuer uuid
+    #   APPLE_API_KEY_PATH          FILE PATH to the decoded .p8 (Tauri, unlike
+    #                               @electron/notarize's appleApiKey, wants a
+    #                               path here, not the key ID)
+    # The .p8 is decoded to a file with node (portable; avoids BSD-vs-GNU
+    # base64 flag differences on the macOS runner). Inputs are passed via env
+    # (never interpolated into the script body) so a value's special
+    # characters cannot break or inject into the shell.
     - shell: bash
       env:
+        APPLE_CERTIFICATE: ${{ inputs.csc-link }}
+        APPLE_CERTIFICATE_PASSWORD: ${{ inputs.csc-key-password }}
         APPLE_API_KEY_BASE64: ${{ inputs.apple-api-key-base64 }}
         APPLE_API_KEY_ID: ${{ inputs.apple-api-key-id }}
         APPLE_API_ISSUER: ${{ inputs.apple-api-issuer }}
@@ -46,8 +53,10 @@ runs:
         key_path="$RUNNER_TEMP/AuthKey.p8"
         node -e "require('fs').writeFileSync('$key_path', Buffer.from(process.env.APPLE_API_KEY_BASE64, 'base64'))"
         {
-          echo "APPLE_API_KEY=$key_path"
-          echo "APPLE_API_KEY_ID=$APPLE_API_KEY_ID"
-          echo "APPLE_API_ISSUER=$APPLE_API_ISSUER"
+          echo "APPLE_CERTIFICATE=$APPLE_CERTIFICATE"
+          echo "APPLE_CERTIFICATE_PASSWORD=$APPLE_CERTIFICATE_PASSWORD"
           echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY"
+          echo "APPLE_API_KEY=$APPLE_API_KEY_ID"
+          echo "APPLE_API_ISSUER=$APPLE_API_ISSUER"
+          echo "APPLE_API_KEY_PATH=$key_path"
         } >> "$GITHUB_ENV"

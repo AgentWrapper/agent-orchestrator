@@ -21,7 +21,14 @@ pub struct EscalationInput<'a> {
 }
 
 pub fn evaluate_escalation(input: EscalationInput<'_>) -> bool {
-    let EscalationInput { channel, staged_at, now, important, running_version, latest_stable_version } = input;
+    let EscalationInput {
+        channel,
+        staged_at,
+        now,
+        important,
+        running_version,
+        latest_stable_version,
+    } = input;
 
     if channel == "latest" {
         return now - staged_at >= H48_MS;

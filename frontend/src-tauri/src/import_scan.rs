@@ -16,9 +16,21 @@ const SCAN_CONCURRENCY: usize = 8;
 const SCAN_MAX_ENTRIES: usize = 200;
 
 fn skip_dirs() -> HashSet<&'static str> {
-    [".git", "node_modules", "dist", "build", ".cache", ".turbo", "target", "coverage", "tmp", "temp", "Library"]
-        .into_iter()
-        .collect()
+    [
+        ".git",
+        "node_modules",
+        "dist",
+        "build",
+        ".cache",
+        ".turbo",
+        "target",
+        "coverage",
+        "tmp",
+        "temp",
+        "Library",
+    ]
+    .into_iter()
+    .collect()
 }
 
 #[derive(Debug, Clone, Default)]
@@ -115,14 +127,19 @@ fn normalize_git_reported_path(cwd: &Path, value: &str) -> String {
         return String::new();
     }
     let p = Path::new(value);
-    let resolved = if p.is_absolute() { p.to_path_buf() } else { cwd.join(p) };
+    let resolved = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        cwd.join(p)
+    };
     resolved.to_string_lossy().to_string()
 }
 
 fn is_descendant_path(child: &str, parent: &str) -> bool {
     let child_key = comparable_path(child);
     let parent_key = comparable_path(parent);
-    child_key == parent_key || child_key.starts_with(&format!("{parent_key}{}", std::path::MAIN_SEPARATOR))
+    child_key == parent_key
+        || child_key.starts_with(&format!("{parent_key}{}", std::path::MAIN_SEPARATOR))
 }
 
 fn project_setup_safety_reason(repo_path: &str, options: &ScanOptions) -> Option<String> {
@@ -137,8 +154,13 @@ fn project_setup_safety_reason(repo_path: &str, options: &ScanOptions) -> Option
     None
 }
 
-async fn ancestor_repository_setup_warning(repo_path: &Path, options: &ScanOptions) -> Option<String> {
-    let raw_top = git_output(repo_path, &["rev-parse", "--show-toplevel"], options).await.ok()?;
+async fn ancestor_repository_setup_warning(
+    repo_path: &Path,
+    options: &ScanOptions,
+) -> Option<String> {
+    let raw_top = git_output(repo_path, &["rev-parse", "--show-toplevel"], options)
+        .await
+        .ok()?;
     let top = normalize_git_reported_path(repo_path, &raw_top);
     let repo_path_str = repo_path.to_string_lossy().to_string();
     if !top.is_empty() && !same_path(&top, &repo_path_str) {
@@ -154,13 +176,24 @@ async fn is_git_repo(repo_path: &Path, options: &ScanOptions) -> bool {
         Ok(meta) if meta.is_dir() => {}
         _ => return false,
     }
-    git_output(repo_path, &["rev-parse", "--show-toplevel"], options).await.is_ok()
+    git_output(repo_path, &["rev-parse", "--show-toplevel"], options)
+        .await
+        .is_ok()
 }
 
 async fn resolve_default_branch(repo_path: &Path, options: &ScanOptions) -> String {
-    if let Ok(ref_name) = git_output(repo_path, &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], options).await {
+    if let Ok(ref_name) = git_output(
+        repo_path,
+        &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        options,
+    )
+    .await
+    {
         if !ref_name.is_empty() {
-            return ref_name.strip_prefix("origin/").unwrap_or(&ref_name).to_string();
+            return ref_name
+                .strip_prefix("origin/")
+                .unwrap_or(&ref_name)
+                .to_string();
         }
     }
     if let Ok(branch) = git_output(repo_path, &["branch", "--show-current"], options).await {
@@ -171,7 +204,13 @@ async fn resolve_default_branch(repo_path: &Path, options: &ScanOptions) -> Stri
     "HEAD".to_string()
 }
 
-fn scan_repo_validation_reason(name: &str, branch: &str, has_remote: bool, is_bare: bool, has_head: bool) -> Option<String> {
+fn scan_repo_validation_reason(
+    name: &str,
+    branch: &str,
+    has_remote: bool,
+    is_bare: bool,
+    has_head: bool,
+) -> Option<String> {
     if name == "__root__" {
         return Some("Repository name is reserved by AO.".to_string());
     }
@@ -200,9 +239,16 @@ fn relative_path_of(root: &Path, target: &Path) -> String {
     }
 }
 
-async fn scan_git_repo(repo_path: PathBuf, root_path: PathBuf, options: ScanOptions) -> Option<GitRepoScanResult> {
+async fn scan_git_repo(
+    repo_path: PathBuf,
+    root_path: PathBuf,
+    options: ScanOptions,
+) -> Option<GitRepoScanResult> {
     let relative_path = relative_path_of(&root_path, &repo_path);
-    let name = repo_path.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+    let name = repo_path
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
     let path_str = repo_path.to_string_lossy().to_string();
 
     match std::fs::metadata(repo_path.join(".git")) {
@@ -222,7 +268,9 @@ async fn scan_git_repo(repo_path: PathBuf, root_path: PathBuf, options: ScanOpti
             });
         }
         Err(_) => {
-            if let Ok(v) = git_output(&repo_path, &["rev-parse", "--is-bare-repository"], &options).await {
+            if let Ok(v) =
+                git_output(&repo_path, &["rev-parse", "--is-bare-repository"], &options).await
+            {
                 if v == "true" {
                     return Some(GitRepoScanResult {
                         name,
@@ -251,13 +299,21 @@ async fn scan_git_repo(repo_path: PathBuf, root_path: PathBuf, options: ScanOpti
         git_output(&repo_path, &["rev-parse", "--verify", "HEAD"], &options),
     );
 
-    let has_remote = remote_result.as_ref().map(|s| !s.is_empty()).unwrap_or(false);
+    let has_remote = remote_result
+        .as_ref()
+        .map(|s| !s.is_empty())
+        .unwrap_or(false);
     let remote = remote_result.unwrap_or_default();
     let is_bare = bare_result.as_deref() == Ok("true");
     let has_head = head_result.is_ok();
 
-    let validation_reason = scan_repo_validation_reason(&name, &branch, has_remote, is_bare, has_head);
-    let status = if validation_reason.is_some() { "error" } else { "ok" };
+    let validation_reason =
+        scan_repo_validation_reason(&name, &branch, has_remote, is_bare, has_head);
+    let status = if validation_reason.is_some() {
+        "error"
+    } else {
+        "ok"
+    };
 
     Some(GitRepoScanResult {
         name,
@@ -302,12 +358,19 @@ where
 }
 
 /// Port of `scanImportFolder`.
-pub async fn scan_import_folder(root_path: PathBuf, mode: &str, options: ScanOptions) -> Result<ImportFolderScanResult, String> {
+pub async fn scan_import_folder(
+    root_path: PathBuf,
+    mode: &str,
+    options: ScanOptions,
+) -> Result<ImportFolderScanResult, String> {
     let root_path_str = root_path.to_string_lossy().to_string();
 
     if mode == "project" {
         if let Some(safety_reason) = project_setup_safety_reason(&root_path_str, &options) {
-            let name = root_path.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+            let name = root_path
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
             return Ok(ImportFolderScanResult {
                 path: root_path_str.clone(),
                 repos: vec![GitRepoScanResult {
@@ -324,12 +387,22 @@ pub async fn scan_import_folder(root_path: PathBuf, mode: &str, options: ScanOpt
             });
         }
 
-        if let Some(repo) = scan_git_repo(root_path.clone(), root_path.clone(), options.clone()).await {
-            return Ok(ImportFolderScanResult { path: root_path_str, repos: vec![repo], setup_warning: None });
+        if let Some(repo) =
+            scan_git_repo(root_path.clone(), root_path.clone(), options.clone()).await
+        {
+            return Ok(ImportFolderScanResult {
+                path: root_path_str,
+                repos: vec![repo],
+                setup_warning: None,
+            });
         }
 
         let setup_warning = ancestor_repository_setup_warning(&root_path, &options).await;
-        return Ok(ImportFolderScanResult { path: root_path_str, repos: vec![], setup_warning });
+        return Ok(ImportFolderScanResult {
+            path: root_path_str,
+            repos: vec![],
+            setup_warning,
+        });
     }
 
     let skip = skip_dirs();
@@ -337,24 +410,30 @@ pub async fn scan_import_folder(root_path: PathBuf, mode: &str, options: ScanOpt
         .map_err(|e| e.to_string())?
         .filter_map(|e| e.ok())
         .filter(|e| {
-            e.file_type().map(|t| t.is_dir()).unwrap_or(false) && !skip.contains(e.file_name().to_string_lossy().as_ref())
+            e.file_type().map(|t| t.is_dir()).unwrap_or(false)
+                && !skip.contains(e.file_name().to_string_lossy().as_ref())
         })
         .take(SCAN_MAX_ENTRIES)
         .collect();
 
     let root_for_task = root_path.clone();
     let opts_for_task = options.clone();
-    let repos_opt: Vec<Option<GitRepoScanResult>> = map_limited(entries, SCAN_CONCURRENCY, move |entry| {
-        let root = root_for_task.clone();
-        let opts = opts_for_task.clone();
-        async move { scan_git_repo(root.join(entry.file_name()), root, opts).await }
-    })
-    .await;
+    let repos_opt: Vec<Option<GitRepoScanResult>> =
+        map_limited(entries, SCAN_CONCURRENCY, move |entry| {
+            let root = root_for_task.clone();
+            let opts = opts_for_task.clone();
+            async move { scan_git_repo(root.join(entry.file_name()), root, opts).await }
+        })
+        .await;
 
     let mut repos: Vec<GitRepoScanResult> = repos_opt.into_iter().flatten().collect();
     repos.sort_by(|a, b| a.name.cmp(&b.name));
 
-    Ok(ImportFolderScanResult { path: root_path_str, repos, setup_warning: None })
+    Ok(ImportFolderScanResult {
+        path: root_path_str,
+        repos,
+        setup_warning: None,
+    })
 }
 
 #[cfg(test)]
@@ -366,7 +445,10 @@ mod tests {
         let dir = std::env::temp_dir().join(format!(
             "{prefix}-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -387,22 +469,31 @@ mod tests {
 
     fn committed_repo(dir: &Path) {
         std::fs::create_dir_all(dir).unwrap();
-        git(&["init", "-b", "main", &dir.to_string_lossy()], dir.parent().unwrap());
+        git(
+            &["init", "-b", "main", &dir.to_string_lossy()],
+            dir.parent().unwrap(),
+        );
         std::fs::write(dir.join("README.md"), "hello\n").unwrap();
         git(&["add", "README.md"], dir);
         git(&["commit", "-m", "initial"], dir);
-        git(&["remote", "add", "origin", "https://example.com/repo.git"], dir);
+        git(
+            &["remote", "add", "origin", "https://example.com/repo.git"],
+            dir,
+        );
     }
 
     #[tokio::test]
-    async fn leaves_a_plain_project_folder_nested_inside_a_parent_repo_setup_ready_with_a_warning() {
+    async fn leaves_a_plain_project_folder_nested_inside_a_parent_repo_setup_ready_with_a_warning()
+    {
         let root = tempdir("ao-import-scan-nested");
         let parent = root.join("parent");
         committed_repo(&parent);
         let nested = parent.join("universe");
         std::fs::create_dir_all(&nested).unwrap();
 
-        let scan = scan_import_folder(nested.clone(), "project", ScanOptions::default()).await.unwrap();
+        let scan = scan_import_folder(nested.clone(), "project", ScanOptions::default())
+            .await
+            .unwrap();
 
         assert_eq!(scan.path, nested.to_string_lossy());
         assert_eq!(scan.repos, vec![]);
@@ -417,7 +508,9 @@ mod tests {
         let repo = root.join("repo");
         committed_repo(&repo);
 
-        let scan = scan_import_folder(repo.clone(), "project", ScanOptions::default()).await.unwrap();
+        let scan = scan_import_folder(repo.clone(), "project", ScanOptions::default())
+            .await
+            .unwrap();
 
         assert_eq!(scan.repos.len(), 1);
         let result = &scan.repos[0];
@@ -436,25 +529,50 @@ mod tests {
         std::fs::create_dir_all(&selected).unwrap();
 
         let mut env: std::collections::HashMap<String, String> = std::env::vars().collect();
-        env.insert("GIT_CEILING_DIRECTORIES".to_string(), root.to_string_lossy().to_string());
+        env.insert(
+            "GIT_CEILING_DIRECTORIES".to_string(),
+            root.to_string_lossy().to_string(),
+        );
 
-        let scan = scan_import_folder(selected.clone(), "project", ScanOptions { env: Some(env), home_dir: None })
-            .await
-            .unwrap();
+        let scan = scan_import_folder(
+            selected.clone(),
+            "project",
+            ScanOptions {
+                env: Some(env),
+                home_dir: None,
+            },
+        )
+        .await
+        .unwrap();
 
-        assert_eq!(scan, ImportFolderScanResult { path: selected.to_string_lossy().to_string(), repos: vec![], setup_warning: None });
+        assert_eq!(
+            scan,
+            ImportFolderScanResult {
+                path: selected.to_string_lossy().to_string(),
+                repos: vec![],
+                setup_warning: None
+            }
+        );
     }
 
     #[tokio::test]
     async fn reports_folders_inside_ao_managed_worktrees_before_offering_setup() {
         let home = tempdir("ao-import-scan-home");
-        let selected = home.join(".ao").join("data").join("worktrees").join("project").join("session");
+        let selected = home
+            .join(".ao")
+            .join("data")
+            .join("worktrees")
+            .join("project")
+            .join("session");
         std::fs::create_dir_all(&selected).unwrap();
 
         let scan = scan_import_folder(
             selected.clone(),
             "project",
-            ScanOptions { env: None, home_dir: Some(home.to_string_lossy().to_string()) },
+            ScanOptions {
+                env: None,
+                home_dir: Some(home.to_string_lossy().to_string()),
+            },
         )
         .await
         .unwrap();

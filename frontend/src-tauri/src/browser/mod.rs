@@ -64,20 +64,6 @@ pub struct BrowserNavState {
     pub error: Option<String>,
 }
 
-impl BrowserNavState {
-    pub fn empty(view_id: &str) -> Self {
-        BrowserNavState {
-            view_id: view_id.to_string(),
-            url: String::new(),
-            title: String::new(),
-            can_go_back: false,
-            can_go_forward: false,
-            is_loading: false,
-            error: None,
-        }
-    }
-}
-
 /// Byte-matches `BrowserBoundsInput`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -187,9 +173,21 @@ mod tests {
         assert!(!is_browser_label(""));
     }
 
+    fn empty_nav_state(view_id: &str) -> BrowserNavState {
+        BrowserNavState {
+            view_id: view_id.to_string(),
+            url: String::new(),
+            title: String::new(),
+            can_go_back: false,
+            can_go_forward: false,
+            is_loading: false,
+            error: None,
+        }
+    }
+
     #[test]
     fn empty_nav_state_carries_the_view_id_and_no_error() {
-        let state = BrowserNavState::empty("browser-abc");
+        let state = empty_nav_state("browser-abc");
         assert_eq!(state.view_id, "browser-abc");
         assert_eq!(state.url, "");
         assert!(!state.can_go_back);
@@ -198,7 +196,7 @@ mod tests {
 
     #[test]
     fn nav_state_serializes_with_camel_case_field_names_and_omits_absent_error() {
-        let state = BrowserNavState::empty("browser-abc");
+        let state = empty_nav_state("browser-abc");
         let value = serde_json::to_value(&state).unwrap();
         assert_eq!(
             value,
@@ -230,12 +228,20 @@ mod tests {
         assert_eq!(webviews, &[serde_json::json!("browser-*")]);
         assert!(is_browser_label("browser-abc123"));
 
-        let mut permissions: Vec<&str> =
-            capability["permissions"].as_array().unwrap().iter().map(|p| p.as_str().unwrap()).collect();
+        let mut permissions: Vec<&str> = capability["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p.as_str().unwrap())
+            .collect();
         permissions.sort_unstable();
         assert_eq!(
             permissions,
-            vec!["allow-browser-annotation-cancel", "allow-browser-annotation-submit", "allow-browser-forward-shortcut"]
+            vec![
+                "allow-browser-annotation-cancel",
+                "allow-browser-annotation-submit",
+                "allow-browser-forward-shortcut"
+            ]
         );
     }
 }

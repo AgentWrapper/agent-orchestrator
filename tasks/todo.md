@@ -13,7 +13,10 @@ Wave 1: [T1 scaffold src-tauri (M0), T2 `ao daemon ensure` Go (M1), T3 CORS taur
    re-verificação opus: PASS; hardening extra do orquestrador (capability por webview
    label + is_browser_label no validate_caller). Checkpoint 39273ea68 (M4). Pendência
    Win/Linux: captura nativa stub até CI com runners nativos (T11).]
-→ Wave 5: [T10 updater] → Wave 6: [T11 CI/release] → Wave 7: [T12 cleanup Electron, só após validação manual]
+→ Wave 5: [T10 updater PASS + T10b fixes PASS — checkpoint 9e5eb41cb (M5)]
+→ Wave 6: [T11 CI/release (executando)] → Wave 7: [T12 cleanup Electron, só após validação manual]
+Pendências conhecidas p/ T11+: pubkey do updater em tauri.conf.json é placeholder (trocar
+pela chave real de CI); captura Win/Linux é stub; teste negativo do wizard (dev esconde) ausente.
 
 Specs completas em tasks/specs/T4..T12. Handoff: um orquestrador novo precisa apenas de
 tasks/todo.md + tasks/specs/* + o plano ~/.claude/plans/jazzy-hatching-seal.md.

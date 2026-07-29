@@ -24,7 +24,8 @@ fn core_webview2(webview: &tauri::Webview) -> Result<ICoreWebView2, String> {
             let _ = tx.send(core);
         })
         .map_err(|e| e.to_string())?;
-    rx.recv_timeout(std::time::Duration::from_secs(5)).map_err(|e| e.to_string())?
+    rx.recv_timeout(std::time::Duration::from_secs(5))
+        .map_err(|e| e.to_string())?
 }
 
 pub fn history_state_blocking(
@@ -32,8 +33,12 @@ pub fn history_state_blocking(
     _timeout: std::time::Duration,
 ) -> Result<(bool, bool), String> {
     let core = core_webview2(webview)?;
-    let can_back = unsafe { core.CanGoBack() }.map_err(|e| e.to_string())?.as_bool();
-    let can_forward = unsafe { core.CanGoForward() }.map_err(|e| e.to_string())?.as_bool();
+    let can_back = unsafe { core.CanGoBack() }
+        .map_err(|e| e.to_string())?
+        .as_bool();
+    let can_forward = unsafe { core.CanGoForward() }
+        .map_err(|e| e.to_string())?
+        .as_bool();
     Ok((can_back, can_forward))
 }
 
@@ -55,7 +60,10 @@ pub fn stop_loading(webview: &tauri::Webview) {
     }
 }
 
-pub fn snapshot_jpeg_blocking(_webview: &tauri::Webview, _timeout: std::time::Duration) -> Result<Vec<u8>, String> {
+pub fn snapshot_jpeg_blocking(
+    _webview: &tauri::Webview,
+    _timeout: std::time::Duration,
+) -> Result<Vec<u8>, String> {
     Err("browser panel JPEG capture is not yet implemented on Windows".to_string())
 }
 

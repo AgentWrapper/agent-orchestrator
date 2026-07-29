@@ -74,5 +74,8 @@ pub const ALL_COMMAND_NAMES: &[&str] = &[
 /// allow-lists. Kept alongside `ALL_COMMAND_NAMES` so tests can assert the
 /// two lists (all commands vs. the browser-panel subset) don't drift apart.
 #[allow(dead_code)]
-pub const BROWSER_PANEL_COMMAND_NAMES: &[&str] =
-    &["browser_annotation_submit", "browser_annotation_cancel", "browser_forward_shortcut"];
+pub const BROWSER_PANEL_COMMAND_NAMES: &[&str] = &[
+    "browser_annotation_submit",
+    "browser_annotation_cancel",
+    "browser_forward_shortcut",
+];

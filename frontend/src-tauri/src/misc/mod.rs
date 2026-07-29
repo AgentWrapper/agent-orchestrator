@@ -41,12 +41,17 @@ pub struct ScanImportFolderInput {
 }
 
 #[tauri::command]
-pub async fn app_scan_import_folder(input: ScanImportFolderInput) -> Result<serde_json::Value, String> {
+pub async fn app_scan_import_folder(
+    input: ScanImportFolderInput,
+) -> Result<serde_json::Value, String> {
     let home_dir = dirs::home_dir().map(|p| p.to_string_lossy().to_string());
     let result = import_scan::scan_import_folder(
         PathBuf::from(input.path),
         &input.mode,
-        ScanOptions { env: None, home_dir },
+        ScanOptions {
+            env: None,
+            home_dir,
+        },
     )
     .await?;
     serde_json::to_value(result).map_err(|e| e.to_string())
@@ -81,7 +86,10 @@ fn sanitize_dropped_file_name(name: &str) -> String {
 }
 
 fn now_millis() -> u128 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
 }
 
 fn save_dropped_file(dir: &Path, name: &str, bytes: &[u8]) -> Result<String, String> {
@@ -138,7 +146,10 @@ fn load_or_create_telemetry_install_id(data_dir: &Path) -> Result<String, String
         }
     }
     std::fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
-    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
     let distinct_id = format!("ins_{}-{nanos}", std::process::id());
     std::fs::write(&file, format!("{distinct_id}\n")).map_err(|e| e.to_string())?;
     Ok(distinct_id)
@@ -152,7 +163,10 @@ fn node_style_platform() -> &'static str {
     }
 }
 
-fn build_telemetry_bootstrap(data_dir: Option<PathBuf>, app_version: &str) -> Result<Option<Value>, String> {
+fn build_telemetry_bootstrap(
+    data_dir: Option<PathBuf>,
+    app_version: &str,
+) -> Result<Option<Value>, String> {
     let Some(data_dir) = data_dir else {
         return Ok(None);
     };
@@ -295,7 +309,9 @@ pub async fn menu_action(app: AppHandle, action: String) -> Result<(), String> {
         }
         "close" => window.close().map_err(|e| e.to_string())?,
         "quit" => app.exit(0),
-        "reload" => window.eval("location.reload()").map_err(|e| e.to_string())?,
+        "reload" => window
+            .eval("location.reload()")
+            .map_err(|e| e.to_string())?,
         "toggle-devtools" => {
             #[cfg(debug_assertions)]
             {
@@ -318,7 +334,9 @@ pub async fn menu_action(app: AppHandle, action: String) -> Result<(), String> {
         }
         "togglefullscreen" => {
             let fullscreen = window.is_fullscreen().map_err(|e| e.to_string())?;
-            window.set_fullscreen(!fullscreen).map_err(|e| e.to_string())?;
+            window
+                .set_fullscreen(!fullscreen)
+                .map_err(|e| e.to_string())?;
         }
         "shell-focus" => {}
         other => {
@@ -344,7 +362,10 @@ pub struct NotificationInput {
 }
 
 #[tauri::command]
-pub async fn notifications_show(app: AppHandle, notification: NotificationInput) -> Result<(), String> {
+pub async fn notifications_show(
+    app: AppHandle,
+    notification: NotificationInput,
+) -> Result<(), String> {
     use tauri_plugin_notification::NotificationExt;
 
     if notification.id.is_empty() || notification.title.is_empty() {
@@ -371,7 +392,11 @@ pub async fn clipboard_write_primary(text: String) -> Result<(), String> {
     {
         use arboard::{Clipboard, LinuxClipboardKind, SetExtLinux};
         let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
-        clipboard.set().clipboard(LinuxClipboardKind::Primary).text(text).map_err(|e| e.to_string())?;
+        clipboard
+            .set()
+            .clipboard(LinuxClipboardKind::Primary)
+            .text(text)
+            .map_err(|e| e.to_string())?;
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -397,7 +422,10 @@ mod tests {
         let dir = std::env::temp_dir().join(format!(
             "{prefix}-{}-{}",
             std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -409,8 +437,14 @@ mod tests {
         #[test]
         fn strips_path_separators_and_keeps_word_dot_dash_chars() {
             assert_eq!(sanitize_dropped_file_name("../../etc/passwd"), "passwd");
-            assert_eq!(sanitize_dropped_file_name("weird name!!.png"), "weird_name_.png");
-            assert_eq!(sanitize_dropped_file_name("C:\\Users\\me\\file.txt"), "file.txt");
+            assert_eq!(
+                sanitize_dropped_file_name("weird name!!.png"),
+                "weird_name_.png"
+            );
+            assert_eq!(
+                sanitize_dropped_file_name("C:\\Users\\me\\file.txt"),
+                "file.txt"
+            );
         }
 
         #[test]
@@ -430,7 +464,11 @@ mod tests {
             let written = std::fs::read(&path).unwrap();
             assert_eq!(written, b"hello");
             assert!(Path::new(&path).is_absolute());
-            let file_name = Path::new(&path).file_name().unwrap().to_string_lossy().to_string();
+            let file_name = Path::new(&path)
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .to_string();
             assert!(file_name.ends_with("-clip.png"));
         }
 
@@ -453,9 +491,14 @@ mod tests {
         #[test]
         fn creates_and_persists_a_distinct_id_on_first_use() {
             let dir = tempdir("ao-telemetry-bootstrap");
-            let bootstrap = build_telemetry_bootstrap(Some(dir.clone()), "1.2.3").unwrap().unwrap();
+            let bootstrap = build_telemetry_bootstrap(Some(dir.clone()), "1.2.3")
+                .unwrap()
+                .unwrap();
             assert_eq!(bootstrap["appVersion"], json!("1.2.3"));
-            assert!(bootstrap["distinctId"].as_str().unwrap().starts_with("ins_"));
+            assert!(bootstrap["distinctId"]
+                .as_str()
+                .unwrap()
+                .starts_with("ins_"));
             let install_id_file = dir.join("telemetry_install_id");
             assert!(install_id_file.exists());
         }
@@ -463,8 +506,12 @@ mod tests {
         #[test]
         fn reuses_an_existing_distinct_id_across_calls() {
             let dir = tempdir("ao-telemetry-bootstrap-reuse");
-            let first = build_telemetry_bootstrap(Some(dir.clone()), "1.0.0").unwrap().unwrap();
-            let second = build_telemetry_bootstrap(Some(dir.clone()), "1.0.0").unwrap().unwrap();
+            let first = build_telemetry_bootstrap(Some(dir.clone()), "1.0.0")
+                .unwrap()
+                .unwrap();
+            let second = build_telemetry_bootstrap(Some(dir.clone()), "1.0.0")
+                .unwrap()
+                .unwrap();
             assert_eq!(first["distinctId"], second["distinctId"]);
         }
     }

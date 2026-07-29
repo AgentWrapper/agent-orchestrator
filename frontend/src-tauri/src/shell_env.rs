@@ -134,7 +134,9 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 /// (in `daemon::shell`) spawns `shell_path` with `args` and enforces a 3s
 /// timeout; this indirection keeps the parsing/merging logic above injectable
 /// and unit-testable without spawning real processes.
-pub type ShellRunner = Arc<dyn Fn(String, Vec<String>) -> BoxFuture<'static, Result<Option<String>, String>> + Send + Sync>;
+pub type ShellRunner = Arc<
+    dyn Fn(String, Vec<String>) -> BoxFuture<'static, Result<Option<String>, String>> + Send + Sync,
+>;
 
 /// Run the probe via an injected runner. Returns `None` on any failure/timeout
 /// or if the result lacks PATH; the caller then falls back to the static floor.
@@ -163,7 +165,10 @@ mod tests {
     use super::*;
 
     fn map(pairs: &[(&str, &str)]) -> HashMap<String, String> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     mod parse_env_block_tests {
@@ -171,10 +176,14 @@ mod tests {
 
         #[test]
         fn parses_nul_separated_records_after_the_sentinel() {
-            let stdout = format!("{SHELL_ENV_SENTINEL}PATH=/opt/homebrew/bin:/usr/bin\0HOME=/Users/me\0");
+            let stdout =
+                format!("{SHELL_ENV_SENTINEL}PATH=/opt/homebrew/bin:/usr/bin\0HOME=/Users/me\0");
             assert_eq!(
                 parse_env_block(&stdout),
-                map(&[("PATH", "/opt/homebrew/bin:/usr/bin"), ("HOME", "/Users/me")])
+                map(&[
+                    ("PATH", "/opt/homebrew/bin:/usr/bin"),
+                    ("HOME", "/Users/me")
+                ])
             );
         }
 
@@ -187,7 +196,10 @@ mod tests {
         #[test]
         fn preserves_a_value_containing_a_newline() {
             let stdout = format!("{SHELL_ENV_SENTINEL}MULTI=line1\nline2\0NEXT=ok\0");
-            assert_eq!(parse_env_block(&stdout), map(&[("MULTI", "line1\nline2"), ("NEXT", "ok")]));
+            assert_eq!(
+                parse_env_block(&stdout),
+                map(&[("MULTI", "line1\nline2"), ("NEXT", "ok")])
+            );
         }
 
         #[test]
@@ -226,7 +238,10 @@ mod tests {
         #[test]
         fn overrides_win_over_both_shell_and_process_env() {
             let process_env = map(&[("PATH", "/usr/bin:/bin"), ("AO_TELEMETRY_EVENTS", "off")]);
-            let shell_env = map(&[("PATH", "/opt/homebrew/bin"), ("AO_TELEMETRY_EVENTS", "shell")]);
+            let shell_env = map(&[
+                ("PATH", "/opt/homebrew/bin"),
+                ("AO_TELEMETRY_EVENTS", "shell"),
+            ]);
             let overrides = map(&[("AO_TELEMETRY_EVENTS", "on")]);
             let env = build_daemon_env(&process_env, Some(&shell_env), &overrides);
             assert_eq!(env.get("AO_TELEMETRY_EVENTS").unwrap(), "on");
@@ -235,7 +250,10 @@ mod tests {
         #[test]
         fn keeps_a_credential_present_only_in_the_shell_env() {
             let process_env = map(&[("PATH", "/usr/bin:/bin")]);
-            let shell_env = map(&[("PATH", "/opt/homebrew/bin"), ("ANTHROPIC_API_KEY", "sk-ant")]);
+            let shell_env = map(&[
+                ("PATH", "/opt/homebrew/bin"),
+                ("ANTHROPIC_API_KEY", "sk-ant"),
+            ]);
             let env = build_daemon_env(&process_env, Some(&shell_env), &HashMap::new());
             assert_eq!(env.get("ANTHROPIC_API_KEY").unwrap(), "sk-ant");
         }
@@ -257,7 +275,10 @@ mod tests {
             let env = build_daemon_env(&process_env, None, &HashMap::new());
             let path = env.get("PATH").unwrap();
             for dir in FALLBACK_PATH_DIRS {
-                assert!(path.split(':').any(|p| p == *dir), "missing {dir} in {path}");
+                assert!(
+                    path.split(':').any(|p| p == *dir),
+                    "missing {dir} in {path}"
+                );
             }
         }
 
@@ -288,7 +309,10 @@ mod tests {
 
         #[test]
         fn returns_shell_when_set() {
-            assert_eq!(resolve_shell_path(&map(&[("SHELL", "/bin/bash")])), "/bin/bash");
+            assert_eq!(
+                resolve_shell_path(&map(&[("SHELL", "/bin/bash")])),
+                "/bin/bash"
+            );
         }
 
         #[test]
@@ -319,7 +343,9 @@ mod tests {
 
         #[tokio::test]
         async fn yields_the_parsed_map_on_a_successful_probe() {
-            let stdout: &'static str = Box::leak(format!("{SHELL_ENV_SENTINEL}PATH=/opt/homebrew/bin\0FOO=bar\0").into_boxed_str());
+            let stdout: &'static str = Box::leak(
+                format!("{SHELL_ENV_SENTINEL}PATH=/opt/homebrew/bin\0FOO=bar\0").into_boxed_str(),
+            );
             let run = runner_ok(stdout);
             let env = map(&[("SHELL", "/bin/zsh")]);
             assert_eq!(
@@ -342,7 +368,8 @@ mod tests {
 
         #[tokio::test]
         async fn returns_none_when_the_parsed_env_lacks_path() {
-            let stdout: &'static str = Box::leak(format!("{SHELL_ENV_SENTINEL}FOO=bar\0").into_boxed_str());
+            let stdout: &'static str =
+                Box::leak(format!("{SHELL_ENV_SENTINEL}FOO=bar\0").into_boxed_str());
             let run = runner_ok(stdout);
             assert_eq!(resolve_shell_env(&HashMap::new(), &run).await, None);
         }

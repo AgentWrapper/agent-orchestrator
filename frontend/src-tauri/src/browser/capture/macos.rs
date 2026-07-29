@@ -23,30 +23,36 @@ fn begin_snapshot(webview: &WKWebView, tx: Sender<Result<Vec<u8>, String>>) {
         return;
     };
     let config = unsafe { WKSnapshotConfiguration::new(mtm) };
-    let block = RcBlock::new(move |image: *mut NSImage, error: *mut objc2_foundation::NSError| {
-        let result = if !image.is_null() {
-            let image = unsafe { Retained::retain(image) }.unwrap();
-            match image.TIFFRepresentation() {
-                Some(tiff) => Ok(tiff.to_vec()),
-                None => Err("no TIFF representation".to_string()),
-            }
-        } else if !error.is_null() {
-            Err(unsafe { &*error }.to_string())
-        } else {
-            Err("unknown snapshot error".to_string())
-        };
-        let _ = tx.send(result);
-    });
+    let block = RcBlock::new(
+        move |image: *mut NSImage, error: *mut objc2_foundation::NSError| {
+            let result = if !image.is_null() {
+                let image = unsafe { Retained::retain(image) }.unwrap();
+                match image.TIFFRepresentation() {
+                    Some(tiff) => Ok(tiff.to_vec()),
+                    None => Err("no TIFF representation".to_string()),
+                }
+            } else if !error.is_null() {
+                Err(unsafe { &*error }.to_string())
+            } else {
+                Err("unknown snapshot error".to_string())
+            };
+            let _ = tx.send(result);
+        },
+    );
     unsafe {
         webview.takeSnapshotWithConfiguration_completionHandler(Some(&config), &block);
     }
 }
 
 fn tiff_to_jpeg(tiff: &[u8]) -> Result<Vec<u8>, String> {
-    let decoded = image::load_from_memory_with_format(tiff, image::ImageFormat::Tiff).map_err(|e| e.to_string())?;
+    let decoded = image::load_from_memory_with_format(tiff, image::ImageFormat::Tiff)
+        .map_err(|e| e.to_string())?;
     let mut jpeg_bytes: Vec<u8> = Vec::new();
     decoded
-        .write_to(&mut std::io::Cursor::new(&mut jpeg_bytes), image::ImageFormat::Jpeg)
+        .write_to(
+            &mut std::io::Cursor::new(&mut jpeg_bytes),
+            image::ImageFormat::Jpeg,
+        )
         .map_err(|e| e.to_string())?;
     Ok(jpeg_bytes)
 }
@@ -56,7 +62,10 @@ fn tiff_to_jpeg(tiff: &[u8]) -> Result<Vec<u8>, String> {
 /// the main thread — so the run loop stays free to deliver the completion.
 /// This is the load-bearing concurrency contract for every native async call
 /// in this module (see `browser/mod.rs` module doc).
-pub fn snapshot_jpeg_blocking(webview: &tauri::Webview, timeout: Duration) -> Result<Vec<u8>, String> {
+pub fn snapshot_jpeg_blocking(
+    webview: &tauri::Webview,
+    timeout: Duration,
+) -> Result<Vec<u8>, String> {
     let (tx, rx) = channel::<Result<Vec<u8>, String>>();
     webview
         .with_webview(move |pw| {
@@ -74,7 +83,10 @@ pub fn snapshot_jpeg_blocking(webview: &tauri::Webview, timeout: Duration) -> Re
 /// the async snapshot, just without a completion handler round trip. The
 /// wait for the channel still only ever blocks the calling BACKGROUND
 /// thread/task, never main.
-pub fn history_state_blocking(webview: &tauri::Webview, timeout: Duration) -> Result<(bool, bool), String> {
+pub fn history_state_blocking(
+    webview: &tauri::Webview,
+    timeout: Duration,
+) -> Result<(bool, bool), String> {
     let (tx, rx) = channel::<(bool, bool)>();
     webview
         .with_webview(move |pw| {

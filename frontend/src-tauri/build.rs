@@ -15,8 +15,8 @@
 include!("src/command_names.rs");
 
 fn main() {
-    let attributes =
-        tauri_build::Attributes::new().app_manifest(tauri_build::AppManifest::new().commands(ALL_COMMAND_NAMES));
+    let attributes = tauri_build::Attributes::new()
+        .app_manifest(tauri_build::AppManifest::new().commands(ALL_COMMAND_NAMES));
     if let Err(error) = tauri_build::try_build(attributes) {
         panic!("{error:#}");
     }

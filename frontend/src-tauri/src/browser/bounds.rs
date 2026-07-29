@@ -16,7 +16,12 @@ pub fn scale_bounds_for_zoom(rect: (f64, f64, f64, f64), zoom_factor: f64) -> (f
         return rect;
     }
     let (x, y, width, height) = rect;
-    (x * zoom_factor, y * zoom_factor, width * zoom_factor, height * zoom_factor)
+    (
+        x * zoom_factor,
+        y * zoom_factor,
+        width * zoom_factor,
+        height * zoom_factor,
+    )
 }
 
 pub fn clamp_bounds_to_window(
@@ -39,7 +44,11 @@ pub fn clamp_bounds_to_window(
 }
 
 #[tauri::command]
-pub fn browser_set_bounds(window: tauri::Window, state: State<'_, BrowserRegistry>, input: BrowserBoundsInput) {
+pub fn browser_set_bounds(
+    window: tauri::Window,
+    state: State<'_, BrowserRegistry>,
+    input: BrowserBoundsInput,
+) {
     if !state.0.lock().unwrap().contains_key(&input.view_id) {
         return;
     }
@@ -53,7 +62,12 @@ pub fn browser_set_bounds(window: tauri::Window, state: State<'_, BrowserRegistr
     // bounds and this stays a 1.0 passthrough scale — kept as a named step so
     // a future page-zoom feature only has to change this call site.
     let zoom_factor = 1.0;
-    let rect = (input.rect.x, input.rect.y, input.rect.width, input.rect.height);
+    let rect = (
+        input.rect.x,
+        input.rect.y,
+        input.rect.width,
+        input.rect.height,
+    );
 
     if input.parked.unwrap_or(false) {
         let (_, _, w, h) = scale_bounds_for_zoom(rect, zoom_factor);
@@ -78,7 +92,8 @@ pub fn browser_set_bounds(window: tauri::Window, state: State<'_, BrowserRegistr
             (size.width as f64 / scale, size.height as f64 / scale)
         })
         .unwrap_or((0.0, 0.0));
-    let (x, y, width, height) = clamp_bounds_to_window(scale_bounds_for_zoom(rect, zoom_factor), main_bounds);
+    let (x, y, width, height) =
+        clamp_bounds_to_window(scale_bounds_for_zoom(rect, zoom_factor), main_bounds);
     let _ = child.set_position(LogicalPosition::new(x, y));
     let _ = child.set_size(LogicalSize::new(width.max(0.0), height.max(0.0)));
     if width > 0.0 && height > 0.0 {
@@ -94,43 +109,73 @@ mod tests {
 
     #[test]
     fn scale_bounds_for_zoom_is_a_passthrough_at_default_zoom() {
-        assert_eq!(scale_bounds_for_zoom((1.0, 2.0, 3.0, 4.0), 1.0), (1.0, 2.0, 3.0, 4.0));
+        assert_eq!(
+            scale_bounds_for_zoom((1.0, 2.0, 3.0, 4.0), 1.0),
+            (1.0, 2.0, 3.0, 4.0)
+        );
     }
 
     #[test]
     fn scale_bounds_for_zoom_scales_all_fields_uniformly() {
-        assert_eq!(scale_bounds_for_zoom((10.0, 20.0, 30.0, 40.0), 2.0), (20.0, 40.0, 60.0, 80.0));
+        assert_eq!(
+            scale_bounds_for_zoom((10.0, 20.0, 30.0, 40.0), 2.0),
+            (20.0, 40.0, 60.0, 80.0)
+        );
     }
 
     #[test]
     fn scale_bounds_for_zoom_ignores_non_finite_or_non_positive_factors() {
-        assert_eq!(scale_bounds_for_zoom((1.0, 1.0, 1.0, 1.0), 0.0), (1.0, 1.0, 1.0, 1.0));
-        assert_eq!(scale_bounds_for_zoom((1.0, 1.0, 1.0, 1.0), -2.0), (1.0, 1.0, 1.0, 1.0));
-        assert_eq!(scale_bounds_for_zoom((1.0, 1.0, 1.0, 1.0), f64::NAN), (1.0, 1.0, 1.0, 1.0));
+        assert_eq!(
+            scale_bounds_for_zoom((1.0, 1.0, 1.0, 1.0), 0.0),
+            (1.0, 1.0, 1.0, 1.0)
+        );
+        assert_eq!(
+            scale_bounds_for_zoom((1.0, 1.0, 1.0, 1.0), -2.0),
+            (1.0, 1.0, 1.0, 1.0)
+        );
+        assert_eq!(
+            scale_bounds_for_zoom((1.0, 1.0, 1.0, 1.0), f64::NAN),
+            (1.0, 1.0, 1.0, 1.0)
+        );
     }
 
     #[test]
     fn clamp_bounds_to_window_keeps_an_in_bounds_rect_unchanged() {
-        assert_eq!(clamp_bounds_to_window((10.0, 10.0, 100.0, 100.0), (800.0, 600.0)), (10.0, 10.0, 100.0, 100.0));
+        assert_eq!(
+            clamp_bounds_to_window((10.0, 10.0, 100.0, 100.0), (800.0, 600.0)),
+            (10.0, 10.0, 100.0, 100.0)
+        );
     }
 
     #[test]
     fn clamp_bounds_to_window_clamps_negative_origin_to_zero() {
-        assert_eq!(clamp_bounds_to_window((-50.0, -20.0, 100.0, 100.0), (800.0, 600.0)), (0.0, 0.0, 100.0, 100.0));
+        assert_eq!(
+            clamp_bounds_to_window((-50.0, -20.0, 100.0, 100.0), (800.0, 600.0)),
+            (0.0, 0.0, 100.0, 100.0)
+        );
     }
 
     #[test]
     fn clamp_bounds_to_window_shrinks_a_rect_that_overflows_the_window() {
-        assert_eq!(clamp_bounds_to_window((700.0, 500.0, 200.0, 200.0), (800.0, 600.0)), (700.0, 500.0, 100.0, 100.0));
+        assert_eq!(
+            clamp_bounds_to_window((700.0, 500.0, 200.0, 200.0), (800.0, 600.0)),
+            (700.0, 500.0, 100.0, 100.0)
+        );
     }
 
     #[test]
     fn clamp_bounds_to_window_never_produces_negative_size() {
-        assert_eq!(clamp_bounds_to_window((900.0, 700.0, 50.0, 50.0), (800.0, 600.0)), (800.0, 600.0, 0.0, 0.0));
+        assert_eq!(
+            clamp_bounds_to_window((900.0, 700.0, 50.0, 50.0), (800.0, 600.0)),
+            (800.0, 600.0, 0.0, 0.0)
+        );
     }
 
     #[test]
     fn clamp_bounds_to_window_rounds_fractional_input() {
-        assert_eq!(clamp_bounds_to_window((10.4, 10.6, 100.4, 100.6), (800.0, 600.0)), (10.0, 11.0, 100.0, 101.0));
+        assert_eq!(
+            clamp_bounds_to_window((10.4, 10.6, 100.4, 100.6), (800.0, 600.0)),
+            (10.0, 11.0, 100.0, 101.0)
+        );
     }
 }

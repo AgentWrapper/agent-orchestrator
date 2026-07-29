@@ -24,10 +24,10 @@ pub use feature_builds::FeatureBuild;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex as SyncMutex;
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::sync::atomic::AtomicBool;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_updater::{Update, UpdaterExt};
 use tokio::sync::Mutex as AsyncMutex;
@@ -56,7 +56,9 @@ fn channel_endpoint(channel: &str, feature_pr: Option<i64>) -> String {
         return format!("https://github.com/{owner}/{repo}/releases/download/pr{pr}/pr-{pr}.json");
     }
     match channel {
-        "nightly" => format!("https://github.com/{owner}/{repo}/releases/download/nightly/nightly.json"),
+        "nightly" => {
+            format!("https://github.com/{owner}/{repo}/releases/download/nightly/nightly.json")
+        }
         _ => format!("https://github.com/{owner}/{repo}/releases/latest/download/latest.json"),
     }
 }
@@ -103,11 +105,20 @@ impl Default for UpdateStatus {
 
 impl UpdateStatus {
     fn state_only(state: &str, request_id: Option<String>) -> Self {
-        UpdateStatus { state: state.to_string(), request_id, ..Default::default() }
+        UpdateStatus {
+            state: state.to_string(),
+            request_id,
+            ..Default::default()
+        }
     }
 
     fn error(message: impl Into<String>, request_id: Option<String>) -> Self {
-        UpdateStatus { state: "error".to_string(), message: Some(message.into()), request_id, ..Default::default() }
+        UpdateStatus {
+            state: "error".to_string(),
+            message: Some(message.into()),
+            request_id,
+            ..Default::default()
+        }
     }
 }
 
@@ -152,7 +163,10 @@ pub struct PendingInstall(pub SyncMutex<Option<(Update, Vec<u8>)>>);
 static ESCALATION_LOOP_RUNNING: AtomicBool = AtomicBool::new(false);
 
 fn now_ms() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 fn broadcast(app: &AppHandle, state: &State<'_, UpdaterState>, status: UpdateStatus) {
@@ -165,20 +179,36 @@ fn current_settings() -> Value {
 }
 
 fn settings_channel(settings: &Value) -> String {
-    settings.get("channel").and_then(Value::as_str).unwrap_or("latest").to_string()
+    settings
+        .get("channel")
+        .and_then(Value::as_str)
+        .unwrap_or("latest")
+        .to_string()
 }
 
 fn settings_feature_pr(settings: &Value) -> Option<i64> {
-    settings.get("feature").and_then(|f| if f.is_null() { None } else { f.get("pr") }).and_then(Value::as_i64)
+    settings
+        .get("feature")
+        .and_then(|f| if f.is_null() { None } else { f.get("pr") })
+        .and_then(Value::as_i64)
 }
 
 fn settings_enabled(settings: &Value) -> bool {
-    settings.get("enabled").and_then(Value::as_bool).unwrap_or(false)
+    settings
+        .get("enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
 }
 
-async fn build_updater(app: &AppHandle, endpoint: &str) -> Result<tauri_plugin_updater::Updater, String> {
+async fn build_updater(
+    app: &AppHandle,
+    endpoint: &str,
+) -> Result<tauri_plugin_updater::Updater, String> {
     let url = url::Url::parse(endpoint).map_err(|e| e.to_string())?;
-    let builder = app.updater_builder().endpoints(vec![url]).map_err(|e| e.to_string())?;
+    let builder = app
+        .updater_builder()
+        .endpoints(vec![url])
+        .map_err(|e| e.to_string())?;
     builder.build().map_err(|e| e.to_string())
 }
 
@@ -205,7 +235,11 @@ pub async fn updates_check(
     }
     let settings = current_settings();
 
-    broadcast(&app, &state, UpdateStatus::state_only("checking", options.request_id.clone()));
+    broadcast(
+        &app,
+        &state,
+        UpdateStatus::state_only("checking", options.request_id.clone()),
+    );
 
     let endpoint = channel_endpoint(&settings_channel(&settings), settings_feature_pr(&settings));
     let status = match build_updater(&app, &endpoint).await {
@@ -242,7 +276,15 @@ pub async fn updates_return_home(
             settings::write_update_settings(&paths::ao_data_dir(), &cleared)?;
         }
     }
-    updates_check(app, state, Some(UpdateCheckOptions { settings: None, request_id })).await
+    updates_check(
+        app,
+        state,
+        Some(UpdateCheckOptions {
+            settings: None,
+            request_id,
+        }),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -259,11 +301,19 @@ pub async fn updates_download(
     let update = match updater.check().await {
         Ok(Some(u)) => u,
         Ok(None) => {
-            broadcast(&app, &state, UpdateStatus::state_only("not-available", request_id));
+            broadcast(
+                &app,
+                &state,
+                UpdateStatus::state_only("not-available", request_id),
+            );
             return Ok(());
         }
         Err(err) => {
-            broadcast(&app, &state, UpdateStatus::error(err.to_string(), request_id));
+            broadcast(
+                &app,
+                &state,
+                UpdateStatus::error(err.to_string(), request_id),
+            );
             return Ok(());
         }
     };
@@ -278,7 +328,11 @@ pub async fn updates_download(
         .download(
             move |chunk_len, total| {
                 let so_far = downloaded_bytes.fetch_add(chunk_len, Ordering::Relaxed) + chunk_len;
-                let percent = total.filter(|t| *t > 0).map(|t| ((so_far as f64 / t as f64) * 100.0).round().clamp(0.0, 100.0) as u32);
+                let percent = total.filter(|t| *t > 0).map(|t| {
+                    ((so_far as f64 / t as f64) * 100.0)
+                        .round()
+                        .clamp(0.0, 100.0) as u32
+                });
                 let status = UpdateStatus {
                     state: "downloading".to_string(),
                     version: Some(progress_version.clone()),
@@ -296,8 +350,11 @@ pub async fn updates_download(
     match result {
         Ok(bytes) => {
             let staged_at_ms = now_ms();
-            *state.staged.lock().unwrap() =
-                Some(StagedBuild { version: update.version.clone(), staged_at_ms, escalated: false });
+            *state.staged.lock().unwrap() = Some(StagedBuild {
+                version: update.version.clone(),
+                staged_at_ms,
+                escalated: false,
+            });
             *pending.0.lock().unwrap() = Some((update.clone(), bytes));
             broadcast(
                 &app,
@@ -314,7 +371,11 @@ pub async fn updates_download(
             spawn_escalation_recheck_loop(app.clone());
         }
         Err(err) => {
-            broadcast(&app, &state, UpdateStatus::error(err.to_string(), request_id));
+            broadcast(
+                &app,
+                &state,
+                UpdateStatus::error(err.to_string(), request_id),
+            );
         }
     }
     Ok(())
@@ -362,7 +423,11 @@ fn spawn_escalation_recheck_loop(app: AppHandle) {
                     running_version: &running_version,
                     latest_stable_version: None,
                 });
-                Some((staged.version.clone(), staged.staged_at_ms, staged.escalated))
+                Some((
+                    staged.version.clone(),
+                    staged.staged_at_ms,
+                    staged.escalated,
+                ))
             };
             if let Some((version, staged_at, escalated)) = still_staged {
                 broadcast(
@@ -407,12 +472,18 @@ pub async fn feature_builds_list() -> Result<Vec<FeatureBuild>, String> {
     let (owner, repo) = release_repo();
     let client = reqwest::Client::new();
     let user_agent = format!("ao-desktop/{}", env!("CARGO_PKG_VERSION"));
-    Ok(feature_builds::collect_feature_builds(&client, &owner, &repo, &user_agent, now_ms()).await.unwrap_or_default())
+    Ok(
+        feature_builds::collect_feature_builds(&client, &owner, &repo, &user_agent, now_ms())
+            .await
+            .unwrap_or_default(),
+    )
 }
 
 #[tauri::command]
 pub async fn feature_builds_get_active(app: AppHandle) -> Result<Option<i64>, String> {
-    Ok(feature_builds::parse_feature_build(&app.package_info().version.to_string()))
+    Ok(feature_builds::parse_feature_build(
+        &app.package_info().version.to_string(),
+    ))
 }
 
 /// Starts the hourly automatic-update-check timer. Call once from `lib.rs`'s
@@ -435,7 +506,9 @@ pub fn start_automatic_check_timer(app: AppHandle) {
             if !settings_enabled(&settings) {
                 continue;
             }
-            let Some(state) = app.try_state::<UpdaterState>() else { continue };
+            let Some(state) = app.try_state::<UpdaterState>() else {
+                continue;
+            };
             let _ = updates_check(app.clone(), state, None).await;
         }
     });
@@ -482,7 +555,10 @@ mod tests {
     #[test]
     fn channel_endpoint_maps_latest_nightly_and_feature_channels() {
         assert!(channel_endpoint("latest", None).ends_with("/releases/latest/download/latest.json"));
-        assert!(channel_endpoint("nightly", None).ends_with("/releases/download/nightly/nightly.json"));
-        assert!(channel_endpoint("latest", Some(2270)).ends_with("/releases/download/pr2270/pr-2270.json"));
+        assert!(
+            channel_endpoint("nightly", None).ends_with("/releases/download/nightly/nightly.json")
+        );
+        assert!(channel_endpoint("latest", Some(2270))
+            .ends_with("/releases/download/pr2270/pr-2270.json"));
     }
 }

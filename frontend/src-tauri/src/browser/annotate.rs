@@ -45,9 +45,15 @@ use super::{
 /// tasks/specs/T9-browser-panel.md step 6: the invoking webview's own Tauri
 /// label must equal the viewId the page-context payload claims to be. A
 /// hostile/compromised page could otherwise spoof another session's viewId.
-pub fn validate_caller<R: tauri::Runtime>(webview: &tauri::Webview<R>, claimed_view_id: &str) -> Result<(), String> {
+pub fn validate_caller<R: tauri::Runtime>(
+    webview: &tauri::Webview<R>,
+    claimed_view_id: &str,
+) -> Result<(), String> {
     if !crate::browser::is_browser_label(webview.label()) {
-        return Err("browser annotation commands may only be invoked from browser panel webviews".to_string());
+        return Err(
+            "browser annotation commands may only be invoked from browser panel webviews"
+                .to_string(),
+        );
     }
     if webview.label() == claimed_view_id {
         Ok(())
@@ -62,10 +68,17 @@ pub fn validate_caller<R: tauri::Runtime>(webview: &tauri::Webview<R>, claimed_v
 /// `__AO_SET_ANNOTATION_MODE__`, Tauri's equivalent of Electron's
 /// `contents.send("browser:annotation:setMode", ...)`.
 #[tauri::command]
-pub fn browser_annotation_set_mode(app: tauri::AppHandle, state: State<'_, BrowserRegistry>, input: BrowserAnnotationModeInput) {
+pub fn browser_annotation_set_mode(
+    app: tauri::AppHandle,
+    state: State<'_, BrowserRegistry>,
+    input: BrowserAnnotationModeInput,
+) {
     {
         let mut registry = state.0.lock().unwrap();
-        registry.entry(input.view_id.clone()).or_default().annotation_enabled = input.enabled;
+        registry
+            .entry(input.view_id.clone())
+            .or_default()
+            .annotation_enabled = input.enabled;
     }
     if let Some(webview) = app.get_webview(&input.view_id) {
         let _ = webview.eval(format!(
@@ -85,10 +98,16 @@ pub fn browser_annotation_submit(
     validate_caller(&webview, &payload.view_id)?;
     {
         let mut registry = state.0.lock().unwrap();
-        registry.entry(payload.view_id.clone()).or_default().annotation_enabled = false;
+        registry
+            .entry(payload.view_id.clone())
+            .or_default()
+            .annotation_enabled = false;
     }
-    let forwarded =
-        BrowserAnnotationSubmitPayload { view_id: payload.view_id, instruction: payload.instruction, context: payload.context };
+    let forwarded = BrowserAnnotationSubmitPayload {
+        view_id: payload.view_id,
+        instruction: payload.instruction,
+        context: payload.context,
+    };
     if let Some(main) = app.get_webview_window("main") {
         let _ = main.emit("browser://annotation-submitted", &forwarded);
     }
@@ -105,9 +124,15 @@ pub fn browser_annotation_cancel(
     validate_caller(&webview, &payload.view_id)?;
     {
         let mut registry = state.0.lock().unwrap();
-        registry.entry(payload.view_id.clone()).or_default().annotation_enabled = false;
+        registry
+            .entry(payload.view_id.clone())
+            .or_default()
+            .annotation_enabled = false;
     }
-    let forwarded = BrowserAnnotationCancelPayload { view_id: payload.view_id, reason: payload.reason };
+    let forwarded = BrowserAnnotationCancelPayload {
+        view_id: payload.view_id,
+        reason: payload.reason,
+    };
     if let Some(main) = app.get_webview_window("main") {
         let _ = main.emit("browser://annotation-canceled", &forwarded);
     }
@@ -144,7 +169,11 @@ struct ForwardedShortcutPayload {
 /// be duplicated into the annotate bundle. Validates caller identity the
 /// same way the annotation commands do.
 #[tauri::command]
-pub fn browser_forward_shortcut(webview: tauri::Webview, app: tauri::AppHandle, chord: ForwardedShortcutChord) -> Result<(), String> {
+pub fn browser_forward_shortcut(
+    webview: tauri::Webview,
+    app: tauri::AppHandle,
+    chord: ForwardedShortcutChord,
+) -> Result<(), String> {
     validate_caller(&webview, &chord.view_id)?;
     if let Some(main) = app.get_webview_window("main") {
         let _ = main.emit(

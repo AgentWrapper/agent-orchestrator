@@ -22,7 +22,10 @@ pub fn is_allowed_protocol(url: &tauri::Url) -> bool {
 /// Builds the `on_navigation` handler installed on every child webview: it
 /// blocks navigations whose scheme is not in the allowlist, the same
 /// hardening Electron applies via `will-navigate`/`will-redirect`.
-pub fn allowlist_navigation_handler(app: tauri::AppHandle, view_id: String) -> impl Fn(&tauri::Url) -> bool {
+pub fn allowlist_navigation_handler(
+    app: tauri::AppHandle,
+    view_id: String,
+) -> impl Fn(&tauri::Url) -> bool {
     move |url: &tauri::Url| {
         if is_allowed_protocol(url) {
             return true;
@@ -55,7 +58,9 @@ pub fn browser_navigate(
     if !is_allowed_protocol(&url) {
         return Err("Unsupported browser URL".to_string());
     }
-    let webview = app.get_webview(&input.view_id).ok_or("browser view not found")?;
+    let webview = app
+        .get_webview(&input.view_id)
+        .ok_or("browser view not found")?;
     webview.navigate(url).map_err(|e| e.to_string())?;
     Ok(host::push_nav_state(&app, &state, &input.view_id))
 }

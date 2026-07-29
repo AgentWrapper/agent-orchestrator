@@ -10,6 +10,14 @@ mod updater;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Hard rule: all app state lives under ~/.ao. Ensure the webview profile
+    // dir exists and, on Windows, pin WebView2's user data folder to it
+    // before any webview is created.
+    let webview_dir = paths::webview_data_dir();
+    let _ = std::fs::create_dir_all(&webview_dir);
+    #[cfg(target_os = "windows")]
+    std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &webview_dir);
+
     tauri::Builder::default()
         .manage(daemon::DaemonState::default())
         .manage(browser::BrowserRegistry::default())
@@ -162,10 +170,11 @@ mod acl_coverage_tests {
     ///   - `browser-panel` (the untrusted child-webview capability) is
     ///     granted EXACTLY the 3 forwarding commands and nothing else.
     #[test]
-    fn gen_schemas_capabilities_grants_every_command_to_main_window_and_exactly_three_to_browser_panel() {
+    fn gen_schemas_capabilities_grants_every_command_to_main_window_and_exactly_three_to_browser_panel(
+    ) {
         let manifest = include_str!("../gen/schemas/capabilities.json");
-        let capabilities: serde_json::Value =
-            serde_json::from_str(manifest).expect("gen/schemas/capabilities.json must be valid JSON after `cargo build`");
+        let capabilities: serde_json::Value = serde_json::from_str(manifest)
+            .expect("gen/schemas/capabilities.json must be valid JSON after `cargo build`");
 
         let main_permissions: Vec<&str> = capabilities["main-window"]["permissions"]
             .as_array()
@@ -189,7 +198,10 @@ mod acl_coverage_tests {
             .collect();
         browser_panel_permissions.sort_unstable();
 
-        let mut expected: Vec<String> = BROWSER_PANEL_COMMAND_NAMES.iter().map(|c| permission_slug(c)).collect();
+        let mut expected: Vec<String> = BROWSER_PANEL_COMMAND_NAMES
+            .iter()
+            .map(|c| permission_slug(c))
+            .collect();
         expected.sort();
         let expected: Vec<&str> = expected.iter().map(|s| s.as_str()).collect();
 

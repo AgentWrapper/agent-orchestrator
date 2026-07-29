@@ -66,7 +66,11 @@ pub fn browser_request_mirror(
     }
 
     let stop_flag = Arc::new(AtomicBool::new(false));
-    loops.0.lock().unwrap().insert(view_id.clone(), stop_flag.clone());
+    loops
+        .0
+        .lock()
+        .unwrap()
+        .insert(view_id.clone(), stop_flag.clone());
 
     // `AppHandle` is cheaply cloneable and re-exposes the same managed state
     // (`app.state::<T>()`) from any thread, so the loop re-fetches
@@ -80,8 +84,12 @@ pub fn browser_request_mirror(
             if stop_flag.load(Ordering::SeqCst) {
                 break;
             }
-            let still_registered =
-                app_for_loop.state::<BrowserRegistry>().0.lock().unwrap().contains_key(&view_id_for_loop);
+            let still_registered = app_for_loop
+                .state::<BrowserRegistry>()
+                .0
+                .lock()
+                .unwrap()
+                .contains_key(&view_id_for_loop);
             if !still_registered {
                 break;
             }
@@ -89,12 +97,27 @@ pub fn browser_request_mirror(
                 break;
             };
             if let Ok(bytes) = capture::snapshot_jpeg_blocking(&webview) {
-                app_for_loop.state::<MirrorFrames>().0.lock().unwrap().insert(view_id_for_loop.clone(), bytes);
+                app_for_loop
+                    .state::<MirrorFrames>()
+                    .0
+                    .lock()
+                    .unwrap()
+                    .insert(view_id_for_loop.clone(), bytes);
             }
             thread::sleep(MIRROR_INTERVAL);
         }
-        app_for_loop.state::<MirrorFrames>().0.lock().unwrap().remove(&view_id_for_loop);
-        app_for_loop.state::<MirrorLoops>().0.lock().unwrap().remove(&view_id_for_loop);
+        app_for_loop
+            .state::<MirrorFrames>()
+            .0
+            .lock()
+            .unwrap()
+            .remove(&view_id_for_loop);
+        app_for_loop
+            .state::<MirrorLoops>()
+            .0
+            .lock()
+            .unwrap()
+            .remove(&view_id_for_loop);
     });
 
     true
@@ -131,14 +154,21 @@ fn mirror_response_origin() -> &'static str {
 /// caller in that case; this is additional defense-in-depth against a
 /// cross-origin caller that DOES send an (untrusted) `Origin` header.
 fn origin_is_allowed(request: &http::Request<Vec<u8>>) -> bool {
-    match request.headers().get(http::header::ORIGIN).and_then(|v| v.to_str().ok()) {
+    match request
+        .headers()
+        .get(http::header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+    {
         Some(origin) => ALLOWED_MIRROR_ORIGINS.contains(&origin),
         None => true,
     }
 }
 
 fn forbidden() -> http::Response<Vec<u8>> {
-    http::Response::builder().status(http::StatusCode::FORBIDDEN).body(Vec::new()).unwrap()
+    http::Response::builder()
+        .status(http::StatusCode::FORBIDDEN)
+        .body(Vec::new())
+        .unwrap()
 }
 
 /// `mirror://<viewId>/frame` protocol handler, registered on the `Builder` in
@@ -161,7 +191,10 @@ fn forbidden() -> http::Response<Vec<u8>> {
 ///       origins, so the response is never readable cross-origin (which
 ///       would otherwise taint the mirror `<canvas>` and break
 ///       `captureStream()` with a `SecurityError` — see fix 4).
-pub fn protocol_handler(ctx: tauri::UriSchemeContext<'_, tauri::Wry>, request: http::Request<Vec<u8>>) -> http::Response<Vec<u8>> {
+pub fn protocol_handler(
+    ctx: tauri::UriSchemeContext<'_, tauri::Wry>,
+    request: http::Request<Vec<u8>>,
+) -> http::Response<Vec<u8>> {
     if ctx.webview_label() != "main" {
         return forbidden();
     }
@@ -207,7 +240,11 @@ mod tests {
     fn mirror_loops_stop_signals_and_forgets_a_registered_flag() {
         let loops = MirrorLoops::default();
         let flag = Arc::new(AtomicBool::new(false));
-        loops.0.lock().unwrap().insert("browser-a".to_string(), flag.clone());
+        loops
+            .0
+            .lock()
+            .unwrap()
+            .insert("browser-a".to_string(), flag.clone());
         loops.stop("browser-a");
         assert!(flag.load(Ordering::SeqCst));
         assert!(!loops.0.lock().unwrap().contains_key("browser-a"));
@@ -228,14 +265,22 @@ mod tests {
 
     #[test]
     fn origin_is_allowed_permits_the_renderer_asset_protocol_origins() {
-        assert!(origin_is_allowed(&request_with_origin(Some("tauri://localhost"))));
-        assert!(origin_is_allowed(&request_with_origin(Some("http://tauri.localhost"))));
+        assert!(origin_is_allowed(&request_with_origin(Some(
+            "tauri://localhost"
+        ))));
+        assert!(origin_is_allowed(&request_with_origin(Some(
+            "http://tauri.localhost"
+        ))));
     }
 
     #[test]
     fn origin_is_allowed_rejects_any_other_origin() {
-        assert!(!origin_is_allowed(&request_with_origin(Some("https://evil.example"))));
-        assert!(!origin_is_allowed(&request_with_origin(Some("http://localhost:5173"))));
+        assert!(!origin_is_allowed(&request_with_origin(Some(
+            "https://evil.example"
+        ))));
+        assert!(!origin_is_allowed(&request_with_origin(Some(
+            "http://localhost:5173"
+        ))));
     }
 
     #[test]

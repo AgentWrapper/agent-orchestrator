@@ -42,7 +42,12 @@ impl BrowserEntry {
 /// after `browser_ensure`, but this keeps them from panicking/no-op-ing on a
 /// races (e.g. a stale viewId from a torn-down session).
 pub fn ensure_entry(state: &State<'_, BrowserRegistry>, view_id: &str) {
-    state.0.lock().unwrap().entry(view_id.to_string()).or_default();
+    state
+        .0
+        .lock()
+        .unwrap()
+        .entry(view_id.to_string())
+        .or_default();
 }
 
 pub fn mark_error(app: &tauri::AppHandle, view_id: &str, message: String) {
@@ -60,7 +65,11 @@ pub fn mark_error(app: &tauri::AppHandle, view_id: &str, message: String) {
 /// registry entry, canGoBack/canGoForward freshly queried from the native
 /// webview) and emits it on `browser://nav-state`, byte-matching
 /// `AoBridge["browser"]["onNavState"]`.
-pub fn push_nav_state(app: &tauri::AppHandle, state: &State<'_, BrowserRegistry>, view_id: &str) -> BrowserNavState {
+pub fn push_nav_state(
+    app: &tauri::AppHandle,
+    state: &State<'_, BrowserRegistry>,
+    view_id: &str,
+) -> BrowserNavState {
     let history = app
         .get_webview(view_id)
         .and_then(|webview| super::capture::history_state_blocking(&webview).ok())
@@ -99,52 +108,73 @@ pub fn browser_ensure(
         return Ok(push_nav_state(&app, &state, &view_id));
     }
 
-    let annotate_init_script =
-        format!("window.__AO_BROWSER_VIEW_ID__ = {};\n{}", serde_json::to_string(&view_id).unwrap(), annotate_bundle());
+    let annotate_init_script = format!(
+        "window.__AO_BROWSER_VIEW_ID__ = {};\n{}",
+        serde_json::to_string(&view_id).unwrap(),
+        annotate_bundle()
+    );
 
     let handler_app = app.clone();
     let handler_view_id = view_id.clone();
-    let builder = WebviewBuilder::new(view_id.clone(), WebviewUrl::External("about:blank".parse().unwrap()))
-        .initialization_script(annotate_init_script)
-        .on_navigation(nav::allowlist_navigation_handler(handler_app, handler_view_id))
-        .on_page_load({
-            let app = app.clone();
-            let view_id = view_id.clone();
-            move |_webview, payload| {
-                let state = app.state::<BrowserRegistry>();
-                let is_started = matches!(payload.event(), tauri::webview::PageLoadEvent::Started);
-                {
-                    let mut registry = state.0.lock().unwrap();
-                    let entry = registry.entry(view_id.clone()).or_default();
-                    entry.is_loading = is_started;
-                    let url = payload.url().to_string();
-                    entry.url = if url == "about:blank" { String::new() } else { url };
-                    if is_started {
-                        entry.error = None;
-                    }
+    let builder = WebviewBuilder::new(
+        view_id.clone(),
+        WebviewUrl::External("about:blank".parse().unwrap()),
+    )
+    .initialization_script(annotate_init_script)
+    .on_navigation(nav::allowlist_navigation_handler(
+        handler_app,
+        handler_view_id,
+    ))
+    .on_page_load({
+        let app = app.clone();
+        let view_id = view_id.clone();
+        move |_webview, payload| {
+            let state = app.state::<BrowserRegistry>();
+            let is_started = matches!(payload.event(), tauri::webview::PageLoadEvent::Started);
+            {
+                let mut registry = state.0.lock().unwrap();
+                let entry = registry.entry(view_id.clone()).or_default();
+                entry.is_loading = is_started;
+                let url = payload.url().to_string();
+                entry.url = if url == "about:blank" {
+                    String::new()
+                } else {
+                    url
+                };
+                if is_started {
+                    entry.error = None;
                 }
-                push_nav_state(&app, &state, &view_id);
             }
-        })
-        .on_document_title_changed({
-            let app = app.clone();
-            let view_id = view_id.clone();
-            move |_webview, title| {
-                let state = app.state::<BrowserRegistry>();
-                {
-                    let mut registry = state.0.lock().unwrap();
-                    registry.entry(view_id.clone()).or_default().title = title;
-                }
-                push_nav_state(&app, &state, &view_id);
+            push_nav_state(&app, &state, &view_id);
+        }
+    })
+    .on_document_title_changed({
+        let app = app.clone();
+        let view_id = view_id.clone();
+        move |_webview, title| {
+            let state = app.state::<BrowserRegistry>();
+            {
+                let mut registry = state.0.lock().unwrap();
+                registry.entry(view_id.clone()).or_default().title = title;
             }
-        });
+            push_nav_state(&app, &state, &view_id);
+        }
+    });
 
     let child = window
-        .add_child(builder, LogicalPosition::new(OFFSCREEN_X, 0.0), LogicalSize::new(1.0, 1.0))
+        .add_child(
+            builder,
+            LogicalPosition::new(OFFSCREEN_X, 0.0),
+            LogicalSize::new(1.0, 1.0),
+        )
         .map_err(|e| e.to_string())?;
     let _ = child.hide();
 
-    state.0.lock().unwrap().insert(view_id.clone(), BrowserEntry::default());
+    state
+        .0
+        .lock()
+        .unwrap()
+        .insert(view_id.clone(), BrowserEntry::default());
     Ok(push_nav_state(&app, &state, &view_id))
 }
 
@@ -177,8 +207,18 @@ mod tests {
             let s: std::sync::MutexGuard<_> = registry.0.lock().unwrap();
             assert!(s.is_empty());
         }
-        registry.0.lock().unwrap().entry("browser-a".to_string()).or_default();
-        registry.0.lock().unwrap().entry("browser-a".to_string()).or_default();
+        registry
+            .0
+            .lock()
+            .unwrap()
+            .entry("browser-a".to_string())
+            .or_default();
+        registry
+            .0
+            .lock()
+            .unwrap()
+            .entry("browser-a".to_string())
+            .or_default();
         assert_eq!(registry.0.lock().unwrap().len(), 1);
     }
 
@@ -202,7 +242,10 @@ mod tests {
 
     #[test]
     fn nav_state_carries_forward_a_set_error() {
-        let entry = BrowserEntry { error: Some("Unsupported browser URL".to_string()), ..Default::default() };
+        let entry = BrowserEntry {
+            error: Some("Unsupported browser URL".to_string()),
+            ..Default::default()
+        };
         let state = entry.nav_state("browser-a", (false, false));
         assert_eq!(state.error.as_deref(), Some("Unsupported browser URL"));
     }

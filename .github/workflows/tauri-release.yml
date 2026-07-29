@@ -1,0 +1,453 @@
+name: Tauri desktop release
+
+# Builds, signs, and publishes the Tauri desktop app (the eventual replacement
+# for the Electron pipeline in frontend-release.yml / feature-release.yml —
+# see tasks/specs/T11-ci-release.md, M6). Each platform builds on its own
+# native runner so build-daemon.mjs --sidecar compiles the bundled `ao` daemon
+# for that runner's target triple (frontend/src-tauri/binaries/ao-<triple>),
+# matching the externalBin convention in tauri.conf.json.
+#
+# DELIBERATELY NOT WIRED to the legacy `desktop-v*` tag yet: frontend-release.yml
+# still owns that tag and is the only thing end users auto-update from until
+# the M7 cutover retires it (Do NOT touch its contents — see the M6 spec). This
+# workflow uses its own tag prefix (`desktop-tauri-v*`) plus workflow_dispatch
+# so it can be exercised in parallel without colliding with the live Electron
+# release or double-publishing the same GitHub Release.
+#
+# Two release shapes share this one pipeline (spec step 4):
+#   - stable: triggered by a `desktop-tauri-v*` tag push. channel=latest,
+#     manifest=latest.json, a normal (non-prerelease) GitHub Release.
+#   - feature: triggered by workflow_dispatch with a `pr` input, mirroring
+#     feature-release.yml's guard (PR validation, 5-build quota, one-live-build-
+#     per-PR retirement, and the `<!-- ao-feature-build: {...} -->` marker so
+#     the in-app feature-build list keeps working once cut over).
+#
+# ── Signing / secrets (documented here, never generated or committed) ───────
+#   TAURI_SIGNING_PRIVATE_KEY          minisign private key (`tauri signer generate`)
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD password for that private key
+#   TAURI_UPDATER_PUBKEY               the matching minisign PUBLIC key; this
+#                                       replaces the THROWAWAY placeholder
+#                                       pubkey committed in tauri.conf.json
+#                                       (that placeholder can never verify a
+#                                       real signature - see the pubkey-inject
+#                                       step below).
+#   CSC_LINK / CSC_KEY_PASSWORD                    Developer ID .p12 (base64) + password
+#   APPLE_API_KEY_BASE64 / _ID / _ISSUER           App Store Connect API key for notarization
+#   APPLE_SIGNING_IDENTITY                          "Developer ID Application: <Holder> (<TEAMID>)"
+#   (the last five are consumed by ./.github/actions/macos-signing-setup, which
+#   remaps them to Tauri's expected APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD /
+#   APPLE_SIGNING_IDENTITY / APPLE_API_KEY / APPLE_API_ISSUER / APPLE_API_KEY_PATH)
+
+on:
+  push:
+    tags:
+      - "desktop-tauri-v*"
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "PR number for a feature build (leave empty for a manual stable-channel dispatch)"
+        required: false
+        default: ""
+      slug:
+        description: "Short label for a feature build (display only, optional)"
+        required: false
+        default: ""
+      allow_fork:
+        description: "Allow a cross-repository (fork) PR for a feature build"
+        type: boolean
+        default: false
+
+jobs:
+  # ── guard ───────────────────────────────────────────────────────────────
+  # Resolves version/tag/channel for either release shape and, for feature
+  # builds, enforces the same PR validation + 5-build quota as
+  # feature-release.yml's guard job. Runs with no `environment:` gate and no
+  # checkout of PR-controlled code, so it is safe to run unattended; the build
+  # job below is what's gated by the `release` environment's required reviewers.
+  guard:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      channel: ${{ steps.resolve.outputs.channel }}
+      prerelease: ${{ steps.resolve.outputs.prerelease }}
+      headSha: ${{ steps.resolve.outputs.headSha }}
+      shortSha: ${{ steps.resolve.outputs.shortSha }}
+      title: ${{ steps.resolve.outputs.title }}
+      isFeature: ${{ steps.resolve.outputs.isFeature }}
+    steps:
+      - name: "Quota check: at most 5 active feature releases"
+        if: github.event_name == 'workflow_dispatch' && inputs.pr != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ inputs.pr }}
+        run: |
+          # Mirrors feature-release.yml's guard: dedupe by PR, ignore releases
+          # older than 7 days, only count PRs that are still open. A rebuild of
+          # the SAME pr number is net-zero (it retires its own prior build), so
+          # it does not count against the quota.
+          cutoff="$(date -u -d '7 days ago' +%s)"
+          declare -A seen
+          active=0
+          while IFS=$'\t' read -r published_at body; do
+            json="$(echo "$body" | sed -n 's/.*<!-- ao-feature-build: \(.*\) -->.*/\1/p')"
+            if [ -z "$json" ]; then continue; fi
+            pr_num="$(echo "$json" | jq -r '.pr' 2>/dev/null)" || true
+            if [ -z "$pr_num" ] || [ "$pr_num" = "null" ]; then continue; fi
+            if [ "$pr_num" = "$PR_NUMBER" ]; then continue; fi
+            if [ -n "${seen[$pr_num]:-}" ]; then continue; fi
+            published_ts="$(date -u -d "$published_at" +%s 2>/dev/null || echo 0)"
+            if [ "$published_ts" -lt "$cutoff" ]; then continue; fi
+            state="$(gh api "repos/$REPO/pulls/$pr_num" --jq '.state' 2>/dev/null || echo closed)"
+            if [ "$state" = "open" ]; then
+              seen[$pr_num]=1
+              active=$((active + 1))
+            fi
+          done < <(gh api "repos/$REPO/releases?per_page=100" --jq '.[] | select(.prerelease) | select(.body != null) | select(.body | contains("<!-- ao-feature-build:")) | [.published_at, .body] | @tsv')
+          echo "Active feature releases: $active"
+          if [ "$active" -ge 5 ]; then
+            echo "::error::5 feature releases active - retire one first."
+            exit 1
+          fi
+
+      - name: Resolve PR head and validate
+        id: pr
+        if: github.event_name == 'workflow_dispatch' && inputs.pr != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ inputs.pr }}
+          ALLOW_FORK: ${{ inputs.allow_fork }}
+        run: |
+          pr_json="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json headRefOid,state,title,isCrossRepository)"
+          state="$(echo "$pr_json" | jq -r '.state')"
+          is_cross="$(echo "$pr_json" | jq -r '.isCrossRepository')"
+          head_sha="$(echo "$pr_json" | jq -r '.headRefOid')"
+          title="$(echo "$pr_json" | jq -r '.title')"
+          if [ "$state" != "OPEN" ]; then
+            echo "::error::PR #$PR_NUMBER is not open (state=$state). Feature builds require an open PR."
+            exit 1
+          fi
+          if [ "$is_cross" = "true" ] && [ "$ALLOW_FORK" != "true" ]; then
+            echo "::error::PR #$PR_NUMBER is from a fork. Set allow_fork=true to build fork PRs."
+            exit 1
+          fi
+          short_sha="${head_sha:0:7}"
+          {
+            echo "headSha=$head_sha"
+            echo "shortSha=$short_sha"
+            printf 'title=%s\n' "$title"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Resolve version/tag/channel
+        id: resolve
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ inputs.pr }}
+          HEAD_SHA: ${{ steps.pr.outputs.headSha }}
+          SHORT_SHA: ${{ steps.pr.outputs.shortSha }}
+          TITLE: ${{ steps.pr.outputs.title }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ -n "$PR_NUMBER" ]; then
+            # Feature build: read frontend/package.json AT THE PR HEAD via the
+            # contents API (no checkout, no execution of PR-controlled code
+            # before the environment-gated build job), matching
+            # feature-version.mjs's computeFeatureVersion.
+            base="$(gh api "repos/$REPO/contents/frontend/package.json?ref=$HEAD_SHA" --jq '.content' | base64 -d | jq -r '.version')"
+            if [ -z "$base" ] || [ "$base" = "null" ]; then
+              echo "::error::Could not read frontend/package.json version at $HEAD_SHA"
+              exit 1
+            fi
+            bare="${base#desktop-}"; bare="${bare#v}"
+            ts="$(date -u +%Y%m%d%H%M)"
+            version="${bare}-pr${PR_NUMBER}.${ts}+${SHORT_SHA}"
+            tag="v${version%%+*}"
+            {
+              echo "version=$version"
+              echo "tag=$tag"
+              echo "channel=pr${PR_NUMBER}"
+              echo "prerelease=true"
+              echo "headSha=$HEAD_SHA"
+              echo "shortSha=$SHORT_SHA"
+              printf 'title=%s\n' "$TITLE"
+              echo "isFeature=true"
+            } >> "$GITHUB_OUTPUT"
+          else
+            # Stable build: the pushed desktop-tauri-v* tag IS the release,
+            # unlike the Electron pipeline (which lets electron-forge's
+            # publisher derive v<package.json version>) - we call `gh release
+            # create` ourselves below, so the git tag is authoritative.
+            version="${REF_NAME#desktop-tauri-v}"
+            {
+              echo "version=$version"
+              echo "tag=$REF_NAME"
+              echo "channel=latest"
+              echo "prerelease=false"
+              echo "headSha=$GITHUB_SHA"
+              echo "shortSha=${GITHUB_SHA::7}"
+              echo "title="
+              echo "isFeature=false"
+            } >> "$GITHUB_OUTPUT"
+          fi
+          echo "Resolved: version=$version"
+
+  # ── build (matrix: 4 native runners, one per target triple) ──────────────
+  build:
+    needs: guard
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            triple: aarch64-apple-darwin
+          - os: macos-15-intel
+            triple: x86_64-apple-darwin
+          - os: windows-latest
+            triple: x86_64-pc-windows-msvc
+          - os: ubuntu-latest
+            triple: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
+    # Same required-reviewer gate as the Electron release: only an approved run
+    # can consume the signing/notarization secrets below.
+    environment: release
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.guard.outputs.headSha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: frontend/src-tauri
+
+      # Ubuntu-only native deps for building a Tauri app (webkit2gtk4.1, the
+      # notification/appindicator tray backend, librsvg for icon processing,
+      # and patchelf, which tauri-bundler's AppImage step shells out to).
+      - name: Install Linux system deps
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - run: npm ci
+
+      - name: Stamp release version
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          # Forge-equivalent stamping for Tauri: rewrite both version fields
+          # (package.json for the renderer/app metadata, tauri.conf.json for
+          # the bundle + the updater manifest's `version`). Strip +build
+          # metadata: Tauri's version field must be plain semver.
+          v="${RELEASE_VERSION%%+*}"
+          node -e "
+            const fs = require('fs');
+            const pkg = require('./package.json');
+            pkg.version = process.argv[1];
+            fs.writeFileSync('./package.json', JSON.stringify(pkg, null, '\t') + '\n');
+            const confPath = './src-tauri/tauri.conf.json';
+            const conf = require(confPath);
+            conf.version = process.argv[1];
+            fs.writeFileSync(confPath, JSON.stringify(conf, null, 2) + '\n');
+          " "$v"
+
+      - name: Inject the real updater public key
+        shell: bash
+        env:
+          TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
+        run: |
+          # tauri.conf.json ships a THROWAWAY placeholder pubkey (it cannot
+          # verify any real signature) so the repo has no committed secret.
+          # Replace it here, at build time, from the TAURI_UPDATER_PUBKEY
+          # secret - the public counterpart of TAURI_SIGNING_PRIVATE_KEY below.
+          if [ -z "$TAURI_UPDATER_PUBKEY" ]; then
+            echo "::error::TAURI_UPDATER_PUBKEY secret is not set - refusing to ship the placeholder pubkey."
+            exit 1
+          fi
+          node -e "
+            const fs = require('fs');
+            const confPath = './src-tauri/tauri.conf.json';
+            const conf = require(confPath);
+            conf.plugins.updater.pubkey = process.env.TAURI_UPDATER_PUBKEY;
+            fs.writeFileSync(confPath, JSON.stringify(conf, null, 2) + '\n');
+          "
+
+      - name: Build the ao daemon sidecar for this runner's target triple
+        run: node scripts/build-daemon.mjs --sidecar
+
+      - name: macOS signing setup
+        if: startsWith(matrix.os, 'macos')
+        uses: ./.github/actions/macos-signing-setup
+        with:
+          csc-link: ${{ secrets.CSC_LINK }}
+          csc-key-password: ${{ secrets.CSC_KEY_PASSWORD }}
+          apple-api-key-base64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+          apple-api-key-id: ${{ secrets.APPLE_API_KEY_ID }}
+          apple-api-issuer: ${{ secrets.APPLE_API_ISSUER }}
+          apple-signing-identity: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+
+      - name: Build and sign
+        shell: bash
+        run: npx tauri build
+        env:
+          # Signs every bundle and writes a sibling `<bundle>.sig` (minisign),
+          # which tauri-manifest.mjs reads to build the updater manifest.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # macOS APPLE_* signing/notarization env is exported by the "macOS
+          # signing setup" step above via $GITHUB_ENV; no-op on other runners.
+
+      - name: Create the GitHub Release (first job to reach here wins)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.guard.outputs.tag }}
+          TITLE: ${{ needs.guard.outputs.title }}
+          PRERELEASE: ${{ needs.guard.outputs.prerelease }}
+          HEAD_SHA: ${{ needs.guard.outputs.headSha }}
+        run: |
+          # Matrix jobs race here; the second/third/fourth `gh release create`
+          # hits "already exists" (|| true) - harmless, uploads below are
+          # idempotent (--clobber).
+          extra_flag=""
+          [ "$PRERELEASE" = "true" ] && extra_flag="--prerelease"
+          gh release create "$TAG" --target "$HEAD_SHA" --title "${TITLE:-$TAG}" \
+            --notes "Tauri desktop build for $TAG." $extra_flag || true
+
+      - name: Upload signed bundles + .sig files to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.guard.outputs.tag }}
+        run: |
+          # tauri-bundler writes updater-eligible bundles + their `.sig`
+          # sidecars under target/<triple>/release/bundle/**; upload every
+          # bundle/.sig pair (and skip debug symbol/.d directories) so
+          # tauri-manifest.mjs's fan-in job can find them via `gh release
+          # download`.
+          shopt -s globstar nullglob
+          assets=()
+          for f in src-tauri/target/*/release/bundle/**/*; do
+            [ -f "$f" ] || continue
+            case "$f" in
+              *.app.tar.gz|*.app.tar.gz.sig|*.AppImage.tar.gz|*.AppImage.tar.gz.sig|*.nsis.zip|*.nsis.zip.sig|*.msi.zip|*.msi.zip.sig)
+                assets+=("$f") ;;
+            esac
+          done
+          if [ ${#assets[@]} -eq 0 ]; then
+            echo "::error::no signed updater bundles found under src-tauri/target/*/release/bundle" >&2
+            exit 1
+          fi
+          gh release upload "$TAG" "${assets[@]}" --clobber
+
+  # ── manifest (fan-in) ─────────────────────────────────────────────────────
+  # Generates the tauri-plugin-updater manifest from every platform's signed
+  # bundle, all now sitting on the same GitHub Release, and uploads it back.
+  manifest:
+    needs: [guard, build]
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.guard.outputs.headSha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Generate and upload the updater manifest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.guard.outputs.tag }}
+          VERSION: ${{ needs.guard.outputs.version }}
+          CHANNEL: ${{ needs.guard.outputs.channel }}
+          AO_RELEASE_REPO: ${{ github.repository }}
+        run: |
+          mkdir -p dist
+          gh release download "$TAG" --dir dist --clobber
+          AO_RELEASE_TAG="$TAG" node scripts/tauri-manifest.mjs dist "$VERSION" "$CHANNEL"
+          shopt -s nullglob
+          jsons=(dist/latest.json dist/nightly.json dist/pr-*.json)
+          if [ ${#jsons[@]} -eq 0 ]; then
+            echo "::error::tauri-manifest.mjs produced no manifest file" >&2
+            exit 1
+          fi
+          gh release upload "$TAG" "${jsons[@]}" --clobber
+
+      - name: Delete prior feature releases for this PR (one live build per PR)
+        if: needs.guard.outputs.isFeature == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ inputs.pr }}
+          TAG: ${{ needs.guard.outputs.tag }}
+        run: |
+          matching="$(gh api "repos/$REPO/releases?per_page=100" --jq \
+            ".[] | select(.prerelease) | select(.tag_name | test(\"-pr${PR_NUMBER}\\\\.\")) | select(.tag_name != \"${TAG}\") | .tag_name")"
+          if [ -z "$matching" ]; then
+            echo "No prior feature release found for PR #$PR_NUMBER."
+          else
+            while IFS= read -r old_tag; do
+              echo "Deleting prior feature release: $old_tag"
+              gh release delete "$old_tag" --repo "$REPO" --cleanup-tag --yes || true
+            done <<< "$matching"
+          fi
+
+      - name: Annotate release with feature metadata
+        if: needs.guard.outputs.isFeature == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ inputs.pr }}
+          TAG: ${{ needs.guard.outputs.tag }}
+          TITLE: ${{ needs.guard.outputs.title }}
+          SHORT_SHA: ${{ needs.guard.outputs.shortSha }}
+          SLUG: ${{ inputs.slug }}
+        run: |
+          # Same marker payload/shape as feature-release.yml so the app's
+          # existing feature-build parser (feature_builds.rs / feature-builds.ts)
+          # needs no changes once Tauri builds are the ones publishing it.
+          payload="$(jq -nc \
+            --argjson pr "${PR_NUMBER}" \
+            --arg sha "${SHORT_SHA}" \
+            --arg slug "${SLUG}" \
+            '{pr: $pr, sha: $sha, slug: $slug}')"
+          marker="<!-- ao-feature-build: ${payload} -->"
+          current_body="$(gh release view "$TAG" --repo "$REPO" --json body --jq '.body' 2>/dev/null || echo '')"
+          new_body="${current_body}"$'\n'"${marker}"
+          gh release edit "$TAG" --repo "$REPO" \
+            --title "[feature] PR #${PR_NUMBER}: ${TITLE}" \
+            --notes "$new_body"

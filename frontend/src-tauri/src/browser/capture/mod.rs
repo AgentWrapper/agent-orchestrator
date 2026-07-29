@@ -4,10 +4,10 @@
 // thread via `with_webview`, wait for the result only on a background
 // thread/task.
 
-#[cfg(target_os = "macos")]
-pub mod macos;
 #[cfg(target_os = "linux")]
 pub mod linux;
+#[cfg(target_os = "macos")]
+pub mod macos;
 #[cfg(target_os = "windows")]
 pub mod windows;
 
@@ -114,15 +114,23 @@ pub fn stop_loading(webview: &tauri::Webview) {
 // than adding a new top-level dependency.
 pub(crate) fn base64_encode(bytes: &[u8]) -> String {
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
         let b0 = chunk[0];
         let b1 = *chunk.get(1).unwrap_or(&0);
         let b2 = *chunk.get(2).unwrap_or(&0);
         out.push(CHARS[(b0 >> 2) as usize] as char);
         out.push(CHARS[(((b0 & 0x03) << 4) | (b1 >> 4)) as usize] as char);
-        out.push(if chunk.len() > 1 { CHARS[(((b1 & 0x0f) << 2) | (b2 >> 6)) as usize] as char } else { '=' });
-        out.push(if chunk.len() > 2 { CHARS[(b2 & 0x3f) as usize] as char } else { '=' });
+        out.push(if chunk.len() > 1 {
+            CHARS[(((b1 & 0x0f) << 2) | (b2 >> 6)) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            CHARS[(b2 & 0x3f) as usize] as char
+        } else {
+            '='
+        });
     }
     out
 }
@@ -148,7 +156,11 @@ fn jpeg_data_url(bytes: &[u8]) -> String {
 // the call (and its blocking wait) onto Tauri's async runtime instead,
 // leaving the main thread free to deliver the completion.
 #[tauri::command(async)]
-pub fn browser_capture(app: tauri::AppHandle, state: State<'_, BrowserRegistry>, view_id: String) -> Result<String, String> {
+pub fn browser_capture(
+    app: tauri::AppHandle,
+    state: State<'_, BrowserRegistry>,
+    view_id: String,
+) -> Result<String, String> {
     let known = state.0.lock().unwrap().contains_key(&view_id);
     if !known {
         return Ok(String::new());
@@ -156,5 +168,7 @@ pub fn browser_capture(app: tauri::AppHandle, state: State<'_, BrowserRegistry>,
     let Some(webview) = tauri::Manager::get_webview(&app, &view_id) else {
         return Ok(String::new());
     };
-    Ok(snapshot_jpeg_blocking(&webview).map(|bytes| jpeg_data_url(&bytes)).unwrap_or_default())
+    Ok(snapshot_jpeg_blocking(&webview)
+        .map(|bytes| jpeg_data_url(&bytes))
+        .unwrap_or_default())
 }

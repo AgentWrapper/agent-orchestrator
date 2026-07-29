@@ -24,7 +24,8 @@ fn on_main<T: Send + 'static>(
             let _ = tx.send(f(&view));
         })
         .map_err(|e| e.to_string())?;
-    rx.recv_timeout(std::time::Duration::from_secs(5)).map_err(|e| e.to_string())
+    rx.recv_timeout(std::time::Duration::from_secs(5))
+        .map_err(|e| e.to_string())
 }
 
 pub fn history_state_blocking(
@@ -46,7 +47,10 @@ pub fn stop_loading(webview: &tauri::Webview) {
     let _ = on_main(webview, |view| view.stop_loading());
 }
 
-pub fn snapshot_jpeg_blocking(_webview: &tauri::Webview, _timeout: std::time::Duration) -> Result<Vec<u8>, String> {
+pub fn snapshot_jpeg_blocking(
+    _webview: &tauri::Webview,
+    _timeout: std::time::Duration,
+) -> Result<Vec<u8>, String> {
     Err("browser panel JPEG capture is not yet implemented on Linux".to_string())
 }
 

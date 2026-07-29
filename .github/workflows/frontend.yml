@@ -75,3 +75,41 @@ jobs:
 
       - name: Run renderer smoke suite
         run: CI=true npm run test:e2e:renderer
+
+  rust:
+    # Keeps the src-tauri crate green on every PR (fmt/clippy/test), separate
+    # from the actual release build in tauri-release.yml: this job never
+    # bundles or signs anything, so it needs no `release` environment gate and
+    # no secrets, and can run on every PR unattended.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend/src-tauri
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: frontend/src-tauri
+
+      # Tauri's webkit2gtk/appindicator bindings are Linux-only crate deps
+      # (see Cargo.toml's `cfg(target_os = "linux")` sections); without them
+      # `cargo fmt`/`clippy`/`test` can't even parse the dependency graph on
+      # this ubuntu-latest runner.
+      - name: Install Linux system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: cargo fmt --check
+        run: cargo fmt --check
+
+      - name: cargo clippy -D warnings
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: cargo test
+        run: cargo test
