@@ -20,13 +20,13 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 			priority: 1.0,
 		},
 		{
-			url: `${baseUrl}/blog`,
+			url: `${baseUrl}/blog/`,
 			lastModified: new Date(),
 			changeFrequency: "daily",
 			priority: 0.9,
 		},
 		{
-			url: `${baseUrl}/changelog`,
+			url: `${baseUrl}/changelog/`,
 			lastModified: new Date(),
 			changeFrequency: "weekly",
 			priority: 0.9,
@@ -41,7 +41,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
 	const posts = getBlogPosts();
 	const blogPages: MetadataRoute.Sitemap = posts.map((post) => ({
-		url: `${baseUrl}/blog/${post.slug}`,
+		url: `${baseUrl}/blog/${post.slug}/`,
 		lastModified: new Date(post.date),
 		changeFrequency: "monthly" as const,
 		priority: 0.8,
@@ -50,7 +50,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 	const changelogEntries = await getChangelogEntries();
 	const changelogPages: MetadataRoute.Sitemap = changelogEntries.map(
 		(entry) => ({
-			url: `${baseUrl}/changelog/${entry.slug}`,
+			url: `${baseUrl}/changelog/${entry.slug}/`,
 			lastModified: new Date(entry.date),
 			changeFrequency: "monthly" as const,
 			priority: 0.8,
@@ -59,7 +59,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
 	const people = getAllPeople();
 	const teamPages: MetadataRoute.Sitemap = people.map((person) => ({
-		url: `${baseUrl}/team/${person.id}`,
+		url: `${baseUrl}/team/${person.id}/`,
 		lastModified: new Date(),
 		changeFrequency: "monthly" as const,
 		priority: 0.7,
@@ -67,7 +67,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
 	const comparisonPages: MetadataRoute.Sitemap = getComparisonPages().map(
 		(page) => ({
-			url: `${baseUrl}/compare/${page.slug}`,
+			url: `${baseUrl}/compare/${page.slug}/`,
 			lastModified: new Date(page.lastUpdated || page.date),
 			changeFrequency: "weekly" as const,
 			priority: 0.9,
@@ -77,7 +77,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 	const legalPages: MetadataRoute.Sitemap = getAllLegalSlugs().map((slug) => {
 		const page = getLegalPage(slug);
 		return {
-			url: `${baseUrl}/${slug}`,
+			url: `${baseUrl}/${slug}/`,
 			lastModified: page?.lastUpdated ? new Date(page.lastUpdated) : new Date(),
 			changeFrequency: "yearly" as const,
 			priority: 0.3,
@@ -85,7 +85,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 	});
 
 	const docsPages: MetadataRoute.Sitemap = getAllDocSlugs().map((slug) => ({
-		url: `${baseUrl}/docs${slug.length ? `/${slug.join("/")}` : ""}`,
+		url: `${baseUrl}/docs${slug.length ? `/${slug.join("/")}` : ""}/`,
 		lastModified: new Date(),
 		changeFrequency: "weekly" as const,
 		priority: 0.7,
