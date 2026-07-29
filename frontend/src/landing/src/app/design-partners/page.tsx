@@ -27,7 +27,7 @@ const FALLBACK_STATS = {
 } as const;
 
 export const metadata: Metadata = {
-  title: "Design Partner Program - Agent Orchestrator",
+  title: "Design Partner Program",
   description:
     "Mission control for your agent fleet: shared sessions, ROI observability, and an engine room your org fully owns. Your engineers get leverage; your leadership gets answers.",
   openGraph: {
