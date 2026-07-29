@@ -650,37 +650,36 @@ function SplitLaneColumn({
 					<SessionCount count={secondarySessions.length} label={secondaryTone.countLabel} />
 				</div>
 			</div>
-			<div className="flex min-h-0 flex-1 flex-col">
-				{showPrimary ? (
-					<div
-						aria-label={primaryTone.regionLabel}
-						className={cn(
-							"board-scrollbar min-h-0 overflow-y-auto px-3 pb-3 pt-3",
-							showSecondary ? "flex-[3]" : "flex-1",
-						)}
-						role="region"
-					>
-						<div className="flex min-h-full flex-col gap-2.5">
-							{primarySessions.map((session) => (
-								<SessionCard
-									key={session.id}
-									session={session}
-									onOpen={() => onOpen(session)}
-									onTerminate={() => onTerminate(session)}
-								/>
-							))}
+			<div className="board-scrollbar min-h-0 flex-1 overflow-y-auto px-3 pb-3 pt-3">
+				<div className="flex min-h-full flex-col">
+					{showPrimary ? (
+						<div
+							aria-label={primaryTone.regionLabel}
+							className={cn("flex flex-col", showSecondary ? "flex-none pb-3" : "flex-1")}
+							role="region"
+						>
+							<div className="flex flex-col gap-2.5">
+								{primarySessions.map((session) => (
+									<SessionCard
+										key={session.id}
+										session={session}
+										onOpen={() => onOpen(session)}
+										onTerminate={() => onTerminate(session)}
+									/>
+								))}
+							</div>
 						</div>
-					</div>
-				) : null}
-				{showSecondary ? (
-					<SecondaryLaneSection
-						sessions={secondarySessions}
-						standalone={!showPrimary}
-						tone={secondaryTone}
-						onOpen={onOpen}
-						onTerminate={onTerminate}
-					/>
-				) : null}
+					) : null}
+					{showSecondary ? (
+						<SecondaryLaneSection
+							sessions={secondarySessions}
+							standalone={!showPrimary}
+							tone={secondaryTone}
+							onOpen={onOpen}
+							onTerminate={onTerminate}
+						/>
+					) : null}
+				</div>
 			</div>
 		</section>
 	);
@@ -720,8 +719,8 @@ function SecondaryLaneSection({
 		<div
 			aria-label={tone.regionLabel}
 			className={cn(
-				"min-h-0 overflow-hidden",
-				standalone ? "flex flex-1 flex-col" : "flex flex-[2] flex-col border-t border-border-strong",
+				"overflow-hidden",
+				standalone ? "flex flex-1 flex-col" : "flex flex-1 flex-col border-t border-border-strong",
 			)}
 			role="region"
 		>
@@ -731,17 +730,15 @@ function SecondaryLaneSection({
 				</div>
 				<span className="ml-auto font-mono text-2xs leading-none text-passive">{sessions.length}</span>
 			</div>
-			<div className="board-scrollbar min-h-0 flex-1 overflow-y-auto px-3 pb-3 pt-3">
-				<div className="flex min-h-full flex-col gap-2.5">
-					{sessions.map((session) => (
-						<SessionCard
-							key={session.id}
-							session={session}
-							onOpen={() => onOpen(session)}
-							onTerminate={onTerminate ? () => onTerminate(session) : undefined}
-						/>
-					))}
-				</div>
+			<div className="flex flex-col gap-2.5 pt-3">
+				{sessions.map((session) => (
+					<SessionCard
+						key={session.id}
+						session={session}
+						onOpen={() => onOpen(session)}
+						onTerminate={onTerminate ? () => onTerminate(session) : undefined}
+					/>
+				))}
 			</div>
 		</div>
 	);

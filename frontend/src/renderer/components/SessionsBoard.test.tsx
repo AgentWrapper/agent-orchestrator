@@ -367,10 +367,12 @@ describe("SessionsBoard", () => {
 		expect(within(workLane).getByLabelText("2 idle sessions")).toHaveTextContent("2");
 		expect(within(workLane).getByLabelText("1 working session")).toHaveTextContent("1");
 		expect(screen.queryByRole("button", { name: /idle sessions/i })).not.toBeInTheDocument();
-		expect(idleRegion).toHaveClass("flex-[3]");
-		expect(workingRegion.className).toContain("flex-[2]");
-		expect(workingRegion.className).toContain("border-t");
+		expect(workLane.querySelectorAll(".overflow-y-auto")).toHaveLength(1);
+		expect(idleRegion).toHaveClass("flex-none");
+		expect(idleRegion).not.toHaveClass("overflow-y-auto", "board-scrollbar");
+		expect(workingRegion).toHaveClass("flex-1", "border-t");
 		expect(workingRegion.className).not.toContain("rounded-t");
+		expect(workingRegion).not.toHaveClass("overflow-y-auto", "board-scrollbar");
 		expect(within(idleRegion).getByText("idle-no-pr-task")).toBeInTheDocument();
 		expect(within(idleRegion).getByText("second-idle-task")).toBeInTheDocument();
 		expect(within(workingRegion).getByText("active-task")).toBeInTheDocument();
@@ -381,6 +383,48 @@ describe("SessionsBoard", () => {
 		const badge = within(idleCard).getByText("Idle").closest("span");
 		expect(badge).toHaveClass("text-status-idle");
 		expect(badge).not.toHaveClass("text-status-working");
+	});
+
+	it("uses one shared scrollbar when a short idle section sits above many working sessions", () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					boardSession({
+						id: "s-idle",
+						title: "single-idle-task",
+						status: "idle",
+						activity: { state: "idle", lastActivityAt: "2026-01-01T00:00:00Z" },
+					}),
+					...Array.from({ length: 7 }, (_, index) =>
+						boardSession({
+							id: `s-working-${index + 1}`,
+							title: `working-task-${index + 1}`,
+							status: "working",
+							activity: { state: "active", lastActivityAt: "2026-01-01T00:00:00Z" },
+						}),
+					),
+				]),
+			],
+			isError: false,
+		});
+
+		renderBoard("p1");
+
+		const workLane = screen.getByRole("region", { name: "Idle / Working sessions" });
+		const idleRegion = within(workLane).getByRole("region", { name: "Idle sessions" });
+		const workingRegion = within(workLane).getByRole("region", { name: "Working sessions" });
+		const laneScrollers = Array.from(workLane.querySelectorAll<HTMLElement>(".overflow-y-auto"));
+
+		expect(laneScrollers).toHaveLength(1);
+		expect(laneScrollers[0]).toHaveClass("board-scrollbar", "overflow-y-auto");
+		expect(laneScrollers[0]).toContainElement(idleRegion);
+		expect(laneScrollers[0]).toContainElement(workingRegion);
+		expect(idleRegion).toHaveClass("flex-none");
+		expect(workingRegion).toHaveClass("flex-1");
+		expect(idleRegion.querySelector(".overflow-y-auto")).not.toBeInTheDocument();
+		expect(workingRegion.querySelector(".overflow-y-auto")).not.toBeInTheDocument();
+		expect(within(idleRegion).getByText("single-idle-task")).toBeInTheDocument();
+		expect(within(workingRegion).getAllByTestId("board-session-card")).toHaveLength(7);
 	});
 
 	it("lets idle sessions fill the lane when no working sessions exist", () => {
@@ -439,6 +483,7 @@ describe("SessionsBoard", () => {
 		expect(within(workLane).queryByRole("region", { name: "Idle sessions" })).not.toBeInTheDocument();
 		expect(workingRegion).toHaveClass("flex-1");
 		expect(workingRegion).not.toHaveClass("flex-[2]", "border-t");
+		expect(workLane.querySelectorAll(".overflow-y-auto")).toHaveLength(1);
 		expect(within(workingRegion).getByText("first-working-task")).toBeInTheDocument();
 		expect(within(workingRegion).getByText("second-working-task")).toBeInTheDocument();
 	});
@@ -856,10 +901,12 @@ describe("SessionsBoard", () => {
 		const mergedRegion = within(mergeLane).getByRole("region", { name: "Merged sessions" });
 		expect(within(mergeLane).getByLabelText("1 ready to merge session")).toHaveTextContent("1");
 		expect(within(mergeLane).getByLabelText("1 merged session")).toHaveTextContent("1");
-		expect(readyRegion).toHaveClass("flex-[3]");
-		expect(mergedRegion.className).toContain("flex-[2]");
-		expect(mergedRegion.className).toContain("border-t");
+		expect(mergeLane.querySelectorAll(".overflow-y-auto")).toHaveLength(1);
+		expect(readyRegion).toHaveClass("flex-none");
+		expect(readyRegion).not.toHaveClass("overflow-y-auto", "board-scrollbar");
+		expect(mergedRegion).toHaveClass("flex-1", "border-t");
 		expect(mergedRegion.className).not.toContain("rounded-t");
+		expect(mergedRegion).not.toHaveClass("overflow-y-auto", "board-scrollbar");
 		expect(within(readyRegion).getByText("ready worker")).toBeInTheDocument();
 		expect(within(mergedRegion).getByText("merged worker")).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: /archive/i })).not.toBeInTheDocument();
@@ -886,7 +933,7 @@ describe("SessionsBoard", () => {
 		const laneScrollers = screen
 			.getAllByTestId("board-column")
 			.flatMap((column) => Array.from(column.querySelectorAll<HTMLElement>(".overflow-y-auto")));
-		expect(laneScrollers).toHaveLength(6);
+		expect(laneScrollers).toHaveLength(4);
 		for (const scroller of laneScrollers) {
 			expect(scroller).toHaveClass("board-scrollbar", "overflow-y-auto");
 		}
