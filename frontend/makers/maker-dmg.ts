@@ -71,9 +71,6 @@ export default class MakerDMG extends MakerBase<MakerDMGConfig> {
 		// appName is Forge's filenamify'd packagerConfig.name, the same name
 		// @electron/packager gives the bundle inside `dir`.
 		const appPath = path.join(dir, `${appName}.app`);
-		// Forge already computed <out>/make and passes it as makeDir; use it rather
-		// than re-deriving from a path that no longer points at the package dir.
-		const output = makeDir;
 		const artifacts = await buildForge(
 			{ dir: appPath },
 			{
@@ -81,7 +78,10 @@ export default class MakerDMG extends MakerBase<MakerDMGConfig> {
 				config: {
 					appId: cfg.appId,
 					productName: cfg.productName ?? appName,
-					directories: { output },
+					// Forge already computed <out>/make and passes it as makeDir. Use it
+					// rather than letting buildForge default to dirname(dir)/make, which
+					// now that `dir` is the .app would land inside the package directory.
+					directories: { output: makeDir },
 					// Forge owns publishing (the workflow uploads via `gh release`).
 					// `null` stops electron-builder from inferring a GitHub publish
 					// target from package.json `repository` and trying to upload.
