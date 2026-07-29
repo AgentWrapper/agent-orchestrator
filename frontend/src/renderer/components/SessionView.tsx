@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, startTransition } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "@tanstack/react-router";
 import type { PanelImperativeHandle, PanelSize } from "react-resizable-panels";
@@ -12,6 +12,9 @@ import { useResolvedTheme, useUiStore, type InspectorView } from "../stores/ui-s
 import { useShell } from "../lib/shell-context";
 import { useBrowserView } from "../hooks/useBrowserView";
 import {
+	beginOpenShellTerminalActivation,
+	isLatestOpenShellTerminalActivation,
+	isPendingShellHandleId,
 	useCloseShellTerminal,
 	useOpenShellTerminal,
 	useRenameShellTerminal,
@@ -22,6 +25,7 @@ import { hidesShellTopbar } from "../lib/platform";
 import { isOrchestratorSession, sessionIsActive, workerSessions, type WorkspaceSession } from "../types/workspace";
 import type { TerminalTarget } from "../types/terminal";
 import { matchesRendererShortcut } from "../stores/keybindings-store";
+import { buildTerminalStripTabs, previousTerminalStripTab, type TerminalStripTab } from "../lib/terminal-strip-tabs";
 
 const INSPECTOR_MIN_PERCENT = 22;
 const INSPECTOR_MAX_PERCENT = 45;
@@ -119,13 +123,6 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 		},
 		[addSessionTab, ownerSessionId, selectProjectSession],
 	);
-	const closeProjectSession = useCallback(
-		(projectSession: WorkspaceSession) => {
-			removeSessionTab(ownerSessionId, projectSession.id);
-			if (projectSession.id === sessionId && tabOwnerSession) selectProjectSession(tabOwnerSession);
-		},
-		[ownerSessionId, removeSessionTab, selectProjectSession, sessionId, tabOwnerSession],
-	);
 
 	// Shell terminals opened inside a session live beside its pane as extra tabs.
 	//
@@ -150,12 +147,16 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 	);
 
 	const addShellTerminal = useCallback(() => {
+		const activationGeneration = beginOpenShellTerminalActivation();
 		openShellTerminal.mutate(
-			{ projectId: tabOwnerSession?.workspaceId, sessionId: ownerSessionId },
+			{ projectId: tabOwnerSession?.workspaceId, sessionId: ownerSessionId, activationGeneration },
 			{
-				onSuccess: (shell) => {
-					setActiveShellTerminal(shell.handleId);
-					setTerminalTarget({ kind: "shell", handleId: shell.handleId, title: shell.title });
+				onSuccess: (shell, variables) => {
+					if (!isLatestOpenShellTerminalActivation(variables.activationGeneration)) return;
+					startTransition(() => {
+						setActiveShellTerminal(shell.handleId);
+						setTerminalTarget({ kind: "shell", handleId: shell.handleId, title: shell.title });
+					});
 				},
 			},
 		);
@@ -163,33 +164,111 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 
 	const selectShellTerminal = useCallback(
 		(handleId: string) => {
+			if (isPendingShellHandleId(handleId)) return;
 			const shell = shellTerminals.find((s) => s.handleId === handleId);
 			if (!shell) return;
-			setActiveShellTerminal(shell.handleId);
-			setTerminalTarget({ kind: "shell", handleId: shell.handleId, title: shell.title });
+			startTransition(() => {
+				setActiveShellTerminal(shell.handleId);
+				setTerminalTarget({ kind: "shell", handleId: shell.handleId, title: shell.title });
+			});
 		},
 		[shellTerminals, setActiveShellTerminal],
-	);
-
-	const closeShellTerminalByHandle = useCallback(
-		(handleId: string) => {
-			// Fall back to the session pane first: leaving the target pointed at a
-			// handle that is being destroyed would attach to a dead PTY.
-			setTerminalTarget((current) =>
-				current.kind === "shell" && current.handleId === handleId ? { kind: "worker" } : current,
-			);
-			if (activeShellTerminalHandleId === handleId) setActiveShellTerminal(null);
-			closeShellTerminal.mutate(handleId);
-		},
-		[closeShellTerminal, activeShellTerminalHandleId, setActiveShellTerminal],
 	);
 
 	// Selecting the session's own pane also drops the active shell, so the effect
 	// above does not immediately pull the view back to that shell.
 	const selectSessionTerminal = useCallback(() => {
-		setActiveShellTerminal(null);
-		setTerminalTarget({ kind: "worker" });
+		startTransition(() => {
+			setActiveShellTerminal(null);
+			setTerminalTarget({ kind: "worker" });
+		});
 	}, [setActiveShellTerminal]);
+
+	const activateTerminalStripTab = useCallback(
+		(tab: TerminalStripTab | undefined) => {
+			if (!tab) {
+				selectSessionTerminal();
+				return;
+			}
+			if (tab.kind === "shell") {
+				if (isPendingShellHandleId(tab.handleId)) {
+					selectSessionTerminal();
+					return;
+				}
+				selectShellTerminal(tab.handleId);
+				return;
+			}
+			const projectSession = allSessions.find((candidate) => candidate.id === tab.sessionId);
+			if (!projectSession) {
+				selectSessionTerminal();
+				return;
+			}
+			if (projectSession.id === sessionId) {
+				selectSessionTerminal();
+				return;
+			}
+			selectProjectSession(projectSession);
+		},
+		[allSessions, selectProjectSession, selectSessionTerminal, selectShellTerminal, sessionId],
+	);
+
+	const closeProjectSession = useCallback(
+		(projectSession: WorkspaceSession) => {
+			const viewingClosedSession =
+				projectSession.id === sessionId && terminalTarget.kind !== "shell";
+			removeSessionTab(ownerSessionId, projectSession.id);
+			if (viewingClosedSession) {
+				activateTerminalStripTab(
+					previousTerminalStripTab(
+						buildTerminalStripTabs(
+							projectSessions.map((item) => item.id),
+							shellTerminals.map((item) => item.handleId),
+						),
+						{ kind: "session", sessionId: projectSession.id },
+					),
+				);
+			}
+		},
+		[
+			activateTerminalStripTab,
+			ownerSessionId,
+			projectSessions,
+			removeSessionTab,
+			sessionId,
+			shellTerminals,
+			terminalTarget.kind,
+		],
+	);
+
+	const closeShellTerminalByHandle = useCallback(
+		(handleId: string) => {
+			const viewingClosedShell =
+				terminalTarget.kind === "shell" && terminalTarget.handleId === handleId;
+			if (viewingClosedShell) {
+				activateTerminalStripTab(
+					previousTerminalStripTab(
+						buildTerminalStripTabs(
+							projectSessions.map((item) => item.id),
+							shellTerminals.map((item) => item.handleId),
+						),
+						{ kind: "shell", handleId },
+					),
+				);
+			} else if (activeShellTerminalHandleId === handleId) {
+				setActiveShellTerminal(null);
+			}
+			closeShellTerminal.mutate(handleId);
+		},
+		[
+			activateTerminalStripTab,
+			activeShellTerminalHandleId,
+			closeShellTerminal,
+			projectSessions,
+			setActiveShellTerminal,
+			shellTerminals,
+			terminalTarget,
+		],
+	);
 
 	// The shell layout owns opening (it is mounted on every route, so the button
 	// and Ctrl+Shift+` work everywhere); this view only follows the result. When a new

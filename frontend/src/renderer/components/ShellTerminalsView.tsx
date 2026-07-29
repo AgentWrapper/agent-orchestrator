@@ -2,6 +2,7 @@ import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { useEffect } from "react";
 import { useOverflowScroll } from "../hooks/useOverflowScroll";
 import { useCloseShellTerminal, useRenameShellTerminal, useShellTerminals } from "../hooks/useShellTerminals";
+import { adjacentShellStripTab } from "../lib/terminal-strip-tabs";
 import { useShell } from "../lib/shell-context";
 import { cn } from "../lib/utils";
 import { useResolvedTheme, useUiStore } from "../stores/ui-store";
@@ -32,11 +33,23 @@ export function ShellTerminalsView() {
 	// to a dead handle.
 	const active = shellTerminals.find((s) => s.handleId === activeHandleId);
 	const tabsOverflow = useOverflowScroll<HTMLDivElement>(shellTerminals.map((t) => t.handleId).join("|"));
+	const closeShellTab = (handleId: string) => {
+		if (activeHandleId === handleId) {
+			const nextHandleId = adjacentShellStripTab(
+				shellTerminals.map((shell) => shell.handleId),
+				handleId,
+			);
+			setActiveShellTerminal(nextHandleId ?? null);
+		}
+		closeShellTerminal.mutate(handleId);
+	};
 	useEffect(() => {
 		if (shellTerminals.length === 0) {
 			if (activeHandleId !== null) setActiveShellTerminal(null);
 			return;
 		}
+		// Daemon-side prune (or a stale active id) with tabs still open: land on
+		// the first remaining tab instead of an empty pane.
 		if (!active) setActiveShellTerminal(shellTerminals[0].handleId);
 	}, [shellTerminals, active, activeHandleId, setActiveShellTerminal]);
 
@@ -71,7 +84,7 @@ export function ShellTerminalsView() {
 							<ShellTerminalTab
 								key={shell.handleId}
 								isActive={isActive}
-								onClose={() => closeShellTerminal.mutate(shell.handleId)}
+								onClose={() => closeShellTab(shell.handleId)}
 								onRename={(title) => renameShellTerminal.mutate({ handleId: shell.handleId, title })}
 								onSelect={() => setActiveShellTerminal(shell.handleId)}
 								shell={shell}

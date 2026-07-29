@@ -130,8 +130,7 @@ describe("CenterPane toolbar session label", () => {
 	it("uses the inspector tab height for the terminal header", () => {
 		render(<CenterPane session={worker} theme="dark" daemonReady />);
 
-		const header = screen.getByText("TERMINAL").parentElement?.parentElement;
-		expect(header).toHaveClass("h-inspector-tabs");
+		expect(screen.getByTestId("terminal-tab-bar")).toHaveClass("h-inspector-tabs");
 	});
 
 	it("lets tabs shrink into a scrollable strip instead of overflowing onto the controls", () => {
@@ -146,14 +145,14 @@ describe("CenterPane toolbar session label", () => {
 			expect(tab).toHaveClass("min-w-flex-min");
 			expect(tab).not.toHaveClass("min-w-0");
 		}
-		// jsdom reports no overflow, so the indicator stays mounted but disabled to preserve focus.
-		expect(screen.getByRole("button", { name: "Scroll tabs right" })).toBeDisabled();
+		// jsdom reports no overflow, so scroll indicators stay out of the tab bar.
+		expect(screen.queryByRole("button", { name: "Scroll tabs right" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Scroll tabs left" })).not.toBeInTheDocument();
 
 		// The display controls float over the terminal body, not the tab bar,
 		// so tabs and controls can never overlap.
-		const tabBarRow = screen.getByText("TERMINAL").closest("div")?.parentElement;
-		expect(tabBarRow).not.toBeNull();
-		expect(tabBarRow?.contains(screen.getByRole("button", { name: /fullscreen/i }))).toBe(false);
+		const tabBarRow = screen.getByTestId("terminal-tab-bar");
+		expect(tabBarRow.contains(screen.getByRole("button", { name: /fullscreen/i }))).toBe(false);
 	});
 
 	it("reveals scroll chevrons only when the tab strip actually overflows", () => {
@@ -165,31 +164,59 @@ describe("CenterPane toolbar session label", () => {
 		Object.defineProperty(scrollRegion, "scrollWidth", { value: 500, configurable: true });
 		fireEvent.scroll(scrollRegion);
 
-		expect(screen.getByRole("button", { name: "Scroll tabs right" })).toBeEnabled();
-		expect(screen.getByRole("button", { name: "Scroll tabs left" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Scroll tabs right" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Scroll tabs left" })).not.toBeInTheDocument();
 
 		Object.defineProperty(scrollRegion, "scrollLeft", { value: 400, configurable: true });
 		fireEvent.scroll(scrollRegion);
-		expect(screen.getByRole("button", { name: "Scroll tabs left" })).toBeEnabled();
-		expect(screen.getByRole("button", { name: "Scroll tabs right" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Scroll tabs left" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Scroll tabs right" })).not.toBeInTheDocument();
 	});
 
-	it("scrolls the tab strip horizontally with the mouse wheel", () => {
-		const shells = makeShells(8);
-		render(<CenterPane session={worker} shellTerminals={shells} theme="dark" daemonReady />);
+	it("closes a session tab on a single click without selecting it", () => {
+		const onCloseProjectSession = vi.fn();
+		const onSelectProjectSession = vi.fn();
+		render(
+			<CenterPane
+				session={worker}
+				projectSessions={[worker, secondWorker]}
+				tabOwnerSessionId={worker.id}
+				onCloseProjectSession={onCloseProjectSession}
+				onSelectProjectSession={onSelectProjectSession}
+				theme="dark"
+				daemonReady
+			/>,
+		);
 
-		const scrollRegion = document.querySelector(".overflow-x-auto") as HTMLElement;
-		Object.defineProperty(scrollRegion, "clientWidth", { value: 100, configurable: true });
-		Object.defineProperty(scrollRegion, "scrollWidth", { value: 500, configurable: true });
-		const scrollBy = vi.fn();
-		Object.defineProperty(scrollRegion, "scrollBy", { value: scrollBy, configurable: true });
+		const close = screen.getByRole("button", { name: "Close session tab review the change" });
+		fireEvent.mouseDown(close, { button: 0 });
+		expect(onCloseProjectSession).toHaveBeenCalledOnce();
+		expect(onCloseProjectSession).toHaveBeenCalledWith(secondWorker);
+		fireEvent.click(close);
+		expect(onCloseProjectSession).toHaveBeenCalledOnce();
+		expect(onSelectProjectSession).not.toHaveBeenCalled();
+	});
 
-		fireEvent.wheel(scrollRegion, { deltaY: 80 });
-		expect(scrollBy).toHaveBeenCalledWith({ left: 80 });
+	it("closes a shell tab on a single click without selecting it", () => {
+		const onCloseShellTerminal = vi.fn();
+		const onSelectShellTerminal = vi.fn();
+		render(
+			<CenterPane
+				session={worker}
+				shellTerminals={makeShells(1)}
+				onCloseShellTerminal={onCloseShellTerminal}
+				onSelectShellTerminal={onSelectShellTerminal}
+				theme="dark"
+				daemonReady
+			/>,
+		);
 
-		// Ctrl+wheel is terminal font zoom, not tab scrolling.
-		scrollBy.mockClear();
-		fireEvent.wheel(scrollRegion, { deltaY: 80, ctrlKey: true });
-		expect(scrollBy).not.toHaveBeenCalled();
+		const close = screen.getByRole("button", { name: "Close terminal agent-orchestrator-0" });
+		fireEvent.mouseDown(close, { button: 0 });
+		expect(onCloseShellTerminal).toHaveBeenCalledOnce();
+		expect(onCloseShellTerminal).toHaveBeenCalledWith("h-0");
+		fireEvent.click(close);
+		expect(onCloseShellTerminal).toHaveBeenCalledOnce();
+		expect(onSelectShellTerminal).not.toHaveBeenCalled();
 	});
 });
