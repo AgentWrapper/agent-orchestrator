@@ -889,8 +889,8 @@ describe("SessionInspector reviews tab", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsTab();
 
-		await userEvent.click(await screen.findByRole("combobox", { name: "Reviewer agent" }));
-		await userEvent.click(await screen.findByRole("option", { name: "opencode" }));
+		await userEvent.click(await screen.findByRole("button", { name: /Reviewer agent/ }));
+		await userEvent.click(await screen.findByRole("menuitem", { name: /opencode/ }));
 		await userEvent.click(screen.getByRole("button", { name: "Run review" }));
 
 		expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/reviews/trigger", {

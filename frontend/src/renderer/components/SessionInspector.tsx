@@ -35,7 +35,8 @@ import { cn } from "../lib/utils";
 import { PRSummaryMeta, PRSummaryParts } from "./PRSummaryDisplay";
 import { StatusPill } from "./StatusPill";
 import { SessionTerminationDialog } from "./SessionTerminationDialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { ReviewerSelect } from "./ReviewerSelect";
+import { agentsQueryOptions } from "../hooks/useAgentsQuery";
 import { Switch } from "./ui/switch";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
@@ -693,13 +694,10 @@ function scmTimelineStates(session: WorkspaceSession): ScmTimelineState[] {
 	return states;
 }
 
-/** Reviewer harnesses AO ships. A separate vocabulary from worker agents: a
-    reviewer-only tool must not become a valid worker, so this is not the agents
-    list. Typed from the generated schema, so the spec stays the source. */
+/** Reviewer harness the daemon accepts, typed from the generated schema. */
 type ReviewerHarness = NonNullable<components["schemas"]["ControllersTriggerReviewRequest"]["harness"]>;
-const REVIEWER_HARNESSES: ReviewerHarness[] = ["claude-code", "codex", "opencode"];
-// Radix Select has no empty-string value, so "use the project's" needs a token.
-const PROJECT_REVIEWER = "__project__";
+type AgentInfo = components["schemas"]["AgentInfo"];
+type AgentCatalog = { supported?: AgentInfo[]; installed?: AgentInfo[]; authorized?: AgentInfo[] };
 
 function ReviewsView({
 	session,
@@ -728,6 +726,7 @@ function ReviewsView({
 			return data ?? ({ reviewerHandleId: "", reviews: [] } satisfies ReviewsResponse);
 		},
 	});
+	const agentsQuery = useQuery(agentsQueryOptions);
 	const projectConfigQuery = useQuery({
 		queryKey: ["project-config", session.workspaceId],
 		enabled: hasPr,
@@ -847,6 +846,7 @@ function ReviewsView({
 					reviewerHandleId={reviewsQuery.data?.reviewerHandleId ?? ""}
 					reviewStates={reviewStates}
 					notice={reviewNotice}
+					agentCatalog={agentsQuery.data}
 					reviewerOverride={reviewerOverride}
 					onReviewerOverrideChange={setReviewerOverride}
 					autoInject={!autoInjectOff}
@@ -1078,6 +1078,7 @@ function ReviewPanel({
 	isCancelling,
 	error,
 	notice,
+	agentCatalog,
 	reviewerOverride,
 	onReviewerOverrideChange,
 	autoInject,
@@ -1097,6 +1098,7 @@ function ReviewPanel({
 	isCancelling: boolean;
 	error: unknown;
 	notice: string | null;
+	agentCatalog?: AgentCatalog;
 	reviewerOverride: ReviewerHarness | "";
 	onReviewerOverrideChange: (next: ReviewerHarness | "") => void;
 	autoInject: boolean;
@@ -1152,23 +1154,17 @@ function ReviewPanel({
 					<AgentAvatar className="size-icon-sm" decorative provider={harness} />
 					<span className="truncate font-mono font-medium text-foreground">{harness}</span>
 				</p>
-				<Select
-					disabled={reviewRunning}
-					onValueChange={(next) => onReviewerOverrideChange(next === PROJECT_REVIEWER ? "" : (next as ReviewerHarness))}
-					value={reviewerOverride === "" ? PROJECT_REVIEWER : reviewerOverride}
-				>
-					<SelectTrigger aria-label="Reviewer agent" className="h-control-md w-auto shrink-0 gap-1.5 text-2xs">
-						<SelectValue />
-					</SelectTrigger>
-					<SelectContent>
-						<SelectItem value={PROJECT_REVIEWER}>Project default</SelectItem>
-						{REVIEWER_HARNESSES.map((option) => (
-							<SelectItem key={option} value={option}>
-								{option}
-							</SelectItem>
-						))}
-					</SelectContent>
-				</Select>
+				<div className="shrink-0">
+					<ReviewerSelect
+						ariaLabel="Reviewer agent"
+						authorized={agentCatalog?.authorized}
+						disabled={reviewRunning}
+						installed={agentCatalog?.installed}
+						onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "")}
+						supported={agentCatalog?.supported}
+						value={reviewerOverride}
+					/>
+				</div>
 			</div>
 			<div className="flex flex-col divide-y divide-border">
 				{openReviewStates.length === 0 ? (
@@ -1222,7 +1218,7 @@ function ReviewPanel({
 				{/* The review action carries the panel, so it gets real button weight
 				    instead of reading as one more link next to Open terminal. */}
 				<Button
-					className="flex-1 gap-1.5 [&_svg]:size-icon-sm"
+					className="shrink-0 gap-1.5 [&_svg]:size-icon-sm"
 					disabled={reviewRunning ? isCancelling : runDisabled}
 					onClick={reviewRunning ? onCancel : onTrigger}
 					size="sm"
@@ -1414,7 +1410,11 @@ function AoReviewRow({ reviewState }: { reviewState: PRReviewState }) {
 	const isStale = !reviewState.latestRun && Boolean(reviewState.previousRun);
 	const verdict = displayRun && !isStale ? runReviewVerdict(displayRun) : reviewVerdict(reviewState);
 	const previousVerdict = isStale && displayRun ? runReviewVerdict(displayRun) : undefined;
-	const summary = displayRun?.body?.trim();
+	// A cancelled run's body is the cancellation reason, not review findings, and
+	// the badge above already says "Cancelled" — rendering it as the summary made
+	// the row state the same thing twice.
+	const isTerminatedRun = displayRun?.status === "cancelled" || displayRun?.status === "failed";
+	const summary = isTerminatedRun ? undefined : displayRun?.body?.trim();
 	const reviewUrl = aoReviewCommentUrl(displayRun);
 	const reviewLinkLabel = reviewState.latestRun ? "View review" : "View previous review";
 	return (
