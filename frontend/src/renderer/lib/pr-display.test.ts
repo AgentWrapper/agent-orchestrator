@@ -28,6 +28,18 @@ const summary = (overrides: Partial<SessionPRSummary> = {}): SessionPRSummary =>
 	...overrides,
 });
 
+const session = (prs: WorkspaceSession["prs"]): WorkspaceSession => ({
+	id: "sess-1",
+	workspaceId: "ws-1",
+	workspaceName: "repo",
+	title: "Fix timing",
+	provider: "codex",
+	branch: "feat/timing",
+	status: "review_pending",
+	updatedAt: "2026-06-15T12:00:00Z",
+	prs,
+});
+
 describe("prStatusRows", () => {
 	it("formats the three PR states without exposing raw unknown", () => {
 		const rows = prStatusRows(
@@ -72,16 +84,8 @@ describe("prBrowserUrl", () => {
 
 describe("sessionPRDisplaySummaries", () => {
 	it("leaves lifecycle timing absent for fallback PR facts until provider times arrive", () => {
-		const session: WorkspaceSession = {
-			id: "sess-1",
-			workspaceId: "ws-1",
-			workspaceName: "repo",
-			title: "Fix timing",
-			provider: "codex",
-			branch: "feat/timing",
-			status: "review_pending",
-			updatedAt: "2026-06-15T12:00:00Z",
-			prs: [
+		const [fallback] = sessionPRDisplaySummaries(
+			session([
 				{
 					url: "https://github.com/acme/repo/pull/7",
 					number: 7,
@@ -92,14 +96,102 @@ describe("sessionPRDisplaySummaries", () => {
 					reviewComments: false,
 					updatedAt: "2026-06-15T11:00:00Z",
 				},
-			],
-		};
-
-		const [fallback] = sessionPRDisplaySummaries(session);
+			]),
+		);
 
 		expect(fallback.updatedAt).toBe("2026-06-15T11:00:00Z");
 		expect(fallback.createdAt).toBeUndefined();
 		expect(fallback.stateChangedAt).toBeUndefined();
+	});
+
+	it("deduplicates repeated API summaries before rendering", () => {
+		const got = sessionPRDisplaySummaries(session([]), [
+			summary({ number: 7, title: "first observed PR #7" }),
+			summary({ number: 7, title: "duplicate PR #7" }),
+			summary({ number: 8, title: "PR #8" }),
+		]);
+
+		expect(got.map((pr) => pr.number)).toEqual([7, 8]);
+		expect(got[0].title).toBe("first observed PR #7");
+	});
+
+	it("deduplicates repeated session facts and uses the enriched summary for the surviving card", () => {
+		const got = sessionPRDisplaySummaries(
+			session([
+				{
+					url: "https://github.com/acme/repo/pull/7",
+					number: 7,
+					state: "open",
+					ci: "pending",
+					review: "none",
+					mergeability: "unknown",
+					reviewComments: false,
+					updatedAt: "2026-06-15T10:00:00Z",
+				},
+				{
+					url: "https://github.com/acme/repo/issues/7",
+					number: 7,
+					state: "open",
+					ci: "passing",
+					review: "approved",
+					mergeability: "mergeable",
+					reviewComments: false,
+					updatedAt: "2026-06-15T11:00:00Z",
+				},
+			]),
+			[
+				summary({ number: 7, title: "enriched PR #7", ci: { state: "passing", failingChecks: [] } }),
+				summary({ number: 7, title: "duplicate enriched PR #7" }),
+			],
+		);
+
+		expect(got).toHaveLength(1);
+		expect(got[0]).toMatchObject({ number: 7, title: "enriched PR #7", ci: { state: "passing" } });
+	});
+
+	it("keeps the next selected session's PR list independent after a duplicated list", () => {
+		const firstSelection = sessionPRDisplaySummaries(
+			session([
+				{
+					url: "https://github.com/acme/repo/pull/7",
+					number: 7,
+					state: "open",
+					ci: "passing",
+					review: "approved",
+					mergeability: "mergeable",
+					reviewComments: false,
+					updatedAt: "2026-06-15T10:00:00Z",
+				},
+				{
+					url: "https://github.com/acme/repo/issues/7",
+					number: 7,
+					state: "open",
+					ci: "passing",
+					review: "approved",
+					mergeability: "mergeable",
+					reviewComments: false,
+					updatedAt: "2026-06-15T11:00:00Z",
+				},
+			]),
+			[summary({ number: 7 }), summary({ number: 7 })],
+		);
+		const nextSelection = sessionPRDisplaySummaries(
+			session([
+				{
+					url: "https://github.com/acme/repo/pull/9",
+					number: 9,
+					state: "open",
+					ci: "passing",
+					review: "approved",
+					mergeability: "mergeable",
+					reviewComments: false,
+					updatedAt: "2026-06-15T12:00:00Z",
+				},
+			]),
+		);
+
+		expect(firstSelection.map((pr) => pr.number)).toEqual([7]);
+		expect(nextSelection.map((pr) => pr.number)).toEqual([9]);
 	});
 });
 
