@@ -358,7 +358,7 @@ func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (por
 	}
 	path := w.workspacePath(name)
 	if _, err := w.exec(ctx, sb.ID, "git -C "+shellQuote(path)+" rev-parse --is-inside-work-tree"); err != nil {
-		return ports.WorkspaceInfo{}, fmt.Errorf("daytona workspace: restore %s: checkout missing: %w: %v", name, ports.ErrWorkspaceStale, err)
+		return ports.WorkspaceInfo{}, fmt.Errorf("daytona workspace: restore %s: checkout missing: %w: %w", name, ports.ErrWorkspaceStale, err)
 	}
 	branch, err := w.currentBranch(ctx, sb.ID, path)
 	if err != nil {
@@ -438,7 +438,7 @@ func (w *Workspace) isDirty(ctx context.Context, sandboxID, path string) (bool, 
 		var execErr *execError
 		if errors.As(err, &execErr) {
 			// Not a git repo any more: stale, nothing to protect.
-			return false, fmt.Errorf("daytona workspace: dirty check %s: %w: %v", path, ports.ErrWorkspaceStale, err)
+			return false, fmt.Errorf("daytona workspace: dirty check %s: %w: %w", path, ports.ErrWorkspaceStale, err)
 		}
 		return false, fmt.Errorf("daytona workspace: dirty check %s: %w", path, err)
 	}
@@ -529,7 +529,7 @@ func (w *Workspace) ApplyPreserved(ctx context.Context, info ports.WorkspaceInfo
 	if _, err := w.exec(ctx, sb.ID, script); err != nil {
 		var execErr *execError
 		if errors.As(err, &execErr) && execErr.exitCode == 5 {
-			return fmt.Errorf("daytona workspace: apply preserved %s: %w: %v", name, ports.ErrPreservedConflict, err)
+			return fmt.Errorf("daytona workspace: apply preserved %s: %w: %w", name, ports.ErrPreservedConflict, err)
 		}
 		return fmt.Errorf("daytona workspace: apply preserved %s: %w", name, err)
 	}
