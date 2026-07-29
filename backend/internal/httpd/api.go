@@ -33,6 +33,7 @@ type APIDeps struct {
 	DevImport          controllers.DevImportService
 	CDC                cdc.Source
 	Events             cdcSubscriber
+	EventFilter        func(*http.Request, cdc.Event) bool
 	Telemetry          ports.EventSink
 	Mobile             *controllers.MobileController
 }
@@ -77,7 +78,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		imports:       &controllers.ImportController{Svc: deps.Import},
 		shellTerms:    &controllers.ShellTerminalsController{Svc: deps.ShellTerminals},
 		dev:           &controllers.DevController{Import: deps.DevImport},
-		events:        &EventsController{Source: deps.CDC, Live: deps.Events},
+		events:        &EventsController{Source: deps.CDC, Live: deps.Events, Filter: deps.EventFilter},
 	}
 }
 
@@ -109,6 +110,26 @@ func (a *API) Register(root chi.Router) {
 		})
 		// Long-lived streams intentionally bypass the REST timeout middleware.
 		a.notifications.RegisterStream(r)
+		a.events.Register(r)
+	})
+}
+
+// RegisterReadOnly mounts the cloud Phase 1 API surface: project/session read
+// paths plus the durable/live CDC event stream.
+func (a *API) RegisterReadOnly(root chi.Router) {
+	timeout := a.cfg.RequestTimeout
+	if timeout <= 0 {
+		timeout = config.DefaultRequestTimeout
+	}
+
+	root.Route("/api/v1", func(r chi.Router) {
+		r.Get("/openapi.yaml", apispec.ServeYAML)
+
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.Timeout(timeout))
+			a.projects.RegisterReadOnly(r)
+			a.sessions.RegisterReadOnly(r)
+		})
 		a.events.Register(r)
 	})
 }

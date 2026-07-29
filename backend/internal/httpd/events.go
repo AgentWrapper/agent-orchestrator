@@ -29,6 +29,7 @@ type cdcSubscriber interface {
 type EventsController struct {
 	Source cdc.Source
 	Live   cdcSubscriber
+	Filter func(*http.Request, cdc.Event) bool
 }
 
 // Register mounts the CDC SSE stream route.
@@ -61,6 +62,9 @@ func (c *EventsController) stream(w http.ResponseWriter, r *http.Request) {
 
 	live := make(chan cdc.Event, eventsLiveBuffer)
 	unsubscribe := c.Live.Subscribe(func(e cdc.Event) {
+		if c.Filter != nil && !c.Filter(r, e) {
+			return
+		}
 		select {
 		case live <- e:
 		default:
@@ -106,6 +110,9 @@ func (c *EventsController) replay(ctx context.Context, w http.ResponseWriter, fl
 			return nil
 		}
 		for _, e := range events {
+			if c.Filter != nil && !c.Filter(wrappedRequest(ctx), e) {
+				continue
+			}
 			if err := writeSSEEvent(w, flusher, e, sentSeq); err != nil {
 				return err
 			}
@@ -114,6 +121,10 @@ func (c *EventsController) replay(ctx context.Context, w http.ResponseWriter, fl
 			return nil
 		}
 	}
+}
+
+func wrappedRequest(ctx context.Context) *http.Request {
+	return (&http.Request{}).WithContext(ctx)
 }
 
 func parseEventsAfter(r *http.Request) (int64, error) {
