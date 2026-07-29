@@ -244,6 +244,44 @@ func TestPollerRewritesStoredOriginToActualDaemonPortWithoutChangingEntry(t *tes
 	})
 }
 
+func TestPollerDoesNotAutoPreviewMarkdownOnlyNewSession(t *testing.T) {
+	// A brand-new session (never explicitly previewed) whose workspace contains
+	// only Markdown documents — no index.html — must NOT be auto-previewed.
+	// Surfacing an arbitrary repo README as the initial browser target is noise.
+	// See issue #2859.
+	workspace := t.TempDir()
+	writeFile(t, filepath.Join(workspace, "README.md"), "# project")
+	writeFile(t, filepath.Join(workspace, "docs", "setup.md"), "# setup")
+	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "")}}
+	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
+
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+	if len(svc.sets) != 0 {
+		t.Fatalf("sets = %#v, want no auto-preview for a Markdown-only new session", svc.sets)
+	}
+}
+
+func TestPollerKeepsMarkdownPreviewFreshOnceExplicitlySet(t *testing.T) {
+	// Once a session has been explicitly previewed against a workspace Markdown
+	// file (workspaceOwned), the poller must still keep that preview fresh — the
+	// document-fallback restriction only applies to never-previewed sessions.
+	workspace := t.TempDir()
+	writeFile(t, filepath.Join(workspace, "docs", "report.md"), "# report")
+	relative := "docs/report.md"
+	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, relative)}}
+	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
+
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+	assertSets(t, svc.sets, previewSet{
+		id:  "ao-1",
+		url: mustFileURL(t, "http://127.0.0.1:3001", "ao-1", relative),
+	})
+}
+
 func TestPollerSkipsNonWorkerSessions(t *testing.T) {
 	workspace := t.TempDir()
 	writeFile(t, filepath.Join(workspace, "index.html"), "<main>hello</main>")

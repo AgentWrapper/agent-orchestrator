@@ -91,6 +91,7 @@ if (typeof window !== "undefined") {
 			getStatus: async () => ({ state: "stopped" }),
 			start: async () => ({ state: "starting" }),
 			stop: async () => ({ state: "stopped" }),
+			restart: async () => ({ state: "starting" }),
 			onStatus: () => () => undefined,
 		},
 		telemetry: {
@@ -173,6 +174,11 @@ if (typeof window !== "undefined") {
 		updateSettings: {
 			get: async () => ({ enabled: false, channel: "latest", nightlyAck: false, feature: null }),
 			set: async () => undefined,
+		},
+		keybindings: {
+			get: async () => ({}),
+			set: async (overrides) => overrides,
+			setRecording: async () => undefined,
 		},
 		updates: {
 			getStatus: async () => ({ state: "idle" }),

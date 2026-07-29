@@ -17,24 +17,24 @@ export function Tabs({ items, children }: { items?: string[]; children: ReactNod
   const labels = items ?? tabs.map((t, i) => t.props.value ?? `Tab ${i + 1}`);
 
   return (
-    <div className="my-6 overflow-hidden rounded-lg border border-border">
-      <div className="flex flex-wrap gap-1 border-b border-border bg-surface/50 p-1">
+    <div className="my-6 overflow-hidden rounded-xl border border-border bg-muted/25">
+      <div className="flex flex-wrap gap-1 border-b border-border bg-background p-1.5">
         {labels.map((label, i) => (
           <button
             key={label}
             type="button"
             onClick={() => setActive(i)}
-            className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
+            className={`rounded-lg px-3 py-1.5 text-sm transition-colors ${
               i === active
-                ? "bg-background text-foreground"
-                : "text-muted-foreground hover:text-foreground"
+                ? "bg-muted text-foreground"
+                : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
             }`}
           >
             {label}
           </button>
         ))}
       </div>
-      <div className="prose prose-invert max-w-none px-4 py-3 prose-p:my-2 prose-pre:my-2">
+      <div className="prose prose-invert max-w-none px-4 py-4 prose-p:my-2 prose-pre:my-2">
         {tabs[active]?.props.children}
       </div>
     </div>

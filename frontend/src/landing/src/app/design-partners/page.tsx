@@ -1,67 +1,141 @@
-import { COMPANY } from "@superset/shared/constants";
+import { AGENT_HARNESSES, COMPANY } from "@ao/shared/constants";
 import type { Metadata } from "next";
+import Image from "next/image";
+import {
+  formatStatPlus,
+  getGitHubRepoStats,
+  monthsSince,
+} from "@/lib/github-stats";
+import {
+  RoadmapSlideshow,
+  type RoadmapPhase,
+} from "./RoadmapSlideshow";
 
 const CONTACT_EMAIL = "prateek@untrivial.ai";
 const CAL_URL = "https://cal.com/agentwrapper/ao-design-partner";
 const MAILTO_HREF = `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(
   "AO Design Partner Program",
 )}&body=${encodeURIComponent(
-  "Hi Prateek,\n\nWe're interested in the AO design partner program.\n\nCompany:\nEngineering team size:\nAgent harnesses we use today:\nWhat we want out of AO:\n",
+  "Hi Prateek,\n\nWe're interested in the AO design partner program.\n\nCompany:\nEngineering team size:\nAgent harnesses we use today (Claude Code / Codex / Cursor / ...):\nWhat we want out of AO:\n",
 )}`;
 
+/** Shown only if the GitHub API request fails. */
+const FALLBACK_STATS = {
+  stars: 8400,
+  forks: 1200,
+  months: 5,
+} as const;
+
 export const metadata: Metadata = {
-  title: "Design Partners",
+  title: "Design Partner Program - Agent Orchestrator",
   description:
-    "Work with AO to shape the operating layer for AI software engineering teams.",
+    "Mission control for your agent fleet: shared sessions, ROI observability, and an engine room your org fully owns. Your engineers get leverage; your leadership gets answers.",
+  openGraph: {
+    title: "AO Design Partner Program",
+    description:
+      "Mission control for your agent fleet: shared sessions, ROI observability, and an engine room your org fully owns.",
+    url: `${COMPANY.MARKETING_URL}/design-partners`,
+  },
   alternates: {
     canonical: `${COMPANY.MARKETING_URL}/design-partners`,
   },
 };
 
-const outcomes = [
-  {
-    title: "A stable layer under every agent",
-    body: "Claude Code, Codex, Cursor, and the next harness can all change. Your company keeps one operating model for assigning, reviewing, and learning from agent work.",
-  },
-  {
-    title: "Visibility leadership can trust",
-    body: "See what agents shipped, where they got stuck, which teams are getting value, and which workflows should become standard.",
-  },
-  {
-    title: "Context that compounds",
-    body: "Every review, fix, failure, and decision becomes part of the organization's engineering memory instead of disappearing inside one terminal session.",
-  },
-];
-
 const partnerGets = [
-  "Founder-led onboarding on real repos and real harnesses.",
-  "First access to team workspaces, analytics, and policy controls.",
-  "A direct feedback loop while product decisions are still malleable.",
-  "Partner pricing that carries into the first commercial release.",
+  {
+    title: "White-glove onboarding",
+    body: "Founder-led setup on your real repos, with the agents you already pay for.",
+  },
+  {
+    title: "Weekly founder access",
+    body: "A standing call and a private channel. Your bugs jump a queue that ships nightly.",
+  },
+  {
+    title: "First access to every unlock",
+    body: "Teams features land in your workspace before anyone else's.",
+  },
+  {
+    title: "Locked-in pricing",
+    body: "Six months of partner pricing at GA. Pilot fees credit toward year one.",
+  },
 ];
 
 const partnerAsks = [
-  "A team already using coding agents in production work.",
-  "One engineering champion who runs AO weekly.",
-  "One leader who wants the ROI answer, not just agent enthusiasm.",
-  "Honest feedback, including the workflows that fail.",
+  {
+    title: "A paid pilot",
+    body: "$500-2,000/month, sized to usage. Month-to-month. Churn is honest signal.",
+  },
+  {
+    title: "A champion and a sponsor",
+    body: "One engineer who runs AO weekly. One leader who wants the ROI answer.",
+  },
+  {
+    title: "Real feedback",
+    body: "A biweekly working session and honest numbers - including the bad news.",
+  },
 ];
 
-const phases = [
+const phases: RoadmapPhase[] = [
   {
-    label: "Now",
-    title: "Local agent fleet",
-    body: "Run multiple agents in isolated worktrees, keep branches separated, and route CI or review feedback back to the session that owns the work.",
+    num: "00",
+    status: "available now",
+    title: "A fleet on every desk",
+    theme:
+      "The single-player engine. Free, open source, already on your machine.",
+    unlocks: [
+      "23 harnesses behind one board - Claude Code, Codex, Cursor, and whatever comes next",
+      "Every session in its own git worktree; branches never collide",
+      "CI failures and review comments route back to the agent that owns the branch",
+      "An orchestrator plans the work and spawns the workers",
+    ],
+    image: "/design-partners/roadmap-fleet-olive.png",
+    imageAlt:
+      "One orchestration workstation coordinating five coding-agent modules across separate worktree lanes",
   },
   {
-    label: "Next",
+    num: "01",
+    status: "building now - partners get it first",
     title: "Shared mission control",
-    body: "Turn solo orchestration into a team surface where sessions can be handed off, reviewed, and understood without rebuilding context.",
+    theme:
+      "The fleet becomes a team sport. Execution stays local; coordination moves to one workspace.",
+    unlocks: [
+      "Team workspaces - the first cloud layer, opt-in by design",
+      "Every session durably captured; hand a running fleet to a teammate",
+      "One board for the team: running, merged, needs a human",
+    ],
+    image: "/design-partners/roadmap-mission-control-olive.png",
+    imageAlt:
+      "Three local agent workstations connecting to a shared team mission-control board",
   },
   {
-    label: "Then",
-    title: "Company memory",
-    body: "Join transcripts, GitHub, CI, reviews, and tracker history so the organization learns from every AI-assisted engineering session.",
+    num: "02",
+    status: "partners shape the spec",
+    title: "The ROI answer",
+    theme:
+      "What did the agents ship last week? What did it cost? Answered.",
+    unlocks: [
+      "Token spend by project, agent, and team",
+      "Outcomes, not vibes: agent PRs merged, cycle time, human-rescue rate",
+      "Transcripts joined with GitHub, CI, reviews, and trackers - reviewable in one place",
+    ],
+    image: "/design-partners/roadmap-roi-olive.png",
+    imageAlt:
+      "A measurement console joining agent cost, merged work, cycle time, and human handoffs",
+  },
+  {
+    num: "03",
+    status: "scoped with partners who need it",
+    title: "The engine room",
+    theme:
+      "The whole engine inside your walls. Your sandboxes. Your policies. Your data.",
+    unlocks: [
+      "Self-hosted control plane in your VPC",
+      "Security policies enforced on every agent; audit trails and SSO across the fleet",
+      "The dataset stays yours: full transcripts joined with SCM, CI, and tracker history",
+    ],
+    image: "/design-partners/roadmap-engine-room-olive.png",
+    imageAlt:
+      "A self-hosted control plane, security gate, and archive contained inside a private perimeter",
   },
 ];
 
@@ -108,52 +182,81 @@ function TextLink({
   );
 }
 
-export default function DesignPartnersPage() {
+export default async function DesignPartnersPage() {
+  const repo = await getGitHubRepoStats();
+  const stars = repo?.stars ?? FALLBACK_STATS.stars;
+  const forks = repo?.forks ?? FALLBACK_STATS.forks;
+  const months = repo ? monthsSince(repo.createdAt) : FALLBACK_STATS.months;
+
+  const stats = [
+    {
+      value: formatStatPlus(stars),
+      label: `stars in ${months} month${months === 1 ? "" : "s"}`,
+    },
+    { value: formatStatPlus(forks), label: "forks" },
+    { value: String(AGENT_HARNESSES), label: "agent harnesses" },
+    { value: "Nightly", label: "desktop releases" },
+  ];
+
   return (
     <main className="bg-background text-foreground">
       <section className="relative overflow-hidden px-4 pb-20 pt-24 sm:px-8 sm:pb-28 sm:pt-32 lg:px-[30px] lg:pt-36">
         <div className="relative mx-auto max-w-7xl">
-          <div className="max-w-5xl">
-            <SectionLabel>Design partners</SectionLabel>
-            <h1 className="mt-5 max-w-5xl text-balance font-sans text-4xl font-normal leading-[0.98] tracking-[-0.5px] text-foreground sm:text-5xl md:text-6xl lg:text-[4.75rem]">
-              Help shape the operating layer for AI software engineering.
-            </h1>
-            <p className="mt-6 max-w-3xl text-base leading-8 text-muted-foreground sm:text-xl">
-              AO is not another model or coding agent. It is the layer underneath
-              them, the way teams coordinate agent work, govern how it is used,
-              and keep the knowledge those sessions create.
-            </p>
-            <div className="mt-8 flex flex-wrap gap-3">
-              <a
-                href={CAL_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex min-h-11 items-center gap-2 rounded-3xl bg-foreground px-6 py-3 text-base font-semibold tracking-[-0.5px] text-background transition-[transform,opacity] duration-150 hover:opacity-90 active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background motion-reduce:transition-none"
-              >
-                Book a discovery call
-                <ArrowIcon className="h-4 w-4" />
-              </a>
-              <a
-                href={MAILTO_HREF}
-                className="inline-flex min-h-11 items-center gap-2 rounded-3xl border border-border bg-background px-6 py-3 text-base font-normal tracking-[-0.5px] text-foreground transition-[transform,background-color] duration-150 hover:bg-muted active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background motion-reduce:transition-none"
-              >
-                Email us
-              </a>
+          <div className="grid items-center gap-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.82fr)] lg:gap-8">
+            <div>
+              <SectionLabel>Design partner program</SectionLabel>
+              <h1 className="mt-5 max-w-4xl text-balance font-sans text-4xl font-normal leading-[0.98] tracking-[-0.5px] text-foreground sm:text-5xl md:text-6xl lg:text-[4.5rem]">
+                Your company is the car. We build the engine.
+              </h1>
+              <p className="mt-6 max-w-3xl text-pretty text-base leading-8 text-muted-foreground sm:text-xl">
+                Your engineers already run coding agents. Nobody runs the fleet.
+                AO puts every agent, branch, and PR on one board and routes CI
+                failures and review comments back to the agent that owns them.
+                More merged work from the subscriptions you already pay for.
+              </p>
+              <div className="mt-8 flex flex-wrap gap-3">
+                <a
+                  href={CAL_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex min-h-11 items-center gap-2 rounded-3xl bg-foreground px-6 py-3 text-base font-semibold tracking-[-0.5px] text-background transition-[transform,opacity] duration-150 hover:opacity-90 active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background motion-reduce:transition-none"
+                >
+                  Book a discovery call
+                  <ArrowIcon className="h-4 w-4" />
+                </a>
+                <a
+                  href={MAILTO_HREF}
+                  className="inline-flex min-h-11 items-center gap-2 rounded-3xl border border-border bg-background px-6 py-3 text-base font-normal tracking-[-0.5px] text-foreground transition-[transform,background-color] duration-150 hover:bg-muted active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background motion-reduce:transition-none"
+                >
+                  or write to {CONTACT_EMAIL}
+                </a>
+              </div>
+              <p className="mt-5 text-sm text-muted-foreground">
+                paid pilots · month-to-month · cancel anytime
+              </p>
             </div>
+
+            <Image
+              src="/design-partners/hero-car-engine-olive.png"
+              alt="An isometric car with its hood open and software engine highlighted"
+              width={1536}
+              height={1024}
+              priority
+              sizes="(max-width: 1024px) 100vw, 42vw"
+              className="w-full"
+            />
           </div>
 
-          <div className="mt-16 grid gap-8 md:grid-cols-3">
-            {outcomes.map((item) => (
+          <div className="mt-16 grid overflow-hidden rounded-xl border border-border sm:grid-cols-2 lg:grid-cols-4">
+            {stats.map((stat) => (
               <div
-                key={item.title}
-                className="py-6"
+                key={stat.label}
+                className="border-b border-border px-6 py-5 sm:border-r sm:[&:nth-child(2n)]:border-r-0 lg:border-b-0 lg:[&:nth-child(2n)]:border-r lg:last:border-r-0"
               >
-                <h2 className="text-xl font-medium tracking-[-0.5px] text-foreground">
-                  {item.title}
-                </h2>
-                <p className="mt-4 text-sm leading-7 text-muted-foreground">
-                  {item.body}
+                <p className="text-xl font-medium tracking-[-0.5px] text-foreground">
+                  {stat.value}
                 </p>
+                <p className="mt-1 text-sm text-muted-foreground">{stat.label}</p>
               </div>
             ))}
           </div>
@@ -163,85 +266,83 @@ export default function DesignPartnersPage() {
       <section className="border-t border-border px-4 py-16 sm:px-8 sm:py-20 lg:px-[30px]">
         <div className="mx-auto grid max-w-7xl gap-12 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
           <div>
-            <SectionLabel>Why now</SectionLabel>
+            <SectionLabel>What your team gets</SectionLabel>
             <h2 className="mt-4 max-w-2xl text-3xl font-medium leading-tight tracking-[-0.5px] text-foreground sm:text-4xl lg:text-5xl">
-              Adoption was the easy part. Operating it is the hard part.
+              One workspace. Humans and agents, side by side.
             </h2>
-          </div>
-          <div className="space-y-6 text-base leading-8 text-muted-foreground">
-            <p>
-              Every company using AI is generating thousands of engineering
-              sessions. Those sessions contain reasoning, failed attempts,
-              debugging paths, review decisions, and context that made the final
-              code possible.
-            </p>
-            <p>
-              Today most of that vanishes. Teams keep the code and lose the
-              learning. AO turns agent work from temporary output into company
-              knowledge that compounds.
+            <p className="mt-6 max-w-xl text-base leading-8 text-muted-foreground">
+              Every session shareable. Every outcome measurable. Every transcript
+              captured - and owned by your org. Each layer lands in partner
+              workspaces first.
             </p>
           </div>
+          <Image
+            src="/design-partners/shared-workspace-olive.png"
+            alt="Human workstations and coding-agent modules connected through one shared board and durable archive"
+            width={1536}
+            height={1024}
+            sizes="(max-width: 1024px) 100vw, 704px"
+            className="w-full"
+          />
         </div>
       </section>
 
       <section className="border-t border-border px-4 py-16 sm:px-8 sm:py-20 lg:px-[30px]">
         <div className="mx-auto max-w-7xl">
           <div className="max-w-3xl">
-            <SectionLabel>Program shape</SectionLabel>
+            <SectionLabel>The exchange</SectionLabel>
             <h2 className="mt-4 text-3xl font-medium leading-tight tracking-[-0.5px] text-foreground sm:text-4xl lg:text-5xl">
-              Work with us while the system is still being formed.
+              What you get. What we ask.
             </h2>
           </div>
 
-          <div className="mt-12 grid gap-10 lg:grid-cols-2 lg:gap-16">
-            <div>
-              <p className="py-4 text-base font-medium tracking-[-0.5px] text-foreground">
+          <div className="mt-12 grid overflow-hidden rounded-xl border border-border lg:grid-cols-2">
+            <div className="lg:border-r lg:border-border">
+              <p className="px-6 pb-2 pt-6 text-base font-medium tracking-[-0.5px] text-foreground sm:px-8 sm:pt-8">
                 You get
               </p>
               <ul>
                 {partnerGets.map((item) => (
-                  <li key={item} className="py-4 text-sm leading-7 text-muted-foreground">
-                    {item}
+                  <li
+                    key={item.title}
+                    className="px-6 py-3 text-sm leading-7 text-muted-foreground last:pb-6 sm:px-8 sm:last:pb-8"
+                  >
+                    <p className="font-medium text-foreground">{item.title}</p>
+                    <p className="mt-1">{item.body}</p>
                   </li>
                 ))}
               </ul>
             </div>
-            <div>
-              <p className="py-4 text-base font-medium tracking-[-0.5px] text-foreground">
+            <div className="border-t border-border lg:border-t-0">
+              <p className="px-6 pb-2 pt-6 text-base font-medium tracking-[-0.5px] text-foreground sm:px-8 sm:pt-8">
                 We ask
               </p>
               <ul>
                 {partnerAsks.map((item) => (
-                  <li key={item} className="py-4 text-sm leading-7 text-muted-foreground">
-                    {item}
+                  <li
+                    key={item.title}
+                    className="px-6 py-3 text-sm leading-7 text-muted-foreground last:pb-6 sm:px-8 sm:last:pb-8"
+                  >
+                    <p className="font-medium text-foreground">{item.title}</p>
+                    <p className="mt-1">{item.body}</p>
                   </li>
                 ))}
               </ul>
             </div>
           </div>
+          <p className="mt-8 max-w-4xl text-sm leading-7 text-muted-foreground">
+            Best fit: 10-100 engineers. Multiple agent subscriptions in use.
+            Leadership asking what the spend produces. AO ships a new build every
+            night - what we promise, you watch arrive.
+          </p>
         </div>
       </section>
 
       <section className="border-t border-border px-4 py-16 sm:px-8 sm:py-20 lg:px-[30px]">
         <div className="mx-auto max-w-7xl">
           <SectionLabel>Roadmap</SectionLabel>
-          <div className="mt-8 grid gap-8 md:grid-cols-3">
-            {phases.map((phase) => (
-              <article
-                key={phase.title}
-                className="py-6"
-              >
-                <p className="text-sm font-medium tracking-[-0.5px] text-muted-foreground">
-                  {phase.label}
-                </p>
-                <h2 className="mt-4 text-2xl font-medium tracking-[-0.5px] text-foreground">
-                  {phase.title}
-                </h2>
-                <p className="mt-4 text-sm leading-7 text-muted-foreground">
-                  {phase.body}
-                </p>
-              </article>
-            ))}
+          <div className="mt-8">
+            <RoadmapSlideshow phases={phases} />
           </div>
         </div>
       </section>
@@ -249,9 +350,9 @@ export default function DesignPartnersPage() {
       <section className="border-t border-border px-4 py-16 sm:px-8 sm:py-20 lg:px-[30px]">
         <div className="mx-auto flex max-w-7xl flex-col items-start justify-between gap-8 py-8 lg:flex-row lg:items-center">
           <div>
-            <SectionLabel>Start with your real repos</SectionLabel>
+            <SectionLabel>Design partner program</SectionLabel>
             <h2 className="mt-4 max-w-3xl text-3xl font-medium leading-tight tracking-[-0.5px] text-foreground sm:text-4xl">
-              Bring the agents your team already uses. We will help you turn them into one operating system.
+              Your engineers get leverage. Your leadership gets answers.
             </h2>
           </div>
           <div className="flex shrink-0 flex-col gap-3 sm:flex-row">
@@ -263,7 +364,9 @@ export default function DesignPartnersPage() {
             >
               Book a call
             </a>
-            <TextLink href={MAILTO_HREF}>{CONTACT_EMAIL}</TextLink>
+            <TextLink href={MAILTO_HREF}>
+              or write to {CONTACT_EMAIL}
+            </TextLink>
           </div>
         </div>
       </section>

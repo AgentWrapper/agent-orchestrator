@@ -88,8 +88,8 @@ const columns = [
 				tone: "default",
 			},
 			{
-				title: "Replace leftover Superset app chrome in preview",
-				branch: "landing/remove-superset-mock",
+				title: "Polish the landing preview app chrome",
+				branch: "landing/preview-chrome",
 				agent: "Codex",
 				icon: "/app-icons/coverage-codex.svg",
 				activity: "Running tests",
@@ -1275,7 +1275,7 @@ function Sidebar({
 					draggable="false"
 				/>
 				<div className="min-w-0 flex-1 truncate text-[12px] font-semibold tracking-[-0.5px] text-[var(--preview-sidebar-foreground)]">
-					AO
+					Agent Orchestrator
 				</div>
 			</div>
 
@@ -1793,7 +1793,7 @@ function OrchestratorView({
 					</div>
 					<div className="min-w-0">
 						<div className="text-[13px] font-semibold tracking-[-0.5px] text-[var(--preview-foreground)]">
-							AO Orchestrator
+							Agent Orchestrator
 						</div>
 						<div className="truncate text-[10px] text-[var(--preview-muted-foreground)]">
 							Planning workers for {selectedTrack.label.toLowerCase()}

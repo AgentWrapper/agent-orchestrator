@@ -1743,6 +1743,131 @@ func TestKill_TearsDownRuntimeAndWorkspace(t *testing.T) {
 // workspace path is missing is still terminated — the destroy steps are
 // skipped, but the session moves to terminal state so it can be cleaned up
 // from the dashboard.
+// fakeShellTerminalCloser stands in for shellterm.Service in ordering tests:
+// it records which sessions it was asked to begin/end teardown for, and —
+// when sharedLog is set — appends into the same call sequence a fakeWorkspace
+// (and fakeStore) logs into, so a test can assert shell terminals are drained
+// BEFORE the worktree they point at is torn down, and the gate is released
+// AFTER.
+type fakeShellTerminalCloser struct {
+	began     []domain.SessionID
+	ended     []domain.SessionID
+	err       error
+	sharedLog *[]string
+}
+
+func (f *fakeShellTerminalCloser) BeginSessionTeardown(_ context.Context, id domain.SessionID) (func(), error) {
+	f.began = append(f.began, id)
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.sharedLog != nil {
+		*f.sharedLog = append(*f.sharedLog, "BeginSessionTeardown:"+string(id))
+	}
+	return func() {
+		f.ended = append(f.ended, id)
+		if f.sharedLog != nil {
+			*f.sharedLog = append(*f.sharedLog, "EndSessionTeardown:"+string(id))
+		}
+	}, nil
+}
+
+// TestKill_ClosesScopedShellTerminalsBeforeWorkspaceTeardown is the regression
+// for the bug where Kill removed a session's worktree while a shell terminal
+// scoped to it was still open, pointed at a directory that no longer existed
+// (and, on Windows, an open handle on that directory could refuse deletion).
+// The gate must also release (EndSessionTeardown) once Kill's own teardown is
+// done, or the session's shell terminals would stay locked out forever.
+func TestKill_ClosesScopedShellTerminalsBeforeWorkspaceTeardown(t *testing.T) {
+	m, st, _, ws := newManager()
+	var calls []string
+	ws.sharedLog = &calls
+	closer := &fakeShellTerminalCloser{sharedLog: &calls}
+	m.SetShellTerminalCloser(closer)
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer",
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", WorkspaceRepoPath: "/ws/mer-1", RuntimeHandleID: "h1"},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+
+	if _, err := m.Kill(ctx, "mer-1"); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+
+	if len(closer.began) != 1 || closer.began[0] != "mer-1" {
+		t.Fatalf("began = %v, want [mer-1]", closer.began)
+	}
+	if len(closer.ended) != 1 || closer.ended[0] != "mer-1" {
+		t.Fatalf("ended = %v, want [mer-1]", closer.ended)
+	}
+	beginIdx, destroyIdx, endIdx := -1, -1, -1
+	for i, c := range calls {
+		switch c {
+		case "BeginSessionTeardown:mer-1":
+			beginIdx = i
+		case "Destroy:" + domain.RootWorkspaceRepoName:
+			destroyIdx = i
+		case "EndSessionTeardown:mer-1":
+			endIdx = i
+		}
+	}
+	if beginIdx == -1 || destroyIdx == -1 || endIdx == -1 {
+		t.Fatalf("call log missing expected entries: %v", calls)
+	}
+	if beginIdx >= destroyIdx || destroyIdx >= endIdx {
+		t.Fatalf("call order = %v, want begin, then destroy, then end", calls)
+	}
+}
+
+// TestKill_RefusesWorkspaceTeardownWhenShellTerminalsWontClose is the
+// regression for the bug where a shell terminal that failed to close was
+// logged and forgotten, then the worktree was destroyed anyway — leaving a
+// still-live shell pointed at nothing. Kill must refuse the workspace release
+// in that case, the same shape as a dirty-workspace refusal.
+func TestKill_RefusesWorkspaceTeardownWhenShellTerminalsWontClose(t *testing.T) {
+	m, st, rt, ws := newManager()
+	m.SetShellTerminalCloser(&fakeShellTerminalCloser{err: errors.New("shellterm-1: still alive")})
+	st.sessions["mer-1"] = mkLive("mer-1")
+	st.worktrees["mer-1"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-1", RepoName: domain.RootWorkspaceRepoName, WorktreePath: "/ws/mer-1"},
+	}
+
+	freed, err := m.Kill(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+	if freed {
+		t.Error("freed = true, want false: an unconfirmed shell close must block workspace teardown")
+	}
+	if ws.destroyed != 0 {
+		t.Errorf("workspace destroyed = %d, want 0: the worktree must be left alone", ws.destroyed)
+	}
+	if rt.destroyed != 1 {
+		t.Error("the session's own runtime must still be destroyed")
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Error("session should still be marked terminated")
+	}
+	// Same guard the plain dirty-workspace refusal applies (#2319): the restore
+	// marker must not survive a user kill, or the next boot's RestoreAll could
+	// resurrect a session the user explicitly terminated — even though the
+	// worktree itself was left alone because a shell wouldn't confirm closed.
+	if rows := st.worktrees["mer-1"]; len(rows) != 0 {
+		t.Errorf("restore marker = %+v, want cleared", rows)
+	}
+}
+
+// A nil closer (SetShellTerminalCloser never called, e.g. a daemon boot path
+// that skips shellterm) must be a no-op, not a nil-pointer panic.
+func TestKill_NilShellTerminalCloserIsNoop(t *testing.T) {
+	m, st, _, _ := newManager()
+	st.sessions["mer-1"] = mkLive("mer-1")
+
+	if _, err := m.Kill(ctx, "mer-1"); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+}
+
 func TestKill_TerminatesIncompleteHandle(t *testing.T) {
 	m, st, _, _ := newManager()
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityActive}}
@@ -2064,6 +2189,71 @@ func TestCleanup_ReclaimsTerminalWorkspaces(t *testing.T) {
 	}
 	if ws.destroyed != 1 {
 		t.Fatal("live workspace must not be destroyed")
+	}
+}
+
+// TestCleanup_ClosesScopedShellTerminalsBeforeWorkspaceTeardown mirrors the
+// Kill regression: Cleanup must also gate shut a session's scoped shell
+// terminals before reclaiming its worktree, and release the gate afterward.
+func TestCleanup_ClosesScopedShellTerminalsBeforeWorkspaceTeardown(t *testing.T) {
+	m, st, _, ws := newManager()
+	var calls []string
+	ws.sharedLog = &calls
+	closer := &fakeShellTerminalCloser{sharedLog: &calls}
+	m.SetShellTerminalCloser(closer)
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", WorkspaceRepoPath: "/ws/mer-1"})
+
+	if _, err := m.Cleanup(ctx, "mer"); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(closer.began) != 1 || closer.began[0] != "mer-1" {
+		t.Fatalf("began = %v, want [mer-1]", closer.began)
+	}
+	if len(closer.ended) != 1 || closer.ended[0] != "mer-1" {
+		t.Fatalf("ended = %v, want [mer-1]", closer.ended)
+	}
+	beginIdx, destroyIdx, endIdx := -1, -1, -1
+	for i, c := range calls {
+		switch c {
+		case "BeginSessionTeardown:mer-1":
+			beginIdx = i
+		case "Destroy:" + domain.RootWorkspaceRepoName:
+			destroyIdx = i
+		case "EndSessionTeardown:mer-1":
+			endIdx = i
+		}
+	}
+	if beginIdx == -1 || destroyIdx == -1 || endIdx == -1 {
+		t.Fatalf("call log missing expected entries: %v", calls)
+	}
+	if beginIdx >= destroyIdx || destroyIdx >= endIdx {
+		t.Fatalf("call order = %v, want begin, then destroy, then end", calls)
+	}
+}
+
+// TestCleanup_SkipsWorkspaceReleaseWhenShellTerminalsWontClose is the
+// regression for the bug where a shell terminal that failed to close was
+// logged and forgotten, then the worktree reclaimed anyway. Cleanup must skip
+// that session for this run (reporting it in Skipped) rather than reclaiming
+// ground out from under a still-live shell — a later run can retry it.
+func TestCleanup_SkipsWorkspaceReleaseWhenShellTerminalsWontClose(t *testing.T) {
+	m, st, _, ws := newManager()
+	m.SetShellTerminalCloser(&fakeShellTerminalCloser{err: errors.New("shellterm-1: still alive")})
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1"})
+
+	res, err := m.Cleanup(ctx, "mer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Cleaned) != 0 {
+		t.Fatalf("cleaned = %v, want none: the shell close was not confirmed", res.Cleaned)
+	}
+	if len(res.Skipped) != 1 || res.Skipped[0].SessionID != "mer-1" {
+		t.Fatalf("skipped = %+v, want mer-1 reported", res.Skipped)
+	}
+	if ws.destroyed != 0 {
+		t.Fatal("workspace must not be destroyed while a scoped shell is still alive")
 	}
 }
 
@@ -4109,6 +4299,56 @@ func TestSaveAndTeardownAll_CaptureOrderAndMarker(t *testing.T) {
 	}
 }
 
+// TestSaveAndTeardownAll_ClosesScopedShellTerminalsBeforeForceDestroy covers
+// the last coverage gap the second review round flagged: the shutdown
+// save-and-teardown path (also reached by reconcileLive on boot, via the same
+// saveAndTeardownOne) force-removes a worktree just like Kill/Cleanup, and
+// must gate shut any shell terminal scoped to the session first.
+func TestSaveAndTeardownAll_ClosesScopedShellTerminalsBeforeForceDestroy(t *testing.T) {
+	m, st, _, ws := newLifecycleManager()
+	var sharedLog []string
+	st.sharedLog = &sharedLog
+	ws.sharedLog = &sharedLog
+	closer := &fakeShellTerminalCloser{sharedLog: &sharedLog}
+	m.SetShellTerminalCloser(closer)
+	ws.stashRef = "refs/ao/preserved/mer-1"
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1/root", RuntimeHandleID: "h1"},
+		Activity:  domain.Activity{State: domain.ActivityActive},
+	}
+
+	if err := m.SaveAndTeardownAll(ctx); err != nil {
+		t.Fatalf("SaveAndTeardownAll err = %v", err)
+	}
+
+	if len(closer.began) != 1 || closer.began[0] != "mer-1" {
+		t.Fatalf("began = %v, want [mer-1]", closer.began)
+	}
+	if len(closer.ended) != 1 || closer.ended[0] != "mer-1" {
+		t.Fatalf("ended = %v, want [mer-1]", closer.ended)
+	}
+	beginIdx, forceIdx, endIdx := -1, -1, -1
+	for i, c := range sharedLog {
+		switch c {
+		case "BeginSessionTeardown:mer-1":
+			beginIdx = i
+		case "ForceDestroy:mer-1":
+			forceIdx = i
+		case "EndSessionTeardown:mer-1":
+			endIdx = i
+		}
+	}
+	if beginIdx == -1 || forceIdx == -1 || endIdx == -1 {
+		t.Fatalf("call log missing expected entries: %v", sharedLog)
+	}
+	if beginIdx >= forceIdx || forceIdx >= endIdx {
+		t.Fatalf("call order = %v, want begin, then force destroy, then end", sharedLog)
+	}
+}
+
 func TestSaveAndTeardownAll_SkipsScratchSessions(t *testing.T) {
 	m, st, rt, ws := newLifecycleManager()
 	st.projects["scratch"] = domain.ProjectRecord{ID: "scratch", Kind: domain.ProjectKindScratch, Config: testRoleAgents()}
@@ -4188,6 +4428,138 @@ func TestRetireForReplacementCapturesAndReleasesWorkspace(t *testing.T) {
 	}
 	if stashIdx >= forceIdx || forceIdx >= deleteIdx {
 		t.Fatalf("replacement retire must capture, force release, then clear restore marker; log=%v", sharedLog)
+	}
+}
+
+// TestRetireForReplacementClosesScopedShellTerminalsBeforeForceDestroy covers
+// the coverage gap the second review round flagged: RetireForReplacement
+// force-removes a worktree the same as Kill/Cleanup, and must gate shut any
+// shell terminal scoped to the retiring orchestrator first.
+func TestRetireForReplacementClosesScopedShellTerminalsBeforeForceDestroy(t *testing.T) {
+	m, st, _, ws := newLifecycleManager()
+	var sharedLog []string
+	st.sharedLog = &sharedLog
+	ws.sharedLog = &sharedLog
+	closer := &fakeShellTerminalCloser{sharedLog: &sharedLog}
+	m.SetShellTerminalCloser(closer)
+	ws.stashRef = "refs/ao/preserved/mer-orch"
+	st.sessions["mer-orch"] = domain.SessionRecord{
+		ID:        "mer-orch",
+		ProjectID: "mer",
+		Kind:      domain.KindOrchestrator,
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/mer-orch", Branch: "ao/mer-orchestrator", RuntimeHandleID: "orch-handle"},
+		Activity:  domain.Activity{State: domain.ActivityActive},
+	}
+
+	if err := m.RetireForReplacement(ctx, "mer-orch"); err != nil {
+		t.Fatalf("RetireForReplacement err = %v", err)
+	}
+
+	if len(closer.began) != 1 || closer.began[0] != "mer-orch" {
+		t.Fatalf("began = %v, want [mer-orch]", closer.began)
+	}
+	if len(closer.ended) != 1 || closer.ended[0] != "mer-orch" {
+		t.Fatalf("ended = %v, want [mer-orch]", closer.ended)
+	}
+	beginIdx, forceIdx, endIdx := -1, -1, -1
+	for i, c := range sharedLog {
+		switch c {
+		case "BeginSessionTeardown:mer-orch":
+			beginIdx = i
+		case "ForceDestroy:mer-orch":
+			forceIdx = i
+		case "EndSessionTeardown:mer-orch":
+			endIdx = i
+		}
+	}
+	if beginIdx == -1 || forceIdx == -1 || endIdx == -1 {
+		t.Fatalf("call log missing expected entries: %v", sharedLog)
+	}
+	if beginIdx >= forceIdx || forceIdx >= endIdx {
+		t.Fatalf("call order = %v, want begin, then force destroy, then end", sharedLog)
+	}
+}
+
+// A shell terminal that cannot be confirmed closed must fail the whole
+// retirement: unlike Kill, RetireForReplacement has no dirty-refusal path — it
+// always force-destroys — so silently proceeding would remove the worktree
+// out from under a still-live shell.
+func TestRetireForReplacementFailsWhenShellTerminalsWontClose(t *testing.T) {
+	m, st, _, ws := newLifecycleManager()
+	m.SetShellTerminalCloser(&fakeShellTerminalCloser{err: errors.New("shellterm-1: still alive")})
+	st.sessions["mer-orch"] = domain.SessionRecord{
+		ID:        "mer-orch",
+		ProjectID: "mer",
+		Kind:      domain.KindOrchestrator,
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/mer-orch", Branch: "ao/mer-orchestrator", RuntimeHandleID: "orch-handle"},
+		Activity:  domain.Activity{State: domain.ActivityActive},
+	}
+
+	if err := m.RetireForReplacement(ctx, "mer-orch"); err == nil {
+		t.Fatal("RetireForReplacement: want an error, the shell terminal was not confirmed closed")
+	}
+	if ws.destroyed != 0 {
+		t.Errorf("workspace destroyed = %d, want 0", ws.destroyed)
+	}
+	if st.sessions["mer-orch"].IsTerminated {
+		t.Error("session must not be terminated when retirement fails outright")
+	}
+}
+
+// TestRetireForReplacementWorkspaceProjectClosesScopedShellTerminalsBeforeForceDestroy
+// is the workspace-project variant of the same coverage gap.
+func TestRetireForReplacementWorkspaceProjectClosesScopedShellTerminalsBeforeForceDestroy(t *testing.T) {
+	m, st, _, ws := newLifecycleManager()
+	var sharedLog []string
+	st.sharedLog = &sharedLog
+	ws.sharedLog = &sharedLog
+	closer := &fakeShellTerminalCloser{sharedLog: &sharedLog}
+	m.SetShellTerminalCloser(closer)
+	ws.stashRef = "refs/ao/preserved/mer-orch"
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: "/repos/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents()}
+	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{{
+		ProjectID:    "mer",
+		Name:         "api",
+		RelativePath: "api",
+	}}
+	st.sessions["mer-orch"] = domain.SessionRecord{
+		ID:        "mer-orch",
+		ProjectID: "mer",
+		Kind:      domain.KindOrchestrator,
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/mer-orch", Branch: "ao/mer-orchestrator", RuntimeHandleID: "orch-handle"},
+		Activity:  domain.Activity{State: domain.ActivityActive},
+	}
+	st.worktrees["mer-orch"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-orch", RepoName: domain.RootWorkspaceRepoName, Branch: "ao/mer-orchestrator", WorktreePath: "/ws/mer-orch", State: "active"},
+		{SessionID: "mer-orch", RepoName: "api", Branch: "ao/mer-orchestrator", WorktreePath: "/ws/mer-orch/api", State: "active"},
+	}
+
+	if err := m.RetireForReplacement(ctx, "mer-orch"); err != nil {
+		t.Fatalf("RetireForReplacement err = %v", err)
+	}
+
+	if len(closer.began) != 1 || closer.began[0] != "mer-orch" {
+		t.Fatalf("began = %v, want [mer-orch]", closer.began)
+	}
+	if len(closer.ended) != 1 || closer.ended[0] != "mer-orch" {
+		t.Fatalf("ended = %v, want [mer-orch]", closer.ended)
+	}
+	beginIdx, forceIdx, endIdx := -1, -1, -1
+	for i, c := range sharedLog {
+		switch c {
+		case "BeginSessionTeardown:mer-orch":
+			beginIdx = i
+		case "ForceDestroy:api":
+			forceIdx = i
+		case "EndSessionTeardown:mer-orch":
+			endIdx = i
+		}
+	}
+	if beginIdx == -1 || forceIdx == -1 || endIdx == -1 {
+		t.Fatalf("call log missing expected entries: %v", sharedLog)
+	}
+	if beginIdx >= forceIdx || forceIdx >= endIdx {
+		t.Fatalf("call order = %v, want begin, then force destroy, then end", sharedLog)
 	}
 }
 
@@ -5205,6 +5577,60 @@ func TestReconcileLive_DeadSessionStashedAndTerminated(t *testing.T) {
 	}
 }
 
+// TestReconcileLive_ClosesScopedShellTerminalsBeforeForceDestroy is the boot
+// path (crash recovery) half of the shutdown save-and-teardown coverage: it
+// calls the same saveAndTeardownOne SaveAndTeardownAll does, so the gate must
+// fire here too, not just for a graceful shutdown.
+func TestReconcileLive_ClosesScopedShellTerminalsBeforeForceDestroy(t *testing.T) {
+	st := newFakeStore()
+	rt := &fakeRuntime{aliveByHandle: map[string]bool{}} // handle not alive
+	ws := &fakeWorkspace{stashRef: "refs/ao/preserved/s1"}
+	var sharedLog []string
+	ws.sharedLog = &sharedLog
+	lcm := &fakeLCM{store: st}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: lcm, LookPath: lookPath})
+	closer := &fakeShellTerminalCloser{sharedLog: &sharedLog}
+	m.SetShellTerminalCloser(closer)
+
+	rec := domain.SessionRecord{
+		ID:           "s1",
+		ProjectID:    "p1",
+		IsTerminated: false,
+		Metadata: domain.SessionMetadata{
+			Branch: "ao/s1/root", WorkspacePath: "/wt/s1", RuntimeHandleID: "s1",
+		},
+	}
+
+	if err := m.reconcileLive(context.Background(), rec); err != nil {
+		t.Fatalf("reconcileLive: %v", err)
+	}
+
+	if len(closer.began) != 1 || closer.began[0] != "s1" {
+		t.Fatalf("began = %v, want [s1]", closer.began)
+	}
+	if len(closer.ended) != 1 || closer.ended[0] != "s1" {
+		t.Fatalf("ended = %v, want [s1]", closer.ended)
+	}
+	beginIdx, forceIdx, endIdx := -1, -1, -1
+	for i, c := range sharedLog {
+		switch c {
+		case "BeginSessionTeardown:s1":
+			beginIdx = i
+		case "ForceDestroy:s1":
+			forceIdx = i
+		case "EndSessionTeardown:s1":
+			endIdx = i
+		}
+	}
+	if beginIdx == -1 || forceIdx == -1 || endIdx == -1 {
+		t.Fatalf("call log missing expected entries: %v", sharedLog)
+	}
+	if beginIdx >= forceIdx || forceIdx >= endIdx {
+		t.Fatalf("call order = %v, want begin, then force destroy, then end", sharedLog)
+	}
+}
+
 func TestReconcileLive_AliveSessionAdoptedNoop(t *testing.T) {
 	st := newFakeStore()
 	rt := &fakeRuntime{aliveByHandle: map[string]bool{"s2": true}}
@@ -5531,6 +5957,8 @@ func TestSend_ConfirmBudgetCapsRetries(t *testing.T) {
 		Activity: domain.Activity{State: domain.ActivityIdle}}
 	msg := &fakeMessenger{}
 	m := newSendTestManager(t, signalingAgent{}, msg, st)
+	var logBuf bytes.Buffer
+	m.logger = slog.New(slog.NewTextHandler(&logBuf, nil))
 
 	if err := m.Send(context.Background(), "s1", "stuck prompt"); err != nil {
 		t.Fatalf("Send: %v", err)
@@ -5540,6 +5968,13 @@ func TestSend_ConfirmBudgetCapsRetries(t *testing.T) {
 	}
 	if got := st.sessions["s1"].Activity.State; got == domain.ActivityActive {
 		t.Fatalf("Activity.State = active, want unchanged (session never went active)")
+	}
+	logText := logBuf.String()
+	if !strings.Contains(logText, "level=WARN") ||
+		!strings.Contains(logText, "activity confirmation budget exhausted") ||
+		!strings.Contains(logText, "sessionID=s1") ||
+		!strings.Contains(logText, "attempts=3") {
+		t.Fatalf("log = %q, want exhausted confirmation warning with session and attempt count", logText)
 	}
 }
 

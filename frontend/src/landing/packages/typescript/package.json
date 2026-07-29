@@ -1,5 +1,5 @@
 {
-  "name": "@superset/typescript",
+  "name": "@ao/typescript",
   "version": "0.1.0",
   "private": true,
   "type": "module",

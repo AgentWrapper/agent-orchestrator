@@ -16,7 +16,15 @@ export function track(
 	event: string,
 	properties?: Record<string, unknown>,
 ): void {
-	posthog.capture(event, properties);
+	// Best-effort: a throw from analytics must never escape into the caller.
+	// Several callers navigate right after (e.g. the download click handler), and
+	// PostHog's capture throws when called before init — which happens whenever
+	// NEXT_PUBLIC_POSTHOG_KEY is unset (local dev) — aborting that navigation.
+	try {
+		posthog.capture(event, properties);
+	} catch (error) {
+		console.warn("PostHog capture failed", error);
+	}
 
 	const redditEvent = REDDIT_EVENT_MAP[event];
 	if (redditEvent) {

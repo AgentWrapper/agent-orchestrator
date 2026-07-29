@@ -8,6 +8,49 @@ import (
 	shelltermsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/shellterm"
 )
 
+// TestSelectShellTerminalsBySessionID: Session Manager uses this to find and
+// close every shell terminal scoped to a session before its worktree is torn
+// down, so it must return only that session's rows.
+func TestSelectShellTerminalsBySessionID(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "portfolio")
+
+	sessA, err := s.CreateSession(ctx, sampleRecord("portfolio"))
+	if err != nil {
+		t.Fatalf("create session a: %v", err)
+	}
+	sessB, err := s.CreateSession(ctx, sampleRecord("portfolio"))
+	if err != nil {
+		t.Fatalf("create session b: %v", err)
+	}
+
+	recA1 := shellTerminalRecord("shellterm-a1", "run-1")
+	recA1.SessionID = sessA.ID
+	recA2 := shellTerminalRecord("shellterm-a2", "run-1")
+	recA2.SessionID = sessA.ID
+	recB := shellTerminalRecord("shellterm-b", "run-1")
+	recB.SessionID = sessB.ID
+	for _, rec := range []shelltermsvc.ShellTerminalRecord{recA1, recA2, recB} {
+		if err := s.InsertShellTerminal(ctx, rec); err != nil {
+			t.Fatalf("insert %s: %v", rec.HandleID, err)
+		}
+	}
+
+	got, err := s.SelectShellTerminalsBySessionID(ctx, sessA.ID)
+	if err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("terminals = %+v, want only session a's two shells", got)
+	}
+	for _, rec := range got {
+		if rec.SessionID != sessA.ID {
+			t.Errorf("terminal %s session id = %q, want %q", rec.HandleID, rec.SessionID, sessA.ID)
+		}
+	}
+}
+
 func shellTerminalRecord(handleID, appRunID string) shelltermsvc.ShellTerminalRecord {
 	return shelltermsvc.ShellTerminalRecord{
 		HandleID:   handleID,
@@ -67,6 +110,46 @@ func TestInsertShellTerminalWithProjectRoundTrips(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].ProjectID != "portfolio" {
 		t.Fatalf("terminals = %+v, want project portfolio", got)
+	}
+}
+
+// TestSelectShellTerminalByHandleID: CloseShellTerminal uses this to learn a
+// shell's session id before taking that session's teardown gate.
+func TestSelectShellTerminalByHandleID(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "portfolio")
+	sess, err := s.CreateSession(ctx, sampleRecord("portfolio"))
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	rec := shellTerminalRecord("shellterm-a", "run-1")
+	rec.SessionID = sess.ID
+	if err := s.InsertShellTerminal(ctx, rec); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	got, found, err := s.SelectShellTerminalByHandleID(ctx, "shellterm-a")
+	if err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	if !found {
+		t.Fatal("found = false, want true for an existing row")
+	}
+	if got.SessionID != sess.ID {
+		t.Errorf("session id = %q, want %q", got.SessionID, sess.ID)
+	}
+}
+
+func TestSelectShellTerminalByHandleIDReportsMissingRow(t *testing.T) {
+	s := newTestStore(t)
+
+	_, found, err := s.SelectShellTerminalByHandleID(context.Background(), "shellterm-missing")
+	if err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	if found {
+		t.Error("found = true, want false for an unknown handle")
 	}
 }
 

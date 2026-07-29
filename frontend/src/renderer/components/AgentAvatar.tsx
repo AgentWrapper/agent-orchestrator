@@ -51,6 +51,8 @@ const LOGOS: Record<string, string> = {
 type AgentAvatarProps = {
 	provider: string;
 	className?: string;
+	/** When true, the logo is purely decorative (label is shown beside it). */
+	decorative?: boolean;
 };
 
 /**
@@ -63,16 +65,17 @@ type AgentAvatarProps = {
  * hover title, so surfaces that show the logo in place of visible agent text —
  * e.g. the archive cards — still name the agent for screen readers.
  */
-export function AgentAvatar({ provider, className }: AgentAvatarProps) {
+export function AgentAvatar({ provider, className, decorative = false }: AgentAvatarProps) {
 	const logo = LOGOS[provider];
 	if (logo) {
 		return (
 			<img
 				src={logo}
-				alt={provider}
+				alt={decorative ? "" : provider}
+				aria-hidden={decorative || undefined}
 				className={cn("size-icon-xl shrink-0 object-contain", className)}
 				draggable={false}
-				title={provider}
+				title={decorative ? undefined : provider}
 			/>
 		);
 	}

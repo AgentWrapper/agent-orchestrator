@@ -3,7 +3,7 @@ import { Slot } from "@radix-ui/react-slot";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "../../lib/utils";
 
-// emdash buttons are font-normal (400) with 6px radius; blue is the live edge
+// Buttons are font-normal (400) with 6px radius; blue is the live edge
 // (primary). See DESIGN.md → Spacing / Color.
 const buttonVariants = cva(
 	"inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-control font-normal transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-45",
