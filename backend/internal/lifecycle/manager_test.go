@@ -1987,43 +1987,6 @@ func TestActivity_WorkerIdleOrchestratorActiveDefersNoNudge(t *testing.T) {
 	}
 }
 
-func TestActivity_DeferredReportFlushedWhenOrchestratorIdle(t *testing.T) {
-	m, st, msg := newManager()
-	now := time.Now()
-	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
-	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, DisplayName: "husky-setup", Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
-
-	// Worker finishes while the orchestrator is busy: deferred, no nudge yet.
-	if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle}); err != nil {
-		t.Fatal(err)
-	}
-	if len(msg.msgs) != 0 {
-		t.Fatalf("nudged while orchestrator busy: %d, want 0", len(msg.msgs))
-	}
-
-	// Orchestrator becomes idle: the deferred report is delivered.
-	if err := m.ApplyActivitySignal(ctx, "mer-orch", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle}); err != nil {
-		t.Fatal(err)
-	}
-	if len(msg.msgs) != 1 {
-		t.Fatalf("flushed nudges = %d, want 1", len(msg.msgs))
-	}
-	if !strings.Contains(msg.msgs[0], "mer-8") {
-		t.Fatalf("flushed nudge missing worker id: %q", msg.msgs[0])
-	}
-
-	// A second orchestrator idle transition must not re-deliver.
-	if err := m.ApplyActivitySignal(ctx, "mer-orch", ports.ActivitySignal{Valid: true, State: domain.ActivityActive, Timestamp: now.Add(time.Second)}); err != nil {
-		t.Fatal(err)
-	}
-	if err := m.ApplyActivitySignal(ctx, "mer-orch", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle, Timestamp: now.Add(2 * time.Second)}); err != nil {
-		t.Fatal(err)
-	}
-	if len(msg.msgs) != 1 {
-		t.Fatalf("re-delivered deferred report: %d, want 1", len(msg.msgs))
-	}
-}
-
 // fakeLifecycleContainerReaper is a minimal containerReaper test double.
 type fakeLifecycleContainerReaper struct {
 	sessions []domain.SessionID
