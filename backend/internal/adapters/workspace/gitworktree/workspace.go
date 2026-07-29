@@ -42,6 +42,9 @@ var (
 	ErrBranchCheckedOutElsewhere = ports.ErrWorkspaceBranchCheckedOutElsewhere
 	ErrBranchNotFetched          = ports.ErrWorkspaceBranchNotFetched
 	ErrBranchInvalid             = ports.ErrWorkspaceBranchInvalid
+	// ErrWorktreeLocked is an adapter-local alias of ports.ErrWorkspaceLocked,
+	// following the same aliasing convention as the branch sentinels above.
+	ErrWorktreeLocked = ports.ErrWorkspaceLocked
 )
 
 // RepoResolver maps a project to the absolute path of its source git repo.
@@ -296,7 +299,7 @@ func (w *Workspace) Destroy(ctx context.Context, info ports.WorkspaceInfo) error
 		}
 		return fmt.Errorf("gitworktree: refusing to remove %q: path is still registered after git worktree prune", path)
 	}
-	if err := os.RemoveAll(path); err != nil {
+	if err := removeAllWithRetry(ctx, path); err != nil {
 		return fmt.Errorf("gitworktree: remove unregistered path %q: %w", path, err)
 	}
 	return nil
@@ -331,7 +334,7 @@ func (w *Workspace) ForceDestroy(ctx context.Context, info ports.WorkspaceInfo) 
 	// os.RemoveAll as a backstop: cleans up filesystem residue left behind if
 	// git worktree remove --force still left the directory (e.g. files outside
 	// git tracking).
-	if err := os.RemoveAll(path); err != nil {
+	if err := removeAllWithRetry(ctx, path); err != nil {
 		return fmt.Errorf("gitworktree: force remove path %q: %w", path, err)
 	}
 	return nil
@@ -618,12 +621,36 @@ func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (por
 	if err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
+	// recreateBranch is the branch used if we fall through to recreate the
+	// worktree below. It defaults to cfg.Branch (the "no prior registration"
+	// case) but is overridden to the stale registration's own branch when one
+	// is found, so a session sitting on a child branch is not silently
+	// recreated on cfg.Branch (typically the root branch) instead.
+	recreateBranch := cfg.Branch
 	if rec, ok := findWorktree(records, path); ok {
-		branch := rec.Branch
-		if branch == "" {
-			branch = cfg.Branch
+		missing, err := registeredWorktreeDirMissing(rec)
+		if err != nil {
+			return ports.WorkspaceInfo{}, err
 		}
-		return ports.WorkspaceInfo{Path: path, Branch: branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID, RepoPath: repo}, nil
+		if !missing {
+			branch := rec.Branch
+			if branch == "" {
+				branch = cfg.Branch
+			}
+			return ports.WorkspaceInfo{Path: path, Branch: branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID, RepoPath: repo}, nil
+		}
+		// The registration outlived its directory (issue #2775: a session's git
+		// worktree registration and DB row survived a deletion that removed only
+		// the directory). Fall through to recreate the worktree at path below,
+		// on the registration's own branch (not cfg.Branch), instead of
+		// returning a handle to a directory that does not exist, which
+		// previously made `cd <path> || exit` in the tmux launch command exit
+		// instantly with no diagnostic. addWorktree re-registers the stale path
+		// itself via `worktree add --force`; the registration is left in place
+		// until then.
+		if rec.Branch != "" {
+			recreateBranch = rec.Branch
+		}
 	}
 	if nonEmpty, err := pathExistsNonEmpty(path); err != nil {
 		return ports.WorkspaceInfo{}, err
@@ -635,13 +662,13 @@ func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (por
 			return ports.WorkspaceInfo{}, err
 		}
 	}
-	if err := w.validateBranch(ctx, repo, cfg.Branch); err != nil {
+	if err := w.validateBranch(ctx, repo, recreateBranch); err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
-	if err := w.addWorktree(ctx, repo, path, cfg.Branch, cfg.BaseBranch); err != nil {
+	if err := w.addWorktree(ctx, repo, path, recreateBranch, cfg.BaseBranch); err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
-	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID, RepoPath: repo}, nil
+	return ports.WorkspaceInfo{Path: path, Branch: recreateBranch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID, RepoPath: repo}, nil
 }
 
 func (w *Workspace) existingWorktree(ctx context.Context, repo, path string, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, bool, error) {
@@ -650,6 +677,24 @@ func (w *Workspace) existingWorktree(ctx context.Context, repo, path string, cfg
 		return ports.WorkspaceInfo{}, false, err
 	}
 	if rec, ok := findWorktree(records, path); ok {
+		missing, err := registeredWorktreeDirMissing(rec)
+		if err != nil {
+			return ports.WorkspaceInfo{}, false, err
+		}
+		if missing {
+			// Report "no existing worktree" so Create falls through to
+			// addWorktree, which re-registers this stale path in one step via
+			// `worktree add --force`.
+			//
+			// Unlike Restore, Create deliberately recreates on cfg.Branch and
+			// not on rec.Branch. Restore is re-attaching to a live session
+			// whose branch may have moved on past what AO recorded, so the
+			// registration is the better source of truth there; Create is
+			// materializing a NEW session, where a registration at this path is
+			// a leftover from a prior session of the same name and its branch
+			// says nothing about what the caller asked for.
+			return ports.WorkspaceInfo{}, false, nil
+		}
 		branch := rec.Branch
 		if branch == "" {
 			branch = cfg.Branch
@@ -657,6 +702,59 @@ func (w *Workspace) existingWorktree(ctx context.Context, repo, path string, cfg
 		return ports.WorkspaceInfo{Path: path, Branch: branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, true, nil
 	}
 	return ports.WorkspaceInfo{}, false, nil
+}
+
+// registeredWorktreeDirMissing reports whether a git-registered worktree's
+// directory no longer exists on disk. A worktree registration (and the
+// session's DB row) can outlive its directory when something removes the path
+// out of band of AO's own teardown (issue #2775: session agent-orchestrator-78
+// kept its branches and worktree registration but its directory was gone, so
+// handing that path straight to the runtime made the tmux launch command's
+// `cd <path> || exit` guard exit instantly with no diagnostic). When it reports
+// true, the caller materializes a fresh worktree at the same path with
+// `git worktree add --force` (see worktreeAddForce), which re-registers the
+// path itself: nothing here removes or prunes a registration first.
+//
+// This is deliberately a pure observation. Recovering by first clearing the
+// stale registration would mean either the repo-wide `git worktree prune`,
+// which also drops the registration of every OTHER worktree of the repo whose
+// directory git currently cannot see (verified against real git: two worktrees
+// with their directories both deleted, one prune removes BOTH registrations,
+// silently reintroducing the "recreated on the wrong branch" failure
+// recreateBranch exists to prevent for a sibling session that never asked to be
+// touched), or the target-specific `git worktree remove --force`, which is
+// check-then-delete against this stat: if anything materializes the worktree
+// between the two, the force-remove deletes a live worktree and any uncommitted
+// agent work in it. `worktree add --force` has neither problem: it touches only
+// this path's registration, and git refuses it outright when the directory
+// exists and is non-empty, so a lost race fails loudly instead of destroying
+// work.
+//
+// If rec is locked (`git worktree lock`), this returns ErrWorktreeLocked
+// instead of reporting a recoverable registration. Verified against real git: a
+// single `worktree add --force` refuses a missing-but-locked registration (it
+// demands `-f -f`), and `git worktree prune` leaves such a registration in
+// place too, so attempting recovery here would just relay an opaque git error
+// downstream. Locking is an explicit operator signal not to touch a worktree,
+// so recovering it automatically would be wrong even if git allowed it.
+func registeredWorktreeDirMissing(rec worktreeRecord) (bool, error) {
+	info, err := os.Stat(rec.Path)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return false, fmt.Errorf("gitworktree: stat registered worktree %q: %w", rec.Path, err)
+		}
+		if rec.Locked {
+			return false, fmt.Errorf(
+				"%w: %q (branch %q) is registered but its directory is missing; unlock it (`git worktree unlock %s`) and retry, or remove the registration manually",
+				ErrWorktreeLocked, rec.Path, rec.Branch, rec.Path,
+			)
+		}
+		return true, nil
+	}
+	if !info.IsDir() {
+		return false, fmt.Errorf("gitworktree: registered worktree %q is not a directory", rec.Path)
+	}
+	return false, nil
 }
 
 func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch, baseBranch string) error {
@@ -670,13 +768,22 @@ func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch, baseBra
 	if conflict, ok := findWorktreeByBranch(records, branch); ok && filepath.Clean(conflict.Path) != filepath.Clean(path) {
 		return fmt.Errorf("%w: %q is checked out at %q", ErrBranchCheckedOutElsewhere, branch, conflict.Path)
 	}
+	// A registration at path whose directory is gone makes a plain add fail
+	// ("is a missing but already registered worktree; use 'add -f' to
+	// override"), so re-register it in the same add instead of clearing it
+	// first. records is the freshly listed state, so this decision and the add
+	// it feeds are as close together as git allows.
+	force, err := staleRegistrationForPath(records, path)
+	if err != nil {
+		return err
+	}
 
 	localBranch, err := w.refExists(ctx, repo, "refs/heads/"+branch)
 	if err != nil {
 		return err
 	}
 	if localBranch {
-		if _, err := w.run(ctx, w.binary, worktreeAddBranchArgs(repo, path, branch)...); err != nil {
+		if _, err := w.run(ctx, w.binary, worktreeAddBranchArgs(repo, path, branch, force)...); err != nil {
 			return fmt.Errorf("gitworktree: worktree add existing branch %q: %w", branch, err)
 		}
 		return nil
@@ -695,16 +802,80 @@ func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch, baseBra
 		}
 		return err
 	}
-	if _, err := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo, branch, path, baseRef)...); err != nil {
-		if isMissingRegisteredWorktreeError(err) {
-			if pruneErr := w.pruneWorktrees(ctx, repo); pruneErr != nil {
-				return fmt.Errorf("gitworktree: worktree add branch %q from %q: recover stale registration: %w", branch, baseRef, pruneErr)
-			}
-			if _, retryErr := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo, branch, path, baseRef)...); retryErr == nil {
-				return nil
-			}
-		}
+	if err := w.addNewBranchWorktree(ctx, repo, branch, path, baseRef, force); err != nil {
 		return fmt.Errorf("gitworktree: worktree add branch %q from %q: %w", branch, baseRef, err)
+	}
+	return nil
+}
+
+// staleRegistrationForPath reports whether records carries a registration for
+// path whose directory is gone, i.e. whether an add at path needs git's
+// `--force` override to re-register it. No registration at all is not stale.
+func staleRegistrationForPath(records []worktreeRecord, path string) (bool, error) {
+	rec, ok := findWorktree(records, path)
+	if !ok {
+		return false, nil
+	}
+	return registeredWorktreeDirMissing(rec)
+}
+
+// addNewBranchWorktree runs `git worktree add [--force] -b <branch> <path>
+// <baseRef>` and recovers when git rejects path as a stale registration that
+// the caller's own pre-check did not see (the directory vanished between that
+// check and this add).
+//
+// The retry deliberately does NOT repeat the `-b` form. git creates
+// refs/heads/<branch> BEFORE it validates the target path, so a `-b` attempt
+// that fails on the stale registration still leaves the branch behind:
+// verified against git 2.54, the failed add prints "Preparing worktree (new
+// branch '<branch>')", exits 128, and `show-ref` then finds the branch. A
+// `--force -b` retry therefore never recovers, it fails with "a branch named
+// '<branch>' already exists" (exit 255), which is the bug this addresses.
+// Retrying on the existing-branch form `worktree add --force <path> <branch>`
+// checks out the branch the first attempt just created, at baseRef, which is
+// exactly what the `-b` form would have produced.
+//
+// Both callers reach the `-b` form only after confirming refs/heads/<branch>
+// did not exist (addWorktree via refExists, createWorkspaceProjectRepo via
+// workspaceProjectBranchFree), so a branch present after the failed attempt is
+// the one that attempt created, never a pre-existing branch this would hijack.
+// The ref is re-read rather than assumed, so a future caller that skips that
+// precondition still gets the correct form.
+//
+// A recovery that fails outright leaves the created branch ref behind. That is
+// deliberate: the failure that matters here is "path exists and is non-empty",
+// which means something else materialized the worktree at path first, possibly
+// checked out on this very branch, and deleting the ref would then damage the
+// worktree that won. The leftover ref is harmless and self-correcting: the next
+// addWorktree for it takes the existing-branch path, and workspaceProjectBranch
+// simply picks the next free candidate.
+func (w *Workspace) addNewBranchWorktree(ctx context.Context, repo, branch, path, baseRef string, force bool) error {
+	_, err := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo, branch, path, baseRef, force)...)
+	if err == nil {
+		return nil
+	}
+	// --force was already in play, so the stale registration is not what failed.
+	if force || !isMissingRegisteredWorktreeError(err) {
+		return err
+	}
+	// Report the recovery failure alongside the original: on its own, the
+	// original ("is a missing but already registered worktree") names the
+	// condition recovery was FOR, not the reason recovery failed, and the two
+	// are routinely different. The interesting ones are "'<path>' already
+	// exists" (another restore materialized the worktree first, so this one
+	// lost the race and must not be read as a stale registration) and "missing
+	// but locked" (a registration that acquired a lock after the caller's
+	// pre-check). Joining keeps errors.Is working for both.
+	created, refErr := w.refExists(ctx, repo, "refs/heads/"+branch)
+	if refErr != nil {
+		return errors.Join(err, refErr)
+	}
+	retryArgs := worktreeAddNewBranchArgs(repo, branch, path, baseRef, true)
+	if created {
+		retryArgs = worktreeAddBranchArgs(repo, path, branch, true)
+	}
+	if _, retryErr := w.run(ctx, w.binary, retryArgs...); retryErr != nil {
+		return errors.Join(err, retryErr)
 	}
 	return nil
 }
@@ -773,15 +944,24 @@ func (w *Workspace) createWorkspaceProjectRepo(ctx context.Context, repo workspa
 	if err != nil {
 		return "", err
 	}
-	if _, err := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo.repoPath, branch, repo.outputPath, baseRef)...); err != nil {
-		if isMissingRegisteredWorktreeError(err) {
-			if pruneErr := w.pruneWorktrees(ctx, repo.repoPath); pruneErr != nil {
-				return "", fmt.Errorf("gitworktree: workspace repo %q worktree add branch %q from %q: recover stale registration: %w", repo.name, branch, baseRef, pruneErr)
-			}
-			if _, retryErr := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo.repoPath, branch, repo.outputPath, baseRef)...); retryErr == nil {
-				return baseSHA, nil
-			}
-		}
+	// Same up-front stale-registration check addWorktree does, so the ordinary
+	// #2775 shape (registration outlived its directory) is handled by the first
+	// add and never reaches the recovery below. Without it every recovery here
+	// had to go through a failed `-b` attempt, which leaves a stray branch ref
+	// behind even when it succeeds.
+	records, err := w.listRecords(ctx, repo.repoPath)
+	if err != nil {
+		return "", err
+	}
+	force, err := staleRegistrationForPath(records, repo.outputPath)
+	if err != nil {
+		return "", err
+	}
+	// Recovery from a registration that only goes stale after that check is
+	// addNewBranchWorktree's job: git's own --force override, not the repo-wide
+	// prune this used to run, which would also drop sibling sessions'
+	// registrations.
+	if err := w.addNewBranchWorktree(ctx, repo.repoPath, branch, repo.outputPath, baseRef, force); err != nil {
 		return "", fmt.Errorf("gitworktree: workspace repo %q worktree add branch %q from %q: %w", repo.name, branch, baseRef, err)
 	}
 	return baseSHA, nil
@@ -792,7 +972,7 @@ func (w *Workspace) forceDestroyPath(ctx context.Context, repo, path string) err
 	if err := w.pruneWorktrees(ctx, repo); err != nil {
 		return err
 	}
-	if err := os.RemoveAll(path); err != nil {
+	if err := removeAllWithRetry(ctx, path); err != nil {
 		return fmt.Errorf("gitworktree: force remove path %q: %w", path, err)
 	}
 	return nil

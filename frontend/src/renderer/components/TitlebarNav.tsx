@@ -1,14 +1,17 @@
 import { useCanGoBack, useRouter } from "@tanstack/react-router";
 import { ArrowLeft, ArrowRight, PanelLeft } from "lucide-react";
 import { useEffect, useState } from "react";
-import { isMacPlatform } from "../lib/platform";
+import { isLinuxPlatform, isMacPlatform } from "../lib/platform";
 import { useUiStore } from "../stores/ui-store";
 
 const isMac = isMacPlatform();
+const isLinux = isLinuxPlatform();
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
-// macOS-only sidebar chrome cluster (sidebar toggle + history arrows). It stays
-// fixed while the sidebar expands, collapses, or appears as a hover preview.
+// Sidebar chrome cluster (sidebar toggle + history arrows). It stays fixed while
+// the sidebar expands, collapses, or appears as a hover preview. macOS pins it
+// beside the traffic lights; Linux has no traffic lights, so it sits at the
+// sidebar's top-left. (Windows keeps these controls in its own titlebar.)
 // The installed router has no useCanGoForward, and deriving one as
 // `__TSR_index < history.length - 1` (the upstream hook's approach) is wrong
 // here: window.history.length also counts entries the router never created —
@@ -46,12 +49,19 @@ export function TitlebarNav({
 	const canGoBack = useCanGoBack();
 	const canGoForward = useCanGoForward();
 
-	if (!isMac) return null;
+	if (!isMac && !isLinux) return null;
 
-	// Stay pinned beside the traffic lights. Nudge down slightly so the
-	// toggle/arrows share a centerline with the native dots (y: 12).
-	const leftClass = isFullScreen ? "left-titlebar-cluster-left-fullscreen" : "left-titlebar-cluster-left";
-	const topClass = isFullScreen ? "top-0" : "top-0.5";
+	// macOS: pinned beside the traffic lights, nudged down so the toggle/arrows
+	// share a centerline with the native dots (y: 12). Linux: no traffic lights,
+	// so it sits at the sidebar's top-left within the reserved titlebar band.
+	const leftClass = !isMac
+		? "left-1.5"
+		: isFullScreen
+			? "left-titlebar-cluster-left-fullscreen"
+			: "left-titlebar-cluster-left";
+	// Linux: match the framed board titlebar's y (mac inset 2px + surface border
+	// 1px) so the cluster shares its centerline with the project title.
+	const topClass = !isMac ? "top-0.75" : isFullScreen ? "top-0" : "top-0.5";
 
 	return (
 		<div

@@ -38,7 +38,8 @@ function renderSheet(onSubmit = vi.fn().mockResolvedValue(undefined)) {
 
 async function chooseOption(trigger: HTMLElement, optionName: string) {
 	await userEvent.click(trigger);
-	await userEvent.click(await screen.findByRole("option", { name: optionName }));
+	const escaped = optionName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	await userEvent.click(await screen.findByRole("option", { name: new RegExp(escaped, "i") }));
 }
 
 describe("CreateProjectAgentSheet", () => {

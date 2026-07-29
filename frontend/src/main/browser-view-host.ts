@@ -17,6 +17,7 @@ import type {
 	BrowserAnnotationSubmitPayload,
 } from "../shared/browser-annotations";
 import { attachAppShortcuts } from "./app-shortcuts";
+import type { KeybindingOverrides } from "../shared/shortcuts";
 
 export type BrowserRect = Pick<Rectangle, "x" | "y" | "width" | "height">;
 
@@ -129,6 +130,8 @@ export type BrowserViewHostOptions = {
 	// Platform flag for application shortcuts forwarded from each preview view
 	// to the shell. Defaults to non-mac when omitted (tests).
 	isMac?: boolean;
+	getKeybindingOverrides?: () => KeybindingOverrides;
+	isKeybindingRecording?: () => boolean;
 };
 
 export type BrowserViewHost = {
@@ -391,7 +394,14 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		// The preview is a separate WebContentsView, so renderer-window keydown
 		// listeners never see keys typed here. Forward application shortcuts to the
 		// shell renderer so they still work with the panel focused.
-		attachAppShortcuts(view.webContents, Boolean(options.isMac), options.mainWindow.webContents, true);
+		attachAppShortcuts(
+			view.webContents,
+			Boolean(options.isMac),
+			options.mainWindow.webContents,
+			true,
+			options.getKeybindingOverrides,
+			options.isKeybindingRecording,
+		);
 		view.webContents.on("focus", () => {
 			lastFocusedViewId = session.viewId;
 		});
