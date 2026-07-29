@@ -33,6 +33,7 @@ type APIDeps struct {
 	DevImport           controllers.DevImportService
 	CDC                 cdc.Source
 	Events              cdcSubscriber
+	EventFilter         func(*http.Request, cdc.Event) bool
 	Telemetry           ports.EventSink
 	Mobile              *controllers.MobileController
 	Browser             controllers.BrowserService
@@ -84,7 +85,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		shellTerms:    &controllers.ShellTerminalsController{Svc: deps.ShellTerminals},
 		dev:           &controllers.DevController{Import: deps.DevImport},
 		browser:       &controllers.BrowserController{Svc: deps.Browser},
-		events:        &EventsController{Source: deps.CDC, Live: deps.Events},
+		events:        &EventsController{Source: deps.CDC, Live: deps.Events, Filter: deps.EventFilter},
 	}
 }
 
