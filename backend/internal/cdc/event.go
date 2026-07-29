@@ -37,6 +37,7 @@ const (
 // not here).
 type Event struct {
 	Seq       int64           `json:"seq"`
+	OrgID     string          `json:"orgId,omitempty"`
 	ProjectID string          `json:"projectId"`
 	SessionID string          `json:"sessionId,omitempty"`
 	Type      EventType       `json:"type"`

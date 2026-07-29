@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
@@ -94,20 +96,37 @@ func (c *commandContext) postLoopbackJSON(ctx context.Context, path string, body
 	return c.doJSONPath(ctx, http.MethodPost, path, body, nil)
 }
 
+// remoteAPIBase reports the AO_API_BASE override: inside a cloud sandbox
+// there is no loopback daemon or run-file, so the runtime adapter injects the
+// calling daemon's reachable API base (plus a sandbox-scoped bearer token in
+// AO_API_TOKEN) and hook commands talk to that instead. Empty means local
+// loopback discovery as always. See docs/cloud/daytona-runtime.md.
+func remoteAPIBase() (base, token string) {
+	return strings.TrimRight(strings.TrimSpace(os.Getenv("AO_API_BASE")), "/"),
+		strings.TrimSpace(os.Getenv("AO_API_TOKEN"))
+}
+
 func (c *commandContext) doJSONPath(ctx context.Context, method, path string, body, out any) error {
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
-	info, err := runfile.Read(cfg.RunFilePath)
-	if err != nil {
-		return err
-	}
-	if info == nil {
-		return fmt.Errorf("AO daemon is not running — start it with `ao start`")
-	}
-	if !c.deps.ProcessAlive(info.PID) {
-		return fmt.Errorf("AO daemon is not running (stale run-file at %s) — start it with `ao start`", cfg.RunFilePath)
+	remoteBase, remoteToken := remoteAPIBase()
+	var url string
+	if remoteBase != "" {
+		url = remoteBase + path
+	} else {
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
+		info, err := runfile.Read(cfg.RunFilePath)
+		if err != nil {
+			return err
+		}
+		if info == nil {
+			return fmt.Errorf("AO daemon is not running — start it with `ao start`")
+		}
+		if !c.deps.ProcessAlive(info.PID) {
+			return fmt.Errorf("AO daemon is not running (stale run-file at %s) — start it with `ao start`", cfg.RunFilePath)
+		}
+		url = fmt.Sprintf("http://%s:%d%s", config.LoopbackHost, info.Port, path)
 	}
 
 	var reader io.Reader = http.NoBody
@@ -118,13 +137,15 @@ func (c *commandContext) doJSONPath(ctx context.Context, method, path string, bo
 		}
 		reader = bytes.NewReader(payload)
 	}
-	url := fmt.Sprintf("http://%s:%d%s", config.LoopbackHost, info.Port, path)
-	req, err := http.NewRequestWithContext(ctx, method, url, reader) // #nosec G704 -- daemon host is fixed loopback; path is an internal API route.
+	req, err := http.NewRequestWithContext(ctx, method, url, reader) // #nosec G704 -- daemon host is fixed loopback or the operator-provided AO_API_BASE; path is an internal API route.
 	if err != nil {
 		return err
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if remoteBase != "" && remoteToken != "" {
+		req.Header.Set("Authorization", "Bearer "+remoteToken)
 	}
 
 	// Reuse the injected client's transport (keeps it stubbable in tests) but
