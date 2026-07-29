@@ -2,6 +2,7 @@ package cloud
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -9,11 +10,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/google/uuid"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/auth"
@@ -52,6 +55,9 @@ func Run() error {
 	if err != nil {
 		return err
 	}
+	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
+		return err
+	}
 	credentialSvc := credentials.New(store, secretManager)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -64,7 +70,11 @@ func Run() error {
 	}
 	pollerDone := poller.Start(ctx)
 
-	handler := NewHandler(cfg, store, issuer, credentialSvc, events)
+	runtimeStack, err := newCloudRuntimeStack(cfg, store, issuer, logger)
+	if err != nil {
+		return err
+	}
+	handler := NewHandlerWithRuntime(cfg, store, issuer, credentialSvc, events, runtimeStack)
 	srv := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second}
 	ln, err := net.Listen("tcp", cfg.Addr())
 	if err != nil {
@@ -100,6 +110,10 @@ func Run() error {
 // NewHandler builds the cloud HTTP surface. Tests call this directly with an
 // ephemeral Postgres store.
 func NewHandler(cfg Config, store *postgres.Store, issuer *auth.Issuer, credentialSvc *credentials.Service, events *cdc.Broadcaster) http.Handler {
+	return NewHandlerWithRuntime(cfg, store, issuer, credentialSvc, events, nil)
+}
+
+func NewHandlerWithRuntime(cfg Config, store *postgres.Store, issuer *auth.Issuer, credentialSvc *credentials.Service, events *cdc.Broadcaster, runtimeStack *cloudRuntimeStack) http.Handler {
 	if events == nil {
 		events = cdc.NewBroadcaster()
 	}
@@ -114,15 +128,27 @@ func NewHandler(cfg Config, store *postgres.Store, issuer *auth.Issuer, credenti
 		Google: auth.NewHTTPGoogleProvider(cfg.Google, nil),
 	}
 	authHandler.Register(r)
+	if cfg.DevAuth {
+		r.Post("/auth/dev/token", devAuthHandler(store, issuer))
+	}
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		envelope.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "ao-cloud"})
 	})
 
-	projectSvc := projectsvc.NewWithDeps(projectsvc.Deps{Store: store, DefaultHarness: domain.HarnessCodex})
-	sessionSvc := sessionsvc.NewWithDeps(sessionsvc.Deps{Manager: cloudCommander{}, Store: store})
+	var sessionService *sessionsvc.Service
+	activity := controllers.ActivityRecorder(nil)
+	if runtimeStack != nil {
+		sessionService = runtimeStack.sessions
+		activity = runtimeStack.activity
+	}
+	projectSvc := projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionService, DefaultHarness: domain.HarnessCodex})
+	if sessionService == nil {
+		sessionService = sessionsvc.NewWithDeps(sessionsvc.Deps{Manager: cloudCommander{}, Store: store})
+	}
 	api := httpd.NewAPI(daemonconfig.Config{RequestTimeout: cfg.RequestTimeout}, httpd.APIDeps{
 		Projects: projectSvc,
-		Sessions: sessionSvc,
+		Sessions: sessionService,
+		Activity: activity,
 		CDC:      store,
 		Events:   events,
 		EventFilter: func(r *http.Request, e cdc.Event) bool {
@@ -135,7 +161,12 @@ func NewHandler(cfg Config, store *postgres.Store, issuer *auth.Issuer, credenti
 		if credentialSvc != nil {
 			r.Post("/api/v1/agent-credentials", credentialSvc.CreateHTTP)
 		}
-		api.RegisterReadOnly(r)
+		r.Post("/api/v1/cloud/projects", cloudProjectHandler(store))
+		if runtimeStack != nil {
+			api.Register(r)
+		} else {
+			api.RegisterReadOnly(r)
+		}
 	})
 	return r
 }
@@ -172,3 +203,126 @@ func errRuntimeUnavailable() error {
 }
 
 var _ controllers.SessionService = (*sessionsvc.Service)(nil)
+
+func cloudProjectHandler(store *postgres.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			ID            string `json:"id"`
+			Name          string `json:"name"`
+			RepoURL       string `json:"repoUrl"`
+			DefaultBranch string `json:"defaultBranch"`
+			WorkerAgent   string `json:"workerAgent"`
+			Permissions   string `json:"permissions"`
+		}
+		dec := json.NewDecoder(r.Body)
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&in); err != nil {
+			envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+			return
+		}
+		id := strings.TrimSpace(in.ID)
+		repoURL := strings.TrimSpace(in.RepoURL)
+		if id == "" || repoURL == "" {
+			envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "PROJECT_ID_AND_REPO_URL_REQUIRED", "id and repoUrl are required", nil)
+			return
+		}
+		name := strings.TrimSpace(in.Name)
+		if name == "" {
+			name = id
+		}
+		worker := domain.AgentHarness(strings.TrimSpace(in.WorkerAgent))
+		if worker == "" {
+			worker = domain.HarnessClaudeCode
+		}
+		permissions := domain.PermissionMode(strings.TrimSpace(in.Permissions))
+		if permissions == "" {
+			permissions = domain.PermissionModeBypassPermissions
+		}
+		cfg := domain.ProjectConfig{
+			DefaultBranch: strings.TrimSpace(in.DefaultBranch),
+			Worker: domain.RoleOverride{
+				Harness:     worker,
+				AgentConfig: domain.AgentConfig{Permissions: permissions},
+			},
+		}
+		if err := cfg.Validate(); err != nil {
+			envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_PROJECT_CONFIG", err.Error(), nil)
+			return
+		}
+		rec := domain.ProjectRecord{
+			ID:            id,
+			Path:          repoURL,
+			RepoOriginURL: repoURL,
+			DisplayName:   name,
+			RegisteredAt:  time.Now().UTC(),
+			Kind:          domain.ProjectKindSingleRepo,
+			Config:        cfg,
+		}
+		if err := store.UpsertProject(r.Context(), rec); err != nil {
+			envelope.WriteError(w, r, err)
+			return
+		}
+		envelope.WriteJSON(w, http.StatusCreated, map[string]any{
+			"project": map[string]any{
+				"id":      rec.ID,
+				"name":    rec.DisplayName,
+				"repoUrl": rec.RepoOriginURL,
+			},
+		})
+	}
+}
+
+func devAuthHandler(store *postgres.Store, issuer *auth.Issuer) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Email string `json:"email"`
+			Name  string `json:"name"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		email := strings.TrimSpace(in.Email)
+		if email == "" {
+			email = "dev@example.com"
+		}
+		name := strings.TrimSpace(in.Name)
+		if name == "" {
+			name = "AO Cloud Dev"
+		}
+		user, orgs, err := store.UpsertGoogleUser(r.Context(), auth.GoogleProfile{
+			Subject:     "dev:" + email,
+			Email:       email,
+			DisplayName: name,
+		})
+		if err != nil {
+			envelope.WriteError(w, r, err)
+			return
+		}
+		orgIDs := make([]string, 0, len(orgs))
+		for _, org := range orgs {
+			orgIDs = append(orgIDs, org.ID)
+		}
+		pair, err := issuer.Issue(user.ID, orgIDs)
+		if err != nil {
+			envelope.WriteError(w, r, err)
+			return
+		}
+		now := time.Now().UTC()
+		if err := store.StoreRefreshToken(r.Context(), auth.APIToken{
+			ID:        uuid.NewString(),
+			UserID:    user.ID,
+			TokenHash: auth.HashRefreshToken(pair.RefreshToken),
+			Kind:      "refresh",
+			ExpiresAt: now.Add(issuer.RefreshTokenTTL()),
+			CreatedAt: now,
+		}); err != nil {
+			envelope.WriteError(w, r, err)
+			return
+		}
+		envelope.WriteJSON(w, http.StatusOK, map[string]any{
+			"accessToken":  pair.AccessToken,
+			"refreshToken": pair.RefreshToken,
+			"expiresAt":    pair.ExpiresAt,
+			"user":         user,
+			"orgs":         orgs,
+		})
+	}
+}

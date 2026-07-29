@@ -16,6 +16,9 @@ func newTestWorkspace(t *testing.T, fc *fakeClient) *Workspace {
 		Client:   fc,
 		Snapshot: "ao-agent-snapshot:1",
 		BootEnv:  map[string]string{"CLAUDE_CODE_OAUTH_TOKEN": "tok"},
+		SessionBootEnv: func(_ context.Context, cfg ports.WorkspaceConfig) (map[string]string, error) {
+			return map[string]string{"AO_API_BASE": "https://ao.example", "AO_API_TOKEN": "token-" + string(cfg.SessionID)}, nil
+		},
 		ResolveRepo: func(context.Context, ports.WorkspaceConfig) (RepoRemote, error) {
 			return RepoRemote{URL: "https://github.com/acme/app.git", DefaultBranch: "main"}, nil
 		},
@@ -62,6 +65,9 @@ func TestWorkspaceCreateProvisionsSandboxAndClone(t *testing.T) {
 	}
 	if req.Env["CLAUDE_CODE_OAUTH_TOKEN"] != "tok" {
 		t.Errorf("boot env missing injected credential: %v", req.Env)
+	}
+	if req.Env["AO_API_BASE"] != "https://ao.example" || req.Env["AO_API_TOKEN"] != "token-s1" {
+		t.Errorf("session boot env missing hook contract: %v", req.Env)
 	}
 	if req.AutoStopInterval == nil || *req.AutoStopInterval != defaultAutoStopMinutes {
 		t.Errorf("autoStopInterval = %v, want default %d", req.AutoStopInterval, defaultAutoStopMinutes)

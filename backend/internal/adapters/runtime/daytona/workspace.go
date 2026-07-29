@@ -70,6 +70,10 @@ type WorkspaceOptions struct {
 	// CLAUDE_CODE_OAUTH_TOKEN) and the hooks-path env (AO_API_BASE,
 	// AO_API_TOKEN). See the design doc's control-plane contract.
 	BootEnv map[string]string
+	// SessionBootEnv is merged into BootEnv for a specific session at sandbox
+	// creation time. The control plane uses this to mint per-session AO_API_TOKEN
+	// values after the session id is assigned.
+	SessionBootEnv func(ctx context.Context, cfg ports.WorkspaceConfig) (map[string]string, error)
 	// WorkspaceRoot is the directory inside the sandbox that holds session
 	// checkouts; default /home/daytona/ao.
 	WorkspaceRoot string
@@ -222,10 +226,14 @@ func (w *Workspace) createSandbox(ctx context.Context, name string, cfg ports.Wo
 	if autoStop < 0 {
 		autoStop = 0 // Daytona: 0 disables auto-stop
 	}
+	env, err := w.bootEnv(ctx, cfg)
+	if err != nil {
+		return Sandbox{}, err
+	}
 	req := CreateSandboxRequest{
 		Name:     "ao-" + name,
 		Snapshot: w.opts.Snapshot,
-		Env:      w.opts.BootEnv,
+		Env:      env,
 		Labels: map[string]string{
 			LabelSession: name,
 			LabelProject: string(cfg.ProjectID),
@@ -257,6 +265,26 @@ func (w *Workspace) createSandbox(ctx context.Context, name string, cfg ports.Wo
 	return sb, nil
 }
 
+func (w *Workspace) bootEnv(ctx context.Context, cfg ports.WorkspaceConfig) (map[string]string, error) {
+	env := make(map[string]string, len(w.opts.BootEnv)+4)
+	for k, v := range w.opts.BootEnv {
+		env[k] = v
+	}
+	if w.opts.SessionBootEnv != nil {
+		extra, err := w.opts.SessionBootEnv(ctx, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("daytona workspace: session boot env: %w", err)
+		}
+		if err := validateEnvKeys(extra); err != nil {
+			return nil, fmt.Errorf("daytona workspace: session boot env: %w", err)
+		}
+		for k, v := range extra {
+			env[k] = v
+		}
+	}
+	return env, nil
+}
+
 // provisionCheckout clones the repo (base branch when set) and creates or
 // checks out the session branch, returning the effective branch name. An
 // existing valid checkout is reused (idempotent retry after a partial spawn).
@@ -282,6 +310,9 @@ func (w *Workspace) provisionCheckout(ctx context.Context, sb Sandbox, path stri
 		return "", fmt.Errorf("daytona workspace: clone %s: %w", remote.URL, err)
 	}
 	if err := w.configureGitIdentity(ctx, sb.ID, path); err != nil {
+		return "", err
+	}
+	if err := w.configureClaudeCode(ctx, sb.ID, path); err != nil {
 		return "", err
 	}
 
@@ -317,6 +348,21 @@ func (w *Workspace) configureGitIdentity(ctx context.Context, sandboxID, path st
 	}
 	return nil
 }
+
+func (w *Workspace) configureClaudeCode(ctx context.Context, sandboxID, path string) error {
+	settings := path + "/.claude/settings.local.json"
+	script := "mkdir -p " + shellQuote(path+"/.claude") + " && cat > " + shellQuote(settings) + " <<'JSON'\n" +
+		claudeCodeHooksJSON + "\nJSON\n" +
+		"node -e " + shellQuote(claudeTrustScript) + " " + shellQuote(path)
+	if _, err := w.exec(ctx, sandboxID, script); err != nil {
+		return fmt.Errorf("daytona workspace: configure claude-code hooks: %w", err)
+	}
+	return nil
+}
+
+const claudeCodeHooksJSON = `{"hooks":{"SessionStart":[{"matcher":"startup","hooks":[{"type":"command","command":"ao hooks claude-code session-start","timeout":30}]}],"UserPromptSubmit":[{"hooks":[{"type":"command","command":"ao hooks claude-code user-prompt-submit","timeout":30}]}],"PreToolUse":[{"hooks":[{"type":"command","command":"ao hooks claude-code pre-tool-use","timeout":30}]}],"PostToolUse":[{"hooks":[{"type":"command","command":"ao hooks claude-code post-tool-use","timeout":30}]}],"PostToolUseFailure":[{"hooks":[{"type":"command","command":"ao hooks claude-code post-tool-use-failure","timeout":30}]}],"PermissionRequest":[{"hooks":[{"type":"command","command":"ao hooks claude-code permission-request","timeout":30}]}],"Stop":[{"hooks":[{"type":"command","command":"ao hooks claude-code stop","timeout":30}]}],"Notification":[{"hooks":[{"type":"command","command":"ao hooks claude-code notification","timeout":30}]}],"SessionEnd":[{"hooks":[{"type":"command","command":"ao hooks claude-code session-end","timeout":30}]}]}}`
+
+const claudeTrustScript = `const fs=require("fs"); const path=process.argv[1]; const cfg=process.env.HOME+"/.claude.json"; let root={}; try { root=JSON.parse(fs.readFileSync(cfg,"utf8")||"{}"); } catch (_) {} root.projects=root.projects||{}; root.projects[path]=Object.assign({}, root.projects[path]||{}, {hasTrustDialogAccepted:true}); fs.writeFileSync(cfg, JSON.stringify(root,null,2));`
 
 func (w *Workspace) currentBranch(ctx context.Context, sandboxID, path string) (string, error) {
 	out, err := w.exec(ctx, sandboxID, "git -C "+shellQuote(path)+" rev-parse --abbrev-ref HEAD")

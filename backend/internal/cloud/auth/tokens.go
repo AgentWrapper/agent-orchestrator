@@ -106,6 +106,34 @@ func (i *Issuer) Issue(subject string, orgIDs []string) (TokenPair, error) {
 	return TokenPair{AccessToken: access, RefreshToken: refresh, ExpiresAt: expires}, nil
 }
 
+// IssueSessionToken signs a short-lived bearer token scoped to one session's
+// activity route. Sandboxes receive this as AO_API_TOKEN for `ao hooks`.
+func (i *Issuer) IssueSessionToken(orgID, sessionID string, ttl time.Duration) (string, time.Time, error) {
+	orgID = strings.TrimSpace(orgID)
+	sessionID = strings.TrimSpace(sessionID)
+	if orgID == "" || sessionID == "" {
+		return "", time.Time{}, errors.New("org id and session id are required")
+	}
+	if ttl <= 0 {
+		ttl = 24 * time.Hour
+	}
+	now := i.now().UTC()
+	expires := now.Add(ttl)
+	token, err := i.sign(jwtClaims{
+		Issuer:    i.issuer,
+		Audience:  i.audience,
+		Subject:   "session:" + sessionID,
+		OrgIDs:    []string{orgID},
+		SessionID: sessionID,
+		Issued:    now.Unix(),
+		Expires:   expires.Unix(),
+	})
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	return token, expires, nil
+}
+
 // VerifyAccessToken implements tenancy.TokenVerifier.
 func (i *Issuer) VerifyAccessToken(token string) (tenancy.Claims, error) {
 	claims, err := i.verify(token)
@@ -121,19 +149,20 @@ func (i *Issuer) VerifyAccessToken(token string) (tenancy.Claims, error) {
 	if claims.Subject == "" || len(claims.OrgIDs) == 0 {
 		return tenancy.Claims{}, errInvalidToken
 	}
-	return tenancy.Claims{Subject: claims.Subject, OrgIDs: claims.OrgIDs}, nil
+	return tenancy.Claims{Subject: claims.Subject, OrgIDs: claims.OrgIDs, SessionID: claims.SessionID}, nil
 }
 
 // RefreshTokenTTL is how long newly issued refresh tokens remain valid.
 func (i *Issuer) RefreshTokenTTL() time.Duration { return i.refreshTTL }
 
 type jwtClaims struct {
-	Issuer   string   `json:"iss"`
-	Audience string   `json:"aud"`
-	Subject  string   `json:"sub"`
-	OrgIDs   []string `json:"orgs"`
-	Issued   int64    `json:"iat"`
-	Expires  int64    `json:"exp"`
+	Issuer    string   `json:"iss"`
+	Audience  string   `json:"aud"`
+	Subject   string   `json:"sub"`
+	OrgIDs    []string `json:"orgs"`
+	SessionID string   `json:"sid,omitempty"`
+	Issued    int64    `json:"iat"`
+	Expires   int64    `json:"exp"`
 }
 
 func (i *Issuer) sign(claims jwtClaims) (string, error) {

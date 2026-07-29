@@ -63,6 +63,7 @@ Optional:
 export AO_CLOUD_HOST=127.0.0.1
 export AO_CLOUD_PORT=3011
 export AO_CLOUD_REQUEST_TIMEOUT=60s
+export AO_DATA_DIR="$HOME/.ao/cloud"
 ```
 
 Google OAuth:
@@ -77,6 +78,31 @@ Create a Google OAuth web client with the redirect URL above. The callback
 exchanges the authorization code for a Google identity, upserts the user,
 creates a default org for first-time users, and returns an access/refresh token
 pair.
+
+Local e2e without Google credentials can enable the dev-auth shim:
+
+```bash
+export AO_CLOUD_DEV_AUTH=1
+curl -sS -X POST http://127.0.0.1:3011/auth/dev/token \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"dev@example.com","name":"AO Cloud Dev"}'
+```
+
+Do not enable `AO_CLOUD_DEV_AUTH` outside local development.
+
+Daytona runtime wiring:
+
+```bash
+export AO_CLOUD_RUNTIME=daytona
+export AO_CLOUD_API_BASE='https://your-tunnel-or-public-cloud-url'
+export DAYTONA_API_KEY='...'
+export AO_DAYTONA_SNAPSHOT='ao-agent-sandbox:dev'
+export CLAUDE_CODE_OAUTH_TOKEN='...'
+```
+
+`AO_CLOUD_API_BASE` must be reachable from Daytona sandboxes. `ao-cloud` passes
+it as `AO_API_BASE` and mints a per-session `AO_API_TOKEN` for in-sandbox
+`ao hooks` calls.
 
 ## Run
 
@@ -130,4 +156,3 @@ Where Docker is available, it boots Postgres, runs migrations, starts the
 `ao-cloud` handler, creates two orgs, seeds same-ID projects/sessions in each,
 and verifies each token can only see its own org through `/api/v1/projects` and
 `/api/v1/sessions`.
-

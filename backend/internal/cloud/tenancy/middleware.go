@@ -11,8 +11,9 @@ import (
 
 // Claims is the authenticated principal data the tenancy middleware needs.
 type Claims struct {
-	Subject string
-	OrgIDs  []string
+	Subject   string
+	OrgIDs    []string
+	SessionID string
 }
 
 // TokenVerifier verifies an access token and returns its tenant-bearing claims.
@@ -62,6 +63,15 @@ func Middleware(verifier TokenVerifier, memberships MembershipStore) func(http.H
 					"Token is not authorized for this org", nil)
 				return
 			}
+			if claims.SessionID != "" {
+				if !sessionActivityPath(r, claims.SessionID) {
+					envelope.WriteAPIError(w, r, http.StatusForbidden, "forbidden", "SESSION_TOKEN_FORBIDDEN",
+						"Session token is only authorized for that session's activity route", nil)
+					return
+				}
+				next.ServeHTTP(w, r.WithContext(WithScope(r.Context(), Scope{UserID: claims.Subject, OrgID: orgID})))
+				return
+			}
 			ok, err := memberships.IsOrgMember(r.Context(), claims.Subject, orgID)
 			if err != nil {
 				envelope.WriteError(w, r, err)
@@ -83,4 +93,11 @@ func bearerToken(r *http.Request) string {
 		return ""
 	}
 	return strings.TrimSpace(strings.TrimPrefix(h, "Bearer "))
+}
+
+func sessionActivityPath(r *http.Request, sessionID string) bool {
+	if r.Method != http.MethodPost {
+		return false
+	}
+	return r.URL.Path == "/api/v1/sessions/"+sessionID+"/activity"
 }
