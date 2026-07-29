@@ -1189,11 +1189,20 @@ function ReviewPanel({
 					{notice}
 				</p>
 			) : null}
+			{/* The reviewer is named once. Once a tab exists it carries the name, so
+			    repeating it here said the same thing twice; before anything has run
+			    there is no tab, and the panel would otherwise never say who reviews. */}
 			<div className="flex min-w-0 items-center gap-2.5">
-				<AgentAvatar className="size-icon-lg shrink-0" decorative provider={harness} />
-				<span className="min-w-0 flex-1 truncate text-sm-md font-semibold leading-tight text-foreground">
-					{harness}
-				</span>
+				{reviewerTabs.length === 0 ? (
+					<>
+						<AgentAvatar className="size-icon-lg shrink-0" decorative provider={harness} />
+						<span className="min-w-0 flex-1 truncate text-sm-md font-semibold leading-tight text-foreground">
+							{harness}
+						</span>
+					</>
+				) : (
+					<span className="flex-1" />
+				)}
 				<div className="shrink-0">
 					<ReviewerSelect
 						ariaLabel="Reviewer agent"
@@ -1214,7 +1223,7 @@ function ReviewPanel({
 							className={cn(
 								"inline-flex h-control-md min-w-0 items-center gap-1.5 rounded-md px-1.5 text-2xs font-medium transition-colors",
 								name === selectedReviewer
-									? "bg-interactive-active text-foreground"
+									? "bg-accent-strong/16 text-foreground ring-1 ring-inset ring-accent-strong/45"
 									: "text-passive hover:bg-interactive-hover hover:text-foreground",
 							)}
 							key={name}
